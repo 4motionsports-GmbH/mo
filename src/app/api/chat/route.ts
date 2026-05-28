@@ -10,6 +10,8 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const maxDuration = 60;
 
+const MAX_MESSAGES_PER_CONVERSATION = 40;
+
 function mergeProfile(prev: CustomerProfile, patch: UpdateCustomerProfileArgs): CustomerProfile {
   // Merge a profile patch onto the previous profile. Empty/undefined fields
   // in the patch leave the previous value intact.
@@ -69,6 +71,18 @@ export async function POST(req: Request) {
   if (!rl.ok) return rateLimitResponse(rl.retryAfter, corsHeaders(guard.origin));
 
   const { messages } = (await req.json()) as { messages: UIMessage[] };
+
+  if (!Array.isArray(messages) || messages.length > MAX_MESSAGES_PER_CONVERSATION) {
+    return new Response(
+      JSON.stringify({
+        error: `Conversation too long (max ${MAX_MESSAGES_PER_CONVERSATION} messages). Please start a new chat.`,
+      }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json", ...corsHeaders(guard.origin) },
+      }
+    );
+  }
 
   const profile = extractProfile(messages);
   const archetype = deriveArchetype(profile);
