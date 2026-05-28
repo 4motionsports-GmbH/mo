@@ -1,14 +1,19 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
+import { errorEnvelope } from "./observability";
 
 const WINDOW = "60 s" as const;
-const MAX_REQUESTS = 20;
+const CHAT_MAX = 20;
+const PRODUCTS_MAX = 60;
 
-let cached: Ratelimit | null = null;
+export type RateLimitBucket = "chat" | "products";
+
+const cached: Partial<Record<RateLimitBucket, Ratelimit>> = {};
 let warned = false;
+let sharedRedis: Redis | null = null;
 
-function getLimiter(): Ratelimit | null {
-  if (cached) return cached;
+function getRedis(): Redis | null {
+  if (sharedRedis) return sharedRedis;
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) {
@@ -20,13 +25,24 @@ function getLimiter(): Ratelimit | null {
     }
     return null;
   }
-  cached = new Ratelimit({
-    redis: new Redis({ url, token }),
-    limiter: Ratelimit.slidingWindow(MAX_REQUESTS, WINDOW),
+  sharedRedis = new Redis({ url, token });
+  return sharedRedis;
+}
+
+function getLimiter(bucket: RateLimitBucket): Ratelimit | null {
+  const existing = cached[bucket];
+  if (existing) return existing;
+  const redis = getRedis();
+  if (!redis) return null;
+  const max = bucket === "chat" ? CHAT_MAX : PRODUCTS_MAX;
+  const limiter = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(max, WINDOW),
     analytics: false,
-    prefix: "ms-chat",
+    prefix: `ms-${bucket}`,
   });
-  return cached;
+  cached[bucket] = limiter;
+  return limiter;
 }
 
 function clientKey(req: Request): string {
@@ -41,8 +57,11 @@ export type RateLimitResult =
   | { ok: true }
   | { ok: false; retryAfter: number };
 
-export async function checkRateLimit(req: Request): Promise<RateLimitResult> {
-  const limiter = getLimiter();
+export async function checkRateLimit(
+  req: Request,
+  bucket: RateLimitBucket = "chat"
+): Promise<RateLimitResult> {
+  const limiter = getLimiter(bucket);
   if (!limiter) return { ok: true };
   const key = clientKey(req);
   const { success, reset } = await limiter.limit(key);
@@ -56,7 +75,7 @@ export function rateLimitResponse(
   extraHeaders: Record<string, string> = {}
 ): Response {
   return new Response(
-    JSON.stringify({ error: "Too many requests" }),
+    JSON.stringify(errorEnvelope("rate_limited", "Too many requests")),
     {
       status: 429,
       headers: {

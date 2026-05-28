@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { errorEnvelope } from "./observability";
 
 const DEFAULT_ALLOWED_ORIGINS = [
   "https://www.motionsports.de",
@@ -67,19 +68,25 @@ export function guardRequest(req: Request): GuardResult {
   if (origin && !isOriginAllowed(origin)) {
     return {
       ok: false,
-      response: new Response(JSON.stringify({ error: "Origin not allowed" }), {
-        status: 403,
-        headers: { "Content-Type": "application/json", Vary: "Origin" },
-      }),
+      response: new Response(
+        JSON.stringify(errorEnvelope("forbidden", "Origin not allowed")),
+        {
+          status: 403,
+          headers: { "Content-Type": "application/json", Vary: "Origin" },
+        }
+      ),
     };
   }
   if (!isSecretValid(req)) {
     return {
       ok: false,
-      response: new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
-      }),
+      response: new Response(
+        JSON.stringify(errorEnvelope("unauthorized", "Unauthorized")),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
+        }
+      ),
     };
   }
   return { ok: true, origin };

@@ -1,0 +1,115 @@
+// Server-side error logging + optional Sentry integration.
+//
+// Sentry is initialized on first use only when SENTRY_DSN is set. When it's
+// absent we skip the import entirely so missing observability config never
+// crashes the route. Both routes funnel unhandled errors through
+// `reportError` + return a stable JSON envelope via `errorResponse`.
+
+import type * as SentryNS from "@sentry/nextjs";
+
+type SentryModule = typeof SentryNS;
+
+let sentryPromise: Promise<SentryModule | null> | null = null;
+
+function getSentry(): Promise<SentryModule | null> {
+  if (sentryPromise) return sentryPromise;
+  const dsn = process.env.SENTRY_DSN;
+  if (!dsn) {
+    sentryPromise = Promise.resolve(null);
+    return sentryPromise;
+  }
+  sentryPromise = import("@sentry/nextjs")
+    .then((mod) => {
+      try {
+        mod.init({
+          dsn,
+          tracesSampleRate: 0,
+          environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+        });
+        return mod;
+      } catch (err) {
+        console.warn("[observability] Sentry init failed", err);
+        return null;
+      }
+    })
+    .catch((err) => {
+      console.warn("[observability] Sentry import failed", err);
+      return null;
+    });
+  return sentryPromise;
+}
+
+export interface ErrorContext {
+  route: string;
+  messageCount?: number;
+  archetype?: string;
+  // Free-form tags — keep values primitive and small. NEVER pass secrets,
+  // auth headers, or request bodies here.
+  [key: string]: unknown;
+}
+
+function errorClass(err: unknown): string {
+  if (err instanceof Error) return err.name || "Error";
+  return typeof err;
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  try {
+    return String(err);
+  } catch {
+    return "<unstringifiable error>";
+  }
+}
+
+export function reportError(err: unknown, ctx: ErrorContext): void {
+  const safeCtx = { ...ctx, errorClass: errorClass(err) };
+  console.error(`[${ctx.route}] unhandled error`, {
+    ...safeCtx,
+    message: errorMessage(err),
+  });
+  getSentry()
+    .then((sentry) => {
+      if (!sentry) return;
+      sentry.withScope((scope) => {
+        scope.setTag("route", ctx.route);
+        if (ctx.archetype) scope.setTag("archetype", ctx.archetype);
+        if (typeof ctx.messageCount === "number") {
+          scope.setExtra("messageCount", ctx.messageCount);
+        }
+        sentry.captureException(err);
+      });
+    })
+    .catch(() => {
+      // swallow — observability must never break the request path
+    });
+}
+
+export type ErrorCode =
+  | "bad_request"
+  | "unauthorized"
+  | "forbidden"
+  | "rate_limited"
+  | "payload_too_large"
+  | "upstream_unavailable"
+  | "internal_error";
+
+export interface ErrorEnvelope {
+  error: { code: ErrorCode; message: string };
+}
+
+export function errorEnvelope(code: ErrorCode, message: string): ErrorEnvelope {
+  return { error: { code, message } };
+}
+
+export function errorResponse(
+  code: ErrorCode,
+  message: string,
+  status: number,
+  headers: Record<string, string> = {}
+): Response {
+  return new Response(JSON.stringify(errorEnvelope(code, message)), {
+    status,
+    headers: { "Content-Type": "application/json", ...headers },
+  });
+}

@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { errorResponse, reportError } from "@/lib/observability";
 
 export const maxDuration = 10;
 
@@ -86,73 +86,102 @@ export async function OPTIONS(req: Request) {
   return preflightResponse(req);
 }
 
+function okJson(body: unknown, headers: Record<string, string>): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json", ...headers },
+  });
+}
+
 export async function POST(req: Request) {
   const guard = guardRequest(req);
   if (!guard.ok) return guard.response;
   const headers = corsHeaders(guard.origin);
 
-  const rl = await checkRateLimit(req);
-  if (!rl.ok) return rateLimitResponse(rl.retryAfter, headers);
-
-  let payload: Partial<ContactPayload>;
   try {
-    payload = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Ungültiger JSON-Body" }, { status: 400, headers });
-  }
+    const rl = await checkRateLimit(req, "chat");
+    if (!rl.ok) return rateLimitResponse(rl.retryAfter, headers);
 
-  if (!isValid(payload)) {
-    return NextResponse.json(
-      { error: "Pflichtfelder fehlen oder ungültig (name, email, message, reason)" },
-      { status: 400, headers }
-    );
-  }
+    let payload: Partial<ContactPayload>;
+    try {
+      payload = await req.json();
+    } catch {
+      return errorResponse("bad_request", "Ungültiger JSON-Body", 400, headers);
+    }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  const to = process.env.CONTACT_TO_EMAIL;
-  const from = process.env.CONTACT_FROM_EMAIL;
-
-  if (!apiKey || !to || !from) {
-    // Local-dev fallback: keep working without a Resend key configured.
-    console.log("[contact-form] new submission (no email sent — RESEND_API_KEY/CONTACT_TO_EMAIL/CONTACT_FROM_EMAIL not set)", {
-      timestamp: new Date().toISOString(),
-      reason: payload.reason,
-      productIds: payload.productIds ?? [],
-      name: payload.name,
-      email: payload.email,
-      organization: payload.organization ?? "",
-      phone: payload.phone ?? "",
-      message: payload.message,
-    });
-    return NextResponse.json({ ok: true }, { headers });
-  }
-
-  const { text, html } = renderBody(payload);
-
-  try {
-    const resend = new Resend(apiKey);
-    const result = await resend.emails.send({
-      from,
-      to,
-      replyTo: payload.email,
-      subject: subjectFor(payload.reason),
-      text,
-      html,
-    });
-    if (result.error) {
-      console.error("[contact-form] Resend error", result.error);
-      return NextResponse.json(
-        { error: "E-Mail konnte nicht zugestellt werden" },
-        { status: 502, headers }
+    if (!isValid(payload)) {
+      return errorResponse(
+        "bad_request",
+        "Pflichtfelder fehlen oder ungültig (name, email, message, reason)",
+        400,
+        headers
       );
     }
-  } catch (err) {
-    console.error("[contact-form] Resend exception", err);
-    return NextResponse.json(
-      { error: "E-Mail konnte nicht zugestellt werden" },
-      { status: 502, headers }
-    );
-  }
 
-  return NextResponse.json({ ok: true }, { headers });
+    const apiKey = process.env.RESEND_API_KEY;
+    const to = process.env.CONTACT_TO_EMAIL;
+    const from = process.env.CONTACT_FROM_EMAIL;
+
+    if (!apiKey || !to || !from) {
+      // Local-dev fallback: keep working without a Resend key configured.
+      console.log(
+        "[contact-form] new submission (no email sent — RESEND_API_KEY/CONTACT_TO_EMAIL/CONTACT_FROM_EMAIL not set)",
+        {
+          timestamp: new Date().toISOString(),
+          reason: payload.reason,
+          productIds: payload.productIds ?? [],
+          name: payload.name,
+          email: payload.email,
+          organization: payload.organization ?? "",
+          phone: payload.phone ?? "",
+          message: payload.message,
+        }
+      );
+      return okJson({ ok: true }, headers);
+    }
+
+    const { text, html } = renderBody(payload);
+
+    try {
+      const resend = new Resend(apiKey);
+      const result = await resend.emails.send({
+        from,
+        to,
+        replyTo: payload.email,
+        subject: subjectFor(payload.reason),
+        text,
+        html,
+      });
+      if (result.error) {
+        reportError(result.error, {
+          route: "api/contact",
+          reason: payload.reason,
+          phase: "resend",
+        });
+        return errorResponse(
+          "upstream_unavailable",
+          "E-Mail konnte nicht zugestellt werden",
+          502,
+          headers
+        );
+      }
+    } catch (err) {
+      reportError(err, {
+        route: "api/contact",
+        reason: payload.reason,
+        phase: "resend",
+      });
+      return errorResponse(
+        "upstream_unavailable",
+        "E-Mail konnte nicht zugestellt werden",
+        502,
+        headers
+      );
+    }
+
+    return okJson({ ok: true }, headers);
+  } catch (err) {
+    reportError(err, { route: "api/contact" });
+    return errorResponse("internal_error", "Unexpected server error", 500, headers);
+  }
 }
