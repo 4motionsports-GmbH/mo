@@ -23,25 +23,31 @@ export function isOriginAllowed(origin: string | null): boolean {
   return getAllowedOrigins().includes(origin);
 }
 
-export function corsHeaders(origin: string | null): Record<string, string> {
+export function corsHeaders(
+  origin: string | null,
+  methods: string = "POST, OPTIONS"
+): Record<string, string> {
   const headers: Record<string, string> = {
     Vary: "Origin",
   };
   if (origin && isOriginAllowed(origin)) {
     headers["Access-Control-Allow-Origin"] = origin;
-    headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
+    headers["Access-Control-Allow-Methods"] = methods;
     headers["Access-Control-Allow-Headers"] = `Content-Type, ${SECRET_HEADER}, x-ms-session`;
     headers["Access-Control-Max-Age"] = "86400";
   }
   return headers;
 }
 
-export function preflightResponse(req: Request): Response {
+export function preflightResponse(
+  req: Request,
+  methods: string = "POST, OPTIONS"
+): Response {
   const origin = req.headers.get("origin");
   if (!isOriginAllowed(origin)) {
     return new Response(null, { status: 403, headers: { Vary: "Origin" } });
   }
-  return new Response(null, { status: 204, headers: corsHeaders(origin) });
+  return new Response(null, { status: 204, headers: corsHeaders(origin, methods) });
 }
 
 function constantTimeEquals(a: string, b: string): boolean {
@@ -85,6 +91,26 @@ export function guardRequest(req: Request): GuardResult {
         {
           status: 401,
           headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
+        }
+      ),
+    };
+  }
+  return { ok: true, origin };
+}
+
+// Origin-only guard for public endpoints (e.g. GET /api/products) that
+// expose data the storefront already shows. Skips the shared-secret check
+// but keeps the same allowlist + envelope shape as guardRequest.
+export function guardOriginOnly(req: Request): GuardResult {
+  const origin = req.headers.get("origin");
+  if (origin && !isOriginAllowed(origin)) {
+    return {
+      ok: false,
+      response: new Response(
+        JSON.stringify(errorEnvelope("forbidden", "Origin not allowed")),
+        {
+          status: 403,
+          headers: { "Content-Type": "application/json", Vary: "Origin" },
         }
       ),
     };
