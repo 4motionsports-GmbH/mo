@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const maxDuration = 10;
 
@@ -33,6 +34,9 @@ export async function POST(req: Request) {
   const guard = guardRequest(req);
   if (!guard.ok) return guard.response;
   const headers = corsHeaders(guard.origin);
+
+  const rl = await checkRateLimit(req);
+  if (!rl.ok) return rateLimitResponse(rl.retryAfter, headers);
 
   let payload: Partial<ContactPayload>;
   try {

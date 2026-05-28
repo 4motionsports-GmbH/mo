@@ -6,6 +6,7 @@ import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
 import { EMPTY_PROFILE, type CustomerProfile, type UpdateCustomerProfileArgs } from "@/lib/types";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const maxDuration = 60;
 
@@ -63,6 +64,9 @@ export async function OPTIONS(req: Request) {
 export async function POST(req: Request) {
   const guard = guardRequest(req);
   if (!guard.ok) return guard.response;
+
+  const rl = await checkRateLimit(req);
+  if (!rl.ok) return rateLimitResponse(rl.retryAfter, corsHeaders(guard.origin));
 
   const { messages } = (await req.json()) as { messages: UIMessage[] };
 
