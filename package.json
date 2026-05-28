@@ -16,6 +16,7 @@
     "@ai-sdk/react": "^3.0.105",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0",
+    "@vercel/blob": "^2.4.0",
     "ai": "^6.0.103",
     "framer-motion": "^12.34.3",
     "lucide-react": "^0.575.0",
