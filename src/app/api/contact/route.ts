@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Resend } from "resend";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -24,6 +25,61 @@ function isValid(p: Partial<ContactPayload>): p is ContactPayload {
     typeof p.message === "string" &&
     p.message.trim().length > 0
   );
+}
+
+const REASON_LABELS: Record<string, string> = {
+  studio_consultation: "Studio-Beratung",
+  public_sector_quote: "Angebot öffentlicher Sektor",
+  physio_consultation: "Physio-Beratung",
+  bulk_discount: "Mengenrabatt",
+  leasing: "Leasing",
+  maintenance: "Wartung",
+  general: "Allgemeine Anfrage",
+};
+
+function subjectFor(reason: string): string {
+  const label = REASON_LABELS[reason] ?? reason;
+  return `[motionsports.de] Kontaktanfrage: ${label}`;
+}
+
+function renderBody(p: ContactPayload): { text: string; html: string } {
+  const productIds = p.productIds ?? [];
+  const fields: Array<[string, string]> = [
+    ["Grund", REASON_LABELS[p.reason] ?? p.reason],
+    ["Name", p.name],
+    ["E-Mail", p.email],
+    ["Organisation", p.organization?.trim() || "—"],
+    ["Telefon", p.phone?.trim() || "—"],
+    ["Produkt-IDs", productIds.length ? productIds.join(", ") : "—"],
+    ["Eingegangen", new Date().toISOString()],
+  ];
+
+  const text = [
+    ...fields.map(([k, v]) => `${k}: ${v}`),
+    "",
+    "Nachricht:",
+    p.message,
+  ].join("\n");
+
+  const escape = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+  const rows = fields
+    .map(
+      ([k, v]) =>
+        `<tr><td style="padding:4px 12px 4px 0;color:#666;vertical-align:top">${escape(k)}</td><td style="padding:4px 0">${escape(v)}</td></tr>`
+    )
+    .join("");
+  const html = `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5">
+<table style="border-collapse:collapse">${rows}</table>
+<h3 style="margin:24px 0 8px 0;font-size:14px">Nachricht</h3>
+<pre style="white-space:pre-wrap;font-family:inherit;margin:0">${escape(p.message)}</pre>
+</div>`;
+
+  return { text, html };
 }
 
 export async function OPTIONS(req: Request) {
@@ -52,18 +108,51 @@ export async function POST(req: Request) {
     );
   }
 
-  // Prototype: log to server console. Production would forward to CRM /
-  // ticket system / email service. Vercel logs are visible in the dashboard.
-  console.log("[contact-form] new submission", {
-    timestamp: new Date().toISOString(),
-    reason: payload.reason,
-    productIds: payload.productIds ?? [],
-    name: payload.name,
-    email: payload.email,
-    organization: payload.organization ?? "",
-    phone: payload.phone ?? "",
-    message: payload.message,
-  });
+  const apiKey = process.env.RESEND_API_KEY;
+  const to = process.env.CONTACT_TO_EMAIL;
+  const from = process.env.CONTACT_FROM_EMAIL;
+
+  if (!apiKey || !to || !from) {
+    // Local-dev fallback: keep working without a Resend key configured.
+    console.log("[contact-form] new submission (no email sent — RESEND_API_KEY/CONTACT_TO_EMAIL/CONTACT_FROM_EMAIL not set)", {
+      timestamp: new Date().toISOString(),
+      reason: payload.reason,
+      productIds: payload.productIds ?? [],
+      name: payload.name,
+      email: payload.email,
+      organization: payload.organization ?? "",
+      phone: payload.phone ?? "",
+      message: payload.message,
+    });
+    return NextResponse.json({ ok: true }, { headers });
+  }
+
+  const { text, html } = renderBody(payload);
+
+  try {
+    const resend = new Resend(apiKey);
+    const result = await resend.emails.send({
+      from,
+      to,
+      replyTo: payload.email,
+      subject: subjectFor(payload.reason),
+      text,
+      html,
+    });
+    if (result.error) {
+      console.error("[contact-form] Resend error", result.error);
+      return NextResponse.json(
+        { error: "E-Mail konnte nicht zugestellt werden" },
+        { status: 502, headers }
+      );
+    }
+  } catch (err) {
+    console.error("[contact-form] Resend exception", err);
+    return NextResponse.json(
+      { error: "E-Mail konnte nicht zugestellt werden" },
+      { status: 502, headers }
+    );
+  }
 
   return NextResponse.json({ ok: true }, { headers });
 }
