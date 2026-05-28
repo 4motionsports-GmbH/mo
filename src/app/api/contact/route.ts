@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 
 export const maxDuration = 10;
 
@@ -24,18 +25,26 @@ function isValid(p: Partial<ContactPayload>): p is ContactPayload {
   );
 }
 
+export async function OPTIONS(req: Request) {
+  return preflightResponse(req);
+}
+
 export async function POST(req: Request) {
+  const guard = guardRequest(req);
+  if (!guard.ok) return guard.response;
+  const headers = corsHeaders(guard.origin);
+
   let payload: Partial<ContactPayload>;
   try {
     payload = await req.json();
   } catch {
-    return NextResponse.json({ error: "Ungültiger JSON-Body" }, { status: 400 });
+    return NextResponse.json({ error: "Ungültiger JSON-Body" }, { status: 400, headers });
   }
 
   if (!isValid(payload)) {
     return NextResponse.json(
       { error: "Pflichtfelder fehlen oder ungültig (name, email, message, reason)" },
-      { status: 400 }
+      { status: 400, headers }
     );
   }
 
@@ -52,5 +61,5 @@ export async function POST(req: Request) {
     message: payload.message,
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true }, { headers });
 }

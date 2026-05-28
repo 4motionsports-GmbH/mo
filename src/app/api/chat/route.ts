@@ -5,6 +5,7 @@ import { buildChatTools } from "@/lib/tools";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
 import { EMPTY_PROFILE, type CustomerProfile, type UpdateCustomerProfileArgs } from "@/lib/types";
+import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 
 export const maxDuration = 60;
 
@@ -55,7 +56,14 @@ function getLatestUserText(messages: UIMessage[]): string {
   return "";
 }
 
+export async function OPTIONS(req: Request) {
+  return preflightResponse(req);
+}
+
 export async function POST(req: Request) {
+  const guard = guardRequest(req);
+  if (!guard.ok) return guard.response;
+
   const { messages } = (await req.json()) as { messages: UIMessage[] };
 
   const profile = extractProfile(messages);
@@ -75,5 +83,5 @@ export async function POST(req: Request) {
     stopWhen: stepCountIs(6),
   });
 
-  return result.toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse({ headers: corsHeaders(guard.origin) });
 }
