@@ -130,10 +130,15 @@ if (!accessToken) {
 
 console.log(`  ok — scope=${scope}${expiresIn ? `, expires_in=${expiresIn}s` : ""}`);
 
-if (!/read_products/.test(scope)) {
+// Shopify scope hierarchy: write_<x> implicitly grants read_<x>.
+// So either read_products or write_products is enough for catalog sync.
+const scopes = scope.split(/[,\s]+/).filter(Boolean);
+const hasProductRead =
+  scopes.includes("read_products") || scopes.includes("write_products");
+if (!hasProductRead) {
   fail(
-    "Granted scope does not include read_products.",
-    `Granted scope: ${scope}\nFix: in the Dev Dashboard, edit your app's API access section, request the read_products scope, and reinstall the app on the store before retrying.`
+    "Granted scope does not include read_products or write_products.",
+    `Granted scope: ${scope}\nFix: in the Dev Dashboard, edit your app's API access section, request read_products (or write_products) and reinstall the app on the store before retrying.`
   );
 }
 
