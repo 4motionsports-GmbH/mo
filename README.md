@@ -1,14 +1,55 @@
-# motion sports — KI-Fitnessberater
+# motion sports — KI-Berater Backend
 
-Persona-aware Sales-Chatbot für motionsports.de, gebaut mit Next.js + Vercel AI SDK.
+Headless backend for the motion sports KI sales assistant. This repo
+exposes the chat and contact endpoints used by the Shopify storefront
+widget; the chat UI itself lives in the Shopify theme and is not part
+of this repo.
 
-## Features
+## Endpoints
 
-- **Persona-Erkennung**: Strukturiertes Customer-Profile wird live aus dem Chat extrahiert. Daraus wird ein Archetyp abgeleitet (Pragmatischer Einsteiger, Ambitionierter Home-Athlet, Kraftsportler, Cardio, Studiobetreiber, Physio, Öffentliche Hand). Der System-Prompt wird pro Archetyp angepasst.
-- **RAG (Retrieval-Augmented Generation)**: Produkte werden mit OpenAI `text-embedding-3-small` indexiert und pro Turn nach semantischer Ähnlichkeit + Profilfilter retrieved. Skaliert auf 1000+ Produkte ohne Token-Explosion. Fallback auf Keyword-Suche, wenn kein Embedding-Index vorhanden ist.
-- **Tools**: `update_customer_profile` (silent), `search_products`, `show_product`, `compare_products`, `add_to_cart` (B2C), `suggest_showroom`, `show_contact_form` (B2B / Spezialfälle).
-- **Kontaktformular**: Eigenes Routing für Studio-, Reha- und Behörden-Anfragen mit prefilled Context aus dem Chat.
-- **Debug-Modus**: `?debug=1` an der URL anhängen — zeigt Live-Profil, Archetyp und alle silent Tool Calls.
+### `POST /api/chat`
+
+Streaming chat endpoint built on Next.js + the Vercel AI SDK + Anthropic
+Claude. The request body is a `UIMessage[]` (the AI SDK message shape).
+On each turn the route:
+
+1. Replays all `update_customer_profile` tool calls to derive the current
+   customer profile (the profile is a pure function of message history).
+2. Picks an archetype from the profile (`deriveArchetype`).
+3. Retrieves relevant products from the catalog via embedding similarity
+   (with a keyword fallback when no embeddings are available).
+4. Streams a Claude response with the persona-aware system prompt and
+   the chat tools wired up (`update_customer_profile`, `search_products`,
+   `show_product`, `compare_products`, `add_to_cart`, `suggest_showroom`,
+   `show_contact_form`).
+
+Response: a UI-message stream (`toUIMessageStreamResponse`) consumable
+by the AI SDK client on the widget side.
+
+### `POST /api/contact`
+
+JSON contact-form submission for studio / rehab / public-procurement
+leads. Body:
+
+```jsonc
+{
+  "reason": "...",
+  "productIds": ["..."],        // optional
+  "name": "...",
+  "email": "...",
+  "organization": "...",         // optional
+  "phone": "...",                // optional
+  "message": "..."
+}
+```
+
+Validates the payload and currently logs to the server console. The
+production hook into CRM / ticketing / email is a follow-up.
+
+### `GET /`
+
+Returns the plain string `motion sports backend — OK` as a trivial
+health check.
 
 ## Setup
 
@@ -17,63 +58,83 @@ npm install
 
 # .env.local
 ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...     # nur für den Indexer benötigt; der Chat funktioniert auch ohne
+OPENAI_API_KEY=sk-...     # only needed for the indexer
 ```
 
-## Katalog aktualisieren
+## Catalog + embeddings
 
-Der Produktkatalog wird aus einem Shopify-CSV-Export generiert. Workflow wenn sich der Shop-Katalog ändert:
+The catalog is generated from a Shopify CSV export:
 
 ```bash
-# 1. Shopify CSV-Export nach src/data/products_export_1.csv legen
-# 2. JSON-Katalog regenerieren
+# 1. Put the Shopify CSV at src/data/products_export_1.csv
+# 2. Regenerate the JSON catalog
 npm run convert-catalog
-# 3. Embeddings neu indexieren
+# 3. Re-index embeddings
 OPENAI_API_KEY=sk-... npm run index
-# 4. Beide Dateien committen + pushen → Vercel deployt automatisch
+# 4. Commit both files
 ```
 
-Filter-Regeln in `convert-catalog`: nur Produkte mit `Published=TRUE`, Preis > 0, mindestens einem Bild und `Status=active`. Persona-relevante Felder (`medicalCertification`, `noiseLevelDb`, `footprintM2`) sind im Shopify-Export nicht durchgängig vorhanden und stehen auf `"unknown"` — bei Bedarf für die wichtigsten Produkte hand-kuratieren.
+Filters in `convert-catalog`: `Published=TRUE`, price > 0, at least one
+image, `Status=active`. Persona-relevant fields
+(`medicalCertification`, `noiseLevelDb`, `footprintM2`) default to
+`"unknown"` when not in the Shopify export.
 
-Solange `product-embeddings.json` keine Vektoren enthält, fällt das Retrieval auf Keyword-Suche zurück.
+If `product-embeddings.json` is empty, retrieval falls back to keyword
+search.
 
-## Lokal starten
+## Run locally
 
 ```bash
 npm run dev
 ```
 
-Chat: http://localhost:3000
-Mit Debug-Strip: http://localhost:3000/?debug=1
+The backend listens on `http://localhost:3000`. There is no chat UI to
+visit; hit the endpoints directly:
 
-## Auf Vercel deployen
+```bash
+curl -X POST http://localhost:3000/api/chat \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","parts":[{"type":"text","text":"Hallo"}]}]}'
+```
 
-1. ANTHROPIC_API_KEY und OPENAI_API_KEY als Environment-Variables setzen.
-2. Vor dem Deploy: `npm run index` lokal ausführen und `src/data/product-embeddings.json` committen.
+## Deploy on Vercel
 
-## Architektur
+1. Set `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as environment variables.
+2. Before each deploy that touches the catalog, run `npm run index`
+   locally and commit `src/data/product-embeddings.json`.
+
+## Architecture
 
 ```
 src/
 ├── app/
-│   ├── api/chat/route.ts          # Chat-Endpoint: extract profile → retrieve → stream
-│   ├── api/contact/route.ts       # Form-Submission (loggt aktuell nur)
-│   └── contact/page.tsx           # Kontaktformular
-├── components/
-│   ├── chat/                      # ChatContainer, MessageBubble, PersonaDebugStrip
-│   ├── tools/                     # ProductCard, Compare, AddToCart, Showroom, ContactFormCard
-│   └── contact/                   # Form-Logik
+│   ├── api/chat/route.ts          # Chat endpoint: extract profile → retrieve → stream
+│   ├── api/contact/route.ts       # Contact-form submission (logs only for now)
+│   ├── layout.tsx                 # Minimal root layout
+│   └── page.tsx                   # Plain health response
 ├── data/
 │   ├── product-catalog.json
-│   └── product-embeddings.json    # generiert via `npm run index`
+│   └── product-embeddings.json    # generated via `npm run index`
 └── lib/
     ├── persona.ts                 # deriveArchetype, addendums, profile rendering
+    ├── product-catalog.ts         # catalog loader
     ├── retrieval.ts               # cosine retrieval + keyword fallback
-    ├── system-prompt.ts           # baut den per-turn System-Prompt
-    ├── tools.ts                   # alle Chat-Tools
-    └── types.ts                   # Profile, Archetype, Product etc.
+    ├── system-prompt.ts           # per-turn system prompt
+    ├── tools.ts                   # chat tools
+    └── types.ts                   # Profile, Archetype, Product, tool args
 ```
 
-## Persona-Architektur
+## Persona architecture
 
-Das Profil ist **eine pure Funktion der Message-History**. Bei jedem Turn werden alle `update_customer_profile`-Tool-Calls aus dem Stream gemerged — kein separater Session-Storage. Der Archetyp wird aus dem Profil abgeleitet (siehe `deriveArchetype`). System-Prompt + Retrieval werden mit dem aktuellen Profil parametriert; alle Empfehlungen sind damit persona-aware.
+The customer profile is **a pure function of the message history**. On
+each turn, every `update_customer_profile` tool call from the assistant
+stream is merged into an empty profile — no separate session storage.
+The archetype is derived from the profile (`deriveArchetype`). System
+prompt and retrieval are both parameterized by the current profile, so
+every recommendation is persona-aware.
+
+## Not yet wired up
+
+CORS, authentication, and rate limiting are deliberately not configured
+in this repo yet. They are the next step before the Shopify widget can
+call these endpoints from the browser.
