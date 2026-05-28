@@ -1,9 +1,9 @@
 # motion sports — KI-Berater Backend
 
 Headless backend for the motion sports KI sales assistant. This repo
-exposes the chat and contact endpoints used by the Shopify storefront
-widget; the chat UI itself lives in the Shopify theme and is not part
-of this repo.
+exposes the chat, contact, and product hydration endpoints used by the
+Shopify storefront widget; the chat UI itself lives in the Shopify theme
+and is not part of this repo.
 
 ## Endpoints
 
@@ -24,67 +24,38 @@ On each turn the route:
    `show_contact_form`).
 
 Response: a UI-message stream (`toUIMessageStreamResponse`) consumable
-by the AI SDK client on the widget side.
+by the AI SDK client on the widget side. See
+[`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) for the exact streamed
+parts the widget must handle.
 
 ### `POST /api/contact`
 
 JSON contact-form submission for studio / rehab / public-procurement
-leads. Body:
+leads. Validates the payload and forwards it as email via Resend
+(falls back to a stdout log when Resend env vars are unset).
 
-```jsonc
-{
-  "reason": "...",
-  "productIds": ["..."],        // optional
-  "name": "...",
-  "email": "...",
-  "organization": "...",         // optional
-  "phone": "...",                // optional
-  "message": "..."
-}
-```
+### `GET /api/products`
 
-Validates the payload and currently logs to the server console. The
-production hook into CRM / ticketing / email is a follow-up.
+Public product hydration: `?ids=a,b,c` (or repeated `?id=`). Returns
+`{ products: PublicProduct[] }` in request order, with `null` entries
+for unknown ids. Capped at 10 ids per request, origin-allowlisted, no
+shared-secret required.
 
 ### `GET /`
 
 Returns the plain string `motion sports backend — OK` as a trivial
 health check.
 
-## Setup
-
-```bash
-npm install
-
-# .env.local
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...     # only needed for the indexer
-```
-
-## Catalog + embeddings
-
-The catalog is generated from a Shopify CSV export:
-
-```bash
-# 1. Put the Shopify CSV at src/data/products_export_1.csv
-# 2. Regenerate the JSON catalog
-npm run convert-catalog
-# 3. Re-index embeddings
-OPENAI_API_KEY=sk-... npm run index
-# 4. Commit both files
-```
-
-Filters in `convert-catalog`: `Published=TRUE`, price > 0, at least one
-image, `Status=active`. Persona-relevant fields
-(`medicalCertification`, `noiseLevelDb`, `footprintM2`) default to
-`"unknown"` when not in the Shopify export.
-
-If `product-embeddings.json` is empty, retrieval falls back to keyword
-search.
+Full request / response shapes for all three endpoints are documented
+in [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) — that is the
+contract the widget code targets.
 
 ## Run locally
 
 ```bash
+npm install
+cp .env.example .env.local
+# fill in ANTHROPIC_API_KEY, OPENAI_API_KEY, CHAT_SHARED_SECRET at minimum
 npm run dev
 ```
 
@@ -94,34 +65,154 @@ visit; hit the endpoints directly:
 ```bash
 curl -X POST http://localhost:3000/api/chat \
   -H 'content-type: application/json' \
+  -H 'x-ms-chat-key: <your CHAT_SHARED_SECRET>' \
+  -H 'x-ms-session: dev-session-1' \
+  -H 'origin: https://www.motionsports.de' \
   -d '{"messages":[{"role":"user","parts":[{"type":"text","text":"Hallo"}]}]}'
 ```
 
-## Deploy on Vercel
+## Catalog + embeddings
 
-1. Set `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as environment variables.
-2. Before each deploy that touches the catalog, run `npm run index`
-   locally and commit `src/data/product-embeddings.json`.
+The catalog used to be a committed JSON file. It is now refreshed by a
+daily Vercel cron (`/api/cron/sync-catalog`) that pulls live products
+from Shopify, regenerates embeddings, and writes both files to Vercel
+Blob. The runtime reads from Blob first, falls back to the bundled JSON
+in `src/data/` if Blob is unconfigured. See
+[`docs/CATALOG_SYNC.md`](docs/CATALOG_SYNC.md) for the full design.
+
+## Deploy to Vercel
+
+### Environment variables
+
+Every env var the production deploy needs, grouped by purpose. All are
+single-line strings. See `.env.example` for the canonical list.
+
+**Chat / AI**
+
+| Variable            | Description                                          |
+| ------------------- | ---------------------------------------------------- |
+| `ANTHROPIC_API_KEY` | Anthropic API key — powers `/api/chat`.              |
+| `OPENAI_API_KEY`    | OpenAI key — embeds user queries + (re-)index runs.  |
+
+**Security**
+
+| Variable             | Description                                                                       |
+| -------------------- | --------------------------------------------------------------------------------- |
+| `ALLOWED_ORIGINS`    | Comma-separated CORS allowlist. Default: `https://www.motionsports.de,https://motionsports.de`. |
+| `CHAT_SHARED_SECRET` | Long random string the widget sends in `x-ms-chat-key`. Required for chat + contact. |
+
+**Rate limiting**
+
+| Variable                     | Description                                                |
+| ---------------------------- | ---------------------------------------------------------- |
+| `UPSTASH_REDIS_REST_URL`     | Upstash Redis REST URL. If unset, rate limiting no-ops.    |
+| `UPSTASH_REDIS_REST_TOKEN`   | Paired token for the URL above.                            |
+
+**Contact form**
+
+| Variable             | Description                                                                |
+| -------------------- | -------------------------------------------------------------------------- |
+| `RESEND_API_KEY`     | Resend API key. If unset, contact submissions only log to stdout.          |
+| `CONTACT_TO_EMAIL`   | Inbox that receives leads (e.g. `vertrieb@motionsports.de`).               |
+| `CONTACT_FROM_EMAIL` | Verified Resend sender (e.g. `Motion Sports <kontakt@motionsports.de>`).   |
+
+**Shopify catalog sync**
+
+| Variable                 | Description                                              |
+| ------------------------ | -------------------------------------------------------- |
+| `SHOPIFY_STORE_DOMAIN`   | `*.myshopify.com` domain (NOT the public domain).        |
+| `SHOPIFY_CLIENT_ID`      | App Client ID from the Shopify Developer Dashboard.      |
+| `SHOPIFY_CLIENT_SECRET`  | App Client Secret (`shpss_…`).                           |
+| `SHOPIFY_API_VERSION`    | Admin API version, e.g. `2026-04`.                       |
+
+**Catalog storage + scheduling**
+
+| Variable                 | Description                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `BLOB_READ_WRITE_TOKEN`  | Vercel Blob token (auto-injected on Vercel; fill in for local).              |
+| `CRON_SECRET`            | Long random string. Cron sends it as `Authorization: Bearer <secret>`.       |
+
+**Observability (optional)**
+
+| Variable     | Description                                                                                          |
+| ------------ | ---------------------------------------------------------------------------------------------------- |
+| `SENTRY_DSN` | Server-side error capture. Skipped silently when unset — routes never crash on missing observability. |
+
+### Deploy checklist
+
+Run these in order. Don't skip the manual cron trigger or the
+spend-cap step.
+
+1. **Push the branch and import the repo into a new Vercel project.**
+   Framework preset: Next.js. Root directory: repo root.
+2. **Set every env var above** in Vercel → Settings → Environment
+   Variables. Apply them to *Production* and *Preview*.
+3. **Deploy.** First deploy will build cleanly even with Blob empty
+   because the runtime falls back to the bundled JSON in `src/data/`.
+4. **Add the custom domain `chat.motionsports.de`** under Settings →
+   Domains. Configure the DNS CNAME at the registrar. Wait for the
+   certificate to issue.
+5. **Trigger the catalog sync manually once** so Blob has fresh data
+   before the first scheduled run:
+   ```bash
+   curl -X POST \
+     -H "Authorization: Bearer $CRON_SECRET" \
+     https://chat.motionsports.de/api/cron/sync-catalog
+   ```
+   Response should be a JSON summary with `mode: "shopify"` and a
+   non-zero product count. If it returns `mode: "fallback-bundle"`,
+   the Shopify creds are wrong — run `npm run verify:shopify` against
+   them locally and fix before continuing.
+6. **Set hard monthly spend caps**:
+   - Anthropic Console → Plans & billing → set a monthly spend limit.
+   - OpenAI Platform → Settings → Limits → set a hard monthly cap.
+   Without these a runaway loop or scraper can drain the account.
+7. **Smoke test the deployed chat endpoint** (replace the secret):
+   ```bash
+   curl -N -X POST https://chat.motionsports.de/api/chat \
+     -H 'content-type: application/json' \
+     -H "x-ms-chat-key: $CHAT_SHARED_SECRET" \
+     -H 'x-ms-session: smoke-test-1' \
+     -H 'origin: https://www.motionsports.de' \
+     -d '{"messages":[{"role":"user","parts":[{"type":"text","text":"Hallo"}]}]}'
+   ```
+   Expect an SSE stream that starts within ~2s. A `401` means the
+   shared secret didn't match; a `403` means the origin isn't in
+   `ALLOWED_ORIGINS`.
+8. **On day 2, verify the scheduled cron ran successfully.**
+   In Vercel → Logs, filter to `/api/cron/sync-catalog`. There should
+   be one invocation at 03:00 UTC with a 200 response and a JSON body
+   reporting `mode: "shopify"` and the product/embedding counts. If
+   the schedule didn't fire, confirm `vercel.json` is committed and
+   the Vercel Cron page lists the job.
 
 ## Architecture
 
 ```
 src/
 ├── app/
-│   ├── api/chat/route.ts          # Chat endpoint: extract profile → retrieve → stream
-│   ├── api/contact/route.ts       # Contact-form submission (logs only for now)
-│   ├── layout.tsx                 # Minimal root layout
-│   └── page.tsx                   # Plain health response
+│   ├── api/chat/route.ts             # Chat endpoint: extract profile → retrieve → stream
+│   ├── api/contact/route.ts          # Contact-form submission via Resend
+│   ├── api/products/route.ts         # Public product hydration for the widget
+│   ├── api/cron/sync-catalog/route.ts # Daily catalog refresh from Shopify
+│   ├── layout.tsx                    # Minimal root layout
+│   └── page.tsx                      # Plain health response
 ├── data/
-│   ├── product-catalog.json
-│   └── product-embeddings.json    # generated via `npm run index`
+│   ├── product-catalog.json          # Fallback when Blob is empty/unconfigured
+│   └── product-embeddings.json
 └── lib/
-    ├── persona.ts                 # deriveArchetype, addendums, profile rendering
-    ├── product-catalog.ts         # catalog loader
-    ├── retrieval.ts               # cosine retrieval + keyword fallback
-    ├── system-prompt.ts           # per-turn system prompt
-    ├── tools.ts                   # chat tools
-    └── types.ts                   # Profile, Archetype, Product, tool args
+    ├── catalog-mapping.ts            # Shopify product → internal Product type
+    ├── catalog-store.ts              # Blob-first loader + writer
+    ├── observability.ts              # Sentry init + reportError + error envelopes
+    ├── persona.ts                    # deriveArchetype, addendums, profile rendering
+    ├── product-catalog.ts            # Thin re-export
+    ├── rate-limit.ts                 # Upstash sliding-window limiter (chat + products buckets)
+    ├── retrieval.ts                  # Cosine retrieval + keyword fallback
+    ├── security.ts                   # CORS + shared-secret guard
+    ├── shopify.ts                    # Admin API client + token cache
+    ├── system-prompt.ts              # Per-turn system prompt
+    ├── tools.ts                      # Chat tool definitions
+    └── types.ts                      # Profile, Archetype, Product, tool args
 ```
 
 ## Persona architecture
@@ -132,9 +223,3 @@ stream is merged into an empty profile — no separate session storage.
 The archetype is derived from the profile (`deriveArchetype`). System
 prompt and retrieval are both parameterized by the current profile, so
 every recommendation is persona-aware.
-
-## Not yet wired up
-
-CORS, authentication, and rate limiting are deliberately not configured
-in this repo yet. They are the next step before the Shopify widget can
-call these endpoints from the browser.
