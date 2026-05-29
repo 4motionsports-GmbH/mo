@@ -156,21 +156,35 @@ export interface ShopifyProduct {
 }
 
 // Metafields we want surfaced for product mapping. The (namespace,key) pairs
-// mirror what convert-catalog.mjs reads from the CSV column names.
-const METAFIELD_IDENTIFIERS = [
-  { namespace: "custom", key: "hoehe" },
-  { namespace: "custom", key: "laenge" },
-  { namespace: "custom", key: "gewicht" },
-  { namespace: "custom", key: "lieferzeit_min" },
-  { namespace: "custom", key: "serie" },
-  { namespace: "custom", key: "typ" },
-  { namespace: "custom", key: "zertifizierung" },
-  { namespace: "shopify", key: "material" },
-  { namespace: "shopify", key: "color-pattern" },
+// mirror what convert-catalog.mjs reads from the CSV column names. The alias
+// is the GraphQL field alias used in the products query — it must be a valid
+// GraphQL identifier (no hyphens), and is stored back as the metafield key
+// when we hand the data to the mapper.
+const METAFIELD_IDENTIFIERS: Array<{
+  alias: string;
+  namespace: string;
+  key: string;
+}> = [
+  { alias: "mf_custom_hoehe", namespace: "custom", key: "hoehe" },
+  { alias: "mf_custom_laenge", namespace: "custom", key: "laenge" },
+  { alias: "mf_custom_gewicht", namespace: "custom", key: "gewicht" },
+  { alias: "mf_custom_lieferzeit_min", namespace: "custom", key: "lieferzeit_min" },
+  { alias: "mf_custom_serie", namespace: "custom", key: "serie" },
+  { alias: "mf_custom_typ", namespace: "custom", key: "typ" },
+  { alias: "mf_custom_zertifizierung", namespace: "custom", key: "zertifizierung" },
+  { alias: "mf_shopify_material", namespace: "shopify", key: "material" },
+  { alias: "mf_shopify_color_pattern", namespace: "shopify", key: "color-pattern" },
 ];
 
+// One `metafield(namespace, key) { value }` field per identifier, aliased so
+// the response is a flat object: { mf_custom_hoehe: { value: "120" }, … }.
+const METAFIELD_QUERY_FIELDS = METAFIELD_IDENTIFIERS.map(
+  (m) =>
+    `${m.alias}: metafield(namespace: "${m.namespace}", key: "${m.key}") { value }`
+).join("\n        ");
+
 const PRODUCTS_QUERY = /* GraphQL */ `
-  query CatalogProducts($cursor: String, $identifiers: [HasMetafieldsIdentifier!]!) {
+  query CatalogProducts($cursor: String) {
     products(first: 100, after: $cursor) {
       pageInfo {
         hasNextPage
@@ -210,37 +224,36 @@ const PRODUCTS_QUERY = /* GraphQL */ `
             inventoryQuantity
           }
         }
-        metafieldsByIdentifiers: metafields(identifiers: $identifiers) {
-          namespace
-          key
-          value
-          type
-        }
+        ${METAFIELD_QUERY_FIELDS}
       }
     }
   }
 `;
 
+type ProductNode = {
+  id: string;
+  handle: string;
+  title: string;
+  descriptionHtml: string;
+  productType: string;
+  vendor: string;
+  status: ShopifyProduct["status"];
+  publishedAt: string | null;
+  tags: string[];
+  onlineStoreUrl: string | null;
+  category: { fullName: string | null; name: string | null } | null;
+  featuredImage: ShopifyProductImage | null;
+  images: { nodes: ShopifyProductImage[] };
+  variants: { nodes: ShopifyProductVariant[] };
+} & {
+  // Each alias becomes its own field on the response.
+  [alias: string]: { value: string | null } | null | unknown;
+};
+
 interface ProductsPage {
   products: {
     pageInfo: { hasNextPage: boolean; endCursor: string | null };
-    nodes: Array<{
-      id: string;
-      handle: string;
-      title: string;
-      descriptionHtml: string;
-      productType: string;
-      vendor: string;
-      status: ShopifyProduct["status"];
-      publishedAt: string | null;
-      tags: string[];
-      onlineStoreUrl: string | null;
-      category: { fullName: string | null; name: string | null } | null;
-      featuredImage: ShopifyProductImage | null;
-      images: { nodes: ShopifyProductImage[] };
-      variants: { nodes: ShopifyProductVariant[] };
-      metafieldsByIdentifiers: Array<ShopifyMetafield | null>;
-    }>;
+    nodes: ProductNode[];
   };
 }
 
@@ -250,11 +263,16 @@ export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   let page = 0;
   while (true) {
     page++;
-    const data: ProductsPage = await graphql<ProductsPage>(PRODUCTS_QUERY, {
-      cursor,
-      identifiers: METAFIELD_IDENTIFIERS,
-    });
+    const data: ProductsPage = await graphql<ProductsPage>(PRODUCTS_QUERY, { cursor });
     for (const n of data.products.nodes) {
+      const metafields: ShopifyMetafield[] = [];
+      for (const id of METAFIELD_IDENTIFIERS) {
+        const field = n[id.alias] as { value: string | null } | null | undefined;
+        const value = field?.value;
+        if (value != null && value !== "") {
+          metafields.push({ namespace: id.namespace, key: id.key, value });
+        }
+      }
       out.push({
         id: n.id,
         handle: n.handle,
@@ -270,9 +288,7 @@ export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
         featuredImage: n.featuredImage,
         images: n.images?.nodes ?? [],
         variants: n.variants?.nodes ?? [],
-        metafields: (n.metafieldsByIdentifiers ?? []).filter(
-          (m): m is ShopifyMetafield => m != null
-        ),
+        metafields,
       });
     }
     if (!data.products.pageInfo.hasNextPage) break;
