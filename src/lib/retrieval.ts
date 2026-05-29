@@ -1,23 +1,30 @@
 import OpenAI from "openai";
-import embeddingsData from "@/data/product-embeddings.json";
-import { productCatalog } from "./product-catalog";
+import { loadEmbeddings, loadProductCatalog, type EmbeddingsFile } from "./catalog-store";
 import type { CustomerProfile, Product, SearchProductsArgs } from "./types";
-
-interface EmbeddingsFile {
-  model: string;
-  dim: number;
-  items: Array<{ id: string; vector: number[] }>;
-}
-
-const EMBEDDINGS = embeddingsData as EmbeddingsFile;
-const EMBEDDING_INDEX = new Map(EMBEDDINGS.items.map((it) => [it.id, it.vector]));
-const HAS_EMBEDDINGS = EMBEDDING_INDEX.size > 0;
-const EMBEDDING_MODEL = EMBEDDINGS.model || "text-embedding-3-small";
 
 let openaiClient: OpenAI | null = null;
 function getOpenAI(): OpenAI {
   if (!openaiClient) openaiClient = new OpenAI();
   return openaiClient;
+}
+
+interface IndexedEmbeddings {
+  index: Map<string, number[]>;
+  model: string;
+  hasVectors: boolean;
+}
+
+let indexedCache: IndexedEmbeddings | null = null;
+async function getIndexedEmbeddings(): Promise<IndexedEmbeddings> {
+  if (indexedCache) return indexedCache;
+  const file: EmbeddingsFile = await loadEmbeddings();
+  const index = new Map(file.items.map((it) => [it.id, it.vector]));
+  indexedCache = {
+    index,
+    model: file.model || "text-embedding-3-small",
+    hasVectors: index.size > 0,
+  };
+  return indexedCache;
 }
 
 function cosine(a: number[], b: number[]): number {
@@ -33,17 +40,12 @@ function cosine(a: number[], b: number[]): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-/**
- * Hard filters that always apply, drawn from explicit profile signals.
- * These are conservative — when in doubt we keep the product.
- */
 function applyHardFilters(
   products: Product[],
   profile: CustomerProfile,
   filters: SearchProductsArgs["filters"]
 ): Product[] {
   return products.filter((p) => {
-    // Tool-level filters from the LLM
     if (filters?.category && p.category !== filters.category) return false;
     if (filters?.maxPriceEUR != null && (p.salePrice ?? p.price) > filters.maxPriceEUR) return false;
     if (filters?.minPriceEUR != null && (p.salePrice ?? p.price) < filters.minPriceEUR) return false;
@@ -51,7 +53,6 @@ function applyHardFilters(
     if (filters?.requiresMedical && p.medicalCertification?.suitableForRehab !== true) return false;
     if (filters?.requiresQuiet && typeof p.noiseLevelDb === "number" && p.noiseLevelDb > 65) return false;
 
-    // Profile-derived soft filters
     if (typeof profile.budgetEUR === "object" && profile.budgetEUR) {
       const price = p.salePrice ?? p.price;
       if (profile.budgetEUR.max != null && price > profile.budgetEUR.max * 1.15) return false;
@@ -60,7 +61,6 @@ function applyHardFilters(
       if (p.footprintM2 > profile.spaceM2 * 1.1) return false;
     }
     if (profile.segment === "physio" && p.medicalCertification?.suitableForRehab === false) {
-      // For physio, drop products explicitly marked not-rehab. Keep "unknown" — model can disclaim.
       return false;
     }
     return true;
@@ -92,11 +92,12 @@ function keywordScore(product: Product, query: string): number {
 }
 
 export async function embedQuery(text: string): Promise<number[] | null> {
-  if (!HAS_EMBEDDINGS) return null;
+  const emb = await getIndexedEmbeddings();
+  if (!emb.hasVectors) return null;
   if (!process.env.OPENAI_API_KEY) return null;
   try {
     const res = await getOpenAI().embeddings.create({
-      model: EMBEDDING_MODEL,
+      model: emb.model,
       input: text,
     });
     return res.data[0].embedding;
@@ -111,17 +112,6 @@ export interface RetrievalHit {
   score: number;
 }
 
-/**
- * Retrieve top-K products for a query under a customer profile.
- *
- * Pipeline:
- *   1. Hard filter by profile + explicit filters
- *   2. Score by cosine similarity (if embeddings available) else keyword overlap
- *   3. Return top-K
- *
- * The query embedding is computed once and passed through `queryVector` so
- * a single chat turn can call retrieve() multiple times without re-embedding.
- */
 export async function retrieve(opts: {
   query: string;
   profile: CustomerProfile;
@@ -130,18 +120,19 @@ export async function retrieve(opts: {
   queryVector?: number[] | null;
 }): Promise<RetrievalHit[]> {
   const limit = opts.limit ?? 8;
-  const candidates = applyHardFilters(productCatalog, opts.profile, opts.filters);
+  const [catalog, emb] = await Promise.all([loadProductCatalog(), getIndexedEmbeddings()]);
+  const candidates = applyHardFilters(catalog, opts.profile, opts.filters);
 
   let queryVector = opts.queryVector ?? null;
   if (queryVector === undefined) queryVector = null;
-  if (HAS_EMBEDDINGS && queryVector === null && opts.query) {
+  if (emb.hasVectors && queryVector === null && opts.query) {
     queryVector = await embedQuery(opts.query);
   }
 
   const scored: RetrievalHit[] = candidates.map((product) => {
     let score = 0;
     if (queryVector) {
-      const v = EMBEDDING_INDEX.get(product.id);
+      const v = emb.index.get(product.id);
       if (v) score = cosine(queryVector, v);
     }
     if (!queryVector || score === 0) {
@@ -154,11 +145,6 @@ export async function retrieve(opts: {
   return scored.slice(0, limit);
 }
 
-/**
- * Retrieval shim used by the API route on every turn before calling the model.
- * Builds a query string from the latest user message + profile signals so the
- * top-K products in the prompt are biased toward what the user just said.
- */
 export async function retrieveForTurn(opts: {
   latestUserMessage: string;
   profile: CustomerProfile;
@@ -178,9 +164,3 @@ export async function retrieveForTurn(opts: {
     limit: opts.limit ?? 8,
   });
 }
-
-export const RETRIEVAL_DEBUG = {
-  hasEmbeddings: HAS_EMBEDDINGS,
-  vectorCount: EMBEDDING_INDEX.size,
-  model: EMBEDDING_MODEL,
-};

@@ -8,11 +8,16 @@
     "start": "next start",
     "lint": "eslint",
     "convert-catalog": "node scripts/convert-catalog.mjs",
-    "index": "node scripts/build-embeddings.mjs"
+    "index": "node scripts/build-embeddings.mjs",
+    "verify:shopify": "node --env-file=.env scripts/verify-shopify-auth.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.48",
     "@ai-sdk/react": "^3.0.105",
+    "@sentry/nextjs": "^10.55.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.38.0",
+    "@vercel/blob": "^2.4.0",
     "ai": "^6.0.103",
     "framer-motion": "^12.34.3",
     "lucide-react": "^0.575.0",
@@ -20,6 +25,7 @@
     "openai": "^6.35.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "resend": "^6.12.4",
     "zod": "^4.3.6"
   },
   "devDependencies": {
