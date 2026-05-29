@@ -14,12 +14,15 @@ let sharedRedis: Redis | null = null;
 
 function getRedis(): Redis | null {
   if (sharedRedis) return sharedRedis;
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  // Accept either the explicit UPSTASH_REDIS_REST_* names or the KV_REST_API_*
+  // names that Vercel's Upstash Marketplace integration auto-injects.
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token =
+    process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
   if (!url || !token) {
     if (!warned) {
       console.warn(
-        "[rate-limit] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN not set — rate limiting disabled"
+        "[rate-limit] Upstash Redis env vars not set (UPSTASH_REDIS_REST_URL/TOKEN or KV_REST_API_URL/TOKEN) — rate limiting disabled"
       );
       warned = true;
     }
