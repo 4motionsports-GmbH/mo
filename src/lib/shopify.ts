@@ -176,11 +176,30 @@ const METAFIELD_IDENTIFIERS: Array<{
   { alias: "mf_shopify_color_pattern", namespace: "shopify", key: "color-pattern" },
 ];
 
-// One `metafield(namespace, key) { value }` field per identifier, aliased so
-// the response is a flat object: { mf_custom_hoehe: { value: "120" }, … }.
+// One `metafield(namespace, key)` field per identifier, aliased so the
+// response is a flat object: { mf_custom_hoehe: { value: "120", … }, … }.
+//
+// We request the raw `value` AND the reference expansion. Reference-type
+// metafields (e.g. the Shopify standard-taxonomy `shopify.material` /
+// `shopify.color-pattern` metaobjects) return a GID — or a JSON array of
+// GIDs — in `value`; the human-readable label lives on the referenced
+// Metaobject's fields. `reference` resolves single references, `references`
+// resolves list references. Both are null for non-reference metafields, so
+// requesting them on plain text/number metafields is harmless.
 const METAFIELD_QUERY_FIELDS = METAFIELD_IDENTIFIERS.map(
   (m) =>
-    `${m.alias}: metafield(namespace: "${m.namespace}", key: "${m.key}") { value }`
+    `${m.alias}: metafield(namespace: "${m.namespace}", key: "${m.key}") {
+          value
+          type
+          reference {
+            ... on Metaobject { fields { key value } }
+          }
+          references(first: 25) {
+            nodes {
+              ... on Metaobject { fields { key value } }
+            }
+          }
+        }`
 ).join("\n        ");
 
 const PRODUCTS_QUERY = /* GraphQL */ `
@@ -230,6 +249,101 @@ const PRODUCTS_QUERY = /* GraphQL */ `
   }
 `;
 
+// Raw metafield shape as returned by the products query (post reference
+// expansion). `value` is the literal Shopify value (a GID or JSON array of
+// GIDs for reference types); `reference` / `references` carry the resolved
+// metaobject(s) when the metafield is a reference type.
+interface RawMetaobjectField {
+  key: string;
+  value: string | null;
+}
+interface RawMetaobjectRef {
+  // Empty (no `fields`) when the reference is not a Metaobject (the inline
+  // fragment didn't match) or the metaobject has no fields.
+  fields?: RawMetaobjectField[] | null;
+}
+interface RawMetafield {
+  value: string | null;
+  type?: string | null;
+  reference?: RawMetaobjectRef | null;
+  references?: { nodes: Array<RawMetaobjectRef | null> | null } | null;
+}
+
+function looksLikeGid(s: string | null | undefined): boolean {
+  return typeof s === "string" && s.includes("gid://shopify/");
+}
+
+// Pull a human-readable display value out of a referenced metaobject. Shopify
+// standard-taxonomy metaobjects (color, material, …) expose the label under a
+// `label` field; custom metaobjects may use `name`/`title`. Fall back to the
+// first non-empty, non-GID text field so we degrade gracefully across however
+// the merchant modelled their metaobject.
+function metaobjectDisplayValue(node: RawMetaobjectRef | null | undefined): string | null {
+  const fields = node?.fields;
+  if (!fields || !Array.isArray(fields)) return null;
+  const pick = (k: string): string | null => {
+    const f = fields.find((f) => f.key === k);
+    const v = f?.value;
+    return v != null && v !== "" && !looksLikeGid(v) ? v : null;
+  };
+  return (
+    pick("label") ??
+    pick("name") ??
+    pick("title") ??
+    pick("value") ??
+    fields.find((f) => f.value != null && f.value !== "" && !looksLikeGid(f.value))?.value ??
+    null
+  );
+}
+
+// Resolve one metafield to a clean, human-readable string for the catalog.
+// - List reference   → join each resolved metaobject label with ", ".
+// - Single reference → the resolved metaobject label.
+// - Plain value      → returned as-is (text/number metafields).
+// Defensive fallback: if a value that should have resolved is still a raw GID
+// (reference came back null/empty/unexpected), emit "—" and warn with the
+// product id rather than leaking the GID to the frontend.
+function resolveMetafieldValue(
+  raw: RawMetafield | null | undefined,
+  productId: string,
+  identifier: string
+): string | null {
+  if (!raw) return null;
+
+  const refNodes = raw.references?.nodes;
+  if (Array.isArray(refNodes) && refNodes.length > 0) {
+    const parts = refNodes
+      .map((n) => metaobjectDisplayValue(n))
+      .filter((v): v is string => !!v);
+    if (parts.length > 0) return parts.join(", ");
+    console.warn(
+      `[shopify] product ${productId}: metafield ${identifier} list references did not resolve to a display value — check the source metaobject's field keys`
+    );
+    return "—";
+  }
+
+  if (raw.reference) {
+    const v = metaobjectDisplayValue(raw.reference);
+    if (v) return v;
+    console.warn(
+      `[shopify] product ${productId}: metafield ${identifier} reference did not resolve to a display value — check the source metaobject's field keys`
+    );
+    return "—";
+  }
+
+  const value = raw.value;
+  if (value == null || value === "") return null;
+  // A reference-type metafield whose expansion came back empty still has a GID
+  // (or JSON array of GIDs) in `value` — never let that reach the catalog.
+  if (looksLikeGid(value)) {
+    console.warn(
+      `[shopify] product ${productId}: metafield ${identifier} is an unresolved reference (${value.slice(0, 80)}) — check the source metaobject`
+    );
+    return "—";
+  }
+  return value;
+}
+
 type ProductNode = {
   id: string;
   handle: string;
@@ -247,7 +361,7 @@ type ProductNode = {
   variants: { nodes: ShopifyProductVariant[] };
 } & {
   // Each alias becomes its own field on the response.
-  [alias: string]: { value: string | null } | null | unknown;
+  [alias: string]: RawMetafield | null | unknown;
 };
 
 interface ProductsPage {
@@ -267,8 +381,12 @@ export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
     for (const n of data.products.nodes) {
       const metafields: ShopifyMetafield[] = [];
       for (const id of METAFIELD_IDENTIFIERS) {
-        const field = n[id.alias] as { value: string | null } | null | undefined;
-        const value = field?.value;
+        const field = n[id.alias] as RawMetafield | null | undefined;
+        const value = resolveMetafieldValue(
+          field,
+          n.id,
+          `${id.namespace}.${id.key}`
+        );
         if (value != null && value !== "") {
           metafields.push({ namespace: id.namespace, key: id.key, value });
         }
