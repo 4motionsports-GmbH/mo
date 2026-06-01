@@ -17,8 +17,19 @@ export interface EmbeddingsFile {
   items: Array<{ id: string; vector: number[] }>;
 }
 
+// How long (ms) a warm Lambda may serve its in-memory snapshot before
+// re-reading the blob. Keeps a re-sync visible within ~a minute without a
+// redeploy, while still avoiding a blob round-trip on every request.
+const CACHE_TTL_MS = 60_000;
+
 let cachedCatalog: Product[] | null = null;
+let cachedCatalogAt = 0;
 let cachedEmbeddings: EmbeddingsFile | null = null;
+let cachedEmbeddingsAt = 0;
+
+function isFresh(loadedAt: number): boolean {
+  return loadedAt > 0 && Date.now() - loadedAt < CACHE_TTL_MS;
+}
 
 function blobConfigured(): boolean {
   return !!process.env.BLOB_READ_WRITE_TOKEN;
@@ -55,7 +66,7 @@ async function loadEmbeddingsFromBundle(): Promise<EmbeddingsFile> {
 }
 
 export async function loadProductCatalog(): Promise<Product[]> {
-  if (cachedCatalog) return cachedCatalog;
+  if (cachedCatalog && isFresh(cachedCatalogAt)) return cachedCatalog;
   if (blobConfigured()) {
     try {
       const url = await findBlobUrl(CATALOG_BLOB_KEY);
@@ -63,6 +74,7 @@ export async function loadProductCatalog(): Promise<Product[]> {
         const data = await fetchJson<Product[]>(url);
         if (Array.isArray(data) && data.length) {
           cachedCatalog = data;
+          cachedCatalogAt = Date.now();
           return data;
         }
       }
@@ -71,11 +83,12 @@ export async function loadProductCatalog(): Promise<Product[]> {
     }
   }
   cachedCatalog = await loadCatalogFromBundle();
+  cachedCatalogAt = Date.now();
   return cachedCatalog;
 }
 
 export async function loadEmbeddings(): Promise<EmbeddingsFile> {
-  if (cachedEmbeddings) return cachedEmbeddings;
+  if (cachedEmbeddings && isFresh(cachedEmbeddingsAt)) return cachedEmbeddings;
   if (blobConfigured()) {
     try {
       const url = await findBlobUrl(EMBEDDINGS_BLOB_KEY);
@@ -83,6 +96,7 @@ export async function loadEmbeddings(): Promise<EmbeddingsFile> {
         const data = await fetchJson<EmbeddingsFile>(url);
         if (data?.items?.length) {
           cachedEmbeddings = data;
+          cachedEmbeddingsAt = Date.now();
           return data;
         }
       }
@@ -91,6 +105,7 @@ export async function loadEmbeddings(): Promise<EmbeddingsFile> {
     }
   }
   cachedEmbeddings = await loadEmbeddingsFromBundle();
+  cachedEmbeddingsAt = Date.now();
   return cachedEmbeddings;
 }
 
@@ -100,6 +115,10 @@ export async function writeCatalogToBlob(products: Product[]): Promise<string> {
     contentType: "application/json",
     addRandomSuffix: false,
     allowOverwrite: true,
+    // Overwrite the stable URL on every sync. Without this, Vercel Blob's
+    // default (one month) caches the old copy at the CDN/browser, so a
+    // re-sync wouldn't be visible. Keep it short so updates propagate fast.
+    cacheControlMaxAge: 60,
     token: process.env.BLOB_READ_WRITE_TOKEN,
   });
   return res.url;
@@ -111,6 +130,7 @@ export async function writeEmbeddingsToBlob(file: EmbeddingsFile): Promise<strin
     contentType: "application/json",
     addRandomSuffix: false,
     allowOverwrite: true,
+    cacheControlMaxAge: 60,
     token: process.env.BLOB_READ_WRITE_TOKEN,
   });
   return res.url;
@@ -118,5 +138,7 @@ export async function writeEmbeddingsToBlob(file: EmbeddingsFile): Promise<strin
 
 export function invalidateCache(): void {
   cachedCatalog = null;
+  cachedCatalogAt = 0;
   cachedEmbeddings = null;
+  cachedEmbeddingsAt = 0;
 }
