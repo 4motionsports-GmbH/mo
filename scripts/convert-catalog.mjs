@@ -477,9 +477,11 @@ async function main() {
         ? { compatibleWith }
         : {}),
       shopifyUrl: `${SHOP_DOMAIN}/products/${handle}`,
-      shopifyCartUrl: first[COLS.sku]
-        ? `${SHOP_DOMAIN}/cart/add?id=${encodeURIComponent(first[COLS.sku])}`
-        : `${SHOP_DOMAIN}/products/${handle}`,
+      // The Shopify CSV export does not include the numeric variant id, and a
+      // SKU-based cart URL 404s with "Cannot find variant". We therefore omit
+      // shopifyCartUrl from the bundled fallback catalog so the widget degrades
+      // gracefully; the live Shopify sync (src/lib/catalog-mapping.ts) populates
+      // it from the variant's numeric id.
       images,
       inStock: true, // active+published; finer-grained stock not in export
       deliveryTime,

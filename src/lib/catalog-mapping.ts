@@ -6,6 +6,7 @@
 
 import type { Product } from "./types";
 import { getMetafield, type ShopifyProduct } from "./shopify";
+import { buildShopifyCartUrl, parseNumericVariantId } from "./shopify-cart-url.mjs";
 
 const SHOP_DOMAIN = "https://motionsports.de";
 
@@ -221,7 +222,13 @@ export function mapShopifyProducts(
     const inStock =
       variant?.inventoryQuantity == null ? true : variant.inventoryQuantity > 0;
 
-    const sku = variant?.sku || "";
+    // Resolve the *numeric* Shopify variant id (Admin/Storefront GraphQL
+    // returns a GID like "gid://shopify/ProductVariant/40123456789"). The cart
+    // permalink must use this numeric id — a SKU 404s with "Cannot find
+    // variant". When it can't be resolved we omit shopifyCartUrl so the widget
+    // degrades gracefully rather than linking to a broken cart.
+    const shopifyVariantId = parseNumericVariantId(variant?.id) ?? undefined;
+    const shopifyCartUrl = buildShopifyCartUrl(variant?.id) ?? undefined;
     const product: Product = {
       id: p.handle,
       name: (p.title || "").trim(),
@@ -238,9 +245,8 @@ export function mapShopifyProducts(
       dimensions,
       targetGroup: [],
       shopifyUrl: p.onlineStoreUrl || `${SHOP_DOMAIN}/products/${p.handle}`,
-      shopifyCartUrl: sku
-        ? `${SHOP_DOMAIN}/cart/add?id=${encodeURIComponent(sku)}`
-        : `${SHOP_DOMAIN}/products/${p.handle}`,
+      ...(shopifyVariantId ? { shopifyVariantId } : {}),
+      ...(shopifyCartUrl ? { shopifyCartUrl } : {}),
       images: uniqueImages,
       inStock,
       deliveryTime,

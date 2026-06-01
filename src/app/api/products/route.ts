@@ -39,7 +39,10 @@ export interface PublicProduct {
   tags: string[];
   images: string[];
   shopifyUrl: string;
-  shopifyCartUrl: string;
+  // Storefront cart permalink (`/cart/<numericVariantId>:1`). Omitted when the
+  // product has no resolvable numeric variant id, so the widget can degrade
+  // gracefully instead of linking to a broken cart.
+  shopifyCartUrl?: string;
   inStock: boolean;
   deliveryTime: string;
 }
@@ -61,7 +64,7 @@ function toPublic(p: Product): PublicProduct {
     tags: p.tags,
     images: p.images,
     shopifyUrl: p.shopifyUrl,
-    shopifyCartUrl: p.shopifyCartUrl,
+    ...(p.shopifyCartUrl ? { shopifyCartUrl: p.shopifyCartUrl } : {}),
     inStock: p.inStock,
     deliveryTime: p.deliveryTime,
   };

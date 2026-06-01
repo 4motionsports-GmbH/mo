@@ -26,7 +26,13 @@ export interface Product {
   targetGroup: string[];
   compatibleWith?: string[];
   shopifyUrl: string;
-  shopifyCartUrl: string;
+  // Numeric Shopify variant id (the cart-url source of truth). Resolved from
+  // the variant GID at ingestion time and cached alongside other fields.
+  shopifyVariantId?: string;
+  // Storefront cart permalink (`/cart/<numericVariantId>:1`). Omitted when no
+  // numeric variant id is resolvable, so the widget can degrade gracefully
+  // rather than link to a broken (SKU-based) cart.
+  shopifyCartUrl?: string;
   images: string[];
   inStock: boolean;
   deliveryTime: string;
