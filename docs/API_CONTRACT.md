@@ -360,7 +360,7 @@ within a request are de-duplicated while preserving order.
         "https://cdn.shopify.com/s/files/1/0823/4896/6217/files/vp150-50-atx-gb_02.jpg?v=1715860325"
       ],
       "shopifyUrl": "https://motionsports.de/products/150-kg-atx®-gym-bumper-plates-vorteilspaket",
-      "shopifyCartUrl": "https://motionsports.de/cart/add?id=MS-VP150-50-ATX-GB",
+      "shopifyCartUrl": "https://motionsports.de/cart/40123456789:1",
       "inStock": true,
       "deliveryTime": "Nach Verfügbarkeit"
     },
@@ -389,7 +389,7 @@ type PublicProduct = {
   tags: string[];
   images: string[];
   shopifyUrl: string;
-  shopifyCartUrl: string;
+  shopifyCartUrl?: string; // optional — see note below
   inStock: boolean;
   deliveryTime: string;
 };
@@ -399,6 +399,15 @@ type ProductsResponse = { products: (PublicProduct | null)[] };
 
 Unknown ids return as `null` at the matching index — never a 404 — so
 the widget can render partial results without aborting.
+
+`shopifyCartUrl` is a Shopify storefront cart permalink for **one** unit of
+the product's variant, of the form `https://motionsports.de/cart/<numericVariantId>:1`
+(the equivalent `…/cart/add?id=<numericVariantId>` form also works). The `id`
+is always the **numeric** Shopify variant id — never the SKU, handle, or
+product id; a SKU-based URL 404s with "Cannot find variant". The field is
+**optional**: it is omitted when a product has no resolvable numeric variant
+id, so the widget should hide the add-to-cart button (or fall back to
+`shopifyUrl`) rather than render a broken cart link.
 
 Response is cacheable for 60 s
 (`Cache-Control: public, max-age=60, stale-while-revalidate=300`).

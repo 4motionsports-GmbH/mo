@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --test \"src/**/*.test.mjs\"",
     "convert-catalog": "node scripts/convert-catalog.mjs",
     "index": "node scripts/build-embeddings.mjs",
     "verify:shopify": "node --env-file=.env scripts/verify-shopify-auth.mjs"
