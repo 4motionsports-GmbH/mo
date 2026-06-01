@@ -164,21 +164,30 @@ Behavior:
     these three rows.** (If equivalent values appear inside
     `specifications`, they'll already surface via the spec rows.)
 
-### 2.3 `add_to_cart` → add-to-cart CTA card
+### 2.3 `add_to_cart` → quick-checkout CTA card
 
 Input: `{ productId: string; message: string }`.
 
+> The tool id is still `add_to_cart`, but `shopifyCartUrl` is now a one-unit
+> cart permalink that lands the shopper **directly on Shopify checkout** for
+> that product. Frame the card as a low-friction "order now", not an
+> add-to-cart-and-keep-shopping action.
+
 Behavior:
-- Hydrate the one product. **Render nothing if unknown.**
+- Hydrate the one product. **Render nothing if unknown**, and also **render
+  nothing if `shopifyCartUrl` is absent** (no resolvable variant id) — in
+  that case there is no checkout link to offer.
 - Card layout:
   - The assistant's `message` as a short bold line at the top.
+  - The product name + price as a compact line so the shopper sees exactly
+    what one click will buy.
   - A **full-width primary button** (accent fill) labeled
-    `"<product.name> in den Warenkorb"` with a cart icon. The button is a
+    `"Jetzt direkt bestellen"` with a cart/checkout icon. The button is a
     **link to `product.shopifyCartUrl`**, opening in a new tab
     (`target="_blank" rel="noopener noreferrer"`). It does **not** do an
-    in-page fetch — it sends the shopper to the Shopify cart-add URL.
+    in-page fetch — it sends the shopper straight to Shopify checkout.
   - A small muted caption beneath:
-    `"Du wirst zu motionsports.de weitergeleitet"`.
+    `"Direkt zur sicheren Kasse bei motionsports.de"`.
 
 ### 2.4 `suggest_showroom` → showroom prompt card
 
