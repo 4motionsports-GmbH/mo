@@ -186,6 +186,13 @@ const METAFIELD_IDENTIFIERS: Array<{
 // Metaobject's fields. `reference` resolves single references, `references`
 // resolves list references. Both are null for non-reference metafields, so
 // requesting them on plain text/number metafields is harmless.
+//
+// `references(first:)` is kept small: it is multiplied by the products page
+// size when Shopify computes the query's static cost, and 9 metafields each
+// with a reference connection adds up fast (the single-query cost ceiling is
+// 1000). Observed catalog data tops out at ~8-9 list values (colors), so 15
+// covers every real product without truncation.
+const METAFIELD_REFERENCES_PAGE_SIZE = 15;
 const METAFIELD_QUERY_FIELDS = METAFIELD_IDENTIFIERS.map(
   (m) =>
     `${m.alias}: metafield(namespace: "${m.namespace}", key: "${m.key}") {
@@ -194,7 +201,7 @@ const METAFIELD_QUERY_FIELDS = METAFIELD_IDENTIFIERS.map(
           reference {
             ... on Metaobject { fields { key value } }
           }
-          references(first: 25) {
+          references(first: ${METAFIELD_REFERENCES_PAGE_SIZE}) {
             nodes {
               ... on Metaobject { fields { key value } }
             }
@@ -202,9 +209,15 @@ const METAFIELD_QUERY_FIELDS = METAFIELD_IDENTIFIERS.map(
         }`
 ).join("\n        ");
 
+// Page size is deliberately modest. Shopify computes a static query cost by
+// multiplying each node's subtree cost by `first`; with the metaobject
+// reference expansions on 9 metafields, first:100 blew past the 1000-cost
+// single-query ceiling (observed cost 1550 → MAX_COST_EXCEEDED). 30 keeps the
+// cost comfortably under the limit while staying well within the page cap.
+const PRODUCTS_PAGE_SIZE = 30;
 const PRODUCTS_QUERY = /* GraphQL */ `
   query CatalogProducts($cursor: String) {
-    products(first: 100, after: $cursor) {
+    products(first: ${PRODUCTS_PAGE_SIZE}, after: $cursor) {
       pageInfo {
         hasNextPage
         endCursor
