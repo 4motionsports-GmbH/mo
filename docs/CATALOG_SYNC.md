@@ -71,6 +71,66 @@ installed on the store, wrong API version, etc).
 Required scope: `read_products` (or `write_products`, which implicitly
 covers reads).
 
+## Metaobject / metafield reference resolution
+
+Some product fields are backed by **Shopify metaobjects** rather than plain
+text — most notably the standard-taxonomy `shopify.color-pattern` (→ "Farbe")
+and `shopify.material` (→ "Material") metafields, and potentially custom
+metafields like `custom.zertifizierung` if the merchant modelled them as
+metaobject references.
+
+For reference-type metafields the Admin API returns a **GID** (or a JSON
+array of GIDs for list references) in the metafield's `value` — e.g.
+`["gid://shopify/Metaobject/12825260684", …]` — not the human-readable label.
+If passed through verbatim, product cards would display the raw GID instead of
+"Schwarz".
+
+`src/lib/shopify.ts` now resolves these at sync time. The products query
+requests the reference expansion alongside the raw value:
+
+```graphql
+metafield(namespace: "shopify", key: "color-pattern") {
+  value
+  type
+  reference  { ... on Metaobject { fields { key value } } }   # single ref
+  references(first: 25) { nodes { ... on Metaobject { fields { key value } } } }  # list ref
+}
+```
+
+`fetchAllProducts()` then resolves each metafield to a clean string before it
+reaches `mapShopifyProducts`:
+
+- **List reference** → each metaobject's display value joined with `", "`
+  (e.g. `"Schwarz, Anthrazit"`).
+- **Single reference** → the metaobject's display value (e.g. `"Stahl"`).
+- **Plain text/number** → passed through unchanged.
+
+The display value is taken from the metaobject's first matching field key in
+priority order: `label` → `name` → `title` → `value` → first non-empty,
+non-GID text field. This covers Shopify standard-taxonomy metaobjects (which
+use `label`) and most custom metaobjects.
+
+The downstream `Product` type is unchanged — only the **values** stored in
+`specifications` (Farbe, Material, Zertifizierung, …) change from GIDs to
+labels. The chat route, tools, retrieval, and `/api/products` are unaffected.
+
+### Troubleshooting: a field shows "—" or is empty
+
+If a field that should have a value shows `"—"` (or is missing) on the
+frontend, the source metaobject could not be resolved to a display value.
+`fetchAllProducts()` emits a `"—"` sentinel (never a raw GID) and logs a
+warning to the Vercel function logs with the product id and metafield, e.g.:
+
+```
+[shopify] product gid://shopify/Product/123: metafield custom.serie reference
+did not resolve to a display value — check the source metaobject's field keys
+```
+
+To fix it, the merchant should open the referenced metaobject in the Shopify
+admin and ensure it has a populated **`label`** (or `name`/`title`) field.
+Once the metaobject has the expected field, re-run the sync (see below) and
+the label will flow through.
+
 ## How the runtime reads the catalog
 
 `src/lib/catalog-store.ts`:
