@@ -210,7 +210,11 @@ Widget action: `GET /api/products?ids=a,b`, render a table with image
 + name as column headers and rows for price, key spec rows, and
 `deliveryTime`. Show `comparisonContext` as a caption above the table.
 
-##### `add_to_cart` → add-to-cart CTA
+##### `add_to_cart` → direct-checkout CTA
+
+> Tool id stays `add_to_cart` for backwards-compat, but it now drives a
+> **direct checkout**: `shopifyCartUrl` is a one-unit cart permalink that
+> sends the shopper straight to Shopify's checkout for that product.
 
 Input schema:
 ```ts
@@ -224,13 +228,14 @@ Example part:
   "state": "result",
   "input": {
     "productId": "atx-treadmill-pro-fold",
-    "message": "Super Wahl — klappbar und leise für deine Wohnung."
+    "message": "Wenn das für dich passt, kannst du es hier direkt bestellen."
   }
 }
 ```
-Widget action: `GET /api/products?id=…`, render a confirmation card
-with `message` plus a button linking to `product.shopifyCartUrl`
-(`target="_blank"`).
+Widget action: `GET /api/products?id=…`, render a quick-checkout CTA card
+with `message` plus a primary button linking to `product.shopifyCartUrl`
+(`target="_blank" rel="noopener noreferrer"`). The button sends the shopper
+**directly to checkout** (one unit), not into a cart they must then manage.
 
 ##### `suggest_showroom` → showroom suggestion
 
@@ -406,8 +411,8 @@ the product's variant, of the form `https://motionsports.de/cart/<numericVariant
 is always the **numeric** Shopify variant id — never the SKU, handle, or
 product id; a SKU-based URL 404s with "Cannot find variant". The field is
 **optional**: it is omitted when a product has no resolvable numeric variant
-id, so the widget should hide the add-to-cart button (or fall back to
-`shopifyUrl`) rather than render a broken cart link.
+id, so the widget should hide the quick-checkout button (or fall back to
+`shopifyUrl`) rather than render a broken checkout link.
 
 Response is cacheable for 60 s
 (`Cache-Control: public, max-age=60, stale-while-revalidate=300`).

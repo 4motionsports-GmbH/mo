@@ -166,9 +166,11 @@ Tool cards reference products by id only; the widget hydrates them from
   showroom needs ≥1). Remember the comparison table **omits**
   dimensions/weight/target-group rows (not in the public response).
 
-Cart action: the `add_to_cart` button is a **link to
-`product.shopifyCartUrl`** opening in a new tab — it does not call any
-API. Product/showroom links go to `shopifyUrl` /
+Quick-checkout action: the `add_to_cart` card renders a primary
+**"Jetzt direkt bestellen"** button that is a **link to
+`product.shopifyCartUrl`** (a one-unit checkout permalink) opening in a new
+tab — it does not call any API. If `shopifyCartUrl` is absent, render no
+checkout button. Product/showroom links go to `shopifyUrl` /
 `https://motionsports.de/pages/showroom-munchen-grobenzell`, new tab,
 `rel="noopener noreferrer"`.
 
@@ -269,8 +271,9 @@ where the key isn't sent.
 - [ ] Renders all five tool cards per `BEHAVIOR_REFERENCE`, keyed by
       `toolCallId`, with the render-nothing guards; silently consumes
       `search_products` + `update_customer_profile`.
-- [ ] Hydrates products via `GET /api/products`; cart button links to
-      `shopifyCartUrl`.
+- [ ] Hydrates products via `GET /api/products`; quick-checkout button
+      ("Jetzt direkt bestellen") links to `shopifyCartUrl`, and is hidden
+      when `shopifyCartUrl` is absent.
 - [ ] Inline contact form posts to `/api/contact`; success + error +
       retry states.
 - [ ] Mobile full-screen behavior; safe-area aware; horizontal-scroll

@@ -168,12 +168,14 @@ Gib das Ergebnis NICHT roh aus — nutze es um dann show_product oder compare_pr
 
     add_to_cart: tool({
       description:
-        "Zeigt einen 'In den Warenkorb' Button. NUR nutzen wenn der Kunde KLARE Kaufbereitschaft zeigt — z.B. 'Das nehme ich', 'Wie bestelle ich?', 'Perfekt, das will ich'. NIEMALS proaktiv ohne Kaufsignal einsetzen. Bei B2B-Segmenten (studio, public_sector) NICHT verwenden — stattdessen show_contact_form.",
+        "Blendet einen Direkt-Checkout-Button für EIN Produkt ein. Ein Klick bringt den Privatkunden mit diesem Produkt (Menge 1) direkt zur Kasse. Nutze ihn bei klaren Kaufsignalen ('Das nehme ich', 'Wie bestelle ich?') ODER von dir aus, wenn die Beratung rund ist und der Kunde zu einem konkreten Produkt zufrieden/entschieden wirkt — dann als niedrigschwelliges Angebot, ohne Druck und pro Produktentscheidung nur einmal. Immer mit show_product fürs selbe Produkt kombinieren. NUR bei segment=private; bei studio/public_sector/physio stattdessen show_contact_form.",
       inputSchema: z.object({
         productId: z.string().describe("Die ID des Produkts"),
         message: z
           .string()
-          .describe("Positive Bestätigungsnachricht, z.B. 'Super Wahl!'"),
+          .describe(
+            "Kurze, einladende Nachricht zum Direkt-Checkout — bestätigend und hilfsbereit, nie drängend. z.B. 'Wenn es für dich passt, kannst du es hier direkt bestellen.'"
+          ),
       }),
       execute: async () => ({ ok: true }),
     }),
