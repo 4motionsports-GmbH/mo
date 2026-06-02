@@ -1,9 +1,16 @@
-import { streamText, stepCountIs, convertToModelMessages, type UIMessage } from "ai";
+import {
+  streamText,
+  stepCountIs,
+  convertToModelMessages,
+  type UIMessage,
+  type ModelMessage,
+} from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { buildSystemPrompt } from "@/lib/system-prompt";
+import { buildSystemPrompt, productPivotNote, type ProductContext } from "@/lib/system-prompt";
 import { buildChatTools } from "@/lib/tools";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
+import { getProductById } from "@/lib/product-catalog";
 import { EMPTY_PROFILE, type CustomerProfile, type PersonaArchetype, type UpdateCustomerProfileArgs } from "@/lib/types";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
@@ -48,6 +55,47 @@ function extractProfile(messages: UIMessage[]): CustomerProfile {
   return profile;
 }
 
+// Optional product context the widget attaches when the chat was opened from a
+// specific product page. Shape is intentionally loose here — it crosses a
+// public network boundary, so we validate it in `resolveProductContext`.
+interface ChatRequestContext {
+  type?: string;
+  productId?: unknown;
+  productTitle?: unknown;
+}
+
+async function resolveProductContext(
+  context: ChatRequestContext | undefined
+): Promise<ProductContext | undefined> {
+  if (!context || context.type !== "product") return undefined;
+  const id = typeof context.productId === "string" ? context.productId.trim() : "";
+  if (!id) return undefined;
+  // Validate against the live catalog. Unknown ids are ignored gracefully so a
+  // stale storefront link can never inject a bogus product into the prompt.
+  const product = await getProductById(id);
+  if (!product) return undefined;
+  // Trust the catalog's canonical name over the client-supplied title.
+  return { id: product.id, name: product.name };
+}
+
+// Append the lightweight pivot note to the latest user turn (in-conversation),
+// keeping prior history intact and preserving Anthropic's role alternation.
+function appendPivotNote(messages: ModelMessage[], ctx: ProductContext): void {
+  const note = productPivotNote(ctx);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "user") continue;
+    if (typeof m.content === "string") {
+      m.content = m.content ? `${m.content}\n\n${note}` : note;
+    } else {
+      m.content = [...m.content, { type: "text", text: note }];
+    }
+    return;
+  }
+  // No user turn found (unexpected) — fall back to a standalone note turn.
+  messages.push({ role: "user", content: note });
+}
+
 function getLatestUserText(messages: UIMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -76,9 +124,9 @@ export async function POST(req: Request) {
     const rl = await checkRateLimit(req, "chat");
     if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
-    let body: { messages?: UIMessage[] };
+    let body: { messages?: UIMessage[]; context?: ChatRequestContext };
     try {
-      body = (await req.json()) as { messages?: UIMessage[] };
+      body = (await req.json()) as { messages?: UIMessage[]; context?: ChatRequestContext };
     } catch {
       return errorResponse("bad_request", "Invalid JSON body", 400, cors);
     }
@@ -106,10 +154,35 @@ export async function POST(req: Request) {
       : [];
     const retrievedProducts = hits.map((h) => h.product);
 
+    // Optional product context (chat opened "about" a product). Validated
+    // against the catalog; unknown/absent ids leave everything unchanged.
+    const productContext = await resolveProductContext(body.context);
+    const modelMessages = await convertToModelMessages(messages);
+
+    let greetingContext: ProductContext | undefined;
+    if (productContext) {
+      if (messages.length === 0) {
+        // Fresh open: seed the greeting as a system-level note and add a
+        // minimal, server-internal trigger turn so the model actually emits
+        // the opener. The trigger is never streamed back nor stored by the
+        // widget (it sent an empty conversation), so no fake user message
+        // lands in the rendered history — the greeting is just an extra seed.
+        greetingContext = productContext;
+        modelMessages.push({
+          role: "user",
+          content: `[System: Chat auf der Produktseite von "${productContext.name}" geöffnet — begrüße den Nutzer.]`,
+        });
+      } else {
+        // Existing conversation: pivot via a lightweight in-conversation note
+        // appended to the latest user turn, leaving prior history intact.
+        appendPivotNote(modelMessages, productContext);
+      }
+    }
+
     const result = streamText({
       model: anthropic("claude-sonnet-4-5-20250929"),
-      system: buildSystemPrompt({ profile, archetype, retrievedProducts }),
-      messages: await convertToModelMessages(messages),
+      system: buildSystemPrompt({ profile, archetype, retrievedProducts, productContext: greetingContext }),
+      messages: modelMessages,
       tools: buildChatTools(profile),
       stopWhen: stepCountIs(6),
       onError: ({ error }) => {

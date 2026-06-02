@@ -93,6 +93,59 @@ full history on every turn (the customer profile is a pure function of
 the messages, reconstructed by replaying `update_customer_profile` tool
 calls), so the widget must send the entire conversation each turn.
 
+#### Optional `context` — opening the chat "about" a product
+
+When the widget is opened from a specific product page (e.g. a "Frage zu
+diesem Produkt"/"Beratung" button on a product detail page), it MAY attach
+an optional `context` object alongside `messages`:
+
+```jsonc
+{
+  "messages": [],
+  "context": {
+    "type": "product",
+    "productId": "atx-treadmill-pro-fold",
+    "productTitle": "ATX Treadmill Pro Fold"   // optional, advisory only
+  }
+}
+```
+
+| Field          | Type     | Notes                                                              |
+| -------------- | -------- | ----------------------------------------------------------------- |
+| `type`         | string   | Must be `"product"`. Any other value is ignored.                  |
+| `productId`    | string   | Catalog product id. Validated server-side (see below).            |
+| `productTitle` | string?  | Optional/advisory. The backend uses the catalog's canonical name. |
+
+**Validation.** `productId` is validated against the live catalog. If it is
+missing, not a known product, or `type` is not `"product"`, the context is
+**ignored gracefully** — the request behaves exactly as if no `context` was
+sent (no error). This means a stale storefront link can never inject a bogus
+product into the prompt.
+
+The backend keys its behavior off whether `messages` is empty:
+
+- **Fresh open (`messages: []` + valid `context`).** The backend seeds the
+  model with a system-level note ("the user is viewing product '<title>'
+  (id …) and chose to get advice about it — greet them warmly by the
+  product's name and invite their questions; do not repeat the full spec
+  unprompted"). The assistant then produces a **natural greeting as its
+  first streamed message**. The widget does NOT need to send a user message
+  to trigger this — it sends `messages: []` and renders the streamed
+  assistant greeting like any other turn. No fake user message is fabricated
+  in the history.
+
+- **Existing conversation (`messages` non-empty + valid `context`).** The
+  backend injects a lightweight in-conversation note ("Der Nutzer schaut
+  sich gerade <title> an") so the assistant can **pivot toward the product
+  without wiping the existing history**. The conversation continues
+  normally; the widget keeps sending the full `messages` array each turn as
+  usual.
+
+In both cases the **response is the same SSE UI-message stream** documented
+below — `context` only seeds the model, it does not change the response
+shape. The widget parses the stream identically whether or not `context`
+was sent.
+
 **40-message cap.** If `messages.length > 40` the route returns:
 
 ```http
