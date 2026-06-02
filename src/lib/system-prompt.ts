@@ -5,6 +5,33 @@ interface BuildPromptOpts {
   profile: CustomerProfile;
   archetype: PersonaArchetype;
   retrievedProducts: Product[];
+  // Set when the chat was opened "about" a specific product from the
+  // storefront AND the conversation is fresh (no prior messages). It seeds a
+  // system-level instruction so the assistant opens with a warm, product-aware
+  // greeting. For an EXISTING conversation we do NOT use this — see
+  // `productPivotNote` for the lightweight in-conversation variant.
+  productContext?: ProductContext;
+}
+
+export interface ProductContext {
+  id: string;
+  name: string;
+}
+
+// Lightweight in-conversation note used when the user opens the product
+// context on top of an EXISTING conversation. Injected into the message flow
+// (not the system prompt) so the assistant can pivot toward the product
+// without wiping the history that came before it.
+export function productPivotNote(ctx: ProductContext): string {
+  return `(Hinweis aus dem Storefront: Der Nutzer schaut sich gerade das Produkt "${ctx.name}" (id ${ctx.id}) an und möchte sich vermutlich dazu beraten lassen. Beziehe dich natürlich darauf, ohne das bisherige Gespräch zu ignorieren.)`;
+}
+
+function renderProductContext(ctx: ProductContext): string {
+  // System-level greeting seed for a fresh open from a product page. Kept
+  // short and directive — the model turns it into a natural first message.
+  return `## Produktkontext (Chat von einer Produktseite geöffnet)
+
+Der Nutzer betrachtet gerade das Produkt "${ctx.name}" (id \`${ctx.id}\`) im Shop und hat den Chat geöffnet, um sich dazu beraten zu lassen. Begrüße ihn warm und persönlich, nenne das Produkt beim Namen und lade ihn ein, seine Fragen dazu zu stellen. Wiederhole NICHT ungefragt die vollständigen Produktdaten — eine einladende, kurze Begrüßung genügt als erste Nachricht.`;
 }
 
 function renderRetrievedProducts(products: Product[]): string {
@@ -57,13 +84,17 @@ export function buildSystemPrompt({
   profile,
   archetype,
   retrievedProducts,
+  productContext,
 }: BuildPromptOpts): string {
   const archetypeMeta = ARCHETYPE_META[archetype];
   const profileBlock = renderProfileForPrompt(profile);
   const archetypeAddendum = getPersonaAddendum(archetype);
   const productsBlock = renderRetrievedProducts(retrievedProducts);
+  const productContextBlock = productContext
+    ? `\n\n${renderProductContext(productContext)}`
+    : "";
 
-  return `Du bist der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.
+  return `Du bist der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}
 
 ## Deine Persönlichkeit
 
