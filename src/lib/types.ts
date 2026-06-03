@@ -200,3 +200,8 @@ export interface ShowContactFormArgs {
   message: string;
   productIds?: string[];
 }
+
+export interface OfferEmailSummaryArgs {
+  message: string;
+  productIds?: string[];
+}

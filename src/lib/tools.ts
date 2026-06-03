@@ -191,6 +191,33 @@ Gib das Ergebnis NICHT roh aus — nutze es um dann show_product oder compare_pr
       execute: async () => ({ ok: true }),
     }),
 
+    offer_email_summary: tool({
+      description: `Bietet dem Kunden an, eine Zusammenfassung dieses Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu erhalten. Der Aufruf blendet im Widget ein DSGVO-konformes Erfassungsformular ein (E-Mail-Feld + getrennte Einwilligungs-Checkboxen).
+
+WANN aufrufen:
+- An einem NATÜRLICHEN Punkt, NACHDEM du solide Empfehlungen gegeben hast (nicht als erste Nachricht, nicht bevor überhaupt etwas empfohlen wurde).
+- Nur EINMAL pro Gespräch. Wenn der Kunde nicht reagiert oder ablehnt: nicht erneut anbieten.
+- Als hilfreicher Service formuliert ("Soll ich dir das per E-Mail schicken?"), nie als Verkaufsdruck.
+
+NICHT aufrufen bei segment=studio/public_sector/physio mit Beschaffungssignalen — dort ist show_contact_form der richtige Weg.
+
+Das eigentliche Versenden + die Einwilligung passieren über das Formular und /api/capture-email; du sammelst hier KEINE E-Mail-Adresse im Chat ein.`,
+      inputSchema: z.object({
+        message: z
+          .string()
+          .describe(
+            "Kurze, freundliche Einladung, die das Angebot erklärt. z.B. 'Wenn du magst, schicke ich dir eine Zusammenfassung mit deinem Warenkorb per E-Mail.'"
+          ),
+        productIds: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Die im Gespräch besprochenen Produkt-IDs (für die Warenkorb-Vorschau im Formular). Optional/advisory — die tatsächlichen Produkte ermittelt das Backend serverseitig."
+          ),
+      }),
+      execute: async () => ({ ok: true }),
+    }),
+
     show_contact_form: tool({
       description: `Zeigt ein Kontaktformular für persönliche Beratung an.
 

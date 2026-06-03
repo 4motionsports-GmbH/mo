@@ -52,3 +52,34 @@ export function buildShopifyCartUrl(idOrGid, quantity = 1, shopDomain = SHOP_DOM
   const qty = Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 1;
   return `${shopDomain}/cart/${variantId}:${qty}`;
 }
+
+/**
+ * Build a MULTI-line prefilled-cart permalink of the form
+ * `/cart/<variant>:<qty>,<variant>:<qty>`, optionally with `?discount=CODE`.
+ *
+ * Accepts a list of bare numeric ids / variant GIDs / SKUs; non-numeric and
+ * unresolvable entries are skipped, and duplicate variant ids are de-duped
+ * (first-seen order preserved). Returns null when not a single line resolves,
+ * so callers omit the cart link rather than emit a broken URL.
+ *
+ * @param {Array<string | number | null | undefined>} idsOrGids
+ * @param {{ quantity?: number, discountCode?: string, shopDomain?: string }} [options]
+ * @returns {string | null}
+ */
+export function buildCartPermalink(idsOrGids, options = {}) {
+  const { quantity = 1, discountCode, shopDomain = SHOP_DOMAIN } = options;
+  const qty = Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 1;
+  const seen = new Set();
+  const segments = [];
+  for (const raw of idsOrGids ?? []) {
+    const variantId = parseNumericVariantId(raw);
+    if (!variantId || seen.has(variantId)) continue;
+    seen.add(variantId);
+    segments.push(`${variantId}:${qty}`);
+  }
+  if (segments.length === 0) return null;
+  let url = `${shopDomain}/cart/${segments.join(",")}`;
+  const code = typeof discountCode === "string" ? discountCode.trim() : "";
+  if (code) url += `?discount=${encodeURIComponent(code)}`;
+  return url;
+}

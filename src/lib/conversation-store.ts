@@ -20,6 +20,7 @@ const PRODUCT_TOOLS = new Set([
   "add_to_cart",
   "suggest_showroom",
   "show_contact_form",
+  "offer_email_summary",
 ]);
 
 // Keep stored content bounded — tool inputs and messages are small, but never
@@ -89,6 +90,70 @@ function latestUserMessage(history: UIMessage[]): UIMessage | null {
     if (history[i].role === "user") return history[i];
   }
   return null;
+}
+
+export interface TranscriptMessage {
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  toolName: string | null;
+}
+
+export interface ConversationSummaryData {
+  conversationId: number;
+  personaLabel: string | null;
+  recommendedProductIds: string[];
+  messages: TranscriptMessage[];
+}
+
+/**
+ * Load a conversation (by session_id) for the transactional summary email:
+ * the ordered transcript plus the accumulated recommended product ids. Returns
+ * null when there's no DB or no such conversation. Read-only — Cluster A data,
+ * keyed by the pseudonymous session_id (never the email).
+ */
+export async function loadConversationForSummary(
+  sessionId: string
+): Promise<ConversationSummaryData | null> {
+  const sql = getSql();
+  if (!sql) return null;
+  const sid = sessionId.trim();
+  if (!sid) return null;
+
+  try {
+    const convRows = await sql`
+      SELECT id, persona_label, recommended_product_ids
+        FROM conversations WHERE session_id = ${sid}
+    `;
+    const conv = convRows[0] as
+      | { id: number; persona_label: string | null; recommended_product_ids: string[] }
+      | undefined;
+    if (!conv) return null;
+
+    const msgRows = await sql`
+      SELECT role, content, tool_name
+        FROM messages
+       WHERE conversation_id = ${conv.id}
+       ORDER BY created_at ASC, id ASC
+    `;
+
+    const messages: TranscriptMessage[] = msgRows.map((r) => ({
+      role: r.role as TranscriptMessage["role"],
+      content: typeof r.content === "string" ? r.content : "",
+      toolName: (r.tool_name as string | null) ?? null,
+    }));
+
+    return {
+      conversationId: conv.id,
+      personaLabel: conv.persona_label ?? null,
+      recommendedProductIds: Array.isArray(conv.recommended_product_ids)
+        ? conv.recommended_product_ids
+        : [],
+      messages,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/conversation-store", phase: "loadConversationForSummary" });
+    return null;
+  }
 }
 
 /**

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   SHOP_DOMAIN,
+  buildCartPermalink,
   buildShopifyCartUrl,
   parseNumericVariantId,
 } from "./shopify-cart-url.mjs";
@@ -58,6 +59,29 @@ test("buildShopifyCartUrl returns null for a SKU (so callers omit the field)", (
   assert.equal(buildShopifyCartUrl(SKU), null);
   assert.equal(buildShopifyCartUrl(null), null);
   assert.equal(buildShopifyCartUrl(undefined), null);
+});
+
+test("buildCartPermalink chains multiple variants into one prefilled cart", () => {
+  const url = buildCartPermalink([
+    "gid://shopify/ProductVariant/111",
+    "222",
+  ]);
+  assert.equal(url, `${SHOP_DOMAIN}/cart/111:1,222:1`);
+});
+
+test("buildCartPermalink de-dupes variants and skips unresolvable ids", () => {
+  const url = buildCartPermalink(["111", SKU, "111", "222", null]);
+  assert.equal(url, `${SHOP_DOMAIN}/cart/111:1,222:1`);
+});
+
+test("buildCartPermalink appends an encoded discount code when given", () => {
+  const url = buildCartPermalink(["111"], { discountCode: "SOMMER 25" });
+  assert.equal(url, `${SHOP_DOMAIN}/cart/111:1?discount=SOMMER%2025`);
+});
+
+test("buildCartPermalink returns null when nothing resolves", () => {
+  assert.equal(buildCartPermalink([SKU, null, undefined]), null);
+  assert.equal(buildCartPermalink([]), null);
 });
 
 test("the bundled catalog never emits a SKU-based cart URL", async () => {
