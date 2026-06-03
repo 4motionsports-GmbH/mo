@@ -8,14 +8,23 @@ wins — open an issue and we'll fix one or the other so they match.
 
 **Base URL (production):** `https://chat.motionsports.de`
 
-Four endpoints:
+Endpoints:
 
-| Method | Path             | Purpose                                                  |
-| ------ | ---------------- | -------------------------------------------------------- |
-| POST   | `/api/chat`      | Streaming Claude chat with persona-aware tools.          |
-| POST   | `/api/contact`   | Contact-form submission → email via Resend.              |
-| GET    | `/api/products`  | Public product hydration for widget cards.               |
-| POST   | `/api/kpi`       | Pseudonymous telemetry ingestion (fire-and-forget).      |
+| Method | Path                      | Purpose                                                  |
+| ------ | ------------------------- | -------------------------------------------------------- |
+| POST   | `/api/chat`               | Streaming Claude chat with persona-aware tools.          |
+| POST   | `/api/contact`            | Contact-form submission → email via Resend.              |
+| GET    | `/api/products`           | Public product hydration for widget cards.               |
+| POST   | `/api/kpi`                | Pseudonymous telemetry ingestion (fire-and-forget).      |
+| POST   | `/api/capture-email`      | GDPR email capture + double opt-in (summary + marketing).|
+| GET    | `/api/confirm-marketing`  | Marketing double-opt-in confirmation link (HTML page).   |
+| GET    | `/api/unsubscribe`        | Signed unsubscribe link → suppression (HTML page).        |
+
+> `/api/confirm-marketing` and `/api/unsubscribe` are **clicked from emails**
+> as top-level browser navigations — they return an HTML page, not JSON, and
+> have **no** CORS allowlist or shared-secret guard (a mail client sends no
+> `Origin` and no custom header). They're protected by unguessable / signed
+> tokens instead. The widget never calls them directly.
 
 ### Security model
 
@@ -216,7 +225,7 @@ function isToolPart(type, name) {
 }
 ```
 
-The five renderable tools, in order of arrival likelihood:
+The renderable tools, in order of arrival likelihood:
 
 ##### `show_product` → product card
 
@@ -339,6 +348,45 @@ pre-selected, message displayed as a header, and (if `productIds` is
 present) `GET /api/products?ids=…` so the form can show which products
 are being asked about. Submission POSTs to `/api/contact` (section 4
 below).
+
+##### `offer_email_summary` → email-capture form
+
+The assistant calls this **once**, at a natural point after it has given solid
+recommendations, to offer emailing a summary of the chat + a prefilled cart. The
+widget turns the tool call into the **GDPR email-capture form** (see §7).
+
+Input schema:
+```ts
+{ message: string; productIds?: string[] }   // productIds advisory only
+```
+Example part:
+```json
+{
+  "type": "tool-offer_email_summary",
+  "toolCallId": "call_pqr678",
+  "state": "result",
+  "input": {
+    "message": "Wenn du magst, schicke ich dir die Zusammenfassung mit deinem Warenkorb per E-Mail.",
+    "productIds": ["atx-treadmill-pro-fold"]
+  }
+}
+```
+Widget action: render `message` as the intro, then the capture form with:
+
+- an **email** input,
+- a **transactional** consent checkbox (required to submit) — label from
+  `TRANSACTIONAL_CHECKBOX_LABEL`,
+- a **separate, unchecked-by-default** marketing consent checkbox — label from
+  `MARKETING_CHECKBOX_LABEL`.
+
+On submit, POST to `/api/capture-email` (§7) with the two booleans and the exact
+consent text strings shown (`consentTextShown`). The marketing box MUST start
+unchecked and MUST be visually independent of the transactional one — never one
+combined checkbox. `productIds` is advisory (cart preview); the backend
+determines the real products server-side from the conversation.
+
+> ⚠️ The checkbox labels are PLACEHOLDER copy pending lawyer approval — see
+> [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
 #### Tool parts the widget MUST NOT render
 
@@ -615,6 +663,127 @@ Why it matters:
   it surfaces the "start a new chat" UX after a `payload_too_large`
   response.
 
-The backend does NOT persist anything keyed off the session id. The
-customer profile is reconstructed from `messages` on every turn, so
-the widget is the only thing holding conversation state.
+The backend does NOT persist anything keyed off the session id for the
+chat. (The email-capture flow in §7 is the one place a `session_id` is
+stored — and only because the user actively submitted their email with a
+consent choice.)
+
+---
+
+## 7. Email capture + double opt-in (GDPR)
+
+This is the only flow that handles an email address. Two **separate**
+consents, marketing requires a **double opt-in**. The full legal rationale,
+the data model, and the lawyer-review TODO are in
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md). The checkbox/email copy is PLACEHOLDER
+pending lawyer sign-off (`src/lib/consent-copy.ts`).
+
+### 7.1 `POST /api/capture-email`
+
+Triggered when the user submits the capture form rendered from the
+`offer_email_summary` tool call.
+
+#### Required request headers
+
+Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
+
+#### Request body
+
+```jsonc
+{
+  "sessionId": "b3c1…",            // optional; falls back to the x-ms-session header
+  "email": "max@example.de",
+  "transactionalConsent": true,    // required to be true
+  "marketingConsent": false,       // separate, defaults unchecked in the UI
+  "consentTextShown": "Ja, sendet mir … | Ja, motion sports darf …"  // exact labels shown (audit)
+}
+```
+
+- `email` is validated with `^[^@\s]+@[^@\s]+\.[^@\s]+$` and normalised
+  (trim + lower-case) server-side.
+- `transactionalConsent` **must** be `true` — you can't email a summary
+  without consent to email the summary. `false`/missing → `400 bad_request`.
+- `marketingConsent` is independent. When `true` (and the address isn't
+  suppressed), the backend sets `marketing_doi_status='pending'`, issues a DOI
+  token, and sends the confirmation email. **No marketing** is sent until the
+  user clicks that link.
+- `consentTextShown` is stored verbatim as Art. 7 proof. Send the exact label
+  strings the user saw (both boxes).
+
+#### Behaviour
+
+1. Upserts one consent record per email (records `consentTextShown`).
+2. **Transactional:** sends the summary email immediately (German summary of the
+   conversation + a prefilled-cart permalink for the discussed products, **no
+   discount**).
+3. **Marketing:** if newly granted, sends the DOI confirmation email. A
+   suppressed/unsubscribed address is never re-pended; an already-confirmed
+   address isn't re-sent a DOI.
+
+#### Success response
+
+```http
+HTTP/1.1 200 OK
+```
+```jsonc
+{
+  "ok": true,
+  "transactional": { "summarySent": true },
+  "marketing": {
+    "status": "pending",        // "none" | "pending" | "confirmed"
+    "doiEmailSent": true,
+    "alreadyConfirmed": false
+  }
+}
+```
+
+The widget should show: "Wir haben dir die Zusammenfassung geschickt." and, when
+`marketing.status === "pending"`, "Bitte bestätige noch die Anmeldung über den
+Link in der E-Mail."
+
+#### Error responses
+
+| Status | Code                   | When                                                              |
+| ------ | ---------------------- | ----------------------------------------------------------------- |
+| 400    | `bad_request`          | Invalid JSON, invalid email, or `transactionalConsent` not true.  |
+| 401    | `unauthorized`         | Missing / wrong shared secret.                                    |
+| 403    | `forbidden`            | Cross-origin from an origin not in allowlist.                     |
+| 429    | `rate_limited`         | Shares the chat bucket (20 req / 60 s).                           |
+| 502    | `upstream_unavailable` | The transactional summary email failed to deliver.               |
+| 503    | `upstream_unavailable` | No database configured — consent could not be stored.            |
+| 500    | `internal_error`       | Anything else.                                                    |
+
+### 7.2 `GET /api/confirm-marketing?token=...`
+
+The marketing double-opt-in confirmation link (in the DOI email). Clicked as a
+top-level navigation — returns an **HTML page**, no JSON, no auth guard.
+
+- Valid, unexpired token → flips `marketing_doi_status='confirmed'`, sets
+  `doi_confirmed_at`, renders **"Danke, deine Anmeldung ist bestätigt."** (200).
+  Idempotent for an already-confirmed token.
+- Invalid token → error page (400). Expired token (older than
+  `MARKETING_DOI_EXPIRY_DAYS`, default 7) → error page (410).
+
+### 7.3 `GET /api/unsubscribe?token=...`
+
+The unsubscribe link carried by **every** marketing email. The token is a
+signed, email-keyed value (`b64url(email).b64url(hmac-sha256)`) — unforgeable
+and verifiable without a DB lookup.
+
+- Valid signature → stamps `unsubscribed_at`, adds the address to the
+  `suppression_list`, revokes marketing DOI, renders **"Du wurdest
+  abgemeldet."** (200).
+- Invalid/forged token → error page (400). No DB → error page (503).
+
+`isSuppressed(email)` (suppression list OR unsubscribed, fail-closed) and
+`canSendMarketing(email)` (DOI confirmed AND not suppressed) gate every future
+marketing send. See [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
+
+### 7.4 New environment variables
+
+| Var                       | Purpose                                                              |
+| ------------------------- | -------------------------------------------------------------------- |
+| `PUBLIC_BASE_URL`         | Absolute base for email links (falls back to Vercel host / origin).  |
+| `MARKETING_DOI_EXPIRY_DAYS` | DOI token validity window (default 7).                             |
+| `UNSUBSCRIBE_SECRET`      | HMAC secret for unsubscribe tokens (falls back to `CHAT_SHARED_SECRET`). |
+| `CONTACT_FROM_EMAIL`      | Reused as the sender for summary + DOI emails.                       |
