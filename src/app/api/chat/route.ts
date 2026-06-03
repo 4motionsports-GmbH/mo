@@ -15,6 +15,7 @@ import { EMPTY_PROFILE, type CustomerProfile, type PersonaArchetype, type Update
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
+import { persistTurn, type ToolInvocation } from "@/lib/conversation-store";
 
 export const maxDuration = 60;
 
@@ -119,6 +120,7 @@ export async function POST(req: Request) {
 
   let messageCount = 0;
   let archetype: PersonaArchetype | undefined;
+  const sessionId = req.headers.get("x-ms-session");
 
   try {
     const rl = await checkRateLimit(req, "chat");
@@ -192,6 +194,30 @@ export async function POST(req: Request) {
           archetype,
           phase: "stream",
         });
+      },
+      onFinish: async ({ text, steps, response }) => {
+        // Persist the completed turn AFTER generation, so this never delays
+        // token delivery. persistTurn is fully self-contained (best-effort,
+        // logs and swallows on failure) — but guard here too so a thrown
+        // error can't escape the stream pipeline and break the response.
+        try {
+          const toolCalls: ToolInvocation[] = steps.flatMap((s) =>
+            (s.toolCalls ?? []).map((tc) => ({
+              toolName: tc.toolName,
+              input: (tc as { input?: unknown }).input,
+            }))
+          );
+          await persistTurn({
+            sessionId,
+            history: messages,
+            personaLabel: archetype ?? "unknown",
+            assistantText: text ?? "",
+            assistantToolCalls: toolCalls,
+            assistantMessageId: response.id,
+          });
+        } catch (err) {
+          reportError(err, { route: "api/chat", phase: "persist", messageCount });
+        }
       },
     });
 
