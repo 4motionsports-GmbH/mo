@@ -8,13 +8,14 @@ wins — open an issue and we'll fix one or the other so they match.
 
 **Base URL (production):** `https://chat.motionsports.de`
 
-Three endpoints:
+Four endpoints:
 
 | Method | Path             | Purpose                                                  |
 | ------ | ---------------- | -------------------------------------------------------- |
 | POST   | `/api/chat`      | Streaming Claude chat with persona-aware tools.          |
 | POST   | `/api/contact`   | Contact-form submission → email via Resend.              |
 | GET    | `/api/products`  | Public product hydration for widget cards.               |
+| POST   | `/api/kpi`       | Pseudonymous telemetry ingestion (fire-and-forget).      |
 
 ### Security model
 
@@ -535,7 +536,62 @@ Content-Type: application/json
 
 ---
 
-## 5. Session lifecycle
+## 5. `POST /api/kpi`
+
+Pseudonymous telemetry ingestion — the endpoint the widget's fail-silent
+`track()` calls. Fire-and-forget: the widget does not need to read the
+response or retry.
+
+### Required request headers
+
+| Header          | Value                                              |
+| --------------- | -------------------------------------------------- |
+| `Content-Type`  | `application/json`                                 |
+| `x-ms-session`  | Stable session id (UUID). Used for rate limiting.  |
+
+No `x-ms-chat-key` — like `/api/products`, this endpoint is origin-allowlisted
+only. It accepts only pseudonymous data and stores no email.
+
+### Request body
+
+```jsonc
+{
+  "event": "product_card_click",          // required, ≤120 chars
+  "sessionId": "b3c1…",                    // optional, pseudonymous
+  "timestamp": 1733212800000,              // optional, client clock (number or ISO string)
+  "data": { "productId": "atx-rack-pro" }  // optional, arbitrary object
+}
+```
+
+- `event` is the only hard requirement (non-empty string, ≤120 chars).
+- `data` must be a plain object if present (arrays/primitives are dropped).
+  The client `timestamp` is preserved inside the stored payload; the server's
+  own `created_at` is authoritative.
+
+### Success response
+
+```http
+HTTP/1.1 202 Accepted
+```
+```json
+{ "ok": true }
+```
+
+Returns `202` even when no database is configured or the write fails —
+telemetry is best-effort and must never make `track()` care.
+
+### Error responses
+
+| Status | Code             | When                                            |
+| ------ | ---------------- | ----------------------------------------------- |
+| 400    | `bad_request`    | Invalid JSON, or `event` missing/too long.      |
+| 403    | `forbidden`      | Cross-origin from an origin not in allowlist.   |
+| 429    | `rate_limited`   | Dedicated `kpi` bucket (120 req / 60 s).        |
+| 500    | `internal_error` | Unexpected server error (not a DB write fail).  |
+
+---
+
+## 6. Session lifecycle
 
 The widget must generate a stable per-browser session id and send it as
 `x-ms-session` on every chat / contact / products request:
