@@ -20,6 +20,7 @@ const PRODUCT_TOOLS = new Set([
   "add_to_cart",
   "suggest_showroom",
   "show_contact_form",
+  "offer_email_summary",
 ]);
 
 // Keep stored content bounded — tool inputs and messages are small, but never
