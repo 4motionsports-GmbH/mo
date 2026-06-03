@@ -10,11 +10,13 @@
     "test": "node --test \"src/**/*.test.mjs\"",
     "convert-catalog": "node scripts/convert-catalog.mjs",
     "index": "node scripts/build-embeddings.mjs",
-    "verify:shopify": "node --env-file=.env scripts/verify-shopify-auth.mjs"
+    "verify:shopify": "node --env-file=.env scripts/verify-shopify-auth.mjs",
+    "db:migrate": "node --env-file=.env scripts/migrate.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.48",
     "@ai-sdk/react": "^3.0.105",
+    "@neondatabase/serverless": "^1.1.0",
     "@sentry/nextjs": "^10.55.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0",
