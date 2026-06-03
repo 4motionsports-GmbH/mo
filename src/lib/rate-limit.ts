@@ -5,8 +5,17 @@ import { errorEnvelope } from "./observability";
 const WINDOW = "60 s" as const;
 const CHAT_MAX = 20;
 const PRODUCTS_MAX = 60;
+// Telemetry is cheap and high-volume (the widget fires events on many
+// interactions), so the KPI bucket is generous on purpose.
+const KPI_MAX = 120;
 
-export type RateLimitBucket = "chat" | "products";
+export type RateLimitBucket = "chat" | "products" | "kpi";
+
+const BUCKET_MAX: Record<RateLimitBucket, number> = {
+  chat: CHAT_MAX,
+  products: PRODUCTS_MAX,
+  kpi: KPI_MAX,
+};
 
 const cached: Partial<Record<RateLimitBucket, Ratelimit>> = {};
 let warned = false;
@@ -37,7 +46,7 @@ function getLimiter(bucket: RateLimitBucket): Ratelimit | null {
   if (existing) return existing;
   const redis = getRedis();
   if (!redis) return null;
-  const max = bucket === "chat" ? CHAT_MAX : PRODUCTS_MAX;
+  const max = BUCKET_MAX[bucket];
   const limiter = new Ratelimit({
     redis,
     limiter: Ratelimit.slidingWindow(max, WINDOW),
