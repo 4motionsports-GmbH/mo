@@ -321,9 +321,54 @@ export async function updateDraftText(
 }
 
 /**
- * Atomically flip a draft to 'sent' with a sent_at stamp. The `status <> 'sent'`
- * guard makes this idempotent / double-send-proof: a row already sent updates
- * zero rows and returns null, so the caller knows not to send again.
+ * Atomically claim a draft for sending: 'draft' → 'approved'. Returns the row
+ * only if it was still a draft, so two concurrent send requests can't both get
+ * past this point — exactly one claims it, the other gets null and aborts. The
+ * 'approved' state is the transient in-flight marker between claim and send.
+ */
+export async function claimForSend(
+  sendId: number,
+  sql: Sql | null = getSql()
+): Promise<MarketingSendRow | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      UPDATE marketing_sends
+         SET status = 'approved', updated_at = now()
+       WHERE id = ${sendId} AND status = 'draft'
+      RETURNING *
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? mapSendRow(rows[0]) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "claimForSend" });
+    return null;
+  }
+}
+
+/**
+ * Release a claim ('approved' → 'draft') when a send fails, so the admin can
+ * retry. Best-effort; never throws.
+ */
+export async function revertClaim(
+  sendId: number,
+  sql: Sql | null = getSql()
+): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`
+      UPDATE marketing_sends
+         SET status = 'draft', updated_at = now()
+       WHERE id = ${sendId} AND status = 'approved'
+    `;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "revertClaim" });
+  }
+}
+
+/**
+ * Atomically flip a claimed row to 'sent' with a sent_at stamp. The
+ * `status <> 'sent'` guard makes this idempotent / double-send-proof: a row
+ * already sent updates zero rows and returns null.
  */
 export async function markSent(
   sendId: number,
