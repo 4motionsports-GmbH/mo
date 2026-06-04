@@ -1,12 +1,14 @@
-// /admin — the marketing dashboard (server-rendered). Protected by the proxy;
+// /admin — the back-office dashboard (server-rendered). Protected by the proxy;
 // this page is only ever reached with a valid admin session.
 //
-// CUSTOMERS / MARKETING tab: lists marketing-eligible contacts (DOI confirmed,
-// not unsubscribed, not suppressed), each with their conversation transcript,
-// persona, discussed products, and the "chatted but not purchased" flag. The
-// per-contact draft / edit / approve-&-send workflow lives in CustomerCard.
-//
-// The KPI tab is intentionally NOT built yet (next session).
+// Two tabs, switched by the `?tab=` query param (kept server-rendered — no client
+// router needed):
+//   - KUNDEN / MARKETING (default): marketing-eligible contacts (DOI confirmed,
+//     not unsubscribed, not suppressed), each with transcript, persona, discussed
+//     products, the "chatted but not purchased" flag and the draft/send workflow
+//     (see CustomerCard).
+//   - KPIs: aggregate analytics over conversations / messages / kpi_events plus
+//     a recommendation→purchase loop (see KpiTab).
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -14,8 +16,11 @@ import { ADMIN_COOKIE_NAME } from "@/lib/admin-auth";
 import { isDbConfigured } from "@/lib/db";
 import { listMarketingTargets } from "@/lib/marketing-store";
 import { CustomerCard } from "./CustomerCard";
+import { KpiTab } from "./KpiTab";
 
 export const dynamic = "force-dynamic";
+
+type Tab = "customers" | "kpi";
 
 async function logoutAction(): Promise<void> {
   "use server";
@@ -24,11 +29,14 @@ async function logoutAction(): Promise<void> {
   redirect("/admin/login");
 }
 
-export default async function AdminDashboardPage() {
+export default async function AdminDashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const sp = await searchParams;
+  const tab: Tab = sp?.tab === "kpi" ? "kpi" : "customers";
   const dbReady = isDbConfigured();
-  const targets = dbReady ? await listMarketingTargets() : [];
-
-  const notPurchased = targets.filter((t) => t.purchase.status === "no_purchase").length;
 
   return (
     <main
@@ -50,9 +58,11 @@ export default async function AdminDashboardPage() {
           }}
         >
           <div>
-            <h1 style={{ fontSize: 22, margin: 0 }}>Marketing-Dashboard</h1>
+            <h1 style={{ fontSize: 22, margin: 0 }}>Admin-Dashboard</h1>
             <p style={{ fontSize: 13, color: "#666", margin: "4px 0 0" }}>
-              Kunden &amp; Marketing · Nur bestätigte (DOI), nicht abgemeldete Kontakte
+              {tab === "kpi"
+                ? "KPIs · Pseudonyme Analytics (Cluster A) + Shopify-Käufe"
+                : "Kunden & Marketing · Nur bestätigte (DOI), nicht abgemeldete Kontakte"}
             </p>
           </div>
           <form action={logoutAction}>
@@ -72,63 +82,74 @@ export default async function AdminDashboardPage() {
           </form>
         </header>
 
-        {/* Tabs — only the Customers/Marketing tab is live this session. */}
         <nav style={{ display: "flex", gap: 8, margin: "16px 0 20px" }}>
-          <span
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              padding: "8px 14px",
-              background: "#111",
-              color: "#fff",
-              borderRadius: 999,
-            }}
-          >
-            Kunden / Marketing
-          </span>
-          <span
-            style={{
-              fontSize: 13,
-              padding: "8px 14px",
-              background: "#fff",
-              color: "#999",
-              border: "1px solid #eee",
-              borderRadius: 999,
-            }}
-            title="Nächste Session"
-          >
-            KPIs (bald)
-          </span>
+          <TabLink label="Kunden / Marketing" href="/admin" active={tab === "customers"} />
+          <TabLink label="KPIs" href="/admin?tab=kpi" active={tab === "kpi"} />
         </nav>
 
-        {!dbReady && (
-          <Banner tone="warn">
-            Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Kontakte
-            geladen werden.
-          </Banner>
+        {tab === "kpi" ? (
+          <KpiTab dbReady={dbReady} />
+        ) : (
+          <CustomersTab dbReady={dbReady} />
         )}
-
-        {dbReady && targets.length === 0 && (
-          <Banner tone="info">
-            Noch keine marketing-berechtigten Kontakte. Sobald Nutzer die
-            Marketing-Einwilligung per Double-Opt-In bestätigen, erscheinen sie hier.
-          </Banner>
-        )}
-
-        {targets.length > 0 && (
-          <p style={{ fontSize: 13, color: "#666", margin: "0 0 16px" }}>
-            {targets.length} Kontakt(e) · <strong>{notPurchased}</strong> &bdquo;beraten,
-            aber (noch) nicht gekauft&ldquo; — die wichtigste Marketing-Zielgruppe.
-          </p>
-        )}
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {targets.map((t) => (
-            <CustomerCard key={t.captureId} target={t} />
-          ))}
-        </div>
       </div>
     </main>
+  );
+}
+
+async function CustomersTab({ dbReady }: { dbReady: boolean }) {
+  const targets = dbReady ? await listMarketingTargets() : [];
+  const notPurchased = targets.filter((t) => t.purchase.status === "no_purchase").length;
+
+  return (
+    <>
+      {!dbReady && (
+        <Banner tone="warn">
+          Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Kontakte
+          geladen werden.
+        </Banner>
+      )}
+
+      {dbReady && targets.length === 0 && (
+        <Banner tone="info">
+          Noch keine marketing-berechtigten Kontakte. Sobald Nutzer die
+          Marketing-Einwilligung per Double-Opt-In bestätigen, erscheinen sie hier.
+        </Banner>
+      )}
+
+      {targets.length > 0 && (
+        <p style={{ fontSize: 13, color: "#666", margin: "0 0 16px" }}>
+          {targets.length} Kontakt(e) · <strong>{notPurchased}</strong> &bdquo;beraten,
+          aber (noch) nicht gekauft&ldquo; — die wichtigste Marketing-Zielgruppe.
+        </p>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {targets.map((t) => (
+          <CustomerCard key={t.captureId} target={t} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function TabLink({ label, href, active }: { label: string; href: string; active: boolean }) {
+  return (
+    <a
+      href={href}
+      style={{
+        fontSize: 13,
+        fontWeight: active ? 600 : 400,
+        padding: "8px 14px",
+        background: active ? "#111" : "#fff",
+        color: active ? "#fff" : "#555",
+        border: active ? "1px solid #111" : "1px solid #eee",
+        borderRadius: 999,
+        textDecoration: "none",
+      }}
+    >
+      {label}
+    </a>
   );
 }
 

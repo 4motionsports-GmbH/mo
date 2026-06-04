@@ -1,0 +1,361 @@
+// KPI tab (server-rendered). Lightweight by design: plain tables + CSS bars, no
+// dashboard framework. All numbers come from the pseudonymous analytics cluster
+// (conversations / messages / kpi_events) plus a capped Shopify-orders pass for
+// the recommendation→purchase loop. Every KPI carries its caveat inline.
+
+import { getCoreMetrics, type CoreMetrics } from "@/lib/kpi-store";
+import { getPersonaInsights, type PersonaInsight } from "@/lib/kpi-persona";
+import {
+  getRecommendationLoop,
+  type RecommendationLoopResult,
+} from "@/lib/kpi-recommendation-loop";
+import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
+import { KpiTopQuestions } from "./KpiTopQuestions";
+
+function pct(n: number): string {
+  return `${(n * 100).toFixed(1)}%`;
+}
+
+function num(n: number, digits = 1): string {
+  return n.toLocaleString("de-DE", { maximumFractionDigits: digits });
+}
+
+export async function KpiTab({ dbReady }: { dbReady: boolean }) {
+  if (!dbReady) {
+    return (
+      <Banner tone="warn">
+        Keine Datenbank konfiguriert (DATABASE_URL) — es können keine KPIs
+        berechnet werden.
+      </Banner>
+    );
+  }
+
+  const [core, personas, loop, cachedQuestions] = await Promise.all([
+    getCoreMetrics(30),
+    getPersonaInsights(5),
+    getRecommendationLoop(),
+    getCachedTopQuestionsMap(),
+  ]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+      <CoreSection core={core} />
+      <PersonaSection personas={personas} cachedQuestions={cachedQuestions} />
+      <LoopSection loop={loop} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 1. Core metrics
+// ---------------------------------------------------------------------------
+
+function CoreSection({ core }: { core: CoreMetrics | null }) {
+  if (!core) {
+    return (
+      <Section title="Kern-Metriken">
+        <Banner tone="info">Noch keine Daten.</Banner>
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="Kern-Metriken">
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+        <Stat label="Chats gesamt" value={num(core.totalChats, 0)} />
+        <Stat label="Ø Nachrichten / Chat" value={num(core.avgMessagesPerChat, 1)} />
+        <Stat
+          label="Abgebrochen"
+          value={`${num(core.status.abandoned, 0)} · ${pct(core.abandonedRate)}`}
+          hint="status='abandoned' (Beratung ohne Abschluss)"
+        />
+        <Stat
+          label="Engagement"
+          value={core.engagementRate == null ? "—" : pct(core.engagementRate)}
+          hint="Chats mit Nachricht ÷ Sessions mit Telemetrie"
+        />
+      </div>
+
+      <h4 style={subhead}>Chats pro Tag (letzte {core.windowDays} Tage)</h4>
+      <DayBars data={core.chatsByDay} />
+
+      <h4 style={subhead}>In-Chat-Klicks (Buttons im Chat)</h4>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
+        <Stat
+          label="Produkt-/CTA-Klicks"
+          value={`${num(core.productCtaClicks, 0)}`}
+          hint={`${num(core.productCtaRatePerChat, 2)} pro Chat`}
+        />
+        <Stat
+          label="Add-to-Cart-Klicks"
+          value={`${num(core.addToCartClicks, 0)}`}
+          hint={`${num(core.addToCartRatePerChat, 2)} pro Chat`}
+        />
+        <Stat label="Sessions mit Telemetrie" value={num(core.sessionsWithTelemetry, 0)} />
+      </div>
+      <p style={caption}>
+        Klick-Signale werden anhand der Event-Namen aus der Widget-Telemetrie
+        gemustert (Produkt/CTA: <code>%product%click%</code> / <code>%cta%click%</code>;
+        Warenkorb: <code>%cart%</code> / <code>%checkout%</code>). Die vollständige
+        Event-Übersicht zeigt die Rohdaten.
+      </p>
+
+      <h4 style={subhead}>Status-Verteilung</h4>
+      <div style={{ display: "flex", gap: 16, fontSize: 13, color: "#444" }}>
+        <span>Aktiv: <strong>{num(core.status.active, 0)}</strong></span>
+        <span>Abgebrochen: <strong>{num(core.status.abandoned, 0)}</strong></span>
+        <span>Konvertiert: <strong>{num(core.status.converted, 0)}</strong></span>
+      </div>
+
+      {core.topEvents.length > 0 && (
+        <>
+          <h4 style={subhead}>Event-Übersicht (Top 20)</h4>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <Th>Event</Th>
+                <Th align="right">Anzahl</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {core.topEvents.map((e) => (
+                <tr key={e.event}>
+                  <Td><code>{e.event}</code></Td>
+                  <Td align="right">{num(e.count, 0)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </Section>
+  );
+}
+
+function DayBars({ data }: { data: Array<{ day: string; count: number }> }) {
+  const max = Math.max(1, ...data.map((d) => d.count));
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 80, marginTop: 8 }}>
+      {data.map((d) => (
+        <div
+          key={d.day}
+          title={`${d.day}: ${d.count}`}
+          style={{
+            flex: 1,
+            background: "#2563eb",
+            opacity: d.count === 0 ? 0.15 : 0.85,
+            height: `${Math.max(2, (d.count / max) * 100)}%`,
+            borderRadius: "2px 2px 0 0",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 2. Persona insights
+// ---------------------------------------------------------------------------
+
+function PersonaSection({
+  personas,
+  cachedQuestions,
+}: {
+  personas: PersonaInsight[] | null;
+  cachedQuestions: Map<string, import("@/lib/kpi-top-questions").TopQuestionsSummary>;
+}) {
+  return (
+    <Section
+      title="Persona-Insights"
+      subtitle="Gruppiert nach abgeleitetem Persona-Archetyp."
+    >
+      {!personas || personas.length === 0 ? (
+        <Banner tone="info">Noch keine klassifizierten Konversationen.</Banner>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {personas.map((p) => (
+            <div
+              key={p.personaLabel}
+              style={{ border: "1px solid #eee", borderRadius: 10, padding: "14px 16px", background: "#fff" }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <strong style={{ fontSize: 14 }}>{p.personaDisplay}</strong>
+                <span style={{ fontSize: 12, color: "#888" }}>{num(p.chatCount, 0)} Chats</span>
+              </div>
+
+              <h5 style={{ ...subhead, fontSize: 12 }}>
+                Lieblingsprodukte (am häufigsten empfohlen)
+              </h5>
+              {p.favoriteProducts.length === 0 ? (
+                <p style={caption}>Keine Produktempfehlungen erfasst.</p>
+              ) : (
+                <FavoriteBars favorites={p.favoriteProducts} />
+              )}
+
+              <KpiTopQuestions
+                personaLabel={p.personaLabel}
+                initial={cachedQuestions.get(p.personaLabel) ?? null}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function FavoriteBars({
+  favorites,
+}: {
+  favorites: Array<{ productId: string; name: string; count: number }>;
+}) {
+  const max = Math.max(1, ...favorites.map((f) => f.count));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+      {favorites.map((f) => (
+        <div key={f.productId} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ flex: "0 0 45%", fontSize: 12, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.name}>
+            {f.name}
+          </div>
+          <div style={{ flex: 1, background: "#f1f1f1", borderRadius: 4, height: 14 }}>
+            <div style={{ width: `${(f.count / max) * 100}%`, background: "#16a34a", height: "100%", borderRadius: 4 }} />
+          </div>
+          <div style={{ flex: "0 0 28px", textAlign: "right", fontSize: 12, color: "#666" }}>{f.count}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 3. Recommendation → purchase loop
+// ---------------------------------------------------------------------------
+
+function LoopSection({ loop }: { loop: RecommendationLoopResult | null }) {
+  return (
+    <Section
+      title="Empfehlung → Kauf"
+      subtitle="Der ROI-Kennwert: wie oft ein empfohlenes Produkt später wirklich gekauft wurde."
+    >
+      {!loop ? (
+        <Banner tone="info">Noch keine Daten.</Banner>
+      ) : !loop.shopifyConfigured ? (
+        <Banner tone="warn">
+          Shopify ist nicht konfiguriert — die Kauf-Zuordnung kann nicht berechnet
+          werden.
+        </Banner>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 32, fontWeight: 700, color: "#111" }}>
+              {loop.recommendationToPurchaseRate == null
+                ? "—"
+                : pct(loop.recommendationToPurchaseRate)}
+            </span>
+            <span style={{ fontSize: 13, color: "#666" }}>
+              der Käufer (mit E-Mail-Einwilligung) kauften ein zuvor empfohlenes
+              Produkt
+            </span>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginTop: 14 }}>
+            <Stat label="Kontakte geprüft" value={num(loop.contactsExamined, 0)} />
+            <Stat label="mit Empfehlung" value={num(loop.withRecommendation, 0)} />
+            <Stat label="mit Kauf" value={num(loop.withPurchase, 0)} />
+            <Stat label="Kauf = Empfehlung" value={num(loop.withRecommendedPurchase, 0)} />
+          </div>
+
+          <p style={caption}>
+            ⚠️ Aussagekraft begrenzt: erfasst <strong>nur</strong> Nutzer, die eine
+            E-Mail angegeben <strong>und</strong> der Verarbeitung zugestimmt haben
+            — also eine Minderheit aller Chatter und nicht alle Käufer. Produkt-Zuordnung
+            erfolgt über normalisierte Shopify-Handles; umbenannte/archivierte Produkte
+            können fehlen.
+            {loop.purchaseUnknown > 0 &&
+              ` Bei ${loop.purchaseUnknown} Kontakt(en) lieferte Shopify keine Antwort (als „unbekannt" gewertet).`}
+            {loop.sampled && " Stichprobe auf die 100 neuesten Kontakte begrenzt."}
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared presentational bits
+// ---------------------------------------------------------------------------
+
+const subhead: React.CSSProperties = {
+  fontSize: 13,
+  margin: "18px 0 0",
+  color: "#333",
+};
+
+const caption: React.CSSProperties = {
+  fontSize: 11,
+  color: "#999",
+  margin: "8px 0 0",
+  lineHeight: 1.5,
+};
+
+const tableStyle: React.CSSProperties = {
+  width: "100%",
+  borderCollapse: "collapse",
+  marginTop: 8,
+  fontSize: 13,
+};
+
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <h2 style={{ fontSize: 17, margin: "0 0 2px" }}>{title}</h2>
+      {subtitle && <p style={{ fontSize: 12, color: "#888", margin: "0 0 12px" }}>{subtitle}</p>}
+      {!subtitle && <div style={{ height: 10 }} />}
+      {children}
+    </section>
+  );
+}
+
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div style={{ border: "1px solid #eee", borderRadius: 10, padding: "12px 14px", background: "#fff" }}>
+      <div style={{ fontSize: 12, color: "#888" }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 600, margin: "4px 0 0" }}>{value}</div>
+      {hint && <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{hint}</div>}
+    </div>
+  );
+}
+
+function Th({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" }) {
+  return (
+    <th style={{ textAlign: align, padding: "6px 8px", borderBottom: "1px solid #eee", color: "#888", fontWeight: 600 }}>
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" }) {
+  return (
+    <td style={{ textAlign: align, padding: "6px 8px", borderBottom: "1px solid #f5f5f5" }}>
+      {children}
+    </td>
+  );
+}
+
+function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
+  const bg = tone === "warn" ? "#fef3c7" : "#eff6ff";
+  const fg = tone === "warn" ? "#92400e" : "#1e40af";
+  return (
+    <div style={{ background: bg, color: fg, fontSize: 13, padding: "12px 14px", borderRadius: 10 }}>
+      {children}
+    </div>
+  );
+}
