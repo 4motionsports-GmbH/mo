@@ -88,3 +88,81 @@ export async function checkRecentPurchase(email: string): Promise<PurchaseCheck>
     return { status: "unknown" };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Purchased line items — backs the "recommendation → purchase" KPI loop.
+// ---------------------------------------------------------------------------
+//
+// Same query shape and protected-customer-data caveats as checkRecentPurchase,
+// but pulls the line items so we can compare what was BOUGHT to what was
+// RECOMMENDED in the chat. We read only the handle/title needed to match against
+// the catalog and never persist the order email.
+
+const ORDER_ITEMS_BY_EMAIL = /* GraphQL */ `
+  query MarketingOrderItemsByEmail($query: String!) {
+    orders(first: 10, query: $query, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id
+        lineItems(first: 50) {
+          nodes {
+            title
+            product { id handle title }
+          }
+        }
+      }
+    }
+  }
+`;
+
+interface OrderItemsResponse {
+  orders: {
+    nodes: Array<{
+      id: string;
+      lineItems: {
+        nodes: Array<{
+          title: string | null;
+          product: { id: string; handle: string | null; title: string | null } | null;
+        }>;
+      };
+    }>;
+  };
+}
+
+export interface PurchasedItem {
+  /** Storefront product handle (the reliable match key against our catalog id). */
+  handle: string | null;
+  title: string | null;
+}
+
+/**
+ * Flattened line items across this email's recent orders, or null when Shopify
+ * is unconfigured / the email is blank / the query fails (i.e. "we don't know" —
+ * never an empty array, which means "ordered nothing matching"). Never throws.
+ */
+export async function fetchPurchasedItemsByEmail(
+  email: string
+): Promise<PurchasedItem[] | null> {
+  if (!isShopifyConfigured()) return null;
+  const e = normalizeEmail(email);
+  if (!e) return null;
+
+  const since = new Date(Date.now() - orderLookbackDays() * 86_400_000).toISOString();
+  const query = `email:"${e}" created_at:>=${since}`;
+
+  try {
+    const data = await adminGraphql<OrderItemsResponse>(ORDER_ITEMS_BY_EMAIL, { query });
+    const items: PurchasedItem[] = [];
+    for (const order of data.orders?.nodes ?? []) {
+      for (const li of order.lineItems?.nodes ?? []) {
+        items.push({
+          handle: li.product?.handle ?? null,
+          title: li.product?.title ?? li.title ?? null,
+        });
+      }
+    }
+    return items;
+  } catch (err) {
+    reportError(err, { route: "lib/shopify-orders", phase: "fetchPurchasedItemsByEmail" });
+    return null;
+  }
+}
