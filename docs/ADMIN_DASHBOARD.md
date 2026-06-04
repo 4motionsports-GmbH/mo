@@ -4,9 +4,10 @@ The authenticated back office where a human reviews marketing-eligible contacts,
 generates a personalised draft email, edits it, and approves it — after which the
 **system** sends it (the operator never copies text into a personal mail client).
 
-It is deliberately small: a single shared admin password, one tab live
-(Customers / Marketing), and a send path that concentrates every legal guarantee
-in one place. The KPI tab is **not** built yet.
+It is deliberately small: a single shared admin password, two tabs
+(**Customers / Marketing** and **KPIs**), and a send path that concentrates every
+legal guarantee in one place. Tabs are switched server-side via `?tab=kpi` — no
+client router.
 
 > ⚠️ All German-facing email copy is still PLACEHOLDER and requires lawyer
 > sign-off (see [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) and
@@ -157,7 +158,64 @@ or suppressed address.
 
 ---
 
-## 5. Shopify scopes & API versions
+## 5. KPI tab
+
+Server-rendered at [`/admin?tab=kpi`](../src/app/admin/KpiTab.tsx). Lightweight by
+design — plain tables and CSS bars, no dashboard framework. Every number is read
+**only** from the pseudonymous analytics cluster (`conversations`, `messages`,
+`kpi_events`), except the recommendation→purchase loop which additionally reads
+Shopify orders. Each KPI carries its caveat inline in the UI.
+
+### 5.1 Core metrics — [`lib/kpi-store.ts`](../src/lib/kpi-store.ts)
+
+| KPI | Definition | Caveats |
+| --- | --- | --- |
+| **Chats gesamt** | `count(conversations)`. One row exists per chat that sent ≥1 message. | All-time (≈ last 180d given retention). |
+| **Chats pro Tag** | New conversations grouped by `date(created_at)`, trailing 30 days, gap-filled with 0. | — |
+| **Ø Nachrichten / Chat** | `avg(conversations.message_count)`. | Counts user + assistant + tool-marker turns. |
+| **Abgebrochen** | `count(status='abandoned')` and its share of all chats. | `status` is flipped to `abandoned` lazily by the retention cron after `ABANDON_AFTER_MINUTES` idle — not real-time. "No resolution" ≈ not `converted`. |
+| **Produkt-/CTA-Klicks**, **Add-to-Cart-Klicks** | `kpi_events` counts, **pattern-matched** by event name: CTA = `event ILIKE '%product%click%' OR '%cta%click%'`; cart = `event ILIKE '%cart%' OR '%checkout%'`. Each also shown as a rate per chat. | The literal event names are owned by the **frontend** widget's `track()`. We match by shape (survives a rename) and additionally surface the **full event breakdown** so the raw truth is always visible. If the widget emits different names, adjust the patterns. |
+| **Engagement** | `chatsWithMessages ÷ sessionsWithTelemetry`, where `sessionsWithTelemetry = count(distinct session_id)` in `kpi_events`. | A proxy for "opened vs message-sent": a conversation row only exists once a message is sent, while any telemetry implies the widget was opened. Depends on the widget emitting telemetry on open. |
+
+### 5.2 Persona-group insights — [`lib/kpi-persona.ts`](../src/lib/kpi-persona.ts)
+
+Grouped by `COALESCE(persona_label, 'unknown')`.
+
+- **Lieblingsprodukte (favorite products)** — pure aggregation:
+  `unnest(recommended_product_ids)` counted per persona. Because
+  `recommended_product_ids` is de-duped per conversation, a count is "in how many
+  of this persona's chats was this product recommended". Reliable.
+- **Top-Fragen (top questions)** — the **on-demand**, token-costing insight
+  ([`lib/kpi-top-questions.ts`](../src/lib/kpi-top-questions.ts)). A button runs an
+  Anthropic pass over a sample of up to **80 recent user messages** in that persona
+  group and returns the common themes/questions in German. **Never runs on page
+  load**: the result is cached in `kpi_persona_question_summaries` with a timestamp
+  and re-used until the operator explicitly regenerates it. The token cost is
+  stated in the UI. Degrades to a clear message when no `ANTHROPIC_API_KEY` is set.
+
+### 5.3 Recommendation → purchase loop — [`lib/kpi-recommendation-loop.ts`](../src/lib/kpi-recommendation-loop.ts)
+
+The headline ROI number. For each marketing-eligible contact (DOI-confirmed, not
+unsubscribed, not suppressed, with a `session_id`) we bridge READ-ONLY to the
+conversation, then ask Shopify (`read_orders`) what that email actually bought. If
+a **recommended** product appears in a real order, that contact counts. The
+surfaced rate is `withRecommendedPurchase ÷ withPurchase`.
+
+> ⚠️ **Honest limitations** (also stated in the UI):
+> - Covers **only** users who gave an email **and** confirmed consent — a minority
+>   of chatters, and not all buyers.
+> - Product matching is by **normalised handle**
+>   ([`lib/kpi-match.mjs`](../src/lib/kpi-match.mjs), unit-tested): our catalog id
+>   equals the storefront handle, but a live Shopify handle is normalised
+>   (lowercased, `®`/special chars stripped), so we normalise both sides. Renamed
+>   or archived products can be missed.
+> - Capped at the **100 newest** eligible contacts to bound Shopify calls per page
+>   load — a sample, not a census. Contacts where Shopify can't answer are counted
+>   as "unknown", never as "no purchase".
+
+---
+
+## 6. Shopify scopes & API versions
 
 - **Scopes:** `write_discounts` (code creation) and `read_orders` (purchase
   check) — both now provisioned on the app.
@@ -176,19 +234,24 @@ or suppressed address.
 
 ---
 
-## 6. Database
+## 7. Database
 
 Migration [`0003_marketing_sends_dashboard.sql`](../migrations/0003_marketing_sends_dashboard.sql)
 extends `marketing_sends` (subject, cart_url, discount_code_gid,
 discount_expires_at, product_ids, persona_label, created_at/updated_at) and adds
-a partial unique index enforcing **one open draft per capture**. Run with
-`npm run db:migrate`.
+a partial unique index enforcing **one open draft per capture**.
 
-`status` lifecycle: `draft` → `approved` (transient in-flight claim) → `sent`.
+Migration [`0004_kpi_persona_question_summaries.sql`](../migrations/0004_kpi_persona_question_summaries.sql)
+adds the `kpi_persona_question_summaries` cache (one row per persona, holding the
+generated summary, sample size, model and timestamp) that backs the on-demand
+"Top-Fragen" insight. Run both with `npm run db:migrate`.
+
+`marketing_sends.status` lifecycle: `draft` → `approved` (transient in-flight
+claim) → `sent`.
 
 ---
 
-## 7. Operator checklist
+## 8. Operator checklist
 
 1. Set `ADMIN_PASSWORD` + `ADMIN_SESSION_SECRET` (and the usual DB / Resend /
    Shopify / `UNSUBSCRIBE_SECRET` env).
