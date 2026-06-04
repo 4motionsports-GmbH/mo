@@ -117,8 +117,8 @@ export default async function AdminDashboardPage() {
 
         {targets.length > 0 && (
           <p style={{ fontSize: 13, color: "#666", margin: "0 0 16px" }}>
-            {targets.length} Kontakt(e) · <strong>{notPurchased}</strong> „beraten,
-            aber (noch) nicht gekauft" — die wichtigste Marketing-Zielgruppe.
+            {targets.length} Kontakt(e) · <strong>{notPurchased}</strong> &bdquo;beraten,
+            aber (noch) nicht gekauft&ldquo; — die wichtigste Marketing-Zielgruppe.
           </p>
         )}
 
