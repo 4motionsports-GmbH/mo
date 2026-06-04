@@ -34,6 +34,25 @@ function apiVersion(): string {
   return env("SHOPIFY_API_VERSION");
 }
 
+/** The configured Admin API version (e.g. "2026-04"), for logging/citation. */
+export function shopifyApiVersion(): string {
+  return apiVersion();
+}
+
+/**
+ * True when the Shopify Admin API credentials are present. Callers that touch
+ * Shopify at request time (discount creation, orders lookup) use this to degrade
+ * gracefully instead of throwing when the store isn't configured (e.g. local dev).
+ */
+export function isShopifyConfigured(): boolean {
+  return Boolean(
+    process.env.SHOPIFY_STORE_DOMAIN &&
+      process.env.SHOPIFY_CLIENT_ID &&
+      process.env.SHOPIFY_CLIENT_SECRET &&
+      process.env.SHOPIFY_API_VERSION
+  );
+}
+
 async function exchangeToken(): Promise<CachedToken> {
   const url = `https://${storeDomain()}/admin/oauth/access_token`;
   const body = new URLSearchParams({
@@ -86,6 +105,19 @@ export async function getAdminToken(): Promise<string> {
 interface GraphQLResponse<T> {
   data?: T;
   errors?: Array<{ message: string; extensions?: Record<string, unknown> }>;
+}
+
+/**
+ * Run an authenticated Admin GraphQL query/mutation and return `data`. Throws on
+ * HTTP errors, GraphQL `errors`, or a missing `data`. Exported so the discount
+ * and orders modules share one auth + transport path (token cache, error
+ * handling) rather than re-implementing it.
+ */
+export async function adminGraphql<T>(
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<T> {
+  return graphql<T>(query, variables);
 }
 
 async function graphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
