@@ -90,23 +90,47 @@ For each contact it surfaces:
 
 All actions are `/api/admin/marketing/*` POSTs (proxy- and `guardAdminPost`-gated).
 
-### Generate draft — `POST /api/admin/marketing/draft { captureId }`
+### Discount selector — chosen BEFORE generating
+
+Each card has a **discount selector**: **Kein Rabatt (default)**, **5 %**, **10 %**,
+**15 %**. **"Kein Rabatt" is the default**, so offering a discount is always a
+deliberate act. The admin picks the depth **before** generating, because the email
+body is written **around** the offer. The chosen depth is persisted on the
+`marketing_sends` row (`discount_percent`).
+
+> **No real code is minted at draft time.** Minting a unique single-use Shopify
+> code for every draft would burn codes on drafts that are edited away or
+> discarded. The real code is minted only at **Approve & send** (see §4). The
+> draft **preview** therefore shows a clearly-marked **placeholder** code
+> `MOIA-XXXX` so the admin sees exactly how the offer will read; at send time the
+> placeholder is swapped 1:1 for the real code.
+
+### Generate draft — `POST /api/admin/marketing/draft { captureId, discountPercent, regenerate? }`
 
 1. Re-check the contact is eligible (`loadEligibleCapture`).
-2. **Idempotent**: if an open (un-sent) draft already exists, return it — we do
-   **not** mint a second discount code.
-3. Mint a **unique single-use 5 % discount code** via the Shopify Admin API
-   (`write_discounts`) — see [`shopify-discounts.ts`](../src/lib/shopify-discounts.ts).
-4. Build the **prefilled-cart permalink** with `?discount=CODE` for the discussed
-   products ([`lib/cart.ts`](../src/lib/cart.ts)).
+2. Validate `discountPercent` ∈ `{0, 5, 10, 15}`.
+3. **Idempotent**: if an open (un-sent) draft exists **and** its depth matches the
+   request, return it untouched. If the depth changed (or `regenerate: true`), the
+   open draft is **overwritten** so the prose and the eventual code never disagree.
+4. Build the **prefilled-cart permalink** for the discussed products
+   ([`lib/cart.ts`](../src/lib/cart.ts)) — **no** `?discount=` param at draft time.
 5. Write the **AI-drafted** personalised German email
    ([`marketing-draft.ts`](../src/lib/marketing-draft.ts)) — warm, personal, as if
    from **MOIA**, a personal consultant at motion sports; references the chat and
-   recommends the discussed products. Stored as a `marketing_sends` row with
+   recommends the discussed products. **When a discount is selected**, the prompt is
+   given the percentage, that the code is **unique, personal and single-use**, the
+   **expiry**, and that a one-click prefilled cart button follows — and the model is
+   required to weave that into the body (near the call-to-action, in MOIA's warm
+   voice, using the placeholder `MOIA-XXXX`). **When "Kein Rabatt"** is selected, the
+   body must mention **no** discount. Stored as a `marketing_sends` row with
    `status = 'draft'`.
 
 The **prose** deliberately excludes the cart and unsubscribe links — those are
 appended deterministically at send time so an edit can never remove them.
+
+> If the admin changes the discount **after** generating, the UI flags a mismatch,
+> **disables Send**, and requires **↻ Neu generieren** so the text and the final
+> code can never disagree.
 
 ### Edit — `POST /api/admin/marketing/update { sendId, subject, body }`
 
@@ -133,12 +157,22 @@ marketing email is sent. The guarantees, in order:
 2. **Unsubscribe always present.** A signed, email-keyed unsubscribe link is
    appended to every send. If one can't be built (no signing secret), the send is
    **refused** rather than shipped without an opt-out.
-3. **Discount + cart are deterministic.** Appended from the stored row, never
-   from the editable prose.
-4. **No double send.** The row is claimed atomically (`draft → approved`); a
-   concurrent request gets nothing and aborts. Success flips to `sent` + `sent_at`;
-   a delivery failure reverts to `draft` for retry.
-5. **Logging / suppression.** Delivery goes through `lib/email` (Resend), which
+3. **The unique code is minted here, at send time.** If the row's
+   `discount_percent > 0`, `createUniqueDiscountCode()` mints a **unique, single-use**
+   Shopify code (`write_discounts`, `usageLimit: 1`, `appliesOncePerCustomer`, with
+   expiry) at the chosen depth. The **placeholder** `MOIA-XXXX` in the body is then
+   replaced 1:1 with the real code, and the prefilled-cart permalink is rebuilt with
+   `?discount=REALCODE`. If minting **fails**, the send is **refused**
+   (`discount_failed`) rather than ship an email that promises a dead code. When
+   `discount_percent = 0`, no code is minted and the cart link carries no discount.
+4. **Discount + cart are deterministic.** The cart button and (when present) the
+   code note are appended from the minted values, never from the editable prose.
+5. **No double send.** The row is claimed atomically (`draft → approved`); a
+   concurrent request gets nothing and aborts. Success flips to `sent` + `sent_at`
+   and persists the minted **code, gid, expiry, shipped cart URL and finalized body**
+   on the row (record-keeping for analytics: which depths/codes were used). A
+   delivery failure reverts to `draft` for retry.
+6. **Logging / suppression.** Delivery goes through `lib/email` (Resend), which
    logs failures; unsubscribe writes the suppression list, which gate (1) reads.
 
 ### Why no send can reach a non-confirmed or suppressed address
@@ -221,11 +255,15 @@ surfaced rate is `withRecommendedPurchase ÷ withPurchase`.
   check) — both now provisioned on the app.
 - **API version:** requests target the configured `SHOPIFY_API_VERSION` (current
   stable, e.g. `2026-04`), not `latest`.
-- The discount + orders code was written against **current** Shopify docs
-  (fetched 2026-06-04), cited inline:
-  - `discountCodeBasicCreate` — single-use (`usageLimit: 1` +
-    `appliesOncePerCustomer`), `customerGets.value.percentage = 0.05`, `endsAt`
-    expiry.
+- The discount + orders code was re-verified against **current** Shopify docs for
+  `SHOPIFY_API_VERSION = 2026-04` (re-confirmed 2026-06-05; `shopify.dev` blocks
+  automated fetches with HTTP 403, so the mutation shape was corroborated via the
+  public docs index), cited inline in
+  [`shopify-discounts.ts`](../src/lib/shopify-discounts.ts):
+  - `discountCodeBasicCreate(basicCodeDiscount: DiscountCodeBasicInput!)` —
+    single-use (`usageLimit: 1` + `appliesOncePerCustomer`),
+    `customerGets.value` as `DiscountPercentage { percentage }` (a 0..1 fraction;
+    **now the admin-chosen depth**, no longer hardcoded), `endsAt` expiry.
   - `orders(query: 'email:"…" created_at:>=…')` — email is a tokenized field, so
     it's quoted for an exact match. Note: the order `email` is **protected
     customer data**; the app may also need Protected Customer Data access approved
@@ -244,7 +282,13 @@ a partial unique index enforcing **one open draft per capture**.
 Migration [`0004_kpi_persona_question_summaries.sql`](../migrations/0004_kpi_persona_question_summaries.sql)
 adds the `kpi_persona_question_summaries` cache (one row per persona, holding the
 generated summary, sample size, model and timestamp) that backs the on-demand
-"Top-Fragen" insight. Run both with `npm run db:migrate`.
+"Top-Fragen" insight.
+
+Migration [`0005_marketing_sends_discount_percent.sql`](../migrations/0005_marketing_sends_discount_percent.sql)
+adds `marketing_sends.discount_percent` (the admin-selected depth; `0` = none,
+default `0`), so analytics can later see which discount depths were offered.
+Together with the existing `discount_code` (real minted code) and `sent_at`, the
+row is a complete record of the offer. Run all with `npm run db:migrate`.
 
 `marketing_sends.status` lifecycle: `draft` → `approved` (transient in-flight
 claim) → `sent`.
@@ -257,5 +301,54 @@ claim) → `sent`.
    Shopify / `UNSUBSCRIBE_SECRET` env).
 2. `npm run db:migrate`.
 3. Visit `/admin`, log in.
-4. For a "beraten, nicht gekauft" contact: **Entwurf generieren** → edit →
-   **Freigeben & senden**.
+4. For a "beraten, nicht gekauft" contact: pick a discount depth → **Entwurf
+   generieren** → edit → **Freigeben & senden**.
+
+---
+
+## 9. End-to-end discount test (verify a real, working code)
+
+Use this to confirm — on your own email — that a working, single-use Shopify code
+is actually created and applied.
+
+**Prerequisites:** Shopify env configured (`SHOPIFY_STORE_DOMAIN`,
+`SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_API_VERSION=2026-04`, scope
+`write_discounts`), Resend configured, and your **own** test email already
+**DOI-confirmed** (so it appears as an eligible contact — never send to a
+non-confirmed or suppressed address).
+
+1. **Choose a discount.** On your contact's card, select e.g. **10 %** (not "Kein
+   Rabatt").
+2. **Generate.** Click **Entwurf generieren**. Read the body: it must clearly tell
+   the customer they have a **personal, unique, single-use 10 % code**, name an
+   **expiry**, and point to the **one-click cart button** — with a **placeholder**
+   code `MOIA-XXXX`. (A note in the panel confirms the real code is minted on send;
+   don't edit the placeholder.) If you change the discount now, the card forces a
+   **↻ Neu generieren** before it lets you send.
+3. **Approve & send to yourself.** Click **Freigeben & senden**. At this step the
+   real unique code is minted and the placeholder is replaced everywhere.
+4. **Receive the email.** Confirm the body shows a **real** code (e.g. `MS5-XXXXXXXX`,
+   not `MOIA-XXXX`) and the **Warenkorb öffnen** button. The link is
+   `https://<shop>/cart/<variant>:1,…?discount=<REALCODE>`.
+5. **Apply it at checkout.** Open the cart button → the code is pre-applied; verify
+   the **10 %** is deducted. Place a (test) order or just confirm the discount line.
+   Then try the **same code a second time** → Shopify must **reject** it
+   (`usageLimit: 1` → single-use). That proves uniqueness.
+6. **Find the minted code for auditing.** It's stored on the **`marketing_sends`
+   row**: column `discount_code` (the real code), with `discount_percent`,
+   `discount_expires_at`, `discount_code_gid` and `sent_at`. The sent card also
+   shows **"Rabatt: 10 % · Code: …"**. Query example:
+   ```sql
+   SELECT id, discount_percent, discount_code, discount_expires_at, sent_at
+     FROM marketing_sends
+    WHERE status = 'sent'
+    ORDER BY sent_at DESC
+    LIMIT 5;
+   ```
+7. **Delete the test code in Shopify.** Shopify admin → **Discounts** → search for
+   the code (the `discount_code` value, e.g. `MS5-…`) → open it → **Delete** (or
+   **Deactivate**). This removes the test discount so it can't be reused. (The code
+   is also titled *"Persönlicher Rabatt (10%) — MS5-…"* in the admin list.)
+
+> Each "Entwurf generieren" does **not** mint a code, so generating/discarding
+> drafts while testing wastes nothing. Only **Freigeben & senden** mints one.
