@@ -30,11 +30,21 @@ interface MarketingSendRow {
   status: "draft" | "approved" | "sent";
   subject: string | null;
   draftedText: string | null;
+  discountPercent: number;
   discountCode: string | null;
   discountExpiresAt: string | null;
   cartUrl: string | null;
   sentAt: string | null;
 }
+
+// The discount depths the admin may offer. None (0) is the default — applying a
+// discount is a deliberate act. Mirrors ALLOWED_DISCOUNT_PERCENTS server-side.
+const DISCOUNT_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 0, label: "Kein Rabatt" },
+  { value: 5, label: "5 %" },
+  { value: 10, label: "10 %" },
+  { value: 15, label: "15 %" },
+];
 
 export interface MarketingTargetProps {
   captureId: number;
@@ -62,9 +72,16 @@ export function CustomerCard({ target }: { target: MarketingTargetProps }) {
   const [showTranscript, setShowTranscript] = useState(false);
   const [subject, setSubject] = useState(send?.subject ?? "");
   const [body, setBody] = useState(send?.draftedText ?? "");
+  // The selected discount depth. Defaults to the draft's stored depth, or "None"
+  // (0) for a fresh card — applying a discount is always a deliberate choice.
+  const [discountPercent, setDiscountPercent] = useState<number>(send?.discountPercent ?? 0);
   const [busy, setBusy] = useState<null | "draft" | "save" | "send">(null);
   const [error, setError] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState<string | null>(null);
+
+  // When a draft exists but the admin changed the depth, the prose and the
+  // (eventual) real code would disagree — force a re-generate before sending.
+  const needsRegenerate = hasDraft && send != null && discountPercent !== send.discountPercent;
 
   async function call(path: string, payload: unknown): Promise<unknown> {
     const res = await fetch(path, {
@@ -82,13 +99,19 @@ export function CustomerCard({ target }: { target: MarketingTargetProps }) {
   async function onGenerate() {
     setBusy("draft");
     setError(null);
+    setSavedNote(null);
     try {
-      const json = (await call("/api/admin/marketing/draft", { captureId: target.captureId })) as {
-        send?: MarketingSendRow;
-      };
+      const json = (await call("/api/admin/marketing/draft", {
+        captureId: target.captureId,
+        discountPercent,
+        // Re-generate (overwrite) when a draft already exists — e.g. the depth
+        // changed. A fresh card inserts a new draft.
+        regenerate: hasDraft,
+      })) as { send?: MarketingSendRow };
       if (json.send) {
         setSubject(json.send.subject ?? "");
         setBody(json.send.draftedText ?? "");
+        setDiscountPercent(json.send.discountPercent ?? 0);
       }
       router.refresh();
     } catch (e) {
@@ -116,6 +139,10 @@ export function CustomerCard({ target }: { target: MarketingTargetProps }) {
 
   async function onSend() {
     if (!send) return;
+    if (needsRegenerate) {
+      setError("Rabatt geändert — bitte zuerst neu generieren, damit Text und Code übereinstimmen.");
+      return;
+    }
     if (!confirm(`E-Mail an ${target.email} wirklich senden?`)) return;
     setBusy("send");
     setError(null);
@@ -228,19 +255,35 @@ export function CustomerCard({ target }: { target: MarketingTargetProps }) {
             body={body}
             setSubject={setSubject}
             setBody={setBody}
-            send={send!}
             busy={busy}
+            discountPercent={discountPercent}
+            setDiscountPercent={setDiscountPercent}
+            needsRegenerate={needsRegenerate}
             onSave={onSave}
             onSend={onSend}
+            onGenerate={onGenerate}
           />
         ) : (
-          <button
-            onClick={onGenerate}
-            disabled={busy === "draft"}
-            style={primaryBtn(busy === "draft")}
-          >
-            {busy === "draft" ? "Generiere Entwurf…" : "✦ Entwurf generieren"}
-          </button>
+          <div>
+            <DiscountSelector
+              value={discountPercent}
+              onChange={setDiscountPercent}
+              disabled={busy === "draft"}
+            />
+            <p style={{ fontSize: 12, color: "#666", margin: "8px 0 12px" }}>
+              Rabatt vor dem Generieren wählen — der Text wird darum herum
+              geschrieben. Bei einem Rabatt zeigt der Entwurf einen Platzhalter-Code
+              (<code>MOIA-XXXX</code>); der echte, einmalige Code wird erst beim
+              Versand erzeugt.
+            </p>
+            <button
+              onClick={onGenerate}
+              disabled={busy === "draft"}
+              style={primaryBtn(busy === "draft")}
+            >
+              {busy === "draft" ? "Generiere Entwurf…" : "✦ Entwurf generieren"}
+            </button>
+          </div>
         )}
 
         {savedNote && <p style={{ color: "#16a34a", fontSize: 12, margin: "8px 0 0" }}>{savedNote}</p>}
@@ -275,9 +318,15 @@ function SentPanel({ send, email }: { send: MarketingSendRow; email: string }) {
       <div style={{ fontSize: 13, marginTop: 10 }}>
         <div style={{ color: "#666", fontSize: 12 }}>Betreff</div>
         <div style={{ fontWeight: 600 }}>{send.subject || "—"}</div>
-        {send.discountCode && (
+        {send.discountPercent > 0 && (
           <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
-            Rabattcode: <code>{send.discountCode}</code>
+            Rabatt: {send.discountPercent} %
+            {send.discountCode ? (
+              <>
+                {" "}
+                · Code: <code>{send.discountCode}</code>
+              </>
+            ) : null}
             {send.discountExpiresAt ? ` (gültig bis ${fmtDate(send.discountExpiresAt)})` : ""}
           </div>
         )}
@@ -307,28 +356,120 @@ function SentPanel({ send, email }: { send: MarketingSendRow; email: string }) {
   );
 }
 
+function DiscountSelector({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div>
+      <label style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 6 }}>
+        Persönlicher Rabatt
+      </label>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {DISCOUNT_OPTIONS.map((opt) => {
+          const active = value === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onChange(opt.value)}
+              disabled={disabled}
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                padding: "7px 14px",
+                borderRadius: 999,
+                cursor: disabled ? "default" : "pointer",
+                border: active ? "1px solid #111" : "1px solid #ddd",
+                background: active ? "#111" : "#fff",
+                color: active ? "#fff" : "#555",
+              }}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function DraftPanel({
   subject,
   body,
   setSubject,
   setBody,
-  send,
   busy,
+  discountPercent,
+  setDiscountPercent,
+  needsRegenerate,
   onSave,
   onSend,
+  onGenerate,
 }: {
   subject: string;
   body: string;
   setSubject: (v: string) => void;
   setBody: (v: string) => void;
-  send: MarketingSendRow;
   busy: null | "draft" | "save" | "send";
+  discountPercent: number;
+  setDiscountPercent: (v: number) => void;
+  needsRegenerate: boolean;
   onSave: () => void;
   onSend: () => void;
+  onGenerate: () => void;
 }) {
   return (
     <div>
       <span style={badge("#e0e7ff", "#3730a3")}>Entwurf — noch nicht gesendet</span>
+
+      <div style={{ margin: "12px 0 4px" }}>
+        <DiscountSelector
+          value={discountPercent}
+          onChange={setDiscountPercent}
+          disabled={busy !== null}
+        />
+      </div>
+
+      {needsRegenerate ? (
+        <div
+          style={{
+            background: "#fef3c7",
+            color: "#92400e",
+            fontSize: 12,
+            padding: "8px 10px",
+            borderRadius: 8,
+            margin: "8px 0",
+          }}
+        >
+          Rabatt geändert auf {discountPercent === 0 ? "Kein Rabatt" : `${discountPercent} %`} —
+          der aktuelle Text passt nicht mehr.{" "}
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={busy !== null}
+            style={{
+              ...secondaryBtn(busy !== null),
+              padding: "4px 10px",
+              fontSize: 12,
+              marginLeft: 4,
+            }}
+          >
+            {busy === "draft" ? "Generiere…" : "↻ Neu generieren"}
+          </button>
+        </div>
+      ) : (
+        <p style={{ fontSize: 12, color: "#666", margin: "8px 0 0" }}>
+          {discountPercent > 0
+            ? `Vorschau mit Platzhalter-Code MOIA-XXXX. Den Platzhalter im Text bitte nicht ändern — er wird beim Versand durch den echten, einmaligen ${discountPercent}%-Code ersetzt.`
+            : "Kein Rabatt gewählt — der Text nennt keinen Code, der Warenkorb-Link enthält keinen Rabatt."}
+        </p>
+      )}
 
       <label style={{ display: "block", fontSize: 12, color: "#666", margin: "12px 0 4px" }}>
         Betreff
@@ -366,24 +507,25 @@ function DraftPanel({
         }}
       />
 
-      {(send.discountCode || send.cartUrl) && (
-        <div style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
-          {send.discountCode && (
-            <>
-              Rabattcode <code>{send.discountCode}</code>
-              {send.discountExpiresAt ? ` (gültig bis ${fmtDate(send.discountExpiresAt)})` : ""}
-              {" — wird beim Versand automatisch als Warenkorb-Button & Abmeldelink angehängt."}
-            </>
-          )}
-          {!send.discountCode && "Warenkorb-Link & Abmeldelink werden beim Versand angehängt."}
-        </div>
-      )}
+      <div style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
+        {discountPercent > 0
+          ? `Beim Versand: einmaliger ${discountPercent}%-Code wird erzeugt`
+          : "Beim Versand werden"}{" "}
+        {discountPercent > 0
+          ? "und automatisch als vorausgefüllter Warenkorb-Button & Abmeldelink angehängt."
+          : "Warenkorb-Button & Abmeldelink automatisch angehängt."}
+      </div>
 
       <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
         <button onClick={onSave} disabled={busy !== null} style={secondaryBtn(busy !== null)}>
           {busy === "save" ? "Speichere…" : "Entwurf speichern"}
         </button>
-        <button onClick={onSend} disabled={busy !== null} style={primaryBtn(busy !== null)}>
+        <button
+          onClick={onSend}
+          disabled={busy !== null || needsRegenerate}
+          style={primaryBtn(busy !== null || needsRegenerate)}
+          title={needsRegenerate ? "Bitte zuerst neu generieren" : undefined}
+        >
           {busy === "send" ? "Sende…" : "✓ Freigeben & senden"}
         </button>
       </div>
