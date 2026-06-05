@@ -28,7 +28,9 @@ const draftSchema = z.object({
     .describe(
       "Der E-Mail-Text auf Deutsch, in der Du-Form, warm und persönlich, " +
         "unterschrieben mit 'MOIA, dein persönlicher Berater bei motion sports'. " +
-        "OHNE Warenkorb-Link und OHNE Abmeldelink (werden separat angehängt)."
+        "Wenn ein persönliches Rabattangebot vorgegeben ist, wird es klar im Text " +
+        "erwähnt (inkl. des exakten Codes), aber OHNE Warenkorb-Link und OHNE " +
+        "Abmeldelink (die werden separat angehängt)."
     ),
 });
 
@@ -41,10 +43,19 @@ export interface GenerateDraftInput {
   personaLabel: string | null;
   products: Array<{ name: string }>;
   transcript: TranscriptMessage[];
-  /** The unique discount code, if one was minted. Mentioned in the prose. */
+  /**
+   * The code string to weave into the body. At draft time this is the clearly-
+   * marked PLACEHOLDER (MOIA-XXXX); at send time the placeholder is swapped 1:1
+   * for the real unique code. Null when no discount was selected.
+   */
   discountCode: string | null;
-  /** Discount percentage as an integer (e.g. 5). */
+  /** Selected discount depth as a whole-number percent. 0 = no offer. */
   discountPercent: number;
+  /**
+   * Human-readable German expiry date (e.g. "05.07.2026") the model should name
+   * in the offer. Null when no discount was selected.
+   */
+  discountExpiresLabel: string | null;
 }
 
 function readableTranscript(messages: TranscriptMessage[]): string {
@@ -82,11 +93,16 @@ function fallbackDraft(input: GenerateDraftInput): MarketingDraft {
       productLine(input.products)
     );
   }
-  if (input.discountCode) {
+  if (input.discountCode && input.discountPercent > 0) {
     lines.push(
       "",
-      `Als kleines Dankeschön habe ich dir einen persönlichen Code hinterlegt: ` +
-        `${input.discountCode} bringt dir ${input.discountPercent}% Rabatt.`
+      `Und weil wir persönlich gesprochen haben, habe ich extra für dich einen ` +
+        `eigenen Rabattcode angelegt: Mit ${input.discountCode} bekommst du ` +
+        `${input.discountPercent}% auf deine Auswahl. Der Code gehört nur dir, ` +
+        `ist einmalig einlösbar` +
+        (input.discountExpiresLabel ? ` und gültig bis ${input.discountExpiresLabel}` : "") +
+        `. Den vorausgefüllten Warenkorb-Button findest du gleich unten — ` +
+        `ein Klick, und der Code ist schon hinterlegt.`
     );
   }
   lines.push(
@@ -107,11 +123,29 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
   if (!process.env.ANTHROPIC_API_KEY) return fallbackDraft(input);
 
   const transcript = readableTranscript(input.transcript);
-  const discountHint = input.discountCode
-    ? `Es gibt einen persönlichen, einmaligen Rabattcode: ${input.discountCode} ` +
-      `(${input.discountPercent}% Rabatt). Erwähne ihn beiläufig und einladend, ` +
-      `aber baue KEINEN Link ein.`
-    : "Es gibt diesmal keinen Rabattcode — erwähne also keinen.";
+  const hasDiscount = Boolean(input.discountCode) && input.discountPercent > 0;
+  const expiryClause = input.discountExpiresLabel
+    ? `Der Code ist gültig bis ${input.discountExpiresLabel} — nenne dieses Ablaufdatum konkret.`
+    : "Der Code läuft nach kurzer Zeit ab — weise freundlich darauf hin, dass er nicht ewig gilt.";
+  const discountHint = hasDiscount
+    ? `WICHTIG — dieser Kunde bekommt ein persönliches Angebot, das du klar, warm ` +
+      `und einladend in den Text einweben MUSST (nahe der Handlungsaufforderung, ` +
+      `nicht aufdringlich, kein Marktschreier):\n` +
+      `- ${input.discountPercent}% Rabatt auf die besprochene Auswahl.\n` +
+      `- Der Code ist EINMALIG und EXTRA für DIESEN Kunden erstellt — kein ` +
+      `allgemeiner Gutschein, keine Massenaktion. Mach unmissverständlich klar, ` +
+      `dass es SEIN/IHR persönlicher Code ist.\n` +
+      `- Der Code lautet exakt ${input.discountCode}. Verwende GENAU diese ` +
+      `Zeichenfolge unverändert im Text.\n` +
+      `- Der Code ist nur EIN EINZIGES MAL einlösbar (single-use).\n` +
+      `- ${expiryClause}\n` +
+      `- Direkt unter dem Text gibt es einen Button „Warenkorb öffnen“, in dem der ` +
+      `Code bereits hinterlegt ist. Verweise einladend auf diesen vorausgefüllten ` +
+      `Warenkorb (ein Klick), baue aber KEINEN Link/keine URL selbst ein.\n` +
+      `Der Kunde soll am Ende sicher wissen: ein persönlicher ${input.discountPercent}%-Code, ` +
+      `nur für ihn/sie, einmalig, mit Ablaufdatum, und der Warenkorb-Button ist startklar.`
+    : "Es gibt diesmal KEIN Rabattangebot — erwähne also weder einen Rabatt noch " +
+      "einen Code und versprich keinen Preisnachlass.";
 
   try {
     const { object } = await generateObject({
@@ -123,7 +157,10 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
         "persönliche Marketing-E-Mail auf Deutsch in der Du-Form an einen Kunden, " +
         "mit dem du im Chat gesprochen hast. Beziehe dich konkret auf das Gespräch " +
         "und empfiehl die besprochenen Produkte. Sei ehrlich, kein Marktschreier, " +
-        "keine erfundenen Produkte, keine erfundenen Preise. Unterschreibe mit " +
+        "keine erfundenen Produkte, keine erfundenen Preise. Wenn dir ein " +
+        "persönliches Rabattangebot vorgegeben wird, webe es klar, warm und " +
+        "einladend in den Text ein (mit dem exakten Code) — als persönliches " +
+        "Angebot für genau diesen Kunden, nicht als Massen-Promo. Unterschreibe mit " +
         "'MOIA, dein persönlicher Berater bei motion sports'. Baue KEINEN " +
         "Warenkorb-Link und KEINEN Abmeldelink ein — die werden separat angehängt.",
       prompt:

@@ -26,6 +26,8 @@ export interface MarketingSendRow {
   status: MarketingSendStatus;
   subject: string | null;
   draftedText: string | null;
+  /** Admin-selected discount depth (whole-number percent). 0 = no offer. */
+  discountPercent: number;
   discountCode: string | null;
   discountExpiresAt: string | null;
   cartUrl: string | null;
@@ -73,6 +75,7 @@ function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
     status: r.status as MarketingSendStatus,
     subject: (r.subject as string | null) ?? null,
     draftedText: (r.drafted_text as string | null) ?? null,
+    discountPercent: r.discount_percent != null ? Number(r.discount_percent) : 0,
     discountCode: (r.discount_code as string | null) ?? null,
     discountExpiresAt: (r.discount_expires_at as string | null) ?? null,
     cartUrl: (r.cart_url as string | null) ?? null,
@@ -230,8 +233,12 @@ export interface CreateDraftInput {
   captureId: number;
   subject: string;
   draftedText: string;
+  /** Selected discount depth (0 = none). The real code is minted at send time. */
+  discountPercent: number;
+  /** Null at draft time — the unique Shopify code is minted only at send. */
   discountCode: string | null;
   discountCodeGid: string | null;
+  /** Projected expiry shown in the preview (the real code gets its own at send). */
   discountExpiresAt: string | null;
   cartUrl: string | null;
   productIds: string[];
@@ -252,14 +259,14 @@ export async function createDraft(
   try {
     const rows = (await sql`
       INSERT INTO marketing_sends
-        (email_capture_id, status, subject, drafted_text, discount_code,
-         discount_code_gid, discount_expires_at, cart_url, product_ids,
-         persona_label, created_at, updated_at)
+        (email_capture_id, status, subject, drafted_text, discount_percent,
+         discount_code, discount_code_gid, discount_expires_at, cart_url,
+         product_ids, persona_label, created_at, updated_at)
       VALUES
         (${input.captureId}, 'draft', ${input.subject}, ${input.draftedText},
-         ${input.discountCode}, ${input.discountCodeGid}, ${input.discountExpiresAt},
-         ${input.cartUrl}, ${input.productIds}::text[], ${input.personaLabel},
-         now(), now())
+         ${input.discountPercent}, ${input.discountCode}, ${input.discountCodeGid},
+         ${input.discountExpiresAt}, ${input.cartUrl}, ${input.productIds}::text[],
+         ${input.personaLabel}, now(), now())
       ON CONFLICT (email_capture_id) WHERE status <> 'sent'
         DO NOTHING
       RETURNING *
@@ -320,6 +327,52 @@ export async function updateDraftText(
   }
 }
 
+export interface RegenerateDraftInput {
+  subject: string;
+  draftedText: string;
+  discountPercent: number;
+  discountExpiresAt: string | null;
+  cartUrl: string | null;
+  productIds: string[];
+  personaLabel: string | null;
+}
+
+/**
+ * Overwrite an existing OPEN draft when the admin re-generates (e.g. after
+ * changing the discount depth). Replaces the AI-written fields and the selected
+ * depth, and resets the (still un-minted) discount code/gid back to NULL so the
+ * draft text and the eventual send-time code can never disagree. Only touches
+ * non-sent rows; a sent row is immutable.
+ */
+export async function saveRegeneratedDraft(
+  sendId: number,
+  input: RegenerateDraftInput,
+  sql: Sql | null = getSql()
+): Promise<MarketingSendRow | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      UPDATE marketing_sends
+         SET subject = ${input.subject},
+             drafted_text = ${input.draftedText},
+             discount_percent = ${input.discountPercent},
+             discount_code = NULL,
+             discount_code_gid = NULL,
+             discount_expires_at = ${input.discountExpiresAt},
+             cart_url = ${input.cartUrl},
+             product_ids = ${input.productIds}::text[],
+             persona_label = ${input.personaLabel},
+             updated_at = now()
+       WHERE id = ${sendId} AND status <> 'sent'
+      RETURNING *
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? mapSendRow(rows[0]) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "saveRegeneratedDraft" });
+    return null;
+  }
+}
+
 /**
  * Atomically claim a draft for sending: 'draft' → 'approved'. Returns the row
  * only if it was still a draft, so two concurrent send requests can't both get
@@ -366,19 +419,42 @@ export async function revertClaim(
 }
 
 /**
- * Atomically flip a claimed row to 'sent' with a sent_at stamp. The
- * `status <> 'sent'` guard makes this idempotent / double-send-proof: a row
- * already sent updates zero rows and returns null.
+ * What the send step finalized: the REAL minted code, its gid/expiry, the cart
+ * permalink that actually went out (carrying ?discount=CODE) and the body with
+ * the placeholder swapped for the real code. Stored on the row so analytics has
+ * the complete record of which discount depth + code was used.
+ */
+export interface SentDiscountPatch {
+  discountCode: string | null;
+  discountCodeGid: string | null;
+  discountExpiresAt: string | null;
+  cartUrl: string | null;
+  draftedText: string;
+}
+
+/**
+ * Atomically flip a claimed row to 'sent' with a sent_at stamp, persisting the
+ * send-time discount artifacts. The `status <> 'sent'` guard makes this
+ * idempotent / double-send-proof: a row already sent updates zero rows and
+ * returns null.
  */
 export async function markSent(
   sendId: number,
+  patch: SentDiscountPatch,
   sql: Sql | null = getSql()
 ): Promise<MarketingSendRow | null> {
   if (!sql) return null;
   try {
     const rows = (await sql`
       UPDATE marketing_sends
-         SET status = 'sent', sent_at = now(), updated_at = now()
+         SET status = 'sent',
+             sent_at = now(),
+             updated_at = now(),
+             discount_code = ${patch.discountCode},
+             discount_code_gid = ${patch.discountCodeGid},
+             discount_expires_at = ${patch.discountExpiresAt},
+             cart_url = ${patch.cartUrl},
+             drafted_text = ${patch.draftedText}
        WHERE id = ${sendId} AND status <> 'sent'
       RETURNING *
     `) as Array<Record<string, unknown>>;

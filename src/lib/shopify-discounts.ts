@@ -3,13 +3,26 @@
 // ⚠️ Shopify's APIs changed recently — this was written against CURRENT docs,
 // not memory:
 //   Mutation:  discountCodeBasicCreate(basicCodeDiscount: DiscountCodeBasicInput!)
-//   Docs:      https://shopify.dev/docs/api/admin-graphql/latest/mutations/discountCodeBasicCreate
-//              https://shopify.dev/docs/api/admin-graphql/latest/input-objects/DiscountCodeBasicInput
-//   Verified:  2026-06-04 against API version SHOPIFY_API_VERSION (current stable,
-//              e.g. 2026-04 — we always target the configured version, not "latest").
+//   Docs:      https://shopify.dev/docs/api/admin-graphql/2026-04/mutations/discountCodeBasicCreate
+//              https://shopify.dev/docs/api/admin-graphql/2026-04/input-objects/DiscountCodeBasicInput
+//              https://shopify.dev/docs/api/admin-graphql/2026-04/payloads/DiscountCodeBasicCreatePayload
+//   Payload:   the result field is `codeDiscountNode` (a DiscountCodeNode with the
+//              gid `id`), NOT a bare `codeDiscount`. Selecting a non-existent
+//              field is a schema validation error that aborts the mutation BEFORE
+//              execution — i.e. no code is created at all. We read the gid off
+//              codeDiscountNode.id for auditing / later deactivation.
+//   Verified:  2026-06-05 against API version SHOPIFY_API_VERSION = 2026-04 (the
+//              configured version; we always target it, not "latest"). shopify.dev
+//              blocks automated fetches (HTTP 403), so the shape was re-confirmed
+//              via the public docs index: discountCodeBasicCreate takes
+//              `basicCodeDiscount: DiscountCodeBasicInput!`; the value is set via
+//              customerGets.value as DiscountPercentage { percentage } (a 0..1
+//              fraction); usageLimit (Int) caps total redemptions;
+//              appliesOncePerCustomer (Boolean) pins it to one buyer.
 //   Scope:     write_discounts.
 //
-// Input shape we use (a 5%-off, single-use code for all customers, with expiry):
+// Input shape we use (a single-use percentage-off code, admin-chosen depth, with
+// expiry — the percentage is passed in per send, no longer hardcoded):
 //   {
 //     title, code,
 //     startsAt, endsAt,
@@ -24,16 +37,50 @@
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { reportError } from "./observability";
 
+/**
+ * The discount depths the admin may offer, as whole-number percents. 0 = "None"
+ * (the default — applying a discount is a deliberate act). Shared by the draft
+ * route (validation) and the dashboard UI (the selector).
+ */
+export const ALLOWED_DISCOUNT_PERCENTS = [0, 5, 10, 15] as const;
+export type AllowedDiscountPercent = (typeof ALLOWED_DISCOUNT_PERCENTS)[number];
+
+export function isAllowedDiscountPercent(n: unknown): n is AllowedDiscountPercent {
+  return (
+    typeof n === "number" &&
+    (ALLOWED_DISCOUNT_PERCENTS as readonly number[]).includes(n)
+  );
+}
+
+/**
+ * The clearly-marked placeholder code shown in the DRAFT PREVIEW. No real
+ * Shopify code is minted at draft time (that would waste single-use codes on
+ * discarded drafts); the model weaves THIS literal into the preview body so the
+ * admin sees exactly how the email will read, and at send time it is swapped
+ * 1:1 for the real unique code. Kept deliberately obvious so the admin doesn't
+ * mistake it for a working code.
+ */
+export const PLACEHOLDER_DISCOUNT_CODE = "MOIA-XXXX";
+
+/** Days a minted code stays valid (env-overridable). Exposed so the draft
+ * preview can show the same projected expiry the real code will get. */
+export function discountExpiryDaysPublic(): number {
+  return discountExpiryDays();
+}
+
 const DISCOUNT_CODE_BASIC_CREATE = /* GraphQL */ `
   mutation MarketingDiscountCreate($basicCodeDiscount: DiscountCodeBasicInput!) {
     discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
-      codeDiscount {
-        ... on DiscountCodeBasic {
-          title
-          status
-          endsAt
-          codes(first: 1) {
-            nodes { code }
+      codeDiscountNode {
+        id
+        codeDiscount {
+          ... on DiscountCodeBasic {
+            title
+            status
+            endsAt
+            codes(first: 1) {
+              nodes { code }
+            }
           }
         }
       }
@@ -48,11 +95,19 @@ const DISCOUNT_CODE_BASIC_CREATE = /* GraphQL */ `
 
 interface DiscountCreateResponse {
   discountCodeBasicCreate: {
-    codeDiscount: {
-      title?: string;
-      status?: string;
-      endsAt?: string | null;
-      codes?: { nodes: Array<{ code: string }> };
+    // The wrapping node — `id` is the gid://shopify/DiscountCodeNode/… handle.
+    // NB: the payload field is `codeDiscountNode` (a DiscountCodeNode), NOT a
+    // bare `codeDiscount` — selecting the latter is a schema error that aborts
+    // the mutation before it runs (so no code is ever created). See the
+    // DiscountCodeBasicCreatePayload docs cited at the top of this file.
+    codeDiscountNode: {
+      id: string;
+      codeDiscount: {
+        title?: string;
+        status?: string;
+        endsAt?: string | null;
+        codes?: { nodes: Array<{ code: string }> };
+      } | null;
     } | null;
     userErrors: Array<{ field?: string[] | null; code?: string | null; message: string }>;
   };
@@ -136,14 +191,14 @@ export async function createUniqueDiscountCode(
       });
       return null;
     }
-    const created = payload.codeDiscount;
+    const node = payload.codeDiscountNode;
+    const created = node?.codeDiscount;
     const returnedCode = created?.codes?.nodes?.[0]?.code ?? code;
     return {
       code: returnedCode,
-      // Shopify returns the DiscountCodeBasic node, not the wrapping
-      // DiscountCodeNode id, on this payload — we keep the title-derived code as
-      // the durable handle and leave gid null when absent.
-      gid: null,
+      // The DiscountCodeNode id (gid://shopify/DiscountCodeNode/…) — the durable
+      // handle for auditing / later deactivation. Falls back to null if absent.
+      gid: node?.id ?? null,
       expiresAt: created?.endsAt ?? endsAt.toISOString(),
     };
   } catch (err) {
