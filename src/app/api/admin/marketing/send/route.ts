@@ -21,6 +21,7 @@ const STATUS_BY_REASON: Record<string, number> = {
   not_eligible: 409,
   no_unsubscribe: 503,
   claim_failed: 409,
+  discount_failed: 502,
   email_not_configured: 503,
   send_failed: 502,
 };

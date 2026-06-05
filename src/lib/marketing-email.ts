@@ -28,6 +28,11 @@ import {
 import { sendEmail } from "./email";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
+import {
+  createUniqueDiscountCode,
+  PLACEHOLDER_DISCOUNT_CODE,
+} from "./shopify-discounts";
+import { buildPrefilledCartUrlForIds } from "./cart";
 import { reportError } from "./observability";
 
 export type ApproveAndSendResult =
@@ -40,6 +45,7 @@ export type ApproveAndSendResult =
         | "not_eligible"
         | "no_unsubscribe"
         | "claim_failed"
+        | "discount_failed"
         | "email_not_configured"
         | "send_failed";
       message: string;
@@ -105,10 +111,50 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
     }
 
     try {
+      // GATE 3 — mint the REAL unique single-use code now (not at draft time, so
+      // discarded drafts never burn a code). When a discount was selected we MUST
+      // get a working code: the body already promises a personal offer, so if
+      // minting fails we refuse to send a mail that references a dead code.
+      let body = claimed.draftedText ?? "";
+      let discountCode: string | null = null;
+      let discountCodeGid: string | null = null;
+      let discountExpiresAt: string | null = null;
+
+      if (claimed.discountPercent > 0) {
+        const minted = await createUniqueDiscountCode({
+          percentage: claimed.discountPercent / 100,
+        });
+        if (!minted) {
+          await revertClaim(sendId);
+          return {
+            ok: false,
+            reason: "discount_failed",
+            message:
+              "Could not mint the unique Shopify discount code — refusing to send " +
+              "an email that promises an offer. Check Shopify config and retry.",
+          };
+        }
+        discountCode = minted.code;
+        discountCodeGid = minted.gid;
+        discountExpiresAt = minted.expiresAt;
+        // Swap the preview placeholder for the real code wherever it appears so
+        // the prose and the working code never disagree.
+        body = body.split(PLACEHOLDER_DISCOUNT_CODE).join(minted.code);
+      }
+
+      // Build the cart permalink that actually ships: it carries ?discount=CODE
+      // only when a real code was minted; otherwise no discount param.
+      const cart = claimed.productIds.length
+        ? await buildPrefilledCartUrlForIds(claimed.productIds, {
+            discountCode: discountCode ?? undefined,
+          })
+        : { url: null as string | null };
+      const cartUrl = cart.url;
+
       const { text, html } = renderMarketingEmail({
-        body: claimed.draftedText ?? "",
-        cartUrl: claimed.cartUrl,
-        discountCode: claimed.discountCode,
+        body,
+        cartUrl,
+        discountCode,
         unsubscribe: unsubscribeFooter(unsubscribeUrl),
       });
 
@@ -133,7 +179,15 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         return { ok: false, reason: "send_failed", message: "Email delivery failed." };
       }
 
-      await markSent(sendId);
+      // Persist the finalized artifacts (real code, gid, expiry, shipped cart,
+      // body with the real code) so analytics has the complete record.
+      await markSent(sendId, {
+        discountCode,
+        discountCodeGid,
+        discountExpiresAt,
+        cartUrl,
+        draftedText: body,
+      });
       return { ok: true, sentTo: email };
     } catch (err) {
       await revertClaim(sendId);
