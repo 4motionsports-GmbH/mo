@@ -13,7 +13,12 @@
 import { getSql, type Sql } from "./db";
 import { loadConversationForSummary, type TranscriptMessage } from "./conversation-store";
 import { getProductsByIds } from "./product-catalog";
-import { checkRecentPurchase, type PurchaseCheck } from "./shopify-orders";
+import {
+  checkRecentPurchase,
+  wasDiscountCodeRedeemed,
+  type PurchaseCheck,
+} from "./shopify-orders";
+import { isShopifyConfigured } from "./shopify";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
 import { reportError } from "./observability";
@@ -213,6 +218,97 @@ export async function getSendById(
 //
 // GDPR: this is a click on a link the user CHOSE to click — not covert
 // surveillance, no open-tracking pixel.
+
+// Bound the number of Shopify code-redemption checks per dashboard load, so the
+// funnel is a sample, not an unbounded fan-out of Admin API calls.
+const MARKETING_FUNNEL_MAX_CODES = 100;
+
+export interface MarketingFunnel {
+  /** Emails actually sent (marketing_sends.status = 'sent'). */
+  sent: number;
+  /** Of those, emails whose tracked link was clicked (clicked_at set). */
+  clicked: number;
+  /** clicked / sent — null when nothing was sent. */
+  clickRate: number | null;
+  /** Whether Shopify is wired up (false ⇒ conversion is unknowable). */
+  shopifyConfigured: boolean;
+  /** Sent emails whose UNIQUE single-use code was redeemed in a real order. */
+  converted: number;
+  /** converted / sent — null when nothing was sent. */
+  conversionRate: number | null;
+  /** Codes actually checked against Shopify (capped sample). */
+  codesChecked: number;
+  /** Codes where Shopify couldn't answer (unconfigured / error). */
+  redemptionUnknown: number;
+  /** True when the codes set was truncated to the cap. */
+  sampled: boolean;
+}
+
+/**
+ * The marketing funnel: sent → clicked → converted (the send's unique code was
+ * redeemed). `sent`/`clicked` are a cheap DB aggregate; `converted` reuses the
+ * read_orders logic, checking each sent code's redemption (capped, never throws).
+ * Returns null only when no DB is configured.
+ */
+export async function getMarketingFunnel(
+  sql: Sql | null = getSql()
+): Promise<MarketingFunnel | null> {
+  if (!sql) return null;
+  const shopifyConfigured = isShopifyConfigured();
+
+  try {
+    const totals = (await sql`
+      SELECT
+        count(*) FILTER (WHERE status = 'sent')::int AS sent,
+        count(*) FILTER (WHERE status = 'sent' AND clicked_at IS NOT NULL)::int AS clicked
+        FROM marketing_sends
+    `) as Array<{ sent: number; clicked: number }>;
+    const sent = Number(totals[0]?.sent ?? 0);
+    const clicked = Number(totals[0]?.clicked ?? 0);
+
+    // Conversion = the send's UNIQUE single-use code shows up in a real order.
+    // Only sent rows that actually carried a code can convert.
+    const codeRows = (await sql`
+      SELECT discount_code
+        FROM marketing_sends
+       WHERE status = 'sent' AND discount_code IS NOT NULL
+       ORDER BY sent_at DESC NULLS LAST, id DESC
+       LIMIT ${MARKETING_FUNNEL_MAX_CODES + 1}
+    `) as Array<{ discount_code: string }>;
+    const sampled = codeRows.length > MARKETING_FUNNEL_MAX_CODES;
+    const codes = codeRows
+      .slice(0, MARKETING_FUNNEL_MAX_CODES)
+      .map((r) => String(r.discount_code));
+
+    let converted = 0;
+    let redemptionUnknown = 0;
+    if (shopifyConfigured && codes.length) {
+      const results = await Promise.all(codes.map((c) => wasDiscountCodeRedeemed(c)));
+      for (const r of results) {
+        if (r === null) redemptionUnknown++;
+        else if (r) converted++;
+      }
+    } else {
+      // Can't check — every coded send is "unknown" rather than "not converted".
+      redemptionUnknown = codes.length;
+    }
+
+    return {
+      sent,
+      clicked,
+      clickRate: sent > 0 ? clicked / sent : null,
+      shopifyConfigured,
+      converted,
+      conversionRate: sent > 0 ? converted / sent : null,
+      codesChecked: codes.length,
+      redemptionUnknown,
+      sampled,
+    } satisfies MarketingFunnel;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "getMarketingFunnel" });
+    return null;
+  }
+}
 
 /**
  * Generate a unique, hard-to-guess redirect token (192 bits, URL-safe base64).

@@ -254,6 +254,21 @@ surfaced rate is `withRecommendedPurchase ÷ withPurchase`.
 >   load — a sample, not a census. Contacts where Shopify can't answer are counted
 >   as "unknown", never as "no purchase".
 
+### 5.4 Marketing funnel — [`getMarketingFunnel()`](../src/lib/marketing-store.ts)
+
+A lightweight **sent → clicked → converted** funnel over the marketing emails the
+dashboard actually sent (`marketing_sends.status = 'sent'`):
+
+| Stage | Definition |
+| --- | --- |
+| **Gesendet (sent)** | `count(status = 'sent')`. |
+| **Geklickt (clicked)** | `count(clicked_at IS NOT NULL)` + click rate. `clicked_at` is the **first** click on the tracked `/api/r/<token>` redirect (see §10). No pixel — only the link the user chose to click. |
+| **Eingelöst (converted)** | The send's **unique single-use** code was redeemed in a real order. Reuses `read_orders` via [`wasDiscountCodeRedeemed()`](../src/lib/shopify-orders.ts) (`orders(query: 'discount_code:"…"')`). Capped at the **100 newest** coded sends to bound Shopify calls; codes where Shopify can't answer are "unknown", never counted as "not redeemed". |
+
+This funnel is inherently scoped to consented marketing recipients (every send went
+to a DOI-confirmed contact), so it is **not** a site-wide rate and isn't framed as
+one.
+
 ---
 
 ## 6. Shopify scopes & API versions

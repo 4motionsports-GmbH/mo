@@ -166,3 +166,50 @@ export async function fetchPurchasedItemsByEmail(
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Discount-code redemption — backs the marketing funnel's "converted" step.
+// ---------------------------------------------------------------------------
+//
+// Each marketing send mints a UNIQUE single-use code (usageLimit: 1). So "was
+// this send's offer converted?" reduces to "does any order carry this code?".
+// `discount_code` is a searchable order field in the Admin order search syntax
+// (https://shopify.dev/docs/api/usage/search-syntax); we quote it as a phrase
+// for an exact match. Same read_orders scope and protected-customer-data caveats
+// as above; we read only existence (the order id) and never persist anything.
+
+const ORDERS_BY_DISCOUNT_CODE = /* GraphQL */ `
+  query MarketingOrdersByDiscountCode($query: String!) {
+    orders(first: 1, query: $query) {
+      nodes { id }
+    }
+  }
+`;
+
+interface OrdersIdResponse {
+  orders: { nodes: Array<{ id: string }> };
+}
+
+/**
+ * Whether the (unique, single-use) discount `code` was redeemed in any order.
+ * Returns true/false when Shopify answers, or null when Shopify is unconfigured
+ * / the code is blank / the query fails (i.e. "we don't know" — never silently
+ * counted as "not redeemed"). Never throws.
+ */
+export async function wasDiscountCodeRedeemed(
+  code: string
+): Promise<boolean | null> {
+  if (!isShopifyConfigured()) return null;
+  const c = code.trim();
+  if (!c) return null;
+
+  // Quote the code (phrase match); searchable order field `discount_code`.
+  const query = `discount_code:"${c}"`;
+  try {
+    const data = await adminGraphql<OrdersIdResponse>(ORDERS_BY_DISCOUNT_CODE, { query });
+    return (data.orders?.nodes ?? []).length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/shopify-orders", phase: "wasDiscountCodeRedeemed" });
+    return null;
+  }
+}
