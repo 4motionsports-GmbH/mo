@@ -242,6 +242,13 @@ conversation, then ask Shopify (`read_orders`) what that email actually bought. 
 a **recommended** product appears in a real order, that contact counts. The
 surfaced rate is `withRecommendedPurchase ÷ withPurchase`.
 
+> 🏷️ **Honest labeling.** Because this can only match a chat to a purchase when
+> the customer gave a **consented email**, it covers a *minority subset*, not all
+> chat users. The UI labels it accordingly — the section title reads *"Empfehlung
+> → Kauf (nur Kund:innen mit E-Mail-Angabe)"* and a prominent caveat banner states
+> it is **not** a site-wide conversion rate. Only the framing changed; the
+> computation is unchanged.
+
 > ⚠️ **Honest limitations** (also stated in the UI):
 > - Covers **only** users who gave an email **and** confirmed consent — a minority
 >   of chatters, and not all buyers.

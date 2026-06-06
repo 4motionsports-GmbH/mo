@@ -101,10 +101,10 @@ function MarketingFunnelSection({ funnel }: { funnel: MarketingFunnel | null }) 
           </table>
 
           <p style={caption}>
-            „Geklickt" zählt E-Mails, deren Warenkorb-Link (über die getrackte
+            „Geklickt“ zählt E-Mails, deren Warenkorb-Link (über die getrackte
             Weiterleitung <code>/api/r/&lt;token&gt;</code>) mindestens einmal
             angeklickt wurde — kein Tracking-Pixel, nur der bewusst geklickte Link.
-            „Eingelöst" prüft per Shopify (<code>read_orders</code>), ob der
+            „Eingelöst“ prüft per Shopify (<code>read_orders</code>), ob der
             <strong> einmalige persönliche Code</strong> der jeweiligen E-Mail in
             einer echten Bestellung verwendet wurde.
             {!funnel.shopifyConfigured &&
@@ -311,8 +311,8 @@ function FavoriteBars({
 function LoopSection({ loop }: { loop: RecommendationLoopResult | null }) {
   return (
     <Section
-      title="Empfehlung → Kauf"
-      subtitle="Der ROI-Kennwert: wie oft ein empfohlenes Produkt später wirklich gekauft wurde."
+      title="Empfehlung → Kauf (nur Kund:innen mit E-Mail-Angabe)"
+      subtitle="ROI-Kennwert für die Teilmenge der Kund:innen, die ihre E-Mail angegeben haben — KEINE site-weite Conversion-Rate."
     >
       {!loop ? (
         <Banner tone="info">Noch keine Daten.</Banner>
@@ -323,15 +323,21 @@ function LoopSection({ loop }: { loop: RecommendationLoopResult | null }) {
         </Banner>
       ) : (
         <>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+          <Banner tone="warn">
+            Nur Kund:innen, die ihre E-Mail angegeben haben — also eine Minderheit
+            aller Chat-Nutzer:innen. Diese Zahl ist <strong>keine</strong>{" "}
+            site-weite Conversion-Rate.
+          </Banner>
+
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
             <span style={{ fontSize: 32, fontWeight: 700, color: "#111" }}>
               {loop.recommendationToPurchaseRate == null
                 ? "—"
                 : pct(loop.recommendationToPurchaseRate)}
             </span>
             <span style={{ fontSize: 13, color: "#666" }}>
-              der Käufer (mit E-Mail-Einwilligung) kauften ein zuvor empfohlenes
-              Produkt
+              der Käufer:innen <strong>mit E-Mail-Angabe</strong> kauften ein zuvor
+              empfohlenes Produkt
             </span>
           </div>
 
