@@ -24,6 +24,7 @@ import {
   claimForSend,
   revertClaim,
   markSent,
+  generateRedirectToken,
 } from "./marketing-store";
 import { sendEmail } from "./email";
 import { unsubscribeFooter } from "./consent-copy";
@@ -151,9 +152,22 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         : { url: null as string | null };
       const cartUrl = cart.url;
 
+      // CLICK-TRACKING: route the click through our own redirect so it's visible
+      // to the KPI dashboard. The REAL Shopify cart URL (with ?discount=CODE)
+      // stays server-side on the row; the email links to /api/r/<token>, which
+      // logs the click and 302s to that cart. Only when there's an actual cart to
+      // link to — no cart ⇒ no token, no tracked link.
+      let redirectToken: string | null = null;
+      let linkUrl: string | null = cartUrl;
+      if (cartUrl) {
+        redirectToken = generateRedirectToken();
+        linkUrl = `${getBaseUrl()}/api/r/${redirectToken}`;
+      }
+
       const { text, html } = renderMarketingEmail({
         body,
-        cartUrl,
+        // The customer sees/clicks the tracked redirect URL, not the raw cart.
+        linkUrl,
         discountCode,
         unsubscribe: unsubscribeFooter(unsubscribeUrl),
       });
@@ -179,14 +193,16 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         return { ok: false, reason: "send_failed", message: "Email delivery failed." };
       }
 
-      // Persist the finalized artifacts (real code, gid, expiry, shipped cart,
-      // body with the real code) so analytics has the complete record.
+      // Persist the finalized artifacts (real code, gid, expiry, the REAL shipped
+      // cart URL, the redirect token that maps to it, and the body with the real
+      // code) so analytics has the complete record and the redirect can resolve.
       await markSent(sendId, {
         discountCode,
         discountCodeGid,
         discountExpiresAt,
         cartUrl,
         draftedText: body,
+        redirectToken,
       });
       return { ok: true, sentTo: email };
     } catch (err) {
@@ -201,30 +217,32 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
 
 function renderMarketingEmail(opts: {
   body: string;
-  cartUrl: string | null;
+  /** The URL the cart button/link points at — the tracked /api/r/<token>
+   *  redirect, NOT the raw Shopify cart (which is kept server-side). */
+  linkUrl: string | null;
   discountCode: string | null;
   unsubscribe: { text: string; html: string };
 }): { text: string; html: string } {
-  const { body, cartUrl, discountCode, unsubscribe } = opts;
+  const { body, linkUrl, discountCode, unsubscribe } = opts;
 
   // --- text part ---
   const textLines = [body.trim()];
-  if (cartUrl) {
+  if (linkUrl) {
     textLines.push(
       "",
       discountCode
         ? `Dein vorausgefüllter Warenkorb (Code ${discountCode} ist bereits hinterlegt):`
         : "Dein vorausgefüllter Warenkorb:",
-      cartUrl
+      linkUrl
     );
   }
   textLines.push("", "—", unsubscribe.text);
   const text = textLines.join("\n");
 
   // --- html part ---
-  const cartButton = cartUrl
+  const cartButton = linkUrl
     ? `<p style="margin:24px 0">
-         <a href="${cartUrl}" style="background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;display:inline-block">Warenkorb öffnen</a>
+         <a href="${linkUrl}" style="background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;display:inline-block">Warenkorb öffnen</a>
        </p>` +
       (discountCode
         ? `<p style="font-size:13px;color:#666;margin:-12px 0 0">Dein persönlicher Code <strong>${escapeHtml(

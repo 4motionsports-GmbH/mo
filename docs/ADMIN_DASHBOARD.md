@@ -167,6 +167,13 @@ marketing email is sent. The guarantees, in order:
    `discount_percent = 0`, no code is minted and the cart link carries no discount.
 4. **Discount + cart are deterministic.** The cart button and (when present) the
    code note are appended from the minted values, never from the editable prose.
+   The cart button does **not** link straight to Shopify: a unique
+   `redirect_token` is minted and the button points at our own
+   **`/api/r/<token>`** redirect, which logs the click and forwards to the real
+   prefilled cart (the `?discount=CODE` stays intact). The real Shopify cart URL
+   lives **server-side** on the row (`cart_url`); only the redirect reveals it.
+   The **draft preview is unchanged** — only the actually-sent email gets the
+   tracked link.
 5. **No double send.** The row is claimed atomically (`draft → approved`); a
    concurrent request gets nothing and aborts. Success flips to `sent` + `sent_at`
    and persists the minted **code, gid, expiry, shipped cart URL and finalized body**
@@ -235,6 +242,13 @@ conversation, then ask Shopify (`read_orders`) what that email actually bought. 
 a **recommended** product appears in a real order, that contact counts. The
 surfaced rate is `withRecommendedPurchase ÷ withPurchase`.
 
+> 🏷️ **Honest labeling.** Because this can only match a chat to a purchase when
+> the customer gave a **consented email**, it covers a *minority subset*, not all
+> chat users. The UI labels it accordingly — the section title reads *"Empfehlung
+> → Kauf (nur Kund:innen mit E-Mail-Angabe)"* and a prominent caveat banner states
+> it is **not** a site-wide conversion rate. Only the framing changed; the
+> computation is unchanged.
+
 > ⚠️ **Honest limitations** (also stated in the UI):
 > - Covers **only** users who gave an email **and** confirmed consent — a minority
 >   of chatters, and not all buyers.
@@ -246,6 +260,21 @@ surfaced rate is `withRecommendedPurchase ÷ withPurchase`.
 > - Capped at the **100 newest** eligible contacts to bound Shopify calls per page
 >   load — a sample, not a census. Contacts where Shopify can't answer are counted
 >   as "unknown", never as "no purchase".
+
+### 5.4 Marketing funnel — [`getMarketingFunnel()`](../src/lib/marketing-store.ts)
+
+A lightweight **sent → clicked → converted** funnel over the marketing emails the
+dashboard actually sent (`marketing_sends.status = 'sent'`):
+
+| Stage | Definition |
+| --- | --- |
+| **Gesendet (sent)** | `count(status = 'sent')`. |
+| **Geklickt (clicked)** | `count(clicked_at IS NOT NULL)` + click rate. `clicked_at` is the **first** click on the tracked `/api/r/<token>` redirect (see §10). No pixel — only the link the user chose to click. |
+| **Eingelöst (converted)** | The send's **unique single-use** code was redeemed in a real order. Reuses `read_orders` via [`wasDiscountCodeRedeemed()`](../src/lib/shopify-orders.ts) (`orders(query: 'discount_code:"…"')`). Capped at the **100 newest** coded sends to bound Shopify calls; codes where Shopify can't answer are "unknown", never counted as "not redeemed". |
+
+This funnel is inherently scoped to consented marketing recipients (every send went
+to a DOI-confirmed contact), so it is **not** a site-wide rate and isn't framed as
+one.
 
 ---
 
@@ -288,7 +317,14 @@ Migration [`0005_marketing_sends_discount_percent.sql`](../migrations/0005_marke
 adds `marketing_sends.discount_percent` (the admin-selected depth; `0` = none,
 default `0`), so analytics can later see which discount depths were offered.
 Together with the existing `discount_code` (real minted code) and `sent_at`, the
-row is a complete record of the offer. Run all with `npm run db:migrate`.
+row is a complete record of the offer.
+
+Migration [`0006_marketing_sends_click_tracking.sql`](../migrations/0006_marketing_sends_click_tracking.sql)
+adds `marketing_sends.redirect_token` (the unique, hard-to-guess token minted at
+send time and embedded in the email's cart link as `/api/r/<token>`; partial
+unique index) and `marketing_sends.clicked_at` (timestamp of the **first** click
+on that link; repeat clicks leave it unchanged). These back the tracked-redirect
+endpoint and the marketing funnel (see §10). Run all with `npm run db:migrate`.
 
 `marketing_sends.status` lifecycle: `draft` → `approved` (transient in-flight
 claim) → `sent`.

@@ -9,6 +9,7 @@ import {
   getRecommendationLoop,
   type RecommendationLoopResult,
 } from "@/lib/kpi-recommendation-loop";
+import { getMarketingFunnel, type MarketingFunnel } from "@/lib/marketing-store";
 import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
 import { KpiTopQuestions } from "./KpiTopQuestions";
 
@@ -30,21 +31,97 @@ export async function KpiTab({ dbReady }: { dbReady: boolean }) {
     );
   }
 
-  const [core, personas, loop, cachedQuestions] = await Promise.all([
+  const [core, personas, loop, funnel, cachedQuestions] = await Promise.all([
     getCoreMetrics(30),
     getPersonaInsights(5),
     getRecommendationLoop(),
+    getMarketingFunnel(),
     getCachedTopQuestionsMap(),
   ]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
       <CoreSection core={core} />
+      <MarketingFunnelSection funnel={funnel} />
       <PersonaSection personas={personas} cachedQuestions={cachedQuestions} />
       <LoopSection loop={loop} />
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Marketing funnel: sent → clicked → converted (unique code redeemed)
+// ---------------------------------------------------------------------------
+
+function MarketingFunnelSection({ funnel }: { funnel: MarketingFunnel | null }) {
+  return (
+    <Section
+      title="Marketing-Funnel"
+      subtitle="Versendete Marketing-E-Mails: gesendet → geklickt → eingelöst (persönlicher Code verwendet)."
+    >
+      {!funnel ? (
+        <Banner tone="info">Noch keine Daten.</Banner>
+      ) : funnel.sent === 0 ? (
+        <Banner tone="info">Noch keine Marketing-E-Mails versendet.</Banner>
+      ) : (
+        <>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <Th>Stufe</Th>
+                <Th align="right">Anzahl</Th>
+                <Th align="right">Rate</Th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <Td>Gesendet</Td>
+                <Td align="right">{num(funnel.sent, 0)}</Td>
+                <Td align="right">—</Td>
+              </tr>
+              <tr>
+                <Td>Geklickt</Td>
+                <Td align="right">{num(funnel.clicked, 0)}</Td>
+                <Td align="right">
+                  {funnel.clickRate == null ? "—" : pct(funnel.clickRate)}
+                </Td>
+              </tr>
+              <tr>
+                <Td>Eingelöst (Code verwendet)</Td>
+                <Td align="right">
+                  {funnel.shopifyConfigured ? num(funnel.converted, 0) : "—"}
+                </Td>
+                <Td align="right">
+                  {funnel.shopifyConfigured && funnel.conversionRate != null
+                    ? pct(funnel.conversionRate)
+                    : "—"}
+                </Td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p style={caption}>
+            „Geklickt“ zählt E-Mails, deren Warenkorb-Link (über die getrackte
+            Weiterleitung <code>/api/r/&lt;token&gt;</code>) mindestens einmal
+            angeklickt wurde — kein Tracking-Pixel, nur der bewusst geklickte Link.
+            „Eingelöst“ prüft per Shopify (<code>read_orders</code>), ob der
+            <strong> einmalige persönliche Code</strong> der jeweiligen E-Mail in
+            einer echten Bestellung verwendet wurde.
+            {!funnel.shopifyConfigured &&
+              " Shopify ist nicht konfiguriert — die Einlösung kann nicht berechnet werden."}
+            {funnel.shopifyConfigured &&
+              funnel.redemptionUnknown > 0 &&
+              ` Bei ${num(funnel.redemptionUnknown, 0)} Code(s) lieferte Shopify keine Antwort (als „unbekannt" gewertet).`}
+            {funnel.sampled &&
+              ` Einlösungsprüfung auf die ${MARKETING_FUNNEL_DISPLAY_CAP} neuesten Codes begrenzt.`}
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+const MARKETING_FUNNEL_DISPLAY_CAP = 100;
 
 // ---------------------------------------------------------------------------
 // 1. Core metrics
@@ -234,8 +311,8 @@ function FavoriteBars({
 function LoopSection({ loop }: { loop: RecommendationLoopResult | null }) {
   return (
     <Section
-      title="Empfehlung → Kauf"
-      subtitle="Der ROI-Kennwert: wie oft ein empfohlenes Produkt später wirklich gekauft wurde."
+      title="Empfehlung → Kauf (nur Kund:innen mit E-Mail-Angabe)"
+      subtitle="ROI-Kennwert für die Teilmenge der Kund:innen, die ihre E-Mail angegeben haben — KEINE site-weite Conversion-Rate."
     >
       {!loop ? (
         <Banner tone="info">Noch keine Daten.</Banner>
@@ -246,15 +323,21 @@ function LoopSection({ loop }: { loop: RecommendationLoopResult | null }) {
         </Banner>
       ) : (
         <>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+          <Banner tone="warn">
+            Nur Kund:innen, die ihre E-Mail angegeben haben — also eine Minderheit
+            aller Chat-Nutzer:innen. Diese Zahl ist <strong>keine</strong>{" "}
+            site-weite Conversion-Rate.
+          </Banner>
+
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
             <span style={{ fontSize: 32, fontWeight: 700, color: "#111" }}>
               {loop.recommendationToPurchaseRate == null
                 ? "—"
                 : pct(loop.recommendationToPurchaseRate)}
             </span>
             <span style={{ fontSize: 13, color: "#666" }}>
-              der Käufer (mit E-Mail-Einwilligung) kauften ein zuvor empfohlenes
-              Produkt
+              der Käufer:innen <strong>mit E-Mail-Angabe</strong> kauften ein zuvor
+              empfohlenes Produkt
             </span>
           </div>
 

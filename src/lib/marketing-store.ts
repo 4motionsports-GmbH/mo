@@ -13,7 +13,12 @@
 import { getSql, type Sql } from "./db";
 import { loadConversationForSummary, type TranscriptMessage } from "./conversation-store";
 import { getProductsByIds } from "./product-catalog";
-import { checkRecentPurchase, type PurchaseCheck } from "./shopify-orders";
+import {
+  checkRecentPurchase,
+  wasDiscountCodeRedeemed,
+  type PurchaseCheck,
+} from "./shopify-orders";
+import { isShopifyConfigured } from "./shopify";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
 import { reportError } from "./observability";
@@ -33,6 +38,10 @@ export interface MarketingSendRow {
   cartUrl: string | null;
   productIds: string[];
   personaLabel: string | null;
+  /** Unique token for the tracked redirect link (/api/r/<token>); minted at send. */
+  redirectToken: string | null;
+  /** First-click timestamp on the tracked link (null = not yet clicked). */
+  clickedAt: string | null;
   sentAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -81,6 +90,8 @@ function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
     cartUrl: (r.cart_url as string | null) ?? null,
     productIds: Array.isArray(r.product_ids) ? (r.product_ids as string[]) : [],
     personaLabel: (r.persona_label as string | null) ?? null,
+    redirectToken: (r.redirect_token as string | null) ?? null,
+    clickedAt: (r.clicked_at as string | null) ?? null,
     sentAt: (r.sent_at as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
     updatedAt: (r.updated_at as string | null) ?? null,
@@ -193,6 +204,182 @@ export async function getSendById(
     return rows[0] ? mapSendRow(rows[0]) : null;
   } catch (err) {
     reportError(err, { route: "lib/marketing-store", phase: "getSendById" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Click-tracking — the tracked redirect link in sent marketing emails.
+// ---------------------------------------------------------------------------
+//
+// The email links to /api/r/<token> instead of straight to Shopify. The token
+// maps to one marketing_sends row, whose cart_url is the REAL prefilled-cart URL
+// (with ?discount=CODE). The redirect endpoint logs the click and forwards there.
+//
+// GDPR: this is a click on a link the user CHOSE to click — not covert
+// surveillance, no open-tracking pixel.
+
+// Bound the number of Shopify code-redemption checks per dashboard load, so the
+// funnel is a sample, not an unbounded fan-out of Admin API calls.
+const MARKETING_FUNNEL_MAX_CODES = 100;
+
+export interface MarketingFunnel {
+  /** Emails actually sent (marketing_sends.status = 'sent'). */
+  sent: number;
+  /** Of those, emails whose tracked link was clicked (clicked_at set). */
+  clicked: number;
+  /** clicked / sent — null when nothing was sent. */
+  clickRate: number | null;
+  /** Whether Shopify is wired up (false ⇒ conversion is unknowable). */
+  shopifyConfigured: boolean;
+  /** Sent emails whose UNIQUE single-use code was redeemed in a real order. */
+  converted: number;
+  /** converted / sent — null when nothing was sent. */
+  conversionRate: number | null;
+  /** Codes actually checked against Shopify (capped sample). */
+  codesChecked: number;
+  /** Codes where Shopify couldn't answer (unconfigured / error). */
+  redemptionUnknown: number;
+  /** True when the codes set was truncated to the cap. */
+  sampled: boolean;
+}
+
+/**
+ * The marketing funnel: sent → clicked → converted (the send's unique code was
+ * redeemed). `sent`/`clicked` are a cheap DB aggregate; `converted` reuses the
+ * read_orders logic, checking each sent code's redemption (capped, never throws).
+ * Returns null only when no DB is configured.
+ */
+export async function getMarketingFunnel(
+  sql: Sql | null = getSql()
+): Promise<MarketingFunnel | null> {
+  if (!sql) return null;
+  const shopifyConfigured = isShopifyConfigured();
+
+  try {
+    const totals = (await sql`
+      SELECT
+        count(*) FILTER (WHERE status = 'sent')::int AS sent,
+        count(*) FILTER (WHERE status = 'sent' AND clicked_at IS NOT NULL)::int AS clicked
+        FROM marketing_sends
+    `) as Array<{ sent: number; clicked: number }>;
+    const sent = Number(totals[0]?.sent ?? 0);
+    const clicked = Number(totals[0]?.clicked ?? 0);
+
+    // Conversion = the send's UNIQUE single-use code shows up in a real order.
+    // Only sent rows that actually carried a code can convert.
+    const codeRows = (await sql`
+      SELECT discount_code
+        FROM marketing_sends
+       WHERE status = 'sent' AND discount_code IS NOT NULL
+       ORDER BY sent_at DESC NULLS LAST, id DESC
+       LIMIT ${MARKETING_FUNNEL_MAX_CODES + 1}
+    `) as Array<{ discount_code: string }>;
+    const sampled = codeRows.length > MARKETING_FUNNEL_MAX_CODES;
+    const codes = codeRows
+      .slice(0, MARKETING_FUNNEL_MAX_CODES)
+      .map((r) => String(r.discount_code));
+
+    let converted = 0;
+    let redemptionUnknown = 0;
+    if (shopifyConfigured && codes.length) {
+      const results = await Promise.all(codes.map((c) => wasDiscountCodeRedeemed(c)));
+      for (const r of results) {
+        if (r === null) redemptionUnknown++;
+        else if (r) converted++;
+      }
+    } else {
+      // Can't check — every coded send is "unknown" rather than "not converted".
+      redemptionUnknown = codes.length;
+    }
+
+    return {
+      sent,
+      clicked,
+      clickRate: sent > 0 ? clicked / sent : null,
+      shopifyConfigured,
+      converted,
+      conversionRate: sent > 0 ? converted / sent : null,
+      codesChecked: codes.length,
+      redemptionUnknown,
+      sampled,
+    } satisfies MarketingFunnel;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "getMarketingFunnel" });
+    return null;
+  }
+}
+
+/**
+ * Generate a unique, hard-to-guess redirect token (192 bits, URL-safe base64).
+ * Long and random enough that tokens can't be enumerated; short enough to sit in
+ * a clean /api/r/<token> URL.
+ */
+export function generateRedirectToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  // base64url, no padding.
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export interface ClickResolution {
+  /** The real Shopify prefilled-cart URL to forward to (null if the row had none). */
+  destination: string | null;
+  sendId: number;
+}
+
+/**
+ * Resolve a redirect token to its sent row and record the click in one place:
+ *   - set clicked_at = now() on the FIRST click only (the `clicked_at IS NULL`
+ *     guard makes repeat clicks a no-op — they never error),
+ *   - log a 'marketing_email_clicked' kpi_event on every click (with send /
+ *     capture id and a firstClick flag) so click VOLUME stays visible.
+ * Returns the real cart destination, or null when the token can't be resolved
+ * (unknown / expired / pruned) so the caller can fall back gracefully. Never
+ * throws.
+ */
+export async function recordEmailClick(
+  token: string,
+  sql: Sql | null = getSql()
+): Promise<ClickResolution | null> {
+  if (!sql) return null;
+  const t = token.trim();
+  if (!t) return null;
+  try {
+    const rows = (await sql`
+      SELECT id, email_capture_id, cart_url, clicked_at
+        FROM marketing_sends
+       WHERE redirect_token = ${t} AND status = 'sent'
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    const row = rows[0];
+    if (!row) return null;
+
+    const sendId = Number(row.id);
+    const captureId = Number(row.email_capture_id);
+    const destination = (row.cart_url as string | null) ?? null;
+    const firstClick = row.clicked_at == null;
+
+    // First click stamps clicked_at; the guard makes repeats a no-op.
+    await sql`
+      UPDATE marketing_sends
+         SET clicked_at = now()
+       WHERE id = ${sendId} AND clicked_at IS NULL
+    `;
+    // Cluster-A telemetry: session_id is null (this is a marketing-email click,
+    // not a widget event); the internal send/capture ids live in `data`.
+    await sql`
+      INSERT INTO kpi_events (session_id, event, data)
+      VALUES (
+        NULL,
+        'marketing_email_clicked',
+        ${JSON.stringify({ sendId, captureId, firstClick })}::jsonb
+      )
+    `;
+    return { destination, sendId };
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "recordEmailClick" });
     return null;
   }
 }
@@ -434,6 +621,8 @@ export interface SentDiscountPatch {
   discountExpiresAt: string | null;
   cartUrl: string | null;
   draftedText: string;
+  /** Token for the tracked redirect link that went into the email (null = no cart). */
+  redirectToken: string | null;
 }
 
 /**
@@ -458,7 +647,8 @@ export async function markSent(
              discount_code_gid = ${patch.discountCodeGid},
              discount_expires_at = ${patch.discountExpiresAt},
              cart_url = ${patch.cartUrl},
-             drafted_text = ${patch.draftedText}
+             drafted_text = ${patch.draftedText},
+             redirect_token = ${patch.redirectToken}
        WHERE id = ${sendId} AND status <> 'sent'
       RETURNING *
     `) as Array<Record<string, unknown>>;
