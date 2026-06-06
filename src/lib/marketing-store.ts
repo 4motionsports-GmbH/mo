@@ -525,6 +525,8 @@ export interface SentDiscountPatch {
   discountExpiresAt: string | null;
   cartUrl: string | null;
   draftedText: string;
+  /** Token for the tracked redirect link that went into the email (null = no cart). */
+  redirectToken: string | null;
 }
 
 /**
@@ -549,7 +551,8 @@ export async function markSent(
              discount_code_gid = ${patch.discountCodeGid},
              discount_expires_at = ${patch.discountExpiresAt},
              cart_url = ${patch.cartUrl},
-             drafted_text = ${patch.draftedText}
+             drafted_text = ${patch.draftedText},
+             redirect_token = ${patch.redirectToken}
        WHERE id = ${sendId} AND status <> 'sent'
       RETURNING *
     `) as Array<Record<string, unknown>>;

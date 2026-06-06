@@ -167,6 +167,13 @@ marketing email is sent. The guarantees, in order:
    `discount_percent = 0`, no code is minted and the cart link carries no discount.
 4. **Discount + cart are deterministic.** The cart button and (when present) the
    code note are appended from the minted values, never from the editable prose.
+   The cart button does **not** link straight to Shopify: a unique
+   `redirect_token` is minted and the button points at our own
+   **`/api/r/<token>`** redirect, which logs the click and forwards to the real
+   prefilled cart (the `?discount=CODE` stays intact). The real Shopify cart URL
+   lives **server-side** on the row (`cart_url`); only the redirect reveals it.
+   The **draft preview is unchanged** — only the actually-sent email gets the
+   tracked link.
 5. **No double send.** The row is claimed atomically (`draft → approved`); a
    concurrent request gets nothing and aborts. Success flips to `sent` + `sent_at`
    and persists the minted **code, gid, expiry, shipped cart URL and finalized body**
