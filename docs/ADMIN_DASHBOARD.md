@@ -288,7 +288,14 @@ Migration [`0005_marketing_sends_discount_percent.sql`](../migrations/0005_marke
 adds `marketing_sends.discount_percent` (the admin-selected depth; `0` = none,
 default `0`), so analytics can later see which discount depths were offered.
 Together with the existing `discount_code` (real minted code) and `sent_at`, the
-row is a complete record of the offer. Run all with `npm run db:migrate`.
+row is a complete record of the offer.
+
+Migration [`0006_marketing_sends_click_tracking.sql`](../migrations/0006_marketing_sends_click_tracking.sql)
+adds `marketing_sends.redirect_token` (the unique, hard-to-guess token minted at
+send time and embedded in the email's cart link as `/api/r/<token>`; partial
+unique index) and `marketing_sends.clicked_at` (timestamp of the **first** click
+on that link; repeat clicks leave it unchanged). These back the tracked-redirect
+endpoint and the marketing funnel (see §10). Run all with `npm run db:migrate`.
 
 `marketing_sends.status` lifecycle: `draft` → `approved` (transient in-flight
 claim) → `sent`.
