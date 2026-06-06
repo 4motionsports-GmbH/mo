@@ -27,6 +27,12 @@ async function getIndexedEmbeddings(): Promise<IndexedEmbeddings> {
   return indexedCache;
 }
 
+// How much to nudge sold-out products down the ranking. Multiplicative and
+// deliberately mild (~15%): a strongly-matching sold-out item can still rank
+// above a weak in-stock one, but in-stock wins whenever the fit is comparable.
+// This is a ranking nudge, not a hard filter.
+const SOLD_OUT_RANK_PENALTY = 0.85;
+
 function cosine(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;
@@ -138,6 +144,14 @@ export async function retrieve(opts: {
     if (!queryVector || score === 0) {
       score = keywordScore(product, opts.query);
     }
+    // Gentle de-prioritisation of sold-out items. We deliberately do NOT filter
+    // them out — Mo may still surface a genuinely best-fit item that's
+    // currently unavailable — but in-stock options should rank first when
+    // comparably suitable. A small multiplicative penalty keeps a clearly
+    // superior sold-out match ahead of a much weaker in-stock one, while
+    // letting in-stock win ties and near-ties. (Stock is sync-fresh; see
+    // docs/CATALOG_SYNC.md.)
+    if (product.inStock === false) score *= SOLD_OUT_RANK_PENALTY;
     return { product, score };
   });
 
