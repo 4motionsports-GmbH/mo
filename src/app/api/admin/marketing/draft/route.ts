@@ -132,40 +132,63 @@ export async function POST(req: Request) {
 
     const expiresAtIso = expiry ? expiry.toISOString() : null;
 
-    if (existing) {
-      // Depth changed or explicit regenerate — overwrite the open draft.
-      const updated = await saveRegeneratedDraft(existing.id, {
+    // Persist the generated draft. The draft was expensive to produce (the
+    // Anthropic call), so a DB write failure here must be reported with its real
+    // reason — a column/type mismatch, a NOT-NULL violation, etc. — rather than
+    // collapsing into a reasonless 500 the client can't act on.
+    try {
+      if (existing) {
+        // Depth changed or explicit regenerate — overwrite the open draft.
+        const updated = await saveRegeneratedDraft(existing.id, {
+          subject: draft.subject,
+          draftedText: draft.body,
+          discountPercent,
+          discountExpiresAt: expiresAtIso,
+          cartUrl: cart.url,
+          productIds,
+          personaLabel,
+        });
+        if (!updated) {
+          // The write itself succeeded structurally but matched no open draft —
+          // it was sent (now immutable) or removed between read and write.
+          return adminJsonError(
+            "draft_gone",
+            "The open draft to overwrite no longer exists (it may have been sent).",
+            409
+          );
+        }
+        return adminJson({ send: updated, regenerated: true });
+      }
+
+      const send = await createDraft({
+        captureId,
         subject: draft.subject,
         draftedText: draft.body,
         discountPercent,
+        discountCode: null, // minted at send time
+        discountCodeGid: null,
         discountExpiresAt: expiresAtIso,
         cartUrl: cart.url,
         productIds,
         personaLabel,
       });
-      if (!updated) {
-        return adminJsonError("internal_error", "Could not update the draft.", 500);
+
+      if (!send) {
+        return adminJsonError("internal_error", "Could not persist the draft.", 500);
       }
-      return adminJson({ send: updated, regenerated: true });
+      return adminJson({ send });
+    } catch (dbErr) {
+      reportError(dbErr, {
+        route: "api/admin/marketing/draft",
+        phase: "persistDraft",
+      });
+      const reason = dbErr instanceof Error ? dbErr.message : String(dbErr);
+      return adminJsonError(
+        "draft_persist_failed",
+        `Could not save the generated draft to the database: ${reason}`,
+        500
+      );
     }
-
-    const send = await createDraft({
-      captureId,
-      subject: draft.subject,
-      draftedText: draft.body,
-      discountPercent,
-      discountCode: null, // minted at send time
-      discountCodeGid: null,
-      discountExpiresAt: expiresAtIso,
-      cartUrl: cart.url,
-      productIds,
-      personaLabel,
-    });
-
-    if (!send) {
-      return adminJsonError("internal_error", "Could not persist the draft.", 500);
-    }
-    return adminJson({ send });
   } catch (err) {
     reportError(err, { route: "api/admin/marketing/draft" });
     return adminJsonError("internal_error", "Draft generation failed.", 500);
