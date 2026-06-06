@@ -33,6 +33,10 @@ export interface MarketingSendRow {
   cartUrl: string | null;
   productIds: string[];
   personaLabel: string | null;
+  /** Unique token for the tracked redirect link (/api/r/<token>); minted at send. */
+  redirectToken: string | null;
+  /** First-click timestamp on the tracked link (null = not yet clicked). */
+  clickedAt: string | null;
   sentAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -81,6 +85,8 @@ function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
     cartUrl: (r.cart_url as string | null) ?? null,
     productIds: Array.isArray(r.product_ids) ? (r.product_ids as string[]) : [],
     personaLabel: (r.persona_label as string | null) ?? null,
+    redirectToken: (r.redirect_token as string | null) ?? null,
+    clickedAt: (r.clicked_at as string | null) ?? null,
     sentAt: (r.sent_at as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
     updatedAt: (r.updated_at as string | null) ?? null,
@@ -193,6 +199,91 @@ export async function getSendById(
     return rows[0] ? mapSendRow(rows[0]) : null;
   } catch (err) {
     reportError(err, { route: "lib/marketing-store", phase: "getSendById" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Click-tracking — the tracked redirect link in sent marketing emails.
+// ---------------------------------------------------------------------------
+//
+// The email links to /api/r/<token> instead of straight to Shopify. The token
+// maps to one marketing_sends row, whose cart_url is the REAL prefilled-cart URL
+// (with ?discount=CODE). The redirect endpoint logs the click and forwards there.
+//
+// GDPR: this is a click on a link the user CHOSE to click — not covert
+// surveillance, no open-tracking pixel.
+
+/**
+ * Generate a unique, hard-to-guess redirect token (192 bits, URL-safe base64).
+ * Long and random enough that tokens can't be enumerated; short enough to sit in
+ * a clean /api/r/<token> URL.
+ */
+export function generateRedirectToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  // base64url, no padding.
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export interface ClickResolution {
+  /** The real Shopify prefilled-cart URL to forward to (null if the row had none). */
+  destination: string | null;
+  sendId: number;
+}
+
+/**
+ * Resolve a redirect token to its sent row and record the click in one place:
+ *   - set clicked_at = now() on the FIRST click only (the `clicked_at IS NULL`
+ *     guard makes repeat clicks a no-op — they never error),
+ *   - log a 'marketing_email_clicked' kpi_event on every click (with send /
+ *     capture id and a firstClick flag) so click VOLUME stays visible.
+ * Returns the real cart destination, or null when the token can't be resolved
+ * (unknown / expired / pruned) so the caller can fall back gracefully. Never
+ * throws.
+ */
+export async function recordEmailClick(
+  token: string,
+  sql: Sql | null = getSql()
+): Promise<ClickResolution | null> {
+  if (!sql) return null;
+  const t = token.trim();
+  if (!t) return null;
+  try {
+    const rows = (await sql`
+      SELECT id, email_capture_id, cart_url, clicked_at
+        FROM marketing_sends
+       WHERE redirect_token = ${t} AND status = 'sent'
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    const row = rows[0];
+    if (!row) return null;
+
+    const sendId = Number(row.id);
+    const captureId = Number(row.email_capture_id);
+    const destination = (row.cart_url as string | null) ?? null;
+    const firstClick = row.clicked_at == null;
+
+    // First click stamps clicked_at; the guard makes repeats a no-op.
+    await sql`
+      UPDATE marketing_sends
+         SET clicked_at = now()
+       WHERE id = ${sendId} AND clicked_at IS NULL
+    `;
+    // Cluster-A telemetry: session_id is null (this is a marketing-email click,
+    // not a widget event); the internal send/capture ids live in `data`.
+    await sql`
+      INSERT INTO kpi_events (session_id, event, data)
+      VALUES (
+        NULL,
+        'marketing_email_clicked',
+        ${JSON.stringify({ sendId, captureId, firstClick })}::jsonb
+      )
+    `;
+    return { destination, sendId };
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "recordEmailClick" });
     return null;
   }
 }
