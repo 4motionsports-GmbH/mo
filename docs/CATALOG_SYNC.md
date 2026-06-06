@@ -131,6 +131,47 @@ admin and ensure it has a populated **`label`** (or `name`/`title`) field.
 Once the metaobject has the expected field, re-run the sync (see below) and
 the label will flow through.
 
+## Stock / availability status
+
+The sync captures each product's stock status from the Shopify Admin API
+(`2026-04`) so Mo and the product cards know what's actually available:
+
+| Source field (Admin API)            | Type       | Used for                                   |
+| ----------------------------------- | ---------- | ------------------------------------------ |
+| `ProductVariant.availableForSale`   | `Boolean!` | Per-variant "can be sold now" — respects the inventory policy (a "continue selling when out of stock" variant stays `true`). |
+| `Product.totalInventory`            | `Int`      | Units in stock across variants/locations.  |
+| `Product.tracksInventory`           | `Boolean!` | Whether the quantity is meaningful at all. |
+
+`mapShopifyProducts` derives the catalog's stock fields from these:
+
+- **`inStock`** (`boolean`, always present) — the headline flag. `true` when
+  **any** variant is `availableForSale`. Falls back through
+  `totalInventory > 0` → first-variant `inventoryQuantity > 0` → permissive
+  default, so older payloads and the committed fallback bundle (which carry no
+  availability data) keep their prior behaviour and never falsely read as
+  sold out.
+- **`inventoryQuantity`** (`number`, optional) — `Product.totalInventory` when
+  present.
+- **`anyVariantAvailable`** (`boolean`, optional) — whether any variant is
+  `availableForSale`. Omitted when no availability data was present.
+
+These are written to the catalog Blob alongside every other field and surfaced
+on `GET /api/products` (`inStock` is what the widget uses for an "Ausverkauft"
+badge — see `docs/API_CONTRACT.md`).
+
+> **Freshness — sync-fresh, not live.** Stock status is only as current as the
+> last successful daily sync (the cron runs `0 3 * * *`). This is a pragmatic,
+> good-enough trade-off: it stops Mo from leading with or checking out
+> sold-out items, while staying simple. The known limitation is a window of up
+> to ~24h where a just-sold-out item can still read as in stock.
+>
+> **Future option — live availability check.** If day-stale data proves
+> insufficient (e.g. fast-moving SKUs going out of stock between syncs), a
+> live check can be layered in later: query `ProductVariant.availableForSale`
+> for just the handful of products Mo is about to recommend / add to a
+> checkout, at request time, and override the cached `inStock`. This was
+> deliberately deferred — the sync-fresh approach is enough for now.
+
 ## How the runtime reads the catalog
 
 `src/lib/catalog-store.ts`:
