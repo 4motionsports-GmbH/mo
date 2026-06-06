@@ -41,6 +41,12 @@ export interface PrefilledCart {
   resolvedProductIds: string[];
   /** Ids that could not be resolved (unknown product or no numeric variant). */
   unresolvedProductIds: string[];
+  /**
+   * Ids skipped because the product is sold out AND `excludeSoldOut` was set.
+   * Surfaced separately from `unresolvedProductIds` so callers can tell a
+   * deliberate availability exclusion apart from a missing-variant failure.
+   */
+  soldOutProductIds: string[];
 }
 
 export interface BuildPrefilledCartOptions {
@@ -53,6 +59,13 @@ export interface BuildPrefilledCartOptions {
   quantityPerItem?: number;
   /** Override the shop domain (defaults to the production storefront). */
   shopDomain?: string;
+  /**
+   * When true, products that are sold out (`inStock === false`) are skipped
+   * and reported in `soldOutProductIds` instead of being added to the cart.
+   * Used by the quick-checkout path so a sold-out item can never enter a
+   * checkout action (stock is sync-fresh — see docs/CATALOG_SYNC.md).
+   */
+  excludeSoldOut?: boolean;
 }
 
 function normalizedQuantity(quantity: number | undefined): number {
@@ -80,6 +93,7 @@ export function buildPrefilledCartUrl(
   const lines: CartLine[] = [];
   const resolvedProductIds: string[] = [];
   const unresolvedProductIds: string[] = [];
+  const soldOutProductIds: string[] = [];
   const variantIds: string[] = [];
   // De-dupe variant ids so the same product isn't added twice (e.g. discussed
   // and also "recommended"), while preserving first-seen order.
@@ -87,6 +101,14 @@ export function buildPrefilledCartUrl(
 
   for (const productId of productIds) {
     const product = productsById.get(productId);
+    // Hard guarantee: a sold-out product never enters the checkout link when
+    // the caller opts in. We still record it (lines + soldOutProductIds) so the
+    // caller can explain the omission rather than silently dropping it.
+    if (options.excludeSoldOut && product && product.inStock === false) {
+      lines.push({ productId, variantId: null, product });
+      soldOutProductIds.push(productId);
+      continue;
+    }
     const variantId = product
       ? parseNumericVariantId(product.shopifyVariantId ?? null)
       : null;
@@ -109,7 +131,7 @@ export function buildPrefilledCartUrl(
     shopDomain,
   });
 
-  return { url, lines, resolvedProductIds, unresolvedProductIds };
+  return { url, lines, resolvedProductIds, unresolvedProductIds, soldOutProductIds };
 }
 
 /**

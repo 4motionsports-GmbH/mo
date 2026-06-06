@@ -219,8 +219,32 @@ export function mapShopifyProducts(
     const deliveryTime = deliveryTimeLabel(deliveryMinDays);
     const series = serieMeta || undefined;
 
+    // Stock status (sync-fresh; refreshed by the daily catalog cron, not a live
+    // check — see docs/CATALOG_SYNC.md). Prefer Shopify's per-variant
+    // `availableForSale`, which already factors in the inventory policy (a
+    // "continue selling when out of stock" variant stays available). A product
+    // counts as in stock when ANY of its variants can be sold. We fall back
+    // through totalInventory → first-variant inventoryQuantity → permissive
+    // default so older payloads and the committed fallback bundle (which carry
+    // no availability data) keep their previous behaviour and never falsely show
+    // as sold out.
+    const variantsWithAvail = p.variants.filter(
+      (v) => typeof v.availableForSale === "boolean"
+    );
+    const anyVariantAvailable =
+      variantsWithAvail.length > 0
+        ? variantsWithAvail.some((v) => v.availableForSale === true)
+        : undefined;
+    const totalInventory =
+      typeof p.totalInventory === "number" ? p.totalInventory : undefined;
     const inStock =
-      variant?.inventoryQuantity == null ? true : variant.inventoryQuantity > 0;
+      anyVariantAvailable != null
+        ? anyVariantAvailable
+        : totalInventory != null
+          ? totalInventory > 0
+          : variant?.inventoryQuantity == null
+            ? true
+            : variant.inventoryQuantity > 0;
 
     // Resolve the *numeric* Shopify variant id (Admin/Storefront GraphQL
     // returns a GID like "gid://shopify/ProductVariant/40123456789"). The cart
@@ -249,6 +273,8 @@ export function mapShopifyProducts(
       ...(shopifyCartUrl ? { shopifyCartUrl } : {}),
       images: uniqueImages,
       inStock,
+      ...(totalInventory != null ? { inventoryQuantity: totalInventory } : {}),
+      ...(anyVariantAvailable != null ? { anyVariantAvailable } : {}),
       deliveryTime,
       ...(series ? { series } : {}),
       tags,

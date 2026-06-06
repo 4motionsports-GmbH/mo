@@ -160,6 +160,12 @@ export interface ShopifyProductVariant {
   price: string; // GraphQL Money — decimal string
   compareAtPrice?: string | null;
   inventoryQuantity?: number | null;
+  // Whether THIS variant can currently be sold. Shopify computes this from the
+  // variant's inventory AND its inventory policy, so a variant set to "continue
+  // selling when out of stock" is still `true` here. Preferred signal for the
+  // catalog's stock status — see catalog-mapping.ts.
+  // Field: ProductVariant.availableForSale (Boolean!), Admin API 2026-04.
+  availableForSale?: boolean | null;
 }
 
 export interface ShopifyMetafield {
@@ -185,6 +191,16 @@ export interface ShopifyProduct {
   images: ShopifyProductImage[];
   variants: ShopifyProductVariant[];
   metafields: ShopifyMetafield[];
+  // Product-level stock signals (Admin API 2026-04):
+  //   Product.totalInventory  (Int)      — quantity in stock across all
+  //                                         variants/locations. Null/0 when not
+  //                                         tracked.
+  //   Product.tracksInventory (Boolean!) — whether inventory tracking is on for
+  //                                         this product. When false, quantity is
+  //                                         not meaningful and availability is
+  //                                         governed by the variant's policy.
+  totalInventory?: number | null;
+  tracksInventory?: boolean | null;
 }
 
 // Metafields we want surfaced for product mapping. The (namespace,key) pairs
@@ -265,6 +281,13 @@ const PRODUCTS_QUERY = /* GraphQL */ `
         publishedAt
         tags
         onlineStoreUrl
+        # Stock signals — sync-fresh (refreshed by the daily catalog cron, not a
+        # live per-request check). totalInventory is the in-stock quantity across
+        # variants/locations; tracksInventory tells us whether that number is
+        # meaningful. Per-variant availableForSale (below) is the authoritative
+        # "can this be sold right now" flag and also respects oversell policy.
+        totalInventory
+        tracksInventory
         category {
           fullName
           name
@@ -286,6 +309,7 @@ const PRODUCTS_QUERY = /* GraphQL */ `
             price
             compareAtPrice
             inventoryQuantity
+            availableForSale
           }
         }
         ${METAFIELD_QUERY_FIELDS}
@@ -400,6 +424,8 @@ type ProductNode = {
   publishedAt: string | null;
   tags: string[];
   onlineStoreUrl: string | null;
+  totalInventory: number | null;
+  tracksInventory: boolean | null;
   category: { fullName: string | null; name: string | null } | null;
   featuredImage: ShopifyProductImage | null;
   images: { nodes: ShopifyProductImage[] };
@@ -451,6 +477,8 @@ export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
         featuredImage: n.featuredImage,
         images: n.images?.nodes ?? [],
         variants: n.variants?.nodes ?? [],
+        totalInventory: n.totalInventory,
+        tracksInventory: n.tracksInventory,
         metafields,
       });
     }

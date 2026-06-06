@@ -41,10 +41,17 @@ export interface PublicProduct {
   images: string[];
   shopifyUrl: string;
   // Storefront cart permalink (`/cart/<numericVariantId>:1`). Omitted when the
-  // product has no resolvable numeric variant id, so the widget can degrade
-  // gracefully instead of linking to a broken cart.
+  // product has no resolvable numeric variant id OR when the product is sold
+  // out, so the widget can degrade gracefully instead of linking to a checkout
+  // for an unavailable item.
   shopifyCartUrl?: string;
+  // Stock status (sync-fresh, refreshed by the daily catalog cron — not a live
+  // check). `inStock` is the headline flag the widget uses to show a subtle
+  // "Ausverkauft" badge. The two optional fields carry richer signals when the
+  // sync captured them.
   inStock: boolean;
+  inventoryQuantity?: number;
+  anyVariantAvailable?: boolean;
   deliveryTime: string;
 }
 
@@ -65,8 +72,12 @@ function toPublic(p: Product): PublicProduct {
     tags: p.tags,
     images: p.images,
     shopifyUrl: p.shopifyUrl,
-    ...(p.shopifyCartUrl ? { shopifyCartUrl: p.shopifyCartUrl } : {}),
+    // Never expose a quick-checkout link for a sold-out product — that keeps a
+    // sold-out item out of the checkout even at the single-product card level.
+    ...(p.shopifyCartUrl && p.inStock ? { shopifyCartUrl: p.shopifyCartUrl } : {}),
     inStock: p.inStock,
+    ...(typeof p.inventoryQuantity === "number" ? { inventoryQuantity: p.inventoryQuantity } : {}),
+    ...(typeof p.anyVariantAvailable === "boolean" ? { anyVariantAvailable: p.anyVariantAvailable } : {}),
     deliveryTime: p.deliveryTime,
   };
 }
@@ -136,7 +147,11 @@ export async function GET(req: Request) {
     // without the widget having to stitch variant ids out of per-product URLs.
     // No discount (that is marketing-only). Null when nothing resolves; for a
     // single id it equals that product's own cart permalink.
-    const cartUrl = buildPrefilledCartUrl(ids, byId).url;
+    //
+    // excludeSoldOut: the quick-checkout action must NEVER contain a sold-out
+    // item, so we drop them here as a hard guarantee on top of the system
+    // prompt instructing Mo not to include them. Stock is sync-fresh (daily).
+    const cartUrl = buildPrefilledCartUrl(ids, byId, { excludeSoldOut: true }).url;
 
     return new Response(JSON.stringify({ products, cartUrl }), {
       status: 200,

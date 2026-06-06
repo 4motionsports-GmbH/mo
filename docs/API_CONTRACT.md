@@ -534,7 +534,15 @@ type PublicProduct = {
   images: string[];
   shopifyUrl: string;
   shopifyCartUrl?: string; // optional — see note below
+  // Stock status, refreshed by the daily catalog sync (NOT a live per-request
+  // check — see docs/CATALOG_SYNC.md). `inStock` is the headline flag: render a
+  // subtle "Ausverkauft" badge on the card when it is `false`. The two optional
+  // fields carry richer signals when the sync captured them:
+  //   inventoryQuantity   — units in stock across variants/locations
+  //   anyVariantAvailable — whether any variant is currently sellable
   inStock: boolean;
+  inventoryQuantity?: number;
+  anyVariantAvailable?: boolean;
   deliveryTime: string;
 };
 
@@ -542,9 +550,11 @@ type ProductsResponse = {
   products: (PublicProduct | null)[];
   // Combined prefilled-cart permalink covering ALL requested resolvable
   // variants in ONE cart (`…/cart/<v1>:1,<v2>:1`). Use this for the
-  // multi-product `add_to_cart` checkout button. `null` when no requested id
-  // resolves to a variant. For a single requested id it equals that product's
-  // own `shopifyCartUrl`. Never carries a discount (marketing-only).
+  // multi-product `add_to_cart` checkout button. Sold-out products are
+  // excluded — they can never enter this checkout link. `null` when no
+  // requested id resolves to an in-stock variant. For a single requested id it
+  // equals that product's own `shopifyCartUrl`. Never carries a discount
+  // (marketing-only).
   cartUrl: string | null;
 };
 ```
@@ -563,8 +573,17 @@ the product's variant, of the form `https://motionsports.de/cart/<numericVariant
 is always the **numeric** Shopify variant id — never the SKU, handle, or
 product id; a SKU-based URL 404s with "Cannot find variant". The field is
 **optional**: it is omitted when a product has no resolvable numeric variant
-id, so the widget should hide the quick-checkout button (or fall back to
-`shopifyUrl`) rather than render a broken checkout link.
+id, **or when the product is sold out** (`inStock: false`), so the widget
+should hide the quick-checkout button (or fall back to `shopifyUrl`) rather
+than render a broken or sold-out checkout link.
+
+**Stock status & checkout guarantee.** `inStock` reflects the latest daily
+catalog sync (sync-fresh, not a live availability check). A sold-out product
+is **never** offered a checkout link: its `shopifyCartUrl` is omitted, and it
+is excluded from the combined top-level `cartUrl` (so a sold-out item can never
+enter a checkout action even when bundled with in-stock products). The
+`null`/sold-out entries still carry full product data and `inStock: false`, so
+the widget can render the card with a subtle "Ausverkauft" badge.
 
 Response is cacheable for 60 s
 (`Cache-Control: public, max-age=60, stale-while-revalidate=300`).

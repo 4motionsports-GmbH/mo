@@ -34,7 +34,19 @@ export interface Product {
   // rather than link to a broken (SKU-based) cart.
   shopifyCartUrl?: string;
   images: string[];
+  // Stock status, refreshed by the daily catalog sync (NOT a live per-request
+  // check — see docs/CATALOG_SYNC.md). `inStock` is the headline flag Mo and
+  // the UI use: true when the product can currently be sold.
   inStock: boolean;
+  // Optional richer stock signals captured from Shopify when available.
+  //   inventoryQuantity   — units in stock across variants/locations
+  //                         (Shopify `Product.totalInventory`). Omitted when
+  //                         inventory isn't tracked.
+  //   anyVariantAvailable — whether ANY variant is `availableForSale` (already
+  //                         accounts for oversell policy). Omitted when no
+  //                         availability data was present (e.g. fallback bundle).
+  inventoryQuantity?: number;
+  anyVariantAvailable?: boolean;
   deliveryTime: string;
   series?: string;
   tags: string[];
