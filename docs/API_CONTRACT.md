@@ -273,17 +273,24 @@ Widget action: `GET /api/products?ids=a,b`, render a table with image
 + name as column headers and rows for price, key spec rows, and
 `deliveryTime`. Show `comparisonContext` as a caption above the table.
 
-##### `add_to_cart` → direct-checkout CTA
+##### `add_to_cart` → direct-checkout CTA (single **or** multi-product)
 
 > Tool id stays `add_to_cart` for backwards-compat, but it now drives a
-> **direct checkout**: `shopifyCartUrl` is a one-unit cart permalink that
-> sends the shopper straight to Shopify's checkout for that product.
+> **direct checkout** and can cover **one or several** products in a single
+> cart. The model emits **one** `add_to_cart` call per buying decision.
 
-Input schema:
+Input schema (**either** `productId` **or** `productIds`, at least one required):
 ```ts
-{ productId: string; message: string }
+{ productId?: string; productIds?: string[]; message: string }
 ```
-Example part:
+
+- **Single product** — the model sets `productId` (unchanged from before).
+- **Multiple products** — when the shopper clearly wants several items together
+  ("beides nehme ich", "das Rack UND die Hantelbank"), the model sets
+  `productIds` with **all** intended ids and calls the tool **once**. This is
+  one combined cart, not several separate buttons.
+
+Single-product example part (backward compatible):
 ```json
 {
   "type": "tool-add_to_cart",
@@ -295,10 +302,39 @@ Example part:
   }
 }
 ```
-Widget action: `GET /api/products?id=…`, render a quick-checkout CTA card
-with `message` plus a primary button linking to `product.shopifyCartUrl`
-(`target="_blank" rel="noopener noreferrer"`). The button sends the shopper
-**directly to checkout** (one unit), not into a cart they must then manage.
+
+Multi-product example part:
+```json
+{
+  "type": "tool-add_to_cart",
+  "toolCallId": "call_ghi790",
+  "state": "result",
+  "input": {
+    "productIds": ["atx-rack-pro", "atx-bench-pro"],
+    "message": "Wenn die Kombi für dich passt, kannst du beides hier direkt bestellen."
+  }
+}
+```
+
+**Widget action — WHAT CHANGED FOR THE FRONTEND:**
+
+1. **Normalise the input to an id list:** `const ids = input.productIds ?? [input.productId!]`.
+   (Old code that only reads `input.productId` keeps working for single-product
+   calls, but should be updated to handle `productIds` for the multi case.)
+2. **Hydrate:** `GET /api/products?ids=<id1>,<id2>,…` (the existing multi-id
+   form — up to 10 ids). Render **one** quick-checkout card listing every
+   resolved product (name / price / thumbnail), with `message` as the header.
+3. **Checkout button:** link it to the **top-level** `cartUrl` from that same
+   `/api/products` response — a single permalink that puts **all** variants in
+   **one** cart (`…/cart/<v1>:1,<v2>:1`). Do **not** stitch this together from
+   the per-product `shopifyCartUrl` values; use the server-built `cartUrl`.
+   Open with `target="_blank" rel="noopener noreferrer"`.
+4. **Degrade gracefully:** if `cartUrl` is `null` (no variant resolved), hide
+   the checkout button (or fall back to listing the products' `shopifyUrl`
+   links). Unknown ids come back as `null` entries in `products` — skip them.
+
+The button sends the shopper **directly to checkout** (one unit per line), not
+into a cart they must then manage.
 
 ##### `suggest_showroom` → showroom suggestion
 
@@ -472,7 +508,8 @@ within a request are de-duplicated while preserving order.
       "deliveryTime": "Nach Verfügbarkeit"
     },
     null
-  ]
+  ],
+  "cartUrl": "https://motionsports.de/cart/40123456789:1,40987654321:1"
 }
 ```
 
@@ -501,11 +538,24 @@ type PublicProduct = {
   deliveryTime: string;
 };
 
-type ProductsResponse = { products: (PublicProduct | null)[] };
+type ProductsResponse = {
+  products: (PublicProduct | null)[];
+  // Combined prefilled-cart permalink covering ALL requested resolvable
+  // variants in ONE cart (`…/cart/<v1>:1,<v2>:1`). Use this for the
+  // multi-product `add_to_cart` checkout button. `null` when no requested id
+  // resolves to a variant. For a single requested id it equals that product's
+  // own `shopifyCartUrl`. Never carries a discount (marketing-only).
+  cartUrl: string | null;
+};
 ```
 
 Unknown ids return as `null` at the matching index — never a 404 — so
 the widget can render partial results without aborting.
+
+The top-level **`cartUrl`** is new: it is the one-click checkout link for a
+**multi-product** `add_to_cart` (and works for the single-product case too).
+It is built server-side from the resolvable numeric variant ids, so the widget
+never has to assemble a multi-variant permalink itself.
 
 `shopifyCartUrl` is a Shopify storefront cart permalink for **one** unit of
 the product's variant, of the form `https://motionsports.de/cart/<numericVariantId>:1`

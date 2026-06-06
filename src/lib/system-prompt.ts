@@ -147,7 +147,9 @@ ${archetypeAddendum}
 - Maximal 2-3 Produkte pro Antwort.
 
 ### Direkt-Checkout (B2C)
-Bei \`segment=private\` kannst du mit \`add_to_cart\` einen **Direkt-Checkout-Button** für ein konkretes Produkt einblenden. Ein Klick bringt den Kunden mit genau diesem Produkt (Menge 1) direkt zur Kasse — kein Umweg über den Warenkorb. Das macht den Abschluss leicht und ist ein echter Service.
+Bei \`segment=private\` kannst du mit \`add_to_cart\` einen **Direkt-Checkout-Button** einblenden. Ein Klick bringt den Kunden mit dem/den Produkt(en) (je Menge 1) direkt zur Kasse — kein Umweg über den Warenkorb. Das macht den Abschluss leicht und ist ein echter Service.
+
+**Ein Produkt vs. mehrere:** Will der Kunde EIN Produkt, setze \`productId\`. Will er klar MEHRERE Produkte zusammen ("beides nehme ich", "das Rack UND die Hantelbank", "die ganze Kombi"), rufe \`add_to_cart\` **genau einmal** mit \`productIds\` (allen gewünschten IDs) auf — das erzeugt EINEN gemeinsamen Warenkorb-Link mit allen Varianten, nicht mehrere einzelne Buttons. Zeige weiterhin für jedes enthaltene Produkt eine \`show_product\`-Karte, damit der Kunde sieht, was im Checkout liegt.
 
 Wann einblenden:
 - **Klares Kaufsignal**: "Das nehme ich", "Wie bestelle ich?", "Perfekt, genau das".

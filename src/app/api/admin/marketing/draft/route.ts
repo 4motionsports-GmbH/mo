@@ -9,7 +9,7 @@
 //   2. validates the selected discount depth (None / 5 / 10 / 15),
 //   3. writes an AI-drafted personalised German email; when a discount is
 //      selected the body is woven around a clearly-marked PLACEHOLDER code
-//      (MOIA-XXXX) plus the projected expiry, so the admin previews exactly how
+//      (MO-XXXX) plus the projected expiry, so the admin previews exactly how
 //      it will read,
 //   4. persists the draft (status 'draft') with the selected depth.
 //

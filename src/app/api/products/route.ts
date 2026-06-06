@@ -16,6 +16,7 @@ import {
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { loadProductCatalog } from "@/lib/catalog-store";
+import { buildPrefilledCartUrl } from "@/lib/cart";
 import type { Product } from "@/lib/types";
 
 export const maxDuration = 10;
@@ -128,7 +129,16 @@ export async function GET(req: Request) {
       return p ? toPublic(p) : null;
     });
 
-    return new Response(JSON.stringify({ products }), {
+    // Combined prefilled-cart permalink covering ALL requested (resolvable)
+    // variants in ONE cart — built via the shared lib/cart.ts helper so the
+    // single- and multi-product checkout paths can never drift apart. Lets a
+    // multi-product `add_to_cart` (productIds) render a single checkout button
+    // without the widget having to stitch variant ids out of per-product URLs.
+    // No discount (that is marketing-only). Null when nothing resolves; for a
+    // single id it equals that product's own cart permalink.
+    const cartUrl = buildPrefilledCartUrl(ids, byId).url;
+
+    return new Response(JSON.stringify({ products, cartUrl }), {
       status: 200,
       headers: {
         "Content-Type": "application/json",

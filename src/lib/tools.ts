@@ -168,15 +168,33 @@ Gib das Ergebnis NICHT roh aus — nutze es um dann show_product oder compare_pr
 
     add_to_cart: tool({
       description:
-        "Blendet einen Direkt-Checkout-Button für EIN Produkt ein. Ein Klick bringt den Privatkunden mit diesem Produkt (Menge 1) direkt zur Kasse. Nutze ihn bei klaren Kaufsignalen ('Das nehme ich', 'Wie bestelle ich?') ODER von dir aus, wenn die Beratung rund ist und der Kunde zu einem konkreten Produkt zufrieden/entschieden wirkt — dann als niedrigschwelliges Angebot, ohne Druck und pro Produktentscheidung nur einmal. Immer mit show_product fürs selbe Produkt kombinieren. NUR bei segment=private; bei studio/public_sector/physio stattdessen show_contact_form.",
-      inputSchema: z.object({
-        productId: z.string().describe("Die ID des Produkts"),
-        message: z
-          .string()
-          .describe(
-            "Kurze, einladende Nachricht zum Direkt-Checkout — bestätigend und hilfsbereit, nie drängend. z.B. 'Wenn es für dich passt, kannst du es hier direkt bestellen.'"
-          ),
-      }),
+        "Blendet einen Direkt-Checkout-Button ein. Ein Klick bringt den Privatkunden mit dem/den Produkt(en) (je Menge 1) direkt zur Kasse. Für EIN Produkt: setze productId. Wenn der Kunde klar MEHRERE Produkte zusammen kaufen will ('beides nehme ich', 'das Rack UND die Hantelbank', 'die ganze Kombi'): setze productIds mit ALLEN gewünschten IDs — das ergibt EINEN gemeinsamen Warenkorb mit allen Varianten, NICHT mehrere einzelne Buttons. Rufe das Tool dann nur EINMAL auf. Nutze ihn bei klaren Kaufsignalen ('Das nehme ich', 'Wie bestelle ich?') ODER von dir aus, wenn die Beratung rund ist und der Kunde entschieden wirkt — niedrigschwellig, ohne Druck, pro Kaufentscheidung nur einmal. Immer mit show_product für jedes enthaltene Produkt kombinieren. NUR bei segment=private; bei studio/public_sector/physio stattdessen show_contact_form.",
+      inputSchema: z
+        .object({
+          productId: z
+            .string()
+            .optional()
+            .describe(
+              "Die ID des Produkts für einen Einzel-Checkout. Nutze entweder productId (ein Produkt) ODER productIds (mehrere)."
+            ),
+          productIds: z
+            .array(z.string())
+            .min(1)
+            .optional()
+            .describe(
+              "Mehrere Produkt-IDs für EINEN gemeinsamen Checkout (alle Varianten in einem Warenkorb). Nutze dies, wenn der Kunde klar mehrere Produkte zusammen kaufen will."
+            ),
+          message: z
+            .string()
+            .describe(
+              "Kurze, einladende Nachricht zum Direkt-Checkout — bestätigend und hilfsbereit, nie drängend. z.B. 'Wenn das für dich passt, kannst du beides hier direkt bestellen.'"
+            ),
+        })
+        // Backward compatible: at least one of productId / productIds must be
+        // present. The frontend normalises both to a single id list.
+        .refine((d) => Boolean(d.productId) || (d.productIds?.length ?? 0) > 0, {
+          message: "Either productId or productIds must be provided.",
+        }),
       execute: async () => ({ ok: true }),
     }),
 
