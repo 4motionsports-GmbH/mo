@@ -17,7 +17,18 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { persistTurn, type ToolInvocation } from "@/lib/conversation-store";
 
-export const maxDuration = 60;
+// This route runs on the Node.js runtime (the Next.js default — we do not set
+// `runtime = "edge"`). Node + Vercel Fluid Compute streams the SSE body
+// token-by-token just as well as Edge for this route, and Node is required by
+// our stack here (Sentry, the Neon driver, post-stream persistence). It also
+// means `maxDuration` below actually applies — that knob governs Node/Fluid
+// functions, not Edge.
+//
+// Longer/complex consultations were terminating early at the old 60s cap. With
+// Fluid Compute (now the default — see the catalog-sync cron already at 300s),
+// the Hobby/Free tier reliably allows up to 300s, so we raise to the ceiling.
+// FREE-TIER LIMIT — raise to 800 once on Vercel Pro.
+export const maxDuration = 300;
 
 const MAX_MESSAGES_PER_CONVERSATION = 40;
 
