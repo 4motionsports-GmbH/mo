@@ -275,8 +275,11 @@ export async function createDraft(
     // Conflict: an open draft already exists — return it untouched.
     return getOpenDraftForCapture(input.captureId, sql);
   } catch (err) {
+    // A failed draft INSERT must be diagnosable — re-throw (after logging) so the
+    // route can surface the real DB reason (e.g. a missing column) in its JSON
+    // envelope instead of collapsing to a bare, reasonless 500.
     reportError(err, { route: "lib/marketing-store", phase: "createDraft" });
-    return null;
+    throw err;
   }
 }
 
@@ -368,8 +371,9 @@ export async function saveRegeneratedDraft(
     `) as Array<Record<string, unknown>>;
     return rows[0] ? mapSendRow(rows[0]) : null;
   } catch (err) {
+    // As with createDraft: surface the real reason rather than swallowing it.
     reportError(err, { route: "lib/marketing-store", phase: "saveRegeneratedDraft" });
-    return null;
+    throw err;
   }
 }
 
