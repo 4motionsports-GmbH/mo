@@ -229,7 +229,29 @@ export async function POST(req: Request) {
     // enforce CORS on the *response* the stream is delivered through, not on
     // individual SSE chunks, but the headers still have to be on that
     // response. Hence we always merge `cors` into the stream response below.
-    return result.toUIMessageStreamResponse({ headers: cors });
+    //
+    // STREAMING SMOOTHNESS: we do NOT buffer on our side — `streamText` +
+    // `toUIMessageStreamResponse()` pipe each UI-message chunk straight to the
+    // client as the model emits it (the `onFinish` persistence above runs
+    // AFTER generation and never delays token delivery). The only place a token
+    // could get held back is an upstream reverse proxy / CDN buffering the SSE
+    // body before forwarding. We disable that with explicit headers so chunks
+    // flush as they arrive:
+    //   - X-Accel-Buffering: no   → tells nginx-style proxies (incl. Vercel's
+    //                               edge layer) not to buffer the response.
+    //   - Cache-Control: no-cache, no-transform → no caching, and crucially
+    //     `no-transform` stops any proxy from re-chunking/compressing the body
+    //     (compression forces buffering of the whole stream).
+    // NB: this removes OUR buffering only. Perceived smoothness is still bound
+    // by the model's own token rate and the current Vercel hosting tier — we
+    // can stop holding tokens back, but we cannot make the model emit faster.
+    return result.toUIMessageStreamResponse({
+      headers: {
+        ...cors,
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+      },
+    });
   } catch (err) {
     reportError(err, { route: "api/chat", messageCount, archetype });
     return errorResponse("internal_error", "Unexpected server error", 500, cors);
