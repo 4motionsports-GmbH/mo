@@ -273,7 +273,7 @@ export function CustomerCard({ target }: { target: MarketingTargetProps }) {
             <p style={{ fontSize: 12, color: "#666", margin: "8px 0 12px" }}>
               Rabatt vor dem Generieren wählen — der Text wird darum herum
               geschrieben. Bei einem Rabatt zeigt der Entwurf einen Platzhalter-Code
-              (<code>MOIA-XXXX</code>); der echte, einmalige Code wird erst beim
+              (<code>MO-XXXX</code>); der echte, einmalige Code wird erst beim
               Versand erzeugt.
             </p>
             <button
@@ -466,7 +466,7 @@ function DraftPanel({
       ) : (
         <p style={{ fontSize: 12, color: "#666", margin: "8px 0 0" }}>
           {discountPercent > 0
-            ? `Vorschau mit Platzhalter-Code MOIA-XXXX. Den Platzhalter im Text bitte nicht ändern — er wird beim Versand durch den echten, einmaligen ${discountPercent}%-Code ersetzt.`
+            ? `Vorschau mit Platzhalter-Code MO-XXXX. Den Platzhalter im Text bitte nicht ändern — er wird beim Versand durch den echten, einmaligen ${discountPercent}%-Code ersetzt.`
             : "Kein Rabatt gewählt — der Text nennt keinen Code, der Warenkorb-Link enthält keinen Rabatt."}
         </p>
       )}

@@ -59,8 +59,13 @@ export function isAllowedDiscountPercent(n: unknown): n is AllowedDiscountPercen
  * admin sees exactly how the email will read, and at send time it is swapped
  * 1:1 for the real unique code. Kept deliberately obvious so the admin doesn't
  * mistake it for a working code.
+ *
+ * NOTE: this is only the DRAFT placeholder, not an issued code prefix — real
+ * minted codes use the `MS5-` prefix (see generateDiscountCodeString) and are
+ * unaffected by this rename. We renamed the placeholder MOIA-XXXX → MO-XXXX
+ * alongside the MOIA → Mo persona rename; no already-issued code is touched.
  */
-export const PLACEHOLDER_DISCOUNT_CODE = "MOIA-XXXX";
+export const PLACEHOLDER_DISCOUNT_CODE = "MO-XXXX";
 
 /** Days a minted code stays valid (env-overridable). Exposed so the draft
  * preview can show the same projected expiry the real code will get. */

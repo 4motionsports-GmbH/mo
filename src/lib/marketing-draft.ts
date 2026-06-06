@@ -1,7 +1,7 @@
 // AI-drafted personalised marketing email.
 //
 // Writes a warm, personal German email AS IF from a personal consultant at
-// motion sports (signed "MOIA"), referencing what the customer discussed in the
+// motion sports (signed "Mo"), referencing what the customer discussed in the
 // chat and recommending the products that came up. The discount code + prefilled
 // cart are NOT part of the editable prose — they are appended deterministically
 // at send time (see marketing-email.ts) so the admin can never edit away the
@@ -27,7 +27,7 @@ const draftSchema = z.object({
     .string()
     .describe(
       "Der E-Mail-Text auf Deutsch, in der Du-Form, warm und persönlich, " +
-        "unterschrieben mit 'MOIA, dein persönlicher Berater bei motion sports'. " +
+        "unterschrieben mit 'Mo, dein persönlicher Berater bei motion sports'. " +
         "Wenn ein persönliches Rabattangebot vorgegeben ist, wird es klar im Text " +
         "erwähnt (inkl. des exakten Codes), aber OHNE Warenkorb-Link und OHNE " +
         "Abmeldelink (die werden separat angehängt)."
@@ -45,7 +45,7 @@ export interface GenerateDraftInput {
   transcript: TranscriptMessage[];
   /**
    * The code string to weave into the body. At draft time this is the clearly-
-   * marked PLACEHOLDER (MOIA-XXXX); at send time the placeholder is swapped 1:1
+   * marked PLACEHOLDER (MO-XXXX); at send time the placeholder is swapped 1:1
    * for the real unique code. Null when no discount was selected.
    */
   discountCode: string | null;
@@ -83,7 +83,7 @@ function fallbackDraft(input: GenerateDraftInput): MarketingDraft {
   const lines: string[] = [
     "Hallo,",
     "",
-    "hier ist MOIA von motion sports. Schön, dass wir uns im Chat zu deinem " +
+    "hier ist Mo von motion sports. Schön, dass wir uns im Chat zu deinem " +
       "Trainingsvorhaben austauschen konnten.",
   ];
   if (input.products.length > 0) {
@@ -110,7 +110,7 @@ function fallbackDraft(input: GenerateDraftInput): MarketingDraft {
     "Melde dich jederzeit, wenn du Fragen hast — ich helfe dir gern persönlich weiter.",
     "",
     "Herzliche Grüße",
-    "MOIA, dein persönlicher Berater bei motion sports"
+    "Mo, dein persönlicher Berater bei motion sports"
   );
   return { subject, body: lines.join("\n") };
 }
@@ -152,7 +152,7 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
       model: anthropic(DRAFT_MODEL),
       schema: draftSchema,
       system:
-        "Du bist MOIA, ein persönlicher, sympathischer Berater bei motion sports " +
+        "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
         "(Fitness- und Kraftsportgeräte). Du schreibst eine kurze, warme, " +
         "persönliche Marketing-E-Mail auf Deutsch in der Du-Form an einen Kunden, " +
         "mit dem du im Chat gesprochen hast. Beziehe dich konkret auf das Gespräch " +
@@ -161,7 +161,7 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
         "persönliches Rabattangebot vorgegeben wird, webe es klar, warm und " +
         "einladend in den Text ein (mit dem exakten Code) — als persönliches " +
         "Angebot für genau diesen Kunden, nicht als Massen-Promo. Unterschreibe mit " +
-        "'MOIA, dein persönlicher Berater bei motion sports'. Baue KEINEN " +
+        "'Mo, dein persönlicher Berater bei motion sports'. Baue KEINEN " +
         "Warenkorb-Link und KEINEN Abmeldelink ein — die werden separat angehängt.",
       prompt:
         `Persona des Kunden: ${input.personaLabel ?? "unbekannt"}\n\n` +

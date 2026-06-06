@@ -102,7 +102,7 @@ body is written **around** the offer. The chosen depth is persisted on the
 > code for every draft would burn codes on drafts that are edited away or
 > discarded. The real code is minted only at **Approve & send** (see §4). The
 > draft **preview** therefore shows a clearly-marked **placeholder** code
-> `MOIA-XXXX` so the admin sees exactly how the offer will read; at send time the
+> `MO-XXXX` so the admin sees exactly how the offer will read; at send time the
 > placeholder is swapped 1:1 for the real code.
 
 ### Generate draft — `POST /api/admin/marketing/draft { captureId, discountPercent, regenerate? }`
@@ -116,12 +116,12 @@ body is written **around** the offer. The chosen depth is persisted on the
    ([`lib/cart.ts`](../src/lib/cart.ts)) — **no** `?discount=` param at draft time.
 5. Write the **AI-drafted** personalised German email
    ([`marketing-draft.ts`](../src/lib/marketing-draft.ts)) — warm, personal, as if
-   from **MOIA**, a personal consultant at motion sports; references the chat and
+   from **Mo**, a personal consultant at motion sports; references the chat and
    recommends the discussed products. **When a discount is selected**, the prompt is
    given the percentage, that the code is **unique, personal and single-use**, the
    **expiry**, and that a one-click prefilled cart button follows — and the model is
-   required to weave that into the body (near the call-to-action, in MOIA's warm
-   voice, using the placeholder `MOIA-XXXX`). **When "Kein Rabatt"** is selected, the
+   required to weave that into the body (near the call-to-action, in Mo's warm
+   voice, using the placeholder `MO-XXXX`). **When "Kein Rabatt"** is selected, the
    body must mention **no** discount. Stored as a `marketing_sends` row with
    `status = 'draft'`.
 
@@ -160,7 +160,7 @@ marketing email is sent. The guarantees, in order:
 3. **The unique code is minted here, at send time.** If the row's
    `discount_percent > 0`, `createUniqueDiscountCode()` mints a **unique, single-use**
    Shopify code (`write_discounts`, `usageLimit: 1`, `appliesOncePerCustomer`, with
-   expiry) at the chosen depth. The **placeholder** `MOIA-XXXX` in the body is then
+   expiry) at the chosen depth. The **placeholder** `MO-XXXX` in the body is then
    replaced 1:1 with the real code, and the prefilled-cart permalink is rebuilt with
    `?discount=REALCODE`. If minting **fails**, the send is **refused**
    (`discount_failed`) rather than ship an email that promises a dead code. When
@@ -322,13 +322,13 @@ non-confirmed or suppressed address).
 2. **Generate.** Click **Entwurf generieren**. Read the body: it must clearly tell
    the customer they have a **personal, unique, single-use 10 % code**, name an
    **expiry**, and point to the **one-click cart button** — with a **placeholder**
-   code `MOIA-XXXX`. (A note in the panel confirms the real code is minted on send;
+   code `MO-XXXX`. (A note in the panel confirms the real code is minted on send;
    don't edit the placeholder.) If you change the discount now, the card forces a
    **↻ Neu generieren** before it lets you send.
 3. **Approve & send to yourself.** Click **Freigeben & senden**. At this step the
    real unique code is minted and the placeholder is replaced everywhere.
 4. **Receive the email.** Confirm the body shows a **real** code (e.g. `MS5-XXXXXXXX`,
-   not `MOIA-XXXX`) and the **Warenkorb öffnen** button. The link is
+   not `MO-XXXX`) and the **Warenkorb öffnen** button. The link is
    `https://<shop>/cart/<variant>:1,…?discount=<REALCODE>`.
 5. **Apply it at checkout.** Open the cart button → the code is pre-applied; verify
    the **10 %** is deducted. Place a (test) order or just confirm the discount line.
