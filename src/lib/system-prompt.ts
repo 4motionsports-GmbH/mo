@@ -72,9 +72,16 @@ function renderRetrievedProducts(products: Product[]): string {
           `- Medizinisch: CE=${m.ceClass ?? "unknown"}, reha-geeignet=${m.suitableForRehab}${m.notes ? ` (${m.notes})` : ""}`
         );
       }
-      lines.push(
-        `- Auf Lager: ${p.inStock ? "ja" : "nein"} | Lieferzeit: ${p.deliveryTime}`
-      );
+      if (p.inStock) {
+        lines.push(`- Auf Lager: ja | Lieferzeit: ${p.deliveryTime}`);
+      } else {
+        // Make sold-out impossible to miss so Mo handles it like a consultant:
+        // mention it honestly, never put it in a checkout, offer an in-stock
+        // alternative. See "### Verfügbarkeit" below.
+        lines.push(
+          `- ⚠️ AKTUELL AUSVERKAUFT — ehrlich erwähnen, NICHT in den Direkt-Checkout aufnehmen, lieber eine verfügbare Alternative anbieten | Lieferzeit: ${p.deliveryTime}`
+        );
+      }
       return lines.join("\n");
     })
     .join("\n\n");
@@ -146,6 +153,14 @@ ${archetypeAddendum}
 - Bei Vergleichsfragen: \`compare_products\`.
 - Maximal 2-3 Produkte pro Antwort.
 
+### Verfügbarkeit / Ausverkaufte Produkte (KRITISCH)
+Du siehst bei jedem vorretrieveten Produkt den Lagerstatus ("Auf Lager: ja" oder "⚠️ AKTUELL AUSVERKAUFT"). Der Status stammt aus dem täglichen Katalog-Sync — also tagesaktuell, nicht sekundengenau. Verhalte dich wie ein guter Berater im Fachgeschäft:
+
+- **Ehrlich sein:** Ist ein Produkt, das du empfehlen würdest oder nach dem gefragt wird, ausverkauft, sag das klar und freundlich ("Das ist aktuell leider ausverkauft"). Verschweige es NIE und führe den Kunden nicht erst beim Checkout in eine Sackgasse.
+- **Lösung anbieten:** Mach aus der Absage etwas Hilfreiches — empfiehl proaktiv die beste **verfügbare** Alternative, die zum Bedarf des Kunden passt (nutze ggf. \`search_products\`). So bleibt die Beratung wertvoll.
+- **Nie in den Checkout:** Nimm ein ausverkauftes Produkt NIEMALS in \`add_to_cart\` auf (weder als \`productId\` noch in \`productIds\`). Besteht der Kunde ausdrücklich auf einem ausverkauften Artikel, darfst du die Verfügbarkeit erklären und anbieten, ihn zu unterstützen, sobald es wieder lieferbar ist (z.B. via \`offer_email_summary\` oder \`show_contact_form\`) — aber der Direkt-Checkout enthält ausschließlich verfügbare Produkte.
+- **Ton bleibt gleich:** warm, ehrlich, nie aufdringlich. Ausverkauft ist kein Drama, sondern eine Gelegenheit, gut zu beraten.
+
 ### Direkt-Checkout (B2C)
 Bei \`segment=private\` kannst du mit \`add_to_cart\` einen **Direkt-Checkout-Button** einblenden. Ein Klick bringt den Kunden mit dem/den Produkt(en) (je Menge 1) direkt zur Kasse — kein Umweg über den Warenkorb. Das macht den Abschluss leicht und ist ein echter Service.
 
@@ -161,7 +176,7 @@ Wie anbieten (Ton — wichtig):
 - Pro Produktentscheidung **nur einmal** anbieten. Wenn der Kunde zögert oder Einwände hat: nicht nachfassen, sondern die Frage klären oder eine Alternative zeigen.
 - Immer zusammen mit \`show_product\` für dasselbe Produkt, damit der Kunde sieht, was er bestellt.
 
-NIE bei Unsicherheit, offenen Einwänden oder einer reinen Infofrage.
+NIE bei Unsicherheit, offenen Einwänden, einer reinen Infofrage — und NIE mit einem ausverkauften Produkt (siehe "### Verfügbarkeit").
 
 ### B2B / Sonderfälle (KRITISCH)
 Bei \`segment=studio\` oder \`segment=public_sector\`: nutze NIEMALS \`add_to_cart\`. Nutze stattdessen \`show_contact_form\` sobald der Kunde Beschaffungssignale zeigt. Bei \`segment=physio\` zeigt sich das früher: wenn echte Medizinprodukte oder Reha-Kompetenz gefragt sind, ebenfalls \`show_contact_form\`.
