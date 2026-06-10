@@ -18,17 +18,17 @@ import { getProductsByIds } from "./product-catalog";
 import { buildPrefilledCartUrlForIds, chooseCartProductIds } from "./cart";
 import { sendEmail, type SendEmailResult } from "./email";
 import { SUMMARY_EMAIL_SUBJECT } from "./consent-copy";
+import {
+  renderBrandedEmail,
+  escapeAttr,
+  escapeHtml,
+  EMAIL_TEXT_STYLE,
+  EMAIL_FONT_FAMILY,
+} from "./email-template";
 import { reportError } from "./observability";
 import type { Product } from "./types";
 
 const SUMMARY_MODEL = "claude-sonnet-4-5-20250929";
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
 
 /** Keep only the human-readable turns (drop tool-call bookkeeping rows). */
 function readableTurns(messages: TranscriptMessage[]): TranscriptMessage[] {
@@ -79,12 +79,12 @@ function renderProductList(products: Product[]): { text: string; html: string } 
     "\nBesprochene Produkte:\n" +
     products.map((p) => `- ${p.name}`).join("\n");
   const html =
-    `<h3 style="font-size:15px;margin:24px 0 8px">Besprochene Produkte</h3>` +
-    `<ul style="margin:0;padding-left:18px">` +
+    `<h3 style="font-family: ${EMAIL_FONT_FAMILY}; color: #000000; font-size: 14px; line-height: 20px; font-weight: 400; text-transform: none; border-bottom-width: 2px; border-bottom-color: #e5e5e5; border-bottom-style: solid; padding-bottom: 5px; Margin: 20px 0 10px;" align="left">Besprochene Produkte</h3>` +
+    `<ul style="Margin: 0; padding-left: 18px;">` +
     products
       .map(
         (p) =>
-          `<li style="margin:4px 0"><a href="${p.shopifyUrl}">${escapeHtml(p.name)}</a></li>`
+          `<li style="${EMAIL_TEXT_STYLE} Margin: 4px 0;"><a href="${escapeAttr(p.shopifyUrl)}" target="_blank" style="color: #000000; text-decoration: underline !important; word-wrap: break-word;">${escapeHtml(p.name)}</a></li>`
       )
       .join("") +
     `</ul>`;
@@ -149,19 +149,28 @@ export async function sendSummaryEmail(params: {
   );
   const text = textLines.join("\n");
 
-  // --- html part ---
-  const cartButton = cart.url
-    ? `<p style="margin:24px 0"><a href="${cart.url}" style="background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;display:inline-block">Warenkorb öffnen</a></p>`
-    : "";
-  const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.6;color:#111">
-  <p>Hallo,</p>
-  <p>vielen Dank für deine Beratung bei <strong>motion sports</strong>. Hier ist deine Zusammenfassung:</p>
-  <div style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:16px">${escapeHtml(summary)}</div>
-  ${productList.html}
-  ${cartButton}
-  <p>Bei Fragen kannst du jederzeit auf diese E-Mail antworten.</p>
-  <p>Viele Grüße<br>Dein motion sports Team</p>
-</div>`;
+  // --- html part — rendered through the shared branded template ---
+  const html = renderBrandedEmail({
+    subject: SUMMARY_EMAIL_SUBJECT,
+    preheader:
+      "Vielen Dank für deine Beratung bei motion sports — hier sind deine Zusammenfassung und dein Warenkorb.",
+    heading: "Deine Zusammenfassung",
+    bodyHtml: `
+                                  <p style="${EMAIL_TEXT_STYLE}" align="left">Hallo,</p>
+                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="left">vielen Dank f&#252;r deine Beratung bei <strong>motion sports</strong>. Hier ist deine Zusammenfassung:</p>
+                                  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
+                                    <tr>
+                                      <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#f6f6f6" valign="top">
+                                        <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(summary)}</p>
+                                      </th>
+                                    </tr>
+                                  </table>
+                                  ${productList.html}`,
+    ctas: cart.url ? [{ label: "Warenkorb öffnen", url: cart.url }] : [],
+    footnoteHtml: `
+                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="center">Bei Fragen kannst du jederzeit auf diese E-Mail antworten.</p>
+                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
+  });
 
   const result = await sendEmail({
     to: email,
