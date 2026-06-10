@@ -27,6 +27,12 @@ import {
   generateRedirectToken,
 } from "./marketing-store";
 import { sendEmail } from "./email";
+import {
+  renderBrandedEmail,
+  escapeHtml,
+  EMAIL_TEXT_STYLE,
+  EMAIL_MUTED_TEXT_STYLE,
+} from "./email-template";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -52,10 +58,6 @@ export type ApproveAndSendResult =
         | "send_failed";
       message: string;
     };
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 
 /**
  * Approve and send a drafted marketing email through the system. Performs the
@@ -180,6 +182,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       }
 
       const { text, html } = renderMarketingEmail({
+        subject: claimed.subject ?? "motion sports",
         body,
         // The customer sees/clicks the tracked redirect URL, not the raw cart.
         linkUrl,
@@ -236,6 +239,8 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
 }
 
 function renderMarketingEmail(opts: {
+  /** Subject line — reused for the HTML <title>/preview line. */
+  subject: string;
   body: string;
   /** The URL the cart button/link points at — the tracked /api/r/<token>
    *  redirect, NOT the raw Shopify cart (which is kept server-side). */
@@ -246,7 +251,7 @@ function renderMarketingEmail(opts: {
   discountExpiresLabel: string | null;
   unsubscribe: { text: string; html: string };
 }): { text: string; html: string } {
-  const { body, linkUrl, discountCode, discountExpiresLabel, unsubscribe } = opts;
+  const { subject, body, linkUrl, discountCode, discountExpiresLabel, unsubscribe } = opts;
 
   const validityNote = discountExpiresLabel
     ? `, gültig bis ${discountExpiresLabel}`
@@ -270,27 +275,38 @@ function renderMarketingEmail(opts: {
   textLines.push("", "—", unsubscribe.text);
   const text = textLines.join("\n");
 
-  // --- html part ---
-  const cartButton = linkUrl
-    ? `<p style="margin:24px 0">
-         <a href="${linkUrl}" style="background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;display:inline-block">Warenkorb öffnen</a>
-       </p>` +
-      (discountCode
-        ? `<p style="font-size:13px;color:#666;margin:-12px 0 0">Dein persönlicher Code <strong>${escapeHtml(
-            discountCode
-          )}</strong> ist im Warenkorb bereits hinterlegt${escapeHtml(validityNote)}.</p>`
-        : "")
+  // --- html part — rendered through the shared branded template ---
+  // The discount note is rendered as the CTA footnote so the code + deadline
+  // ship deterministically OUTSIDE the editable prose; the cart button always
+  // points at the tracked redirect (linkUrl), never the raw Shopify cart; and
+  // the unsubscribe block goes through the template's dedicated footer slot,
+  // which a content edit can never remove.
+  const discountNote = linkUrl
+    ? discountCode
+      ? `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 5px; padding-bottom: 10px;" align="center">Dein pers&#246;nlicher Code <strong>${escapeHtml(
+          discountCode
+        )}</strong> ist im Warenkorb bereits hinterlegt${escapeHtml(validityNote)}.</p>`
+      : ""
     : discountCode
-      ? `<p style="font-size:13px;color:#666;margin:24px 0 0">Dein persönlicher Code: <strong>${escapeHtml(
+      ? `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 5px; padding-bottom: 10px;" align="center">Dein pers&#246;nlicher Code: <strong>${escapeHtml(
           discountCode
         )}</strong>${escapeHtml(validityNote)}.</p>`
       : "";
 
-  const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.6;color:#111">
-  <div style="white-space:pre-wrap">${escapeHtml(body.trim())}</div>
-  ${cartButton}
-  ${unsubscribe.html}
-</div>`;
+  const html = renderBrandedEmail({
+    subject,
+    preheader: body.trim().split("\n")[0]?.slice(0, 140) || undefined,
+    heading: "Deine persönliche Empfehlung",
+    bodyHtml: `
+                                  <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(body.trim())}</p>`,
+    ctas: linkUrl ? [{ label: "Warenkorb öffnen", url: linkUrl }] : [],
+    footnoteHtml: discountNote || undefined,
+    footer: {
+      // GATE 2 guarantees `unsubscribe` is always present — every marketing
+      // email carries the opt-out block.
+      unsubscribeHtml: unsubscribe.html,
+    },
+  });
 
   return { text, html };
 }
