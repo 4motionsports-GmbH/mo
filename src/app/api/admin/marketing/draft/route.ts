@@ -115,9 +115,10 @@ export async function POST(req: Request) {
     const expiry = hasDiscount ? projectedExpiry() : null;
 
     // Preview cart: no ?discount= param at draft time (the real code rides the
-    // link only at send). The body still references the cart button.
+    // link only at send). The body still references the cart button. Sold-out
+    // products are excluded here AND at send time (stock can change between).
     const cart = productIds.length
-      ? await buildPrefilledCartUrlForIds(productIds)
+      ? await buildPrefilledCartUrlForIds(productIds, { excludeSoldOut: true })
       : { url: null };
 
     const draft = await generateMarketingDraft({

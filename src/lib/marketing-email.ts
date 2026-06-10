@@ -157,9 +157,12 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
 
       // Build the cart permalink that actually ships: it carries ?discount=CODE
       // only when a real code was minted; otherwise no discount param.
+      // excludeSoldOut re-checked at SEND time (not just draft time) so an item
+      // that sold out while the draft sat around never enters the shipped cart.
       const cart = claimed.productIds.length
         ? await buildPrefilledCartUrlForIds(claimed.productIds, {
             discountCode: discountCode ?? undefined,
+            excludeSoldOut: true,
           })
         : { url: null as string | null };
       const cartUrl = cart.url;
