@@ -87,9 +87,24 @@ The scope Shopify echoes back (collection vs all) is verified against what we
 requested (mismatch ⇒ send refused) and stored per send in
 `marketing_sends.discount_applies_to`.
 
-## 3. Expiry
+## 3. Expiry — 7 days, stated in the email
 
-Codes expire `MARKETING_DISCOUNT_EXPIRY_DAYS` days after creation (created
-with `endsAt` = mint time + N days; the Shopify-returned `endsAt` is stored in
-`marketing_sends.discount_expires_at`). The marketing email states the
-validity period and the concrete end date.
+Codes expire **7 days after creation** (`endsAt` = mint time + 7 days on the
+`DiscountCodeBasicInput`; override via `MARKETING_DISCOUNT_EXPIRY_DAYS`). The
+Shopify-returned `endsAt` is stored in `marketing_sends.discount_expires_at`.
+
+The deadline reaches the customer twice:
+
+1. **In the AI prose** — the draft prompt is given the validity period and the
+   concrete German-formatted date (Europe/Berlin, `TT.MM.JJJJ`) and instructed
+   to state both naturally near the call-to-action, in Mo's voice. The date
+   named at draft time is *projected*; the real code is minted only at
+   APPROVE & SEND, so the send step swaps a stale projected date in the prose
+   for the real expiry (same 1:1 mechanism as the `MO-XXXX` code placeholder).
+2. **Deterministically** — the non-editable line under the cart button (or the
+   code line, when there is no cart) always carries "gültig bis TT.MM.JJJJ"
+   derived from the *minted* code's actual `endsAt`, so the deadline ships
+   even if the prose was edited.
+
+The transactional **summary email carries no discount code by design** (see
+`src/lib/summary-email.ts`), so no deadline needs to be stated there.
