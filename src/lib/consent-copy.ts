@@ -19,6 +19,14 @@
 //
 // See docs/CONSENT_FLOW.md for the full flow and the lawyer-review TODO list.
 
+import {
+  renderBrandedEmail,
+  escapeAttr,
+  escapeHtml,
+  EMAIL_TEXT_STYLE,
+  EMAIL_MUTED_TEXT_STYLE,
+} from "./email-template";
+
 /**
  * Marks a copy block as not-yet-legally-approved. Kept as a runtime-visible
  * constant (not just a comment) so reviewers and tooling can find every string
@@ -79,22 +87,26 @@ export function doiEmailBody(confirmUrl: string): { text: string; html: string }
     "Dein motion sports Team",
   ].join("\n");
 
-  const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.6;color:#111">
-  <p>Hallo,</p>
-  <p>du hast angegeben, dass dich <strong>motion sports</strong> per E-Mail mit
-  persönlichen Empfehlungen und Angeboten kontaktieren darf, die auf deinem
-  Beratungsgespräch basieren.</p>
-  <p>Bitte bestätige diese Einwilligung mit einem Klick auf den Button:</p>
-  <p style="margin:24px 0">
-    <a href="${confirmUrl}" style="background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;display:inline-block">Anmeldung bestätigen</a>
-  </p>
-  <p style="font-size:13px;color:#666">Falls der Button nicht funktioniert, kopiere
-  diesen Link in deinen Browser:<br><a href="${confirmUrl}">${confirmUrl}</a></p>
-  <p style="font-size:13px;color:#666">Erst nach deiner Bestätigung senden wir dir
-  Marketing-E-Mails. Wenn du das nicht angefordert hast, ignoriere diese E-Mail
-  einfach — dann passiert nichts.</p>
-  <p>Viele Grüße<br>Dein motion sports Team</p>
-</div>`;
+  // HTML part — rendered through the shared branded template. The legal copy
+  // (purpose statement, "nothing happens until you confirm", fallback link)
+  // stays verbatim; only the shell around it is shared.
+  const html = renderBrandedEmail({
+    subject: DOI_EMAIL_SUBJECT,
+    preheader:
+      "Bitte bestätige deine Einwilligung mit einem Klick — erst danach senden wir dir Marketing-E-Mails.",
+    heading: "Anmeldung bestätigen",
+    bodyHtml: `
+                                  <p style="${EMAIL_TEXT_STYLE}" align="left">Hallo,</p>
+                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">du hast angegeben, dass dich <strong>motion sports</strong> per E-Mail mit
+                                  pers&#246;nlichen Empfehlungen und Angeboten kontaktieren darf, die auf deinem
+                                  Beratungsgespr&#228;ch basieren.</p>
+                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">Bitte best&#228;tige diese Einwilligung mit einem Klick auf den Button:</p>`,
+    ctas: [{ label: "Anmeldung bestätigen", url: confirmUrl }],
+    footnoteHtml: `
+                  <p style="${EMAIL_MUTED_TEXT_STYLE}" align="center">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:<br><a href="${escapeAttr(confirmUrl)}" style="color: #212121; word-wrap: break-word;">${escapeHtml(confirmUrl)}</a></p>
+                  <p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px;" align="center">Erst nach deiner Best&#228;tigung senden wir dir Marketing-E-Mails. Wenn du das nicht angefordert hast, ignoriere diese E-Mail einfach &#8212; dann passiert nichts.</p>
+                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
+  });
 
   return { text, html };
 }
@@ -126,11 +138,13 @@ export function unsubscribeFooter(unsubscribeUrl: string): { text: string; html:
     `Du erhältst diese E-Mail, weil du der Kontaktaufnahme durch motion sports ` +
     `zugestimmt hast. Wenn du keine weiteren E-Mails erhalten möchtest, kannst ` +
     `du dich hier jederzeit kostenlos abmelden: ${unsubscribeUrl}`;
-  const html = `<p style="font-size:12px;color:#888;line-height:1.5;margin-top:32px;border-top:1px solid #eee;padding-top:16px">
-  Du erhältst diese E-Mail, weil du der Kontaktaufnahme durch motion sports
-  zugestimmt hast. Wenn du keine weiteren E-Mails erhalten möchtest, kannst du
+  // Styled for the shared branded template (which renders this in its own
+  // bordered footer section). The legal sentence itself is unchanged.
+  const html = `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">
+  Du erh&#228;ltst diese E-Mail, weil du der Kontaktaufnahme durch motion sports
+  zugestimmt hast. Wenn du keine weiteren E-Mails erhalten m&#246;chtest, kannst du
   dich hier jederzeit kostenlos abmelden:
-  <a href="${unsubscribeUrl}">Abmelden</a>.</p>`;
+  <a href="${escapeAttr(unsubscribeUrl)}" style="color: #212121; text-decoration: underline !important; word-wrap: break-word;">Abmelden</a>.</p>`;
   return { text, html };
 }
 
