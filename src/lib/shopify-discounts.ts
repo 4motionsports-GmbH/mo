@@ -115,6 +115,19 @@ const DISCOUNT_CODE_BASIC_CREATE = /* GraphQL */ `
               productDiscounts
               shippingDiscounts
             }
+            customerGets {
+              items {
+                __typename
+                ... on DiscountCollections {
+                  collections(first: 5) {
+                    nodes { id }
+                  }
+                }
+                ... on AllDiscountItems {
+                  allItems
+                }
+              }
+            }
             codes(first: 1) {
               nodes { code }
             }
@@ -144,6 +157,13 @@ interface DiscountCreateResponse {
         status?: string;
         endsAt?: string | null;
         combinesWith?: DiscountCombinesWith | null;
+        customerGets?: {
+          items?: {
+            __typename?: string;
+            collections?: { nodes: Array<{ id: string }> };
+            allItems?: boolean;
+          } | null;
+        } | null;
         codes?: { nodes: Array<{ code: string }> };
       } | null;
     } | null;
@@ -169,6 +189,63 @@ export const MARKETING_COMBINES_WITH: DiscountCombinesWith = {
   shippingDiscounts: false,
 };
 
+/**
+ * What the code's eligibility was scoped to, as echoed by Shopify:
+ *   - "collection" — only items in the configured full-price collection are
+ *     discounted (sale items in a mixed cart get nothing),
+ *   - "all"        — store-wide (the fallback when no collection is configured).
+ */
+export type DiscountAppliesTo =
+  | { scope: "all" }
+  | { scope: "collection"; collectionGid: string };
+
+/**
+ * FULL-PRICE-ONLY SCOPING — what Shopify can and cannot express (investigated
+ * 2026-06-10 against Admin GraphQL 2026-04; shopify.dev 403s automated fetches,
+ * so verified via the smart-collections help docs + changelog and a 2026-04
+ * integration template, citations below):
+ *
+ *   1. "On sale" (compare-at price set) is NOT a discount in Shopify's model —
+ *      it's just the variant's price. combinesWith (see above) therefore can't
+ *      exclude sale items; it only governs stacking with other DISCOUNTS.
+ *   2. There is NO eligibility rule on a code discount like "exclude items on
+ *      sale" and NO "all items except collection X". DiscountCodeBasicInput's
+ *      customerGets.items can only POSITIVELY target all / products /
+ *      collections (DiscountItemsInput, 2026-04).
+ *   3. The closest clean construct — and what we implement: scope the code to
+ *      an automated ("smart") collection whose condition is "Compare-at price
+ *      is empty", i.e. full-price products. Shopify keeps that collection
+ *      current as prices change, and a discount scoped to a collection applies
+ *      per LINE ITEM: in a mixed cart only the full-price lines are discounted.
+ *      Docs: https://help.shopify.com/en/manual/products/collections/smart-collections/conditions
+ *            https://changelog.shopify.com/posts/create-an-automated-collection-based-on-the-compare-at-price-field
+ *      Known limits (documented for the client in docs/DISCOUNTS.md):
+ *        - membership is per PRODUCT, and "Compare-at price is empty" matches
+ *          when ANY variant has no compare-at price — a product with one sale
+ *          variant and one full-price variant counts as full-price, so its
+ *          sale variants would be discounted too;
+ *        - a compare-at price EQUAL to the price still counts as "set";
+ *        - collection re-evaluation is asynchronous (short staleness window
+ *          right after a price change).
+ *
+ * The collection is configured via SHOPIFY_FULL_PRICE_COLLECTION_GID (a
+ * gid://shopify/Collection/… id). When unset, codes stay store-wide ("all") —
+ * loudly warned, so the sale-item exclusion can't silently appear active.
+ */
+export function fullPriceCollectionGid(): string | null {
+  const raw = process.env.SHOPIFY_FULL_PRICE_COLLECTION_GID?.trim();
+  if (!raw) return null;
+  if (!raw.startsWith("gid://shopify/Collection/")) {
+    console.warn(
+      `[shopify-discounts] SHOPIFY_FULL_PRICE_COLLECTION_GID is not a ` +
+        `gid://shopify/Collection/… id (got "${raw.slice(0, 60)}") — ignoring it; ` +
+        `discount codes will apply store-wide.`
+    );
+    return null;
+  }
+  return raw;
+}
+
 export interface CreatedDiscount {
   /** The human-facing code the customer types / that rides ?discount=CODE. */
   code: string;
@@ -179,6 +256,9 @@ export interface CreatedDiscount {
   /** The combinability settings AS ECHOED BY SHOPIFY (verified all-false), kept
    * on the marketing_sends row as the record of the rules the code carried. */
   combinesWith: DiscountCombinesWith;
+  /** The eligibility scope AS ECHOED BY SHOPIFY (full-price collection vs all),
+   * likewise kept on the marketing_sends row. */
+  appliesTo: DiscountAppliesTo;
 }
 
 function discountExpiryDays(): number {
@@ -223,6 +303,21 @@ export async function createUniqueDiscountCode(
   const startsAt = new Date();
   const endsAt = new Date(startsAt.getTime() + discountExpiryDays() * 86_400_000);
 
+  // FULL-PRICE-ONLY: scope eligible items to the configured full-price
+  // collection (see fullPriceCollectionGid above for what this can and cannot
+  // guarantee). Without the collection the code applies store-wide — warn so
+  // nobody believes the sale-item exclusion is active when it isn't.
+  const collectionGid = fullPriceCollectionGid();
+  if (!collectionGid) {
+    console.warn(
+      "[shopify-discounts] SHOPIFY_FULL_PRICE_COLLECTION_GID is not set — the " +
+        "minted code will apply to ALL items, including sale items."
+    );
+  }
+  const items = collectionGid
+    ? { collections: { add: [collectionGid] } }
+    : { all: true };
+
   const basicCodeDiscount = {
     title: options.title ?? `Persönlicher Rabatt (${Math.round(percentage * 100)}%) — ${code}`,
     code,
@@ -231,7 +326,7 @@ export async function createUniqueDiscountCode(
     customerSelection: { all: true },
     customerGets: {
       value: { percentage },
-      items: { all: true },
+      items,
     },
     // NON-STACKABLE: combines with no other discount, of any class. See the
     // COMBINABILITY block at the top of this file for the model + doc citations.
@@ -280,6 +375,32 @@ export async function createUniqueDiscountCode(
       return null;
     }
 
+    // CONFIRM the eligibility scope on the response too: when we asked for the
+    // full-price collection, Shopify must echo a DiscountCollections selection
+    // containing exactly that collection. Anything else means the code went
+    // live broader than promised — refuse it (send aborted, gid reported).
+    const echoedItems = created?.customerGets?.items;
+    let appliesTo: DiscountAppliesTo;
+    if (collectionGid) {
+      const echoedIds = echoedItems?.collections?.nodes?.map((n) => n.id) ?? [];
+      if (
+        echoedItems?.__typename !== "DiscountCollections" ||
+        !echoedIds.includes(collectionGid)
+      ) {
+        reportError(new Error("discount created with unexpected items scope"), {
+          route: "lib/shopify-discounts",
+          phase: "verifyAppliesTo",
+          gid: node?.id ?? "unknown",
+          expected: collectionGid,
+          echoed: JSON.stringify(echoedItems).slice(0, 300),
+        });
+        return null;
+      }
+      appliesTo = { scope: "collection", collectionGid };
+    } else {
+      appliesTo = { scope: "all" };
+    }
+
     const returnedCode = created?.codes?.nodes?.[0]?.code ?? code;
     return {
       code: returnedCode,
@@ -288,6 +409,7 @@ export async function createUniqueDiscountCode(
       gid: node?.id ?? null,
       expiresAt: created?.endsAt ?? endsAt.toISOString(),
       combinesWith,
+      appliesTo,
     };
   } catch (err) {
     reportError(err, { route: "lib/shopify-discounts", phase: "create" });
