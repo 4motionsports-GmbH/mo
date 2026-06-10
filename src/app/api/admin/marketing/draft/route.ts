@@ -35,7 +35,7 @@ import {
   discountExpiryDaysPublic,
   formatGermanExpiryDate,
 } from "@/lib/shopify-discounts";
-import { buildPrefilledCartUrlForIds } from "@/lib/cart";
+import { buildPrefilledCartUrlForIds, chooseCartProductIds } from "@/lib/cart";
 import { generateMarketingDraft } from "@/lib/marketing-draft";
 import { reportError } from "@/lib/observability";
 
@@ -101,7 +101,10 @@ export async function POST(req: Request) {
     const conversation = capture.sessionId
       ? await loadConversationForSummary(capture.sessionId)
       : null;
-    const productIds = conversation?.recommendedProductIds ?? [];
+    // The products the email is written around AND the ones in its cart link:
+    // the user's selection when they made one, otherwise everything discussed.
+    // Stored on the draft row, so the send step ships exactly this set.
+    const productIds = chooseCartProductIds(conversation);
     const products = productIds.length ? await getProductsByIds(productIds) : [];
     const personaLabel = conversation?.personaLabel ?? null;
 

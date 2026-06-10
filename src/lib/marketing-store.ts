@@ -13,6 +13,7 @@
 import { getSql, type Sql } from "./db";
 import { loadConversationForSummary, type TranscriptMessage } from "./conversation-store";
 import { getProductsByIds } from "./product-catalog";
+import { chooseCartProductIds } from "./cart";
 import {
   checkRecentPurchase,
   wasDiscountCodeRedeemed,
@@ -140,7 +141,9 @@ export async function listMarketingTargets(
         checkRecentPurchase(email),
       ]);
 
-      const productIds = conversation?.recommendedProductIds ?? [];
+      // Same chooser the draft/send path uses, so the dashboard previews the
+      // exact product set a marketing email for this contact would carry.
+      const productIds = chooseCartProductIds(conversation);
       const products = productIds.length
         ? (await getProductsByIds(productIds)).map((p) => ({ id: p.id, name: p.name }))
         : [];
