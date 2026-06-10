@@ -118,9 +118,11 @@ export async function sendSummaryEmail(params: {
   const products = productIds.length ? await getProductsByIds(productIds) : [];
 
   // Prefilled cart for the CHOSEN products — NO discount (transactional).
+  // excludeSoldOut: the sold-out rule takes precedence over selection — a
+  // sold-out product never enters a checkout link, same as the in-chat button.
   const cartProductIds = chooseCartProductIds(conversation);
   const cart = cartProductIds.length
-    ? await buildPrefilledCartUrlForIds(cartProductIds)
+    ? await buildPrefilledCartUrlForIds(cartProductIds, { excludeSoldOut: true })
     : { url: null, lines: [], resolvedProductIds: [], unresolvedProductIds: [] };
 
   const summary = await buildSummaryText(turns);
