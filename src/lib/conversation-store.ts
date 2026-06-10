@@ -13,7 +13,8 @@ import { getSql } from "./db";
 import { reportError } from "./observability";
 
 // Tool inputs that reference catalog product ids. Used to accumulate
-// conversations.recommended_product_ids.
+// conversations.recommended_product_ids — the "DISCUSSED" set: every product
+// that appeared in the conversation, including compared-and-rejected ones.
 const PRODUCT_TOOLS = new Set([
   "show_product",
   "compare_products",
@@ -22,6 +23,13 @@ const PRODUCT_TOOLS = new Set([
   "show_contact_form",
   "offer_email_summary",
 ]);
+
+// Tools whose firing signals the user actively CHOSE to buy — the "SELECTED"
+// set, distinct from merely discussed. add_to_cart is the direct-checkout CTA:
+// the model fires it only on a clear buy signal ("Das nehme ich"), with ALL
+// wanted items in one call (productId or productIds). show_product /
+// compare_products, by contrast, are pure discussion.
+const SELECTION_TOOLS = new Set(["add_to_cart"]);
 
 // Keep stored content bounded — tool inputs and messages are small, but never
 // let a pathological turn write an unbounded blob.
@@ -85,6 +93,37 @@ function productIdsFromInvocation(inv: ToolInvocation): string[] {
   return out;
 }
 
+/**
+ * The user's CURRENT selection: the product ids of the LATEST selection-intent
+ * (add_to_cart) tool call across the whole conversation, or null when no such
+ * call exists.
+ *
+ * The latest call REPLACES earlier ones instead of accumulating: the model is
+ * instructed to put ALL wanted items into ONE add_to_cart call per buying
+ * decision, so a newer call after a switch ("nimm doch lieber das andere")
+ * reflects the user's current decision — the rejected alternative must not
+ * linger in the cart. Deliberately no further inference (no NLP over the
+ * transcript): the tool call IS the signal.
+ */
+function latestSelectedProductIds(
+  history: UIMessage[],
+  assistantToolCalls: ToolInvocation[]
+): string[] | null {
+  let latest: string[] | null = null;
+  const consider = (inv: ToolInvocation) => {
+    if (!SELECTION_TOOLS.has(inv.toolName)) return;
+    // productIdsFromInvocation reads both `productId` (single checkout) and
+    // `productIds` (multi-product checkout), so every wanted item is captured.
+    const ids = [...new Set(productIdsFromInvocation(inv))];
+    if (ids.length > 0) latest = ids;
+  };
+  for (const msg of history) {
+    for (const inv of toolInvocationsOfMessage(msg)) consider(inv);
+  }
+  for (const inv of assistantToolCalls) consider(inv);
+  return latest;
+}
+
 function latestUserMessage(history: UIMessage[]): UIMessage | null {
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].role === "user") return history[i];
@@ -101,7 +140,14 @@ export interface TranscriptMessage {
 export interface ConversationSummaryData {
   conversationId: number;
   personaLabel: string | null;
+  /** Every product referenced by tool calls — the DISCUSSED set. */
   recommendedProductIds: string[];
+  /**
+   * Products the user expressed intent to BUY (latest add_to_cart call) — the
+   * SELECTED set. Empty when no buy signal occurred; cart-link builders then
+   * fall back to the discussed set (see chooseCartProductIds in lib/cart).
+   */
+  selectedProductIds: string[];
   messages: TranscriptMessage[];
 }
 
@@ -121,11 +167,16 @@ export async function loadConversationForSummary(
 
   try {
     const convRows = await sql`
-      SELECT id, persona_label, recommended_product_ids
+      SELECT id, persona_label, recommended_product_ids, selected_product_ids
         FROM conversations WHERE session_id = ${sid}
     `;
     const conv = convRows[0] as
-      | { id: number; persona_label: string | null; recommended_product_ids: string[] }
+      | {
+          id: number;
+          persona_label: string | null;
+          recommended_product_ids: string[];
+          selected_product_ids: string[];
+        }
       | undefined;
     if (!conv) return null;
 
@@ -147,6 +198,9 @@ export async function loadConversationForSummary(
       personaLabel: conv.persona_label ?? null,
       recommendedProductIds: Array.isArray(conv.recommended_product_ids)
         ? conv.recommended_product_ids
+        : [],
+      selectedProductIds: Array.isArray(conv.selected_product_ids)
+        ? conv.selected_product_ids
         : [],
       messages,
     };
@@ -182,16 +236,24 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
     }
     const newProductIds = [...productIds];
 
+    // The user's current SELECTION (latest add_to_cart across the full
+    // conversation), or null when no buy signal has fired. Recomputed from
+    // scratch each turn — the widget re-sends the whole history — so the
+    // stored value always mirrors the latest selection state, including a
+    // switch to an alternative (replacement, not accumulation).
+    const selection = latestSelectedProductIds(input.history, input.assistantToolCalls);
+
     // Count includes the assistant turn we're about to write.
     const messageCount = input.history.length + 1;
 
     const rows = await sql`
       INSERT INTO conversations
         (session_id, persona_label, message_count, recommended_product_ids,
-         status, created_at, updated_at, last_activity_at)
+         selected_product_ids, status, created_at, updated_at, last_activity_at)
       VALUES
         (${sessionId}, ${input.personaLabel}, ${messageCount},
-         ${newProductIds}::text[], 'active', now(), now(), now())
+         ${newProductIds}::text[], ${selection ?? []}::text[],
+         'active', now(), now(), now())
       ON CONFLICT (session_id) DO UPDATE SET
         persona_label = EXCLUDED.persona_label,
         message_count = EXCLUDED.message_count,
@@ -203,6 +265,14 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
             ) AS e
           )
         ),
+        -- Selection is REPLACED with the latest state (so a switch drops the
+        -- rejected product) — but only when this turn's history actually shows
+        -- a selection. With no add_to_cart in sight we keep the stored value,
+        -- defensive against a client that ever sends a trimmed history.
+        selected_product_ids = CASE
+          WHEN ${selection !== null} THEN EXCLUDED.selected_product_ids
+          ELSE conversations.selected_product_ids
+        END,
         -- 'converted' is sticky; otherwise an active turn keeps it active.
         status = CASE WHEN conversations.status = 'converted'
                       THEN 'converted' ELSE 'active' END,
