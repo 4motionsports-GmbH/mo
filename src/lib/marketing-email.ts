@@ -32,6 +32,7 @@ import { getBaseUrl } from "./base-url";
 import {
   createUniqueDiscountCode,
   PLACEHOLDER_DISCOUNT_CODE,
+  type DiscountCombinesWith,
 } from "./shopify-discounts";
 import { buildPrefilledCartUrlForIds } from "./cart";
 import { reportError } from "./observability";
@@ -120,6 +121,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       let discountCode: string | null = null;
       let discountCodeGid: string | null = null;
       let discountExpiresAt: string | null = null;
+      let discountCombinesWith: DiscountCombinesWith | null = null;
 
       if (claimed.discountPercent > 0) {
         const minted = await createUniqueDiscountCode({
@@ -138,6 +140,9 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         discountCode = minted.code;
         discountCodeGid = minted.gid;
         discountExpiresAt = minted.expiresAt;
+        // Shopify-echoed (and verified all-false) combinability — recorded on
+        // the row so each send shows the rules its code actually carried.
+        discountCombinesWith = minted.combinesWith;
         // Swap the preview placeholder for the real code wherever it appears so
         // the prose and the working code never disagree.
         body = body.split(PLACEHOLDER_DISCOUNT_CODE).join(minted.code);
@@ -200,6 +205,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         discountCode,
         discountCodeGid,
         discountExpiresAt,
+        discountCombinesWith,
         cartUrl,
         draftedText: body,
         redirectToken,

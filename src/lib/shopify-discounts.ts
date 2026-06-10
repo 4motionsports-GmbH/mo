@@ -21,6 +21,31 @@
 //              appliesOncePerCustomer (Boolean) pins it to one buyer.
 //   Scope:     write_discounts.
 //
+// COMBINABILITY (non-stackable codes) — re-verified 2026-06-10, same caveat
+// (shopify.dev 403s automated fetches; shape cross-checked against an
+// integration template that targets /admin/api/2026-04/graphql.json verbatim,
+// plus Shopify's combinations help docs):
+//   Input:  DiscountCodeBasicInput.combinesWith: DiscountCombinesWithInput
+//           { orderDiscounts: Boolean, productDiscounts: Boolean,
+//             shippingDiscounts: Boolean }
+//           (2026-04 additionally knows productDiscountsWithTagsOnSameCartLine —
+//           a tag allowlist for same-line product-discount stacking — which we
+//           deliberately do NOT set: we don't want any stacking.)
+//   Docs:   https://shopify.dev/docs/api/admin-graphql/2026-04/input-objects/DiscountCombinesWithInput
+//           https://help.shopify.com/en/manual/discounts/discount-combinations
+//   Model:  Shopify has NO "combines with other discount codes" toggle. A
+//           discount declares which discount CLASSES (product/order/shipping)
+//           it combines with, and two discounts stack only if EACH allows the
+//           OTHER's class. Setting all three to false therefore makes our code
+//           combine with NOTHING — no other code and no automatic discount.
+//           Customer-facing behavior when a cart holds two non-combinable
+//           discounts: Shopify applies the better one and tells the customer
+//           "Some discount codes couldn't be used together. We applied the
+//           best combination." — our 5% can never stack on a 10%.
+//   Echo:   the created DiscountCodeBasic exposes combinesWith
+//           { orderDiscounts productDiscounts shippingDiscounts }; we select it
+//           and VERIFY all three came back false before using the code.
+//
 // Input shape we use (a single-use percentage-off code, admin-chosen depth, with
 // expiry — the percentage is passed in per send, no longer hardcoded):
 //   {
@@ -28,6 +53,8 @@
 //     startsAt, endsAt,
 //     customerSelection: { all: true },
 //     customerGets: { value: { percentage: 0.05 }, items: { all: true } },
+//     combinesWith: { orderDiscounts: false, productDiscounts: false,
+//                     shippingDiscounts: false },   // stacks with NOTHING
 //     appliesOncePerCustomer: true,
 //     usageLimit: 1            // single redemption across the whole store
 //   }
@@ -83,6 +110,11 @@ const DISCOUNT_CODE_BASIC_CREATE = /* GraphQL */ `
             title
             status
             endsAt
+            combinesWith {
+              orderDiscounts
+              productDiscounts
+              shippingDiscounts
+            }
             codes(first: 1) {
               nodes { code }
             }
@@ -111,12 +143,31 @@ interface DiscountCreateResponse {
         title?: string;
         status?: string;
         endsAt?: string | null;
+        combinesWith?: DiscountCombinesWith | null;
         codes?: { nodes: Array<{ code: string }> };
       } | null;
     } | null;
     userErrors: Array<{ field?: string[] | null; code?: string | null; message: string }>;
   };
 }
+
+/**
+ * The discount-class combinability of a code, mirroring Shopify's
+ * DiscountCombinesWith. All false = the code stacks with nothing.
+ */
+export interface DiscountCombinesWith {
+  orderDiscounts: boolean;
+  productDiscounts: boolean;
+  shippingDiscounts: boolean;
+}
+
+/** What we always request: a code that combines with NOTHING (other codes or
+ * automatic discounts) — so it can never stack on top of another discount. */
+export const MARKETING_COMBINES_WITH: DiscountCombinesWith = {
+  orderDiscounts: false,
+  productDiscounts: false,
+  shippingDiscounts: false,
+};
 
 export interface CreatedDiscount {
   /** The human-facing code the customer types / that rides ?discount=CODE. */
@@ -125,6 +176,9 @@ export interface CreatedDiscount {
   gid: string | null;
   /** When the code stops working. */
   expiresAt: string;
+  /** The combinability settings AS ECHOED BY SHOPIFY (verified all-false), kept
+   * on the marketing_sends row as the record of the rules the code carried. */
+  combinesWith: DiscountCombinesWith;
 }
 
 function discountExpiryDays(): number {
@@ -179,6 +233,9 @@ export async function createUniqueDiscountCode(
       value: { percentage },
       items: { all: true },
     },
+    // NON-STACKABLE: combines with no other discount, of any class. See the
+    // COMBINABILITY block at the top of this file for the model + doc citations.
+    combinesWith: MARKETING_COMBINES_WITH,
     appliesOncePerCustomer: true,
     usageLimit: 1,
   };
@@ -198,6 +255,31 @@ export async function createUniqueDiscountCode(
     }
     const node = payload.codeDiscountNode;
     const created = node?.codeDiscount;
+
+    // CONFIRM the non-stackable setting on the response, not just the request:
+    // every flag Shopify echoes back must be false. A mismatch would mean a
+    // stackable code went live, so we refuse to use it (the send is aborted) and
+    // report the gid so the stray discount can be deactivated in the admin.
+    const echoed = created?.combinesWith;
+    const combinesWith: DiscountCombinesWith = {
+      orderDiscounts: echoed?.orderDiscounts ?? false,
+      productDiscounts: echoed?.productDiscounts ?? false,
+      shippingDiscounts: echoed?.shippingDiscounts ?? false,
+    };
+    if (
+      combinesWith.orderDiscounts ||
+      combinesWith.productDiscounts ||
+      combinesWith.shippingDiscounts
+    ) {
+      reportError(new Error("discount created with unexpected combinesWith"), {
+        route: "lib/shopify-discounts",
+        phase: "verifyCombinesWith",
+        gid: node?.id ?? "unknown",
+        combinesWith: JSON.stringify(combinesWith),
+      });
+      return null;
+    }
+
     const returnedCode = created?.codes?.nodes?.[0]?.code ?? code;
     return {
       code: returnedCode,
@@ -205,6 +287,7 @@ export async function createUniqueDiscountCode(
       // handle for auditing / later deactivation. Falls back to null if absent.
       gid: node?.id ?? null,
       expiresAt: created?.endsAt ?? endsAt.toISOString(),
+      combinesWith,
     };
   } catch (err) {
     reportError(err, { route: "lib/shopify-discounts", phase: "create" });
