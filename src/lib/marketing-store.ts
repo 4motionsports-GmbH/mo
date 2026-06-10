@@ -18,7 +18,6 @@ import {
   wasDiscountCodeRedeemed,
   type PurchaseCheck,
 } from "./shopify-orders";
-import type { DiscountAppliesTo, DiscountCombinesWith } from "./shopify-discounts";
 import { isShopifyConfigured } from "./shopify";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
@@ -36,12 +35,6 @@ export interface MarketingSendRow {
   discountPercent: number;
   discountCode: string | null;
   discountExpiresAt: string | null;
-  /** Combinability of the minted code as echoed by Shopify (all-false = stacks
-   * with nothing). Null for rows without a code / sent before this feature. */
-  discountCombinesWith: DiscountCombinesWith | null;
-  /** Eligibility scope of the minted code as echoed by Shopify (full-price
-   * collection vs store-wide). Null for rows without a code / older rows. */
-  discountAppliesTo: DiscountAppliesTo | null;
   cartUrl: string | null;
   productIds: string[];
   personaLabel: string | null;
@@ -84,44 +77,6 @@ function personaDisplayLabel(label: string | null): string | null {
   return meta ? meta.label : label;
 }
 
-// JSONB comes back from the driver as a parsed object (or a string, depending
-// on driver config) — normalize defensively to the three known booleans.
-function parseCombinesWith(raw: unknown): DiscountCombinesWith | null {
-  let v = raw;
-  if (typeof v === "string") {
-    try {
-      v = JSON.parse(v);
-    } catch {
-      return null;
-    }
-  }
-  if (!v || typeof v !== "object") return null;
-  const o = v as Record<string, unknown>;
-  return {
-    orderDiscounts: o.orderDiscounts === true,
-    productDiscounts: o.productDiscounts === true,
-    shippingDiscounts: o.shippingDiscounts === true,
-  };
-}
-
-function parseAppliesTo(raw: unknown): DiscountAppliesTo | null {
-  let v = raw;
-  if (typeof v === "string") {
-    try {
-      v = JSON.parse(v);
-    } catch {
-      return null;
-    }
-  }
-  if (!v || typeof v !== "object") return null;
-  const o = v as Record<string, unknown>;
-  if (o.scope === "collection" && typeof o.collectionGid === "string") {
-    return { scope: "collection", collectionGid: o.collectionGid };
-  }
-  if (o.scope === "all") return { scope: "all" };
-  return null;
-}
-
 function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
   return {
     id: Number(r.id),
@@ -132,8 +87,6 @@ function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
     discountPercent: r.discount_percent != null ? Number(r.discount_percent) : 0,
     discountCode: (r.discount_code as string | null) ?? null,
     discountExpiresAt: (r.discount_expires_at as string | null) ?? null,
-    discountCombinesWith: parseCombinesWith(r.discount_combines_with),
-    discountAppliesTo: parseAppliesTo(r.discount_applies_to),
     cartUrl: (r.cart_url as string | null) ?? null,
     productIds: Array.isArray(r.product_ids) ? (r.product_ids as string[]) : [],
     personaLabel: (r.persona_label as string | null) ?? null,
@@ -666,10 +619,6 @@ export interface SentDiscountPatch {
   discountCode: string | null;
   discountCodeGid: string | null;
   discountExpiresAt: string | null;
-  /** Combinability echoed by Shopify for the minted code (null = no code). */
-  discountCombinesWith: DiscountCombinesWith | null;
-  /** Eligibility scope echoed by Shopify for the minted code (null = no code). */
-  discountAppliesTo: DiscountAppliesTo | null;
   cartUrl: string | null;
   draftedText: string;
   /** Token for the tracked redirect link that went into the email (null = no cart). */
@@ -697,14 +646,6 @@ export async function markSent(
              discount_code = ${patch.discountCode},
              discount_code_gid = ${patch.discountCodeGid},
              discount_expires_at = ${patch.discountExpiresAt},
-             discount_combines_with = ${
-               patch.discountCombinesWith
-                 ? JSON.stringify(patch.discountCombinesWith)
-                 : null
-             }::jsonb,
-             discount_applies_to = ${
-               patch.discountAppliesTo ? JSON.stringify(patch.discountAppliesTo) : null
-             }::jsonb,
              cart_url = ${patch.cartUrl},
              drafted_text = ${patch.draftedText},
              redirect_token = ${patch.redirectToken}
