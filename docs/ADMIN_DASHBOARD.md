@@ -74,8 +74,12 @@ For each contact it surfaces:
 - **Transcript** — the linked conversation (Cluster A) joined READ-ONLY to the
   capture (Cluster B) via the pseudonymous `session_id` (the same optional bridge
   the summary email uses; email is never written into Cluster A).
-- **Persona** label and **discussed product ids** (from
-  `conversations.recommended_product_ids`).
+- **Persona** label and the **cart product ids** — the user's *selected*
+  products (`conversations.selected_product_ids`, latest `add_to_cart` call)
+  when a clear choice was made, falling back to the *discussed* set
+  (`conversations.recommended_product_ids`) otherwise; the same
+  `chooseCartProductIds` rule the draft/send path uses, so the dashboard
+  previews exactly what the email would carry.
 - **"Chatted but not purchased" flag** — the key marketing-target signal.
   [`checkRecentPurchase()`](../src/lib/shopify-orders.ts) queries Shopify orders
   (`read_orders`) for an order from that email within
