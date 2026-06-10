@@ -1,6 +1,8 @@
 // Transactional summary email — the service the user requests when they tick
 // the transactional consent box. Renders a readable German summary of the
-// conversation plus a prefilled-cart permalink for the products discussed.
+// conversation plus a prefilled-cart permalink for the products the user
+// CHOSE (falling back to all discussed products when no choice was made —
+// see chooseCartProductIds in lib/cart).
 //
 // IMPORTANT: NO discount code here. A discount is marketing-only; this is a
 // transactional service email under Art. 6(1)(b), sent immediately on request.
@@ -13,7 +15,7 @@ import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { loadConversationForSummary, type TranscriptMessage } from "./conversation-store";
 import { getProductsByIds } from "./product-catalog";
-import { buildPrefilledCartUrlForIds } from "./cart";
+import { buildPrefilledCartUrlForIds, chooseCartProductIds } from "./cart";
 import { sendEmail, type SendEmailResult } from "./email";
 import { SUMMARY_EMAIL_SUBJECT } from "./consent-copy";
 import { reportError } from "./observability";
@@ -109,12 +111,16 @@ export async function sendSummaryEmail(params: {
   const conversation = sessionId ? await loadConversationForSummary(sessionId) : null;
   const turns = conversation ? readableTurns(conversation.messages) : [];
 
+  // The "Besprochene Produkte" list stays the full DISCUSSED set — it
+  // documents the consultation. The CART is narrower: only what the user
+  // chose (falling back to discussed when no choice was made).
   const productIds = conversation?.recommendedProductIds ?? [];
   const products = productIds.length ? await getProductsByIds(productIds) : [];
 
-  // Prefilled cart for the discussed products — NO discount (transactional).
-  const cart = productIds.length
-    ? await buildPrefilledCartUrlForIds(productIds)
+  // Prefilled cart for the CHOSEN products — NO discount (transactional).
+  const cartProductIds = chooseCartProductIds(conversation);
+  const cart = cartProductIds.length
+    ? await buildPrefilledCartUrlForIds(cartProductIds)
     : { url: null, lines: [], resolvedProductIds: [], unresolvedProductIds: [] };
 
   const summary = await buildSummaryText(turns);

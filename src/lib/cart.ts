@@ -1,6 +1,7 @@
 // Prefilled Shopify cart permalink builder.
 //
-// Given a list of catalog product ids (the ones discussed in a conversation),
+// Given a list of catalog product ids (a conversation's chosen products —
+// see chooseCartProductIds for the selected-vs-discussed decision),
 // resolve each to its default *numeric* Shopify variant id and assemble a
 // storefront prefilled-cart permalink of the form
 //   https://<shop>/cart/<variant>:1,<variant>:1
@@ -66,6 +67,35 @@ export interface BuildPrefilledCartOptions {
    * checkout action (stock is sync-fresh — see docs/CATALOG_SYNC.md).
    */
   excludeSoldOut?: boolean;
+}
+
+/**
+ * Decide WHICH of a conversation's products belong in its prefilled-cart link.
+ * This is the single source of truth for that decision — the summary email,
+ * the marketing draft/send, and the marketing dashboard all go through here so
+ * the three paths can never disagree. (The in-chat checkout button needs no
+ * chooser: /api/products builds its cartUrl from exactly the ids of the
+ * add_to_cart tool call, which IS the selection.)
+ *
+ * Preference order:
+ *   1. SELECTED — products the user expressed intent to buy (the latest
+ *      add_to_cart call, see lib/conversation-store). When the user made a
+ *      clear choice, the cart contains exactly that choice — not every
+ *      alternative Mo happened to compare along the way.
+ *   2. DISCUSSED (recommended_product_ids) — fallback only when no selection
+ *      was made, so conversations that ended before a buy signal still get a
+ *      useful cart link.
+ */
+export function chooseCartProductIds(
+  conversation: {
+    selectedProductIds?: string[];
+    recommendedProductIds?: string[];
+  } | null
+): string[] {
+  if (!conversation) return [];
+  const selected = conversation.selectedProductIds ?? [];
+  if (selected.length > 0) return selected;
+  return conversation.recommendedProductIds ?? [];
 }
 
 function normalizedQuantity(quantity: number | undefined): number {
