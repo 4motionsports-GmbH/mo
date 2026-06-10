@@ -783,8 +783,23 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
 
 1. Upserts one consent record per email (records `consentTextShown`).
 2. **Transactional:** sends the summary email immediately (German summary of the
-   conversation + a prefilled-cart permalink for the discussed products, **no
-   discount**).
+   conversation + a prefilled-cart permalink, **no discount**).
+
+   **Which products end up in that cart — selected vs discussed.** The backend
+   tracks two product sets per conversation:
+
+   - **Selected** — products the user expressed intent to **buy**: the ids of
+     the latest `add_to_cart` (direct-checkout) tool call. Updated by
+     replacement, so switching to an alternative drops the rejected product.
+   - **Discussed** — every product any tool call referenced (`show_product`,
+     `compare_products`, …), including compared-and-rejected alternatives.
+
+   The cart permalink uses the **selected** set when the user made a clear
+   choice, and falls back to the full **discussed** set only when no selection
+   was made. Sold-out products are always excluded from the cart link
+   regardless of set. The same rule drives the marketing email's cart link, so
+   all cart links behave identically. (The "Besprochene Produkte" list in the
+   summary email still shows the full discussed set — only the cart narrows.)
 3. **Marketing:** if newly granted, sends the DOI confirmation email. A
    suppressed/unsubscribed address is never re-pended; an already-confirmed
    address isn't re-sent a DOI.

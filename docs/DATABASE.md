@@ -53,7 +53,7 @@ The schema is split into **two clusters** (see the separation rationale below).
 
 | Table           | Key columns                                                                                          |
 | --------------- | --------------------------------------------------------------------------------------------------- |
-| `conversations` | `session_id` (unique), `created_at`/`updated_at`/`last_activity_at`, `persona_label`, `message_count`, `recommended_product_ids` (text[]), `status` (active/abandoned/converted) |
+| `conversations` | `session_id` (unique), `created_at`/`updated_at`/`last_activity_at`, `persona_label`, `message_count`, `recommended_product_ids` (text[]), `selected_product_ids` (text[]), `status` (active/abandoned/converted) |
 | `messages`      | `conversation_id` (FK, cascade), `client_message_id` (idempotency), `role`, `content`, `tool_name`  |
 | `kpi_events`    | `session_id`, `event`, `data` (jsonb), `created_at`                                                  |
 
@@ -62,6 +62,16 @@ The schema is split into **two clusters** (see the separation rationale below).
   latency. It upserts the conversation by `session_id`, records the persona
   label, accumulates `recommended_product_ids` from product-referencing tool
   calls, and inserts the new user + assistant messages.
+- **Selected vs discussed:** `recommended_product_ids` is the DISCUSSED set —
+  every product any tool call referenced, accumulated additively (including
+  compared-and-rejected alternatives). `selected_product_ids` is the SELECTED
+  set — only the products the user expressed intent to buy, i.e. the ids of
+  the latest `add_to_cart` (direct-checkout) tool call. It is **replaced** with
+  the latest selection each turn (not accumulated), so switching to an
+  alternative drops the rejected product. Cart links (summary email, marketing
+  email/dashboard) prefer the selected set and fall back to the discussed set
+  only when no selection was made — see `chooseCartProductIds` in
+  `src/lib/cart.ts`.
 - **Idempotency:** message inserts dedupe on
   `(conversation_id, client_message_id, COALESCE(tool_name,''))`, so re-sent
   history never duplicates rows.
