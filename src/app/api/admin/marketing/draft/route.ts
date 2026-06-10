@@ -33,6 +33,7 @@ import {
   PLACEHOLDER_DISCOUNT_CODE,
   isAllowedDiscountPercent,
   discountExpiryDaysPublic,
+  formatGermanExpiryDate,
 } from "@/lib/shopify-discounts";
 import { buildPrefilledCartUrlForIds } from "@/lib/cart";
 import { generateMarketingDraft } from "@/lib/marketing-draft";
@@ -40,17 +41,12 @@ import { reportError } from "@/lib/observability";
 
 export const maxDuration = 30;
 
-/** Projected expiry the real code will get, for the preview. */
+/** Projected expiry the real code will get, for the preview. The REAL code is
+ * minted at send time with its own now+N-days endsAt; if the dates drift apart
+ * (draft sat for a while), the send step swaps the date in the prose — see
+ * approveAndSend in lib/marketing-email. */
 function projectedExpiry(): Date {
   return new Date(Date.now() + discountExpiryDaysPublic() * 86_400_000);
-}
-
-function germanDate(d: Date): string {
-  return d.toLocaleDateString("de-DE", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
 }
 
 export async function POST(req: Request) {
@@ -127,7 +123,8 @@ export async function POST(req: Request) {
       transcript: conversation?.messages ?? [],
       discountCode: placeholderCode,
       discountPercent,
-      discountExpiresLabel: expiry ? germanDate(expiry) : null,
+      discountExpiresLabel: expiry ? formatGermanExpiryDate(expiry) : null,
+      discountValidityDays: hasDiscount ? discountExpiryDaysPublic() : null,
     });
 
     const expiresAtIso = expiry ? expiry.toISOString() : null;

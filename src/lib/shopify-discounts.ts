@@ -127,10 +127,30 @@ export interface CreatedDiscount {
   expiresAt: string;
 }
 
+// Codes are short-lived by design: 7 days from mint (endsAt = now + 7d on the
+// DiscountCodeBasicInput, echoed back as endsAt and stored on the send row).
+// The email must state both the validity period and the concrete end date —
+// see marketing-draft.ts (prompt) and marketing-email.ts (deterministic line).
 function discountExpiryDays(): number {
   const raw = process.env.MARKETING_DISCOUNT_EXPIRY_DAYS;
   const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 30;
+  return Number.isFinite(n) && n > 0 ? n : 7;
+}
+
+/**
+ * The expiry date as the customer should read it: German format (TT.MM.JJJJ)
+ * in the store's timezone (Europe/Berlin) — the instant lives in UTC, and
+ * formatting it server-side without a timezone could shift the day. One shared
+ * formatter so the AI prose, the deterministic email line, and the draft
+ * preview can never disagree on the date string.
+ */
+export function formatGermanExpiryDate(d: string | Date): string {
+  return new Date(d).toLocaleDateString("de-DE", {
+    timeZone: "Europe/Berlin",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 
 /**

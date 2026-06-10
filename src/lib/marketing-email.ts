@@ -31,6 +31,7 @@ import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
   createUniqueDiscountCode,
+  formatGermanExpiryDate,
   PLACEHOLDER_DISCOUNT_CODE,
 } from "./shopify-discounts";
 import { buildPrefilledCartUrlForIds } from "./cart";
@@ -141,6 +142,17 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         // Swap the preview placeholder for the real code wherever it appears so
         // the prose and the working code never disagree.
         body = body.split(PLACEHOLDER_DISCOUNT_CODE).join(minted.code);
+        // Same for the expiry date: the prose names the date PROJECTED at draft
+        // time, but the real code minted just now expires N days from NOW. If
+        // the draft sat around, swap the stale date string for the real one so
+        // the stated deadline always matches the code that ships.
+        const realExpiryLabel = formatGermanExpiryDate(minted.expiresAt);
+        if (claimed.discountExpiresAt) {
+          const draftExpiryLabel = formatGermanExpiryDate(claimed.discountExpiresAt);
+          if (draftExpiryLabel !== realExpiryLabel) {
+            body = body.split(draftExpiryLabel).join(realExpiryLabel);
+          }
+        }
       }
 
       // Build the cart permalink that actually ships: it carries ?discount=CODE
@@ -169,6 +181,11 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         // The customer sees/clicks the tracked redirect URL, not the raw cart.
         linkUrl,
         discountCode,
+        // Deterministic deadline next to the code, derived from the REAL minted
+        // expiry — stated even if the AI prose were edited to drop it.
+        discountExpiresLabel: discountExpiresAt
+          ? formatGermanExpiryDate(discountExpiresAt)
+          : null,
         unsubscribe: unsubscribeFooter(unsubscribeUrl),
       });
 
@@ -221,9 +238,16 @@ function renderMarketingEmail(opts: {
    *  redirect, NOT the raw Shopify cart (which is kept server-side). */
   linkUrl: string | null;
   discountCode: string | null;
+  /** German-formatted expiry date of the minted code ("TT.MM.JJJJ"); stated
+   *  deterministically next to the code so the deadline always ships. */
+  discountExpiresLabel: string | null;
   unsubscribe: { text: string; html: string };
 }): { text: string; html: string } {
-  const { body, linkUrl, discountCode, unsubscribe } = opts;
+  const { body, linkUrl, discountCode, discountExpiresLabel, unsubscribe } = opts;
+
+  const validityNote = discountExpiresLabel
+    ? `, gültig bis ${discountExpiresLabel}`
+    : "";
 
   // --- text part ---
   const textLines = [body.trim()];
@@ -231,10 +255,14 @@ function renderMarketingEmail(opts: {
     textLines.push(
       "",
       discountCode
-        ? `Dein vorausgefüllter Warenkorb (Code ${discountCode} ist bereits hinterlegt):`
+        ? `Dein vorausgefüllter Warenkorb (Code ${discountCode}${validityNote} ist bereits hinterlegt):`
         : "Dein vorausgefüllter Warenkorb:",
       linkUrl
     );
+  } else if (discountCode) {
+    // No cart to link (no products on the row) — the code + deadline must
+    // still appear outside the editable prose.
+    textLines.push("", `Dein persönlicher Code: ${discountCode}${validityNote}.`);
   }
   textLines.push("", "—", unsubscribe.text);
   const text = textLines.join("\n");
@@ -247,9 +275,13 @@ function renderMarketingEmail(opts: {
       (discountCode
         ? `<p style="font-size:13px;color:#666;margin:-12px 0 0">Dein persönlicher Code <strong>${escapeHtml(
             discountCode
-          )}</strong> ist im Warenkorb bereits hinterlegt.</p>`
+          )}</strong> ist im Warenkorb bereits hinterlegt${escapeHtml(validityNote)}.</p>`
         : "")
-    : "";
+    : discountCode
+      ? `<p style="font-size:13px;color:#666;margin:24px 0 0">Dein persönlicher Code: <strong>${escapeHtml(
+          discountCode
+        )}</strong>${escapeHtml(validityNote)}.</p>`
+      : "";
 
   const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.6;color:#111">
   <div style="white-space:pre-wrap">${escapeHtml(body.trim())}</div>

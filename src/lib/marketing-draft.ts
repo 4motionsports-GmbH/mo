@@ -56,6 +56,12 @@ export interface GenerateDraftInput {
    * in the offer. Null when no discount was selected.
    */
   discountExpiresLabel: string | null;
+  /**
+   * How many days the code stays valid (normally 7) so the prose can state the
+   * period ("7 Tage gültig") alongside the concrete date. Null when no
+   * discount was selected.
+   */
+  discountValidityDays: number | null;
 }
 
 function readableTranscript(messages: TranscriptMessage[]): string {
@@ -94,14 +100,19 @@ function fallbackDraft(input: GenerateDraftInput): MarketingDraft {
     );
   }
   if (input.discountCode && input.discountPercent > 0) {
+    const validity = input.discountValidityDays
+      ? `${input.discountValidityDays} Tage gültig` +
+        (input.discountExpiresLabel ? ` — bis ${input.discountExpiresLabel}` : "")
+      : input.discountExpiresLabel
+        ? `gültig bis ${input.discountExpiresLabel}`
+        : `nur für kurze Zeit gültig`;
     lines.push(
       "",
       `Und weil wir persönlich gesprochen haben, habe ich extra für dich einen ` +
         `eigenen Rabattcode angelegt: Mit ${input.discountCode} bekommst du ` +
         `${input.discountPercent}% auf deine Auswahl. Der Code gehört nur dir, ` +
-        `ist einmalig einlösbar` +
-        (input.discountExpiresLabel ? ` und gültig bis ${input.discountExpiresLabel}` : "") +
-        `. Den vorausgefüllten Warenkorb-Button findest du gleich unten — ` +
+        `ist einmalig einlösbar und ${validity}. ` +
+        `Den vorausgefüllten Warenkorb-Button findest du gleich unten — ` +
         `ein Klick, und der Code ist schon hinterlegt.`
     );
   }
@@ -124,8 +135,17 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
 
   const transcript = readableTranscript(input.transcript);
   const hasDiscount = Boolean(input.discountCode) && input.discountPercent > 0;
+  // The expiry must be unmissable in the prose: state the validity period AND
+  // the concrete end date, naturally placed next to the call-to-action.
+  const validityPhrase = input.discountValidityDays
+    ? `${input.discountValidityDays} Tage`
+    : "kurze Zeit";
   const expiryClause = input.discountExpiresLabel
-    ? `Der Code ist gültig bis ${input.discountExpiresLabel} — nenne dieses Ablaufdatum konkret.`
+    ? `Der Code ist ab heute nur ${validityPhrase} gültig — bis ${input.discountExpiresLabel}. ` +
+      `Sage BEIDES klar im Text, nah an der Handlungsaufforderung (dem Hinweis ` +
+      `auf den Warenkorb-Button): die Gültigkeitsdauer UND das konkrete ` +
+      `Ablaufdatum, z. B. „gültig bis ${input.discountExpiresLabel}“. Natürlich ` +
+      `formuliert, kein künstlicher Druck.`
     : "Der Code läuft nach kurzer Zeit ab — weise freundlich darauf hin, dass er nicht ewig gilt.";
   const discountHint = hasDiscount
     ? `WICHTIG — dieser Kunde bekommt ein persönliches Angebot, das du klar, warm ` +
