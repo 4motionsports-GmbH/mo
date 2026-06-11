@@ -61,6 +61,12 @@ export interface CustomerProps {
   profileSummaryUpdatedAt: string | null;
   purchaseSummary: OrderHistoryProps | null;
   purchaseSummaryUpdatedAt: string | null;
+  /** One-time welcome discount (issued on first DOI confirmation). */
+  welcomeCode: string | null;
+  welcomeCodeExpiresAt: string | null;
+  welcomeIssuedAt: string | null;
+  /** Live Shopify redemption check (read_orders); null = unknown. */
+  welcomeRedeemed: boolean | null;
   sessions: CustomerSessionProps[];
 }
 
@@ -277,6 +283,42 @@ export function CustomerProfileCard({ customer }: { customer: CustomerProps }) {
         ) : (
           <p style={{ fontSize: 13, color: "#999", margin: "8px 0 0" }}>
             <em>Noch keine Kaufhistorie geladen.</em>
+          </p>
+        )}
+      </div>
+
+      {/* Welcome discount (one-time, issued on first DOI confirmation) */}
+      <div style={{ marginTop: 16, borderTop: "1px solid #f0f0f0", paddingTop: 14 }}>
+        <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>Willkommensrabatt</div>
+        {customer.welcomeIssuedAt ? (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={badge("#dbeafe", "#1e40af")}>
+              🎁 Ausgestellt am {fmtDate(customer.welcomeIssuedAt)}
+            </span>
+            {customer.welcomeCode && (
+              <span style={{ fontSize: 13 }}>
+                Code: <code>{customer.welcomeCode}</code>
+                {customer.welcomeCodeExpiresAt
+                  ? ` (gültig bis ${fmtDate(customer.welcomeCodeExpiresAt)})`
+                  : ""}
+              </span>
+            )}
+            {customer.welcomeRedeemed === true ? (
+              <span style={badge("#dcfce7", "#166534")}>✓ Eingelöst</span>
+            ) : customer.welcomeRedeemed === false ? (
+              <span style={badge("#fef3c7", "#92400e")}>Noch nicht eingelöst</span>
+            ) : (
+              <span style={badge("#f3f4f6", "#6b7280")} title="Shopify nicht erreichbar/konfiguriert">
+                Einlösung unbekannt
+              </span>
+            )}
+          </div>
+        ) : (
+          <p style={{ fontSize: 13, color: "#999", margin: 0 }}>
+            <em>
+              Noch kein Willkommenscode — wird automatisch bei der ersten
+              Double-Opt-In-Bestätigung ausgestellt (einmal pro Kunde).
+            </em>
           </p>
         )}
       </div>
