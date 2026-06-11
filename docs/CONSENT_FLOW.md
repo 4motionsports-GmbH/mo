@@ -150,3 +150,9 @@ Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off
       from **past chat sessions and Shopify purchase history** — the current
       copy may only cover the present conversation. Details and sub-items in
       `CUSTOMERS.md` → "TODO — GDPR".
+- [ ] **Customer memory in the live chat** (`CUSTOMERS.md` → "Customer memory
+      in the live chat"): once a returning customer re-identifies by email in
+      the current session, prior interactions + purchase history shape the
+      **live consultation**. Confirm this personalisation purpose is within
+      the approved consent scope / privacy policy before enabling for real
+      users — same launch gate as the rest of this checklist.

@@ -94,6 +94,37 @@ export async function canSendMarketing(
   }
 }
 
+/**
+ * True only when the consent record for `email` carries `sessionId` — i.e. the
+ * (latest) capture of this address really came from THIS chat session. This is
+ * the server-side half of the in-session re-identification gate for customer
+ * memory in the live chat: the widget's claim ("the user just typed this email
+ * here") is cross-checked against the capture trail, so a forged chat request
+ * naming someone else's address resolves nothing unless the capture flow
+ * actually ran from this very session. Fail-closed: no DB / no match / any
+ * error → false.
+ */
+export async function wasEmailCapturedFromSession(
+  email: string,
+  sessionId: string,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false; // fail-closed
+  const e = normalizeEmail(email);
+  const sid = sessionId.trim();
+  if (!e || !sid) return false;
+  try {
+    const rows = await sql`
+      SELECT 1 FROM email_captures
+       WHERE email = ${e} AND session_id = ${sid}
+       LIMIT 1
+    `;
+    return rows.length > 0;
+  } catch {
+    return false; // fail-closed
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Upsert (capture)
 // ---------------------------------------------------------------------------

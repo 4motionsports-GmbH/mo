@@ -7,6 +7,7 @@ import {
 } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { buildSystemPrompt, productPivotNote, type ProductContext } from "@/lib/system-prompt";
+import { resolveCustomerMemory, type CustomerMemoryContext } from "@/lib/customer-memory";
 import { buildChatTools } from "@/lib/tools";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
@@ -76,6 +77,16 @@ interface ChatRequestContext {
   productTitle?: unknown;
 }
 
+// Optional re-identification the widget attaches ONLY after a successful
+// /api/capture-email in THIS chat session (kept in widget memory, never read
+// back from localStorage on a fresh open). Loose shape — public boundary; the
+// real gate is server-side in `resolveCustomerMemory`, which also verifies the
+// capture actually came from this session id. A forged/garbage value resolves
+// to no memory, never to an error.
+interface ChatRequestCustomer {
+  email?: unknown;
+}
+
 async function resolveProductContext(
   context: ChatRequestContext | undefined
 ): Promise<ProductContext | undefined> {
@@ -137,9 +148,13 @@ export async function POST(req: Request) {
     const rl = await checkRateLimit(req, "chat");
     if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
-    let body: { messages?: UIMessage[]; context?: ChatRequestContext };
+    let body: {
+      messages?: UIMessage[];
+      context?: ChatRequestContext;
+      customer?: ChatRequestCustomer;
+    };
     try {
-      body = (await req.json()) as { messages?: UIMessage[]; context?: ChatRequestContext };
+      body = (await req.json()) as typeof body;
     } catch {
       return errorResponse("bad_request", "Invalid JSON body", 400, cors);
     }
@@ -162,9 +177,23 @@ export async function POST(req: Request) {
     archetype = deriveArchetype(profile);
     const latestUserText = getLatestUserText(messages);
 
-    const hits = latestUserText
-      ? await retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
-      : [];
+    // Customer memory — PRIVACY GATE: resolved only from an email the user
+    // provided IN THIS session (the widget attaches it after a successful
+    // capture here), and only after the server verifies that capture really
+    // came from this session id. NEVER from the localStorage session id alone
+    // — a shared/family/public browser must not surface someone else's
+    // history. Anonymous sessions (no `customer.email`) skip this entirely.
+    const claimedEmail =
+      typeof body.customer?.email === "string" ? body.customer.email.trim() : "";
+
+    const [hits, customerMemory] = await Promise.all([
+      latestUserText
+        ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
+        : Promise.resolve([]),
+      claimedEmail
+        ? resolveCustomerMemory({ email: claimedEmail, sessionId })
+        : Promise.resolve<CustomerMemoryContext | null>(null),
+    ]);
     const retrievedProducts = hits.map((h) => h.product);
 
     // Optional product context (chat opened "about" a product). Validated
@@ -194,7 +223,13 @@ export async function POST(req: Request) {
 
     const result = streamText({
       model: anthropic("claude-sonnet-4-5-20250929"),
-      system: buildSystemPrompt({ profile, archetype, retrievedProducts, productContext: greetingContext }),
+      system: buildSystemPrompt({
+        profile,
+        archetype,
+        retrievedProducts,
+        productContext: greetingContext,
+        customerMemory: customerMemory ?? undefined,
+      }),
       messages: modelMessages,
       tools: buildChatTools(profile),
       stopWhen: stepCountIs(6),

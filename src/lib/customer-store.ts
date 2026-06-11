@@ -168,6 +168,48 @@ export async function getCustomerById(
   }
 }
 
+export async function getCustomerByEmail(
+  email: string,
+  sql: Sql | null = getSql()
+): Promise<Customer | null> {
+  if (!sql) return null;
+  const e = normalizeEmail(email);
+  if (!e) return null;
+  try {
+    const rows = (await sql`
+      SELECT * FROM customers WHERE email = ${e}
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? mapCustomer(rows[0]) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "getCustomerByEmail" });
+    return null;
+  }
+}
+
+/**
+ * Number of linked conversations EXCLUDING the given session — the customer's
+ * PRIOR consultations. The live conversation is linked at capture time, so it
+ * must not count as "history" of its own. Returns 0 on any failure.
+ */
+export async function countPriorConversations(
+  customerId: number,
+  excludeSessionId: string | null,
+  sql: Sql | null = getSql()
+): Promise<number> {
+  if (!sql) return 0;
+  try {
+    const rows = await sql`
+      SELECT count(*)::int AS n FROM conversations
+       WHERE customer_id = ${customerId}
+         AND (${excludeSessionId}::text IS NULL OR session_id <> ${excludeSessionId})
+    `;
+    return rows[0]?.n != null ? Number(rows[0].n) : 0;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "countPriorConversations" });
+    return 0;
+  }
+}
+
 /** One linked conversation of a customer, with its readable transcript. */
 export interface CustomerSession {
   conversationId: number;
