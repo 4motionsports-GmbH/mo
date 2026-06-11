@@ -144,3 +144,9 @@ Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off
       two consents as visually separate, independently-tickable boxes.
 - [ ] Confirm an **Imprint/Privacy link** is shown next to the capture form
       (frontend), as the consent text references data use for personalisation.
+- [ ] **Profile building from past interactions and purchases** (the customer
+      entity, see [`CUSTOMERS.md`](./CUSTOMERS.md)): confirm the privacy policy
+      and the marketing consent text cover building a durable customer profile
+      from **past chat sessions and Shopify purchase history** — the current
+      copy may only cover the present conversation. Details and sub-items in
+      `CUSTOMERS.md` → "TODO — GDPR".
