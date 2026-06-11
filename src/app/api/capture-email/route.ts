@@ -24,6 +24,7 @@ import {
   isValidEmail,
   upsertEmailCapture,
 } from "@/lib/email-capture-store";
+import { linkCustomerOnEmailCapture } from "@/lib/customer-store";
 import { sendEmail } from "@/lib/email";
 import { sendSummaryEmail } from "@/lib/summary-email";
 import { getBaseUrl } from "@/lib/base-url";
@@ -110,6 +111,13 @@ export async function POST(req: Request) {
         headers
       );
     }
+
+    // Customer linking: find-or-create the customer for this email, attach the
+    // current conversation, bump last_seen_at. An email that already exists
+    // means a RETURNING customer — this session becomes another entry under the
+    // same customer. Best-effort (never throws): the consent is already stored,
+    // and a linking failure must not block the summary/DOI emails.
+    await linkCustomerOnEmailCapture({ email, sessionId });
 
     const baseUrl = getBaseUrl(req);
 

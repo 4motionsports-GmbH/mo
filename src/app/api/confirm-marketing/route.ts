@@ -9,6 +9,7 @@
 // Until this runs, NO marketing email is permitted for the address.
 
 import { confirmMarketingByToken } from "@/lib/email-capture-store";
+import { syncCustomerConsent } from "@/lib/customer-store";
 import { reportError } from "@/lib/observability";
 import {
   DOI_CONFIRMED_BODY,
@@ -36,6 +37,8 @@ export async function GET(req: Request) {
 
     const result = await confirmMarketingByToken(token);
     if (result.ok) {
+      // Mirror the confirmed state onto the customer entity (best-effort).
+      await syncCustomerConsent(result.email);
       return renderResultPage({
         status: 200,
         heading: DOI_CONFIRMED_HEADING,

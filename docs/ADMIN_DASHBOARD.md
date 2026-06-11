@@ -4,10 +4,17 @@ The authenticated back office where a human reviews marketing-eligible contacts,
 generates a personalised draft email, edits it, and approves it — after which the
 **system** sends it (the operator never copies text into a personal mail client).
 
-It is deliberately small: a single shared admin password, two tabs
-(**Customers / Marketing** and **KPIs**), and a send path that concentrates every
-legal guarantee in one place. Tabs are switched server-side via `?tab=kpi` — no
+It is deliberately small: a single shared admin password, three tabs
+(**Marketing**, **Kunden** and **KPIs**), and a send path that concentrates every
+legal guarantee in one place. Tabs are switched server-side via `?tab=` — no
 client router.
+
+The **Kunden** tab (`?tab=kunden`) groups by CUSTOMER (email), not by session:
+session timeline with transcripts, cached Shopify purchase history, and the
+on-demand "current understanding" profile (an Anthropic pass — token cost shown
+per run). Returning customers (multiple sessions under one email) are badged.
+See [`CUSTOMERS.md`](./CUSTOMERS.md) for the identity model and the open GDPR
+TODO on profile building.
 
 > ⚠️ All German-facing email copy is still PLACEHOLDER and requires lawyer
 > sign-off (see [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) and

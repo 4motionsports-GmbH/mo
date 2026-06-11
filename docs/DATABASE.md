@@ -82,13 +82,28 @@ The schema is split into **two clusters** (see the separation rationale below).
 
 | Table              | Key columns                                                                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------- |
-| `email_captures`   | `email`, `transactional_consent`, `marketing_consent`, `marketing_doi_status`, `doi_token`, `doi_confirmed_at`, `consent_text_shown`, `unsubscribed_at` |
+| `email_captures`   | `email`, `customer_id` (FK → customers, SET NULL), `transactional_consent`, `marketing_consent`, `marketing_doi_status`, `doi_token`, `doi_confirmed_at`, `consent_text_shown`, `unsubscribed_at` |
 | `suppression_list` | `email` (PK), `added_at`, `reason`                                                                       |
 | `marketing_sends`  | `email_capture_id` (FK, cascade), `drafted_text`, `discount_code`, `sent_at`, `status` (draft/approved/sent), `shopify_order_matched` |
+| `customers`        | `email` (unique — the person key), `first_seen_at`/`last_seen_at`, `transactional_consent` + `marketing_status` (aggregated mirror of the capture), `profile_summary` + `profile_summary_updated_at` (regenerated "current understanding"), `purchase_summary` (jsonb Shopify order history) + `purchase_summary_updated_at` |
 
-> The consent flow, dashboards, and marketing sends are **future work**. This
-> session only creates the tables so the consent system can be built on a
-> stable schema.
+### The customer entity (migration 0008)
+
+A **customer** is keyed by email — the only reliable cross-session identifier
+(given with consent). The localStorage session id is a per-browser *thread* id,
+not a person; anonymous sessions are never linked across visits.
+
+**Linking rule:** a conversation gets a `customer_id` when (and only when) an
+email is captured for that session via `/api/capture-email`
+(`linkCustomerOnEmailCapture` in `src/lib/customer-store.ts` find-or-creates
+the customer, attaches the conversation, and bumps `last_seen_at`). Sessions
+without an email capture stay anonymous and unlinked. Multiple sessions under
+one email = the returning-customer case. `email_captures` remains the
+audit-grade source of truth for consent; `customers` only mirrors the
+aggregated state.
+
+See [`CUSTOMERS.md`](./CUSTOMERS.md) for the full model and the open GDPR
+TODO on profile building.
 
 ## Why conversations and marketing are separate
 
@@ -100,9 +115,13 @@ This separation is a GDPR design decision, not just tidiness:
 2. **Email is quarantined.** An email address appears in **exactly one place**
    (`email_captures`). Conversations are pseudonymous (`session_id` only), so
    the bulk of stored data carries no directly-identifying field.
-3. **No foreign key between clusters.** They are intentionally not joined in
-   the schema. The only bridge is the pseudonymous `session_id`, which a user
-   can sever by clearing browser storage.
+3. **No implicit join between clusters.** For anonymous traffic the only
+   bridge is the pseudonymous `session_id`, which a user can sever by clearing
+   browser storage. Since migration 0008 there is **one explicit,
+   consent-anchored exception**: `conversations.customer_id`, set only when the
+   user actively submits their email for that session. The FK is
+   `ON DELETE SET NULL`, so erasing a customer returns their conversations to
+   plain pseudonymous rows.
 4. **Independent retention.** Each cluster expires on its own schedule (see
    [`DATA_RETENTION.md`](./DATA_RETENTION.md)) — e.g. purging a marketing
    capture on unsubscribe doesn't touch conversation analytics, and deleting an

@@ -11,7 +11,10 @@
 //   3. Delete kpi_events past the telemetry retention window.
 //   4. Purge PII for suppressed/unsubscribed email_captures after a grace
 //      period — the suppression_list record itself is kept so we keep honouring
-//      the opt-out.
+//      the opt-out. The matching `customers` row (email + cached profile /
+//      purchase summaries — all PII) is purged with the same criteria; its
+//      ON DELETE SET NULL FKs return the linked conversations to plain
+//      pseudonymous rows.
 
 import { getSql } from "./db";
 
@@ -31,6 +34,7 @@ export interface RetentionResult {
   deletedConversations: number;
   deletedKpiEvents: number;
   purgedSuppressedCaptures: number;
+  purgedSuppressedCustomers: number;
   ranAt: string;
 }
 
@@ -125,11 +129,28 @@ export async function runRetention(
     SELECT count(*)::int AS n FROM del
   `;
 
+  // 5. Purge the customer entity for the same opted-out addresses. Runs AFTER
+  //    the capture purge so a freshly purged capture's customer goes in the
+  //    same run. Customers carry email + cached profile/purchase summaries —
+  //    all PII under the same consent. ON DELETE SET NULL detaches their
+  //    conversations back to anonymous, pseudonymous rows.
+  const purgedCustomers = await sql`
+    WITH del AS (
+      DELETE FROM customers c
+       WHERE EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = c.email)
+         AND c.created_at < ${suppressedCutoff}
+         AND NOT EXISTS (SELECT 1 FROM email_captures ec WHERE ec.email = c.email)
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM del
+  `;
+
   return {
     abandonedConversations: abandoned[0]?.n ?? 0,
     deletedConversations: deletedConvos[0]?.n ?? 0,
     deletedKpiEvents: deletedKpi[0]?.n ?? 0,
     purgedSuppressedCaptures: purgedCaptures[0]?.n ?? 0,
+    purgedSuppressedCustomers: purgedCustomers[0]?.n ?? 0,
     ranAt: new Date().toISOString(),
   };
 }
