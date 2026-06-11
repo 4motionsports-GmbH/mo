@@ -31,3 +31,11 @@ The deadline reaches the customer twice:
 
 The transactional **summary email carries no discount code by design** (see
 `src/lib/summary-email.ts`), so no deadline needs to be stated there.
+
+## Welcome codes (`WELCOME-…`)
+
+The one-time **welcome discount** issued on a customer's first DOI
+confirmation uses the same minting path (`createUniqueDiscountCode`,
+single-use) but its own prefix and expiry (default 30 days,
+`WELCOME_DISCOUNT_EXPIRY_DAYS`) — see
+[`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md).

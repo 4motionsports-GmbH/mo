@@ -170,3 +170,10 @@ Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off
       **live consultation**. Confirm this personalisation purpose is within
       the approved consent scope / privacy policy before enabling for real
       users — same launch gate as the rest of this checklist.
+- [ ] **Welcome discount framing** (see [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)):
+      the one-time welcome code is tied to **completing the DOI
+      confirmation** (a freely-chosen "yes, I want this" / welcome gift for
+      joining), **not** to ticking the marketing checkbox, so the consent
+      stays "freely given" (Art. 7(4) GDPR). Confirm this framing and the
+      welcome email / confirmation-page copy (`WELCOME_EMAIL_SUBJECT`,
+      `welcomeEmailBody`, `DOI_CONFIRMED_WELCOME_BODY`).

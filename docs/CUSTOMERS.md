@@ -43,6 +43,18 @@ per-session profiles — contradictions between sessions resolve toward the
 newer statement. Each run costs tokens; the dashboard shows the usage and an
 approximate USD cost after every run.
 
+## Welcome discount (once-ever, recorded here)
+
+The customer row is the **source of truth for the one-time welcome code**
+(migration `0009_welcome_discount.sql`: `welcome_code`, `welcome_code_gid`,
+`welcome_code_expires_at`, `welcome_issued_at`). Issued automatically on the
+customer's **first DOI confirmation** — never twice for the same email, across
+all future sessions and signups; the atomic `welcome_issued_at` claim
+guarantees it. Details, legal framing (lawyer-confirm) and dashboard tracking
+in [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md). GDPR erasure of the
+customer row removes the welcome record with it (the suppression list keeps
+honouring opt-outs as before).
+
 ## Customer memory in the live chat (in-session re-identification ONLY)
 
 Since the customer-memory feature, Mo can use a returning customer's history
