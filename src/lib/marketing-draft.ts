@@ -39,10 +39,10 @@ export interface MarketingDraft {
   body: string;
 }
 
-export interface GenerateDraftInput {
-  personaLabel: string | null;
-  products: Array<{ name: string }>;
-  transcript: TranscriptMessage[];
+/** The personal-offer parameters, shared by the per-session and per-customer
+ * drafts so the discount behaviour (placeholder code, stated validity period +
+ * concrete expiry date) can never drift apart between the two paths. */
+export interface DraftDiscountInput {
   /**
    * The code string to weave into the body. At draft time this is the clearly-
    * marked PLACEHOLDER (MO-XXXX); at send time the placeholder is swapped 1:1
@@ -64,6 +64,12 @@ export interface GenerateDraftInput {
   discountValidityDays: number | null;
 }
 
+export interface GenerateDraftInput extends DraftDiscountInput {
+  personaLabel: string | null;
+  products: Array<{ name: string }>;
+  transcript: TranscriptMessage[];
+}
+
 function readableTranscript(messages: TranscriptMessage[]): string {
   return messages
     .filter(
@@ -77,6 +83,26 @@ function readableTranscript(messages: TranscriptMessage[]): string {
 function productLine(products: Array<{ name: string }>): string {
   if (products.length === 0) return "(keine konkreten Produkte besprochen)";
   return products.map((p) => `- ${p.name}`).join("\n");
+}
+
+/** The templated discount paragraph for the fallback drafts, or null when no
+ * discount was selected. Shared by both fallbacks. */
+function fallbackDiscountParagraph(input: DraftDiscountInput): string | null {
+  if (!input.discountCode || input.discountPercent <= 0) return null;
+  const validity = input.discountValidityDays
+    ? `${input.discountValidityDays} Tage gültig` +
+      (input.discountExpiresLabel ? ` — bis ${input.discountExpiresLabel}` : "")
+    : input.discountExpiresLabel
+      ? `gültig bis ${input.discountExpiresLabel}`
+      : `nur für kurze Zeit gültig`;
+  return (
+    `Und weil wir persönlich gesprochen haben, habe ich extra für dich einen ` +
+    `eigenen Rabattcode angelegt: Mit ${input.discountCode} bekommst du ` +
+    `${input.discountPercent}% auf deine Auswahl. Der Code gehört nur dir, ` +
+    `ist einmalig einlösbar und ${validity}. ` +
+    `Den vorausgefüllten Warenkorb-Button findest du gleich unten — ` +
+    `ein Klick, und der Code ist schon hinterlegt.`
+  );
 }
 
 /** Clean templated fallback used when the model is unavailable. */
@@ -99,23 +125,8 @@ function fallbackDraft(input: GenerateDraftInput): MarketingDraft {
       productLine(input.products)
     );
   }
-  if (input.discountCode && input.discountPercent > 0) {
-    const validity = input.discountValidityDays
-      ? `${input.discountValidityDays} Tage gültig` +
-        (input.discountExpiresLabel ? ` — bis ${input.discountExpiresLabel}` : "")
-      : input.discountExpiresLabel
-        ? `gültig bis ${input.discountExpiresLabel}`
-        : `nur für kurze Zeit gültig`;
-    lines.push(
-      "",
-      `Und weil wir persönlich gesprochen haben, habe ich extra für dich einen ` +
-        `eigenen Rabattcode angelegt: Mit ${input.discountCode} bekommst du ` +
-        `${input.discountPercent}% auf deine Auswahl. Der Code gehört nur dir, ` +
-        `ist einmalig einlösbar und ${validity}. ` +
-        `Den vorausgefüllten Warenkorb-Button findest du gleich unten — ` +
-        `ein Klick, und der Code ist schon hinterlegt.`
-    );
-  }
+  const discountParagraph = fallbackDiscountParagraph(input);
+  if (discountParagraph) lines.push("", discountParagraph);
   lines.push(
     "",
     "Melde dich jederzeit, wenn du Fragen hast — ich helfe dir gern persönlich weiter.",
@@ -127,16 +138,18 @@ function fallbackDraft(input: GenerateDraftInput): MarketingDraft {
 }
 
 /**
- * Generate the personalised draft. Never throws — on any error returns the
- * templated fallback so the workflow continues.
+ * The prompt section describing the personal offer (or its absence). The expiry
+ * must be unmissable in the prose: validity period AND concrete end date,
+ * naturally placed next to the call-to-action. Shared by both draft paths.
  */
-export async function generateMarketingDraft(input: GenerateDraftInput): Promise<MarketingDraft> {
-  if (!process.env.ANTHROPIC_API_KEY) return fallbackDraft(input);
-
-  const transcript = readableTranscript(input.transcript);
+function discountHint(input: DraftDiscountInput): string {
   const hasDiscount = Boolean(input.discountCode) && input.discountPercent > 0;
-  // The expiry must be unmissable in the prose: state the validity period AND
-  // the concrete end date, naturally placed next to the call-to-action.
+  if (!hasDiscount) {
+    return (
+      "Es gibt diesmal KEIN Rabattangebot — erwähne also weder einen Rabatt noch " +
+      "einen Code und versprich keinen Preisnachlass."
+    );
+  }
   const validityPhrase = input.discountValidityDays
     ? `${input.discountValidityDays} Tage`
     : "kurze Zeit";
@@ -147,25 +160,34 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
       `Ablaufdatum, z. B. „gültig bis ${input.discountExpiresLabel}“. Natürlich ` +
       `formuliert, kein künstlicher Druck.`
     : "Der Code läuft nach kurzer Zeit ab — weise freundlich darauf hin, dass er nicht ewig gilt.";
-  const discountHint = hasDiscount
-    ? `WICHTIG — dieser Kunde bekommt ein persönliches Angebot, das du klar, warm ` +
-      `und einladend in den Text einweben MUSST (nahe der Handlungsaufforderung, ` +
-      `nicht aufdringlich, kein Marktschreier):\n` +
-      `- ${input.discountPercent}% Rabatt auf die besprochene Auswahl.\n` +
-      `- Der Code ist EINMALIG und EXTRA für DIESEN Kunden erstellt — kein ` +
-      `allgemeiner Gutschein, keine Massenaktion. Mach unmissverständlich klar, ` +
-      `dass es SEIN/IHR persönlicher Code ist.\n` +
-      `- Der Code lautet exakt ${input.discountCode}. Verwende GENAU diese ` +
-      `Zeichenfolge unverändert im Text.\n` +
-      `- Der Code ist nur EIN EINZIGES MAL einlösbar (single-use).\n` +
-      `- ${expiryClause}\n` +
-      `- Direkt unter dem Text gibt es einen Button „Warenkorb öffnen“, in dem der ` +
-      `Code bereits hinterlegt ist. Verweise einladend auf diesen vorausgefüllten ` +
-      `Warenkorb (ein Klick), baue aber KEINEN Link/keine URL selbst ein.\n` +
-      `Der Kunde soll am Ende sicher wissen: ein persönlicher ${input.discountPercent}%-Code, ` +
-      `nur für ihn/sie, einmalig, mit Ablaufdatum, und der Warenkorb-Button ist startklar.`
-    : "Es gibt diesmal KEIN Rabattangebot — erwähne also weder einen Rabatt noch " +
-      "einen Code und versprich keinen Preisnachlass.";
+  return (
+    `WICHTIG — dieser Kunde bekommt ein persönliches Angebot, das du klar, warm ` +
+    `und einladend in den Text einweben MUSST (nahe der Handlungsaufforderung, ` +
+    `nicht aufdringlich, kein Marktschreier):\n` +
+    `- ${input.discountPercent}% Rabatt auf die besprochene Auswahl.\n` +
+    `- Der Code ist EINMALIG und EXTRA für DIESEN Kunden erstellt — kein ` +
+    `allgemeiner Gutschein, keine Massenaktion. Mach unmissverständlich klar, ` +
+    `dass es SEIN/IHR persönlicher Code ist.\n` +
+    `- Der Code lautet exakt ${input.discountCode}. Verwende GENAU diese ` +
+    `Zeichenfolge unverändert im Text.\n` +
+    `- Der Code ist nur EIN EINZIGES MAL einlösbar (single-use).\n` +
+    `- ${expiryClause}\n` +
+    `- Direkt unter dem Text gibt es einen Button „Warenkorb öffnen“, in dem der ` +
+    `Code bereits hinterlegt ist. Verweise einladend auf diesen vorausgefüllten ` +
+    `Warenkorb (ein Klick), baue aber KEINEN Link/keine URL selbst ein.\n` +
+    `Der Kunde soll am Ende sicher wissen: ein persönlicher ${input.discountPercent}%-Code, ` +
+    `nur für ihn/sie, einmalig, mit Ablaufdatum, und der Warenkorb-Button ist startklar.`
+  );
+}
+
+/**
+ * Generate the personalised draft. Never throws — on any error returns the
+ * templated fallback so the workflow continues.
+ */
+export async function generateMarketingDraft(input: GenerateDraftInput): Promise<MarketingDraft> {
+  if (!process.env.ANTHROPIC_API_KEY) return fallbackDraft(input);
+
+  const transcript = readableTranscript(input.transcript);
 
   try {
     const { object } = await generateObject({
@@ -186,7 +208,7 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
       prompt:
         `Persona des Kunden: ${input.personaLabel ?? "unbekannt"}\n\n` +
         `Besprochene Produkte:\n${productLine(input.products)}\n\n` +
-        `${discountHint}\n\n` +
+        `${discountHint(input)}\n\n` +
         `Gesprächsprotokoll:\n${transcript || "(kein Protokoll verfügbar)"}\n\n` +
         `Schreibe die personalisierte E-Mail (Betreff + Text).`,
     });
@@ -197,5 +219,193 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
   } catch (err) {
     reportError(err, { route: "lib/marketing-draft", phase: "generate" });
     return fallbackDraft(input);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-CUSTOMER draft — the full-context upgrade (all conversations + profile +
+// purchase history + admin special instructions).
+// ---------------------------------------------------------------------------
+
+// Bound the prompt like customer-profile does: newest sessions carry the
+// freshest signal, so when trimming, the OLDEST transcripts are dropped first.
+const MAX_SESSIONS_IN_DRAFT_PROMPT = 10;
+const MAX_TRANSCRIPT_CHARS_PER_SESSION = 5000;
+
+/** One linked conversation, as the customer draft needs it. Structurally
+ * satisfied by CustomerSession (lib/customer-store). */
+export interface CustomerDraftSession {
+  createdAt: string | null;
+  personaLabel: string | null;
+  transcript: TranscriptMessage[];
+}
+
+export interface GenerateCustomerDraftInput extends DraftDiscountInput {
+  /** ALL linked conversations, chronological (oldest first). */
+  sessions: CustomerDraftSession[];
+  /** The cached "current understanding" profile summary, if generated. */
+  profileSummary: string | null;
+  /**
+   * What the customer already OWNS (from the Shopify purchase history) — the
+   * email must never re-recommend these; it builds on them instead. Empty
+   * array = history checked, nothing bought; see purchasesKnown for "unknown".
+   */
+  ownedItems: Array<{ title: string | null; quantity: number }>;
+  /** False when no purchase history was loaded — owned items are then UNKNOWN,
+   *  not "none", and the email must not claim the customer owns nothing. */
+  purchasesKnown: boolean;
+  /** The products the email recommends (owned items already excluded — see
+   *  chooseCustomerProductIds in lib/cart). Also the cart-link product set. */
+  products: Array<{ name: string }>;
+  /**
+   * Free-text special instructions from the ADMIN (e.g. "mention the new
+   * rowing machine line"). Operator guidance, NOT customer data — passed to
+   * the model in its own clearly-labelled section. Null/empty = none.
+   */
+  adminInstructions: string | null;
+}
+
+function draftSessionBlock(s: CustomerDraftSession, index: number, total: number): string {
+  const transcript = readableTranscript(s.transcript);
+  const clipped =
+    transcript.length > MAX_TRANSCRIPT_CHARS_PER_SESSION
+      ? transcript.slice(0, MAX_TRANSCRIPT_CHARS_PER_SESSION) + "\n[… gekürzt]"
+      : transcript;
+  const date = s.createdAt ? new Date(s.createdAt).toLocaleDateString("de-DE") : "Datum unbekannt";
+  return (
+    `### Gespräch ${index + 1} von ${total} — ${date}` +
+    `${s.personaLabel ? ` · Persona: ${s.personaLabel}` : ""}\n` +
+    (clipped || "(kein lesbares Transkript)")
+  );
+}
+
+function ownedItemsBlock(input: GenerateCustomerDraftInput): string {
+  if (!input.purchasesKnown) {
+    return (
+      "(Kaufhistorie nicht geladen — Käufe sind UNBEKANNT, nicht 'keine'. " +
+      "Behaupte nichts über bisherige Käufe.)"
+    );
+  }
+  if (input.ownedItems.length === 0) {
+    return "(Shopify abgefragt: bisher keine Bestellungen unter dieser E-Mail)";
+  }
+  return input.ownedItems
+    .map((i) => `- ${i.quantity}× ${i.title ?? "Unbekannter Artikel"}`)
+    .join("\n");
+}
+
+/** Templated fallback for the per-customer draft. Admin instructions cannot be
+ * honoured by a template — the admin reviews/edits every draft before sending,
+ * and the instructions stay visible next to the editor. */
+function fallbackCustomerDraft(input: GenerateCustomerDraftInput): MarketingDraft {
+  const first = input.products[0]?.name;
+  const subject = first
+    ? `Deine Empfehlung von motion sports: ${first}`
+    : "Deine persönliche Empfehlung von motion sports";
+
+  const several = input.sessions.length > 1;
+  const lines: string[] = [
+    "Hallo,",
+    "",
+    several
+      ? "hier ist Mo von motion sports. Schön, dass wir uns schon mehrfach im " +
+        "Chat zu deinem Trainingsvorhaben austauschen konnten."
+      : "hier ist Mo von motion sports. Schön, dass wir uns im Chat zu deinem " +
+        "Trainingsvorhaben austauschen konnten.",
+  ];
+  if (input.products.length > 0) {
+    lines.push(
+      "",
+      several
+        ? "Basierend auf unseren Gesprächen passt aus meiner Sicht besonders gut:"
+        : "Basierend auf unserem Gespräch passt aus meiner Sicht besonders gut:",
+      productLine(input.products)
+    );
+  }
+  const discountParagraph = fallbackDiscountParagraph(input);
+  if (discountParagraph) lines.push("", discountParagraph);
+  lines.push(
+    "",
+    "Melde dich jederzeit, wenn du Fragen hast — ich helfe dir gern persönlich weiter.",
+    "",
+    "Herzliche Grüße",
+    "Mo, dein persönlicher Berater bei motion sports"
+  );
+  return { subject, body: lines.join("\n") };
+}
+
+/**
+ * Generate the per-customer personalised draft from EVERYTHING we know about
+ * one person: every linked conversation, the "current understanding" profile,
+ * the purchase history (owned items are never re-recommended), and — clearly
+ * separated from the customer data — the admin's special instructions. Never
+ * throws — on any error returns the templated fallback so the workflow
+ * continues (the admin reviews and edits every draft before sending anyway).
+ */
+export async function generateCustomerMarketingDraft(
+  input: GenerateCustomerDraftInput
+): Promise<MarketingDraft> {
+  if (!process.env.ANTHROPIC_API_KEY) return fallbackCustomerDraft(input);
+
+  const kept = input.sessions.slice(-MAX_SESSIONS_IN_DRAFT_PROMPT);
+  const sessionBlocks = kept.map((s, i) => draftSessionBlock(s, i, kept.length)).join("\n\n");
+  const instructions = input.adminInstructions?.trim() || null;
+
+  // The admin's guidance gets its own labelled section, clearly separated from
+  // the customer data, so the model treats it as operator directives — woven
+  // into the prose, never quoted as instructions.
+  const adminBlock = instructions
+    ? `## Hinweise vom motion-sports-Team (NICHT vom Kunden)\n` +
+      `Arbeite die folgenden Punkte natürlich in die E-Mail ein. Zitiere sie ` +
+      `nicht wörtlich und erwähne nicht, dass es interne Hinweise sind:\n` +
+      `${instructions}\n\n`
+    : "";
+
+  try {
+    const { object } = await generateObject({
+      model: anthropic(DRAFT_MODEL),
+      schema: draftSchema,
+      system:
+        "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
+        "(Fitness- und Kraftsportgeräte). Du schreibst eine kurze, warme, " +
+        "persönliche Marketing-E-Mail auf Deutsch in der Du-Form an einen " +
+        "Stammkunden, den du aus einem oder mehreren Chat-Gesprächen kennst. " +
+        "Du bekommst ALLES, was wir über diesen Kunden wissen: alle bisherigen " +
+        "Gespräche, ein verdichtetes Kundenverständnis und die Kaufhistorie.\n\n" +
+        "Regeln:\n" +
+        "- Beziehe dich konkret auf die Gespräche; bei Widersprüchen zwischen " +
+        "älteren und neueren Gesprächen gilt die neuere Aussage.\n" +
+        "- Produkte, die der Kunde laut Kaufhistorie BEREITS BESITZT, empfiehlst " +
+        "du NICHT noch einmal. Knüpfe stattdessen daran an: empfiehl Ergänzendes " +
+        "oder den sinnvollen nächsten Schritt, und freu dich ehrlich über den Kauf, " +
+        "wenn es passt.\n" +
+        "- Empfiehl NUR die vorgegebenen Produkte — sei ehrlich, kein Marktschreier, " +
+        "keine erfundenen Produkte, keine erfundenen Preise.\n" +
+        "- Hinweise vom motion-sports-Team (wenn vorhanden) arbeitest du natürlich " +
+        "in den Text ein — als deine eigenen Worte, nie als zitierte Anweisung.\n" +
+        "- Wenn dir ein persönliches Rabattangebot vorgegeben wird, webe es klar, " +
+        "warm und einladend in den Text ein (mit dem exakten Code) — als " +
+        "persönliches Angebot für genau diesen Kunden, nicht als Massen-Promo.\n" +
+        "- Unterschreibe mit 'Mo, dein persönlicher Berater bei motion sports'. " +
+        "Baue KEINEN Warenkorb-Link und KEINEN Abmeldelink ein — die werden " +
+        "separat angehängt.",
+      prompt:
+        `## Aktuelles Kundenverständnis (verdichtet)\n` +
+        `${input.profileSummary?.trim() || "(noch kein Profil generiert)"}\n\n` +
+        `## Bereits gekauft (NICHT erneut empfehlen)\n${ownedItemsBlock(input)}\n\n` +
+        `## Produkte, die diese E-Mail empfehlen soll\n${productLine(input.products)}\n\n` +
+        `${discountHint(input)}\n\n` +
+        adminBlock +
+        `## Bisherige Gespräche (chronologisch, älteste zuerst)\n\n` +
+        `${sessionBlocks || "(keine Gespräche verknüpft)"}\n\n` +
+        `Schreibe jetzt die personalisierte E-Mail (Betreff + Text).`,
+    });
+    const subject = object.subject?.trim();
+    const body = object.body?.trim();
+    if (!subject || !body) return fallbackCustomerDraft(input);
+    return { subject, body };
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-draft", phase: "generateCustomer" });
+    return fallbackCustomerDraft(input);
   }
 }

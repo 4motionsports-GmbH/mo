@@ -17,7 +17,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { ADMIN_COOKIE_NAME } from "@/lib/admin-auth";
 import { isDbConfigured } from "@/lib/db";
-import { listMarketingTargets } from "@/lib/marketing-store";
+import { listMarketingTargets, getLatestSendForEmail } from "@/lib/marketing-store";
 import { listCustomersWithSessions } from "@/lib/customer-store";
 import { wasDiscountCodeRedeemed } from "@/lib/shopify-orders";
 import { ARCHETYPE_META } from "@/lib/persona";
@@ -163,7 +163,8 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
   // the browser doesn't need the pseudonymous keys). For customers with a
   // welcome code, the redemption status is looked up live against Shopify
   // orders (read_orders, same check the marketing funnel uses) — concurrent,
-  // and null ("unknown") when Shopify can't answer.
+  // and null ("unknown") when Shopify can't answer. The latest marketing send
+  // (open draft preferred) backs the personalised-email workflow on the card.
   const cards: CustomerProps[] = await Promise.all(
     customers.map(async (c) => ({
       id: c.id,
@@ -172,6 +173,22 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
       lastSeenAt: c.lastSeenAt,
       transactionalConsent: c.transactionalConsent,
       marketingStatus: c.marketingStatus,
+      adminInstructions: c.adminInstructions,
+      marketingSend: await getLatestSendForEmail(c.email).then((s) =>
+        s
+          ? {
+              id: s.id,
+              status: s.status,
+              subject: s.subject,
+              draftedText: s.draftedText,
+              discountPercent: s.discountPercent,
+              discountCode: s.discountCode,
+              discountExpiresAt: s.discountExpiresAt,
+              adminInstructions: s.adminInstructions,
+              sentAt: s.sentAt,
+            }
+          : null
+      ),
       profileSummary: c.profileSummary,
       profileSummaryUpdatedAt: c.profileSummaryUpdatedAt,
       purchaseSummary: c.purchaseSummary,
