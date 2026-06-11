@@ -427,13 +427,24 @@ below).
 
 ##### `offer_email_summary` → email-capture form
 
-The assistant calls this **once**, at a natural point after it has given solid
-recommendations, to offer emailing a summary of the chat + a prefilled cart. The
-widget turns the tool call into the **GDPR email-capture form** (see §7).
+The assistant calls this at a **value-triggered** moment — after the user
+reacted well to a recommendation, after a helpful comparison, when the user
+wants to think it over, or at clear buying/checkout intent — never as the first
+message and never on a fixed timer. It is offered **at most twice per
+conversation**: if the user declines or ignores it, the assistant backs off and
+may raise it once more at a later, clearly higher-value moment (typically
+checkout intent). The widget turns the tool call into the **GDPR email-capture
+form** (see §7).
 
 Input schema:
 ```ts
-{ message: string; productIds?: string[] }   // productIds advisory only
+{
+  message: string;
+  // The value moment that triggered this ask (also used for KPI measurement):
+  trigger: "recommendation_accepted" | "comparison_delivered" |
+           "consideration_pause" | "buying_intent" | "checkout_intent";
+  productIds?: string[];   // advisory only
+}
 ```
 Example part:
 ```json
@@ -442,7 +453,8 @@ Example part:
   "toolCallId": "call_pqr678",
   "state": "result",
   "input": {
-    "message": "Wenn du magst, schicke ich dir die Zusammenfassung mit deinem Warenkorb per E-Mail.",
+    "message": "Soll ich dir deine persönliche Empfehlung und den fertigen Warenkorb per Mail schicken?",
+    "trigger": "recommendation_accepted",
     "productIds": ["atx-treadmill-pro-fold"]
   }
 }
