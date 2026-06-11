@@ -8,7 +8,7 @@ import {
 import { anthropic } from "@ai-sdk/anthropic";
 import { buildSystemPrompt, productPivotNote, type ProductContext } from "@/lib/system-prompt";
 import { resolveCustomerMemory, type CustomerMemoryContext } from "@/lib/customer-memory";
-import { buildChatTools } from "@/lib/tools";
+import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
 import { getProductById } from "@/lib/product-catalog";
@@ -66,6 +66,20 @@ function extractProfile(messages: UIMessage[]): CustomerProfile {
     }
   }
   return profile;
+}
+
+function countEmailSummaryOffers(messages: UIMessage[]): number {
+  // Count prior offer_email_summary tool calls the same way extractProfile
+  // replays profile patches: straight from the message history, so the two-ask
+  // cap is a pure function of the conversation rather than separate state.
+  let count = 0;
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    for (const part of msg.parts ?? []) {
+      if (part.type.startsWith("tool-offer_email_summary")) count++;
+    }
+  }
+  return count;
 }
 
 // Optional product context the widget attaches when the chat was opened from a
@@ -186,6 +200,18 @@ export async function POST(req: Request) {
     const claimedEmail =
       typeof body.customer?.email === "string" ? body.customer.email.trim() : "";
 
+    // Email-summary ask cap (value-triggered capture): how often the offer was
+    // already made in this conversation, and whether the email is already in.
+    // `claimedEmail` is only ever attached by the widget after a successful
+    // capture in THIS session, so its presence means "captured" for gating
+    // purposes (a forged claim merely suppresses the offer — harmless). Once
+    // the cap is hit or the email captured, the tool is withheld entirely so
+    // a third ask is impossible regardless of what the model does.
+    const emailOffersMade = countEmailSummaryOffers(messages);
+    const emailCaptured = Boolean(claimedEmail);
+    const allowEmailSummaryOffer =
+      !emailCaptured && emailOffersMade < MAX_EMAIL_OFFERS_PER_CONVERSATION;
+
     const [hits, customerMemory] = await Promise.all([
       latestUserText
         ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
@@ -229,9 +255,10 @@ export async function POST(req: Request) {
         retrievedProducts,
         productContext: greetingContext,
         customerMemory: customerMemory ?? undefined,
+        emailOffer: { offersMade: emailOffersMade, emailCaptured },
       }),
       messages: modelMessages,
-      tools: buildChatTools(profile),
+      tools: buildChatTools(profile, { allowEmailSummaryOffer }),
       stopWhen: stepCountIs(6),
       onError: ({ error }) => {
         reportError(error, {

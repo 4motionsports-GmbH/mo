@@ -55,7 +55,10 @@ before any marketing send.
 ## End-to-end flow
 
 ```
-Chat → assistant calls offer_email_summary (once, at a natural point)
+Chat → assistant calls offer_email_summary (value-triggered: after a
+       well-received recommendation, a helpful comparison, or at buying/
+       checkout intent — never as the opener; at most TWO asks per
+       conversation, enforced server-side by withholding the tool)
      → widget renders the capture form (email + two separate checkboxes)
      → POST /api/capture-email { sessionId, email, transactionalConsent,
                                  marketingConsent, consentTextShown }
