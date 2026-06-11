@@ -1,4 +1,5 @@
 import type { Product, CustomerProfile, PersonaArchetype } from "./types";
+import type { CustomerMemoryContext } from "./customer-memory";
 import { ARCHETYPE_META, getPersonaAddendum, renderProfileForPrompt } from "./persona";
 
 interface BuildPromptOpts {
@@ -11,6 +12,12 @@ interface BuildPromptOpts {
   // greeting. For an EXISTING conversation we do NOT use this — see
   // `productPivotNote` for the lightweight in-conversation variant.
   productContext?: ProductContext;
+  // Set ONLY after the user re-identified themselves IN THIS session (email
+  // captured here and verified against this session id) AND that email matched
+  // an existing customer with history. Never derived from the session id alone
+  // — see lib/customer-memory.ts for the gate. Absent → no memory, the chat
+  // behaves exactly as for an anonymous/new visitor.
+  customerMemory?: CustomerMemoryContext;
 }
 
 export interface ProductContext {
@@ -32,6 +39,47 @@ function renderProductContext(ctx: ProductContext): string {
   return `## Produktkontext (Chat von einer Produktseite geöffnet)
 
 Der Nutzer betrachtet gerade das Produkt "${ctx.name}" (id \`${ctx.id}\`) im Shop und hat den Chat geöffnet, um sich dazu beraten zu lassen. Begrüße ihn warm und persönlich, nenne das Produkt beim Namen und lade ihn ein, seine Fragen dazu zu stellen. Wiederhole NICHT ungefragt die vollständigen Produktdaten — eine einladende, kurze Begrüßung genügt als erste Nachricht.`;
+}
+
+function fmtMemoryDate(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString("de-DE");
+}
+
+function renderCustomerMemory(memory: CustomerMemoryContext): string {
+  const facts: string[] = [];
+  const since = fmtMemoryDate(memory.firstSeenAt);
+  if (since) facts.push(`- Kunde bei uns seit: ${since}`);
+  if (memory.priorConversationCount > 0) {
+    facts.push(
+      `- Frühere Beratungsgespräche: ${memory.priorConversationCount}`
+    );
+  }
+  if (memory.ownedItems.length > 0) {
+    const last = fmtMemoryDate(memory.lastPurchaseAt);
+    facts.push(
+      `- Besitzt bereits (gekauft${last ? `, zuletzt am ${last}` : ""}): ${memory.ownedItems.join("; ")}`
+    );
+  }
+  const summaryBlock = memory.profileSummary
+    ? `\n### Aktuelles Kundenverständnis (verdichtet aus früheren Sessions)\n\n${memory.profileSummary}\n`
+    : "";
+
+  return `## Kundengedächtnis (wiederkehrender Kunde — hat sich in DIESEM Gespräch per E-Mail identifiziert)
+
+Der Kunde hat in diesem Gespräch seine E-Mail-Adresse angegeben und ist ein wiederkehrender Kunde. Das wissen wir aus früheren Beratungen und Käufen:
+
+${facts.join("\n") || "- (keine Einzelfakten — siehe Kundenverständnis unten)"}
+${summaryBlock}
+### So nutzt du das Gedächtnis (KRITISCH)
+
+- **Warm, nicht gruselig.** Erkenne die Rückkehr EINMAL kurz und natürlich an ("Schön, dass du wieder da bist!") — wie ein Berater im Fachgeschäft, der einen Stammkunden wiedererkennt. Zähle die Historie NICHT auf, zitiere keine alten Gespräche und nenne keine Kaufdetails, solange der Kunde nicht selbst danach fragt. Beziehe dich nur auf das, was für sein AKTUELLES Anliegen relevant ist.
+- **Nichts doppelt verkaufen.** Empfiehl KEINE Produkte, die der Kunde laut Gedächtnis bereits besitzt — außer er fragt ausdrücklich danach (Ersatz, Zweitgerät). Denke stattdessen in sinnvollen **Ergänzungen** zu dem, was er schon hat.
+- **Schneller zum Punkt.** Nutze das bekannte Profil (Niveau, Fokus, Platz-/Budget-Signale), um passender zu beraten und unnötige Basisfragen zu überspringen — stelle aber weiterhin Rückfragen, wenn das heutige Anliegen unklar ist.
+- **Heute schlägt gestern.** Widerspricht der Kunde im aktuellen Gespräch dem Gedächtnis (anderes Budget, anderer Fokus, umgezogen), gilt die heutige Aussage — Menschen ändern sich. Korrigiere ggf. still per \`update_customer_profile\`.
+- **Keine Regel wird aufgeweicht.** Das Gedächtnis informiert nur deine Empfehlungen. Verfügbarkeits-/Ausverkauft-Regeln, Direkt-Checkout-Regeln, B2B-Regeln und das übrige Tool-Verhalten gelten unverändert — ein ausverkauftes Produkt bleibt auch für einen Stammkunden ausverkauft.
+- **Datenschutz.** Gib ausschließlich Informationen aus diesem Gedächtnisblock oder dem aktuellen Gespräch wieder — niemals Bestellnummern, Beträge oder Daten Dritter erfinden oder vermuten.`;
 }
 
 function renderRetrievedProducts(products: Product[]): string {
@@ -92,6 +140,7 @@ export function buildSystemPrompt({
   archetype,
   retrievedProducts,
   productContext,
+  customerMemory,
 }: BuildPromptOpts): string {
   const archetypeMeta = ARCHETYPE_META[archetype];
   const profileBlock = renderProfileForPrompt(profile);
@@ -99,6 +148,9 @@ export function buildSystemPrompt({
   const productsBlock = renderRetrievedProducts(retrievedProducts);
   const productContextBlock = productContext
     ? `\n\n${renderProductContext(productContext)}`
+    : "";
+  const customerMemoryBlock = customerMemory
+    ? `\n\n${renderCustomerMemory(customerMemory)}`
     : "";
 
   return `Du bist der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}
@@ -132,7 +184,7 @@ ${profileBlock}
 
 **Aktueller Persona-Archetyp: ${archetypeMeta.label}** (\`${archetype}\`)
 
-${archetypeAddendum}
+${archetypeAddendum}${customerMemoryBlock}
 
 ## Dein Verhalten
 
