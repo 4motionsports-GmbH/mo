@@ -8,6 +8,7 @@
 // top-level navigation from a mail client → no CORS/secret guard.
 
 import { unsubscribeByEmail, verifyUnsubscribeToken } from "@/lib/email-capture-store";
+import { syncCustomerConsent } from "@/lib/customer-store";
 import { reportError } from "@/lib/observability";
 import {
   UNSUBSCRIBE_CONFIRMED_BODY,
@@ -45,6 +46,9 @@ export async function GET(req: Request) {
         tone: "error",
       });
     }
+
+    // Mirror the unsubscribe onto the customer entity (best-effort).
+    await syncCustomerConsent(email);
 
     return renderResultPage({
       status: 200,
