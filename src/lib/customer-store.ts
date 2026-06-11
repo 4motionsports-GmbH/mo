@@ -21,6 +21,7 @@
 import { getSql, type Sql } from "./db";
 import { normalizeEmail } from "./email-capture-store";
 import type { TranscriptMessage } from "./conversation-store";
+import type { OrderHistory } from "./shopify-orders";
 import { reportError } from "./observability";
 
 export type CustomerMarketingStatus = "none" | "pending" | "confirmed" | "unsubscribed";
@@ -37,7 +38,7 @@ export interface Customer {
   profileSummary: string | null;
   profileSummaryUpdatedAt: string | null;
   /** Cached Shopify order-history summary (refreshed on demand). */
-  purchaseSummary: Record<string, unknown> | null;
+  purchaseSummary: OrderHistory | null;
   purchaseSummaryUpdatedAt: string | null;
 }
 
@@ -52,7 +53,7 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     marketingStatus: (r.marketing_status as CustomerMarketingStatus) ?? "none",
     profileSummary: (r.profile_summary as string | null) ?? null,
     profileSummaryUpdatedAt: (r.profile_summary_updated_at as string | null) ?? null,
-    purchaseSummary: (r.purchase_summary as Record<string, unknown> | null) ?? null,
+    purchaseSummary: (r.purchase_summary as OrderHistory | null) ?? null,
     purchaseSummaryUpdatedAt: (r.purchase_summary_updated_at as string | null) ?? null,
   };
 }
@@ -277,7 +278,7 @@ export async function listCustomersWithSessions(
 
 export async function saveCustomerPurchaseSummary(
   customerId: number,
-  history: Record<string, unknown>,
+  history: OrderHistory,
   sql: Sql | null = getSql()
 ): Promise<boolean> {
   if (!sql) return false;
