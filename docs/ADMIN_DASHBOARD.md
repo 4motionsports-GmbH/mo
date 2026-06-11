@@ -99,7 +99,10 @@ For each contact it surfaces:
 
 ## 3. Marketing workflow
 
-All actions are `/api/admin/marketing/*` POSTs (proxy- and `guardAdminPost`-gated).
+All actions are `/api/admin/*` POSTs (proxy- and `guardAdminPost`-gated). Drafts
+can be generated from two places with the **same** lifecycle and send path:
+per **capture/session** on the Marketing tab (below), and per **CUSTOMER** with
+full context on the Kunden tab (§3a).
 
 ### Discount selector — chosen BEFORE generating
 
@@ -153,6 +156,52 @@ immutable.
 Delivers the (possibly edited) email through the system. See §4.
 
 Sent items are clearly marked in the UI and become read-only.
+
+---
+
+## 3a. Per-customer draft (Kunden tab) — full context + admin special instructions
+
+`POST /api/admin/customers/marketing-draft { customerId, discountPercent,
+adminInstructions?, regenerate? }` — the full-context upgrade of the per-capture
+draft, driven from the **Kunden** tab's "Personalisierte E-Mail (Mo)" section.
+
+**What feeds the draft** ([`generateCustomerMarketingDraft`](../src/lib/marketing-draft.ts)):
+
+1. **Every linked conversation** of the customer (chronological; oldest trimmed
+   first under the prompt cap) — not just one session's transcript.
+2. The cached **"current understanding" profile summary** (§2/Kunden tab), when
+   generated.
+3. The cached **Shopify purchase history**: owned items are listed as *bereits
+   gekauft — NICHT erneut empfehlen*, so Mo builds on the purchase
+   (complementary/next products) instead of re-recommending it. Owned items are
+   **also excluded from the recommended/cart product set** — catalog product ids
+   are Shopify handles, so purchase-history handles filter directly
+   (`chooseCustomerProductIds` in [`lib/cart.ts`](../src/lib/cart.ts): newest
+   conversation first, selected-over-discussed per conversation, capped).
+4. **Admin special instructions** — a free-text field on the customer (e.g.
+   "Erwähne die neue Rudergeräte-Linie", "Bundle anbieten"). Passed to the model
+   in its **own clearly-labelled section**, separated from the customer data, as
+   operator guidance to be woven in as Mo's own words (never quoted as an
+   instruction).
+
+**Audit trail:** the instructions are stored twice — the **current editable
+value** on `customers.admin_instructions`, and the **snapshot** that went into a
+specific draft on `marketing_sends.admin_instructions`, alongside
+`marketing_sends.customer_id` (migration 0010).
+
+**Same rules as the per-capture draft:** eligibility is re-checked via the
+customer's (unique-email) capture row; depth ∈ `{0, 5, 10, 15}` chosen before
+generating; the preview uses the `MO-XXXX` placeholder and the projected expiry;
+the real **`MS5-` single-use code (7-day expiry, stated in the prose)** is minted
+only at **Approve & send**. The one-time **welcome code** (`WELCOME-`, see
+[`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)) is a separate flow and is never
+re-issued here. Changing the depth **or** the instructions after generating
+flags a mismatch, disables Send and requires a re-generate, so the prose, the
+code depth and the audit snapshot always agree.
+
+**Edit / approve & send are the SAME endpoints** as the Marketing tab
+(`/api/admin/marketing/update`, `/api/admin/marketing/send`) on the same
+`marketing_sends` row — every guarantee in §4 applies unchanged.
 
 ---
 
