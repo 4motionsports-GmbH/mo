@@ -55,7 +55,10 @@ before any marketing send.
 ## End-to-end flow
 
 ```
-Chat → assistant calls offer_email_summary (once, at a natural point)
+Chat → assistant calls offer_email_summary (value-triggered: after a
+       well-received recommendation, a helpful comparison, or at buying/
+       checkout intent — never as the opener; at most TWO asks per
+       conversation, enforced server-side by withholding the tool)
      → widget renders the capture form (email + two separate checkboxes)
      → POST /api/capture-email { sessionId, email, transactionalConsent,
                                  marketingConsent, consentTextShown }
@@ -111,6 +114,17 @@ Retention purges PII for opted-out/suppressed captures after a grace period
 while keeping the `suppression_list` row, so we keep honouring the opt-out (see
 [`DATA_RETENTION.md`](./DATA_RETENTION.md)).
 
+## Measurement (pseudonymous, Cluster A)
+
+The ask → submit → opt-in → DOI-confirm funnel is tracked through
+session-keyed `kpi_events` (`email_capture_ask_shown` / `_submitted` /
+`_marketing_opted_in` / `_marketing_confirmed`, plus the widget-emitted
+`_declined`), each carrying the trigger moment of the ask. **No email address
+ever appears in an event** — see `src/lib/kpi-events.ts` and
+[`API_CONTRACT.md`](./API_CONTRACT.md) §5. The optional `trigger` echoed to
+`/api/capture-email` is telemetry-only and is never stored on the consent
+record.
+
 ## Defensive email handling
 
 All sends go through [`lib/email.ts`](../src/lib/email.ts), which **logs every
@@ -150,3 +164,16 @@ Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off
       from **past chat sessions and Shopify purchase history** — the current
       copy may only cover the present conversation. Details and sub-items in
       `CUSTOMERS.md` → "TODO — GDPR".
+- [ ] **Customer memory in the live chat** (`CUSTOMERS.md` → "Customer memory
+      in the live chat"): once a returning customer re-identifies by email in
+      the current session, prior interactions + purchase history shape the
+      **live consultation**. Confirm this personalisation purpose is within
+      the approved consent scope / privacy policy before enabling for real
+      users — same launch gate as the rest of this checklist.
+- [ ] **Welcome discount framing** (see [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)):
+      the one-time welcome code is tied to **completing the DOI
+      confirmation** (a freely-chosen "yes, I want this" / welcome gift for
+      joining), **not** to ticking the marketing checkbox, so the consent
+      stays "freely given" (Art. 7(4) GDPR). Confirm this framing and the
+      welcome email / confirmation-page copy (`WELCOME_EMAIL_SUBJECT`,
+      `welcomeEmailBody`, `DOI_CONFIRMED_WELCOME_BODY`).

@@ -156,6 +156,46 @@ below — `context` only seeds the model, it does not change the response
 shape. The widget parses the stream identically whether or not `context`
 was sent.
 
+#### Optional `customer` — returning-customer memory after in-session re-identification
+
+After a **successful `POST /api/capture-email` in the current chat session**
+(§7.1), the widget MAY attach the captured email to every subsequent
+`/api/chat` request of that session:
+
+```jsonc
+{
+  "messages": [ /* full history as usual */ ],
+  "customer": { "email": "max@example.de" }
+}
+```
+
+When that email matches an **existing customer with history** (prior linked
+conversations, a generated "current understanding" summary, and/or a cached
+purchase history), the backend injects a compact memory block into the system
+prompt so the assistant can consult like someone who remembers a returning
+client — acknowledge the return lightly, skip products they already own,
+tailor to their known profile. The response shape is unchanged; memory only
+seeds the model.
+
+**Privacy gate (the rules the widget MUST follow).** A returning customer
+opens a new chat as **anonymous** — we do not know who they are until they
+give their email in *this* conversation. Therefore:
+
+- Attach `customer.email` **only after** `/api/capture-email` succeeded **in
+  the current chat session**, and keep that state **in memory only**. Never
+  persist it to `localStorage`/cookies and never auto-attach it on a fresh
+  widget open — a shared/family/public browser must not surface another
+  person's history.
+- The backend enforces this independently: it injects memory only when the
+  email's consent record was verifiably captured **from the same
+  `x-ms-session`** as the chat request. A forged or replayed `customer.email`
+  resolves to no memory — **ignored gracefully**, exactly like an invalid
+  `context` (no error).
+- A **new email** (no existing customer history) also resolves to no memory:
+  the request behaves exactly as if `customer` was never sent.
+- The session id alone never unlocks memory; the match is strictly by the
+  email the user just provided in this session.
+
 **40-message cap.** If `messages.length > 40` the route returns:
 
 ```http
@@ -387,13 +427,24 @@ below).
 
 ##### `offer_email_summary` → email-capture form
 
-The assistant calls this **once**, at a natural point after it has given solid
-recommendations, to offer emailing a summary of the chat + a prefilled cart. The
-widget turns the tool call into the **GDPR email-capture form** (see §7).
+The assistant calls this at a **value-triggered** moment — after the user
+reacted well to a recommendation, after a helpful comparison, when the user
+wants to think it over, or at clear buying/checkout intent — never as the first
+message and never on a fixed timer. It is offered **at most twice per
+conversation**: if the user declines or ignores it, the assistant backs off and
+may raise it once more at a later, clearly higher-value moment (typically
+checkout intent). The widget turns the tool call into the **GDPR email-capture
+form** (see §7).
 
 Input schema:
 ```ts
-{ message: string; productIds?: string[] }   // productIds advisory only
+{
+  message: string;
+  // The value moment that triggered this ask (also used for KPI measurement):
+  trigger: "recommendation_accepted" | "comparison_delivered" |
+           "consideration_pause" | "buying_intent" | "checkout_intent";
+  productIds?: string[];   // advisory only
+}
 ```
 Example part:
 ```json
@@ -402,7 +453,8 @@ Example part:
   "toolCallId": "call_pqr678",
   "state": "result",
   "input": {
-    "message": "Wenn du magst, schicke ich dir die Zusammenfassung mit deinem Warenkorb per E-Mail.",
+    "message": "Soll ich dir deine persönliche Empfehlung und den fertigen Warenkorb per Mail schicken?",
+    "trigger": "recommendation_accepted",
     "productIds": ["atx-treadmill-pro-fold"]
   }
 }
@@ -415,11 +467,19 @@ Widget action: render `message` as the intro, then the capture form with:
 - a **separate, unchecked-by-default** marketing consent checkbox — label from
   `MARKETING_CHECKBOX_LABEL`.
 
-On submit, POST to `/api/capture-email` (§7) with the two booleans and the exact
-consent text strings shown (`consentTextShown`). The marketing box MUST start
-unchecked and MUST be visually independent of the transactional one — never one
-combined checkbox. `productIds` is advisory (cart preview); the backend
-determines the real products server-side from the conversation.
+On submit, POST to `/api/capture-email` (§7) with the two booleans, the exact
+consent text strings shown (`consentTextShown`), and the tool call's `trigger`
+echoed back (telemetry-only — lets the opt-in funnel be split by trigger
+moment). The marketing box MUST start unchecked and MUST be visually
+independent of the transactional one — never one combined checkbox.
+`productIds` is advisory (cart preview); the backend determines the real
+products server-side from the conversation.
+
+If the user dismisses or declines the capture card without submitting, the
+widget should emit one `email_capture_declined` event via `POST /api/kpi`
+(see §5) with `data: { trigger, askNumber? }` — the backend cannot observe a
+dismissal itself. Do NOT emit "shown"/"submitted" events from the widget;
+those are recorded server-side.
 
 > ⚠️ The checkbox labels are PLACEHOLDER copy pending lawyer approval — see
 > [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
@@ -685,6 +745,26 @@ only. It accepts only pseudonymous data and stores no email.
   The client `timestamp` is preserved inside the stored payload; the server's
   own `created_at` is authoritative.
 
+### Email-capture funnel events (canonical names)
+
+The value-triggered email capture is measured through this pseudonymous,
+session-keyed funnel (names in `src/lib/kpi-events.ts`; no email address ever
+appears in an event). Most are emitted **server-side** — the widget must not
+duplicate them:
+
+| Event                                | Emitted by | `data`                                  |
+| ------------------------------------ | ---------- | --------------------------------------- |
+| `email_capture_ask_shown`            | server (`/api/chat`) | `{ trigger, askNumber }` — one per `offer_email_summary` call. |
+| `email_capture_submitted`            | server (`/api/capture-email`) | `{ marketingConsent, trigger? }` |
+| `email_capture_marketing_opted_in`   | server (`/api/capture-email`) | `{ doiStatus, trigger? }` — the separate marketing box was ticked. |
+| `email_capture_marketing_confirmed`  | server (`/api/confirm-marketing`) | `{}` — unique DOI confirmations only. |
+| `email_capture_declined`             | **widget** (this endpoint) | `{ trigger, askNumber? }` — capture card dismissed/declined without submit. |
+
+`trigger` is the value moment from the `offer_email_summary` tool call
+(`recommendation_accepted`, `comparison_delivered`, `consideration_pause`,
+`buying_intent`, `checkout_intent`), so opt-in rates can be compared per
+trigger moment and per ask number.
+
 ### Success response
 
 ```http
@@ -764,7 +844,8 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   "email": "max@example.de",
   "transactionalConsent": true,    // required to be true
   "marketingConsent": false,       // separate, defaults unchecked in the UI
-  "consentTextShown": "Ja, sendet mir … | Ja, motion sports darf …"  // exact labels shown (audit)
+  "consentTextShown": "Ja, sendet mir … | Ja, motion sports darf …",  // exact labels shown (audit)
+  "trigger": "recommendation_accepted"  // optional; echo of the offer's trigger (telemetry only)
 }
 ```
 
@@ -824,6 +905,11 @@ HTTP/1.1 200 OK
 The widget should show: "Wir haben dir die Zusammenfassung geschickt." and, when
 `marketing.status === "pending"`, "Bitte bestätige noch die Anmeldung über den
 Link in der E-Mail."
+
+After a success response, the widget MAY start attaching the captured email
+as `customer.email` to the session's subsequent `/api/chat` requests to enable
+returning-customer memory — see §2 "Optional `customer`" for the privacy rules
+(in-memory only, this session only, never from `localStorage`).
 
 #### Error responses
 

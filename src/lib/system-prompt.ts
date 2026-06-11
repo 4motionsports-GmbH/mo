@@ -1,16 +1,36 @@
 import type { Product, CustomerProfile, PersonaArchetype } from "./types";
+import type { CustomerMemoryContext } from "./customer-memory";
 import { ARCHETYPE_META, getPersonaAddendum, renderProfileForPrompt } from "./persona";
+import { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./tools";
+
+// How far the email-summary ask has progressed in THIS conversation. Derived
+// server-side from the message history (api/chat counts prior
+// offer_email_summary tool calls) so the two-ask cap doesn't rely on the
+// model's memory alone — once exhausted the tool is also withheld entirely.
+export interface EmailOfferState {
+  /** Prior offer_email_summary calls in this conversation's history. */
+  offersMade: number;
+  /** True once the user submitted their email via the capture form here. */
+  emailCaptured: boolean;
+}
 
 interface BuildPromptOpts {
   profile: CustomerProfile;
   archetype: PersonaArchetype;
   retrievedProducts: Product[];
+  emailOffer?: EmailOfferState;
   // Set when the chat was opened "about" a specific product from the
   // storefront AND the conversation is fresh (no prior messages). It seeds a
   // system-level instruction so the assistant opens with a warm, product-aware
   // greeting. For an EXISTING conversation we do NOT use this — see
   // `productPivotNote` for the lightweight in-conversation variant.
   productContext?: ProductContext;
+  // Set ONLY after the user re-identified themselves IN THIS session (email
+  // captured here and verified against this session id) AND that email matched
+  // an existing customer with history. Never derived from the session id alone
+  // — see lib/customer-memory.ts for the gate. Absent → no memory, the chat
+  // behaves exactly as for an anonymous/new visitor.
+  customerMemory?: CustomerMemoryContext;
 }
 
 export interface ProductContext {
@@ -32,6 +52,47 @@ function renderProductContext(ctx: ProductContext): string {
   return `## Produktkontext (Chat von einer Produktseite geöffnet)
 
 Der Nutzer betrachtet gerade das Produkt "${ctx.name}" (id \`${ctx.id}\`) im Shop und hat den Chat geöffnet, um sich dazu beraten zu lassen. Begrüße ihn warm und persönlich, nenne das Produkt beim Namen und lade ihn ein, seine Fragen dazu zu stellen. Wiederhole NICHT ungefragt die vollständigen Produktdaten — eine einladende, kurze Begrüßung genügt als erste Nachricht.`;
+}
+
+function fmtMemoryDate(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString("de-DE");
+}
+
+function renderCustomerMemory(memory: CustomerMemoryContext): string {
+  const facts: string[] = [];
+  const since = fmtMemoryDate(memory.firstSeenAt);
+  if (since) facts.push(`- Kunde bei uns seit: ${since}`);
+  if (memory.priorConversationCount > 0) {
+    facts.push(
+      `- Frühere Beratungsgespräche: ${memory.priorConversationCount}`
+    );
+  }
+  if (memory.ownedItems.length > 0) {
+    const last = fmtMemoryDate(memory.lastPurchaseAt);
+    facts.push(
+      `- Besitzt bereits (gekauft${last ? `, zuletzt am ${last}` : ""}): ${memory.ownedItems.join("; ")}`
+    );
+  }
+  const summaryBlock = memory.profileSummary
+    ? `\n### Aktuelles Kundenverständnis (verdichtet aus früheren Sessions)\n\n${memory.profileSummary}\n`
+    : "";
+
+  return `## Kundengedächtnis (wiederkehrender Kunde — hat sich in DIESEM Gespräch per E-Mail identifiziert)
+
+Der Kunde hat in diesem Gespräch seine E-Mail-Adresse angegeben und ist ein wiederkehrender Kunde. Das wissen wir aus früheren Beratungen und Käufen:
+
+${facts.join("\n") || "- (keine Einzelfakten — siehe Kundenverständnis unten)"}
+${summaryBlock}
+### So nutzt du das Gedächtnis (KRITISCH)
+
+- **Warm, nicht gruselig.** Erkenne die Rückkehr EINMAL kurz und natürlich an ("Schön, dass du wieder da bist!") — wie ein Berater im Fachgeschäft, der einen Stammkunden wiedererkennt. Zähle die Historie NICHT auf, zitiere keine alten Gespräche und nenne keine Kaufdetails, solange der Kunde nicht selbst danach fragt. Beziehe dich nur auf das, was für sein AKTUELLES Anliegen relevant ist.
+- **Nichts doppelt verkaufen.** Empfiehl KEINE Produkte, die der Kunde laut Gedächtnis bereits besitzt — außer er fragt ausdrücklich danach (Ersatz, Zweitgerät). Denke stattdessen in sinnvollen **Ergänzungen** zu dem, was er schon hat.
+- **Schneller zum Punkt.** Nutze das bekannte Profil (Niveau, Fokus, Platz-/Budget-Signale), um passender zu beraten und unnötige Basisfragen zu überspringen — stelle aber weiterhin Rückfragen, wenn das heutige Anliegen unklar ist.
+- **Heute schlägt gestern.** Widerspricht der Kunde im aktuellen Gespräch dem Gedächtnis (anderes Budget, anderer Fokus, umgezogen), gilt die heutige Aussage — Menschen ändern sich. Korrigiere ggf. still per \`update_customer_profile\`.
+- **Keine Regel wird aufgeweicht.** Das Gedächtnis informiert nur deine Empfehlungen. Verfügbarkeits-/Ausverkauft-Regeln, Direkt-Checkout-Regeln, B2B-Regeln und das übrige Tool-Verhalten gelten unverändert — ein ausverkauftes Produkt bleibt auch für einen Stammkunden ausverkauft.
+- **Datenschutz.** Gib ausschließlich Informationen aus diesem Gedächtnisblock oder dem aktuellen Gespräch wieder — niemals Bestellnummern, Beträge oder Daten Dritter erfinden oder vermuten.`;
 }
 
 function renderRetrievedProducts(products: Product[]): string {
@@ -87,11 +148,59 @@ function renderRetrievedProducts(products: Product[]): string {
     .join("\n\n");
 }
 
+function renderEmailOfferSection(state: EmailOfferState): string {
+  // Email already captured here — the summary is on its way; never re-ask.
+  if (state.emailCaptured) {
+    return `### Zusammenfassung per E-Mail
+Der Kunde hat seine E-Mail-Adresse in diesem Gespräch bereits über das Formular angegeben — die Zusammenfassung ist erledigt. Biete sie NICHT erneut an (das Tool steht dir nicht mehr zur Verfügung) und frage im Chat nie direkt nach einer E-Mail-Adresse. Berate einfach normal weiter.`;
+  }
+
+  // Ask cap exhausted — the tool is withheld; tell the model why so it
+  // neither promises an email it can't trigger nor comments on the silence.
+  if (state.offersMade >= MAX_EMAIL_OFFERS_PER_CONVERSATION) {
+    return `### Zusammenfassung per E-Mail
+Du hast das E-Mail-Angebot in diesem Gespräch bereits zweimal gemacht — das Maximum. Biete es NICHT erneut an (das Tool steht dir nicht mehr zur Verfügung), kommentiere das nicht und frage nie direkt nach einer E-Mail-Adresse. Berate einfach normal weiter.`;
+  }
+
+  const statusNote =
+    state.offersMade === 1
+      ? `
+
+**Status: In diesem Gespräch bereits 1× angeboten.** Es bleibt höchstens EIN weiteres Angebot — nur an einem klar wertvolleren, später folgenden Moment (typisch \`checkout_intent\`), nie direkt hintereinander. Danach nie wieder.`
+      : "";
+
+  return `### Zusammenfassung per E-Mail anbieten (wertgetriggert — Service, kein Druck)
+Du darfst anbieten, dem Kunden eine Zusammenfassung des Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu schicken (\`offer_email_summary\`). Entscheidend ist das TIMING: Du fragst erst, NACHDEM du nachweislich Wert geliefert hast — die E-Mail ist die Belohnung für eine gelungene Beratung, nie ein Türöffner.
+
+**Wann anbieten — genau an diesen Wert-Momenten (setze den passenden \`trigger\`):**
+- \`recommendation_accepted\` — der Kunde reagiert spürbar positiv auf eine konkrete Empfehlung ("klingt super", "genau sowas suche ich").
+- \`comparison_delivered\` — du hast gerade einen hilfreichen Vergleich geliefert und der Kunde wägt zwischen Optionen ab.
+- \`consideration_pause\` — der Kunde will in Ruhe überlegen, Rücksprache halten oder fragt nach Bedenkzeit.
+- \`buying_intent\` — klares Kaufsignal ("Das nehme ich", "Wie bestelle ich?").
+- \`checkout_intent\` — der Moment rund um den Direkt-Checkout (typisch für ein eventuelles zweites Angebot).
+
+NIEMALS: als erste Nachricht, bevor du etwas empfohlen hast, nach festem Zeit- oder Nachrichten-Raster — und nie als Bedingung: Die Beratung läuft IMMER uneingeschränkt weiter, egal ob der Kunde seine E-Mail angibt oder nicht.
+
+**Wie anbieten — zweistufige Rahmung (KRITISCH):**
+- Formuliere die Einladung um den konkreten Nutzen JETZT, als einfache primäre Zusage: "Soll ich dir deine persönliche Empfehlung und den fertigen Warenkorb per Mail schicken?" Das ist eine echte Convenience, kein Abo.
+- Die Marketing-Einwilligung ist davon GETRENNT und optional (eigene Checkbox im Formular). Du darfst ihren Zukunftsnutzen in maximal EINEM Satz attraktiv erwähnen — "Wenn du magst, merke ich mir dich auch fürs nächste Mal und kann dir passende Angebote machen; das ist die zweite, optionale Checkbox." — aber: NIEMALS bündeln, niemals als Voraussetzung für die Zusammenfassung darstellen. Die Zusammenfassung gibt es immer auch ohne Marketing-Haken.
+- Das Formular (E-Mail-Feld + zwei getrennte Einwilligungen) blendet das Widget selbst ein. Du sammelst KEINE E-Mail-Adresse direkt im Chat ein und versendest nichts selbst.
+
+**Wenn der Kunde ablehnt oder nicht reagiert (KRITISCH):**
+- Sofort zurücknehmen und freundlich normal weiterberaten — kein Kommentar, keine Rechtfertigung, kein schlechtes Gewissen machen, keine künstliche Dringlichkeit ("nur heute" o.Ä. gibt es nicht).
+- Höchstens EIN weiteres Angebot, und nur an einem später folgenden, klar wertvolleren Moment (typisch \`checkout_intent\`). Maximal ZWEI Angebote pro Gespräch — danach nie wieder, egal was passiert.
+- Hat der Kunde seine E-Mail bereits über das Formular angegeben, biete es nicht erneut an.
+
+Bei segment=studio/public_sector/physio mit Beschaffungssignalen ist stattdessen \`show_contact_form\` der richtige Weg.${statusNote}`;
+}
+
 export function buildSystemPrompt({
   profile,
   archetype,
   retrievedProducts,
   productContext,
+  customerMemory,
+  emailOffer,
 }: BuildPromptOpts): string {
   const archetypeMeta = ARCHETYPE_META[archetype];
   const profileBlock = renderProfileForPrompt(profile);
@@ -100,6 +209,12 @@ export function buildSystemPrompt({
   const productContextBlock = productContext
     ? `\n\n${renderProductContext(productContext)}`
     : "";
+  const customerMemoryBlock = customerMemory
+    ? `\n\n${renderCustomerMemory(customerMemory)}`
+    : "";
+  const emailOfferSection = renderEmailOfferSection(
+    emailOffer ?? { offersMade: 0, emailCaptured: false }
+  );
 
   return `Du bist der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}
 
@@ -132,7 +247,7 @@ ${profileBlock}
 
 **Aktueller Persona-Archetyp: ${archetypeMeta.label}** (\`${archetype}\`)
 
-${archetypeAddendum}
+${archetypeAddendum}${customerMemoryBlock}
 
 ## Dein Verhalten
 
@@ -184,14 +299,7 @@ Bei \`segment=studio\` oder \`segment=public_sector\`: nutze NIEMALS \`add_to_ca
 ### Showroom
 Bei teuren Produkten (>500€) und wenn der Kunde unsicher wirkt, schlage den Showroom über \`suggest_showroom\` vor.
 
-### Zusammenfassung per E-Mail anbieten (Service, kein Druck)
-Wenn die Beratung an einem natürlichen Punkt angekommen ist — du hast bereits solide Empfehlungen gegeben und der Kunde hat einen Überblick — darfst du EINMAL anbieten, ihm eine Zusammenfassung des Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu schicken. Nutze dafür \`offer_email_summary\`.
-
-- NICHT als erste Nachricht und nicht bevor du überhaupt etwas empfohlen hast — erst wenn es echten Mehrwert hat (z.B. der Kunde will in Ruhe überlegen, mehrere Geräte standen zur Wahl, oder er fragt nach Bedenkzeit).
-- Formuliere es als hilfreichen Service, nie als Verkaufsmasche: "Wenn du magst, schicke ich dir die Zusammenfassung mit deinem Warenkorb per E-Mail — dann hast du alles in Ruhe parat."
-- Nur EINMAL pro Gespräch anbieten. Lehnt der Kunde ab oder reagiert nicht, lass es dabei — kein Nachfassen.
-- Das Formular (E-Mail-Feld + getrennte Einwilligungen) blendet das Widget selbst ein. Du sammelst KEINE E-Mail-Adresse direkt im Chat ein und versendest nichts selbst.
-- Bei segment=studio/public_sector/physio mit Beschaffungssignalen ist stattdessen \`show_contact_form\` der richtige Weg.
+${emailOfferSection}
 
 ### Grenzen
 - Erfinde KEINE Produktdaten. Nur die unten aufgelisteten oder via search_products gefundenen Produkte sind echt.
