@@ -11,6 +11,7 @@
 // send path re-checks independently (see canSendMarketing).
 
 import { getSql, type Sql } from "./db";
+import { normalizeEmail } from "./email-capture-store";
 import { loadConversationForSummary, type TranscriptMessage } from "./conversation-store";
 import { getProductsByIds } from "./product-catalog";
 import { chooseCartProductIds } from "./cart";
@@ -29,6 +30,16 @@ export type MarketingSendStatus = "draft" | "approved" | "sent";
 export interface MarketingSendRow {
   id: number;
   emailCaptureId: number;
+  /**
+   * The customer this draft was generated FROM (per-customer full-context
+   * drafts, migration 0010). Null for legacy per-capture drafts.
+   */
+  customerId: number | null;
+  /**
+   * Snapshot of the admin's special instructions that went into THIS draft —
+   * frozen here for the audit trail (the editable value lives on the customer).
+   */
+  adminInstructions: string | null;
   status: MarketingSendStatus;
   subject: string | null;
   draftedText: string | null;
@@ -82,6 +93,8 @@ function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
   return {
     id: Number(r.id),
     emailCaptureId: Number(r.email_capture_id),
+    customerId: r.customer_id != null ? Number(r.customer_id) : null,
+    adminInstructions: (r.admin_instructions as string | null) ?? null,
     status: r.status as MarketingSendStatus,
     subject: (r.subject as string | null) ?? null,
     draftedText: (r.drafted_text as string | null) ?? null,
@@ -419,8 +432,75 @@ export async function loadEligibleCapture(
   }
 }
 
+/**
+ * Like loadEligibleCapture, but keyed by EMAIL — the bridge the per-customer
+ * draft uses: a customer (keyed by email) has at most one capture row (unique
+ * email since migration 0002), and the SAME eligibility bar applies. Returns
+ * null when there is no capture or it isn't marketing-eligible.
+ */
+export async function loadEligibleCaptureByEmail(
+  email: string,
+  sql: Sql | null = getSql()
+): Promise<EligibleCapture | null> {
+  if (!sql) return null;
+  const e = normalizeEmail(email);
+  if (!e) return null;
+  try {
+    const rows = (await sql`
+      SELECT ec.id, ec.email, ec.session_id
+        FROM email_captures ec
+       WHERE ec.email = ${e}
+         AND ec.marketing_doi_status = 'confirmed'
+         AND ec.unsubscribed_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = ec.email)
+    `) as Array<Record<string, unknown>>;
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      id: Number(r.id),
+      email: String(r.email),
+      sessionId: (r.session_id as string | null) ?? null,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "loadEligibleCaptureByEmail" });
+    return null;
+  }
+}
+
+/**
+ * The most relevant marketing_sends row for an EMAIL (open draft preferred over
+ * sent history, then newest first) — what the Kunden tab shows/edits for a
+ * customer. Null when the email has no capture or no send rows.
+ */
+export async function getLatestSendForEmail(
+  email: string,
+  sql: Sql | null = getSql()
+): Promise<MarketingSendRow | null> {
+  if (!sql) return null;
+  const e = normalizeEmail(email);
+  if (!e) return null;
+  try {
+    const rows = (await sql`
+      SELECT ms.*
+        FROM marketing_sends ms
+        JOIN email_captures ec ON ec.id = ms.email_capture_id
+       WHERE ec.email = ${e}
+       ORDER BY (ms.status = 'sent') ASC, ms.created_at DESC, ms.id DESC
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? mapSendRow(rows[0]) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "getLatestSendForEmail" });
+    return null;
+  }
+}
+
 export interface CreateDraftInput {
   captureId: number;
+  /** The customer the draft was generated from (per-customer drafts only). */
+  customerId?: number | null;
+  /** Snapshot of the admin special instructions woven into this draft. */
+  adminInstructions?: string | null;
   subject: string;
   draftedText: string;
   /** Selected discount depth (0 = none). The real code is minted at send time. */
@@ -449,11 +529,13 @@ export async function createDraft(
   try {
     const rows = (await sql`
       INSERT INTO marketing_sends
-        (email_capture_id, status, subject, drafted_text, discount_percent,
-         discount_code, discount_code_gid, discount_expires_at, cart_url,
-         product_ids, persona_label, created_at, updated_at)
+        (email_capture_id, customer_id, admin_instructions, status, subject,
+         drafted_text, discount_percent, discount_code, discount_code_gid,
+         discount_expires_at, cart_url, product_ids, persona_label,
+         created_at, updated_at)
       VALUES
-        (${input.captureId}, 'draft', ${input.subject}, ${input.draftedText},
+        (${input.captureId}, ${input.customerId ?? null}, ${input.adminInstructions ?? null},
+         'draft', ${input.subject}, ${input.draftedText},
          ${input.discountPercent}, ${input.discountCode}, ${input.discountCodeGid},
          ${input.discountExpiresAt}, ${input.cartUrl}, ${input.productIds}::text[],
          ${input.personaLabel}, now(), now())
@@ -528,6 +610,10 @@ export interface RegenerateDraftInput {
   cartUrl: string | null;
   productIds: string[];
   personaLabel: string | null;
+  /** See CreateDraftInput. Re-stamped on regenerate so the audit snapshot
+   *  always matches the text that was actually generated. */
+  customerId?: number | null;
+  adminInstructions?: string | null;
 }
 
 /**
@@ -555,6 +641,8 @@ export async function saveRegeneratedDraft(
              cart_url = ${input.cartUrl},
              product_ids = ${input.productIds}::text[],
              persona_label = ${input.personaLabel},
+             customer_id = ${input.customerId ?? null},
+             admin_instructions = ${input.adminInstructions ?? null},
              updated_at = now()
        WHERE id = ${sendId} AND status <> 'sent'
       RETURNING *

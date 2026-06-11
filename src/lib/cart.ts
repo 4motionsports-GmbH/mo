@@ -98,6 +98,44 @@ export function chooseCartProductIds(
   return conversation.recommendedProductIds ?? [];
 }
 
+// Keep the per-customer email focused: enough products for a useful cart, not
+// every item that ever came up across a long consultation history.
+const CUSTOMER_CART_MAX_PRODUCTS = 6;
+
+/**
+ * Decide which products a PER-CUSTOMER marketing email recommends — the
+ * customer-level sibling of chooseCartProductIds, fed by ALL of the customer's
+ * conversations (newest first; see loadCustomerProductSelections).
+ *
+ * Rules:
+ *   1. Within each conversation the same selected-over-discussed preference as
+ *      chooseCartProductIds applies (a clear buy signal beats comparisons).
+ *   2. Conversations are merged newest-first, de-duplicated — the freshest
+ *      interest leads the email.
+ *   3. Products the customer ALREADY OWNS (purchase-history handles — catalog
+ *      product ids ARE Shopify handles, see catalog-mapping) are excluded so
+ *      the email never re-recommends an owned item; Mo recommends what
+ *      complements or follows the purchase instead.
+ *   4. Capped so a long history doesn't produce an unwieldy cart.
+ */
+export function chooseCustomerProductIds(
+  selections: Array<{ selectedProductIds: string[]; recommendedProductIds: string[] }>,
+  ownedProductIds: Iterable<string> = []
+): string[] {
+  const owned = new Set(ownedProductIds);
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const conversation of selections) {
+    for (const id of chooseCartProductIds(conversation)) {
+      if (seen.has(id) || owned.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+      if (ids.length >= CUSTOMER_CART_MAX_PRODUCTS) return ids;
+    }
+  }
+  return ids;
+}
+
 function normalizedQuantity(quantity: number | undefined): number {
   return Number.isFinite(quantity) && (quantity as number) > 0
     ? Math.floor(quantity as number)

@@ -40,6 +40,14 @@ export interface Customer {
   /** Cached Shopify order-history summary (refreshed on demand). */
   purchaseSummary: OrderHistory | null;
   purchaseSummaryUpdatedAt: string | null;
+  /**
+   * Admin free-text special instructions for the next generated marketing
+   * email (migration 0010) — e.g. "mention the new rowing machine line". The
+   * CURRENT editable value; the snapshot that went into a specific draft is
+   * frozen on the marketing_sends row.
+   */
+  adminInstructions: string | null;
+  adminInstructionsUpdatedAt: string | null;
   /** The one-time welcome discount code (migration 0009), if issued. */
   welcomeCode: string | null;
   /** When the welcome code stops working (Shopify endsAt). */
@@ -61,6 +69,8 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     profileSummaryUpdatedAt: (r.profile_summary_updated_at as string | null) ?? null,
     purchaseSummary: (r.purchase_summary as OrderHistory | null) ?? null,
     purchaseSummaryUpdatedAt: (r.purchase_summary_updated_at as string | null) ?? null,
+    adminInstructions: (r.admin_instructions as string | null) ?? null,
+    adminInstructionsUpdatedAt: (r.admin_instructions_updated_at as string | null) ?? null,
     welcomeCode: (r.welcome_code as string | null) ?? null,
     welcomeCodeExpiresAt: (r.welcome_code_expires_at as string | null) ?? null,
     welcomeIssuedAt: (r.welcome_issued_at as string | null) ?? null,
@@ -429,6 +439,70 @@ export async function recordWelcomeCode(
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "recordWelcomeCode" });
     return false;
+  }
+}
+
+/**
+ * Persist the admin's free-text special instructions for the next generated
+ * marketing email. NULL clears them. Returns false when the customer doesn't
+ * exist or the write failed. Never throws.
+ */
+export async function saveCustomerAdminInstructions(
+  customerId: number,
+  instructions: string | null,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = await sql`
+      UPDATE customers
+         SET admin_instructions = ${instructions},
+             admin_instructions_updated_at = now()
+       WHERE id = ${customerId}
+      RETURNING id
+    `;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "saveCustomerAdminInstructions" });
+    return false;
+  }
+}
+
+/** Per-conversation product sets of a customer, NEWEST conversation first. */
+export interface CustomerProductSelection {
+  selectedProductIds: string[];
+  recommendedProductIds: string[];
+}
+
+/**
+ * The product sets of every linked conversation, newest first — the raw input
+ * for the per-customer email's product chooser (see chooseCustomerProductIds
+ * in lib/cart). Returns [] on any failure.
+ */
+export async function loadCustomerProductSelections(
+  customerId: number,
+  sql: Sql | null = getSql()
+): Promise<CustomerProductSelection[]> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT selected_product_ids, recommended_product_ids
+        FROM conversations
+       WHERE customer_id = ${customerId}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ${SESSIONS_PER_CUSTOMER}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      selectedProductIds: Array.isArray(r.selected_product_ids)
+        ? (r.selected_product_ids as string[])
+        : [],
+      recommendedProductIds: Array.isArray(r.recommended_product_ids)
+        ? (r.recommended_product_ids as string[])
+        : [],
+    }));
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "loadCustomerProductSelections" });
+    return [];
   }
 }
 
