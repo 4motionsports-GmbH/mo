@@ -155,15 +155,16 @@ export function formatGermanExpiryDate(d: string | Date): string {
 
 /**
  * Generate a fresh, hard-to-guess code string. Short enough to read in an email,
- * random enough not to collide or be enumerated. Prefix marks its origin.
+ * random enough not to collide or be enumerated. Prefix marks its origin:
+ * "MS5" = marketing sends, "WELCOME" = the one-time welcome code.
  */
-export function generateDiscountCodeString(): string {
+export function generateDiscountCodeString(prefix = "MS5"): string {
   // 5 bytes → 8 base32-ish chars. Avoid ambiguous chars (0/O, 1/I).
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   let s = "";
   for (let i = 0; i < bytes.length; i++) s += alphabet[bytes[i] % alphabet.length];
-  return `MS5-${s}`;
+  return `${prefix}-${s}`;
 }
 
 export interface CreateDiscountOptions {
@@ -171,6 +172,10 @@ export interface CreateDiscountOptions {
   percentage?: number;
   /** Admin-facing title. Defaults to a marketing label. */
   title?: string;
+  /** Code prefix marking the code's origin. Defaults to the marketing "MS5". */
+  codePrefix?: string;
+  /** Days until the code expires. Defaults to the marketing expiry (7d). */
+  expiryDays?: number;
 }
 
 /**
@@ -185,9 +190,13 @@ export async function createUniqueDiscountCode(
   if (!isShopifyConfigured()) return null;
 
   const percentage = options.percentage ?? 0.05;
-  const code = generateDiscountCodeString();
+  const code = generateDiscountCodeString(options.codePrefix);
   const startsAt = new Date();
-  const endsAt = new Date(startsAt.getTime() + discountExpiryDays() * 86_400_000);
+  const expiryDays =
+    options.expiryDays != null && options.expiryDays > 0
+      ? options.expiryDays
+      : discountExpiryDays();
+  const endsAt = new Date(startsAt.getTime() + expiryDays * 86_400_000);
 
   const basicCodeDiscount = {
     title: options.title ?? `Persönlicher Rabatt (${Math.round(percentage * 100)}%) — ${code}`,
