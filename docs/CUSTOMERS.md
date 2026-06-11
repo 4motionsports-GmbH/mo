@@ -43,6 +43,41 @@ per-session profiles — contradictions between sessions resolve toward the
 newer statement. Each run costs tokens; the dashboard shows the usage and an
 approximate USD cost after every run.
 
+## Customer memory in the live chat (in-session re-identification ONLY)
+
+Since the customer-memory feature, Mo can use a returning customer's history
+to tailor the **live consultation** — under a strict privacy gate
+([`src/lib/customer-memory.ts`](../src/lib/customer-memory.ts)):
+
+> **A returning customer opens a new chat as ANONYMOUS.** The localStorage
+> session id is a browser thread id, not a person — on a shared/family/public
+> device it can carry someone else's past capture. So no past history is ever
+> surfaced at chat start, and the session id alone never unlocks memory.
+
+Memory is injected into the system prompt only when **both** hold:
+
+1. **In-session claim** — the widget attaches `customer.email` to `/api/chat`
+   only after a successful `/api/capture-email` **in the current chat
+   session**, keeping that state in memory only (`API_CONTRACT.md` §2).
+2. **Server-side verification** — `resolveCustomerMemory()` checks the email's
+   consent record was captured **from this very session id**
+   (`wasEmailCapturedFromSession`, fail-closed). A forged request body naming
+   someone else's address resolves nothing.
+
+What gets injected (compact, never raw transcripts): the cached
+`profile_summary` ("current understanding"), owned items + quantities from the
+cached `purchase_summary`, the prior-consultation count, and first-seen date.
+The prompt block instructs Mo to acknowledge the return lightly (once, warm,
+never exhaustive), not to re-recommend owned products (suggest complements
+instead), to let today's statements override the memory, and that **no
+existing rule is weakened** — sold-out, checkout, B2B, and tool behaviour all
+apply unchanged.
+
+A **new email** (customer just created, no prior conversations, no cached
+summaries) resolves to no memory — the chat behaves exactly as before. Another
+customer's data is unreachable by construction: the lookup is keyed strictly
+by the email the user just provided in this session.
+
 ## Retention / erasure
 
 - `conversations.customer_id` and `email_captures.customer_id` are
@@ -72,15 +107,22 @@ approximate USD cost after every run.
 >       into the chat-derived profile needs its own disclosure.
 > - [ ] Whether the regenerated profile constitutes **profiling** under
 >       Art. 22 / requires a DPIA entry.
+> - [ ] **Customer memory in the live chat** (section above): prior chat
+>       interactions + purchase history now shape the **live consultation**
+>       for a re-identified returning customer. Confirm this personalisation
+>       purpose is within the (lawyer-approved) consent scope / privacy policy
+>       — it goes beyond the one-off transactional summary the user originally
+>       requested. Until that sign-off, do NOT enable this for real users.
 >
-> Until that sign-off, treat the Kunden tab's profile generation as an
-> internal pilot. This item is also listed in the lawyer checklist in
+> Until that sign-off, treat the Kunden tab's profile generation AND the
+> in-chat customer memory as an internal pilot — the same launch + legal
+> constraints as the rest of the consent copy
+> (`CONSENT_COPY_LAWYER_APPROVED` in `src/lib/consent-copy.ts` is still
+> `false`). This item is also listed in the lawyer checklist in
 > [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
 ## What deliberately did NOT change
 
-- The live chat behaviour is untouched — the model does not (yet) see customer
-  memory; that is a later session.
 - `email_captures` remains the only consent record; `customers` mirrors state
   but never replaces the audit trail.
 - Anonymous (no-email) sessions remain exactly as pseudonymous and unlinked as

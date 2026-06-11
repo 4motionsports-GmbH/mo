@@ -156,6 +156,46 @@ below — `context` only seeds the model, it does not change the response
 shape. The widget parses the stream identically whether or not `context`
 was sent.
 
+#### Optional `customer` — returning-customer memory after in-session re-identification
+
+After a **successful `POST /api/capture-email` in the current chat session**
+(§7.1), the widget MAY attach the captured email to every subsequent
+`/api/chat` request of that session:
+
+```jsonc
+{
+  "messages": [ /* full history as usual */ ],
+  "customer": { "email": "max@example.de" }
+}
+```
+
+When that email matches an **existing customer with history** (prior linked
+conversations, a generated "current understanding" summary, and/or a cached
+purchase history), the backend injects a compact memory block into the system
+prompt so the assistant can consult like someone who remembers a returning
+client — acknowledge the return lightly, skip products they already own,
+tailor to their known profile. The response shape is unchanged; memory only
+seeds the model.
+
+**Privacy gate (the rules the widget MUST follow).** A returning customer
+opens a new chat as **anonymous** — we do not know who they are until they
+give their email in *this* conversation. Therefore:
+
+- Attach `customer.email` **only after** `/api/capture-email` succeeded **in
+  the current chat session**, and keep that state **in memory only**. Never
+  persist it to `localStorage`/cookies and never auto-attach it on a fresh
+  widget open — a shared/family/public browser must not surface another
+  person's history.
+- The backend enforces this independently: it injects memory only when the
+  email's consent record was verifiably captured **from the same
+  `x-ms-session`** as the chat request. A forged or replayed `customer.email`
+  resolves to no memory — **ignored gracefully**, exactly like an invalid
+  `context` (no error).
+- A **new email** (no existing customer history) also resolves to no memory:
+  the request behaves exactly as if `customer` was never sent.
+- The session id alone never unlocks memory; the match is strictly by the
+  email the user just provided in this session.
+
 **40-message cap.** If `messages.length > 40` the route returns:
 
 ```http
@@ -824,6 +864,11 @@ HTTP/1.1 200 OK
 The widget should show: "Wir haben dir die Zusammenfassung geschickt." and, when
 `marketing.status === "pending"`, "Bitte bestätige noch die Anmeldung über den
 Link in der E-Mail."
+
+After a success response, the widget MAY start attaching the captured email
+as `customer.email` to the session's subsequent `/api/chat` requests to enable
+returning-customer memory — see §2 "Optional `customer`" for the privacy rules
+(in-memory only, this session only, never from `localStorage`).
 
 #### Error responses
 
