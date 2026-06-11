@@ -18,6 +18,10 @@ import {
   DOI_INVALID_HEADING,
 } from "@/lib/consent-copy";
 import { renderResultPage } from "@/lib/result-page";
+import {
+  KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED,
+  recordKpiEvent,
+} from "@/lib/kpi-events";
 
 export const maxDuration = 10;
 
@@ -39,6 +43,14 @@ export async function GET(req: Request) {
     if (result.ok) {
       // Mirror the confirmed state onto the customer entity (best-effort).
       await syncCustomerConsent(result.email);
+      // Funnel telemetry: count each unique DOI confirmation once, keyed by
+      // the pseudonymous session the capture came from (no email in the event).
+      if (!result.alreadyConfirmed) {
+        await recordKpiEvent({
+          sessionId: result.sessionId,
+          event: KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED,
+        });
+      }
       return renderResultPage({
         status: 200,
         heading: DOI_CONFIRMED_HEADING,

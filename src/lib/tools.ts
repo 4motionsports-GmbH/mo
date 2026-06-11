@@ -62,8 +62,30 @@ const profilePatchSchema = z.object({
     ),
 });
 
-export function buildChatTools(profile: CustomerProfile) {
-  return {
+/**
+ * Hard cap on offer_email_summary invitations per conversation. The system
+ * prompt instructs the model to stop on its own; this constant additionally
+ * backs the server-side enforcement (the tool is withheld entirely once the
+ * cap is reached — see buildChatTools / api/chat).
+ */
+export const MAX_EMAIL_OFFERS_PER_CONVERSATION = 2;
+
+export interface BuildChatToolsOpts {
+  /**
+   * When false, offer_email_summary is withheld from the tool set entirely —
+   * the ask cap was reached or the user already submitted their email in this
+   * session. Prompt instructions alone are advisory; removing the tool makes
+   * "never a third ask" a guarantee.
+   */
+  allowEmailSummaryOffer?: boolean;
+}
+
+export function buildChatTools(
+  profile: CustomerProfile,
+  opts: BuildChatToolsOpts = {}
+) {
+  const { allowEmailSummaryOffer = true } = opts;
+  const tools = {
     update_customer_profile: tool({
       description: `Aktualisiert das Kundenprofil basierend auf neuen Signalen aus der Konversation.
 Rufe dieses Tool SOFORT auf wenn du ein neues Signal erkennst — z.B. der Kunde nennt sein Budget, seinen Platz, sein Erfahrungslevel, ob er Studio/Physio/Behörde ist.
@@ -209,33 +231,6 @@ Gib das Ergebnis NICHT roh aus — nutze es um dann show_product oder compare_pr
       execute: async () => ({ ok: true }),
     }),
 
-    offer_email_summary: tool({
-      description: `Bietet dem Kunden an, eine Zusammenfassung dieses Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu erhalten. Der Aufruf blendet im Widget ein DSGVO-konformes Erfassungsformular ein (E-Mail-Feld + getrennte Einwilligungs-Checkboxen).
-
-WANN aufrufen:
-- An einem NATÜRLICHEN Punkt, NACHDEM du solide Empfehlungen gegeben hast (nicht als erste Nachricht, nicht bevor überhaupt etwas empfohlen wurde).
-- Nur EINMAL pro Gespräch. Wenn der Kunde nicht reagiert oder ablehnt: nicht erneut anbieten.
-- Als hilfreicher Service formuliert ("Soll ich dir das per E-Mail schicken?"), nie als Verkaufsdruck.
-
-NICHT aufrufen bei segment=studio/public_sector/physio mit Beschaffungssignalen — dort ist show_contact_form der richtige Weg.
-
-Das eigentliche Versenden + die Einwilligung passieren über das Formular und /api/capture-email; du sammelst hier KEINE E-Mail-Adresse im Chat ein.`,
-      inputSchema: z.object({
-        message: z
-          .string()
-          .describe(
-            "Kurze, freundliche Einladung, die das Angebot erklärt. z.B. 'Wenn du magst, schicke ich dir eine Zusammenfassung mit deinem Warenkorb per E-Mail.'"
-          ),
-        productIds: z
-          .array(z.string())
-          .optional()
-          .describe(
-            "Die im Gespräch besprochenen Produkt-IDs (für die Warenkorb-Vorschau im Formular). Optional/advisory — die tatsächlichen Produkte ermittelt das Backend serverseitig."
-          ),
-      }),
-      execute: async () => ({ ok: true }),
-    }),
-
     show_contact_form: tool({
       description: `Zeigt ein Kontaktformular für persönliche Beratung an.
 
@@ -267,6 +262,51 @@ Nutze die treffendste reason. Die Nachricht sollte erklären WARUM persönliche 
           .optional()
           .describe(
             "Produkte die im Gespräch relevant sind, werden im Formular vorausgefüllt."
+          ),
+      }),
+      execute: async () => ({ ok: true }),
+    }),
+  };
+
+  // The offer tool is appended (not destructured away) so withholding it
+  // leaves no unused binding behind.
+  if (!allowEmailSummaryOffer) return tools;
+
+  return {
+    ...tools,
+    offer_email_summary: tool({
+      description: `Bietet dem Kunden an, eine Zusammenfassung dieses Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu erhalten. Der Aufruf blendet im Widget ein DSGVO-konformes Erfassungsformular ein (E-Mail-Feld + zwei GETRENNTE Einwilligungs-Checkboxen: Zusammenfassung jetzt vs. optionales Marketing).
+
+WANN aufrufen (wertgetriggert):
+- Erst NACHDEM du nachweislich Wert geliefert hast — der Kunde reagiert positiv auf eine konkrete Empfehlung, du hast einen hilfreichen Vergleich geliefert, der Kunde will in Ruhe überlegen, oder es gibt ein klares Kaufsignal. Setze den passenden trigger.
+- NIE als erste Nachricht, nie bevor du etwas empfohlen hast, nie nach festem Raster — und nie als Bedingung für weitere Beratung.
+- Maximal ZWEI Mal pro Gespräch: Lehnt der Kunde ab oder reagiert nicht, höchstens EIN weiteres Angebot an einem späteren, klar wertvolleren Moment (typisch checkout_intent) — danach nie wieder.
+
+NICHT aufrufen bei segment=studio/public_sector/physio mit Beschaffungssignalen — dort ist show_contact_form der richtige Weg.
+
+Das eigentliche Versenden + die Einwilligungen passieren über das Formular und /api/capture-email. Die Zusammenfassung gibt es IMMER auch ohne Marketing-Einwilligung (nie bündeln); du sammelst hier KEINE E-Mail-Adresse im Chat ein.`,
+      inputSchema: z.object({
+        message: z
+          .string()
+          .describe(
+            "Kurze, freundliche Einladung um den konkreten Nutzen JETZT. z.B. 'Soll ich dir deine persönliche Empfehlung und den fertigen Warenkorb per Mail schicken?'"
+          ),
+        trigger: z
+          .enum([
+            "recommendation_accepted",
+            "comparison_delivered",
+            "consideration_pause",
+            "buying_intent",
+            "checkout_intent",
+          ])
+          .describe(
+            "Der Wert-Moment, der dieses Angebot auslöst. recommendation_accepted=Kunde reagiert positiv auf eine Empfehlung; comparison_delivered=nach hilfreichem Vergleich; consideration_pause=Kunde will in Ruhe überlegen; buying_intent=klares Kaufsignal; checkout_intent=Moment rund um den Direkt-Checkout."
+          ),
+        productIds: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Die im Gespräch besprochenen Produkt-IDs (für die Warenkorb-Vorschau im Formular). Optional/advisory — die tatsächlichen Produkte ermittelt das Backend serverseitig."
           ),
       }),
       execute: async () => ({ ok: true }),

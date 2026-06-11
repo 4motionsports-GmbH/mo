@@ -55,7 +55,10 @@ before any marketing send.
 ## End-to-end flow
 
 ```
-Chat → assistant calls offer_email_summary (once, at a natural point)
+Chat → assistant calls offer_email_summary (value-triggered: after a
+       well-received recommendation, a helpful comparison, or at buying/
+       checkout intent — never as the opener; at most TWO asks per
+       conversation, enforced server-side by withholding the tool)
      → widget renders the capture form (email + two separate checkboxes)
      → POST /api/capture-email { sessionId, email, transactionalConsent,
                                  marketingConsent, consentTextShown }
@@ -110,6 +113,17 @@ For each capture we can show, on demand:
 Retention purges PII for opted-out/suppressed captures after a grace period
 while keeping the `suppression_list` row, so we keep honouring the opt-out (see
 [`DATA_RETENTION.md`](./DATA_RETENTION.md)).
+
+## Measurement (pseudonymous, Cluster A)
+
+The ask → submit → opt-in → DOI-confirm funnel is tracked through
+session-keyed `kpi_events` (`email_capture_ask_shown` / `_submitted` /
+`_marketing_opted_in` / `_marketing_confirmed`, plus the widget-emitted
+`_declined`), each carrying the trigger moment of the ask. **No email address
+ever appears in an event** — see `src/lib/kpi-events.ts` and
+[`API_CONTRACT.md`](./API_CONTRACT.md) §5. The optional `trigger` echoed to
+`/api/capture-email` is telemetry-only and is never stored on the consent
+record.
 
 ## Defensive email handling
 
