@@ -239,7 +239,13 @@ export async function upsertEmailCapture(
 // ---------------------------------------------------------------------------
 
 export type ConfirmResult =
-  | { ok: true; alreadyConfirmed: boolean; email: string }
+  | {
+      ok: true;
+      alreadyConfirmed: boolean;
+      email: string;
+      /** Pseudonymous session the capture came from (for KPI telemetry). */
+      sessionId: string | null;
+    }
   | { ok: false; reason: "not_found" | "expired" };
 
 /**
@@ -256,16 +262,16 @@ export async function confirmMarketingByToken(
   if (!t) return { ok: false, reason: "not_found" };
 
   const rows = await sql`
-    SELECT id, email, marketing_doi_status, doi_sent_at, doi_confirmed_at
+    SELECT id, email, session_id, marketing_doi_status, doi_sent_at, doi_confirmed_at
       FROM email_captures WHERE doi_token = ${t}
   `;
   const row = rows[0] as
-    | { id: number; email: string; marketing_doi_status: MarketingDoiStatus; doi_sent_at: string | null }
+    | { id: number; email: string; session_id: string | null; marketing_doi_status: MarketingDoiStatus; doi_sent_at: string | null }
     | undefined;
   if (!row) return { ok: false, reason: "not_found" };
 
   if (row.marketing_doi_status === "confirmed") {
-    return { ok: true, alreadyConfirmed: true, email: row.email };
+    return { ok: true, alreadyConfirmed: true, email: row.email, sessionId: row.session_id };
   }
 
   // Expiry by doi_sent_at (fall back to "expired" if we somehow have no stamp).
@@ -281,7 +287,7 @@ export async function confirmMarketingByToken(
            doi_confirmed_at = now()
      WHERE id = ${row.id}
   `;
-  return { ok: true, alreadyConfirmed: false, email: row.email };
+  return { ok: true, alreadyConfirmed: false, email: row.email, sessionId: row.session_id };
 }
 
 // ---------------------------------------------------------------------------

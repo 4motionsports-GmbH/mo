@@ -467,11 +467,19 @@ Widget action: render `message` as the intro, then the capture form with:
 - a **separate, unchecked-by-default** marketing consent checkbox — label from
   `MARKETING_CHECKBOX_LABEL`.
 
-On submit, POST to `/api/capture-email` (§7) with the two booleans and the exact
-consent text strings shown (`consentTextShown`). The marketing box MUST start
-unchecked and MUST be visually independent of the transactional one — never one
-combined checkbox. `productIds` is advisory (cart preview); the backend
-determines the real products server-side from the conversation.
+On submit, POST to `/api/capture-email` (§7) with the two booleans, the exact
+consent text strings shown (`consentTextShown`), and the tool call's `trigger`
+echoed back (telemetry-only — lets the opt-in funnel be split by trigger
+moment). The marketing box MUST start unchecked and MUST be visually
+independent of the transactional one — never one combined checkbox.
+`productIds` is advisory (cart preview); the backend determines the real
+products server-side from the conversation.
+
+If the user dismisses or declines the capture card without submitting, the
+widget should emit one `email_capture_declined` event via `POST /api/kpi`
+(see §5) with `data: { trigger, askNumber? }` — the backend cannot observe a
+dismissal itself. Do NOT emit "shown"/"submitted" events from the widget;
+those are recorded server-side.
 
 > ⚠️ The checkbox labels are PLACEHOLDER copy pending lawyer approval — see
 > [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
@@ -737,6 +745,26 @@ only. It accepts only pseudonymous data and stores no email.
   The client `timestamp` is preserved inside the stored payload; the server's
   own `created_at` is authoritative.
 
+### Email-capture funnel events (canonical names)
+
+The value-triggered email capture is measured through this pseudonymous,
+session-keyed funnel (names in `src/lib/kpi-events.ts`; no email address ever
+appears in an event). Most are emitted **server-side** — the widget must not
+duplicate them:
+
+| Event                                | Emitted by | `data`                                  |
+| ------------------------------------ | ---------- | --------------------------------------- |
+| `email_capture_ask_shown`            | server (`/api/chat`) | `{ trigger, askNumber }` — one per `offer_email_summary` call. |
+| `email_capture_submitted`            | server (`/api/capture-email`) | `{ marketingConsent, trigger? }` |
+| `email_capture_marketing_opted_in`   | server (`/api/capture-email`) | `{ doiStatus, trigger? }` — the separate marketing box was ticked. |
+| `email_capture_marketing_confirmed`  | server (`/api/confirm-marketing`) | `{}` — unique DOI confirmations only. |
+| `email_capture_declined`             | **widget** (this endpoint) | `{ trigger, askNumber? }` — capture card dismissed/declined without submit. |
+
+`trigger` is the value moment from the `offer_email_summary` tool call
+(`recommendation_accepted`, `comparison_delivered`, `consideration_pause`,
+`buying_intent`, `checkout_intent`), so opt-in rates can be compared per
+trigger moment and per ask number.
+
 ### Success response
 
 ```http
@@ -816,7 +844,8 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   "email": "max@example.de",
   "transactionalConsent": true,    // required to be true
   "marketingConsent": false,       // separate, defaults unchecked in the UI
-  "consentTextShown": "Ja, sendet mir … | Ja, motion sports darf …"  // exact labels shown (audit)
+  "consentTextShown": "Ja, sendet mir … | Ja, motion sports darf …",  // exact labels shown (audit)
+  "trigger": "recommendation_accepted"  // optional; echo of the offer's trigger (telemetry only)
 }
 ```
 

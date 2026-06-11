@@ -17,6 +17,7 @@ import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { persistTurn, type ToolInvocation } from "@/lib/conversation-store";
+import { KPI_EMAIL_CAPTURE_ASK_SHOWN, recordKpiEvent } from "@/lib/kpi-events";
 
 // This route runs on the Node.js runtime (the Next.js default — we do not set
 // `runtime = "edge"`). Node + Vercel Fluid Compute streams the SSE body
@@ -288,6 +289,25 @@ export async function POST(req: Request) {
             assistantToolCalls: toolCalls,
             assistantMessageId: response.id,
           });
+
+          // Funnel telemetry: one pseudonymous event per email-summary offer
+          // made in this turn, carrying the value moment that triggered it and
+          // which ask (1st or 2nd) it was. recordKpiEvent never throws.
+          let askNumber = emailOffersMade;
+          for (const tc of toolCalls) {
+            if (tc.toolName !== "offer_email_summary") continue;
+            askNumber += 1;
+            const input = tc.input as { trigger?: unknown } | undefined;
+            await recordKpiEvent({
+              sessionId,
+              event: KPI_EMAIL_CAPTURE_ASK_SHOWN,
+              data: {
+                trigger:
+                  typeof input?.trigger === "string" ? input.trigger : "unspecified",
+                askNumber,
+              },
+            });
+          }
         } catch (err) {
           reportError(err, { route: "api/chat", phase: "persist", messageCount });
         }

@@ -32,8 +32,15 @@ import {
   DOI_EMAIL_SUBJECT,
   doiEmailBody,
 } from "@/lib/consent-copy";
+import {
+  KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
+  KPI_EMAIL_CAPTURE_SUBMITTED,
+  recordKpiEvent,
+} from "@/lib/kpi-events";
 
 export const maxDuration = 30;
+
+const MAX_TRIGGER_CHARS = 40;
 
 interface CapturePayload {
   sessionId?: unknown;
@@ -41,6 +48,10 @@ interface CapturePayload {
   transactionalConsent?: unknown;
   marketingConsent?: unknown;
   consentTextShown?: unknown;
+  // Optional echo of the offer_email_summary `trigger` input — the value
+  // moment the capture card was shown at. Telemetry-only (never stored with
+  // the consent record), so the opt-in funnel can be split by trigger.
+  trigger?: unknown;
 }
 
 export async function OPTIONS(req: Request) {
@@ -79,6 +90,10 @@ export async function POST(req: Request) {
         : req.headers.get("x-ms-session");
     const consentTextShown =
       typeof payload.consentTextShown === "string" ? payload.consentTextShown : null;
+    const trigger =
+      typeof payload.trigger === "string"
+        ? payload.trigger.trim().slice(0, MAX_TRIGGER_CHARS) || null
+        : null;
 
     if (!isValidEmail(email)) {
       return errorResponse("bad_request", "Ungültige E-Mail-Adresse", 400, headers);
@@ -118,6 +133,25 @@ export async function POST(req: Request) {
     // same customer. Best-effort (never throws): the consent is already stored,
     // and a linking failure must not block the summary/DOI emails.
     await linkCustomerOnEmailCapture({ email, sessionId });
+
+    // Funnel telemetry (pseudonymous, session-keyed — NO email in the data).
+    // Emitted as soon as the consent is stored, so a downstream summary-send
+    // failure (502 below) can't lose the fact that the user submitted.
+    await recordKpiEvent({
+      sessionId,
+      event: KPI_EMAIL_CAPTURE_SUBMITTED,
+      data: { marketingConsent, ...(trigger ? { trigger } : {}) },
+    });
+    if (marketingConsent) {
+      await recordKpiEvent({
+        sessionId,
+        event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
+        data: {
+          doiStatus: capture.marketingDoiStatus,
+          ...(trigger ? { trigger } : {}),
+        },
+      });
+    }
 
     const baseUrl = getBaseUrl(req);
 

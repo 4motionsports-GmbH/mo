@@ -114,6 +114,17 @@ Retention purges PII for opted-out/suppressed captures after a grace period
 while keeping the `suppression_list` row, so we keep honouring the opt-out (see
 [`DATA_RETENTION.md`](./DATA_RETENTION.md)).
 
+## Measurement (pseudonymous, Cluster A)
+
+The ask → submit → opt-in → DOI-confirm funnel is tracked through
+session-keyed `kpi_events` (`email_capture_ask_shown` / `_submitted` /
+`_marketing_opted_in` / `_marketing_confirmed`, plus the widget-emitted
+`_declined`), each carrying the trigger moment of the ask. **No email address
+ever appears in an event** — see `src/lib/kpi-events.ts` and
+[`API_CONTRACT.md`](./API_CONTRACT.md) §5. The optional `trigger` echoed to
+`/api/capture-email` is telemetry-only and is never stored on the consent
+record.
+
 ## Defensive email handling
 
 All sends go through [`lib/email.ts`](../src/lib/email.ts), which **logs every
