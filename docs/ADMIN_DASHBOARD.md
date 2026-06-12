@@ -448,3 +448,37 @@ non-confirmed or suppressed address).
 
 > Each "Entwurf generieren" does **not** mint a code, so generating/discarding
 > drafts while testing wastes nothing. Only **Freigeben & senden** mints one.
+
+---
+
+## 10. Tracked redirect — `GET /api/r/<token>`
+
+The endpoint behind the cart button in every **sent** marketing email
+([`src/app/api/r/[token]/route.ts`](../src/app/api/r/%5Btoken%5D/route.ts),
+[`recordEmailClick()`](../src/lib/marketing-store.ts)). The email never links
+straight to Shopify: the button carries the send's unique `redirect_token`,
+and this route resolves it, records the click, and **302-redirects** to the
+real prefilled Shopify cart (`marketing_sends.cart_url`, with the
+`?discount=CODE` param intact). The customer experiences a perfectly normal
+click. Clicked as a top-level navigation from a mail client → no CORS or
+shared-secret guard (like `/api/confirm-marketing` and `/api/unsubscribe`).
+
+Per click:
+
+- **`clicked_at` is stamped on the FIRST click only** (a `clicked_at IS NULL`
+  guard makes repeat clicks a no-op) — this backs the funnel's "Geklickt"
+  stage (§5.4).
+- A **`marketing_email_clicked`** `kpi_events` row is inserted on **every**
+  click, with `session_id = NULL` (it's an email click, not a widget event)
+  and `data: { sendId, captureId, firstClick }` — so click volume stays
+  visible beyond the first click. Note this event matches neither KPI-tab
+  ILIKE pattern (§5.1), so it surfaces only in the raw event breakdown.
+
+**Fallback behavior:** a customer clicking a real email must never hit a dead
+page. An unresolvable token (unknown / expired / pruned), a row without a
+stored cart URL, or any unexpected failure still **302-redirects to the
+storefront cart** (`https://motionsports.de/cart`) instead of erroring; the
+anomaly is logged server-side.
+
+> GDPR note: this logs a click on a link the user **chose** to click — there
+> is deliberately **no** open-tracking pixel.

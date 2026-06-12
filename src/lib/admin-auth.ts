@@ -4,10 +4,11 @@
 // cookie. There is no user table — this is a single-operator back office.
 //
 // Everything here uses the Web Crypto API (globalThis.crypto.subtle) and NOT
-// node:crypto, on purpose: this module is imported by src/middleware.ts, which
-// runs on the Edge runtime where node:crypto is unavailable. Web Crypto is
-// available in both the Edge middleware and the Node route handlers / server
-// actions, so the same verify path runs everywhere.
+// node:crypto, on purpose: this module is imported by src/proxy.ts (the Next 16
+// proxy, the former middleware), which runs on the Edge runtime where
+// node:crypto is unavailable. Web Crypto is available in both the Edge proxy
+// and the Node route handlers / server actions, so the same verify path runs
+// everywhere.
 //
 // Cookie format:  base64url(JSON payload) "." base64url(HMAC-SHA256(payload))
 // Payload:        { exp: <epoch-ms> }     — stateless, no DB lookup to verify.

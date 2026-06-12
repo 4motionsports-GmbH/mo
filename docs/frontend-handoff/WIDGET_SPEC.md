@@ -145,18 +145,31 @@ For each user send:
      far (the backend reconstructs the customer profile from full history
      each turn; see `API_CONTRACT.md` §2). Each message is
      `{ id, role, parts: [{ type: "text", text }] }`.
-3. Read the response as a **stream** and parse the AI SDK UI-message
-   stream (SSE). Use `fetch` + `response.body.getReader()` +
-   `TextDecoder`, buffering by lines and parsing each `data:` JSON event
-   into a *part*. (Do **not** use `EventSource` — it can't send custom
-   headers or a POST body.)
-4. Maintain a "current assistant message" and apply each incoming part:
-   - text part → append `text` to the assistant bubble (re-render the
-     markdown subset, `BEHAVIOR_REFERENCE` §3).
-   - tool part → dispatch per `BEHAVIOR_REFERENCE` §2, keyed by
-     `toolCallId` (update in place, render only once `input` exists, skip
-     the two silent tools).
-5. On stream end, finalize the assistant message and re-enable input.
+3. Read the response as a **stream** and parse the AI SDK stream
+   **chunks** (SSE; `API_CONTRACT.md` §2 "Response — SSE stream"). Use
+   `fetch` + `response.body.getReader()` + `TextDecoder`, buffering by
+   lines; each `data:` line is one JSON-encoded *chunk* (`text-delta`,
+   `tool-input-available`, …) — **not** an assembled UI-message part —
+   and the stream ends with a literal `data: [DONE]`. (Do **not** use
+   `EventSource` — it can't send custom headers or a POST body.)
+4. Maintain a "current assistant message" and assemble the chunks into
+   it (full chunk vocabulary in `API_CONTRACT.md` §2):
+   - `text-start` / `text-delta` / `text-end` → open a text part keyed
+     by the chunk's `id` and **append** each `delta` to the assistant
+     bubble (re-render the markdown subset, `BEHAVIOR_REFERENCE` §3).
+   - `tool-input-start` → open a tool card slot keyed by `toolCallId`;
+     render nothing yet (`tool-input-delta` chunks may follow — safe to
+     ignore).
+   - `tool-input-available` → the args are complete: **render the card
+     now**, dispatching on the chunk's bare `toolName` per
+     `BEHAVIOR_REFERENCE` §2 and reading `input`. Update in place by
+     `toolCallId`; skip the two silent tools.
+   - `tool-output-available` → merge `output` into the same card; only
+     `offer_email_summary` needs it (it carries `output.consentCopy`).
+   - `error` → show the friendly retry message; ignore `start`,
+     `start-step`/`finish-step` and any unknown chunk types.
+5. On `finish` / `data: [DONE]`, finalize the assistant message and
+   re-enable input.
 
 Treat malformed/partial JSON lines defensively (buffer until a full line
 arrives; ignore keep-alive/empty lines).

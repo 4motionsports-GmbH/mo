@@ -34,6 +34,9 @@ export function corsHeaders(
     headers["Access-Control-Allow-Origin"] = origin;
     headers["Access-Control-Allow-Methods"] = methods;
     headers["Access-Control-Allow-Headers"] = `Content-Type, ${SECRET_HEADER}, x-ms-session`;
+    // Retry-After is not CORS-safelisted, so without this the widget's
+    // cross-origin read of the 429 backoff hint returns null.
+    headers["Access-Control-Expose-Headers"] = "Retry-After";
     headers["Access-Control-Max-Age"] = "86400";
   }
   return headers;
