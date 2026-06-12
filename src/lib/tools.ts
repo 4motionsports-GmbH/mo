@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { retrieve, embedQuery } from "./retrieval";
+import { captureConsentCopy } from "./consent-copy";
 import type { CustomerProfile } from "./types";
 
 const profilePatchSchema = z.object({
@@ -309,7 +310,13 @@ Das eigentliche Versenden + die Einwilligungen passieren über das Formular und 
             "Die im Gespräch besprochenen Produkt-IDs (für die Warenkorb-Vorschau im Formular). Optional/advisory — die tatsächlichen Produkte ermittelt das Backend serverseitig."
           ),
       }),
-      execute: async () => ({ ok: true }),
+      // The tool result carries the canonical capture-form consent copy (it
+      // streams to the widget as the tool part's `output`). The widget renders
+      // these strings verbatim and echoes `consentTextShown` back unchanged on
+      // /api/capture-email — the Art. 7 audit record can never drift from what
+      // was displayed, and lawyer copy changes need no widget release. See
+      // src/lib/consent-copy.ts and API_CONTRACT.md §7.4.
+      execute: async () => ({ ok: true, consentCopy: captureConsentCopy() }),
     }),
   };
 }
