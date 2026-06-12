@@ -9,11 +9,15 @@
 // Until this runs, NO marketing email is permitted for the address.
 //
 // A FIRST-TIME confirmation additionally issues the one-time welcome discount
-// code (lib/welcome-discount.ts): the freely-chosen DOI click — not the
-// marketing checkbox — is the trigger, the customer row's welcome_issued_at
-// claim guarantees once-ever per email, and the code is delivered in the
-// welcome email right after this page renders. Best-effort: a welcome failure
-// never breaks the confirmation itself.
+// code (lib/welcome-discount.ts) — IF AND ONLY IF WELCOME_DISCOUNT_ENABLED is
+// set (default OFF; the gate lives inside issueWelcomeCodeOnDoiConfirmation,
+// which then returns { issued: false, reason: "disabled" } and this page
+// renders the plain confirmation body with no welcome-gift reference). When
+// enabled: the freely-chosen DOI click — not the marketing checkbox — is the
+// trigger, the customer row's welcome_issued_at claim guarantees once-ever
+// per email, and the code is delivered in the welcome email right after this
+// page renders. Best-effort: a welcome failure never breaks the confirmation
+// itself.
 
 import { confirmMarketingByToken } from "@/lib/email-capture-store";
 import { syncCustomerConsent } from "@/lib/customer-store";
@@ -63,9 +67,12 @@ export async function GET(req: Request) {
           event: KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED,
         });
         // First-time confirmation → issue the one-time welcome code and email
-        // it. Once-ever/suppression/opt-out guarantees live inside; a repeated
-        // click of the same token never reaches this branch (alreadyConfirmed),
-        // and a re-signup later is blocked by the customer's welcome claim.
+        // it. Flag-gated inside (WELCOME_DISCOUNT_ENABLED, default off →
+        // reason "disabled" and welcomeDelivered stays false, so the page
+        // below never mentions a gift). Once-ever/suppression/opt-out
+        // guarantees live inside too; a repeated click of the same token
+        // never reaches this branch (alreadyConfirmed), and a re-signup later
+        // is blocked by the customer's welcome claim.
         const welcome = await issueWelcomeCodeOnDoiConfirmation(result.email);
         welcomeDelivered = welcome.issued && welcome.emailSent;
       }

@@ -50,7 +50,11 @@ export interface CustomerMemoryContext {
    * customer — Mo must not re-promise the welcome gift then. LIMITATION: we
    * only know ISSUANCE (`welcome_issued_at`), not whether the code was
    * actually redeemed in Shopify; since the gift is once-ever either way,
-   * "issued" is the correct suppression signal.
+   * "issued" is the correct suppression signal. NOTE: while the automatic
+   * issuance is feature-flagged off (WELCOME_DISCOUNT_ENABLED, default
+   * false) the memory block instructs Mo to promise no welcome discount to
+   * anyone; this field then only shapes how questions about historical
+   * codes are answered (see system-prompt.ts renderWelcomeMemoryRule).
    */
   welcomeAlreadyIssued: boolean;
 }

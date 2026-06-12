@@ -3,9 +3,11 @@
 // Body: { sessionId, email, transactionalConsent, marketingConsent, consentTextShown }
 //
 //   - Validates the email and that transactional consent is present (we can't
-//     email a summary without consent to email the summary).
-//   - Upserts one consent record per address (records consent_text_shown for
-//     the Art. 7 audit trail).
+//     email a summary without consent to email the summary). With consent
+//     copy v2 BOTH boxes start unchecked, so a missing transactional consent
+//     is rejected with the documented `transactional_consent_required` code.
+//   - Upserts one consent record per address (records consent_text_shown plus
+//     the consent_copy_version stamp for the Art. 7 audit trail).
 //   - transactionalConsent → sends the summary email immediately (the service
 //     the user requested; lawful under Art. 6(1)(b)).
 //   - marketingConsent → sets marketing_doi_status='pending', issues a DOI
@@ -20,10 +22,9 @@
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
-import {
-  isValidEmail,
-  upsertEmailCapture,
-} from "@/lib/email-capture-store";
+import { validateCaptureRequest } from "@/lib/capture-validation.mjs";
+import { resolveConsentCopyVersion } from "@/lib/consent-copy-version.mjs";
+import { upsertEmailCapture } from "@/lib/email-capture-store";
 import { linkCustomerOnEmailCapture } from "@/lib/customer-store";
 import { sendEmail } from "@/lib/email";
 import { sendSummaryEmail } from "@/lib/summary-email";
@@ -31,6 +32,7 @@ import { getBaseUrl } from "@/lib/base-url";
 import {
   DOI_EMAIL_SUBJECT,
   doiEmailBody,
+  captureConsentCopy,
 } from "@/lib/consent-copy";
 import {
   KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
@@ -95,18 +97,26 @@ export async function POST(req: Request) {
         ? payload.trigger.trim().slice(0, MAX_TRIGGER_CHARS) || null
         : null;
 
-    if (!isValidEmail(email)) {
-      return errorResponse("bad_request", "Ungültige E-Mail-Adresse", 400, headers);
+    // You can't email a summary without consent to email the summary. With
+    // copy v2 BOTH boxes start unchecked, so a no-transactional submit is a
+    // real user state — rejected with the dedicated, documented code
+    // `transactional_consent_required` (the widget shows a targeted hint).
+    const validation = validateCaptureRequest({
+      email,
+      transactionalConsent: payload.transactionalConsent,
+    });
+    if (!validation.ok) {
+      return errorResponse(validation.code, validation.message, 400, headers);
     }
-    // You can't email a summary without consent to email the summary.
-    if (!transactionalConsent) {
-      return errorResponse(
-        "bad_request",
-        "Transaktionale Einwilligung ist erforderlich, um die Zusammenfassung zu senden.",
-        400,
-        headers
-      );
-    }
+
+    // Audit-trail version stamp: attest the served copy version only when the
+    // echoed consentTextShown is byte-identical to the canonical string the
+    // backend currently serves; anything else stores NULL (the verbatim text
+    // itself remains the authoritative Art. 7 record).
+    const consentCopyVersion = resolveConsentCopyVersion(
+      consentTextShown,
+      captureConsentCopy().consentTextShown
+    );
 
     const capture = await upsertEmailCapture({
       sessionId,
@@ -114,6 +124,7 @@ export async function POST(req: Request) {
       transactionalConsent,
       marketingConsent,
       consentTextShown,
+      consentCopyVersion,
     });
     if (!capture) {
       // No DB configured (or the write failed) — we cannot store the consent,

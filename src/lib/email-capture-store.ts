@@ -16,14 +16,14 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getSql, type Sql } from "./db";
+import { isValidEmail } from "./capture-validation.mjs";
 
 export type MarketingDoiStatus = "none" | "pending" | "confirmed";
 
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-
-export function isValidEmail(email: unknown): email is string {
-  return typeof email === "string" && EMAIL_RE.test(email.trim());
-}
+// Canonical email validation lives in capture-validation.mjs (plain .mjs so
+// the capture-request validation is unit-testable); re-exported here so
+// existing importers keep working off one definition.
+export { isValidEmail };
 
 /** Normalise an email for storage + lookup (trim + lower-case). */
 export function normalizeEmail(email: string): string {
@@ -135,6 +135,14 @@ export interface UpsertCaptureInput {
   transactionalConsent: boolean;
   marketingConsent: boolean;
   consentTextShown: string | null;
+  /**
+   * Which canonical copy `consentTextShown` is (e.g. "v2") — resolved
+   * server-side by the route (resolveConsentCopyVersion): set only when the
+   * echoed text matches the currently-served canonical string byte-for-byte,
+   * `null` otherwise (honest "unattested"). Stored alongside the verbatim
+   * text so v1/v2 audit records stay distinguishable.
+   */
+  consentCopyVersion: string | null;
 }
 
 export interface UpsertCaptureResult {
@@ -207,10 +215,12 @@ export async function upsertEmailCapture(
   const rows = await sql`
     INSERT INTO email_captures
       (session_id, email, transactional_consent, marketing_consent,
-       marketing_doi_status, doi_token, doi_sent_at, consent_text_shown, created_at)
+       marketing_doi_status, doi_token, doi_sent_at, consent_text_shown,
+       consent_copy_version, created_at)
     VALUES
       (${sessionId}, ${email}, ${input.transactionalConsent}, ${marketingConsentColumn},
-       ${status}, ${doiToken}, ${doiSentAt}, ${input.consentTextShown}, now())
+       ${status}, ${doiToken}, ${doiSentAt}, ${input.consentTextShown},
+       ${input.consentCopyVersion}, now())
     ON CONFLICT (email) DO UPDATE SET
       session_id            = COALESCE(EXCLUDED.session_id, email_captures.session_id),
       transactional_consent = email_captures.transactional_consent OR EXCLUDED.transactional_consent,
@@ -218,8 +228,13 @@ export async function upsertEmailCapture(
       marketing_doi_status  = EXCLUDED.marketing_doi_status,
       doi_token             = EXCLUDED.doi_token,
       doi_sent_at           = EXCLUDED.doi_sent_at,
-      -- Keep the freshest consent copy we actually showed.
-      consent_text_shown    = COALESCE(EXCLUDED.consent_text_shown, email_captures.consent_text_shown)
+      -- Keep the freshest consent copy we actually showed; the version always
+      -- follows the text it describes (updated together, or not at all).
+      consent_text_shown    = COALESCE(EXCLUDED.consent_text_shown, email_captures.consent_text_shown),
+      consent_copy_version  = CASE
+        WHEN EXCLUDED.consent_text_shown IS NOT NULL THEN EXCLUDED.consent_copy_version
+        ELSE email_captures.consent_copy_version
+      END
     RETURNING id
   `;
   const id = rows[0]?.id as number | undefined;

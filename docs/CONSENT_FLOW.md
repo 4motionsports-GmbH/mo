@@ -22,32 +22,60 @@ bundled**:
 
 Rules baked into the code:
 
+- **BOTH checkboxes start UNCHECKED** — consent copy **v2** (client-approved
+  product decision, June 2026). The transactional box was allowed to render
+  pre-checked under v1; that is **no longer permitted**: the user must
+  actively tick it to get the summary, and the backend **rejects** a capture
+  without transactional consent with `400` and the documented error code
+  **`transactional_consent_required`** (the form's only purpose is the
+  summary, so a no-transactional submit is invalid — see
+  `src/lib/capture-validation.mjs` and [`API_CONTRACT.md`](./API_CONTRACT.md)
+  §7.1).
 - The marketing checkbox is a **separate**, **unchecked-by-default** box with
   its own explicit text. **Documented decision** (`src/lib/consent-copy.ts`):
   pre-ticked marketing consent is invalid under the GDPR's
   clear-affirmative-act requirement (CJEU C-673/17 *Planet49*) and a common
   Abmahnung trigger under the German UWG — we deliberately reject pre-checking
-  it, regardless of what other platforms do. The box may be **prominent** and
-  carries a benefit-led label + hint (`MARKETING_CHECKBOX_BENEFIT_HINT`);
-  the opt-in is won through copy, never a pre-tick.
-- The **transactional** box is the requested service, not marketing — the
-  widget MAY render it pre-checked as the low-friction default (submitting
-  the form is itself the affirmative request). Only the marketing box must
-  start unchecked.
+  it, regardless of what other platforms do. The box may be **prominent**;
+  the opt-in is won through copy, never a pre-tick. **Copy ceiling (UWG /
+  dark-pattern exposure, agreed with the client):** the v2 label promises
+  "exklusive Angebote …, nur für Abonnenten" and nothing more — accurate
+  scarcity only; no countdowns, no invented urgency, no concrete discount
+  promise.
+- A **shared one-line footer** (`CONSENT_SHARED_FOOTER`) is rendered beneath
+  both checkboxes — the Art. 7 minimum (controller + policy + anytime
+  withdrawal) — with the existing imprint/privacy link placement next to it.
 - **No marketing** is permitted to an address whose `marketing_doi_status` is
   not `'confirmed'`, or that is on the suppression list / unsubscribed.
 - Every marketing email MUST contain a working unsubscribe link.
 - The exact consent text shown to the user is stored verbatim
-  (`consent_text_shown`) as **Art. 7 proof of consent**.
+  (`consent_text_shown`) as **Art. 7 proof of consent**, together with a
+  **consent copy version stamp** (`consent_copy_version`, currently `"v2"` —
+  `CONSENT_COPY_VERSION` in `src/lib/consent-copy-version.mjs`), so v1 and v2
+  records stay distinguishable in the audit trail. The stamp is resolved
+  server-side: it is set only when the echoed text is byte-identical to the
+  copy the backend currently serves, and `NULL` otherwise (honest
+  "unattested" — e.g. a ≤60s-stale cached copy across a deploy boundary; the
+  verbatim text remains authoritative). Pre-versioning rows are backfilled to
+  `'v1'` (migration `0011_consent_copy_version.sql`).
 - **The widget never hard-codes the consent copy.** The canonical strings
-  (checkbox labels, marketing benefit hint, imprint/privacy links, and the
-  pre-composed `consentTextShown` audit string) are served by the backend —
-  attached to every `offer_email_summary` tool result and available via
-  `GET /api/consent-copy` for capture forms not triggered by the tool (see
+  (checkbox labels, shared footer, imprint/privacy links, the copy `version`,
+  and the pre-composed `consentTextShown` audit string) are served by the
+  backend — attached to every `offer_email_summary` tool result and available
+  via `GET /api/consent-copy` for capture forms not triggered by the tool (see
   [`API_CONTRACT.md`](./API_CONTRACT.md) §2 + §7.4). The widget renders them
   verbatim and echoes `consentTextShown` back unchanged, so the stored audit
   text can never diverge from what was displayed, and a lawyer copy change
   ships as a backend deploy with no widget release.
+- **Returning-customer hint** (served alongside the consent copy, same
+  payload: `returningHint { enabled, text }`): a short, backend-served hint
+  near the email input telling users they can be recognised via email
+  ("Schon einmal von Mo beraten worden? …"). **Informational only — NOT part
+  of `consentTextShown`** (it describes the customer-memory feature, it is
+  not consent text). Serving it from the backend lets the wording be tuned
+  without a theme release, e.g. after the lawyer clears customer-memory use
+  (CUST-B, see [`CUSTOMERS.md`](./CUSTOMERS.md)); `enabled: false`
+  (`RETURNING_HINT_ENABLED=false`) tells the widget to hide it.
 
 ## The data (Cluster B — explicit consent)
 
@@ -65,6 +93,7 @@ Email lives **only** in the consent/marketing cluster (see
 | `doi_sent_at` | When the token was issued; drives expiry. |
 | `doi_confirmed_at` | When the user clicked confirm. |
 | `consent_text_shown` | Verbatim copy the user saw (audit trail). |
+| `consent_copy_version` | Which canonical copy that text is (`'v1'`/`'v2'`; `NULL` = unattested echo). See migration `0011`. |
 | `unsubscribed_at` | Set on unsubscribe; the address also goes to `suppression_list`. |
 
 `suppression_list (email, added_at, reason)` is the hard block-list checked
@@ -89,8 +118,10 @@ Chat → assistant calls offer_email_summary (value-triggered: after a
        or GET /api/consent-copy for a non-tool-triggered form)
      → POST /api/capture-email { sessionId, email, transactionalConsent,
                                  marketingConsent, consentTextShown }
-        ├─ validate email + transactionalConsent (required)
-        ├─ upsert email_captures (store consent_text_shown)
+        ├─ validate email + transactionalConsent (required — false/missing →
+        │    400 `transactional_consent_required`; both boxes start unchecked)
+        ├─ upsert email_captures (store consent_text_shown +
+        │    consent_copy_version stamp)
         ├─ (A) transactional: send summary email NOW  ──────────────► user inbox
         │      • German summary of the conversation
         │      • prefilled-cart permalink (NO discount)
@@ -167,21 +198,31 @@ result and logs to stdout (local-dev), rather than faking success.
 
 All strings below are in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts).
 Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off.
+The current copy is **v2** (`CONSENT_COPY_VERSION`) — review the v2 strings
+as-is; they go to the lawyer verbatim.
 
-- [ ] **Transactional checkbox label** (`TRANSACTIONAL_CHECKBOX_LABEL`) — and
-      confirm that rendering this box **pre-checked by default** is acceptable
-      (it is the requested service, Art. 6(1)(b), submitted by an affirmative
-      form submission — not marketing).
-- [ ] **Marketing checkbox label + benefit hint** (`MARKETING_CHECKBOX_LABEL`,
-      `MARKETING_CHECKBOX_BENEFIT_HINT`) — the copy is deliberately
-      benefit-led ("Mo erkennt dich wieder", tailored offers next time);
-      confirm it remains specific enough about purpose (personalised
-      recommendations/offers based on the consultations, chat content used for
-      personalisation), that the **plural** "Beratungsgesprächen" properly
-      covers the durable profile/memory purpose (see the profile-building item
-      below), that the free, anytime withdrawal + unsubscribe link is stated,
-      and that the hint promises **no discount** for ticking the box (freely
-      given, Art. 7(4)).
+- [ ] **Transactional checkbox label** (`TRANSACTIONAL_CHECKBOX_LABEL`, v2:
+      "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl.
+      Direkt-Link zur Kasse)."). Note the v2 decision: this box now starts
+      **unchecked** like the marketing box, and a submit without it is
+      rejected server-side (`transactional_consent_required`) — the v1
+      question about an acceptable pre-check is moot.
+- [ ] **Marketing checkbox label** (`MARKETING_CHECKBOX_LABEL`, v2: "Ja, ich
+      möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten.
+      Jederzeit abbestellbar."). Confirm purpose specificity, that "Jederzeit
+      abbestellbar" suffices alongside the shared footer's withdrawal line,
+      and that the "nur für Abonnenten" exclusivity claim is acceptable
+      (accurate scarcity — the agreed ceiling; no urgency, no concrete
+      discount promise).
+- [ ] **Shared footer** (`CONSENT_SHARED_FOOTER`, v2: "Verarbeitung durch
+      motion sports gemäß Datenschutzerklärung; Widerruf jederzeit möglich.")
+      — confirm this one line plus the linked privacy policy meets the
+      Art. 7 / transparency minimum for both consents.
+- [ ] **Returning-customer hint** (`RETURNING_CUSTOMER_HINT_TEXT`) — rendered
+      near the email input, NOT part of the consent text. Review together
+      with the customer-memory item below (CUST-B): it advertises
+      recognition via email, so it must stay within whatever scope the
+      customer-memory clearance allows.
 - [ ] **DOI confirmation email** subject + body (`DOI_EMAIL_SUBJECT`,
       `doiEmailBody`) — purpose statement + the confirm CTA.
 - [ ] **DOI confirmation page** copy (`DOI_CONFIRMED_*`, `DOI_INVALID_*`).
@@ -191,10 +232,10 @@ Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off
 - [ ] **Summary email** subject + framing (`SUMMARY_EMAIL_SUBJECT`,
       `summary-email.ts`) — confirm it reads as a requested service, not
       marketing (no offers/discounts).
-- [ ] Confirm the **frontend renders the marketing checkbox unchecked** (the
-      documented never-pre-tick decision — prominence and the benefit hint are
-      fine, a pre-tick never is) and the two consents as visually separate,
-      independently-tickable boxes.
+- [ ] Confirm the **frontend renders BOTH checkboxes unchecked** (v2: the
+      never-pre-tick rule now covers the transactional box too — prominence
+      is fine, a pre-tick never is) and the two consents as visually
+      separate, independently-tickable boxes.
 - [ ] Confirm an **Imprint/Privacy link** is shown next to the capture form
       (frontend), as the consent text references data use for personalisation.
       The link targets are served by the backend (`CAPTURE_FORM_IMPRINT_URL`,
@@ -213,17 +254,15 @@ Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off
       **live consultation**. Confirm this personalisation purpose is within
       the approved consent scope / privacy policy before enabling for real
       users — same launch gate as the rest of this checklist.
-- [ ] **Welcome discount framing** (see [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)):
-      the one-time welcome code is tied to **completing the DOI
-      confirmation** (a freely-chosen "yes, I want this" / welcome gift for
-      joining), **not** to ticking the marketing checkbox, so the consent
-      stays "freely given" (Art. 7(4) GDPR). Confirm this framing and the
-      welcome email / confirmation-page copy (`WELCOME_EMAIL_SUBJECT`,
-      `welcomeEmailBody`, `DOI_CONFIRMED_WELCOME_BODY`).
-- [ ] **Welcome discount mention in chat** (`welcomeChatMentionExample` +
-      the prompt rules in `src/lib/system-prompt.ts`, see
-      [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md) → "Chat mention"): Mo may
-      mention the gift in ONE sentence as a thank-you for **completing the
-      signup**, never linked to the marketing checkbox ("agree to marketing
-      and get X % off" is forbidden). Confirm the example sentence and that
-      the framing keeps the consent "freely given".
+- [ ] **Welcome discount framing** — ⚠️ **feature-flagged OFF by default**
+      (`WELCOME_DISCOUNT_ENABLED`, see
+      [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)): the automatic issuance
+      is disabled (client decision; manual codes via the dashboard instead)
+      and the former in-chat mention was **removed** from the system prompt.
+      Review is only needed **before re-enabling the flag**: the one-time
+      welcome code is tied to **completing the DOI confirmation** (a
+      freely-chosen "yes, I want this" / welcome gift for joining), **not**
+      to ticking the marketing checkbox, so the consent stays "freely given"
+      (Art. 7(4) GDPR). Confirm this framing and the welcome email /
+      confirmation-page copy (`WELCOME_EMAIL_SUBJECT`, `welcomeEmailBody`,
+      `DOI_CONFIRMED_WELCOME_BODY`).

@@ -24,6 +24,7 @@ import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
 import { CustomerCard } from "./CustomerCard";
 import { CustomerProfileCard, type CustomerProps } from "./CustomerProfileCard";
+import { isWelcomeDiscountEnabled } from "@/lib/welcome-discount-flag.mjs";
 import { KpiTab } from "./KpiTab";
 
 export const dynamic = "force-dynamic";
@@ -231,7 +232,13 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {cards.map((c) => (
-          <CustomerProfileCard key={c.id} customer={c} />
+          <CustomerProfileCard
+            key={c.id}
+            customer={c}
+            // Historical welcome stats stay visible; the card only labels the
+            // section "(deaktiviert)" while the flag is off.
+            welcomeDiscountEnabled={isWelcomeDiscountEnabled()}
+          />
         ))}
       </div>
     </>

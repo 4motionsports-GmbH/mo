@@ -82,7 +82,7 @@ The schema is split into **two clusters** (see the separation rationale below).
 
 | Table              | Key columns                                                                                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------- |
-| `email_captures`   | `email`, `customer_id` (FK → customers, SET NULL), `transactional_consent`, `marketing_consent`, `marketing_doi_status`, `doi_token`, `doi_confirmed_at`, `consent_text_shown`, `unsubscribed_at` |
+| `email_captures`   | `email`, `customer_id` (FK → customers, SET NULL), `transactional_consent`, `marketing_consent`, `marketing_doi_status`, `doi_token`, `doi_confirmed_at`, `consent_text_shown`, `consent_copy_version` (audit stamp, migration 0011), `unsubscribed_at` |
 | `suppression_list` | `email` (PK), `added_at`, `reason`                                                                       |
 | `marketing_sends`  | `email_capture_id` (FK, cascade), `drafted_text`, `discount_code`, `sent_at`, `status` (draft/approved/sent), `shopify_order_matched` |
 | `customers`        | `email` (unique — the person key), `first_seen_at`/`last_seen_at`, `transactional_consent` + `marketing_status` (aggregated mirror of the capture), `profile_summary` + `profile_summary_updated_at` (regenerated "current understanding"), `purchase_summary` (jsonb Shopify order history) + `purchase_summary_updated_at` |
