@@ -18,7 +18,7 @@ import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { welcomeDiscountPercent } from "@/lib/welcome-discount";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
-import { getProductById } from "@/lib/product-catalog";
+import { getProductById, getProductsByIds } from "@/lib/product-catalog";
 import { EMPTY_PROFILE, type CustomerProfile, type PersonaArchetype, type UpdateCustomerProfileArgs } from "@/lib/types";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
@@ -233,8 +233,6 @@ export async function POST(req: Request) {
         ? resolveCustomerMemory({ email: claimedEmail, sessionId })
         : Promise.resolve<CustomerMemoryContext | null>(null),
     ]);
-    const retrievedProducts = hits.map((h) => h.product);
-
     // Optional product context (chat opened "about" a product) and/or
     // browsing context (small recently-viewed trail brought along by the
     // user). Both validated against the catalog; unknown/absent ids leave
@@ -246,6 +244,22 @@ export async function POST(req: Request) {
             excludeProductId: productContext?.id,
           })
         : undefined;
+
+    // Ground the context products in the pre-retrieved block so a contextual
+    // first message ("Ist das gut für Zuhause?" sent from a product page) gets
+    // a specific answer about THAT product — specs and the sold-out flag are
+    // visible without a tool roundtrip. Context products lead; semantic hits
+    // follow, deduped.
+    const contextProductIds = [
+      ...(productContext ? [productContext.id] : []),
+      ...(browsingContext?.products.map((p) => p.id) ?? []),
+    ];
+    const contextProducts =
+      contextProductIds.length > 0 ? await getProductsByIds(contextProductIds) : [];
+    const retrievedProducts = [
+      ...contextProducts,
+      ...hits.map((h) => h.product).filter((p) => !contextProductIds.includes(p.id)),
+    ];
     const modelMessages = await convertToModelMessages(messages);
 
     let greetingContext: ProductContext | undefined;
