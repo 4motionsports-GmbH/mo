@@ -76,7 +76,14 @@ before any marketing send.
 Chat → assistant calls offer_email_summary (value-triggered: after a
        well-received recommendation, a helpful comparison, or at buying/
        checkout intent — never as the opener; at most TWO asks per
-       conversation, enforced server-side by withholding the tool)
+       conversation, enforced server-side by withholding the tool.
+       At the checkout moment the ask is GUARANTEED deterministically:
+       when a turn calls add_to_cart without the model offering the
+       summary itself, the backend forces one extra step with toolChoice
+       pinned to offer_email_summary — counted as one of the two asks,
+       suppressed once the email is captured, the cap is reached, or the
+       session has an email_capture_declined event. See
+       src/lib/email-offer-trigger.mjs + api/chat prepareStep.)
      → widget renders the capture form (email + two separate checkboxes;
        copy taken verbatim from the tool result's consentCopy payload —
        or GET /api/consent-copy for a non-tool-triggered form)
