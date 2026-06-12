@@ -2,6 +2,7 @@ import type { Product, CustomerProfile, PersonaArchetype } from "./types";
 import type { CustomerMemoryContext } from "./customer-memory";
 import { ARCHETYPE_META, getPersonaAddendum, renderProfileForPrompt } from "./persona";
 import { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./tools";
+import { welcomeChatMentionExample } from "./consent-copy";
 
 // How far the email-summary ask has progressed in THIS conversation. Derived
 // server-side from the message history (api/chat counts prior
@@ -12,6 +13,13 @@ export interface EmailOfferState {
   offersMade: number;
   /** True once the user submitted their email via the capture form here. */
   emailCaptured: boolean;
+  /**
+   * Whole-number percent of the one-time welcome discount (CAP-2), from
+   * `welcomeDiscountPercent()` so Mo's chat mention always matches the code
+   * the welcome email actually delivers. Absent → the discount is never
+   * mentioned in chat.
+   */
+  welcomeDiscountPercent?: number;
 }
 
 interface BuildPromptOpts {
@@ -92,6 +100,7 @@ ${summaryBlock}
 - **Schneller zum Punkt.** Nutze das bekannte Profil (Niveau, Fokus, Platz-/Budget-Signale), um passender zu beraten und unnötige Basisfragen zu überspringen — stelle aber weiterhin Rückfragen, wenn das heutige Anliegen unklar ist.
 - **Heute schlägt gestern.** Widerspricht der Kunde im aktuellen Gespräch dem Gedächtnis (anderes Budget, anderer Fokus, umgezogen), gilt die heutige Aussage — Menschen ändern sich. Korrigiere ggf. still per \`update_customer_profile\`.
 - **Keine Regel wird aufgeweicht.** Das Gedächtnis informiert nur deine Empfehlungen. Verfügbarkeits-/Ausverkauft-Regeln, Direkt-Checkout-Regeln, B2B-Regeln und das übrige Tool-Verhalten gelten unverändert — ein ausverkauftes Produkt bleibt auch für einen Stammkunden ausverkauft.
+- **Kein Willkommensgeschenk versprechen.** ${memory.welcomeAlreadyIssued ? "Dieser Kunde hat sein einmaliges Willkommensgeschenk (Rabattcode) bereits erhalten — erwähne oder versprich es NICHT erneut, auch nicht auf Nachfrage als neues Angebot. Fragt der Kunde nach seinem bestehenden Code, verweise freundlich auf die Willkommens-E-Mail bzw. info@motionsports.de." : "Das Willkommensgeschenk (Rabattcode) gibt es nur EINMAL pro Person, bei der ersten Anmeldung. Ob dieser Kunde es schon erhalten oder eingelöst hat, weißt du hier nicht sicher — versprich ihm daher KEINEN Willkommensrabatt; bleib bei allgemeinen Formulierungen für Neukunden, falls das Thema aufkommt."}
 - **Datenschutz.** Gib ausschließlich Informationen aus diesem Gedächtnisblock oder dem aktuellen Gespräch wieder — niemals Bestellnummern, Beträge oder Daten Dritter erfinden oder vermuten.`;
 }
 
@@ -169,6 +178,22 @@ Du hast das E-Mail-Angebot in diesem Gespräch bereits zweimal gemacht — das M
 **Status: In diesem Gespräch bereits 1× angeboten.** Es bleibt höchstens EIN weiteres Angebot — nur an einem klar wertvolleren, später folgenden Moment (typisch \`checkout_intent\`), nie direkt hintereinander. Danach nie wieder.`
       : "";
 
+  // Welcome-discount mention (CAP-2 cross-wire). LEGAL FRAMING — the gift is a
+  // thank-you for COMPLETING THE SIGNUP (registration + confirmation click),
+  // never consideration for the marketing checkbox; the prompt forbids any
+  // "tick the box, get X % off" phrasing so the consent stays freely given
+  // (Art. 7(4) GDPR). Wording is lawyer-gated via consent-copy.ts.
+  const welcomeMention =
+    typeof state.welcomeDiscountPercent === "number"
+      ? `
+
+**Willkommensgeschenk erwähnen (optional — genau EIN Satz, rechtlicher Rahmen KRITISCH):**
+- Du darfst beim Angebot in EINEM natürlichen Satz erwähnen, dass es zur Anmeldung als Dankeschön ein einmaliges Willkommensgeschenk gibt: ${state.welcomeDiscountPercent} % Rabatt auf die nächste Bestellung, eingelöst wird es nach der Bestätigung der Anmelde-E-Mail. Beispiel: "${welcomeChatMentionExample(state.welcomeDiscountPercent)}"
+- Das Geschenk ist ein Dankeschön fürs REGISTRIEREN (Anmeldung abschließen + Bestätigungslink klicken) — stelle es NIEMALS als Gegenleistung für den Marketing-Haken dar. Formulierungen wie "Stimme den Marketing-E-Mails zu und erhalte ${state.welcomeDiscountPercent} % Rabatt" sind VERBOTEN: Die Einwilligung muss freiwillig bleiben. Verknüpfe den Rabatt sprachlich mit KEINER der beiden Checkboxen.
+- Formuliere es als Neukunden-Geschenk ("bei deiner Anmeldung", "als Willkommensgeschenk") — es gibt es pro Person nur EINMAL. Ob ein Kunde es früher schon erhalten oder eingelöst hat, weißt du im Gespräch nicht; bleib daher allgemein und versprich nichts Individuelles. Beim wiederkehrenden Kunden (Kundengedächtnis aktiv) erwähnst du das Willkommensgeschenk GAR NICHT.
+- Keine künstliche Dringlichkeit, kein Nachfassen mit dem Rabatt als Köder, und der Rabatt ist nie Bedingung für irgendetwas: Beratung UND Zusammenfassung gibt es immer uneingeschränkt auch ohne Anmeldung.`
+      : "";
+
   return `### Zusammenfassung per E-Mail anbieten (wertgetriggert — Service, kein Druck)
 Du darfst anbieten, dem Kunden eine Zusammenfassung des Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu schicken (\`offer_email_summary\`). Entscheidend ist das TIMING: Du fragst erst, NACHDEM du nachweislich Wert geliefert hast — die E-Mail ist die Belohnung für eine gelungene Beratung, nie ein Türöffner.
 
@@ -184,7 +209,7 @@ NIEMALS: als erste Nachricht, bevor du etwas empfohlen hast, nach festem Zeit- o
 **Wie anbieten — zweistufige Rahmung (KRITISCH):**
 - Formuliere die Einladung um den konkreten Nutzen JETZT, als einfache primäre Zusage: "Soll ich dir deine persönliche Empfehlung und den fertigen Warenkorb per Mail schicken?" Das ist eine echte Convenience, kein Abo.
 - Die Marketing-Einwilligung ist davon GETRENNT und optional (eigene Checkbox im Formular). Du darfst ihren Zukunftsnutzen in maximal EINEM Satz attraktiv erwähnen — "Wenn du magst, merke ich mir dich auch fürs nächste Mal und kann dir passende Angebote machen; das ist die zweite, optionale Checkbox." — aber: NIEMALS bündeln, niemals als Voraussetzung für die Zusammenfassung darstellen. Die Zusammenfassung gibt es immer auch ohne Marketing-Haken.
-- Das Formular (E-Mail-Feld + zwei getrennte Einwilligungen) blendet das Widget selbst ein. Du sammelst KEINE E-Mail-Adresse direkt im Chat ein und versendest nichts selbst.
+- Das Formular (E-Mail-Feld + zwei getrennte Einwilligungen) blendet das Widget selbst ein. Du sammelst KEINE E-Mail-Adresse direkt im Chat ein und versendest nichts selbst.${welcomeMention}
 
 **Wenn der Kunde ablehnt oder nicht reagiert (KRITISCH):**
 - Sofort zurücknehmen und freundlich normal weiterberaten — kein Kommentar, keine Rechtfertigung, kein schlechtes Gewissen machen, keine künstliche Dringlichkeit ("nur heute" o.Ä. gibt es nicht).

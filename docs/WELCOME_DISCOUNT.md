@@ -90,6 +90,34 @@ The CTA is Shopify's discount share link (`/discount/<code>`), which applies
 the code automatically; the unsubscribe footer is always present. The DOI
 confirmation page mentions the welcome email only when it actually went out.
 
+## Chat mention (Mo's value-triggered offer)
+
+Mo may mention the welcome gift **in one sentence** as part of the existing
+value-triggered email-summary offer (CAP-1 — same triggers, same two-ask cap,
+same graceful back-off; nothing about the offer cadence changes). The percent
+is injected into the system prompt from `welcomeDiscountPercent()`
+(`emailOffer.welcomeDiscountPercent` in `src/app/api/chat/route.ts`), so chat
+can never drift from what the welcome email actually delivers. The canonical
+sentence lives in `src/lib/consent-copy.ts` (`welcomeChatMentionExample`) under
+the `CONSENT_COPY_LAWYER_APPROVED` gate.
+
+**Framing rules enforced by the prompt** (same legal framing as above):
+
+- The gift is a thank-you for **completing the signup** (registration +
+  confirmation click) — never presented as consideration for the marketing
+  checkbox. "Agree to marketing emails and get X % off" is explicitly
+  forbidden wording; the discount is never linked to either checkbox.
+- General new-customer phrasing only ("bei deiner Anmeldung", once-ever) — no
+  individual promises. **Limitation:** at offer time the visitor is usually
+  anonymous, so whether they already received/redeemed a code is not knowable;
+  the prompt therefore mandates general wording. For a **re-identified
+  returning customer** (customer memory active) the prompt suppresses the
+  mention entirely, and when `welcome_issued_at` is set the memory block tells
+  Mo explicitly not to re-promise the gift (we know issuance, not redemption —
+  once-ever either way, so issuance is the right suppression signal).
+- No artificial urgency, never a condition: consultation and summary are
+  always available without signing up.
+
 ## Dashboard tracking
 
 The admin **Kunden** tab shows per customer: whether a welcome code was

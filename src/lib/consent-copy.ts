@@ -39,20 +39,48 @@ export const CONSENT_COPY_LAWYER_APPROVED = false as const;
 // ---------------------------------------------------------------------------
 
 /**
- * (A) Transactional consent — checkbox label. The user must tick this to
- * receive the summary + cart email (it's the service they're requesting).
+ * (A) Transactional consent — checkbox label. Must be true to submit — it's
+ * the very service the user is requesting (Art. 6(1)(b)), not marketing.
+ * LOW-FRICTION PATH: because submitting the form IS the affirmative request
+ * for this email, the widget MAY render this box pre-checked by default —
+ * the unchecked-by-default rule below applies ONLY to the marketing box (B).
  * PLACEHOLDER — lawyer review required.
  */
 export const TRANSACTIONAL_CHECKBOX_LABEL =
   "Ja, sendet mir eine Zusammenfassung dieses Gesprächs und meinen Warenkorb per E-Mail.";
 
 /**
- * (B) Marketing consent — checkbox label. MUST be a SEPARATE checkbox,
- * UNCHECKED by default, never bundled with (A). PLACEHOLDER — lawyer review
- * required.
+ * (B) Marketing consent — checkbox label. MUST be a SEPARATE checkbox, never
+ * bundled with (A).
+ *
+ * ⚠️ DECISION — THIS BOX IS NEVER PRE-CHECKED. Pre-ticked marketing consent
+ * is invalid under the GDPR's clear-affirmative-act requirement (Art. 4(11),
+ * Art. 7(2); CJEU C-673/17 "Planet49") and a classic Abmahnung trigger under
+ * the German UWG. We deliberately reject pre-checking it, regardless of what
+ * other platforms do. Opt-ins are won honestly — through the benefit-led
+ * label + hint below — not through a pre-tick. The widget MUST render it
+ * UNCHECKED and visually independent of (A); making it PROMINENT (placement,
+ * styling, the benefit hint) is fine and encouraged.
+ *
+ * The copy is benefit-led but stays accurate: specific about the purpose
+ * (personalised recommendations/offers based on the consultations, used for
+ * personalisation) and explicit about the free, anytime withdrawal. It must
+ * NEVER promise the welcome discount for ticking this box ("freely given",
+ * Art. 7(4) GDPR — see docs/WELCOME_DISCOUNT.md). PLACEHOLDER — lawyer
+ * review required.
  */
 export const MARKETING_CHECKBOX_LABEL =
-  "Ja, motion sports darf mich per E-Mail mit persönlichen Empfehlungen und Angeboten kontaktieren, die auf diesem Beratungsgespräch basieren. Der Chat-Inhalt wird zur Personalisierung verwendet. Die Einwilligung kann ich jederzeit kostenlos widerrufen (Abmeldelink in jeder E-Mail).";
+  "Ja, Mo darf sich mich merken: motion sports darf mich per E-Mail mit persönlichen Empfehlungen und Angeboten kontaktieren, die auf meinen Beratungsgesprächen basieren.";
+
+/**
+ * (B) Benefit hint — rendered directly beneath the marketing label as part of
+ * the same consent block (and stored verbatim in `consentTextShown` together
+ * with the label, Art. 7 proof). Concrete future value + purpose + free
+ * anytime withdrawal. Same decision as above: prominence yes, pre-tick never.
+ * PLACEHOLDER — lawyer review required.
+ */
+export const MARKETING_CHECKBOX_BENEFIT_HINT =
+  "Dein Vorteil: Beim nächsten Besuch erkennt Mo dich wieder — keine Basisfragen von vorn, sondern Empfehlungen und Angebote, die wirklich zu deinem Training, deinem Platz und deinem Budget passen. Dafür verwenden wir die Inhalte deiner Beratungsgespräche. Abmelden geht jederzeit kostenlos — ein Klick auf den Link in jeder E-Mail genügt.";
 
 // ---------------------------------------------------------------------------
 // Double-opt-in confirmation email (sent when marketing consent is ticked)
@@ -207,6 +235,32 @@ export function welcomeEmailBody(opts: WelcomeEmailOptions): { text: string; htm
   });
 
   return { text, html };
+}
+
+// ---------------------------------------------------------------------------
+// Chat mention of the welcome discount (Mo, at the value-triggered email offer)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ LEGAL FRAMING — lawyer-confirm (see docs/WELCOME_DISCOUNT.md): in chat,
+// Mo may mention the one-time welcome gift in ONE sentence as a thank-you for
+// COMPLETING THE SIGNUP (registering + clicking the confirmation link) —
+// NEVER as a reward for ticking the marketing checkbox. "Agree to marketing
+// and get X % off" is forbidden: it would stop the consent being "freely
+// given" (Art. 7(4) GDPR). The sentence below is the canonical wording the
+// system prompt hands to the model as its example; it deliberately names no
+// checkbox and attaches the gift to the confirmed signup only.
+
+/**
+ * Canonical example sentence for Mo's in-chat mention of the welcome gift.
+ * `percent` comes from `welcomeDiscountPercent()` so chat always matches what
+ * the welcome email actually delivers. PLACEHOLDER — lawyer review required.
+ */
+export function welcomeChatMentionExample(percent: number): string {
+  return (
+    `Kleines Extra: Wenn du dich dabei anmeldest, bekommst du als Dankeschön ` +
+    `nach der Bestätigung ein einmaliges Willkommensgeschenk — ${percent} % ` +
+    `Rabatt auf deine nächste Bestellung.`
+  );
 }
 
 /** Shown when a DOI token is invalid or expired. PLACEHOLDER. */
