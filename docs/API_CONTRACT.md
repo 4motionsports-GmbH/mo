@@ -17,6 +17,7 @@ Endpoints:
 | GET    | `/api/products`           | Public product hydration for widget cards.               |
 | POST   | `/api/kpi`                | Pseudonymous telemetry ingestion (fire-and-forget).      |
 | POST   | `/api/capture-email`      | GDPR email capture + double opt-in (summary + marketing).|
+| GET    | `/api/consent-copy`       | Canonical capture-form consent copy (labels + links).     |
 | GET    | `/api/confirm-marketing`  | Marketing double-opt-in confirmation link (HTML page).   |
 | GET    | `/api/unsubscribe`        | Signed unsubscribe link → suppression (HTML page).        |
 
@@ -446,6 +447,18 @@ Input schema:
   productIds?: string[];   // advisory only
 }
 ```
+**The tool RESULT carries the canonical consent copy.** Unlike the other
+renderable tools, this part's `output` (populated once the result state
+arrives, alongside `input`) is load-bearing: it contains the exact checkbox
+labels, the marketing benefit hint, the imprint/privacy links, and the
+pre-composed `consentTextShown` audit string. The widget **MUST render these
+backend-served strings and MUST NOT hard-code any consent copy** — the served
+text is stored verbatim as Art. 7 proof of consent, so a hard-coded theme
+snapshot could silently diverge from the audit record. Lawyer copy changes
+ship as a backend deploy with no widget release. (For capture forms not
+triggered by this tool, the same payload is available via
+`GET /api/consent-copy` — §7.4.)
+
 Example part:
 ```json
 {
@@ -456,6 +469,18 @@ Example part:
     "message": "Soll ich dir deine persönliche Empfehlung und den fertigen Warenkorb per Mail schicken?",
     "trigger": "recommendation_accepted",
     "productIds": ["atx-treadmill-pro-fold"]
+  },
+  "output": {
+    "ok": true,
+    "consentCopy": {
+      "transactionalLabel": "Ja, sendet mir eine Zusammenfassung dieses Gesprächs und meinen Warenkorb per E-Mail.",
+      "marketingLabel": "Ja, Mo darf sich mich merken: motion sports darf mich per E-Mail mit persönlichen Empfehlungen und Angeboten kontaktieren, die auf meinen Beratungsgesprächen basieren.",
+      "marketingBenefitHint": "Dein Vorteil: Beim nächsten Besuch erkennt Mo dich wieder — …",
+      "consentTextShown": "Ja, sendet mir … | Ja, Mo darf sich mich merken … Dein Vorteil: …",
+      "imprintUrl": "https://motionsports.de/pages/impressum",
+      "privacyUrl": "https://motionsports.de/policies/privacy-policy",
+      "lawyerApproved": false
+    }
   }
 }
 ```
@@ -463,27 +488,32 @@ Widget action: render `message` as the intro, then the capture form with:
 
 - an **email** input,
 - a **transactional** consent checkbox (required to submit) — label from
-  `TRANSACTIONAL_CHECKBOX_LABEL`. This is the requested service (not
+  `output.consentCopy.transactionalLabel`. This is the requested service (not
   marketing), so it is the **low-friction default path**: the widget MAY
   render it **pre-checked** — submitting the form is itself the affirmative
   request for this email.
 - a **separate** marketing consent checkbox — label from
-  `MARKETING_CHECKBOX_LABEL`, with the benefit line
-  `MARKETING_CHECKBOX_BENEFIT_HINT` rendered directly beneath it as part of
-  the same consent block. **This box MUST start UNCHECKED — never pre-check
-  it.** Pre-ticked marketing consent is invalid (GDPR clear-affirmative-act;
-  CJEU *Planet49*) and a German UWG Abmahnung trigger; this is a deliberate,
-  documented decision (see `src/lib/consent-copy.ts`). The widget SHOULD make
-  the box **prominent** (placement, styling, the benefit hint) — opt-ins are
-  won through the copy, not a pre-tick.
+  `output.consentCopy.marketingLabel`, with the benefit line
+  `output.consentCopy.marketingBenefitHint` rendered directly beneath it as
+  part of the same consent block. **This box MUST start UNCHECKED — never
+  pre-check it.** Pre-ticked marketing consent is invalid (GDPR
+  clear-affirmative-act; CJEU *Planet49*) and a German UWG Abmahnung trigger;
+  this is a deliberate, documented decision (see `src/lib/consent-copy.ts`).
+  The widget SHOULD make the box **prominent** (placement, styling, the
+  benefit hint) — opt-ins are won through the copy, not a pre-tick.
+- **imprint + privacy links** next to the form, targeting
+  `output.consentCopy.imprintUrl` / `output.consentCopy.privacyUrl`
+  (`target="_blank" rel="noopener noreferrer"`).
 
-On submit, POST to `/api/capture-email` (§7) with the two booleans, the exact
-consent text strings shown (`consentTextShown` — for the marketing box that
-means **label + benefit hint verbatim**), and the tool call's `trigger`
-echoed back (telemetry-only — lets the opt-in funnel be split by trigger
-moment). The marketing box MUST be visually independent of the transactional
-one — never one combined checkbox. `productIds` is advisory (cart preview);
-the backend determines the real products server-side from the conversation.
+On submit, POST to `/api/capture-email` (§7) with the two booleans, the
+backend-provided `output.consentCopy.consentTextShown` echoed back
+**verbatim** (never recomposed or hard-coded by the widget — it must be
+byte-for-byte the strings that were served and displayed), and the tool
+call's `trigger` echoed back (telemetry-only — lets the opt-in funnel be
+split by trigger moment). The marketing box MUST be visually independent of
+the transactional one — never one combined checkbox. `productIds` is advisory
+(cart preview); the backend determines the real products server-side from the
+conversation.
 
 If the user dismisses or declines the capture card without submitting, the
 widget should emit one `email_capture_declined` event via `POST /api/kpi`
@@ -854,7 +884,7 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   "email": "max@example.de",
   "transactionalConsent": true,    // required to be true
   "marketingConsent": false,       // separate, MUST default unchecked in the UI (never pre-ticked)
-  "consentTextShown": "Ja, sendet mir … | Ja, Mo darf sich mich merken … Dein Vorteil: …",  // exact labels + benefit hint shown (audit)
+  "consentTextShown": "Ja, sendet mir … | Ja, Mo darf sich mich merken … Dein Vorteil: …",  // backend-served audit string, echoed verbatim
   "trigger": "recommendation_accepted"  // optional; echo of the offer's trigger (telemetry only)
 }
 ```
@@ -867,8 +897,12 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   suppressed), the backend sets `marketing_doi_status='pending'`, issues a DOI
   token, and sends the confirmation email. **No marketing** is sent until the
   user clicks that link.
-- `consentTextShown` is stored verbatim as Art. 7 proof. Send the exact label
-  strings the user saw (both boxes).
+- `consentTextShown` is stored verbatim as Art. 7 proof. It MUST be the
+  **backend-provided** `consentCopy.consentTextShown` string (from the
+  `offer_email_summary` tool result or `GET /api/consent-copy`, §7.4) echoed
+  back **byte-for-byte** — the widget never composes or hard-codes this text.
+  Because the form renders exactly those served strings, the audit record
+  cannot diverge from what was displayed.
 
 #### Behaviour
 
@@ -959,7 +993,61 @@ and verifiable without a DB lookup.
 `canSendMarketing(email)` (DOI confirmed AND not suppressed) gate every future
 marketing send. See [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
-### 7.4 New environment variables
+### 7.4 `GET /api/consent-copy`
+
+Serves the canonical capture-form consent copy. The same payload is already
+attached to every `offer_email_summary` tool result (§2), so the widget only
+needs this endpoint for capture forms **not** triggered by the tool (e.g. a
+proactive share-form entry point). The widget MUST source all consent copy
+from one of these two paths and **never hard-code it** — the strings are the
+Art. 7 audit text.
+
+Like `/api/products`: **no shared secret** (the strings are public form copy),
+origin allowlist + rate limit only (shares the products bucket, 60 req /
+60 s). Send `x-ms-session` for rate-limit keying.
+
+#### Request
+
+```
+GET /api/consent-copy
+```
+
+#### Response
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: public, max-age=60, stale-while-revalidate=300
+```
+```jsonc
+{
+  "transactionalLabel": "Ja, sendet mir eine Zusammenfassung dieses Gesprächs und meinen Warenkorb per E-Mail.",
+  "marketingLabel": "Ja, Mo darf sich mich merken: motion sports darf mich per E-Mail mit persönlichen Empfehlungen und Angeboten kontaktieren, die auf meinen Beratungsgesprächen basieren.",
+  "marketingBenefitHint": "Dein Vorteil: Beim nächsten Besuch erkennt Mo dich wieder — …",
+  // Pre-composed audit string — echo back VERBATIM as `consentTextShown`
+  // on POST /api/capture-email (§7.1). Never recompose it client-side.
+  "consentTextShown": "Ja, sendet mir … | Ja, Mo darf sich mich merken … Dein Vorteil: …",
+  "imprintUrl": "https://motionsports.de/pages/impressum",
+  "privacyUrl": "https://motionsports.de/policies/privacy-policy",
+  // Mirrors CONSENT_COPY_LAWYER_APPROVED — informational; stays false until
+  // Legal signs off on the placeholder copy.
+  "lawyerApproved": false
+}
+```
+
+The 60 s cache is deliberate: a lawyer copy change must reach live widgets
+quickly. Fetch fresh copy when rendering a capture form (or at widget boot) —
+do not persist it across sessions.
+
+#### Error responses
+
+| Status | Code             | When                                            |
+| ------ | ---------------- | ----------------------------------------------- |
+| 403    | `forbidden`      | Cross-origin from an origin not in allowlist.   |
+| 429    | `rate_limited`   | Shares the products bucket (60 req / 60 s).     |
+| 500    | `internal_error` | Unexpected server error.                        |
+
+### 7.5 New environment variables
 
 | Var                       | Purpose                                                              |
 | ------------------------- | -------------------------------------------------------------------- |

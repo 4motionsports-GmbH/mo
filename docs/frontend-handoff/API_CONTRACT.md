@@ -1,5 +1,12 @@
 # motion sports chat backend — API contract
 
+> **Synced copy.** This file is a copy of the backend repo's
+> `docs/API_CONTRACT.md` for frontend sessions that don't have that repo.
+> The backend doc is canonical — whenever the backend contract changes,
+> this folder must be re-synced from it. References to other backend docs
+> (`docs/CONSENT_FLOW.md`, `src/lib/consent-copy.ts`, …) are informational;
+> everything the widget needs is inline here.
+
 This document is the single source of truth for the Shopify widget that
 calls this backend. If anything here disagrees with the code, the code
 wins — open an issue and we'll fix one or the other so they match.
@@ -8,13 +15,24 @@ wins — open an issue and we'll fix one or the other so they match.
 
 **Base URL (production):** `https://chat.motionsports.de`
 
-Three endpoints:
+Endpoints:
 
-| Method | Path             | Purpose                                                  |
-| ------ | ---------------- | -------------------------------------------------------- |
-| POST   | `/api/chat`      | Streaming Claude chat with persona-aware tools.          |
-| POST   | `/api/contact`   | Contact-form submission → email via Resend.              |
-| GET    | `/api/products`  | Public product hydration for widget cards.               |
+| Method | Path                      | Purpose                                                  |
+| ------ | ------------------------- | -------------------------------------------------------- |
+| POST   | `/api/chat`               | Streaming Claude chat with persona-aware tools.          |
+| POST   | `/api/contact`            | Contact-form submission → email via Resend.              |
+| GET    | `/api/products`           | Public product hydration for widget cards.               |
+| POST   | `/api/kpi`                | Pseudonymous telemetry ingestion (fire-and-forget).      |
+| POST   | `/api/capture-email`      | GDPR email capture + double opt-in (summary + marketing).|
+| GET    | `/api/consent-copy`       | Canonical capture-form consent copy (labels + links).     |
+| GET    | `/api/confirm-marketing`  | Marketing double-opt-in confirmation link (HTML page).   |
+| GET    | `/api/unsubscribe`        | Signed unsubscribe link → suppression (HTML page).        |
+
+> `/api/confirm-marketing` and `/api/unsubscribe` are **clicked from emails**
+> as top-level browser navigations — they return an HTML page, not JSON, and
+> have **no** CORS allowlist or shared-secret guard (a mail client sends no
+> `Origin` and no custom header). They're protected by unguessable / signed
+> tokens instead. The widget never calls them directly.
 
 ### Security model
 
@@ -93,6 +111,99 @@ full history on every turn (the customer profile is a pure function of
 the messages, reconstructed by replaying `update_customer_profile` tool
 calls), so the widget must send the entire conversation each turn.
 
+#### Optional `context` — opening the chat "about" a product
+
+When the widget is opened from a specific product page (e.g. a "Frage zu
+diesem Produkt"/"Beratung" button on a product detail page), it MAY attach
+an optional `context` object alongside `messages`:
+
+```jsonc
+{
+  "messages": [],
+  "context": {
+    "type": "product",
+    "productId": "atx-treadmill-pro-fold",
+    "productTitle": "ATX Treadmill Pro Fold"   // optional, advisory only
+  }
+}
+```
+
+| Field          | Type     | Notes                                                              |
+| -------------- | -------- | ----------------------------------------------------------------- |
+| `type`         | string   | Must be `"product"`. Any other value is ignored.                  |
+| `productId`    | string   | Catalog product id. Validated server-side (see below).            |
+| `productTitle` | string?  | Optional/advisory. The backend uses the catalog's canonical name. |
+
+**Validation.** `productId` is validated against the live catalog. If it is
+missing, not a known product, or `type` is not `"product"`, the context is
+**ignored gracefully** — the request behaves exactly as if no `context` was
+sent (no error). This means a stale storefront link can never inject a bogus
+product into the prompt.
+
+The backend keys its behavior off whether `messages` is empty:
+
+- **Fresh open (`messages: []` + valid `context`).** The backend seeds the
+  model with a system-level note ("the user is viewing product '<title>'
+  (id …) and chose to get advice about it — greet them warmly by the
+  product's name and invite their questions; do not repeat the full spec
+  unprompted"). The assistant then produces a **natural greeting as its
+  first streamed message**. The widget does NOT need to send a user message
+  to trigger this — it sends `messages: []` and renders the streamed
+  assistant greeting like any other turn. No fake user message is fabricated
+  in the history.
+
+- **Existing conversation (`messages` non-empty + valid `context`).** The
+  backend injects a lightweight in-conversation note ("Der Nutzer schaut
+  sich gerade <title> an") so the assistant can **pivot toward the product
+  without wiping the existing history**. The conversation continues
+  normally; the widget keeps sending the full `messages` array each turn as
+  usual.
+
+In both cases the **response is the same SSE UI-message stream** documented
+below — `context` only seeds the model, it does not change the response
+shape. The widget parses the stream identically whether or not `context`
+was sent.
+
+#### Optional `customer` — returning-customer memory after in-session re-identification
+
+After a **successful `POST /api/capture-email` in the current chat session**
+(§7.1), the widget MAY attach the captured email to every subsequent
+`/api/chat` request of that session:
+
+```jsonc
+{
+  "messages": [ /* full history as usual */ ],
+  "customer": { "email": "max@example.de" }
+}
+```
+
+When that email matches an **existing customer with history** (prior linked
+conversations, a generated "current understanding" summary, and/or a cached
+purchase history), the backend injects a compact memory block into the system
+prompt so the assistant can consult like someone who remembers a returning
+client — acknowledge the return lightly, skip products they already own,
+tailor to their known profile. The response shape is unchanged; memory only
+seeds the model.
+
+**Privacy gate (the rules the widget MUST follow).** A returning customer
+opens a new chat as **anonymous** — we do not know who they are until they
+give their email in *this* conversation. Therefore:
+
+- Attach `customer.email` **only after** `/api/capture-email` succeeded **in
+  the current chat session**, and keep that state **in memory only**. Never
+  persist it to `localStorage`/cookies and never auto-attach it on a fresh
+  widget open — a shared/family/public browser must not surface another
+  person's history.
+- The backend enforces this independently: it injects memory only when the
+  email's consent record was verifiably captured **from the same
+  `x-ms-session`** as the chat request. A forged or replayed `customer.email`
+  resolves to no memory — **ignored gracefully**, exactly like an invalid
+  `context` (no error).
+- A **new email** (no existing customer history) also resolves to no memory:
+  the request behaves exactly as if `customer` was never sent.
+- The session id alone never unlocks memory; the match is strictly by the
+  email the user just provided in this session.
+
 **40-message cap.** If `messages.length > 40` the route returns:
 
 ```http
@@ -162,7 +273,7 @@ function isToolPart(type, name) {
 }
 ```
 
-The five renderable tools, in order of arrival likelihood:
+The renderable tools, in order of arrival likelihood:
 
 ##### `show_product` → product card
 
@@ -210,17 +321,24 @@ Widget action: `GET /api/products?ids=a,b`, render a table with image
 + name as column headers and rows for price, key spec rows, and
 `deliveryTime`. Show `comparisonContext` as a caption above the table.
 
-##### `add_to_cart` → direct-checkout CTA
+##### `add_to_cart` → direct-checkout CTA (single **or** multi-product)
 
 > Tool id stays `add_to_cart` for backwards-compat, but it now drives a
-> **direct checkout**: `shopifyCartUrl` is a one-unit cart permalink that
-> sends the shopper straight to Shopify's checkout for that product.
+> **direct checkout** and can cover **one or several** products in a single
+> cart. The model emits **one** `add_to_cart` call per buying decision.
 
-Input schema:
+Input schema (**either** `productId` **or** `productIds`, at least one required):
 ```ts
-{ productId: string; message: string }
+{ productId?: string; productIds?: string[]; message: string }
 ```
-Example part:
+
+- **Single product** — the model sets `productId` (unchanged from before).
+- **Multiple products** — when the shopper clearly wants several items together
+  ("beides nehme ich", "das Rack UND die Hantelbank"), the model sets
+  `productIds` with **all** intended ids and calls the tool **once**. This is
+  one combined cart, not several separate buttons.
+
+Single-product example part (backward compatible):
 ```json
 {
   "type": "tool-add_to_cart",
@@ -232,10 +350,39 @@ Example part:
   }
 }
 ```
-Widget action: `GET /api/products?id=…`, render a quick-checkout CTA card
-with `message` plus a primary button linking to `product.shopifyCartUrl`
-(`target="_blank" rel="noopener noreferrer"`). The button sends the shopper
-**directly to checkout** (one unit), not into a cart they must then manage.
+
+Multi-product example part:
+```json
+{
+  "type": "tool-add_to_cart",
+  "toolCallId": "call_ghi790",
+  "state": "result",
+  "input": {
+    "productIds": ["atx-rack-pro", "atx-bench-pro"],
+    "message": "Wenn die Kombi für dich passt, kannst du beides hier direkt bestellen."
+  }
+}
+```
+
+**Widget action — WHAT CHANGED FOR THE FRONTEND:**
+
+1. **Normalise the input to an id list:** `const ids = input.productIds ?? [input.productId!]`.
+   (Old code that only reads `input.productId` keeps working for single-product
+   calls, but should be updated to handle `productIds` for the multi case.)
+2. **Hydrate:** `GET /api/products?ids=<id1>,<id2>,…` (the existing multi-id
+   form — up to 10 ids). Render **one** quick-checkout card listing every
+   resolved product (name / price / thumbnail), with `message` as the header.
+3. **Checkout button:** link it to the **top-level** `cartUrl` from that same
+   `/api/products` response — a single permalink that puts **all** variants in
+   **one** cart (`…/cart/<v1>:1,<v2>:1`). Do **not** stitch this together from
+   the per-product `shopifyCartUrl` values; use the server-built `cartUrl`.
+   Open with `target="_blank" rel="noopener noreferrer"`.
+4. **Degrade gracefully:** if `cartUrl` is `null` (no variant resolved), hide
+   the checkout button (or fall back to listing the products' `shopifyUrl`
+   links). Unknown ids come back as `null` entries in `products` — skip them.
+
+The button sends the shopper **directly to checkout** (one unit per line), not
+into a cart they must then manage.
 
 ##### `suggest_showroom` → showroom suggestion
 
@@ -285,6 +432,104 @@ pre-selected, message displayed as a header, and (if `productIds` is
 present) `GET /api/products?ids=…` so the form can show which products
 are being asked about. Submission POSTs to `/api/contact` (section 4
 below).
+
+##### `offer_email_summary` → email-capture form
+
+The assistant calls this at a **value-triggered** moment — after the user
+reacted well to a recommendation, after a helpful comparison, when the user
+wants to think it over, or at clear buying/checkout intent — never as the first
+message and never on a fixed timer. It is offered **at most twice per
+conversation**: if the user declines or ignores it, the assistant backs off and
+may raise it once more at a later, clearly higher-value moment (typically
+checkout intent). The widget turns the tool call into the **GDPR email-capture
+form** (see §7).
+
+Input schema:
+```ts
+{
+  message: string;
+  // The value moment that triggered this ask (also used for KPI measurement):
+  trigger: "recommendation_accepted" | "comparison_delivered" |
+           "consideration_pause" | "buying_intent" | "checkout_intent";
+  productIds?: string[];   // advisory only
+}
+```
+**The tool RESULT carries the canonical consent copy.** Unlike the other
+renderable tools, this part's `output` (populated once the result state
+arrives, alongside `input`) is load-bearing: it contains the exact checkbox
+labels, the marketing benefit hint, the imprint/privacy links, and the
+pre-composed `consentTextShown` audit string. The widget **MUST render these
+backend-served strings and MUST NOT hard-code any consent copy** — the served
+text is stored verbatim as Art. 7 proof of consent, so a hard-coded theme
+snapshot could silently diverge from the audit record. Lawyer copy changes
+ship as a backend deploy with no widget release. (For capture forms not
+triggered by this tool, the same payload is available via
+`GET /api/consent-copy` — §7.4.)
+
+Example part:
+```json
+{
+  "type": "tool-offer_email_summary",
+  "toolCallId": "call_pqr678",
+  "state": "result",
+  "input": {
+    "message": "Soll ich dir deine persönliche Empfehlung und den fertigen Warenkorb per Mail schicken?",
+    "trigger": "recommendation_accepted",
+    "productIds": ["atx-treadmill-pro-fold"]
+  },
+  "output": {
+    "ok": true,
+    "consentCopy": {
+      "transactionalLabel": "Ja, sendet mir eine Zusammenfassung dieses Gesprächs und meinen Warenkorb per E-Mail.",
+      "marketingLabel": "Ja, Mo darf sich mich merken: motion sports darf mich per E-Mail mit persönlichen Empfehlungen und Angeboten kontaktieren, die auf meinen Beratungsgesprächen basieren.",
+      "marketingBenefitHint": "Dein Vorteil: Beim nächsten Besuch erkennt Mo dich wieder — …",
+      "consentTextShown": "Ja, sendet mir … | Ja, Mo darf sich mich merken … Dein Vorteil: …",
+      "imprintUrl": "https://motionsports.de/pages/impressum",
+      "privacyUrl": "https://motionsports.de/policies/privacy-policy",
+      "lawyerApproved": false
+    }
+  }
+}
+```
+Widget action: render `message` as the intro, then the capture form with:
+
+- an **email** input,
+- a **transactional** consent checkbox (required to submit) — label from
+  `output.consentCopy.transactionalLabel`. This is the requested service (not
+  marketing), so it is the **low-friction default path**: the widget MAY
+  render it **pre-checked** — submitting the form is itself the affirmative
+  request for this email.
+- a **separate** marketing consent checkbox — label from
+  `output.consentCopy.marketingLabel`, with the benefit line
+  `output.consentCopy.marketingBenefitHint` rendered directly beneath it as
+  part of the same consent block. **This box MUST start UNCHECKED — never
+  pre-check it.** Pre-ticked marketing consent is invalid (GDPR
+  clear-affirmative-act; CJEU *Planet49*) and a German UWG Abmahnung trigger;
+  this is a deliberate, documented decision (see the backend repo's `src/lib/consent-copy.ts`).
+  The widget SHOULD make the box **prominent** (placement, styling, the
+  benefit hint) — opt-ins are won through the copy, not a pre-tick.
+- **imprint + privacy links** next to the form, targeting
+  `output.consentCopy.imprintUrl` / `output.consentCopy.privacyUrl`
+  (`target="_blank" rel="noopener noreferrer"`).
+
+On submit, POST to `/api/capture-email` (§7) with the two booleans, the
+backend-provided `output.consentCopy.consentTextShown` echoed back
+**verbatim** (never recomposed or hard-coded by the widget — it must be
+byte-for-byte the strings that were served and displayed), and the tool
+call's `trigger` echoed back (telemetry-only — lets the opt-in funnel be
+split by trigger moment). The marketing box MUST be visually independent of
+the transactional one — never one combined checkbox. `productIds` is advisory
+(cart preview); the backend determines the real products server-side from the
+conversation.
+
+If the user dismisses or declines the capture card without submitting, the
+widget should emit one `email_capture_declined` event via `POST /api/kpi`
+(see §5) with `data: { trigger, askNumber? }` — the backend cannot observe a
+dismissal itself. Do NOT emit "shown"/"submitted" events from the widget;
+those are recorded server-side.
+
+> ⚠️ The checkbox labels are PLACEHOLDER copy pending lawyer approval — see
+> `docs/CONSENT_FLOW.md` (backend repo).
 
 #### Tool parts the widget MUST NOT render
 
@@ -370,7 +615,8 @@ within a request are de-duplicated while preserving order.
       "deliveryTime": "Nach Verfügbarkeit"
     },
     null
-  ]
+  ],
+  "cartUrl": "https://motionsports.de/cart/40123456789:1,40987654321:1"
 }
 ```
 
@@ -395,15 +641,38 @@ type PublicProduct = {
   images: string[];
   shopifyUrl: string;
   shopifyCartUrl?: string; // optional — see note below
+  // Stock status, refreshed by the daily catalog sync (NOT a live per-request
+  // check — see the backend repo's docs/CATALOG_SYNC.md). `inStock` is the headline flag: render a
+  // subtle "Ausverkauft" badge on the card when it is `false`. The two optional
+  // fields carry richer signals when the sync captured them:
+  //   inventoryQuantity   — units in stock across variants/locations
+  //   anyVariantAvailable — whether any variant is currently sellable
   inStock: boolean;
+  inventoryQuantity?: number;
+  anyVariantAvailable?: boolean;
   deliveryTime: string;
 };
 
-type ProductsResponse = { products: (PublicProduct | null)[] };
+type ProductsResponse = {
+  products: (PublicProduct | null)[];
+  // Combined prefilled-cart permalink covering ALL requested resolvable
+  // variants in ONE cart (`…/cart/<v1>:1,<v2>:1`). Use this for the
+  // multi-product `add_to_cart` checkout button. Sold-out products are
+  // excluded — they can never enter this checkout link. `null` when no
+  // requested id resolves to an in-stock variant. For a single requested id it
+  // equals that product's own `shopifyCartUrl`. Never carries a discount
+  // (marketing-only).
+  cartUrl: string | null;
+};
 ```
 
 Unknown ids return as `null` at the matching index — never a 404 — so
 the widget can render partial results without aborting.
+
+The top-level **`cartUrl`** is new: it is the one-click checkout link for a
+**multi-product** `add_to_cart` (and works for the single-product case too).
+It is built server-side from the resolvable numeric variant ids, so the widget
+never has to assemble a multi-variant permalink itself.
 
 `shopifyCartUrl` is a Shopify storefront cart permalink for **one** unit of
 the product's variant, of the form `https://motionsports.de/cart/<numericVariantId>:1`
@@ -411,8 +680,17 @@ the product's variant, of the form `https://motionsports.de/cart/<numericVariant
 is always the **numeric** Shopify variant id — never the SKU, handle, or
 product id; a SKU-based URL 404s with "Cannot find variant". The field is
 **optional**: it is omitted when a product has no resolvable numeric variant
-id, so the widget should hide the quick-checkout button (or fall back to
-`shopifyUrl`) rather than render a broken checkout link.
+id, **or when the product is sold out** (`inStock: false`), so the widget
+should hide the quick-checkout button (or fall back to `shopifyUrl`) rather
+than render a broken or sold-out checkout link.
+
+**Stock status & checkout guarantee.** `inStock` reflects the latest daily
+catalog sync (sync-fresh, not a live availability check). A sold-out product
+is **never** offered a checkout link: its `shopifyCartUrl` is omitted, and it
+is excluded from the combined top-level `cartUrl` (so a sold-out item can never
+enter a checkout action even when bundled with in-stock products). The
+`null`/sold-out entries still carry full product data and `inStock: false`, so
+the widget can render the card with a subtle "Ausverkauft" badge.
 
 Response is cacheable for 60 s
 (`Cache-Control: public, max-age=60, stale-while-revalidate=300`).
@@ -482,7 +760,82 @@ Content-Type: application/json
 
 ---
 
-## 5. Session lifecycle
+## 5. `POST /api/kpi`
+
+Pseudonymous telemetry ingestion — the endpoint the widget's fail-silent
+`track()` calls. Fire-and-forget: the widget does not need to read the
+response or retry.
+
+### Required request headers
+
+| Header          | Value                                              |
+| --------------- | -------------------------------------------------- |
+| `Content-Type`  | `application/json`                                 |
+| `x-ms-session`  | Stable session id (UUID). Used for rate limiting.  |
+
+No `x-ms-chat-key` — like `/api/products`, this endpoint is origin-allowlisted
+only. It accepts only pseudonymous data and stores no email.
+
+### Request body
+
+```jsonc
+{
+  "event": "product_card_click",          // required, ≤120 chars
+  "sessionId": "b3c1…",                    // optional, pseudonymous
+  "timestamp": 1733212800000,              // optional, client clock (number or ISO string)
+  "data": { "productId": "atx-rack-pro" }  // optional, arbitrary object
+}
+```
+
+- `event` is the only hard requirement (non-empty string, ≤120 chars).
+- `data` must be a plain object if present (arrays/primitives are dropped).
+  The client `timestamp` is preserved inside the stored payload; the server's
+  own `created_at` is authoritative.
+
+### Email-capture funnel events (canonical names)
+
+The value-triggered email capture is measured through this pseudonymous,
+session-keyed funnel (names in `src/lib/kpi-events.ts`; no email address ever
+appears in an event). Most are emitted **server-side** — the widget must not
+duplicate them:
+
+| Event                                | Emitted by | `data`                                  |
+| ------------------------------------ | ---------- | --------------------------------------- |
+| `email_capture_ask_shown`            | server (`/api/chat`) | `{ trigger, askNumber }` — one per `offer_email_summary` call. |
+| `email_capture_submitted`            | server (`/api/capture-email`) | `{ marketingConsent, trigger? }` |
+| `email_capture_marketing_opted_in`   | server (`/api/capture-email`) | `{ doiStatus, trigger? }` — the separate marketing box was ticked. |
+| `email_capture_marketing_confirmed`  | server (`/api/confirm-marketing`) | `{}` — unique DOI confirmations only. |
+| `email_capture_declined`             | **widget** (this endpoint) | `{ trigger, askNumber? }` — capture card dismissed/declined without submit. |
+
+`trigger` is the value moment from the `offer_email_summary` tool call
+(`recommendation_accepted`, `comparison_delivered`, `consideration_pause`,
+`buying_intent`, `checkout_intent`), so opt-in rates can be compared per
+trigger moment and per ask number.
+
+### Success response
+
+```http
+HTTP/1.1 202 Accepted
+```
+```json
+{ "ok": true }
+```
+
+Returns `202` even when no database is configured or the write fails —
+telemetry is best-effort and must never make `track()` care.
+
+### Error responses
+
+| Status | Code             | When                                            |
+| ------ | ---------------- | ----------------------------------------------- |
+| 400    | `bad_request`    | Invalid JSON, or `event` missing/too long.      |
+| 403    | `forbidden`      | Cross-origin from an origin not in allowlist.   |
+| 429    | `rate_limited`   | Dedicated `kpi` bucket (120 req / 60 s).        |
+| 500    | `internal_error` | Unexpected server error (not a DB write fail).  |
+
+---
+
+## 6. Session lifecycle
 
 The widget must generate a stable per-browser session id and send it as
 `x-ms-session` on every chat / contact / products request:
@@ -506,6 +859,206 @@ Why it matters:
   it surfaces the "start a new chat" UX after a `payload_too_large`
   response.
 
-The backend does NOT persist anything keyed off the session id. The
-customer profile is reconstructed from `messages` on every turn, so
-the widget is the only thing holding conversation state.
+The backend does NOT persist anything keyed off the session id for the
+chat. (The email-capture flow in §7 is the one place a `session_id` is
+stored — and only because the user actively submitted their email with a
+consent choice.)
+
+---
+
+## 7. Email capture + double opt-in (GDPR)
+
+This is the only flow that handles an email address. Two **separate**
+consents, marketing requires a **double opt-in**. The full legal rationale,
+the data model, and the lawyer-review TODO are in
+`docs/CONSENT_FLOW.md` (backend repo). The checkbox/email copy is PLACEHOLDER
+pending lawyer sign-off (backend repo, `src/lib/consent-copy.ts`).
+
+### 7.1 `POST /api/capture-email`
+
+Triggered when the user submits the capture form rendered from the
+`offer_email_summary` tool call.
+
+#### Required request headers
+
+Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
+
+#### Request body
+
+```jsonc
+{
+  "sessionId": "b3c1…",            // optional; falls back to the x-ms-session header
+  "email": "max@example.de",
+  "transactionalConsent": true,    // required to be true
+  "marketingConsent": false,       // separate, MUST default unchecked in the UI (never pre-ticked)
+  "consentTextShown": "Ja, sendet mir … | Ja, Mo darf sich mich merken … Dein Vorteil: …",  // backend-served audit string, echoed verbatim
+  "trigger": "recommendation_accepted"  // optional; echo of the offer's trigger (telemetry only)
+}
+```
+
+- `email` is validated with `^[^@\s]+@[^@\s]+\.[^@\s]+$` and normalised
+  (trim + lower-case) server-side.
+- `transactionalConsent` **must** be `true` — you can't email a summary
+  without consent to email the summary. `false`/missing → `400 bad_request`.
+- `marketingConsent` is independent. When `true` (and the address isn't
+  suppressed), the backend sets `marketing_doi_status='pending'`, issues a DOI
+  token, and sends the confirmation email. **No marketing** is sent until the
+  user clicks that link.
+- `consentTextShown` is stored verbatim as Art. 7 proof. It MUST be the
+  **backend-provided** `consentCopy.consentTextShown` string (from the
+  `offer_email_summary` tool result or `GET /api/consent-copy`, §7.4) echoed
+  back **byte-for-byte** — the widget never composes or hard-codes this text.
+  Because the form renders exactly those served strings, the audit record
+  cannot diverge from what was displayed.
+
+#### Behaviour
+
+1. Upserts one consent record per email (records `consentTextShown`).
+2. **Transactional:** sends the summary email immediately (German summary of the
+   conversation + a prefilled-cart permalink, **no discount**).
+
+   **Which products end up in that cart — selected vs discussed.** The backend
+   tracks two product sets per conversation:
+
+   - **Selected** — products the user expressed intent to **buy**: the ids of
+     the latest `add_to_cart` (direct-checkout) tool call. Updated by
+     replacement, so switching to an alternative drops the rejected product.
+   - **Discussed** — every product any tool call referenced (`show_product`,
+     `compare_products`, …), including compared-and-rejected alternatives.
+
+   The cart permalink uses the **selected** set when the user made a clear
+   choice, and falls back to the full **discussed** set only when no selection
+   was made. Sold-out products are always excluded from the cart link
+   regardless of set. The same rule drives the marketing email's cart link, so
+   all cart links behave identically. (The "Besprochene Produkte" list in the
+   summary email still shows the full discussed set — only the cart narrows.)
+3. **Marketing:** if newly granted, sends the DOI confirmation email. A
+   suppressed/unsubscribed address is never re-pended; an already-confirmed
+   address isn't re-sent a DOI.
+
+#### Success response
+
+```http
+HTTP/1.1 200 OK
+```
+```jsonc
+{
+  "ok": true,
+  "transactional": { "summarySent": true },
+  "marketing": {
+    "status": "pending",        // "none" | "pending" | "confirmed"
+    "doiEmailSent": true,
+    "alreadyConfirmed": false
+  }
+}
+```
+
+The widget should show: "Wir haben dir die Zusammenfassung geschickt." and, when
+`marketing.status === "pending"`, "Bitte bestätige noch die Anmeldung über den
+Link in der E-Mail."
+
+After a success response, the widget MAY start attaching the captured email
+as `customer.email` to the session's subsequent `/api/chat` requests to enable
+returning-customer memory — see §2 "Optional `customer`" for the privacy rules
+(in-memory only, this session only, never from `localStorage`).
+
+#### Error responses
+
+| Status | Code                   | When                                                              |
+| ------ | ---------------------- | ----------------------------------------------------------------- |
+| 400    | `bad_request`          | Invalid JSON, invalid email, or `transactionalConsent` not true.  |
+| 401    | `unauthorized`         | Missing / wrong shared secret.                                    |
+| 403    | `forbidden`            | Cross-origin from an origin not in allowlist.                     |
+| 429    | `rate_limited`         | Shares the chat bucket (20 req / 60 s).                           |
+| 502    | `upstream_unavailable` | The transactional summary email failed to deliver.               |
+| 503    | `upstream_unavailable` | No database configured — consent could not be stored.            |
+| 500    | `internal_error`       | Anything else.                                                    |
+
+### 7.2 `GET /api/confirm-marketing?token=...`
+
+The marketing double-opt-in confirmation link (in the DOI email). Clicked as a
+top-level navigation — returns an **HTML page**, no JSON, no auth guard.
+
+- Valid, unexpired token → flips `marketing_doi_status='confirmed'`, sets
+  `doi_confirmed_at`, renders **"Danke, deine Anmeldung ist bestätigt."** (200).
+  Idempotent for an already-confirmed token.
+- Invalid token → error page (400). Expired token (older than
+  `MARKETING_DOI_EXPIRY_DAYS`, default 7) → error page (410).
+
+### 7.3 `GET /api/unsubscribe?token=...`
+
+The unsubscribe link carried by **every** marketing email. The token is a
+signed, email-keyed value (`b64url(email).b64url(hmac-sha256)`) — unforgeable
+and verifiable without a DB lookup.
+
+- Valid signature → stamps `unsubscribed_at`, adds the address to the
+  `suppression_list`, revokes marketing DOI, renders **"Du wurdest
+  abgemeldet."** (200).
+- Invalid/forged token → error page (400). No DB → error page (503).
+
+`isSuppressed(email)` (suppression list OR unsubscribed, fail-closed) and
+`canSendMarketing(email)` (DOI confirmed AND not suppressed) gate every future
+marketing send. See `docs/CONSENT_FLOW.md` (backend repo).
+
+### 7.4 `GET /api/consent-copy`
+
+Serves the canonical capture-form consent copy. The same payload is already
+attached to every `offer_email_summary` tool result (§2), so the widget only
+needs this endpoint for capture forms **not** triggered by the tool (e.g. a
+proactive share-form entry point). The widget MUST source all consent copy
+from one of these two paths and **never hard-code it** — the strings are the
+Art. 7 audit text.
+
+Like `/api/products`: **no shared secret** (the strings are public form copy),
+origin allowlist + rate limit only (shares the products bucket, 60 req /
+60 s). Send `x-ms-session` for rate-limit keying.
+
+#### Request
+
+```
+GET /api/consent-copy
+```
+
+#### Response
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: public, max-age=60, stale-while-revalidate=300
+```
+```jsonc
+{
+  "transactionalLabel": "Ja, sendet mir eine Zusammenfassung dieses Gesprächs und meinen Warenkorb per E-Mail.",
+  "marketingLabel": "Ja, Mo darf sich mich merken: motion sports darf mich per E-Mail mit persönlichen Empfehlungen und Angeboten kontaktieren, die auf meinen Beratungsgesprächen basieren.",
+  "marketingBenefitHint": "Dein Vorteil: Beim nächsten Besuch erkennt Mo dich wieder — …",
+  // Pre-composed audit string — echo back VERBATIM as `consentTextShown`
+  // on POST /api/capture-email (§7.1). Never recompose it client-side.
+  "consentTextShown": "Ja, sendet mir … | Ja, Mo darf sich mich merken … Dein Vorteil: …",
+  "imprintUrl": "https://motionsports.de/pages/impressum",
+  "privacyUrl": "https://motionsports.de/policies/privacy-policy",
+  // Mirrors CONSENT_COPY_LAWYER_APPROVED — informational; stays false until
+  // Legal signs off on the placeholder copy.
+  "lawyerApproved": false
+}
+```
+
+The 60 s cache is deliberate: a lawyer copy change must reach live widgets
+quickly. Fetch fresh copy when rendering a capture form (or at widget boot) —
+do not persist it across sessions.
+
+#### Error responses
+
+| Status | Code             | When                                            |
+| ------ | ---------------- | ----------------------------------------------- |
+| 403    | `forbidden`      | Cross-origin from an origin not in allowlist.   |
+| 429    | `rate_limited`   | Shares the products bucket (60 req / 60 s).     |
+| 500    | `internal_error` | Unexpected server error.                        |
+
+### 7.5 New environment variables
+
+| Var                       | Purpose                                                              |
+| ------------------------- | -------------------------------------------------------------------- |
+| `PUBLIC_BASE_URL`         | Absolute base for email links (falls back to Vercel host / origin).  |
+| `MARKETING_DOI_EXPIRY_DAYS` | DOI token validity window (default 7).                             |
+| `UNSUBSCRIBE_SECRET`      | HMAC secret for unsubscribe tokens (falls back to `CHAT_SHARED_SECRET`). |
+| `CONTACT_FROM_EMAIL`      | Reused as the sender for summary + DOI emails.                       |

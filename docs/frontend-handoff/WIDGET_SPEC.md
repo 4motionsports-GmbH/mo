@@ -61,8 +61,12 @@ minimum:
 - `chatKey` — the shared secret, read from a **theme/app setting**
   (`settings.ms_chat_shared_secret`, configured in `settings_schema.json`
   so a non-developer can paste it in the theme editor). This becomes the
-  `x-ms-chat-key` header on every `/api/chat` and `/api/contact` request.
-  See the security note in §9.
+  `x-ms-chat-key` header on every `/api/chat`, `/api/contact`, and
+  `/api/capture-email` request. See the security note in §10.
+
+The widget must NOT carry any consent copy in its config or source — the
+capture form's checkbox labels, benefit hint, and imprint/privacy links are
+served by the backend (§7).
 
 The JS must fail gracefully (log a warning, not throw, don't render the
 launcher) if `chatKey` is empty.
@@ -80,13 +84,23 @@ if (!sid) { sid = crypto.randomUUID(); localStorage.setItem("ms-chat-sid", sid);
 ```
 
 Send it as the `x-ms-session` header on **every** request to `/api/chat`,
-`/api/contact`, and `/api/products`. (Products doesn't require the chat
-key but should still carry the session id for rate-limit keying.)
+`/api/contact`, `/api/products`, `/api/capture-email`, `/api/kpi`, and
+`/api/consent-copy`. (Products, kpi, and consent-copy don't require the
+chat key but should still carry the session id for rate-limit keying.)
 
-Conversation state lives **only** in the widget (the backend persists
-nothing). Persisting the message history to `localStorage` so the panel
-survives a page navigation is nice-to-have but optional; at minimum the
-state must survive within a single page session.
+Conversation state lives **only** in the widget. The backend persists
+nothing keyed off the session id for the chat itself — the customer
+profile is reconstructed from `messages` on every turn. The one exception
+is the email-capture flow (§7 / `API_CONTRACT.md` §7), where a
+`session_id` is stored because the user actively submitted their email
+with a consent choice. Persisting the message history to `localStorage`
+so the panel survives a page navigation is nice-to-have but optional; at
+minimum the state must survive within a single page session.
+
+A captured email may be attached as `customer.email` to this session's
+subsequent `/api/chat` requests (returning-customer memory) — but only
+**in memory**, never persisted to `localStorage`/cookies, and never
+auto-attached on a fresh widget open. See `API_CONTRACT.md` §2.
 
 ---
 
@@ -115,7 +129,7 @@ state must survive within a single page session.
 - **Typing indicator**: three-dot bounce in an assistant bubble while
   submitted but no visible assistant content yet.
 
-### 4.3 Desktop vs mobile (see §7).
+### 4.3 Desktop vs mobile (see §8).
 
 ---
 
@@ -167,16 +181,60 @@ Tool cards reference products by id only; the widget hydrates them from
   dimensions/weight/target-group rows (not in the public response).
 
 Quick-checkout action: the `add_to_cart` card renders a primary
-**"Jetzt direkt bestellen"** button that is a **link to
-`product.shopifyCartUrl`** (a one-unit checkout permalink) opening in a new
-tab — it does not call any API. If `shopifyCartUrl` is absent, render no
-checkout button. Product/showroom links go to `shopifyUrl` /
-`https://motionsports.de/pages/showroom-munchen-grobenzell`, new tab,
-`rel="noopener noreferrer"`.
+**"Jetzt direkt bestellen"** button. For a single product it links to
+`product.shopifyCartUrl`; for a multi-product call (`productIds`) it links
+to the **top-level `cartUrl`** from the same `/api/products` response (one
+permalink, all variants in one cart) — never stitch it together client-side.
+Opens in a new tab; it does not call any API. If `cartUrl`/`shopifyCartUrl`
+is absent, render no checkout button. Product/showroom links go to
+`shopifyUrl` / `https://motionsports.de/pages/showroom-munchen-grobenzell`,
+new tab, `rel="noopener noreferrer"`.
 
 ---
 
-## 7. Mobile responsiveness
+## 7. Email-capture form (GDPR — consent copy comes from the backend)
+
+When the stream emits an `offer_email_summary` tool part, render the
+**email-capture form** exactly per `API_CONTRACT.md` §2
+("`offer_email_summary` → email-capture form") and
+`BEHAVIOR_REFERENCE.md` §2.6. The load-bearing rules:
+
+- **Never hard-code consent copy.** The tool part's **`output`** carries
+  `consentCopy`: the transactional checkbox label, the marketing checkbox
+  label, the marketing **benefit hint**, the imprint/privacy URLs, and a
+  pre-composed `consentTextShown` audit string. Render those strings
+  verbatim. For a capture form shown *without* a tool call (e.g. a
+  proactive share entry point), fetch the same payload from
+  `GET /api/consent-copy` (`API_CONTRACT.md` §7.4). The served text is
+  stored as **Art. 7 proof of consent** — a hard-coded theme copy could
+  drift from the audit record, and lawyer copy changes must not require a
+  widget release.
+- **Two separate checkboxes, never bundled.** The transactional box
+  (required to submit) MAY be pre-checked — it's the requested service.
+  The marketing box MUST start **unchecked** (never pre-tick; GDPR
+  clear-affirmative-act, CJEU *Planet49*), with the benefit hint rendered
+  directly beneath its label as one consent block. Prominence is fine;
+  a pre-tick never is.
+- **Imprint/privacy links** (`consentCopy.imprintUrl` / `privacyUrl`)
+  shown next to the form, new tab, `rel="noopener noreferrer"`.
+- **Submit** → POST `/api/capture-email` (auth/session headers like
+  `/api/chat`) with `{ sessionId, email, transactionalConsent,
+  marketingConsent, consentTextShown, trigger }`, where `consentTextShown`
+  is the backend-provided `consentCopy.consentTextShown` echoed
+  **byte-for-byte** and `trigger` echoes the tool input's `trigger`.
+- **Success** → "Wir haben dir die Zusammenfassung geschickt."; when
+  `marketing.status === "pending"`, add "Bitte bestätige noch die
+  Anmeldung über den Link in der E-Mail." The widget MAY then start
+  attaching `customer.email` to this session's `/api/chat` requests
+  (in-memory only — §3).
+- **Dismissed/declined without submit** → emit one
+  `email_capture_declined` event via `POST /api/kpi` with
+  `data: { trigger, askNumber? }`. Do NOT emit shown/submitted events —
+  those are recorded server-side.
+
+---
+
+## 8. Mobile responsiveness
 
 - On narrow viewports (≈ ≤ 640px) the panel goes **full-screen** (or
   near-full: full width, full height minus a small top inset), instead of
@@ -191,7 +249,7 @@ checkout button. Product/showroom links go to `shopifyUrl` /
 
 ---
 
-## 8. Error & edge-case handling
+## 9. Error & edge-case handling
 
 The backend uses a stable error envelope
 (`{ "error": { "code, message } }`); handle these gracefully:
@@ -221,6 +279,11 @@ The backend uses a stable error envelope
   the inline error, keep the form populated for retry; on `502
   upstream_unavailable` use *"Senden gerade nicht möglich — bitte später
   erneut versuchen."*
+- **Capture form** errors (`/api/capture-email`, `API_CONTRACT.md` §7.1):
+  same inline-error + keep-populated treatment. `400 bad_request` covers
+  an invalid email or a missing transactional consent; `502`/`503
+  upstream_unavailable` mean the summary send / consent storage failed —
+  use the "Senden gerade nicht möglich" hint and let the user retry.
 
 For non-streaming responses, detect errors by `!response.ok` and parse
 the JSON envelope to branch on `error.code`. For the chat stream, a
@@ -229,7 +292,7 @@ before starting to read the body as a stream.
 
 ---
 
-## 9. Security note (must be honored)
+## 10. Security note (must be honored)
 
 The `x-ms-chat-key` shared secret is injected into the storefront via
 Liquid and is therefore **visible to anyone who views the page source or
@@ -253,13 +316,16 @@ gives false assurance); rely on the documented server-side controls. If
 the storefront origin ever changes, the backend's `ALLOWED_ORIGINS` must
 be updated in lockstep or the widget will get `403 forbidden`.
 
-`GET /api/products` deliberately does **not** require the secret (it
-exposes only storefront-visible fields), so product hydration works even
-where the key isn't sent.
+`GET /api/products`, `GET /api/consent-copy`, and `POST /api/kpi`
+deliberately do **not** require the secret (they expose only
+storefront-visible fields / public form copy / accept pseudonymous
+telemetry), so those calls work even where the key isn't sent.
+`POST /api/capture-email` DOES require the secret, like `/api/chat` and
+`/api/contact`.
 
 ---
 
-## 10. Acceptance checklist
+## 11. Acceptance checklist
 
 - [ ] Drops into a Shopify theme as a snippet; no build step; works with
       JS-only + CSS-only assets.
@@ -268,14 +334,20 @@ where the key isn't sent.
       the right requests.
 - [ ] Streams `/api/chat` over SSE via fetch+reader (not `EventSource`);
       concatenates text, renders the markdown subset safely.
-- [ ] Renders all five tool cards per `BEHAVIOR_REFERENCE`, keyed by
+- [ ] Renders all six tool cards per `BEHAVIOR_REFERENCE`, keyed by
       `toolCallId`, with the render-nothing guards; silently consumes
       `search_products` + `update_customer_profile`.
 - [ ] Hydrates products via `GET /api/products`; quick-checkout button
-      ("Jetzt direkt bestellen") links to `shopifyCartUrl`, and is hidden
-      when `shopifyCartUrl` is absent.
+      ("Jetzt direkt bestellen") links to `shopifyCartUrl` (single) /
+      top-level `cartUrl` (multi), and is hidden when absent.
 - [ ] Inline contact form posts to `/api/contact`; success + error +
       retry states.
+- [ ] Email-capture form renders **backend-served** consent copy only (tool
+      `output.consentCopy` / `GET /api/consent-copy`) — no hard-coded
+      consent strings anywhere in the theme; marketing checkbox starts
+      unchecked; imprint/privacy links shown; `consentTextShown` echoed
+      verbatim to `/api/capture-email`; `email_capture_declined` emitted
+      on dismissal.
 - [ ] Mobile full-screen behavior; safe-area aware; horizontal-scroll
       comparison table.
 - [ ] Handles 429 (Retry-After), 401/403 (config), 400 payload_too_large

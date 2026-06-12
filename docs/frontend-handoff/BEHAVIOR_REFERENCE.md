@@ -83,7 +83,7 @@ should ignore both tools entirely.)
 
 ---
 
-## 2. The five visible tools → UI cards
+## 2. The six visible tools → UI cards
 
 Each renderable tool maps to one card. The old UI looked products up in a
 **bundled local catalog** by id; the widget instead **hydrates from
@@ -166,26 +166,33 @@ Behavior:
 
 ### 2.3 `add_to_cart` → quick-checkout CTA card
 
-Input: `{ productId: string; message: string }`.
+Input: `{ productId?: string; productIds?: string[]; message: string }`
+(at least one of `productId`/`productIds` — see `API_CONTRACT.md` §2 for
+the multi-product form, which postdates the old UI).
 
-> The tool id is still `add_to_cart`, but `shopifyCartUrl` is now a one-unit
-> cart permalink that lands the shopper **directly on Shopify checkout** for
-> that product. Frame the card as a low-friction "order now", not an
+> The tool id is still `add_to_cart`, but it now drives a **direct
+> checkout** and can cover one or several products in a single cart. Frame
+> the card as a low-friction "order now", not an
 > add-to-cart-and-keep-shopping action.
 
 Behavior:
-- Hydrate the one product. **Render nothing if unknown**, and also **render
-  nothing if `shopifyCartUrl` is absent** (no resolvable variant id) — in
-  that case there is no checkout link to offer.
+- Normalise to an id list (`input.productIds ?? [input.productId]`) and
+  hydrate. **Render nothing if no product resolves**, and also **render
+  nothing if there is no checkout link** (single: `shopifyCartUrl` absent;
+  multi: top-level `cartUrl` null) — the multi-product checkout button
+  always uses the server-built top-level `cartUrl`, never a client-side
+  stitched permalink.
 - Card layout:
   - The assistant's `message` as a short bold line at the top.
-  - The product name + price as a compact line so the shopper sees exactly
-    what one click will buy.
+  - Each resolved product's name + price as a compact line so the shopper
+    sees exactly what one click will buy.
   - A **full-width primary button** (accent fill) labeled
     `"Jetzt direkt bestellen"` with a cart/checkout icon. The button is a
-    **link to `product.shopifyCartUrl`**, opening in a new tab
-    (`target="_blank" rel="noopener noreferrer"`). It does **not** do an
-    in-page fetch — it sends the shopper straight to Shopify checkout.
+    **link to the checkout permalink** (`product.shopifyCartUrl` for a
+    single product, the response's top-level `cartUrl` for several),
+    opening in a new tab (`target="_blank" rel="noopener noreferrer"`).
+    It does **not** do an in-page fetch — it sends the shopper straight
+    to Shopify checkout.
   - A small muted caption beneath:
     `"Direkt zur sicheren Kasse bei motionsports.de"`.
 
@@ -269,6 +276,37 @@ Card / form behavior:
 - Footer caption under the form: `"Wir melden uns innerhalb von 1-2
   Werktagen. Deine Daten werden nur für die Bearbeitung deiner Anfrage
   verwendet."`
+
+### 2.6 `offer_email_summary` → email-capture form (GDPR)
+
+Input:
+`{ message: string; trigger: string; productIds?: string[] }`.
+
+> **New behavior — no old-React equivalent.** This tool postdates the old
+> UI, so unlike the other cards there is no legacy rendering to mirror.
+> The normative spec is `API_CONTRACT.md` §2 ("`offer_email_summary` →
+> email-capture form") + §7; `WIDGET_SPEC.md` §7 summarises the widget
+> obligations. Key behavior:
+
+- The assistant calls this at a value-triggered moment (at most twice per
+  conversation, enforced server-side). Render `message` as the intro,
+  then the capture form: an email input, **two separate consent
+  checkboxes**, and imprint/privacy links.
+- **All consent copy comes from the backend** — the tool part's `output`
+  carries `consentCopy` (labels, marketing benefit hint, imprint/privacy
+  URLs, and the pre-composed `consentTextShown` audit string). Render it
+  verbatim; never hard-code these strings. A form shown without a tool
+  call fetches the same payload from `GET /api/consent-copy`.
+- The transactional box (required) MAY be pre-checked; the marketing box
+  MUST start **unchecked**, with the benefit hint directly beneath its
+  label.
+- Submit → `POST /api/capture-email` with the two booleans, the
+  backend-provided `consentTextShown` echoed **verbatim**, and the tool's
+  `trigger`. Success → confirmation line (+ "bitte bestätige…" when
+  marketing DOI is pending). Dismissed without submit → one
+  `email_capture_declined` KPI event.
+- `productIds` is advisory only (optional cart preview); the backend
+  determines the real summary/cart products server-side.
 
 ---
 
