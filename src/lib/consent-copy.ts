@@ -209,6 +209,32 @@ export function welcomeEmailBody(opts: WelcomeEmailOptions): { text: string; htm
   return { text, html };
 }
 
+// ---------------------------------------------------------------------------
+// Chat mention of the welcome discount (Mo, at the value-triggered email offer)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ LEGAL FRAMING — lawyer-confirm (see docs/WELCOME_DISCOUNT.md): in chat,
+// Mo may mention the one-time welcome gift in ONE sentence as a thank-you for
+// COMPLETING THE SIGNUP (registering + clicking the confirmation link) —
+// NEVER as a reward for ticking the marketing checkbox. "Agree to marketing
+// and get X % off" is forbidden: it would stop the consent being "freely
+// given" (Art. 7(4) GDPR). The sentence below is the canonical wording the
+// system prompt hands to the model as its example; it deliberately names no
+// checkbox and attaches the gift to the confirmed signup only.
+
+/**
+ * Canonical example sentence for Mo's in-chat mention of the welcome gift.
+ * `percent` comes from `welcomeDiscountPercent()` so chat always matches what
+ * the welcome email actually delivers. PLACEHOLDER — lawyer review required.
+ */
+export function welcomeChatMentionExample(percent: number): string {
+  return (
+    `Kleines Extra: Wenn du dich dabei anmeldest, bekommst du als Dankeschön ` +
+    `nach der Bestätigung ein einmaliges Willkommensgeschenk — ${percent} % ` +
+    `Rabatt auf deine nächste Bestellung.`
+  );
+}
+
 /** Shown when a DOI token is invalid or expired. PLACEHOLDER. */
 export const DOI_INVALID_HEADING = "Dieser Bestätigungslink ist ungültig oder abgelaufen.";
 export const DOI_INVALID_BODY =

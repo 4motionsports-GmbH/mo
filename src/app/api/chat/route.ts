@@ -9,6 +9,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { buildSystemPrompt, productPivotNote, type ProductContext } from "@/lib/system-prompt";
 import { resolveCustomerMemory, type CustomerMemoryContext } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
+import { welcomeDiscountPercent } from "@/lib/welcome-discount";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
 import { getProductById } from "@/lib/product-catalog";
@@ -256,7 +257,13 @@ export async function POST(req: Request) {
         retrievedProducts,
         productContext: greetingContext,
         customerMemory: customerMemory ?? undefined,
-        emailOffer: { offersMade: emailOffersMade, emailCaptured },
+        emailOffer: {
+          offersMade: emailOffersMade,
+          emailCaptured,
+          // Same config the welcome email uses (CAP-2), so Mo's one-sentence
+          // mention can never drift from the code that's actually minted.
+          welcomeDiscountPercent: welcomeDiscountPercent(),
+        },
       }),
       messages: modelMessages,
       tools: buildChatTools(profile, { allowEmailSummaryOffer }),

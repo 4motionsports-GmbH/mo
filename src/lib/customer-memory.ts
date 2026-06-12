@@ -45,6 +45,14 @@ export interface CustomerMemoryContext {
   ownedItems: string[];
   /** ISO date of the most recent order in the cached history. */
   lastPurchaseAt: string | null;
+  /**
+   * True when the one-time welcome code (CAP-2) was already issued to this
+   * customer — Mo must not re-promise the welcome gift then. LIMITATION: we
+   * only know ISSUANCE (`welcome_issued_at`), not whether the code was
+   * actually redeemed in Shopify; since the gift is once-ever either way,
+   * "issued" is the correct suppression signal.
+   */
+  welcomeAlreadyIssued: boolean;
 }
 
 // Keep the prompt block bounded even for heavy buyers.
@@ -112,6 +120,7 @@ export async function resolveCustomerMemory(
       profileSummary,
       ownedItems,
       lastPurchaseAt,
+      welcomeAlreadyIssued: customer.welcomeIssuedAt != null,
     };
   } catch (err) {
     reportError(err, { route: "lib/customer-memory", phase: "resolveCustomerMemory" });

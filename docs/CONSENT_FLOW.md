@@ -177,3 +177,10 @@ Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off
       stays "freely given" (Art. 7(4) GDPR). Confirm this framing and the
       welcome email / confirmation-page copy (`WELCOME_EMAIL_SUBJECT`,
       `welcomeEmailBody`, `DOI_CONFIRMED_WELCOME_BODY`).
+- [ ] **Welcome discount mention in chat** (`welcomeChatMentionExample` +
+      the prompt rules in `src/lib/system-prompt.ts`, see
+      [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md) → "Chat mention"): Mo may
+      mention the gift in ONE sentence as a thank-you for **completing the
+      signup**, never linked to the marketing checkbox ("agree to marketing
+      and get X % off" is forbidden). Confirm the example sentence and that
+      the framing keeps the consent "freely given".
