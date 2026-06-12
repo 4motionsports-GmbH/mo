@@ -463,17 +463,27 @@ Widget action: render `message` as the intro, then the capture form with:
 
 - an **email** input,
 - a **transactional** consent checkbox (required to submit) — label from
-  `TRANSACTIONAL_CHECKBOX_LABEL`,
-- a **separate, unchecked-by-default** marketing consent checkbox — label from
-  `MARKETING_CHECKBOX_LABEL`.
+  `TRANSACTIONAL_CHECKBOX_LABEL`. This is the requested service (not
+  marketing), so it is the **low-friction default path**: the widget MAY
+  render it **pre-checked** — submitting the form is itself the affirmative
+  request for this email.
+- a **separate** marketing consent checkbox — label from
+  `MARKETING_CHECKBOX_LABEL`, with the benefit line
+  `MARKETING_CHECKBOX_BENEFIT_HINT` rendered directly beneath it as part of
+  the same consent block. **This box MUST start UNCHECKED — never pre-check
+  it.** Pre-ticked marketing consent is invalid (GDPR clear-affirmative-act;
+  CJEU *Planet49*) and a German UWG Abmahnung trigger; this is a deliberate,
+  documented decision (see `src/lib/consent-copy.ts`). The widget SHOULD make
+  the box **prominent** (placement, styling, the benefit hint) — opt-ins are
+  won through the copy, not a pre-tick.
 
 On submit, POST to `/api/capture-email` (§7) with the two booleans, the exact
-consent text strings shown (`consentTextShown`), and the tool call's `trigger`
+consent text strings shown (`consentTextShown` — for the marketing box that
+means **label + benefit hint verbatim**), and the tool call's `trigger`
 echoed back (telemetry-only — lets the opt-in funnel be split by trigger
-moment). The marketing box MUST start unchecked and MUST be visually
-independent of the transactional one — never one combined checkbox.
-`productIds` is advisory (cart preview); the backend determines the real
-products server-side from the conversation.
+moment). The marketing box MUST be visually independent of the transactional
+one — never one combined checkbox. `productIds` is advisory (cart preview);
+the backend determines the real products server-side from the conversation.
 
 If the user dismisses or declines the capture card without submitting, the
 widget should emit one `email_capture_declined` event via `POST /api/kpi`
@@ -843,8 +853,8 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   "sessionId": "b3c1…",            // optional; falls back to the x-ms-session header
   "email": "max@example.de",
   "transactionalConsent": true,    // required to be true
-  "marketingConsent": false,       // separate, defaults unchecked in the UI
-  "consentTextShown": "Ja, sendet mir … | Ja, motion sports darf …",  // exact labels shown (audit)
+  "marketingConsent": false,       // separate, MUST default unchecked in the UI (never pre-ticked)
+  "consentTextShown": "Ja, sendet mir … | Ja, Mo darf sich mich merken … Dein Vorteil: …",  // exact labels + benefit hint shown (audit)
   "trigger": "recommendation_accepted"  // optional; echo of the offer's trigger (telemetry only)
 }
 ```

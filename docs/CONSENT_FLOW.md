@@ -23,8 +23,17 @@ bundled**:
 Rules baked into the code:
 
 - The marketing checkbox is a **separate**, **unchecked-by-default** box with
-  its own explicit text. Pre-ticked boxes are invalid, so the frontend MUST
-  render it unchecked.
+  its own explicit text. **Documented decision** (`src/lib/consent-copy.ts`):
+  pre-ticked marketing consent is invalid under the GDPR's
+  clear-affirmative-act requirement (CJEU C-673/17 *Planet49*) and a common
+  Abmahnung trigger under the German UWG — we deliberately reject pre-checking
+  it, regardless of what other platforms do. The box may be **prominent** and
+  carries a benefit-led label + hint (`MARKETING_CHECKBOX_BENEFIT_HINT`);
+  the opt-in is won through copy, never a pre-tick.
+- The **transactional** box is the requested service, not marketing — the
+  widget MAY render it pre-checked as the low-friction default (submitting
+  the form is itself the affirmative request). Only the marketing box must
+  start unchecked.
 - **No marketing** is permitted to an address whose `marketing_doi_status` is
   not `'confirmed'`, or that is on the suppression list / unsubscribed.
 - Every marketing email MUST contain a working unsubscribe link.
@@ -141,10 +150,20 @@ result and logs to stdout (local-dev), rather than faking success.
 All strings below are in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts).
 Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off.
 
-- [ ] **Transactional checkbox label** (`TRANSACTIONAL_CHECKBOX_LABEL`).
-- [ ] **Marketing checkbox label** (`MARKETING_CHECKBOX_LABEL`) — confirm it is
-      specific enough about purpose (personalised offers based on the chat) and
-      mentions the free, anytime right to withdraw + unsubscribe link.
+- [ ] **Transactional checkbox label** (`TRANSACTIONAL_CHECKBOX_LABEL`) — and
+      confirm that rendering this box **pre-checked by default** is acceptable
+      (it is the requested service, Art. 6(1)(b), submitted by an affirmative
+      form submission — not marketing).
+- [ ] **Marketing checkbox label + benefit hint** (`MARKETING_CHECKBOX_LABEL`,
+      `MARKETING_CHECKBOX_BENEFIT_HINT`) — the copy is deliberately
+      benefit-led ("Mo erkennt dich wieder", tailored offers next time);
+      confirm it remains specific enough about purpose (personalised
+      recommendations/offers based on the consultations, chat content used for
+      personalisation), that the **plural** "Beratungsgesprächen" properly
+      covers the durable profile/memory purpose (see the profile-building item
+      below), that the free, anytime withdrawal + unsubscribe link is stated,
+      and that the hint promises **no discount** for ticking the box (freely
+      given, Art. 7(4)).
 - [ ] **DOI confirmation email** subject + body (`DOI_EMAIL_SUBJECT`,
       `doiEmailBody`) — purpose statement + the confirm CTA.
 - [ ] **DOI confirmation page** copy (`DOI_CONFIRMED_*`, `DOI_INVALID_*`).
@@ -154,8 +173,10 @@ Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off
 - [ ] **Summary email** subject + framing (`SUMMARY_EMAIL_SUBJECT`,
       `summary-email.ts`) — confirm it reads as a requested service, not
       marketing (no offers/discounts).
-- [ ] Confirm the **frontend renders the marketing checkbox unchecked** and the
-      two consents as visually separate, independently-tickable boxes.
+- [ ] Confirm the **frontend renders the marketing checkbox unchecked** (the
+      documented never-pre-tick decision — prominence and the benefit hint are
+      fine, a pre-tick never is) and the two consents as visually separate,
+      independently-tickable boxes.
 - [ ] Confirm an **Imprint/Privacy link** is shown next to the capture form
       (frontend), as the consent text references data use for personalisation.
 - [ ] **Profile building from past interactions and purchases** (the customer
