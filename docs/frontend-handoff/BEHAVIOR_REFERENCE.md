@@ -301,13 +301,17 @@ Input:
   then the capture form: an email input, **two separate consent
   checkboxes**, and imprint/privacy links.
 - **All consent copy comes from the backend** — the tool part's `output`
-  carries `consentCopy` (labels, marketing benefit hint, imprint/privacy
-  URLs, and the pre-composed `consentTextShown` audit string). Render it
-  verbatim; never hard-code these strings. A form shown without a tool
-  call fetches the same payload from `GET /api/consent-copy`.
-- The transactional box (required) MAY be pre-checked; the marketing box
-  MUST start **unchecked**, with the benefit hint directly beneath its
-  label.
+  carries `consentCopy` (labels, shared footer, imprint/privacy URLs, the
+  copy `version`, the returning-customer hint, and the pre-composed
+  `consentTextShown` audit string). Render it verbatim; never hard-code
+  these strings. A form shown without a tool call fetches the same payload
+  from `GET /api/consent-copy`.
+- **BOTH boxes MUST start unchecked** (consent copy v2 — the earlier
+  transactional pre-check allowance is revoked). The transactional box is
+  required: keep submit gated on it; the backend rejects a submit without
+  it with `400 transactional_consent_required`. Render the
+  `returningHint.text` near the email input only when
+  `returningHint.enabled` is true.
 - Submit → `POST /api/capture-email` with the two booleans, the
   backend-provided `consentTextShown` echoed **verbatim**, and the tool's
   `trigger`. Success → confirmation line (+ "bitte bestätige…" when

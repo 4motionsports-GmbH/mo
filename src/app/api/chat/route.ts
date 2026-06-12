@@ -15,7 +15,6 @@ import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-con
 import { resolveCustomerMemory, type CustomerMemoryContext } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
-import { welcomeDiscountPercent } from "@/lib/welcome-discount";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
 import { getProductById, getProductsByIds } from "@/lib/product-catalog";
@@ -340,9 +339,6 @@ export async function POST(req: Request) {
         emailOffer: {
           offersMade: emailOffersMade,
           emailCaptured,
-          // Same config the welcome email uses (CAP-2), so Mo's one-sentence
-          // mention can never drift from the code that's actually minted.
-          welcomeDiscountPercent: welcomeDiscountPercent(),
         },
       }),
       messages: modelMessages,

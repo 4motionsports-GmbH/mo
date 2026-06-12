@@ -1,5 +1,30 @@
 # Welcome discount — one-time code on first DOI confirmation
 
+> ## ⚠️ FEATURE-FLAGGED **OFF** BY DEFAULT (`WELCOME_DISCOUNT_ENABLED`)
+>
+> **Client decision (June 2026):** the automatic issuance is too exploitable
+> — one alias email = one fresh code — so the entire issuance path is gated
+> behind `WELCOME_DISCOUNT_ENABLED` (default **false**, fail-closed; only
+> `true`/`1`/`yes`/`on` enables it — `src/lib/welcome-discount-flag.mjs`).
+> The client issues discount codes **manually via the dashboard** instead.
+> With the flag off:
+>
+> - `issueWelcomeCodeOnDoiConfirmation` returns
+>   `{ issued: false, reason: "disabled" }` before any claim/mint/send
+>   (GATE 0) — the DOI confirmation itself is unaffected.
+> - The DOI confirmation page never shows the welcome variant
+>   (`DOI_CONFIRMED_WELCOME_BODY`) — it only renders when a welcome email
+>   actually went out.
+> - The former **in-chat mention** by Mo was **removed** from the system
+>   prompt entirely (not just gated — see "Chat mention" below), so Mo never
+>   promises a gift the backend won't issue; the customer-memory block
+>   additionally instructs Mo not to promise any welcome/new-customer
+>   discount while the flag is off.
+> - The dashboard keeps showing **historical** issued/redeemed welcome-code
+>   data, labelled **"(deaktiviert)"**.
+>
+> Everything below describes the behaviour **when the flag is enabled**.
+
 An automatic, **once-ever** welcome discount code, issued when a customer
 completes the marketing double-opt-in confirmation for the **first** time.
 Implementation: [`src/lib/welcome-discount.ts`](../src/lib/welcome-discount.ts),
@@ -30,6 +55,9 @@ flips to `confirmed`. Only when this is a **fresh** confirmation (not an
 `alreadyConfirmed` re-click) does the route call
 `issueWelcomeCodeOnDoiConfirmation(email)`, which enforces, in order:
 
+0. **Feature flag** — `WELCOME_DISCOUNT_ENABLED` must be explicitly enabled
+   (default off, fail-closed); otherwise the function returns
+   `reason: "disabled"` before anything else runs.
 1. **Suppression / eligibility** — `isSuppressed` + `canSendMarketing`
    (both fail-closed). A suppressed or unsubscribed address never gets a code
    or an email.
@@ -90,33 +118,23 @@ The CTA is Shopify's discount share link (`/discount/<code>`), which applies
 the code automatically; the unsubscribe footer is always present. The DOI
 confirmation page mentions the welcome email only when it actually went out.
 
-## Chat mention (Mo's value-triggered offer)
+## Chat mention (REMOVED)
 
-Mo may mention the welcome gift **in one sentence** as part of the existing
-value-triggered email-summary offer (CAP-1 — same triggers, same two-ask cap,
-same graceful back-off; nothing about the offer cadence changes). The percent
-is injected into the system prompt from `welcomeDiscountPercent()`
-(`emailOffer.welcomeDiscountPercent` in `src/app/api/chat/route.ts`), so chat
-can never drift from what the welcome email actually delivers. The canonical
-sentence lives in `src/lib/consent-copy.ts` (`welcomeChatMentionExample`) under
-the `CONSENT_COPY_LAWYER_APPROVED` gate.
-
-**Framing rules enforced by the prompt** (same legal framing as above):
-
-- The gift is a thank-you for **completing the signup** (registration +
-  confirmation click) — never presented as consideration for the marketing
-  checkbox. "Agree to marketing emails and get X % off" is explicitly
-  forbidden wording; the discount is never linked to either checkbox.
-- General new-customer phrasing only ("bei deiner Anmeldung", once-ever) — no
-  individual promises. **Limitation:** at offer time the visitor is usually
-  anonymous, so whether they already received/redeemed a code is not knowable;
-  the prompt therefore mandates general wording. For a **re-identified
-  returning customer** (customer memory active) the prompt suppresses the
-  mention entirely, and when `welcome_issued_at` is set the memory block tells
-  Mo explicitly not to re-promise the gift (we know issuance, not redemption —
-  once-ever either way, so issuance is the right suppression signal).
-- No artificial urgency, never a condition: consultation and summary are
-  always available without signing up.
+The former in-chat mention — Mo naming the welcome gift in one sentence at
+the value-triggered email-summary offer (the CAP-4 cross-wire) — was
+**removed from the system prompt entirely** together with the feature-flag
+change: with issuance off by default, any mention would promise a gift that
+never arrives. `welcomeChatMentionExample` was deleted from
+`src/lib/consent-copy.ts`, and `emailOffer.welcomeDiscountPercent` was
+removed from the prompt plumbing (`src/lib/system-prompt.ts`,
+`src/app/api/chat/route.ts`). The customer-memory block retains a defensive
+rule: while the flag is off, Mo must not promise any welcome/new-customer
+discount (and refers questions about previously issued codes to the welcome
+email / info@motionsports.de); when the flag is on, the old
+don't-re-promise-to-returning-customers rule applies. If the client ever
+wants the mention back, re-add it under the lawyer gate with the legal
+framing preserved in the git history of this file (gift for completing the
+signup, never consideration for the marketing checkbox, Art. 7(4) GDPR).
 
 ## Dashboard tracking
 
@@ -124,11 +142,14 @@ The admin **Kunden** tab shows per customer: whether a welcome code was
 issued, the code, issue date, expiry, and whether it was **redeemed** — a live
 Shopify check reusing `wasDiscountCodeRedeemed` (`read_orders`, the same query
 the marketing funnel uses), with an honest "unknown" state when Shopify can't
-answer.
+answer. While `WELCOME_DISCOUNT_ENABLED` is off, the section is labelled
+**"Willkommensrabatt (deaktiviert)"** — historical data stays visible; only
+the empty-state text changes to point at manual code issuance.
 
 ## Env
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `WELCOME_DISCOUNT_ENABLED` | `false` | **Master switch for the entire issuance path.** Fail-closed: only `true`/`1`/`yes`/`on` enables it. |
 | `WELCOME_DISCOUNT_PERCENT` | `5` | Whole-number percent (clamped 1–50). |
 | `WELCOME_DISCOUNT_EXPIRY_DAYS` | `30` | Days the code stays valid. |

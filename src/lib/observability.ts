@@ -92,7 +92,10 @@ export type ErrorCode =
   | "rate_limited"
   | "payload_too_large"
   | "upstream_unavailable"
-  | "internal_error";
+  | "internal_error"
+  // Capture form submitted without the (no-longer-pre-checked) transactional
+  // consent — see capture-validation.mjs + API_CONTRACT.md §7.1.
+  | "transactional_consent_required";
 
 export interface ErrorEnvelope {
   error: { code: ErrorCode; message: string };

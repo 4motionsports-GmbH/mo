@@ -43,15 +43,19 @@ per-session profiles — contradictions between sessions resolve toward the
 newer statement. Each run costs tokens; the dashboard shows the usage and an
 approximate USD cost after every run.
 
-## Welcome discount (once-ever, recorded here)
+## Welcome discount (once-ever, recorded here) — ⚠️ disabled by default
 
 The customer row is the **source of truth for the one-time welcome code**
 (migration `0009_welcome_discount.sql`: `welcome_code`, `welcome_code_gid`,
-`welcome_code_expires_at`, `welcome_issued_at`). Issued automatically on the
-customer's **first DOI confirmation** — never twice for the same email, across
-all future sessions and signups; the atomic `welcome_issued_at` claim
-guarantees it. Details, legal framing (lawyer-confirm) and dashboard tracking
-in [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md). GDPR erasure of the
+`welcome_code_expires_at`, `welcome_issued_at`). The automatic issuance is
+**feature-flagged off by default** (`WELCOME_DISCOUNT_ENABLED=false`; codes
+are issued manually via the dashboard instead — see
+[`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)). When enabled it is issued
+automatically on the customer's **first DOI confirmation** — never twice for
+the same email, across all future sessions and signups; the atomic
+`welcome_issued_at` claim guarantees it. Details, legal framing
+(lawyer-confirm) and dashboard tracking in
+[`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md). GDPR erasure of the
 customer row removes the welcome record with it (the suppression list keeps
 honouring opt-outs as before).
 

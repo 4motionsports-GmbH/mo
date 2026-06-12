@@ -1,6 +1,14 @@
 // One-time welcome discount — issued when a customer completes the marketing
 // double-opt-in confirmation for the FIRST time (GET /api/confirm-marketing).
 //
+// ⚠️ FEATURE-FLAGGED OFF BY DEFAULT (WELCOME_DISCOUNT_ENABLED, see
+// welcome-discount-flag.mjs): the client decided the automatic issuance is
+// too exploitable (one alias email = one fresh code) and issues codes
+// manually via the dashboard instead. GATE 0 below blocks the entire
+// issuance path — no claim, no mint, no email — unless the env flag is
+// explicitly enabled. Historical issued/redeemed data stays visible on the
+// dashboard. See docs/WELCOME_DISCOUNT.md.
+//
 // LEGAL FRAMING (lawyer-confirm, see docs/WELCOME_DISCOUNT.md): the code is a
 // welcome GIFT for completing the freely-chosen DOI confirmation ("yes, I want
 // this"), NOT consideration for ticking the marketing checkbox — this keeps
@@ -48,6 +56,9 @@ import { sendEmail } from "./email";
 import { WELCOME_EMAIL_SUBJECT, welcomeEmailBody, unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import { reportError } from "./observability";
+import { isWelcomeDiscountEnabled } from "./welcome-discount-flag.mjs";
+
+export { isWelcomeDiscountEnabled };
 
 /** Prefix marking welcome codes — distinct from the marketing "MS5-" codes. */
 export const WELCOME_CODE_PREFIX = "WELCOME";
@@ -75,6 +86,7 @@ export type WelcomeIssueResult =
   | {
       issued: false;
       reason:
+        | "disabled"
         | "suppressed"
         | "not_eligible"
         | "no_unsubscribe"
@@ -94,6 +106,12 @@ export async function issueWelcomeCodeOnDoiConfirmation(
   email: string
 ): Promise<WelcomeIssueResult> {
   try {
+    // GATE 0 — feature flag. WELCOME_DISCOUNT_ENABLED defaults to FALSE
+    // (fail-closed): with the flag off nothing downstream runs — no claim is
+    // consumed, no Shopify code is minted, no email is sent, and the DOI
+    // confirmation page renders without any welcome-gift reference.
+    if (!isWelcomeDiscountEnabled()) return { issued: false, reason: "disabled" };
+
     const e = normalizeEmail(email);
     if (!e) return { issued: false, reason: "error" };
 

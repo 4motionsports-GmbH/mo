@@ -241,6 +241,9 @@ Everything else checked out exactly — notable confirmations:
   expiry, DOI-completion trigger, atomic once-ever claim with mint-failure release,
   record-before-send, suppression/unsubscribe gates, prompt framing rules incl.
   returning-customer suppression (`welcome-discount.ts`, `system-prompt.ts:154,237-245`).
+  *(Post-audit update, June 2026: the entire issuance path is now gated behind
+  `WELCOME_DISCOUNT_ENABLED`, default off, and the in-chat mention was removed
+  from the system prompt — see `WELCOME_DISCOUNT.md`.)*
 - **Selected vs discussed** product sets and `chooseCartProductIds` preference,
   replacement semantics of the latest `add_to_cart`, sold-out exclusion in every
   cart-link builder (`conversation-store.ts`, `cart.ts`, `summary-email.ts`,
@@ -422,6 +425,13 @@ Its `tool-output-available` chunk carries:
 `consentTextShown` is composed server-side as
 `` `${transactionalLabel} | ${marketingLabel} ${marketingBenefitHint}` `` — never
 recompose it client-side; never hard-code any of these strings.
+
+*(Post-audit update, June 2026 — consent copy v2: the payload above changed.
+`marketingBenefitHint` was removed; `version`, `consentFooter` and
+`returningHint { enabled, text }` were added; BOTH checkboxes now start
+unchecked (the "MAY pre-check" note for checkbox A no longer applies) and
+`consentTextShown` is now `` `${transactionalLabel} | ${marketingLabel} |
+${consentFooter}` ``. See `API_CONTRACT.md` §2/§7.4.)*
 
 **Consume silently (never render):** `update_customer_profile` (profile patch
 object), `search_products` (input `{ query, filters?, limit? }`; output

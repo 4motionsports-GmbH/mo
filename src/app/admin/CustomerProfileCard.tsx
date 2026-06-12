@@ -113,7 +113,16 @@ const MARKETING_STATUS_LABEL: Record<CustomerProps["marketingStatus"], string> =
   unsubscribed: "Abgemeldet",
 };
 
-export function CustomerProfileCard({ customer }: { customer: CustomerProps }) {
+export function CustomerProfileCard({
+  customer,
+  // Whether the automatic welcome-discount issuance is currently enabled
+  // (WELCOME_DISCOUNT_ENABLED, default off). Historical issued/redeemed data
+  // stays visible either way — disabled only changes the labelling.
+  welcomeDiscountEnabled,
+}: {
+  customer: CustomerProps;
+  welcomeDiscountEnabled: boolean;
+}) {
   const router = useRouter();
   const isReturning = customer.sessions.length > 1;
 
@@ -311,9 +320,19 @@ export function CustomerProfileCard({ customer }: { customer: CustomerProps }) {
         )}
       </div>
 
-      {/* Welcome discount (one-time, issued on first DOI confirmation) */}
+      {/* Welcome discount (one-time, issued on first DOI confirmation).
+          Flag-gated (WELCOME_DISCOUNT_ENABLED): when off, the historical
+          issued/redeemed data stays visible but is labelled "(deaktiviert)". */}
       <div style={{ marginTop: 16, borderTop: "1px solid #f0f0f0", paddingTop: 14 }}>
-        <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>Willkommensrabatt</div>
+        <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
+          Willkommensrabatt
+          {!welcomeDiscountEnabled && (
+            <span title="Automatische Ausstellung per WELCOME_DISCOUNT_ENABLED abgeschaltet — Codes werden manuell vergeben.">
+              {" "}
+              (deaktiviert)
+            </span>
+          )}
+        </div>
         {customer.welcomeIssuedAt ? (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             <span style={badge("#dbeafe", "#1e40af")}>
@@ -340,8 +359,9 @@ export function CustomerProfileCard({ customer }: { customer: CustomerProps }) {
         ) : (
           <p style={{ fontSize: 13, color: "#999", margin: 0 }}>
             <em>
-              Noch kein Willkommenscode — wird automatisch bei der ersten
-              Double-Opt-In-Bestätigung ausgestellt (einmal pro Kunde).
+              {welcomeDiscountEnabled
+                ? "Noch kein Willkommenscode — wird automatisch bei der ersten Double-Opt-In-Bestätigung ausgestellt (einmal pro Kunde)."
+                : "Kein Willkommenscode. Die automatische Ausstellung ist deaktiviert (WELCOME_DISCOUNT_ENABLED) — Rabattcodes werden manuell über das Dashboard vergeben."}
             </em>
           </p>
         )}

@@ -26,6 +26,12 @@ import {
   EMAIL_TEXT_STYLE,
   EMAIL_MUTED_TEXT_STYLE,
 } from "./email-template";
+import {
+  CONSENT_COPY_VERSION,
+  composeConsentTextShown,
+} from "./consent-copy-version.mjs";
+
+export { CONSENT_COPY_VERSION };
 
 /**
  * Marks a copy block as not-yet-legally-approved. Kept as a runtime-visible
@@ -35,19 +41,27 @@ import {
 export const CONSENT_COPY_LAWYER_APPROVED = false as const;
 
 // ---------------------------------------------------------------------------
-// Checkbox labels (rendered by the widget's capture form)
+// Checkbox labels (rendered by the widget's capture form) — COPY v2
 // ---------------------------------------------------------------------------
+//
+// v2 (client-approved product decision, June 2026): shorter labels, a shared
+// one-line Art. 7 footer, and — new versus v1 — BOTH checkboxes start
+// UNCHECKED. The version identifier lives in consent-copy-version.mjs
+// (CONSENT_COPY_VERSION) and is stored alongside consent_text_shown on every
+// capture so v1 and v2 audit records stay distinguishable.
 
 /**
  * (A) Transactional consent — checkbox label. Must be true to submit — it's
  * the very service the user is requesting (Art. 6(1)(b)), not marketing.
- * LOW-FRICTION PATH: because submitting the form IS the affirmative request
- * for this email, the widget MAY render this box pre-checked by default —
- * the unchecked-by-default rule below applies ONLY to the marketing box (B).
- * PLACEHOLDER — lawyer review required.
+ *
+ * ⚠️ v2 DECISION — THIS BOX NOW STARTS UNCHECKED TOO (changed from v1, where
+ * pre-checking was permitted). The user must actively tick it to get the
+ * summary; a submit without it is rejected server-side with the documented
+ * `transactional_consent_required` error (see capture-validation.mjs and
+ * API_CONTRACT.md §7.1). PLACEHOLDER — lawyer review required.
  */
 export const TRANSACTIONAL_CHECKBOX_LABEL =
-  "Ja, sendet mir eine Zusammenfassung dieses Gesprächs und meinen Warenkorb per E-Mail.";
+  "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl. Direkt-Link zur Kasse).";
 
 /**
  * (B) Marketing consent — checkbox label. MUST be a SEPARATE checkbox, never
@@ -58,29 +72,59 @@ export const TRANSACTIONAL_CHECKBOX_LABEL =
  * Art. 7(2); CJEU C-673/17 "Planet49") and a classic Abmahnung trigger under
  * the German UWG. We deliberately reject pre-checking it, regardless of what
  * other platforms do. Opt-ins are won honestly — through the benefit-led
- * label + hint below — not through a pre-tick. The widget MUST render it
- * UNCHECKED and visually independent of (A); making it PROMINENT (placement,
- * styling, the benefit hint) is fine and encouraged.
+ * label — not through a pre-tick. The widget MUST render it UNCHECKED and
+ * visually independent of (A); making it PROMINENT (placement, styling) is
+ * fine and encouraged.
  *
- * The copy is benefit-led but stays accurate: specific about the purpose
- * (personalised recommendations/offers based on the consultations, used for
- * personalisation) and explicit about the free, anytime withdrawal. It must
- * NEVER promise the welcome discount for ticking this box ("freely given",
- * Art. 7(4) GDPR — see docs/WELCOME_DISCOUNT.md). PLACEHOLDER — lawyer
- * review required.
+ * COPY CEILING (UWG / dark-pattern exposure — agreed with the client): the
+ * label promises "exklusive Angebote …, nur für Abonnenten" and NOTHING more.
+ * Accurate scarcity only — NEVER add countdowns, invented urgency, or any
+ * concrete discount promise here. It must also never promise the welcome
+ * discount for ticking this box ("freely given", Art. 7(4) GDPR — see
+ * docs/WELCOME_DISCOUNT.md). PLACEHOLDER — lawyer review required.
  */
 export const MARKETING_CHECKBOX_LABEL =
-  "Ja, Mo darf sich mich merken: motion sports darf mich per E-Mail mit persönlichen Empfehlungen und Angeboten kontaktieren, die auf meinen Beratungsgesprächen basieren.";
+  "Ja, ich möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten. Jederzeit abbestellbar.";
 
 /**
- * (B) Benefit hint — rendered directly beneath the marketing label as part of
- * the same consent block (and stored verbatim in `consentTextShown` together
- * with the label, Art. 7 proof). Concrete future value + purpose + free
- * anytime withdrawal. Same decision as above: prominence yes, pre-tick never.
- * PLACEHOLDER — lawyer review required.
+ * Shared footer — ONE line rendered beneath both checkboxes (with the
+ * imprint/privacy links from CAPTURE_FORM_*_URL placed next to it, as
+ * before). The Art. 7 minimum: who processes, under which policy, and that
+ * withdrawal is possible at any time. Part of `consentTextShown` (the form
+ * displays it as part of the consent block). PLACEHOLDER — lawyer review
+ * required.
  */
-export const MARKETING_CHECKBOX_BENEFIT_HINT =
-  "Dein Vorteil: Beim nächsten Besuch erkennt Mo dich wieder — keine Basisfragen von vorn, sondern Empfehlungen und Angebote, die wirklich zu deinem Training, deinem Platz und deinem Budget passen. Dafür verwenden wir die Inhalte deiner Beratungsgespräche. Abmelden geht jederzeit kostenlos — ein Klick auf den Link in jeder E-Mail genügt.";
+export const CONSENT_SHARED_FOOTER =
+  "Verarbeitung durch motion sports gemäß Datenschutzerklärung; Widerruf jederzeit möglich.";
+
+// ---------------------------------------------------------------------------
+// Returning-customer hint (served alongside the consent copy — NOT consent)
+// ---------------------------------------------------------------------------
+
+/**
+ * Short hint rendered near the email input, telling users they can be
+ * recognised via email (addresses the "when should I enter my email?"
+ * confusion). Served by the backend on the same paths as the consent copy so
+ * its wording can change without a theme release — e.g. for tuning after the
+ * lawyer clears customer-memory use (CUST-B, see docs/CUSTOMERS.md).
+ *
+ * INFORMATIONAL ONLY: this hint is NOT part of `consentTextShown` — it
+ * describes a feature, it is not consent text. PLACEHOLDER — lawyer review
+ * required (CUST-B).
+ */
+export const RETURNING_CUSTOMER_HINT_TEXT =
+  "Schon einmal von Mo beraten worden? Gib deine E-Mail an — Mo erkennt dich wieder und knüpft an deine letzte Beratung an.";
+
+/**
+ * Server-side kill switch for the returning-customer hint: set
+ * RETURNING_HINT_ENABLED=false to make the widget hide it (the text is still
+ * served so the payload shape stays stable). Default ON.
+ */
+function returningHintEnabled(): boolean {
+  const raw = process.env.RETURNING_HINT_ENABLED;
+  if (typeof raw !== "string" || !raw.trim()) return true;
+  return !["0", "false", "no", "off"].includes(raw.trim().toLowerCase());
+}
 
 // ---------------------------------------------------------------------------
 // Capture-form consent copy payload (served to the widget)
@@ -114,12 +158,18 @@ export const CAPTURE_FORM_PRIVACY_URL =
 
 /** The exact copy the widget needs to render the capture form. */
 export interface CaptureConsentCopy {
-  /** (A) Transactional checkbox label (may render pre-checked — see above). */
+  /**
+   * Identifier of the served copy (CONSENT_COPY_VERSION, currently "v2").
+   * Stored alongside `consent_text_shown` on every capture so v1/v2 audit
+   * records stay distinguishable.
+   */
+  version: string;
+  /** (A) Transactional checkbox label (MUST render UNCHECKED — v2 decision). */
   transactionalLabel: string;
   /** (B) Marketing checkbox label (MUST render unchecked — see above). */
   marketingLabel: string;
-  /** (B) Benefit hint, rendered directly beneath the marketing label. */
-  marketingBenefitHint: string;
+  /** Shared one-line footer rendered beneath both checkboxes (Art. 7 minimum). */
+  consentFooter: string;
   /**
    * The pre-composed audit string the widget MUST echo back verbatim as
    * `consentTextShown` on POST /api/capture-email. Composed server-side so
@@ -131,19 +181,32 @@ export interface CaptureConsentCopy {
   privacyUrl: string;
   /** Mirrors CONSENT_COPY_LAWYER_APPROVED — false until Legal signs off. */
   lawyerApproved: boolean;
+  /**
+   * Returning-customer hint, rendered near the email input. Informational —
+   * NOT part of `consentTextShown`. `enabled: false` (server-side switch)
+   * means the widget must hide it.
+   */
+  returningHint: { enabled: boolean; text: string };
 }
 
 export function captureConsentCopy(): CaptureConsentCopy {
   return {
+    version: CONSENT_COPY_VERSION,
     transactionalLabel: TRANSACTIONAL_CHECKBOX_LABEL,
     marketingLabel: MARKETING_CHECKBOX_LABEL,
-    marketingBenefitHint: MARKETING_CHECKBOX_BENEFIT_HINT,
-    consentTextShown:
-      `${TRANSACTIONAL_CHECKBOX_LABEL} | ` +
-      `${MARKETING_CHECKBOX_LABEL} ${MARKETING_CHECKBOX_BENEFIT_HINT}`,
+    consentFooter: CONSENT_SHARED_FOOTER,
+    consentTextShown: composeConsentTextShown([
+      TRANSACTIONAL_CHECKBOX_LABEL,
+      MARKETING_CHECKBOX_LABEL,
+      CONSENT_SHARED_FOOTER,
+    ]),
     imprintUrl: CAPTURE_FORM_IMPRINT_URL,
     privacyUrl: CAPTURE_FORM_PRIVACY_URL,
     lawyerApproved: CONSENT_COPY_LAWYER_APPROVED,
+    returningHint: {
+      enabled: returningHintEnabled(),
+      text: RETURNING_CUSTOMER_HINT_TEXT,
+    },
   };
 }
 
@@ -215,8 +278,11 @@ export const DOI_CONFIRMED_BODY =
 
 /**
  * Variant of the confirmation page body shown when the one-time welcome code
- * was just issued — points the user at the email that delivers it.
- * PLACEHOLDER — lawyer review required.
+ * was just issued — points the user at the email that delivers it. Only ever
+ * rendered when a welcome email actually went out, which requires
+ * WELCOME_DISCOUNT_ENABLED (default OFF — see docs/WELCOME_DISCOUNT.md);
+ * with the flag off the plain DOI_CONFIRMED_BODY is shown and no welcome
+ * gift is referenced anywhere. PLACEHOLDER — lawyer review required.
  */
 export const DOI_CONFIRMED_WELCOME_BODY =
   DOI_CONFIRMED_BODY +
@@ -225,6 +291,10 @@ export const DOI_CONFIRMED_WELCOME_BODY =
 // ---------------------------------------------------------------------------
 // Welcome email (delivers the one-time welcome discount code after DOI)
 // ---------------------------------------------------------------------------
+//
+// ⚠️ FEATURE-FLAGGED OFF BY DEFAULT: the entire issuance path (and with it
+// this email) is gated behind WELCOME_DISCOUNT_ENABLED (default false) —
+// see src/lib/welcome-discount-flag.mjs and docs/WELCOME_DISCOUNT.md.
 //
 // ⚠️ LEGAL FRAMING — lawyer-confirm (see docs/WELCOME_DISCOUNT.md): the code is
 // framed as a welcome GIFT for completing the freely-chosen double-opt-in
@@ -302,31 +372,12 @@ export function welcomeEmailBody(opts: WelcomeEmailOptions): { text: string; htm
   return { text, html };
 }
 
-// ---------------------------------------------------------------------------
-// Chat mention of the welcome discount (Mo, at the value-triggered email offer)
-// ---------------------------------------------------------------------------
-//
-// ⚠️ LEGAL FRAMING — lawyer-confirm (see docs/WELCOME_DISCOUNT.md): in chat,
-// Mo may mention the one-time welcome gift in ONE sentence as a thank-you for
-// COMPLETING THE SIGNUP (registering + clicking the confirmation link) —
-// NEVER as a reward for ticking the marketing checkbox. "Agree to marketing
-// and get X % off" is forbidden: it would stop the consent being "freely
-// given" (Art. 7(4) GDPR). The sentence below is the canonical wording the
-// system prompt hands to the model as its example; it deliberately names no
-// checkbox and attaches the gift to the confirmed signup only.
-
-/**
- * Canonical example sentence for Mo's in-chat mention of the welcome gift.
- * `percent` comes from `welcomeDiscountPercent()` so chat always matches what
- * the welcome email actually delivers. PLACEHOLDER — lawyer review required.
- */
-export function welcomeChatMentionExample(percent: number): string {
-  return (
-    `Kleines Extra: Wenn du dich dabei anmeldest, bekommst du als Dankeschön ` +
-    `nach der Bestätigung ein einmaliges Willkommensgeschenk — ${percent} % ` +
-    `Rabatt auf deine nächste Bestellung.`
-  );
-}
+// NOTE: the former in-chat mention of the welcome gift
+// (`welcomeChatMentionExample` + the prompt rules in system-prompt.ts) was
+// REMOVED entirely when the automatic welcome discount was feature-flagged
+// off (WELCOME_DISCOUNT_ENABLED, default false — client decision, see
+// docs/WELCOME_DISCOUNT.md): Mo must never promise a gift the backend won't
+// issue.
 
 /** Shown when a DOI token is invalid or expired. PLACEHOLDER. */
 export const DOI_INVALID_HEADING = "Dieser Bestätigungslink ist ungültig oder abgelaufen.";
