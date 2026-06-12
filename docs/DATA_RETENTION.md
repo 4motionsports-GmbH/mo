@@ -5,9 +5,14 @@
 > allowed to (lawful basis under GDPR Art. 6), and *how long* it is kept.
 
 The data model is split into two clusters with **different lawful bases**. They
-are kept structurally separate (no foreign key linking them); the only bridge
-is the pseudonymous `session_id`, which a user severs by clearing their browser
-storage. Keep them separate — do not denormalise an email onto a conversation.
+are kept structurally separate; for anonymous traffic the only bridge is the
+pseudonymous `session_id`, which a user severs by clearing their browser
+storage. Since migration `0008_customers.sql` there is **one explicit,
+consent-anchored exception**: the nullable `conversations.customer_id` /
+`email_captures.customer_id` foreign keys (`ON DELETE SET NULL`), set only when
+the user actively submits their email — erasing a customer returns the linked
+rows to plain pseudonymous data (see [`DATABASE.md`](./DATABASE.md)). Keep the
+clusters separate otherwise — do not denormalise an email onto a conversation.
 
 ---
 
@@ -80,6 +85,11 @@ by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
 3. Deletes `kpi_events` past `KPI_RETENTION_DAYS`.
 4. Purges PII for unsubscribed / suppressed `email_captures` past the grace
    window, keeping the `suppression_list` entry.
+5. Purges the matching `customers` rows (email + cached profile / purchase
+   summaries — all PII under the same consent) for the same opted-out
+   addresses, after the capture purge; their `ON DELETE SET NULL` FKs return
+   the linked conversations to plain pseudonymous rows (see
+   [`CUSTOMERS.md`](./CUSTOMERS.md)).
 
 ### Running it manually
 
@@ -98,6 +108,7 @@ The endpoint returns a JSON summary with the counts affected, e.g.:
   "deletedConversations": 12,
   "deletedKpiEvents": 833,
   "purgedSuppressedCaptures": 1,
+  "purgedSuppressedCustomers": 1,
   "ranAt": "2026-06-03T03:30:00.000Z"
 }
 ```
@@ -106,8 +117,9 @@ The endpoint returns a JSON summary with the counts affected, e.g.:
 
 ## Data-subject requests (forward note)
 
-The consent flow and a self-service erasure path are **future work**. Until they
-land, a subject-access or erasure request is handled manually:
+The consent flow has shipped (see [`CONSENT_FLOW.md`](./CONSENT_FLOW.md)); a
+self-service erasure path is still **future work**. Until it lands, a
+subject-access or erasure request is handled manually:
 
 - **Erasure of an email:** add it to `suppression_list` (reason `erasure`) and
   delete its `email_captures` / `marketing_sends` rows. The next retention run

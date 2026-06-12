@@ -43,8 +43,8 @@ storefront:
   origins in `ALLOWED_ORIGINS` (default: `https://www.motionsports.de`,
   `https://motionsports.de`). The CORS preflight (`OPTIONS`) reflects
   the same allowlist.
-- **Shared secret** (`x-ms-chat-key`). Required on `/api/chat` and
-  `/api/contact`. *Honest caveat:* this secret is shipped to the
+- **Shared secret** (`x-ms-chat-key`). Required on `/api/chat`,
+  `/api/contact`, and `/api/capture-email` (§7.1). *Honest caveat:* this secret is shipped to the
   storefront widget, so anyone can read it from the browser. The
   point isn't strong auth — it's combining it with the origin
   allowlist and rate limit so that a scraper has to forge the origin
@@ -75,7 +75,8 @@ string.
 
 ## 2. `POST /api/chat`
 
-Streams a Claude response as an AI SDK UI-message stream over SSE.
+Streams a Claude response over SSE as AI SDK **stream chunks** (the AI
+SDK UI-message stream protocol, `x-vercel-ai-ui-message-stream: v1`).
 
 ### Required request headers
 
@@ -84,6 +85,14 @@ Streams a Claude response as an AI SDK UI-message stream over SSE.
 | `Content-Type`  | `application/json`                                                     |
 | `x-ms-chat-key` | The shared secret from `CHAT_SHARED_SECRET`.                           |
 | `x-ms-session`  | Client-generated stable session id (UUID stored in `localStorage`).    |
+
+> **Note on `x-ms-session`:** the widget must always send it, but the
+> server does **not** enforce its presence — a request without it is not
+> rejected. When present it keys the rate-limit bucket (`sid:<id>`) and
+> the conversation persistence that the summary email / consent flow
+> depend on; when absent, rate limiting falls back to the caller's IP
+> and conversation persistence is skipped. "Required" here is a widget
+> instruction, not a server-side guard.
 
 Plus the browser-set `Origin` header, which must be one of
 `ALLOWED_ORIGINS`. The CORS preflight advertises `POST, OPTIONS` and
@@ -196,7 +205,7 @@ The backend keys its behavior off whether `messages` is empty:
   block (specs + stock status), so sold-out and checkout rules apply from the
   first answer.
 
-In both cases the **response is the same SSE UI-message stream** documented
+In both cases the **response is the same SSE chunk stream** documented
 below — `context` only seeds the model, it does not change the response
 shape. The widget parses the stream identically whether or not `context`
 was sent.
@@ -261,27 +270,93 @@ The widget should surface this as "start a new chat" UX.
 ### Response — SSE stream
 
 The route returns the result of
-`result.toUIMessageStreamResponse({ headers: corsHeaders })`. Headers:
+`result.toUIMessageStreamResponse(...)`. Headers:
 
 ```
 HTTP/1.1 200 OK
 Content-Type: text/event-stream
+x-vercel-ai-ui-message-stream: v1
+Cache-Control: no-cache, no-transform
+X-Accel-Buffering: no
 Access-Control-Allow-Origin: https://www.motionsports.de
 ```
 
-Each event is a JSON-encoded UI-message *part*. The widget must
-maintain a current assistant message and append parts as they arrive,
-matching on `part.type` and `part.toolCallId`.
+`Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no` keep
+caches and nginx-style proxies from buffering or re-chunking the stream;
+`x-vercel-ai-ui-message-stream: v1` identifies the stream protocol
+version and is a useful client-side sanity check.
 
-#### Part types the widget must handle
+The body is SSE: lines of `data: <JSON>`, separated by blank lines,
+terminated by a literal `data: [DONE]`. Parse with `fetch` +
+`response.body.getReader()` + `TextDecoder`, buffering by line (do
+**not** use `EventSource` — it can't send a POST body or custom
+headers).
 
-**1. Text deltas.** The assistant prose, streamed token by token.
+**Each `data:` line is a JSON-encoded AI SDK *stream chunk*** (the
+`UIMessageChunk` vocabulary of the pinned `ai@6`), **not** an assembled
+UI-message part. Assembled parts (`{ "type": "text", … }`,
+`{ "type": "tool-<name>", "state": …, … }`) are what `@ai-sdk/react`'s
+`useChat` builds *client-side out of* these chunks — they never appear
+on the wire. A widget that parses the stream itself must assemble the
+chunks into the current assistant message (or use the AI SDK's
+client-side assembly).
 
-```jsonc
-{ "type": "text", "text": "Ein leises Laufband für deine Wohnung — schau dir das hier an." }
+A complete turn (one text bubble + one `show_product` call) looks like:
+
+```
+data: {"type":"start"}
+data: {"type":"start-step"}
+data: {"type":"text-start","id":"t1"}
+data: {"type":"text-delta","id":"t1","delta":"Hallo "}
+data: {"type":"text-delta","id":"t1","delta":"Welt."}
+data: {"type":"text-end","id":"t1"}
+data: {"type":"tool-input-available","toolCallId":"call_1","toolName":"show_product","input":{"productId":"abc","reason":"leise"}}
+data: {"type":"tool-output-available","toolCallId":"call_1","output":{"ok":true}}
+data: {"type":"finish-step"}
+data: {"type":"finish"}
+data: [DONE]
 ```
 
-Concatenate `text` chunks into the visible assistant bubble.
+#### Chunk vocabulary
+
+| `type` | Payload fields | Widget action |
+| --- | --- | --- |
+| `start` | — | begin a new assistant message |
+| `start-step` / `finish-step` | — | ignore (the model can run up to **6 steps** per turn — `stepCountIs(6)`) |
+| `text-start` | `id` | open a text part keyed by `id` |
+| `text-delta` | `id`, `delta` | **append** `delta` to that text part's bubble |
+| `text-end` | `id` | text part complete |
+| `tool-input-start` | `toolCallId`, `toolName` | open a tool part keyed by `toolCallId` (render nothing yet) |
+| `tool-input-delta` | `toolCallId`, `inputTextDelta` | streaming JSON of the args; safe to ignore |
+| `tool-input-available` | `toolCallId`, `toolName`, `input` | args complete → **render the card now** (dispatch on `toolName`, read `input`) |
+| `tool-output-available` | `toolCallId`, `output` | tool result → for `offer_email_summary` this carries the load-bearing `output.consentCopy`; the other tools return `{ ok: true }` |
+| `error` | `errorText` | show the friendly retry message |
+| `finish` | — | finalize the message, re-enable input |
+| `[DONE]` (literal, not JSON) | — | stream end |
+
+Assembly rules:
+
+- `toolName` is the **bare** tool name (`show_product`), never
+  `tool-show_product` and never a suffixed variant. If you assemble
+  AI-SDK-style parts client-side, the part type becomes
+  `tool-${toolName}` and its `state` progresses
+  `input-streaming → input-available → output-available` (an erroring
+  tool yields `output-error`). There is no `"partial"` or `"result"`
+  state and no `tool-<name>-partial` / `tool-<name>-result` type.
+- Key tool cards by `toolCallId` and update **in place**: render the
+  card once `tool-input-available` delivers `input`, and merge the
+  later `tool-output-available` into the same card. A duplicated or
+  re-emitted chunk for a known `toolCallId` must replace, never append
+  a second card.
+- Ignore unknown chunk types (e.g. `reasoning-*`, `tool-output-error`)
+  defensively — the vocabulary can grow with SDK upgrades.
+- The route's `maxDuration` is 300 s — a long consultation can stream
+  for minutes; don't impose a short client-side timeout.
+
+#### Rendering assistant text
+
+Concatenate the `text-delta` chunks of each text part (keyed by `id`)
+into the visible assistant bubble.
 
 **Markdown subset to render:** bold (`**text**`) → `<strong>` and
 inline links (`[label](url)`) → `<a href="url" target="_blank"
@@ -293,24 +368,11 @@ rendered with `renderTextWithFormatting`. The regex used there:
 /(\*\*(.+?)\*\*)|(\[([^\]]+)\]\(([^)]+)\))/g
 ```
 
-**2. Tool parts the widget MUST render.** Each is keyed by
-`type: "tool-<name>"`. The AI SDK may also stream intermediate states
-of the same tool call with type prefixes like `"tool-<name>-partial"`
-or `"tool-<name>-result"` — match with `startsWith` to be safe. Read
-`input` (the tool arguments) once the part is past the partial state.
-Use `toolCallId` as the React-style key so duplicate parts replace
-each other rather than rendering twice.
+#### Tools the widget MUST render
 
-Reference detection helper from the previous React widget (mirror this
-in the vanilla-JS widget):
-
-```js
-function isToolPart(type, name) {
-  return type === `tool-${name}` || type.startsWith(`tool-${name}`);
-}
-```
-
-The renderable tools, in order of arrival likelihood:
+Dispatch on the `toolName` of each `tool-input-available` chunk and
+render the matching card from its `input`, keyed by `toolCallId`. The
+renderable tools, in order of arrival likelihood:
 
 ##### `show_product` → product card
 
@@ -318,12 +380,12 @@ Input schema:
 ```ts
 { productId: string; reason?: string }
 ```
-Example part:
+Example `tool-input-available` chunk:
 ```json
 {
-  "type": "tool-show_product",
+  "type": "tool-input-available",
   "toolCallId": "call_abc123",
-  "state": "result",
+  "toolName": "show_product",
   "input": {
     "productId": "atx-treadmill-pro-fold",
     "reason": "Sehr leise (62 dB) und klappbar — passt in eine Mietwohnung."
@@ -342,12 +404,12 @@ Input schema:
 ```ts
 { productIds: string[]; comparisonContext?: string } // 2–3 ids
 ```
-Example part:
+Example `tool-input-available` chunk:
 ```json
 {
-  "type": "tool-compare_products",
+  "type": "tool-input-available",
   "toolCallId": "call_def456",
-  "state": "result",
+  "toolName": "compare_products",
   "input": {
     "productIds": ["atx-treadmill-pro-fold", "atx-treadmill-silent-x"],
     "comparisonContext": "Beide leise, aber unterschiedliche Laufflächen."
@@ -375,12 +437,12 @@ Input schema (**either** `productId` **or** `productIds`, at least one required)
   `productIds` with **all** intended ids and calls the tool **once**. This is
   one combined cart, not several separate buttons.
 
-Single-product example part (backward compatible):
+Single-product example chunk (backward compatible):
 ```json
 {
-  "type": "tool-add_to_cart",
+  "type": "tool-input-available",
   "toolCallId": "call_ghi789",
-  "state": "result",
+  "toolName": "add_to_cart",
   "input": {
     "productId": "atx-treadmill-pro-fold",
     "message": "Wenn das für dich passt, kannst du es hier direkt bestellen."
@@ -388,12 +450,12 @@ Single-product example part (backward compatible):
 }
 ```
 
-Multi-product example part:
+Multi-product example chunk:
 ```json
 {
-  "type": "tool-add_to_cart",
+  "type": "tool-input-available",
   "toolCallId": "call_ghi790",
-  "state": "result",
+  "toolName": "add_to_cart",
   "input": {
     "productIds": ["atx-rack-pro", "atx-bench-pro"],
     "message": "Wenn die Kombi für dich passt, kannst du beides hier direkt bestellen."
@@ -427,12 +489,12 @@ Input schema:
 ```ts
 { productIds: string[] }
 ```
-Example part:
+Example `tool-input-available` chunk:
 ```json
 {
-  "type": "tool-suggest_showroom",
+  "type": "tool-input-available",
   "toolCallId": "call_jkl012",
-  "state": "result",
+  "toolName": "suggest_showroom",
   "input": { "productIds": ["atx-treadmill-pro-fold"] }
 }
 ```
@@ -451,12 +513,12 @@ Input schema:
   productIds?: string[];
 }
 ```
-Example part:
+Example `tool-input-available` chunk:
 ```json
 {
-  "type": "tool-show_contact_form",
+  "type": "tool-input-available",
   "toolCallId": "call_mno345",
-  "state": "result",
+  "toolName": "show_contact_form",
   "input": {
     "reason": "studio_consultation",
     "message": "Für die Studio-Ausstattung lohnt sich ein persönliches Gespräch.",
@@ -492,10 +554,10 @@ Input schema:
 }
 ```
 **The tool RESULT carries the canonical consent copy.** Unlike the other
-renderable tools, this part's `output` (populated once the result state
-arrives, alongside `input`) is load-bearing: it contains the exact checkbox
-labels, the marketing benefit hint, the imprint/privacy links, and the
-pre-composed `consentTextShown` audit string. The widget **MUST render these
+renderable tools, this call's `tool-output-available` chunk is load-bearing:
+its `output.consentCopy` contains the exact checkbox labels, the marketing
+benefit hint, the imprint/privacy links, and the pre-composed
+`consentTextShown` audit string. The widget **MUST render these
 backend-served strings and MUST NOT hard-code any consent copy** — the served
 text is stored verbatim as Art. 7 proof of consent, so a hard-coded theme
 snapshot could silently diverge from the audit record. Lawyer copy changes
@@ -503,17 +565,24 @@ ship as a backend deploy with no widget release. (For capture forms not
 triggered by this tool, the same payload is available via
 `GET /api/consent-copy` — §7.4.)
 
-Example part:
+Example chunk pair (the `tool-input-available` chunk, followed by the
+`tool-output-available` chunk for the same `toolCallId`):
 ```json
 {
-  "type": "tool-offer_email_summary",
+  "type": "tool-input-available",
   "toolCallId": "call_pqr678",
-  "state": "result",
+  "toolName": "offer_email_summary",
   "input": {
     "message": "Soll ich dir deine persönliche Empfehlung und den fertigen Warenkorb per Mail schicken?",
     "trigger": "recommendation_accepted",
     "productIds": ["atx-treadmill-pro-fold"]
-  },
+  }
+}
+```
+```json
+{
+  "type": "tool-output-available",
+  "toolCallId": "call_pqr678",
   "output": {
     "ok": true,
     "consentCopy": {
@@ -568,18 +637,20 @@ those are recorded server-side.
 > ⚠️ The checkbox labels are PLACEHOLDER copy pending lawyer approval — see
 > [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
-#### Tool parts the widget MUST NOT render
+#### Tools the widget MUST NOT render
 
-These are background tools — skip them when their `type` matches:
+These are background tools — skip their chunks when `toolName` matches:
 
-- `tool-update_customer_profile` — updates the persona view; pure
+- `update_customer_profile` — updates the persona view; pure
   bookkeeping.
-- `tool-search_products` — internal RAG; the assistant uses the
+- `search_products` — internal RAG; the assistant uses the
   result to decide which `show_product` / `compare_products` calls to
-  make.
+  make. Its `tool-output-available` chunk streams the search result
+  (`{ totalMatched, products: [...] }`) — ignore it.
 
-Both tools still appear in the stream and the widget must consume them
-without rendering anything.
+Both tools still appear in the stream (the full
+`tool-input-start → … → tool-output-available` chunk sequence) and the
+widget must consume them without rendering anything.
 
 ### Rate-limit response (429)
 
@@ -947,6 +1018,8 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   back **byte-for-byte** — the widget never composes or hard-codes this text.
   Because the form renders exactly those served strings, the audit record
   cannot diverge from what was displayed.
+- `trigger` is silently **truncated to 40 characters** server-side before it
+  is stored/echoed (all five canonical trigger values fit well within that).
 
 #### Behaviour
 
@@ -993,6 +1066,11 @@ HTTP/1.1 200 OK
 The widget should show: "Wir haben dir die Zusammenfassung geschickt." and, when
 `marketing.status === "pending"`, "Bitte bestätige noch die Anmeldung über den
 Link in der E-Mail."
+
+> **Local-dev note:** `transactional.summarySent: true` is also returned when
+> no email provider (Resend) is configured — the send is then *skipped*, not
+> delivered. In production with Resend configured, `true` means the summary
+> was handed to the provider; an actual delivery failure returns `502`.
 
 After a success response, the widget MAY start attaching the captured email
 as `customer.email` to the session's subsequent `/api/chat` requests to enable

@@ -298,7 +298,7 @@ export function buildSystemPrompt({
     emailOffer ?? { offersMade: 0, emailCaptured: false }
   );
 
-  return `Du bist der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}${browsingContextBlock}
+  return `Du bist Mo, der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}${browsingContextBlock}
 
 ## Deine Persönlichkeit
 

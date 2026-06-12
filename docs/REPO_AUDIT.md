@@ -1,5 +1,12 @@
 # Repo Audit — Headless Backend Conversion
 
+> **SUPERSEDED — historical document.** This audit describes the one-time
+> conversion to a headless backend with "only two HTTP endpoints"; the backend
+> has grown far beyond that (9 public + 6 admin + 2 cron routes). It is kept
+> for historical context only — do not treat anything here as the current
+> state. For current contracts see [`API_CONTRACT.md`](./API_CONTRACT.md) and
+> the other docs in this folder.
+
 This audit categorizes every file under `src/` (plus root-level support
 files) for the conversion of this repo from a Next.js + React chat app
 into a headless backend that exposes only two HTTP endpoints. The chat
