@@ -315,7 +315,7 @@ data: [DONE]
 | `type` | Payload fields | Widget action |
 | --- | --- | --- |
 | `start` | — | begin a new assistant message |
-| `start-step` / `finish-step` | — | ignore (the model can run up to **6 steps** per turn — `stepCountIs(6)`) |
+| `start-step` / `finish-step` | — | ignore (the model can run up to **6 steps** per turn, +1 when the backend appends the guaranteed checkout-moment email-offer step) |
 | `text-start` | `id` | open a text part keyed by `id` |
 | `text-delta` | `id`, `delta` | **append** `delta` to that text part's bubble |
 | `text-end` | `id` | text part complete |

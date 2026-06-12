@@ -63,30 +63,22 @@ const profilePatchSchema = z.object({
     ),
 });
 
-/**
- * Hard cap on offer_email_summary invitations per conversation. The system
- * prompt instructs the model to stop on its own; this constant additionally
- * backs the server-side enforcement (the tool is withheld entirely once the
- * cap is reached — see buildChatTools / api/chat).
- */
-export const MAX_EMAIL_OFFERS_PER_CONVERSATION = 2;
+// Hard cap on offer_email_summary invitations per conversation. Lives in the
+// pure trigger module (email-offer-trigger.mjs) next to the deterministic
+// checkout-intent trigger that shares it; re-exported here so existing
+// importers (system-prompt, api/chat) keep working unchanged.
+export { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./email-offer-trigger.mjs";
 
-export interface BuildChatToolsOpts {
-  /**
-   * When false, offer_email_summary is withheld from the tool set entirely —
-   * the ask cap was reached or the user already submitted their email in this
-   * session. Prompt instructions alone are advisory; removing the tool makes
-   * "never a third ask" a guarantee.
-   */
-  allowEmailSummaryOffer?: boolean;
-}
-
-export function buildChatTools(
-  profile: CustomerProfile,
-  opts: BuildChatToolsOpts = {}
-) {
-  const { allowEmailSummaryOffer = true } = opts;
-  const tools = {
+// NOTE on withholding offer_email_summary: the full tool set is always built
+// here so the return type is stable (api/chat's deterministic email-offer
+// trigger force-selects the tool in a prepareStep, which needs the tool's key
+// in the type). The actual withholding — ask cap reached or email already
+// captured, making "never a third ask" a guarantee rather than a prompt
+// instruction — happens in api/chat via streamText's `activeTools`: an
+// inactive tool is filtered out before the provider call and is invisible to
+// the model, exactly like omitting it from this object.
+export function buildChatTools(profile: CustomerProfile) {
+  return {
     update_customer_profile: tool({
       description: `Aktualisiert das Kundenprofil basierend auf neuen Signalen aus der Konversation.
 Rufe dieses Tool SOFORT auf wenn du ein neues Signal erkennst — z.B. der Kunde nennt sein Budget, seinen Platz, sein Erfahrungslevel, ob er Studio/Physio/Behörde ist.
@@ -267,14 +259,7 @@ Nutze die treffendste reason. Die Nachricht sollte erklären WARUM persönliche 
       }),
       execute: async () => ({ ok: true }),
     }),
-  };
 
-  // The offer tool is appended (not destructured away) so withholding it
-  // leaves no unused binding behind.
-  if (!allowEmailSummaryOffer) return tools;
-
-  return {
-    ...tools,
     offer_email_summary: tool({
       description: `Bietet dem Kunden an, eine Zusammenfassung dieses Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu erhalten. Der Aufruf blendet im Widget ein DSGVO-konformes Erfassungsformular ein (E-Mail-Feld + zwei GETRENNTE Einwilligungs-Checkboxen: Zusammenfassung jetzt vs. optionales Marketing).
 

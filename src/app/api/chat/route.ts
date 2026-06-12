@@ -1,6 +1,5 @@
 import {
   streamText,
-  stepCountIs,
   convertToModelMessages,
   type UIMessage,
   type ModelMessage,
@@ -15,6 +14,7 @@ import {
 import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-context";
 import { resolveCustomerMemory, type CustomerMemoryContext } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
+import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
 import { welcomeDiscountPercent } from "@/lib/welcome-discount";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
@@ -24,7 +24,11 @@ import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { persistTurn, type ToolInvocation } from "@/lib/conversation-store";
-import { KPI_EMAIL_CAPTURE_ASK_SHOWN, recordKpiEvent } from "@/lib/kpi-events";
+import {
+  KPI_EMAIL_CAPTURE_ASK_SHOWN,
+  hasDeclinedEmailCapture,
+  recordKpiEvent,
+} from "@/lib/kpi-events";
 
 // This route runs on the Node.js runtime (the Next.js default — we do not set
 // `runtime = "edge"`). Node + Vercel Fluid Compute streams the SSE body
@@ -40,6 +44,22 @@ import { KPI_EMAIL_CAPTURE_ASK_SHOWN, recordKpiEvent } from "@/lib/kpi-events";
 export const maxDuration = 300;
 
 const MAX_MESSAGES_PER_CONVERSATION = 40;
+
+// Step budget of the agentic loop (was `stopWhen: stepCountIs(6)`). The
+// custom stop condition below grants ONE extra step beyond this only when the
+// deterministic email-offer step is still pending (add_to_cart landed on the
+// very last budgeted step), so the offer guarantee can't be starved by the
+// step cap.
+const MAX_STEPS_PER_TURN = 6;
+
+// Tool names called so far in THIS turn's steps — input to the deterministic
+// email-offer trigger (see prepareStep / stopWhen in POST below). Typed
+// structurally so it works with the route's concrete StepResult generic.
+function turnToolNames(
+  steps: ReadonlyArray<{ toolCalls?: ReadonlyArray<{ toolName: string }> }>
+): string[] {
+  return steps.flatMap((s) => (s.toolCalls ?? []).map((tc) => tc.toolName));
+}
 
 function mergeProfile(prev: CustomerProfile, patch: UpdateCustomerProfileArgs): CustomerProfile {
   // Merge a profile patch onto the previous profile. Empty/undefined fields
@@ -225,13 +245,21 @@ export async function POST(req: Request) {
     const allowEmailSummaryOffer =
       !emailCaptured && emailOffersMade < MAX_EMAIL_OFFERS_PER_CONVERSATION;
 
-    const [hits, customerMemory] = await Promise.all([
+    const [hits, customerMemory, emailOfferDeclined] = await Promise.all([
       latestUserText
         ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
         : Promise.resolve([]),
       claimedEmail
         ? resolveCustomerMemory({ email: claimedEmail, sessionId })
         : Promise.resolve<CustomerMemoryContext | null>(null),
+      // Whether the user dismissed a capture card in this session (a UI click
+      // the message history never shows — only the widget's KPI event records
+      // it). Gates the deterministic email-offer trigger below: after an
+      // explicit decline the backend never FORCES another ask. Only consulted
+      // while an offer is still possible at all.
+      allowEmailSummaryOffer
+        ? hasDeclinedEmailCapture(sessionId)
+        : Promise.resolve(true),
     ]);
     // Optional product context (chat opened "about" a product) and/or
     // browsing context (small recently-viewed trail brought along by the
@@ -288,6 +316,18 @@ export async function POST(req: Request) {
       if (browsingContext) appendPivotNote(modelMessages, browsingPivotNote(browsingContext));
     }
 
+    // The full tool set is always built (stable type for the forced-offer
+    // prepareStep below); offer_email_summary is withheld from the model via
+    // `activeTools` once the ask cap is reached or the email was captured —
+    // an inactive tool is filtered out before the provider call, so "never a
+    // third ask" stays a server-side guarantee, not a prompt instruction.
+    const tools = buildChatTools(profile);
+    const defaultActiveTools = (
+      allowEmailSummaryOffer
+        ? Object.keys(tools)
+        : Object.keys(tools).filter((name) => name !== "offer_email_summary")
+    ) as Array<keyof typeof tools>;
+
     const result = streamText({
       model: anthropic("claude-sonnet-4-5-20250929"),
       system: buildSystemPrompt({
@@ -306,8 +346,48 @@ export async function POST(req: Request) {
         },
       }),
       messages: modelMessages,
-      tools: buildChatTools(profile, { allowEmailSummaryOffer }),
-      stopWhen: stepCountIs(6),
+      tools,
+      activeTools: defaultActiveTools,
+      // DETERMINISTIC EMAIL-OFFER TRIGGER (highest-intent moment): when this
+      // turn has produced an add_to_cart (direct-checkout) call and the model
+      // did not offer the email summary on its own, force the next step's
+      // toolChoice to offer_email_summary — exactly one extra model step, so
+      // the invitation text stays AI-written (the tool's `message` input) and
+      // in-context. Prompt wording alone proved unreliable here: the
+      // persona's anti-pushiness rules made the model consistently skip the
+      // soft ask at checkout. shouldForceEmailOfferStep keeps every existing
+      // rule intact: never once the email is captured, never past the two-ask
+      // cap (the forced ask COUNTS as one of the two — it streams as a normal
+      // tool call, so countEmailSummaryOffers and the ask-shown KPI below
+      // pick it up like any other offer), and never after the user declined a
+      // capture card (widget-reported KPI event). When it fires, the tool is
+      // guaranteed present in the tool set: the trigger's gates are a strict
+      // subset of allowEmailSummaryOffer.
+      prepareStep: ({ steps }) => {
+        const force = shouldForceEmailOfferStep({
+          emailCaptured,
+          offersMade: emailOffersMade,
+          declined: emailOfferDeclined,
+          toolNamesCalled: turnToolNames(steps),
+        });
+        if (!force) return undefined;
+        return {
+          toolChoice: { type: "tool", toolName: "offer_email_summary" },
+          activeTools: ["offer_email_summary"],
+        };
+      },
+      stopWhen: ({ steps }) => {
+        if (steps.length < MAX_STEPS_PER_TURN) return false;
+        // Budget reached: allow one extra step only for a pending forced
+        // email offer (add_to_cart landed on the last budgeted step).
+        const offerPending = shouldForceEmailOfferStep({
+          emailCaptured,
+          offersMade: emailOffersMade,
+          declined: emailOfferDeclined,
+          toolNamesCalled: turnToolNames(steps),
+        });
+        return !offerPending || steps.length > MAX_STEPS_PER_TURN;
+      },
       onError: ({ error }) => {
         reportError(error, {
           route: "api/chat",

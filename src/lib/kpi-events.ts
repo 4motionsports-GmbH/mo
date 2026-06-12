@@ -52,3 +52,35 @@ export async function recordKpiEvent(opts: {
     reportError(err, { route: "lib/kpi-events", phase: "insert", event: opts.event });
   }
 }
+
+/**
+ * True if this session has recorded an email_capture_declined event (emitted
+ * by the widget through POST /api/kpi when the user dismisses a capture card
+ * — a dismissal is a UI click the conversation history never shows). Gates
+ * the deterministic checkout-intent email offer in api/chat: after an
+ * explicit decline the backend never FORCES another ask; any second ask stays
+ * the model's prompt-gated decision. Best-effort like the rest of this
+ * module: no database or a failed read resolves to false (no decline known).
+ */
+export async function hasDeclinedEmailCapture(
+  sessionId: string | null
+): Promise<boolean> {
+  if (!sessionId) return false;
+  const sql = getSql();
+  if (!sql) return false;
+  try {
+    const rows = await sql`
+      SELECT 1 FROM kpi_events
+      WHERE session_id = ${sessionId} AND event = ${KPI_EMAIL_CAPTURE_DECLINED}
+      LIMIT 1
+    `;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, {
+      route: "lib/kpi-events",
+      phase: "select",
+      event: KPI_EMAIL_CAPTURE_DECLINED,
+    });
+    return false;
+  }
+}
