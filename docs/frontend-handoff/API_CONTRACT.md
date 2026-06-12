@@ -111,53 +111,90 @@ full history on every turn (the customer profile is a pure function of
 the messages, reconstructed by replaying `update_customer_profile` tool
 calls), so the widget must send the entire conversation each turn.
 
-#### Optional `context` — opening the chat "about" a product
+#### Optional `context` — opening the chat "about" a product and/or with a browsing trail
 
 When the widget is opened from a specific product page (e.g. a "Frage zu
-diesem Produkt"/"Beratung" button on a product detail page), it MAY attach
-an optional `context` object alongside `messages`:
+diesem Produkt"/"Beratung" button on a product detail page) and/or with a
+small in-browser browsing trail (recently viewed products/categories), it
+MAY attach an optional `context` object alongside `messages`:
 
 ```jsonc
 {
   "messages": [],
   "context": {
-    "type": "product",
-    "productId": "atx-treadmill-pro-fold",
-    "productTitle": "ATX Treadmill Pro Fold"   // optional, advisory only
+    "type": "product",                          // or "browsing" — see below
+    "productId": "atx-treadmill-pro-fold",      // type "product" only
+    "productTitle": "ATX Treadmill Pro Fold",   // optional, advisory only
+    "recentlyViewed": [                          // optional on BOTH types
+      { "type": "product",  "id": "horizon-fitness-omega-z-laufband", "name": "Omega Z Laufband" },
+      { "type": "product",  "id": "horizon-fitness-paragon-x-laufband", "name": "Paragon X" },
+      { "type": "category", "id": "laufbaender", "name": "Laufbänder" }
+    ]
   }
 }
 ```
 
-| Field          | Type     | Notes                                                              |
-| -------------- | -------- | ----------------------------------------------------------------- |
-| `type`         | string   | Must be `"product"`. Any other value is ignored.                  |
-| `productId`    | string   | Catalog product id. Validated server-side (see below).            |
-| `productTitle` | string?  | Optional/advisory. The backend uses the catalog's canonical name. |
+| Field            | Type     | Notes                                                              |
+| ---------------- | -------- | ----------------------------------------------------------------- |
+| `type`           | string   | `"product"` (single-product open, may also carry a trail) or `"browsing"` (trail only). Any other value → whole context ignored. |
+| `productId`      | string   | Catalog product id (`type: "product"` only). Validated server-side. |
+| `productTitle`   | string?  | Optional/advisory. The backend uses the catalog's canonical name. |
+| `recentlyViewed` | array?   | Small browsing trail, most recent first. Entries: `{ type: "product", id, name }` or `{ type: "category", id?, name }`. |
 
-**Validation.** `productId` is validated against the live catalog. If it is
-missing, not a known product, or `type` is not `"product"`, the context is
-**ignored gracefully** — the request behaves exactly as if no `context` was
-sent (no error). This means a stale storefront link can never inject a bogus
-product into the prompt.
+**Privacy.** The browsing trail is gathered **in the browser** and only ever
+reaches the backend as part of a chat request the **user initiates** (opening
+the chat / sending a message) — it is conversation input, not background
+tracking. Like the single-product context, it shapes the live conversation
+and is never stored as a tracking profile. Don't send it on every turn:
+attach it when the chat is opened (or with the first message, e.g. a starter
+prompt) and when it meaningfully changed — not as a per-turn heartbeat.
+
+**Validation & caps.** Everything is validated against the live catalog and
+**ignored gracefully** on mismatch (no error; the request behaves as if that
+part of the context was never sent):
+
+- `productId` must be a known catalog product (unchanged from before).
+- Trail **products** are validated by `id`; unknown ids are dropped and the
+  catalog's canonical name wins over the client-supplied `name`.
+- Trail **categories** are matched by `name` against the catalog (tolerant of
+  German storefront labels, e.g. "Laufbänder" matches the treadmill range);
+  labels that don't correspond to anything in the catalog are dropped. The
+  category `id` (e.g. a collection handle) is accepted but currently advisory.
+- The trail is capped server-side at the **3 most recent valid products and
+  2 categories** (at most the first 20 entries are even scanned), so send a
+  short, most-recent-first list — there is no point sending more.
 
 The backend keys its behavior off whether `messages` is empty:
 
 - **Fresh open (`messages: []` + valid `context`).** The backend seeds the
-  model with a system-level note ("the user is viewing product '<title>'
-  (id …) and chose to get advice about it — greet them warmly by the
-  product's name and invite their questions; do not repeat the full spec
-  unprompted"). The assistant then produces a **natural greeting as its
-  first streamed message**. The widget does NOT need to send a user message
-  to trigger this — it sends `messages: []` and renders the streamed
-  assistant greeting like any other turn. No fake user message is fabricated
-  in the history.
+  model with a system-level note and the assistant produces a **natural,
+  context-aware greeting as its first streamed message**:
+  - With a product context — unchanged: greet by the product's name and
+    invite questions.
+  - With (only) a browsing trail — greet by helpfully picking up the single
+    most relevant item/category ("Du hast dir ein paar Laufbänder angeschaut
+    — soll ich beim Vergleich helfen?"). The prompt explicitly forbids
+    creepy phrasing: the assistant talks about the products/categories,
+    never about the observing, and never recites the whole trail.
+  - With **both**, the product-page greeting wins and the trail becomes
+    background knowledge for the consultation.
+
+  The widget does NOT need to send a user message to trigger this — it sends
+  `messages: []` and renders the streamed assistant greeting like any other
+  turn. No fake user message is fabricated in the history.
 
 - **Existing conversation (`messages` non-empty + valid `context`).** The
-  backend injects a lightweight in-conversation note ("Der Nutzer schaut
-  sich gerade <title> an") so the assistant can **pivot toward the product
-  without wiping the existing history**. The conversation continues
-  normally; the widget keeps sending the full `messages` array each turn as
-  usual.
+  backend injects lightweight in-conversation notes (product pivot and/or
+  browsing note) so the assistant can **pivot toward the context without
+  wiping the existing history**. The conversation continues normally; the
+  widget keeps sending the full `messages` array each turn as usual.
+
+  This is also the path a **context-seeded starter prompt** takes: sending a
+  starter like "Ist das gut für Zuhause?" as the first user message together
+  with the `context` makes the answer specific to that product/trail — the
+  backend grounds the context products in the model's pre-retrieved product
+  block (specs + stock status), so sold-out and checkout rules apply from the
+  first answer.
 
 In both cases the **response is the same SSE UI-message stream** documented
 below — `context` only seeds the model, it does not change the response
@@ -505,7 +542,7 @@ Widget action: render `message` as the intro, then the capture form with:
   part of the same consent block. **This box MUST start UNCHECKED — never
   pre-check it.** Pre-ticked marketing consent is invalid (GDPR
   clear-affirmative-act; CJEU *Planet49*) and a German UWG Abmahnung trigger;
-  this is a deliberate, documented decision (see the backend repo's `src/lib/consent-copy.ts`).
+  this is a deliberate, documented decision (see `src/lib/consent-copy.ts`).
   The widget SHOULD make the box **prominent** (placement, styling, the
   benefit hint) — opt-ins are won through the copy, not a pre-tick.
 - **imprint + privacy links** next to the form, targeting
@@ -529,7 +566,7 @@ dismissal itself. Do NOT emit "shown"/"submitted" events from the widget;
 those are recorded server-side.
 
 > ⚠️ The checkbox labels are PLACEHOLDER copy pending lawyer approval — see
-> `docs/CONSENT_FLOW.md` (backend repo).
+> [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
 #### Tool parts the widget MUST NOT render
 
@@ -642,7 +679,7 @@ type PublicProduct = {
   shopifyUrl: string;
   shopifyCartUrl?: string; // optional — see note below
   // Stock status, refreshed by the daily catalog sync (NOT a live per-request
-  // check — see the backend repo's docs/CATALOG_SYNC.md). `inStock` is the headline flag: render a
+  // check — see docs/CATALOG_SYNC.md). `inStock` is the headline flag: render a
   // subtle "Ausverkauft" badge on the card when it is `false`. The two optional
   // fields carry richer signals when the sync captured them:
   //   inventoryQuantity   — units in stock across variants/locations
@@ -871,8 +908,8 @@ consent choice.)
 This is the only flow that handles an email address. Two **separate**
 consents, marketing requires a **double opt-in**. The full legal rationale,
 the data model, and the lawyer-review TODO are in
-`docs/CONSENT_FLOW.md` (backend repo). The checkbox/email copy is PLACEHOLDER
-pending lawyer sign-off (backend repo, `src/lib/consent-copy.ts`).
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md). The checkbox/email copy is PLACEHOLDER
+pending lawyer sign-off (`src/lib/consent-copy.ts`).
 
 ### 7.1 `POST /api/capture-email`
 
@@ -998,7 +1035,7 @@ and verifiable without a DB lookup.
 
 `isSuppressed(email)` (suppression list OR unsubscribed, fail-closed) and
 `canSendMarketing(email)` (DOI confirmed AND not suppressed) gate every future
-marketing send. See `docs/CONSENT_FLOW.md` (backend repo).
+marketing send. See [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
 ### 7.4 `GET /api/consent-copy`
 
