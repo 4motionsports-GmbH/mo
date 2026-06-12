@@ -6,13 +6,19 @@ import {
   type ModelMessage,
 } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { buildSystemPrompt, productPivotNote, type ProductContext } from "@/lib/system-prompt";
+import {
+  browsingPivotNote,
+  buildSystemPrompt,
+  productPivotNote,
+  type ProductContext,
+} from "@/lib/system-prompt";
+import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-context";
 import { resolveCustomerMemory, type CustomerMemoryContext } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { welcomeDiscountPercent } from "@/lib/welcome-discount";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
-import { getProductById } from "@/lib/product-catalog";
+import { getProductById, getProductsByIds } from "@/lib/product-catalog";
 import { EMPTY_PROFILE, type CustomerProfile, type PersonaArchetype, type UpdateCustomerProfileArgs } from "@/lib/types";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
@@ -84,13 +90,19 @@ function countEmailSummaryOffers(messages: UIMessage[]): number {
   return count;
 }
 
-// Optional product context the widget attaches when the chat was opened from a
-// specific product page. Shape is intentionally loose here — it crosses a
-// public network boundary, so we validate it in `resolveProductContext`.
+// Optional context the widget attaches when the chat was opened from a
+// specific product page (`type: "product"`) and/or with a small recently-
+// viewed browsing trail (`recentlyViewed`, also valid standalone as
+// `type: "browsing"`). Shape is intentionally loose here — it crosses a
+// public network boundary, so we validate it in `resolveProductContext` /
+// `resolveBrowsingContext`. PRIVACY: the trail only ever arrives as part of
+// a chat request the user initiated — conversation input, not tracking; it
+// seeds the live conversation and is never stored as a profile.
 interface ChatRequestContext {
   type?: string;
   productId?: unknown;
   productTitle?: unknown;
+  recentlyViewed?: unknown;
 }
 
 // Optional re-identification the widget attaches ONLY after a successful
@@ -117,10 +129,9 @@ async function resolveProductContext(
   return { id: product.id, name: product.name };
 }
 
-// Append the lightweight pivot note to the latest user turn (in-conversation),
+// Append a lightweight pivot note to the latest user turn (in-conversation),
 // keeping prior history intact and preserving Anthropic's role alternation.
-function appendPivotNote(messages: ModelMessage[], ctx: ProductContext): void {
-  const note = productPivotNote(ctx);
+function appendPivotNote(messages: ModelMessage[], note: string): void {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== "user") continue;
@@ -222,31 +233,59 @@ export async function POST(req: Request) {
         ? resolveCustomerMemory({ email: claimedEmail, sessionId })
         : Promise.resolve<CustomerMemoryContext | null>(null),
     ]);
-    const retrievedProducts = hits.map((h) => h.product);
-
-    // Optional product context (chat opened "about" a product). Validated
-    // against the catalog; unknown/absent ids leave everything unchanged.
+    // Optional product context (chat opened "about" a product) and/or
+    // browsing context (small recently-viewed trail brought along by the
+    // user). Both validated against the catalog; unknown/absent ids leave
+    // everything unchanged.
     const productContext = await resolveProductContext(body.context);
+    const browsingContext =
+      body.context?.type === "product" || body.context?.type === "browsing"
+        ? await resolveBrowsingContext(body.context.recentlyViewed, {
+            excludeProductId: productContext?.id,
+          })
+        : undefined;
+
+    // Ground the context products in the pre-retrieved block so a contextual
+    // first message ("Ist das gut für Zuhause?" sent from a product page) gets
+    // a specific answer about THAT product — specs and the sold-out flag are
+    // visible without a tool roundtrip. Context products lead; semantic hits
+    // follow, deduped.
+    const contextProductIds = [
+      ...(productContext ? [productContext.id] : []),
+      ...(browsingContext?.products.map((p) => p.id) ?? []),
+    ];
+    const contextProducts =
+      contextProductIds.length > 0 ? await getProductsByIds(contextProductIds) : [];
+    const retrievedProducts = [
+      ...contextProducts,
+      ...hits.map((h) => h.product).filter((p) => !contextProductIds.includes(p.id)),
+    ];
     const modelMessages = await convertToModelMessages(messages);
 
     let greetingContext: ProductContext | undefined;
-    if (productContext) {
-      if (messages.length === 0) {
-        // Fresh open: seed the greeting as a system-level note and add a
-        // minimal, server-internal trigger turn so the model actually emits
-        // the opener. The trigger is never streamed back nor stored by the
-        // widget (it sent an empty conversation), so no fake user message
-        // lands in the rendered history — the greeting is just an extra seed.
-        greetingContext = productContext;
-        modelMessages.push({
-          role: "user",
-          content: `[System: Chat auf der Produktseite von "${productContext.name}" geöffnet — begrüße den Nutzer.]`,
-        });
-      } else {
-        // Existing conversation: pivot via a lightweight in-conversation note
-        // appended to the latest user turn, leaving prior history intact.
-        appendPivotNote(modelMessages, productContext);
-      }
+    let greetingBrowsingContext: BrowsingContext | undefined;
+    if (messages.length === 0 && (productContext || browsingContext)) {
+      // Fresh open: seed the greeting as a system-level note and add a
+      // minimal, server-internal trigger turn so the model actually emits
+      // the opener. The trigger is never streamed back nor stored by the
+      // widget (it sent an empty conversation), so no fake user message
+      // lands in the rendered history — the greeting is just an extra seed.
+      // When both contexts are present, the product-page greeting wins and
+      // the browsing trail becomes background info (see system-prompt.ts).
+      greetingContext = productContext;
+      greetingBrowsingContext = browsingContext;
+      modelMessages.push({
+        role: "user",
+        content: productContext
+          ? `[System: Chat auf der Produktseite von "${productContext.name}" geöffnet — begrüße den Nutzer.]`
+          : `[System: Chat geöffnet, nachdem sich der Nutzer im Shop umgesehen hat — begrüße den Nutzer.]`,
+      });
+    } else if (messages.length > 0) {
+      // Existing conversation (including a starter prompt sent as the first
+      // message): pivot via lightweight in-conversation notes appended to the
+      // latest user turn, leaving prior history intact — never wiped.
+      if (productContext) appendPivotNote(modelMessages, productPivotNote(productContext));
+      if (browsingContext) appendPivotNote(modelMessages, browsingPivotNote(browsingContext));
     }
 
     const result = streamText({
@@ -256,6 +295,7 @@ export async function POST(req: Request) {
         archetype,
         retrievedProducts,
         productContext: greetingContext,
+        browsingContext: greetingBrowsingContext,
         customerMemory: customerMemory ?? undefined,
         emailOffer: {
           offersMade: emailOffersMade,

@@ -1,4 +1,5 @@
 import type { Product, CustomerProfile, PersonaArchetype } from "./types";
+import type { BrowsingContext } from "./browsing-context";
 import type { CustomerMemoryContext } from "./customer-memory";
 import { ARCHETYPE_META, getPersonaAddendum, renderProfileForPrompt } from "./persona";
 import { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./tools";
@@ -33,6 +34,12 @@ interface BuildPromptOpts {
   // greeting. For an EXISTING conversation we do NOT use this — see
   // `productPivotNote` for the lightweight in-conversation variant.
   productContext?: ProductContext;
+  // Set when the user opened a FRESH chat bringing a small recently-viewed
+  // trail along (validated in lib/browsing-context.ts). Seeds either the
+  // context-aware greeting (no productContext present) or background info for
+  // the first answer (productContext present — the product greeting wins).
+  // For an EXISTING conversation we do NOT use this — see `browsingPivotNote`.
+  browsingContext?: BrowsingContext;
   // Set ONLY after the user re-identified themselves IN THIS session (email
   // captured here and verified against this session id) AND that email matched
   // an existing customer with history. Never derived from the session id alone
@@ -60,6 +67,50 @@ function renderProductContext(ctx: ProductContext): string {
   return `## Produktkontext (Chat von einer Produktseite geöffnet)
 
 Der Nutzer betrachtet gerade das Produkt "${ctx.name}" (id \`${ctx.id}\`) im Shop und hat den Chat geöffnet, um sich dazu beraten zu lassen. Begrüße ihn warm und persönlich, nenne das Produkt beim Namen und lade ihn ein, seine Fragen dazu zu stellen. Wiederhole NICHT ungefragt die vollständigen Produktdaten — eine einladende, kurze Begrüßung genügt als erste Nachricht.`;
+}
+
+// Compact one-line description of the validated trail, reused by the system
+// block and the pivot note. Already capped small in lib/browsing-context.ts.
+function describeBrowsing(ctx: BrowsingContext): string {
+  const parts: string[] = [];
+  if (ctx.products.length > 0) {
+    parts.push(
+      `Produkte: ${ctx.products
+        .map((p) => `"${p.name}" (id \`${p.id}\`${p.inStock ? "" : ", aktuell AUSVERKAUFT"})`)
+        .join(", ")}`
+    );
+  }
+  if (ctx.categories.length > 0) {
+    parts.push(`Kategorien: ${ctx.categories.map((c) => c.name).join(", ")}`);
+  }
+  return parts.join(" — ");
+}
+
+// Lightweight in-conversation note used when browsing context arrives on top
+// of an EXISTING conversation. Like productPivotNote: injected into the
+// message flow, never wiping the history that came before it.
+export function browsingPivotNote(ctx: BrowsingContext): string {
+  return `(Hinweis aus dem Storefront: Der Nutzer hat sich gerade im Shop umgesehen — ${describeBrowsing(ctx)}. Knüpfe NUR daran an, falls es zu seinem aktuellen Anliegen passt, und ignoriere das bisherige Gespräch nicht. Zähle nie auf, was er sich alles angesehen hat, und kommentiere nicht sein Surfverhalten — sprich höchstens hilfreich über die Produkte/Kategorien selbst.)`;
+}
+
+function renderBrowsingContext(ctx: BrowsingContext, opts: { greet: boolean }): string {
+  const intro = opts.greet
+    ? `Der Nutzer hat den Chat geöffnet, nachdem er sich im Shop umgesehen hat. Zuletzt angesehen: ${describeBrowsing(ctx)}.
+
+Begrüße ihn warm und knüpfe hilfreich an den EINEN relevantesten Punkt daraus an — als Gesprächsangebot, nicht als Feststellung über sein Verhalten. Gutes Beispiel: "Du hast dir ein paar Laufbänder angeschaut — soll ich beim Vergleich helfen?" Eine kurze, einladende Begrüßung genügt; wiederhole keine Produktdaten.`
+    : `Der Nutzer hat sich vor dem Öffnen des Chats zusätzlich im Shop umgesehen. Zuletzt angesehen: ${describeBrowsing(ctx)}.
+
+Das ist Hintergrundwissen für deine Beratung (z.B. für Vergleiche oder Alternativen) — die Begrüßung richtet sich nach dem Produktkontext oben, zähle diese Liste dort NICHT auf.`;
+
+  return `## Browsing-Kontext (vom Nutzer beim Öffnen des Chats mitgebracht)
+
+${intro}
+
+### So nutzt du den Browsing-Kontext (KRITISCH — hilfreich, nie gruselig)
+- Beziehe dich höchstens auf die 1–2 Punkte, die zum Anliegen passen. Zähle NIEMALS die ganze Liste auf und arbeite sie nicht ab.
+- Sprich über die Produkte/Kategorien, nie über das Beobachten ("ich sehe, du hast geklickt/getrackt" ist VERBOTEN). Formulierungen wie "Du hast dir … angeschaut" oder direkt das Thema aufgreifen sind richtig.
+- Lenkt der Nutzer auf ein anderes Thema, lass den Browsing-Kontext sofort fallen — sein aktuelles Anliegen gewinnt immer.
+- Alle übrigen Regeln gelten unverändert: ein als AUSVERKAUFT markiertes Produkt behandelst du nach den Verfügbarkeits-Regeln (ehrlich erwähnen, nie in den Direkt-Checkout, Alternative anbieten), Tool- und E-Mail-Angebots-Regeln bleiben wie beschrieben.`;
 }
 
 function fmtMemoryDate(iso: string | null): string | null {
@@ -224,6 +275,7 @@ export function buildSystemPrompt({
   archetype,
   retrievedProducts,
   productContext,
+  browsingContext,
   customerMemory,
   emailOffer,
 }: BuildPromptOpts): string {
@@ -234,6 +286,11 @@ export function buildSystemPrompt({
   const productContextBlock = productContext
     ? `\n\n${renderProductContext(productContext)}`
     : "";
+  // Without a product context the browsing trail drives the greeting; with
+  // one it is background only — the product-page greeting wins.
+  const browsingContextBlock = browsingContext
+    ? `\n\n${renderBrowsingContext(browsingContext, { greet: !productContext })}`
+    : "";
   const customerMemoryBlock = customerMemory
     ? `\n\n${renderCustomerMemory(customerMemory)}`
     : "";
@@ -241,7 +298,7 @@ export function buildSystemPrompt({
     emailOffer ?? { offersMade: 0, emailCaptured: false }
   );
 
-  return `Du bist der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}
+  return `Du bist der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}${browsingContextBlock}
 
 ## Deine Persönlichkeit
 
