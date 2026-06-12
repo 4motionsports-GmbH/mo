@@ -83,6 +83,71 @@ export const MARKETING_CHECKBOX_BENEFIT_HINT =
   "Dein Vorteil: Beim nächsten Besuch erkennt Mo dich wieder — keine Basisfragen von vorn, sondern Empfehlungen und Angebote, die wirklich zu deinem Training, deinem Platz und deinem Budget passen. Dafür verwenden wir die Inhalte deiner Beratungsgespräche. Abmelden geht jederzeit kostenlos — ein Klick auf den Link in jeder E-Mail genügt.";
 
 // ---------------------------------------------------------------------------
+// Capture-form consent copy payload (served to the widget)
+// ---------------------------------------------------------------------------
+//
+// The widget must NEVER hard-code the strings above: `consent_text_shown` is
+// our Art. 7 proof of consent, so a manually-copied snapshot in the theme
+// could silently drift from what the audit record claims was shown. Instead
+// the backend serves the canonical copy on two paths and the widget renders
+// it verbatim:
+//
+//   1. attached to the `offer_email_summary` tool RESULT (the tool part's
+//      `output` in the chat stream), and
+//   2. via GET /api/consent-copy for capture forms not triggered by the tool
+//      (e.g. a proactive share-form entry point).
+//
+// Both paths build their payload here, so a lawyer copy change ships with a
+// backend deploy and requires NO widget release.
+
+/**
+ * Imprint / privacy links rendered next to the capture form (the consent text
+ * references data use for personalisation, so the form must link the policy —
+ * see the CONSENT_FLOW.md lawyer TODO). The imprint URL matches the one in the
+ * branded email footer. ⚠️ Verify the privacy URL resolves on the live shop
+ * before launch (Shopify's standard policy path is assumed).
+ */
+export const CAPTURE_FORM_IMPRINT_URL =
+  "https://motionsports.de/pages/impressum";
+export const CAPTURE_FORM_PRIVACY_URL =
+  "https://motionsports.de/policies/privacy-policy";
+
+/** The exact copy the widget needs to render the capture form. */
+export interface CaptureConsentCopy {
+  /** (A) Transactional checkbox label (may render pre-checked — see above). */
+  transactionalLabel: string;
+  /** (B) Marketing checkbox label (MUST render unchecked — see above). */
+  marketingLabel: string;
+  /** (B) Benefit hint, rendered directly beneath the marketing label. */
+  marketingBenefitHint: string;
+  /**
+   * The pre-composed audit string the widget MUST echo back verbatim as
+   * `consentTextShown` on POST /api/capture-email. Composed server-side so
+   * the Art. 7 record can never diverge from the strings actually served.
+   */
+  consentTextShown: string;
+  /** Imprint / privacy links to show next to the form. */
+  imprintUrl: string;
+  privacyUrl: string;
+  /** Mirrors CONSENT_COPY_LAWYER_APPROVED — false until Legal signs off. */
+  lawyerApproved: boolean;
+}
+
+export function captureConsentCopy(): CaptureConsentCopy {
+  return {
+    transactionalLabel: TRANSACTIONAL_CHECKBOX_LABEL,
+    marketingLabel: MARKETING_CHECKBOX_LABEL,
+    marketingBenefitHint: MARKETING_CHECKBOX_BENEFIT_HINT,
+    consentTextShown:
+      `${TRANSACTIONAL_CHECKBOX_LABEL} | ` +
+      `${MARKETING_CHECKBOX_LABEL} ${MARKETING_CHECKBOX_BENEFIT_HINT}`,
+    imprintUrl: CAPTURE_FORM_IMPRINT_URL,
+    privacyUrl: CAPTURE_FORM_PRIVACY_URL,
+    lawyerApproved: CONSENT_COPY_LAWYER_APPROVED,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Double-opt-in confirmation email (sent when marketing consent is ticked)
 // ---------------------------------------------------------------------------
 

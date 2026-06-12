@@ -39,6 +39,15 @@ Rules baked into the code:
 - Every marketing email MUST contain a working unsubscribe link.
 - The exact consent text shown to the user is stored verbatim
   (`consent_text_shown`) as **Art. 7 proof of consent**.
+- **The widget never hard-codes the consent copy.** The canonical strings
+  (checkbox labels, marketing benefit hint, imprint/privacy links, and the
+  pre-composed `consentTextShown` audit string) are served by the backend —
+  attached to every `offer_email_summary` tool result and available via
+  `GET /api/consent-copy` for capture forms not triggered by the tool (see
+  [`API_CONTRACT.md`](./API_CONTRACT.md) §2 + §7.4). The widget renders them
+  verbatim and echoes `consentTextShown` back unchanged, so the stored audit
+  text can never diverge from what was displayed, and a lawyer copy change
+  ships as a backend deploy with no widget release.
 
 ## The data (Cluster B — explicit consent)
 
@@ -68,7 +77,9 @@ Chat → assistant calls offer_email_summary (value-triggered: after a
        well-received recommendation, a helpful comparison, or at buying/
        checkout intent — never as the opener; at most TWO asks per
        conversation, enforced server-side by withholding the tool)
-     → widget renders the capture form (email + two separate checkboxes)
+     → widget renders the capture form (email + two separate checkboxes;
+       copy taken verbatim from the tool result's consentCopy payload —
+       or GET /api/consent-copy for a non-tool-triggered form)
      → POST /api/capture-email { sessionId, email, transactionalConsent,
                                  marketingConsent, consentTextShown }
         ├─ validate email + transactionalConsent (required)
@@ -179,6 +190,10 @@ Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off
       independently-tickable boxes.
 - [ ] Confirm an **Imprint/Privacy link** is shown next to the capture form
       (frontend), as the consent text references data use for personalisation.
+      The link targets are served by the backend (`CAPTURE_FORM_IMPRINT_URL`,
+      `CAPTURE_FORM_PRIVACY_URL` in `consent-copy.ts`) — verify the privacy
+      URL actually resolves on the live shop (the standard Shopify policy
+      path is assumed) before launch.
 - [ ] **Profile building from past interactions and purchases** (the customer
       entity, see [`CUSTOMERS.md`](./CUSTOMERS.md)): confirm the privacy policy
       and the marketing consent text cover building a durable customer profile
