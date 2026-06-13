@@ -401,33 +401,55 @@ async function main() {
     // ── CHECK 1 — CAPABILITY ──────────────────────────────────────────────────
     section("CHECK 1 — CAPABILITY (productBundleCreate)");
 
-    // 1. Pick two cheap, in-stock catalog products/variants — fetched live, not
-    //    hardcoded. We read the product's options + the chosen variant's
-    //    selectedOptions so we can build a valid optionSelections mapping.
+    // 1. Pick two cheap, GENUINELY-stocked catalog variants — fetched live, not
+    //    hardcoded. A fixed bundle's stock is derived from its components, but
+    //    Shopify IGNORES any component that is untracked or set to oversell
+    //    ("continue selling when out of stock"). `availableForSale` alone is
+    //    true for such oversell variants even at qty 0, which yields a bundle
+    //    with 0 derivable inventory. So we prefer variants with a real positive
+    //    tracked quantity (inventoryQuantity > 0), falling back to
+    //    availableForSale only if too few exist (and warning).
     const catalog = await adminGraphql(
       `{ products(first: 60, query: "status:active") {
            nodes {
              id title status
              options { id name }
              variants(first: 5) {
-               nodes { id title price availableForSale selectedOptions { name value } }
+               nodes { id title price availableForSale inventoryQuantity inventoryPolicy selectedOptions { name value } }
              }
            }
          } }`
     );
-    const candidates = [];
+    const stocked = [];
+    const availableOnly = [];
     for (const p of catalog.products.nodes) {
-      const v = (p.variants?.nodes ?? []).find(
-        (x) => x.availableForSale && Number(x.price) > 0
-      );
-      if (!v) continue;
-      candidates.push({ product: p, variant: v, price: Number(v.price) });
+      for (const v of p.variants?.nodes ?? []) {
+        if (!(Number(v.price) > 0)) continue;
+        const entry = { product: p, variant: v, price: Number(v.price) };
+        if (v.availableForSale && (v.inventoryQuantity ?? 0) > 0) stocked.push(entry);
+        else if (v.availableForSale) availableOnly.push(entry);
+      }
     }
-    candidates.sort((a, b) => a.price - b.price);
-    const chosen = candidates.slice(0, 2);
+    stocked.sort((a, b) => a.price - b.price);
+    availableOnly.sort((a, b) => a.price - b.price);
+    // Use distinct PRODUCTS (a bundle can't list the same product twice).
+    const chosen = [];
+    const usedProducts = new Set();
+    for (const c of [...stocked, ...availableOnly]) {
+      if (usedProducts.has(c.product.id)) continue;
+      usedProducts.add(c.product.id);
+      chosen.push(c);
+      if (chosen.length === 2) break;
+    }
     if (chosen.length < 2) {
       throw new Error(
         `Need 2 in-stock active products to form a bundle; found ${chosen.length}.`
+      );
+    }
+    if (stocked.length < 2) {
+      console.log(
+        "  ⚠ fewer than 2 variants with positive tracked stock — using oversell/" +
+          "availableForSale variants; the bundle may derive 0 inventory."
       );
     }
     report.components = chosen.map((c) => ({
@@ -435,10 +457,15 @@ async function main() {
       title: c.product.title,
       variantId: c.variant.id,
       price: c.variant.price,
+      inventoryQuantity: c.variant.inventoryQuantity ?? null,
+      inventoryPolicy: c.variant.inventoryPolicy ?? null,
     }));
-    console.log("  chosen components (cheapest in-stock):");
+    console.log("  chosen components (cheapest with real stock first):");
     for (const c of chosen) {
-      console.log(`    - ${c.product.title} @ ${c.price} (${c.variant.id})`);
+      console.log(
+        `    - ${c.product.title} @ ${c.price} qty=${c.variant.inventoryQuantity} ` +
+          `policy=${c.variant.inventoryPolicy} (${c.variant.id})`
+      );
     }
 
     // Build component inputs: one optionSelection per product option, fixing it
@@ -681,11 +708,27 @@ async function main() {
         }
       }
     }`;
-    const ver = await adminGraphql(VERIFY, { id: opProduct.id });
-    const vp = ver.product;
-    const parentVar =
-      (vp.variants?.nodes ?? []).find((v) => v.id === report.parentVariantId) ??
-      vp.variants?.nodes?.[0];
+    // A fixed bundle's inventory is computed from its components ASYNCHRONOUSLY,
+    // so the parent variant can read as availableForSale=false / qty 0 for a few
+    // seconds right after creation. Re-poll until it settles to available (or the
+    // budget is exhausted) so the buyable verdict reflects the steady state.
+    const INV_MAX_ATTEMPTS = 8;
+    const INV_INTERVAL_MS = 1500;
+    let vp = null;
+    let parentVar = null;
+    for (let i = 1; i <= INV_MAX_ATTEMPTS; i++) {
+      const ver = await adminGraphql(VERIFY, { id: opProduct.id });
+      vp = ver.product;
+      parentVar =
+        (vp.variants?.nodes ?? []).find((v) => v.id === report.parentVariantId) ??
+        vp.variants?.nodes?.[0];
+      console.log(
+        `  inventory check #${i}: availableForSale=${parentVar?.availableForSale} ` +
+          `qty=${parentVar?.inventoryQuantity} totalInventory=${vp?.totalInventory}`
+      );
+      if (parentVar?.availableForSale === true) break;
+      if (i < INV_MAX_ATTEMPTS) await sleep(INV_INTERVAL_MS);
+    }
 
     let publishedOnOnlineStore = null;
     if (onlineStorePubId) {
