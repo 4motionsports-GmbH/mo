@@ -84,6 +84,39 @@ needed for that and is justified by legitimate interest. The richer capture
 
 ---
 
+## Cluster B (cont.) — Bundle offers
+
+**Lawful basis: explicit consent (Art. 6(1)(a)).** A **bundle offer**
+(`bundle_offers`, migration `0013`, see [`BUNDLES.md`](./BUNDLES.md)) is a real
+Shopify product generated *for* a person and sent through the consented
+marketing channel, so it follows the **same lawful basis and rules as a
+marketing send**. Its only personal link is the nullable `customer_id`
+(`ON DELETE SET NULL`) — the row itself stores **no email**; it holds Shopify
+product/variant ids, a component **price snapshot**, the offer price, the
+materialized cart link and the lifecycle status.
+
+| Table           | What's stored                                                                              | Lawful basis     |
+| --------------- | ------------------------------------------------------------------------------------------ | ---------------- |
+| `bundle_offers` | nullable `customer_id`, component snapshot (no PII), prices, Shopify ids, status/timestamps | Explicit consent |
+
+### Retention windows (bundle offers)
+
+| Data                          | Default window | Env var                    | Action on expiry / erasure                          |
+| ----------------------------- | -------------- | -------------------------- | --------------------------------------------------- |
+| Offer **availability**        | **7 days**     | `BUNDLE_OFFER_EXPIRY_DAYS` | `/api/cron/expire-bundles` archives the Shopify product + flips the row to `expired` (kept for audit/KPIs) |
+| Offer **record → customer link** | follows the customer | `SUPPRESSED_CAPTURE_PURGE_DAYS` | erasing the customer **SET NULL**s `customer_id`; the de-identified offer row (Shopify ids + prices, no PII) is retained for order-history/KPI integrity |
+
+**Why the record is kept after the customer is erased.** Like `marketing_sends`,
+a bundle offer can correspond to a **real Shopify order**; deleting it would
+orphan order history. The `ON DELETE SET NULL` link means a GDPR erasure removes
+the *person* (the email + cached summaries on `customers`) while the offer row —
+which carries no directly-identifying field — stays for accounting/KPIs. The
+**archived-offer window** is therefore "kept de-identified"; the *active* window
+is the 7-day availability above, enforced by the expiry cron (ARCHIVE, never
+DELETE, so the Shopify side stays reversible too).
+
+---
+
 ## How retention is enforced
 
 A daily cron — `GET /api/cron/retention`, scheduled in `vercel.json`, protected

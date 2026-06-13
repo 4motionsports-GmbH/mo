@@ -1,20 +1,24 @@
-// GET /api/r/[token] — tracked redirect for the marketing email's cart link.
+// GET /api/r/[token] — tracked redirect for marketing email links.
 //
-// The marketing email links here instead of straight to Shopify. We resolve the
-// token to its marketing_sends row, record the click (clicked_at = FIRST click,
-// plus a 'marketing_email_clicked' kpi_event), then 302-redirect to the real
-// prefilled Shopify cart (the ?discount=CODE param stays intact). The customer
-// experiences a perfectly normal click.
+// Two kinds of token resolve here, tried in order:
+//   1. MARKETING send token  → the prefilled Shopify cart (?discount=CODE intact).
+//   2. BUNDLE OFFER token     → the bundle's materialized /cart permalink.
+// Either way we record the click (clicked_at / a kpi_event), then 302 to the
+// real destination. The customer experiences a perfectly normal click.
 //
 // GDPR: this logs a click on a link the user CHOSE to click — not covert
 // surveillance, and deliberately NO open-tracking pixel.
 //
-// Resilience: a customer clicking a real email must NEVER hit a dead page. If the
-// token can't be resolved (unknown / expired / pruned), or has no stored cart, we
-// STILL redirect to a sensible storefront fallback and log the anomaly. Clicked
-// as a top-level navigation from a mail client → no CORS/secret guard.
+// Resilience: a customer clicking a real email must NEVER hit a dead page.
+//   - Unknown / unresolved token  → redirect to a sensible storefront fallback.
+//   - EXPIRED / archived bundle offer → a friendly branded "Angebot abgelaufen"
+//     page (Shopify has no native friendly-expired page; an archived product's
+//     URL 404s and a stale cart permalink drops the line — spike §5). We serve
+//     the on-brand page here instead.
+// Clicked as a top-level navigation from a mail client → no CORS/secret guard.
 
 import { recordEmailClick } from "@/lib/marketing-store";
+import { resolveBundleRedirect } from "@/lib/bundle-offers-store";
 import { SHOP_DOMAIN } from "@/lib/shopify-cart-url.mjs";
 import { reportError } from "@/lib/observability";
 
@@ -24,21 +28,91 @@ export const maxDuration = 10;
 // so a real customer always lands somewhere sensible rather than on an error.
 const FALLBACK_URL = `${SHOP_DOMAIN}/cart`;
 
+// A sensible storefront destination from the friendly expired page (env-
+// overridable, e.g. a "current deals" collection). Defaults to the storefront.
+function expiredCollectionUrl(): string {
+  return process.env.BUNDLE_EXPIRED_REDIRECT_URL?.trim() || `${SHOP_DOMAIN}`;
+}
+
+/** A small branded "offer expired" page (spike §5 graceful degrade). */
+function expiredOfferResponse(): Response {
+  const shopUrl = expiredCollectionUrl();
+  const html = `<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Angebot abgelaufen — Motion Sports</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0; min-height: 100vh; display: flex; align-items: center;
+        justify-content: center; background: #f5f5f4;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: #1c1917; padding: 24px;
+      }
+      .card {
+        background: #fff; border-radius: 16px; padding: 40px 32px; max-width: 460px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.08); text-align: center;
+      }
+      h1 { font-size: 1.5rem; margin: 0 0 12px; }
+      p { font-size: 1rem; line-height: 1.5; color: #44403c; margin: 0 0 24px; }
+      a.btn {
+        display: inline-block; background: #1c1917; color: #fff; text-decoration: none;
+        padding: 12px 24px; border-radius: 9999px; font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Dieses Angebot ist leider abgelaufen</h1>
+      <p>
+        Dein persönliches Set ist nicht mehr verfügbar. Stöbere gerne in unserem
+        Shop — vielleicht ist etwas Passendes für dich dabei.
+      </p>
+      <a class="btn" href="${shopUrl}">Zum Shop</a>
+    </main>
+  </body>
+</html>`;
+  return new Response(html, {
+    status: 410, // Gone — the offer existed but is no longer available.
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
 export async function GET(
   _req: Request,
   ctx: { params: Promise<{ token: string }> }
 ) {
   const { token } = await ctx.params;
 
-  let destination = FALLBACK_URL;
   try {
-    const resolved = await recordEmailClick(token);
-    if (resolved?.destination) {
-      destination = resolved.destination;
+    // 1. Marketing send token (the established path).
+    const marketing = await recordEmailClick(token);
+    if (marketing?.destination) {
+      return Response.redirect(marketing.destination, 302);
+    }
+
+    // 2. Bundle offer token.
+    const bundle = await resolveBundleRedirect(token);
+    if (bundle) {
+      if (bundle.status === "active" && bundle.destination) {
+        return Response.redirect(bundle.destination, 302);
+      }
+      // Expired / archived / failed / pending offer → friendly branded page,
+      // never a Shopify 404 or empty cart.
+      return expiredOfferResponse();
+    }
+
+    // Unknown / pruned token, or a marketing row without a cart URL. Don't error
+    // the customer — fall back to the storefront cart and log it.
+    if (marketing) {
+      console.warn("[api/r] marketing redirect token without a cart URL", {
+        tokenPreview: typeof token === "string" ? token.slice(0, 8) : "",
+      });
     } else {
-      // Unknown/expired/pruned token, or a sent row without a cart URL. Don't
-      // error the customer — fall back to the storefront cart and log it.
-      console.warn("[api/r] unresolved marketing redirect token", {
+      console.warn("[api/r] unresolved redirect token", {
         tokenPreview: typeof token === "string" ? token.slice(0, 8) : "",
       });
     }
@@ -47,5 +121,5 @@ export async function GET(
     reportError(err, { route: "api/r" });
   }
 
-  return Response.redirect(destination, 302);
+  return Response.redirect(FALLBACK_URL, 302);
 }
