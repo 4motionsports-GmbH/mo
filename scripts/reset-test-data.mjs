@@ -14,6 +14,7 @@
 //   suppression_list               (Cluster B)
 //   kpi_persona_question_summaries (Cluster A — derived analytics cache)
 //   customers                      (Cluster B — migration 0008)
+//   ai_usage                       (standalone — migration 0012)
 //
 // What is NOT touched:
 //   _migrations        — schema version tracking; never touch
@@ -99,6 +100,7 @@ const DATA_TABLES = [
   "suppression_list",
   "kpi_persona_question_summaries",
   "customers",             // added migration 0008; email_captures/conversations truncated first
+  "ai_usage",              // added migration 0012
 ];
 
 console.log("[reset-test-data] Tables to truncate:");
