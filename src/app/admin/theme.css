@@ -1,0 +1,168 @@
+/*
+ * Admin design system — Tailwind CSS v4 entry + design tokens.
+ *
+ * SCOPING: this stylesheet is imported ONLY by src/app/admin/layout.tsx. In the
+ * Next.js App Router, CSS imported in a layout is loaded only for routes under
+ * that segment, so Tailwind (incl. its preflight reset) applies to /admin/* and
+ * NEVER to the public widget (/) or the /api/* routes. Do not import this file
+ * anywhere outside the admin subtree.
+ *
+ * Tailwind v4 is CSS-first: tokens live in @theme, dark mode is opt-in via a
+ * `.dark` class (see @custom-variant below) rather than prefers-color-scheme,
+ * so the server can render the chosen theme from a cookie with no flash.
+ */
+
+@import "tailwindcss";
+
+/* Class-based dark mode: `dark:` utilities apply when a `.dark` ancestor exists
+ * (the admin shell toggles `.dark` on #admin-root). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+ * Brand + semantic tokens. Raw semantic variables are defined on :root (light)
+ * and overridden under .dark (dark). The @theme inline block below maps them to
+ * Tailwind color names so utilities like `bg-card` / `text-muted-foreground`
+ * resolve through these variables and flip automatically in dark mode.
+ * ------------------------------------------------------------------------- */
+:root {
+  /* Fixed brand colors (do not change per theme) */
+  --brand-black: #111111;
+  --brand-blue: #008ccb; /* accent */
+  --brand-red: #cf2e2e; /* alerts only */
+
+  --radius: 0.625rem;
+
+  /* Surfaces / text */
+  --background: #fafafa;
+  --foreground: #111111;
+  --card: #ffffff;
+  --card-foreground: #111111;
+  --popover: #ffffff;
+  --popover-foreground: #111111;
+
+  /* Primary = brand black (inverts in dark for contrast) */
+  --primary: #111111;
+  --primary-foreground: #ffffff;
+
+  /* Secondary / muted neutral grays */
+  --secondary: #f1f3f5;
+  --secondary-foreground: #1f2937;
+  --muted: #f3f4f6;
+  --muted-foreground: #6b7280;
+
+  /* Accent = brand blue */
+  --accent: #008ccb;
+  --accent-foreground: #ffffff;
+
+  /* Destructive = brand alert red */
+  --destructive: #cf2e2e;
+  --destructive-foreground: #ffffff;
+
+  /* Status tints (banners/badges) — readable in light theme */
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+  --warning: #b45309;
+  --warning-foreground: #ffffff;
+  --info: #1e40af;
+  --info-foreground: #ffffff;
+
+  /* Lines + focus */
+  --border: #e5e7eb;
+  --input: #d6dbe0;
+  --ring: #008ccb;
+}
+
+.dark {
+  --background: #0b0d0f;
+  --foreground: #f3f4f6;
+  --card: #15181b;
+  --card-foreground: #f3f4f6;
+  --popover: #15181b;
+  --popover-foreground: #f3f4f6;
+
+  /* Inverted so a "primary" action stays visible on dark surfaces */
+  --primary: #f3f4f6;
+  --primary-foreground: #111111;
+
+  --secondary: #23272b;
+  --secondary-foreground: #f3f4f6;
+  --muted: #1b1f23;
+  --muted-foreground: #9aa3ad;
+
+  --accent: #2aa5db;
+  --accent-foreground: #06222e;
+
+  --destructive: #e5484d;
+  --destructive-foreground: #1a0606;
+
+  --success: #34d399;
+  --success-foreground: #05281a;
+  --warning: #fbbf24;
+  --warning-foreground: #2a1a00;
+  --info: #93c5fd;
+  --info-foreground: #07203f;
+
+  --border: #2a2f35;
+  --input: #3a4047;
+  --ring: #2aa5db;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-brand-black: var(--brand-black);
+  --color-brand-blue: var(--brand-blue);
+  --color-brand-red: var(--brand-red);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-montserrat), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+}
+
+/* The admin shell root: paints the themed surface and applies Montserrat. */
+.admin-root {
+  background-color: var(--background);
+  color: var(--foreground);
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Default border + outline colors so utilities like `border` look right under
+ * Tailwind v4 (which no longer defaults the border color to gray). */
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--border);
+  }
+}

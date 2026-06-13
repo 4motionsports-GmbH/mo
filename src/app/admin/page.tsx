@@ -1,17 +1,19 @@
-// /admin — the back-office dashboard (server-rendered). Protected by the proxy;
-// this page is only ever reached with a valid admin session.
+// /admin — the back-office dashboard. Auth is enforced by the proxy; this page
+// is only ever reached with a valid admin session.
 //
-// Three tabs, switched by the `?tab=` query param (kept server-rendered — no
-// client router needed):
+// Structure: data for all three tabs is fetched + rendered on the SERVER (the
+// CustomersTab / KundenTab / KpiTab bodies below) and handed to the client
+// AdminShell, which owns the active-tab state, the theme toggle and the Toaster.
+// The old server-side ?tab= switch is gone, but the initial tab is still seeded
+// from ?tab= so deep links / refresh land on the right tab, and the shell keeps
+// the query param in sync as you switch.
+//
 //   - MARKETING (default): marketing-eligible contacts (DOI confirmed, not
-//     unsubscribed, not suppressed), each with transcript, persona, discussed
-//     products, the "chatted but not purchased" flag and the draft/send workflow
-//     (see CustomerCard).
-//   - KUNDEN: grouped by CUSTOMER (email), not by session — session timeline,
-//     purchase history, persona(s) and the regenerated "current understanding"
-//     summary (see CustomerProfileCard). Returning customers are marked.
-//   - KPIs: aggregate analytics over conversations / messages / kpi_events plus
-//     a recommendation→purchase loop (see KpiTab).
+//     unsubscribed, not suppressed) with transcript, persona, products, the
+//     "chatted but not purchased" flag and the draft/send workflow (CustomerCard).
+//   - KUNDEN: grouped by CUSTOMER (email) — session timeline, purchase history,
+//     persona(s) and the regenerated "current understanding" (CustomerProfileCard).
+//   - KPIs: aggregate analytics + recommendation→purchase loop (KpiTab).
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -28,10 +30,10 @@ import { CustomerCard } from "./CustomerCard";
 import { CustomerProfileCard, type CustomerProps } from "./CustomerProfileCard";
 import { isWelcomeDiscountEnabled } from "@/lib/welcome-discount-flag.mjs";
 import { KpiTab } from "./KpiTab";
+import { AdminShell, type AdminTab } from "./AdminShell";
+import { THEME_COOKIE, type Theme } from "./theme-config";
 
 export const dynamic = "force-dynamic";
-
-type Tab = "customers" | "kunden" | "kpi";
 
 async function logoutAction(): Promise<void> {
   "use server";
@@ -46,70 +48,24 @@ export default async function AdminDashboardPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const sp = await searchParams;
-  const tab: Tab = sp?.tab === "kpi" ? "kpi" : sp?.tab === "kunden" ? "kunden" : "customers";
+  const initialTab: AdminTab =
+    sp?.tab === "kpi" ? "kpi" : sp?.tab === "kunden" ? "kunden" : "customers";
   const dbReady = isDbConfigured();
 
+  const store = await cookies();
+  const themeCookie = store.get(THEME_COOKIE)?.value;
+  const themeInitial: Theme | null =
+    themeCookie === "dark" ? "dark" : themeCookie === "light" ? "light" : null;
+
   return (
-    <main
-      style={{
-        fontFamily: "system-ui, sans-serif",
-        color: "#111",
-        background: "#fafafa",
-        minHeight: "100vh",
-        padding: "24px 20px 64px",
-      }}
-    >
-      <div style={{ maxWidth: 920, margin: "0 auto" }}>
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 8,
-          }}
-        >
-          <div>
-            <h1 style={{ fontSize: 22, margin: 0 }}>Admin-Dashboard</h1>
-            <p style={{ fontSize: 13, color: "#666", margin: "4px 0 0" }}>
-              {tab === "kpi"
-                ? "KPIs · Pseudonyme Analytics (Cluster A) + Shopify-Käufe"
-                : tab === "kunden"
-                  ? "Kunden · Gruppiert nach Person (E-Mail) — Sessions, Käufe & Kundenverständnis"
-                  : "Marketing · Nur bestätigte (DOI), nicht abgemeldete Kontakte"}
-            </p>
-          </div>
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              style={{
-                fontSize: 13,
-                padding: "8px 14px",
-                border: "1px solid #ddd",
-                background: "#fff",
-                borderRadius: 8,
-                cursor: "pointer",
-              }}
-            >
-              Abmelden
-            </button>
-          </form>
-        </header>
-
-        <nav style={{ display: "flex", gap: 8, margin: "16px 0 20px" }}>
-          <TabLink label="Marketing" href="/admin" active={tab === "customers"} />
-          <TabLink label="Kunden" href="/admin?tab=kunden" active={tab === "kunden"} />
-          <TabLink label="KPIs" href="/admin?tab=kpi" active={tab === "kpi"} />
-        </nav>
-
-        {tab === "kpi" ? (
-          <KpiTab dbReady={dbReady} />
-        ) : tab === "kunden" ? (
-          <KundenTab dbReady={dbReady} />
-        ) : (
-          <CustomersTab dbReady={dbReady} />
-        )}
-      </div>
-    </main>
+    <AdminShell
+      initialTab={initialTab}
+      themeInitial={themeInitial}
+      logoutAction={logoutAction}
+      marketing={<CustomersTab dbReady={dbReady} />}
+      kunden={<KundenTab dbReady={dbReady} />}
+      kpi={<KpiTab dbReady={dbReady} />}
+    />
   );
 }
 
@@ -134,13 +90,14 @@ async function CustomersTab({ dbReady }: { dbReady: boolean }) {
       )}
 
       {targets.length > 0 && (
-        <p style={{ fontSize: 13, color: "#666", margin: "0 0 16px" }}>
-          {targets.length} Kontakt(e) · <strong>{notPurchased}</strong> &bdquo;beraten,
-          aber (noch) nicht gekauft&ldquo; — die wichtigste Marketing-Zielgruppe.
+        <p className="mb-4 text-sm text-muted-foreground">
+          {targets.length} Kontakt(e) · <strong className="text-foreground">{notPurchased}</strong>{" "}
+          &bdquo;beraten, aber (noch) nicht gekauft&ldquo; — die wichtigste
+          Marketing-Zielgruppe.
         </p>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="flex flex-col gap-4">
         {targets.map((t) => (
           <CustomerCard key={t.captureId} target={t} />
         ))}
@@ -246,13 +203,13 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
       )}
 
       {cards.length > 0 && (
-        <p style={{ fontSize: 13, color: "#666", margin: "0 0 16px" }}>
-          {cards.length} Kunde(n) · <strong>{returning}</strong> wiederkehrend (mehrere Sessions
-          unter derselben E-Mail).
+        <p className="mb-4 text-sm text-muted-foreground">
+          {cards.length} Kunde(n) · <strong className="text-foreground">{returning}</strong>{" "}
+          wiederkehrend (mehrere Sessions unter derselben E-Mail).
         </p>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="flex flex-col gap-4">
         {cards.map((c) => (
           <CustomerProfileCard
             key={c.id}
@@ -267,41 +224,15 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
   );
 }
 
-function TabLink({ label, href, active }: { label: string; href: string; active: boolean }) {
-  return (
-    <a
-      href={href}
-      style={{
-        fontSize: 13,
-        fontWeight: active ? 600 : 400,
-        padding: "8px 14px",
-        background: active ? "#111" : "#fff",
-        color: active ? "#fff" : "#555",
-        border: active ? "1px solid #111" : "1px solid #eee",
-        borderRadius: 999,
-        textDecoration: "none",
-      }}
-    >
-      {label}
-    </a>
-  );
-}
-
+// Page-level banner (empty / not-configured states). Themed via tokens so it
+// stays readable in both light and dark. The richer tab-body cards keep their
+// own styling for now — full per-tab redesigns land in sessions B/C/D.
 function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
-  const bg = tone === "warn" ? "#fef3c7" : "#eff6ff";
-  const fg = tone === "warn" ? "#92400e" : "#1e40af";
+  const cls =
+    tone === "warn"
+      ? "border-warning/30 bg-warning/10 text-warning"
+      : "border-info/30 bg-info/10 text-info";
   return (
-    <div
-      style={{
-        background: bg,
-        color: fg,
-        fontSize: 13,
-        padding: "12px 14px",
-        borderRadius: 10,
-        marginBottom: 16,
-      }}
-    >
-      {children}
-    </div>
+    <div className={`mb-4 rounded-lg border px-3.5 py-3 text-sm ${cls}`}>{children}</div>
   );
 }
