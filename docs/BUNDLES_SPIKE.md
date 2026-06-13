@@ -483,40 +483,53 @@ It uses the existing backend client (`adminGraphql`/`isShopifyConfigured` from
 trust memorised mutation shapes**: a `preflight()` step introspects the live
 `2026-04` schema and asserts every input field / mutation argument it uses
 (`ProductBundleCreateInput`, `ProductBundleComponentInput`,
-`ProductBundleComponentOptionSelectionInput`, `ProductVariantsBulkInput`,
-`PublicationInput`, the `productUpdate` argument name, and the `ProductStatus`
-enum incl. `UNLISTED`/`ARCHIVED`) exists before any mutation fires, aborting
-with the live schema dump on any mismatch. It always archives (never deletes)
-anything it creates, even on partial failure.
+`ProductBundleComponentOptionSelectionInput`, `ProductVariantsBulkInput` incl.
+`compareAtPrice`, `PublicationInput`, the `productUpdate` argument name, and the
+`ProductStatus` enum incl. `UNLISTED`/`ARCHIVED`) exists before any mutation
+fires, aborting with the live schema dump on any mismatch. It **also derives
+each mutation's `userErrors` sub-selection from the live schema** (these
+mutations use different userError types — see the corrected false-negative note
+below). It sets the parent variant's `compareAtPrice` to the true component sum
+(PAngV-safe "statt €X", §2) and always archives (never deletes) anything it
+creates, even on partial failure.
 
-### ⚠ Execution status: NOT YET RUN AGAINST THE LIVE STORE
+### ⚠ Correction — the first live run was a probe bug (false negative), now fixed
 
-This S9b session executed in the Claude-Code **web/CI environment, which has no
-Shopify credentials** (no `.env`; `SHOPIFY_STORE_DOMAIN` / `SHOPIFY_CLIENT_ID` /
-`SHOPIFY_CLIENT_SECRET` / `SHOPIFY_API_VERSION` are all unset). The probe is a
-**live-store** test — creating a real (then-archived) bundle product — so it
-**cannot** run here. Run against the store gives:
+An earlier revision of the probe hardcoded `userErrors { field message code }`
+on **every** mutation. On `2026-04`, `productBundleCreate`'s `userErrors` are a
+plain **`UserError`** (only `field` + `message` — **no `code`**), so Shopify
+**rejected the query at GraphQL validation** (`Field 'code' doesn't exist on
+type 'UserError'`) **before ever attempting to create a bundle**. The old
+classifier then matched the word "bundle" in that validation message and
+misreported it as **"capability not available" — a FALSE NEGATIVE.** It was a
+script bug, not a capability verdict; the store is on the **Advanced plan** and
+`productBundleCreate` + all its input types passed preflight, so the bundles
+capability is **almost certainly PRESENT** — we just never got a real answer.
 
-```
-$ node scripts/probe-bundle.mjs
-SKIPPED — Shopify is not configured in this environment.
-```
+Fixed in this revision:
+1. **No hardcoded `code`.** Each mutation's `userErrors` selection (and
+   `ProductBundleOperation.userErrors`) is introspected from the live schema and
+   only existing fields are selected — different userError types are handled
+   per-type, not assumed to share a shape.
+2. **Hardened capability classifier.** ONLY a genuine
+   access/ownership/permission error (`ACCESS_DENIED`, "must install", "must
+   have access", scope errors, …) is reported as "capability not available." Any
+   GraphQL validation / undefined-field error now **fails LOUD as a probe error**
+   and can never masquerade as a capability verdict.
 
-The script itself is verified to **load, type-check (native TS strip), parse,
-and exit 0 cleanly** on the no-credentials path. To get the empirical answers,
-run it where the Shopify env vars are present (a developer machine with `.env`,
-or this environment once the four `SHOPIFY_*` secrets are added) and paste the
-emitted **FINDINGS** JSON block in below.
+The corrected probe is verified to load/parse and exit 0 cleanly on the
+no-credentials path; the live capability/purchasability fields below are left
+**blank, to be filled from the local re-run** against the store.
 
-### Results to fill in (template — populate from the live run)
+### Results to fill in (template — populate from the corrected live run)
 
 | Field | Value |
 | --- | --- |
-| CHECK 1 — capability (`productBundleCreate`) | **YES / NO** _(if NO: exact code + message; merchant must install free "Shopify Bundles" app or use §6a fallback)_ |
+| CHECK 1 — capability (`productBundleCreate`) | **YES / NO** _(if NO: exact field + message of the genuine access error; merchant must install free "Shopify Bundles" app or use §6a fallback)_ |
 | `ProductBundleOperation` id | _gid_ |
 | Poll count / wall time | _n polls / m ms_ |
 | Bundle product id / parent variant gid | _gid / gid_ |
-| CHECK 2 — price set (`productVariantsBulkUpdate`) | _1.00 EUR_ |
+| CHECK 2 — price / compareAtPrice (`productVariantsBulkUpdate`) | _1.00 EUR / <component-sum> EUR_ |
 | Status → `UNLISTED` (`productUpdate`) | _UNLISTED_ |
 | Published to Online Store (`publishablePublish`) | _publicationId + true_ |
 | **Cart permalink to test manually** | `https://motionsports.de/cart/<numericVariantId>:1` |
@@ -528,19 +541,19 @@ an incognito window and confirm it reaches Shopify checkout. The probe verifies
 everything up to that point (UNLISTED + published-to-Online-Store +
 `availableForSale`); the final click-through is the human confirmation.
 
-### Recommendation: **PENDING the live run** (analysis ⇒ provisional GO)
+### Recommendation: **PENDING the corrected live run** (analysis ⇒ provisional GO)
 
 The spike's §1/§3 analysis points to **GO** on the native fixed-bundle path
 (only `write_products` needed; `UNLISTED` present in `2026-04`), **conditional
-on** the §1 capability check passing. The empirical confirmation is the one
-thing this environment could not produce. Decision rule for S10, straight from
-the probe output:
+on** the §1 capability check passing — and the Advanced plan + clean preflight
+make a PRESENT capability the strongly expected outcome. Decision rule for S10,
+straight from the (now trustworthy) probe output:
 
 - **CHECK 1 = YES and CHECK 2 signals buyable → GO** (native fixed bundle, per
   the §RECOMMENDED flow).
-- **CHECK 1 = NO (access/capability error) → NO-GO for native unless the
-  merchant installs the free "Shopify Bundles" app; otherwise FALLBACK** to the
-  §6(a) plain-`UNLISTED`-product path (same rails, `write_products` only,
+- **CHECK 1 = NO (genuine access/ownership error only) → NO-GO for native unless
+  the merchant installs the free "Shopify Bundles" app; otherwise FALLBACK** to
+  the §6(a) plain-`UNLISTED`-product path (same rails, `write_products` only,
   accepts manual inventory safety).
 </content>
 </invoke>
