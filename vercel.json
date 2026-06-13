@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/retention",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/expire-bundles",
+      "schedule": "45 3 * * *"
     }
   ]
 }
