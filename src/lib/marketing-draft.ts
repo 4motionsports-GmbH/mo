@@ -271,6 +271,38 @@ export interface GenerateCustomerDraftInput extends DraftDiscountInput {
    * the model in its own clearly-labelled section. Null/empty = none.
    */
   adminInstructions: string | null;
+  /**
+   * A created bundle attached to this send, so the draft references it
+   * NATURALLY. The actual offer block (products, price, "statt", CTA) is
+   * appended deterministically at send time — the prose just mentions the set.
+   * Null = no bundle attached.
+   */
+  attachedBundle?: {
+    title: string;
+    componentNames: string[];
+    /** True when the bundle price is below the component sum (a real saving). */
+    hasSaving: boolean;
+  } | null;
+}
+
+/** The prompt section describing an attached bundle (or null when none). The
+ * model should reference the set warmly, near the call-to-action, WITHOUT
+ * inventing a price or a link (the offer block is appended at send time). */
+function bundleHint(bundle: GenerateCustomerDraftInput["attachedBundle"]): string {
+  if (!bundle || bundle.componentNames.length === 0) return "";
+  const items = bundle.componentNames.map((n) => `  - ${n}`).join("\n");
+  return (
+    `## Angehängtes Set-Angebot (im Text natürlich erwähnen)\n` +
+    `Für diesen Kunden ist ein persönliches Produkt-Set „${bundle.title}“ ` +
+    `vorbereitet, das unten in der E-Mail als eigenes Angebot mit Bild, Preis ` +
+    `und Button erscheint. Erwähne dieses Set einladend im Text (nahe der ` +
+    `Handlungsaufforderung), als hättest du es persönlich zusammengestellt.` +
+    (bundle.hasSaving
+      ? ` Es ist günstiger als die Einzelprodukte zusammen — weise freundlich auf den Vorteil hin.`
+      : ``) +
+    ` Nenne KEINEN Preis und baue KEINEN Link ein (beides wird automatisch ` +
+    `angehängt). Das Set enthält:\n${items}\n\n`
+  );
 }
 
 function draftSessionBlock(s: CustomerDraftSession, index: number, total: number): string {
@@ -332,6 +364,13 @@ function fallbackCustomerDraft(input: GenerateCustomerDraftInput): MarketingDraf
   }
   const discountParagraph = fallbackDiscountParagraph(input);
   if (discountParagraph) lines.push("", discountParagraph);
+  if (input.attachedBundle && input.attachedBundle.componentNames.length > 0) {
+    lines.push(
+      "",
+      `Ich habe dir außerdem ein persönliches Set zusammengestellt: ` +
+        `${input.attachedBundle.title}. Die Details und dein Angebot findest du gleich unten.`
+    );
+  }
   lines.push(
     "",
     "Melde dich jederzeit, wenn du Fragen hast — ich helfe dir gern persönlich weiter.",
@@ -394,6 +433,9 @@ export async function generateCustomerMarketingDraft(
         "- Wenn dir ein persönliches Rabattangebot vorgegeben wird, webe es klar, " +
         "warm und einladend in den Text ein (mit dem exakten Code) — als " +
         "persönliches Angebot für genau diesen Kunden, nicht als Massen-Promo.\n" +
+        "- Wenn ein persönliches Set-Angebot angehängt ist, erwähne es natürlich " +
+        "im Text (es erscheint unten als eigenes Angebot mit Bild, Preis und " +
+        "Button) — nenne aber selbst KEINEN Preis und KEINEN Link.\n" +
         "- Unterschreibe mit 'Mo, dein persönlicher Berater bei motion sports'. " +
         "Baue KEINEN Warenkorb-Link und KEINEN Abmeldelink ein — die werden " +
         "separat angehängt.",
@@ -403,6 +445,7 @@ export async function generateCustomerMarketingDraft(
         `## Bereits gekauft (NICHT erneut empfehlen)\n${ownedItemsBlock(input)}\n\n` +
         `## Produkte, die diese E-Mail empfehlen soll\n${productLine(input.products)}\n\n` +
         `${discountHint(input)}\n\n` +
+        bundleHint(input.attachedBundle) +
         adminBlock +
         `## Bisherige Gespräche (chronologisch, älteste zuerst)\n\n` +
         `${sessionBlocks || "(keine Gespräche verknüpft)"}\n\n` +

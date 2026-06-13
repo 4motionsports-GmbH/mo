@@ -19,6 +19,8 @@ import { ADMIN_COOKIE_NAME } from "@/lib/admin-auth";
 import { isDbConfigured } from "@/lib/db";
 import { listMarketingTargets, getLatestSendForEmail } from "@/lib/marketing-store";
 import { listCustomersWithSessions } from "@/lib/customer-store";
+import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-store";
+import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
 import { wasDiscountCodeRedeemed } from "@/lib/shopify-orders";
 import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
@@ -204,6 +206,26 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
         personaDisplay: personaDisplay(s.personaLabel),
         messageCount: s.messageCount,
         transcript: s.transcript,
+      })),
+      bundles: (await listBundleOffersWithSignalsForCustomer(c.id)).map((b) => ({
+        id: b.id,
+        title: b.title,
+        status: b.status,
+        components: b.components.map((x) => ({
+          productId: x.productId,
+          title: x.title,
+          quantity: x.quantity,
+        })),
+        componentsSum: b.componentsSum,
+        bundlePrice: b.bundlePrice,
+        currency: b.currency,
+        cartUrl: b.cartUrl,
+        redirectUrl: buildBundleRedirectUrl(b.redirectToken),
+        createdAt: b.createdAt,
+        expiresAt: b.expiresAt,
+        error: b.error,
+        emailSentAt: b.emailSentAt,
+        clicked: b.clicked,
       })),
     }))
   );

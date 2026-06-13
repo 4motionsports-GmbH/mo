@@ -75,6 +75,28 @@ export interface CustomerMarketingSendProps {
   sentAt: string | null;
 }
 
+/** One bundle offer (S10/S11) in the per-customer list. */
+export interface CustomerBundleProps {
+  id: number;
+  title: string | null;
+  status: "pending" | "active" | "expired" | "failed";
+  components: Array<{ productId: string; title: string; quantity: number }>;
+  /** Decimal Money strings. */
+  componentsSum: string;
+  bundlePrice: string;
+  currency: string;
+  cartUrl: string | null;
+  /** The tracked purchase link (/api/r/<token>). */
+  redirectUrl: string | null;
+  createdAt: string | null;
+  expiresAt: string | null;
+  error: string | null;
+  /** sent_at of the linked marketing send (→ "Versendet"), if it was sent. */
+  emailSentAt: string | null;
+  /** The tracked link reported ≥1 click (redeemed/engagement signal). */
+  clicked: boolean;
+}
+
 export interface CustomerProps {
   id: number;
   email: string;
@@ -97,6 +119,8 @@ export interface CustomerProps {
   /** Live Shopify redemption check (read_orders); null = unknown. */
   welcomeRedeemed: boolean | null;
   sessions: CustomerSessionProps[];
+  /** This customer's bundle offers (S10/S11), newest first. */
+  bundles: CustomerBundleProps[];
 }
 
 interface ProfileUsage {
@@ -628,6 +652,16 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
         </div>
       )}
 
+      {/* Bundle offer — a NEW block ABOVE the special-additions field. The
+          created bundle (if any) is attached to the email and rendered as a
+          special-offer block at send time. */}
+      <BundleOfferSection
+        customerId={customer.id}
+        customerEmail={customer.email}
+        sendId={send && send.status !== "sent" ? send.id : null}
+        initialBundles={customer.bundles}
+      />
+
       {/* Special instructions — operator guidance woven into the next draft. */}
       <label style={{ display: "block", fontSize: 12, color: "#666", margin: "0 0 4px" }}>
         Besondere Hinweise für diese E-Mail (optional)
@@ -805,6 +839,589 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
 
       {note && <p style={{ color: "#16a34a", fontSize: 12, margin: "8px 0 0" }}>{note}</p>}
       {error && <p style={{ color: "#b91c1c", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bundle offer composer + per-customer bundle list (S11). A NEW block above the
+// special-additions field in the personalized-email flow. Workflow: suggest (AI)
+// → edit composition (remove / add-by-search) → set price/title/expiry → create
+// (S10 createBundleOffer). A created, active bundle is attached to the email and
+// rendered as a special-offer block at send time.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_BUNDLE_TITLE = "Dein persönliches Set";
+const DEFAULT_EXPIRY_DAYS = 7;
+const BUNDLE_MIN = 2;
+const BUNDLE_MAX = 5;
+
+interface ComposerComponent {
+  productId: string;
+  title: string;
+  imageUrl: string | null;
+  unitPrice: number;
+  currency: string;
+  inStock: boolean;
+  rationale?: string;
+}
+
+interface CatalogSearchHit {
+  productId: string;
+  title: string;
+  imageUrl: string | null;
+  unitPrice: number;
+  currency: string;
+  inStock: boolean;
+}
+
+/** Loose shape of the bundle/catalog admin JSON responses (only the fields the
+ * composer reads). */
+interface BundleApiResponse {
+  ok?: boolean;
+  error?: { code?: string; message?: string };
+  offenders?: string[];
+  redirectUrl?: string | null;
+  title?: string;
+  components?: ComposerComponent[];
+  products?: CatalogSearchHit[];
+  offer?: {
+    id: number;
+    title: string | null;
+    status: CustomerBundleProps["status"];
+    components?: Array<{ productId: string; title: string; quantity: number }>;
+    componentsSum: string;
+    bundlePrice: string;
+    currency: string;
+    cartUrl: string | null;
+    createdAt: string | null;
+    expiresAt: string | null;
+    error: string | null;
+  };
+}
+
+function fmtMoney(value: number | string, currency = "EUR"): string {
+  const n = typeof value === "number" ? value : Number(String(value).replace(",", "."));
+  if (!Number.isFinite(n)) return String(value);
+  return n.toLocaleString("de-DE", { style: "currency", currency });
+}
+
+function bundleStatusBadge(b: CustomerBundleProps): React.ReactNode {
+  if (b.status === "failed") return <span style={badge("#fee2e2", "#991b1b")}>Fehlgeschlagen</span>;
+  if (b.status === "expired") return <span style={badge("#f3f4f6", "#6b7280")}>Abgelaufen</span>;
+  if (b.status === "pending") return <span style={badge("#fef3c7", "#92400e")}>Wird erstellt…</span>;
+  if (b.emailSentAt) return <span style={badge("#dcfce7", "#166534")}>Versendet</span>;
+  return <span style={badge("#dbeafe", "#1e40af")}>Aktiv</span>;
+}
+
+function BundleOfferSection({
+  customerId,
+  customerEmail,
+  sendId,
+  initialBundles,
+}: {
+  customerId: number;
+  customerEmail: string;
+  /** The open (un-sent) draft id, so a created bundle attaches to it. */
+  sendId: number | null;
+  initialBundles: CustomerBundleProps[];
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [components, setComponents] = useState<ComposerComponent[]>([]);
+  const [title, setTitle] = useState(DEFAULT_BUNDLE_TITLE);
+  const [price, setPrice] = useState<string>("");
+  const [priceEdited, setPriceEdited] = useState(false);
+  const [expiryDays, setExpiryDays] = useState<number>(DEFAULT_EXPIRY_DAYS);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<CatalogSearchHit[]>([]);
+  const [busy, setBusy] = useState<null | "suggest" | "search" | "create">(null);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [bundles, setBundles] = useState<CustomerBundleProps[]>(initialBundles);
+
+  const componentSum = components.reduce((s, c) => s + c.unitPrice, 0);
+  const priceNum = Number(price.replace(",", "."));
+  const priceValid = Number.isFinite(priceNum) && priceNum > 0;
+  const aboveSum = priceValid && priceNum > componentSum + 0.0001;
+  const countOk = components.length >= BUNDLE_MIN && components.length <= BUNDLE_MAX;
+
+  // Keep the price defaulted to the live component sum until the admin edits it.
+  function applyComponents(next: ComposerComponent[]) {
+    setComponents(next);
+    if (!priceEdited) {
+      const sum = next.reduce((s, c) => s + c.unitPrice, 0);
+      setPrice(next.length ? sum.toFixed(2) : "");
+    }
+  }
+
+  async function post(
+    path: string,
+    payload: unknown
+  ): Promise<{ ok: boolean; status: number; json: BundleApiResponse }> {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const json = (await res.json().catch(() => ({}))) as BundleApiResponse;
+    return { ok: res.ok, status: res.status, json };
+  }
+
+  async function onSuggest() {
+    setBusy("suggest");
+    setError(null);
+    setNote(null);
+    try {
+      const { ok, json } = await post("/api/admin/bundles/suggest", { customerId });
+      if (!ok) {
+        setError(json?.error?.message ?? "Vorschlag fehlgeschlagen.");
+        return;
+      }
+      const next: ComposerComponent[] = (json.components ?? []).map((c: ComposerComponent) => ({
+        productId: c.productId,
+        title: c.title,
+        imageUrl: c.imageUrl,
+        unitPrice: c.unitPrice,
+        currency: c.currency,
+        inStock: c.inStock,
+        rationale: c.rationale,
+      }));
+      applyComponents(next);
+      if (json.title && (!title || title === DEFAULT_BUNDLE_TITLE)) setTitle(json.title);
+      setNote(`KI-Vorschlag: ${next.length} Produkte. Du kannst frei anpassen.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onSearch() {
+    const q = query.trim();
+    if (!q) return;
+    setBusy("search");
+    setError(null);
+    try {
+      const { ok, json } = await post("/api/admin/catalog/search", { query: q });
+      if (!ok) {
+        setError(json?.error?.message ?? "Suche fehlgeschlagen.");
+        return;
+      }
+      setResults(json.products ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function addProduct(hit: CatalogSearchHit) {
+    if (components.some((c) => c.productId === hit.productId)) return;
+    applyComponents([...components, { ...hit }]);
+  }
+
+  function removeProduct(productId: string) {
+    applyComponents(components.filter((c) => c.productId !== productId));
+  }
+
+  async function onCreate() {
+    if (!countOk) {
+      setError(`Ein Bundle braucht ${BUNDLE_MIN}–${BUNDLE_MAX} Produkte.`);
+      return;
+    }
+    if (!priceValid) {
+      setError("Bitte einen Bundle-Preis größer als 0 € angeben.");
+      return;
+    }
+    setBusy("create");
+    setError(null);
+    setNote(null);
+    try {
+      const { ok, json } = await post("/api/admin/bundles/create", {
+        customerId,
+        components: components.map((c) => ({ productId: c.productId })),
+        bundlePriceOverride: priceNum,
+        title: title.trim() || DEFAULT_BUNDLE_TITLE,
+        expiryDays,
+        ...(sendId != null ? { marketingSendId: sendId } : {}),
+      });
+      if (!ok || !json.ok) {
+        const code = json?.error?.code;
+        const base = json?.error?.message ?? "Bundle-Erstellung fehlgeschlagen.";
+        const offenders: string[] = json?.offenders ?? [];
+        setError(
+          code === "sold_out" && offenders.length
+            ? `${base} Ausverkauft: ${offenders.join(", ")}. Bitte entfernen und erneut versuchen.`
+            : base
+        );
+        return;
+      }
+      const offer = json.offer;
+      if (!offer) {
+        setError("Bundle erstellt, aber die Antwort enthielt keine Angebotsdaten.");
+        return;
+      }
+      const created: CustomerBundleProps = {
+        id: offer.id,
+        title: offer.title,
+        status: offer.status,
+        components: (offer.components ?? []).map((c: { productId: string; title: string; quantity: number }) => ({
+          productId: c.productId,
+          title: c.title,
+          quantity: c.quantity,
+        })),
+        componentsSum: offer.componentsSum,
+        bundlePrice: offer.bundlePrice,
+        currency: offer.currency,
+        cartUrl: offer.cartUrl,
+        redirectUrl: json.redirectUrl ?? null,
+        createdAt: offer.createdAt,
+        expiresAt: offer.expiresAt,
+        error: offer.error,
+        emailSentAt: null,
+        clicked: false,
+      };
+      setBundles([created, ...bundles]);
+      // Reset the composer for the next bundle.
+      applyComponents([]);
+      setComponents([]);
+      setTitle(DEFAULT_BUNDLE_TITLE);
+      setPrice("");
+      setPriceEdited(false);
+      setResults([]);
+      setQuery("");
+      setNote(
+        sendId != null
+          ? "Bundle erstellt & an die E-Mail angehängt. Tipp: E-Mail neu generieren, damit der Text das Set erwähnt."
+          : "Bundle erstellt. Es wird an die nächste generierte E-Mail angehängt."
+      );
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onArchive(id: number) {
+    if (!confirm("Dieses Bundle wirklich archivieren? Der Angebots-Link wird ungültig.")) return;
+    try {
+      const { ok, json } = await post("/api/admin/bundles/archive", { id });
+      if (!ok || !json.ok) {
+        setError(json?.error?.message ?? "Archivieren fehlgeschlagen.");
+        return;
+      }
+      setBundles((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, status: "expired" as const } : b))
+      );
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+    }
+  }
+
+  return (
+    <div style={{ margin: "0 0 16px", border: "1px solid #e5e7eb", borderRadius: 10, padding: 12 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          background: "none",
+          border: "none",
+          color: "#111",
+          cursor: "pointer",
+          padding: 0,
+          textAlign: "left",
+          width: "100%",
+        }}
+      >
+        {open ? "▾" : "▸"} 🎁 Bundle-Angebot{" "}
+        {bundles.length > 0 && (
+          <span style={{ color: "#888", fontWeight: 400 }}>· {bundles.length} vorhanden</span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {/* Composer */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <button onClick={onSuggest} disabled={busy !== null} style={primaryBtn(busy !== null)}>
+              {busy === "suggest" ? "Schlage vor…" : "✦ Bundle vorschlagen"}
+            </button>
+            <span style={{ fontSize: 11, color: "#999", alignSelf: "center" }}>
+              KI-Durchlauf über Profil, Gespräche &amp; Käufe — kostet Tokens.
+            </span>
+          </div>
+
+          {/* Editable composition */}
+          {components.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+              {components.map((c) => (
+                <div
+                  key={c.productId}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    background: "#fafafa",
+                    borderRadius: 8,
+                    padding: "6px 10px",
+                  }}
+                >
+                  {c.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={c.imageUrl}
+                      alt={c.title}
+                      width={36}
+                      height={36}
+                      style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 6 }}
+                    />
+                  ) : (
+                    <div style={{ width: 36, height: 36, background: "#eee", borderRadius: 6 }} />
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{c.title}</div>
+                    <div style={{ fontSize: 12, color: "#888" }}>
+                      {fmtMoney(c.unitPrice, c.currency)}
+                      {c.rationale ? ` · ${c.rationale}` : ""}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removeProduct(c.productId)}
+                    title="Entfernen"
+                    style={{ ...secondaryBtn(false), padding: "4px 8px", fontSize: 12 }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <div style={{ fontSize: 13, color: "#444", textAlign: "right" }}>
+                Komponentensumme: <strong>{fmtMoney(componentSum)}</strong>
+              </div>
+            </div>
+          )}
+
+          {/* Add product by name search */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    onSearch();
+                  }
+                }}
+                placeholder="Produkt suchen (Name)…"
+                style={{
+                  flex: 1,
+                  boxSizing: "border-box",
+                  padding: "7px 10px",
+                  fontSize: 13,
+                  border: "1px solid #ddd",
+                  borderRadius: 8,
+                }}
+              />
+              <button onClick={onSearch} disabled={busy !== null} style={secondaryBtn(busy !== null)}>
+                {busy === "search" ? "Suche…" : "Suchen"}
+              </button>
+            </div>
+            {results.length > 0 && (
+              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                {results.map((r) => {
+                  const added = components.some((c) => c.productId === r.productId);
+                  return (
+                    <div
+                      key={r.productId}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        fontSize: 13,
+                        padding: "4px 6px",
+                        borderRadius: 6,
+                        background: "#fff",
+                        border: "1px solid #f0f0f0",
+                      }}
+                    >
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        {r.title}{" "}
+                        <span style={{ color: "#888" }}>· {fmtMoney(r.unitPrice, r.currency)}</span>
+                        {!r.inStock && (
+                          <span style={{ color: "#991b1b" }}> · ausverkauft</span>
+                        )}
+                      </span>
+                      <button
+                        onClick={() => addProduct(r)}
+                        disabled={added || !r.inStock}
+                        style={{
+                          ...secondaryBtn(added || !r.inStock),
+                          padding: "3px 8px",
+                          fontSize: 12,
+                        }}
+                        title={!r.inStock ? "Ausverkauft — nicht hinzufügbar" : undefined}
+                      >
+                        {added ? "✓ drin" : "+ hinzufügen"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Price / title / expiry */}
+          {components.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 10 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 4 }}>
+                  Bundle-Preis (€)
+                </label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step={0.01}
+                  value={price}
+                  onChange={(e) => {
+                    setPrice(e.target.value);
+                    setPriceEdited(true);
+                  }}
+                  style={{
+                    width: 110,
+                    boxSizing: "border-box",
+                    padding: "7px 10px",
+                    fontSize: 14,
+                    border: `1px solid ${priceValid ? "#ddd" : "#fca5a5"}`,
+                    borderRadius: 8,
+                  }}
+                />
+              </div>
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 4 }}>
+                  Titel
+                </label>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "7px 10px",
+                    fontSize: 14,
+                    border: "1px solid #ddd",
+                    borderRadius: 8,
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 4 }}>
+                  Gültig (Tage)
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  step={1}
+                  value={expiryDays}
+                  onChange={(e) => setExpiryDays(Math.max(1, Math.floor(e.target.valueAsNumber || DEFAULT_EXPIRY_DAYS)))}
+                  style={{
+                    width: 80,
+                    boxSizing: "border-box",
+                    padding: "7px 10px",
+                    fontSize: 14,
+                    border: "1px solid #ddd",
+                    borderRadius: 8,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {aboveSum && (
+            <p style={{ fontSize: 12, color: "#92400e", margin: "0 0 10px" }}>
+              ⚠ Preis über der Komponentensumme ({fmtMoney(componentSum)}) — es wird KEINE
+              „statt“-Zeile angezeigt (das Bundle ist nicht günstiger als die Einzelprodukte).
+            </p>
+          )}
+
+          {components.length > 0 && (
+            <button
+              onClick={onCreate}
+              disabled={busy !== null || !countOk || !priceValid}
+              style={primaryBtn(busy !== null || !countOk || !priceValid)}
+            >
+              {busy === "create" ? "Erstelle…" : "Bundle erstellen"}
+            </button>
+          )}
+
+          {note && <p style={{ color: "#16a34a", fontSize: 12, margin: "8px 0 0" }}>{note}</p>}
+          {error && <p style={{ color: "#b91c1c", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+
+          {/* Per-customer bundle list */}
+          {bundles.length > 0 && (
+            <div style={{ marginTop: 14, borderTop: "1px solid #f0f0f0", paddingTop: 10 }}>
+              <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
+                Bundles für {customerEmail} ({bundles.length})
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {bundles.map((b) => (
+                  <div
+                    key={b.id}
+                    style={{ background: "#fafafa", borderRadius: 8, padding: "8px 12px", fontSize: 13 }}
+                  >
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <strong>{b.title ?? "Bundle"}</strong>
+                      {bundleStatusBadge(b)}
+                      {b.clicked && <span style={badge("#e0e7ff", "#3730a3")}>↗ Klick erfasst</span>}
+                      <span style={{ color: "#666" }}>
+                        {fmtMoney(b.bundlePrice, b.currency)}
+                        {Number(b.bundlePrice) < Number(b.componentsSum)
+                          ? ` (statt ${fmtMoney(b.componentsSum, b.currency)})`
+                          : ""}
+                      </span>
+                    </div>
+                    <div style={{ color: "#555", marginTop: 2 }}>
+                      {b.components.map((c) => c.title).join(" + ")}
+                    </div>
+                    <div style={{ color: "#888", marginTop: 2, fontSize: 12 }}>
+                      Erstellt {fmtDate(b.createdAt)}
+                      {b.expiresAt ? ` · läuft ab ${fmtDate(b.expiresAt)}` : ""}
+                    </div>
+                    {b.status === "failed" && b.error && (
+                      <div style={{ color: "#b91c1c", marginTop: 4, fontSize: 12 }}>{b.error}</div>
+                    )}
+                    {b.status === "active" && (
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+                        {b.redirectUrl && (
+                          <a
+                            href={b.redirectUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ fontSize: 12, color: "#2563eb" }}
+                          >
+                            Angebots-Link
+                          </a>
+                        )}
+                        <button
+                          onClick={() => onArchive(b.id)}
+                          style={{ ...secondaryBtn(false), padding: "4px 10px", fontSize: 12 }}
+                        >
+                          Archivieren
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

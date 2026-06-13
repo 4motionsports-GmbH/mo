@@ -52,6 +52,11 @@ import {
 } from "@/lib/discount-validation.mjs";
 import { buildPrefilledCartUrlForIds, chooseCustomerProductIds } from "@/lib/cart";
 import { generateCustomerMarketingDraft } from "@/lib/marketing-draft";
+import {
+  getActiveBundleForCustomer,
+  linkBundleOfferToSend,
+} from "@/lib/bundle-offers-store";
+import { computeCompareAtPrice } from "@/lib/bundle-offer-core.mjs";
 import { reportError } from "@/lib/observability";
 
 // The Anthropic pass over several transcripts can take a while.
@@ -170,6 +175,19 @@ export async function POST(req: Request) {
     // Snapshot persona: the newest session's, the freshest signal.
     const personaLabel = sessions.at(-1)?.personaLabel ?? null;
 
+    // A created, still-active bundle for this customer is ATTACHED to the email:
+    // the draft references it naturally (prompt below) and the send path renders
+    // its special-offer block. The bundle is linked to the send row after persist.
+    const attachableBundle = await getActiveBundleForCustomer(customerId);
+    const attachedBundle = attachableBundle
+      ? {
+          title: attachableBundle.title ?? "Dein persönliches Set",
+          componentNames: attachableBundle.components.map((c) => c.title),
+          hasSaving:
+            computeCompareAtPrice(attachableBundle.bundlePrice, attachableBundle.componentsSum) != null,
+        }
+      : null;
+
     const hasDiscount = discountPercent > 0;
     const placeholderCode = hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null;
     const expiry = hasDiscount ? projectedExpiry() : null;
@@ -187,6 +205,7 @@ export async function POST(req: Request) {
       purchasesKnown: purchases != null,
       products: products.map((p) => ({ name: p.name })),
       adminInstructions,
+      attachedBundle,
       discountCode: placeholderCode,
       discountPercent,
       discountExpiresLabel: expiry ? formatGermanExpiryDate(expiry) : null,
@@ -218,6 +237,8 @@ export async function POST(req: Request) {
             409
           );
         }
+        // Attach the active bundle to this send so the send path renders it.
+        if (attachableBundle) await linkBundleOfferToSend(attachableBundle.id, updated.id);
         return adminJson({ send: updated, regenerated: true });
       }
 
@@ -239,6 +260,8 @@ export async function POST(req: Request) {
       if (!send) {
         return adminJsonError("internal_error", "Could not persist the draft.", 500);
       }
+      // Attach the active bundle to this send so the send path renders it.
+      if (attachableBundle) await linkBundleOfferToSend(attachableBundle.id, send.id);
       return adminJson({ send });
     } catch (dbErr) {
       reportError(dbErr, {

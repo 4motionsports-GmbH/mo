@@ -41,7 +41,13 @@ import {
   PLACEHOLDER_DISCOUNT_CODE,
 } from "./shopify-discounts";
 import { buildPrefilledCartUrlForIds } from "./cart";
+import { getActiveBundleForSend } from "./bundle-offers-store";
+import { buildBundleRedirectUrl } from "./bundle-offers";
+import { renderBundleOfferBlock } from "./bundle-email";
+import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
+import { loadProductCatalog } from "./catalog-store";
 import { reportError } from "./observability";
+import type { Product } from "./types";
 
 export type ApproveAndSendResult =
   | { ok: true; sentTo: string }
@@ -181,6 +187,14 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         linkUrl = `${getBaseUrl()}/api/r/${redirectToken}`;
       }
 
+      // SPECIAL-OFFER block — ADDITIVE. When a created, still-active bundle is
+      // attached to this send, render it as a special-offer block in the body.
+      // This touches NONE of the send safeguards above (eligibility, unsubscribe,
+      // discount minting, click-tracking) — a send may carry a discount, a
+      // bundle, both, or neither. A bundle resolution failure must never block a
+      // send, so it degrades to "no block".
+      const bundle = await buildBundleBlockForSend(sendId);
+
       const { text, html } = renderMarketingEmail({
         subject: claimed.subject ?? "motion sports",
         body,
@@ -193,6 +207,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
           ? formatGermanExpiryDate(discountExpiresAt)
           : null,
         unsubscribe: unsubscribeFooter(unsubscribeUrl),
+        bundle,
       });
 
       const result = await sendEmail({
@@ -238,6 +253,51 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
   }
 }
 
+/** First usable absolute-https catalog image, or null (mail clients won't load a
+ * relative/http image). */
+function firstImageUrl(p: Product | undefined): string | null {
+  return p?.images?.find((u) => typeof u === "string" && u.startsWith("https://")) ?? null;
+}
+
+/**
+ * Resolve the bundle attached to this send (if any) and render its special-offer
+ * block. Returns null when no live bundle is attached — so the block is OMITTED
+ * (the pure shouldRenderBundleBlock guard centralizes that "active-only" rule).
+ * Never throws; a failure degrades to "no block" so a send is never blocked by
+ * the bundle path.
+ */
+async function buildBundleBlockForSend(
+  sendId: number
+): Promise<{ text: string; html: string } | null> {
+  try {
+    const bundle = await getActiveBundleForSend(sendId);
+    if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
+    const offerUrl = buildBundleRedirectUrl(bundle.redirectToken);
+    if (!offerUrl) return null;
+
+    // Resolve component images from the live catalog (the row snapshots names +
+    // prices, not images — the latter can drift, so we look them up fresh).
+    const catalog = await loadProductCatalog();
+    const byId = new Map(catalog.map((p) => [p.id, p]));
+    const components = bundle.components.map((c) => ({
+      name: c.title,
+      imageUrl: firstImageUrl(byId.get(c.productId)),
+    }));
+
+    return renderBundleOfferBlock({
+      title: bundle.title ?? "Dein persönliches Set",
+      components,
+      bundlePrice: bundle.bundlePrice,
+      componentsSum: bundle.componentsSum,
+      currency: bundle.currency,
+      offerUrl,
+    });
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-email", phase: "buildBundleBlockForSend" });
+    return null;
+  }
+}
+
 function renderMarketingEmail(opts: {
   /** Subject line — reused for the HTML <title>/preview line. */
   subject: string;
@@ -250,8 +310,10 @@ function renderMarketingEmail(opts: {
    *  deterministically next to the code so the deadline always ships. */
   discountExpiresLabel: string | null;
   unsubscribe: { text: string; html: string };
+  /** Optional special-offer block for an attached bundle (text + HTML parts). */
+  bundle: { text: string; html: string } | null;
 }): { text: string; html: string } {
-  const { subject, body, linkUrl, discountCode, discountExpiresLabel, unsubscribe } = opts;
+  const { subject, body, linkUrl, discountCode, discountExpiresLabel, unsubscribe, bundle } = opts;
 
   const validityNote = discountExpiresLabel
     ? `, gültig bis ${discountExpiresLabel}`
@@ -259,6 +321,9 @@ function renderMarketingEmail(opts: {
 
   // --- text part ---
   const textLines = [body.trim()];
+  // The special-offer block (when a bundle is attached) sits right after the
+  // prose, before the cart link + unsubscribe footer.
+  if (bundle) textLines.push(bundle.text);
   if (linkUrl) {
     textLines.push(
       "",
@@ -297,8 +362,12 @@ function renderMarketingEmail(opts: {
     subject,
     preheader: body.trim().split("\n")[0]?.slice(0, 140) || undefined,
     heading: "Deine persönliche Empfehlung",
+    // The bundle special-offer block (if any) is appended to the prose body so
+    // it renders above the cart CTA/unsubscribe footer.
     bodyHtml: `
-                                  <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(body.trim())}</p>`,
+                                  <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(
+                                    body.trim()
+                                  )}</p>${bundle ? bundle.html : ""}`,
     ctas: linkUrl ? [{ label: "Warenkorb öffnen", url: linkUrl }] : [],
     footnoteHtml: discountNote || undefined,
     footer: {
