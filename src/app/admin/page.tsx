@@ -26,7 +26,7 @@ import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
 import { wasDiscountCodeRedeemed } from "@/lib/shopify-orders";
 import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
-import { CustomerCard } from "./CustomerCard";
+import { MarketingList } from "./MarketingList";
 import { CustomerProfileCard, type CustomerProps } from "./CustomerProfileCard";
 import { isWelcomeDiscountEnabled } from "@/lib/welcome-discount-flag.mjs";
 import { KpiTab } from "./KpiTab";
@@ -90,18 +90,15 @@ async function CustomersTab({ dbReady }: { dbReady: boolean }) {
       )}
 
       {targets.length > 0 && (
-        <p className="mb-4 text-sm text-muted-foreground">
-          {targets.length} Kontakt(e) · <strong className="text-foreground">{notPurchased}</strong>{" "}
-          &bdquo;beraten, aber (noch) nicht gekauft&ldquo; — die wichtigste
-          Marketing-Zielgruppe.
-        </p>
+        <>
+          <p className="mb-4 text-sm text-muted-foreground">
+            <strong className="text-foreground">{notPurchased}</strong>{" "}
+            &bdquo;beraten, aber (noch) nicht gekauft&ldquo; — die wichtigste
+            Marketing-Zielgruppe.
+          </p>
+          <MarketingList targets={targets} />
+        </>
       )}
-
-      <div className="flex flex-col gap-4">
-        {targets.map((t) => (
-          <CustomerCard key={t.captureId} target={t} />
-        ))}
-      </div>
     </>
   );
 }
