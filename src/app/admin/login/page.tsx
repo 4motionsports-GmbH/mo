@@ -1,7 +1,10 @@
-// /admin/login — the only unauthenticated admin page (allow-listed in
-// middleware). A server action validates ADMIN_PASSWORD, mints a signed
-// HTTP-only session cookie, and redirects into the dashboard. No password ever
-// reaches the client beyond the form POST; the check runs entirely server-side.
+// /admin/login — the only unauthenticated admin page (allow-listed in the
+// proxy). A server action validates ADMIN_PASSWORD, mints a signed HTTP-only
+// session cookie, and redirects into the dashboard. No password ever reaches the
+// client beyond the form POST; the check runs entirely server-side.
+//
+// Styling uses the admin design system (themed via ../theme.css, loaded by the
+// admin layout). The auth flow itself is unchanged.
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -12,6 +15,16 @@ import {
   isAdminPasswordValid,
   sessionCookieOptions,
 } from "@/lib/admin-auth";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from "../ui/card";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
+import { Button } from "../ui/button";
 
 export const dynamic = "force-dynamic";
 
@@ -47,105 +60,44 @@ export default async function AdminLoginPage({
         : null;
 
   return (
-    <main
-      style={{
-        fontFamily: "system-ui, sans-serif",
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#fafafa",
-        color: "#111",
-      }}
-    >
-      <div
-        style={{
-          background: "#fff",
-          width: 360,
-          maxWidth: "90vw",
-          padding: "32px 28px",
-          borderRadius: 14,
-          boxShadow: "0 1px 3px rgba(0,0,0,.08)",
-        }}
-      >
-        <h1 style={{ fontSize: 18, margin: "0 0 4px" }}>motion sports — Admin</h1>
-        <p style={{ fontSize: 13, color: "#666", margin: "0 0 20px" }}>
-          Marketing-Dashboard. Bitte anmelden.
-        </p>
+    <main className="flex min-h-screen items-center justify-center p-4">
+      <Card className="w-[360px] max-w-[90vw] shadow-md">
+        <CardHeader>
+          <CardTitle className="text-lg">motion sports — Admin</CardTitle>
+          <CardDescription>Marketing-Dashboard. Bitte anmelden.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {!configured && (
+            <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+              ADMIN_PASSWORD / ADMIN_SESSION_SECRET sind nicht gesetzt — Login ist
+              deaktiviert.
+            </p>
+          )}
 
-        {!configured && (
-          <p
-            style={{
-              fontSize: 13,
-              color: "#92400e",
-              background: "#fef3c7",
-              padding: "8px 10px",
-              borderRadius: 8,
-              margin: "0 0 16px",
-            }}
-          >
-            ADMIN_PASSWORD / ADMIN_SESSION_SECRET sind nicht gesetzt — Login ist
-            deaktiviert.
-          </p>
-        )}
+          {message && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {message}
+            </p>
+          )}
 
-        {message && (
-          <p
-            style={{
-              fontSize: 13,
-              color: "#b91c1c",
-              background: "#fee2e2",
-              padding: "8px 10px",
-              borderRadius: 8,
-              margin: "0 0 16px",
-            }}
-          >
-            {message}
-          </p>
-        )}
-
-        <form action={loginAction}>
-          <label
-            htmlFor="password"
-            style={{ display: "block", fontSize: 13, marginBottom: 6 }}
-          >
-            Passwort
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            autoFocus
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              padding: "10px 12px",
-              fontSize: 14,
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              marginBottom: 16,
-            }}
-          />
-          <button
-            type="submit"
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              fontSize: 14,
-              fontWeight: 600,
-              color: "#fff",
-              background: "#111",
-              border: "none",
-              borderRadius: 8,
-              cursor: "pointer",
-            }}
-          >
-            Anmelden
-          </button>
-        </form>
-      </div>
+          <form action={loginAction} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="password">Passwort</Label>
+              <Input
+                id="password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                autoFocus
+              />
+            </div>
+            <Button type="submit" className="w-full">
+              Anmelden
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </main>
   );
 }
