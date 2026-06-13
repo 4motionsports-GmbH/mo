@@ -294,6 +294,25 @@ async function main() {
     `  shop=${shopData.shop?.name} (${shopData.shop?.myshopifyDomain}) plan=${shopData.shop?.plan?.displayName}`
   );
 
+  // Scope visibility: the client-credentials token only carries the scopes the
+  // app is granted on this store, so print them and flag whether the publication
+  // scopes (needed for the publish step) have landed yet. Purely informational —
+  // the publish step degrades gracefully if they are missing.
+  try {
+    const inst = await adminGraphql(
+      `{ currentAppInstallation { accessScopes { handle } } }`
+    );
+    const granted = (inst.currentAppInstallation?.accessScopes ?? []).map((s) => s.handle);
+    const needs = ["read_publications", "write_publications"];
+    const have = needs.filter((s) => granted.includes(s));
+    console.log(`  token scopes (${granted.length}): ${granted.join(", ")}`);
+    console.log(
+      `  publication scopes: ${have.length === needs.length ? "PRESENT ✓" : `MISSING ⚠ (have: [${have.join(", ")}] of [${needs.join(", ")}])`}`
+    );
+  } catch (err) {
+    console.log(`  ⚠ could not read token scopes: ${err?.message ?? err}`);
+  }
+
   // ── PREFLIGHT: verify mutation/field shapes against the LIVE schema ──────────
   section("PREFLIGHT — verifying mutation shapes against the live 2026-04 schema");
   const mutMap = await introspectMutations();
@@ -648,12 +667,14 @@ async function main() {
       }
     }
 
-    // 6. Server-side purchasability signals. status + availableForSale are always
-    //    available; publishedOnPublication needs the publication (read_publications),
-    //    so it is queried separately and only when we could resolve it.
+    // 6. Server-side purchasability signals. Note: `availableForSale` exists on
+    //    ProductVariant but NOT on Product in 2026-04, so we read it from the
+    //    parent variant (the bundle's buyability follows its parent variant +
+    //    component stock). publishedOnPublication needs the publication
+    //    (read_publications), so it is queried separately and only when resolved.
     const VERIFY = `query Ver($id: ID!) {
       product(id: $id) {
-        id title handle status availableForSale
+        id title handle status
         totalInventory tracksInventory
         variants(first: 5) {
           nodes { id price availableForSale inventoryQuantity inventoryPolicy }
@@ -683,7 +704,6 @@ async function main() {
 
     report.purchasability = {
       status: vp.status,
-      productAvailableForSale: vp.availableForSale,
       publishedOnOnlineStore,
       parentVariantAvailableForSale: parentVar?.availableForSale ?? null,
       parentVariantInventoryQuantity: parentVar?.inventoryQuantity ?? null,
@@ -704,7 +724,7 @@ async function main() {
       const buyable =
         vp.status === "UNLISTED" &&
         publishedOnOnlineStore === true &&
-        (vp.availableForSale === true || parentVar?.availableForSale === true);
+        parentVar?.availableForSale === true;
       report.recommendation = buyable
         ? "GO — native fixed bundle is purchasable server-side (UNLISTED + published + " +
           "availableForSale). Final click-through-to-checkout is a manual browser step."
