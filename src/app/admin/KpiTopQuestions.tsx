@@ -4,8 +4,13 @@
 // summary (if any) is rendered immediately from the server; the button runs the
 // token-costing Anthropic pass via POST /api/admin/kpi/top-questions and swaps in
 // the fresh result. The token cost is stated up front so it's never a surprise.
+//
+// Themed via the admin design tokens (Button + token colors) so it reads
+// correctly in BOTH light and dark mode — no hardcoded hex colors.
 
 import { useState } from "react";
+import { Sparkles } from "lucide-react";
+import { Button, Skeleton } from "./ui";
 
 interface Summary {
   personaLabel: string;
@@ -33,9 +38,9 @@ function renderSummary(md: string): React.ReactNode {
   const bullets = lines.filter((l) => l.startsWith("- ") || l.startsWith("* "));
   if (bullets.length > 0) {
     return (
-      <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+      <ul className="mt-2 list-disc pl-5">
         {bullets.map((l, i) => (
-          <li key={i} style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 4 }}>
+          <li key={i} className="mb-1 text-[13px] leading-relaxed text-foreground">
             {l.replace(/^[-*]\s+/, "")}
           </li>
         ))}
@@ -43,7 +48,10 @@ function renderSummary(md: string): React.ReactNode {
     );
   }
   return lines.map((l, i) => (
-    <p key={i} style={{ fontSize: 13, color: "#555", margin: "8px 0 0", fontStyle: l.startsWith("_") ? "italic" : "normal" }}>
+    <p
+      key={i}
+      className={`mt-2 text-[13px] text-muted-foreground ${l.startsWith("_") ? "italic" : ""}`}
+    >
       {l.replace(/^_|_$/g, "")}
     </p>
   ));
@@ -83,43 +91,34 @@ export function KpiTopQuestions({
   }
 
   return (
-    <div style={{ marginTop: 12, borderTop: "1px dashed #e5e5e5", paddingTop: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: 13 }}>Top-Fragen dieser Gruppe</strong>
-        <button
-          type="button"
-          onClick={() => run(summary != null)}
-          disabled={loading}
-          style={{
-            fontSize: 12,
-            padding: "5px 10px",
-            border: "1px solid #ddd",
-            background: loading ? "#f3f3f3" : "#fff",
-            borderRadius: 8,
-            cursor: loading ? "default" : "pointer",
-          }}
-        >
-          {loading
-            ? "Wird erstellt…"
-            : summary
-              ? "Neu generieren"
-              : "Top-Fragen generieren"}
-        </button>
+    <div className="mt-3 border-t border-dashed border-border pt-3">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <strong className="text-[13px] text-foreground">Top-Fragen dieser Gruppe</strong>
+        <Button variant="secondary" size="sm" onClick={() => run(summary != null)} disabled={loading}>
+          <Sparkles />
+          {loading ? "Wird erstellt…" : summary ? "Neu generieren" : "Top-Fragen generieren"}
+        </Button>
       </div>
 
-      <p style={{ fontSize: 11, color: "#999", margin: "6px 0 0" }}>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">
         ⚠️ On-Demand-KI-Analyse von bis zu 80 echten Nutzernachrichten — kostet
         Anthropic-Tokens (wenige Cent pro Lauf). Ergebnis wird zwischengespeichert.
       </p>
 
-      {error && (
-        <p style={{ fontSize: 12, color: "#b91c1c", margin: "8px 0 0" }}>{error}</p>
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+
+      {loading && !summary && (
+        <div className="mt-2 space-y-1.5" aria-hidden>
+          <Skeleton className="h-3 w-11/12" />
+          <Skeleton className="h-3 w-10/12" />
+          <Skeleton className="h-3 w-9/12" />
+        </div>
       )}
 
       {summary && (
-        <div>
+        <div className={loading ? "opacity-60 transition-opacity" : undefined}>
           {renderSummary(summary.summaryMd)}
-          <p style={{ fontSize: 11, color: "#aaa", margin: "8px 0 0" }}>
+          <p className="mt-2 text-[11px] text-muted-foreground">
             Stichprobe: {summary.sampleSize} Nachrichten ·{" "}
             {summary.cached ? "zwischengespeichert" : "frisch generiert"} ·{" "}
             {formatTimestamp(summary.generatedAt)}

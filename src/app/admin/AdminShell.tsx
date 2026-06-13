@@ -58,13 +58,55 @@ export function AdminShell({
 
   // Graceful URL sync: keep the query param current so a refresh or a copied
   // link lands on the same tab, without a full server navigation.
-  function onTabChange(next: string) {
+  const onTabChange = React.useCallback((next: string) => {
     const value = (TAB_ORDER as string[]).includes(next) ? (next as AdminTab) : "overview";
     setTab(value);
     if (typeof window !== "undefined") {
       window.history.replaceState(window.history.state, "", tabToQuery(value));
     }
-  }
+  }, []);
+
+  // Light, optional keyboard shortcuts (dialogs close on Esc via the Dialog
+  // primitive itself). Deliberately bare keys, ignored while typing in a field or
+  // with a modifier held so they never clobber browser/native shortcuts:
+  //   1–4  switch to the n-th tab
+  //   /    focus the Marketing search box (switching to that tab if needed)
+  React.useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        el?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.key >= "1" && e.key <= String(TAB_ORDER.length)) {
+        const next = TAB_ORDER[Number(e.key) - 1];
+        if (next) {
+          e.preventDefault();
+          onTabChange(next);
+        }
+        return;
+      }
+
+      if (e.key === "/") {
+        e.preventDefault();
+        onTabChange("customers");
+        // Let the tab become visible before focusing its (now un-hidden) input.
+        requestAnimationFrame(() => {
+          document.getElementById("ms-search")?.focus();
+        });
+      }
+    }
+
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onTabChange]);
 
   const bodies: Record<AdminTab, React.ReactNode> = {
     overview,

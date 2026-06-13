@@ -51,6 +51,16 @@ export function toast(options: ToastOptions): number {
 
 toast.dismiss = dismiss;
 
+/** Update an existing toast in place (e.g. a live progress counter). No-op if the
+ * toast was already dismissed. Pass `duration: 0` on create to keep it pinned. */
+function update(id: number, options: ToastOptions): void {
+  let changed = false;
+  toasts = toasts.map((t) => (t.id === id ? ((changed = true), { ...t, ...options }) : t));
+  if (changed) emit();
+}
+
+toast.update = update;
+
 function useToasts(): ToastRecord[] {
   const [state, setState] = React.useState<ToastRecord[]>(toasts);
   React.useEffect(() => {
