@@ -218,6 +218,32 @@ export async function loadConversationForSummary(
 }
 
 /**
+ * Resolve the conversation id for a session, or null when there's no DB, no
+ * session, or no conversation yet. Read-only and best-effort (a failure logs
+ * and returns null) — used to attribute out-of-band usage like /api/tts to the
+ * consultation it belongs to without ever breaking the request.
+ */
+export async function getConversationIdBySession(
+  sessionId: string | null
+): Promise<number | null> {
+  const sql = getSql();
+  if (!sql) return null;
+  const sid = sessionId?.trim();
+  if (!sid) return null;
+  try {
+    const rows = await sql`SELECT id FROM conversations WHERE session_id = ${sid}`;
+    const id = (rows[0] as { id?: number } | undefined)?.id;
+    return typeof id === "number" ? id : null;
+  } catch (err) {
+    reportError(err, {
+      route: "lib/conversation-store",
+      phase: "getConversationIdBySession",
+    });
+    return null;
+  }
+}
+
+/**
  * Upsert the conversation row (by session_id) and insert the new messages.
  * Returns true if persisted, false if skipped (no DB / no session) or failed.
  */

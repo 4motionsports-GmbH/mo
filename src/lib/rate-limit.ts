@@ -2,19 +2,24 @@ import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { errorEnvelope } from "./observability";
 
-const WINDOW = "60 s" as const;
-const CHAT_MAX = 20;
-const PRODUCTS_MAX = 60;
-// Telemetry is cheap and high-volume (the widget fires events on many
-// interactions), so the KPI bucket is generous on purpose.
-const KPI_MAX = 120;
+export type RateLimitBucket = "chat" | "products" | "kpi" | "tts";
 
-export type RateLimitBucket = "chat" | "products" | "kpi";
-
-const BUCKET_MAX: Record<RateLimitBucket, number> = {
-  chat: CHAT_MAX,
-  products: PRODUCTS_MAX,
-  kpi: KPI_MAX,
+// Per-bucket sliding-window config: max requests over the given Upstash
+// duration string. Each bucket gets its own window so we can mix short (chat,
+// 60 s) and longer (tts, 5 min) limits.
+const BUCKET_CONFIG: Record<RateLimitBucket, { max: number; window: `${number} ${"s" | "m"}` }> = {
+  chat: { max: 20, window: "60 s" },
+  products: { max: 60, window: "60 s" },
+  // Telemetry is cheap and high-volume (the widget fires events on many
+  // interactions), so the KPI bucket is generous on purpose.
+  kpi: { max: 120, window: "60 s" },
+  // Text-to-speech (voice mode): each call is a billed OpenAI synthesis of up
+  // to ~2000 chars, so this bucket is tighter than chat and uses a longer
+  // window. 20 / 5 min comfortably covers a real consultation — the widget
+  // calls /api/tts once per assistant message the user plays, plus the
+  // occasional replay — while capping a scraper's spend (≤20 syntheses / 5 min
+  // / session, each ≤2000 chars) and matching the per-session keying below.
+  tts: { max: 20, window: "300 s" },
 };
 
 const cached: Partial<Record<RateLimitBucket, Ratelimit>> = {};
@@ -46,10 +51,10 @@ function getLimiter(bucket: RateLimitBucket): Ratelimit | null {
   if (existing) return existing;
   const redis = getRedis();
   if (!redis) return null;
-  const max = BUCKET_MAX[bucket];
+  const { max, window } = BUCKET_CONFIG[bucket];
   const limiter = new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(max, WINDOW),
+    limiter: Ratelimit.slidingWindow(max, window),
     analytics: false,
     prefix: `ms-${bucket}`,
   });

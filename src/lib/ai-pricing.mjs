@@ -28,6 +28,15 @@ export const DEFAULT_MODEL_PRICES = {
   "claude-opus-4-7": { input: 5, output: 25 },
   // OpenAI — query embedding model. Embeddings have no output tokens.
   "text-embedding-3-small": { input: 0.02, output: 0 },
+  // OpenAI — text-to-speech (voice mode, /api/tts). UNIT NOTE: TTS is billed
+  // per CHARACTER of input, so for these models `input` is USD per million
+  // CHARACTERS and the usage store records characters synthesized in the
+  // input_tokens column (output is 0). Figures are list pricing as of
+  // 2026-06 (gpt-4o-mini-tts ≈ $15.9/1M chars; tts-1 $15; tts-1-hd $30) —
+  // override via MODEL_PRICES_JSON when they move.
+  "gpt-4o-mini-tts": { input: 15.9, output: 0 },
+  "tts-1": { input: 15, output: 0 },
+  "tts-1-hd": { input: 30, output: 0 },
 };
 
 /** Is `v` a finite, non-negative number? */

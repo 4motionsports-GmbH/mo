@@ -26,12 +26,18 @@ export type AiCallSite =
   | "customer_profile"
   | "top_questions"
   | "embeddings"
-  | "bundle_suggestions";
+  | "bundle_suggestions"
+  // Text-to-speech for voice mode (/api/tts). NB: for this call site the
+  // input_tokens column carries CHARACTERS synthesized (not LLM tokens) and
+  // output_tokens is 0 — OpenAI TTS is billed per character of input, and its
+  // price entry in ai-pricing.mjs is therefore USD per million CHARACTERS. The
+  // `estimated` flag is set on these rows to mark the unit difference.
+  | "tts";
 
 // Call sites counted as "chat-serving" spend in the dashboard split. Embeddings
-// power retrieval for the live chat, so they sit on the chat side; everything
-// else is dashboard/admin AI usage.
-const CHAT_SIDE_CALL_SITES = new Set<AiCallSite>(["chat", "embeddings"]);
+// power retrieval for the live chat and TTS reads the chat answers aloud, so
+// both sit on the chat side; everything else is dashboard/admin AI usage.
+const CHAT_SIDE_CALL_SITES = new Set<AiCallSite>(["chat", "embeddings", "tts"]);
 
 export interface RecordAiUsageInput {
   callSite: AiCallSite;
