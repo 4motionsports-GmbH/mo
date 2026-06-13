@@ -16,26 +16,7 @@ import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { CustomerCard, type MarketingTargetProps } from "./CustomerCard";
 import { Input, Label, Select } from "./ui";
-
-// The status buckets the toolbar can filter by. Exported (with a runtime guard)
-// so the Overview tab's quick links can deep-link straight into a pre-applied
-// filter via ?status=… without re-declaring the union.
-export const MARKETING_STATUS_FILTERS = [
-  "all",
-  "no_purchase",
-  "draft",
-  "sent",
-  "purchased",
-  "unknown",
-] as const;
-export type StatusFilter = (typeof MARKETING_STATUS_FILTERS)[number];
-
-/** Coerce an arbitrary (URL) value to a valid StatusFilter, defaulting to "all". */
-export function toStatusFilter(value: unknown): StatusFilter {
-  return (MARKETING_STATUS_FILTERS as readonly string[]).includes(value as string)
-    ? (value as StatusFilter)
-    : "all";
-}
+import type { StatusFilter } from "./marketing-filter";
 
 type SortKey = "confirmed_desc" | "confirmed_asc" | "persona";
 
