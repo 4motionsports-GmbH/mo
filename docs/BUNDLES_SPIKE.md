@@ -518,6 +518,7 @@ access/ownership error, so the free "Shopify Bundles" app is NOT required.**
 | Parent variant `availableForSale` / qty / policy | **true** / **1** / `DENY` ✅ (settled on the 1st inventory re-poll) |
 | `totalInventory` / `tracksInventory` | **1** / true |
 | **Cart permalink** | `https://motionsports.de/cart/54594995487049:1` |
+| Manual checkout (incognito) | **CONFIRMED ✅** — permalink adds the bundle and reaches Shopify checkout (2026-06-13) |
 | Recommendation emitted | **`GO`** |
 
 **§4 native inventory linkage — empirically confirmed.** The bundle's
@@ -525,11 +526,12 @@ access/ownership error, so the free "Shopify Bundles" app is NOT required.**
 lowest-stock component caps the bundle), exactly as §4 describes. No phantom
 bundle stock; availability follows the components.
 
-**Manual step (the only thing not provable server-side):** open the permalink
-above in an incognito window and confirm it adds the bundle and reaches Shopify
-checkout. The product was left live via `--keep` for this; **archive it
-afterward** (Shopify admin → Products, or a `--keep`-less probe run sweeps any
-`S9b probe bundle*` leftover).
+**Manual step — DONE.** The permalink was opened in an incognito window on
+2026-06-13: it adds the bundle and reaches Shopify checkout. ✅ This was the only
+part not provable server-side; the end-to-end purchasable-UNLISTED-bundle path is
+now fully confirmed. (The probe product left live via `--keep` should be archived
+— Shopify admin → Products, or a `--keep`-less probe run sweeps any
+`S9b probe bundle*` leftover.)
 
 ### ⚠ Scope correction to §1 / "Required follow-ups" — publishing needs publication scopes
 
@@ -560,8 +562,8 @@ price + true-sum `compareAtPrice` → `productUpdate` `UNLISTED` → `publishabl
 to Online Store → `/cart/<numericVariantId>:1` permalink → server-side
 purchasable (`availableForSale=true`, bundle qty = min component) → archive on
 expiry. **One scope addition vs the original spike:** the app must hold
-`read_publications` + `write_publications` (now granted). Final
-click-through-to-checkout is a one-time manual confirmation on the permalink
-above.
+`read_publications` + `write_publications` (now granted). The final
+click-through-to-checkout was manually confirmed (incognito, 2026-06-13) — the
+path is verified end-to-end with no open questions.
 </content>
 </invoke>
