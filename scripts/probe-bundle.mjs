@@ -511,6 +511,10 @@ async function main() {
         }
       }
     }`;
+    // ProductOperationStatus lifecycle is CREATED → ACTIVE → COMPLETE, and the
+    // `product` is only populated once the operation reaches COMPLETE (at ACTIVE
+    // it is still null). So we break as soon as a product GID is present — never
+    // on status alone — and keep polling through CREATED/ACTIVE otherwise.
     const t0 = Date.now();
     let polls = 0;
     let opProduct = null;
@@ -518,12 +522,20 @@ async function main() {
       polls++;
       const pd = await adminGraphql(POLL, { id: op.id });
       const o = pd.node;
-      console.log(`  poll #${polls}: status=${o?.status}`);
+      console.log(
+        `  poll #${polls}: status=${o?.status}` +
+          (o?.product?.id ? ` product=${o.product.id}` : "")
+      );
       const opUe = o?.userErrors ?? [];
       if (opUe.length) throw new Error(`operation userErrors: ${JSON.stringify(opUe)}`);
-      if (o?.status === "COMPLETE" || o?.status === "ACTIVE") {
+      if (o?.product?.id) {
         opProduct = o.product;
         break;
+      }
+      if (o?.status === "COMPLETE") {
+        throw new Error(
+          `operation reached COMPLETE but returned no product: ${JSON.stringify(o)}`
+        );
       }
       await sleep(POLL_INTERVAL_MS);
     }
