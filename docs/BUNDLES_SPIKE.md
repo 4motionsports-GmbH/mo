@@ -469,5 +469,78 @@ yet live) → `active` (UNLISTED + published, `cart_url` materialized) → `expi
 - draftOrderCreate (scope blocker) — https://shopify.dev/docs/api/admin-graphql/2026-04/mutations/draftOrderCreate
 - discountAutomaticBxgyCreate — https://shopify.dev/docs/api/admin-graphql/2026-04/mutations/discountAutomaticBxgyCreate
 - API rate limits — https://shopify.dev/docs/api/usage/limits , https://help.shopify.com/api/graphql-admin-api/call-limit
+
+---
+
+## Probe results (S9b, 2026-06-13)
+
+**Probe artefact:** `scripts/probe-bundle.mjs` (throwaway; run with
+`node --env-file=.env scripts/probe-bundle.mjs`).
+It uses the existing backend client (`adminGraphql`/`isShopifyConfigured` from
+`src/lib/shopify.ts`, `parseNumericVariantId`/`SHOP_DOMAIN` from
+`src/lib/shopify-cart-url.mjs` — the module `src/lib/cart.ts` re-exports
+`parseNumericVariantId` from) and, per the doc-sourcing note above, **does not
+trust memorised mutation shapes**: a `preflight()` step introspects the live
+`2026-04` schema and asserts every input field / mutation argument it uses
+(`ProductBundleCreateInput`, `ProductBundleComponentInput`,
+`ProductBundleComponentOptionSelectionInput`, `ProductVariantsBulkInput`,
+`PublicationInput`, the `productUpdate` argument name, and the `ProductStatus`
+enum incl. `UNLISTED`/`ARCHIVED`) exists before any mutation fires, aborting
+with the live schema dump on any mismatch. It always archives (never deletes)
+anything it creates, even on partial failure.
+
+### ⚠ Execution status: NOT YET RUN AGAINST THE LIVE STORE
+
+This S9b session executed in the Claude-Code **web/CI environment, which has no
+Shopify credentials** (no `.env`; `SHOPIFY_STORE_DOMAIN` / `SHOPIFY_CLIENT_ID` /
+`SHOPIFY_CLIENT_SECRET` / `SHOPIFY_API_VERSION` are all unset). The probe is a
+**live-store** test — creating a real (then-archived) bundle product — so it
+**cannot** run here. Run against the store gives:
+
+```
+$ node scripts/probe-bundle.mjs
+SKIPPED — Shopify is not configured in this environment.
+```
+
+The script itself is verified to **load, type-check (native TS strip), parse,
+and exit 0 cleanly** on the no-credentials path. To get the empirical answers,
+run it where the Shopify env vars are present (a developer machine with `.env`,
+or this environment once the four `SHOPIFY_*` secrets are added) and paste the
+emitted **FINDINGS** JSON block in below.
+
+### Results to fill in (template — populate from the live run)
+
+| Field | Value |
+| --- | --- |
+| CHECK 1 — capability (`productBundleCreate`) | **YES / NO** _(if NO: exact code + message; merchant must install free "Shopify Bundles" app or use §6a fallback)_ |
+| `ProductBundleOperation` id | _gid_ |
+| Poll count / wall time | _n polls / m ms_ |
+| Bundle product id / parent variant gid | _gid / gid_ |
+| CHECK 2 — price set (`productVariantsBulkUpdate`) | _1.00 EUR_ |
+| Status → `UNLISTED` (`productUpdate`) | _UNLISTED_ |
+| Published to Online Store (`publishablePublish`) | _publicationId + true_ |
+| **Cart permalink to test manually** | `https://motionsports.de/cart/<numericVariantId>:1` |
+| Server-side purchasability signals | _status=UNLISTED, product.availableForSale=?, publishedOnPublication=?, parentVariant.availableForSale=?, inventory…_ |
+| Cleanup — archived product id(s) | _gid → ARCHIVED_ |
+
+**Manual step (cannot be done server-side):** open the cart permalink above in
+an incognito window and confirm it reaches Shopify checkout. The probe verifies
+everything up to that point (UNLISTED + published-to-Online-Store +
+`availableForSale`); the final click-through is the human confirmation.
+
+### Recommendation: **PENDING the live run** (analysis ⇒ provisional GO)
+
+The spike's §1/§3 analysis points to **GO** on the native fixed-bundle path
+(only `write_products` needed; `UNLISTED` present in `2026-04`), **conditional
+on** the §1 capability check passing. The empirical confirmation is the one
+thing this environment could not produce. Decision rule for S10, straight from
+the probe output:
+
+- **CHECK 1 = YES and CHECK 2 signals buyable → GO** (native fixed bundle, per
+  the §RECOMMENDED flow).
+- **CHECK 1 = NO (access/capability error) → NO-GO for native unless the
+  merchant installs the free "Shopify Bundles" app; otherwise FALLBACK** to the
+  §6(a) plain-`UNLISTED`-product path (same rails, `write_products` only,
+  accepts manual inventory safety).
 </content>
 </invoke>
