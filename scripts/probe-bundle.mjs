@@ -58,6 +58,11 @@ import {
 // A nominal throwaway price for the bundle's parent variant (§Check-2 step 4).
 const NOMINAL_PRICE = "1.00";
 const NOMINAL_CURRENCY = "EUR";
+// Title prefix for every probe bundle, so cleanup can find + archive orphans
+// from a prior run that errored before it could archive its own product
+// (productBundleCreate is async — the product can materialise even if the run
+// later crashes). The create call appends a timestamp to this prefix.
+const PROBE_TITLE_PREFIX = "S9b probe bundle";
 // Poll budget for the async ProductBundleOperation (§Check-1 step 3).
 const POLL_MAX_ATTEMPTS = 15;
 const POLL_INTERVAL_MS = 1500;
@@ -443,7 +448,7 @@ async function main() {
     let createData;
     try {
       createData = await adminGraphql(CREATE, {
-        input: { title: `S9b probe bundle ${new Date().toISOString()}`, components },
+        input: { title: `${PROBE_TITLE_PREFIX} ${new Date().toISOString()}`, components },
       });
     } catch (err) {
       const msg = String(err?.message ?? err);
@@ -492,13 +497,18 @@ async function main() {
     report.operationId = op?.id ?? null;
     console.log(`  CAPABILITY: YES — ProductBundleOperation id=${op?.id} status=${op?.status}`);
 
-    // 3. Poll the operation to completion.
+    // 3. Poll the operation to completion. There is NO top-level
+    //    `productBundleOperation(id:)` query field on 2026-04 — a
+    //    ProductBundleOperation is read through the generic `node(id:)` Node
+    //    interface with an inline fragment.
     section("CHECK 1 — polling ProductBundleOperation to completion");
     const POLL = `query P($id: ID!) {
-      productBundleOperation(id: $id) {
-        id status
-        product { id title handle status variants(first: 5) { nodes { id } } }
-        userErrors { ${ueOperation} }
+      node(id: $id) {
+        ... on ProductBundleOperation {
+          id status
+          product { id title handle status variants(first: 5) { nodes { id } } }
+          userErrors { ${ueOperation} }
+        }
       }
     }`;
     const t0 = Date.now();
@@ -507,7 +517,7 @@ async function main() {
     while (polls < POLL_MAX_ATTEMPTS) {
       polls++;
       const pd = await adminGraphql(POLL, { id: op.id });
-      const o = pd.productBundleOperation;
+      const o = pd.node;
       console.log(`  poll #${polls}: status=${o?.status}`);
       const opUe = o?.userErrors ?? [];
       if (opUe.length) throw new Error(`operation userErrors: ${JSON.stringify(opUe)}`);
@@ -641,9 +651,53 @@ async function main() {
         "  it reaches Shopify checkout."
     );
   } finally {
-    // ── CLEANUP — always archive (never delete) anything created ───────────────
+    // ── CLEANUP — always archive (never delete) any probe product ──────────────
+    // Robust against partial failure: (a) archive whatever we captured; (b) if
+    // an operation was created but we never captured its product (e.g. the poll
+    // step crashed), resolve the product from the operation id; (c) sweep any
+    // leftover probe products by title prefix to catch orphans from earlier
+    // failed runs. All collected into a de-duped set.
     section("CLEANUP — archiving probe product(s)");
-    for (const id of createdProductIds) {
+    const toArchive = new Set(createdProductIds);
+
+    // (b) operation -> product, when not already captured.
+    if (report.operationId && !report.bundleProductId) {
+      try {
+        const d = await adminGraphql(
+          `query Op($id: ID!) { node(id: $id) { ... on ProductBundleOperation { product { id } } } }`,
+          { id: report.operationId }
+        );
+        const pid = d.node?.product?.id;
+        if (pid) {
+          toArchive.add(pid);
+          console.log(`  resolved product ${pid} from operation ${report.operationId}`);
+        }
+      } catch (err) {
+        console.log(`  ⚠ could not resolve product from operation: ${err?.message ?? err}`);
+      }
+    }
+
+    // (c) sweep leftover probe products by title prefix (incl. prior orphans).
+    try {
+      const swept = await adminGraphql(
+        `query Sweep($q: String!) {
+           products(first: 100, query: $q) { nodes { id title status } }
+         }`,
+        { q: `title:${PROBE_TITLE_PREFIX}*` }
+      );
+      for (const p of swept.products?.nodes ?? []) {
+        if (!p.title?.startsWith(PROBE_TITLE_PREFIX)) continue; // guard the search
+        if (p.status === "ARCHIVED") continue;
+        if (!toArchive.has(p.id)) {
+          console.log(`  found orphan probe product ${p.id} ("${p.title}", ${p.status})`);
+        }
+        toArchive.add(p.id);
+      }
+    } catch (err) {
+      console.log(`  ⚠ title sweep failed: ${err?.message ?? err}`);
+    }
+
+    for (const id of toArchive) {
       try {
         const archived = await productUpdate({ id, status: "ARCHIVED" });
         report.archived.push({ id, status: archived.status });
@@ -653,7 +707,7 @@ async function main() {
         report.archived.push({ id, status: `ARCHIVE-FAILED: ${err?.message ?? err}` });
       }
     }
-    if (!createdProductIds.length) console.log("  nothing to archive.");
+    if (!toArchive.size) console.log("  nothing to archive.");
   }
 
   // ── Paste-ready findings block ──────────────────────────────────────────────
