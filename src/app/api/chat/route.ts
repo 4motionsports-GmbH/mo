@@ -44,6 +44,10 @@ export const maxDuration = 300;
 
 const MAX_MESSAGES_PER_CONVERSATION = 40;
 
+// The chat model id — referenced both in the streamText call and when recording
+// token usage for the cost KPI, so the two can never drift apart.
+const CHAT_MODEL = "claude-sonnet-4-5-20250929";
+
 // Step budget of the agentic loop (was `stopWhen: stepCountIs(6)`). The
 // custom stop condition below grants ONE extra step beyond this only when the
 // deterministic email-offer step is still pending (add_to_cart landed on the
@@ -328,7 +332,7 @@ export async function POST(req: Request) {
     ) as Array<keyof typeof tools>;
 
     const result = streamText({
-      model: anthropic("claude-sonnet-4-5-20250929"),
+      model: anthropic(CHAT_MODEL),
       system: buildSystemPrompt({
         profile,
         archetype,
@@ -392,7 +396,7 @@ export async function POST(req: Request) {
           phase: "stream",
         });
       },
-      onFinish: async ({ text, steps, response }) => {
+      onFinish: async ({ text, steps, response, totalUsage }) => {
         // Persist the completed turn AFTER generation, so this never delays
         // token delivery. persistTurn is fully self-contained (best-effort,
         // logs and swallows on failure) — but guard here too so a thrown
@@ -411,6 +415,14 @@ export async function POST(req: Request) {
             assistantText: text ?? "",
             assistantToolCalls: toolCalls,
             assistantMessageId: response.id,
+            // `totalUsage` aggregates input/output tokens across all agentic
+            // steps this turn (ai@6 LanguageModelUsage; fields may be undefined,
+            // so coalesce to 0). Recorded for the cost-per-consultation KPI.
+            usage: {
+              model: CHAT_MODEL,
+              inputTokens: totalUsage?.inputTokens ?? 0,
+              outputTokens: totalUsage?.outputTokens ?? 0,
+            },
           });
 
           // Funnel telemetry: one pseudonymous event per email-summary offer

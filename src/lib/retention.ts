@@ -8,7 +8,10 @@
 //   1. Flip stale 'active' conversations to 'abandoned' (a lazy, cron-driven
 //      version of the abandonment check).
 //   2. Delete conversations (messages cascade) past the retention window.
-//   3. Delete kpi_events past the telemetry retention window.
+//   3. Delete kpi_events past the telemetry retention window, and the
+//      dashboard/admin AI-usage rows (the ones with no conversation) on the same
+//      analytics window. Chat AI-usage rows carry a conversation FK and cascade
+//      with step 2 instead.
 //   4. Purge PII for suppressed/unsubscribed email_captures after a grace
 //      period — the suppression_list record itself is kept so we keep honouring
 //      the opt-out. The matching `customers` row (email + cached profile /
@@ -33,6 +36,8 @@ export interface RetentionResult {
   abandonedConversations: number;
   deletedConversations: number;
   deletedKpiEvents: number;
+  /** Dashboard/admin AI-usage rows (no conversation) purged by created_at. */
+  deletedAiUsage: number;
   purgedSuppressedCaptures: number;
   purgedSuppressedCustomers: number;
   ranAt: string;
@@ -111,6 +116,18 @@ export async function runRetention(
     SELECT count(*)::int AS n FROM del
   `;
 
+  // 3b. Delete expired dashboard/admin AI-usage rows (conversation_id IS NULL).
+  //     Chat rows (conversation_id set) are already gone via the step-2 cascade.
+  const deletedAiUsage = await sql`
+    WITH del AS (
+      DELETE FROM ai_usage
+       WHERE conversation_id IS NULL
+         AND created_at < ${kpiCutoff}
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM del
+  `;
+
   // 4. Purge PII for opted-out captures past the grace period. The
   //    suppression_list row stays so future sends keep respecting the opt-out.
   const purgedCaptures = await sql`
@@ -149,6 +166,7 @@ export async function runRetention(
     abandonedConversations: abandoned[0]?.n ?? 0,
     deletedConversations: deletedConvos[0]?.n ?? 0,
     deletedKpiEvents: deletedKpi[0]?.n ?? 0,
+    deletedAiUsage: deletedAiUsage[0]?.n ?? 0,
     purgedSuppressedCaptures: purgedCaptures[0]?.n ?? 0,
     purgedSuppressedCustomers: purgedCustomers[0]?.n ?? 0,
     ranAt: new Date().toISOString(),

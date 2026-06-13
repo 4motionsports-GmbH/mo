@@ -56,6 +56,7 @@ The schema is split into **two clusters** (see the separation rationale below).
 | `conversations` | `session_id` (unique), `created_at`/`updated_at`/`last_activity_at`, `persona_label`, `message_count`, `recommended_product_ids` (text[]), `selected_product_ids` (text[]), `status` (active/abandoned/converted) |
 | `messages`      | `conversation_id` (FK, cascade), `client_message_id` (idempotency), `role`, `content`, `tool_name`  |
 | `kpi_events`    | `session_id`, `event`, `data` (jsonb), `created_at`                                                  |
+| `ai_usage`      | `conversation_id` (FK, cascade, nullable), `call_site`, `model`, `input_tokens`, `output_tokens`, `estimated`, `created_at` (migration 0012) |
 
 - **Write path:** `/api/chat` calls `persistTurn()` (`src/lib/conversation-store.ts`)
   in its `onFinish` handler — *after* the stream finishes, so it adds no token
@@ -77,6 +78,17 @@ The schema is split into **two clusters** (see the separation rationale below).
   history never duplicates rows.
 - **Telemetry:** `/api/kpi` inserts pseudonymous `kpi_events` (the widget's
   fail-silent `track()`), best-effort.
+- **AI cost (migration 0012):** every AI call records one `ai_usage` row — model
+  id + provider-reported input/output token counts (`estimated` flags the rare
+  case where they're estimated, e.g. an embeddings response with no usage field).
+  CHAT usage carries `conversation_id` (so it cascade-deletes with its
+  conversation); dashboard/admin/embedding calls leave it NULL. `recordAiUsage()`
+  in `src/lib/ai-usage-store.ts` is best-effort (no DB ⇒ no-op, never throws).
+  The KPI tab turns token counts into EUR via the model→price table in
+  `src/lib/ai-pricing.mjs` — USD per million tokens with sane defaults for the
+  models we call, overridable via the `MODEL_PRICES_JSON` env var; EUR conversion
+  via `USD_EUR_RATE` (default 0.92). `getAiCostMetrics()` reports average/median
+  cost per consultation, total spend, and a chat-vs-dashboard split.
 
 ### Cluster B — consent / marketing (email lives ONLY here)
 

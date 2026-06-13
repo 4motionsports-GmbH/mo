@@ -37,20 +37,10 @@
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { reportError } from "./observability";
 
-/**
- * The discount depths the admin may offer, as whole-number percents. 0 = "None"
- * (the default — applying a discount is a deliberate act). Shared by the draft
- * route (validation) and the dashboard UI (the selector).
- */
-export const ALLOWED_DISCOUNT_PERCENTS = [0, 5, 10, 15] as const;
-export type AllowedDiscountPercent = (typeof ALLOWED_DISCOUNT_PERCENTS)[number];
-
-export function isAllowedDiscountPercent(n: unknown): n is AllowedDiscountPercent {
-  return (
-    typeof n === "number" &&
-    (ALLOWED_DISCOUNT_PERCENTS as readonly number[]).includes(n)
-  );
-}
+// The admin chooses the discount depth as a whole-number percent (DEFAULT 0,
+// range 0–50). The bounds + validation live in lib/discount-validation.mjs,
+// shared by the draft routes (server-side) and the dashboard input (client-side).
+// 0 mints no code; >0 mints the MS5- code below with the chosen percentage.
 
 /**
  * The clearly-marked placeholder code shown in the DRAFT PREVIEW. No real

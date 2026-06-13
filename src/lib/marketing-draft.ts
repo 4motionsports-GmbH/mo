@@ -17,6 +17,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import type { TranscriptMessage } from "./conversation-store";
 import { reportError } from "./observability";
+import { recordAiUsage } from "./ai-usage-store";
 
 // Same model the transactional summary uses — one voice across the backend.
 const DRAFT_MODEL = "claude-sonnet-4-5-20250929";
@@ -190,7 +191,7 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
   const transcript = readableTranscript(input.transcript);
 
   try {
-    const { object } = await generateObject({
+    const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
       schema: draftSchema,
       system:
@@ -211,6 +212,13 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
         `${discountHint(input)}\n\n` +
         `Gesprächsprotokoll:\n${transcript || "(kein Protokoll verfügbar)"}\n\n` +
         `Schreibe die personalisierte E-Mail (Betreff + Text).`,
+    });
+    // Cost KPI (dashboard/admin side).
+    await recordAiUsage({
+      callSite: "marketing_draft",
+      model: DRAFT_MODEL,
+      inputTokens: usage?.inputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
     });
     const subject = object.subject?.trim();
     const body = object.body?.trim();
@@ -362,7 +370,7 @@ export async function generateCustomerMarketingDraft(
     : "";
 
   try {
-    const { object } = await generateObject({
+    const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
       schema: draftSchema,
       system:
@@ -399,6 +407,13 @@ export async function generateCustomerMarketingDraft(
         `## Bisherige Gespräche (chronologisch, älteste zuerst)\n\n` +
         `${sessionBlocks || "(keine Gespräche verknüpft)"}\n\n` +
         `Schreibe jetzt die personalisierte E-Mail (Betreff + Text).`,
+    });
+    // Cost KPI (dashboard/admin side).
+    await recordAiUsage({
+      callSite: "marketing_draft",
+      model: DRAFT_MODEL,
+      inputTokens: usage?.inputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
     });
     const subject = object.subject?.trim();
     const body = object.body?.trim();

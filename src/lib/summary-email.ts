@@ -28,6 +28,7 @@ import {
 } from "./email-template";
 import { partitionSummaryProducts } from "./summary-products.mjs";
 import { reportError } from "./observability";
+import { recordAiUsage } from "./ai-usage-store";
 import type { Product } from "./types";
 
 const SUMMARY_MODEL = "claude-sonnet-4-5-20250929";
@@ -58,7 +59,7 @@ async function buildSummaryText(turns: TranscriptMessage[]): Promise<string> {
   if (!process.env.ANTHROPIC_API_KEY) return transcript;
 
   try {
-    const { text } = await generateText({
+    const { text, usage } = await generateText({
       model: anthropic(SUMMARY_MODEL),
       system:
         "Du fasst ein Fitness-Beratungsgespräch für eine E-Mail an den Kunden " +
@@ -66,6 +67,13 @@ async function buildSummaryText(turns: TranscriptMessage[]): Promise<string> {
         "kurze Sätze. Nenne den ermittelten Bedarf und die wichtigsten Empfehlungen. " +
         "Keine erfundenen Produkte, keine Preise erfinden, kein Marketing, keine Rabatte.",
       prompt: `Hier ist das Gesprächsprotokoll:\n\n${transcript}\n\nSchreibe die Zusammenfassung.`,
+    });
+    // Cost KPI (dashboard/admin side; transactional, no conversation link).
+    await recordAiUsage({
+      callSite: "summary_email",
+      model: SUMMARY_MODEL,
+      inputTokens: usage?.inputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
     });
     const trimmed = text?.trim();
     return trimmed || transcript;

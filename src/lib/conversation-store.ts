@@ -11,6 +11,7 @@
 import type { UIMessage } from "ai";
 import { getSql } from "./db";
 import { reportError } from "./observability";
+import { recordAiUsage } from "./ai-usage-store";
 
 // Tool inputs that reference catalog product ids. Used to accumulate
 // conversations.recommended_product_ids — the "DISCUSSED" set: every product
@@ -52,6 +53,12 @@ export interface PersistTurnInput {
   assistantToolCalls: ToolInvocation[];
   /** Stable id for the assistant turn (provider response id). */
   assistantMessageId: string;
+  /**
+   * Token usage for this turn's model call (the AI SDK's aggregated
+   * `totalUsage`), recorded against the conversation for the cost-per-
+   * consultation KPI. Optional — omitted when usage is unavailable.
+   */
+  usage?: { model: string; inputTokens: number; outputTokens: number };
 }
 
 function truncate(s: string): string {
@@ -328,6 +335,21 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
 
     if (queries.length > 0) {
       await sql.transaction(queries);
+    }
+
+    // Record this turn's token usage against the conversation (cost-per-
+    // consultation KPI). Best-effort and self-contained — never throws.
+    if (input.usage) {
+      await recordAiUsage(
+        {
+          callSite: "chat",
+          model: input.usage.model,
+          inputTokens: input.usage.inputTokens,
+          outputTokens: input.usage.outputTokens,
+          conversationId,
+        },
+        sql
+      );
     }
 
     return true;

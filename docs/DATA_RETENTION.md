@@ -28,6 +28,7 @@ is **pseudonymous**: keyed by a client-generated `session_id`, never an email.
 | `conversations` | `session_id`, timestamps, derived persona label, message count, referenced product ids, status | No (pseudonymous)        |
 | `messages`      | role, message text, which tools fired                                          | Only if a user types it  |
 | `kpi_events`    | event name, pseudonymous `session_id`, free-form jsonb `data`                  | No (telemetry)           |
+| `ai_usage`      | AI call site, model id, input/output token counts, optional `conversation_id`  | No (token counts only)   |
 
 **Note on free-text:** users *can* type personal data into a chat message. We
 do not solicit it, and the retention window below bounds how long any such text
@@ -37,12 +38,20 @@ survives. Do not log message content to third parties.
 
 | Data                          | Default window | Env var               | Action on expiry            |
 | ----------------------------- | -------------- | --------------------- | --------------------------- |
-| Conversations + messages      | **180 days**   | `RETENTION_DAYS`      | Hard delete (messages cascade) |
+| Conversations + messages      | **180 days**   | `RETENTION_DAYS`      | Hard delete (messages + chat `ai_usage` cascade) |
 | KPI / telemetry events        | **180 days**   | `KPI_RETENTION_DAYS`  | Hard delete                 |
+| AI usage — chat               | follows the conversation | `RETENTION_DAYS` | Cascade-deleted with the conversation (FK) |
+| AI usage — dashboard/admin    | **180 days**   | `KPI_RETENTION_DAYS`  | Hard delete (by `created_at`) |
 | Active → abandoned transition | **30 minutes** idle | `ABANDON_AFTER_MINUTES` | Status flip (not deletion) |
 
 Windows are measured from `last_activity_at` (conversations) and `created_at`
-(kpi_events).
+(kpi_events, dashboard/admin `ai_usage`).
+
+**AI usage rows follow their conversation.** Chat `ai_usage` rows carry a
+`conversation_id` foreign key with `ON DELETE CASCADE`, so they are deleted
+together with the conversation they measure — exactly the same window. Only the
+dashboard/admin rows (email drafts, profiles, top-questions, embeddings — which
+have no conversation) are purged independently, on the analytics window.
 
 ---
 
@@ -81,8 +90,9 @@ A daily cron — `GET /api/cron/retention`, scheduled in `vercel.json`, protecte
 by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
 
 1. Marks stale `active` conversations `abandoned`.
-2. Deletes conversations past `RETENTION_DAYS` (messages cascade).
-3. Deletes `kpi_events` past `KPI_RETENTION_DAYS`.
+2. Deletes conversations past `RETENTION_DAYS` (messages + chat `ai_usage` cascade).
+3. Deletes `kpi_events` past `KPI_RETENTION_DAYS`, and the dashboard/admin
+   `ai_usage` rows (those with no `conversation_id`) on the same window.
 4. Purges PII for unsubscribed / suppressed `email_captures` past the grace
    window, keeping the `suppression_list` entry.
 5. Purges the matching `customers` rows (email + cached profile / purchase
@@ -107,6 +117,7 @@ The endpoint returns a JSON summary with the counts affected, e.g.:
   "abandonedConversations": 4,
   "deletedConversations": 12,
   "deletedKpiEvents": 833,
+  "deletedAiUsage": 27,
   "purgedSuppressedCaptures": 1,
   "purgedSuppressedCustomers": 1,
   "ranAt": "2026-06-03T03:30:00.000Z"

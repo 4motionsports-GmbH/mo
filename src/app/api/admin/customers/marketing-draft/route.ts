@@ -43,10 +43,13 @@ import {
 import { getProductsByIds } from "@/lib/product-catalog";
 import {
   PLACEHOLDER_DISCOUNT_CODE,
-  isAllowedDiscountPercent,
   discountExpiryDaysPublic,
   formatGermanExpiryDate,
 } from "@/lib/shopify-discounts";
+import {
+  parseDiscountPercent,
+  DISCOUNT_PERCENT_MAX,
+} from "@/lib/discount-validation.mjs";
 import { buildPrefilledCartUrlForIds, chooseCustomerProductIds } from "@/lib/cart";
 import { generateCustomerMarketingDraft } from "@/lib/marketing-draft";
 import { reportError } from "@/lib/observability";
@@ -83,10 +86,16 @@ export async function POST(req: Request) {
     if (!Number.isInteger(customerId) || customerId <= 0) {
       return adminJsonError("bad_request", "customerId required", 400);
     }
-    discountPercent = Number(body.discountPercent ?? 0);
-    if (!isAllowedDiscountPercent(discountPercent)) {
-      return adminJsonError("bad_request", "discountPercent must be one of 0, 5, 10, 15.", 400);
+    // Default 0 (no discount); any whole percent 0–50 (mirrored client-side).
+    const parsedPercent = parseDiscountPercent(body.discountPercent ?? 0);
+    if (parsedPercent === null) {
+      return adminJsonError(
+        "bad_request",
+        `discountPercent must be a whole number between 0 and ${DISCOUNT_PERCENT_MAX}.`,
+        400
+      );
     }
+    discountPercent = parsedPercent;
     if (body.adminInstructions != null && typeof body.adminInstructions !== "string") {
       return adminJsonError("bad_request", "adminInstructions must be a string.", 400);
     }
