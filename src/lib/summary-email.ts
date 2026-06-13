@@ -27,6 +27,7 @@ import {
   EMAIL_FONT_FAMILY,
 } from "./email-template";
 import { partitionSummaryProducts } from "./summary-products.mjs";
+import { renderEmailProductRows } from "./email-products";
 import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
 import type { Product } from "./types";
@@ -129,33 +130,10 @@ function renderChosenProducts(products: Product[]): { text: string; html: string
     "\nDeine Auswahl:\n" +
     products.map((p) => `- ${p.name} – ${formatPrice(p)}`).join("\n");
 
-  const rows = products
-    .map((p) => {
-      const img = firstImageUrl(p);
-      const imageCell = img
-        ? `<td width="96" valign="top" style="mso-line-height-rule: exactly; padding: 8px 12px 8px 0;"><img src="${escapeAttr(
-            img
-          )}" alt="${escapeAttr(
-            p.name
-          )}" width="80" height="80" border="0" style="width: 80px; height: 80px; display: block; border: none; outline: none; object-fit: cover;"></td>`
-        : "";
-      return `
-                <tr>${imageCell}
-                  <td valign="middle" style="mso-line-height-rule: exactly; padding: 8px 0;">
-                    <p style="${EMAIL_TEXT_STYLE} text-align: left; font-weight: 700;" align="left">${escapeHtml(
-                      p.name
-                    )}</p>
-                    <p style="${EMAIL_TEXT_STYLE} text-align: left; padding-top: 2px;" align="left">${escapeHtml(
-                      formatPrice(p)
-                    )}</p>
-                  </td>
-                </tr>`;
-    })
-    .join("");
-
-  const html = `
-                <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr; Margin-top: 10px;" role="presentation">${rows}
-                </table>`;
+  // Shared product-row renderer (also used by the bundle special-offer block).
+  const html = renderEmailProductRows(
+    products.map((p) => ({ imageUrl: firstImageUrl(p), name: p.name, priceLabel: formatPrice(p) }))
+  );
   return { text, html };
 }
 

@@ -190,14 +190,46 @@ business already runs with.
 - `archiveBundleOffer(id)` — manual archive for the S11 UI.
 - `expireBundleOffers()` — the cron sweep entry.
 
-Admin endpoints (behind the existing admin auth + CSRF via `guardAdminPost`;
-UI lands in S11):
+Admin endpoints (behind the existing admin auth + CSRF via `guardAdminPost`):
 
 | Endpoint                        | Body                                                            |
 | ------------------------------- | -------------------------------------------------------------- |
 | `POST /api/admin/bundles/list`    | `{ customerId }` → `{ offers }`                                |
 | `POST /api/admin/bundles/create`  | `{ customerId?, components:[{productId,quantity?}], bundlePriceOverride?, title?, expiryDays?, marketingSendId? }` |
 | `POST /api/admin/bundles/archive` | `{ id }` → `{ offer }`                                         |
+| `POST /api/admin/bundles/suggest` | `{ customerId }` → `{ title, components, componentsSum }` (AI) |
+| `POST /api/admin/catalog/search`  | `{ query }` → `{ products }` (name search for "add product")   |
+
+### Admin workflow (S11) — the marketing dashboard's "Kunden" tab
+
+A **bundle block** sits above the free-text "special additions" field in the
+personalized-email flow (`CustomerProfileCard`):
+
+1. **Bundle vorschlagen** (`/bundles/suggest`) — an AI pass over the customer's
+   "current understanding" profile, full conversation history and purchase
+   history proposes ONE bundle of **2–5** in-stock, **not-owned** products (sold
+   out is never offered — S10 refuses it anyway), each with a one-sentence
+   rationale. Structured output (`generateObject`); token usage recorded under
+   the `bundle_suggestions` call site (S6).
+2. **Editable composition** — remove suggested products / add by name search
+   (`/catalog/search`) over the synced catalog; the live component sum is shown.
+3. **Price** (default = component sum; admin-set, validated `> 0`; a price above
+   the sum only **warns** — no "statt" line per S10's rule), **title** (default
+   "Dein persönliches Set"), **expiry days** (default 7).
+4. **Bundle erstellen** (`/bundles/create`) → the S10 service; creation errors
+   (sold-out offenders, lost-publication-scope) surface inline.
+5. **Email integration** — a created, still-active bundle is **attached** to the
+   send (`marketing_send_id`). The personalized email then carries a
+   SPECIAL-OFFER block (title, component image+name rows reusing the S5 product
+   row, the bundle price and — only when `bundle_price < components_sum` — a
+   PAngV "statt €<sum>" line) with a "Zum Angebot" CTA on the **tracked**
+   `/api/r/<token>` link. The drafting prompt is extended minimally so the prose
+   references the set; the rest of the send path (unsubscribe, suppression,
+   confirmed-consent, tracked links, discount minting) is **unchanged**.
+6. **Coexistence** — a send may carry a discount code, a bundle, both or neither.
+   The per-customer bundle list shows each offer's status (active / sent /
+   expired), a "Klick erfasst" signal when the tracked link reported a click, and
+   a manual **Archivieren** action (`/bundles/archive`).
 
 ---
 

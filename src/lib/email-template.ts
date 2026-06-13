@@ -99,7 +99,7 @@ const MENU_ITEMS: ReadonlyArray<{ label: string; url: string }> = [
   { label: "Impressum", url: "https://motionsports.de/pages/impressum" },
 ];
 
-function renderCtaButton(cta: EmailCta): string {
+export function renderCtaButton(cta: EmailCta): string {
   // "Bulletproof" pill button straight from the reference design: a one-cell
   // table whose th carries bgcolor + border-radius (works in Outlook) and a
   // block-level <a> with a thick same-color border for the clickable padding.
