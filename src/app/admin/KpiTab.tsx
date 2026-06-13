@@ -16,7 +16,7 @@ import { getMarketingFunnel, type MarketingFunnel } from "@/lib/marketing-store"
 import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
 import { getAiCostMetrics, type AiCostMetrics } from "@/lib/ai-usage-store";
 import { KpiTopQuestions } from "./KpiTopQuestions";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui";
+import { Card, CardContent, CardHeader, CardTitle, Section, Stat, Caveat } from "./ui";
 import {
   ChatsPerDayChart,
   StatusSplitChart,
@@ -508,38 +508,8 @@ function LoopSection({ loop }: { loop: RecommendationLoopResult | null }) {
 
 // ---------------------------------------------------------------------------
 // Shared presentational bits — themed via the admin design tokens.
+// Section / Stat / Caveat now live in ./ui/stat so the Overview tab reuses them.
 // ---------------------------------------------------------------------------
-
-function Section({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section>
-      <h2 className="text-lg font-semibold tracking-tight text-foreground">{title}</h2>
-      {subtitle && <p className="mt-0.5 mb-3 text-xs text-muted-foreground">{subtitle}</p>}
-      {!subtitle && <div className="h-2.5" />}
-      {children}
-    </section>
-  );
-}
-
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        <div className="mt-1 text-xl font-semibold text-foreground">{value}</div>
-        {hint && <div className="mt-0.5 text-[11px] text-muted-foreground/80">{hint}</div>}
-      </CardContent>
-    </Card>
-  );
-}
 
 function LegendDot({ color, label, value }: { color: string; label: string; value: number }) {
   return (
@@ -547,15 +517,6 @@ function LegendDot({ color, label, value }: { color: string; label: string; valu
       <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
       {label}: <strong className="text-foreground">{num(value, 0)}</strong>
     </span>
-  );
-}
-
-// Caveat — the required-honesty note attached to a KPI. Kept verbatim per KPI.
-function Caveat({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/80 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5">
-      {children}
-    </p>
   );
 }
 

@@ -17,7 +17,26 @@ import { Search } from "lucide-react";
 import { CustomerCard, type MarketingTargetProps } from "./CustomerCard";
 import { Input, Label, Select } from "./ui";
 
-type StatusFilter = "all" | "no_purchase" | "draft" | "sent" | "purchased" | "unknown";
+// The status buckets the toolbar can filter by. Exported (with a runtime guard)
+// so the Overview tab's quick links can deep-link straight into a pre-applied
+// filter via ?status=… without re-declaring the union.
+export const MARKETING_STATUS_FILTERS = [
+  "all",
+  "no_purchase",
+  "draft",
+  "sent",
+  "purchased",
+  "unknown",
+] as const;
+export type StatusFilter = (typeof MARKETING_STATUS_FILTERS)[number];
+
+/** Coerce an arbitrary (URL) value to a valid StatusFilter, defaulting to "all". */
+export function toStatusFilter(value: unknown): StatusFilter {
+  return (MARKETING_STATUS_FILTERS as readonly string[]).includes(value as string)
+    ? (value as StatusFilter)
+    : "all";
+}
+
 type SortKey = "confirmed_desc" | "confirmed_asc" | "persona";
 
 function matchesStatus(t: MarketingTargetProps, filter: StatusFilter): boolean {
@@ -46,9 +65,16 @@ function confirmedTime(t: MarketingTargetProps): number {
   return Number.isNaN(ms) ? Number.NaN : ms;
 }
 
-export function MarketingList({ targets }: { targets: MarketingTargetProps[] }) {
+export function MarketingList({
+  targets,
+  initialStatus = "all",
+}: {
+  targets: MarketingTargetProps[];
+  /** Seeds the status filter — set by an Overview quick link's ?status= deep link. */
+  initialStatus?: StatusFilter;
+}) {
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("all");
+  const [status, setStatus] = useState<StatusFilter>(initialStatus);
   const [sort, setSort] = useState<SortKey>("confirmed_desc");
 
   const visible = useMemo(() => {

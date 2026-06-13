@@ -12,32 +12,36 @@ import { Toaster } from "./ui/toast";
 import { ThemeToggle } from "./ThemeToggle";
 import type { Theme } from "./theme-config";
 
-export type AdminTab = "customers" | "kunden" | "kpi";
+export type AdminTab = "overview" | "customers" | "kunden" | "kpi";
 
-const TAB_ORDER: AdminTab[] = ["customers", "kunden", "kpi"];
+const TAB_ORDER: AdminTab[] = ["overview", "customers", "kunden", "kpi"];
 
 const TAB_LABEL: Record<AdminTab, string> = {
+  overview: "Übersicht",
   customers: "Marketing",
   kunden: "Kunden",
   kpi: "KPIs",
 };
 
 const TAB_SUBTITLE: Record<AdminTab, string> = {
+  overview: "Übersicht · Kennzahlen & Schnellzugriff auf einen Blick",
   customers: "Marketing · Nur bestätigte (DOI), nicht abgemeldete Kontakte",
   kunden:
     "Kunden · Gruppiert nach Person (E-Mail) — Sessions, Käufe & Kundenverständnis",
   kpi: "KPIs · Pseudonyme Analytics (Cluster A) + Shopify-Käufe",
 };
 
-// The URL keeps `?tab=kunden` / `?tab=kpi`; the Marketing tab is the bare /admin.
+// The Übersicht tab is the bare /admin (the default landing tab); every other
+// tab carries its `?tab=` so a refresh / copied link lands on the same tab.
 function tabToQuery(tab: AdminTab): string {
-  return tab === "customers" ? "/admin" : `/admin?tab=${tab}`;
+  return tab === "overview" ? "/admin" : `/admin?tab=${tab}`;
 }
 
 export function AdminShell({
   initialTab,
   themeInitial,
   logoutAction,
+  overview,
   marketing,
   kunden,
   kpi,
@@ -45,6 +49,7 @@ export function AdminShell({
   initialTab: AdminTab;
   themeInitial: Theme | null;
   logoutAction: () => void | Promise<void>;
+  overview: React.ReactNode;
   marketing: React.ReactNode;
   kunden: React.ReactNode;
   kpi: React.ReactNode;
@@ -54,7 +59,7 @@ export function AdminShell({
   // Graceful URL sync: keep the query param current so a refresh or a copied
   // link lands on the same tab, without a full server navigation.
   function onTabChange(next: string) {
-    const value = (TAB_ORDER as string[]).includes(next) ? (next as AdminTab) : "customers";
+    const value = (TAB_ORDER as string[]).includes(next) ? (next as AdminTab) : "overview";
     setTab(value);
     if (typeof window !== "undefined") {
       window.history.replaceState(window.history.state, "", tabToQuery(value));
@@ -62,6 +67,7 @@ export function AdminShell({
   }
 
   const bodies: Record<AdminTab, React.ReactNode> = {
+    overview,
     customers: marketing,
     kunden,
     kpi,
