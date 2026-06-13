@@ -326,6 +326,70 @@ export async function getMarketingFunnel(
   }
 }
 
+export interface RecentSend {
+  id: number;
+  /** Recipient email (via the capture join). */
+  email: string;
+  subject: string | null;
+  sentAt: string | null;
+}
+
+export interface MarketingActivity {
+  /** Most recently SENT marketing emails (newest first), capped to `limit`. */
+  recentSends: RecentSend[];
+  /** Count of marketing emails sent within the trailing `windowDays`. */
+  sentInWindow: number;
+  windowDays: number;
+}
+
+/**
+ * Read-only activity feed for the overview tab: the newest sent marketing emails
+ * (with the recipient email, via the same capture join getLatestSendForEmail
+ * uses) plus a windowed sent count for the headline "sends this period" KPI. Pure
+ * aggregation over marketing_sends — never writes. Returns null only when no DB
+ * is configured; degrades to empty/zero (logged) on a query failure.
+ */
+export async function getMarketingActivity(
+  { windowDays = 30, limit = 5 }: { windowDays?: number; limit?: number } = {},
+  sql: Sql | null = getSql()
+): Promise<MarketingActivity | null> {
+  if (!sql) return null;
+  const days = Number.isFinite(windowDays) && windowDays > 0 ? Math.floor(windowDays) : 30;
+  const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 5;
+  try {
+    const [recentRows, windowRows] = (await Promise.all([
+      sql`
+        SELECT ms.id, ec.email, ms.subject, ms.sent_at
+          FROM marketing_sends ms
+          JOIN email_captures ec ON ec.id = ms.email_capture_id
+         WHERE ms.status = 'sent'
+         ORDER BY ms.sent_at DESC NULLS LAST, ms.id DESC
+         LIMIT ${cap}
+      `,
+      sql`
+        SELECT count(*)::int AS n
+          FROM marketing_sends
+         WHERE status = 'sent'
+           AND sent_at >= (current_date - ${days - 1}::int)::date
+      `,
+    ])) as [Array<Record<string, unknown>>, Array<{ n: number }>];
+
+    return {
+      recentSends: recentRows.map((r) => ({
+        id: Number(r.id),
+        email: String(r.email),
+        subject: (r.subject as string | null) ?? null,
+        sentAt: (r.sent_at as string | null) ?? null,
+      })),
+      sentInWindow: Number(windowRows[0]?.n ?? 0),
+      windowDays: days,
+    } satisfies MarketingActivity;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "getMarketingActivity" });
+    return null;
+  }
+}
+
 /**
  * Generate a unique, hard-to-guess redirect token (192 bits, URL-safe base64).
  * Long and random enough that tokens can't be enumerated; short enough to sit in

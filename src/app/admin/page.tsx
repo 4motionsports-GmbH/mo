@@ -19,17 +19,22 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { ADMIN_COOKIE_NAME } from "@/lib/admin-auth";
 import { isDbConfigured } from "@/lib/db";
-import { listMarketingTargets, getLatestSendForEmail } from "@/lib/marketing-store";
+import {
+  listMarketingTargets,
+  getLatestSendForEmail,
+  type MarketingTarget,
+} from "@/lib/marketing-store";
 import { listCustomersWithSessions } from "@/lib/customer-store";
 import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-store";
 import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
 import { wasDiscountCodeRedeemed } from "@/lib/shopify-orders";
 import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
-import { MarketingList } from "./MarketingList";
+import { MarketingList, toStatusFilter, type StatusFilter } from "./MarketingList";
 import { CustomerProfileCard, type CustomerProps } from "./CustomerProfileCard";
 import { isWelcomeDiscountEnabled } from "@/lib/welcome-discount-flag.mjs";
 import { KpiTab } from "./KpiTab";
+import { OverviewTab } from "./OverviewTab";
 import { AdminShell, type AdminTab } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
 
@@ -48,9 +53,26 @@ export default async function AdminDashboardPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const sp = await searchParams;
+  // Übersicht is the default landing tab; the others stay reachable via ?tab=.
   const initialTab: AdminTab =
-    sp?.tab === "kpi" ? "kpi" : sp?.tab === "kunden" ? "kunden" : "customers";
+    sp?.tab === "kpi"
+      ? "kpi"
+      : sp?.tab === "kunden"
+        ? "kunden"
+        : sp?.tab === "customers"
+          ? "customers"
+          : "overview";
+  // ?status= deep-links straight into a pre-applied Marketing filter (set by the
+  // Overview quick links), seeding MarketingList's own filter state.
+  const initialMarketingStatus = toStatusFilter(
+    typeof sp?.status === "string" ? sp.status : undefined
+  );
   const dbReady = isDbConfigured();
+
+  // The marketing targets back BOTH the Marketing tab and the Overview headline
+  // KPIs / "not purchased" count — fetch the (Shopify-touching) list once here
+  // and hand it to both so the numbers agree and the fan-out isn't doubled.
+  const targets: MarketingTarget[] = dbReady ? await listMarketingTargets() : [];
 
   const store = await cookies();
   const themeCookie = store.get(THEME_COOKIE)?.value;
@@ -62,15 +84,29 @@ export default async function AdminDashboardPage({
       initialTab={initialTab}
       themeInitial={themeInitial}
       logoutAction={logoutAction}
-      marketing={<CustomersTab dbReady={dbReady} />}
+      overview={<OverviewTab dbReady={dbReady} targets={targets} />}
+      marketing={
+        <CustomersTab
+          dbReady={dbReady}
+          targets={targets}
+          initialStatus={initialMarketingStatus}
+        />
+      }
       kunden={<KundenTab dbReady={dbReady} />}
       kpi={<KpiTab dbReady={dbReady} />}
     />
   );
 }
 
-async function CustomersTab({ dbReady }: { dbReady: boolean }) {
-  const targets = dbReady ? await listMarketingTargets() : [];
+function CustomersTab({
+  dbReady,
+  targets,
+  initialStatus,
+}: {
+  dbReady: boolean;
+  targets: MarketingTarget[];
+  initialStatus: StatusFilter;
+}) {
   const notPurchased = targets.filter((t) => t.purchase.status === "no_purchase").length;
 
   return (
@@ -96,7 +132,7 @@ async function CustomersTab({ dbReady }: { dbReady: boolean }) {
             &bdquo;beraten, aber (noch) nicht gekauft&ldquo; — die wichtigste
             Marketing-Zielgruppe.
           </p>
-          <MarketingList targets={targets} />
+          <MarketingList targets={targets} initialStatus={initialStatus} />
         </>
       )}
     </>

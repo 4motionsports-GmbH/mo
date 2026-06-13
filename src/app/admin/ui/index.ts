@@ -48,3 +48,4 @@ export {
 } from "./dropdown-menu";
 export { Tooltip, TooltipProvider } from "./tooltip";
 export { toast, Toaster, type ToastOptions, type ToastVariant } from "./toast";
+export { Section, Stat, Caveat } from "./stat";
