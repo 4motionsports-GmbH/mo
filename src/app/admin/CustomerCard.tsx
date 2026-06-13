@@ -13,6 +13,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DISCOUNT_PERCENT_MIN,
+  DISCOUNT_PERCENT_MAX,
+  clampDiscountPercent,
+} from "@/lib/discount-validation.mjs";
 
 interface TranscriptMessage {
   role: "user" | "assistant" | "system" | "tool";
@@ -36,15 +41,6 @@ interface MarketingSendRow {
   cartUrl: string | null;
   sentAt: string | null;
 }
-
-// The discount depths the admin may offer. None (0) is the default — applying a
-// discount is a deliberate act. Mirrors ALLOWED_DISCOUNT_PERCENTS server-side.
-const DISCOUNT_OPTIONS: Array<{ value: number; label: string }> = [
-  { value: 0, label: "Kein Rabatt" },
-  { value: 5, label: "5 %" },
-  { value: 10, label: "10 %" },
-  { value: 15, label: "15 %" },
-];
 
 export interface MarketingTargetProps {
   captureId: number;
@@ -356,6 +352,10 @@ function SentPanel({ send, email }: { send: MarketingSendRow; email: string }) {
   );
 }
 
+// Numeric discount input: a whole percent in [0, 50], DEFAULT 0. 0 = no code is
+// minted and no discount block appears in the email; >0 mints the unique MS5-
+// code at send time with this percentage. Bounds mirror the server
+// (lib/discount-validation.mjs) and are clamped on change.
 function DiscountSelector({
   value,
   onChange,
@@ -367,33 +367,37 @@ function DiscountSelector({
 }) {
   return (
     <div>
-      <label style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 6 }}>
-        Persönlicher Rabatt
+      <label
+        htmlFor="ms-discount-percent"
+        style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 6 }}
+      >
+        Persönlicher Rabatt (%)
       </label>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {DISCOUNT_OPTIONS.map((opt) => {
-          const active = value === opt.value;
-          return (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => onChange(opt.value)}
-              disabled={disabled}
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                padding: "7px 14px",
-                borderRadius: 999,
-                cursor: disabled ? "default" : "pointer",
-                border: active ? "1px solid #111" : "1px solid #ddd",
-                background: active ? "#111" : "#fff",
-                color: active ? "#fff" : "#555",
-              }}
-            >
-              {opt.label}
-            </button>
-          );
-        })}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          id="ms-discount-percent"
+          type="number"
+          inputMode="numeric"
+          min={DISCOUNT_PERCENT_MIN}
+          max={DISCOUNT_PERCENT_MAX}
+          step={1}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(clampDiscountPercent(e.target.valueAsNumber))}
+          style={{
+            width: 96,
+            boxSizing: "border-box",
+            padding: "7px 10px",
+            fontSize: 14,
+            border: "1px solid #ddd",
+            borderRadius: 8,
+          }}
+        />
+        <span style={{ fontSize: 12, color: "#888" }}>
+          {value === 0
+            ? "0 = kein Rabatt, kein Code"
+            : `${DISCOUNT_PERCENT_MIN}–${DISCOUNT_PERCENT_MAX} %`}
+        </span>
       </div>
     </div>
   );

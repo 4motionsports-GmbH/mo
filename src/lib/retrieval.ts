@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { loadEmbeddings, loadProductCatalog, type EmbeddingsFile } from "./catalog-store";
+import { recordAiUsage } from "./ai-usage-store";
 import type { CustomerProfile, Product, SearchProductsArgs } from "./types";
 
 let openaiClient: OpenAI | null = null;
@@ -105,6 +106,15 @@ export async function embedQuery(text: string): Promise<number[] | null> {
     const res = await getOpenAI().embeddings.create({
       model: emb.model,
       input: text,
+    });
+    // Cost KPI (chat-serving side). OpenAI returns prompt_tokens on the usage
+    // field, so this is provider-reported, not estimated. Fire-and-forget: this
+    // runs on the chat hot path (before streaming), so we never await the write.
+    void recordAiUsage({
+      callSite: "embeddings",
+      model: emb.model,
+      inputTokens: res.usage?.prompt_tokens ?? 0,
+      outputTokens: 0,
     });
     return res.data[0].embedding;
   } catch (err) {

@@ -138,6 +138,13 @@ single-line strings. See `.env.example` for the canonical list.
 | ------------ | ---------------------------------------------------------------------------------------------------- |
 | `SENTRY_DSN` | Server-side error capture. Skipped silently when unset — routes never crash on missing observability. |
 
+**AI cost tracking (optional — KPI tab)**
+
+| Variable            | Description                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| `MODEL_PRICES_JSON` | JSON `{ "<model>": { "input": N, "output": N } }` in USD per million tokens. Overrides/extends the built-in defaults. Unset ⇒ defaults. |
+| `USD_EUR_RATE`      | USD→EUR rate applied to computed AI costs. Default `0.92`.                                     |
+
 ### Deploy checklist
 
 Run these in order. Don't skip the manual cron trigger or the

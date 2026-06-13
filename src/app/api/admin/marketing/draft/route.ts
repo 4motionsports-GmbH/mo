@@ -31,10 +31,13 @@ import { loadConversationForSummary } from "@/lib/conversation-store";
 import { getProductsByIds } from "@/lib/product-catalog";
 import {
   PLACEHOLDER_DISCOUNT_CODE,
-  isAllowedDiscountPercent,
   discountExpiryDaysPublic,
   formatGermanExpiryDate,
 } from "@/lib/shopify-discounts";
+import {
+  parseDiscountPercent,
+  DISCOUNT_PERCENT_MAX,
+} from "@/lib/discount-validation.mjs";
 import { buildPrefilledCartUrlForIds, chooseCartProductIds } from "@/lib/cart";
 import { generateMarketingDraft } from "@/lib/marketing-draft";
 import { reportError } from "@/lib/observability";
@@ -66,14 +69,18 @@ export async function POST(req: Request) {
     if (!Number.isInteger(captureId) || captureId <= 0) {
       return adminJsonError("bad_request", "captureId required", 400);
     }
-    discountPercent = Number(body.discountPercent ?? 0);
-    if (!isAllowedDiscountPercent(discountPercent)) {
+    // Default 0 (no discount); accept any whole percent in 0–50 (server-side
+    // bound, mirrored client-side). 0 mints no code; >0 mints the MS5- code at
+    // send time with this percentage through the unchanged safeguarded path.
+    const parsedPercent = parseDiscountPercent(body.discountPercent ?? 0);
+    if (parsedPercent === null) {
       return adminJsonError(
         "bad_request",
-        "discountPercent must be one of 0, 5, 10, 15.",
+        `discountPercent must be a whole number between 0 and ${DISCOUNT_PERCENT_MAX}.`,
         400
       );
     }
+    discountPercent = parsedPercent;
     regenerate = body.regenerate === true;
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);

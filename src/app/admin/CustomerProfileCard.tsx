@@ -19,6 +19,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DISCOUNT_PERCENT_MIN,
+  DISCOUNT_PERCENT_MAX,
+  clampDiscountPercent,
+} from "@/lib/discount-validation.mjs";
 
 interface TranscriptMessage {
   role: "user" | "assistant" | "system" | "tool";
@@ -433,15 +438,6 @@ export function CustomerProfileCard({
   );
 }
 
-// The discount depths the admin may offer — mirrors ALLOWED_DISCOUNT_PERCENTS
-// server-side and the Marketing tab's selector. None (0) is the default.
-const DISCOUNT_OPTIONS: Array<{ value: number; label: string }> = [
-  { value: 0, label: "Kein Rabatt" },
-  { value: 5, label: "5 %" },
-  { value: 10, label: "10 %" },
-  { value: 15, label: "15 %" },
-];
-
 const MARKETING_BLOCKED_NOTE: Record<Exclude<CustomerProps["marketingStatus"], "confirmed">, string> = {
   none: "Keine Marketing-Einwilligung — es kann keine Marketing-E-Mail generiert werden.",
   pending: "Double-Opt-In noch nicht bestätigt — bis dahin keine Marketing-E-Mail.",
@@ -664,33 +660,40 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
       </p>
 
       <div>
-        <label style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 6 }}>
-          Persönlicher Rabatt
+        <label
+          htmlFor={`ms-customer-discount-${customer.id}`}
+          style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 6 }}
+        >
+          Persönlicher Rabatt (%)
         </label>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {DISCOUNT_OPTIONS.map((opt) => {
-            const active = discountPercent === opt.value;
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setDiscountPercent(opt.value)}
-                disabled={busy !== null}
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  padding: "7px 14px",
-                  borderRadius: 999,
-                  cursor: busy !== null ? "default" : "pointer",
-                  border: active ? "1px solid #111" : "1px solid #ddd",
-                  background: active ? "#111" : "#fff",
-                  color: active ? "#fff" : "#555",
-                }}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
+        {/* Numeric input: whole percent 0–50, DEFAULT 0. 0 = no code minted,
+            no discount block in the email; >0 mints the unique MS5- code at
+            send time. Bounds mirror the server (lib/discount-validation.mjs). */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            id={`ms-customer-discount-${customer.id}`}
+            type="number"
+            inputMode="numeric"
+            min={DISCOUNT_PERCENT_MIN}
+            max={DISCOUNT_PERCENT_MAX}
+            step={1}
+            value={discountPercent}
+            disabled={busy !== null}
+            onChange={(e) => setDiscountPercent(clampDiscountPercent(e.target.valueAsNumber))}
+            style={{
+              width: 96,
+              boxSizing: "border-box",
+              padding: "7px 10px",
+              fontSize: 14,
+              border: "1px solid #ddd",
+              borderRadius: 8,
+            }}
+          />
+          <span style={{ fontSize: 12, color: "#888" }}>
+            {discountPercent === 0
+              ? "0 = kein Rabatt, kein Code"
+              : `${DISCOUNT_PERCENT_MIN}–${DISCOUNT_PERCENT_MAX} %`}
+          </span>
         </div>
       </div>
 

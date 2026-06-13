@@ -19,6 +19,7 @@ import { getSql, type Sql } from "./db";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
 import { reportError } from "./observability";
+import { recordAiUsage } from "./ai-usage-store";
 
 // Same model family as the other backend LLM calls — one voice across the app.
 const SUMMARY_MODEL = "claude-sonnet-4-5-20250929";
@@ -185,7 +186,7 @@ export async function generateTopQuestions(
   let summaryMd: string;
   try {
     const numbered = sample.map((m, i) => `${i + 1}. ${m}`).join("\n");
-    const { text } = await generateText({
+    const { text, usage } = await generateText({
       model: anthropic(SUMMARY_MODEL),
       system:
         "Du bist Analyst für motion sports (Fitness- und Kraftsportgeräte). Du " +
@@ -200,6 +201,13 @@ export async function generateTopQuestions(
         "Was sind die häufigsten Themen und Fragen dieser Gruppe?",
     });
     summaryMd = text.trim() || "_Keine klaren Themen erkennbar._";
+    // Cost KPI (dashboard/admin side).
+    await recordAiUsage({
+      callSite: "top_questions",
+      model: SUMMARY_MODEL,
+      inputTokens: usage?.inputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
+    });
   } catch (err) {
     reportError(err, { route: "lib/kpi-top-questions", phase: "generate" });
     return {

@@ -25,6 +25,7 @@ import type { CustomerSession } from "./customer-store";
 import type { OrderHistory } from "./shopify-orders";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
+import { recordAiUsage } from "./ai-usage-store";
 
 const PROFILE_MODEL = "claude-opus-4-8";
 
@@ -163,6 +164,14 @@ export async function generateCustomerProfile(
 
     const inputTokens = result.usage?.inputTokens ?? 0;
     const outputTokens = result.usage?.outputTokens ?? 0;
+    // Cost KPI (dashboard/admin side). The per-run cost shown in the dashboard
+    // is computed separately below; this feeds the aggregate spend tracking.
+    await recordAiUsage({
+      callSite: "customer_profile",
+      model: PROFILE_MODEL,
+      inputTokens,
+      outputTokens,
+    });
     return {
       ok: true,
       summary,

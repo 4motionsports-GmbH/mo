@@ -11,6 +11,7 @@ import {
 } from "@/lib/kpi-recommendation-loop";
 import { getMarketingFunnel, type MarketingFunnel } from "@/lib/marketing-store";
 import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
+import { getAiCostMetrics, type AiCostMetrics } from "@/lib/ai-usage-store";
 import { KpiTopQuestions } from "./KpiTopQuestions";
 
 function pct(n: number): string {
@@ -19,6 +20,21 @@ function pct(n: number): string {
 
 function num(n: number, digits = 1): string {
   return n.toLocaleString("de-DE", { maximumFractionDigits: digits });
+}
+
+// EUR with up to 4 decimals — per-consultation costs are fractions of a cent.
+function eur(n: number, digits = 4): string {
+  return n.toLocaleString("de-DE", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: digits,
+  });
+}
+
+function dateLabel(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("de-DE");
 }
 
 export async function KpiTab({ dbReady }: { dbReady: boolean }) {
@@ -31,21 +47,91 @@ export async function KpiTab({ dbReady }: { dbReady: boolean }) {
     );
   }
 
-  const [core, personas, loop, funnel, cachedQuestions] = await Promise.all([
+  const [core, personas, loop, funnel, cachedQuestions, aiCost] = await Promise.all([
     getCoreMetrics(30),
     getPersonaInsights(5),
     getRecommendationLoop(),
     getMarketingFunnel(),
     getCachedTopQuestionsMap(),
+    getAiCostMetrics(),
   ]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
       <CoreSection core={core} />
+      <AiCostSection cost={aiCost} />
       <MarketingFunnelSection funnel={funnel} />
       <PersonaSection personas={personas} cachedQuestions={cachedQuestions} />
       <LoopSection loop={loop} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AI cost: average cost per consultation (EUR) + total spend, chat vs admin
+// ---------------------------------------------------------------------------
+
+function AiCostSection({ cost }: { cost: AiCostMetrics | null }) {
+  return (
+    <Section
+      title="KI-Kosten"
+      subtitle="Geschätzte KI-Kosten (EUR) aus erfassten Token-Verbräuchen pro Modell."
+    >
+      {!cost || cost.capturedSince == null ? (
+        <Banner tone="info">
+          Noch keine KI-Verbrauchsdaten erfasst. Die Erfassung beginnt mit dem
+          Deploy dieser Version — danach erscheinen hier die Kosten.
+        </Banner>
+      ) : (
+        <>
+          <p style={{ fontSize: 12, color: "#888", margin: "0 0 12px" }}>
+            ab {dateLabel(cost.capturedSince)} erfasst
+            {cost.estimated && " · enthält geschätzte Werte"}
+          </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+            <Stat
+              label="Ø Kosten / Beratung"
+              value={cost.consultationCount > 0 ? eur(cost.avgCostPerConsultationEur) : "—"}
+              hint={`${num(cost.consultationCount, 0)} Beratungen mit Token-Erfassung`}
+            />
+            <Stat
+              label="Median / Beratung"
+              value={cost.consultationCount > 0 ? eur(cost.medianCostPerConsultationEur) : "—"}
+            />
+            <Stat
+              label="Gesamtausgaben"
+              value={eur(cost.totalSpendEur, 2)}
+              hint="alle KI-Aufrufe im Zeitraum"
+            />
+          </div>
+
+          <h4 style={subhead}>Aufteilung</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+            <Stat
+              label="Chat (inkl. Embeddings)"
+              value={eur(cost.chatSpendEur, 2)}
+              hint="Beratungs-Chat + Produktsuche"
+            />
+            <Stat
+              label="Dashboard / Admin"
+              value={eur(cost.adminSpendEur, 2)}
+              hint="E-Mail-Entwürfe, Profile, Themen-Summaries"
+            />
+          </div>
+
+          <p style={caption}>
+            Kosten werden aus den vom Anbieter gemeldeten Token-Zahlen je Modell
+            berechnet (Preistabelle in USD pro Mio. Tokens, überschreibbar via
+            <code> MODEL_PRICES_JSON</code>; EUR-Umrechnung via
+            <code> USD_EUR_RATE</code>, Standard 0,92). „Ø Kosten / Beratung“ zählt
+            nur den Chat-Verbrauch je Konversation. Embeddings (Produktsuche) sind
+            kostenseitig Rauschen, werden aber ehrlich mitgezählt
+            {cost.estimated && " und teils geschätzt, wenn der Anbieter keine Token-Zahl liefert"}.
+          </p>
+        </>
+      )}
+    </Section>
   );
 }
 
