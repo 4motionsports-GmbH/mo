@@ -1246,6 +1246,7 @@ function BundleOfferSection({
                     size="icon"
                     className="size-7"
                     title="Entfernen"
+                    aria-label={`${c.title} aus dem Bundle entfernen`}
                     onClick={() => removeProduct(c.productId)}
                   >
                     <X />

@@ -30,6 +30,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogHeader,
@@ -80,7 +81,21 @@ function fmtDate(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("de-DE");
 }
 
-export function CustomerCard({ target }: { target: MarketingTargetProps }) {
+/** When present, the card shows a leading selection checkbox (Marketing tab bulk
+ * actions). Only passed for contacts eligible for bulk DRAFTING (not yet sent);
+ * sent contacts are read-only and never selectable. */
+export interface CardSelection {
+  selected: boolean;
+  onSelectedChange: (next: boolean) => void;
+}
+
+export function CustomerCard({
+  target,
+  selection,
+}: {
+  target: MarketingTargetProps;
+  selection?: CardSelection;
+}) {
   const router = useRouter();
   const send = target.latestSend;
   const isSent = send?.status === "sent";
@@ -184,13 +199,24 @@ export function CustomerCard({ target }: { target: MarketingTargetProps }) {
 
   return (
     <Card className="p-5">
-      {/* Header: email + meta on the left, status badges on the right */}
+      {/* Header: (optional select checkbox +) email + meta on the left, status
+          badges on the right */}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-[15px] font-semibold">{target.email}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            DOI bestätigt: {fmtDate(target.confirmedAt)}
-            {target.personaDisplay ? ` · Persona: ${target.personaDisplay}` : ""}
+        <div className="flex min-w-0 items-start gap-3">
+          {selection && (
+            <Checkbox
+              className="mt-1"
+              checked={selection.selected}
+              onChange={(e) => selection.onSelectedChange(e.target.checked)}
+              aria-label={`${target.email} für Sammelaktion auswählen`}
+            />
+          )}
+          <div className="min-w-0">
+            <div className="truncate text-[15px] font-semibold">{target.email}</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              DOI bestätigt: {fmtDate(target.confirmedAt)}
+              {target.personaDisplay ? ` · Persona: ${target.personaDisplay}` : ""}
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
