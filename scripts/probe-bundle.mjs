@@ -66,6 +66,12 @@ const PROBE_TITLE_PREFIX = "S9b probe bundle";
 // Poll budget for the async ProductBundleOperation (§Check-1 step 3).
 const POLL_MAX_ATTEMPTS = 15;
 const POLL_INTERVAL_MS = 1500;
+// `--keep` (or KEEP_PROBE=1) skips the archive cleanup so the probe product is
+// left LIVE for the manual browser checkout test (§Check-2 step 6 — the cart
+// permalink only resolves while the product is published & not archived). The
+// caller must archive it by hand afterward (re-running without --keep sweeps it
+// via the title prefix). Default = archive, per the spike's cleanup rule.
+const KEEP_PROBE = process.argv.includes("--keep") || process.env.KEEP_PROBE === "1";
 
 // Everything the probe learns, echoed as a paste-ready block at the very end so
 // the findings can be dropped into docs/BUNDLES_SPIKE.md.
@@ -95,6 +101,7 @@ const report = {
   componentsSum: null,
   statusUnlisted: null,
   published: null,
+  publishError: null,
   publicationId: null,
   cartPermalink: null,
   purchasability: null,
@@ -586,59 +593,98 @@ async function main() {
     report.statusUnlisted = unlisted.status;
     console.log(`  status -> ${unlisted.status}`);
 
-    // 4c. Publish to the Online Store publication.
-    const pubs = await adminGraphql(`{ publications(first: 20) { nodes { id name } } }`);
-    const onlineStore = (pubs.publications?.nodes ?? []).find(
-      (p) => p.name === "Online Store"
-    );
-    if (!onlineStore) {
-      throw new Error(
-        `Online Store publication not found (have: ${(pubs.publications?.nodes ?? [])
-          .map((p) => p.name)
-          .join(", ")})`
-      );
-    }
-    report.publicationId = onlineStore.id;
-    const PUBLISH = `mutation Pub($id: ID!, $input: [PublicationInput!]!) {
-      publishablePublish(id: $id, input: $input) {
-        publishable { availablePublicationsCount { count } }
-        userErrors { ${uePublish} }
-      }
-    }`;
-    const pub = await adminGraphql(PUBLISH, {
-      id: opProduct.id,
-      input: [{ publicationId: onlineStore.id }],
-    });
-    const pubUe = pub.publishablePublish?.userErrors ?? [];
-    if (pubUe.length) throw new Error(`publish userErrors: ${JSON.stringify(pubUe)}`);
-    report.published = true;
-    console.log(`  published to Online Store (${onlineStore.id})`);
-
-    // 5. Derive numeric variant id + construct the cart permalink.
+    // 5. Derive the numeric variant id + construct the cart permalink NOW —
+    //    it depends only on the parent variant id, so it is always reported even
+    //    if the publish step below is blocked.
     report.numericVariantId = parseNumericVariantId(report.parentVariantId);
     report.cartPermalink = `${SHOP_DOMAIN}/cart/${report.numericVariantId}:1`;
-    console.log(`  CART PERMALINK (test manually): ${report.cartPermalink}`);
+    console.log(`  CART PERMALINK: ${report.cartPermalink}`);
 
-    // 6. Server-side purchasability signals.
-    const VERIFY = `query Ver($id: ID!, $pub: ID!) {
+    // 4c. Publish to the Online Store publication. This needs read_publications
+    //     (to find the publication) + write_publications (to publish). If the
+    //     app's token lacks them that is a genuine SCOPE GAP — a real S10 finding
+    //     — so we record it and degrade gracefully rather than crashing; the
+    //     create/poll/price/UNLISTED results above remain valid.
+    let onlineStorePubId = null;
+    try {
+      const pubs = await adminGraphql(`{ publications(first: 20) { nodes { id name } } }`);
+      const onlineStore = (pubs.publications?.nodes ?? []).find(
+        (p) => p.name === "Online Store"
+      );
+      if (!onlineStore) {
+        throw new Error(
+          `Online Store publication not found (have: ${(pubs.publications?.nodes ?? [])
+            .map((p) => p.name)
+            .join(", ")})`
+        );
+      }
+      onlineStorePubId = onlineStore.id;
+      report.publicationId = onlineStore.id;
+      const PUBLISH = `mutation Pub($id: ID!, $input: [PublicationInput!]!) {
+        publishablePublish(id: $id, input: $input) {
+          publishable { availablePublicationsCount { count } }
+          userErrors { ${uePublish} }
+        }
+      }`;
+      const pub = await adminGraphql(PUBLISH, {
+        id: opProduct.id,
+        input: [{ publicationId: onlineStore.id }],
+      });
+      const pubUe = pub.publishablePublish?.userErrors ?? [];
+      if (pubUe.length) throw new Error(`publish userErrors: ${JSON.stringify(pubUe)}`);
+      report.published = true;
+      console.log(`  published to Online Store (${onlineStore.id})`);
+    } catch (err) {
+      const msg = String(err?.message ?? err);
+      if (/read_publications|write_publications|publication.*access|ACCESS_DENIED/i.test(msg)) {
+        report.published = false;
+        report.publishError =
+          "SCOPE GAP — publishing the bundle to the Online Store requires the " +
+          "read_publications + write_publications scopes, which the app's token does " +
+          `NOT currently hold: ${msg}`;
+        console.log(`  ⚠ PUBLISH BLOCKED — ${report.publishError}`);
+      } else {
+        throw err; // unrelated failure — surface it
+      }
+    }
+
+    // 6. Server-side purchasability signals. status + availableForSale are always
+    //    available; publishedOnPublication needs the publication (read_publications),
+    //    so it is queried separately and only when we could resolve it.
+    const VERIFY = `query Ver($id: ID!) {
       product(id: $id) {
         id title handle status availableForSale
         totalInventory tracksInventory
-        publishedOnPublication(publicationId: $pub)
         variants(first: 5) {
           nodes { id price availableForSale inventoryQuantity inventoryPolicy }
         }
       }
     }`;
-    const ver = await adminGraphql(VERIFY, { id: opProduct.id, pub: onlineStore.id });
+    const ver = await adminGraphql(VERIFY, { id: opProduct.id });
     const vp = ver.product;
     const parentVar =
       (vp.variants?.nodes ?? []).find((v) => v.id === report.parentVariantId) ??
       vp.variants?.nodes?.[0];
+
+    let publishedOnOnlineStore = null;
+    if (onlineStorePubId) {
+      try {
+        const pp = await adminGraphql(
+          `query PP($id: ID!, $pub: ID!) {
+             product(id: $id) { publishedOnPublication(publicationId: $pub) }
+           }`,
+          { id: opProduct.id, pub: onlineStorePubId }
+        );
+        publishedOnOnlineStore = pp.product?.publishedOnPublication ?? null;
+      } catch (err) {
+        console.log(`  ⚠ publishedOnPublication unavailable: ${err?.message ?? err}`);
+      }
+    }
+
     report.purchasability = {
       status: vp.status,
       productAvailableForSale: vp.availableForSale,
-      publishedOnOnlineStore: vp.publishedOnPublication,
+      publishedOnOnlineStore,
       parentVariantAvailableForSale: parentVar?.availableForSale ?? null,
       parentVariantInventoryQuantity: parentVar?.inventoryQuantity ?? null,
       parentVariantInventoryPolicy: parentVar?.inventoryPolicy ?? null,
@@ -647,23 +693,47 @@ async function main() {
     };
     console.log(`  purchasability signals: ${JSON.stringify(report.purchasability, null, 2)}`);
 
-    const buyable =
-      vp.status === "UNLISTED" &&
-      vp.publishedOnPublication === true &&
-      (vp.availableForSale === true || parentVar?.availableForSale === true);
-    report.recommendation = buyable
-      ? "GO — native fixed bundle is purchasable server-side (UNLISTED + published + " +
-        "availableForSale). Final click-through-to-checkout is a manual browser step."
-      : "NO-GO / INVESTIGATE — server-side signals do not confirm a buyable state; " +
-        "inspect purchasability block before committing S10.";
+    if (report.publishError) {
+      report.recommendation =
+        "BLOCKED (scope) — native bundle CAPABILITY=YES and create→poll→price→" +
+        "compareAtPrice→UNLISTED all succeed, but publishing to the Online Store is " +
+        "blocked: the app lacks read_publications + write_publications. S10 PREREQUISITE: " +
+        "add those scopes (Dev Dashboard) + merchant re-grant, then re-run to confirm the " +
+        "permalink reaches checkout. The bundle is NOT purchasable until published.";
+    } else {
+      const buyable =
+        vp.status === "UNLISTED" &&
+        publishedOnOnlineStore === true &&
+        (vp.availableForSale === true || parentVar?.availableForSale === true);
+      report.recommendation = buyable
+        ? "GO — native fixed bundle is purchasable server-side (UNLISTED + published + " +
+          "availableForSale). Final click-through-to-checkout is a manual browser step."
+        : "NO-GO / INVESTIGATE — server-side signals do not confirm a buyable state; " +
+          "inspect purchasability block before committing S10.";
+    }
     console.log(`\n  >>> ${report.recommendation}`);
-    console.log(
-      "  NOTE: the FINAL confirmation (link actually reaches checkout) is a MANUAL\n" +
-        "  browser step — open the permalink above in an incognito window and confirm\n" +
-        "  it reaches Shopify checkout."
-    );
+    if (report.published) {
+      console.log(
+        "  NOTE: the FINAL confirmation (link actually reaches checkout) is a MANUAL\n" +
+          "  browser step — open the permalink above in an incognito window and confirm\n" +
+          "  it reaches Shopify checkout. Re-run with --keep to leave the product LIVE\n" +
+          "  for that test (otherwise cleanup archives it and the link goes dead)."
+      );
+    }
   } finally {
-    // ── CLEANUP — always archive (never delete) any probe product ──────────────
+    // ── CLEANUP — archive (never delete) any probe product ─────────────────────
+    // With --keep, skip cleanup entirely so the product stays LIVE for the manual
+    // browser checkout test; report what was left behind so it can be archived by
+    // hand (or swept by a later default run).
+    if (KEEP_PROBE) {
+      section("CLEANUP — SKIPPED (--keep)");
+      const kept = report.bundleProductId ?? "(none created)";
+      console.log(
+        `  --keep set: leaving probe product LIVE for manual testing: ${kept}\n` +
+          "  Archive it by hand when done (Shopify admin → Products → Archive), or\n" +
+          "  re-run this probe WITHOUT --keep to sweep it via the title prefix."
+      );
+    } else {
     // Robust against partial failure: (a) archive whatever we captured; (b) if
     // an operation was created but we never captured its product (e.g. the poll
     // step crashed), resolve the product from the operation id; (c) sweep any
@@ -720,6 +790,7 @@ async function main() {
       }
     }
     if (!toArchive.size) console.log("  nothing to archive.");
+    }
   }
 
   // ── Paste-ready findings block ──────────────────────────────────────────────
