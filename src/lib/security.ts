@@ -25,7 +25,12 @@ export function isOriginAllowed(origin: string | null): boolean {
 
 export function corsHeaders(
   origin: string | null,
-  methods: string = "POST, OPTIONS"
+  methods: string = "POST, OPTIONS",
+  // Extra response headers the browser should be allowed to read cross-origin,
+  // on top of the always-exposed Retry-After (e.g. /api/tts exposes its
+  // truncation flag). Non-CORS-safelisted headers are invisible to the widget
+  // unless listed here.
+  exposeHeaders: string[] = []
 ): Record<string, string> {
   const headers: Record<string, string> = {
     Vary: "Origin",
@@ -36,7 +41,7 @@ export function corsHeaders(
     headers["Access-Control-Allow-Headers"] = `Content-Type, ${SECRET_HEADER}, x-ms-session`;
     // Retry-After is not CORS-safelisted, so without this the widget's
     // cross-origin read of the 429 backoff hint returns null.
-    headers["Access-Control-Expose-Headers"] = "Retry-After";
+    headers["Access-Control-Expose-Headers"] = ["Retry-After", ...exposeHeaders].join(", ");
     headers["Access-Control-Max-Age"] = "86400";
   }
   return headers;
