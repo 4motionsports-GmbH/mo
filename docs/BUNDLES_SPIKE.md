@@ -474,86 +474,94 @@ yet live) → `active` (UNLISTED + published, `cart_url` materialized) → `expi
 
 ## Probe results (S9b, 2026-06-13)
 
+**Verified live** against `motion sports` (`d75d11-58.myshopify.com`, **Advanced**
+plan), Admin API `2026-04`, on 2026-06-13.
+
 **Probe artefact:** `scripts/probe-bundle.mjs` (throwaway; run with
-`node --env-file=.env scripts/probe-bundle.mjs`).
-It uses the existing backend client (`adminGraphql`/`isShopifyConfigured` from
-`src/lib/shopify.ts`, `parseNumericVariantId`/`SHOP_DOMAIN` from
-`src/lib/shopify-cart-url.mjs` — the module `src/lib/cart.ts` re-exports
-`parseNumericVariantId` from) and, per the doc-sourcing note above, **does not
-trust memorised mutation shapes**: a `preflight()` step introspects the live
-`2026-04` schema and asserts every input field / mutation argument it uses
-(`ProductBundleCreateInput`, `ProductBundleComponentInput`,
-`ProductBundleComponentOptionSelectionInput`, `ProductVariantsBulkInput` incl.
-`compareAtPrice`, `PublicationInput`, the `productUpdate` argument name, and the
-`ProductStatus` enum incl. `UNLISTED`/`ARCHIVED`) exists before any mutation
-fires, aborting with the live schema dump on any mismatch. It **also derives
-each mutation's `userErrors` sub-selection from the live schema** (these
-mutations use different userError types — see the corrected false-negative note
-below). It sets the parent variant's `compareAtPrice` to the true component sum
-(PAngV-safe "statt €X", §2) and always archives (never deletes) anything it
-creates, even on partial failure.
+`node --env-file=.env scripts/probe-bundle.mjs` — add `--keep` to leave the
+probe product live for the manual checkout test). It uses the existing backend
+client (`adminGraphql`/`isShopifyConfigured` from `src/lib/shopify.ts`,
+`parseNumericVariantId`/`SHOP_DOMAIN` from `src/lib/shopify-cart-url.mjs` — the
+module `src/lib/cart.ts` re-exports `parseNumericVariantId` from) and, per the
+doc-sourcing note above, **does not trust memorised mutation shapes**: a
+`preflight()` step introspects the live `2026-04` schema and asserts every input
+field / mutation argument **and each mutation's `userErrors` sub-selection**
+before firing (these mutations use *different* userError types — e.g.
+`productBundleCreate` → plain `UserError` with **no `code`**;
+`productVariantsBulkUpdate` → `ProductVariantsBulkUpdateUserError` with `code`).
+A capability verdict is drawn ONLY from a genuine access/ownership error; any
+GraphQL validation error fails loud as a probe bug. It sets `compareAtPrice` to
+the true component sum (PAngV "statt €X", §2), re-polls the async bundle
+inventory until it settles, and archives (never deletes) what it creates.
 
-### ⚠ Correction — the first live run was a probe bug (false negative), now fixed
+### CHECK 1 — capability: **YES** ✅
 
-An earlier revision of the probe hardcoded `userErrors { field message code }`
-on **every** mutation. On `2026-04`, `productBundleCreate`'s `userErrors` are a
-plain **`UserError`** (only `field` + `message` — **no `code`**), so Shopify
-**rejected the query at GraphQL validation** (`Field 'code' doesn't exist on
-type 'UserError'`) **before ever attempting to create a bundle**. The old
-classifier then matched the word "bundle" in that validation message and
-misreported it as **"capability not available" — a FALSE NEGATIVE.** It was a
-script bug, not a capability verdict; the store is on the **Advanced plan** and
-`productBundleCreate` + all its input types passed preflight, so the bundles
-capability is **almost certainly PRESENT** — we just never got a real answer.
-
-Fixed in this revision:
-1. **No hardcoded `code`.** Each mutation's `userErrors` selection (and
-   `ProductBundleOperation.userErrors`) is introspected from the live schema and
-   only existing fields are selected — different userError types are handled
-   per-type, not assumed to share a shape.
-2. **Hardened capability classifier.** ONLY a genuine
-   access/ownership/permission error (`ACCESS_DENIED`, "must install", "must
-   have access", scope errors, …) is reported as "capability not available." Any
-   GraphQL validation / undefined-field error now **fails LOUD as a probe error**
-   and can never masquerade as a capability verdict.
-
-The corrected probe is verified to load/parse and exit 0 cleanly on the
-no-credentials path; the live capability/purchasability fields below are left
-**blank, to be filled from the local re-run** against the store.
-
-### Results to fill in (template — populate from the corrected live run)
+`productBundleCreate` succeeds on this store with `write_products` — **no
+access/ownership error, so the free "Shopify Bundles" app is NOT required.**
 
 | Field | Value |
 | --- | --- |
-| CHECK 1 — capability (`productBundleCreate`) | **YES / NO** _(if NO: exact field + message of the genuine access error; merchant must install free "Shopify Bundles" app or use §6a fallback)_ |
-| `ProductBundleOperation` id | _gid_ |
-| Poll count / wall time | _n polls / m ms_ |
-| Bundle product id / parent variant gid | _gid / gid_ |
-| CHECK 2 — price / compareAtPrice (`productVariantsBulkUpdate`) | _1.00 EUR / <component-sum> EUR_ |
-| Status → `UNLISTED` (`productUpdate`) | _UNLISTED_ |
-| Published to Online Store (`publishablePublish`) | _publicationId + true_ |
-| **Cart permalink to test manually** | `https://motionsports.de/cart/<numericVariantId>:1` |
-| Server-side purchasability signals | _status=UNLISTED, product.availableForSale=?, publishedOnPublication=?, parentVariant.availableForSale=?, inventory…_ |
-| Cleanup — archived product id(s) | _gid → ARCHIVED_ |
+| Capability (`productBundleCreate`) | **YES** — no access error |
+| `ProductBundleOperation` id | `gid://shopify/ProductBundleOperation/47933358409` |
+| Poll to completion | **2 polls / ~1.9 s** (lifecycle `CREATED → ACTIVE → COMPLETE`; the `product` populates only at `COMPLETE`, read via the generic `node(id:)` interface — there is no top-level `productBundleOperation(id:)` field) |
+| Bundle product / parent variant | `gid://shopify/Product/10240485392713` / `gid://shopify/ProductVariant/54594995487049` |
+| Components (auto-picked, real stock) | ATX® 2 Grip Hantelscheiben 1,25 kg (qty **1**) + Widerstandsbänder ATX® (qty **30**) |
 
-**Manual step (cannot be done server-side):** open the cart permalink above in
-an incognito window and confirm it reaches Shopify checkout. The probe verifies
-everything up to that point (UNLISTED + published-to-Online-Store +
-`availableForSale`); the final click-through is the human confirmation.
+### CHECK 2 — purchasability: **buyable server-side** ✅
 
-### Recommendation: **PENDING the corrected live run** (analysis ⇒ provisional GO)
+| Field | Value |
+| --- | --- |
+| Price / `compareAtPrice` (`productVariantsBulkUpdate`) | **1.00 EUR** / **6.50 EUR** (= true component sum) |
+| Status → `UNLISTED` (`productUpdate`, arg `product: ProductUpdateInput`) | **UNLISTED** ✅ |
+| Published to Online Store (`publishablePublish`) | **true**, publication `gid://shopify/Publication/200465285449` ✅ |
+| `publishedOnPublication(Online Store)` | **true** ✅ |
+| Parent variant `availableForSale` / qty / policy | **true** / **1** / `DENY` ✅ (settled on the 1st inventory re-poll) |
+| `totalInventory` / `tracksInventory` | **1** / true |
+| **Cart permalink** | `https://motionsports.de/cart/54594995487049:1` |
+| Recommendation emitted | **`GO`** |
 
-The spike's §1/§3 analysis points to **GO** on the native fixed-bundle path
-(only `write_products` needed; `UNLISTED` present in `2026-04`), **conditional
-on** the §1 capability check passing — and the Advanced plan + clean preflight
-make a PRESENT capability the strongly expected outcome. Decision rule for S10,
-straight from the (now trustworthy) probe output:
+**§4 native inventory linkage — empirically confirmed.** The bundle's
+`inventoryQuantity` came out **1 = min(component stock)** = `min(1, 30)` (the
+lowest-stock component caps the bundle), exactly as §4 describes. No phantom
+bundle stock; availability follows the components.
 
-- **CHECK 1 = YES and CHECK 2 signals buyable → GO** (native fixed bundle, per
-  the §RECOMMENDED flow).
-- **CHECK 1 = NO (genuine access/ownership error only) → NO-GO for native unless
-  the merchant installs the free "Shopify Bundles" app; otherwise FALLBACK** to
-  the §6(a) plain-`UNLISTED`-product path (same rails, `write_products` only,
-  accepts manual inventory safety).
+**Manual step (the only thing not provable server-side):** open the permalink
+above in an incognito window and confirm it adds the bundle and reaches Shopify
+checkout. The product was left live via `--keep` for this; **archive it
+afterward** (Shopify admin → Products, or a `--keep`-less probe run sweeps any
+`S9b probe bundle*` leftover).
+
+### ⚠ Scope correction to §1 / "Required follow-ups" — publishing needs publication scopes
+
+The spike (§1, §6, follow-up #3) stated the native path needs **only
+`write_products`**. The probe **disproved** that: creating + pricing + setting
+`UNLISTED` work with `write_products`, but **publishing the bundle to the Online
+Store requires `read_publications` + `write_publications`**, which the app's
+token did **not** originally hold (`publishablePublish`/`publications` returned
+`ACCESS_DENIED: read_publications`). After adding both scopes in the Dev
+Dashboard and **reinstalling the app on the store** (client-credentials tokens
+only carry scopes granted at install), the token reported all 17 scopes incl.
+`read_publications` + `write_publications`, and the publish step succeeded. The
+§6(a) plain-`UNLISTED`-product fallback uses the **same** `publishablePublish`,
+so it needs these scopes too. **S10 prerequisite: keep `read_publications` +
+`write_publications` granted.** (An earlier probe revision also produced a
+*false-negative* "capability NOT available" by hardcoding a non-existent
+`userErrors.code` on `productBundleCreate` and mis-classifying the resulting
+validation error; that is fixed — capability verdicts now come only from genuine
+access errors.)
+
+### Recommendation: **GO** ✅ (native fixed bundle)
+
+Build personalized bundle offers as **native Shopify fixed bundles, kept
+`UNLISTED`**, per the §RECOMMENDED flow. Every step is verified end-to-end on the
+live store: `productBundleCreate` (capability present, no Bundles-app install
+needed) → poll `ProductBundleOperation` via `node(id:)` → `productVariantsBulkUpdate`
+price + true-sum `compareAtPrice` → `productUpdate` `UNLISTED` → `publishablePublish`
+to Online Store → `/cart/<numericVariantId>:1` permalink → server-side
+purchasable (`availableForSale=true`, bundle qty = min component) → archive on
+expiry. **One scope addition vs the original spike:** the app must hold
+`read_publications` + `write_publications` (now granted). Final
+click-through-to-checkout is a one-time manual confirmation on the permalink
+above.
 </content>
 </invoke>
