@@ -1,10 +1,10 @@
 "use client";
 
 // Per-CUSTOMER card for the admin dashboard's Kunden tab — grouped by person
-// (email), not by session. Shows the session timeline (each transcript
-// viewable), the cached Shopify purchase history, the persona(s), and the
-// regenerated "current understanding" summary. Returning customers (more than
-// one session) are clearly marked.
+// (email), not by session. Shows the session timeline (each transcript opens in
+// a Dialog), the cached Shopify purchase history (as a table), the persona(s),
+// and the regenerated "current understanding" summary. Returning customers
+// (more than one session) are clearly badged.
 //
 // On-demand actions (all gating server-side; this is just the operator UI):
 //   Käufe aktualisieren            → POST /api/admin/customers/purchases
@@ -16,14 +16,53 @@
 //                                    instructions), then the SAME edit/send
 //                                    endpoints as the Marketing tab:
 //                                    /api/admin/marketing/update + /send.
+//
+// Presentation only: this is the Session-A re-skin onto the shared admin UI kit
+// (Card/Badge/Button/Input/Textarea/Dialog/Table/Toast). Every control behavior
+// is preserved exactly — the SAME endpoints and payloads, the discount lockout
+// (depth or instructions changed → Send disabled → ↻ Neu generieren), the
+// MO-XXXX placeholder preview, read-only sent rows, and the per-run token-cost
+// disclosure on the profile (honest cost, kept verbatim).
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  ExternalLink,
+  Gift,
+  MessageSquare,
+  Plus,
+  RotateCcw,
+  Save,
+  Search,
+  Send,
+  Sparkles,
+  X,
+} from "lucide-react";
 import {
   DISCOUNT_PERCENT_MIN,
   DISCOUNT_PERCENT_MAX,
   clampDiscountPercent,
 } from "@/lib/discount-validation.mjs";
+import {
+  Badge,
+  type BadgeProps,
+  Button,
+  Card,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Label,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  Textarea,
+  toast,
+} from "./ui";
 
 interface TranscriptMessage {
   role: "user" | "assistant" | "system" | "tool";
@@ -135,11 +174,22 @@ function fmtDate(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("de-DE");
 }
 
-const MARKETING_STATUS_LABEL: Record<CustomerProps["marketingStatus"], string> = {
-  none: "Kein Marketing",
-  pending: "DOI ausstehend",
-  confirmed: "Marketing bestätigt",
-  unsubscribed: "Abgemeldet",
+function reportError(e: unknown) {
+  toast({
+    variant: "error",
+    title: "Fehler",
+    description: e instanceof Error ? e.message : "Unbekannter Fehler",
+  });
+}
+
+const MARKETING_STATUS: Record<
+  CustomerProps["marketingStatus"],
+  { label: string; variant: BadgeProps["variant"] }
+> = {
+  none: { label: "Kein Marketing", variant: "secondary" },
+  pending: { label: "DOI ausstehend", variant: "secondary" },
+  confirmed: { label: "Marketing bestätigt", variant: "success" },
+  unsubscribed: { label: "Abgemeldet", variant: "destructive" },
 };
 
 export function CustomerProfileCard({
@@ -165,7 +215,6 @@ export function CustomerProfileCard({
   );
   const [lastUsage, setLastUsage] = useState<ProfileUsage | null>(null);
   const [busy, setBusy] = useState<null | "purchases" | "profile">(null);
-  const [error, setError] = useState<string | null>(null);
 
   async function call(path: string): Promise<unknown> {
     const res = await fetch(path, {
@@ -184,7 +233,6 @@ export function CustomerProfileCard({
 
   async function onRefreshPurchases() {
     setBusy("purchases");
-    setError(null);
     try {
       const json = (await call("/api/admin/customers/purchases")) as {
         purchaseSummary?: OrderHistoryProps;
@@ -193,9 +241,14 @@ export function CustomerProfileCard({
         setPurchases(json.purchaseSummary);
         setPurchasesUpdatedAt(new Date().toISOString());
       }
+      toast({
+        variant: "success",
+        title: "Käufe aktualisiert",
+        description: customer.email,
+      });
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      reportError(e);
     } finally {
       setBusy(null);
     }
@@ -203,7 +256,6 @@ export function CustomerProfileCard({
 
   async function onGenerateProfile() {
     setBusy("profile");
-    setError(null);
     try {
       const json = (await call("/api/admin/customers/profile")) as {
         profileSummary?: string;
@@ -215,178 +267,124 @@ export function CustomerProfileCard({
         setProfileUpdatedAt(new Date().toISOString());
       }
       if (json.usage) setLastUsage(json.usage);
-      if (json.warning) setError(json.warning);
+      if (json.warning) {
+        toast({ variant: "warning", title: "Hinweis", description: json.warning });
+      } else {
+        toast({
+          variant: "success",
+          title: "Kundenverständnis generiert",
+          description: customer.email,
+        });
+      }
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      reportError(e);
     } finally {
       setBusy(null);
     }
   }
 
+  const marketingStatus = MARKETING_STATUS[customer.marketingStatus];
+
   return (
-    <section
-      style={{
-        background: "#fff",
-        border: "1px solid #eee",
-        borderRadius: 14,
-        padding: 18,
-        boxShadow: "0 1px 2px rgba(0,0,0,.04)",
-      }}
-    >
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>{customer.email}</div>
-          <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
-            Zuerst gesehen: {fmtDate(customer.firstSeenAt)} · Zuletzt: {fmtDate(customer.lastSeenAt)}
+    <Card className="p-5">
+      {/* Header: email + first/last seen on the left, status badges on the right */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-[15px] font-semibold">{customer.email}</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            Zuerst gesehen: {fmtDate(customer.firstSeenAt)} · Zuletzt:{" "}
+            {fmtDate(customer.lastSeenAt)}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div className="flex flex-wrap items-center gap-1.5">
           {isReturning ? (
-            <span
-              style={badge("#ede9fe", "#5b21b6")}
-              title="Mehrere Sessions unter derselben E-Mail"
-            >
-              ↻ Wiederkehrend · {customer.sessions.length} Sessions
-            </span>
+            <Badge variant="accent" title="Mehrere Sessions unter derselben E-Mail">
+              <RotateCcw className="size-3" /> Wiederkehrend · {customer.sessions.length} Sessions
+            </Badge>
           ) : (
-            <span style={badge("#f3f4f6", "#6b7280")}>
+            <Badge variant="secondary">
               {customer.sessions.length === 1 ? "1 Session" : "Keine Session verknüpft"}
-            </span>
+            </Badge>
           )}
-          <span
-            style={
-              customer.marketingStatus === "confirmed"
-                ? badge("#dcfce7", "#166534")
-                : customer.marketingStatus === "unsubscribed"
-                  ? badge("#fee2e2", "#991b1b")
-                  : badge("#f3f4f6", "#6b7280")
-            }
-          >
-            {MARKETING_STATUS_LABEL[customer.marketingStatus]}
-          </span>
+          <Badge variant={marketingStatus.variant}>{marketingStatus.label}</Badge>
         </div>
       </div>
 
       {/* Session timeline */}
-      <div style={{ marginTop: 14 }}>
-        <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-          Gesprächs-Timeline ({customer.sessions.length})
-        </div>
-        {customer.sessions.length === 0 && (
-          <p style={{ fontSize: 13, color: "#999", margin: 0 }}>
+      <Section title={`Gesprächs-Timeline (${customer.sessions.length})`}>
+        {customer.sessions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
             <em>
               Keine Konversation verknüpft — die E-Mail wurde erfasst, aber die zugehörige Session
               ist nicht (mehr) gespeichert.
             </em>
           </p>
-        )}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {customer.sessions.map((s, i) => (
-            <SessionRow key={s.conversationId} session={s} index={i} />
-          ))}
-        </div>
-      </div>
-
-      {/* Purchase history */}
-      <div style={{ marginTop: 16, borderTop: "1px solid #f0f0f0", paddingTop: 14 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ fontSize: 12, color: "#666" }}>
-            Kaufhistorie (Shopify)
-            {purchasesUpdatedAt ? ` · Stand: ${fmtDate(purchasesUpdatedAt)}` : " · noch nicht geladen"}
-          </div>
-          <button
-            onClick={onRefreshPurchases}
-            disabled={busy !== null}
-            style={secondaryBtn(busy !== null)}
-          >
-            {busy === "purchases" ? "Lade…" : "↻ Käufe aktualisieren"}
-          </button>
-        </div>
-        {purchases ? (
-          purchases.orders.length === 0 ? (
-            <p style={{ fontSize: 13, color: "#999", margin: "8px 0 0" }}>
-              Keine Bestellungen unter dieser E-Mail gefunden.
-            </p>
-          ) : (
-            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-              {purchases.orders.map((o) => (
-                <div
-                  key={o.name + o.createdAt}
-                  style={{ fontSize: 13, background: "#fafafa", borderRadius: 8, padding: "8px 12px" }}
-                >
-                  <strong>{o.name}</strong> · {fmtDate(o.createdAt)}
-                  {o.totalAmount ? ` · ${o.totalAmount} ${o.currencyCode ?? ""}` : ""}
-                  <div style={{ color: "#555", marginTop: 2 }}>
-                    {o.items.length > 0
-                      ? o.items
-                          .map((it) => `${it.quantity}× ${it.title ?? it.handle ?? "Artikel"}`)
-                          .join(", ")
-                      : "(keine Positionen)"}
-                  </div>
-                </div>
-              ))}
-              {purchases.truncated && (
-                <p style={{ fontSize: 11, color: "#999", margin: "2px 0 0" }}>
-                  Liste ggf. gekürzt (nur die neuesten Bestellungen).
-                </p>
-              )}
-            </div>
-          )
         ) : (
-          <p style={{ fontSize: 13, color: "#999", margin: "8px 0 0" }}>
-            <em>Noch keine Kaufhistorie geladen.</em>
-          </p>
+          <ol className="relative ml-1 border-l border-border">
+            {customer.sessions.map((s, i) => (
+              <SessionTimelineItem key={s.conversationId} session={s} index={i} email={customer.email} />
+            ))}
+          </ol>
         )}
-      </div>
+      </Section>
+
+      {/* Purchase history (Shopify) — proper table */}
+      <Section
+        title="Kaufhistorie (Shopify)"
+        meta={purchasesUpdatedAt ? `Stand: ${fmtDate(purchasesUpdatedAt)}` : "noch nicht geladen"}
+        action={
+          <Button variant="secondary" size="sm" onClick={onRefreshPurchases} disabled={busy !== null}>
+            <RotateCcw /> {busy === "purchases" ? "Lade…" : "Käufe aktualisieren"}
+          </Button>
+        }
+      >
+        <PurchaseHistory purchases={purchases} />
+      </Section>
 
       {/* Welcome discount (one-time, issued on first DOI confirmation).
           Flag-gated (WELCOME_DISCOUNT_ENABLED): when off, the historical
           issued/redeemed data stays visible but is labelled "(deaktiviert)". */}
-      <div style={{ marginTop: 16, borderTop: "1px solid #f0f0f0", paddingTop: 14 }}>
-        <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-          Willkommensrabatt
-          {!welcomeDiscountEnabled && (
-            <span title="Automatische Ausstellung per WELCOME_DISCOUNT_ENABLED abgeschaltet — Codes werden manuell vergeben.">
-              {" "}
-              (deaktiviert)
-            </span>
-          )}
-        </div>
+      <Section
+        title={
+          <span className="inline-flex items-center gap-1">
+            Willkommensrabatt
+            {!welcomeDiscountEnabled && (
+              <span
+                className="font-normal text-muted-foreground"
+                title="Automatische Ausstellung per WELCOME_DISCOUNT_ENABLED abgeschaltet — Codes werden manuell vergeben."
+              >
+                (deaktiviert)
+              </span>
+            )}
+          </span>
+        }
+      >
         {customer.welcomeIssuedAt ? (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={badge("#dbeafe", "#1e40af")}>
-              🎁 Ausgestellt am {fmtDate(customer.welcomeIssuedAt)}
-            </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="info">
+              <Gift className="size-3" /> Ausgestellt am {fmtDate(customer.welcomeIssuedAt)}
+            </Badge>
             {customer.welcomeCode && (
-              <span style={{ fontSize: 13 }}>
-                Code: <code>{customer.welcomeCode}</code>
+              <span className="text-sm">
+                Code: <code className="rounded bg-muted px-1 py-0.5">{customer.welcomeCode}</code>
                 {customer.welcomeCodeExpiresAt
                   ? ` (gültig bis ${fmtDate(customer.welcomeCodeExpiresAt)})`
                   : ""}
               </span>
             )}
             {customer.welcomeRedeemed === true ? (
-              <span style={badge("#dcfce7", "#166534")}>✓ Eingelöst</span>
+              <Badge variant="success">✓ Eingelöst</Badge>
             ) : customer.welcomeRedeemed === false ? (
-              <span style={badge("#fef3c7", "#92400e")}>Noch nicht eingelöst</span>
+              <Badge variant="warning">Noch nicht eingelöst</Badge>
             ) : (
-              <span style={badge("#f3f4f6", "#6b7280")} title="Shopify nicht erreichbar/konfiguriert">
+              <Badge variant="secondary" title="Shopify nicht erreichbar/konfiguriert">
                 Einlösung unbekannt
-              </span>
+              </Badge>
             )}
           </div>
         ) : (
-          <p style={{ fontSize: 13, color: "#999", margin: 0 }}>
+          <p className="text-sm text-muted-foreground">
             <em>
               {welcomeDiscountEnabled
                 ? "Noch kein Willkommenscode — wird automatisch bei der ersten Double-Opt-In-Bestätigung ausgestellt (einmal pro Kunde)."
@@ -394,71 +392,206 @@ export function CustomerProfileCard({
             </em>
           </p>
         )}
-      </div>
+      </Section>
 
-      {/* Current understanding */}
-      <div style={{ marginTop: 16, borderTop: "1px solid #f0f0f0", paddingTop: 14 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ fontSize: 12, color: "#666" }}>
-            Aktuelles Kundenverständnis
-            {profileUpdatedAt ? ` · Stand: ${fmtDate(profileUpdatedAt)}` : ""}
-          </div>
-          <button
-            onClick={onGenerateProfile}
-            disabled={busy !== null}
-            style={primaryBtn(busy !== null)}
-          >
+      {/* Current understanding — the regenerated profile, in its own Card. The
+          per-run token-cost line is kept verbatim (honest cost disclosure). */}
+      <Section
+        title="Aktuelles Kundenverständnis"
+        meta={profileUpdatedAt ? `Stand: ${fmtDate(profileUpdatedAt)}` : undefined}
+        action={
+          <Button size="sm" onClick={onGenerateProfile} disabled={busy !== null}>
+            <Sparkles />{" "}
             {busy === "profile"
               ? "Generiere…"
               : profile
-                ? "✦ Neu generieren"
-                : "✦ Kundenverständnis generieren"}
-          </button>
-        </div>
-        {profile ? (
-          <pre
-            style={{
-              whiteSpace: "pre-wrap",
-              fontFamily: "inherit",
-              fontSize: 13,
-              lineHeight: 1.5,
-              background: "#fafafa",
-              padding: 12,
-              borderRadius: 8,
-              margin: "8px 0 0",
-            }}
-          >
-            {profile}
-          </pre>
-        ) : (
-          <p style={{ fontSize: 13, color: "#999", margin: "8px 0 0" }}>
-            <em>Noch kein Profil generiert.</em>
+                ? "Neu generieren"
+                : "Kundenverständnis generieren"}
+          </Button>
+        }
+      >
+        <Card className="bg-muted/40 p-4 shadow-none">
+          {profile ? (
+            <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">{profile}</pre>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              <em>Noch kein Profil generiert.</em>
+            </p>
+          )}
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Jede Generierung ist ein KI-Durchlauf (Anthropic Claude) über alle verknüpften Gespräche
+            + Kaufhistorie und kostet Tokens.
+            {lastUsage
+              ? ` Letzter Lauf: ${lastUsage.inputTokens.toLocaleString("de-DE")} Input- / ` +
+                `${lastUsage.outputTokens.toLocaleString("de-DE")} Output-Tokens` +
+                ` (~$${lastUsage.approxCostUsd.toFixed(3)}).`
+              : ""}
           </p>
-        )}
-        <p style={{ fontSize: 11, color: "#999", margin: "8px 0 0" }}>
-          Jede Generierung ist ein KI-Durchlauf (Anthropic Claude) über alle verknüpften Gespräche +
-          Kaufhistorie und kostet Tokens.
-          {lastUsage
-            ? ` Letzter Lauf: ${lastUsage.inputTokens.toLocaleString("de-DE")} Input- / ` +
-              `${lastUsage.outputTokens.toLocaleString("de-DE")} Output-Tokens` +
-              ` (~$${lastUsage.approxCostUsd.toFixed(3)}).`
-            : ""}
-        </p>
-      </div>
-
-      {error && <p style={{ color: "#b91c1c", fontSize: 12, margin: "10px 0 0" }}>{error}</p>}
+        </Card>
+      </Section>
 
       {/* Personalised marketing email (full-customer context) */}
       <MarketingEmailSection customer={customer} />
-    </section>
+    </Card>
+  );
+}
+
+/** A titled section with a top border, an optional meta string and an optional
+ * right-aligned action — the repeated layout used across the card. */
+function Section({
+  title,
+  meta,
+  action,
+  children,
+}: {
+  title: React.ReactNode;
+  meta?: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-medium text-muted-foreground">
+          {title}
+          {meta ? <span className="font-normal"> · {meta}</span> : null}
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+const FINANCIAL_STATUS: Record<string, { label: string; variant: BadgeProps["variant"] }> = {
+  PAID: { label: "Bezahlt", variant: "success" },
+  PARTIALLY_PAID: { label: "Teilw. bezahlt", variant: "warning" },
+  PENDING: { label: "Ausstehend", variant: "warning" },
+  AUTHORIZED: { label: "Autorisiert", variant: "info" },
+  REFUNDED: { label: "Erstattet", variant: "secondary" },
+  PARTIALLY_REFUNDED: { label: "Teilw. erstattet", variant: "secondary" },
+  VOIDED: { label: "Storniert", variant: "destructive" },
+  EXPIRED: { label: "Abgelaufen", variant: "secondary" },
+};
+
+function FinancialStatusBadge({ status }: { status: string | null }) {
+  if (!status) return <Badge variant="secondary">—</Badge>;
+  const meta = FINANCIAL_STATUS[status.toUpperCase()];
+  return <Badge variant={meta?.variant ?? "secondary"}>{meta?.label ?? status}</Badge>;
+}
+
+function PurchaseHistory({ purchases }: { purchases: OrderHistoryProps | null }) {
+  if (!purchases) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        <em>Noch keine Kaufhistorie geladen.</em>
+      </p>
+    );
+  }
+  if (purchases.orders.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Keine Bestellungen unter dieser E-Mail gefunden.
+      </p>
+    );
+  }
+  return (
+    <>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Artikel</TableHead>
+            <TableHead align="right">Menge</TableHead>
+            <TableHead>Datum</TableHead>
+            <TableHead align="right">Summe</TableHead>
+            <TableHead>Status</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {purchases.orders.map((o) => {
+            const qty = o.items.reduce((s, it) => s + it.quantity, 0);
+            const itemsLabel =
+              o.items.length > 0
+                ? o.items.map((it) => it.title ?? it.handle ?? "Artikel").join(", ")
+                : "(keine Positionen)";
+            return (
+              <TableRow key={o.name + o.createdAt}>
+                <TableCell>
+                  <div className="font-medium">{itemsLabel}</div>
+                  <div className="text-xs text-muted-foreground">{o.name}</div>
+                </TableCell>
+                <TableCell align="right">{qty || "—"}</TableCell>
+                <TableCell>{fmtDate(o.createdAt)}</TableCell>
+                <TableCell align="right">
+                  {o.totalAmount ? `${o.totalAmount} ${o.currencyCode ?? ""}`.trim() : "—"}
+                </TableCell>
+                <TableCell>
+                  <FinancialStatusBadge status={o.financialStatus} />
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+      {purchases.truncated && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Liste ggf. gekürzt (nur die neuesten Bestellungen).
+        </p>
+      )}
+    </>
+  );
+}
+
+function SessionTimelineItem({
+  session,
+  index,
+  email,
+}: {
+  session: CustomerSessionProps;
+  index: number;
+  email: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="relative mb-4 pl-5 last:mb-0">
+      {/* Timeline dot */}
+      <span className="absolute -left-[5px] top-1.5 size-2.5 rounded-full border-2 border-card bg-accent" />
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-sm font-semibold">Session {index + 1}</span>
+        <span className="text-xs text-muted-foreground">
+          {fmtDate(session.createdAt)}
+          {session.personaDisplay ? ` · ${session.personaDisplay}` : ""}
+        </span>
+        <Badge variant="secondary">{session.messageCount} Nachrichten</Badge>
+        <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setOpen(true)}>
+          <MessageSquare /> Transkript ({session.transcript.length})
+        </Button>
+      </div>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Session {index + 1} · {fmtDate(session.createdAt)} · {email}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-3 max-h-[60vh] overflow-y-auto rounded-lg bg-muted/50 p-3 text-sm leading-relaxed">
+            {session.transcript.length === 0 ? (
+              <em className="text-muted-foreground">Kein lesbares Transkript.</em>
+            ) : (
+              session.transcript.map((m, i) => (
+                <p key={i} className="mb-2 last:mb-0">
+                  <strong className={m.role === "user" ? "text-foreground" : "text-accent"}>
+                    {m.role === "user" ? "Kunde" : "Berater"}:
+                  </strong>{" "}
+                  {m.content}
+                </p>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </li>
   );
 }
 
@@ -473,7 +606,7 @@ const MARKETING_BLOCKED_NOTE: Record<Exclude<CustomerProps["marketingStatus"], "
  * "Personalisierte E-Mail generieren" (full-customer context) → edit → approve
  * & send. Editing and sending reuse the Marketing tab's endpoints, so the send
  * path (eligibility, unsubscribe, mint-at-send, tracking, logging) is the same
- * single audited pipeline. All gating is server-side.
+ * single audited pipeline. All gating is server-side; this is presentation only.
  */
 function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
   const router = useRouter();
@@ -497,19 +630,14 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
     hasDraft ? (send?.discountPercent ?? 0) : 0
   );
   const [busy, setBusy] = useState<null | "draft" | "save" | "send">(null);
-  const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
 
   if (customer.marketingStatus !== "confirmed") {
     return (
-      <div style={{ marginTop: 16, borderTop: "1px solid #f0f0f0", paddingTop: 14 }}>
-        <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-          Personalisierte E-Mail (Mo)
-        </div>
-        <p style={{ fontSize: 13, color: "#999", margin: 0 }}>
+      <Section title="Personalisierte E-Mail (Mo)">
+        <p className="text-sm text-muted-foreground">
           <em>{MARKETING_BLOCKED_NOTE[customer.marketingStatus]}</em>
         </p>
-      </div>
+      </Section>
     );
   }
 
@@ -538,8 +666,6 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
 
   async function onGenerate() {
     setBusy("draft");
-    setError(null);
-    setNote(null);
     try {
       const json = (await call("/api/admin/customers/marketing-draft", {
         customerId: customer.id,
@@ -556,9 +682,10 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
         setDiscountPercent(json.send.discountPercent ?? 0);
         setInstructions(json.send.adminInstructions ?? "");
       }
+      toast({ variant: "success", title: "Entwurf generiert", description: customer.email });
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      reportError(e);
     } finally {
       setBusy(null);
     }
@@ -567,14 +694,12 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
   async function onSave() {
     if (!send) return;
     setBusy("save");
-    setError(null);
-    setNote(null);
     try {
       await call("/api/admin/marketing/update", { sendId: send.id, subject, body });
-      setNote("Entwurf gespeichert.");
+      toast({ variant: "success", title: "Entwurf gespeichert" });
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      reportError(e);
     } finally {
       setBusy(null);
     }
@@ -583,38 +708,38 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
   async function onSend() {
     if (!send) return;
     if (needsRegenerate) {
-      setError(
-        "Rabatt oder Hinweise geändert — bitte zuerst neu generieren, damit Text und Eingaben übereinstimmen."
-      );
+      toast({
+        variant: "warning",
+        title: "Rabatt oder Hinweise geändert",
+        description: "Bitte zuerst neu generieren, damit Text und Eingaben übereinstimmen.",
+      });
       return;
     }
     if (!confirm(`E-Mail an ${customer.email} wirklich senden?`)) return;
     setBusy("send");
-    setError(null);
     try {
       // Persist any unsaved edits first so the sent mail matches the textarea.
       await call("/api/admin/marketing/update", { sendId: send.id, subject, body });
       await call("/api/admin/marketing/send", { sendId: send.id });
       setSend({ ...send, status: "sent", subject, draftedText: body, sentAt: new Date().toISOString() });
+      toast({ variant: "success", title: "E-Mail gesendet", description: customer.email });
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      reportError(e);
     } finally {
       setBusy(null);
     }
   }
 
-  return (
-    <div style={{ marginTop: 16, borderTop: "1px solid #f0f0f0", paddingTop: 14 }}>
-      <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-        Personalisierte E-Mail (Mo) — aus dem GESAMTEN Kundenkontext
-      </div>
+  const discountId = `ms-customer-discount-${customer.id}`;
 
+  return (
+    <Section title="Personalisierte E-Mail (Mo) — aus dem GESAMTEN Kundenkontext">
       {isSent && send && (
-        <div style={{ marginBottom: 12 }}>
-          <span style={badge("#dcfce7", "#166534")}>✓ Gesendet am {fmtDate(send.sentAt)}</span>
-          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
-            Betreff: <strong>{send.subject || "—"}</strong>
+        <div className="mb-4">
+          <Badge variant="success">✓ Gesendet am {fmtDate(send.sentAt)}</Badge>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Betreff: <strong className="text-foreground">{send.subject || "—"}</strong>
             {send.discountPercent > 0 && (
               <>
                 {" "}
@@ -622,31 +747,22 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
                 {send.discountCode ? (
                   <>
                     {" "}
-                    · Code: <code>{send.discountCode}</code>
+                    · Code:{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">{send.discountCode}</code>
                   </>
                 ) : null}
               </>
             )}
           </div>
-          <details style={{ marginTop: 6 }}>
-            <summary style={{ fontSize: 12, color: "#2563eb", cursor: "pointer" }}>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs font-medium text-accent">
               Gesendeten Text anzeigen
             </summary>
-            <pre
-              style={{
-                whiteSpace: "pre-wrap",
-                fontFamily: "inherit",
-                fontSize: 13,
-                background: "#fafafa",
-                padding: 12,
-                borderRadius: 8,
-                marginTop: 8,
-              }}
-            >
+            <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-muted/50 p-3 font-sans text-sm">
               {send.draftedText}
             </pre>
           </details>
-          <p style={{ fontSize: 12, color: "#666", margin: "10px 0 0" }}>
+          <p className="mt-2 text-xs text-muted-foreground">
             Du kannst unten jederzeit eine neue personalisierte E-Mail generieren.
           </p>
         </div>
@@ -663,49 +779,37 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
       />
 
       {/* Special instructions — operator guidance woven into the next draft. */}
-      <label style={{ display: "block", fontSize: 12, color: "#666", margin: "0 0 4px" }}>
+      <Label htmlFor={`ms-instructions-${customer.id}`} className="mb-1.5 block text-muted-foreground">
         Besondere Hinweise für diese E-Mail (optional)
-      </label>
-      <textarea
+      </Label>
+      <Textarea
+        id={`ms-instructions-${customer.id}`}
         value={instructions}
         onChange={(e) => setInstructions(e.target.value)}
         rows={3}
         maxLength={2000}
+        disabled={busy !== null}
+        className="resize-y"
         placeholder={
           'z. B. "Erwähne die neue Rudergeräte-Linie", "Bundle anbieten", ' +
           '"Sie hatte nach Lieferung nach Österreich gefragt"'
         }
-        disabled={busy !== null}
-        style={{
-          width: "100%",
-          boxSizing: "border-box",
-          padding: "8px 10px",
-          fontSize: 13,
-          lineHeight: 1.5,
-          border: "1px solid #ddd",
-          borderRadius: 8,
-          fontFamily: "inherit",
-          resize: "vertical",
-        }}
       />
-      <p style={{ fontSize: 11, color: "#999", margin: "4px 0 10px" }}>
-        Wird der KI als Team-Anweisung mitgegeben (klar getrennt von den Kundendaten) und am
-        Entwurf gespeichert (Audit-Trail).
+      <p className="mb-3 mt-1 text-[11px] text-muted-foreground">
+        Wird der KI als Team-Anweisung mitgegeben (klar getrennt von den Kundendaten) und am Entwurf
+        gespeichert (Audit-Trail).
       </p>
 
+      {/* Numeric discount input: whole percent 0–50, DEFAULT 0. 0 = no code
+          minted, no discount block in the email; >0 mints the unique MS5- code
+          at send time. Bounds mirror the server (lib/discount-validation.mjs). */}
       <div>
-        <label
-          htmlFor={`ms-customer-discount-${customer.id}`}
-          style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 6 }}
-        >
+        <Label htmlFor={discountId} className="mb-1.5 block text-muted-foreground">
           Persönlicher Rabatt (%)
-        </label>
-        {/* Numeric input: whole percent 0–50, DEFAULT 0. 0 = no code minted,
-            no discount block in the email; >0 mints the unique MS5- code at
-            send time. Bounds mirror the server (lib/discount-validation.mjs). */}
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            id={`ms-customer-discount-${customer.id}`}
+        </Label>
+        <div className="flex items-center gap-2">
+          <Input
+            id={discountId}
             type="number"
             inputMode="numeric"
             min={DISCOUNT_PERCENT_MIN}
@@ -714,16 +818,9 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
             value={discountPercent}
             disabled={busy !== null}
             onChange={(e) => setDiscountPercent(clampDiscountPercent(e.target.valueAsNumber))}
-            style={{
-              width: 96,
-              boxSizing: "border-box",
-              padding: "7px 10px",
-              fontSize: 14,
-              border: "1px solid #ddd",
-              borderRadius: 8,
-            }}
+            className="w-24"
           />
-          <span style={{ fontSize: 12, color: "#888" }}>
+          <span className="text-xs text-muted-foreground">
             {discountPercent === 0
               ? "0 = kein Rabatt, kein Code"
               : `${DISCOUNT_PERCENT_MIN}–${DISCOUNT_PERCENT_MAX} %`}
@@ -732,123 +829,91 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
       </div>
 
       {hasDraft ? (
-        <div style={{ marginTop: 12 }}>
-          <span style={badge("#e0e7ff", "#3730a3")}>Entwurf — noch nicht gesendet</span>
+        <div className="mt-3">
+          <Badge variant="info">Entwurf — noch nicht gesendet</Badge>
 
           {needsRegenerate ? (
-            <div
-              style={{
-                background: "#fef3c7",
-                color: "#92400e",
-                fontSize: 12,
-                padding: "8px 10px",
-                borderRadius: 8,
-                margin: "8px 0",
-              }}
-            >
-              Rabatt oder Hinweise geändert — der aktuelle Text passt nicht mehr.{" "}
-              <button
-                type="button"
-                onClick={onGenerate}
-                disabled={busy !== null}
-                style={{ ...secondaryBtn(busy !== null), padding: "4px 10px", fontSize: 12, marginLeft: 4 }}
-              >
-                {busy === "draft" ? "Generiere…" : "↻ Neu generieren"}
-              </button>
+            <div className="my-2 flex flex-wrap items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <span>Rabatt oder Hinweise geändert — der aktuelle Text passt nicht mehr.</span>
+              <Button variant="secondary" size="sm" onClick={onGenerate} disabled={busy !== null}>
+                <RotateCcw /> {busy === "draft" ? "Generiere…" : "Neu generieren"}
+              </Button>
             </div>
           ) : (
-            <p style={{ fontSize: 12, color: "#666", margin: "8px 0 0" }}>
+            <p className="mt-2 text-xs text-muted-foreground">
               {discountPercent > 0
                 ? `Vorschau mit Platzhalter-Code MO-XXXX. Den Platzhalter im Text bitte nicht ändern — er wird beim Versand durch den echten, einmaligen ${discountPercent}%-Code (7 Tage gültig) ersetzt.`
                 : "Kein Rabatt gewählt — der Text nennt keinen Code, der Warenkorb-Link enthält keinen Rabatt."}
             </p>
           )}
 
-          <label style={{ display: "block", fontSize: 12, color: "#666", margin: "12px 0 4px" }}>
+          <Label htmlFor={`ms-customer-subject-${customer.id}`} className="mb-1 mt-3 block text-muted-foreground">
             Betreff
-          </label>
-          <input
+          </Label>
+          <Input
+            id={`ms-customer-subject-${customer.id}`}
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              padding: "8px 10px",
-              fontSize: 14,
-              border: "1px solid #ddd",
-              borderRadius: 8,
-            }}
           />
 
-          <label style={{ display: "block", fontSize: 12, color: "#666", margin: "12px 0 4px" }}>
+          <Label htmlFor={`ms-customer-body-${customer.id}`} className="mb-1 mt-3 block text-muted-foreground">
             E-Mail-Text (bearbeitbar)
-          </label>
-          <textarea
+          </Label>
+          <Textarea
+            id={`ms-customer-body-${customer.id}`}
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={10}
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              padding: "10px 12px",
-              fontSize: 14,
-              lineHeight: 1.5,
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              fontFamily: "inherit",
-              resize: "vertical",
-            }}
+            className="resize-y"
           />
 
-          <div style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
+          <div className="mt-2 text-xs text-muted-foreground">
             Beim Versand werden Warenkorb-Button &amp; Abmeldelink automatisch angehängt
             {discountPercent > 0 ? " und der einmalige Rabattcode erzeugt" : ""}. Gesendet wird nur
             an bestätigte, nicht abgemeldete Adressen.
           </div>
 
-          <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-            <button onClick={onSave} disabled={busy !== null} style={secondaryBtn(busy !== null)}>
-              {busy === "save" ? "Speichere…" : "Entwurf speichern"}
-            </button>
-            <button
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={onSave} disabled={busy !== null}>
+              <Save /> {busy === "save" ? "Speichere…" : "Entwurf speichern"}
+            </Button>
+            <Button
               onClick={onSend}
               disabled={busy !== null || needsRegenerate}
-              style={primaryBtn(busy !== null || needsRegenerate)}
               title={needsRegenerate ? "Bitte zuerst neu generieren" : undefined}
             >
-              {busy === "send" ? "Sende…" : "✓ Freigeben & senden"}
-            </button>
+              <Send /> {busy === "send" ? "Sende…" : "Freigeben & senden"}
+            </Button>
           </div>
         </div>
       ) : (
-        <div style={{ marginTop: 12 }}>
-          <p style={{ fontSize: 12, color: "#666", margin: "0 0 10px" }}>
+        <div className="mt-3">
+          <p className="mb-3 text-xs text-muted-foreground">
             Der Entwurf nutzt ALLES zu diesem Kunden: alle verknüpften Gespräche, das aktuelle
             Kundenverständnis und die Kaufhistorie (bereits Gekauftes wird nicht erneut empfohlen).
             Ein KI-Durchlauf — kostet Tokens.
           </p>
-          <button onClick={onGenerate} disabled={busy === "draft"} style={primaryBtn(busy === "draft")}>
+          <Button onClick={onGenerate} disabled={busy === "draft"}>
+            <Sparkles />{" "}
             {busy === "draft"
               ? "Generiere Entwurf…"
               : isSent
-                ? "✦ Neue personalisierte E-Mail generieren"
-                : "✦ Personalisierte E-Mail generieren"}
-          </button>
+                ? "Neue personalisierte E-Mail generieren"
+                : "Personalisierte E-Mail generieren"}
+          </Button>
         </div>
       )}
-
-      {note && <p style={{ color: "#16a34a", fontSize: 12, margin: "8px 0 0" }}>{note}</p>}
-      {error && <p style={{ color: "#b91c1c", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
-    </div>
+    </Section>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Bundle offer composer + per-customer bundle list (S11). A NEW block above the
+// Bundle offer composer + per-customer bundle list (S11). A block above the
 // special-additions field in the personalized-email flow. Workflow: suggest (AI)
 // → edit composition (remove / add-by-search) → set price/title/expiry → create
 // (S10 createBundleOffer). A created, active bundle is attached to the email and
-// rendered as a special-offer block at send time.
+// rendered as a special-offer block at send time. Endpoints unchanged; this is
+// the Session-A re-skin only.
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BUNDLE_TITLE = "Dein persönliches Set";
@@ -906,12 +971,12 @@ function fmtMoney(value: number | string, currency = "EUR"): string {
   return n.toLocaleString("de-DE", { style: "currency", currency });
 }
 
-function bundleStatusBadge(b: CustomerBundleProps): React.ReactNode {
-  if (b.status === "failed") return <span style={badge("#fee2e2", "#991b1b")}>Fehlgeschlagen</span>;
-  if (b.status === "expired") return <span style={badge("#f3f4f6", "#6b7280")}>Abgelaufen</span>;
-  if (b.status === "pending") return <span style={badge("#fef3c7", "#92400e")}>Wird erstellt…</span>;
-  if (b.emailSentAt) return <span style={badge("#dcfce7", "#166534")}>Versendet</span>;
-  return <span style={badge("#dbeafe", "#1e40af")}>Aktiv</span>;
+function BundleStatusBadge({ b }: { b: CustomerBundleProps }) {
+  if (b.status === "failed") return <Badge variant="destructive">Fehlgeschlagen</Badge>;
+  if (b.status === "expired") return <Badge variant="secondary">Abgelaufen</Badge>;
+  if (b.status === "pending") return <Badge variant="warning">Wird erstellt…</Badge>;
+  if (b.emailSentAt) return <Badge variant="success">Versendet</Badge>;
+  return <Badge variant="info">Aktiv</Badge>;
 }
 
 function BundleOfferSection({
@@ -936,8 +1001,6 @@ function BundleOfferSection({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CatalogSearchHit[]>([]);
   const [busy, setBusy] = useState<null | "suggest" | "search" | "create">(null);
-  const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
   const [bundles, setBundles] = useState<CustomerBundleProps[]>(initialBundles);
 
   const componentSum = components.reduce((s, c) => s + c.unitPrice, 0);
@@ -970,12 +1033,10 @@ function BundleOfferSection({
 
   async function onSuggest() {
     setBusy("suggest");
-    setError(null);
-    setNote(null);
     try {
       const { ok, json } = await post("/api/admin/bundles/suggest", { customerId });
       if (!ok) {
-        setError(json?.error?.message ?? "Vorschlag fehlgeschlagen.");
+        toast({ variant: "error", title: "Fehler", description: json?.error?.message ?? "Vorschlag fehlgeschlagen." });
         return;
       }
       const next: ComposerComponent[] = (json.components ?? []).map((c: ComposerComponent) => ({
@@ -989,9 +1050,13 @@ function BundleOfferSection({
       }));
       applyComponents(next);
       if (json.title && (!title || title === DEFAULT_BUNDLE_TITLE)) setTitle(json.title);
-      setNote(`KI-Vorschlag: ${next.length} Produkte. Du kannst frei anpassen.`);
+      toast({
+        variant: "success",
+        title: "KI-Vorschlag erstellt",
+        description: `${next.length} Produkte — du kannst frei anpassen.`,
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      reportError(e);
     } finally {
       setBusy(null);
     }
@@ -1001,16 +1066,15 @@ function BundleOfferSection({
     const q = query.trim();
     if (!q) return;
     setBusy("search");
-    setError(null);
     try {
       const { ok, json } = await post("/api/admin/catalog/search", { query: q });
       if (!ok) {
-        setError(json?.error?.message ?? "Suche fehlgeschlagen.");
+        toast({ variant: "error", title: "Fehler", description: json?.error?.message ?? "Suche fehlgeschlagen." });
         return;
       }
       setResults(json.products ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      reportError(e);
     } finally {
       setBusy(null);
     }
@@ -1027,16 +1091,14 @@ function BundleOfferSection({
 
   async function onCreate() {
     if (!countOk) {
-      setError(`Ein Bundle braucht ${BUNDLE_MIN}–${BUNDLE_MAX} Produkte.`);
+      toast({ variant: "warning", title: "Ungültige Auswahl", description: `Ein Bundle braucht ${BUNDLE_MIN}–${BUNDLE_MAX} Produkte.` });
       return;
     }
     if (!priceValid) {
-      setError("Bitte einen Bundle-Preis größer als 0 € angeben.");
+      toast({ variant: "warning", title: "Preis fehlt", description: "Bitte einen Bundle-Preis größer als 0 € angeben." });
       return;
     }
     setBusy("create");
-    setError(null);
-    setNote(null);
     try {
       const { ok, json } = await post("/api/admin/bundles/create", {
         customerId,
@@ -1050,16 +1112,19 @@ function BundleOfferSection({
         const code = json?.error?.code;
         const base = json?.error?.message ?? "Bundle-Erstellung fehlgeschlagen.";
         const offenders: string[] = json?.offenders ?? [];
-        setError(
-          code === "sold_out" && offenders.length
-            ? `${base} Ausverkauft: ${offenders.join(", ")}. Bitte entfernen und erneut versuchen.`
-            : base
-        );
+        toast({
+          variant: "error",
+          title: "Fehler",
+          description:
+            code === "sold_out" && offenders.length
+              ? `${base} Ausverkauft: ${offenders.join(", ")}. Bitte entfernen und erneut versuchen.`
+              : base,
+        });
         return;
       }
       const offer = json.offer;
       if (!offer) {
-        setError("Bundle erstellt, aber die Antwort enthielt keine Angebotsdaten.");
+        toast({ variant: "error", title: "Fehler", description: "Bundle erstellt, aber die Antwort enthielt keine Angebotsdaten." });
         return;
       }
       const created: CustomerBundleProps = {
@@ -1091,14 +1156,17 @@ function BundleOfferSection({
       setPriceEdited(false);
       setResults([]);
       setQuery("");
-      setNote(
-        sendId != null
-          ? "Bundle erstellt & an die E-Mail angehängt. Tipp: E-Mail neu generieren, damit der Text das Set erwähnt."
-          : "Bundle erstellt. Es wird an die nächste generierte E-Mail angehängt."
-      );
+      toast({
+        variant: "success",
+        title: "Bundle erstellt",
+        description:
+          sendId != null
+            ? "An die E-Mail angehängt. Tipp: E-Mail neu generieren, damit der Text das Set erwähnt."
+            : "Es wird an die nächste generierte E-Mail angehängt.",
+      });
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      reportError(e);
     } finally {
       setBusy(null);
     }
@@ -1109,66 +1177,50 @@ function BundleOfferSection({
     try {
       const { ok, json } = await post("/api/admin/bundles/archive", { id });
       if (!ok || !json.ok) {
-        setError(json?.error?.message ?? "Archivieren fehlgeschlagen.");
+        toast({ variant: "error", title: "Fehler", description: json?.error?.message ?? "Archivieren fehlgeschlagen." });
         return;
       }
-      setBundles((prev) =>
-        prev.map((b) => (b.id === id ? { ...b, status: "expired" as const } : b))
-      );
+      setBundles((prev) => prev.map((b) => (b.id === id ? { ...b, status: "expired" as const } : b)));
+      toast({ variant: "success", title: "Bundle archiviert" });
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      reportError(e);
     }
   }
 
   return (
-    <div style={{ margin: "0 0 16px", border: "1px solid #e5e7eb", borderRadius: 10, padding: 12 }}>
+    <Card className="mb-4 p-3 shadow-none">
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        style={{
-          fontSize: 13,
-          fontWeight: 600,
-          background: "none",
-          border: "none",
-          color: "#111",
-          cursor: "pointer",
-          padding: 0,
-          textAlign: "left",
-          width: "100%",
-        }}
+        className="flex w-full items-center gap-1 text-left text-sm font-semibold text-foreground"
       >
-        {open ? "▾" : "▸"} 🎁 Bundle-Angebot{" "}
+        <Gift className="size-4" /> Bundle-Angebot
         {bundles.length > 0 && (
-          <span style={{ color: "#888", fontWeight: 400 }}>· {bundles.length} vorhanden</span>
+          <span className="font-normal text-muted-foreground">· {bundles.length} vorhanden</span>
         )}
+        <span className="ml-auto text-muted-foreground">{open ? "▾" : "▸"}</span>
       </button>
 
       {open && (
-        <div style={{ marginTop: 10 }}>
+        <div className="mt-3">
           {/* Composer */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-            <button onClick={onSuggest} disabled={busy !== null} style={primaryBtn(busy !== null)}>
-              {busy === "suggest" ? "Schlage vor…" : "✦ Bundle vorschlagen"}
-            </button>
-            <span style={{ fontSize: 11, color: "#999", alignSelf: "center" }}>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Button onClick={onSuggest} disabled={busy !== null}>
+              <Sparkles /> {busy === "suggest" ? "Schlage vor…" : "Bundle vorschlagen"}
+            </Button>
+            <span className="text-[11px] text-muted-foreground">
               KI-Durchlauf über Profil, Gespräche &amp; Käufe — kostet Tokens.
             </span>
           </div>
 
           {/* Editable composition */}
           {components.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+            <div className="mb-3 flex flex-col gap-1.5">
               {components.map((c) => (
                 <div
                   key={c.productId}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    background: "#fafafa",
-                    borderRadius: 8,
-                    padding: "6px 10px",
-                  }}
+                  className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-2.5 py-1.5"
                 >
                   {c.imageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -1177,96 +1229,79 @@ function BundleOfferSection({
                       alt={c.title}
                       width={36}
                       height={36}
-                      style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 6 }}
+                      className="size-9 rounded-md object-cover"
                     />
                   ) : (
-                    <div style={{ width: 36, height: 36, background: "#eee", borderRadius: 6 }} />
+                    <div className="size-9 rounded-md bg-muted" />
                   )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{c.title}</div>
-                    <div style={{ fontSize: 12, color: "#888" }}>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold">{c.title}</div>
+                    <div className="text-xs text-muted-foreground">
                       {fmtMoney(c.unitPrice, c.currency)}
                       {c.rationale ? ` · ${c.rationale}` : ""}
                     </div>
                   </div>
-                  <button
-                    onClick={() => removeProduct(c.productId)}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
                     title="Entfernen"
-                    style={{ ...secondaryBtn(false), padding: "4px 8px", fontSize: 12 }}
+                    onClick={() => removeProduct(c.productId)}
                   >
-                    ✕
-                  </button>
+                    <X />
+                  </Button>
                 </div>
               ))}
-              <div style={{ fontSize: 13, color: "#444", textAlign: "right" }}>
-                Komponentensumme: <strong>{fmtMoney(componentSum)}</strong>
+              <div className="text-right text-sm text-muted-foreground">
+                Komponentensumme: <strong className="text-foreground">{fmtMoney(componentSum)}</strong>
               </div>
             </div>
           )}
 
           {/* Add product by name search */}
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    onSearch();
-                  }
-                }}
-                placeholder="Produkt suchen (Name)…"
-                style={{
-                  flex: 1,
-                  boxSizing: "border-box",
-                  padding: "7px 10px",
-                  fontSize: 13,
-                  border: "1px solid #ddd",
-                  borderRadius: 8,
-                }}
-              />
-              <button onClick={onSearch} disabled={busy !== null} style={secondaryBtn(busy !== null)}>
+          <div className="mb-3">
+            <div className="flex gap-1.5">
+              <div className="relative flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      onSearch();
+                    }
+                  }}
+                  placeholder="Produkt suchen (Name)…"
+                  className="pl-9"
+                />
+              </div>
+              <Button variant="secondary" onClick={onSearch} disabled={busy !== null}>
                 {busy === "search" ? "Suche…" : "Suchen"}
-              </button>
+              </Button>
             </div>
             {results.length > 0 && (
-              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+              <div className="mt-1.5 flex flex-col gap-1">
                 {results.map((r) => {
                   const added = components.some((c) => c.productId === r.productId);
                   return (
                     <div
                       key={r.productId}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        fontSize: 13,
-                        padding: "4px 6px",
-                        borderRadius: 6,
-                        background: "#fff",
-                        border: "1px solid #f0f0f0",
-                      }}
+                      className="flex items-center gap-2 rounded-md border border-border bg-card px-2 py-1 text-sm"
                     >
-                      <span style={{ flex: 1, minWidth: 0 }}>
-                        {r.title}{" "}
-                        <span style={{ color: "#888" }}>· {fmtMoney(r.unitPrice, r.currency)}</span>
-                        {!r.inStock && (
-                          <span style={{ color: "#991b1b" }}> · ausverkauft</span>
-                        )}
+                      <span className="min-w-0 flex-1">
+                        {r.title} <span className="text-muted-foreground">· {fmtMoney(r.unitPrice, r.currency)}</span>
+                        {!r.inStock && <span className="text-destructive"> · ausverkauft</span>}
                       </span>
-                      <button
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         onClick={() => addProduct(r)}
                         disabled={added || !r.inStock}
-                        style={{
-                          ...secondaryBtn(added || !r.inStock),
-                          padding: "3px 8px",
-                          fontSize: 12,
-                        }}
                         title={!r.inStock ? "Ausverkauft — nicht hinzufügbar" : undefined}
                       >
-                        {added ? "✓ drin" : "+ hinzufügen"}
-                      </button>
+                        {added ? "✓ drin" : <><Plus /> hinzufügen</>}
+                      </Button>
                     </div>
                   );
                 })}
@@ -1276,12 +1311,10 @@ function BundleOfferSection({
 
           {/* Price / title / expiry */}
           {components.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 10 }}>
+            <div className="mb-3 flex flex-wrap gap-3">
               <div>
-                <label style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 4 }}>
-                  Bundle-Preis (€)
-                </label>
-                <input
+                <Label className="mb-1 block text-muted-foreground">Bundle-Preis (€)</Label>
+                <Input
                   type="number"
                   inputMode="decimal"
                   min={0}
@@ -1291,128 +1324,88 @@ function BundleOfferSection({
                     setPrice(e.target.value);
                     setPriceEdited(true);
                   }}
-                  style={{
-                    width: 110,
-                    boxSizing: "border-box",
-                    padding: "7px 10px",
-                    fontSize: 14,
-                    border: `1px solid ${priceValid ? "#ddd" : "#fca5a5"}`,
-                    borderRadius: 8,
-                  }}
+                  className={`w-28 ${priceValid ? "" : "border-destructive"}`}
                 />
               </div>
-              <div style={{ flex: 1, minWidth: 160 }}>
-                <label style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 4 }}>
-                  Titel
-                </label>
-                <input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  style={{
-                    width: "100%",
-                    boxSizing: "border-box",
-                    padding: "7px 10px",
-                    fontSize: 14,
-                    border: "1px solid #ddd",
-                    borderRadius: 8,
-                  }}
-                />
+              <div className="min-w-[10rem] flex-1">
+                <Label className="mb-1 block text-muted-foreground">Titel</Label>
+                <Input value={title} onChange={(e) => setTitle(e.target.value)} />
               </div>
               <div>
-                <label style={{ display: "block", fontSize: 12, color: "#666", marginBottom: 4 }}>
-                  Gültig (Tage)
-                </label>
-                <input
+                <Label className="mb-1 block text-muted-foreground">Gültig (Tage)</Label>
+                <Input
                   type="number"
                   inputMode="numeric"
                   min={1}
                   step={1}
                   value={expiryDays}
-                  onChange={(e) => setExpiryDays(Math.max(1, Math.floor(e.target.valueAsNumber || DEFAULT_EXPIRY_DAYS)))}
-                  style={{
-                    width: 80,
-                    boxSizing: "border-box",
-                    padding: "7px 10px",
-                    fontSize: 14,
-                    border: "1px solid #ddd",
-                    borderRadius: 8,
-                  }}
+                  onChange={(e) =>
+                    setExpiryDays(Math.max(1, Math.floor(e.target.valueAsNumber || DEFAULT_EXPIRY_DAYS)))
+                  }
+                  className="w-20"
                 />
               </div>
             </div>
           )}
 
           {aboveSum && (
-            <p style={{ fontSize: 12, color: "#92400e", margin: "0 0 10px" }}>
+            <p className="mb-3 text-xs text-warning">
               ⚠ Preis über der Komponentensumme ({fmtMoney(componentSum)}) — es wird KEINE
               „statt“-Zeile angezeigt (das Bundle ist nicht günstiger als die Einzelprodukte).
             </p>
           )}
 
           {components.length > 0 && (
-            <button
-              onClick={onCreate}
-              disabled={busy !== null || !countOk || !priceValid}
-              style={primaryBtn(busy !== null || !countOk || !priceValid)}
-            >
+            <Button onClick={onCreate} disabled={busy !== null || !countOk || !priceValid}>
               {busy === "create" ? "Erstelle…" : "Bundle erstellen"}
-            </button>
+            </Button>
           )}
-
-          {note && <p style={{ color: "#16a34a", fontSize: 12, margin: "8px 0 0" }}>{note}</p>}
-          {error && <p style={{ color: "#b91c1c", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
 
           {/* Per-customer bundle list */}
           {bundles.length > 0 && (
-            <div style={{ marginTop: 14, borderTop: "1px solid #f0f0f0", paddingTop: 10 }}>
-              <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
+            <div className="mt-4 border-t border-border pt-3">
+              <div className="mb-2 text-xs font-medium text-muted-foreground">
                 Bundles für {customerEmail} ({bundles.length})
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div className="flex flex-col gap-2">
                 {bundles.map((b) => (
-                  <div
-                    key={b.id}
-                    style={{ background: "#fafafa", borderRadius: 8, padding: "8px 12px", fontSize: 13 }}
-                  >
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <div key={b.id} className="rounded-lg bg-muted/50 px-3 py-2 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
                       <strong>{b.title ?? "Bundle"}</strong>
-                      {bundleStatusBadge(b)}
-                      {b.clicked && <span style={badge("#e0e7ff", "#3730a3")}>↗ Klick erfasst</span>}
-                      <span style={{ color: "#666" }}>
+                      <BundleStatusBadge b={b} />
+                      {b.clicked && <Badge variant="accent">↗ Klick erfasst</Badge>}
+                      <span className="text-muted-foreground">
                         {fmtMoney(b.bundlePrice, b.currency)}
                         {Number(b.bundlePrice) < Number(b.componentsSum)
                           ? ` (statt ${fmtMoney(b.componentsSum, b.currency)})`
                           : ""}
                       </span>
                     </div>
-                    <div style={{ color: "#555", marginTop: 2 }}>
+                    <div className="mt-0.5 text-muted-foreground">
                       {b.components.map((c) => c.title).join(" + ")}
                     </div>
-                    <div style={{ color: "#888", marginTop: 2, fontSize: 12 }}>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
                       Erstellt {fmtDate(b.createdAt)}
                       {b.expiresAt ? ` · läuft ab ${fmtDate(b.expiresAt)}` : ""}
                     </div>
                     {b.status === "failed" && b.error && (
-                      <div style={{ color: "#b91c1c", marginTop: 4, fontSize: 12 }}>{b.error}</div>
+                      <div className="mt-1 text-xs text-destructive">{b.error}</div>
                     )}
                     {b.status === "active" && (
-                      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6, flexWrap: "wrap" }}>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
                         {b.redirectUrl && (
                           <a
                             href={b.redirectUrl}
                             target="_blank"
                             rel="noreferrer"
-                            style={{ fontSize: 12, color: "#2563eb" }}
+                            className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
                           >
-                            Angebots-Link
+                            <ExternalLink className="size-3.5" /> Angebots-Link
                           </a>
                         )}
-                        <button
-                          onClick={() => onArchive(b.id)}
-                          style={{ ...secondaryBtn(false), padding: "4px 10px", fontSize: 12 }}
-                        >
+                        <Button variant="secondary" size="sm" onClick={() => onArchive(b.id)}>
                           Archivieren
-                        </button>
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -1422,93 +1415,6 @@ function BundleOfferSection({
           )}
         </div>
       )}
-    </div>
+    </Card>
   );
-}
-
-function SessionRow({ session, index }: { session: CustomerSessionProps; index: number }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ background: "#fafafa", borderRadius: 8, padding: "8px 12px" }}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          fontSize: 13,
-          background: "none",
-          border: "none",
-          color: "#111",
-          cursor: "pointer",
-          padding: 0,
-          textAlign: "left",
-          width: "100%",
-        }}
-      >
-        {open ? "▾" : "▸"} <strong>Session {index + 1}</strong> · {fmtDate(session.createdAt)}
-        {session.personaDisplay ? ` · ${session.personaDisplay}` : ""}
-        <span style={{ color: "#888" }}> · {session.messageCount} Nachrichten</span>
-      </button>
-      {open && (
-        <div
-          style={{
-            marginTop: 8,
-            maxHeight: 240,
-            overflowY: "auto",
-            fontSize: 13,
-            lineHeight: 1.5,
-          }}
-        >
-          {session.transcript.length === 0 && (
-            <em style={{ color: "#999" }}>Kein lesbares Transkript.</em>
-          )}
-          {session.transcript.map((m, i) => (
-            <p key={i} style={{ margin: "0 0 8px" }}>
-              <strong style={{ color: m.role === "user" ? "#111" : "#2563eb" }}>
-                {m.role === "user" ? "Kunde" : "Berater"}:
-              </strong>{" "}
-              {m.content}
-            </p>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function badge(bg: string, fg: string): React.CSSProperties {
-  return {
-    fontSize: 12,
-    fontWeight: 600,
-    background: bg,
-    color: fg,
-    borderRadius: 999,
-    padding: "4px 10px",
-    whiteSpace: "nowrap",
-    display: "inline-block",
-  };
-}
-
-function primaryBtn(disabled: boolean): React.CSSProperties {
-  return {
-    fontSize: 13,
-    fontWeight: 600,
-    padding: "7px 14px",
-    background: disabled ? "#9ca3af" : "#111",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    cursor: disabled ? "default" : "pointer",
-  };
-}
-
-function secondaryBtn(disabled: boolean): React.CSSProperties {
-  return {
-    fontSize: 13,
-    fontWeight: 600,
-    padding: "7px 14px",
-    background: "#fff",
-    color: "#111",
-    border: "1px solid #ddd",
-    borderRadius: 8,
-    cursor: disabled ? "default" : "pointer",
-  };
 }
