@@ -10,7 +10,6 @@
 //
 // Run (loads .env like the other scripts):
 //   node --env-file=.env scripts/probe-bundle.mjs
-//   (or `npm run probe:bundle`)
 //
 // It reuses the real backend client so the auth/transport path is identical to
 // production:
@@ -25,7 +24,17 @@
 // asserts that every input field / mutation argument it intends to use actually
 // exists on the live server, printing the real shapes it found. If memory was
 // wrong, the probe aborts loudly with the live schema dump instead of firing a
-// malformed mutation. Canonical docs (open in a browser to confirm):
+// malformed mutation. This includes each mutation's userErrors sub-selection:
+// these mutations use DIFFERENT userError types (productBundleCreate → plain
+// UserError with NO `code`; productVariantsBulkUpdate →
+// ProductVariantsBulkUpdateUserError; etc.), so the selection is derived from
+// the live schema rather than assuming a shared `{ field message code }` shape.
+// (Hardcoding `code` on productBundleCreate is what caused the S9b
+// false-negative: Shopify rejected the query at validation and the old
+// classifier misread that bug as "capability not available".) A capability
+// verdict is ONLY ever drawn from a genuine access/ownership error — never from
+// a validation error, which always fails loud as a probe bug.
+// Canonical docs (open in a browser to confirm):
 //   productBundleCreate       — /mutations/productBundleCreate
 //   ProductBundleOperation    — /objects/ProductBundleOperation
 //   productVariantsBulkUpdate — /mutations/productVariantsBulkUpdate
@@ -77,6 +86,8 @@ const report = {
   parentVariantId: null,
   numericVariantId: null,
   priceUpdate: null,
+  compareAtPrice: null,
+  componentsSum: null,
   statusUnlisted: null,
   published: null,
   publicationId: null,
@@ -124,23 +135,92 @@ async function introspectEnum(name) {
   return data.__type;
 }
 
-// Map of mutation field name -> [{ arg, type }] for the mutations we use, so we
-// can discover (not assume) e.g. whether productUpdate takes `input:
-// ProductInput!` or `product: ProductUpdateInput!` on this API version.
-async function introspectMutationArgs() {
+// Map of mutation field name -> { args: [{ arg, type }], payload } for the
+// mutations we use, so we can discover (not assume) e.g. whether productUpdate
+// takes `input: ProductInput!` or `product: ProductUpdateInput!`, AND the name
+// of each mutation's payload type (needed to derive its userErrors shape).
+async function introspectMutations() {
   const data = await adminGraphql(
     `{ __schema { mutationType {
-         fields { name args { name ${TYPE_REF} } }
+         fields { name ${TYPE_REF} args { name ${TYPE_REF} } }
        } } }`
   );
   const map = new Map();
   for (const f of data.__schema.mutationType.fields) {
-    map.set(
-      f.name,
-      f.args.map((a) => ({ arg: a.name, type: namedType(a.type) }))
-    );
+    map.set(f.name, {
+      args: f.args.map((a) => ({ arg: a.name, type: namedType(a.type) })),
+      payload: namedType(f.type),
+    });
   }
   return map;
+}
+
+// Introspect an OBJECT type's fields (name + type ref), cached.
+const objectTypeCache = new Map();
+async function introspectObjectType(name) {
+  if (objectTypeCache.has(name)) return objectTypeCache.get(name);
+  const data = await adminGraphql(
+    `query O($n: String!) { __type(name: $n) { name kind fields { name ${TYPE_REF} } } }`,
+    { n: name }
+  );
+  objectTypeCache.set(name, data.__type);
+  return data.__type;
+}
+
+// The userErrors fields we'd like, in preference order. `code` is INTENTIONALLY
+// optional: these mutations use DIFFERENT userError types and not all define
+// `code` — productBundleCreate's userErrors are plain `UserError` (field +
+// message only). Hardcoding `code` there is exactly what caused the S9b
+// false-negative (Shopify rejected the whole query at validation, and the old
+// classifier misread that as "capability not available"). So we NEVER assume a
+// shared shape: we derive each selection from the live schema.
+const WANT_UE_FIELDS = ["field", "message", "code"];
+
+// Given a type that has a `userErrors` field (a mutation payload OR an object
+// like ProductBundleOperation), return the space-joined selection of userErrors
+// sub-fields that ACTUALLY exist on its specific userError type.
+async function userErrorsSelectionForType(ownerTypeName) {
+  const owner = await introspectObjectType(ownerTypeName);
+  const ueField = (owner?.fields ?? []).find((f) => f.name === "userErrors");
+  if (!ueField) return { ueType: null, selection: "" };
+  const ueType = namedType(ueField.type);
+  const ueObj = await introspectObjectType(ueType);
+  const have = new Set((ueObj?.fields ?? []).map((f) => f.name));
+  const selection = WANT_UE_FIELDS.filter((f) => have.has(f));
+  // field+message are universal on Shopify userError types; fall back to them
+  // defensively so we never emit an empty `userErrors { }` selection.
+  return { ueType, selection: (selection.length ? selection : ["field", "message"]).join(" ") };
+}
+
+// Resolve a mutation's userErrors selection from its payload type, logging the
+// concrete userError type + fields discovered on the live schema.
+async function mutationUserErrorsSelection(mutMap, mutationName) {
+  const info = mutMap.get(mutationName);
+  if (!info?.payload) throw new Error(`[preflight] no payload type for ${mutationName}`);
+  const { ueType, selection } = await userErrorsSelectionForType(info.payload);
+  console.log(`  ${mutationName}: ${info.payload}.userErrors is ${ueType} { ${selection} }`);
+  return selection;
+}
+
+// ── error classification (a capability verdict must NEVER come from a bug) ─────
+
+// A GraphQL VALIDATION / undefined-field / bad-input error means the PROBE
+// built a malformed request — a script bug. It must fail loud, never be
+// reported as a capability verdict.
+function isValidationError(msg) {
+  return /doesn't exist on type|undefinedField|Field '[^']*' doesn't exist|argumentLiteralsIncompatible|argumentNotAccepted|InvalidValue|Parse error|parse error|Expected (?:type|value)|wasn't provided|is required but|was provided invalid|Variable \$|no field|fieldConflict|selectionMismatch/i.test(
+    msg
+  );
+}
+
+// ONLY genuine access / ownership / permission failures count as "capability
+// not available" (merchant must install the free Shopify Bundles app, or fall
+// back to §6a). Note: deliberately does NOT match a bare "bundle"/"capability"
+// substring — that over-broad match is what swallowed the validation error.
+function isGenuineAccessError(msg) {
+  return /ACCESS_DENIED|access denied|denied access|not approved|must install|must have access|does not have access|requires? [^.]*scope|missing [^.]*scope|not authoriz|unauthoriz|forbidden|permission|app is not allowed|not (?:been )?(?:granted|enabled)[^.]*bundle|bundle[^.]*not[^.]*(?:enabled|available|approved)/i.test(
+    msg
+  );
 }
 
 function assertFields(typeObj, label, required) {
@@ -162,8 +242,9 @@ function assertFields(typeObj, label, required) {
 // Discover the argument name + input type for a mutation, asserting the input
 // type carries the fields we need. Returns { arg, type }.
 function pickArg(mutMap, mutation, acceptableTypes) {
-  const args = mutMap.get(mutation);
-  if (!args) throw new Error(`[preflight] mutation ${mutation} not found in live schema`);
+  const info = mutMap.get(mutation);
+  if (!info) throw new Error(`[preflight] mutation ${mutation} not found in live schema`);
+  const args = info.args;
   const hit = args.find((a) => acceptableTypes.includes(a.type));
   if (!hit) {
     throw new Error(
@@ -203,7 +284,7 @@ async function main() {
 
   // ── PREFLIGHT: verify mutation/field shapes against the LIVE schema ──────────
   section("PREFLIGHT — verifying mutation shapes against the live 2026-04 schema");
-  const mutMap = await introspectMutationArgs();
+  const mutMap = await introspectMutations();
 
   const bundleCreateInput = await introspectInputType("ProductBundleCreateInput");
   assertFields(bundleCreateInput, "ProductBundleCreateInput", ["title", "components"]);
@@ -222,7 +303,11 @@ async function main() {
     "values",
   ]);
   const variantsBulkInput = await introspectInputType("ProductVariantsBulkInput");
-  assertFields(variantsBulkInput, "ProductVariantsBulkInput", ["id", "price"]);
+  assertFields(variantsBulkInput, "ProductVariantsBulkInput", [
+    "id",
+    "price",
+    "compareAtPrice",
+  ]);
   const pubInput = await introspectInputType("PublicationInput");
   assertFields(pubInput, "PublicationInput", ["publicationId"]);
 
@@ -251,12 +336,27 @@ async function main() {
     throw new Error("[preflight] ProductStatus.ARCHIVED missing — cleanup would fail.");
   }
 
-  // Helper that builds + runs productUpdate with the discovered arg name.
+  // Derive each mutation's userErrors selection from the LIVE schema — these
+  // mutations use DIFFERENT userError types, so we never assume `code` exists.
+  console.log("  userErrors shapes (derived, not assumed):");
+  const ueCreate = await mutationUserErrorsSelection(mutMap, "productBundleCreate");
+  const ueVariants = await mutationUserErrorsSelection(mutMap, "productVariantsBulkUpdate");
+  const uePublish = await mutationUserErrorsSelection(mutMap, "publishablePublish");
+  const ueProductUpdate = await mutationUserErrorsSelection(mutMap, "productUpdate");
+  // ProductBundleOperation is an object (queried while polling), not a mutation,
+  // but it also exposes userErrors — derive its selection the same way.
+  const { selection: ueOperation } = await userErrorsSelectionForType(
+    "ProductBundleOperation"
+  );
+  console.log(`  ProductBundleOperation.userErrors { ${ueOperation} }`);
+
+  // Helper that builds + runs productUpdate with the discovered arg name +
+  // schema-derived userErrors selection.
   async function productUpdate(fields) {
     const q = `mutation U($p: ${productUpdateArg.type}!) {
       productUpdate(${productUpdateArg.arg}: $p) {
         product { id status }
-        userErrors { field message }
+        userErrors { ${ueProductUpdate} }
       }
     }`;
     const d = await adminGraphql(q, { p: fields });
@@ -325,13 +425,19 @@ async function main() {
       }),
     }));
 
-    // 2. Call productBundleCreate. Capability/ownership errors can arrive either
-    //    as top-level GraphQL errors (adminGraphql throws) OR as userErrors —
-    //    classify both and STOP if it's an access/capability failure.
+    // 2. Call productBundleCreate. A capability failure can arrive either as a
+    //    top-level GraphQL error (adminGraphql throws) OR as a userError. ONLY a
+    //    genuine access/ownership/permission error is a capability verdict; a
+    //    GraphQL VALIDATION error is a probe/script bug and must fail LOUD (it
+    //    must never masquerade as "capability not available" — that was the S9b
+    //    false-negative). userErrors selection is schema-derived (no `code`).
+    const FALLBACK_REC =
+      "NO-GO (capability) → merchant must install the free \"Shopify Bundles\" app, " +
+      "or use the §6(a) plain-UNLISTED-product FALLBACK.";
     const CREATE = `mutation B($input: ProductBundleCreateInput!) {
       productBundleCreate(input: $input) {
         productBundleOperation { id status }
-        userErrors { field message code }
+        userErrors { ${ueCreate} }
       }
     }`;
     let createData;
@@ -341,40 +447,44 @@ async function main() {
       });
     } catch (err) {
       const msg = String(err?.message ?? err);
-      report.capability = "NO";
-      report.capabilityError = msg;
-      console.log(`  productBundleCreate threw: ${msg}`);
-      if (/ACCESS_DENIED|access|not.*authoriz|bundle|capab|forbidden/i.test(msg)) {
-        report.recommendation =
-          "NO-GO (capability) → merchant must install the free \"Shopify Bundles\" app, " +
-          "or use the §6(a) plain-UNLISTED-product FALLBACK.";
+      console.log(`  productBundleCreate errored: ${msg}`);
+      if (isGenuineAccessError(msg) && !isValidationError(msg)) {
+        report.capability = "NO";
+        report.capabilityError = msg;
+        report.recommendation = FALLBACK_REC;
         console.log(
-          "\n  CAPABILITY NOT AVAILABLE. The merchant must install the free " +
-            "\"Shopify Bundles\" app in Shopify admin → Apps to unlock bundles, " +
-            "or fall back to a plain UNLISTED product (spike §6a). STOPPING."
+          "\n  CAPABILITY NOT AVAILABLE (genuine access/ownership error). The merchant " +
+            "must install the free \"Shopify Bundles\" app in Shopify admin → Apps, or " +
+            "fall back to a plain UNLISTED product (spike §6a). STOPPING."
         );
         return;
       }
-      throw err; // unexpected error — surface it
+      // NOT a capability signal — a real/script error (e.g. GraphQL validation).
+      // Fail loud; do NOT record a capability verdict.
+      throw new Error(
+        `productBundleCreate failed with a NON-capability error (probe/script bug — ` +
+          `NOT a capability verdict): ${msg}`
+      );
     }
 
     const userErrors = createData.productBundleCreate?.userErrors ?? [];
     if (userErrors.length) {
-      report.capability = "NO";
       report.capabilityError = JSON.stringify(userErrors);
       console.log(`  productBundleCreate userErrors: ${report.capabilityError}`);
-      const blob = report.capabilityError.toLowerCase();
-      if (/access|bundle|capab|not.*manage|forbidden/i.test(blob)) {
-        report.recommendation =
-          "NO-GO (capability) → merchant must install the free \"Shopify Bundles\" app, " +
-          "or use the §6(a) plain-UNLISTED-product FALLBACK.";
+      const blob = userErrors.map((e) => `${e.field ?? ""}: ${e.message ?? ""}`).join(" | ");
+      if (isGenuineAccessError(blob) && !isValidationError(blob)) {
+        report.capability = "NO";
+        report.recommendation = FALLBACK_REC;
         console.log(
-          "\n  CAPABILITY NOT AVAILABLE (userErrors). Merchant must install the free " +
-            "\"Shopify Bundles\" app, or use the §6a fallback. STOPPING."
+          "\n  CAPABILITY NOT AVAILABLE (userErrors indicate access/ownership). Merchant " +
+            "must install the free \"Shopify Bundles\" app, or use the §6a fallback. STOPPING."
         );
         return;
       }
-      throw new Error(`Unexpected productBundleCreate userErrors: ${report.capabilityError}`);
+      // Input/validation userErrors are a probe bug, not a capability verdict.
+      throw new Error(
+        `productBundleCreate returned NON-capability userErrors (probe/script bug): ${report.capabilityError}`
+      );
     }
 
     const op = createData.productBundleCreate.productBundleOperation;
@@ -388,7 +498,7 @@ async function main() {
       productBundleOperation(id: $id) {
         id status
         product { id title handle status variants(first: 5) { nodes { id } } }
-        userErrors { field message code }
+        userErrors { ${ueOperation} }
       }
     }`;
     const t0 = Date.now();
@@ -425,20 +535,28 @@ async function main() {
     // ── CHECK 2 — PURCHASABILITY ──────────────────────────────────────────────
     section("CHECK 2 — PURCHASABILITY");
 
-    // 4a. Set the parent variant price.
+    // 4a. Set the parent variant price (nominal) + compareAtPrice = the TRUE sum
+    //     of the component prices (the PAngV-safe "statt €X" reference, §2).
+    const componentsSum = report.components
+      .reduce((s, c) => s + Number(c.price), 0)
+      .toFixed(2);
+    report.componentsSum = componentsSum;
     const PRICE = `mutation V($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
       productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants { id price }
-        userErrors { field message }
+        productVariants { id price compareAtPrice }
+        userErrors { ${ueVariants} }
       }
     }`;
     const pr = await adminGraphql(PRICE, {
       productId: opProduct.id,
-      variants: [{ id: report.parentVariantId, price: NOMINAL_PRICE }],
+      variants: [
+        { id: report.parentVariantId, price: NOMINAL_PRICE, compareAtPrice: componentsSum },
+      ],
     });
     const prUe = pr.productVariantsBulkUpdate?.userErrors ?? [];
     if (prUe.length) throw new Error(`price update userErrors: ${JSON.stringify(prUe)}`);
     report.priceUpdate = `${NOMINAL_PRICE} ${NOMINAL_CURRENCY}`;
+    report.compareAtPrice = `${componentsSum} ${NOMINAL_CURRENCY}`;
     console.log(`  price set: ${JSON.stringify(pr.productVariantsBulkUpdate.productVariants)}`);
 
     // 4b. Status -> UNLISTED.
@@ -462,7 +580,7 @@ async function main() {
     const PUBLISH = `mutation Pub($id: ID!, $input: [PublicationInput!]!) {
       publishablePublish(id: $id, input: $input) {
         publishable { availablePublicationsCount { count } }
-        userErrors { field message }
+        userErrors { ${uePublish} }
       }
     }`;
     const pub = await adminGraphql(PUBLISH, {
