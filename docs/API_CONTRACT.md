@@ -17,6 +17,7 @@ Endpoints:
 | POST   | `/api/contact`            | Contact-form submission → email via Resend.              |
 | GET    | `/api/products`           | Public product hydration for widget cards.               |
 | POST   | `/api/kpi`                | Pseudonymous telemetry ingestion (fire-and-forget).      |
+| POST   | `/api/feedback`           | Customer feedback capture (free text + optional context). §9. |
 | POST   | `/api/capture-email`      | GDPR email capture + double opt-in (summary + marketing).|
 | GET    | `/api/consent-copy`       | Canonical capture-form consent copy (labels + links).     |
 | GET    | `/api/confirm-marketing`  | Marketing double-opt-in confirmation link (HTML page).   |
@@ -1435,3 +1436,72 @@ chunk records its own `call_site = 'tts'` row for the characters it
 synthesized. The rows aggregate to the same total characters the single-shot
 call would have recorded for the full message — spend tracking is identical,
 just split across more rows.
+
+---
+
+## 9. `POST /api/feedback`
+
+Customer feedback capture. A free-text comment plus **optional context**,
+stored in the `feedback` table (migration 0020) and surfaced read-only in the
+admin **Feedback** tab. Behind the same widget guard as `/api/chat` — origin
+allowlist + `x-ms-chat-key` shared secret + rate limit.
+
+Light abuse protection: a **dedicated, tight rate-limit bucket**
+(`feedback`: 5 req / 5 min, keyed by `x-ms-session`/IP) plus a hard
+**length cap** on the comment.
+
+### Required request headers
+
+Same as `/api/chat`:
+
+| Header          | Value                                                                |
+| --------------- | -------------------------------------------------------------------- |
+| `Content-Type`  | `application/json`                                                   |
+| `x-ms-chat-key` | Shared secret.                                                       |
+| `x-ms-session`  | Stable session id (UUID). Used for rate limiting + as the `sessionId` fallback. |
+
+### Request body
+
+```jsonc
+{
+  "message": "Der Vergleich der Racks war super hilfreich!",  // required, ≤4000 chars
+  // ↓ all optional CONTEXT — send what the widget has, omit the rest
+  "sessionId": "b3c1…",            // pseudonymous; falls back to the x-ms-session header
+  "conversationId": "thread-2",    // the conversationKey/thread the comment is about
+  "tier": "anonymous",             // customer tier the widget knows (telemetry-grade)
+  "email": "max@example.de",       // ONLY if already identified (signed-in / captured)
+  "page": "/produkte/atx-rack-pro" // storefront URL/path the user was on
+}
+```
+
+- `message` is the only required field — non-empty after trimming, **≤4000
+  characters** (longer is rejected with `payload_too_large`, never silently cut).
+  `feedback` is accepted as an alias for `message`.
+- Every optional context field is trimmed and length-capped server-side
+  (`sessionId`/`conversationId` ≤128, `tier` ≤40, `email` ≤254, `page` ≤1024);
+  blanks become `null`.
+- **`email` here is user-supplied contact context for this comment** (like
+  `/api/contact`), **not** a consent record and grants **no** permission. The
+  audit-grade consent trail lives exclusively in `email_captures`.
+
+### Success response
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+```
+```json
+{ "ok": true }
+```
+
+### Error responses
+
+| Status | Code                   | When                                                                 |
+| ------ | ---------------------- | -------------------------------------------------------------------- |
+| 400    | `bad_request`          | Invalid JSON, or `message` missing/empty.                            |
+| 413    | `payload_too_large`    | `message` exceeds the 4000-char cap.                                 |
+| 401    | `unauthorized`         | Missing / wrong shared secret.                                       |
+| 403    | `forbidden`            | Cross-origin request from an origin not in the allowlist.            |
+| 429    | `rate_limited`         | Dedicated `feedback` bucket (5 req / 5 min). `Retry-After` set.      |
+| 503    | `upstream_unavailable` | No database configured, or the insert failed (comment not stored).   |
+| 500    | `internal_error`       | Anything else.                                                       |

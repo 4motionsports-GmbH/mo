@@ -57,6 +57,7 @@ The schema is split into **two clusters** (see the separation rationale below).
 | `messages`      | `conversation_id` (FK, cascade), `client_message_id` (idempotency), `role`, `content`, `tool_name`  |
 | `kpi_events`    | `session_id`, `event`, `data` (jsonb), `created_at`                                                  |
 | `ai_usage`      | `conversation_id` (FK, cascade, nullable), `call_site`, `model`, `input_tokens`, `output_tokens`, `estimated`, `created_at` (migration 0012) |
+| `feedback`      | `message` (the comment), optional context: `session_id`, `conversation_id`, `tier`, `email`, `page`; `created_at` (migration 0020) |
 
 - **Write path:** `/api/chat` calls `persistTurn()` (`src/lib/conversation-store.ts`)
   in its `onFinish` handler — *after* the stream finishes, so it adds no token
@@ -89,6 +90,19 @@ The schema is split into **two clusters** (see the separation rationale below).
   models we call, overridable via the `MODEL_PRICES_JSON` env var; EUR conversion
   via `USD_EUR_RATE` (default 0.92). `getAiCostMetrics()` reports average/median
   cost per consultation, total spend, and a chat-vs-dashboard split.
+- **Feedback (migration 0020):** `POST /api/feedback` stores one free-text
+  customer comment per row (`insertFeedback` in `src/lib/feedback-store.ts`),
+  with optional context — `session_id`/`conversation_id` (pseudonymous, plain
+  TEXT, **no FK** so a comment survives a retention purge of its conversation),
+  `tier`, `page`, and an optional `email`. Light abuse protection: a dedicated
+  tight rate-limit bucket plus a 4000-char cap enforced in
+  `feedback-validation.mjs` before insert. The admin **Feedback** tab reads it
+  read-only, newest-first (`listFeedback`). *On the `email` column:* it appears
+  only when the widget already knows an identified address, and is user-supplied
+  **contact context for that comment** (the same shape as `/api/contact`'s
+  email) — it is **not** a consent record and grants no permission. The
+  audit-grade consent trail remains exclusively in `email_captures` (Cluster B),
+  so the "email lives in exactly one place" invariant for *consent* is intact.
 
 ### Cluster B — consent / marketing (email lives ONLY here)
 
