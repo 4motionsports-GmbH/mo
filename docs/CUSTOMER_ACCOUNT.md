@@ -156,16 +156,39 @@ Implemented as a pure decision (`lib/customer-merge.mjs::decideMerge`, unit-test
    auditable). We never overwrite the consent-anchored email on a mismatch.
 
 `linkCustomerOnEmailCapture` (tier 2) and `bindShopifyIdentity` (tier 3) are the
-two entry points of the generalised "identity bind"; both attach the current
-conversation to the resolved customer and never weaken an existing tier
-(`GREATEST(identity_tier, …)`).
+two entry points of the generalised "identity bind"; both never weaken an
+existing tier (`GREATEST(identity_tier, …)`) and both persist the session →
+customer link **two** ways:
+
+1. a **direct** row in `customer_session_links` (`session_id` PK → `customer_id`,
+   migration `0019`) — this is the **authoritative re-hydration link**, and
+2. the legacy `conversations.customer_id` stamp (`WHERE session_id = …`) — which
+   carries the chat into the customer's **history**.
+
+The direct link exists because the conversation stamp alone is **not** a reliable
+identity link: at sign-in there is frequently **no conversation row yet** for the
+session (the `prompt=none` silent check on first widget open, or clicking
+"Anmelden" before sending any message), so the `UPDATE … WHERE session_id` matches
+zero rows and the link is silently lost. Writing `customer_session_links`
+unconditionally fixes that — identity resolves even with no chat history.
 
 ### The signed-in resolver
 
 `resolveSignedInCustomer(sessionId)` maps the opaque widget session reference →
-the linked customer (must have a `shopify_customer_id`). `/api/auth/me` then
-proves the session is still live by obtaining a **valid access token** (refreshing
-if needed) before reporting `signedIn: true`. Everything fails closed.
+the linked customer (must have a `shopify_customer_id`). It reads the **direct**
+`customer_session_links` row first, falling back to the legacy
+`conversations.customer_id` stamp (so sessions linked before migration `0019`'s
+backfill still resolve). `/api/auth/me` then proves the session is still live by
+obtaining a **valid access token** (refreshing if needed) before reporting
+`signedIn: true`. Everything fails closed — a blank/unlinked session, or one
+linked only to a tier-1/2 customer (no `shopify_customer_id`), resolves to null.
+
+A successful round-trip: login (`?session={sid}`) → callback binds + writes
+`customer_session_links[sid]` → callback 302s back to `return_url` **with
+`?ms_auth=ok`** → widget reads/strips it and probes `/api/auth/me?session={sid}`
+→ `{ signedIn: true, identity: { name, tier: 3 } }`. The `sid` is **identical**
+at every hop (the widget's stable localStorage id — `?session=` on login,
+`x-ms-session`/`?session=` on `/api/auth/me`); the backend never mints its own.
 
 ## 5. Schema (migration `0014_customer_accounts.sql`)
 
@@ -178,10 +201,15 @@ if needed) before reporting `signedIn: true`. Everything fails closed.
 - `customer_auth_pending` (`state` PK): `session_id`, `code_verifier`, `nonce`,
   `return_url`, `prompt_none`, `created_at`, `expires_at` (~10-min TTL).
 - `customer_merge_conflicts`: the admin-review audit log for case (d).
+- `customer_session_links` (`session_id` PK → `customer_id`, `ON DELETE CASCADE`,
+  migration `0019`): the **direct, durable re-hydration link** written on every
+  identity bind, read first by `resolveSignedInCustomer`. Backfilled on deploy
+  from existing `conversations.customer_id` stamps.
 
 Retention: `customer_auth_pending` is purged past expiry by the retention cron;
-`customer_oauth_tokens` cascade with the customer (so a GDPR erasure / customer
-purge removes them). See [`DATA_RETENTION.md`](./DATA_RETENTION.md).
+`customer_oauth_tokens` and `customer_session_links` cascade with the customer (so
+a GDPR erasure / customer purge removes them). See
+[`DATA_RETENTION.md`](./DATA_RETENTION.md).
 
 ## 6. Verify gate — run it before relying on the flow
 

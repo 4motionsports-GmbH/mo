@@ -9,6 +9,7 @@ import {
   verifyState,
   safeReturnUrl,
   withParams,
+  withAuthMarker,
 } from "./customer-account-oauth.mjs";
 
 test("base64url has no +, /, or = padding", () => {
@@ -61,6 +62,37 @@ test("safeReturnUrl only accepts allow-listed origins", () => {
   assert.equal(safeReturnUrl("not a url", allowed), null);
   assert.equal(safeReturnUrl("", allowed), null);
   assert.equal(safeReturnUrl(undefined, allowed), null);
+});
+
+test("withAuthMarker stamps ?ms_auth=ok so the widget re-probes after sign-in", () => {
+  // THE re-hydration signal: a successful callback must carry ?ms_auth=ok back to
+  // the storefront return_url — the widget keys re-hydration on reading it.
+  const out = withAuthMarker("https://www.motionsports.de/pages/beratung", "ok");
+  const url = new URL(out);
+  assert.equal(url.searchParams.get("ms_auth"), "ok");
+  assert.equal(url.origin + url.pathname, "https://www.motionsports.de/pages/beratung");
+});
+
+test("withAuthMarker preserves existing query params and overwrites a stale ms_auth", () => {
+  const out = withAuthMarker("https://www.motionsports.de/pages/beratung?utm=x&ms_auth=error", "ok");
+  const url = new URL(out);
+  assert.equal(url.searchParams.get("utm"), "x");
+  assert.equal(url.searchParams.get("ms_auth"), "ok");
+  // No duplicate ms_auth params (set, not append).
+  assert.equal(url.searchParams.getAll("ms_auth").length, 1);
+});
+
+test("withAuthMarker carries the other markers and is defensive on a bad URL", () => {
+  assert.equal(
+    new URL(withAuthMarker("https://motionsports.de/", "login_required")).searchParams.get("ms_auth"),
+    "login_required"
+  );
+  assert.equal(
+    new URL(withAuthMarker("https://motionsports.de/", "logged_out")).searchParams.get("ms_auth"),
+    "logged_out"
+  );
+  // Unparseable input → returned unchanged (never throws).
+  assert.equal(withAuthMarker("not a url", "ok"), "not a url");
 });
 
 test("withParams appends without clobbering existing query", () => {

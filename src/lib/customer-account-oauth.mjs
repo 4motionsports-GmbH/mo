@@ -116,3 +116,26 @@ export function withParams(urlStr, params) {
   }
   return url.toString();
 }
+
+/**
+ * Stamp the storefront return URL with the `?ms_auth=<marker>` re-hydration
+ * signal the widget keys on (ok | login_required | logged_out | error). The
+ * widget reads + strips it, then probes /api/auth/me — so a missing or wrong
+ * marker means it never re-probes and never flips to signed-in.
+ *
+ * Returns the URL unchanged when it can't be parsed (the caller has already
+ * allow-listed it; this is just defensive). Never throws.
+ *
+ * @param {string} returnUrl
+ * @param {string} marker
+ * @returns {string}
+ */
+export function withAuthMarker(returnUrl, marker) {
+  try {
+    const u = new URL(returnUrl);
+    u.searchParams.set("ms_auth", marker);
+    return u.toString();
+  } catch {
+    return returnUrl;
+  }
+}

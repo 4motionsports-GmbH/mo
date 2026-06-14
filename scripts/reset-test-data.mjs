@@ -99,6 +99,7 @@ const DATA_TABLES = [
   "bundle_offers",         // FK → customers (SET NULL), marketing_sends (SET NULL) — migration 0013
   "marketing_sends",       // FK → email_captures
   "customer_oauth_tokens", // FK → customers (CASCADE) — migration 0014
+  "customer_session_links", // FK → customers (CASCADE) — migration 0019
   // Parents / standalone tables (conversations before customers: customer_id ON DELETE SET NULL)
   "conversations",
   "kpi_events",
