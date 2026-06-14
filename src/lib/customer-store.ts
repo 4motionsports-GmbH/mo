@@ -257,24 +257,6 @@ export async function getCustomerByEmail(
   }
 }
 
-export async function getCustomerByShopifyId(
-  shopifyCustomerId: string,
-  sql: Sql | null = getSql()
-): Promise<Customer | null> {
-  if (!sql) return null;
-  const id = shopifyCustomerId.trim();
-  if (!id) return null;
-  try {
-    const rows = (await sql`
-      SELECT * FROM customers WHERE shopify_customer_id = ${id}
-    `) as Array<Record<string, unknown>>;
-    return rows[0] ? mapCustomer(rows[0]) : null;
-  } catch (err) {
-    reportError(err, { route: "lib/customer-store", phase: "getCustomerByShopifyId" });
-    return null;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Tier-3 identity bind (Customer Account sign-in)
 // ---------------------------------------------------------------------------

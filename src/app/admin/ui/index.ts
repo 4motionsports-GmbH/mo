@@ -39,14 +39,5 @@ export {
   DialogFooter,
   DialogClose,
 } from "./dialog";
-export {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "./dropdown-menu";
-export { Tooltip, TooltipProvider } from "./tooltip";
 export { toast, Toaster, type ToastOptions, type ToastVariant } from "./toast";
 export { Section, Stat, Caveat } from "./stat";

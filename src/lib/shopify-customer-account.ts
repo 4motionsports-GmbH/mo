@@ -22,7 +22,6 @@
 
 import { getBaseUrl } from "./base-url";
 import {
-  base64url,
   codeChallengeS256,
   withParams,
 } from "./customer-account-oauth.mjs";
@@ -754,6 +753,3 @@ export async function fetchSignedInCustomerData(
     return { identity: null, accountSummary: null, orderHistory: null };
   }
 }
-
-// Re-export for callers that only need the base64url helper from one place.
-export { base64url };
