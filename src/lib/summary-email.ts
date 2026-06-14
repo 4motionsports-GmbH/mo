@@ -20,7 +20,9 @@ import {
 } from "./conversation-store";
 import { getProductsByIds } from "./product-catalog";
 import { buildPrefilledCartUrlForIds, chooseCartProductIds } from "./cart";
-import { sendEmail, type SendEmailResult } from "./email";
+import { sendEmail, senderAddress, type SendEmailResult } from "./email";
+import { outboundThreading } from "./email-inbound";
+import { recordSentMessage } from "./email-messages-store";
 import { SUMMARY_EMAIL_SUBJECT } from "./consent-copy";
 import {
   renderBrandedEmail,
@@ -392,13 +394,32 @@ export async function sendSummaryEmail(params: {
     usage: { callSite: "summary_email" },
   });
 
+  // Our own Message-ID + an inbound Reply-To so a "just reply to this email"
+  // answer threads back into the unified mail log (mirror-write below).
+  const threading = outboundThreading();
   const result = await sendEmail({
     to: email,
     subject: SUMMARY_EMAIL_SUBJECT,
     text,
     html,
     kind: "summary",
+    messageId: threading.messageId,
+    replyTo: threading.replyTo,
   });
+
+  // MIRROR-WRITE (additive, fail-soft): log the transactional summary in the
+  // unified mail log. No marketing_send_id (this isn't a campaign); the customer
+  // is resolved from the recipient address when one exists.
+  if (result.ok) {
+    await recordSentMessage({
+      toAddress: email,
+      fromAddress: senderAddress() ?? "",
+      subject: SUMMARY_EMAIL_SUBJECT,
+      bodyText: text,
+      bodyHtml: html,
+      messageId: threading.messageId,
+    });
+  }
 
   return {
     sent: result.ok,

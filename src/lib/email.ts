@@ -19,6 +19,13 @@ export interface SendEmailInput {
   text: string;
   html: string;
   replyTo?: string;
+  /**
+   * Our own RFC-5322 Message-ID (e.g. "<hex@motionsports.de>"). Set on the wire
+   * as a custom header so the reply that comes back carries it in
+   * In-Reply-To/References and threads onto the originating row. Additive —
+   * callers that don't thread (e.g. the contact form) simply omit it.
+   */
+  messageId?: string;
   /** Tag used in error logs to identify which mail failed. */
   kind: string;
 }
@@ -64,6 +71,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       text: input.text,
       html: input.html,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+      ...(input.messageId ? { headers: { "Message-ID": input.messageId } } : {}),
     });
     if (result.error) {
       reportError(result.error, { route: "lib/email", kind: input.kind, phase: "resend" });
