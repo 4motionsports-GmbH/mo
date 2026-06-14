@@ -20,7 +20,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { MessageSquare, RotateCcw, Save, Send, Sparkles } from "lucide-react";
+import { MessageSquare, RotateCcw, Save, Send, Sparkles, Trash2 } from "lucide-react";
 import {
   DISCOUNT_PERCENT_MIN,
   DISCOUNT_PERCENT_MAX,
@@ -107,7 +107,7 @@ export function CustomerCard({
   // The selected discount depth. Defaults to the draft's stored depth, or "None"
   // (0) for a fresh card — applying a discount is always a deliberate choice.
   const [discountPercent, setDiscountPercent] = useState<number>(send?.discountPercent ?? 0);
-  const [busy, setBusy] = useState<null | "draft" | "save" | "send">(null);
+  const [busy, setBusy] = useState<null | "draft" | "save" | "send" | "delete">(null);
 
   // When a draft exists but the admin changed the depth, the prose and the
   // (eventual) real code would disagree — force a re-generate before sending.
@@ -164,6 +164,25 @@ export function CustomerCard({
     try {
       await call("/api/admin/marketing/update", { sendId: send.id, subject, body });
       toast({ variant: "success", title: "Entwurf gespeichert" });
+      router.refresh();
+    } catch (e) {
+      reportError(e);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onDelete() {
+    if (!send) return;
+    if (!confirm("Diesen Entwurf wirklich löschen? Er kann nicht wiederhergestellt werden.")) return;
+    setBusy("delete");
+    try {
+      await call("/api/admin/marketing/delete", { sendId: send.id });
+      // Drop the local edit state so the card returns to the "generate" view.
+      setSubject("");
+      setBody("");
+      setDiscountPercent(0);
+      toast({ variant: "success", title: "Entwurf gelöscht", description: target.email });
       router.refresh();
     } catch (e) {
       reportError(e);
@@ -275,6 +294,7 @@ export function CustomerCard({
             needsRegenerate={needsRegenerate}
             onSave={onSave}
             onSend={onSend}
+            onDelete={onDelete}
             onGenerate={onGenerate}
           />
         ) : (
@@ -448,6 +468,7 @@ function DraftPanel({
   needsRegenerate,
   onSave,
   onSend,
+  onDelete,
   onGenerate,
 }: {
   captureId: number;
@@ -455,12 +476,13 @@ function DraftPanel({
   body: string;
   setSubject: (v: string) => void;
   setBody: (v: string) => void;
-  busy: null | "draft" | "save" | "send";
+  busy: null | "draft" | "save" | "send" | "delete";
   discountPercent: number;
   setDiscountPercent: (v: number) => void;
   needsRegenerate: boolean;
   onSave: () => void;
   onSend: () => void;
+  onDelete: () => void;
   onGenerate: () => void;
 }) {
   return (
@@ -526,6 +548,14 @@ function DraftPanel({
           title={needsRegenerate ? "Bitte zuerst neu generieren" : undefined}
         >
           <Send /> {busy === "send" ? "Sende…" : "Freigeben & senden"}
+        </Button>
+        <Button
+          variant="ghost"
+          className="text-destructive hover:text-destructive"
+          onClick={onDelete}
+          disabled={busy !== null}
+        >
+          <Trash2 /> {busy === "delete" ? "Lösche…" : "Entwurf löschen"}
         </Button>
       </div>
     </div>

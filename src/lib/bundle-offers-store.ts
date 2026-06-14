@@ -209,6 +209,33 @@ export async function markOfferExpired(
   }
 }
 
+/**
+ * Hard-DELETE a draft/unsent offer's row. Guarded to status IN ('pending',
+ * 'failed') — the never-published DRAFT states (see isDeletableBundleStatus) —
+ * so an active/published or expired offer can NEVER be deleted here (those use
+ * the ARCHIVE path). Returns true only when this call actually removed the row,
+ * so a racing activation (pending → active between read and delete) yields false
+ * and the caller surfaces it rather than silently dropping a live offer. The
+ * caller is responsible for archiving any (unexpected) Shopify product first.
+ */
+export async function deleteDraftOffer(
+  id: number,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      DELETE FROM bundle_offers
+       WHERE id = ${id} AND status IN ('pending', 'failed')
+      RETURNING id
+    `) as Array<Record<string, unknown>>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/bundle-offers-store", phase: "deleteDraftOffer" });
+    throw err;
+  }
+}
+
 /** Load one offer by id. */
 export async function getBundleOfferById(
   id: number,

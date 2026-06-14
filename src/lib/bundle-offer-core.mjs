@@ -53,6 +53,31 @@ export function pickBundleCreator(creators, mode) {
   return creator;
 }
 
+// ── Lifecycle: which offers are a deletable DRAFT vs. must be ARCHIVED ─────────
+
+/**
+ * Bundle statuses that represent a never-published DRAFT and are therefore safe
+ * to hard-DELETE: `pending` (inserted, Shopify create never finalized) and
+ * `failed` (the Shopify create threw — no live, purchasable product). Both are
+ * unsent and never went live.
+ *
+ * An `active` (published) or `expired` offer is deliberately NOT here: it uses
+ * the ARCHIVE path (archiveBundleOffer → Shopify ARCHIVED + status='expired'),
+ * which preserves order history and is reversible. Delete is only ever for the
+ * draft/unsent rows.
+ */
+export const DELETABLE_BUNDLE_STATUSES = ["pending", "failed"];
+
+/**
+ * True iff a bundle offer in this status is a deletable DRAFT (pending/failed).
+ * The single source of truth the service layer + the SQL guard agree on.
+ * @param {string} status
+ * @returns {boolean}
+ */
+export function isDeletableBundleStatus(status) {
+  return DELETABLE_BUNDLE_STATUSES.includes(status);
+}
+
 // ── Money helpers (integer cents, formatted to a 2-decimal string) ───────────
 
 /**

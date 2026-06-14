@@ -13,7 +13,28 @@ import {
   validateAndSnapshotComponents,
   isExpired,
   runBundleExpirySweep,
+  isDeletableBundleStatus,
+  DELETABLE_BUNDLE_STATUSES,
 } from "./bundle-offer-core.mjs";
+
+// ── Deletable-draft guard ─────────────────────────────────────────────────────
+
+test("isDeletableBundleStatus: only never-published drafts (pending/failed)", () => {
+  // Deletable: never went live, never sent.
+  assert.equal(isDeletableBundleStatus("pending"), true);
+  assert.equal(isDeletableBundleStatus("failed"), true);
+  // NOT deletable: active/published + expired use the ARCHIVE path.
+  assert.equal(isDeletableBundleStatus("active"), false);
+  assert.equal(isDeletableBundleStatus("expired"), false);
+  // Unknown / junk is never deletable.
+  assert.equal(isDeletableBundleStatus("sent"), false);
+  assert.equal(isDeletableBundleStatus(""), false);
+  assert.equal(isDeletableBundleStatus(undefined), false);
+});
+
+test("DELETABLE_BUNDLE_STATUSES is exactly pending + failed", () => {
+  assert.deepEqual([...DELETABLE_BUNDLE_STATUSES].sort(), ["failed", "pending"]);
+});
 
 // ── Money helpers ─────────────────────────────────────────────────────────────
 

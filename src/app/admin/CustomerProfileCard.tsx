@@ -36,6 +36,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -609,7 +610,7 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
   const [discountPercent, setDiscountPercent] = useState<number>(
     hasDraft ? (send?.discountPercent ?? 0) : 0
   );
-  const [busy, setBusy] = useState<null | "draft" | "save" | "send">(null);
+  const [busy, setBusy] = useState<null | "draft" | "save" | "send" | "delete">(null);
 
   if (customer.marketingStatus !== "confirmed") {
     return (
@@ -677,6 +678,26 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
     try {
       await call("/api/admin/marketing/update", { sendId: send.id, subject, body });
       toast({ variant: "success", title: "Entwurf gespeichert" });
+      router.refresh();
+    } catch (e) {
+      reportError(e);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onDelete() {
+    if (!send) return;
+    if (!confirm("Diesen Entwurf wirklich löschen? Er kann nicht wiederhergestellt werden.")) return;
+    setBusy("delete");
+    try {
+      await call("/api/admin/marketing/delete", { sendId: send.id });
+      // Back to the "generate" view — the placeholder/preview lived on the row.
+      setSend(null);
+      setSubject("");
+      setBody("");
+      setDiscountPercent(0);
+      toast({ variant: "success", title: "Entwurf gelöscht", description: customer.email });
       router.refresh();
     } catch (e) {
       reportError(e);
@@ -863,6 +884,14 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
               title={needsRegenerate ? "Bitte zuerst neu generieren" : undefined}
             >
               <Send /> {busy === "send" ? "Sende…" : "Freigeben & senden"}
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-destructive hover:text-destructive"
+              onClick={onDelete}
+              disabled={busy !== null}
+            >
+              <Trash2 /> {busy === "delete" ? "Lösche…" : "Entwurf löschen"}
             </Button>
           </div>
         </div>
@@ -1168,6 +1197,25 @@ function BundleOfferSection({
     }
   }
 
+  // DELETE a draft/unsent bundle — only the never-published states (pending /
+  // failed). An active/published or expired offer uses Archive instead (the
+  // server enforces this; the button only appears for deletable rows).
+  async function onDelete(id: number) {
+    if (!confirm("Dieses Bundle wirklich löschen? Es kann nicht wiederhergestellt werden.")) return;
+    try {
+      const { ok, json } = await post("/api/admin/bundles/delete", { id });
+      if (!ok || !json.ok) {
+        toast({ variant: "error", title: "Fehler", description: json?.error?.message ?? "Löschen fehlgeschlagen." });
+        return;
+      }
+      setBundles((prev) => prev.filter((b) => b.id !== id));
+      toast({ variant: "success", title: "Bundle gelöscht" });
+      router.refresh();
+    } catch (e) {
+      reportError(e);
+    }
+  }
+
   return (
     <Card className="mb-4 p-3 shadow-none">
       <button
@@ -1371,6 +1419,19 @@ function BundleOfferSection({
                     </div>
                     {b.status === "failed" && b.error && (
                       <div className="mt-1 text-xs text-destructive">{b.error}</div>
+                    )}
+                    {(b.status === "pending" || b.status === "failed") && (
+                      // Never-published DRAFT — deletable (active/expired use Archive).
+                      <div className="mt-1.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => onDelete(b.id)}
+                        >
+                          <Trash2 className="size-3.5" /> Löschen
+                        </Button>
+                      </div>
                     )}
                     {b.status === "active" && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
