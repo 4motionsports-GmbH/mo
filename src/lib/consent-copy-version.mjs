@@ -3,11 +3,15 @@
 // mirroring the email-offer-trigger.mjs convention.
 //
 // WHY A VERSION EXISTS: the canonical consent strings (src/lib/consent-copy.ts)
-// changed from v1 to v2 (shorter labels, shared Art. 7 footer, BOTH boxes
-// unchecked). The verbatim `consent_text_shown` remains the byte-authoritative
+// evolve. The verbatim `consent_text_shown` remains the byte-authoritative
 // Art. 7 audit record, but a stored version identifier lets the audit trail
-// distinguish v1 from v2 records without string-matching old copy. Bump
-// CONSENT_COPY_VERSION whenever the served capture-form copy changes.
+// distinguish copy eras without string-matching old copy. Bump
+// CONSENT_COPY_VERSION whenever the served consent copy (any surface) changes.
+//
+// One linear version spans EVERY consent surface the backend serves (the
+// in-chat capture form AND the at-sign-in marketing opt-in). The verbatim
+// `consent_text_shown` disambiguates which surface a record came from; the
+// version is the coarse copy-era stamp shared by both.
 
 /**
  * Identifier of the consent copy currently served by the backend. History:
@@ -16,8 +20,14 @@
  *            before versioning existed are backfilled to "v1" by migration
  *            0011 (v1 was the only copy ever served).
  *   - "v2" — shorter labels + shared footer; BOTH boxes start unchecked.
+ *   - "v3" — adds the AT-SIGN-IN marketing opt-in surface (a signed-in customer
+ *            opts into the SAME double-opt-in without re-typing their verified
+ *            email; benefit-framed, UNTICKED, no dark patterns). The in-chat
+ *            capture-form labels are unchanged from v2 but ship as part of the
+ *            v3 copy set, so new captures on either surface stamp "v3". v3 is
+ *            the copy now under lawyer review (it REPLACES v2 there).
  */
-export const CONSENT_COPY_VERSION = "v2";
+export const CONSENT_COPY_VERSION = "v3";
 
 /**
  * Compose the pre-served `consentTextShown` audit string from the copy blocks

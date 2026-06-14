@@ -95,7 +95,15 @@ export type ErrorCode =
   | "internal_error"
   // Capture form submitted without the (no-longer-pre-checked) transactional
   // consent — see capture-validation.mjs + API_CONTRACT.md §7.1.
-  | "transactional_consent_required";
+  | "transactional_consent_required"
+  // At-sign-in opt-in POSTed without the explicit affirmative marketing tick —
+  // a Shopify account never implies consent. See /api/account/marketing-opt-in.
+  | "marketing_consent_required"
+  // At-sign-in opt-in for an account with no verified email (synthetic
+  // shopify:<id> placeholder) — can't run the DOI without a real address.
+  | "no_verified_email"
+  // Requested resource (e.g. the signed-in customer row) was not found.
+  | "not_found";
 
 export interface ErrorEnvelope {
   error: { code: ErrorCode; message: string };

@@ -211,6 +211,90 @@ export function captureConsentCopy(): CaptureConsentCopy {
 }
 
 // ---------------------------------------------------------------------------
+// At-sign-in marketing opt-in (COPY v3) — served to SIGNED-IN customers
+// ---------------------------------------------------------------------------
+//
+// PRESENTATION-MAXIMISED, STILL FULLY LAWFUL. A signed-in Shopify customer can
+// opt into marketing right at/after sign-in. The ONLY thing the account removes
+// is the "type your email" step — we already hold their VERIFIED email — so the
+// opt-in is one tick instead of a form. Everything else is IDENTICAL to the
+// in-chat capture flow:
+//   * a Shopify account NEVER implies consent — there is NO auto-enrol and NO
+//     pre-tick. The checkbox renders UNCHECKED and the customer must actively
+//     tick it (clear affirmative act, Art. 4(11)/7(2) GDPR; CJEU C-673/17).
+//   * it runs the EXISTING double-opt-in: the tick only sets DOI 'pending' and
+//     sends the confirmation email; consent becomes 'confirmed' only after the
+//     customer clicks the link. Withdrawable any time via the same unsubscribe.
+//   * the exact label + footer shown are stored verbatim as `consent_text_shown`
+//     with the SAME `consent_copy_version` stamp (now "v3").
+//
+// COPY CEILING (unchanged from v2): benefit-framed and prominent is fine; the
+// promise stays "exklusive Angebote …, nur für Abonnenten" — accurate scarcity
+// only, NO countdowns, NO invented urgency, NO concrete discount promise, and it
+// must never dangle the welcome gift for ticking (Art. 7(4) "freely given").
+// PLACEHOLDER — lawyer review required (v3 REPLACES v2 in the review).
+
+/**
+ * Attractive headline shown ABOVE the sign-in opt-in checkbox. Framing only —
+ * NOT part of `consentTextShown` (it sells the benefit; it is not consent
+ * text), exactly like the returning-customer hint. PLACEHOLDER.
+ */
+export const SIGNIN_MARKETING_OPTIN_HEADLINE =
+  "Bleib auf dem Laufenden — als angemeldete:r Kund:in.";
+
+/**
+ * (B) Marketing consent — checkbox label for the SIGNED-IN opt-in. This IS the
+ * consent text (stored verbatim). MUST render UNCHECKED and independent; making
+ * it prominent is encouraged, pre-ticking it is never permitted. Same scarcity
+ * ceiling as MARKETING_CHECKBOX_LABEL. The phrasing acknowledges we already
+ * know the address (no email field), but the act of consent stays explicit.
+ * PLACEHOLDER — lawyer review required.
+ */
+export const SIGNIN_MARKETING_OPTIN_LABEL =
+  "Ja, schickt mir an meine hinterlegte E-Mail-Adresse exklusive Angebote und Aktionen — nur für Abonnenten. Jederzeit abbestellbar.";
+
+/** The exact copy the widget needs to render the at-sign-in opt-in. */
+export interface SignInMarketingConsentCopy {
+  /** CONSENT_COPY_VERSION (currently "v3") — stamped on the resulting capture. */
+  version: string;
+  /** Attractive headline above the checkbox (framing — NOT consent text). */
+  headline: string;
+  /** The marketing checkbox label (MUST render UNCHECKED). IS the consent text. */
+  marketingLabel: string;
+  /** Shared one-line Art. 7 footer rendered beneath the checkbox. */
+  consentFooter: string;
+  /**
+   * Pre-composed audit string the widget MUST echo back verbatim as
+   * `consentTextShown` on POST /api/account/marketing-opt-in. Only the label +
+   * footer (the actual consent text) — NOT the headline. Composed server-side
+   * so the Art. 7 record can never diverge from what was shown.
+   */
+  consentTextShown: string;
+  /** Imprint / privacy links to show next to the opt-in. */
+  imprintUrl: string;
+  privacyUrl: string;
+  /** Mirrors CONSENT_COPY_LAWYER_APPROVED — false until Legal signs off. */
+  lawyerApproved: boolean;
+}
+
+export function signInMarketingConsentCopy(): SignInMarketingConsentCopy {
+  return {
+    version: CONSENT_COPY_VERSION,
+    headline: SIGNIN_MARKETING_OPTIN_HEADLINE,
+    marketingLabel: SIGNIN_MARKETING_OPTIN_LABEL,
+    consentFooter: CONSENT_SHARED_FOOTER,
+    // Audit string = label + footer only (the headline is framing, not consent).
+    consentTextShown: composeConsentTextShown([
+      SIGNIN_MARKETING_OPTIN_LABEL,
+      CONSENT_SHARED_FOOTER,
+    ]),
+    imprintUrl: CAPTURE_FORM_IMPRINT_URL,
+    privacyUrl: CAPTURE_FORM_PRIVACY_URL,
+    lawyerApproved: CONSENT_COPY_LAWYER_APPROVED,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Double-opt-in confirmation email (sent when marketing consent is ticked)
 // ---------------------------------------------------------------------------
 
@@ -414,6 +498,50 @@ export const UNSUBSCRIBE_CONFIRMED_BODY =
 export const UNSUBSCRIBE_INVALID_HEADING = "Dieser Abmeldelink ist ungültig.";
 export const UNSUBSCRIBE_INVALID_BODY =
   "Bitte nutze den Abmeldelink aus einer unserer E-Mails.";
+
+// ---------------------------------------------------------------------------
+// §7 Abs. 3 UWG Bestandskunden — the SEPARATE existing-customer opt-out
+// ---------------------------------------------------------------------------
+//
+// ⚠️ SEPARATE LAWFUL BASIS, SEPARATE OPT-OUT. A §7(3) existing-customer email
+// is NOT a DOI-consented marketing email — it relies on a completed purchase,
+// not on a double-opt-in. So it carries its OWN objection notice and its OWN
+// opt-out link (honoured via bestandskunden_suppression_list, independently of
+// the DOI unsubscribe). Every §7(3) message MUST state — clearly and for free —
+// that the customer may object at any time (§7 Abs. 3 Nr. 4 UWG). PLACEHOLDER —
+// lawyer review required, AND gated behind BESTANDSKUNDE_SENDS_APPROVED (OFF)
+// until the "own similar products" boundary + this copy are signed off.
+
+/**
+ * Footer placed at the bottom of every §7(3) Bestandskunden email. `optOutUrl`
+ * points at GET /api/unsubscribe/bestandskunde. Distinct from
+ * `unsubscribeFooter` (the DOI one): it names the legal basis (existing
+ * customer of own similar products) and the free, anytime objection.
+ * PLACEHOLDER — lawyer review required.
+ */
+export function bestandskundenOptOutNotice(optOutUrl: string): { text: string; html: string } {
+  const text =
+    `Du erhältst diese E-Mail als bestehende:r Kund:in von motion sports zu ` +
+    `eigenen, ähnlichen Produkten (§ 7 Abs. 3 UWG). Du kannst dieser Nutzung ` +
+    `deiner E-Mail-Adresse jederzeit kostenlos widersprechen — es entstehen ` +
+    `keine anderen als die Übermittlungskosten nach den Basistarifen: ${optOutUrl}`;
+  const html = `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">
+  Du erh&#228;ltst diese E-Mail als bestehende:r Kund:in von motion sports zu eigenen,
+  &#228;hnlichen Produkten (&#167;&#160;7 Abs.&#160;3 UWG). Du kannst dieser Nutzung deiner
+  E-Mail-Adresse jederzeit kostenlos widersprechen &#8212; es entstehen keine anderen als die
+  &#220;bermittlungskosten nach den Basistarifen:
+  <a href="${escapeAttr(optOutUrl)}" style="color: #212121; text-decoration: underline !important; word-wrap: break-word;">Widersprechen</a>.</p>`;
+  return { text, html };
+}
+
+/** Heading + body for the §7(3) opt-out (objection) confirmation page. PLACEHOLDER. */
+export const BESTANDSKUNDE_OPT_OUT_CONFIRMED_HEADING =
+  "Dein Widerspruch ist eingetragen.";
+export const BESTANDSKUNDE_OPT_OUT_CONFIRMED_BODY =
+  "Wir senden dir keine weiteren E-Mails zu ähnlichen Produkten als bestehende:r Kund:in mehr. Deine reguläre Newsletter-Einwilligung (falls vorhanden) bleibt davon unberührt.";
+export const BESTANDSKUNDE_OPT_OUT_INVALID_HEADING = "Dieser Widerspruchslink ist ungültig.";
+export const BESTANDSKUNDE_OPT_OUT_INVALID_BODY =
+  "Bitte nutze den Widerspruchslink aus einer unserer E-Mails.";
 
 // ---------------------------------------------------------------------------
 // Transactional summary email subject (the service the user requested)

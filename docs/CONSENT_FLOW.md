@@ -50,9 +50,14 @@ Rules baked into the code:
 - Every marketing email MUST contain a working unsubscribe link.
 - The exact consent text shown to the user is stored verbatim
   (`consent_text_shown`) as **Art. 7 proof of consent**, together with a
-  **consent copy version stamp** (`consent_copy_version`, currently `"v2"` —
-  `CONSENT_COPY_VERSION` in `src/lib/consent-copy-version.mjs`), so v1 and v2
-  records stay distinguishable in the audit trail. The stamp is resolved
+  **consent copy version stamp** (`consent_copy_version`, currently `"v3"` —
+  `CONSENT_COPY_VERSION` in `src/lib/consent-copy-version.mjs`), so v1/v2/v3
+  records stay distinguishable in the audit trail. One linear version spans
+  **every** consent surface (the in-chat capture form **and** the at-sign-in
+  opt-in, see below); the verbatim text disambiguates which surface a record
+  came from. **v3** adds the at-sign-in opt-in and is the copy now under lawyer
+  review (it REPLACES v2 there); the capture-form labels are unchanged from v2
+  but ship in the v3 set. The stamp is resolved
   server-side: it is set only when the echoed text is byte-identical to the
   copy the backend currently serves, and `NULL` otherwise (honest
   "unattested" — e.g. a ≤60s-stale cached copy across a deploy boundary; the
@@ -142,6 +147,109 @@ Later, every marketing email carries:
         └─ render "Du wurdest abgemeldet."
 ```
 
+## At-sign-in marketing opt-in (presentation-maximised, lawful) — copy v3
+
+A **signed-in** Shopify customer can opt into marketing **without re-typing their
+email**. This is a *presentation* optimisation only — the lawful basis is
+**unchanged** (it is still the consent path B above, still a real double-opt-in):
+
+- **A Shopify account NEVER implies consent.** There is **no auto-enrol** and
+  **no pre-tick** — the widget renders an **UNCHECKED**, benefit-framed box and
+  the customer must actively tick it (clear affirmative act). The endpoint
+  **requires** `marketingConsent: true` in the body and refuses otherwise
+  (`400 marketing_consent_required`).
+- **The only thing the account removes is the "type your email" step.** We
+  already hold the customer's **verified** Shopify email (`customers.email` for
+  the tier-3 row), so the opt-in is one tick instead of a form. A synthetic
+  `shopify:<id>` placeholder (sign-in with no verified email) is refused
+  (`422 no_verified_email`).
+- **It runs the EXISTING DOI.** The tick sets `marketing_doi_status = 'pending'`,
+  issues a token, and sends the **same** confirmation email; consent becomes
+  `'confirmed'` only after the link is clicked. Withdrawable via the **same**
+  unsubscribe.
+- **Same consent audit.** The exact label + footer shown are stored verbatim as
+  `consent_text_shown` with the same `consent_copy_version` stamp (v3). The copy
+  is **served by the backend** (`GET /api/consent-copy?surface=signin` →
+  `signInMarketingConsentCopy()`), so the widget renders it verbatim and echoes
+  `consentTextShown` back unchanged — a lawyer copy change ships as a backend
+  deploy.
+
+```
+signed-in widget (tier 3)                     backend
+─────────────────────────                     ───────
+GET /api/consent-copy?surface=signin  ───────► { headline, marketingLabel (UNCHECKED),
+                                                 consentFooter, consentTextShown, version: v3, … }
+user ticks the box  ─────────────────────────► POST /api/account/marketing-opt-in
+                                                 (guard: origin + secret + LIVE access token)
+                                                 ├─ require marketingConsent === true
+                                                 ├─ email = customers.email (verified; refuse shopify:<id>)
+                                                 ├─ upsertEmailCapture(marketing=true) → 'pending' + token
+                                                 ├─ linkCustomerOnEmailCapture (attach session, sync mirror)
+                                                 └─ send DOI email
+user clicks confirm link ─────────────────────► GET /api/confirm-marketing  → 'confirmed'
+```
+
+The widget render contract is in
+[`frontend-handoff/CONSENT_FLOW.md`](./frontend-handoff/CONSENT_FLOW.md) §2.
+
+## §7 Abs. 3 UWG Bestandskunden — a SEPARATE lawful basis
+
+Existing-customer email (§7 Abs. 3 UWG) lets us email a customer about our **own
+similar products** **without** prior opt-in consent — a **different lawful basis**
+from the DOI marketing above. **The two bases are NEVER merged.**
+
+| | DOI-consented marketing | §7(3) Bestandskunden |
+|---|---|---|
+| **Lawful basis** | Art. 6(1)(a) — explicit consent | §7 Abs. 3 UWG — existing customer |
+| **Granted by** | the **double-opt-in** (only path to `confirmed`) | a **completed purchase** in Shopify order history |
+| **State** | `email_captures.marketing_doi_status` / `customers.marketing_status` | `customers.bestandskunde_eligible` (migration 0017) |
+| **Opt-out** | `suppression_list` (`/api/unsubscribe`) | **separate** `bestandskunden_suppression_list` (`/api/unsubscribe/bestandskunde`) |
+| **Send gate** | `canSendMarketing` + `CONSENT_COPY_LAWYER_APPROVED` | `canSendBestandskundenMail` + **own** flag `BESTANDSKUNDE_SENDS_APPROVED` |
+
+Eligibility (`lib/bestandskunden.mjs :: isBestandskundeEligible`) is **NOT** an
+account alone and **NOT** a cancelled/abandoned order: it requires at least one
+order whose financial status is a **completed purchase** (`PAID` or
+`PARTIALLY_REFUNDED`; everything else — pending/authorized/voided/refunded/
+unknown — fails closed). It is cached on the customer row, recomputed every time
+the purchase summary is refreshed (`saveCustomerPurchaseSummary`), so the
+audience query is a cheap boolean filter, never a Shopify fan-out.
+
+A §7(3) send (when the flag is on) MUST:
+
+- **(a)** be limited to **own, similar/complementary** products to what was
+  bought — the boundary the lawyer signs off before the flag flips;
+- **(b)** carry the **opt-out notice** in every message
+  (`bestandskundenOptOutNotice` — names the basis, anytime, free of charge,
+  §7 Abs. 3 Nr. 4 UWG);
+- **(c)** honour the **separate** Bestandskunden opt-out
+  (`bestandskunden_suppression_list`), independently of the DOI unsubscribe — a
+  customer objecting to one is **not** auto-removed from the other.
+
+**Built but OFF.** The audience, eligibility, suppression, opt-out link and the
+`canSendBestandskundenMail` gate are all built, but **real §7(3) sends are gated
+behind `BESTANDSKUNDE_SENDS_APPROVED` (default false)** — distinct from
+`CONSENT_COPY_LAWYER_APPROVED`. Nothing existing-customer goes out until a lawyer
+blesses the "own similar products" boundary + the opt-out copy and the flag is
+flipped. The admin dashboard's Marketing tab shows the two audiences under
+**separate labelled headings** ("DOI-Einwilligung" vs "§7 Abs. 3 UWG
+Bestandskunden") so the bases never blur; a Bestandskunde who *also* holds a DOI
+consent is flagged as such without merging the lists.
+
+## Match-up on sign-in (consent carry-forward + session scope)
+
+Two match-up cases run on the Customer Account sign-in (see
+[`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §4):
+
+- **email-only → signed-in:** the merge (`decideMerge` → `bindShopifyIdentity`)
+  **stamps** the existing tier-2 row matched by the verified email. That UPDATE
+  touches **only identity columns** — never `marketing_status` /
+  `transactional_consent` — so a **prior DOI consent under that email carries
+  forward intact** (still `confirmed`): none invented, none silently revoked.
+- **current-anonymous-session → signed-in:** only the **current** session's
+  conversation (the chat that led to sign-in, from the signed `state`/pending
+  record) is attached to the now-signed-in customer (`WHERE session_id = THIS
+  session`). Other anonymous threads are **never** retroactively scooped.
+
 ## Suppression & "can I send?" logic
 
 Two gates, both in [`email-capture-store.ts`](../src/lib/email-capture-store.ts):
@@ -197,9 +305,43 @@ result and logs to stdout (local-dev), rather than faking success.
 ## ✅ TODO — copy the lawyer must approve before launch
 
 All strings below are in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts).
-Flip `CONSENT_COPY_LAWYER_APPROVED` to `true` only once every item is signed off.
-The current copy is **v2** (`CONSENT_COPY_VERSION`) — review the v2 strings
-as-is; they go to the lawyer verbatim.
+`CONSENT_COPY_LAWYER_APPROVED` governs the DOI marketing + personalisation path;
+keep it accurate for every item below. The current copy is **v3**
+(`CONSENT_COPY_VERSION`) — it REPLACES v2 in the review and adds the at-sign-in
+opt-in strings; review the v3 strings as-is, they go to the lawyer verbatim.
+
+> ⚠️ **Two separate sign-offs.** The DOI/personalisation copy is gated by
+> `CONSENT_COPY_LAWYER_APPROVED` (in `consent-copy.ts`). **Real §7(3)
+> Bestandskunden sends are a DISTINCT gate** — `BESTANDSKUNDE_SENDS_APPROVED`
+> (env, default **false**) — and need their own sign-off of the "own similar
+> products" boundary + the opt-out copy. Do not conflate them.
+
+### v3 — at-sign-in marketing opt-in (NEW; replaces v2 in the review)
+
+- [ ] **Sign-in opt-in headline** (`SIGNIN_MARKETING_OPTIN_HEADLINE`, v3) —
+      framing shown above the box; NOT part of `consentTextShown`.
+- [ ] **Sign-in opt-in checkbox label** (`SIGNIN_MARKETING_OPTIN_LABEL`, v3:
+      "Ja, schickt mir an meine hinterlegte E-Mail-Adresse exklusive Angebote
+      und Aktionen — nur für Abonnenten. Jederzeit abbestellbar."). Confirm the
+      "hinterlegte E-Mail-Adresse" phrasing (we use the verified Shopify email,
+      no field), the same scarcity ceiling as the capture box, that it renders
+      **UNCHECKED** (no auto-enrol on sign-in), and that it runs the same DOI.
+
+### §7 Abs. 3 UWG Bestandskunden (DISTINCT gate: `BESTANDSKUNDE_SENDS_APPROVED`)
+
+- [ ] **The "own similar products" boundary** — the rule for which products a
+      §7(3) email may advertise relative to what the customer bought. This is the
+      central legal call; the flag stays OFF until it's blessed.
+- [ ] **Bestandskunden opt-out notice** (`bestandskundenOptOutNotice`) — present
+      in every §7(3) email: names the basis, the anytime + free objection
+      (§7 Abs. 3 Nr. 4 UWG), and links the separate opt-out.
+- [ ] **§7(3) opt-out confirmation page** copy
+      (`BESTANDSKUNDE_OPT_OUT_CONFIRMED_*` / `_INVALID_*`).
+- [ ] Confirm the **completed-purchase boundary** (`PAID` / `PARTIALLY_REFUNDED`
+      only; account-alone / cancelled / abandoned excluded) matches the legal
+      "Bestandskunde" definition.
+
+### Capture-form copy (unchanged text, now v3 set)
 
 - [ ] **Transactional checkbox label** (`TRANSACTIONAL_CHECKBOX_LABEL`, v2:
       "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl.

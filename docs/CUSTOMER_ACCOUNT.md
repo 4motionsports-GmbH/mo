@@ -406,3 +406,51 @@ After erasure the session no longer resolves to a customer, so every subsequent
 `/api/account/*` call (and `/api/auth/me`) fails closed. Note this drops the
 stored tokens server-side; the customer may additionally log out of Shopify
 itself (the `end_session_endpoint`, §5 frontend doc).
+
+Erasure suppresses **both** lawful bases for the real email: it adds the address
+to `suppression_list` (DOI, reason `erasure`) **and** to
+`bestandskunden_suppression_list` (§7(3), reason `erasure`), so a future
+re-sign-in can re-derive neither audience from the unchanged Shopify history.
+
+## 10. At-sign-in marketing opt-in + the match-up (CA-4)
+
+CA-1 established that **signing in is identity, not marketing consent** (§1). CA-4
+**keeps that rule** and adds a *presentation-maximised but fully lawful* way for a
+**signed-in** customer to opt into marketing — see
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "At-sign-in marketing opt-in".
+
+- **Endpoint:** `POST /api/account/marketing-opt-in` (the standard signed-in
+  guard: origin + secret + a **live** access token). It requires an explicit
+  `marketingConsent: true` (no auto-enrol), uses the customer's **verified**
+  `customers.email` (refusing the synthetic `shopify:<id>` placeholder), and runs
+  the **existing DOI** via `upsertEmailCapture` — `'pending'` + confirmation
+  email, `'confirmed'` only after the link click. The copy is served by
+  `signInMarketingConsentCopy()` (`GET /api/consent-copy?surface=signin`, v3).
+- **Still ours, still DOI.** Re-keying on sign-in **never** imports Shopify's
+  marketing state; the *only* path to `confirmed` is the double-opt-in, on either
+  surface. The opt-in is a **separate, explicit act** the customer chooses.
+
+### The match-up (consent carry-forward + session scope)
+
+Both cases are handled by the existing merge (`decideMerge` →
+`bindShopifyIdentity`, §4) — CA-4 pins and documents them:
+
+- **email-only → signed-in:** the **stamp** branch targets the tier-2 row matched
+  by the verified email and writes **only identity columns**, so a **prior DOI
+  consent under that email carries forward intact** (`email_captures` +
+  the mirrored `customers.marketing_status` stay `confirmed`) — none invented,
+  none silently revoked. A collision/mismatch is logged to
+  `customer_merge_conflicts` and **never fuses** two consent records.
+- **current-anonymous-session → signed-in:** only the **current** session's
+  conversation (the chat that led to sign-in, carried in the signed
+  `state`/pending record) is attached — `WHERE session_id = THIS session`. Other
+  anonymous threads are **never** retroactively scooped.
+
+### §7(3) Bestandskunden (separate basis, see CONSENT_FLOW.md)
+
+A signed-in customer's **completed purchases** (pulled via the Customer Account
+API into `purchase_summary`, §8) also feed the **separate** §7(3)
+existing-customer audience (`customers.bestandskunde_eligible`, recomputed on
+every purchase refresh). That basis is **never merged** with DOI consent and its
+real sends stay gated behind the distinct `BESTANDSKUNDE_SENDS_APPROVED` flag —
+full details in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
