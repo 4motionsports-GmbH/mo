@@ -10,7 +10,7 @@
 
 import { useState } from "react";
 import { Sparkles } from "lucide-react";
-import { Button, Skeleton } from "./ui";
+import { Button, Markdown, Skeleton } from "./ui";
 
 interface Summary {
   personaLabel: string;
@@ -30,31 +30,6 @@ function formatTimestamp(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-// Minimal markdown-ish renderer: '- ' lines become bullets, '_…_' become italic.
-function renderSummary(md: string): React.ReactNode {
-  const lines = md.split("\n").map((l) => l.trim()).filter(Boolean);
-  const bullets = lines.filter((l) => l.startsWith("- ") || l.startsWith("* "));
-  if (bullets.length > 0) {
-    return (
-      <ul className="mt-2 list-disc pl-5">
-        {bullets.map((l, i) => (
-          <li key={i} className="mb-1 text-[13px] leading-relaxed text-foreground">
-            {l.replace(/^[-*]\s+/, "")}
-          </li>
-        ))}
-      </ul>
-    );
-  }
-  return lines.map((l, i) => (
-    <p
-      key={i}
-      className={`mt-2 text-[13px] text-muted-foreground ${l.startsWith("_") ? "italic" : ""}`}
-    >
-      {l.replace(/^_|_$/g, "")}
-    </p>
-  ));
 }
 
 export function KpiTopQuestions({
@@ -117,7 +92,7 @@ export function KpiTopQuestions({
 
       {summary && (
         <div className={loading ? "opacity-60 transition-opacity" : undefined}>
-          {renderSummary(summary.summaryMd)}
+          <Markdown content={summary.summaryMd} className="mt-2 text-[13px]" />
           <p className="mt-2 text-[11px] text-muted-foreground">
             Stichprobe: {summary.sampleSize} Nachrichten ·{" "}
             {summary.cached ? "zwischengespeichert" : "frisch generiert"} ·{" "}
