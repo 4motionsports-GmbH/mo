@@ -5,6 +5,8 @@
 > full order history) is now pulled and fed into the internal profile **and** the
 > live chat via the existing customer-memory mechanism, under the same consent
 > gate and data-minimisation (see [§8](#8-signed-in-data-in-the-profile--live-chat-ca-2--ca-3)).
+> **Signed-in conversation history** (list / fetch / rename / delete + full
+> "delete my data") is documented in [§9](#9-signed-in-conversation-history-tier-3).
 > The authoritative feasibility report is
 > [`CUSTOMER_ACCOUNT_SPIKE.md`](./CUSTOMER_ACCOUNT_SPIKE.md); this document
 > describes what was built.
@@ -311,3 +313,96 @@ So a **non-consented or anonymous** user gets **no** purchase history, profile,
 or address in the prompt — the consent gate governs personalisation exactly as
 for tier 2; only the signed-in name greeting (the session's own identity) is
 added on top.
+
+## 9. Signed-in conversation history (tier 3)
+
+A signed-in customer can browse, open, rename and delete their own **past
+conversations** — and erase all of their data. These endpoints live under
+`/api/account/*` and are the contract CA-3-THEME builds against (precise
+request/response shapes: [`frontend-handoff/CUSTOMER_ACCOUNT.md`](./frontend-handoff/CUSTOMER_ACCOUNT.md) §7).
+
+### The gate (fail-closed, behind the CA-1 resolver)
+
+Every `/api/account/*` request runs the same gate (`lib/account-guard.ts ::
+requireSignedInCustomer`), in this order:
+
+1. **`guardRequest`** — origin allowlist + shared secret (`x-ms-chat-key`),
+   like `/api/chat`. Widget XHR, with a CORS preflight.
+2. **Rate limit** — the chat bucket.
+3. **`resolveSignedInCustomer(session)`** — the session must link to a customer
+   with a `shopify_customer_id`. **Anonymous** (no customer) and **email-only**
+   (tier-2, no `shopify_customer_id`) sessions resolve to `null` → **401, fail
+   closed**, before any history is read.
+4. **`getValidAccessToken`** — proves the session is **still authenticated**
+   (refreshing if needed), exactly like `/api/auth/me`. A logged-out / expired
+   session → 401.
+
+**Resolved across devices.** All of a signed-in customer's sessions — on every
+device — link to the **same** `customers` row (keyed by `shopify_customer_id`),
+so history is scoped by `customer_id` and is therefore the customer's **whole**
+history regardless of which device opened each conversation. Every per-id
+operation additionally constrains `customer_id = <self>`, so a conversation the
+caller doesn't own is **indistinguishable from a missing one** (404 — no
+enumeration leak).
+
+### Endpoints (all under `/api/account`)
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/account/conversations` | GET | LIST the customer's past conversations (across devices), each with a TITLE, timestamps, message count. |
+| `/api/account/conversations/{id}` | GET | FETCH one conversation's transcript (must belong to this customer). |
+| `/api/account/conversations/{id}` | PATCH | RENAME the conversation title (`{ title }`). |
+| `/api/account/conversations/{id}` | DELETE | HARD-delete this one transcript. |
+| `/api/account/erase` | POST | Full "delete my data" — erase the customer (distinct from single-chat delete). |
+
+### Titles are cheap — no model call per render
+
+The list TITLE is either the customer's **custom title** (set via RENAME,
+stored in `conversations.title`, migration `0016`) or, when unset, a
+**derived** label: the first user message, whitespace-collapsed and trimmed to
+80 chars (`lib/conversation-title.mjs :: deriveConversationTitle`). The
+derivation is pure and deterministic — **no Anthropic call** runs per list
+render. `messageCount` counts the **readable** turns (user/assistant text; tool
+bookkeeping rows excluded) — the same turns the transcript returns.
+
+### Deletion semantics — single-chat delete vs. the durable profile
+
+This is the subtle part, and it follows the two-cluster lawful-basis split
+([`DATA_RETENTION.md`](./DATA_RETENTION.md)):
+
+- **`DELETE /api/account/conversations/{id}` HARD-deletes that one transcript**
+  — the `conversations` row plus its `messages` and chat `ai_usage` (FK
+  `ON DELETE CASCADE`). It is gone immediately and irreversibly.
+- **The durable "current understanding" profile is a SEPARATE aggregate under a
+  different lawful basis** (`customers.profile_summary`, regenerated on demand —
+  see [`CUSTOMERS.md`](./CUSTOMERS.md)). Deleting a source conversation means a
+  **future profile regeneration no longer sees it** — but **profile text already
+  derived persists** until the profile is regenerated **or** the customer is
+  erased. Single-chat delete deliberately does **not** reach into the profile
+  aggregate; that would conflate two lawful bases. The honest contract for the
+  customer: "this chat is gone; what we already learned is cleared when you
+  regenerate your profile or delete all your data."
+
+### The distinct full "delete my data" path
+
+`POST /api/account/erase` (`lib/account-history.ts :: eraseSignedInCustomer`) is
+a **GDPR erasure of the person**, separate from the single-chat delete. In one
+transaction it:
+
+1. **Purges every linked conversation** — all transcripts + messages + chat
+   `ai_usage` cascade (not merely unlinked: the customer's own transcripts are
+   gone).
+2. **Suppresses + purges the consent record** — adds the (real) email to
+   `suppression_list` (reason `erasure`, so a future sign-in can't silently
+   re-attach the old data) and deletes its `email_captures` (`marketing_sends`
+   cascade). Skipped for the synthetic `shopify:<id>` placeholder email.
+3. **Deletes the `customers` row** — which **clears the profile + all cached
+   summaries** (they live on the row), **revokes the OAuth tokens**
+   (`customer_oauth_tokens` `ON DELETE CASCADE`), and de-identifies the
+   remaining FK refs (`bundle_offers` `ON DELETE SET NULL` — kept for
+   accounting, no PII).
+
+After erasure the session no longer resolves to a customer, so every subsequent
+`/api/account/*` call (and `/api/auth/me`) fails closed. Note this drops the
+stored tokens server-side; the customer may additionally log out of Shopify
+itself (the `end_session_endpoint`, §5 frontend doc).

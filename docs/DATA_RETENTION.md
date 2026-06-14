@@ -148,6 +148,57 @@ signed-in* customer and they live and die with that customer's row. Logging out
 (`/api/auth/shopify/logout/return`) drops the token row immediately; otherwise
 they cascade away when the customer is erased.
 
+### Signed-in conversation history — single-chat delete vs. the durable profile
+
+A signed-in (tier-3) customer can manage their own conversation history through
+`/api/account/*` (see [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §9). This
+does **not** change the cluster split — it gives the *data subject* the controls
+the split implies:
+
+- **Deleting a single chat HARD-deletes that transcript** —
+  `DELETE /api/account/conversations/{id}` removes the `conversations` row plus
+  its `messages` + chat `ai_usage` (FK `ON DELETE CASCADE`), immediately and
+  irreversibly, ahead of the 180-day Cluster A window. The optional
+  `conversations.title` (migration `0016`, a custom label) lives on the row and
+  is removed with it; it stores no new PII (a derived title is a slice of the
+  customer's own first message, already bounded by the conversation window).
+- **The durable "current understanding" profile is a SEPARATE aggregate under a
+  different lawful basis.** `customers.profile_summary` (Cluster B) is *derived
+  from* conversations but stored independently and regenerated on demand.
+  Deleting a source conversation means a **future profile regeneration no longer
+  sees it**, but **profile text already derived persists** until the profile is
+  regenerated or the customer is erased. Single-chat delete deliberately does
+  **not** reach into the profile — conflating the two lawful bases would be
+  wrong; the erasure path below is what clears the profile.
+
+| Data | Default window | Env var | Action on expiry / erasure |
+| --- | --- | --- | --- |
+| `conversations.title` (tier-3 custom label) | follows the conversation | `RETENTION_DAYS` | Removed with the conversation (single-chat delete or window expiry). |
+
+### Self-service "delete my data" (tier-3) — `POST /api/account/erase`
+
+A signed-in customer can erase **all** their data themselves — a GDPR erasure of
+the *person*, **distinct** from the single-chat delete. In one transaction
+(`lib/account-history.ts :: eraseSignedInCustomer`):
+
+1. **Purges every linked conversation** (all transcripts + messages + chat
+   `ai_usage` cascade) — not merely unlinked.
+2. **Suppresses + purges the consent record** — adds the (real) email to
+   `suppression_list` (reason `erasure`) so a future sign-in can't silently
+   re-attach, and deletes its `email_captures` (`marketing_sends` cascade).
+   Skipped for the synthetic `shopify:<id>` placeholder email.
+3. **Deletes the `customers` row** — clearing the **profile + all cached
+   summaries** (they live on the row) and **revoking the OAuth tokens**
+   (`customer_oauth_tokens` `ON DELETE CASCADE`); `bundle_offers`
+   `ON DELETE SET NULL` keeps the de-identified offer row for accounting.
+
+This is the stronger sibling of the retention cron's step 5: the cron erases
+*opted-out* customers and uses `ON DELETE SET NULL` to return their conversations
+to pseudonymous rows; the self-service erase **purges** the customer's
+conversations outright, because they are the customer's own transcripts and a
+"delete my data" should remove them. Both paths revoke tokens and clear the
+profile by deleting the `customers` row.
+
 ---
 
 ## How retention is enforced
@@ -198,13 +249,21 @@ The endpoint returns a JSON summary with the counts affected, e.g.:
 
 ## Data-subject requests (forward note)
 
-The consent flow has shipped (see [`CONSENT_FLOW.md`](./CONSENT_FLOW.md)); a
-self-service erasure path is still **future work**. Until it lands, a
-subject-access or erasure request is handled manually:
+The consent flow has shipped (see [`CONSENT_FLOW.md`](./CONSENT_FLOW.md)).
+
+**Signed-in (tier-3) customers now have a self-service path** (see the section
+above): `DELETE /api/account/conversations/{id}` erases a single transcript, and
+`POST /api/account/erase` erases the whole person (conversations purged + profile
+cleared + tokens revoked + email suppressed). No manual step is needed for them.
+
+For **anonymous / email-only** subjects, a subject-access or erasure request is
+still handled manually:
 
 - **Erasure of an email:** add it to `suppression_list` (reason `erasure`) and
   delete its `email_captures` / `marketing_sends` rows. The next retention run
-  also enforces this.
+  also enforces this. (This is exactly what the tier-3 erase path does
+  automatically for the signed-in customer's email.)
 - **Erasure of a conversation:** delete the `conversations` row by `session_id`
   (messages cascade). This is only possible if the user can supply their
-  `session_id`, since Cluster A holds no identifier that maps to a person.
+  `session_id`, since Cluster A holds no identifier that maps to a person —
+  unless they are a signed-in customer, who can delete it themselves by id.
