@@ -194,13 +194,8 @@ const MARKETING_STATUS: Record<
 
 export function CustomerProfileCard({
   customer,
-  // Whether the automatic welcome-discount issuance is currently enabled
-  // (WELCOME_DISCOUNT_ENABLED, default off). Historical issued/redeemed data
-  // stays visible either way — disabled only changes the labelling.
-  welcomeDiscountEnabled,
 }: {
   customer: CustomerProps;
-  welcomeDiscountEnabled: boolean;
 }) {
   const router = useRouter();
   const isReturning = customer.sessions.length > 1;
@@ -342,24 +337,10 @@ export function CustomerProfileCard({
         <PurchaseHistory purchases={purchases} />
       </Section>
 
-      {/* Welcome discount (one-time, issued on first DOI confirmation).
-          Flag-gated (WELCOME_DISCOUNT_ENABLED): when off, the historical
-          issued/redeemed data stays visible but is labelled "(deaktiviert)". */}
-      <Section
-        title={
-          <span className="inline-flex items-center gap-1">
-            Willkommensrabatt
-            {!welcomeDiscountEnabled && (
-              <span
-                className="font-normal text-muted-foreground"
-                title="Automatische Ausstellung per WELCOME_DISCOUNT_ENABLED abgeschaltet — Codes werden manuell vergeben."
-              >
-                (deaktiviert)
-              </span>
-            )}
-          </span>
-        }
-      >
+      {/* Welcome discount — the automatic issuance feature was retired
+          pre-launch; this section is now a read-only historical view of codes
+          that were issued while the feature was live. */}
+      <Section title="Willkommensrabatt">
         {customer.welcomeIssuedAt ? (
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="info">
@@ -386,9 +367,8 @@ export function CustomerProfileCard({
         ) : (
           <p className="text-sm text-muted-foreground">
             <em>
-              {welcomeDiscountEnabled
-                ? "Noch kein Willkommenscode — wird automatisch bei der ersten Double-Opt-In-Bestätigung ausgestellt (einmal pro Kunde)."
-                : "Kein Willkommenscode. Die automatische Ausstellung ist deaktiviert (WELCOME_DISCOUNT_ENABLED) — Rabattcodes werden manuell über das Dashboard vergeben."}
+              Kein Willkommenscode. Rabattcodes werden manuell über das Dashboard
+              vergeben.
             </em>
           </p>
         )}

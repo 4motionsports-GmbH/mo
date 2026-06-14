@@ -1,8 +1,7 @@
 // §7 Abs. 3 UWG "Bestandskunden" (existing-customer) decision logic — kept in
 // plain .mjs (pure, no I/O) so the part with real legal consequences is
-// unit-tested in isolation, mirroring the email-offer-trigger.mjs /
-// welcome-discount-flag.mjs convention. The DB reads/writes live in
-// lib/bestandskunden-store.ts.
+// unit-tested in isolation, mirroring the email-offer-trigger.mjs convention.
+// The DB reads/writes live in lib/bestandskunden-store.ts.
 //
 // ⚠️ SEPARATE LAWFUL BASIS — NEVER MERGE WITH DOI CONSENT. §7 Abs. 3 UWG lets a
 // trader email an EXISTING customer about its OWN SIMILAR products WITHOUT prior

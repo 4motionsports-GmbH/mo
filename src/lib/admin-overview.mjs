@@ -1,5 +1,5 @@
 // Pure, I/O-free derivations for the admin OVERVIEW (Übersicht) tab. Kept in
-// plain .mjs — like welcome-discount-flag.mjs / email-offer-trigger.mjs — so the
+// plain .mjs — like email-offer-trigger.mjs — so the
 // aggregation maths is trivially unit-testable with node:test and shared by the
 // server-rendered OverviewTab. NOTHING here fetches or mutates: callers pass in
 // data already read from the existing stores (listMarketingTargets, …), and we

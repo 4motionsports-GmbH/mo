@@ -1267,5 +1267,4 @@ do not persist it across sessions.
 | `MARKETING_DOI_EXPIRY_DAYS` | DOI token validity window (default 7).                             |
 | `UNSUBSCRIBE_SECRET`      | HMAC secret for unsubscribe tokens (falls back to `CHAT_SHARED_SECRET`). |
 | `CONTACT_FROM_EMAIL`      | Reused as the sender for summary + DOI emails.                       |
-| `WELCOME_DISCOUNT_ENABLED` | **Default `false`.** Gates the entire automatic welcome-discount issuance on DOI confirmation (see [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)). Only `true`/`1`/`yes`/`on` enables it. |
 | `RETURNING_HINT_ENABLED`  | **Default `true`.** Server-side switch for `returningHint.enabled` (§7.4); set `false` to make the widget hide the hint. |

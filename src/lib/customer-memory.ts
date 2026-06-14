@@ -55,15 +55,11 @@ export interface CustomerMemoryContext {
   /** ISO date of the most recent order in the cached history. */
   lastPurchaseAt: string | null;
   /**
-   * True when the one-time welcome code (CAP-2) was already issued to this
-   * customer — Mo must not re-promise the welcome gift then. LIMITATION: we
-   * only know ISSUANCE (`welcome_issued_at`), not whether the code was
-   * actually redeemed in Shopify; since the gift is once-ever either way,
-   * "issued" is the correct suppression signal. NOTE: while the automatic
-   * issuance is feature-flagged off (WELCOME_DISCOUNT_ENABLED, default
-   * false) the memory block instructs Mo to promise no welcome discount to
-   * anyone; this field then only shapes how questions about historical
-   * codes are answered (see system-prompt.ts renderWelcomeMemoryRule).
+   * True when a one-time welcome code was issued historically to this customer
+   * (`welcome_issued_at` non-NULL). The automatic welcome discount has been
+   * retired, so the memory block instructs Mo to promise NO welcome discount
+   * to anyone; this field only shapes how questions about a previously issued
+   * code are answered (see system-prompt.ts renderWelcomeMemoryRule).
    */
   welcomeAlreadyIssued: boolean;
   // --- Tier-3 (signed-in Shopify customer) extras (CA-2/CA-3) ----------------

@@ -79,9 +79,8 @@ export const TRANSACTIONAL_CHECKBOX_LABEL =
  * COPY CEILING (UWG / dark-pattern exposure — agreed with the client): the
  * label promises "exklusive Angebote …, nur für Abonnenten" and NOTHING more.
  * Accurate scarcity only — NEVER add countdowns, invented urgency, or any
- * concrete discount promise here. It must also never promise the welcome
- * discount for ticking this box ("freely given", Art. 7(4) GDPR — see
- * docs/WELCOME_DISCOUNT.md). PLACEHOLDER — lawyer review required.
+ * concrete discount promise here, and never offer a reward for ticking this
+ * box ("freely given", Art. 7(4) GDPR). PLACEHOLDER — lawyer review required.
  */
 export const MARKETING_CHECKBOX_LABEL =
   "Ja, ich möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten. Jederzeit abbestellbar.";
@@ -231,7 +230,7 @@ export function captureConsentCopy(): CaptureConsentCopy {
 // COPY CEILING (unchanged from v2): benefit-framed and prominent is fine; the
 // promise stays "exklusive Angebote …, nur für Abonnenten" — accurate scarcity
 // only, NO countdowns, NO invented urgency, NO concrete discount promise, and it
-// must never dangle the welcome gift for ticking (Art. 7(4) "freely given").
+// must never offer a reward for ticking (Art. 7(4) "freely given").
 // PLACEHOLDER — lawyer review required (v3 REPLACES v2 in the review).
 
 /**
@@ -359,109 +358,6 @@ export function doiEmailBody(confirmUrl: string): { text: string; html: string }
 export const DOI_CONFIRMED_HEADING = "Danke, deine Anmeldung ist bestätigt.";
 export const DOI_CONFIRMED_BODY =
   "Du erhältst ab jetzt persönliche Empfehlungen und Angebote von motion sports. Du kannst dich jederzeit über den Abmeldelink in jeder E-Mail wieder abmelden.";
-
-/**
- * Variant of the confirmation page body shown when the one-time welcome code
- * was just issued — points the user at the email that delivers it. Only ever
- * rendered when a welcome email actually went out, which requires
- * WELCOME_DISCOUNT_ENABLED (default OFF — see docs/WELCOME_DISCOUNT.md);
- * with the flag off the plain DOI_CONFIRMED_BODY is shown and no welcome
- * gift is referenced anywhere. PLACEHOLDER — lawyer review required.
- */
-export const DOI_CONFIRMED_WELCOME_BODY =
-  DOI_CONFIRMED_BODY +
-  " Als kleines Willkommensgeschenk haben wir dir gerade eine E-Mail mit einem einmaligen Rabattcode geschickt.";
-
-// ---------------------------------------------------------------------------
-// Welcome email (delivers the one-time welcome discount code after DOI)
-// ---------------------------------------------------------------------------
-//
-// ⚠️ FEATURE-FLAGGED OFF BY DEFAULT: the entire issuance path (and with it
-// this email) is gated behind WELCOME_DISCOUNT_ENABLED (default false) —
-// see src/lib/welcome-discount-flag.mjs and docs/WELCOME_DISCOUNT.md.
-//
-// ⚠️ LEGAL FRAMING — lawyer-confirm (see docs/WELCOME_DISCOUNT.md): the code is
-// framed as a welcome GIFT for completing the freely-chosen double-opt-in
-// confirmation ("yes, I want this"), NOT as consideration for ticking the
-// marketing checkbox — this keeps the marketing consent "freely given"
-// (Art. 7(4) GDPR). The copy below must never promise the discount as a reward
-// for the checkbox itself.
-
-/** Welcome email subject. PLACEHOLDER — lawyer review required. */
-export const WELCOME_EMAIL_SUBJECT =
-  "Willkommen bei motion sports — dein Willkommensgeschenk";
-
-export interface WelcomeEmailOptions {
-  /** The minted one-time code, e.g. "WELCOME-A1B2C3D4". */
-  code: string;
-  /** Whole-number percent the code is worth, e.g. 5. */
-  percent: number;
-  /** German-formatted expiry date ("TT.MM.JJJJ") — MUST be stated in the text. */
-  expiresLabel: string;
-  /** Shopify discount share link that applies the code automatically. */
-  redeemUrl: string;
-  /** Signed unsubscribe block — mandatory, this is a commercial email. */
-  unsubscribe: { text: string; html: string };
-}
-
-/**
- * The welcome email body: the one-time code, its worth, and its terms
- * (single-use, concrete expiry date) stated explicitly in both parts.
- * PLACEHOLDER — lawyer review required.
- */
-export function welcomeEmailBody(opts: WelcomeEmailOptions): { text: string; html: string } {
-  const terms = `Der Code gilt einmalig, bis zum ${opts.expiresLabel}.`;
-
-  const text = [
-    "Hallo,",
-    "",
-    "schön, dass du dabei bist — deine Anmeldung ist bestätigt.",
-    "",
-    `Als Dankeschön fürs Mitmachen erhältst du ein kleines Willkommensgeschenk:`,
-    `${opts.percent} % Rabatt auf deine nächste Bestellung mit dem Code ${opts.code}.`,
-    terms,
-    "",
-    `Code einlösen: ${opts.redeemUrl}`,
-    "",
-    "Viele Grüße",
-    "Dein motion sports Team",
-    "",
-    "—",
-    opts.unsubscribe.text,
-  ].join("\n");
-
-  const html = renderBrandedEmail({
-    subject: WELCOME_EMAIL_SUBJECT,
-    preheader: `Dein Willkommensgeschenk: ${opts.percent} % Rabatt — einmalig, gültig bis ${opts.expiresLabel}.`,
-    heading: "Willkommen bei motion sports",
-    bodyHtml: `
-                                  <p style="${EMAIL_TEXT_STYLE}" align="left">Hallo,</p>
-                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">sch&#246;n, dass du dabei bist &#8212; deine Anmeldung ist best&#228;tigt.</p>
-                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">Als Dankesch&#246;n f&#252;rs Mitmachen erh&#228;ltst du ein kleines Willkommensgeschenk:
-                                  <strong>${escapeHtml(String(opts.percent))}&nbsp;% Rabatt</strong> auf deine n&#228;chste Bestellung mit dem Code
-                                  <strong>${escapeHtml(opts.code)}</strong>.</p>`,
-    ctas: [{ label: "Code einlösen", url: opts.redeemUrl }],
-    // The terms (single-use + concrete expiry date) ship deterministically
-    // under the CTA, outside any editable prose.
-    footnoteHtml: `
-                  <p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 5px; padding-bottom: 10px;" align="center">${escapeHtml(terms)}</p>
-                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
-    footer: {
-      // Commercial email → the opt-out block is mandatory (same bar as
-      // marketing sends; the caller refuses to send without it).
-      unsubscribeHtml: opts.unsubscribe.html,
-    },
-  });
-
-  return { text, html };
-}
-
-// NOTE: the former in-chat mention of the welcome gift
-// (`welcomeChatMentionExample` + the prompt rules in system-prompt.ts) was
-// REMOVED entirely when the automatic welcome discount was feature-flagged
-// off (WELCOME_DISCOUNT_ENABLED, default false — client decision, see
-// docs/WELCOME_DISCOUNT.md): Mo must never promise a gift the backend won't
-// issue.
 
 /** Shown when a DOI token is invalid or expired. PLACEHOLDER. */
 export const DOI_INVALID_HEADING = "Dieser Bestätigungslink ist ungültig oder abgelaufen.";

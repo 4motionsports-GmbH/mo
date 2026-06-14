@@ -38,7 +38,6 @@ import type { PersonaArchetype } from "@/lib/types";
 import { MarketingList } from "./MarketingList";
 import { toStatusFilter, type StatusFilter } from "./marketing-filter";
 import { CustomerProfileCard, type CustomerProps } from "./CustomerProfileCard";
-import { isWelcomeDiscountEnabled } from "@/lib/welcome-discount-flag.mjs";
 import { KpiTab } from "./KpiTab";
 import { OverviewTab } from "./OverviewTab";
 import { AdminShell, type AdminTab } from "./AdminShell";
@@ -321,13 +320,7 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
 
       <div className="flex flex-col gap-4">
         {cards.map((c) => (
-          <CustomerProfileCard
-            key={c.id}
-            customer={c}
-            // Historical welcome stats stay visible; the card only labels the
-            // section "(deaktiviert)" while the flag is off.
-            welcomeDiscountEnabled={isWelcomeDiscountEnabled()}
-          />
+          <CustomerProfileCard key={c.id} customer={c} />
         ))}
       </div>
     </>

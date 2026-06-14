@@ -43,21 +43,18 @@ per-session profiles — contradictions between sessions resolve toward the
 newer statement. Each run costs tokens; the dashboard shows the usage and an
 approximate USD cost after every run.
 
-## Welcome discount (once-ever, recorded here) — ⚠️ disabled by default
+## Welcome discount (historical, recorded here) — ⚠️ feature retired
 
-The customer row is the **source of truth for the one-time welcome code**
-(migration `0009_welcome_discount.sql`: `welcome_code`, `welcome_code_gid`,
-`welcome_code_expires_at`, `welcome_issued_at`). The automatic issuance is
-**feature-flagged off by default** (`WELCOME_DISCOUNT_ENABLED=false`; codes
-are issued manually via the dashboard instead — see
-[`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)). When enabled it is issued
-automatically on the customer's **first DOI confirmation** — never twice for
-the same email, across all future sessions and signups; the atomic
-`welcome_issued_at` claim guarantees it. Details, legal framing
-(lawyer-confirm) and dashboard tracking in
-[`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md). GDPR erasure of the
-customer row removes the welcome record with it (the suppression list keeps
-honouring opt-outs as before).
+The automatic welcome-discount feature was **retired pre-launch** (client
+decision: too exploitable via alias emails — codes are issued manually via the
+dashboard instead). The minting/issuance code and the `WELCOME_DISCOUNT_*` env
+flags are gone; the migration `0009_welcome_discount.sql` columns
+(`welcome_code`, `welcome_code_gid`, `welcome_code_expires_at`,
+`welcome_issued_at`) are **retained as READ-ONLY historical data** — never
+written again — and back the dashboard's historical view of codes that were
+issued while the feature was live. GDPR erasure of the customer row removes
+this historical welcome record with it (the suppression list keeps honouring
+opt-outs as before).
 
 ## Customer memory in the live chat (in-session re-identification ONLY)
 

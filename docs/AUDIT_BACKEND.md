@@ -237,13 +237,15 @@ Everything else checked out exactly — notable confirmations:
   draft→approved→sent claim (`marketing-email.ts`, `shopify-discounts.ts`,
   `marketing-store.ts`). Stacking/sale-item exclusion correctly documented as
   out of scope (`DISCOUNTS.md`).
-- **Welcome discount**: `WELCOME-` prefix, default 5 % (clamped 1–50), 30-day
-  expiry, DOI-completion trigger, atomic once-ever claim with mint-failure release,
-  record-before-send, suppression/unsubscribe gates, prompt framing rules incl.
-  returning-customer suppression (`welcome-discount.ts`, `system-prompt.ts:154,237-245`).
-  *(Post-audit update, June 2026: the entire issuance path is now gated behind
-  `WELCOME_DISCOUNT_ENABLED`, default off, and the in-chat mention was removed
-  from the system prompt — see `WELCOME_DISCOUNT.md`.)*
+- **Welcome discount** *(feature RETIRED pre-launch)*: originally a `WELCOME-`
+  prefixed, once-ever code minted on DOI completion (atomic claim, mint-failure
+  release, record-before-send, suppression/unsubscribe gates). It was first
+  feature-flagged off, then **removed entirely** in the pre-launch cleanup
+  (client decision: too exploitable via alias emails; codes issued manually
+  via the dashboard instead). The issuance module and `WELCOME_DISCOUNT_*` env
+  flags are gone; the `customers` welcome columns (migration 0009) are kept
+  read-only to back the dashboard's historical view, and Mo's prompt still
+  forbids promising any welcome/new-customer discount.
 - **Selected vs discussed** product sets and `chooseCartProductIds` preference,
   replacement semantics of the latest `add_to_cart`, sold-out exclusion in every
   cart-link builder (`conversation-store.ts`, `cart.ts`, `summary-email.ts`,

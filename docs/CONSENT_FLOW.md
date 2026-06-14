@@ -396,15 +396,12 @@ opt-in strings; review the v3 strings as-is, they go to the lawyer verbatim.
       **live consultation**. Confirm this personalisation purpose is within
       the approved consent scope / privacy policy before enabling for real
       users — same launch gate as the rest of this checklist.
-- [ ] **Welcome discount framing** — ⚠️ **feature-flagged OFF by default**
-      (`WELCOME_DISCOUNT_ENABLED`, see
-      [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)): the automatic issuance
-      is disabled (client decision; manual codes via the dashboard instead)
-      and the former in-chat mention was **removed** from the system prompt.
-      Review is only needed **before re-enabling the flag**: the one-time
-      welcome code is tied to **completing the DOI confirmation** (a
-      freely-chosen "yes, I want this" / welcome gift for joining), **not**
-      to ticking the marketing checkbox, so the consent stays "freely given"
-      (Art. 7(4) GDPR). Confirm this framing and the welcome email /
-      confirmation-page copy (`WELCOME_EMAIL_SUBJECT`, `welcomeEmailBody`,
-      `DOI_CONFIRMED_WELCOME_BODY`).
+- [x] **Welcome discount framing** — ✅ **N/A: feature retired pre-launch.**
+      The automatic welcome-discount issuance was removed entirely (client
+      decision; codes are issued manually via the dashboard instead), so there
+      is no welcome-gift framing to review. Mo's system prompt instructs it to
+      promise no welcome/new-customer discount, and the marketing-consent copy
+      never offers a reward for ticking the checkbox ("freely given",
+      Art. 7(4) GDPR). If the feature is ever reintroduced, restore the
+      gift-for-completing-the-DOI framing from git history under a fresh
+      lawyer review.
