@@ -30,13 +30,21 @@ Endpoints:
 | GET    | `/api/unsubscribe`        | Signed unsubscribe link → suppression (HTML page).        |
 | GET    | `/api/auth/shopify/login` | Customer Account sign-in (top-level redirect). |
 | GET    | `/api/auth/shopify/callback` | OAuth callback (server-side PKCE exchange). |
-| GET    | `/api/auth/me`            | Signed-in identity re-hydration (`{ name, tier }`). |
+| GET    | `/api/auth/me`            | Signed-in identity re-hydration (`{ name, tier, marketing }`). |
+| GET    | `/api/account/summary`    | Signed-in: download a thread's S5 summary as branded HTML. |
+| POST   | `/api/account/marketing-opt-in` | Signed-in: at-sign-in marketing opt-in (DOI). |
 | GET    | `/api/auth/shopify/logout/return` | Logout-return landing. |
 
 > **Customer Account sign-in (tier 3)** has its own frontend contract:
 > [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) in this folder. The `login` /
 > `callback` / `logout/return` routes are top-level navigations (signed `state`,
-> no CORS/secret); `/api/auth/me` is a guarded widget XHR.
+> no CORS/secret); `/api/auth/me` is a guarded widget XHR (now also returning
+> `marketing: { status, optInActionable }` — §4 there). The signed-in
+> **`/api/account/summary`** download (branded HTML reusing the summary-email
+> renderer, §8 there), the **at-sign-in opt-in** (`/api/account/marketing-opt-in`,
+> [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §2), and the **tier-3 suppression**
+> contract (suppress the end-of-chat capture widget when `tier === 3`) are all in
+> `CUSTOMER_ACCOUNT.md` §6 + §8.
 
 > `/api/confirm-marketing` and `/api/unsubscribe` are **clicked from emails**
 > as top-level browser navigations — they return an HTML page, not JSON, and

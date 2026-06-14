@@ -13,7 +13,11 @@
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { loadConversationForSummary, type TranscriptMessage } from "./conversation-store";
+import {
+  loadConversationForSummary,
+  type TranscriptMessage,
+  type ConversationSummaryData,
+} from "./conversation-store";
 import { getProductsByIds } from "./product-catalog";
 import { buildPrefilledCartUrlForIds, chooseCartProductIds } from "./cart";
 import { sendEmail, type SendEmailResult } from "./email";
@@ -29,7 +33,7 @@ import {
 import { partitionSummaryProducts } from "./summary-products.mjs";
 import { renderEmailProductRows } from "./email-products";
 import { reportError } from "./observability";
-import { recordAiUsage } from "./ai-usage-store";
+import { recordAiUsage, type AiCallSite } from "./ai-usage-store";
 import type { Product } from "./types";
 
 const SUMMARY_MODEL = "claude-sonnet-4-5-20250929";
@@ -50,9 +54,18 @@ function formatTranscript(turns: TranscriptMessage[]): string {
 /**
  * Produce a tidy German summary. Tries the Anthropic API for a polished prose
  * summary; on any error (or no API key) falls back to the plain transcript so
- * the email is never blocked on the model.
+ * the summary is never blocked on the model.
+ *
+ * `usage` attributes the model call's token usage to the right S6 cost metric:
+ * the mailed summary (`summary_email`, no conversation link — transactional) or
+ * the on-demand signed-in download (`summary_download`, linked to its
+ * conversation so it cascade-deletes). The model call only happens when a real
+ * transcript and an API key are present; otherwise nothing is recorded.
  */
-async function buildSummaryText(turns: TranscriptMessage[]): Promise<string> {
+async function buildSummaryText(
+  turns: TranscriptMessage[],
+  usage: { callSite: AiCallSite; conversationId?: number | null }
+): Promise<string> {
   const transcript = formatTranscript(turns);
   if (!transcript) {
     return "In diesem Gespräch wurde noch kein Beratungsverlauf festgehalten.";
@@ -60,7 +73,7 @@ async function buildSummaryText(turns: TranscriptMessage[]): Promise<string> {
   if (!process.env.ANTHROPIC_API_KEY) return transcript;
 
   try {
-    const { text, usage } = await generateText({
+    const { text, usage: modelUsage } = await generateText({
       model: anthropic(SUMMARY_MODEL),
       system:
         "Du fasst ein Fitness-Beratungsgespräch für eine E-Mail an den Kunden " +
@@ -69,12 +82,13 @@ async function buildSummaryText(turns: TranscriptMessage[]): Promise<string> {
         "Keine erfundenen Produkte, keine Preise erfinden, kein Marketing, keine Rabatte.",
       prompt: `Hier ist das Gesprächsprotokoll:\n\n${transcript}\n\nSchreibe die Zusammenfassung.`,
     });
-    // Cost KPI (dashboard/admin side; transactional, no conversation link).
+    // Cost KPI (S6): same generator, attributed to the requesting surface.
     await recordAiUsage({
-      callSite: "summary_email",
+      callSite: usage.callSite,
       model: SUMMARY_MODEL,
-      inputTokens: usage?.inputTokens ?? 0,
-      outputTokens: usage?.outputTokens ?? 0,
+      inputTokens: modelUsage?.inputTokens ?? 0,
+      outputTokens: modelUsage?.outputTokens ?? 0,
+      conversationId: usage.conversationId ?? null,
     });
     const trimmed = text?.trim();
     return trimmed || transcript;
@@ -276,24 +290,31 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
   return { text, html };
 }
 
-export interface SummaryEmailResult {
-  sent: boolean;
-  result: SendEmailResult;
-  hadConversation: boolean;
+export interface SummaryDocument {
+  /** Plain-text part (same top-to-bottom order as the HTML). */
+  text: string;
+  /** The full branded HTML document (renderBrandedEmail shell). */
+  html: string;
+  /** The "Zur Kasse" permalink, or null when no cart could be built. */
   cartUrl: string | null;
 }
 
 /**
- * Build and send the transactional summary email to `email` for the given
- * session. Never throws; returns a result the route can surface.
+ * Build the summary document (text + branded HTML + cart link) from an
+ * already-loaded conversation — the SINGLE place the S5 structure (AI text →
+ * chosen products → "Zur Kasse" → divider → "Vielleicht auch interessant:") is
+ * assembled. The mailed summary and the signed-in "Zusammenfassung
+ * herunterladen" download both go through here, so the email and the download
+ * can never drift apart — they ARE the same renderer.
+ *
+ * `usage` attributes any model call (S6 cost metric) to the requesting surface.
+ * Pass `null` for a missing/empty conversation to still get a graceful document.
  */
-export async function sendSummaryEmail(params: {
-  sessionId: string | null;
-  email: string;
-}): Promise<SummaryEmailResult> {
-  const { sessionId, email } = params;
-
-  const conversation = sessionId ? await loadConversationForSummary(sessionId) : null;
+export async function buildSummaryDocument(params: {
+  conversation: ConversationSummaryData | null;
+  usage: { callSite: AiCallSite; conversationId?: number | null };
+}): Promise<SummaryDocument> {
+  const { conversation, usage } = params;
   const turns = conversation ? readableTurns(conversation.messages) : [];
 
   // Prefilled cart for the CHOSEN products — NO discount (transactional).
@@ -302,7 +323,13 @@ export async function sendSummaryEmail(params: {
   const cartProductIds = chooseCartProductIds(conversation);
   const cart = cartProductIds.length
     ? await buildPrefilledCartUrlForIds(cartProductIds, { excludeSoldOut: true })
-    : { url: null, lines: [], resolvedProductIds: [], unresolvedProductIds: [] };
+    : {
+        url: null,
+        lines: [],
+        resolvedProductIds: [],
+        unresolvedProductIds: [],
+        soldOutProductIds: [],
+      };
 
   // The CHOSEN section renders exactly what the cart permalink contains
   // (cart.resolvedProductIds, in URL order) — the cart builder already dropped
@@ -327,13 +354,42 @@ export async function sendSummaryEmail(params: {
     discussedProducts
   );
 
-  const summary = await buildSummaryText(turns);
+  const summary = await buildSummaryText(turns, usage);
 
   const { text, html } = buildSummaryEmailContent({
     summary,
     chosenProducts,
     alternatives,
     cartUrl: cart.url,
+  });
+
+  return { text, html, cartUrl: cart.url };
+}
+
+export interface SummaryEmailResult {
+  sent: boolean;
+  result: SendEmailResult;
+  hadConversation: boolean;
+  cartUrl: string | null;
+}
+
+/**
+ * Build and send the transactional summary email to `email` for the given
+ * session. Never throws; returns a result the route can surface.
+ */
+export async function sendSummaryEmail(params: {
+  sessionId: string | null;
+  email: string;
+}): Promise<SummaryEmailResult> {
+  const { sessionId, email } = params;
+
+  const conversation = sessionId ? await loadConversationForSummary(sessionId) : null;
+
+  // The transactional email is fire-on-request — no conversation link on the
+  // usage row (cost stays on the dashboard/admin side, like before).
+  const { text, html, cartUrl } = await buildSummaryDocument({
+    conversation,
+    usage: { callSite: "summary_email" },
   });
 
   const result = await sendEmail({
@@ -348,6 +404,6 @@ export async function sendSummaryEmail(params: {
     sent: result.ok,
     result,
     hadConversation: Boolean(conversation),
-    cartUrl: cart.url,
+    cartUrl,
   };
 }

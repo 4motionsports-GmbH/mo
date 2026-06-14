@@ -107,7 +107,11 @@ Response (always HTTP 200, `Cache-Control: no-store`):
 
 ```jsonc
 // signed-in
-{ "signedIn": true, "identity": { "name": "Max Mustermann", "tier": 3 } }
+{
+  "signedIn": true,
+  "identity": { "name": "Max Mustermann", "tier": 3 },
+  "marketing": { "status": "none", "optInActionable": true }
+}
 // not signed in (or anything unprovable — fails closed)
 { "signedIn": false }
 ```
@@ -116,6 +120,17 @@ Response (always HTTP 200, `Cache-Control: no-store`):
   if Shopify returns no name — render a neutral fallback in that case.
 - `tier` is `3` for a signed-in customer. The widget never sees tokens, email,
   addresses, or orders in CA-1 (those arrive in CA-2/CA-3).
+- **`marketing`** (present only when `signedIn: true`) drives the **at-sign-in
+  opt-in** and the **tier-3 suppression** (§6):
+  - `status` — our DOI marketing state for this customer:
+    `"none" | "pending" | "confirmed" | "unsubscribed"`. This is **our**
+    double-opt-in state only; signing in never imports Shopify's marketing state.
+  - `optInActionable` — `true` ⇔ surface the at-sign-in opt-in card (§6.1). It is
+    `true` exactly when the customer has **no marketing decision on record yet**
+    (`status === "none"`) **and** has a real verified email. It is `false` once a
+    decision exists (`pending` / `confirmed` / `unsubscribed`) or for the rare
+    account with no verified email. Treat it as the single source of truth for
+    "should I show the opt-in" — don't re-derive it from `status` yourself.
 - A `CORS` preflight (`OPTIONS`) is supported; the endpoint advertises
   `GET, OPTIONS`.
 
@@ -143,23 +158,51 @@ The account/history linkage is **not** deleted — logging out ends the session,
 not the account (full erasure is §7.5). Same open-redirect rule as login:
 `return_url` must be an allow-listed storefront origin.
 
-## 6. What does NOT change
+## 6. What does NOT change — and where the opt-in moves for tier 3
 
 The anonymous and email-capture flows are untouched. Sign-in is **identity only**
 — it does **not** opt the customer into marketing. The double-opt-in email flow
 remains the only path to marketing consent. A visitor can use the chat fully
 without ever signing in.
 
-### 6.1 Optional: the at-sign-in marketing opt-in (v3)
+### 6.0 Tier-3 suppression contract (end-of-chat capture widget)
 
-A signed-in customer **may** be offered a one-tick marketing opt-in that skips
-re-typing their email (we already hold the verified address). It is **still the
-same double-opt-in**, **still unticked by default**, and **still a separate,
-explicit act** — signing in never enrols anyone. Render contract (copy +
-endpoint) is in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §2
-(`GET /api/consent-copy?surface=signin` → tick → `POST
-/api/account/marketing-opt-in`). Only show it once `/api/auth/me` reports
-`signedIn: true`; never pre-tick it.
+For a **signed-in (tier 3)** customer the redesign **moves** the marketing
+opt-in: the **end-of-chat email-summary + marketing-opt-in widget is
+suppressed**, and the opt-in is surfaced **at sign-in** instead (§6.1).
+
+- **Gate on `tier`.** `/api/auth/me` returns `identity.tier`. When `tier === 3`,
+  **do not render** the end-of-chat capture/opt-in card (the "type your email +
+  get the summary + tick marketing" widget). A signed-in customer doesn't need
+  it: they can **download** the summary instead (§8) and their opt-in lives at
+  sign-in.
+- **Tiers 1–2 are unchanged.** Anonymous and email-only visitors still get the
+  end-of-chat capture form exactly as today (the `offer_email_summary` tool flow
+  in [`API_CONTRACT.md`](./API_CONTRACT.md) §2/§7). This is purely a tier-3
+  frontend gate — the backend's capture flow is untouched.
+
+### 6.1 The at-sign-in marketing opt-in (v3) — gated on `optInActionable`
+
+A signed-in customer is offered a one-tick marketing opt-in that skips re-typing
+their email (we already hold the verified address). It is **still the same
+double-opt-in**, **still unticked by default**, and **still a separate, explicit
+act** — signing in never enrols anyone.
+
+**When to show it — read `marketing.optInActionable` from `/api/auth/me` (§4).**
+Show the at-sign-in opt-in card **only** when `signedIn: true` **and**
+`marketing.optInActionable === true`. That flag is `true` exactly for a signed-in
+customer who has **not yet recorded a marketing decision**; it is `false` once
+they've decided (DOI `pending` / `confirmed` / unsubscribed) — so a customer who
+already opted in (or whose prior opt-in carried forward when their email merged
+into the signed-in identity) is **not** re-asked. The widget MAY additionally
+remember a local "dismissed" state for the session so a customer who closed the
+card isn't shown it again in the same session — but the **backend** truth for
+"already decided" is `optInActionable: false`.
+
+Render contract (copy + submit endpoint) is in
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §2 (`GET /api/consent-copy?surface=signin`
+→ tick → `POST /api/account/marketing-opt-in`). Never pre-tick it. After a
+successful opt-in, the next `/api/auth/me` reports `optInActionable: false`.
 
 ## 7. Signed-in conversation history (CA-3-THEME contract)
 
@@ -313,3 +356,75 @@ unchanging identity link. See [`API_CONTRACT.md`](./API_CONTRACT.md) §2
   **`conversationKey`** as the active thread; the next `/api/chat` turn sends
   that key and appends to the right thread.
 - **Omit `conversationKey`** → legacy one-thread-per-session (backward-compatible).
+
+## 8. Download a conversation summary — `GET /api/account/summary`
+
+Backs the widget's **"Zusammenfassung herunterladen"** button for a signed-in
+customer. It returns the **same** structured summary as the email motion sports
+mails after a chat — AI prose → chosen products → **Zur Kasse** → divider →
+**"Vielleicht auch interessant:"** alternatives — rendered with the **same
+branded template**. (It is literally the email renderer; the download and the
+mailed summary can't diverge.)
+
+**Format: a branded HTML document, served as a file attachment.** HTML was chosen
+because it reuses the email template directly (no PDF pipeline). You receive the
+HTML as the response body of a guarded XHR and save it as a file client-side.
+
+```
+GET {BASE_URL}/api/account/summary?conversationKey={conversationKey}
+Headers:
+  x-ms-chat-key: {shared secret}
+  Origin:        {storefront origin}        (browser-set)
+  x-ms-session:  {session_id}               (or ?session= query param)
+```
+
+- **`conversationKey`** is the per-thread key from the history list / transcript
+  (§7.1/§7.2) — the same value you send on `/api/chat` to resume a thread. **Not**
+  the numeric `conversationId`. For the **active** chat, use the thread's current
+  `conversationKey`.
+- **Same fail-closed guards as the rest of `/api/account/*`**: an anonymous /
+  email-only / logged-out session → **401**. Only offer the button once
+  `/api/auth/me` reports `signedIn: true`.
+- The thread must belong to the caller — a key that isn't this customer's (or is
+  unknown) returns **404** `bad_request` (`"Konversation nicht gefunden"`), same
+  as a missing one. A missing/empty `conversationKey` → **400** `bad_request`.
+
+### Success response
+
+```http
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Disposition: attachment; filename="motionsports-zusammenfassung-….html"
+Cache-Control: no-store
+```
+
+The body is the full branded HTML document (a complete `<!DOCTYPE html>` page).
+
+### Triggering the download from the widget
+
+Because the endpoint is a **guarded XHR** (it needs the `x-ms-chat-key` + session
+headers, which a plain `<a download>` / `window.location` navigation can't send),
+fetch it and save the body as a `Blob`:
+
+```js
+const res = await fetch(
+  `${BASE_URL}/api/account/summary?conversationKey=${encodeURIComponent(conversationKey)}`,
+  { headers: { "x-ms-chat-key": SHARED_SECRET, "x-ms-session": sessionId } }
+);
+if (!res.ok) { /* 401 → re-auth UI; 404 → "nicht gefunden"; else generic error */ }
+const blob = await res.blob();           // text/html
+const url = URL.createObjectURL(blob);
+const a = Object.assign(document.createElement("a"), {
+  href: url,
+  download: "motionsports-zusammenfassung.html",   // name it yourself; server name is advisory
+});
+a.click();
+URL.revokeObjectURL(url);
+```
+
+- The download is **on-demand and may make one AI call** (the German prose
+  summary), so it can take a moment — show a spinner and don't impose a short
+  timeout. If the model/API is unavailable it gracefully falls back to a plain
+  transcript summary (never an error).
+- It reflects the thread's **current** state (latest selected/discussed products,
+  newest transcript) each time it's downloaded.

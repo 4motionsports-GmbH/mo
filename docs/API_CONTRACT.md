@@ -23,10 +23,12 @@ Endpoints:
 | GET    | `/api/unsubscribe`        | Signed unsubscribe link → suppression (HTML page).        |
 | GET    | `/api/auth/shopify/login` | Customer Account sign-in (top-level redirect). |
 | GET    | `/api/auth/shopify/callback` | OAuth callback (server-side PKCE exchange). |
-| GET    | `/api/auth/me`            | Signed-in identity re-hydration (`{ name, tier }`). |
+| GET    | `/api/auth/me`            | Signed-in identity re-hydration (`{ name, tier, marketing }`). |
 | GET    | `/api/auth/shopify/logout/return` | Logout-return landing. |
 | GET    | `/api/account/conversations` | Signed-in: LIST past conversations (tier 3). |
 | GET/PATCH/DELETE | `/api/account/conversations/{id}` | Signed-in: fetch / rename / delete one conversation. |
+| GET    | `/api/account/summary`    | Signed-in: download a thread's S5 summary as branded HTML. |
+| POST   | `/api/account/marketing-opt-in` | Signed-in: at-sign-in marketing opt-in (DOI). |
 | POST   | `/api/account/erase`      | Signed-in: full "delete my data" (erase customer). |
 
 > **Customer Account sign-in (tier 3)** is documented in full in
@@ -36,7 +38,12 @@ Endpoints:
 > CORS/secret); `/api/auth/me` is a guarded widget XHR. The **signed-in
 > conversation-history** endpoints (`/api/account/*`) are guarded widget XHRs
 > behind the CA-1 signed-in resolver (fail-closed for anonymous / email-only) —
-> see `CUSTOMER_ACCOUNT.md` §9.
+> see `CUSTOMER_ACCOUNT.md` §9. `/api/account/summary` (the **"Zusammenfassung
+> herunterladen"** download — branded HTML reusing the summary-email renderer),
+> `/api/account/marketing-opt-in` (the **at-sign-in opt-in**), and the
+> **tier-3 suppression contract** (`/api/auth/me`'s `tier` gates off the
+> end-of-chat capture widget for tier 3; `marketing.optInActionable` gates the
+> at-sign-in card) are documented in `CUSTOMER_ACCOUNT.md` §10–§11.
 
 > `/api/confirm-marketing` and `/api/unsubscribe` are **clicked from emails**
 > as top-level browser navigations — they return an HTML page, not JSON, and

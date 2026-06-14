@@ -7,6 +7,12 @@
 > gate and data-minimisation (see [§8](#8-signed-in-data-in-the-profile--live-chat-ca-2--ca-3)).
 > **Signed-in conversation history** (list / fetch / rename / delete + full
 > "delete my data") is documented in [§9](#9-signed-in-conversation-history-tier-3).
+> **CA-4** (at-sign-in marketing opt-in) is in [§10](#10-at-sign-in-marketing-opt-in--the-match-up-ca-4),
+> which also pins the **tier-3 suppression contract** (the end-of-chat capture
+> widget is suppressed for signed-in customers; the opt-in moves to sign-in) and
+> the `marketing.optInActionable` state. The signed-in **conversation summary
+> download** (the S5 summary email reused as a downloadable HTML document) is in
+> [§11](#11-conversation-summary-download-signed-in-s5-structure-reused).
 > The authoritative feasibility report is
 > [`CUSTOMER_ACCOUNT_SPIKE.md`](./CUSTOMER_ACCOUNT_SPIKE.md); this document
 > describes what was built.
@@ -507,3 +513,79 @@ existing-customer audience (`customers.bestandskunde_eligible`, recomputed on
 every purchase refresh). That basis is **never merged** with DOI consent and its
 real sends stay gated behind the distinct `BESTANDSKUNDE_SENDS_APPROVED` flag —
 full details in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
+
+### Where the opt-in is surfaced for tier 3 — and where it is NOT
+
+The tier-3 chat experience **moves** the marketing opt-in: the end-of-chat
+email-summary + marketing capture widget is **suppressed** for signed-in
+customers, and the opt-in is offered **at sign-in** instead (the CA-4 card). The
+two states the widget reads are both already in the backend; CA-4 just pins the
+contract.
+
+- **Suppression gate — tier.** `/api/auth/me` returns `identity.tier`. The widget
+  **suppresses** the end-of-chat capture/opt-in widget when `tier === 3` (a
+  signed-in customer): they don't need the "type your email + summary" capture —
+  the summary is downloadable (§11) and the opt-in lives at sign-in. **Tiers 1–2
+  are unchanged**: the end-of-chat capture form still shows for anonymous /
+  email-only visitors exactly as before. This is a **frontend gate on an existing
+  field** — no backend behaviour change; sign-in is still identity, not consent.
+- **At-sign-in opt-in actionability — `marketing.optInActionable`.** `/api/auth/me`
+  now also returns `marketing: { status, optInActionable }`. The widget's
+  `optInActionable` flag reads this: the CA-4 card is shown to a signed-in
+  customer who has **not yet recorded a marketing decision**, and hidden once
+  they have. `optInActionable` is computed fail-closed as:
+
+  ```
+  optInActionable = signedIn
+                 && customer has a REAL verified email (not the shopify:<id> placeholder)
+                 && marketing_status === 'none'      // no DOI decision on record yet
+  ```
+
+  `marketing_status` is **our DOI state only** (`customers.marketing_status`,
+  mirrored from `email_captures`) — sign-in **never** imports Shopify's marketing
+  state (§1), so a freshly signed-in customer starts at `'none'` → **actionable**,
+  unless a **prior DOI under their verified email carried forward on merge** (§4
+  stamp branch), in which case it's already `pending`/`confirmed`/`unsubscribed`
+  → **not actionable** (decided). A synthetic-email tier-3 row (no real address to
+  DOI) is also **not actionable**. "Dismissed" (the customer closed the card
+  without ticking) is a **widget-local** state the backend does not track — once a
+  real decision is recorded via `POST /api/account/marketing-opt-in` the backend
+  flips `status` away from `'none'` and `optInActionable` becomes `false` on the
+  next `/api/auth/me`.
+
+The opt-in submit itself is unchanged (`POST /api/account/marketing-opt-in`,
+above): explicit `marketingConsent: true`, the existing DOI, our verified email.
+
+## 11. Conversation summary download (signed-in, S5 structure reused)
+
+A signed-in (tier-3) customer can **download** a summary of any one of their
+threads from the widget's **"Zusammenfassung herunterladen"** button. It is the
+**same** S5 structured summary as the transactional summary **email** — AI prose
+→ chosen products → **Zur Kasse** → divider → **"Vielleicht auch interessant:"**
+alternatives — produced by the **very same renderer** (`buildSummaryDocument` →
+`renderBrandedEmail`, `lib/summary-email.ts`), not a second format. The email and
+the download can therefore never drift apart.
+
+### Format: styled HTML (the branded email shell)
+
+The download is the branded **HTML** document the email uses, returned as a file
+attachment (`Content-Type: text/html`, `Content-Disposition: attachment`). **HTML
+was chosen deliberately**: it reuses the email template byte-for-byte with **no
+new dependency**; a PDF would require a headless-render pipeline and a second
+layout to maintain. The widget fetches the endpoint as a guarded XHR (so it can
+send the shared-secret + session headers), then saves the response body as a
+`Blob` behind the button.
+
+### Endpoint — `GET /api/account/summary?conversationKey=<key>`
+
+| | |
+|---|---|
+| **Guard** | the standard signed-in gate (`requireSignedInCustomer`): origin allowlist + `x-ms-chat-key` + a **live** access token. Anonymous / email-only / logged-out → **401**, fail closed. |
+| **Scope** | keyed by the thread's **`conversationKey`** (migration 0018). The thread must belong to the caller (`conversation_key + customer_id = self`); a foreign/unknown key is a clean **404** — indistinguishable from missing (no enumeration leak). |
+| **Body** | the full branded HTML summary document. |
+| **Cost (S6)** | when it makes a model call (Anthropic summary prose), the token usage is recorded as the **`summary_download`** call site, **linked to the conversation** so it cascade-deletes with the transcript on single-chat delete / erasure. No model call (no API key / empty transcript) → nothing recorded; the document degrades to the plain transcript, exactly like the email. |
+
+The `conversationKey` is the per-thread key the history list / transcript already
+return (§9, migration 0018) and the widget already sends on `/api/chat`. The
+numeric `conversationId` keys the rename/delete routes; the **summary download
+keys on `conversationKey`** (the thread), matching the thread model.
