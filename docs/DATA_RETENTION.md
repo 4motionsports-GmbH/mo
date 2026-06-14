@@ -117,6 +117,47 @@ DELETE, so the Shopify side stays reversible too).
 
 ---
 
+## Cluster B (cont.) — Korrespondenz (E-Mail)
+
+**Lawful basis: performance of a contract / legitimate interest (Art. 6(1)(b) /
+6(1)(f)) — NOT marketing consent.** `email_messages` (migration `0021`, see
+[`EMAIL_SUBSYSTEM_SPIKE.md`](./EMAIL_SUBSYSTEM_SPIKE.md)) is the **unified mail
+log**: every email we send (a mirror-write at each send site) and every reply we
+receive (the Resend Inbound webhook `/api/inbound/resend`). Answering a customer
+who wrote to us rests on contract / legitimate interest, **independent** of
+`marketing_doi_status`. It is therefore its **own data category** and is **never
+fused** into the consent gates (`canSendMarketing` / `loadEligibleCapture`) or
+the §7(3) Bestandskunden audience — the same "never merge the bases" discipline
+as `migrations/0017`.
+
+Its only personal link is the nullable `customer_id` (`ON DELETE SET NULL`); a
+reply from an **unknown** address is stored with `customer_id = NULL` (the
+"unmatched inbound" triage queue). Attachments are stored as **metadata only**
+(filename / type / size / provider ref) — never the blob.
+
+| Table | What's stored | Lawful basis |
+| --- | --- | --- |
+| `email_messages` | direction (sent/received), RFC-5322 identity + threading (message_id, in_reply_to, references, derived thread_id), from/to/subject/body, snippet, attachment **metadata**, provider refetch handle, nullable `customer_id` + `marketing_send_id` | Contract / legitimate interest |
+
+### Retention windows (Korrespondenz)
+
+| Data | Default window | Env var | Action on expiry / erasure |
+| --- | --- | --- | --- |
+| `email_messages` | **365 days** (by `occurred_at`) | `CORRESPONDENCE_RETENTION_DAYS` | Hard delete on its **own** schedule. |
+| `email_messages` → customer link | follows the customer | — | Erasing the customer **SET NULL**s `customer_id`; the row itself is retained until its own window above. |
+
+**Why it purges on its own schedule (not with the customer).** The `customer_id`
+FK is `ON DELETE SET NULL`, so a GDPR erasure / customer purge **detaches** the
+correspondence (removing the person link) but does **not** cascade-delete the
+audit row — that would let a customer deletion silently drop correspondence
+mid-window. Correspondence instead leaves on the `CORRESPONDENCE_RETENTION_DAYS`
+window, longer than the 180-day analytics window because a reply thread stays
+useful well beyond a single chat session. *(Window + the lawfulness of feeding
+correspondence body into the KB passes are pending Legal/DPO sign-off — see the
+spike §3.)*
+
+---
+
 ## Cluster B (cont.) — Signed-in customers (tier 3)
 
 **Lawful basis: performance of a contract / legitimate interest (Art. 6(1)(b) /
@@ -218,6 +259,10 @@ by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
    the linked conversations to plain pseudonymous rows (see
    [`CUSTOMERS.md`](./CUSTOMERS.md)), and their `customer_oauth_tokens` cascade
    away.
+5b. Deletes `email_messages` (Korrespondenz) past `CORRESPONDENCE_RETENTION_DAYS`
+   (by `occurred_at`) — its **own** schedule, decoupled from the consent-capture
+   grace; the `ON DELETE SET NULL` customer link means a customer erasure
+   detaches (never cascade-deletes) these rows.
 6. Purges expired `customer_auth_pending` rows (the short-lived sign-in
    CSRF/PKCE state).
 
@@ -233,13 +278,14 @@ The endpoint returns a JSON summary with the counts affected, e.g.:
 ```json
 {
   "ok": true,
-  "options": { "retentionDays": 180, "kpiRetentionDays": 180, "abandonAfterMinutes": 30, "suppressedPurgeDays": 30 },
+  "options": { "retentionDays": 180, "kpiRetentionDays": 180, "abandonAfterMinutes": 30, "suppressedPurgeDays": 30, "correspondenceRetentionDays": 365 },
   "abandonedConversations": 4,
   "deletedConversations": 12,
   "deletedKpiEvents": 833,
   "deletedAiUsage": 27,
   "purgedSuppressedCaptures": 1,
   "purgedSuppressedCustomers": 1,
+  "deletedEmailMessages": 5,
   "purgedAuthPending": 3,
   "ranAt": "2026-06-03T03:30:00.000Z"
 }

@@ -31,6 +31,8 @@ export interface RetentionOptions {
   abandonAfterMinutes: number;
   /** email_captures that are unsubscribed or suppressed are purged after this grace. */
   suppressedPurgeDays: number;
+  /** email_messages (Korrespondenz) older than this (by occurred_at) are deleted. */
+  correspondenceRetentionDays: number;
 }
 
 export interface RetentionResult {
@@ -41,6 +43,8 @@ export interface RetentionResult {
   deletedAiUsage: number;
   purgedSuppressedCaptures: number;
   purgedSuppressedCustomers: number;
+  /** email_messages (correspondence) purged past the Korrespondenz window. */
+  deletedEmailMessages: number;
   /** Expired customer_auth_pending rows (CSRF/PKCE state) removed. */
   purgedAuthPending: number;
   ranAt: string;
@@ -59,6 +63,9 @@ export function retentionOptionsFromEnv(): RetentionOptions {
     kpiRetentionDays: intEnv("KPI_RETENTION_DAYS", 180),
     abandonAfterMinutes: intEnv("ABANDON_AFTER_MINUTES", 30),
     suppressedPurgeDays: intEnv("SUPPRESSED_CAPTURE_PURGE_DAYS", 30),
+    // Correspondence (Art. 6(1)(b)/(f)) is kept longer than analytics — a reply
+    // thread stays useful well beyond a chat session. 12 months by default.
+    correspondenceRetentionDays: intEnv("CORRESPONDENCE_RETENTION_DAYS", 365),
   };
 }
 
@@ -86,6 +93,7 @@ export async function runRetention(
   const conversationCutoff = daysAgo(opts.retentionDays);
   const kpiCutoff = daysAgo(opts.kpiRetentionDays);
   const suppressedCutoff = daysAgo(opts.suppressedPurgeDays);
+  const correspondenceCutoff = daysAgo(opts.correspondenceRetentionDays);
 
   // 1. Mark stale active conversations abandoned.
   const abandoned = await sql`
@@ -165,6 +173,20 @@ export async function runRetention(
     SELECT count(*)::int AS n FROM del
   `;
 
+  // 5b. Purge correspondence (email_messages) past its OWN window. It is its
+  //     own data category (Korrespondenz), so it purges on its own schedule —
+  //     NOT with the consent-capture grace. The customer FK is ON DELETE SET
+  //     NULL, so a customer erasure detaches (but does not cascade-delete) these
+  //     rows; they leave here, by occurred_at, on the correspondence window.
+  const deletedEmailMessages = await sql`
+    WITH del AS (
+      DELETE FROM email_messages
+       WHERE occurred_at < ${correspondenceCutoff}
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM del
+  `;
+
   // 6. Purge expired pending-auth records (short-lived CSRF/PKCE state). The
   //    encrypted token rows (customer_oauth_tokens) carry no separate window —
   //    they cascade with the customer (ON DELETE CASCADE), so a GDPR erasure /
@@ -178,6 +200,7 @@ export async function runRetention(
     deletedAiUsage: deletedAiUsage[0]?.n ?? 0,
     purgedSuppressedCaptures: purgedCaptures[0]?.n ?? 0,
     purgedSuppressedCustomers: purgedCustomers[0]?.n ?? 0,
+    deletedEmailMessages: deletedEmailMessages[0]?.n ?? 0,
     purgedAuthPending,
     ranAt: new Date().toISOString(),
   };

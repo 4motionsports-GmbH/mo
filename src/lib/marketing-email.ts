@@ -26,7 +26,9 @@ import {
   markSent,
   generateRedirectToken,
 } from "./marketing-store";
-import { sendEmail } from "./email";
+import { sendEmail, senderAddress } from "./email";
+import { outboundThreading } from "./email-inbound";
+import { recordSentMessage } from "./email-messages-store";
 import {
   renderBrandedEmail,
   escapeHtml,
@@ -210,12 +212,17 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         bundle,
       });
 
+      // Our own Message-ID + an inbound Reply-To so a reply threads back into
+      // the unified mail log (mirror-write below).
+      const threading = outboundThreading();
       const result = await sendEmail({
         to: email,
         subject: claimed.subject ?? "motion sports",
         text,
         html,
         kind: "marketing",
+        messageId: threading.messageId,
+        replyTo: threading.replyTo,
       });
 
       if (!result.ok) {
@@ -241,6 +248,20 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         cartUrl,
         draftedText: body,
         redirectToken,
+      });
+
+      // MIRROR-WRITE (additive, fail-soft): record this campaign send in the
+      // unified mail log, LINKED to the workflow row via marketing_send_id. The
+      // body we actually shipped is `text`. Never blocks the send.
+      await recordSentMessage({
+        toAddress: email,
+        fromAddress: senderAddress() ?? "",
+        subject: claimed.subject ?? "motion sports",
+        bodyText: text,
+        bodyHtml: html,
+        messageId: threading.messageId,
+        customerId: claimed.customerId,
+        marketingSendId: sendId,
       });
       return { ok: true, sentTo: email };
     } catch (err) {

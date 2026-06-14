@@ -24,7 +24,9 @@ import { errorResponse, reportError } from "@/lib/observability";
 import { resolveConsentCopyVersion } from "@/lib/consent-copy-version.mjs";
 import { upsertEmailCapture } from "@/lib/email-capture-store";
 import { getCustomerById, linkCustomerOnEmailCapture } from "@/lib/customer-store";
-import { sendEmail } from "@/lib/email";
+import { sendEmail, senderAddress } from "@/lib/email";
+import { outboundThreading } from "@/lib/email-inbound";
+import { recordSentMessage } from "@/lib/email-messages-store";
 import { getBaseUrl } from "@/lib/base-url";
 import {
   DOI_EMAIL_SUBJECT,
@@ -156,14 +158,28 @@ export async function POST(req: Request) {
     if (capture.doiEmailRequired && capture.doiToken) {
       const confirmUrl = `${getBaseUrl(req)}/api/confirm-marketing?token=${encodeURIComponent(capture.doiToken)}`;
       const body = doiEmailBody(confirmUrl);
+      const threading = outboundThreading();
       const doiResult = await sendEmail({
         to: email,
         subject: DOI_EMAIL_SUBJECT,
         text: body.text,
         html: body.html,
         kind: "doi",
+        messageId: threading.messageId,
+        replyTo: threading.replyTo,
       });
       doiEmailSent = doiResult.ok;
+      // MIRROR-WRITE (additive, fail-soft): log the DOI mail as correspondence.
+      if (doiResult.ok) {
+        await recordSentMessage({
+          toAddress: email,
+          fromAddress: senderAddress() ?? "",
+          subject: DOI_EMAIL_SUBJECT,
+          bodyText: body.text,
+          bodyHtml: body.html,
+          messageId: threading.messageId,
+        });
+      }
       if (!doiResult.ok && !doiResult.skipped) {
         // The pending consent is stored; the user just didn't get the link. Log
         // it (they can re-request) rather than failing the whole opt-in.
