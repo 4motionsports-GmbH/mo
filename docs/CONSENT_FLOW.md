@@ -196,6 +196,16 @@ user ticks the box  ────────────────────
 user clicks confirm link ─────────────────────► GET /api/confirm-marketing  → 'confirmed'
 ```
 
+**Where it is surfaced (CA-4 placement).** The at-sign-in opt-in card is shown
+**only** to a signed-in customer who has **not yet recorded a marketing
+decision** — the widget gates it on `marketing.optInActionable` from
+`/api/auth/me` (`true` ⇔ `marketing_status === 'none'` **and** a real verified
+email; `false` once `pending`/`confirmed`/`unsubscribed`, or for a synthetic
+email). For tier-3 customers the **end-of-chat** email-summary + opt-in capture
+widget is **suppressed** (the widget gates that off `identity.tier === 3`); the
+opt-in lives here at sign-in instead. Tiers 1–2 keep the end-of-chat capture
+unchanged. See [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §10–§11.
+
 The widget render contract is in
 [`frontend-handoff/CONSENT_FLOW.md`](./frontend-handoff/CONSENT_FLOW.md) §2.
 

@@ -13,9 +13,14 @@
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
-import { resolveSignedInCustomer } from "@/lib/customer-store";
+import { getCustomerById, resolveSignedInCustomer } from "@/lib/customer-store";
 import { getValidAccessToken } from "@/lib/customer-oauth-store";
 import { fetchCustomerIdentity } from "@/lib/shopify-customer-account";
+
+// A tier-3 row created with no verified Shopify email claim is keyed by this
+// synthetic placeholder — it can't receive a DOI / marketing mail, so the
+// at-sign-in opt-in is NOT actionable for it.
+const SYNTHETIC_EMAIL_PREFIX = "shopify:";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -75,7 +80,42 @@ export async function GET(req: Request) {
       reportError(err, { route: "api/auth/me", phase: "fetchIdentity" });
     }
 
-    return json({ signedIn: true, identity: { name, tier: resolved.tier } }, headers);
+    // At-sign-in marketing opt-in state (CA-4). The widget gates its at-sign-in
+    // opt-in card on `marketing.optInActionable`: surface it ONLY for a signed-in
+    // customer who has NOT yet recorded a marketing decision. "No decision yet"
+    // is marketing_status === 'none'; any DOI decision already on record
+    // (pending / confirmed / unsubscribed) makes it non-actionable, as does a
+    // synthetic placeholder email (no real address to send a DOI to). This is
+    // our DOI consent state only — sign-in NEVER imports Shopify's marketing
+    // state, so a signed-in customer always starts at 'none' unless a prior DOI
+    // under their verified email carried forward on merge.
+    let marketingStatus: "none" | "pending" | "confirmed" | "unsubscribed" = "none";
+    let optInActionable = false;
+    try {
+      const customer = await getCustomerById(resolved.customerId);
+      if (customer) {
+        marketingStatus = customer.marketingStatus;
+        const hasRealEmail =
+          !!customer.email &&
+          customer.email.includes("@") &&
+          !customer.email.startsWith(SYNTHETIC_EMAIL_PREFIX);
+        optInActionable = hasRealEmail && marketingStatus === "none";
+      }
+    } catch (err) {
+      // Best-effort: a read failure degrades to "not actionable" (fail-closed —
+      // we never invite an opt-in we can't substantiate) without dropping the
+      // signed-in identity.
+      reportError(err, { route: "api/auth/me", phase: "marketingState" });
+    }
+
+    return json(
+      {
+        signedIn: true,
+        identity: { name, tier: resolved.tier },
+        marketing: { status: marketingStatus, optInActionable },
+      },
+      headers
+    );
   } catch (err) {
     reportError(err, { route: "api/auth/me" });
     return json({ signedIn: false }, headers);

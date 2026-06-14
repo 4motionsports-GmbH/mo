@@ -109,7 +109,11 @@ Body:
 - **Fail-closed auth** (same as the rest of `/api/account/*`): an anonymous or
   email-only (not Shopify-signed-in) or logged-out session gets **401**
   `{ "error": { "code": "unauthorized" } }`. Only show this surface once
-  `/api/auth/me` reports `signedIn: true`.
+  `/api/auth/me` reports `signedIn: true` **and**
+  `marketing.optInActionable === true` (a signed-in customer with no marketing
+  decision on record yet). Once they've decided — opted in here, or a prior DOI
+  carried forward on merge — `optInActionable` is `false` and the card is **not**
+  shown. See [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §4 + §6.1.
 - `400 marketing_consent_required` — the box wasn't ticked (`marketingConsent`
   not `true`). Surface a gentle "please tick to confirm" hint.
 - `422 no_verified_email` — the account has no verified email on file (rare).

@@ -25,7 +25,7 @@
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
-import type { TranscriptMessage } from "./conversation-store";
+import type { TranscriptMessage, ConversationSummaryData } from "./conversation-store";
 import { deriveConversationTitle } from "./conversation-title.mjs";
 
 // Bound the history list. A signed-in customer's own past consultations — more
@@ -188,6 +188,69 @@ export async function getCustomerConversationTranscript(
     };
   } catch (err) {
     reportError(err, { route: "lib/account-history", phase: "getCustomerConversationTranscript" });
+    return null;
+  }
+}
+
+/**
+ * Load ONE of the signed-in customer's conversations — by its per-THREAD
+ * `conversationKey` (migration 0018) — in the shape the S5 summary renderer
+ * consumes (transcript + the accumulated DISCUSSED / SELECTED product id sets).
+ * This backs the "Zusammenfassung herunterladen" download.
+ *
+ * Ownership is enforced in the WHERE clause (`customer_id = $self`), so a thread
+ * the caller doesn't own — or one belonging to an anonymous/tier-2 session — is
+ * indistinguishable from a missing one (no enumeration leak). `conversation_key`
+ * is unique (migration 0018), so this returns at most one row. Returns null when
+ * there's no DB, an empty key, or no such owned conversation.
+ */
+export async function loadCustomerConversationForSummary(
+  customerId: number,
+  conversationKey: string,
+  sql: Sql | null = getSql()
+): Promise<ConversationSummaryData | null> {
+  if (!sql) return null;
+  const key = conversationKey.trim();
+  if (!key) return null;
+  try {
+    const convRows = (await sql`
+      SELECT id, persona_label, recommended_product_ids, selected_product_ids
+        FROM conversations
+       WHERE conversation_key = ${key}
+         AND customer_id = ${customerId}
+    `) as Array<Record<string, unknown>>;
+    const conv = convRows[0];
+    if (!conv) return null;
+
+    const msgRows = (await sql`
+      SELECT role, content, tool_name
+        FROM messages
+       WHERE conversation_id = ${Number(conv.id)}
+       ORDER BY created_at ASC, id ASC
+    `) as Array<Record<string, unknown>>;
+
+    const messages: TranscriptMessage[] = msgRows.map((r) => ({
+      role: r.role as TranscriptMessage["role"],
+      content: typeof r.content === "string" ? r.content : "",
+      toolName: (r.tool_name as string | null) ?? null,
+    }));
+
+    return {
+      conversationId: Number(conv.id),
+      personaLabel: (conv.persona_label as string | null) ?? null,
+      recommendedProductIds: Array.isArray(conv.recommended_product_ids)
+        ? (conv.recommended_product_ids as string[])
+        : [],
+      selectedProductIds: Array.isArray(conv.selected_product_ids)
+        ? (conv.selected_product_ids as string[])
+        : [],
+      messages,
+    };
+  } catch (err) {
+    reportError(err, {
+      route: "lib/account-history",
+      phase: "loadCustomerConversationForSummary",
+    });
     return null;
   }
 }

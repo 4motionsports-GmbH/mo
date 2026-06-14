@@ -22,6 +22,12 @@ import {
 export type AiCallSite =
   | "chat"
   | "summary_email"
+  // The signed-in (tier-3) "Zusammenfassung herunterladen" download — the same
+  // summary generator as `summary_email`, but produced on demand for the widget
+  // instead of mailed. Dashboard/admin-side spend (not chat-serving). The row is
+  // linked to its conversation so it cascade-deletes on single-chat delete /
+  // erasure, like chat usage.
+  | "summary_download"
   | "marketing_draft"
   | "customer_profile"
   | "top_questions"
