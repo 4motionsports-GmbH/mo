@@ -65,6 +65,10 @@ import {
   Textarea,
   toast,
 } from "./ui";
+import {
+  KorrespondenzPanel,
+  type CorrespondenceMessageProps,
+} from "./KorrespondenzPanel";
 
 interface TranscriptMessage {
   role: "user" | "assistant" | "system" | "tool";
@@ -162,6 +166,8 @@ export interface CustomerProps {
   sessions: CustomerSessionProps[];
   /** This customer's bundle offers (S10/S11), newest first. */
   bundles: CustomerBundleProps[];
+  /** This customer's email correspondence (sent + received), oldest-first. */
+  correspondence: CorrespondenceMessageProps[];
 }
 
 interface ProfileUsage {
@@ -410,6 +416,16 @@ export function CustomerProfileCard({
               : ""}
           </p>
         </Card>
+      </Section>
+
+      {/* Korrespondenz — the per-customer email client (§5): thread view of sent
+          + received mail, lazy body expand, compose/reply via sendEmail(). */}
+      <Section title="Korrespondenz (E-Mail)">
+        <KorrespondenzPanel
+          customerId={customer.id}
+          customerEmail={customer.email}
+          messages={customer.correspondence}
+        />
       </Section>
 
       {/* Personalised marketing email (full-customer context) */}

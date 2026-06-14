@@ -26,6 +26,13 @@ export interface SendEmailInput {
    * callers that don't thread (e.g. the contact form) simply omit it.
    */
   messageId?: string;
+  /**
+   * RFC-5322 reply headers, set on the wire so a reply we SEND threads in the
+   * customer's mail client AND the reply that comes back carries the chain.
+   * Additive — non-reply callers omit them. Ids should be angle-bracketed.
+   */
+  inReplyTo?: string;
+  references?: string[];
   /** Tag used in error logs to identify which mail failed. */
   kind: string;
 }
@@ -64,6 +71,14 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
 
   try {
     const resend = new Resend(apiKey);
+    // Build custom RFC-5322 headers (Message-ID + reply chain) only when set, so
+    // non-threading callers (e.g. the contact form) ship no extra headers.
+    const headers: Record<string, string> = {};
+    if (input.messageId) headers["Message-ID"] = input.messageId;
+    if (input.inReplyTo) headers["In-Reply-To"] = input.inReplyTo;
+    if (input.references && input.references.length > 0) {
+      headers["References"] = input.references.join(" ");
+    }
     const result = await resend.emails.send({
       from,
       to: input.to,
@@ -71,7 +86,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       text: input.text,
       html: input.html,
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
-      ...(input.messageId ? { headers: { "Message-ID": input.messageId } } : {}),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
     });
     if (result.error) {
       reportError(result.error, { route: "lib/email", kind: input.kind, phase: "resend" });

@@ -30,6 +30,10 @@ import {
 } from "@/lib/bestandskunden-store";
 import { isBestandskundenSendsApproved } from "@/lib/bestandskunden.mjs";
 import { listCustomersWithSessions } from "@/lib/customer-store";
+import {
+  listCustomerMessages,
+  listUnmatchedInbound,
+} from "@/lib/email-messages-store";
 import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-store";
 import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
 import { wasDiscountCodeRedeemed } from "@/lib/shopify-orders";
@@ -38,6 +42,7 @@ import type { PersonaArchetype } from "@/lib/types";
 import { MarketingList } from "./MarketingList";
 import { toStatusFilter, type StatusFilter } from "./marketing-filter";
 import { CustomerProfileCard, type CustomerProps } from "./CustomerProfileCard";
+import { UnmatchedInboundQueue } from "./UnmatchedInboundQueue";
 import { KpiTab } from "./KpiTab";
 import { FeedbackTab } from "./FeedbackTab";
 import { OverviewTab } from "./OverviewTab";
@@ -297,8 +302,16 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
         emailSentAt: b.emailSentAt,
         clicked: b.clicked,
       })),
+      // Per-customer email correspondence (§5) — a cheap metadata query; bodies
+      // are fetched lazily on expand. Shape matches CorrespondenceMessageProps.
+      correspondence: await listCustomerMessages(c.id),
     }))
   );
+
+  // The ONE global view: received mail from an unknown address (customer_id
+  // NULL), plus the slim customer list backing the "assign to customer" action.
+  const unmatched = dbReady ? await listUnmatchedInbound() : [];
+  const assignTargets = cards.map((c) => ({ id: c.id, email: c.email }));
 
   return (
     <>
@@ -314,6 +327,9 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
           Einwilligung) hinterlässt — anonyme Sessions bleiben unverknüpft.
         </Banner>
       )}
+
+      {/* The only non-per-customer surface: unmatched inbound triage (§5). */}
+      <UnmatchedInboundQueue messages={unmatched} customers={assignTargets} />
 
       {cards.length > 0 && (
         <p className="mb-4 text-sm text-muted-foreground">

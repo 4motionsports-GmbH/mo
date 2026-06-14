@@ -94,6 +94,56 @@ function stripAngle(token) {
 }
 
 /**
+ * The grouping key for the per-customer thread view. Our 'sent' rows store the
+ * Message-ID WITH angle brackets (generateMessageId emits `<id>`), while inbound
+ * rows store ids bracket-stripped (the webhook normaliser strips them). A reply
+ * and the mail it answers must collapse into ONE conversation, so the admin view
+ * groups by this normalised key (brackets stripped + lower-cased). Returns "" for
+ * an empty/absent id so the caller can fall back to the row id.
+ */
+export function threadKey(threadId) {
+  return stripAngle(threadId).toLowerCase();
+}
+
+/** Ensure an id is angle-bracketed for the wire (`<id>`). Headers ship bracketed;
+ * stored ids may be stripped (inbound) or already bracketed (our outbound). */
+export function ensureAngle(id) {
+  const bare = stripAngle(id);
+  return bare ? `<${bare}>` : "";
+}
+
+/**
+ * The `References` chain for a REPLY to a stored parent message: the parent's own
+ * References followed by the parent's Message-ID (RFC-5322 §3.6.4). All ids are
+ * returned bracket-stripped (the storage form), de-duplicated, order preserved.
+ * The send route angle-brackets them for the wire via ensureAngle.
+ */
+export function buildReplyReferences(parentReferences, parentMessageId) {
+  const refs = parseReferences(parentReferences);
+  const parent = stripAngle(parentMessageId);
+  const chain = parent ? [...refs, parent] : refs;
+  const seen = new Set();
+  const out = [];
+  for (const id of chain) {
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+/**
+ * The subject of a REPLY: prefix `Re: ` unless the subject already carries a
+ * reply/forward marker (Re:/AW:/…). Empty subjects become a bare "Re:".
+ */
+export function replySubject(subject) {
+  if (typeof subject !== "string" || !subject.trim()) return "Re:";
+  const s = subject.trim();
+  return SUBJECT_PREFIX_RE.test(s) ? s : `Re: ${s}`;
+}
+
+/**
  * The STABLE conversation key. Header-first: the root of the References chain
  * (the first/oldest id) identifies the whole thread; failing that the
  * In-Reply-To parent; failing both, the message's own Message-ID (a brand-new
