@@ -55,6 +55,7 @@ import {
   DialogTitle,
   Input,
   Label,
+  Markdown,
   Table,
   TableBody,
   TableCell,
@@ -393,7 +394,7 @@ export function CustomerProfileCard({
       >
         <Card className="bg-muted/40 p-4 shadow-none">
           {profile ? (
-            <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">{profile}</pre>
+            <Markdown content={profile} />
           ) : (
             <p className="text-sm text-muted-foreground">
               <em>Noch kein Profil generiert.</em>
@@ -759,9 +760,10 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
             <summary className="cursor-pointer text-xs font-medium text-accent">
               Gesendeten Text anzeigen
             </summary>
-            <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-muted/50 p-3 font-sans text-sm">
-              {send.draftedText}
-            </pre>
+            <Markdown
+              content={send.draftedText}
+              className="mt-2 rounded-lg bg-muted/50 p-3"
+            />
           </details>
           <p className="mt-2 text-xs text-muted-foreground">
             Du kannst unten jederzeit eine neue personalisierte E-Mail generieren.

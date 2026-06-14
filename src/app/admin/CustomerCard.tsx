@@ -37,6 +37,7 @@ import {
   DialogTitle,
   Input,
   Label,
+  Markdown,
   Textarea,
   toast,
 } from "./ui";
@@ -400,9 +401,10 @@ function SentPanel({ send, email }: { send: MarketingSendRow; email: string }) {
           <summary className="cursor-pointer text-xs font-medium text-accent">
             Gesendeten Text anzeigen
           </summary>
-          <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-muted/50 p-3 font-sans text-sm">
-            {send.draftedText}
-          </pre>
+          <Markdown
+            content={send.draftedText}
+            className="mt-2 rounded-lg bg-muted/50 p-3"
+          />
         </details>
         <p className="mt-2 text-[11px] text-muted-foreground">
           Versendet über das System an {email} — Abmeldelink automatisch angehängt.
