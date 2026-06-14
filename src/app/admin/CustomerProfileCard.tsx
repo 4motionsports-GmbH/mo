@@ -24,7 +24,7 @@
 // MO-XXXX placeholder preview, read-only sent rows, and the per-run token-cost
 // disclosure on the profile (honest cost, kept verbatim).
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ExternalLink,
@@ -1011,7 +1011,11 @@ function BundleOfferSection({
   const [expiryDays, setExpiryDays] = useState<number>(DEFAULT_EXPIRY_DAYS);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CatalogSearchHit[]>([]);
-  const [busy, setBusy] = useState<null | "suggest" | "search" | "create">(null);
+  const [searching, setSearching] = useState(false);
+  const [busy, setBusy] = useState<null | "suggest" | "create">(null);
+  // Monotonic token so an out-of-order debounced response can't clobber a newer
+  // one (the operator types fast; an early request may resolve last).
+  const searchSeq = useRef(0);
   const [bundles, setBundles] = useState<CustomerBundleProps[]>(initialBundles);
 
   const componentSum = components.reduce((s, c) => s + c.unitPrice, 0);
@@ -1073,23 +1077,38 @@ function BundleOfferSection({
     }
   }
 
-  async function onSearch() {
+  // Search-as-you-type over the synced catalog. Debounced so each keystroke
+  // doesn't fire a request; the backend handles case-insensitive +
+  // umlaut-tolerant matching. Results clear below a 2-char query (a single
+  // letter is too coarse to be useful and would just dump the cap).
+  useEffect(() => {
     const q = query.trim();
-    if (!q) return;
-    setBusy("search");
-    try {
-      const { ok, json } = await post("/api/admin/catalog/search", { query: q });
-      if (!ok) {
-        toast({ variant: "error", title: "Fehler", description: json?.error?.message ?? "Suche fehlgeschlagen." });
-        return;
-      }
-      setResults(json.products ?? []);
-    } catch (e) {
-      reportError(e);
-    } finally {
-      setBusy(null);
+    if (q.length < 2) {
+      searchSeq.current++; // invalidate any in-flight response for a longer query
+      setResults([]);
+      setSearching(false);
+      return;
     }
-  }
+    const seq = ++searchSeq.current;
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        const { ok, json } = await post("/api/admin/catalog/search", { query: q });
+        if (seq !== searchSeq.current) return; // a newer query superseded this one
+        if (!ok) {
+          toast({ variant: "error", title: "Fehler", description: json?.error?.message ?? "Suche fehlgeschlagen." });
+          return;
+        }
+        setResults(json.products ?? []);
+      } catch (e) {
+        if (seq === searchSeq.current) reportError(e);
+      } finally {
+        if (seq === searchSeq.current) setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(handle);
+    // `post` is a stable local helper; re-running only on query change is intended.
+  }, [query]);
 
   function addProduct(hit: CatalogSearchHit) {
     if (components.some((c) => c.productId === hit.productId)) return;
@@ -1289,27 +1308,22 @@ function BundleOfferSection({
             </div>
           )}
 
-          {/* Add product by name search */}
+          {/* Add product by name search — filters the synced catalog as you type */}
           <div className="mb-3">
-            <div className="flex gap-1.5">
-              <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      onSearch();
-                    }
-                  }}
-                  placeholder="Produkt suchen (Name)…"
-                  className="pl-9"
-                />
-              </div>
-              <Button variant="secondary" onClick={onSearch} disabled={busy !== null}>
-                {busy === "search" ? "Suche…" : "Suchen"}
-              </Button>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Produkt suchen (Name)…"
+                className="pl-9 pr-16"
+                aria-label="Produkt im Katalog suchen"
+              />
+              {searching && (
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                  Suche…
+                </span>
+              )}
             </div>
             {results.length > 0 && (
               <div className="mt-1.5 flex flex-col gap-1">
@@ -1320,6 +1334,18 @@ function BundleOfferSection({
                       key={r.productId}
                       className="flex items-center gap-2 rounded-md border border-border bg-card px-2 py-1 text-sm"
                     >
+                      {r.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={r.imageUrl}
+                          alt={r.title}
+                          width={28}
+                          height={28}
+                          className="size-7 shrink-0 rounded object-cover"
+                        />
+                      ) : (
+                        <div className="size-7 shrink-0 rounded bg-muted" />
+                      )}
                       <span className="min-w-0 flex-1">
                         {r.title} <span className="text-muted-foreground">· {fmtMoney(r.unitPrice, r.currency)}</span>
                         {!r.inStock && <span className="text-destructive"> · ausverkauft</span>}
@@ -1336,6 +1362,11 @@ function BundleOfferSection({
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {query.trim().length >= 2 && !searching && results.length === 0 && (
+              <div className="mt-1.5 text-xs text-muted-foreground">
+                Keine Treffer für „{query.trim()}“.
               </div>
             )}
           </div>
