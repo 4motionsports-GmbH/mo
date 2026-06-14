@@ -2,20 +2,21 @@
 //
 // Name search over the full synced catalog, for the bundle composer's "add
 // product" box (S11). Reuses the catalog data layer (loadProductCatalog) — name
-// substring matching is enough. Returns the picker shape each match needs
-// (id, title, image, price, stock); sold-out items are returned but FLAGGED so
-// the UI can mark them un-addable (S10 refuses sold-out components anyway).
+// substring matching is enough. The matching itself (case-insensitive, German
+// umlaut-tolerant, AND-term) lives in the pure catalog-search-core so it's
+// unit-testable. Returns the picker shape each match needs (id, title, image,
+// price, stock); sold-out items are returned but FLAGGED so the UI can mark them
+// un-addable (S10 refuses sold-out components anyway).
 //
 // Read-only. Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { loadProductCatalog } from "@/lib/catalog-store";
+import { searchCatalogByName, MAX_SEARCH_RESULTS } from "@/lib/catalog-search-core.mjs";
 import type { Product } from "@/lib/types";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 15;
-
-const MAX_RESULTS = 20;
 
 function effectivePrice(p: Product): number {
   return typeof p.salePrice === "number" && p.salePrice > 0 ? p.salePrice : p.price;
@@ -32,7 +33,7 @@ export async function POST(req: Request) {
   let query: string;
   try {
     const body = (await req.json()) as { query?: unknown };
-    query = String(body.query ?? "").trim().toLowerCase();
+    query = String(body.query ?? "").trim();
     if (!query) return adminJsonError("bad_request", "query required", 400);
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
@@ -40,28 +41,15 @@ export async function POST(req: Request) {
 
   try {
     const catalog = await loadProductCatalog();
-    const terms = query.split(/\s+/).filter((t) => t.length > 1);
-
-    const matches = catalog
-      .filter((p) => {
-        const haystack = `${p.name} ${p.brand ?? ""} ${p.category ?? ""}`.toLowerCase();
-        // Every term must appear (AND) — a focused name search, not fuzzy recall.
-        return terms.every((t) => haystack.includes(t));
-      })
-      // In-stock first (the addable ones), then by name.
-      .sort((a, b) => {
-        if (a.inStock !== b.inStock) return a.inStock ? -1 : 1;
-        return a.name.localeCompare(b.name, "de");
-      })
-      .slice(0, MAX_RESULTS)
-      .map((p) => ({
-        productId: p.id,
-        title: p.name,
-        imageUrl: firstImageUrl(p),
-        unitPrice: effectivePrice(p),
-        currency: p.currency ?? "EUR",
-        inStock: p.inStock !== false,
-      }));
+    const hits = searchCatalogByName(catalog, query, MAX_SEARCH_RESULTS) as Product[];
+    const matches = hits.map((p) => ({
+      productId: p.id,
+      title: p.name,
+      imageUrl: firstImageUrl(p),
+      unitPrice: effectivePrice(p),
+      currency: p.currency ?? "EUR",
+      inStock: p.inStock !== false,
+    }));
 
     return adminJson({ products: matches });
   } catch (err) {
