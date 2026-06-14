@@ -20,6 +20,7 @@
 //   customer_auth_pending          (standalone CSRF/PKCE state — migration 0014)
 //   customer_merge_conflicts       (standalone sign-in conflict audit — migration 0014)
 //   bestandskunden_suppression_list (standalone §7(3) opt-out — migration 0017)
+//   customer_session_links         (FK child of customers — migration 0019)
 //
 // What is NOT touched:
 //   _migrations        — schema version tracking; never touch
