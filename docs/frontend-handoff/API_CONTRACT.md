@@ -131,6 +131,41 @@ full history on every turn (the customer profile is a pure function of
 the messages, reconstructed by replaying `update_customer_profile` tool
 calls), so the widget must send the entire conversation each turn.
 
+#### Optional `conversationKey` — multiple threads under one stable `session_id`
+
+The `session_id` is the **identity** link and must NOT rotate while signed in,
+so it can no longer also be the *thread* key. To support several conversations
+per session (e.g. "Neue Beratung" creating a fresh history entry rather than
+growing one ever-larger thread), the widget MAY send a **`conversationKey`**:
+
+```jsonc
+{
+  "messages": [ /* … */ ],
+  "conversationKey": "c3f1e8a2-…"   // stable, client-generated per THREAD
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `conversationKey` | A stable, client-generated string (e.g. a UUID) identifying **which** conversation under this `session_id` the turn belongs to. ≤ 200 chars. |
+
+Rules:
+- **New chat / "Neue Beratung"** → generate a **fresh** `conversationKey`. The
+  next turn under it creates a new conversation row (a new history entry).
+- **Continuing the active thread** → send the **same** `conversationKey` each turn.
+- **Resuming a past thread** (opened from `GET /api/account/conversations`) →
+  send that item's **`conversationKey`** (now returned by the history endpoints).
+  Appends to the original thread, even from another device.
+- **Omitted** → the backend defaults the key to the `session_id`, preserving the
+  legacy **one-thread-per-session** behaviour (fully backward-compatible). A
+  widget that wants multiple threads MUST send `conversationKey`.
+- `conversationKey` carries the same trust/entropy expectation as `session_id`
+  (an unguessable client value); never reuse another thread's key for a new chat.
+
+> This is **distinct** from the numeric `conversationId` used by the
+> `/api/account/conversations/{id}` routes (rename/delete) — `conversationId`
+> stays the DB id; `conversationKey` is the chat-thread key for `/api/chat`.
+
 #### Optional `context` — opening the chat "about" a product and/or with a browsing trail
 
 When the widget is opened from a specific product page (e.g. a "Frage zu
