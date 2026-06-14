@@ -16,6 +16,9 @@
 //   customers                      (Cluster B — migration 0008)
 //   ai_usage                       (standalone — migration 0012)
 //   bundle_offers                  (FK child of customers + marketing_sends — migration 0013)
+//   customer_oauth_tokens          (FK child of customers — migration 0014)
+//   customer_auth_pending          (standalone CSRF/PKCE state — migration 0014)
+//   customer_merge_conflicts       (standalone sign-in conflict audit — migration 0014)
 //
 // What is NOT touched:
 //   _migrations        — schema version tracking; never touch
@@ -94,6 +97,7 @@ const DATA_TABLES = [
   "messages",              // FK → conversations
   "bundle_offers",         // FK → customers (SET NULL), marketing_sends (SET NULL) — migration 0013
   "marketing_sends",       // FK → email_captures
+  "customer_oauth_tokens", // FK → customers (CASCADE) — migration 0014
   // Parents / standalone tables (conversations before customers: customer_id ON DELETE SET NULL)
   "conversations",
   "kpi_events",
@@ -102,6 +106,9 @@ const DATA_TABLES = [
   "kpi_persona_question_summaries",
   "customers",             // added migration 0008; email_captures/conversations truncated first
   "ai_usage",              // added migration 0012
+  // Standalone tables — no FK constraints
+  "customer_auth_pending",    // CSRF/PKCE state — migration 0014
+  "customer_merge_conflicts", // sign-in conflict audit — migration 0014
 ];
 
 console.log("[reset-test-data] Tables to truncate:");
