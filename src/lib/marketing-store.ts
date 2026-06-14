@@ -666,6 +666,38 @@ export async function updateDraftText(
   }
 }
 
+/**
+ * DELETE an unsent marketing-email draft. Guarded to status = 'draft' — the
+ * inverse of the "sent is read-only" guarantee: a 'sent' row is immutable (never
+ * deletable, preserves the audit/analytics record) and an 'approved' row is an
+ * in-flight send we must not race. Returns true only when this call removed the
+ * row, so a concurrent send (draft → approved/sent) yields false and the caller
+ * surfaces it rather than reporting a phantom delete.
+ *
+ * Nothing external needs cleaning up: a draft mints NO Shopify discount code and
+ * NO redirect token (both happen only at send — see markSent / approveAndSend),
+ * and its placeholder code (MO-XXXX) + preview cart URL live entirely on this
+ * row, so removing the row removes all placeholder/preview state — and mints
+ * nothing.
+ */
+export async function deleteDraftSend(
+  sendId: number,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      DELETE FROM marketing_sends
+       WHERE id = ${sendId} AND status = 'draft'
+      RETURNING id
+    `) as Array<Record<string, unknown>>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "deleteDraftSend" });
+    throw err;
+  }
+}
+
 export interface RegenerateDraftInput {
   subject: string;
   draftedText: string;

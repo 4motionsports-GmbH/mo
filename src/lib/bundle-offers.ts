@@ -22,6 +22,7 @@ import {
   toCents,
   centsToMoney,
   runBundleExpirySweep,
+  isDeletableBundleStatus,
 } from "./bundle-offer-core.mjs";
 import {
   createBundleProduct,
@@ -33,6 +34,7 @@ import {
   markOfferActive,
   markOfferFailed,
   markOfferExpired,
+  deleteDraftOffer,
   getBundleOfferById,
   fetchDueBundleOffers,
   type BundleOfferRow,
@@ -268,6 +270,64 @@ export async function archiveBundleOffer(id: number): Promise<ArchiveBundleOffer
       ok: false,
       reason: "archive_failed",
       message: `Could not archive the offer: ${(err as Error).message}`,
+    };
+  }
+}
+
+export type DeleteDraftBundleOfferResult =
+  | { ok: true; offer: BundleOfferRow }
+  | {
+      ok: false;
+      reason: "not_found" | "not_deletable" | "delete_failed";
+      message: string;
+    };
+
+/**
+ * DELETE a draft/unsent bundle offer (S11 UI). STRICT: only the never-published
+ * DRAFT states (pending/failed — see isDeletableBundleStatus) are deletable. An
+ * active/published or expired offer is rejected with `not_deletable` so the
+ * admin uses the ARCHIVE path (archiveBundleOffer), which keeps the Shopify
+ * product ARCHIVED and the row for audit/KPIs — delete never orphans a live,
+ * sellable product or erases sent/redeemed history.
+ *
+ * Pre-send a draft shouldn't carry a Shopify product, but we guard anyway: if a
+ * (pending/failed) row somehow has a shopify_product_id we ARCHIVE that product
+ * first rather than leaving it orphaned on the store, then remove the row.
+ */
+export async function deleteDraftBundleOffer(
+  id: number
+): Promise<DeleteDraftBundleOfferResult> {
+  const offer = await getBundleOfferById(id);
+  if (!offer) return { ok: false, reason: "not_found", message: "Offer not found." };
+  if (!isDeletableBundleStatus(offer.status)) {
+    return {
+      ok: false,
+      reason: "not_deletable",
+      message: `Offer is ${offer.status}; published/expired offers must be archived, not deleted.`,
+    };
+  }
+  try {
+    // Defensive: a draft shouldn't have a live product, but never orphan one.
+    if (offer.shopifyProductId) {
+      await archiveBundleProduct(offer.shopifyProductId);
+    }
+    const deleted = await deleteDraftOffer(id);
+    if (!deleted) {
+      // The row moved out of a deletable state between read and delete (e.g. a
+      // racing activation) — surface it rather than reporting a phantom success.
+      return {
+        ok: false,
+        reason: "not_deletable",
+        message: "Offer is no longer a deletable draft (it may have just gone live).",
+      };
+    }
+    return { ok: true, offer };
+  } catch (err) {
+    reportError(err, { route: "lib/bundle-offers", phase: "deleteDraftBundleOffer", offerId: id });
+    return {
+      ok: false,
+      reason: "delete_failed",
+      message: `Could not delete the draft offer: ${(err as Error).message}`,
     };
   }
 }
