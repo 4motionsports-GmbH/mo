@@ -127,6 +127,17 @@ The anonymous and email-capture flows are untouched. Sign-in is **identity only*
 remains the only path to marketing consent. A visitor can use the chat fully
 without ever signing in.
 
+### 6.1 Optional: the at-sign-in marketing opt-in (v3)
+
+A signed-in customer **may** be offered a one-tick marketing opt-in that skips
+re-typing their email (we already hold the verified address). It is **still the
+same double-opt-in**, **still unticked by default**, and **still a separate,
+explicit act** — signing in never enrols anyone. Render contract (copy +
+endpoint) is in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §2
+(`GET /api/consent-copy?surface=signin` → tick → `POST
+/api/account/marketing-opt-in`). Only show it once `/api/auth/me` reports
+`signedIn: true`; never pre-tick it.
+
 ## 7. Signed-in conversation history (CA-3-THEME contract)
 
 A **signed-in** customer can browse, open, rename and delete their own past

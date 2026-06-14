@@ -1,4 +1,4 @@
-// GET /api/consent-copy — canonical capture-form consent copy for the widget.
+// GET /api/consent-copy[?surface=signin] — canonical consent copy for the widget.
 //
 // The checkbox labels, the marketing benefit hint, and the pre-composed
 // `consentTextShown` audit string are legally load-bearing (Art. 7 proof of
@@ -7,6 +7,13 @@
 // tool-triggered path; this endpoint serves the same strings for capture
 // forms NOT triggered by the tool (e.g. a proactive share-form entry point),
 // and lets the widget refresh its copy without a theme release.
+//
+// Two surfaces, ONE version stamp (v3):
+//   * default            — the in-chat capture form (email + two checkboxes).
+//   * ?surface=signin    — the AT-SIGN-IN marketing opt-in for a signed-in
+//                          customer (one UNCHECKED benefit-framed box, no email
+//                          field — we already hold the verified address). The
+//                          widget POSTs the tick to /api/account/marketing-opt-in.
 //
 // Public read-only strings already shown to every form user, so no
 // shared-secret auth is required — origin allowlist + rate limit are the
@@ -19,7 +26,7 @@ import {
 } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
-import { captureConsentCopy } from "@/lib/consent-copy";
+import { captureConsentCopy, signInMarketingConsentCopy } from "@/lib/consent-copy";
 
 export const maxDuration = 10;
 
@@ -38,9 +45,13 @@ export async function GET(req: Request) {
     const rl = await checkRateLimit(req, "products");
     if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
+    const surface = new URL(req.url).searchParams.get("surface");
+    const copy =
+      surface === "signin" ? signInMarketingConsentCopy() : captureConsentCopy();
+
     // Short cache only: a lawyer copy change must propagate to live widgets
     // quickly, since the served strings ARE the audit-trail text.
-    return new Response(JSON.stringify(captureConsentCopy()), {
+    return new Response(JSON.stringify(copy), {
       status: 200,
       headers: {
         "Content-Type": "application/json",

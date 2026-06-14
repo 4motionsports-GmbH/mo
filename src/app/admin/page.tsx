@@ -24,6 +24,11 @@ import {
   getLatestSendForEmail,
   type MarketingTarget,
 } from "@/lib/marketing-store";
+import {
+  listBestandskundenAudience,
+  type BestandskundeAudienceRow,
+} from "@/lib/bestandskunden-store";
+import { isBestandskundenSendsApproved } from "@/lib/bestandskunden.mjs";
 import { listCustomersWithSessions } from "@/lib/customer-store";
 import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-store";
 import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
@@ -75,6 +80,13 @@ export default async function AdminDashboardPage({
   // and hand it to both so the numbers agree and the fan-out isn't doubled.
   const targets: MarketingTarget[] = dbReady ? await listMarketingTargets() : [];
 
+  // The SEPARATE §7(3) Bestandskunden audience (completed-purchase basis, never
+  // the DOI list). Cheap DB read (eligibility is precomputed) — shown apart on
+  // the Marketing tab so the two lawful bases never visually blur together.
+  const bestandskunden: BestandskundeAudienceRow[] = dbReady
+    ? await listBestandskundenAudience()
+    : [];
+
   const store = await cookies();
   const themeCookie = store.get(THEME_COOKIE)?.value;
   const themeInitial: Theme | null =
@@ -90,6 +102,8 @@ export default async function AdminDashboardPage({
         <CustomersTab
           dbReady={dbReady}
           targets={targets}
+          bestandskunden={bestandskunden}
+          bestandskundenSendsApproved={isBestandskundenSendsApproved()}
           initialStatus={initialMarketingStatus}
         />
       }
@@ -102,10 +116,14 @@ export default async function AdminDashboardPage({
 function CustomersTab({
   dbReady,
   targets,
+  bestandskunden,
+  bestandskundenSendsApproved,
   initialStatus,
 }: {
   dbReady: boolean;
   targets: MarketingTarget[];
+  bestandskunden: BestandskundeAudienceRow[];
+  bestandskundenSendsApproved: boolean;
   initialStatus: StatusFilter;
 }) {
   const notPurchased = targets.filter((t) => t.purchase.status === "no_purchase").length;
@@ -118,6 +136,12 @@ function CustomersTab({
           geladen werden.
         </Banner>
       )}
+
+      {/* ── Basis 1: DOI-Einwilligung ──────────────────────────────────── */}
+      <BasisHeading
+        label="DOI-Einwilligung"
+        sub="Double-Opt-In bestätigt (Art. 6 Abs. 1 a DSGVO). Werblicher Versand erlaubt."
+      />
 
       {dbReady && targets.length === 0 && (
         <Banner tone="info">
@@ -136,7 +160,59 @@ function CustomersTab({
           <MarketingList targets={targets} initialStatus={initialStatus} />
         </>
       )}
+
+      {/* ── Basis 2: §7(3) Bestandskunden (SEPARATE basis, never merged) ── */}
+      <div className="mt-8">
+        <BasisHeading
+          label="§ 7 Abs. 3 UWG Bestandskunden"
+          sub="Eigene ähnliche Produkte an Kund:innen mit abgeschlossenem Kauf — OHNE Einwilligung, eigener Widerspruch."
+        />
+
+        <Banner tone={bestandskundenSendsApproved ? "info" : "warn"}>
+          {bestandskundenSendsApproved ? (
+            <>
+              Versand <strong>freigeschaltet</strong>{" "}
+              (BESTANDSKUNDE_SENDS_APPROVED). Nur eigene <em>ähnliche</em> Produkte,
+              mit Widerspruchshinweis &amp; separater Sperrliste.
+            </>
+          ) : (
+            <>
+              Versand <strong>deaktiviert</strong> — wartet auf die anwaltliche
+              Freigabe der &bdquo;ähnliche Produkte&ldquo;-Grenze und des
+              Widerspruchstextes (eigenes Flag{" "}
+              <code>BESTANDSKUNDE_SENDS_APPROVED</code>, getrennt von der
+              DOI-Freigabe). Diese Liste ist nur informativ.
+            </>
+          )}
+        </Banner>
+
+        {dbReady && bestandskunden.length === 0 ? (
+          <Banner tone="info">
+            Noch keine Bestandskunden. Sobald ein Kunde einen Kauf abschließt (und
+            die Käufe aktualisiert werden), erscheint er hier — getrennt von der
+            DOI-Liste.
+          </Banner>
+        ) : (
+          <p className="mb-2 text-sm text-muted-foreground">
+            <strong className="text-foreground">{bestandskunden.length}</strong>{" "}
+            Bestandskund:in(nen) mit abgeschlossenem Kauf, ohne Widerspruch.{" "}
+            {bestandskunden.filter((b) => b.hasDoiConsent).length} davon haben{" "}
+            <em>zusätzlich</em> eine DOI-Einwilligung (beide Basen bleiben getrennt).
+          </p>
+        )}
+      </div>
     </>
+  );
+}
+
+// Small labelled separator that names a marketing lawful basis, so the two
+// audiences (DOI-consent vs §7(3) Bestandskunden) never blur together visually.
+function BasisHeading({ label, sub }: { label: string; sub: string }) {
+  return (
+    <div className="mb-3 border-b border-border pb-2">
+      <h3 className="text-base font-semibold text-foreground">{label}</h3>
+      <p className="text-xs text-muted-foreground">{sub}</p>
+    </div>
   );
 }
 

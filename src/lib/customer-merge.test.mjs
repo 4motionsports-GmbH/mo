@@ -24,6 +24,22 @@ test("(b) existing tier-2 row by email → stamp it (the tier-2→3 merge)", () 
   assert.equal(res.conflict, null);
 });
 
+test("MATCH-UP email-only → signed-in: stamp targets the existing email row (its prior DOI consent carries; nothing fused/invented)", () => {
+  // A tier-2 customer who already double-opted-in under this email then signs
+  // in. The merge must STAMP that exact row (id 42) and NEVER create/collide,
+  // so the bind only adds identity columns and the row's existing marketing
+  // consent stays put. (The DB UPDATE never touches consent — asserted by code
+  // review; here we pin the decision that selects the consent-bearing row.)
+  const res = decideMerge({
+    rowByShopifyId: null,
+    rowByEmail: { id: 42, email: EMAIL },
+    shopifyEmail: EMAIL,
+  });
+  assert.equal(res.action, "stamp");
+  assert.equal(res.customerId, 42); // the consent-anchored row, carried forward
+  assert.equal(res.conflict, null); // a clean merge — no review, no fusing
+});
+
 test("(c) nothing matches → create a fresh tier-3 row", () => {
   const res = decideMerge({
     rowByShopifyId: null,

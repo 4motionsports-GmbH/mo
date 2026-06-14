@@ -304,6 +304,15 @@ export async function eraseSignedInCustomer(
         VALUES (${realEmail}, 'erasure')
         ON CONFLICT (email) DO NOTHING
       `);
+      // Suppress the SEPARATE §7(3) Bestandskunden basis too: deleting the
+      // customers row drops the cached eligibility, but a future re-sign-in
+      // would re-derive it from the (unchanged) Shopify purchase history. The
+      // objection list keeps the erasure durable across both lawful bases.
+      queries.push(sql`
+        INSERT INTO bestandskunden_suppression_list (email, reason)
+        VALUES (${realEmail}, 'erasure')
+        ON CONFLICT (email) DO NOTHING
+      `);
       queries.push(sql`DELETE FROM email_captures WHERE email = ${realEmail}`);
     }
     queries.push(sql`DELETE FROM customers WHERE id = ${customerId}`);
