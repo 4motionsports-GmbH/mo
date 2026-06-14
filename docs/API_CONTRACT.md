@@ -133,6 +133,22 @@ full history on every turn (the customer profile is a pure function of
 the messages, reconstructed by replaying `update_customer_profile` tool
 calls), so the widget must send the entire conversation each turn.
 
+#### Optional `conversationKey` — multiple threads under one stable `session_id`
+
+`session_id` is the identity link (must not rotate while signed in), so it is no
+longer the *thread* key. The widget MAY send a **`conversationKey`** (a stable,
+client-generated per-thread string, ≤ 200 chars) to address WHICH conversation a
+turn belongs to (migration 0018):
+
+- **New chat / "Neue Beratung"** → a **fresh** key (new conversation row / history
+  entry); **continuing** → the **same** key; **resuming a past thread** → the
+  `conversationKey` returned by `GET /api/account/conversations`.
+- **Omitted** → defaults to `session_id` server-side (legacy one-thread-per-
+  session; fully backward-compatible).
+- Distinct from the numeric `conversationId` used by `/api/account/
+  conversations/{id}`. Same trust/entropy expectation as `session_id`. See the
+  frontend handoff for the full widget flow.
+
 #### Optional `context` — opening the chat "about" a product and/or with a browsing trail
 
 When the widget is opened from a specific product page (e.g. a "Frage zu

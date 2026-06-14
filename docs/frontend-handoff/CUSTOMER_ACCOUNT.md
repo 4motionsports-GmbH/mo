@@ -114,11 +114,27 @@ Response (always HTTP 200, `Cache-Control: no-store`):
 
 ## 5. Logout (optional, for CA-3)
 
-To sign out, send the top-level window to Shopify's `end_session_endpoint` with
-`post_logout_redirect_uri` = `{BASE_URL}/api/auth/shopify/logout/return?session={session_id}`.
-The backend drops the server-side tokens for that session and bounces the browser
-back to the storefront with `?ms_auth=logged_out`. The account/history linkage is
-**not** deleted — logging out ends the session, not the account.
+Logout is **backend-initiated** — the widget cannot build Shopify's OIDC
+`end_session` URL itself (it never sees discovery or tokens). Send the
+**top-level window** to:
+
+```
+GET {BASE_URL}/api/auth/shopify/logout
+      ?session={session_id}
+      &return_url={the storefront URL to come back to}
+```
+
+The backend constructs the Shopify `end_session` redirect (with
+`post_logout_redirect_uri = {BASE_URL}/api/auth/shopify/logout/return`), Shopify
+ends its session, then the return route **drops the server-side tokens** for that
+session and bounces the browser back to the storefront with
+**`?ms_auth=logged_out`**. If the store doesn't advertise an `end_session`
+endpoint, the route degrades to a **local sign-out** (tokens dropped, same
+`?ms_auth=logged_out` bounce) — no widget change needed either way.
+
+The account/history linkage is **not** deleted — logging out ends the session,
+not the account (full erasure is §7.5). Same open-redirect rule as login:
+`return_url` must be an allow-listed storefront origin.
 
 ## 6. What does NOT change
 
@@ -176,7 +192,8 @@ timestamps, and the readable message count. **No pagination params** in v1
 {
   "conversations": [
     {
-      "conversationId": 412,
+      "conversationId": 412,                          // numeric DB id — for rename/delete (§7.3/§7.4)
+      "conversationKey": "c3f1e8a2-…",                // thread key — send on /api/chat to RESUME (§7.6)
       "title": "Welche Laufschuhe passen zu mir?",   // custom title, else first user msg trimmed
       "createdAt": "2026-06-01T09:14:22.000Z",
       "updatedAt": "2026-06-01T09:31:05.000Z",
@@ -186,6 +203,11 @@ timestamps, and the readable message count. **No pagination params** in v1
   ]
 }
 ```
+
+> Each item carries **two** ids: `conversationId` (numeric DB id, used in the
+> `/api/account/conversations/{id}` rename/delete URLs) and `conversationKey`
+> (the chat-thread key — send it as `conversationKey` on `/api/chat` to **resume**
+> this thread; see §7.6).
 
 - `title` is **cheap** server-side (no model call): the custom title if the
   customer renamed it, otherwise the first user message trimmed to ≤ 80 chars
@@ -201,6 +223,7 @@ timestamps, and the readable message count. **No pagination params** in v1
 {
   "conversation": {
     "conversationId": 412,
+    "conversationKey": "c3f1e8a2-…",        // send on /api/chat to RESUME this thread (§7.6)
     "title": "Welche Laufschuhe passen zu mir?",
     "createdAt": "2026-06-01T09:14:22.000Z",
     "updatedAt": "2026-06-01T09:31:05.000Z",
@@ -268,3 +291,18 @@ After it returns:
   session itself.
 - `503` `upstream_unavailable` means the erasure could **not** be performed
   (don't show "deleted" — let the user retry).
+
+### 7.6 Multiple conversations under one stable `session_id`
+
+The history list can now hold **multiple threads** for a customer because the
+widget keys each conversation with a **`conversationKey`** (a stable,
+client-generated string) sent on `/api/chat`, while `session_id` stays the
+unchanging identity link. See [`API_CONTRACT.md`](./API_CONTRACT.md) §2
+("Optional `conversationKey`") for the full rules. In short:
+
+- **"Neue Beratung"** → keep `session_id`, generate a **fresh** `conversationKey`,
+  clear the local `messages`. The first turn under it creates a new history row.
+- **Open a past conversation** → load its transcript (§7.2) and adopt its
+  **`conversationKey`** as the active thread; the next `/api/chat` turn sends
+  that key and appends to the right thread.
+- **Omit `conversationKey`** → legacy one-thread-per-session (backward-compatible).

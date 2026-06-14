@@ -40,6 +40,20 @@ storefront page on first chat open. So the widget relies on `/api/auth/me`
 otherwise. **No backend change required** — just confirming we deliberately did
 not wire `prompt=none`.
 
+## ✅ RESOLVED — multi-conversation under a stable session_id
+
+> **Backend answer (migration 0018):** send a **`conversationKey`** on
+> `/api/chat` — a stable, client-generated per-THREAD string. `session_id` stays
+> the identity link (unchanged, never rotated); `conversation_key` is the new
+> uniqueness key. **"Neue Beratung"** = a fresh `conversationKey` (new history
+> row); **resuming** a past thread = send the `conversationKey` now returned by
+> `GET /api/account/conversations` (list + transcript). Omitting it defaults to
+> `session_id` (legacy one-thread-per-session — your current code keeps working
+> untouched). Full rules: `frontend-handoff/API_CONTRACT.md` §2 ("Optional
+> `conversationKey`") + `frontend-handoff/CUSTOMER_ACCOUNT.md` §7.6.
+
+<details><summary>Original question (kept for context)</summary>
+
 ## ❓ NEEDS CONFIRMATION — multi-conversation under a stable session_id
 
 The widget models the **active conversation as the local `messages` array**, and
@@ -59,7 +73,21 @@ ever-growing row. If the intended mechanism is a per-request `conversationId`
 (or "start a new conversation" signal) on `/api/chat`, tell us the field and
 we'll send it — it is a small additive change on the widget side.
 
-## ❓ NEEDS AN ENDPOINT (or docs) — signed-in logout initiation
+</details>
+
+## ✅ RESOLVED — signed-in logout initiation
+
+> **Backend answer:** the requested route now exists —
+> **`GET /api/auth/shopify/logout?session={sid}&return_url={storefront}`** (a
+> top-level navigation, mirroring login). It builds the Shopify `end_session`
+> redirect server-side from discovery, Shopify ends its session, and
+> `/api/auth/shopify/logout/return` drops the server-side tokens and bounces back
+> with **`?ms_auth=logged_out`**. If the store advertises no `end_session`
+> endpoint it degrades to a local token-drop sign-out (same bounce). Point the
+> top-level window at it for a true sign-out. See
+> `frontend-handoff/CUSTOMER_ACCOUNT.md` §5.
+
+<details><summary>Original request (kept for context)</summary>
 
 `CUSTOMER_ACCOUNT.md §5` describes logout as the widget sending the top-level
 window to **Shopify's `end_session_endpoint`** with a `post_logout_redirect_uri`
@@ -73,6 +101,8 @@ Requested: a backend-initiated logout route mirroring login, e.g.
 the `end_session` redirect server-side and bounces back with `?ms_auth=logged_out`.
 Then the widget can offer a true sign-out. (Erase — `POST /api/account/erase` —
 already works and is wired.)
+
+</details>
 
 ## Origins / config
 

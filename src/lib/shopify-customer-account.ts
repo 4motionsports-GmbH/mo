@@ -210,6 +210,38 @@ export async function buildAuthorizationUrl(input: BuildAuthUrlInput): Promise<s
   return withParams(authorizationEndpoint, params);
 }
 
+export interface BuildEndSessionUrlInput {
+  /**
+   * Where Shopify sends the browser AFTER logging out — our registered Logout
+   * URI (customerAccountLogoutReturnUri), typically carrying ?session=&return_url=
+   * so that route can drop the server-side tokens and bounce to the storefront.
+   */
+  postLogoutRedirectUri: string;
+  /** Optional id_token_hint, when available, to skip Shopify's logout prompt. */
+  idTokenHint?: string | null;
+}
+
+/**
+ * Build the top-level end-session (logout) redirect URL from discovery. The
+ * widget can't construct this itself — it never sees discovery or tokens — so
+ * logout is server-initiated, mirroring login. Returns null when the store does
+ * not advertise an end_session_endpoint (the caller then falls back to a local
+ * sign-out via the logout-return route directly).
+ */
+export async function buildEndSessionUrl(
+  input: BuildEndSessionUrlInput
+): Promise<string | null> {
+  const { endSessionEndpoint } = await getDiscovery();
+  if (!endSessionEndpoint) return null;
+  const params: Record<string, string> = {
+    post_logout_redirect_uri: input.postLogoutRedirectUri,
+  };
+  const clientId = customerAccountClientId();
+  if (clientId) params.client_id = clientId;
+  if (input.idTokenHint) params.id_token_hint = input.idTokenHint;
+  return withParams(endSessionEndpoint, params);
+}
+
 // ---------------------------------------------------------------------------
 // Token exchange + refresh
 // ---------------------------------------------------------------------------

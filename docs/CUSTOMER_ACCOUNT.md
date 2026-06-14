@@ -74,11 +74,16 @@ the URLs in the Shopify admin.
 | `/api/auth/shopify/login` | GET | signed state + origin-allowlisted `return_url` | mint PKCE/state, store pending, 302 to Shopify |
 | `/api/auth/shopify/callback` | GET | signed state + single-use pending | exchange code, verify id_token, merge, store tokens, 302 back |
 | `/api/auth/me` | GET | origin allowlist + `x-ms-chat-key` | identity re-hydration (`{ name, tier }`), fail-closed |
-| `/api/auth/shopify/logout/return` | GET | top-level navigation | drop tokens for the session, 302 back to storefront |
+| `/api/auth/shopify/logout` | GET | top-level navigation + return-url allowlist | server-INITIATE logout: build the OIDC `end_session` redirect from discovery, 302 to Shopify |
+| `/api/auth/shopify/logout/return` | GET | top-level navigation | drop tokens for the session, 302 back to storefront `?ms_auth=logged_out` |
 
-`login`, `callback`, and `logout/return` are **top-level navigations** (like the
-email-clicked confirm/unsubscribe routes) — no CORS/secret guard; they are
-protected by the **signed `state`** + the **server-side pending record**.
+`login`, `callback`, `logout`, and `logout/return` are **top-level navigations**
+(like the email-clicked confirm/unsubscribe routes) — no CORS/secret guard. The
+auth pair is protected by the **signed `state`** + the **server-side pending
+record**; the logout pair by the **return-url origin allowlist** (logout is
+server-initiated — it builds the OIDC `end_session` redirect from discovery,
+since the widget can't, and degrades to a local token-drop sign-out when the
+store advertises no `end_session_endpoint`).
 `/api/auth/me` is a widget **XHR**, so it carries the origin allowlist + shared
 secret like `/api/chat`.
 
@@ -354,6 +359,26 @@ enumeration leak).
 | `/api/account/conversations/{id}` | PATCH | RENAME the conversation title (`{ title }`). |
 | `/api/account/conversations/{id}` | DELETE | HARD-delete this one transcript. |
 | `/api/account/erase` | POST | Full "delete my data" — erase the customer (distinct from single-chat delete). |
+
+### Multiple threads per session (migration 0018)
+
+`session_id` is the identity link and must not rotate while signed in, so it can
+no longer also be the *thread* key. `conversations.conversation_key` (a stable,
+client-generated value the widget sends on `/api/chat`) is now the uniqueness key;
+`session_id` stays on the row (no longer unique) as the match-up/summary bridge.
+
+- A session can host **many** conversations — "Neue Beratung" sends a fresh
+  `conversationKey`, creating a new history row instead of growing one thread.
+- The list + transcript responses return `conversationKey` so the widget can
+  **resume** a thread (send it back on `/api/chat`), even across devices — the
+  upsert never rewrites a row's `session_id`.
+- **Backward-compatible:** a client that sends no key defaults
+  `conversation_key = session_id` (the legacy one-thread-per-session behaviour).
+- Session-keyed reads that assume a single thread now take the **most recently
+  active** thread of the session (`loadConversationForSummary`,
+  `getConversationIdBySession`); the match-up/capture attach still uses
+  `WHERE session_id`, so it links **all** of the signing-in session's threads to
+  the customer (and never another session's).
 
 ### Titles are cheap — no model call per render
 

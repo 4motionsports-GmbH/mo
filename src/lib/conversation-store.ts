@@ -43,6 +43,14 @@ export interface ToolInvocation {
 
 export interface PersistTurnInput {
   sessionId: string | null;
+  /**
+   * Per-THREAD key (migration 0018). The widget sends a stable, client-generated
+   * value per conversation; "Neue Beratung" = a fresh key. Defaults to
+   * `sessionId` when absent, preserving the legacy one-thread-per-session
+   * behaviour. The row's session_id is never rewritten on conflict, so resuming
+   * a thread from another device (same key) appends to the original row.
+   */
+  conversationKey?: string | null;
   /** Full incoming UIMessage history (the new user turn is the last user msg). */
   history: UIMessage[];
   /** Persona archetype the backend derived this turn (e.g. 'pragmatic_beginner'). */
@@ -159,10 +167,14 @@ export interface ConversationSummaryData {
 }
 
 /**
- * Load a conversation (by session_id) for the transactional summary email:
- * the ordered transcript plus the accumulated recommended product ids. Returns
- * null when there's no DB or no such conversation. Read-only — Cluster A data,
- * keyed by the pseudonymous session_id (never the email).
+ * Load a conversation for the transactional summary email: the ordered
+ * transcript plus the accumulated recommended product ids. Returns null when
+ * there's no DB or no such conversation. Read-only — Cluster A data, keyed by
+ * the pseudonymous session_id (never the email).
+ *
+ * A session may now host multiple THREADS (migration 0018); the summary is for
+ * the chat the user is currently in, so we take the MOST RECENTLY ACTIVE thread
+ * of the session. With one thread this is identical to the legacy behaviour.
  */
 export async function loadConversationForSummary(
   sessionId: string
@@ -175,7 +187,10 @@ export async function loadConversationForSummary(
   try {
     const convRows = await sql`
       SELECT id, persona_label, recommended_product_ids, selected_product_ids
-        FROM conversations WHERE session_id = ${sid}
+        FROM conversations
+       WHERE session_id = ${sid}
+       ORDER BY last_activity_at DESC, id DESC
+       LIMIT 1
     `;
     const conv = convRows[0] as
       | {
@@ -231,7 +246,14 @@ export async function getConversationIdBySession(
   const sid = sessionId?.trim();
   if (!sid) return null;
   try {
-    const rows = await sql`SELECT id FROM conversations WHERE session_id = ${sid}`;
+    // A session may host multiple threads (migration 0018) — attribute usage to
+    // the most recently active one (the thread the out-of-band call belongs to).
+    const rows = await sql`
+      SELECT id FROM conversations
+       WHERE session_id = ${sid}
+       ORDER BY last_activity_at DESC, id DESC
+       LIMIT 1
+    `;
     const id = (rows[0] as { id?: number } | undefined)?.id;
     return typeof id === "number" ? id : null;
   } catch (err) {
@@ -253,6 +275,9 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
 
   const sessionId = input.sessionId?.trim();
   if (!sessionId) return false;
+  // The thread key identifies WHICH conversation under this session. Default to
+  // the session id (legacy one-thread-per-session) when the client sends none.
+  const conversationKey = input.conversationKey?.trim() || sessionId;
 
   try {
     // Accumulate product ids referenced anywhere in this conversation's tool
@@ -281,13 +306,14 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
 
     const rows = await sql`
       INSERT INTO conversations
-        (session_id, persona_label, message_count, recommended_product_ids,
-         selected_product_ids, status, created_at, updated_at, last_activity_at)
+        (session_id, conversation_key, persona_label, message_count,
+         recommended_product_ids, selected_product_ids, status,
+         created_at, updated_at, last_activity_at)
       VALUES
-        (${sessionId}, ${input.personaLabel}, ${messageCount},
+        (${sessionId}, ${conversationKey}, ${input.personaLabel}, ${messageCount},
          ${newProductIds}::text[], ${selection ?? []}::text[],
          'active', now(), now(), now())
-      ON CONFLICT (session_id) DO UPDATE SET
+      ON CONFLICT (conversation_key) DO UPDATE SET
         persona_label = EXCLUDED.persona_label,
         message_count = EXCLUDED.message_count,
         recommended_product_ids = (

@@ -35,6 +35,12 @@ const HISTORY_LIST_LIMIT = 100;
 /** One row of the signed-in customer's conversation list. */
 export interface ConversationListItem {
   conversationId: number;
+  /**
+   * The per-THREAD key (migration 0018) the widget sends on /api/chat to RESUME
+   * this conversation. Distinct from `conversationId` (the numeric DB id used by
+   * the per-id account routes). Falls back to the session id for legacy rows.
+   */
+  conversationKey: string;
   /** Custom title if renamed, else the cheap derived label (never null). */
   title: string;
   createdAt: string | null;
@@ -58,6 +64,7 @@ export async function listCustomerConversations(
   try {
     const rows = (await sql`
       SELECT co.id,
+             co.conversation_key,
              co.title,
              co.created_at,
              co.updated_at,
@@ -95,6 +102,7 @@ export async function listCustomerConversations(
           : deriveConversationTitle((r.first_user_message as string | null) ?? "");
       return {
         conversationId: Number(r.id),
+        conversationKey: String(r.conversation_key ?? ""),
         title,
         createdAt: (r.created_at as string | null) ?? null,
         updatedAt: (r.updated_at as string | null) ?? null,
@@ -110,6 +118,8 @@ export async function listCustomerConversations(
 /** A single past conversation's transcript, scoped to its owning customer. */
 export interface ConversationTranscript {
   conversationId: number;
+  /** The per-thread key to RESUME this conversation on /api/chat (migration 0018). */
+  conversationKey: string;
   title: string;
   createdAt: string | null;
   updatedAt: string | null;
@@ -134,7 +144,7 @@ export async function getCustomerConversationTranscript(
   if (!Number.isInteger(conversationId)) return null;
   try {
     const convRows = (await sql`
-      SELECT id, title, persona_label, created_at, updated_at
+      SELECT id, conversation_key, title, persona_label, created_at, updated_at
         FROM conversations
        WHERE id = ${conversationId}
          AND customer_id = ${customerId}
@@ -168,6 +178,7 @@ export async function getCustomerConversationTranscript(
 
     return {
       conversationId: Number(conv.id),
+      conversationKey: String(conv.conversation_key ?? ""),
       title,
       createdAt: (conv.created_at as string | null) ?? null,
       updatedAt: (conv.updated_at as string | null) ?? null,

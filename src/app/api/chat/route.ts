@@ -202,6 +202,12 @@ export async function POST(req: Request) {
       messages?: UIMessage[];
       context?: ChatRequestContext;
       customer?: ChatRequestCustomer;
+      // Per-THREAD key (migration 0018): a stable, client-generated value that
+      // identifies WHICH conversation under this (stable) session_id this turn
+      // belongs to. "Neue Beratung" = a fresh key; resuming a past thread sends
+      // the `conversationKey` returned by /api/account/conversations. Absent →
+      // defaults to the session id server-side (legacy one-thread-per-session).
+      conversationKey?: unknown;
     };
     try {
       body = (await req.json()) as typeof body;
@@ -209,6 +215,11 @@ export async function POST(req: Request) {
       return errorResponse("bad_request", "Invalid JSON body", 400, cors);
     }
     const messages = body.messages;
+    // Bound the client-supplied thread key (it lands in a unique-indexed column).
+    const conversationKey =
+      typeof body.conversationKey === "string" && body.conversationKey.trim()
+        ? body.conversationKey.trim().slice(0, 200)
+        : null;
 
     if (!Array.isArray(messages)) {
       return errorResponse("bad_request", "messages must be an array", 400, cors);
@@ -413,6 +424,7 @@ export async function POST(req: Request) {
           );
           await persistTurn({
             sessionId,
+            conversationKey,
             history: messages,
             personaLabel: archetype ?? "unknown",
             assistantText: text ?? "",
