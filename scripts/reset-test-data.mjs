@@ -15,6 +15,7 @@
 //   kpi_persona_question_summaries (Cluster A — derived analytics cache)
 //   customers                      (Cluster B — migration 0008)
 //   ai_usage                       (standalone — migration 0012)
+//   bundle_offers                  (FK child of customers + marketing_sends — migration 0013)
 //
 // What is NOT touched:
 //   _migrations        — schema version tracking; never touch
@@ -89,9 +90,9 @@ console.log("");
 // makes the intent clear and avoids any FK violation if CASCADE is somehow off.
 
 const DATA_TABLES = [
-  // Cluster A — FK child must come before its parent
+  // FK children first (deepest nesting first)
   "messages",              // FK → conversations
-  // Cluster B — FK child must come before its parent
+  "bundle_offers",         // FK → customers (SET NULL), marketing_sends (SET NULL) — migration 0013
   "marketing_sends",       // FK → email_captures
   // Parents / standalone tables (conversations before customers: customer_id ON DELETE SET NULL)
   "conversations",
