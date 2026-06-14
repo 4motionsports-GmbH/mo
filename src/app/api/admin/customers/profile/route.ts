@@ -15,6 +15,7 @@ import {
   loadCustomerSessions,
   saveCustomerProfileSummary,
 } from "@/lib/customer-store";
+import { loadCustomerCorrespondence } from "@/lib/email-messages-store";
 import { generateCustomerProfile } from "@/lib/customer-profile";
 import { reportError } from "@/lib/observability";
 
@@ -42,13 +43,19 @@ export async function POST(req: Request) {
       return adminJsonError("not_found", "Customer not found.", 404);
     }
 
-    const sessions = await loadCustomerSessions(customerId);
+    const [sessions, correspondence] = await Promise.all([
+      loadCustomerSessions(customerId),
+      // Body-text-only, recency-capped email correspondence (§3). Same explicit,
+      // admin-triggered regeneration — no automatic processing.
+      loadCustomerCorrespondence(customerId),
+    ]);
 
     const result = await generateCustomerProfile({
       sessions,
       purchases: customer.purchaseSummary,
       // Tier-3 only: the cached, data-minimised location context.
       accountContext: customer.shopifyAccountSummary?.addressContext ?? null,
+      correspondence,
     });
 
     if (!result.ok) {

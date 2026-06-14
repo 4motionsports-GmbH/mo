@@ -16,8 +16,11 @@
 // a missing key / model error surfaces to the dashboard instead of caching a
 // fabricated profile.
 //
-// Data minimisation: the email address is NOT sent to the model — transcripts,
-// personas, and purchases carry all the signal the summary needs.
+// Data minimisation: the email ADDRESS is never sent to the model. The customer's
+// email CORRESPONDENCE (body text only — never headers/address lines) is folded
+// in as one more source (docs/EMAIL_SUBSYSTEM_SPIKE.md §3): the loader caps it
+// (last N messages / last 12 months) and it rides the SAME explicit, admin-
+// triggered regeneration as everything else here — no automatic processing.
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
@@ -57,6 +60,13 @@ export interface GenerateProfileInput {
    * context. Never the full street address. Absent for tiers 1–2.
    */
   accountContext?: { city: string | null; countryCode: string | null } | null;
+  /**
+   * The customer's email correspondence, pre-rendered as ONE readable block
+   * (oldest-first, both directions) by loadCustomerCorrespondence — body TEXT
+   * ONLY, already capped (last N messages / last 12 months). Empty string /
+   * absent = no correspondence to fold in.
+   */
+  correspondence?: string | null;
 }
 
 export type GenerateProfileResult =
@@ -135,11 +145,12 @@ export async function generateCustomerProfile(
   }
 
   const sessions = input.sessions.filter((s) => s.transcript.length > 0);
-  if (sessions.length === 0 && !input.purchases?.orders?.length) {
+  const correspondence = input.correspondence?.trim() || "";
+  if (sessions.length === 0 && !input.purchases?.orders?.length && !correspondence) {
     return {
       ok: false,
       reason: "no_data",
-      message: "Keine verknüpften Gespräche oder Käufe — nichts zu verdichten.",
+      message: "Keine verknüpften Gespräche, Käufe oder Korrespondenz — nichts zu verdichten.",
     };
   }
 
@@ -153,13 +164,14 @@ export async function generateCustomerProfile(
       maxOutputTokens: 1500,
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
-        "verdichtest die Chat-Sessions und die Kaufhistorie EINES Kunden zu einem " +
-        "aktuellen Kundenverständnis für das Beratungs-/Marketing-Team.\n\n" +
+        "verdichtest die Chat-Sessions, die E-Mail-Korrespondenz und die " +
+        "Kaufhistorie EINES Kunden zu einem aktuellen Kundenverständnis für das " +
+        "Beratungs-/Marketing-Team.\n\n" +
         "Regeln:\n" +
         "- Schreibe auf Deutsch, prägnant, faktenbasiert — keine Floskeln, nichts erfinden.\n" +
-        "- Erstelle EIN kohärentes Gesamtbild, KEINE Aneinanderreihung der Sessions. " +
-        "Bei Widersprüchen zwischen Sessions gilt die neuere Aussage; erwähne den " +
-        "Sinneswandel nur, wenn er beratungsrelevant ist.\n" +
+        "- Erstelle EIN kohärentes Gesamtbild, KEINE Aneinanderreihung der Quellen. " +
+        "Bei Widersprüchen zwischen Quellen (Sessions wie Korrespondenz) gilt die " +
+        "neuere Aussage; erwähne den Sinneswandel nur, wenn er beratungsrelevant ist.\n" +
         "- Unterscheide klar zwischen GEKAUFT (Kaufhistorie), GEWÜNSCHT (im Chat " +
         "geäußert) und UNBEKANNT.\n" +
         "- Gliedere in kurze Abschnitte: Bedarf & Ziele · Niveau & Kontext · " +
@@ -169,6 +181,8 @@ export async function generateCustomerProfile(
       prompt:
         `## Chat-Sessions (chronologisch, älteste zuerst)\n\n` +
         `${blocks || "(keine Gespräche verknüpft)"}\n\n` +
+        `## Korrespondenz (E-Mail)\n\n` +
+        `${correspondence || "(keine E-Mail-Korrespondenz)"}\n\n` +
         `## Kaufhistorie (Shopify)\n\n${purchasesBlock(input.purchases)}\n\n` +
         `## Konto-Kontext (Shopify)\n\n${accountContextBlock(input.accountContext)}\n\n` +
         `Erstelle jetzt das aktuelle Kundenverständnis.`,

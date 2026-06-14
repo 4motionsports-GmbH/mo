@@ -12,6 +12,10 @@
 import { getSql, type Sql } from "./db";
 import { getCustomerByEmail } from "./customer-store";
 import { interpretReceivedInsert } from "./email-inbound-core.mjs";
+import {
+  renderCorrespondence,
+  MAX_CORRESPONDENCE_IN_PROMPT,
+} from "./correspondence-core.mjs";
 import { reportError } from "./observability";
 
 export interface AttachmentMeta {
@@ -147,6 +151,66 @@ export async function recordSentMessage(
     `;
   } catch (err) {
     reportError(err, { route: "lib/email-messages-store", phase: "recordSentMessage" });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// KB READ — fold correspondence into the per-customer knowledge base (§3).
+// ---------------------------------------------------------------------------
+
+// DATA-MINIMISATION recency cap (§3 mitigation ii): never feed the KB passes mail
+// older than this. Retention already purges email_messages past
+// CORRESPONDENCE_RETENTION_DAYS (default 365); this is the SECOND, independent
+// bound so the KB never sees stale correspondence even if retention is tuned up.
+const MAX_CORRESPONDENCE_MONTHS = 12;
+
+/**
+ * Load a customer's email correspondence rendered as ONE readable block for the
+ * KB passes (generateCustomerProfile / generateCustomerMarketingDraft), oldest-
+ * first, both directions — see docs/EMAIL_SUBSYSTEM_SPIKE.md §3. Returns "" when
+ * there is nothing (or no DB) so the caller can show a placeholder.
+ *
+ * DATA-MINIMISATION (required):
+ *  - body TEXT ONLY — the query selects body_text only, NEVER from/to/subject/
+ *    message-id or any other header/address line.
+ *  - recency-capped — only the most recent MAX_CORRESPONDENCE_IN_PROMPT messages
+ *    AND only within the last MAX_CORRESPONDENCE_MONTHS.
+ * This is its own data category (Korrespondenz); it never touches the consent /
+ * eligibility gates, and it only runs inside the SAME explicit, admin-triggered
+ * regeneration the profile/draft passes already are.
+ */
+export async function loadCustomerCorrespondence(
+  customerId: number,
+  sql: Sql | null = getSql()
+): Promise<string> {
+  if (!sql) return "";
+  const recencyCutoff = new Date(
+    Date.now() - MAX_CORRESPONDENCE_MONTHS * 30 * 86_400_000
+  ).toISOString();
+  try {
+    // body_text + direction + occurred_at ONLY — no headers/addresses reach the
+    // model. Most recent first so the LIMIT keeps the freshest window; reversed
+    // to oldest-first below for the readable thread.
+    const rows = (await sql`
+      SELECT direction, occurred_at, body_text
+        FROM email_messages
+       WHERE customer_id = ${customerId}
+         AND occurred_at >= ${recencyCutoff}
+       ORDER BY occurred_at DESC, id DESC
+       LIMIT ${MAX_CORRESPONDENCE_IN_PROMPT}
+    `) as Array<Record<string, unknown>>;
+    if (rows.length === 0) return "";
+    const messages = rows
+      .map((r) => ({
+        direction: r.direction === "received" ? "received" : "sent",
+        occurredAt: (r.occurred_at as string | null) ?? null,
+        bodyText: (r.body_text as string | null) ?? null,
+      }))
+      .reverse(); // DB gives newest-first; the thread reads oldest-first.
+    return renderCorrespondence(messages);
+  } catch (err) {
+    reportError(err, { route: "lib/email-messages-store", phase: "loadCustomerCorrespondence" });
+    return "";
   }
 }
 

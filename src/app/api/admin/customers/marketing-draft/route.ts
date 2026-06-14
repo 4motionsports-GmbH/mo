@@ -38,6 +38,7 @@ import {
   loadCustomerProductSelections,
   saveCustomerAdminInstructions,
 } from "@/lib/customer-store";
+import { loadCustomerCorrespondence } from "@/lib/email-messages-store";
 import { getProductsByIds } from "@/lib/product-catalog";
 import {
   PLACEHOLDER_DISCOUNT_CODE,
@@ -151,9 +152,12 @@ export async function POST(req: Request) {
 
     // Full customer context: every linked conversation (oldest first), the
     // cached profile + purchase summary, and the per-conversation product sets.
-    const [sessions, selections] = await Promise.all([
+    const [sessions, selections, correspondence] = await Promise.all([
       loadCustomerSessions(customerId),
       loadCustomerProductSelections(customerId),
+      // Body-text-only, recency-capped email correspondence (§3), so the draft
+      // can reference a real reply. Same admin-triggered regeneration.
+      loadCustomerCorrespondence(customerId),
     ]);
 
     // Owned items: catalog product ids ARE Shopify handles, so the purchase
@@ -199,6 +203,7 @@ export async function POST(req: Request) {
     const draft = await generateCustomerMarketingDraft({
       sessions,
       profileSummary: customer.profileSummary,
+      correspondence,
       ownedItems,
       purchasesKnown: purchases != null,
       products: products.map((p) => ({ name: p.name })),

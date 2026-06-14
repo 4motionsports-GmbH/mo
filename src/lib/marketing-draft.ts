@@ -254,6 +254,14 @@ export interface GenerateCustomerDraftInput extends DraftDiscountInput {
   /** The cached "current understanding" profile summary, if generated. */
   profileSummary: string | null;
   /**
+   * The customer's email correspondence, pre-rendered as ONE readable block
+   * (oldest-first, both directions) by loadCustomerCorrespondence — body TEXT
+   * ONLY, already capped (last N messages / last 12 months). Lets the draft
+   * reference a real reply ("du hattest nach der Lieferzeit gefragt…"). Empty /
+   * absent = no correspondence.
+   */
+  correspondence?: string | null;
+  /**
    * What the customer already OWNS (from the Shopify purchase history) — the
    * email must never re-recommend these; it builds on them instead. Empty
    * array = history checked, nothing bought; see purchasesKnown for "unknown".
@@ -396,6 +404,7 @@ export async function generateCustomerMarketingDraft(
 
   const kept = input.sessions.slice(-MAX_SESSIONS_IN_DRAFT_PROMPT);
   const sessionBlocks = kept.map((s, i) => draftSessionBlock(s, i, kept.length)).join("\n\n");
+  const correspondence = input.correspondence?.trim() || "";
   const instructions = input.adminInstructions?.trim() || null;
 
   // The admin's guidance gets its own labelled section, clearly separated from
@@ -418,10 +427,13 @@ export async function generateCustomerMarketingDraft(
         "persönliche Marketing-E-Mail auf Deutsch in der Du-Form an einen " +
         "Stammkunden, den du aus einem oder mehreren Chat-Gesprächen kennst. " +
         "Du bekommst ALLES, was wir über diesen Kunden wissen: alle bisherigen " +
-        "Gespräche, ein verdichtetes Kundenverständnis und die Kaufhistorie.\n\n" +
+        "Gespräche, die bisherige E-Mail-Korrespondenz, ein verdichtetes " +
+        "Kundenverständnis und die Kaufhistorie.\n\n" +
         "Regeln:\n" +
-        "- Beziehe dich konkret auf die Gespräche; bei Widersprüchen zwischen " +
-        "älteren und neueren Gesprächen gilt die neuere Aussage.\n" +
+        "- Beziehe dich konkret auf die Gespräche UND, falls vorhanden, auf die " +
+        "bisherige E-Mail-Korrespondenz (z. B. auf eine offene Frage aus einer " +
+        "Antwort); bei Widersprüchen zwischen älteren und neueren Aussagen gilt " +
+        "die neuere.\n" +
         "- Produkte, die der Kunde laut Kaufhistorie BEREITS BESITZT, empfiehlst " +
         "du NICHT noch einmal. Knüpfe stattdessen daran an: empfiehl Ergänzendes " +
         "oder den sinnvollen nächsten Schritt, und freu dich ehrlich über den Kauf, " +
@@ -449,6 +461,8 @@ export async function generateCustomerMarketingDraft(
         adminBlock +
         `## Bisherige Gespräche (chronologisch, älteste zuerst)\n\n` +
         `${sessionBlocks || "(keine Gespräche verknüpft)"}\n\n` +
+        `## Bisherige E-Mail-Korrespondenz (chronologisch, älteste zuerst)\n\n` +
+        `${correspondence || "(keine E-Mail-Korrespondenz)"}\n\n` +
         `Schreibe jetzt die personalisierte E-Mail (Betreff + Text).`,
     });
     // Cost KPI (dashboard/admin side).
