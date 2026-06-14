@@ -23,6 +23,7 @@ import { normalizeEmail } from "./email-capture-store";
 import type { TranscriptMessage } from "./conversation-store";
 import type { OrderHistory } from "./shopify-orders";
 import { reportError } from "./observability";
+import { decideMerge } from "./customer-merge.mjs";
 
 export type CustomerMarketingStatus = "none" | "pending" | "confirmed" | "unsubscribed";
 
@@ -54,6 +55,15 @@ export interface Customer {
   welcomeCodeExpiresAt: string | null;
   /** Once-ever claim stamp — non-NULL means the welcome code was issued. */
   welcomeIssuedAt: string | null;
+  // --- Tier-3 (signed-in Shopify customer) identity (migration 0014) ---------
+  /** Numeric extracted from the Shopify customer GID — the tier-3 key. */
+  shopifyCustomerId: string | null;
+  /** Canonical gid://shopify/Customer/<numeric>. */
+  shopifyCustomerGid: string | null;
+  /** When sign-in first bound this row to a Shopify identity. */
+  shopifyLinkedAt: string | null;
+  /** 1 anonymous, 2 email-identified, 3 signed-in. */
+  identityTier: 1 | 2 | 3;
 }
 
 function mapCustomer(r: Record<string, unknown>): Customer {
@@ -74,11 +84,21 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     welcomeCode: (r.welcome_code as string | null) ?? null,
     welcomeCodeExpiresAt: (r.welcome_code_expires_at as string | null) ?? null,
     welcomeIssuedAt: (r.welcome_issued_at as string | null) ?? null,
+    shopifyCustomerId: (r.shopify_customer_id as string | null) ?? null,
+    shopifyCustomerGid: (r.shopify_customer_gid as string | null) ?? null,
+    shopifyLinkedAt: (r.shopify_linked_at as string | null) ?? null,
+    identityTier: (Number(r.identity_tier ?? 1) as 1 | 2 | 3) ?? 1,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Linking — called from /api/capture-email after the consent upsert.
+// Identity bind — the consent-anchored bridge into Cluster A.
+//
+// Two entry points share this module:
+//   * linkCustomerOnEmailCapture (tier 2) — /api/capture-email, keyed by the
+//     consented email.
+//   * bindShopifyIdentity (tier 3) — the Customer Account sign-in callback,
+//     keyed by the verified Shopify customer id, merging by email.
 // ---------------------------------------------------------------------------
 
 export interface LinkCustomerInput {
@@ -92,6 +112,9 @@ export interface LinkCustomerInput {
  * Returns the customer id, or null when skipped/failed. Best-effort: a failure
  * here must NEVER break the capture flow (the consent is already stored), so
  * this logs and returns null instead of throwing.
+ *
+ * Stamps identity_tier to at least 2 (email-identified) without ever
+ * downgrading an existing tier-3 (signed-in) customer who re-captures an email.
  */
 export async function linkCustomerOnEmailCapture(
   input: LinkCustomerInput,
@@ -104,11 +127,14 @@ export async function linkCustomerOnEmailCapture(
 
   try {
     // Find-or-create keyed by email. An existing customer means a RETURNING
-    // visit — bump last_seen_at; first_seen_at stays put.
+    // visit — bump last_seen_at; first_seen_at stays put. A new row is at least
+    // tier 2; GREATEST never weakens an already signed-in (tier 3) customer.
     const rows = await sql`
-      INSERT INTO customers (email)
-      VALUES (${email})
-      ON CONFLICT (email) DO UPDATE SET last_seen_at = now()
+      INSERT INTO customers (email, identity_tier)
+      VALUES (${email}, 2)
+      ON CONFLICT (email) DO UPDATE SET
+        last_seen_at = now(),
+        identity_tier = GREATEST(customers.identity_tier, 2)
       RETURNING id
     `;
     const customerId = rows[0]?.id != null ? Number(rows[0].id) : null;
@@ -201,6 +227,202 @@ export async function getCustomerByEmail(
     return rows[0] ? mapCustomer(rows[0]) : null;
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "getCustomerByEmail" });
+    return null;
+  }
+}
+
+export async function getCustomerByShopifyId(
+  shopifyCustomerId: string,
+  sql: Sql | null = getSql()
+): Promise<Customer | null> {
+  if (!sql) return null;
+  const id = shopifyCustomerId.trim();
+  if (!id) return null;
+  try {
+    const rows = (await sql`
+      SELECT * FROM customers WHERE shopify_customer_id = ${id}
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? mapCustomer(rows[0]) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "getCustomerByShopifyId" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tier-3 identity bind (Customer Account sign-in)
+// ---------------------------------------------------------------------------
+
+export interface BindShopifyIdentityInput {
+  /** Numeric id extracted from the GraphQL customer.id GID — the tier-3 key. */
+  shopifyCustomerId: string;
+  /** Canonical gid://shopify/Customer/<numeric>. */
+  shopifyCustomerGid: string;
+  /** Shopify's VERIFIED email (authoritative for identity). */
+  email: string | null;
+  /** Optional id_token subject, recorded on the token row for cross-check. */
+  idTokenSub?: string | null;
+  /** Widget thread to attach to this identity. */
+  sessionId: string | null;
+}
+
+export interface BindShopifyIdentityResult {
+  customerId: number;
+  /** Whether a merge conflict was logged for admin review. */
+  conflict: boolean;
+}
+
+/**
+ * Bind a verified Shopify identity to a customer row on sign-in, running the
+ * email↔Shopify merge rule (see lib/customer-merge.mjs / docs/CUSTOMER_ACCOUNT.md):
+ *   (a) existing row by shopify_customer_id → use it;
+ *   (b) else existing tier-2 row by verified email → stamp shopify ids, tier 3
+ *       (carries consent/profile/history forward);
+ *   (c) else create a tier-3 row;
+ *   (d) collision / email mismatch → prefer Shopify's verified email as the
+ *       authoritative identity but DO NOT silently fuse consent records — record
+ *       a merge-conflict for admin review.
+ *
+ * Re-keying NEVER imports Shopify's marketing state into marketing_status —
+ * sign-in establishes IDENTITY, not marketing consent. Returns null only when
+ * no DB is configured or the write hard-fails. Throws nothing the caller can't
+ * handle: it returns null on failure (the callback degrades gracefully).
+ */
+export async function bindShopifyIdentity(
+  input: BindShopifyIdentityInput,
+  sql: Sql | null = getSql()
+): Promise<BindShopifyIdentityResult | null> {
+  if (!sql) return null;
+  const shopifyId = input.shopifyCustomerId.trim();
+  if (!shopifyId) return null;
+  const email = input.email ? normalizeEmail(input.email) : "";
+  const sessionId = input.sessionId?.trim() || null;
+
+  try {
+    const byShopifyRows = (await sql`
+      SELECT id, email FROM customers WHERE shopify_customer_id = ${shopifyId}
+    `) as Array<Record<string, unknown>>;
+    const rowByShopifyId = byShopifyRows[0]
+      ? { id: Number(byShopifyRows[0].id), email: (byShopifyRows[0].email as string | null) ?? null }
+      : null;
+
+    let rowByEmail: { id: number; email: string | null } | null = null;
+    if (email) {
+      const byEmailRows = (await sql`
+        SELECT id, email FROM customers WHERE email = ${email}
+      `) as Array<Record<string, unknown>>;
+      rowByEmail = byEmailRows[0]
+        ? { id: Number(byEmailRows[0].id), email: (byEmailRows[0].email as string | null) ?? null }
+        : null;
+    }
+
+    const decision = decideMerge({ rowByShopifyId, rowByEmail, shopifyEmail: email });
+
+    let customerId: number;
+    if (decision.action === "create") {
+      // No existing row → create a fresh tier-3 customer. If we have no verified
+      // email we still need a unique key; fall back to a synthetic placeholder
+      // keyed by the Shopify id (kept normalised + unique).
+      const insertEmail = email || `shopify:${shopifyId}`;
+      const rows = (await sql`
+        INSERT INTO customers
+          (email, shopify_customer_id, shopify_customer_gid, shopify_linked_at, identity_tier)
+        VALUES (${insertEmail}, ${shopifyId}, ${input.shopifyCustomerGid}, now(), 3)
+        ON CONFLICT (email) DO UPDATE SET last_seen_at = now()
+        RETURNING id
+      `) as Array<Record<string, unknown>>;
+      customerId = Number(rows[0].id);
+    } else {
+      // use | stamp — both target an existing row. Stamp the Shopify ids and
+      // bump to tier 3 (never weakening). We do NOT overwrite the
+      // consent-anchored email even on a mismatch (Shopify is authoritative for
+      // identity, but the consent provenance stays put — the conflict is logged).
+      customerId = decision.customerId as number;
+      await sql`
+        UPDATE customers SET
+          shopify_customer_id  = ${shopifyId},
+          shopify_customer_gid = ${input.shopifyCustomerGid},
+          shopify_linked_at    = COALESCE(shopify_linked_at, now()),
+          identity_tier        = GREATEST(identity_tier, 3),
+          last_seen_at         = now()
+        WHERE id = ${customerId}
+      `;
+    }
+
+    // Attach the current conversation to this identity (the generalised
+    // "identity bind" — same bridge linkCustomerOnEmailCapture uses).
+    if (sessionId) {
+      await sql`
+        UPDATE conversations SET customer_id = ${customerId} WHERE session_id = ${sessionId}
+      `;
+    }
+
+    // Record the id_token subject on the token row later (saveCustomerTokens);
+    // here we only persist identity. Conflicts are audit-logged.
+    let conflict = false;
+    if (decision.conflict) {
+      conflict = true;
+      await sql`
+        INSERT INTO customer_merge_conflicts
+          (shopify_customer_id, shopify_customer_gid, shopify_email,
+           email_row_customer_id, email_row_email, shopify_row_customer_id,
+           conflict_kind, resolved_customer_id, session_id)
+        VALUES (${shopifyId}, ${input.shopifyCustomerGid}, ${email || null},
+                ${decision.conflict.emailRowCustomerId}, ${decision.conflict.emailRowEmail},
+                ${decision.conflict.shopifyRowCustomerId}, ${decision.conflict.kind},
+                ${customerId}, ${sessionId})
+      `;
+    }
+
+    return { customerId, conflict };
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "bindShopifyIdentity" });
+    return null;
+  }
+}
+
+/**
+ * Resolve the signed-in customer for a widget session (the opaque session
+ * reference → customer row). Returns the tier-3 identity for re-hydration, or
+ * null when the session isn't linked to a signed-in customer. Fail-closed.
+ */
+export interface SignedInIdentity {
+  customerId: number;
+  shopifyCustomerId: string;
+  /** Best available display name (displayName → first+last → null). */
+  name: string | null;
+  tier: 3;
+}
+
+export async function resolveSignedInCustomer(
+  sessionId: string | null,
+  sql: Sql | null = getSql()
+): Promise<SignedInIdentity | null> {
+  if (!sql) return null;
+  const sid = sessionId?.trim();
+  if (!sid) return null;
+  try {
+    const rows = (await sql`
+      SELECT c.id, c.shopify_customer_id, c.identity_tier, c.profile_summary
+        FROM conversations co
+        JOIN customers c ON c.id = co.customer_id
+       WHERE co.session_id = ${sid}
+         AND c.shopify_customer_id IS NOT NULL
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    const r = rows[0];
+    if (!r || r.shopify_customer_id == null) return null;
+    // The name comes from Shopify (authoritative) at sign-in; we don't cache PII
+    // names locally for tier 3 in CA-1, so this resolver returns the linkage and
+    // tier. The callback supplies the live name to /api/auth/me via Shopify.
+    return {
+      customerId: Number(r.id),
+      shopifyCustomerId: String(r.shopify_customer_id),
+      name: null,
+      tier: 3,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "resolveSignedInCustomer" });
     return null;
   }
 }
