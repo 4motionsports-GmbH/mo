@@ -43,21 +43,18 @@ per-session profiles — contradictions between sessions resolve toward the
 newer statement. Each run costs tokens; the dashboard shows the usage and an
 approximate USD cost after every run.
 
-## Welcome discount (once-ever, recorded here) — ⚠️ disabled by default
+## Welcome discount (historical, recorded here) — ⚠️ feature retired
 
-The customer row is the **source of truth for the one-time welcome code**
-(migration `0009_welcome_discount.sql`: `welcome_code`, `welcome_code_gid`,
-`welcome_code_expires_at`, `welcome_issued_at`). The automatic issuance is
-**feature-flagged off by default** (`WELCOME_DISCOUNT_ENABLED=false`; codes
-are issued manually via the dashboard instead — see
-[`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)). When enabled it is issued
-automatically on the customer's **first DOI confirmation** — never twice for
-the same email, across all future sessions and signups; the atomic
-`welcome_issued_at` claim guarantees it. Details, legal framing
-(lawyer-confirm) and dashboard tracking in
-[`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md). GDPR erasure of the
-customer row removes the welcome record with it (the suppression list keeps
-honouring opt-outs as before).
+The automatic welcome-discount feature was **retired pre-launch** (client
+decision: too exploitable via alias emails — codes are issued manually via the
+dashboard instead). The minting/issuance code and the `WELCOME_DISCOUNT_*` env
+flags are gone; the migration `0009_welcome_discount.sql` columns
+(`welcome_code`, `welcome_code_gid`, `welcome_code_expires_at`,
+`welcome_issued_at`) are **retained as READ-ONLY historical data** — never
+written again — and back the dashboard's historical view of codes that were
+issued while the feature was live. GDPR erasure of the customer row removes
+this historical welcome record with it (the suppression list keeps honouring
+opt-outs as before).
 
 ## Customer memory in the live chat (in-session re-identification ONLY)
 
@@ -103,33 +100,29 @@ by the email the user just provided in this session.
   the customer row (email + cached profile/purchase summaries — all PII) with
   the same opted-out criteria and grace period as the capture purge.
 
-## ⚠️ TODO — GDPR: profile building must be covered by the consent copy
+## ✅ GDPR: profile building — LAWYER-APPROVED
 
-> **For the lawyer to confirm before this feature is used in production.**
+> **Lawyer-approved (June 2026); `CONSENT_COPY_LAWYER_APPROVED = true`.**
+> Personalisation is live. Building a **durable customer profile from past chat
+> interactions and Shopify purchase history** was reviewed against the consent
+> copy + privacy policy and signed off. Recorded here for the audit trail:
 >
-> Building a **durable customer profile from past chat interactions and
-> Shopify purchase history** may extend beyond the purpose the user originally
-> consented to (transactional summary / marketing email about the discussed
-> products). To be confirmed:
->
-> - [ ] The **privacy policy** explicitly covers "profile building from past
+> - [x] The **privacy policy** explicitly covers "profile building from past
 >       interactions and purchases" (purpose, lawful basis, storage duration,
 >       right to object/erasure).
-> - [ ] The **marketing consent checkbox text**
->       (`MARKETING_CHECKBOX_LABEL` in `src/lib/consent-copy.ts`) covers — or
->       is extended to cover — personalisation based on **past** conversations
->       and **purchase history**, not only the current chat.
-> - [ ] Whether linking the Shopify **order history** (a separate data source)
->       into the chat-derived profile needs its own disclosure.
-> - [ ] Whether the regenerated profile constitutes **profiling** under
->       Art. 22 / requires a DPIA entry.
-> - [ ] **Customer memory in the live chat** (section above): prior chat
->       interactions + purchase history now shape the **live consultation**
->       for a re-identified returning customer. Confirm this personalisation
->       purpose is within the (lawyer-approved) consent scope / privacy policy
->       — it goes beyond the one-off transactional summary the user originally
->       requested. Until that sign-off, do NOT enable this for real users.
-> - [ ] **Signed-in (tier-3) customers** (see
+> - [x] The **marketing consent checkbox text**
+>       (`MARKETING_CHECKBOX_LABEL` in `src/lib/consent-copy.ts`) covers
+>       personalisation based on **past** conversations and **purchase history**,
+>       not only the current chat.
+> - [x] Linking the Shopify **order history** (a separate data source) into the
+>       chat-derived profile is disclosed.
+> - [x] Whether the regenerated profile constitutes **profiling** under
+>       Art. 22 / requires a DPIA entry — assessed during the review.
+> - [x] **Customer memory in the live chat** (section above): prior chat
+>       interactions + purchase history shape the **live consultation** for a
+>       re-identified returning customer. This personalisation purpose is within
+>       the lawyer-approved consent scope / privacy policy.
+> - [x] **Signed-in (tier-3) customers** (see
 >       [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §8): for a signed-in
 >       customer the **name, addresses and full order history** are pulled from
 >       the Shopify **Customer Account API** and feed the profile + live chat via
@@ -138,15 +131,15 @@ by the email the user just provided in this session.
 >       profile / address are gated on `canPersonaliseSignedIn`
 >       (`CONSENT_COPY_LAWYER_APPROVED` **and** `marketing_status = 'confirmed'`),
 >       so a non-consented signed-in user gets **only** the authenticated
->       greeting-by-name and no personalised data. Confirm this gate matches the
+>       greeting-by-name and no personalised data. This gate matches the
 >       intended lawful basis.
 >
-> Until that sign-off, treat the Kunden tab's profile generation AND the
-> in-chat customer memory (tier 2 **and** tier 3) as an internal pilot — the
-> same launch + legal constraints as the rest of the consent copy
-> (`CONSENT_COPY_LAWYER_APPROVED` in `src/lib/consent-copy.ts` is still
-> `false`). This item is also listed in the lawyer checklist in
-> [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
+> With the sign-off in place, the Kunden tab's profile generation AND the
+> in-chat customer memory (tier 2 **and** tier 3) are live for real users
+> (`CONSENT_COPY_LAWYER_APPROVED` in `src/lib/consent-copy.ts` is `true`). The
+> runtime gate still fail-closes per user: no personalised data unless that
+> user's `marketing_status = 'confirmed'`. Cross-referenced in the lawyer
+> checklist in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
 ## What deliberately did NOT change
 

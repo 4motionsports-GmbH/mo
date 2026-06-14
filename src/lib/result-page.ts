@@ -1,7 +1,7 @@
 // Minimal, self-contained HTML page for the two user-facing GET endpoints that
 // are clicked from an email (confirm-marketing, unsubscribe). No framework, no
 // external assets — just a small branded page with a heading and a line of
-// copy. German strings come from consent-copy.ts (lawyer-review-required).
+// copy. German strings come from consent-copy.ts (lawyer-approved).
 
 export interface ResultPageOptions {
   status: number;

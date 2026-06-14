@@ -193,11 +193,10 @@ specific draft on `marketing_sends.admin_instructions`, alongside
 customer's (unique-email) capture row; depth ∈ `{0, 5, 10, 15}` chosen before
 generating; the preview uses the `MO-XXXX` placeholder and the projected expiry;
 the real **`MS5-` single-use code (7-day expiry, stated in the prose)** is minted
-only at **Approve & send**. The one-time **welcome code** (`WELCOME-`, see
-[`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)) is a separate flow — disabled
-by default via `WELCOME_DISCOUNT_ENABLED`; the Kunden tab labels its section
-"(deaktiviert)" while keeping historical issued/redeemed data — and is never
-re-issued here. Changing the depth **or** the instructions after generating
+only at **Approve & send**. The automatic one-time **welcome code**
+(`WELCOME-`) feature was retired pre-launch; the Kunden tab keeps a read-only
+**Willkommensrabatt** section showing the historical issued/redeemed data, but
+no welcome code is ever issued here. Changing the depth **or** the instructions after generating
 flags a mismatch, disables Send and requires a re-generate, so the prose, the
 code depth and the audit snapshot always agree.
 

@@ -19,11 +19,11 @@
 // Both checks fail closed. The match is strictly by the email the user just
 // provided — never by session id, IP, or any fingerprint.
 //
-// ⚠️ GDPR — same lawyer sign-off as the rest of the customer entity: using
-// prior interactions + purchase history to shape the LIVE consultation must be
-// covered by the approved consent/privacy copy before this runs for real
-// users. See docs/CUSTOMERS.md → "TODO — GDPR" and the lawyer checklist in
-// docs/CONSENT_FLOW.md (CONSENT_COPY_LAWYER_APPROVED).
+// GDPR — using prior interactions + purchase history to shape the LIVE
+// consultation is covered by the lawyer-approved consent/privacy copy
+// (CONSENT_COPY_LAWYER_APPROVED is true, June 2026). It still fail-closes per
+// user at runtime: no personalised data unless that user's marketing consent is
+// confirmed. See docs/CUSTOMERS.md → "GDPR" and docs/CONSENT_FLOW.md.
 //
 // Data minimisation: only the compact cached summaries (CUST-A "current
 // understanding", owned items from the cached purchase summary) and counts go
@@ -55,15 +55,11 @@ export interface CustomerMemoryContext {
   /** ISO date of the most recent order in the cached history. */
   lastPurchaseAt: string | null;
   /**
-   * True when the one-time welcome code (CAP-2) was already issued to this
-   * customer — Mo must not re-promise the welcome gift then. LIMITATION: we
-   * only know ISSUANCE (`welcome_issued_at`), not whether the code was
-   * actually redeemed in Shopify; since the gift is once-ever either way,
-   * "issued" is the correct suppression signal. NOTE: while the automatic
-   * issuance is feature-flagged off (WELCOME_DISCOUNT_ENABLED, default
-   * false) the memory block instructs Mo to promise no welcome discount to
-   * anyone; this field then only shapes how questions about historical
-   * codes are answered (see system-prompt.ts renderWelcomeMemoryRule).
+   * True when a one-time welcome code was issued historically to this customer
+   * (`welcome_issued_at` non-NULL). The automatic welcome discount has been
+   * retired, so the memory block instructs Mo to promise NO welcome discount
+   * to anyone; this field only shapes how questions about a previously issued
+   * code are answered (see system-prompt.ts renderWelcomeMemoryRule).
    */
   welcomeAlreadyIssued: boolean;
   // --- Tier-3 (signed-in Shopify customer) extras (CA-2/CA-3) ----------------

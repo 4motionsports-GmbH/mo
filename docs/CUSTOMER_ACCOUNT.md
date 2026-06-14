@@ -307,8 +307,8 @@ The gate is two hard conditions, both fail-closed:
 
 1. **`CONSENT_COPY_LAWYER_APPROVED`** — the consent/privacy copy that covers
    "profile building from past interactions and purchases" must be legally signed
-   off. It is currently `false`, so **no personalised data leaks for anyone**;
-   only the authenticated name greeting is shown to signed-in users.
+   off. It is **`true`** (lawyer-approved June 2026), so this condition is
+   satisfied; personalisation then depends on condition 2 below, per user.
 2. **Marketing consent on record (`marketing_status = 'confirmed'`)** — the
    affirmative, unbundled, double-opt-in consent the GDPR TODO
    ([`CUSTOMERS.md`](./CUSTOMERS.md)) extends to cover personalisation from past

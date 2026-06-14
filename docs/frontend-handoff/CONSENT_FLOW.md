@@ -35,8 +35,9 @@ consent.
   only (`exklusive Angebote … nur für Abonnenten`).
 - **Show the imprint + privacy links** (`imprintUrl`, `privacyUrl`) next to the
   consent block.
-- **`lawyerApproved: false`** in the payload means the copy is **not yet legally
-  signed off** — don't launch the surface to real users until it's `true`.
+- **`lawyerApproved`** in the payload is now **`true`** — the copy is
+  lawyer-approved and cleared for real users. (Semantics: `false` would mean the
+  copy is not yet legally signed off; don't launch the surface until `true`.)
 
 ---
 

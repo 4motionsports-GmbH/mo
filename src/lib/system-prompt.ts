@@ -3,7 +3,6 @@ import type { BrowsingContext } from "./browsing-context";
 import type { CustomerMemoryContext } from "./customer-memory";
 import { ARCHETYPE_META, getPersonaAddendum, renderProfileForPrompt } from "./persona";
 import { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./tools";
-import { isWelcomeDiscountEnabled } from "./welcome-discount-flag.mjs";
 
 // How far the email-summary ask has progressed in THIS conversation. Derived
 // server-side from the message history (api/chat counts prior
@@ -112,19 +111,14 @@ function fmtMemoryDate(iso: string | null): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString("de-DE");
 }
 
-// Welcome-gift rule inside the customer-memory block, flag-aware: with the
-// automatic welcome discount disabled (WELCOME_DISCOUNT_ENABLED, default
-// false) there is NO gift to promise to anyone — Mo must not announce one,
-// while historical codes (already issued) remain answerable.
+// Welcome-gift rule inside the customer-memory block. There is NO automatic
+// welcome discount — Mo must never announce or promise one to anyone. A
+// customer who received a code historically (welcomeAlreadyIssued) gets a
+// slightly different line so questions about that old code are handled.
 function renderWelcomeMemoryRule(welcomeAlreadyIssued: boolean): string {
-  if (!isWelcomeDiscountEnabled()) {
-    return welcomeAlreadyIssued
-      ? "Ein automatisches Willkommensgeschenk gibt es derzeit NICHT — versprich oder erwähne KEINEN Willkommens- oder Neukundenrabatt. Dieser Kunde hat früher einmal einen Willkommenscode erhalten; fragt er danach, verweise freundlich auf die damalige Willkommens-E-Mail bzw. info@motionsports.de — stelle aber keinen neuen Rabatt in Aussicht."
-      : "Ein automatisches Willkommensgeschenk gibt es derzeit NICHT — versprich oder erwähne KEINEN Willkommens- oder Neukundenrabatt. Rabattcodes vergibt ausschließlich das motion sports Team; verweise bei Fragen freundlich an info@motionsports.de.";
-  }
   return welcomeAlreadyIssued
-    ? "Dieser Kunde hat sein einmaliges Willkommensgeschenk (Rabattcode) bereits erhalten — erwähne oder versprich es NICHT erneut, auch nicht auf Nachfrage als neues Angebot. Fragt der Kunde nach seinem bestehenden Code, verweise freundlich auf die Willkommens-E-Mail bzw. info@motionsports.de."
-    : "Das Willkommensgeschenk (Rabattcode) gibt es nur EINMAL pro Person, bei der ersten Anmeldung. Ob dieser Kunde es schon erhalten oder eingelöst hat, weißt du hier nicht sicher — versprich ihm daher KEINEN Willkommensrabatt; bleib bei allgemeinen Formulierungen für Neukunden, falls das Thema aufkommt.";
+    ? "Ein automatisches Willkommensgeschenk gibt es derzeit NICHT — versprich oder erwähne KEINEN Willkommens- oder Neukundenrabatt. Dieser Kunde hat früher einmal einen Willkommenscode erhalten; fragt er danach, verweise freundlich auf die damalige Willkommens-E-Mail bzw. info@motionsports.de — stelle aber keinen neuen Rabatt in Aussicht."
+    : "Ein automatisches Willkommensgeschenk gibt es derzeit NICHT — versprich oder erwähne KEINEN Willkommens- oder Neukundenrabatt. Rabattcodes vergibt ausschließlich das motion sports Team; verweise bei Fragen freundlich an info@motionsports.de.";
 }
 
 // A SIGNED-IN (tier-3) customer who has NOT consented to history-personalisation
@@ -277,12 +271,6 @@ Du hast das E-Mail-Angebot in diesem Gespräch bereits zweimal gemacht — das M
 
 **Status: In diesem Gespräch bereits 1× angeboten.** Es bleibt höchstens EIN weiteres Angebot — nur an einem klar wertvolleren, später folgenden Moment (typisch \`checkout_intent\`), nie direkt hintereinander. Danach nie wieder.`
       : "";
-
-  // NOTE: the former welcome-discount mention (CAP-2/CAP-4 cross-wire) was
-  // REMOVED from this section when the automatic welcome discount was
-  // feature-flagged off (WELCOME_DISCOUNT_ENABLED, default false — client
-  // decision, docs/WELCOME_DISCOUNT.md): Mo must never promise a gift the
-  // backend won't issue.
 
   return `### Zusammenfassung per E-Mail anbieten (wertgetriggert — Service, kein Druck)
 Du darfst anbieten, dem Kunden eine Zusammenfassung des Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu schicken (\`offer_email_summary\`). Entscheidend ist das TIMING: Du fragst erst, NACHDEM du nachweislich Wert geliefert hast — die E-Mail ist die Belohnung für eine gelungene Beratung, nie ein Türöffner.
@@ -458,25 +446,4 @@ ${productsBlock}
 - Adresse: Gröbenzell bei München
 - Terminvereinbarung erforderlich
 - Alle Geräte können vor Ort getestet werden`;
-}
-
-// Backwards-compat export — old route used getSystemPrompt() with no args.
-// Keep it as a no-op default in case anything else imports it.
-export function getSystemPrompt(): string {
-  return buildSystemPrompt({
-    profile: {
-      segment: "unknown",
-      experienceLevel: "unknown",
-      trainingFocus: "unknown",
-      spaceM2: "unknown",
-      budgetEUR: "unknown",
-      trainingFrequency: "unknown",
-      housing: "unknown",
-      noiseSensitive: "unknown",
-      procurementNeeds: [],
-      confidence: 0,
-    },
-    archetype: "unknown",
-    retrievedProducts: [],
-  });
 }

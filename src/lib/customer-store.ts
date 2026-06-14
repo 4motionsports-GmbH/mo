@@ -67,11 +67,15 @@ export interface Customer {
    */
   adminInstructions: string | null;
   adminInstructionsUpdatedAt: string | null;
-  /** The one-time welcome discount code (migration 0009), if issued. */
+  // Historical welcome-discount data (migration 0009). The automatic issuance
+  // feature was retired pre-launch; these columns are now READ-ONLY — never
+  // written again — and back the dashboard's historical view of codes that
+  // were issued while the feature was live.
+  /** The one-time welcome discount code, if one was issued historically. */
   welcomeCode: string | null;
-  /** When the welcome code stops working (Shopify endsAt). */
+  /** When that welcome code stops working (Shopify endsAt). */
   welcomeCodeExpiresAt: string | null;
-  /** Once-ever claim stamp — non-NULL means the welcome code was issued. */
+  /** Issuance stamp — non-NULL means a welcome code was issued historically. */
   welcomeIssuedAt: string | null;
   // --- Tier-3 (signed-in Shopify customer) identity (migration 0014) ---------
   /** Numeric extracted from the Shopify customer GID — the tier-3 key. */
@@ -249,24 +253,6 @@ export async function getCustomerByEmail(
     return rows[0] ? mapCustomer(rows[0]) : null;
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "getCustomerByEmail" });
-    return null;
-  }
-}
-
-export async function getCustomerByShopifyId(
-  shopifyCustomerId: string,
-  sql: Sql | null = getSql()
-): Promise<Customer | null> {
-  if (!sql) return null;
-  const id = shopifyCustomerId.trim();
-  if (!id) return null;
-  try {
-    const rows = (await sql`
-      SELECT * FROM customers WHERE shopify_customer_id = ${id}
-    `) as Array<Record<string, unknown>>;
-    return rows[0] ? mapCustomer(rows[0]) : null;
-  } catch (err) {
-    reportError(err, { route: "lib/customer-store", phase: "getCustomerByShopifyId" });
     return null;
   }
 }
@@ -645,90 +631,6 @@ export async function saveCustomerAccountSummary(
     return rows.length > 0;
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "saveCustomerAccountSummary" });
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Welcome discount — the ONCE-EVER guarantee lives here (migration 0009).
-//
-// The customer row (keyed by email) is the source of truth: welcome_issued_at
-// is claimed atomically BEFORE any Shopify code is minted, so the same email
-// can never receive a second welcome code — not on a repeated DOI-token click,
-// not on a re-signup from a future session, not under concurrent confirmations
-// (the conditional UPDATE lets exactly one claimant through).
-// ---------------------------------------------------------------------------
-
-/**
- * Atomically claim the one-and-only welcome-code issuance for an email.
- * Returns the customer id when THIS call won the claim, or null when the
- * customer doesn't exist, was already issued/claimed, or the DB failed
- * (fail-closed: no claim → no code). Never throws.
- */
-export async function claimWelcomeIssuance(
-  email: string,
-  sql: Sql | null = getSql()
-): Promise<number | null> {
-  if (!sql) return null;
-  const e = normalizeEmail(email);
-  if (!e) return null;
-  try {
-    const rows = await sql`
-      UPDATE customers
-         SET welcome_issued_at = now()
-       WHERE email = ${e}
-         AND welcome_issued_at IS NULL
-      RETURNING id
-    `;
-    return rows[0]?.id != null ? Number(rows[0].id) : null;
-  } catch (err) {
-    reportError(err, { route: "lib/customer-store", phase: "claimWelcomeIssuance" });
-    return null;
-  }
-}
-
-/**
- * Release a welcome claim after a FAILED mint, so a transient Shopify error
- * doesn't permanently burn the customer's single welcome code. Guarded on
- * welcome_code IS NULL — once a real code is recorded, the claim can never be
- * reverted. Never throws.
- */
-export async function revertWelcomeIssuance(
-  customerId: number,
-  sql: Sql | null = getSql()
-): Promise<void> {
-  if (!sql) return;
-  try {
-    await sql`
-      UPDATE customers
-         SET welcome_issued_at = NULL
-       WHERE id = ${customerId}
-         AND welcome_code IS NULL
-    `;
-  } catch (err) {
-    reportError(err, { route: "lib/customer-store", phase: "revertWelcomeIssuance" });
-  }
-}
-
-/** Persist the minted welcome code on the (already claimed) customer row. */
-export async function recordWelcomeCode(
-  customerId: number,
-  minted: { code: string; gid: string | null; expiresAt: string },
-  sql: Sql | null = getSql()
-): Promise<boolean> {
-  if (!sql) return false;
-  try {
-    const rows = await sql`
-      UPDATE customers
-         SET welcome_code = ${minted.code},
-             welcome_code_gid = ${minted.gid},
-             welcome_code_expires_at = ${minted.expiresAt}
-       WHERE id = ${customerId}
-      RETURNING id
-    `;
-    return rows.length > 0;
-  } catch (err) {
-    reportError(err, { route: "lib/customer-store", phase: "recordWelcomeCode" });
     return false;
   }
 }

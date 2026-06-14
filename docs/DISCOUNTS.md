@@ -32,12 +32,12 @@ The deadline reaches the customer twice:
 The transactional **summary email carries no discount code by design** (see
 `src/lib/summary-email.ts`), so no deadline needs to be stated there.
 
-## Welcome codes (`WELCOME-…`) — ⚠️ disabled by default
+## Welcome codes (`WELCOME-…`) — ⚠️ feature retired
 
-The one-time **welcome discount** issued on a customer's first DOI
-confirmation uses the same minting path (`createUniqueDiscountCode`,
-single-use) but its own prefix and expiry (default 30 days,
-`WELCOME_DISCOUNT_EXPIRY_DAYS`). The entire issuance path is **feature-flagged
-off by default** (`WELCOME_DISCOUNT_ENABLED=false` — client decision: too
-exploitable via alias emails; codes are issued manually via the dashboard
-instead) — see [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md).
+The automatic one-time **welcome discount** (minted on a customer's first DOI
+confirmation, `WELCOME-` prefix) was **retired pre-launch** — client decision:
+too exploitable via alias emails; codes are issued manually via the dashboard
+instead. The issuance code and the `WELCOME_DISCOUNT_*` env flags have been
+removed. Any `WELCOME-…` codes already minted in Shopify remain valid until
+their own expiry, and the historical issued/redeemed data stays visible on the
+admin **Kunden** tab (read-only).

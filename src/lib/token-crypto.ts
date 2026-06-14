@@ -61,16 +61,6 @@ function getKey(): Buffer {
   return key;
 }
 
-/** True when a usable TOKEN_ENC_KEY is configured (does not throw). */
-export function isTokenCryptoConfigured(): boolean {
-  try {
-    getKey();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Encrypt a token string → a self-contained BYTEA buffer (IV|tag|ciphertext). */
 export function encryptToken(plaintext: string): Buffer {
   const key = getKey();

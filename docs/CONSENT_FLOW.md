@@ -5,9 +5,16 @@ This document describes how the backend captures an email address, the two
 the suppression logic, and the audit trail. It also lists exactly which copy a
 lawyer must approve before launch.
 
-> ⚠️ **All German-facing copy is PLACEHOLDER and requires lawyer sign-off.**
-> It lives in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts), marked
-> with `CONSENT_COPY_LAWYER_APPROVED = false`. See the TODO list at the end.
+> ✅ **The DOI / marketing / personalisation / transactional copy is
+> LAWYER-APPROVED** (June 2026). It lives in
+> [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts), marked with
+> `CONSENT_COPY_LAWYER_APPROVED = true`. Treat these strings as approved — any
+> wording change needs a fresh review.
+>
+> ⚠️ **Still pending — the §7(3) "Bestandskunden" copy only.** That audience is
+> a DISTINCT lawful basis gated by its own flag `BESTANDSKUNDE_SENDS_APPROVED`
+> (still **false**); its strings and the "own similar products" boundary await
+> their own sign-off. See the TODO list at the end.
 
 ## Legal background (why it's built this way)
 
@@ -302,25 +309,28 @@ result and logs to stdout (local-dev), rather than faking success.
 
 ---
 
-## ✅ TODO — copy the lawyer must approve before launch
+## Lawyer sign-off status
 
 All strings below are in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts).
-`CONSENT_COPY_LAWYER_APPROVED` governs the DOI marketing + personalisation path;
-keep it accurate for every item below. The current copy is **v3**
-(`CONSENT_COPY_VERSION`) — it REPLACES v2 in the review and adds the at-sign-in
-opt-in strings; review the v3 strings as-is, they go to the lawyer verbatim.
+`CONSENT_COPY_LAWYER_APPROVED` governs the DOI marketing + personalisation path.
 
-> ⚠️ **Two separate sign-offs.** The DOI/personalisation copy is gated by
-> `CONSENT_COPY_LAWYER_APPROVED` (in `consent-copy.ts`). **Real §7(3)
-> Bestandskunden sends are a DISTINCT gate** — `BESTANDSKUNDE_SENDS_APPROVED`
-> (env, default **false**) — and need their own sign-off of the "own similar
-> products" boundary + the opt-out copy. Do not conflate them.
+> ✅ **DONE — `CONSENT_COPY_LAWYER_APPROVED = true` (June 2026).** The v3 copy
+> (`CONSENT_COPY_VERSION`) — DOI/marketing/personalisation/transactional plus the
+> at-sign-in opt-in strings — was reviewed and approved by the lawyer and went
+> live verbatim. The items below are checked off as a record of what was
+> approved; any wording change requires a fresh review.
+>
+> ⚠️ **Two separate sign-offs.** The above is gated by
+> `CONSENT_COPY_LAWYER_APPROVED`. **Real §7(3) Bestandskunden sends are a
+> DISTINCT gate** — `BESTANDSKUNDE_SENDS_APPROVED` (env, default **false**) — and
+> STILL need their own sign-off of the "own similar products" boundary + the
+> opt-out copy. Those items remain unchecked below. Do not conflate them.
 
 ### v3 — at-sign-in marketing opt-in (NEW; replaces v2 in the review)
 
-- [ ] **Sign-in opt-in headline** (`SIGNIN_MARKETING_OPTIN_HEADLINE`, v3) —
+- [x] **Sign-in opt-in headline** (`SIGNIN_MARKETING_OPTIN_HEADLINE`, v3) —
       framing shown above the box; NOT part of `consentTextShown`.
-- [ ] **Sign-in opt-in checkbox label** (`SIGNIN_MARKETING_OPTIN_LABEL`, v3:
+- [x] **Sign-in opt-in checkbox label** (`SIGNIN_MARKETING_OPTIN_LABEL`, v3:
       "Ja, schickt mir an meine hinterlegte E-Mail-Adresse exklusive Angebote
       und Aktionen — nur für Abonnenten. Jederzeit abbestellbar."). Confirm the
       "hinterlegte E-Mail-Adresse" phrasing (we use the verified Shopify email,
@@ -343,68 +353,65 @@ opt-in strings; review the v3 strings as-is, they go to the lawyer verbatim.
 
 ### Capture-form copy (unchanged text, now v3 set)
 
-- [ ] **Transactional checkbox label** (`TRANSACTIONAL_CHECKBOX_LABEL`, v2:
+- [x] **Transactional checkbox label** (`TRANSACTIONAL_CHECKBOX_LABEL`, v2:
       "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl.
       Direkt-Link zur Kasse)."). Note the v2 decision: this box now starts
       **unchecked** like the marketing box, and a submit without it is
       rejected server-side (`transactional_consent_required`) — the v1
       question about an acceptable pre-check is moot.
-- [ ] **Marketing checkbox label** (`MARKETING_CHECKBOX_LABEL`, v2: "Ja, ich
+- [x] **Marketing checkbox label** (`MARKETING_CHECKBOX_LABEL`, v2: "Ja, ich
       möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten.
       Jederzeit abbestellbar."). Confirm purpose specificity, that "Jederzeit
       abbestellbar" suffices alongside the shared footer's withdrawal line,
       and that the "nur für Abonnenten" exclusivity claim is acceptable
       (accurate scarcity — the agreed ceiling; no urgency, no concrete
       discount promise).
-- [ ] **Shared footer** (`CONSENT_SHARED_FOOTER`, v2: "Verarbeitung durch
+- [x] **Shared footer** (`CONSENT_SHARED_FOOTER`, v2: "Verarbeitung durch
       motion sports gemäß Datenschutzerklärung; Widerruf jederzeit möglich.")
       — confirm this one line plus the linked privacy policy meets the
       Art. 7 / transparency minimum for both consents.
-- [ ] **Returning-customer hint** (`RETURNING_CUSTOMER_HINT_TEXT`) — rendered
+- [x] **Returning-customer hint** (`RETURNING_CUSTOMER_HINT_TEXT`) — rendered
       near the email input, NOT part of the consent text. Review together
       with the customer-memory item below (CUST-B): it advertises
       recognition via email, so it must stay within whatever scope the
       customer-memory clearance allows.
-- [ ] **DOI confirmation email** subject + body (`DOI_EMAIL_SUBJECT`,
+- [x] **DOI confirmation email** subject + body (`DOI_EMAIL_SUBJECT`,
       `doiEmailBody`) — purpose statement + the confirm CTA.
-- [ ] **DOI confirmation page** copy (`DOI_CONFIRMED_*`, `DOI_INVALID_*`).
-- [ ] **Unsubscribe footer** (`unsubscribeFooter`) present in every marketing
+- [x] **DOI confirmation page** copy (`DOI_CONFIRMED_*`, `DOI_INVALID_*`).
+- [x] **Unsubscribe footer** (`unsubscribeFooter`) present in every marketing
       email, with the legal basis line.
-- [ ] **Unsubscribe confirmation page** copy (`UNSUBSCRIBE_*`).
-- [ ] **Summary email** subject + framing (`SUMMARY_EMAIL_SUBJECT`,
+- [x] **Unsubscribe confirmation page** copy (`UNSUBSCRIBE_*`).
+- [x] **Summary email** subject + framing (`SUMMARY_EMAIL_SUBJECT`,
       `summary-email.ts`) — confirm it reads as a requested service, not
       marketing (no offers/discounts).
-- [ ] Confirm the **frontend renders BOTH checkboxes unchecked** (v2: the
+- [x] Confirm the **frontend renders BOTH checkboxes unchecked** (v2: the
       never-pre-tick rule now covers the transactional box too — prominence
       is fine, a pre-tick never is) and the two consents as visually
       separate, independently-tickable boxes.
-- [ ] Confirm an **Imprint/Privacy link** is shown next to the capture form
+- [x] Confirm an **Imprint/Privacy link** is shown next to the capture form
       (frontend), as the consent text references data use for personalisation.
       The link targets are served by the backend (`CAPTURE_FORM_IMPRINT_URL`,
       `CAPTURE_FORM_PRIVACY_URL` in `consent-copy.ts`) — verify the privacy
       URL actually resolves on the live shop (the standard Shopify policy
       path is assumed) before launch.
-- [ ] **Profile building from past interactions and purchases** (the customer
+- [x] **Profile building from past interactions and purchases** (the customer
       entity, see [`CUSTOMERS.md`](./CUSTOMERS.md)): confirm the privacy policy
       and the marketing consent text cover building a durable customer profile
       from **past chat sessions and Shopify purchase history** — the current
       copy may only cover the present conversation. Details and sub-items in
       `CUSTOMERS.md` → "TODO — GDPR".
-- [ ] **Customer memory in the live chat** (`CUSTOMERS.md` → "Customer memory
+- [x] **Customer memory in the live chat** (`CUSTOMERS.md` → "Customer memory
       in the live chat"): once a returning customer re-identifies by email in
       the current session, prior interactions + purchase history shape the
       **live consultation**. Confirm this personalisation purpose is within
       the approved consent scope / privacy policy before enabling for real
       users — same launch gate as the rest of this checklist.
-- [ ] **Welcome discount framing** — ⚠️ **feature-flagged OFF by default**
-      (`WELCOME_DISCOUNT_ENABLED`, see
-      [`WELCOME_DISCOUNT.md`](./WELCOME_DISCOUNT.md)): the automatic issuance
-      is disabled (client decision; manual codes via the dashboard instead)
-      and the former in-chat mention was **removed** from the system prompt.
-      Review is only needed **before re-enabling the flag**: the one-time
-      welcome code is tied to **completing the DOI confirmation** (a
-      freely-chosen "yes, I want this" / welcome gift for joining), **not**
-      to ticking the marketing checkbox, so the consent stays "freely given"
-      (Art. 7(4) GDPR). Confirm this framing and the welcome email /
-      confirmation-page copy (`WELCOME_EMAIL_SUBJECT`, `welcomeEmailBody`,
-      `DOI_CONFIRMED_WELCOME_BODY`).
+- [x] **Welcome discount framing** — ✅ **N/A: feature retired pre-launch.**
+      The automatic welcome-discount issuance was removed entirely (client
+      decision; codes are issued manually via the dashboard instead), so there
+      is no welcome-gift framing to review. Mo's system prompt instructs it to
+      promise no welcome/new-customer discount, and the marketing-consent copy
+      never offers a reward for ticking the checkbox ("freely given",
+      Art. 7(4) GDPR). If the feature is ever reintroduced, restore the
+      gift-for-completing-the-DOI framing from git history under a fresh
+      lawyer review.

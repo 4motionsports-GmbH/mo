@@ -13,9 +13,7 @@
 // flow — resolved via the customer's (unique-email) capture row — so the
 // edit / approve / send path with all its safeguards is reused unchanged:
 // human review, eligibility re-checks, mandatory unsubscribe, code minted at
-// send (MS5-, 7-day expiry stated in the prose), tracked link, logging. The
-// one-time welcome code (WELCOME-) is a separate flow (feature-flagged off by
-// default via WELCOME_DISCOUNT_ENABLED) and is never re-issued here.
+// send (MS5-, 7-day expiry stated in the prose), tracked link, logging.
 //
 // Audit trail: the instructions are stored twice — the editable CURRENT value
 // on the customer row, and the SNAPSHOT that went into this draft on the
