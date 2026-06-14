@@ -30,7 +30,16 @@
 // into the prompt — never raw transcripts, order totals, or the email itself.
 
 import { isValidEmail, normalizeEmail, wasEmailCapturedFromSession } from "./email-capture-store";
-import { countPriorConversations, getCustomerByEmail } from "./customer-store";
+import {
+  countPriorConversations,
+  getCustomerByEmail,
+  getCustomerById,
+  resolveSignedInCustomer,
+  type Customer,
+} from "./customer-store";
+import { getValidAccessToken } from "./customer-oauth-store";
+import { CONSENT_COPY_LAWYER_APPROVED } from "./consent-copy";
+import { canPersonaliseSignedIn } from "./customer-account-data.mjs";
 import { reportError } from "./observability";
 
 /** Compact memory injected into the system prompt for a re-identified customer. */
@@ -57,10 +66,52 @@ export interface CustomerMemoryContext {
    * codes are answered (see system-prompt.ts renderWelcomeMemoryRule).
    */
   welcomeAlreadyIssued: boolean;
+  // --- Tier-3 (signed-in Shopify customer) extras (CA-2/CA-3) ----------------
+  /** True when this memory belongs to a SIGNED-IN customer (authenticated). */
+  signedIn?: boolean;
+  /**
+   * True when history-personalisation is actually allowed (consent gate passed).
+   * For a signed-in customer that has NOT consented this is false: only the
+   * authenticated greeting-by-name is shown, no history/profile/address.
+   */
+  personalised?: boolean;
+  /** The signed-in customer's display name, for the tier-appropriate greeting. */
+  displayName?: string | null;
+  /**
+   * DATA-MINIMISED address context (city + country only) from the Shopify
+   * account — populated only when personalisation is allowed.
+   */
+  addressContext?: { city: string | null; countryCode: string | null } | null;
 }
 
 // Keep the prompt block bounded even for heavy buyers.
 const MAX_OWNED_ITEMS = 15;
+
+/**
+ * Aggregate "owned items" from a cached purchase summary — titles + quantities
+ * ONLY (no order numbers, no totals), capped. Shared by the email-keyed (tier-2)
+ * and signed-in (tier-3) resolvers so both apply the same data minimisation.
+ */
+function aggregateOwnedItems(
+  purchaseSummary: Customer["purchaseSummary"]
+): { ownedItems: string[]; lastPurchaseAt: string | null } {
+  const owned = new Map<string, number>();
+  let lastPurchaseAt: string | null = null;
+  for (const order of purchaseSummary?.orders ?? []) {
+    if (order.createdAt && (!lastPurchaseAt || order.createdAt > lastPurchaseAt)) {
+      lastPurchaseAt = order.createdAt;
+    }
+    for (const item of order.items) {
+      const title = item.title?.trim();
+      if (!title) continue;
+      owned.set(title, (owned.get(title) ?? 0) + (item.quantity || 1));
+    }
+  }
+  const ownedItems = [...owned.entries()]
+    .slice(0, MAX_OWNED_ITEMS)
+    .map(([title, qty]) => (qty > 1 ? `${qty}× ${title}` : title));
+  return { ownedItems, lastPurchaseAt };
+}
 
 export interface ResolveMemoryInput {
   /** The email the user provided in THIS session (forwarded by the widget). */
@@ -94,21 +145,7 @@ export async function resolveCustomerMemory(
 
     // Aggregate owned items from the cached purchase summary (titles +
     // quantities only — no order numbers, no totals).
-    const owned = new Map<string, number>();
-    let lastPurchaseAt: string | null = null;
-    for (const order of customer.purchaseSummary?.orders ?? []) {
-      if (!lastPurchaseAt || order.createdAt > lastPurchaseAt) {
-        lastPurchaseAt = order.createdAt;
-      }
-      for (const item of order.items) {
-        const title = item.title?.trim();
-        if (!title) continue;
-        owned.set(title, (owned.get(title) ?? 0) + (item.quantity || 1));
-      }
-    }
-    const ownedItems = [...owned.entries()]
-      .slice(0, MAX_OWNED_ITEMS)
-      .map(([title, qty]) => (qty > 1 ? `${qty}× ${title}` : title));
+    const { ownedItems, lastPurchaseAt } = aggregateOwnedItems(customer.purchaseSummary);
 
     const profileSummary = customer.profileSummary?.trim() || null;
 
@@ -130,4 +167,100 @@ export async function resolveCustomerMemory(
     reportError(err, { route: "lib/customer-memory", phase: "resolveCustomerMemory" });
     return null;
   }
+}
+
+/**
+ * Resolve memory for a SIGNED-IN (tier-3) customer. The authenticated session
+ * IS the re-identification — no in-session email capture needed — but it must
+ * still be live: we obtain a valid access token (refreshing if needed) before
+ * surfacing anything, so a logged-out/expired session resolves to null (fail
+ * closed), exactly like /api/auth/me.
+ *
+ * The greeting-by-name uses ONLY the authenticated session's own identity, so it
+ * is shown to any live signed-in customer. Using their PURCHASE HISTORY /
+ * PROFILE / ADDRESS to personalise is gated on the SAME personalisation consent
+ * as tier 2 (CONSENT_COPY_LAWYER_APPROVED + marketing consent — see
+ * canPersonaliseSignedIn). Non-consented → name only. Best-effort; never throws.
+ */
+export async function resolveSignedInMemory(
+  sessionId: string | null
+): Promise<CustomerMemoryContext | null> {
+  const sid = sessionId?.trim() || null;
+  if (!sid) return null;
+  try {
+    const resolved = await resolveSignedInCustomer(sid);
+    if (!resolved) return null;
+
+    // Prove the session is still live (authenticated re-identification).
+    const token = await getValidAccessToken(resolved.customerId);
+    if (!token) return null;
+
+    const customer = await getCustomerById(resolved.customerId);
+    if (!customer) return null;
+
+    const displayName =
+      customer.shopifyAccountSummary?.displayName?.trim() || resolved.name || null;
+
+    const personalise = canPersonaliseSignedIn({
+      lawyerApproved: CONSENT_COPY_LAWYER_APPROVED,
+      marketingStatus: customer.marketingStatus,
+    });
+
+    if (!personalise) {
+      // Authenticated greeting-by-name ONLY — no history personalisation leaks.
+      // With nothing to even greet by, behave exactly as for an anonymous visit.
+      if (!displayName) return null;
+      return {
+        firstSeenAt: null,
+        priorConversationCount: 0,
+        profileSummary: null,
+        ownedItems: [],
+        lastPurchaseAt: null,
+        welcomeAlreadyIssued: customer.welcomeIssuedAt != null,
+        signedIn: true,
+        personalised: false,
+        displayName,
+        addressContext: null,
+      };
+    }
+
+    // Consented: full personalisation from the cached Shopify data.
+    const priorConversationCount = await countPriorConversations(customer.id, sid);
+    const { ownedItems, lastPurchaseAt } = aggregateOwnedItems(customer.purchaseSummary);
+    const profileSummary = customer.profileSummary?.trim() || null;
+
+    return {
+      firstSeenAt: customer.firstSeenAt,
+      priorConversationCount,
+      profileSummary,
+      ownedItems,
+      lastPurchaseAt,
+      welcomeAlreadyIssued: customer.welcomeIssuedAt != null,
+      signedIn: true,
+      personalised: true,
+      displayName,
+      addressContext: customer.shopifyAccountSummary?.addressContext ?? null,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/customer-memory", phase: "resolveSignedInMemory" });
+    return null;
+  }
+}
+
+/**
+ * The single entry point the chat route uses to resolve customer memory.
+ * SIGNED-IN (tier-3) identity takes precedence — it's the authenticated session
+ * — and falls back to the email-keyed (tier-2) in-session re-identification.
+ * Fail-closed: anonymous / unverified resolves to null.
+ */
+export async function resolveChatMemory(input: {
+  sessionId: string | null;
+  email: string | null;
+}): Promise<CustomerMemoryContext | null> {
+  const signedIn = await resolveSignedInMemory(input.sessionId);
+  if (signedIn) return signedIn;
+  if (input.email) {
+    return resolveCustomerMemory({ email: input.email, sessionId: input.sessionId });
+  }
+  return null;
 }

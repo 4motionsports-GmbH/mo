@@ -129,10 +129,21 @@ by the email the user just provided in this session.
 >       purpose is within the (lawyer-approved) consent scope / privacy policy
 >       — it goes beyond the one-off transactional summary the user originally
 >       requested. Until that sign-off, do NOT enable this for real users.
+> - [ ] **Signed-in (tier-3) customers** (see
+>       [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §8): for a signed-in
+>       customer the **name, addresses and full order history** are pulled from
+>       the Shopify **Customer Account API** and feed the profile + live chat via
+>       this same mechanism. Re-identification is the authenticated session, but
+>       the **personalisation consent requirement is unchanged**: history /
+>       profile / address are gated on `canPersonaliseSignedIn`
+>       (`CONSENT_COPY_LAWYER_APPROVED` **and** `marketing_status = 'confirmed'`),
+>       so a non-consented signed-in user gets **only** the authenticated
+>       greeting-by-name and no personalised data. Confirm this gate matches the
+>       intended lawful basis.
 >
 > Until that sign-off, treat the Kunden tab's profile generation AND the
-> in-chat customer memory as an internal pilot — the same launch + legal
-> constraints as the rest of the consent copy
+> in-chat customer memory (tier 2 **and** tier 3) as an internal pilot — the
+> same launch + legal constraints as the rest of the consent copy
 > (`CONSENT_COPY_LAWYER_APPROVED` in `src/lib/consent-copy.ts` is still
 > `false`). This item is also listed in the lawyer checklist in
 > [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).

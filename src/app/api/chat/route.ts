@@ -12,7 +12,7 @@ import {
   type ProductContext,
 } from "@/lib/system-prompt";
 import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-context";
-import { resolveCustomerMemory, type CustomerMemoryContext } from "@/lib/customer-memory";
+import { resolveChatMemory } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
 import { deriveArchetype } from "@/lib/persona";
@@ -227,12 +227,17 @@ export async function POST(req: Request) {
     archetype = deriveArchetype(profile);
     const latestUserText = getLatestUserText(messages);
 
-    // Customer memory — PRIVACY GATE: resolved only from an email the user
-    // provided IN THIS session (the widget attaches it after a successful
-    // capture here), and only after the server verifies that capture really
-    // came from this session id. NEVER from the localStorage session id alone
-    // — a shared/family/public browser must not surface someone else's
-    // history. Anonymous sessions (no `customer.email`) skip this entirely.
+    // Customer memory — PRIVACY GATE (two paths, both fail-closed):
+    //   * SIGNED-IN (tier 3): the authenticated session itself is the
+    //     re-identification (a live access token is required); the greeting uses
+    //     the session's own identity, and history-personalisation is gated on the
+    //     same personalisation consent as tier 2.
+    //   * EMAIL-identified (tier 2): resolved only from an email the user
+    //     provided IN THIS session (the widget attaches it after a successful
+    //     capture here) AND verified by the server to have been captured from
+    //     this session id — NEVER from the localStorage session id alone, so a
+    //     shared/family/public browser can't surface someone else's history.
+    // Anonymous sessions resolve to no memory.
     const claimedEmail =
       typeof body.customer?.email === "string" ? body.customer.email.trim() : "";
 
@@ -252,9 +257,7 @@ export async function POST(req: Request) {
       latestUserText
         ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
         : Promise.resolve([]),
-      claimedEmail
-        ? resolveCustomerMemory({ email: claimedEmail, sessionId })
-        : Promise.resolve<CustomerMemoryContext | null>(null),
+      resolveChatMemory({ sessionId, email: claimedEmail || null }),
       // Whether the user dismissed a capture card in this session (a UI click
       // the message history never shows — only the widget's KPI event records
       // it). Gates the deterministic email-offer trigger below: after an

@@ -127,7 +127,30 @@ function renderWelcomeMemoryRule(welcomeAlreadyIssued: boolean): string {
     : "Das Willkommensgeschenk (Rabattcode) gibt es nur EINMAL pro Person, bei der ersten Anmeldung. Ob dieser Kunde es schon erhalten oder eingelöst hat, weißt du hier nicht sicher — versprich ihm daher KEINEN Willkommensrabatt; bleib bei allgemeinen Formulierungen für Neukunden, falls das Thema aufkommt.";
 }
 
+// A SIGNED-IN (tier-3) customer who has NOT consented to history-personalisation
+// (the consent gate fails closed): we greet them by their authenticated name —
+// basic signed-in UX that uses only the session's own identity — and surface NO
+// purchase history / profile / address. See lib/customer-memory.ts.
+function renderSignedInNameOnly(name: string): string {
+  const who = name || "der Kunde";
+  return `## Angemeldeter Kunde
+
+Der Kunde ist in seinem motion sports Konto ANGEMELDET${name ? ` (Name: **${name}**)` : ""}.
+
+- Begrüße ${who} EINMAL freundlich und namentlich (tonal passend zum Segment — bei studio/public_sector siezen) — wie ein Berater, der einen Stammkunden mit Namen begrüßt. Danach nicht ständig wiederholen.
+- Du hast sonst KEINE weiteren persönlichen Daten zu diesem Kunden (keine Kaufhistorie, kein Profil, keine Adresse) — berate ansonsten genau wie für einen neuen Kunden und erfinde nichts.
+- Datenschutz: Nenne oder vermute KEINE Bestelldaten, Beträge, Adressen oder Daten Dritter — du hast sie hier nicht.`;
+}
+
 function renderCustomerMemory(memory: CustomerMemoryContext): string {
+  // Signed-in but not (yet) consented to history-personalisation → name only.
+  if (memory.signedIn && !memory.personalised) {
+    return renderSignedInNameOnly(memory.displayName?.trim() || "");
+  }
+
+  const signedIn = Boolean(memory.signedIn);
+  const name = memory.displayName?.trim() || "";
+
   const facts: string[] = [];
   const since = fmtMemoryDate(memory.firstSeenAt);
   if (since) facts.push(`- Kunde bei uns seit: ${since}`);
@@ -142,13 +165,31 @@ function renderCustomerMemory(memory: CustomerMemoryContext): string {
       `- Besitzt bereits (gekauft${last ? `, zuletzt am ${last}` : ""}): ${memory.ownedItems.join("; ")}`
     );
   }
+  if (signedIn && memory.addressContext) {
+    const loc = [memory.addressContext.city, memory.addressContext.countryCode]
+      .filter(Boolean)
+      .join(", ");
+    if (loc) {
+      facts.push(
+        `- Standort-Kontext aus dem Konto (Stadt/Land — nur für Versand-/Verfügbarkeitshinweise, sonst NICHT erwähnen): ${loc}`
+      );
+    }
+  }
   const summaryBlock = memory.profileSummary
     ? `\n### Aktuelles Kundenverständnis (verdichtet aus früheren Sessions)\n\n${memory.profileSummary}\n`
     : "";
 
-  return `## Kundengedächtnis (wiederkehrender Kunde — hat sich in DIESEM Gespräch per E-Mail identifiziert)
+  const header = signedIn
+    ? `## Kundengedächtnis (angemeldeter Stammkunde${name ? ` — ${name}` : ""})`
+    : `## Kundengedächtnis (wiederkehrender Kunde — hat sich in DIESEM Gespräch per E-Mail identifiziert)`;
 
-Der Kunde hat in diesem Gespräch seine E-Mail-Adresse angegeben und ist ein wiederkehrender Kunde. Das wissen wir aus früheren Beratungen und Käufen:
+  const intro = signedIn
+    ? `Der Kunde ist in seinem motion sports Konto ANGEMELDET${name ? ` (Name: ${name})` : ""} und ist ein wiederkehrender Kunde. Begrüße ihn EINMAL namentlich und tonal passend (bei studio/public_sector siezen). Das wissen wir aus seinem Konto und früheren Beratungen/Käufen:`
+    : `Der Kunde hat in diesem Gespräch seine E-Mail-Adresse angegeben und ist ein wiederkehrender Kunde. Das wissen wir aus früheren Beratungen und Käufen:`;
+
+  return `${header}
+
+${intro}
 
 ${facts.join("\n") || "- (keine Einzelfakten — siehe Kundenverständnis unten)"}
 ${summaryBlock}

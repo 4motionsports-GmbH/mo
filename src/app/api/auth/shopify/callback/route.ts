@@ -24,6 +24,7 @@ import {
 } from "@/lib/shopify-customer-account";
 import { consumePendingAuth, saveCustomerTokens } from "@/lib/customer-oauth-store";
 import { bindShopifyIdentity } from "@/lib/customer-store";
+import { refreshSignedInCustomerCache } from "@/lib/customer-account-cache";
 import { verifyState } from "@/lib/customer-account-oauth.mjs";
 import { numericFromCustomerGid } from "@/lib/customer-merge.mjs";
 
@@ -126,6 +127,11 @@ export async function GET(req: Request) {
     }
 
     await saveCustomerTokens(bind.customerId, tokens, idTokenSub);
+
+    // Warm the tier-3 cache (name + address context + order history) from the
+    // Customer Account API so the live chat and the marketing profile have it on
+    // the very next turn. Best-effort: never block the redirect on it.
+    await refreshSignedInCustomerCache(bind.customerId);
 
     return redirect(withMarker(returnUrl, "ok"));
   } catch (err) {

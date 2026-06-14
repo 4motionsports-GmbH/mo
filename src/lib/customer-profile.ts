@@ -51,6 +51,12 @@ export interface ProfileUsage {
 export interface GenerateProfileInput {
   sessions: CustomerSession[];
   purchases: OrderHistory | null;
+  /**
+   * Tier-3 only: a DATA-MINIMISED location context (city/country) from the
+   * signed-in Shopify account, so the profile can note delivery-relevant
+   * context. Never the full street address. Absent for tiers 1–2.
+   */
+  accountContext?: { city: string | null; countryCode: string | null } | null;
 }
 
 export type GenerateProfileResult =
@@ -100,6 +106,16 @@ function purchasesBlock(purchases: OrderHistory | null): string {
       return `- ${o.name} (${fmtDate(o.createdAt)}): ${items || "(keine Positionen)"}${total}`;
     })
     .join("\n");
+}
+
+function accountContextBlock(
+  ctx: { city: string | null; countryCode: string | null } | null | undefined
+): string {
+  if (!ctx) return "(kein Konto-Kontext — Kunde nicht angemeldet oder keine Adresse)";
+  const loc = [ctx.city, ctx.countryCode].filter(Boolean).join(", ");
+  return loc
+    ? `Angemeldeter Kunde. Standort (Stadt/Land, nur für Versand-/Verfügbarkeitskontext): ${loc}`
+    : "Angemeldeter Kunde (keine Adressangaben).";
 }
 
 /**
@@ -154,6 +170,7 @@ export async function generateCustomerProfile(
         `## Chat-Sessions (chronologisch, älteste zuerst)\n\n` +
         `${blocks || "(keine Gespräche verknüpft)"}\n\n` +
         `## Kaufhistorie (Shopify)\n\n${purchasesBlock(input.purchases)}\n\n` +
+        `## Konto-Kontext (Shopify)\n\n${accountContextBlock(input.accountContext)}\n\n` +
         `Erstelle jetzt das aktuelle Kundenverständnis.`,
     });
 

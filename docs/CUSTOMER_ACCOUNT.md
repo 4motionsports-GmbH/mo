@@ -1,8 +1,11 @@
 # Customer Account sign-in (tier-3 identity)
 
-> **Status:** CA-1 shipped — auth + identity model + token handling. Signed-in
-> data is **not** yet wired into the chat prompt and there is no history UI
-> (those are CA-2 / CA-3). The authoritative feasibility report is
+> **Status:** CA-1 shipped — auth + identity model + token handling. **CA-2/CA-3
+> shipped** — the signed-in customer's Customer Account data (name, addresses,
+> full order history) is now pulled and fed into the internal profile **and** the
+> live chat via the existing customer-memory mechanism, under the same consent
+> gate and data-minimisation (see [§8](#8-signed-in-data-in-the-profile--live-chat-ca-2--ca-3)).
+> The authoritative feasibility report is
 > [`CUSTOMER_ACCOUNT_SPIKE.md`](./CUSTOMER_ACCOUNT_SPIKE.md); this document
 > describes what was built.
 
@@ -207,3 +210,104 @@ switch to confidential), and (3) probes `prompt=none` (logged-out → expects
 6. **Re-hydrate:** `GET https://<PUBLIC_BASE_URL>/api/auth/me?session=<same-id>`
    with `Origin: https://www.motionsports.de` + `x-ms-chat-key: <secret>` →
    expect `{ "signedIn": true, "identity": { "name": "…", "tier": 3 } }`.
+
+## 8. Signed-in data in the profile + live chat (CA-2 / CA-3)
+
+For a **signed-in (tier-3)** customer we pull the interesting Customer Account
+data and feed it into the **internal marketing profile** and the **live chat**,
+reusing the **existing customer-memory mechanism** and its consent gate. This is
+**profile + live-chat personalisation only** — it does **not** touch the
+marketing CONSENT model (CA-4): signing in still establishes identity, never
+marketing consent.
+
+### What we fetch — and from where
+
+Via the **Customer Account API GraphQL** endpoint
+(`account.motionsports.de/customer/api/<version>/graphql`) with the customer's
+own server-held access token (sent **directly** in `Authorization`, no `Bearer`
+prefix), `fetchSignedInCustomerData` reads (signed-in customer only): **name**,
+**addresses**, and **full order history with line items**
+(`lib/shopify-customer-account.ts`).
+
+> ⚠️ **Customer Account API field shapes differ from the Admin Customer object**
+> and must be re-verified against the **rendered** schema (the verify gate, §6):
+> e.g. email is wrapped as `emailAddress { emailAddress }`; the order date is
+> `processedAt` (Admin: `createdAt`); the total is a flat
+> `totalPrice { amount currencyCode }` (Admin wraps it in
+> `currentTotalPriceSet.shopMoney`); the status is `financialStatus` (Admin:
+> `displayFinancialStatus`); the default address exposes `territoryCode`. The
+> richer read is **fault-isolated** from the identity read and **fails soft**:
+> any residual shape drift degrades to "name only", never an error.
+
+For tier 3 this **REPLACES** the email-keyed Admin-API order fetch
+(`fetchOrderHistoryByEmail`) as the purchase-history source.
+
+### Where it's cached — keyed by `shopify_customer_id`
+
+The normalisation (`lib/customer-account-data.mjs`, unit-tested) maps the
+Customer Account response into the shapes the rest of the app **already**
+consumes, so nothing downstream changes:
+
+- **Order history → `customers.purchase_summary`** (migration 0008) — the same
+  blob the live-chat memory, profile generation, marketing draft and bundle
+  suggestion already read.
+- **Name + a DATA-MINIMISED address context (city + country code only) →
+  `customers.shopify_account_summary`** (migration **0015**) — for the greeting
+  and the profile. We never cache the raw street, phone, or order totals here.
+
+`refreshSignedInCustomerCache(customerId)` (`lib/customer-account-cache.ts`) ties
+token → fetch → cache. It runs **on sign-in** (the callback, best-effort) and
+when an admin clicks **"Käufe aktualisieren"** (for a tier-3 customer the
+purchases route uses the Customer Account API instead of the email path).
+
+### How it reaches the chat — same mechanism, same minimisation
+
+`resolveChatMemory({ sessionId, email })` (`lib/customer-memory.ts`) is the
+single entry point the chat route uses. **Signed-in identity takes precedence**
+(it's the authenticated session), falling back to the tier-2 email path:
+
+- **Re-identification** for a signed-in user is the **authenticated session
+  itself** — `resolveSignedInMemory` requires a **live access token** (refreshing
+  if needed) before surfacing anything, so a logged-out/expired session resolves
+  to nothing (fail-closed), exactly like `/api/auth/me`.
+- **Greeting (CA goal 2):** the chat greets the returning signed-in customer by
+  **name, tier-appropriately** (du / — for studio & public_sector — Sie). The
+  greeting uses only the **session's own authenticated identity**, so it is shown
+  to any live signed-in customer.
+- **Personalisation (CA goal 1):** the **current-understanding summary + owned
+  items + address context** are injected via the **same** customer-memory block,
+  with the **same data minimisation** — a compact summary, owned-item titles +
+  quantities, counts; **never** raw transcripts, order totals, or the email in
+  the prompt.
+- **Profile (CA goal 3):** for tier 3 the richer Shopify data flows into the
+  existing personalized-email + bundle-suggestion flows automatically (they read
+  `purchase_summary` / `profile_summary`); the profile generation additionally
+  receives the data-minimised location context.
+
+### The consent gate (unchanged personalisation requirement)
+
+History-personalisation stays gated on the **same** consent as tier 2 —
+`CONSENT_COPY_LAWYER_APPROVED` **and** the personalisation purpose being covered
+— enforced by `canPersonaliseSignedIn({ lawyerApproved, marketingStatus })`:
+
+| Visitor | Greeting by name | History / profile / address personalisation |
+|---|---|---|
+| Anonymous (tier 1) | no | no |
+| Signed-in, **not** consented | **yes** (authenticated UX) | **no** (fails closed) |
+| Signed-in, marketing-consented + lawyer flag on | yes | **yes** |
+
+The gate is two hard conditions, both fail-closed:
+
+1. **`CONSENT_COPY_LAWYER_APPROVED`** — the consent/privacy copy that covers
+   "profile building from past interactions and purchases" must be legally signed
+   off. It is currently `false`, so **no personalised data leaks for anyone**;
+   only the authenticated name greeting is shown to signed-in users.
+2. **Marketing consent on record (`marketing_status = 'confirmed'`)** — the
+   affirmative, unbundled, double-opt-in consent the GDPR TODO
+   ([`CUSTOMERS.md`](./CUSTOMERS.md)) extends to cover personalisation from past
+   conversations + purchases. Signing in never sets this; only our DOI does.
+
+So a **non-consented or anonymous** user gets **no** purchase history, profile,
+or address in the prompt — the consent gate governs personalisation exactly as
+for tier 2; only the signed-in name greeting (the session's own identity) is
+added on top.
