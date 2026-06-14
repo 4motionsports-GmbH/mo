@@ -25,12 +25,18 @@ Endpoints:
 | GET    | `/api/auth/shopify/callback` | OAuth callback (server-side PKCE exchange). |
 | GET    | `/api/auth/me`            | Signed-in identity re-hydration (`{ name, tier }`). |
 | GET    | `/api/auth/shopify/logout/return` | Logout-return landing. |
+| GET    | `/api/account/conversations` | Signed-in: LIST past conversations (tier 3). |
+| GET/PATCH/DELETE | `/api/account/conversations/{id}` | Signed-in: fetch / rename / delete one conversation. |
+| POST   | `/api/account/erase`      | Signed-in: full "delete my data" (erase customer). |
 
 > **Customer Account sign-in (tier 3)** is documented in full in
 > [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) (frontend contract:
 > `docs/frontend-handoff/CUSTOMER_ACCOUNT.md`). The `login` / `callback` /
 > `logout/return` routes are top-level navigations (signed `state`, no
-> CORS/secret); `/api/auth/me` is a guarded widget XHR.
+> CORS/secret); `/api/auth/me` is a guarded widget XHR. The **signed-in
+> conversation-history** endpoints (`/api/account/*`) are guarded widget XHRs
+> behind the CA-1 signed-in resolver (fail-closed for anonymous / email-only) —
+> see `CUSTOMER_ACCOUNT.md` §9.
 
 > `/api/confirm-marketing` and `/api/unsubscribe` are **clicked from emails**
 > as top-level browser navigations — they return an HTML page, not JSON, and

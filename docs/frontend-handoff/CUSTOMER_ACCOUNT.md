@@ -126,3 +126,134 @@ The anonymous and email-capture flows are untouched. Sign-in is **identity only*
 — it does **not** opt the customer into marketing. The double-opt-in email flow
 remains the only path to marketing consent. A visitor can use the chat fully
 without ever signing in.
+
+## 7. Signed-in conversation history (CA-3-THEME contract)
+
+A **signed-in** customer can browse, open, rename and delete their own past
+conversations — and erase all of their data. These are widget XHRs under
+`/api/account/*`, so they carry the **same guards as `/api/auth/me`**:
+
+```
+x-ms-chat-key: {shared secret}
+Origin:        {storefront origin}        (browser-set)
+x-ms-session:  {session_id}               (or ?session= query param)
+```
+
+All of them:
+
+- are **fail-closed**: an anonymous or **email-only** session (not signed in via
+  Shopify), or a logged-out / expired one, gets **HTTP 401**
+  `{ "error": { "code": "unauthorized", "message": "…" } }`. Only render the
+  history UI once `/api/auth/me` reports `signedIn: true`.
+- return JSON with `Cache-Control: no-store` and support a CORS `OPTIONS`
+  preflight (the per-id route advertises `GET, PATCH, DELETE, OPTIONS`).
+- are scoped to the signed-in customer **across devices** — the list is the
+  customer's whole history, whichever device opened each chat. A conversation id
+  the customer doesn't own returns **404** (same as a missing one).
+
+> If anything here disagrees with the backend, the backend wins
+> (`docs/CUSTOMER_ACCOUNT.md` §9).
+
+### 7.1 List — `GET /api/account/conversations`
+
+Most-recent-first. Each item has a ready-to-render `title` (never null), the
+timestamps, and the readable message count. **No pagination params** in v1
+(capped at 100 server-side).
+
+```jsonc
+// 200 OK
+{
+  "conversations": [
+    {
+      "conversationId": 412,
+      "title": "Welche Laufschuhe passen zu mir?",   // custom title, else first user msg trimmed
+      "createdAt": "2026-06-01T09:14:22.000Z",
+      "updatedAt": "2026-06-01T09:31:05.000Z",
+      "messageCount": 8                               // readable user/assistant turns
+    }
+    // …
+  ]
+}
+```
+
+- `title` is **cheap** server-side (no model call): the custom title if the
+  customer renamed it, otherwise the first user message trimmed to ≤ 80 chars
+  (the backend falls back to `"Beratung"` when there's no user text yet).
+- `createdAt` / `updatedAt` are ISO-8601 (or `null` if unknown). `updatedAt`
+  bumps on rename; list order is by **last activity**, so a rename does **not**
+  reorder the list.
+
+### 7.2 Fetch transcript — `GET /api/account/conversations/{id}`
+
+```jsonc
+// 200 OK
+{
+  "conversation": {
+    "conversationId": 412,
+    "title": "Welche Laufschuhe passen zu mir?",
+    "createdAt": "2026-06-01T09:14:22.000Z",
+    "updatedAt": "2026-06-01T09:31:05.000Z",
+    "personaLabel": "pragmatic_beginner",   // may be null
+    "messageCount": 8,
+    "messages": [
+      { "role": "user",      "content": "Welche Laufschuhe passen zu mir?", "toolName": null },
+      { "role": "assistant", "content": "Gern! Wofür möchtest du sie …",     "toolName": null }
+      // … readable turns only; tool-bookkeeping rows are dropped
+    ]
+  }
+}
+```
+
+- `400` `bad_request` if `{id}` isn't a positive integer.
+- `404` `bad_request` (`"Konversation nicht gefunden"`) if it isn't this
+  customer's conversation.
+
+### 7.3 Rename — `PATCH /api/account/conversations/{id}`
+
+```jsonc
+// request body
+{ "title": "Laufschuh-Beratung" }
+// 200 OK
+{ "ok": true, "conversationId": 412, "title": "Laufschuh-Beratung" }
+```
+
+- The title is trimmed, whitespace-collapsed, and bounded to **80 chars**
+  server-side — send the raw user input; the response echoes the stored value.
+- `400` `bad_request` for a missing/empty/non-string title or bad JSON.
+- `404` `bad_request` if the conversation isn't this customer's.
+
+### 7.4 Delete one chat — `DELETE /api/account/conversations/{id}`
+
+```jsonc
+// 200 OK
+{ "ok": true, "conversationId": 412, "deleted": true }
+```
+
+- **HARD-deletes that one transcript** (messages included) — irreversible.
+- `404` `bad_request` if the conversation isn't this customer's.
+- **It does NOT erase the durable profile.** Deleting a chat means a future
+  profile regeneration no longer sees it, but anything already learned persists
+  until the profile is regenerated or the customer uses §7.5. Word the UI
+  honestly: *"Dieser Chat wird gelöscht"*, not *"alle Daten gelöscht"*.
+
+### 7.5 Delete ALL my data — `POST /api/account/erase`
+
+A **distinct, heavier** action from §7.4 — confirm it explicitly in the UI.
+
+```jsonc
+// POST (no body required)
+// 200 OK
+{ "ok": true, "erased": true, "deletedConversations": 7 }
+```
+
+This erases the **person**: purges **all** conversations, clears the profile +
+cached summaries, **revokes the stored OAuth tokens**, and suppresses the email.
+After it returns:
+
+- the session **no longer resolves** — `/api/auth/me` now returns
+  `signedIn: false` and every `/api/account/*` call returns 401. Clear the
+  signed-in UI immediately.
+- consider also sending the user through Shopify logout (§5) to end the Shopify
+  session itself.
+- `503` `upstream_unavailable` means the erasure could **not** be performed
+  (don't show "deleted" — let the user retry).
