@@ -2,7 +2,13 @@ import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { errorEnvelope } from "./observability";
 
-export type RateLimitBucket = "chat" | "products" | "kpi" | "tts" | "tts-stream";
+export type RateLimitBucket =
+  | "chat"
+  | "products"
+  | "kpi"
+  | "tts"
+  | "tts-stream"
+  | "feedback";
 
 // Per-bucket sliding-window config: max requests over the given Upstash
 // duration string. Each bucket gets its own window so we can mix short (chat,
@@ -30,6 +36,13 @@ const BUCKET_CONFIG: Record<RateLimitBucket, { max: number; window: `${number} $
   // path, while the higher request COUNT no longer trips the tight 20/5-min
   // bucket the full-message fallback keeps.
   "tts-stream": { max: 120, window: "300 s" },
+  // Customer feedback: a deliberate, low-frequency action (a person types a
+  // comment and submits it once). Its own tight bucket is the light abuse
+  // protection for the endpoint — 5 / 5 min / session comfortably covers a
+  // genuine "leave feedback, fix a typo, resubmit" while stopping a script from
+  // flooding the table, complementing the per-message length cap in
+  // feedback-validation.mjs.
+  feedback: { max: 5, window: "300 s" },
 };
 
 const cached: Partial<Record<RateLimitBucket, Ratelimit>> = {};

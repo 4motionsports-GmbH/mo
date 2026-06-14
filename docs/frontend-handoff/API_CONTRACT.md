@@ -25,6 +25,7 @@ Endpoints:
 | POST   | `/api/contact`            | Contact-form submission → email via Resend.              |
 | GET    | `/api/products`           | Public product hydration for widget cards.               |
 | POST   | `/api/kpi`                | Pseudonymous telemetry ingestion (fire-and-forget).      |
+| POST   | `/api/feedback`           | Customer feedback capture (free text + optional context). §9. |
 | POST   | `/api/capture-email`      | GDPR email capture + double opt-in (summary + marketing).|
 | GET    | `/api/consent-copy`       | Canonical capture-form consent copy (labels + links).     |
 | GET    | `/api/confirm-marketing`  | Marketing double-opt-in confirmation link (HTML page).   |
@@ -1414,3 +1415,55 @@ Response headers the widget can read (CORS-exposed):
 > (or a single-shot call). `upstream_unavailable` is the documented, expected
 > "synthesis is down, use the local voice" signal; don't surface it as an
 > error, just speak locally instead.
+
+---
+
+## 9. `POST /api/feedback` — customer feedback
+
+Submit a free-text customer comment. Same guard as `/api/chat`
+(origin allowlist + `x-ms-chat-key` + rate limit). The comment lands in the
+admin **Feedback** tab.
+
+### Required request headers
+
+| Header          | Value                                                                |
+| --------------- | -------------------------------------------------------------------- |
+| `Content-Type`  | `application/json`                                                   |
+| `x-ms-chat-key` | Shared secret (same one the chat uses).                              |
+| `x-ms-session`  | Stable session id (UUID). Rate-limit key + `sessionId` fallback.    |
+
+### Submit contract
+
+```jsonc
+{
+  "message": "Der Vergleich der Racks war super hilfreich!",  // REQUIRED, ≤4000 chars
+  // ↓ all OPTIONAL context — send what you have, omit the rest
+  "sessionId": "b3c1…",            // pseudonymous; omit and the server uses x-ms-session
+  "conversationId": "thread-2",    // the conversationKey/thread the comment is about
+  "tier": "anonymous",             // customer tier if known (e.g. "anonymous", a tier label)
+  "email": "max@example.de",       // ONLY when already identified (signed-in / captured)
+  "page": "/produkte/atx-rack-pro" // page/path the user was on (e.g. location.pathname)
+}
+```
+
+**Rules**
+
+- `message` is the only required field: non-empty after trimming, **≤4000
+  characters**. `feedback` is accepted as an alias for `message`.
+- Send `email` **only** when you already have an identified address (signed-in
+  user, or one captured this session) — it's contact context for follow-up, not
+  a consent step, and triggers nothing. Never prompt for it just for feedback.
+- All context fields are optional; send what's cheaply available.
+
+**Success** → `200 { "ok": true }`. Show a brief "Danke für dein Feedback!"
+confirmation and clear the field.
+
+**Errors** (standard envelope `{ "error": { "code", "message" } }`):
+
+| Status | Code                   | UX guidance                                                          |
+| ------ | ---------------------- | ------------------------------------------------------------------- |
+| 400    | `bad_request`          | Empty/invalid comment — keep the field, show "Bitte gib zuerst dein Feedback ein." |
+| 413    | `payload_too_large`    | Comment too long (>4000) — show the cap, let the user shorten it.    |
+| 429    | `rate_limited`         | Too many submissions — show a "kurz warten" hint; honour `Retry-After`. |
+| 503    | `upstream_unavailable` | Temporary storage outage — offer a retry later.                     |
+| 401/403| `unauthorized`/`forbidden` | Misconfigured guard (secret/origin) — not user-fixable.        |

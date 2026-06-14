@@ -39,6 +39,7 @@ import { MarketingList } from "./MarketingList";
 import { toStatusFilter, type StatusFilter } from "./marketing-filter";
 import { CustomerProfileCard, type CustomerProps } from "./CustomerProfileCard";
 import { KpiTab } from "./KpiTab";
+import { FeedbackTab } from "./FeedbackTab";
 import { OverviewTab } from "./OverviewTab";
 import { AdminShell, type AdminTab } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
@@ -62,11 +63,13 @@ export default async function AdminDashboardPage({
   const initialTab: AdminTab =
     sp?.tab === "kpi"
       ? "kpi"
-      : sp?.tab === "kunden"
-        ? "kunden"
-        : sp?.tab === "customers"
-          ? "customers"
-          : "overview";
+      : sp?.tab === "feedback"
+        ? "feedback"
+        : sp?.tab === "kunden"
+          ? "kunden"
+          : sp?.tab === "customers"
+            ? "customers"
+            : "overview";
   // ?status= deep-links straight into a pre-applied Marketing filter (set by the
   // Overview quick links), seeding MarketingList's own filter state.
   const initialMarketingStatus = toStatusFilter(
@@ -108,6 +111,7 @@ export default async function AdminDashboardPage({
       }
       kunden={<KundenTab dbReady={dbReady} />}
       kpi={<KpiTab dbReady={dbReady} />}
+      feedback={<FeedbackTab dbReady={dbReady} />}
     />
   );
 }

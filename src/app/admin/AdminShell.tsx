@@ -12,15 +12,16 @@ import { Toaster } from "./ui/toast";
 import { ThemeToggle } from "./ThemeToggle";
 import type { Theme } from "./theme-config";
 
-export type AdminTab = "overview" | "customers" | "kunden" | "kpi";
+export type AdminTab = "overview" | "customers" | "kunden" | "kpi" | "feedback";
 
-const TAB_ORDER: AdminTab[] = ["overview", "customers", "kunden", "kpi"];
+const TAB_ORDER: AdminTab[] = ["overview", "customers", "kunden", "kpi", "feedback"];
 
 const TAB_LABEL: Record<AdminTab, string> = {
   overview: "Übersicht",
   customers: "Marketing",
   kunden: "Kunden",
   kpi: "KPIs",
+  feedback: "Feedback",
 };
 
 const TAB_SUBTITLE: Record<AdminTab, string> = {
@@ -29,6 +30,7 @@ const TAB_SUBTITLE: Record<AdminTab, string> = {
   kunden:
     "Kunden · Gruppiert nach Person (E-Mail) — Sessions, Käufe & Kundenverständnis",
   kpi: "KPIs · Pseudonyme Analytics (Cluster A) + Shopify-Käufe",
+  feedback: "Feedback · Kund:innen-Rückmeldungen aus dem Widget — neueste zuerst",
 };
 
 // The Übersicht tab is the bare /admin (the default landing tab); every other
@@ -45,6 +47,7 @@ export function AdminShell({
   marketing,
   kunden,
   kpi,
+  feedback,
 }: {
   initialTab: AdminTab;
   themeInitial: Theme | null;
@@ -53,6 +56,7 @@ export function AdminShell({
   marketing: React.ReactNode;
   kunden: React.ReactNode;
   kpi: React.ReactNode;
+  feedback: React.ReactNode;
 }) {
   const [tab, setTab] = React.useState<AdminTab>(initialTab);
 
@@ -69,7 +73,7 @@ export function AdminShell({
   // Light, optional keyboard shortcuts (dialogs close on Esc via the Dialog
   // primitive itself). Deliberately bare keys, ignored while typing in a field or
   // with a modifier held so they never clobber browser/native shortcuts:
-  //   1–4  switch to the n-th tab
+  //   1–5  switch to the n-th tab
   //   /    focus the Marketing search box (switching to that tab if needed)
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -113,6 +117,7 @@ export function AdminShell({
     customers: marketing,
     kunden,
     kpi,
+    feedback,
   };
 
   return (
