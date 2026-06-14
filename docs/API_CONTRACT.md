@@ -1287,12 +1287,26 @@ The CORS preflight advertises `POST, OPTIONS` and
 
 ```jsonc
 {
-  "text": "Das ATX Power Rack ist sehr stabil und passt gut in deinen Keller."
+  "text": "Das ATX Power Rack ist sehr stabil und passt gut in deinen Keller.",
+  // Optional. Streaming (per-sentence) mode — see "Streaming voice mode" below.
+  "stream": true,
+  // Optional. Chunk index echoed back in X-MS-TTS-Seq (streaming mode only).
+  "seq": 0
 }
 ```
 
 - `text` (string, **required**). Reject if missing/not a string
   (`400 bad_request`) or empty after cleaning (`400 bad_request`).
+- `stream` (boolean, **optional**, default `false`). When `true`, the call is
+  rate-limited on the more generous **`tts-stream`** bucket (120 req / 5 min)
+  instead of the single-shot `tts` bucket (20 req / 5 min). Everything else —
+  auth, origin, cleaning, synthesis, usage recording, response shape — is
+  identical. See **Streaming voice mode** below.
+- `seq` (number, **optional**). A caller-assigned chunk index (≥ 0). It is
+  echoed back verbatim in the `X-MS-TTS-Seq` response header so the widget can
+  slot each independently-completing audio response into its playback queue
+  without depending on response arrival order. Absent / invalid → header is
+  `-1`.
 - **The server cleans the text before synthesis.** Markdown artifacts are
   stripped (`**bold**`, `` `code` ``, `[links](url)`, headings, bullet
   lists) so nothing is ever read aloud as punctuation. The widget SHOULD
@@ -1302,6 +1316,48 @@ The CORS preflight advertises `POST, OPTIONS` and
   end that fits, so the audio ends on a natural pause. When this happens the
   response carries `X-MS-TTS-Truncated: true` — the request still succeeds
   with audio for the kept portion.
+
+### Streaming voice mode (audio while the text streams)
+
+By default the widget waits for the **whole** assistant message before it
+calls `/api/tts` once — so spoken audio only starts after generation
+finishes, which feels slow. Streaming voice mode plays audio **while** the
+text is still streaming (ChatGPT-style): the widget watches the SSE chat
+stream, and as soon as it has a **complete sentence/clause** it fires
+`POST /api/tts` with `{ "text": "<that sentence>", "stream": true, "seq": n }`
+and pushes the returned MP3 into a playback queue. The first audio can start
+~1 s after the **first** sentence instead of after the full answer.
+
+This reuses the existing endpoint wholesale — same shared secret, same origin
+allowlist, same `gpt-4o-mini-tts` synthesis, same per-request usage recording.
+The only difference is the rate-limit bucket: per-sentence calls mean several
+requests per played answer, so streaming mode uses **`tts-stream`** (120 req /
+5 min) while the single-shot full-message path keeps the tight `tts` bucket
+(20 req / 5 min). Each chunk is still capped at 2000 chars, so total
+synthesized characters per window stay bounded.
+
+**Per-sentence calling pattern (the contract):**
+
+1. As chat tokens arrive, accumulate them and split on sentence terminators
+   (`.`, `!`, `?`, `…`, newline). Emit a chunk as soon as a terminator
+   completes a sentence; hold the trailing partial sentence until the next
+   terminator (or until the stream ends — then flush whatever remains).
+2. Optionally coalesce very short fragments (e.g. `< 60` chars) with the next
+   sentence so the audio isn't choppy, and skip chunks that are empty after
+   Markdown stripping.
+3. For each chunk, in stream order, `POST /api/tts` with
+   `{ text, stream: true, seq }` where `seq` is a monotonically increasing
+   index starting at 0.
+4. **Play strictly in `seq` order.** Requests complete out of order; use the
+   echoed `X-MS-TTS-Seq` header (and your own `seq` counter) to enqueue, and
+   only advance playback when the next-in-order clip has arrived. Buffer
+   later-but-ready clips.
+5. **Fallbacks (unchanged):** if a chunk returns a non-2xx (e.g. `429
+   rate_limited` or `502 upstream_unavailable`), stop the per-sentence path
+   for this message and fall back to either the single-shot full-message call
+   (`stream` omitted) or the browser's `speechSynthesis`, exactly as today.
+   Streaming TTS is a perceived-latency optimisation layered **on top of** the
+   existing behaviour, never a replacement for it.
 
 ### Success response — streamed audio
 
@@ -1330,6 +1386,7 @@ Response headers the widget can read (CORS-exposed):
 | -------------------- | -------------------------------------------------------------------- |
 | `X-MS-TTS-Truncated` | `true` when the input exceeded 2000 chars and was cut at a sentence boundary; `false` otherwise. |
 | `X-MS-TTS-Chars`     | Number of characters actually synthesized (after cleaning + truncation). |
+| `X-MS-TTS-Seq`       | Echoes the request's `seq` (streaming mode), so async chunk responses can be ordered for playback. `-1` when no valid `seq` was sent. |
 
 ### Error responses
 
@@ -1342,7 +1399,7 @@ Response headers the widget can read (CORS-exposed):
 | 400    | `bad_request`          | Invalid JSON, `text` missing/not a string, or empty after cleaning.  |
 | 401    | `unauthorized`         | Missing / wrong shared secret.                                       |
 | 403    | `forbidden`            | Cross-origin request from an origin not in the allowlist.            |
-| 429    | `rate_limited`         | Dedicated `tts` bucket (**20 req / 5 min**). `Retry-After` set.      |
+| 429    | `rate_limited`         | Single-shot: `tts` bucket (**20 req / 5 min**). Streaming (`stream: true`): `tts-stream` bucket (**120 req / 5 min**). `Retry-After` set. |
 | 502    | `upstream_unavailable` | OpenAI TTS failed/threw, or no API key configured.                   |
 | 500    | `internal_error`       | Anything else.                                                       |
 
@@ -1360,6 +1417,7 @@ Response headers the widget can read (CORS-exposed):
 | `TTS_MODEL`        | `gpt-4o-mini-tts`  | Current cost-efficient OpenAI TTS model (multilingual).               |
 | `TTS_VOICE`        | `alloy`            | Neutral, clean German pronunciation. Warmer options: `nova`, `coral`, `shimmer`. |
 | `TTS_INSTRUCTIONS` | German tone hint   | Tone/accent steering (gpt-4o-mini-tts only). Steers natural Hochdeutsch. |
+| `TTS_SPEED`        | `1.0`              | Speaking rate (clamped 0.25–4.0). A slightly higher value (e.g. `1.1`) improves perceived responsiveness in streaming mode. Applied as the numeric `speed` param on legacy `tts-1`/`tts-1-hd`; on `gpt-4o-mini-tts` (which rejects `speed`) it is folded into `instructions` as a tempo hint. `1.0` leaves the single-shot path unchanged. |
 
 ### Cost attribution
 
@@ -1371,3 +1429,9 @@ character count in the `input_tokens` column, `output_tokens = 0`,
 `estimated = true` to flag the per-character (not per-token) unit. It is
 counted as chat-serving spend in the dashboard split, and does **not** affect
 the token-based cost-per-consultation average.
+
+In **streaming voice mode** this is unchanged per request: each per-sentence
+chunk records its own `call_site = 'tts'` row for the characters it
+synthesized. The rows aggregate to the same total characters the single-shot
+call would have recorded for the full message — spend tracking is identical,
+just split across more rows.

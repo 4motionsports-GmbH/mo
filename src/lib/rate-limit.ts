@@ -2,7 +2,7 @@ import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { errorEnvelope } from "./observability";
 
-export type RateLimitBucket = "chat" | "products" | "kpi" | "tts";
+export type RateLimitBucket = "chat" | "products" | "kpi" | "tts" | "tts-stream";
 
 // Per-bucket sliding-window config: max requests over the given Upstash
 // duration string. Each bucket gets its own window so we can mix short (chat,
@@ -20,6 +20,16 @@ const BUCKET_CONFIG: Record<RateLimitBucket, { max: number; window: `${number} $
   // occasional replay — while capping a scraper's spend (≤20 syntheses / 5 min
   // / session, each ≤2000 chars) and matching the per-session keying below.
   tts: { max: 20, window: "300 s" },
+  // Streaming voice mode (ChatGPT-style): the widget fires /api/tts once per
+  // SENTENCE/CLAUSE as the answer streams in, so a single played answer is
+  // several requests instead of one. This bucket is sized for that
+  // granularity — a real consultation plays a handful of multi-sentence
+  // answers — while each chunk stays small (the widget sends one sentence,
+  // the server still caps at MAX_TTS_CHARS). Total synthesized characters per
+  // window therefore stay bounded and comparable to the single-shot `tts`
+  // path, while the higher request COUNT no longer trips the tight 20/5-min
+  // bucket the full-message fallback keeps.
+  "tts-stream": { max: 120, window: "300 s" },
 };
 
 const cached: Partial<Record<RateLimitBucket, Ratelimit>> = {};

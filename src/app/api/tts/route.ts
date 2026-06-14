@@ -32,6 +32,31 @@ const TTS_INSTRUCTIONS =
 // overriding TTS_MODEL to a legacy model can't 400 the whole request.
 const SUPPORTS_INSTRUCTIONS = TTS_MODEL.startsWith("gpt-4o");
 
+// SPEAKING RATE (configurable). A slightly faster voice improves perceived
+// responsiveness in streaming mode (the audio "keeps up" with the streamed
+// text), so the rate is env-overridable. The two TTS model families take the
+// rate differently:
+//   * legacy tts-1 / tts-1-hd accept the numeric `speed` param (0.25–4.0);
+//   * the steerable gpt-4o(-mini)-tts models REJECT `speed` and are instead
+//     steered via `instructions` — so we fold a tempo hint into the prompt.
+// Default 1.0 leaves the full-message fallback path byte-for-byte unchanged.
+const TTS_SPEED = (() => {
+  const raw = Number.parseFloat(process.env.TTS_SPEED ?? "");
+  if (!Number.isFinite(raw)) return 1.0;
+  return Math.min(4.0, Math.max(0.25, raw));
+})();
+const SUPPORTS_SPEED = !SUPPORTS_INSTRUCTIONS;
+
+// Build the steering instructions for gpt-4o models, folding in a tempo hint
+// when TTS_SPEED departs from the default. (No-op for legacy models — they get
+// the numeric `speed` param instead.)
+function buildInstructions(): string {
+  let instr = TTS_INSTRUCTIONS;
+  if (TTS_SPEED >= 1.05) instr += " Sprich in einem zügigen, aber gut verständlichen Tempo.";
+  else if (TTS_SPEED <= 0.95) instr += " Sprich in einem ruhigen, langsameren Tempo.";
+  return instr;
+}
+
 // OUTPUT FORMAT: MP3 (Content-Type audio/mpeg). Chosen for the broadest mobile
 // playback. Opus would be smaller / lower-latency, but iOS Safari does NOT
 // decode Opus in an Ogg/WebM container via <audio>, which is exactly the
@@ -44,7 +69,12 @@ const CONTENT_TYPE = "audio/mpeg";
 // many characters we actually synthesized. Must be CORS-exposed (see corsHeaders).
 const TRUNCATED_HEADER = "X-MS-TTS-Truncated";
 const CHARS_HEADER = "X-MS-TTS-Chars";
-const EXPOSE_HEADERS = [TRUNCATED_HEADER, CHARS_HEADER];
+// Echoes the caller's chunk index in streaming mode so the widget can correlate
+// each (independently-completing) audio response back to its place in the
+// sentence queue without relying on response arrival order. Absent / "-1" for
+// non-streaming single-shot calls. CORS-exposed.
+const SEQ_HEADER = "X-MS-TTS-Seq";
+const EXPOSE_HEADERS = [TRUNCATED_HEADER, CHARS_HEADER, SEQ_HEADER];
 
 let openaiClient: OpenAI | null = null;
 function getOpenAI(): OpenAI {
@@ -65,16 +95,32 @@ export async function POST(req: Request) {
   const sessionId = req.headers.get("x-ms-session");
 
   try {
-    // Own rate-limit bucket: 20 req / 5 min, keyed by x-ms-session (IP fallback).
-    const rl = await checkRateLimit(req, "tts");
-    if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
-
-    let body: { text?: unknown };
+    let body: { text?: unknown; stream?: unknown; seq?: unknown };
     try {
       body = (await req.json()) as typeof body;
     } catch {
       return errorResponse("bad_request", "Invalid JSON body", 400, cors);
     }
+
+    // STREAMING MODE (item 3): the widget detects sentence boundaries in the
+    // streamed chat text and fires this endpoint once per sentence, queuing the
+    // returned MP3 clips so audio starts ~1s after the FIRST sentence instead of
+    // after the whole answer. Same auth/origin/synthesis/usage as the
+    // single-shot path — only the rate-limit bucket differs (sentence-level
+    // granularity = more requests per played answer; see lib/rate-limit.ts).
+    // Any falsy/absent `stream` keeps the existing single-shot full-message
+    // behaviour the browser-speechSynthesis fallback also relies on.
+    const streaming = body.stream === true || body.stream === "true" || body.stream === 1;
+    // Optional caller chunk index, echoed back so the widget can order async
+    // responses. Bounded to a sane non-negative integer; anything else → -1.
+    const seq = Number.isFinite(body.seq) && (body.seq as number) >= 0
+      ? Math.floor(body.seq as number)
+      : -1;
+
+    // Rate-limit on the bucket matching the mode, keyed by x-ms-session (IP
+    // fallback): single-shot 20/5min, streaming 120/5min.
+    const rl = await checkRateLimit(req, streaming ? "tts-stream" : "tts");
+    if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
     if (typeof body.text !== "string") {
       return errorResponse("bad_request", "Field 'text' (string) is required", 400, cors);
@@ -106,7 +152,12 @@ export async function POST(req: Request) {
         voice: TTS_VOICE,
         input: text,
         response_format: RESPONSE_FORMAT,
-        ...(SUPPORTS_INSTRUCTIONS ? { instructions: TTS_INSTRUCTIONS } : {}),
+        // Speaking rate (configurable, default 1.0): the steerable gpt-4o
+        // models take it as a prompt hint folded into `instructions`; the
+        // legacy tts-1 family takes the numeric `speed` param (and rejects
+        // `instructions`). Gate each so neither can 400 the other's model.
+        ...(SUPPORTS_INSTRUCTIONS ? { instructions: buildInstructions() } : {}),
+        ...(SUPPORTS_SPEED ? { speed: TTS_SPEED } : {}),
       });
     } catch (err) {
       // Upstream synthesis failed. Return the documented `upstream_unavailable`
@@ -150,6 +201,9 @@ export async function POST(req: Request) {
       "X-Accel-Buffering": "no",
       [TRUNCATED_HEADER]: truncated ? "true" : "false",
       [CHARS_HEADER]: String(text.length),
+      // Echo the caller's chunk index so the widget can slot each async audio
+      // response into its playback queue regardless of arrival order.
+      [SEQ_HEADER]: String(seq),
     };
 
     // Stream the audio straight through when the SDK exposes a body stream;
