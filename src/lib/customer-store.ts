@@ -26,6 +26,7 @@ import type { SignedInAccountSummary } from "./shopify-customer-account";
 import { reportError } from "./observability";
 import { decideMerge } from "./customer-merge.mjs";
 import { isBestandskundeEligible } from "./bestandskunden.mjs";
+import { linkSessionToCustomer, resolveSignedInCustomerRow } from "./customer-session-link.mjs";
 
 export type CustomerMarketingStatus = "none" | "pending" | "confirmed" | "unsubscribed";
 
@@ -181,6 +182,9 @@ export async function linkCustomerOnEmailCapture(
       await sql`
         UPDATE conversations SET customer_id = ${customerId} WHERE session_id = ${sessionId}
       `;
+      // Record the DIRECT session → customer link (migration 0019) so identity
+      // resolution never depends on a conversation row existing.
+      await linkSessionToCustomer(sql, sessionId, customerId);
     }
     return customerId;
   } catch (err) {
@@ -377,6 +381,13 @@ export async function bindShopifyIdentity(
       await sql`
         UPDATE conversations SET customer_id = ${customerId} WHERE session_id = ${sessionId}
       `;
+      // THE re-hydration link. The conversation attach above only fires when a
+      // chat row already exists for this session — which it often does NOT at
+      // sign-in (the prompt=none silent check / "Anmelden" before any message).
+      // Persisting the DIRECT session → customer link here (migration 0019) is
+      // what lets /api/auth/me and /api/account/* resolve this session back to
+      // the signed-in customer regardless of whether a conversation exists yet.
+      await linkSessionToCustomer(sql, sessionId, customerId);
     }
 
     // Record the id_token subject on the token row later (saveCustomerTokens);
@@ -424,22 +435,17 @@ export async function resolveSignedInCustomer(
   const sid = sessionId?.trim();
   if (!sid) return null;
   try {
-    const rows = (await sql`
-      SELECT c.id, c.shopify_customer_id, c.identity_tier, c.profile_summary
-        FROM conversations co
-        JOIN customers c ON c.id = co.customer_id
-       WHERE co.session_id = ${sid}
-         AND c.shopify_customer_id IS NOT NULL
-       LIMIT 1
-    `) as Array<Record<string, unknown>>;
-    const r = rows[0];
-    if (!r || r.shopify_customer_id == null) return null;
+    // Resolve through the DIRECT session → customer link (migration 0019), with a
+    // fallback to the legacy conversation stamp. Reads shopify_customer_id IS NOT
+    // NULL only — anonymous/email-only sessions resolve to null (fail closed).
+    const resolved = await resolveSignedInCustomerRow(sql, sid);
+    if (!resolved) return null;
     // The name comes from Shopify (authoritative) at sign-in; we don't cache PII
     // names locally for tier 3 in CA-1, so this resolver returns the linkage and
     // tier. The callback supplies the live name to /api/auth/me via Shopify.
     return {
-      customerId: Number(r.id),
-      shopifyCustomerId: String(r.shopify_customer_id),
+      customerId: resolved.customerId,
+      shopifyCustomerId: resolved.shopifyCustomerId,
       name: null,
       tier: 3,
     };

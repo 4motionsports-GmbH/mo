@@ -25,7 +25,7 @@ import {
 import { consumePendingAuth, saveCustomerTokens } from "@/lib/customer-oauth-store";
 import { bindShopifyIdentity } from "@/lib/customer-store";
 import { refreshSignedInCustomerCache } from "@/lib/customer-account-cache";
-import { verifyState } from "@/lib/customer-account-oauth.mjs";
+import { verifyState, withAuthMarker } from "@/lib/customer-account-oauth.mjs";
 import { numericFromCustomerGid } from "@/lib/customer-merge.mjs";
 
 export const runtime = "nodejs";
@@ -38,15 +38,9 @@ function redirect(location: string): Response {
   });
 }
 
-function withMarker(returnUrl: string, marker: string): string {
-  try {
-    const u = new URL(returnUrl);
-    u.searchParams.set("ms_auth", marker);
-    return u.toString();
-  } catch {
-    return returnUrl;
-  }
-}
+// The widget keys re-hydration on reading + stripping ?ms_auth — see
+// withAuthMarker in customer-account-oauth.mjs (shared with logout/return).
+const withMarker = withAuthMarker;
 
 function storefrontFallback(): string {
   const allowed = getAllowedOrigins();

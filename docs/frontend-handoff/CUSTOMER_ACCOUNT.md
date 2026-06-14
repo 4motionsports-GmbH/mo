@@ -17,9 +17,16 @@ always read it from config — it moves on DNS cutover).
 Nothing new to store. The widget already keeps a stable `session_id` (a UUID in
 `localStorage`, sent as `x-ms-session`). That **same `session_id` is the opaque
 reference** to the signed-in identity after login — it survives the redirect
-unchanged, so the backend can re-link the conversation to the customer and the
-widget re-hydrates exactly as it does on any reload. Do **not** generate a new
-session id around sign-in.
+unchanged, so the backend links it to the customer and the widget re-hydrates
+exactly as it does on any reload. Do **not** generate a new session id around
+sign-in.
+
+> **Send the identical `session_id` on every hop.** Use the same value on the
+> login redirect (`?session=`) and on `/api/auth/me` (`x-ms-session` / `?session=`).
+> The backend keys re-hydration on that exact id (it never mints its own), so a
+> different/regenerated id resolves to **`signedIn: false`**. Signing in **before
+> sending any chat message works** — the identity link no longer depends on an
+> existing conversation.
 
 ## 2. Initiating login — full-page top-level redirect
 

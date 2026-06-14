@@ -14,7 +14,7 @@ import { reportError } from "@/lib/observability";
 import { getAllowedOrigins } from "@/lib/security";
 import { resolveSignedInCustomer } from "@/lib/customer-store";
 import { deleteCustomerTokens } from "@/lib/customer-oauth-store";
-import { safeReturnUrl } from "@/lib/customer-account-oauth.mjs";
+import { safeReturnUrl, withAuthMarker } from "@/lib/customer-account-oauth.mjs";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -43,11 +43,5 @@ export async function GET(req: Request) {
     reportError(err, { route: "api/auth/shopify/logout/return" });
   }
 
-  try {
-    const u = new URL(returnUrl);
-    u.searchParams.set("ms_auth", "logged_out");
-    return redirect(u.toString());
-  } catch {
-    return redirect(returnUrl);
-  }
+  return redirect(withAuthMarker(returnUrl, "logged_out"));
 }
