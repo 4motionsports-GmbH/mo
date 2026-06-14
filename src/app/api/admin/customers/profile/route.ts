@@ -47,6 +47,8 @@ export async function POST(req: Request) {
     const result = await generateCustomerProfile({
       sessions,
       purchases: customer.purchaseSummary,
+      // Tier-3 only: the cached, data-minimised location context.
+      accountContext: customer.shopifyAccountSummary?.addressContext ?? null,
     });
 
     if (!result.ok) {

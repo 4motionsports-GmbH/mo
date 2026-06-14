@@ -22,6 +22,7 @@ import { getSql, type Sql } from "./db";
 import { normalizeEmail } from "./email-capture-store";
 import type { TranscriptMessage } from "./conversation-store";
 import type { OrderHistory } from "./shopify-orders";
+import type { SignedInAccountSummary } from "./shopify-customer-account";
 import { reportError } from "./observability";
 import { decideMerge } from "./customer-merge.mjs";
 
@@ -41,6 +42,14 @@ export interface Customer {
   /** Cached Shopify order-history summary (refreshed on demand). */
   purchaseSummary: OrderHistory | null;
   purchaseSummaryUpdatedAt: string | null;
+  /**
+   * Cached signed-in (tier-3) Customer Account snapshot — name + a
+   * data-minimised address context (city/country only). Populated from the
+   * Customer Account API on sign-in / refresh (migration 0015). Null for
+   * tiers 1–2 and for tier-3 rows not yet refreshed.
+   */
+  shopifyAccountSummary: SignedInAccountSummary | null;
+  shopifyAccountSummaryUpdatedAt: string | null;
   /**
    * Admin free-text special instructions for the next generated marketing
    * email (migration 0010) — e.g. "mention the new rowing machine line". The
@@ -79,6 +88,8 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     profileSummaryUpdatedAt: (r.profile_summary_updated_at as string | null) ?? null,
     purchaseSummary: (r.purchase_summary as OrderHistory | null) ?? null,
     purchaseSummaryUpdatedAt: (r.purchase_summary_updated_at as string | null) ?? null,
+    shopifyAccountSummary: (r.shopify_account_summary as SignedInAccountSummary | null) ?? null,
+    shopifyAccountSummaryUpdatedAt: (r.shopify_account_summary_updated_at as string | null) ?? null,
     adminInstructions: (r.admin_instructions as string | null) ?? null,
     adminInstructionsUpdatedAt: (r.admin_instructions_updated_at as string | null) ?? null,
     welcomeCode: (r.welcome_code as string | null) ?? null,
@@ -576,6 +587,32 @@ export async function saveCustomerPurchaseSummary(
     return rows.length > 0;
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "saveCustomerPurchaseSummary" });
+    return false;
+  }
+}
+
+/**
+ * Cache the signed-in (tier-3) Customer Account snapshot — name + the
+ * data-minimised address context (migration 0015). Best-effort; returns false
+ * when the customer doesn't exist or the write failed. Never throws.
+ */
+export async function saveCustomerAccountSummary(
+  customerId: number,
+  summary: SignedInAccountSummary,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = await sql`
+      UPDATE customers
+         SET shopify_account_summary = ${JSON.stringify(summary)}::jsonb,
+             shopify_account_summary_updated_at = now()
+       WHERE id = ${customerId}
+      RETURNING id
+    `;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "saveCustomerAccountSummary" });
     return false;
   }
 }

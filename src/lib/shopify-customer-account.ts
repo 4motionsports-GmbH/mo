@@ -26,6 +26,14 @@ import {
   codeChallengeS256,
   withParams,
 } from "./customer-account-oauth.mjs";
+import {
+  buildAccountSummary,
+  deriveDisplayName,
+  mapCustomerAccountOrders,
+  CA_ORDER_HISTORY_MAX_ORDERS,
+  CA_ORDER_MAX_LINE_ITEMS,
+} from "./customer-account-data.mjs";
+import type { OrderHistory } from "./shopify-orders";
 import { createPublicKey, verify as cryptoVerify, type JsonWebKey } from "node:crypto";
 
 export const CUSTOMER_ACCOUNT_SCOPES = "openid email customer-account-api:full";
@@ -519,11 +527,16 @@ interface CustomerQueryData {
 }
 
 /**
- * Read the signed-in customer's identity with their access token. The Customer
- * Account API takes the access token DIRECTLY in the Authorization header (no
- * "Bearer " prefix). Returns null if the query yields no customer.
+ * Run a Customer Account API GraphQL query with the customer-scoped access
+ * token. The endpoint takes the access token DIRECTLY in the Authorization
+ * header (no "Bearer " prefix), per Shopify. Throws on HTTP / GraphQL errors so
+ * callers can fail closed.
  */
-export async function fetchCustomerIdentity(accessToken: string): Promise<CustomerIdentity | null> {
+async function customerAccountGraphql<T>(
+  accessToken: string,
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<T> {
   const { graphqlEndpoint } = await getDiscovery();
   if (!graphqlEndpoint) throw new Error("Customer Account GraphQL endpoint not in discovery");
   const res = await fetch(graphqlEndpoint, {
@@ -533,13 +546,13 @@ export async function fetchCustomerIdentity(accessToken: string): Promise<Custom
       // NOTE: raw access token, NOT "Bearer <token>".
       Authorization: accessToken,
     },
-    body: JSON.stringify({ query: CUSTOMER_QUERY }),
+    body: JSON.stringify({ query, variables }),
   });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`Customer Account GraphQL ${res.status}: ${text.slice(0, 300)}`);
   }
-  let json: { data?: CustomerQueryData; errors?: unknown[] };
+  let json: { data?: T; errors?: unknown[] };
   try {
     json = JSON.parse(text);
   } catch {
@@ -548,7 +561,16 @@ export async function fetchCustomerIdentity(accessToken: string): Promise<Custom
   if (json.errors?.length) {
     throw new Error(`Customer Account GraphQL errors: ${JSON.stringify(json.errors)}`);
   }
-  const c = json.data?.customer;
+  return json.data as T;
+}
+
+/**
+ * Read the signed-in customer's identity with their access token. Returns null
+ * if the query yields no customer.
+ */
+export async function fetchCustomerIdentity(accessToken: string): Promise<CustomerIdentity | null> {
+  const data = await customerAccountGraphql<CustomerQueryData>(accessToken, CUSTOMER_QUERY);
+  const c = data?.customer;
   if (!c?.id) return null;
   return {
     gid: c.id,
@@ -557,6 +579,148 @@ export async function fetchCustomerIdentity(accessToken: string): Promise<Custom
     displayName: c.displayName ?? null,
     email: c.emailAddress?.emailAddress ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Richer signed-in data (tier-3 CA-2/CA-3) — name + addresses + order history.
+// ---------------------------------------------------------------------------
+//
+// ⚠️ Customer Account API field shapes DIFFER from the Admin Customer object and
+// MUST be re-verified against the rendered schema (see the verify gate in
+// docs/CUSTOMER_ACCOUNT.md). Known differences baked in below:
+//   * email is wrapped: emailAddress { emailAddress }
+//   * the order date is `processedAt` (Admin uses `createdAt`)
+//   * the order total is a flat MoneyV2 `totalPrice { amount currencyCode }`
+//     (Admin wraps it in currentTotalPriceSet { shopMoney { … } })
+//   * the status field is `financialStatus` (Admin: `displayFinancialStatus`)
+//   * the default address exposes `territoryCode` (ISO country)
+// To stay robust against any residual shape drift we split the addresses+orders
+// read into its OWN query, isolated from the identity read: if it fails (e.g. a
+// renamed field), the name still resolves (greeting works) and only the
+// history-personalisation degrades. Normalisation lives in the pure, unit-tested
+// customer-account-data.mjs.
+
+const CUSTOMER_DATA_QUERY = /* GraphQL */ `
+  query SignedInCustomerData($ordersFirst: Int!, $lineItemsFirst: Int!, $addressesFirst: Int!) {
+    customer {
+      id
+      firstName
+      lastName
+      displayName
+      emailAddress { emailAddress }
+      defaultAddress {
+        city
+        territoryCode
+      }
+      addresses(first: $addressesFirst) {
+        nodes { id }
+      }
+      orders(first: $ordersFirst, sortKey: PROCESSED_AT, reverse: true) {
+        nodes {
+          id
+          name
+          processedAt
+          financialStatus
+          totalPrice { amount currencyCode }
+          lineItems(first: $lineItemsFirst) {
+            nodes { title quantity }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export interface SignedInAddressContext {
+  city: string | null;
+  countryCode: string | null;
+}
+
+export interface SignedInAccountSummary {
+  displayName: string | null;
+  firstName: string | null;
+  addressContext: SignedInAddressContext | null;
+  addressCount: number;
+  fetchedAt: string;
+}
+
+export interface SignedInCustomerData {
+  identity: CustomerIdentity | null;
+  /** Name + DATA-MINIMISED address context (city/country only). */
+  accountSummary: SignedInAccountSummary | null;
+  /** Normalised order history (same shape as customers.purchase_summary). */
+  orderHistory: OrderHistory | null;
+}
+
+/**
+ * Pull the interesting signed-in data for tier 3: identity (name), a compact
+ * address context, and the full order history. Fault-isolated and fail-soft:
+ * the identity is read first (it backs the greeting); the addresses+orders read
+ * is best-effort, so a schema drift there degrades to "name only" rather than
+ * losing the whole result. Never throws.
+ */
+export async function fetchSignedInCustomerData(
+  accessToken: string
+): Promise<SignedInCustomerData> {
+  let dataCustomer: Record<string, unknown> | null = null;
+  try {
+    const data = await customerAccountGraphql<{ customer: Record<string, unknown> | null }>(
+      accessToken,
+      CUSTOMER_DATA_QUERY,
+      {
+        ordersFirst: CA_ORDER_HISTORY_MAX_ORDERS,
+        lineItemsFirst: CA_ORDER_MAX_LINE_ITEMS,
+        addressesFirst: 10,
+      }
+    );
+    dataCustomer = data?.customer ?? null;
+  } catch {
+    // Richer read failed (likely a CA-schema field drift) — fall back to the
+    // minimal identity query so the greeting still works.
+    dataCustomer = null;
+  }
+
+  if (dataCustomer && dataCustomer.id) {
+    const c = dataCustomer as {
+      id: string;
+      firstName?: string | null;
+      lastName?: string | null;
+      displayName?: string | null;
+      emailAddress?: { emailAddress?: string | null } | null;
+    };
+    const identity: CustomerIdentity = {
+      gid: c.id,
+      firstName: c.firstName ?? null,
+      lastName: c.lastName ?? null,
+      displayName: c.displayName ?? null,
+      email: c.emailAddress?.emailAddress ?? null,
+    };
+    return {
+      identity,
+      accountSummary: buildAccountSummary(dataCustomer) as SignedInAccountSummary,
+      orderHistory: mapCustomerAccountOrders(dataCustomer) as OrderHistory,
+    };
+  }
+
+  // Degraded path: identity only.
+  try {
+    const identity = await fetchCustomerIdentity(accessToken);
+    return {
+      identity,
+      accountSummary: identity
+        ? {
+            displayName: identity.displayName ?? deriveDisplayName(identity),
+            firstName: identity.firstName,
+            addressContext: null,
+            addressCount: 0,
+            fetchedAt: new Date().toISOString(),
+          }
+        : null,
+      orderHistory: null,
+    };
+  } catch {
+    return { identity: null, accountSummary: null, orderHistory: null };
+  }
 }
 
 // Re-export for callers that only need the base64url helper from one place.
