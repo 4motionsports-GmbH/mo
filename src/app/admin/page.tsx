@@ -34,6 +34,8 @@ import {
   listCustomerMessages,
   listUnmatchedInbound,
 } from "@/lib/email-messages-store";
+import { listCustomerLetters } from "@/lib/physical-letters-store";
+import { physicalEligibilityForCustomer } from "@/lib/physical-mail";
 import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-store";
 import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
 import { wasDiscountCodeRedeemed } from "@/lib/shopify-orders";
@@ -244,7 +246,9 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
   // and null ("unknown") when Shopify can't answer. The latest marketing send
   // (open draft preferred) backs the personalised-email workflow on the card.
   const cards: CustomerProps[] = await Promise.all(
-    customers.map(async (c) => ({
+    customers.map(async (c) => {
+    const physical = physicalEligibilityForCustomer(c);
+    return {
       id: c.id,
       email: c.email,
       firstSeenAt: c.firstSeenAt,
@@ -305,7 +309,13 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
       // Per-customer email correspondence (§5) — a cheap metadata query; bodies
       // are fetched lazily on expand. Shape matches CorrespondenceMessageProps.
       correspondence: await listCustomerMessages(c.id),
-    }))
+      // Physical mail (§4): the "Brief senden" eligibility (lawful address + flag
+      // + Pingen config — never part-filled) and this customer's letters.
+      physicalEligible: physical.eligible,
+      physicalReason: physical.reason,
+      physicalLetters: await listCustomerLetters(c.id),
+    };
+    })
   );
 
   // The ONE global view: received mail from an unknown address (customer_id
