@@ -20,6 +20,7 @@
 //      pseudonymous rows.
 
 import { getSql } from "./db";
+import { purgeExpiredPendingAuth } from "./customer-oauth-store";
 
 export interface RetentionOptions {
   /** Conversations + messages older than this (by last_activity_at) are deleted. */
@@ -40,6 +41,8 @@ export interface RetentionResult {
   deletedAiUsage: number;
   purgedSuppressedCaptures: number;
   purgedSuppressedCustomers: number;
+  /** Expired customer_auth_pending rows (CSRF/PKCE state) removed. */
+  purgedAuthPending: number;
   ranAt: string;
 }
 
@@ -162,6 +165,12 @@ export async function runRetention(
     SELECT count(*)::int AS n FROM del
   `;
 
+  // 6. Purge expired pending-auth records (short-lived CSRF/PKCE state). The
+  //    encrypted token rows (customer_oauth_tokens) carry no separate window —
+  //    they cascade with the customer (ON DELETE CASCADE), so a GDPR erasure /
+  //    customer purge in step 5 already removes them.
+  const purgedAuthPending = await purgeExpiredPendingAuth(sql);
+
   return {
     abandonedConversations: abandoned[0]?.n ?? 0,
     deletedConversations: deletedConvos[0]?.n ?? 0,
@@ -169,6 +178,7 @@ export async function runRetention(
     deletedAiUsage: deletedAiUsage[0]?.n ?? 0,
     purgedSuppressedCaptures: purgedCaptures[0]?.n ?? 0,
     purgedSuppressedCustomers: purgedCustomers[0]?.n ?? 0,
+    purgedAuthPending,
     ranAt: new Date().toISOString(),
   };
 }

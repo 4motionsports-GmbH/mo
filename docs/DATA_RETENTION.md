@@ -117,6 +117,39 @@ DELETE, so the Shopify side stays reversible too).
 
 ---
 
+## Cluster B (cont.) — Signed-in customers (tier 3)
+
+**Lawful basis: performance of a contract / legitimate interest (Art. 6(1)(b) /
+6(1)(f)).** When a visitor signs in with their Shopify account (the Customer
+Account API flow, see [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md)), we hold the
+**OAuth tokens** needed to read *their own* Shopify data on their behalf, plus the
+identity linkage on the `customers` row. **Shopify stays authoritative** for the
+name/email/addresses/orders themselves — we do not copy that PII into our DB in
+CA-1; we re-fetch it live. Signing in establishes **identity, not marketing
+consent** — Shopify's marketing state is never imported into `marketing_status`.
+
+| Table | What's stored | Notes |
+| --- | --- | --- |
+| `customers` (tier-3 columns) | `shopify_customer_id`, `shopify_customer_gid`, `shopify_linked_at`, `identity_tier` | identity linkage; the email column stays the single email home |
+| `customer_oauth_tokens` | **encrypted** access + refresh tokens (AES-256-GCM, `TOKEN_ENC_KEY`), `id_token_sub`, scope, expiries | server-side only; **never** sent to the browser |
+| `customer_auth_pending` | short-lived CSRF `state` + PKCE `code_verifier` + `nonce` + `return_url` | transient; ~10-min TTL |
+| `customer_merge_conflicts` | sign-in merge conflicts for admin review (no tokens) | consent-provenance audit trail |
+
+### Retention windows (tier 3)
+
+| Data | Default window | Env var | Action on expiry / erasure |
+| --- | --- | --- | --- |
+| `customer_oauth_tokens` | follows the customer | — | **Cascade-deleted** with the customer (`ON DELETE CASCADE`). A GDPR erasure / customer purge removes the tokens in the same step. Access tokens also rotate/expire continuously (refresh-token rotation). |
+| `customer_auth_pending` | **~10 min** | `CUSTOMER_AUTH_PENDING_TTL_MINUTES` | Hard delete by the retention cron once past `expires_at`. |
+| `customer_merge_conflicts` | kept until reviewed | — | Retained for consent auditability; cleared by an admin. |
+
+**Why tokens have no separate window:** they exist only to act for a *currently
+signed-in* customer and they live and die with that customer's row. Logging out
+(`/api/auth/shopify/logout/return`) drops the token row immediately; otherwise
+they cascade away when the customer is erased.
+
+---
+
 ## How retention is enforced
 
 A daily cron — `GET /api/cron/retention`, scheduled in `vercel.json`, protected
@@ -132,7 +165,10 @@ by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
    summaries — all PII under the same consent) for the same opted-out
    addresses, after the capture purge; their `ON DELETE SET NULL` FKs return
    the linked conversations to plain pseudonymous rows (see
-   [`CUSTOMERS.md`](./CUSTOMERS.md)).
+   [`CUSTOMERS.md`](./CUSTOMERS.md)), and their `customer_oauth_tokens` cascade
+   away.
+6. Purges expired `customer_auth_pending` rows (the short-lived sign-in
+   CSRF/PKCE state).
 
 ### Running it manually
 
@@ -153,6 +189,7 @@ The endpoint returns a JSON summary with the counts affected, e.g.:
   "deletedAiUsage": 27,
   "purgedSuppressedCaptures": 1,
   "purgedSuppressedCustomers": 1,
+  "purgedAuthPending": 3,
   "ranAt": "2026-06-03T03:30:00.000Z"
 }
 ```

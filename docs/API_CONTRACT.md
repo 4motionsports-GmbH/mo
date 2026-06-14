@@ -21,6 +21,16 @@ Endpoints:
 | GET    | `/api/consent-copy`       | Canonical capture-form consent copy (labels + links).     |
 | GET    | `/api/confirm-marketing`  | Marketing double-opt-in confirmation link (HTML page).   |
 | GET    | `/api/unsubscribe`        | Signed unsubscribe link → suppression (HTML page).        |
+| GET    | `/api/auth/shopify/login` | Customer Account sign-in (top-level redirect). |
+| GET    | `/api/auth/shopify/callback` | OAuth callback (server-side PKCE exchange). |
+| GET    | `/api/auth/me`            | Signed-in identity re-hydration (`{ name, tier }`). |
+| GET    | `/api/auth/shopify/logout/return` | Logout-return landing. |
+
+> **Customer Account sign-in (tier 3)** is documented in full in
+> [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) (frontend contract:
+> `docs/frontend-handoff/CUSTOMER_ACCOUNT.md`). The `login` / `callback` /
+> `logout/return` routes are top-level navigations (signed `state`, no
+> CORS/secret); `/api/auth/me` is a guarded widget XHR.
 
 > `/api/confirm-marketing` and `/api/unsubscribe` are **clicked from emails**
 > as top-level browser navigations — they return an HTML page, not JSON, and
