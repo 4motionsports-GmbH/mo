@@ -21,6 +21,7 @@ Endpoints:
 | Method | Path                      | Purpose                                                  |
 | ------ | ------------------------- | -------------------------------------------------------- |
 | POST   | `/api/chat`               | Streaming Claude chat with persona-aware tools.          |
+| POST   | `/api/tts`                | Text-to-speech for voice mode (streams MP3; single-shot **or** per-sentence streaming). §8. |
 | POST   | `/api/contact`            | Contact-form submission → email via Resend.              |
 | GET    | `/api/products`           | Public product hydration for widget cards.               |
 | POST   | `/api/kpi`                | Pseudonymous telemetry ingestion (fire-and-forget).      |
@@ -61,7 +62,8 @@ storefront:
   origins in `ALLOWED_ORIGINS` (default: `https://www.motionsports.de`,
   `https://motionsports.de`). The CORS preflight (`OPTIONS`) reflects
   the same allowlist.
-- **Shared secret** (`x-ms-chat-key`). Required on `/api/chat`,
+- **Shared secret** (`x-ms-chat-key`). Required on `/api/chat`, `/api/tts`
+  (§8),
   `/api/contact`, and `/api/capture-email` (§7.1). *Honest caveat:* this secret is shipped to the
   storefront widget, so anyone can read it from the browser. The
   point isn't strong auth — it's combining it with the origin
@@ -71,7 +73,8 @@ storefront:
   already visible on the storefront.
 - **Rate limiting.** Upstash sliding-window limiter, keyed by
   `x-ms-session` (or IP fallback). Chat bucket: **20 req / 60 s**.
-  Products bucket: **60 req / 60 s**.
+  Products bucket: **60 req / 60 s**. TTS buckets: **20 req / 5 min**
+  single-shot, **120 req / 5 min** streaming (§8).
 - **Spend caps.** Hard monthly caps on Anthropic + OpenAI; the chat
   conversation is hard-capped at 40 messages per session.
 
@@ -1276,3 +1279,138 @@ do not persist it across sessions.
 | `UNSUBSCRIBE_SECRET`      | HMAC secret for unsubscribe tokens (falls back to `CHAT_SHARED_SECRET`). |
 | `CONTACT_FROM_EMAIL`      | Reused as the sender for summary + DOI emails.                       |
 | `RETURNING_HINT_ENABLED`  | **Default `true`.** Server-side switch for `returningHint.enabled` (§7.4); set `false` to make the widget hide the hint. |
+
+---
+
+## 8. `POST /api/tts` — voice mode (single-shot **and** streaming)
+
+Text-to-speech for the widget's **voice mode**. Takes a chunk of text and
+streams back synthesized speech as **MP3 audio** (`audio/mpeg`). Synthesis is
+OpenAI's `gpt-4o-mini-tts` (multilingual, cost-efficient); model/voice are
+env-overridable server-side. There are two ways to call it:
+
+- **Single-shot** (the existing behaviour, and the fallback): the widget sends
+  the **whole** assistant message once, after generation finishes, and plays
+  the returned MP3.
+- **Streaming** (item 3 — audio while the text streams): the widget fires this
+  endpoint **per sentence** as the chat answer streams in, queuing the clips so
+  audio starts ~1 s after the **first** sentence instead of after the whole
+  answer. Set `stream: true` (§8.3).
+
+### 8.1 Required request headers
+
+Same guard as `/api/chat`:
+
+| Header          | Value                                                                |
+| --------------- | -------------------------------------------------------------------- |
+| `Content-Type`  | `application/json`                                                   |
+| `x-ms-chat-key` | Shared secret from `CHAT_SHARED_SECRET`.                             |
+| `x-ms-session`  | Stable session id (UUID). Keys the rate-limit bucket + usage attribution. |
+
+Plus the browser `Origin` header (must be in `ALLOWED_ORIGINS`). The CORS
+preflight advertises `POST, OPTIONS` and
+`Content-Type, x-ms-chat-key, x-ms-session`.
+
+### 8.2 Request body
+
+```jsonc
+{
+  "text": "Das ATX Power Rack ist sehr stabil und passt gut in deinen Keller.",
+  "stream": true, // optional — streaming (per-sentence) mode; default false
+  "seq": 0         // optional — chunk index, echoed in X-MS-TTS-Seq (streaming)
+}
+```
+
+- `text` (string, **required**). `400 bad_request` if missing/not a string or
+  empty after cleaning.
+- `stream` (boolean, optional, default `false`). `true` → rate-limited on the
+  generous `tts-stream` bucket (120 req / 5 min) instead of single-shot `tts`
+  (20 req / 5 min). Nothing else changes.
+- `seq` (number, optional, ≥ 0). Caller-assigned chunk index, echoed verbatim
+  in the `X-MS-TTS-Seq` response header for ordering. Absent/invalid → `-1`.
+- **The server cleans the text before synthesis** — Markdown is stripped
+  (`**bold**`, `` `code` ``, `[links](url)`, headings, bullets) so nothing is
+  read aloud as punctuation. The widget SHOULD pre-clean too; the server never
+  trusts that it did.
+- **Hard length cap: 2000 characters.** Longer input is **truncated at a
+  sentence boundary** (not rejected); the response carries
+  `X-MS-TTS-Truncated: true`.
+
+### 8.3 Streaming voice mode — per-sentence calling pattern (the contract)
+
+The widget owns sentence detection and the playback queue; the backend stays a
+simple per-call synthesizer. The pattern:
+
+1. **Detect sentences in the streamed chat text.** As SSE chat tokens arrive,
+   accumulate them and split on sentence terminators (`.`, `!`, `?`, `…`,
+   newline). Emit a chunk the moment a terminator completes a sentence; hold
+   the trailing partial until the next terminator. When the chat stream ends,
+   flush whatever remains.
+2. **(Optional) smooth the audio.** Coalesce very short fragments (e.g.
+   `< 60` chars) with the next sentence, and skip chunks that are empty after
+   Markdown stripping, so playback isn't choppy.
+3. **Fire one request per chunk, in stream order:**
+   `POST /api/tts` with `{ text, stream: true, seq }`, where `seq` starts at 0
+   and increments per chunk.
+4. **Play strictly in `seq` order.** Requests complete out of order — enqueue
+   each finished clip by its echoed `X-MS-TTS-Seq` and only advance playback
+   when the next-in-order clip is ready (buffer later-but-ready clips). On
+   mobile, kick off the `<audio>`/Web-Audio playback from the user's
+   voice-mode tap so autoplay is allowed; subsequent queued clips play within
+   that gesture's audio context.
+5. **Fallbacks (unchanged, keep them):** on any non-2xx for a chunk (e.g.
+   `429 rate_limited`, `502 upstream_unavailable`), stop the per-sentence path
+   for this message and fall back to **either** a single-shot full-message call
+   (omit `stream`) **or** the browser's `speechSynthesis`. Streaming TTS is a
+   latency optimisation layered **on top of** the existing behaviour — never a
+   replacement. If streaming TTS is unavailable for any reason, the widget must
+   still speak via the single-shot or browser path.
+
+> **Speaking rate.** The server can be configured to speak slightly faster
+> (`TTS_SPEED`, default `1.0`) for better perceived responsiveness while
+> chunks stream — no widget change needed; it's a server-side voice setting.
+
+### 8.4 Success response — streamed audio
+
+```http
+HTTP/1.1 200 OK
+Content-Type: audio/mpeg
+Cache-Control: no-store, no-cache, must-revalidate, max-age=0
+X-MS-TTS-Truncated: false
+X-MS-TTS-Chars: 67
+X-MS-TTS-Seq: 0
+```
+
+The body is the MP3 byte stream — play it directly (an `<audio>` element via a
+blob/object URL, or the Web Audio API). MP3 (`audio/mpeg`) is chosen for the
+broadest mobile playback (iOS Safari decodes it; it does **not** decode Opus in
+`<audio>`). Caching is off — audio is per-session, synthesized on demand.
+
+Response headers the widget can read (CORS-exposed):
+
+| Header               | Meaning                                                              |
+| -------------------- | -------------------------------------------------------------------- |
+| `X-MS-TTS-Truncated` | `true` when input exceeded 2000 chars and was cut at a sentence boundary. |
+| `X-MS-TTS-Chars`     | Characters actually synthesized (after cleaning + truncation).       |
+| `X-MS-TTS-Seq`       | Echoes the request's `seq` (streaming), for ordering async chunks. `-1` if none sent. |
+
+### 8.5 Error responses
+
+```json
+{ "error": { "code": "upstream_unavailable", "message": "Text-to-speech is temporarily unavailable" } }
+```
+
+| Status | Code                   | When                                                                 |
+| ------ | ---------------------- | -------------------------------------------------------------------- |
+| 400    | `bad_request`          | Invalid JSON, `text` missing/not a string, or empty after cleaning.  |
+| 401    | `unauthorized`         | Missing / wrong shared secret.                                       |
+| 403    | `forbidden`            | Cross-origin request from an origin not in the allowlist.            |
+| 429    | `rate_limited`         | Single-shot `tts` bucket (20 / 5 min) **or** streaming `tts-stream` bucket (120 / 5 min). `Retry-After` set. |
+| 502    | `upstream_unavailable` | OpenAI TTS failed/threw, or no API key configured.                   |
+| 500    | `internal_error`       | Anything else.                                                       |
+
+> **Fallback contract:** on **any non-2xx** — and specifically on
+> `502 upstream_unavailable` — fall back to the browser's `speechSynthesis`
+> (or a single-shot call). `upstream_unavailable` is the documented, expected
+> "synthesis is down, use the local voice" signal; don't surface it as an
+> error, just speak locally instead.
