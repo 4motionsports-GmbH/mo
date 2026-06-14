@@ -33,6 +33,8 @@ import {
   CA_ORDER_MAX_LINE_ITEMS,
 } from "./customer-account-data.mjs";
 import type { OrderHistory } from "./shopify-orders";
+import { chooseLawfulAddress } from "./postal-address.mjs";
+import { isCompletedPurchaseStatus } from "./bestandskunden.mjs";
 import { createPublicKey, verify as cryptoVerify, type JsonWebKey } from "node:crypto";
 
 export const CUSTOMER_ACCOUNT_SCOPES = "openid email customer-account-api:full";
@@ -642,6 +644,13 @@ const CUSTOMER_DATA_QUERY = /* GraphQL */ `
       defaultAddress {
         city
         territoryCode
+        address1
+        address2
+        zip
+        firstName
+        lastName
+        company
+        name
       }
       addresses(first: $addressesFirst) {
         nodes { id }
@@ -653,6 +662,17 @@ const CUSTOMER_DATA_QUERY = /* GraphQL */ `
           processedAt
           financialStatus
           totalPrice { amount currencyCode }
+          shippingAddress {
+            city
+            territoryCode
+            address1
+            address2
+            zip
+            firstName
+            lastName
+            company
+            name
+          }
           lineItems(first: $lineItemsFirst) {
             nodes { title quantity }
           }
@@ -681,6 +701,14 @@ export interface SignedInCustomerData {
   accountSummary: SignedInAccountSummary | null;
   /** Normalised order history (same shape as customers.purchase_summary). */
   orderHistory: OrderHistory | null;
+  /**
+   * The FULL lawful postal address for physical mail (migration 0022), derived
+   * from a completed order's shipping address (basis 'purchase') or the saved
+   * profile address (basis 'consented_capture'). Kept SEPARATE from the
+   * minimised accountSummary and NEVER fed to the profile model. Null when no
+   * complete address is on file. See lib/postal-address.
+   */
+  lawfulAddress: { address: Record<string, unknown>; source: string } | null;
 }
 
 /**
@@ -726,10 +754,24 @@ export async function fetchSignedInCustomerData(
       displayName: c.displayName ?? null,
       email: c.emailAddress?.emailAddress ?? null,
     };
+    // Derive the FULL lawful address SEPARATELY (never via buildAccountSummary,
+    // which stays minimised). Prefer a completed order's shipping address
+    // (basis 'purchase'); newest-first, completed only, else the profile default.
+    const orders = Array.isArray((dataCustomer as { orders?: { nodes?: unknown[] } }).orders?.nodes)
+      ? ((dataCustomer as { orders: { nodes: Array<Record<string, unknown>> } }).orders.nodes)
+      : [];
+    const orderShippingAddresses = orders
+      .filter((o) => isCompletedPurchaseStatus(o?.financialStatus as string | null | undefined))
+      .map((o) => (o?.shippingAddress as Record<string, unknown> | null) ?? null);
+    const defaultAddress =
+      ((dataCustomer as { defaultAddress?: Record<string, unknown> | null }).defaultAddress) ?? null;
+    const lawfulAddress = chooseLawfulAddress({ orderShippingAddresses, defaultAddress });
+
     return {
       identity,
       accountSummary: buildAccountSummary(dataCustomer) as SignedInAccountSummary,
       orderHistory: mapCustomerAccountOrders(dataCustomer) as OrderHistory,
+      lawfulAddress,
     };
   }
 
@@ -748,8 +790,9 @@ export async function fetchSignedInCustomerData(
           }
         : null,
       orderHistory: null,
+      lawfulAddress: null,
     };
   } catch {
-    return { identity: null, accountSummary: null, orderHistory: null };
+    return { identity: null, accountSummary: null, orderHistory: null, lawfulAddress: null };
   }
 }
