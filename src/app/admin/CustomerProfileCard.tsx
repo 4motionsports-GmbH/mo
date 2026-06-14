@@ -69,6 +69,10 @@ import {
   KorrespondenzPanel,
   type CorrespondenceMessageProps,
 } from "./KorrespondenzPanel";
+import {
+  PhysicalLetterPanel,
+  type PhysicalLetterProps,
+} from "./PhysicalLetterPanel";
 
 interface TranscriptMessage {
   role: "user" | "assistant" | "system" | "tool";
@@ -168,6 +172,12 @@ export interface CustomerProps {
   bundles: CustomerBundleProps[];
   /** This customer's email correspondence (sent + received), oldest-first. */
   correspondence: CorrespondenceMessageProps[];
+  /** Physical-mail eligibility (§4): whether "Brief senden" is enabled, and the
+   *  reason it is disabled (no lawful address / flag off / Pingen unconfigured). */
+  physicalEligible: boolean;
+  physicalReason: string | null;
+  /** This customer's physical letters (newest first), as status chips. */
+  physicalLetters: PhysicalLetterProps[];
 }
 
 interface ProfileUsage {
@@ -930,6 +940,17 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
           </Button>
         </div>
       )}
+
+      {/* "Brief senden" (§4) — mirrors the email-draft flow: the SAME draft text,
+          rendered to a PDF and submitted to Pingen. Disabled (with a reason) until
+          a complete lawful address + the flag + Pingen config are all present. */}
+      <PhysicalLetterPanel
+        customerEmail={customer.email}
+        sendId={send?.id ?? null}
+        eligible={customer.physicalEligible}
+        reason={customer.physicalReason}
+        letters={customer.physicalLetters}
+      />
     </Section>
   );
 }

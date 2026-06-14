@@ -61,6 +61,18 @@ export interface Customer {
   shopifyAccountSummary: SignedInAccountSummary | null;
   shopifyAccountSummaryUpdatedAt: string | null;
   /**
+   * The LAWFUL full postal address (migration 0022), the ONLY basis for physical
+   * mail (lib/physical-address). Its OWN store, SEPARATE from the minimised
+   * city/country account summary above: written only by a future consented-
+   * capture / purchase-derived flow, NULL by default. The profile/greeting never
+   * read it — minimisation stays intact. Shape:
+   * { name, company?, address_line_1, address_line_2?, postal_code, city,
+   *   country }. `postalAddressSource` records the lawful basis ('purchase' |
+   *   'consented_capture').
+   */
+  postalAddress: Record<string, unknown> | null;
+  postalAddressSource: string | null;
+  /**
    * Admin free-text special instructions for the next generated marketing
    * email (migration 0010) — e.g. "mention the new rowing machine line". The
    * CURRENT editable value; the snapshot that went into a specific draft is
@@ -106,6 +118,8 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     bestandskundeEligibleUpdatedAt: (r.bestandskunde_eligible_updated_at as string | null) ?? null,
     shopifyAccountSummary: (r.shopify_account_summary as SignedInAccountSummary | null) ?? null,
     shopifyAccountSummaryUpdatedAt: (r.shopify_account_summary_updated_at as string | null) ?? null,
+    postalAddress: (r.postal_address as Record<string, unknown> | null) ?? null,
+    postalAddressSource: (r.postal_address_source as string | null) ?? null,
     adminInstructions: (r.admin_instructions as string | null) ?? null,
     adminInstructionsUpdatedAt: (r.admin_instructions_updated_at as string | null) ?? null,
     welcomeCode: (r.welcome_code as string | null) ?? null,

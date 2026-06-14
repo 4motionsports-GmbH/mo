@@ -33,6 +33,8 @@ export interface RetentionOptions {
   suppressedPurgeDays: number;
   /** email_messages (Korrespondenz) older than this (by occurred_at) are deleted. */
   correspondenceRetentionDays: number;
+  /** physical_letters older than this (by created_at) are deleted. */
+  physicalLetterRetentionDays: number;
 }
 
 export interface RetentionResult {
@@ -45,6 +47,8 @@ export interface RetentionResult {
   purgedSuppressedCustomers: number;
   /** email_messages (correspondence) purged past the Korrespondenz window. */
   deletedEmailMessages: number;
+  /** physical_letters purged past their retention window. */
+  deletedPhysicalLetters: number;
   /** Expired customer_auth_pending rows (CSRF/PKCE state) removed. */
   purgedAuthPending: number;
   ranAt: string;
@@ -66,6 +70,7 @@ export function retentionOptionsFromEnv(): RetentionOptions {
     // Correspondence (Art. 6(1)(b)/(f)) is kept longer than analytics — a reply
     // thread stays useful well beyond a chat session. 12 months by default.
     correspondenceRetentionDays: intEnv("CORRESPONDENCE_RETENTION_DAYS", 365),
+    physicalLetterRetentionDays: intEnv("PHYSICAL_LETTER_RETENTION_DAYS", 365),
   };
 }
 
@@ -94,6 +99,7 @@ export async function runRetention(
   const kpiCutoff = daysAgo(opts.kpiRetentionDays);
   const suppressedCutoff = daysAgo(opts.suppressedPurgeDays);
   const correspondenceCutoff = daysAgo(opts.correspondenceRetentionDays);
+  const physicalLetterCutoff = daysAgo(opts.physicalLetterRetentionDays);
 
   // 1. Mark stale active conversations abandoned.
   const abandoned = await sql`
@@ -187,6 +193,19 @@ export async function runRetention(
     SELECT count(*)::int AS n FROM del
   `;
 
+  // 5c. Purge physical_letters past their OWN window. A letter is its own data
+  //     category (NOT email); like email_messages the customer FK is ON DELETE
+  //     SET NULL, so a customer erasure detaches (never cascade-deletes) the
+  //     audit row, and letters leave here, by created_at, on their own window.
+  const deletedPhysicalLetters = await sql`
+    WITH del AS (
+      DELETE FROM physical_letters
+       WHERE created_at < ${physicalLetterCutoff}
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM del
+  `;
+
   // 6. Purge expired pending-auth records (short-lived CSRF/PKCE state). The
   //    encrypted token rows (customer_oauth_tokens) carry no separate window —
   //    they cascade with the customer (ON DELETE CASCADE), so a GDPR erasure /
@@ -201,6 +220,7 @@ export async function runRetention(
     purgedSuppressedCaptures: purgedCaptures[0]?.n ?? 0,
     purgedSuppressedCustomers: purgedCustomers[0]?.n ?? 0,
     deletedEmailMessages: deletedEmailMessages[0]?.n ?? 0,
+    deletedPhysicalLetters: deletedPhysicalLetters[0]?.n ?? 0,
     purgedAuthPending,
     ranAt: new Date().toISOString(),
   };
