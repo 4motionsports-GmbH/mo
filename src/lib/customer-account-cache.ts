@@ -21,6 +21,7 @@ import {
 import {
   saveCustomerAccountSummary,
   saveCustomerPurchaseSummary,
+  saveCustomerPostalAddress,
 } from "./customer-store";
 import { reportError } from "./observability";
 
@@ -45,6 +46,17 @@ export async function refreshSignedInCustomerCache(
     }
     if (data.orderHistory) {
       await saveCustomerPurchaseSummary(customerId, data.orderHistory);
+    }
+    // Address acquisition (§4): cache the FULL lawful postal address for physical
+    // mail when Shopify gave us a complete one (a completed order's shipping
+    // address, or the saved profile address). Its own column set, never the
+    // minimised summary; absent ⇒ leave any previously-held address intact.
+    if (data.lawfulAddress) {
+      await saveCustomerPostalAddress(
+        customerId,
+        data.lawfulAddress.address,
+        data.lawfulAddress.source
+      );
     }
     return data;
   } catch (err) {

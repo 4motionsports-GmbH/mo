@@ -18,6 +18,8 @@
 
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { normalizeEmail } from "./email-capture-store";
+import { chooseLawfulAddress } from "./postal-address.mjs";
+import { isCompletedPurchaseStatus } from "./bestandskunden.mjs";
 import { reportError } from "./observability";
 
 const ORDERS_BY_EMAIL = /* GraphQL */ `
@@ -297,6 +299,75 @@ export async function fetchOrderHistoryByEmail(
     };
   } catch (err) {
     reportError(err, { route: "lib/shopify-orders", phase: "fetchOrderHistoryByEmail" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Address acquisition (§4) — the LAWFUL postal address for physical mail.
+// ---------------------------------------------------------------------------
+//
+// For an EMAIL-only (tier-2) customer with completed orders, the shipping
+// address of a completed order is a purchase-derived lawful basis for outbound
+// post. This is a SEPARATE, deliberate read — the address is NEVER added to
+// OrderHistory (which feeds the profile model); it goes only to the dedicated
+// customers.postal_address store. Same read_orders scope + protected-customer-
+// data caveats as the history fetch.
+
+const ORDER_SHIPPING_BY_EMAIL = /* GraphQL */ `
+  query CustomerShippingAddressesByEmail($query: String!) {
+    orders(first: 10, query: $query, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        displayFinancialStatus
+        shippingAddress {
+          city
+          countryCodeV2
+          address1
+          address2
+          zip
+          firstName
+          lastName
+          company
+          name
+        }
+      }
+    }
+  }
+`;
+
+interface OrderShippingResponse {
+  orders: {
+    nodes: Array<{
+      displayFinancialStatus: string | null;
+      shippingAddress: Record<string, unknown> | null;
+    }>;
+  };
+}
+
+/**
+ * The lawful postal address for an email-identified customer, from the shipping
+ * address of their most recent COMPLETED order (basis 'purchase'). Returns null
+ * when Shopify is unconfigured, the email is blank, the query fails, or no
+ * completed order carries a COMPLETE address (never part-filled). Never throws.
+ */
+export async function fetchLawfulAddressByEmail(
+  email: string
+): Promise<{ address: Record<string, unknown>; source: string } | null> {
+  if (!isShopifyConfigured()) return null;
+  const e = normalizeEmail(email);
+  if (!e) return null;
+  const query = `email:"${e}"`;
+  try {
+    const data = await adminGraphql<OrderShippingResponse>(ORDER_SHIPPING_BY_EMAIL, { query });
+    const nodes = data.orders?.nodes ?? [];
+    // Newest-first, completed purchases only — their shipping address is the
+    // purchase-derived basis.
+    const orderShippingAddresses = nodes
+      .filter((o) => isCompletedPurchaseStatus(o.displayFinancialStatus))
+      .map((o) => o.shippingAddress);
+    return chooseLawfulAddress({ orderShippingAddresses });
+  } catch (err) {
+    reportError(err, { route: "lib/shopify-orders", phase: "fetchLawfulAddressByEmail" });
     return null;
   }
 }

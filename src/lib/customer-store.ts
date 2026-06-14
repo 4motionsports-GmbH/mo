@@ -656,6 +656,38 @@ export async function saveCustomerAccountSummary(
 }
 
 /**
+ * Persist the LAWFUL full postal address (migration 0022) — the ONLY basis for
+ * physical mail. SEPARATE from the minimised account summary: written by the
+ * address-acquisition flow (a completed order's shipping address, or the saved
+ * profile address) with the lawful basis recorded in postal_address_source. The
+ * caller passes a COMPLETE, normalised address (lib/postal-address) — we never
+ * part-fill here. Best-effort; returns false when the customer doesn't exist or
+ * the write failed. Never throws.
+ */
+export async function saveCustomerPostalAddress(
+  customerId: number,
+  address: Record<string, unknown>,
+  source: string,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = await sql`
+      UPDATE customers
+         SET postal_address = ${JSON.stringify(address)}::jsonb,
+             postal_address_source = ${source},
+             postal_address_updated_at = now()
+       WHERE id = ${customerId}
+      RETURNING id
+    `;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "saveCustomerPostalAddress" });
+    return false;
+  }
+}
+
+/**
  * Persist the admin's free-text special instructions for the next generated
  * marketing email. NULL clears them. Returns false when the customer doesn't
  * exist or the write failed. Never throws.

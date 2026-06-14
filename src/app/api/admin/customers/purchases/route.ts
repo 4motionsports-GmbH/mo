@@ -14,9 +14,13 @@
 // Auth + CSRF: guardAdminPost (the proxy already gates /api/admin/*).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
-import { getCustomerById, saveCustomerPurchaseSummary } from "@/lib/customer-store";
+import {
+  getCustomerById,
+  saveCustomerPurchaseSummary,
+  saveCustomerPostalAddress,
+} from "@/lib/customer-store";
 import { refreshSignedInCustomerCache } from "@/lib/customer-account-cache";
-import { fetchOrderHistoryByEmail } from "@/lib/shopify-orders";
+import { fetchOrderHistoryByEmail, fetchLawfulAddressByEmail } from "@/lib/shopify-orders";
 import { isShopifyConfigured } from "@/lib/shopify";
 import { reportError } from "@/lib/observability";
 
@@ -80,6 +84,15 @@ export async function POST(req: Request) {
     const saved = await saveCustomerPurchaseSummary(customerId, history);
     if (!saved) {
       return adminJsonError("internal_error", "Could not cache the purchase summary.", 500);
+    }
+
+    // Address acquisition (§4): in the SAME refresh, capture the lawful postal
+    // address from a completed order's shipping address (basis 'purchase') so
+    // physical mail becomes available. Best-effort — never fails the refresh, and
+    // a missing/incomplete address leaves any previously-held one intact.
+    const lawful = await fetchLawfulAddressByEmail(customer.email);
+    if (lawful) {
+      await saveCustomerPostalAddress(customerId, lawful.address, lawful.source);
     }
 
     return adminJson({ purchaseSummary: history });
