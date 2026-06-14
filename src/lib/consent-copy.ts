@@ -1,9 +1,15 @@
-// ⚠️ LAWYER-REVIEW-REQUIRED — PLACEHOLDER CONSENT COPY ⚠️
+// ⚠️ CONSENT COPY — LAWYER-APPROVED (CONSENT_COPY_LAWYER_APPROVED = true) ⚠️
 //
-// Every German-facing string in this file is a PLACEHOLDER and MUST be reviewed
-// and approved by a lawyer before going live. German marketing email to
-// non-purchasers requires a double opt-in (DOI) and two *separate*, unbundled
-// consents:
+// The German-facing DOI / marketing / personalisation / transactional copy in
+// this file has been REVIEWED AND APPROVED by a lawyer (June 2026), so
+// CONSENT_COPY_LAWYER_APPROVED is true. Treat these strings as approved: any
+// wording change is a new legal review. (The ONE exception is the §7(3)
+// "Bestandskunden" copy near the bottom of the file — that audience is gated by
+// its OWN separate flag BESTANDSKUNDE_SENDS_APPROVED, still OFF pending its own
+// sign-off, and its strings stay marked accordingly.)
+//
+// German marketing email to non-purchasers requires a double opt-in (DOI) and
+// two *separate*, unbundled consents:
 //
 //   (A) TRANSACTIONAL — the user asks us to email a copy of the conversation +
 //       their cart. A service they request (lawful under Art. 6(1)(b)); no DOI
@@ -34,9 +40,11 @@ import {
 export { CONSENT_COPY_VERSION };
 
 /**
- * Marks a copy block as not-yet-legally-approved. Kept as a runtime-visible
- * constant (not just a comment) so reviewers and tooling can find every string
- * that still needs sign-off. DO NOT set to false until Legal approves.
+ * Whether the DOI / marketing / personalisation consent copy has been legally
+ * approved. Kept as a runtime-visible constant (not just a comment) so the
+ * widget payload and the personalisation gate can read a single source of
+ * truth. Lawyer-approved June 2026 → true. (The §7(3) Bestandskunden path has
+ * its OWN gate, BESTANDSKUNDE_SENDS_APPROVED, which is separate from this.)
  */
 export const CONSENT_COPY_LAWYER_APPROVED = true as const;
 
@@ -58,7 +66,7 @@ export const CONSENT_COPY_LAWYER_APPROVED = true as const;
  * pre-checking was permitted). The user must actively tick it to get the
  * summary; a submit without it is rejected server-side with the documented
  * `transactional_consent_required` error (see capture-validation.mjs and
- * API_CONTRACT.md §7.1). PLACEHOLDER — lawyer review required.
+ * API_CONTRACT.md §7.1). Lawyer-approved (CONSENT_COPY_LAWYER_APPROVED).
  */
 export const TRANSACTIONAL_CHECKBOX_LABEL =
   "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl. Direkt-Link zur Kasse).";
@@ -80,7 +88,7 @@ export const TRANSACTIONAL_CHECKBOX_LABEL =
  * label promises "exklusive Angebote …, nur für Abonnenten" and NOTHING more.
  * Accurate scarcity only — NEVER add countdowns, invented urgency, or any
  * concrete discount promise here, and never offer a reward for ticking this
- * box ("freely given", Art. 7(4) GDPR). PLACEHOLDER — lawyer review required.
+ * box ("freely given", Art. 7(4) GDPR). Lawyer-approved (CONSENT_COPY_LAWYER_APPROVED).
  */
 export const MARKETING_CHECKBOX_LABEL =
   "Ja, ich möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten. Jederzeit abbestellbar.";
@@ -90,8 +98,8 @@ export const MARKETING_CHECKBOX_LABEL =
  * imprint/privacy links from CAPTURE_FORM_*_URL placed next to it, as
  * before). The Art. 7 minimum: who processes, under which policy, and that
  * withdrawal is possible at any time. Part of `consentTextShown` (the form
- * displays it as part of the consent block). PLACEHOLDER — lawyer review
- * required.
+ * displays it as part of the consent block). Lawyer-approved
+ * (CONSENT_COPY_LAWYER_APPROVED).
  */
 export const CONSENT_SHARED_FOOTER =
   "Verarbeitung durch motion sports gemäß Datenschutzerklärung; Widerruf jederzeit möglich.";
@@ -108,8 +116,8 @@ export const CONSENT_SHARED_FOOTER =
  * lawyer clears customer-memory use (CUST-B, see docs/CUSTOMERS.md).
  *
  * INFORMATIONAL ONLY: this hint is NOT part of `consentTextShown` — it
- * describes a feature, it is not consent text. PLACEHOLDER — lawyer review
- * required (CUST-B).
+ * describes a feature, it is not consent text. Lawyer-approved
+ * (CONSENT_COPY_LAWYER_APPROVED; CUST-B).
  */
 export const RETURNING_CUSTOMER_HINT_TEXT =
   "Schon einmal von Mo beraten worden? Gib deine E-Mail an — Mo erkennt dich wieder und knüpft an deine letzte Beratung an.";
@@ -178,7 +186,7 @@ export interface CaptureConsentCopy {
   /** Imprint / privacy links to show next to the form. */
   imprintUrl: string;
   privacyUrl: string;
-  /** Mirrors CONSENT_COPY_LAWYER_APPROVED — false until Legal signs off. */
+  /** Mirrors CONSENT_COPY_LAWYER_APPROVED (true — lawyer-approved June 2026). */
   lawyerApproved: boolean;
   /**
    * Returning-customer hint, rendered near the email input. Informational —
@@ -231,12 +239,12 @@ export function captureConsentCopy(): CaptureConsentCopy {
 // promise stays "exklusive Angebote …, nur für Abonnenten" — accurate scarcity
 // only, NO countdowns, NO invented urgency, NO concrete discount promise, and it
 // must never offer a reward for ticking (Art. 7(4) "freely given").
-// PLACEHOLDER — lawyer review required (v3 REPLACES v2 in the review).
+// Lawyer-approved (CONSENT_COPY_LAWYER_APPROVED; v3 is the approved revision).
 
 /**
  * Attractive headline shown ABOVE the sign-in opt-in checkbox. Framing only —
  * NOT part of `consentTextShown` (it sells the benefit; it is not consent
- * text), exactly like the returning-customer hint. PLACEHOLDER.
+ * text), exactly like the returning-customer hint. Lawyer-approved.
  */
 export const SIGNIN_MARKETING_OPTIN_HEADLINE =
   "Bleib auf dem Laufenden — als angemeldete:r Kund:in.";
@@ -247,7 +255,7 @@ export const SIGNIN_MARKETING_OPTIN_HEADLINE =
  * it prominent is encouraged, pre-ticking it is never permitted. Same scarcity
  * ceiling as MARKETING_CHECKBOX_LABEL. The phrasing acknowledges we already
  * know the address (no email field), but the act of consent stays explicit.
- * PLACEHOLDER — lawyer review required.
+ * Lawyer-approved (CONSENT_COPY_LAWYER_APPROVED).
  */
 export const SIGNIN_MARKETING_OPTIN_LABEL =
   "Ja, schickt mir an meine hinterlegte E-Mail-Adresse exklusive Angebote und Aktionen — nur für Abonnenten. Jederzeit abbestellbar.";
@@ -272,7 +280,7 @@ export interface SignInMarketingConsentCopy {
   /** Imprint / privacy links to show next to the opt-in. */
   imprintUrl: string;
   privacyUrl: string;
-  /** Mirrors CONSENT_COPY_LAWYER_APPROVED — false until Legal signs off. */
+  /** Mirrors CONSENT_COPY_LAWYER_APPROVED (true — lawyer-approved June 2026). */
   lawyerApproved: boolean;
 }
 
@@ -297,15 +305,15 @@ export function signInMarketingConsentCopy(): SignInMarketingConsentCopy {
 // Double-opt-in confirmation email (sent when marketing consent is ticked)
 // ---------------------------------------------------------------------------
 
-/** DOI email subject. PLACEHOLDER — lawyer review required. */
+/** DOI email subject. Lawyer-approved (CONSENT_COPY_LAWYER_APPROVED). */
 export const DOI_EMAIL_SUBJECT =
   "Bitte bestätige deine Anmeldung bei motion sports";
 
 /**
  * DOI email body. `confirmUrl` is the link to GET /api/confirm-marketing. It
  * states the purpose and asks the user to confirm by clicking the link. NO
- * marketing content is sent until this link is clicked. PLACEHOLDER — lawyer
- * review required.
+ * marketing content is sent until this link is clicked. Lawyer-approved
+ * (CONSENT_COPY_LAWYER_APPROVED).
  */
 export function doiEmailBody(confirmUrl: string): { text: string; html: string } {
   const text = [
@@ -354,12 +362,12 @@ export function doiEmailBody(confirmUrl: string): { text: string; html: string }
 // Confirmation page (shown after the DOI link is clicked)
 // ---------------------------------------------------------------------------
 
-/** Heading + body for the marketing-DOI confirmation page. PLACEHOLDER. */
+/** Heading + body for the marketing-DOI confirmation page. Lawyer-approved. */
 export const DOI_CONFIRMED_HEADING = "Danke, deine Anmeldung ist bestätigt.";
 export const DOI_CONFIRMED_BODY =
   "Du erhältst ab jetzt persönliche Empfehlungen und Angebote von motion sports. Du kannst dich jederzeit über den Abmeldelink in jeder E-Mail wieder abmelden.";
 
-/** Shown when a DOI token is invalid or expired. PLACEHOLDER. */
+/** Shown when a DOI token is invalid or expired. Lawyer-approved. */
 export const DOI_INVALID_HEADING = "Dieser Bestätigungslink ist ungültig oder abgelaufen.";
 export const DOI_INVALID_BODY =
   "Bitte fordere im Chat erneut eine Zusammenfassung an, wenn du dich für Empfehlungen und Angebote anmelden möchtest.";
@@ -370,7 +378,7 @@ export const DOI_INVALID_BODY =
 
 /**
  * Footer line placed at the bottom of every marketing email. `unsubscribeUrl`
- * points at GET /api/unsubscribe. PLACEHOLDER — lawyer review required.
+ * points at GET /api/unsubscribe. Lawyer-approved (CONSENT_COPY_LAWYER_APPROVED).
  */
 export function unsubscribeFooter(unsubscribeUrl: string): { text: string; html: string } {
   const text =
@@ -387,7 +395,7 @@ export function unsubscribeFooter(unsubscribeUrl: string): { text: string; html:
   return { text, html };
 }
 
-/** Heading + body for the unsubscribe confirmation page. PLACEHOLDER. */
+/** Heading + body for the unsubscribe confirmation page. Lawyer-approved. */
 export const UNSUBSCRIBE_CONFIRMED_HEADING = "Du wurdest abgemeldet.";
 export const UNSUBSCRIBE_CONFIRMED_BODY =
   "Wir senden dir keine weiteren Marketing-E-Mails mehr. Deine E-Mail-Adresse wurde auf unsere Sperrliste gesetzt.";
@@ -443,6 +451,6 @@ export const BESTANDSKUNDE_OPT_OUT_INVALID_BODY =
 // Transactional summary email subject (the service the user requested)
 // ---------------------------------------------------------------------------
 
-/** Subject of the transactional conversation-summary email. PLACEHOLDER. */
+/** Subject of the transactional conversation-summary email. Lawyer-approved. */
 export const SUMMARY_EMAIL_SUBJECT =
   "Deine Beratung bei motion sports — Zusammenfassung & Warenkorb";

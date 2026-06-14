@@ -125,8 +125,8 @@ export function buildAccountSummary(customerNode) {
  *
  *   1. lawyerApproved — the consent/privacy copy that covers "profile building
  *      from past interactions and purchases" is legally signed off
- *      (CONSENT_COPY_LAWYER_APPROVED). Until then this is a hard release gate:
- *      NOTHING personalised leaks for anyone.
+ *      (CONSENT_COPY_LAWYER_APPROVED, now true). This is a hard release gate:
+ *      when false, NOTHING personalised leaks for anyone.
  *   2. The customer has given the affirmative, unbundled, double-opt-in
  *      MARKETING consent (marketing_status = 'confirmed') — the same consent
  *      vehicle the GDPR TODO (docs/CUSTOMERS.md) extends to cover

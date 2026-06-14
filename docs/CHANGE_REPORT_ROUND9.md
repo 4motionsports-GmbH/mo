@@ -148,18 +148,20 @@ and reviewable.
 
 ## FLAGGED-FOR-HUMAN (production-readiness — report only, NOT changed)
 
-1. **⚠️ `CONSENT_COPY_LAWYER_APPROVED` doc/comment drift (legal).**
-   `src/lib/consent-copy.ts:41` has `CONSENT_COPY_LAWYER_APPROVED = true`
-   (deliberately enabled in commit `107dcdc` "Enable personalisation"). But its
-   own comment (lines 36–39: "not-yet-legally-approved … DO NOT set to false
-   until Legal approves") is self-contradictory, and several docs still describe
-   it as **false**: `docs/CUSTOMER_ACCOUNT.md` ("It is currently `false`, so no
-   personalised data leaks"), `docs/CUSTOMERS.md`, `docs/CONSENT_FLOW.md`,
-   `docs/API_CONTRACT.md` + `docs/frontend-handoff/API_CONTRACT.md`
-   (`lawyerApproved: false` example). Left **unchanged** because (a) the brief
-   says CONSENT_COPY_LAWYER_APPROVED is a report-only item and (b) reconciling it
-   asserts a legal state. **Action:** confirm `true` is the intended production
-   value and the v3 copy is signed off, then update the comment + docs to match.
+1. **✅ `CONSENT_COPY_LAWYER_APPROVED` doc/comment drift — RESOLVED.**
+   `src/lib/consent-copy.ts` has `CONSENT_COPY_LAWYER_APPROVED = true`
+   (deliberately enabled in commit `107dcdc` "Enable personalisation"). The repo
+   owner confirmed this is intentional — the lawyer approved the v3 DOI /
+   marketing / personalisation / transactional consent copy (June 2026). The
+   contradictory constant comment, the stale `lawyerApproved: false` example
+   payloads, the "PLACEHOLDER — lawyer review required" markers on the governed
+   strings, and the "still false / until sign-off / do NOT enable" statements
+   across `consent-copy.ts`, `customer-memory.ts`, `customer-account-data.mjs`,
+   `result-page.ts`, `CONSENT_FLOW.md`, `CUSTOMERS.md`, `CUSTOMER_ACCOUNT.md`,
+   `AUDIT_BACKEND.md`, and both `API_CONTRACT.md` files were **reconciled to
+   `true`** (commit in this PR). The actual copy STRINGS and the flag value were
+   not touched — comments/docs only. The §7(3) Bestandskunden copy was kept
+   marked pending (its own gate, item 2).
 
 2. **`BESTANDSKUNDE_SENDS_APPROVED=false`** — correct per brief (§7(3) gate stays
    OFF pending its own sign-off). No action; confirm at launch.

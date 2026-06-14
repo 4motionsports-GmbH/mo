@@ -628,7 +628,7 @@ Example chunk pair (the `tool-input-available` chunk, followed by the
       "consentTextShown": "Ja, schickt mir … | Ja, ich möchte exklusive Angebote … | Verarbeitung durch motion sports …",
       "imprintUrl": "https://motionsports.de/pages/impressum",
       "privacyUrl": "https://motionsports.de/policies/privacy-policy",
-      "lawyerApproved": false,
+      "lawyerApproved": true,
       "returningHint": {
         "enabled": true,
         "text": "Schon einmal von Mo beraten worden? Gib deine E-Mail an — Mo erkennt dich wieder und knüpft an deine letzte Beratung an."
@@ -680,7 +680,7 @@ widget should emit one `email_capture_declined` event via `POST /api/kpi`
 dismissal itself. Do NOT emit "shown"/"submitted" events from the widget;
 those are recorded server-side.
 
-> ⚠️ The checkbox labels are PLACEHOLDER copy pending lawyer approval — see
+> ✅ The checkbox labels are lawyer-approved copy (`lawyerApproved: true`) — see
 > [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
 #### Tools the widget MUST NOT render
@@ -1024,9 +1024,9 @@ consent choice.)
 
 This is the only flow that handles an email address. Two **separate**
 consents, marketing requires a **double opt-in**. The full legal rationale,
-the data model, and the lawyer-review TODO are in
-[`CONSENT_FLOW.md`](./CONSENT_FLOW.md). The checkbox/email copy is PLACEHOLDER
-pending lawyer sign-off (`src/lib/consent-copy.ts`).
+the data model, and the sign-off status are in
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md). The checkbox/email copy is
+lawyer-approved (`lawyerApproved: true`, `src/lib/consent-copy.ts`).
 
 ### 7.1 `POST /api/capture-email`
 
@@ -1212,9 +1212,9 @@ Cache-Control: public, max-age=60, stale-while-revalidate=300
   "consentTextShown": "Ja, schickt mir … | Ja, ich möchte exklusive Angebote … | Verarbeitung durch motion sports …",
   "imprintUrl": "https://motionsports.de/pages/impressum",
   "privacyUrl": "https://motionsports.de/policies/privacy-policy",
-  // Mirrors CONSENT_COPY_LAWYER_APPROVED — informational; stays false until
-  // Legal signs off on the placeholder copy.
-  "lawyerApproved": false,
+  // Mirrors CONSENT_COPY_LAWYER_APPROVED — informational. true since the copy
+  // was lawyer-approved (June 2026).
+  "lawyerApproved": true,
   // Returning-customer hint, rendered near the email input. Informational
   // only — NOT part of consentTextShown. Hide it when enabled is false
   // (server-side switch, RETURNING_HINT_ENABLED); wording can change with a

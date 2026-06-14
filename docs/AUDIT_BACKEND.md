@@ -229,7 +229,7 @@ Everything else checked out exactly — notable confirmations:
   `canSendMarketing` fail-closed — all exactly as `CONSENT_FLOW.md`.
 - **Canonical consent copy** served on both documented paths
   (`offer_email_summary` result + `GET /api/consent-copy`), built from one source
-  (`consent-copy.ts:136-148`), `lawyerApproved: false`, 60s cache.
+  (`consent-copy.ts`), `lawyerApproved: true`, 60s cache.
 - **Discounts**: mint at send only, `MS5-` prefix, 7-day expiry
   (`MARKETING_DISCOUNT_EXPIRY_DAYS`), `usageLimit: 1` + `appliesOncePerCustomer`,
   placeholder `MO-XXXX` swapped 1:1 incl. stale projected expiry date, refusal on
@@ -419,7 +419,7 @@ Its `tool-output-available` chunk carries:
     "consentTextShown": string,     // echo back VERBATIM on /api/capture-email
     "imprintUrl": string,
     "privacyUrl": string,
-    "lawyerApproved": boolean       // currently false
+    "lawyerApproved": boolean       // true (lawyer-approved June 2026)
   }
 }
 ```

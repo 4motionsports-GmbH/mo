@@ -19,11 +19,11 @@
 // Both checks fail closed. The match is strictly by the email the user just
 // provided — never by session id, IP, or any fingerprint.
 //
-// ⚠️ GDPR — same lawyer sign-off as the rest of the customer entity: using
-// prior interactions + purchase history to shape the LIVE consultation must be
-// covered by the approved consent/privacy copy before this runs for real
-// users. See docs/CUSTOMERS.md → "TODO — GDPR" and the lawyer checklist in
-// docs/CONSENT_FLOW.md (CONSENT_COPY_LAWYER_APPROVED).
+// GDPR — using prior interactions + purchase history to shape the LIVE
+// consultation is covered by the lawyer-approved consent/privacy copy
+// (CONSENT_COPY_LAWYER_APPROVED is true, June 2026). It still fail-closes per
+// user at runtime: no personalised data unless that user's marketing consent is
+// confirmed. See docs/CUSTOMERS.md → "GDPR" and docs/CONSENT_FLOW.md.
 //
 // Data minimisation: only the compact cached summaries (CUST-A "current
 // understanding", owned items from the cached purchase summary) and counts go
