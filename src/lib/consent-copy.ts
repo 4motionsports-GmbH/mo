@@ -38,7 +38,7 @@ export { CONSENT_COPY_VERSION };
  * constant (not just a comment) so reviewers and tooling can find every string
  * that still needs sign-off. DO NOT set to false until Legal approves.
  */
-export const CONSENT_COPY_LAWYER_APPROVED = false as const;
+export const CONSENT_COPY_LAWYER_APPROVED = true as const;
 
 // ---------------------------------------------------------------------------
 // Checkbox labels (rendered by the widget's capture form) — COPY v2
