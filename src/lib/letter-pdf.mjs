@@ -17,6 +17,18 @@ const PAGE_H = 841.89;
 
 const MARGIN_X = 57; // ≈ 20mm left/right margin
 
+// Brand palette — matches the email template (lib/email-template): the shop
+// accent #008ccb (= rgb 0, 0.549, 0.796) for the wordmark + rule; a muted grey
+// footer. PDF colours are 0–1 "r g b" operands.
+const ACCENT_RGB = "0 0.549 0.796";
+const MUTED_RGB = "0.45 0.45 0.45";
+const BLACK_RGB = "0 0 0";
+
+// Footer line (every page), echoing the email's Shop/Über/Kontakt/Impressum bar.
+const FOOTER_Y = 40;
+const FOOTER_TEXT =
+  "motion sports  ·  www.motionsports.de  ·  Shop · Über · Kontakt · Impressum";
+
 // Letterhead.
 const BRAND_Y = PAGE_H - 64;
 const RULE_Y = BRAND_Y - 10;
@@ -108,15 +120,27 @@ export function addressLines(recipient) {
 }
 
 /** One PDF text line at an absolute position in the given font (F1=Helvetica,
- *  F2=Helvetica-Bold). Own BT/ET so positioning is trivial to reason about. */
-function textOp(font, x, y, size, str) {
+ *  F2=Helvetica-Bold) and fill colour ("r g b", default black). Own BT/ET so
+ *  positioning is trivial to reason about. */
+function textOp(font, x, y, size, str, color = BLACK_RGB) {
   const safe = escapePdfText(toLatin1Safe(str));
-  return `BT /${font} ${size} Tf 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${safe}) Tj ET\n`;
+  return (
+    `BT /${font} ${size} Tf ${color} rg 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm ` +
+    `(${safe}) Tj ET\n`
+  );
 }
 
-/** A horizontal rule (stroked line) at y from x1→x2 with the given width. */
-function ruleOp(x1, x2, y, width) {
-  return `${width} w ${x1.toFixed(2)} ${y.toFixed(2)} m ${x2.toFixed(2)} ${y.toFixed(2)} l S\n`;
+/** A horizontal rule (stroked line) at y from x1→x2 with the given width + stroke colour. */
+function ruleOp(x1, x2, y, width, color = BLACK_RGB) {
+  return (
+    `${color} RG ${width} w ${x1.toFixed(2)} ${y.toFixed(2)} m ` +
+    `${x2.toFixed(2)} ${y.toFixed(2)} l S\n`
+  );
+}
+
+/** The muted footer line, repeated on every page (the email's menu bar echo). */
+function footerOp() {
+  return textOp("F1", MARGIN_X, FOOTER_Y, 7.5, FOOTER_TEXT, MUTED_RGB);
 }
 
 /**
@@ -135,9 +159,9 @@ export function buildLetterPdf(input) {
   const pages = [];
   let content = "";
 
-  // ── Letterhead ───────────────────────────────────────────────────────────
-  content += textOp("F2", MARGIN_X, BRAND_Y, 20, "motion sports");
-  content += ruleOp(MARGIN_X, PAGE_W - MARGIN_X, RULE_Y, 0.8);
+  // ── Letterhead (brand accent, matching the email) ─────────────────────────
+  content += textOp("F2", MARGIN_X, BRAND_Y, 22, "motion sports", ACCENT_RGB);
+  content += ruleOp(MARGIN_X, PAGE_W - MARGIN_X, RULE_Y, 1.2, ACCENT_RGB);
 
   // ── Sender return line (small, just above the address window) ─────────────
   content += textOp(
@@ -176,7 +200,8 @@ export function buildLetterPdf(input) {
   }
   pages.push(content);
 
-  return assemblePdf(pages);
+  // Brand footer on every page.
+  return assemblePdf(pages.map((p) => p + footerOp()));
 }
 
 // ── Low-level PDF assembly: objects + a byte-accurate xref table ────────────

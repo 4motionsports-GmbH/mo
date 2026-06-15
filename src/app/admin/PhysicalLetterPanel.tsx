@@ -12,7 +12,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Mailbox, Save, Send, Sparkles } from "lucide-react";
+import { Eye, Mailbox, Save, Send, Sparkles } from "lucide-react";
 import { Badge, Button, Input, Label, Textarea, toast, type BadgeProps } from "./ui";
 
 export interface PhysicalLetterProps {
@@ -101,9 +101,11 @@ export function PhysicalLetterPanel({
   initialBody: string | null;
 }) {
   const router = useRouter();
+  const [instructions, setInstructions] = useState("");
   const [subject, setSubject] = useState(initialSubject ?? "");
   const [body, setBody] = useState(initialBody ?? "");
-  const [busy, setBusy] = useState<null | "gen" | "save" | "send">(null);
+  const [busy, setBusy] = useState<null | "gen" | "save" | "send" | "preview">(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const hasDraft = body.trim().length > 0;
 
   async function call(payload: unknown): Promise<{ subject?: string; body?: string }> {
@@ -120,16 +122,44 @@ export function PhysicalLetterPanel({
     return json.letterDraft ?? {};
   }
 
-  async function onGenerate() {
-    setBusy("gen");
+  /** Render the current subject/body to a PDF and show it in the preview frame. */
+  async function loadPreview(nextSubject: string, nextBody: string) {
+    setBusy("preview");
     try {
-      const draft = await call({ customerId });
-      setSubject(draft.subject ?? "");
-      setBody(draft.body ?? "");
-      toast({ variant: "success", title: "Brief-Entwurf generiert", description: customerEmail });
+      const res = await fetch("/api/admin/customers/letter-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerId, subject: nextSubject, body: nextBody }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+        throw new Error(json?.error?.message ?? `Fehler (${res.status})`);
+      }
+      const blob = await res.blob();
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(blob);
+      });
     } catch (e) {
       reportError(e);
     } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onGenerate() {
+    setBusy("gen");
+    try {
+      const draft = await call({ customerId, adminInstructions: instructions.trim() || null });
+      const s = draft.subject ?? "";
+      const b = draft.body ?? "";
+      setSubject(s);
+      setBody(b);
+      toast({ variant: "success", title: "Brief-Entwurf generiert", description: customerEmail });
+      // Show the complete PDF immediately after generation.
+      await loadPreview(s, b);
+    } catch (e) {
+      reportError(e);
       setBusy(null);
     }
   }
@@ -188,6 +218,21 @@ export function PhysicalLetterPanel({
         PDF gerendert und über Pingen an die hinterlegte Postadresse versendet.
       </p>
 
+      {/* Operator instructions woven into the generated letter (before generating). */}
+      <Label htmlFor={`letter-instr-${customerId}`} className="mb-1 block text-muted-foreground">
+        Hinweise für den Brief (optional)
+      </Label>
+      <Textarea
+        id={`letter-instr-${customerId}`}
+        value={instructions}
+        onChange={(e) => setInstructions(e.target.value)}
+        rows={2}
+        maxLength={2000}
+        disabled={busy !== null}
+        className="mb-3 resize-y"
+        placeholder={'z. B. "Lieferung nach Österreich erwähnen", "auf die neue Rudergeräte-Linie hinweisen"'}
+      />
+
       {hasDraft && (
         <div className="mb-3">
           <Label htmlFor={`letter-subject-${customerId}`} className="mb-1 block text-muted-foreground">
@@ -216,10 +261,33 @@ export function PhysicalLetterPanel({
             <Button variant="secondary" onClick={onSave} disabled={busy !== null}>
               <Save /> {busy === "save" ? "Speichere…" : "Entwurf speichern"}
             </Button>
+            <Button
+              variant="ghost"
+              onClick={() => loadPreview(subject.trim(), body)}
+              disabled={busy !== null}
+            >
+              <Eye /> {busy === "preview" ? "Aktualisiere…" : "Vorschau aktualisieren"}
+            </Button>
             <Button onClick={onSend} disabled={!canSend} title={sendDisabledReason ?? undefined}>
               <Send /> {busy === "send" ? "Übermittle…" : "Brief senden"}
             </Button>
           </div>
+
+          {/* Complete PDF preview — what gets printed (shown after generation). */}
+          {previewUrl && (
+            <div className="mt-3">
+              <Label className="mb-1 block text-muted-foreground">PDF-Vorschau</Label>
+              <iframe
+                title="Brief-Vorschau"
+                src={previewUrl}
+                className="h-[520px] w-full rounded-md border border-border bg-white"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Nach Textänderungen &bdquo;Vorschau aktualisieren&ldquo; klicken. Ohne hinterlegte
+                Adresse zeigt die Vorschau einen Platzhalter im Adressfeld.
+              </p>
+            </div>
+          )}
         </div>
       )}
 

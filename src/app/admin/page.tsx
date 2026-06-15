@@ -38,7 +38,6 @@ import { listCustomerLetters } from "@/lib/physical-letters-store";
 import { physicalEligibilityForCustomer } from "@/lib/physical-mail";
 import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-store";
 import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
-import { wasDiscountCodeRedeemed } from "@/lib/shopify-orders";
 import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
 import { MarketingList } from "./MarketingList";
@@ -240,10 +239,7 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
   };
 
   // Strip to the serialisable shape the client card needs (no session ids —
-  // the browser doesn't need the pseudonymous keys). For customers with a
-  // welcome code, the redemption status is looked up live against Shopify
-  // orders (read_orders, same check the marketing funnel uses) — concurrent,
-  // and null ("unknown") when Shopify can't answer. The latest marketing send
+  // the browser doesn't need the pseudonymous keys). The latest marketing send
   // (open draft preferred) backs the personalised-email workflow on the card.
   const cards: CustomerProps[] = await Promise.all(
     customers.map(async (c) => {
@@ -275,10 +271,6 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
       profileSummaryUpdatedAt: c.profileSummaryUpdatedAt,
       purchaseSummary: c.purchaseSummary,
       purchaseSummaryUpdatedAt: c.purchaseSummaryUpdatedAt,
-      welcomeCode: c.welcomeCode,
-      welcomeCodeExpiresAt: c.welcomeCodeExpiresAt,
-      welcomeIssuedAt: c.welcomeIssuedAt,
-      welcomeRedeemed: c.welcomeCode ? await wasDiscountCodeRedeemed(c.welcomeCode) : null,
       sessions: c.sessions.map((s) => ({
         conversationId: s.conversationId,
         createdAt: s.createdAt,

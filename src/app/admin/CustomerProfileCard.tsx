@@ -161,12 +161,6 @@ export interface CustomerProps {
   profileSummaryUpdatedAt: string | null;
   purchaseSummary: OrderHistoryProps | null;
   purchaseSummaryUpdatedAt: string | null;
-  /** One-time welcome discount (issued on first DOI confirmation). */
-  welcomeCode: string | null;
-  welcomeCodeExpiresAt: string | null;
-  welcomeIssuedAt: string | null;
-  /** Live Shopify redemption check (read_orders); null = unknown. */
-  welcomeRedeemed: boolean | null;
   sessions: CustomerSessionProps[];
   /** This customer's bundle offers (S10/S11), newest first. */
   bundles: CustomerBundleProps[];
@@ -356,43 +350,6 @@ export function CustomerProfileCard({
         }
       >
         <PurchaseHistory purchases={purchases} />
-      </Section>
-
-      {/* Welcome discount — the automatic issuance feature was retired
-          pre-launch; this section is now a read-only historical view of codes
-          that were issued while the feature was live. */}
-      <Section title="Willkommensrabatt">
-        {customer.welcomeIssuedAt ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="info">
-              <Gift className="size-3" /> Ausgestellt am {fmtDate(customer.welcomeIssuedAt)}
-            </Badge>
-            {customer.welcomeCode && (
-              <span className="text-sm">
-                Code: <code className="rounded bg-muted px-1 py-0.5">{customer.welcomeCode}</code>
-                {customer.welcomeCodeExpiresAt
-                  ? ` (gültig bis ${fmtDate(customer.welcomeCodeExpiresAt)})`
-                  : ""}
-              </span>
-            )}
-            {customer.welcomeRedeemed === true ? (
-              <Badge variant="success">✓ Eingelöst</Badge>
-            ) : customer.welcomeRedeemed === false ? (
-              <Badge variant="warning">Noch nicht eingelöst</Badge>
-            ) : (
-              <Badge variant="secondary" title="Shopify nicht erreichbar/konfiguriert">
-                Einlösung unbekannt
-              </Badge>
-            )}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            <em>
-              Kein Willkommenscode. Rabattcodes werden manuell über das Dashboard
-              vergeben.
-            </em>
-          </p>
-        )}
       </Section>
 
       {/* Current understanding — the regenerated profile, in its own Card. The
