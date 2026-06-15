@@ -2,17 +2,18 @@
 // "Zusammenfassung herunterladen" download.
 //
 // Produces a downloadable summary of ONE of the signed-in customer's threads in
-// the SAME style/structure/product-rendering as the transactional summary EMAIL
+// the SAME content/structure/product-rendering as the transactional summary EMAIL
 // (S5): AI prose → chosen products → "Zur Kasse" → divider → "Vielleicht auch
-// interessant:" alternatives. It does NOT re-implement that layout — it calls
-// the very same renderer the email uses (buildSummaryDocument /
-// renderBrandedEmail), so the download and the email can never drift apart.
+// interessant:" alternatives. It does NOT re-implement that layout — it calls the
+// very same assembler the email uses (buildSummaryDocument), then renders the
+// structured pieces to PDF (buildSummaryPdf), so the download and the email can
+// never drift apart in content.
 //
-// FORMAT: styled HTML (the branded email shell), returned as a file attachment.
-// HTML is chosen deliberately — it reuses the email template byte-for-byte with
-// no extra dependency; a PDF would require a new headless-render pipeline and a
-// second layout. The widget fetches this XHR (it carries the guard headers), then
-// saves the HTML body as a Blob behind the "Zusammenfassung herunterladen" button.
+// FORMAT: PDF (10E-1, replacing the 10B-1 HTML). Rendered with the repo's
+// dependency-free hand-written PDF stack (lib/pdf-core, shared with the physical-
+// letter PDF) — no headless browser / PDF dependency on Vercel. The widget fetches
+// this XHR (it carries the guard headers), then saves the bytes as a Blob behind
+// the "Zusammenfassung herunterladen" button.
 //
 // Gated by the CA-1 signed-in resolver (origin + secret + a LIVE access token);
 // the thread must belong to the caller (conversation_key + customer_id), so an
@@ -25,6 +26,7 @@ import { errorResponse, reportError } from "@/lib/observability";
 import { requireSignedInCustomer } from "@/lib/account-guard";
 import { loadCustomerConversationForSummary } from "@/lib/account-history";
 import { buildSummaryDocument } from "@/lib/summary-email";
+import { buildSummaryPdf } from "@/lib/summary-pdf.mjs";
 
 export const runtime = "nodejs";
 // The summary may make one Anthropic call — give it the same headroom the
@@ -40,7 +42,7 @@ export async function OPTIONS(req: Request) {
 /** Safe, descriptive download filename derived from the (opaque) thread key. */
 function downloadFilename(conversationKey: string): string {
   const slug = conversationKey.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
-  return `motionsports-zusammenfassung-${slug || "beratung"}.html`;
+  return `motionsports-zusammenfassung-${slug || "beratung"}.pdf`;
 }
 
 export async function GET(req: Request) {
@@ -65,7 +67,7 @@ export async function GET(req: Request) {
       return errorResponse("bad_request", "Konversation nicht gefunden", 404, guard.headers);
     }
 
-    const { html } = await buildSummaryDocument({
+    const { summary, chosen, cartUrl, alternatives } = await buildSummaryDocument({
       conversation,
       usage: {
         callSite: "summary_download",
@@ -73,11 +75,16 @@ export async function GET(req: Request) {
       },
     });
 
-    return new Response(html, {
+    // Render the SAME content to PDF (lib/summary-pdf reuses the shared, dependency-
+    // free pdf-core). Any model call already ran + was recorded in buildSummaryDocument.
+    const pdf = buildSummaryPdf({ summary, chosen, cartUrl, alternatives });
+
+    return new Response(new Uint8Array(pdf), {
       status: 200,
       headers: {
-        "Content-Type": "text/html; charset=utf-8",
+        "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="${downloadFilename(conversationKey)}"`,
+        "Content-Length": String(pdf.length),
         "Cache-Control": "no-store",
         ...guard.headers,
       },

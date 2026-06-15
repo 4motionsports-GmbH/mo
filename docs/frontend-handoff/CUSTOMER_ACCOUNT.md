@@ -66,29 +66,72 @@ to your `return_url`** with a marker query param:
 
 Strip `ms_auth` from the URL after reading it (e.g. `history.replaceState`).
 
-## 3. Already-signed-in check (`prompt=none`)
+## 3. Already-signed-in check (shop-native **and** chatbot login)
 
-Many visitors are already logged into Shopify on the storefront. To detect that
-**without a click**, run the same redirect with `&prompt=none`:
+A visitor is very often **already logged into their Shopify account on the
+storefront** — via the **shop's own login** (the storefront account icon), not the
+chatbot's "Anmelden". We must recognise that and show their name, **regardless of
+how they logged in**, with **no click**. There are two mechanisms; **3a is the
+recommended one** because it is the only one that sees a *shop-native* session.
+
+### 3a. App-Proxy storefront detection — `GET /apps/{proxy}/whoami` (recommended)
+
+The widget and backend are cross-origin, so the backend can't read the storefront
+session cookie on its own. A **Shopify App Proxy** bridges that: the widget calls a
+**same-origin** storefront path; Shopify forwards it to our backend, signing it and
+adding the **live** logged-in customer id. The backend verifies the signature,
+trusts **only** Shopify's id, and (now that `read_customers` is granted) reads the
+name from the Admin API — **no OAuth token, no redirect, no click**.
 
 ```js
-url.searchParams.set("prompt", "none");
+// Same-origin storefront fetch (NOT the chat backend origin). Cookies ride along.
+const res = await fetch(`/apps/chat/whoami?session=${encodeURIComponent(sessionId)}`,
+                        { credentials: "include" });
+const me = await res.json();
 ```
 
-- Logged in → Shopify returns silently and you land back on `?ms_auth=ok`.
-- Logged out → you land back on `?ms_auth=login_required`.
+Response (HTTP 200, `no-store`), shape compatible with `/api/auth/me` (§4):
 
-**Degraded fallback (plan for it):** if `prompt=none` is not honored on this
-store (the backend verify gate reports this), the silent check won't resolve
-cleanly — there is **no functional loss**. In that case **skip silent detection**
-and simply render a subtle one-click **"Sign in"** affordance that does the §2
-redirect without `prompt=none`. Treat `prompt=none` as a best-effort optimisation,
-not a requirement. (A cheap pre-hint, `ShopifyAnalytics.meta.page.customerId`,
-may be read in JS to decide whether the silent attempt is even worth doing, but
-it is not authoritative — never gate identity on it.)
+```jsonc
+// signed in (shop-native OR chatbot — doesn't matter how)
+{
+  "signedIn": true,
+  "name": "Max Mustermann",            // also nested at identity.name
+  "tier": 3,                            // also nested at identity.tier
+  "shopify_customer_id": "1234567890",
+  "identity": { "name": "Max Mustermann", "tier": 3 },
+  "marketing": { "status": "none", "optInActionable": true }
+}
+// logged out / unverifiable → fails closed
+{ "signedIn": false }
+```
 
-> Because `prompt=none` causes a full-page redirect too, run it deliberately
-> (e.g. once per session on first widget open), not on every page load.
+- **Fail-closed:** a bad/absent signature or a logged-out session (empty
+  `logged_in_customer_id`) → `{ "signedIn": false }`. The id is **never** taken
+  from a client-supplied value — only Shopify's signed one.
+- On `signedIn: true` the backend has **linked this `session_id`** to the customer,
+  so the history endpoints (§7) resolve for the **chatbot-token** path. For a pure
+  shop-native session (no chatbot OAuth token) see the note in §7.
+
+> **⚠️ Requires a one-time STORE + THEME action (Lucas), see `docs/CUSTOMER_ACCOUNT.md`
+> §2:** (1) add an **App Proxy** to the app (Shopify admin → app → *App proxy*):
+> subpath prefix `apps`, subpath `chat`, URL `https://chat.motionsports.de/api/auth/storefront`;
+> (2) the theme calls the proxied path above with `?session={sid}`; (3) backend env
+> `SHOPIFY_APP_PROXY_SECRET` (the app's API secret key; falls back to
+> `SHOPIFY_CLIENT_SECRET`). Until the proxy is configured this endpoint isn't
+> reachable and the widget simply keeps using the chatbot "Anmelden" (§2) — no
+> regression. Shopify historically left `logged_in_customer_id` empty on **new
+> customer accounts**; re-verify on the live store. The endpoint fails closed
+> either way, so this is never a security risk — at worst, one extra click.
+
+### 3b. Silent OAuth (`prompt=none`) — alternative, full-page redirect
+
+The original CA-3 detection: run the §2 redirect with `&prompt=none`. Logged in →
+silent return `?ms_auth=ok`; logged out → `?ms_auth=login_required`. It is
+**authoritative** but bounces the whole storefront page, which is why the theme
+deferred it. It is still available as a fallback where the App Proxy isn't
+configured. (A cheap pre-hint, `ShopifyAnalytics.meta.page.customerId`, may decide
+whether the silent attempt is worth doing — never gate identity on it.)
 
 ## 4. Re-hydrating identity — `GET /api/auth/me`
 
@@ -259,12 +302,18 @@ timestamps, and the readable message count. **No pagination params** in v1
 > (the chat-thread key — send it as `conversationKey` on `/api/chat` to **resume**
 > this thread; see §7.6).
 
-- `title` is **cheap** server-side (no model call): the custom title if the
-  customer renamed it, otherwise the first user message trimmed to ≤ 80 chars
-  (the backend falls back to `"Beratung"` when there's no user text yet).
+- `title` is **cheap** server-side (no model call) **and cached on the row** (it
+  is not re-derived per render): the custom title if the customer renamed it,
+  otherwise the first user message trimmed to ≤ 80 chars (the backend falls back
+  to `"Beratung"` when there's no user text yet). The list query is a single
+  indexed walk — expect it well under a second for a normal history.
 - `createdAt` / `updatedAt` are ISO-8601 (or `null` if unknown). `updatedAt`
   bumps on rename; list order is by **last activity**, so a rename does **not**
   reorder the list.
+- A **newly started** conversation appears here **immediately** — it is persisted
+  and customer-linked the moment the first message is sent (not only after the
+  answer arrives), so re-fetching the list right after starting a chat shows it,
+  and it survives a reload. See §7.6.
 
 ### 7.2 Fetch transcript — `GET /api/account/conversations/{id}`
 
@@ -351,7 +400,13 @@ unchanging identity link. See [`API_CONTRACT.md`](./API_CONTRACT.md) §2
 ("Optional `conversationKey`") for the full rules. In short:
 
 - **"Neue Beratung"** → keep `session_id`, generate a **fresh** `conversationKey`,
-  clear the local `messages`. The first turn under it creates a new history row.
+  clear the local `messages`. The **first turn** under it (the first `/api/chat`
+  send) **durably creates + customer-links** the history row **at that moment** —
+  before the assistant answers — so it lists immediately and survives a reload,
+  exactly like ChatGPT/Claude. (Previously a new thread could be lost if the answer
+  never landed, or never showed because it wasn't linked to the customer — both are
+  fixed.) You do **not** need a separate "create conversation" call; just send the
+  first `/api/chat` turn with the fresh `conversationKey`.
 - **Open a past conversation** → load its transcript (§7.2) and adopt its
   **`conversationKey`** as the active thread; the next `/api/chat` turn sends
   that key and appends to the right thread.
@@ -362,13 +417,14 @@ unchanging identity link. See [`API_CONTRACT.md`](./API_CONTRACT.md) §2
 Backs the widget's **"Zusammenfassung herunterladen"** button for a signed-in
 customer. It returns the **same** structured summary as the email motion sports
 mails after a chat — AI prose → chosen products → **Zur Kasse** → divider →
-**"Vielleicht auch interessant:"** alternatives — rendered with the **same
-branded template**. (It is literally the email renderer; the download and the
-mailed summary can't diverge.)
+**"Vielleicht auch interessant:"** alternatives. It is assembled by the **same
+renderer** the email uses (so the content can't diverge), then rendered to PDF.
 
-**Format: a branded HTML document, served as a file attachment.** HTML was chosen
-because it reuses the email template directly (no PDF pipeline). You receive the
-HTML as the response body of a guarded XHR and save it as a file client-side.
+**Format: a PDF, served as a file attachment** (10E-1, replacing the earlier HTML
+download). It is produced by the repo's dependency-free PDF stack (the same one
+behind the physical-letter PDF) — branded letterhead + footer, same sections as
+the email. You receive the PDF bytes as the response body of a guarded XHR and
+save them as a file client-side.
 
 ```
 GET {BASE_URL}/api/account/summary?conversationKey={conversationKey}
@@ -393,12 +449,13 @@ Headers:
 
 ```http
 HTTP/1.1 200 OK
-Content-Type: text/html; charset=utf-8
-Content-Disposition: attachment; filename="motionsports-zusammenfassung-….html"
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="motionsports-zusammenfassung-….pdf"
+Content-Length: …
 Cache-Control: no-store
 ```
 
-The body is the full branded HTML document (a complete `<!DOCTYPE html>` page).
+The body is the PDF bytes (an `application/pdf` document).
 
 ### Triggering the download from the widget
 
@@ -412,11 +469,11 @@ const res = await fetch(
   { headers: { "x-ms-chat-key": SHARED_SECRET, "x-ms-session": sessionId } }
 );
 if (!res.ok) { /* 401 → re-auth UI; 404 → "nicht gefunden"; else generic error */ }
-const blob = await res.blob();           // text/html
+const blob = await res.blob();           // application/pdf
 const url = URL.createObjectURL(blob);
 const a = Object.assign(document.createElement("a"), {
   href: url,
-  download: "motionsports-zusammenfassung.html",   // name it yourself; server name is advisory
+  download: "motionsports-zusammenfassung.pdf",    // name it yourself; server name is advisory
 });
 a.click();
 URL.revokeObjectURL(url);

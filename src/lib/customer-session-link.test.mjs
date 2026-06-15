@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   linkSessionToCustomer,
+  resolveLinkedCustomerId,
   resolveSignedInCustomerRow,
 } from "./customer-session-link.mjs";
 
@@ -22,6 +23,9 @@ function makeSql({ customers = {} } = {}) {
       links.set(sid, customerId); // ON CONFLICT DO UPDATE → last write wins
       return Promise.resolve([]);
     }
+    // NB: resolveSignedInCustomerRow's query ALSO contains a
+    // "SELECT customer_id FROM customer_session_links" subquery, so match the more
+    // specific "FROM customers c" first; the standalone link read falls through.
     if (text.includes("FROM customers c")) {
       // resolveSignedInCustomerRow interpolates the session id (link subquery).
       const sid = values[0];
@@ -35,6 +39,12 @@ function makeSql({ customers = {} } = {}) {
           identity_tier: cust.identity_tier ?? 3,
         },
       ]);
+    }
+    if (text.includes("SELECT customer_id FROM customer_session_links")) {
+      // resolveLinkedCustomerId — the ANY-tier direct link read (standalone).
+      const sid = values[0];
+      const customerId = links.get(sid);
+      return Promise.resolve(customerId != null ? [{ customer_id: customerId }] : []);
     }
     throw new Error(`unexpected query: ${text}`);
   };
@@ -59,6 +69,24 @@ test("linkSessionToCustomer trims and persists the link", async () => {
   const sql = makeSql();
   assert.equal(await linkSessionToCustomer(sql, "  sess-widget-1  ", 42), true);
   assert.equal(sql._links.get("sess-widget-1"), 42);
+});
+
+// ---------------------------------------------------------------------------
+// resolveLinkedCustomerId — the ANY-tier direct link (stamps conversations)
+// ---------------------------------------------------------------------------
+
+test("resolveLinkedCustomerId returns the linked customer_id for ANY tier (or null)", async () => {
+  const sql = makeSql();
+  // Even a tier-2 (email-only) link resolves here — this read is NOT gated on
+  // shopify_customer_id (it stamps conversations.customer_id at creation).
+  await linkSessionToCustomer(sql, "sess-1", 7);
+  assert.equal(await resolveLinkedCustomerId(sql, "sess-1"), 7);
+  assert.equal(await resolveLinkedCustomerId(sql, "  sess-1 "), 7);
+
+  // Fail-soft: no sql / blank / unlinked session → null.
+  assert.equal(await resolveLinkedCustomerId(null, "sess-1"), null);
+  assert.equal(await resolveLinkedCustomerId(sql, ""), null);
+  assert.equal(await resolveLinkedCustomerId(sql, "sess-unknown"), null);
 });
 
 // ---------------------------------------------------------------------------

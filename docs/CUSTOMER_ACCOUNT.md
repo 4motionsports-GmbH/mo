@@ -106,15 +106,62 @@ We **never** hardcode the auth host; we never fetch the `account.*` subdomain
 (only the browser is redirected there). Nothing in CORS/redirect handling assumes
 a single origin.
 
-### `prompt=none` silent already-signed-in detection
+### Already-signed-in detection (shop-native **and** chatbot) — `GET /api/auth/storefront`
 
-`/api/auth/shopify/login?...&prompt=none` runs the same flow with `prompt=none`.
-When a storefront session exists Shopify returns a `code` with **no UI**; when
-logged out it returns `error=login_required`, which the callback turns into a
-`return_url?ms_auth=login_required` bounce so the widget can show a one-click
-"Sign in". **If `prompt=none` is not honored on this store** (see the verify
-gate), this degrades to a plain one-click sign-in — no functional loss. CA-3
-should plan for that degraded path.
+**The problem.** A customer who logs in via the **shop's own login** (the
+storefront account icon), then opens the chat, must be recognised too — not only
+the chatbot's "Anmelden" OAuth. The widget is in the theme (`motionsports.de`); the
+backend is cross-origin on Vercel, so it **cannot read the storefront session
+cookie**, and the spike flagged `logged_in_customer_id` / the Liquid `customer`
+object as **unreliable on new customer accounts** (and a client-supplied id is
+forgeable). The original CA-3 detection (`/api/auth/me` + a deferred `prompt=none`)
+therefore only ever recognised the **chatbot-OAuth** path.
+
+**The mechanism — a Shopify App Proxy.** An App Proxy is the one channel where
+Shopify itself vouches the logged-in customer to a cross-origin backend: the
+storefront calls a **same-origin** path (`/apps/{proxy}/whoami`), Shopify forwards
+it to our backend **adding** `logged_in_customer_id` (the LIVE storefront session's
+customer) and an HMAC `signature` over all params. `GET /api/auth/storefront`
+verifies the signature (`lib/shopify-app-proxy.verifyAppProxySignature`), trusts
+**only** Shopify's `logged_in_customer_id`, and — now that **`read_customers`** is
+granted — enriches the **name/email via the Admin API**
+(`lib/shopify-orders.fetchAdminCustomerById`), with **no customer OAuth token**.
+Detection therefore only establishes **IDENTITY**; the Admin API supplies the rest,
+so it **does not matter how the customer logged in**. It then find-or-creates the
+customer (the same `bindShopifyIdentity` merge as the OAuth callback) and links the
+widget `session_id`. Response:
+`{ signedIn: true, name, tier: 3, shopify_customer_id, identity:{name,tier}, marketing:{…} }`.
+**Fail-closed:** bad/absent signature or a logged-out (empty id) session →
+`{ signedIn: false }`; no Admin/DB work happens until the signature verifies.
+
+> **⚠️ REQUIRES A ONE-TIME STORE + THEME ACTION (Lucas) before it can fire:**
+> 1. **Add an App Proxy** to the app — Shopify admin → the app → *App proxy*:
+>    **Subpath prefix** `apps`, **Subpath** `chat`, **Proxy URL**
+>    `https://chat.motionsports.de/api/auth/storefront`.
+> 2. **Theme** calls the proxied same-origin path `/apps/chat/whoami?session={sid}`
+>    on first panel open (see `frontend-handoff/CUSTOMER_ACCOUNT.md` §3a).
+> 3. **Backend env** `SHOPIFY_APP_PROXY_SECRET` = the app's API secret key (falls
+>    back to `SHOPIFY_CLIENT_SECRET`).
+> 4. **Re-verify on the live store** that App-Proxy `logged_in_customer_id` is
+>    populated for this store's customer-accounts mode (the spike's "unreliable"
+>    finding predates Shopify's fixes). The endpoint fails closed regardless, and
+>    the chatbot "Anmelden" remains the fallback — so this is never a security risk.
+>
+> History for a *pure shop-native* session: `/api/account/*` still require a live
+> Customer-Account token (their liveness/logout proof), which a shop-native login
+> doesn't have. Detection (name) works without it; full history for that session
+> needs either a one-tap chatbot "Anmelden" (to mint a token) or routing the
+> account endpoints through the App Proxy as a follow-up — STATED here, not
+> half-built.
+
+### `prompt=none` silent detection (alternative)
+
+`/api/auth/shopify/login?...&prompt=none` runs the same OAuth flow with
+`prompt=none`. When a storefront session exists Shopify returns a `code` with **no
+UI**; when logged out it returns `error=login_required` → a
+`return_url?ms_auth=login_required` bounce. It is authoritative but a full-page
+redirect (the theme deferred it, see `CUSTOMER_ACCOUNT_THEME_NOTES.md`); it remains
+available where the App Proxy isn't configured.
 
 ## 3. Token handling, rotation, encryption
 
@@ -414,15 +461,58 @@ client-generated value the widget sends on `/api/chat`) is now the uniqueness ke
   `WHERE session_id`, so it links **all** of the signing-in session's threads to
   the customer (and never another session's).
 
-### Titles are cheap — no model call per render
+### Eager create + customer-link at creation (no lost threads — migration 0026)
 
-The list TITLE is either the customer's **custom title** (set via RENAME,
-stored in `conversations.title`, migration `0016`) or, when unset, a
-**derived** label: the first user message, whitespace-collapsed and trimmed to
-80 chars (`lib/conversation-title.mjs :: deriveConversationTitle`). The
-derivation is pure and deterministic — **no Anthropic call** runs per list
-render. `messageCount` counts the **readable** turns (user/assistant text; tool
-bookkeeping rows excluded) — the same turns the transcript returns.
+A started conversation must persist and list **exactly like ChatGPT/Claude** —
+every started thread is durable, even before the assistant answers. Two defects
+broke that and are now fixed:
+
+- **Orphaned by a missing customer link.** The conversation row was written only
+  in `persistTurn` (the chat `onFinish`, *after* the stream) and that `INSERT`
+  **never set `customer_id`** — the customer link was stamped only at sign-in /
+  email-capture (`UPDATE conversations … WHERE session_id`), which had already run
+  *before* a later "Neue Beratung" row existed. So a new signed-in thread was
+  created with `customer_id = NULL` and never appeared in the list (which filters
+  `WHERE customer_id = <self>`). **Lost.**
+- **Flushed too late.** Persisting only in `onFinish` meant a thread whose answer
+  never landed (reload / switch first) was never written at all.
+
+The fix (`lib/conversation-create :: ensureConversationStarted`, called from
+`/api/chat` **before** the stream, concurrently with retrieval):
+
+- **Eager:** the conversation row + the first user message are written at the
+  **first send**, before the model answers — so the thread lists immediately and
+  survives a reload.
+- **Customer-linked at creation:** the row is stamped with the session's linked
+  `customer_id` (resolved from `customer_session_links`, migration 0019) the moment
+  it is created. `persistTurn` is the backstop — it now resolves + stamps
+  `customer_id` too, `COALESCE`-ing so it never NULLs an existing link or
+  re-clobbers a thread that signed in mid-way.
+
+Anonymous sessions still create pseudonymous rows (`customer_id` stays NULL),
+unchanged.
+
+### Titles are cheap — cached on the row, no model call per render
+
+The list TITLE is either the customer's **custom title** (set via RENAME, stored in
+`conversations.title`, migration `0016`) or, when unset, a **derived** label: the
+first user message, whitespace-collapsed and trimmed to 80 chars
+(`lib/conversation-title.mjs :: deriveConversationTitle`). **No Anthropic call** runs
+per list render — it never did. As of migration **0026** the derived label is also
+**cached on the row** (`conversations.title_auto`, written at creation), so the list
+no longer runs a per-row `LATERAL` sub-select to fetch each conversation's first
+message — it reads the title straight off the row.
+
+**List performance (migration 0026).** The list query
+(`listCustomerConversations`) is `WHERE customer_id = <self> ORDER BY
+last_activity_at DESC, id DESC`. The pre-existing `conversations(customer_id)` index
+(migration 0008) covered the filter but **not** the ordering, so a long history
+still paid a sort. The new composite **partial** index
+`conversations(customer_id, last_activity_at DESC, id DESC) WHERE customer_id IS NOT
+NULL` serves filter **and** order in one indexed walk — a snappy list (well under a
+second for a normal history). `messageCount` (readable user/assistant turns, tool
+rows excluded) remains a single indexed `COUNT` per row over
+`messages_conversation_idx`.
 
 ### Deletion semantics — single-chat delete vs. the durable profile
 
@@ -562,19 +652,21 @@ A signed-in (tier-3) customer can **download** a summary of any one of their
 threads from the widget's **"Zusammenfassung herunterladen"** button. It is the
 **same** S5 structured summary as the transactional summary **email** — AI prose
 → chosen products → **Zur Kasse** → divider → **"Vielleicht auch interessant:"**
-alternatives — produced by the **very same renderer** (`buildSummaryDocument` →
-`renderBrandedEmail`, `lib/summary-email.ts`), not a second format. The email and
-the download can therefore never drift apart.
+alternatives — **assembled by the very same renderer** (`buildSummaryDocument`,
+`lib/summary-email.ts`), then rendered to PDF, not a second layout. The email and
+the download can therefore never drift apart in content.
 
-### Format: styled HTML (the branded email shell)
+### Format: PDF (10E-1, replacing the 10B-1 HTML)
 
-The download is the branded **HTML** document the email uses, returned as a file
-attachment (`Content-Type: text/html`, `Content-Disposition: attachment`). **HTML
-was chosen deliberately**: it reuses the email template byte-for-byte with **no
-new dependency**; a PDF would require a headless-render pipeline and a second
-layout to maintain. The widget fetches the endpoint as a guarded XHR (so it can
-send the shared-secret + session headers), then saves the response body as a
-`Blob` behind the button.
+The download is a **PDF** (`Content-Type: application/pdf`,
+`Content-Disposition: attachment`), produced by `lib/summary-pdf :: buildSummaryPdf`
+on the repo's **dependency-free** hand-written PDF stack (`lib/pdf-core`, shared
+with the physical-letter PDF — **no headless browser / PDF dependency** on Vercel).
+It renders the structured pieces `buildSummaryDocument` returns (`summary`,
+`chosen`, `cartUrl`, `alternatives`) into a branded document — letterhead + footer,
+the same sections as the email. The widget fetches the endpoint as a guarded XHR
+(so it can send the shared-secret + session headers), then saves the response body
+as a `Blob` behind the button.
 
 ### Endpoint — `GET /api/account/summary?conversationKey=<key>`
 
@@ -582,7 +674,7 @@ send the shared-secret + session headers), then saves the response body as a
 |---|---|
 | **Guard** | the standard signed-in gate (`requireSignedInCustomer`): origin allowlist + `x-ms-chat-key` + a **live** access token. Anonymous / email-only / logged-out → **401**, fail closed. |
 | **Scope** | keyed by the thread's **`conversationKey`** (migration 0018). The thread must belong to the caller (`conversation_key + customer_id = self`); a foreign/unknown key is a clean **404** — indistinguishable from missing (no enumeration leak). |
-| **Body** | the full branded HTML summary document. |
+| **Body** | the branded **PDF** summary document (`application/pdf`). |
 | **Cost (S6)** | when it makes a model call (Anthropic summary prose), the token usage is recorded as the **`summary_download`** call site, **linked to the conversation** so it cascade-deletes with the transcript on single-chat delete / erasure. No model call (no API key / empty transcript) → nothing recorded; the document degrades to the plain transcript, exactly like the email. |
 
 The `conversationKey` is the per-thread key the history list / transcript already

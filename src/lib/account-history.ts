@@ -26,7 +26,7 @@
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import type { TranscriptMessage, ConversationSummaryData } from "./conversation-store";
-import { deriveConversationTitle } from "./conversation-title.mjs";
+import { deriveConversationTitle, FALLBACK_TITLE } from "./conversation-title.mjs";
 
 // Bound the history list. A signed-in customer's own past consultations — more
 // than this is paginated away (the widget shows the most recent).
@@ -62,25 +62,20 @@ export async function listCustomerConversations(
 ): Promise<ConversationListItem[]> {
   if (!sql) return [];
   try {
+    // One indexed walk: the (customer_id, last_activity_at DESC, id DESC) index
+    // (migration 0026) serves both the WHERE and the ORDER BY, and the title is
+    // read straight off the row (co.title_auto, cached at creation) — NO per-row
+    // first-message LATERAL. Only the readable-turn count is a per-row aggregate,
+    // a single COUNT over the conversation's messages (messages_conversation_idx).
     const rows = (await sql`
       SELECT co.id,
              co.conversation_key,
              co.title,
+             co.title_auto,
              co.created_at,
              co.updated_at,
-             fu.content AS first_user_message,
              COALESCE(mc.cnt, 0) AS message_count
         FROM conversations co
-        LEFT JOIN LATERAL (
-          SELECT m.content
-            FROM messages m
-           WHERE m.conversation_id = co.id
-             AND m.role = 'user'
-             AND m.tool_name IS NULL
-             AND length(btrim(m.content)) > 0
-           ORDER BY m.created_at ASC, m.id ASC
-           LIMIT 1
-        ) fu ON true
         LEFT JOIN LATERAL (
           SELECT count(*)::int AS cnt
             FROM messages m
@@ -96,10 +91,15 @@ export async function listCustomerConversations(
 
     return rows.map((r) => {
       const custom = (r.title as string | null) ?? null;
+      const cachedAuto = (r.title_auto as string | null) ?? null;
+      // Custom rename wins; else the cached cheap label; else a neutral fallback.
+      // No model call and no extra query — the label is on the row.
       const title =
         custom && custom.trim()
           ? custom.trim()
-          : deriveConversationTitle((r.first_user_message as string | null) ?? "");
+          : cachedAuto && cachedAuto.trim()
+            ? cachedAuto.trim()
+            : FALLBACK_TITLE;
       return {
         conversationId: Number(r.id),
         conversationKey: String(r.conversation_key ?? ""),

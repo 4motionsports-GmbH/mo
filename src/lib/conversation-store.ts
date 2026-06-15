@@ -12,6 +12,9 @@ import type { UIMessage } from "ai";
 import { getSql } from "./db";
 import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
+import { resolveLinkedCustomerId } from "./customer-session-link.mjs";
+import { deriveConversationTitle } from "./conversation-title.mjs";
+import { ensureConversationStarted as ensureConversationStartedCore } from "./conversation-create.mjs";
 
 // Tool inputs that reference catalog product ids. Used to accumulate
 // conversations.recommended_product_ids — the "DISCUSSED" set: every product
@@ -146,6 +149,13 @@ function latestUserMessage(history: UIMessage[]): UIMessage | null {
   return null;
 }
 
+function firstUserMessage(history: UIMessage[]): UIMessage | null {
+  for (const msg of history) {
+    if (msg.role === "user") return msg;
+  }
+  return null;
+}
+
 export interface TranscriptMessage {
   role: "user" | "assistant" | "system" | "tool";
   content: string;
@@ -265,6 +275,31 @@ export async function getConversationIdBySession(
   }
 }
 
+export interface EnsureConversationInput {
+  sessionId: string | null;
+  conversationKey?: string | null;
+  personaLabel?: string | null;
+  messageCount?: number;
+  /** This turn's latest user message text — seeds the cached title + persists eagerly. */
+  userText?: string | null;
+  /** This turn's latest user message client id (for idempotent eager persistence). */
+  userMessageId?: string | null;
+}
+
+/**
+ * Eagerly create + customer-link the conversation row at the START of a chat turn
+ * (before the model stream), so a started "Neue Beratung" thread is durable,
+ * listable immediately, and survives a reload even before the assistant answers —
+ * the durability half of the lost-conversation fix. Best-effort; reads getSql()
+ * internally (no-op without a DB), mirroring persistTurn. The onFinish persistTurn
+ * is the backstop and re-stamps customer_id + the cached title on the same row.
+ */
+export async function ensureConversationStarted(
+  input: EnsureConversationInput
+): Promise<{ conversationId: number; customerId: number | null } | null> {
+  return ensureConversationStartedCore(getSql(), input);
+}
+
 /**
  * Upsert the conversation row (by session_id) and insert the new messages.
  * Returns true if persisted, false if skipped (no DB / no session) or failed.
@@ -304,16 +339,36 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
     // Count includes the assistant turn we're about to write.
     const messageCount = input.history.length + 1;
 
+    // The owning customer (migration 0019 direct link) + the cached cheap title
+    // (migration 0026), stamped AT CREATION so a new "Neue Beratung" thread is
+    // customer-linked + listable the moment it is persisted — never orphaned with
+    // customer_id = NULL (the lost-conversation bug). Backstop to the eager
+    // ensureConversationStarted; COALESCE on conflict never NULLs an existing link
+    // or clobbers an already-cached title (or a rename, which lives on `title`).
+    let linkedCustomerId: number | null = null;
+    try {
+      // Fault-isolated: a transient link read must never drop the turn's
+      // persistence. A null here is harmless — eager-create / bindShopifyIdentity
+      // already linked the row, and COALESCE on conflict keeps it.
+      linkedCustomerId = await resolveLinkedCustomerId(sql, sessionId);
+    } catch {
+      linkedCustomerId = null;
+    }
+    const firstUser = firstUserMessage(input.history);
+    const titleAuto = firstUser ? deriveConversationTitle(textOfMessage(firstUser)) : null;
+
     const rows = await sql`
       INSERT INTO conversations
-        (session_id, conversation_key, persona_label, message_count,
-         recommended_product_ids, selected_product_ids, status,
+        (session_id, conversation_key, customer_id, persona_label, message_count,
+         title_auto, recommended_product_ids, selected_product_ids, status,
          created_at, updated_at, last_activity_at)
       VALUES
-        (${sessionId}, ${conversationKey}, ${input.personaLabel}, ${messageCount},
-         ${newProductIds}::text[], ${selection ?? []}::text[],
+        (${sessionId}, ${conversationKey}, ${linkedCustomerId}, ${input.personaLabel}, ${messageCount},
+         ${titleAuto}, ${newProductIds}::text[], ${selection ?? []}::text[],
          'active', now(), now(), now())
       ON CONFLICT (conversation_key) DO UPDATE SET
+        customer_id = COALESCE(conversations.customer_id, EXCLUDED.customer_id),
+        title_auto = COALESCE(conversations.title_auto, EXCLUDED.title_auto),
         persona_label = EXCLUDED.persona_label,
         message_count = EXCLUDED.message_count,
         recommended_product_ids = (
