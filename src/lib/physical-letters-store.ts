@@ -50,6 +50,9 @@ export interface CreatePhysicalLetterInput {
   customerId: number | null;
   marketingSendId?: number | null;
   recipient: RecipientAddress;
+  /** The letter content we printed (snapshot) — feeds the audit + the KB (§3). */
+  subject?: string | null;
+  body?: string | null;
 }
 
 /** INSERT a 'pending' letter row (before the Pingen call) — its id seeds the
@@ -66,17 +69,106 @@ export async function createPhysicalLetter(
         (customer_id, marketing_send_id, provider, status,
          recipient_name, recipient_company, recipient_address_line1,
          recipient_address_line2, recipient_postal_code, recipient_city,
-         recipient_country)
+         recipient_country, subject, body)
       VALUES
         (${input.customerId}, ${input.marketingSendId ?? null}, 'pingen', 'pending',
          ${r.name}, ${r.company}, ${r.addressLine1}, ${r.addressLine2},
-         ${r.postalCode}, ${r.city}, ${r.country})
+         ${r.postalCode}, ${r.city}, ${r.country},
+         ${input.subject ?? null}, ${input.body ?? null})
       RETURNING id
     `) as Array<{ id: number }>;
     return rows[0]?.id != null ? Number(rows[0].id) : null;
   } catch (err) {
     reportError(err, { route: "lib/physical-letters-store", phase: "createPhysicalLetter" });
     return null;
+  }
+}
+
+/** Per-letter postage in cents when Pingen hasn't reported a price (staging, or
+ *  not-yet-known). Configurable; defaults to 106 (≈ €1.06). */
+export function defaultLetterCostCents(): number {
+  const raw = process.env.PINGEN_LETTER_COST_CENTS;
+  const n = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : 106;
+}
+
+export interface PhysicalLetterStats {
+  /** Letters actually handed to Pingen (provider id set, not a failed submit). */
+  totalSent: number;
+  /** Total postage in cents — Pingen's price where known, else the default. */
+  totalCostCents: number;
+}
+
+/**
+ * Aggregate physical-letter cost for the KPI dashboard: how many letters went
+ * out and what they cost (Pingen's reported price per letter, falling back to
+ * the configured default for any letter without a known price). Returns zeroes
+ * on no DB / error.
+ */
+export async function getPhysicalLetterStats(
+  sql: Sql | null = getSql()
+): Promise<PhysicalLetterStats> {
+  if (!sql) return { totalSent: 0, totalCostCents: 0 };
+  try {
+    const fallback = defaultLetterCostCents();
+    const rows = (await sql`
+      SELECT count(*)::int AS n,
+             COALESCE(SUM(COALESCE(cost_cents, ${fallback})), 0)::bigint AS cents
+        FROM physical_letters
+       WHERE provider_letter_id IS NOT NULL
+         AND status <> 'failed'
+    `) as Array<{ n: number; cents: string | number }>;
+    return {
+      totalSent: rows[0]?.n != null ? Number(rows[0].n) : 0,
+      totalCostCents: rows[0]?.cents != null ? Number(rows[0].cents) : 0,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/physical-letters-store", phase: "getPhysicalLetterStats" });
+    return { totalSent: 0, totalCostCents: 0 };
+  }
+}
+
+/** A sent letter rendered as a KB "sent" message (for loadCustomerCorrespondence
+ *  to merge with email, §3). body TEXT only, recency-capped by the caller. */
+export interface LetterKbMessage {
+  direction: "sent";
+  occurredAt: string | null;
+  bodyText: string;
+}
+
+/**
+ * Sent letters for the knowledge base — the letter is correspondence too, so it
+ * folds into the per-customer KB beside sent/received email. body TEXT only
+ * (subject inlined as a label), within the recency window. Failed submits are
+ * excluded (nothing was posted). Returns [] on no DB / error.
+ */
+export async function loadSentLettersForKb(
+  customerId: number,
+  recencyCutoffIso: string,
+  sql: Sql | null = getSql()
+): Promise<LetterKbMessage[]> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT subject, body, COALESCE(submitted_at, created_at) AS occurred_at
+        FROM physical_letters
+       WHERE customer_id = ${customerId}
+         AND body IS NOT NULL
+         AND status <> 'failed'
+         AND COALESCE(submitted_at, created_at) >= ${recencyCutoffIso}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => {
+      const subject = (r.subject as string | null)?.trim();
+      const body = ((r.body as string | null) ?? "").trim();
+      return {
+        direction: "sent" as const,
+        occurredAt: (r.occurred_at as string | null) ?? null,
+        bodyText: subject ? `Brief „${subject}": ${body}` : `Brief: ${body}`,
+      };
+    });
+  } catch (err) {
+    reportError(err, { route: "lib/physical-letters-store", phase: "loadSentLettersForKb" });
+    return [];
   }
 }
 
@@ -161,6 +253,7 @@ export interface PhysicalLetterRow {
   recipientName: string | null;
   recipientCity: string | null;
   recipientCountry: string | null;
+  subject: string | null;
   costCents: number | null;
   error: string | null;
   createdAt: string | null;
@@ -176,8 +269,8 @@ export async function listCustomerLetters(
   try {
     const rows = (await sql`
       SELECT id, status, provider_letter_id, marketing_send_id, recipient_name,
-             recipient_city, recipient_country, cost_cents, error, created_at,
-             submitted_at
+             recipient_city, recipient_country, subject, cost_cents, error,
+             created_at, submitted_at
         FROM physical_letters
        WHERE customer_id = ${customerId}
        ORDER BY created_at DESC, id DESC
@@ -190,6 +283,7 @@ export async function listCustomerLetters(
       recipientName: (r.recipient_name as string | null) ?? null,
       recipientCity: (r.recipient_city as string | null) ?? null,
       recipientCountry: (r.recipient_country as string | null) ?? null,
+      subject: (r.subject as string | null) ?? null,
       costCents: r.cost_cents == null ? null : Number(r.cost_cents),
       error: (r.error as string | null) ?? null,
       createdAt: (r.created_at as string | null) ?? null,

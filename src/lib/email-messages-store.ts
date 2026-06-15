@@ -11,6 +11,7 @@
 
 import { getSql, type Sql } from "./db";
 import { getCustomerByEmail } from "./customer-store";
+import { loadSentLettersForKb } from "./physical-letters-store";
 import { interpretReceivedInsert } from "./email-inbound-core.mjs";
 import {
   renderCorrespondence,
@@ -203,24 +204,34 @@ export async function loadCustomerCorrespondence(
   ).toISOString();
   try {
     // body_text + direction + occurred_at ONLY — no headers/addresses reach the
-    // model. Most recent first so the LIMIT keeps the freshest window; reversed
-    // to oldest-first below for the readable thread.
-    const rows = (await sql`
-      SELECT direction, occurred_at, body_text
-        FROM email_messages
-       WHERE customer_id = ${customerId}
-         AND occurred_at >= ${recencyCutoff}
-       ORDER BY occurred_at DESC, id DESC
-       LIMIT ${MAX_CORRESPONDENCE_IN_PROMPT}
-    `) as Array<Record<string, unknown>>;
-    if (rows.length === 0) return "";
-    const messages = rows
-      .map((r) => ({
-        direction: r.direction === "received" ? "received" : "sent",
-        occurredAt: (r.occurred_at as string | null) ?? null,
-        bodyText: (r.body_text as string | null) ?? null,
-      }))
-      .reverse(); // DB gives newest-first; the thread reads oldest-first.
+    // model. Most recent first; fetch a generous window, then merge with sent
+    // letters and cap below. Letters are correspondence too (§3) — a sent letter
+    // folds in as one more "sent" message beside email.
+    const [emailRows, letterMessages] = await Promise.all([
+      sql`
+        SELECT direction, occurred_at, body_text
+          FROM email_messages
+         WHERE customer_id = ${customerId}
+           AND occurred_at >= ${recencyCutoff}
+         ORDER BY occurred_at DESC, id DESC
+         LIMIT ${MAX_CORRESPONDENCE_IN_PROMPT}
+      ` as Promise<Array<Record<string, unknown>>>,
+      loadSentLettersForKb(customerId, recencyCutoff, sql),
+    ]);
+    const emailMessages = emailRows.map((r) => ({
+      direction: r.direction === "received" ? "received" : "sent",
+      occurredAt: (r.occurred_at as string | null) ?? null,
+      bodyText: (r.body_text as string | null) ?? null,
+    }));
+    const combined = [...emailMessages, ...letterMessages];
+    if (combined.length === 0) return "";
+    // Sort newest-first, keep the freshest window, then oldest-first for reading.
+    combined.sort((a, b) => {
+      const ta = a.occurredAt ? new Date(a.occurredAt).getTime() : 0;
+      const tb = b.occurredAt ? new Date(b.occurredAt).getTime() : 0;
+      return tb - ta;
+    });
+    const messages = combined.slice(0, MAX_CORRESPONDENCE_IN_PROMPT).reverse();
     return renderCorrespondence(messages);
   } catch (err) {
     reportError(err, { route: "lib/email-messages-store", phase: "loadCustomerCorrespondence" });
