@@ -65,6 +65,7 @@ import {
   Textarea,
   toast,
 } from "./ui";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import {
   KorrespondenzPanel,
   type CorrespondenceMessageProps,
@@ -149,6 +150,12 @@ export interface CustomerBundleProps {
 export interface CustomerProps {
   id: number;
   email: string;
+  /** Best display name (Shopify account summary), else null → fall back to email. */
+  name: string | null;
+  /** Identity tier: 1 anonymous · 2 email-identified · 3 signed-in. */
+  identityTier: 1 | 2 | 3;
+  /** §7(3) UWG existing-customer eligibility (a completed purchase is on file). */
+  bestandskundeEligible: boolean;
   firstSeenAt: string | null;
   lastSeenAt: string | null;
   transactionalConsent: boolean;
@@ -296,110 +303,171 @@ export function CustomerProfileCard({
 
   const marketingStatus = MARKETING_STATUS[customer.marketingStatus];
 
+  // The detail organises the per-customer features into clearly-separated SUB-TABS
+  // (Profil · Beratungen · Käufe · Marketing · Korrespondenz · Brief) instead of
+  // one long scroll. forceMount keeps every panel alive while hidden, so an
+  // in-progress edit (a half-written draft / letter) survives switching sub-tabs.
   return (
     <Card className="p-5">
-      {/* Header: email + first/last seen on the left, status badges on the right */}
+      {/* Header: name/email + seen dates on the left, identity/status badges right */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-[15px] font-semibold">{customer.email}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            Zuerst gesehen: {fmtDate(customer.firstSeenAt)} · Zuletzt:{" "}
-            {fmtDate(customer.lastSeenAt)}
+          <div className="truncate text-[15px] font-semibold">
+            {customer.name ?? customer.email}
+          </div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">
+            {customer.name ? <span className="text-foreground/70">{customer.email} · </span> : null}
+            Zuerst: {fmtDate(customer.firstSeenAt)} · Zuletzt: {fmtDate(customer.lastSeenAt)}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          {isReturning ? (
+          <Badge variant={customer.identityTier === 3 ? "info" : "secondary"} title="Identitätsstufe">
+            Tier {customer.identityTier}
+          </Badge>
+          {isReturning && (
             <Badge variant="accent" title="Mehrere Sessions unter derselben E-Mail">
-              <RotateCcw className="size-3" /> Wiederkehrend · {customer.sessions.length} Sessions
+              <RotateCcw className="size-3" /> {customer.sessions.length}×
             </Badge>
-          ) : (
-            <Badge variant="secondary">
-              {customer.sessions.length === 1 ? "1 Session" : "Keine Session verknüpft"}
+          )}
+          {customer.bestandskundeEligible && (
+            <Badge variant="success" title="§7 Abs. 3 UWG — abgeschlossener Kauf">
+              Bestandskunde
             </Badge>
           )}
           <Badge variant={marketingStatus.variant}>{marketingStatus.label}</Badge>
         </div>
       </div>
 
-      {/* Session timeline */}
-      <Section title={`Gesprächs-Timeline (${customer.sessions.length})`}>
-        {customer.sessions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            <em>
-              Keine Konversation verknüpft — die E-Mail wurde erfasst, aber die zugehörige Session
-              ist nicht (mehr) gespeichert.
-            </em>
-          </p>
-        ) : (
-          <ol className="relative ml-1 border-l border-border">
-            {customer.sessions.map((s, i) => (
-              <SessionTimelineItem key={s.conversationId} session={s} index={i} email={customer.email} />
-            ))}
-          </ol>
-        )}
-      </Section>
+      <Tabs defaultValue="profil" className="mt-4">
+        <div className="-mx-1 overflow-x-auto px-1 pb-1">
+          <TabsList>
+            <TabsTrigger value="profil">Profil</TabsTrigger>
+            <TabsTrigger value="beratungen">Beratungen ({customer.sessions.length})</TabsTrigger>
+            <TabsTrigger value="kaeufe">Käufe</TabsTrigger>
+            <TabsTrigger value="marketing">Marketing</TabsTrigger>
+            <TabsTrigger value="korrespondenz">Korrespondenz</TabsTrigger>
+            <TabsTrigger value="brief">Brief</TabsTrigger>
+          </TabsList>
+        </div>
 
-      {/* Purchase history (Shopify) — proper table */}
-      <Section
-        title="Kaufhistorie (Shopify)"
-        meta={purchasesUpdatedAt ? `Stand: ${fmtDate(purchasesUpdatedAt)}` : "noch nicht geladen"}
-        action={
-          <Button variant="secondary" size="sm" onClick={onRefreshPurchases} disabled={busy !== null}>
-            <RotateCcw /> {busy === "purchases" ? "Lade…" : "Käufe aktualisieren"}
-          </Button>
-        }
-      >
-        <PurchaseHistory purchases={purchases} />
-      </Section>
+        {/* Profil — the regenerated "current understanding". The per-run token-cost
+            line is kept verbatim (honest cost disclosure). */}
+        <TabsContent value="profil" forceMount>
+          <Section
+            title="Aktuelles Kundenverständnis"
+            meta={profileUpdatedAt ? `Stand: ${fmtDate(profileUpdatedAt)}` : undefined}
+            action={
+              <Button size="sm" onClick={onGenerateProfile} disabled={busy !== null}>
+                <Sparkles />{" "}
+                {busy === "profile"
+                  ? "Generiere…"
+                  : profile
+                    ? "Neu generieren"
+                    : "Kundenverständnis generieren"}
+              </Button>
+            }
+          >
+            <Card className="bg-muted/40 p-4 shadow-none">
+              {profile ? (
+                <Markdown content={profile} />
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  <em>Noch kein Profil generiert.</em>
+                </p>
+              )}
+              <p className="mt-3 text-[11px] text-muted-foreground">
+                Jede Generierung ist ein KI-Durchlauf (Anthropic Claude) über alle verknüpften
+                Gespräche + Kaufhistorie und kostet Tokens.
+                {lastUsage
+                  ? ` Letzter Lauf: ${lastUsage.inputTokens.toLocaleString("de-DE")} Input- / ` +
+                    `${lastUsage.outputTokens.toLocaleString("de-DE")} Output-Tokens` +
+                    ` (~$${lastUsage.approxCostUsd.toFixed(3)}).`
+                  : ""}
+              </p>
+            </Card>
+          </Section>
+        </TabsContent>
 
-      {/* Current understanding — the regenerated profile, in its own Card. The
-          per-run token-cost line is kept verbatim (honest cost disclosure). */}
-      <Section
-        title="Aktuelles Kundenverständnis"
-        meta={profileUpdatedAt ? `Stand: ${fmtDate(profileUpdatedAt)}` : undefined}
-        action={
-          <Button size="sm" onClick={onGenerateProfile} disabled={busy !== null}>
-            <Sparkles />{" "}
-            {busy === "profile"
-              ? "Generiere…"
-              : profile
-                ? "Neu generieren"
-                : "Kundenverständnis generieren"}
-          </Button>
-        }
-      >
-        <Card className="bg-muted/40 p-4 shadow-none">
-          {profile ? (
-            <Markdown content={profile} />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              <em>Noch kein Profil generiert.</em>
-            </p>
-          )}
-          <p className="mt-3 text-[11px] text-muted-foreground">
-            Jede Generierung ist ein KI-Durchlauf (Anthropic Claude) über alle verknüpften Gespräche
-            + Kaufhistorie und kostet Tokens.
-            {lastUsage
-              ? ` Letzter Lauf: ${lastUsage.inputTokens.toLocaleString("de-DE")} Input- / ` +
-                `${lastUsage.outputTokens.toLocaleString("de-DE")} Output-Tokens` +
-                ` (~$${lastUsage.approxCostUsd.toFixed(3)}).`
-              : ""}
-          </p>
-        </Card>
-      </Section>
+        {/* Beratungen — the session timeline (each transcript opens in a Dialog). */}
+        <TabsContent value="beratungen" forceMount>
+          <Section title={`Gesprächs-Timeline (${customer.sessions.length})`}>
+            {customer.sessions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                <em>
+                  Keine Konversation verknüpft — die E-Mail wurde erfasst, aber die zugehörige
+                  Session ist nicht (mehr) gespeichert.
+                </em>
+              </p>
+            ) : (
+              <ol className="relative ml-1 border-l border-border">
+                {customer.sessions.map((s, i) => (
+                  <SessionTimelineItem
+                    key={s.conversationId}
+                    session={s}
+                    index={i}
+                    email={customer.email}
+                  />
+                ))}
+              </ol>
+            )}
+          </Section>
+        </TabsContent>
 
-      {/* Korrespondenz — the per-customer email client (§5): thread view of sent
-          + received mail, lazy body expand, compose/reply via sendEmail(). */}
-      <Section title="Korrespondenz (E-Mail)">
-        <KorrespondenzPanel
-          customerId={customer.id}
-          customerEmail={customer.email}
-          messages={customer.correspondence}
-        />
-      </Section>
+        {/* Käufe — the cached Shopify purchase history. */}
+        <TabsContent value="kaeufe" forceMount>
+          <Section
+            title="Kaufhistorie (Shopify)"
+            meta={purchasesUpdatedAt ? `Stand: ${fmtDate(purchasesUpdatedAt)}` : "noch nicht geladen"}
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onRefreshPurchases}
+                disabled={busy !== null}
+              >
+                <RotateCcw /> {busy === "purchases" ? "Lade…" : "Käufe aktualisieren"}
+              </Button>
+            }
+          >
+            <PurchaseHistory purchases={purchases} />
+          </Section>
+        </TabsContent>
 
-      {/* Personalised marketing email (full-customer context) */}
-      <MarketingEmailSection customer={customer} />
+        {/* Marketing — the personalised email (full-customer context) + bundle offer. */}
+        <TabsContent value="marketing" forceMount>
+          <MarketingEmailSection customer={customer} />
+        </TabsContent>
+
+        {/* Korrespondenz — the per-customer email client (§5): thread view of sent
+            + received mail, lazy body expand, compose/reply via sendEmail(). */}
+        <TabsContent value="korrespondenz" forceMount>
+          <Section title="Korrespondenz (E-Mail)">
+            <KorrespondenzPanel
+              customerId={customer.id}
+              customerEmail={customer.email}
+              messages={customer.correspondence}
+            />
+          </Section>
+        </TabsContent>
+
+        {/* Brief (§4) — its OWN flow (PDF → Pingen), now a first-class section
+            independent of the marketing-consent gate: generate a letter-optimised
+            draft, edit, then send. Disabled (with a reason) until a complete lawful
+            address + the flag + Pingen config are all present. */}
+        <TabsContent value="brief" forceMount>
+          <Section title="Brief (Post · §4)">
+            <PhysicalLetterPanel
+              customerId={customer.id}
+              customerEmail={customer.email}
+              eligible={customer.physicalEligible}
+              reason={customer.physicalReason}
+              letters={customer.physicalLetters}
+              initialSubject={customer.letterDraftSubject}
+              initialBody={customer.letterDraftBody}
+            />
+          </Section>
+        </TabsContent>
+      </Tabs>
     </Card>
   );
 }
@@ -900,20 +968,6 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
           </Button>
         </div>
       )}
-
-      {/* Brief (§4) — its OWN flow: generate a letter-optimised draft (separate
-          from the email), edit it, then send → PDF → Pingen. Disabled (with a
-          reason) until a complete lawful address + the flag + Pingen config are
-          all present. */}
-      <PhysicalLetterPanel
-        customerId={customer.id}
-        customerEmail={customer.email}
-        eligible={customer.physicalEligible}
-        reason={customer.physicalReason}
-        letters={customer.physicalLetters}
-        initialSubject={customer.letterDraftSubject}
-        initialBody={customer.letterDraftBody}
-      />
     </Section>
   );
 }

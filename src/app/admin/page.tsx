@@ -1,18 +1,18 @@
 // /admin — the back-office dashboard. Auth is enforced by the proxy; this page
 // is only ever reached with a valid admin session.
 //
-// Structure: data for all three tabs is fetched + rendered on the SERVER (the
-// CustomersTab / KundenTab / KpiTab bodies below) and handed to the client
-// AdminShell, which owns the active-tab state, the theme toggle and the Toaster.
-// The old server-side ?tab= switch is gone, but the initial tab is still seeded
-// from ?tab= so deep links / refresh land on the right tab, and the shell keeps
-// the query param in sync as you switch.
+// Structure: data for each tab is fetched + rendered on the SERVER (the
+// KundenTab / KpiTab / … bodies below) and handed to the client AdminShell, which
+// owns the active-tab state, the theme toggle and the Toaster. The initial tab is
+// seeded from ?tab= so deep links / refresh land on the right tab, and the shell
+// keeps the query param in sync as you switch.
 //
-//   - MARKETING (default): marketing-eligible contacts (DOI confirmed, not
-//     unsubscribed, not suppressed) with transcript, persona, products, the
-//     "chatted but not purchased" flag and the draft/send workflow (CustomerCard).
-//   - KUNDEN: grouped by CUSTOMER (email) — session timeline, purchase history,
-//     persona(s) and the regenerated "current understanding" (CustomerProfileCard).
+//   - ÜBERSICHT (default): aggregate KPIs + quick links (OverviewTab).
+//   - KUNDEN: the merged customer + marketing workspace — a compact, searchable,
+//     filterable customer list with a per-customer sub-tabbed detail (profile,
+//     sessions, purchases, MARKETING e-mail, correspondence, letter) and a
+//     bulk-draft action (KundenWorkspace + CustomerProfileCard). The old separate
+//     "Marketing" tab is folded in here as a filter preset + per-customer section.
 //   - KPIs: aggregate analytics + recommendation→purchase loop (KpiTab).
 
 import { cookies } from "next/headers";
@@ -42,10 +42,8 @@ import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-stor
 import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
 import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
-import { MarketingList } from "./MarketingList";
-import { toStatusFilter, type StatusFilter } from "./marketing-filter";
-import { CustomerProfileCard, type CustomerProps } from "./CustomerProfileCard";
-import { UnmatchedInboundQueue } from "./UnmatchedInboundQueue";
+import type { CustomerProps } from "./CustomerProfileCard";
+import { KundenWorkspace } from "./KundenWorkspace";
 import { KpiTab } from "./KpiTab";
 import { FeedbackTab } from "./FeedbackTab";
 import { OverviewTab } from "./OverviewTab";
@@ -68,21 +66,21 @@ export default async function AdminDashboardPage({
 }) {
   const sp = await searchParams;
   // Übersicht is the default landing tab; the others stay reachable via ?tab=.
+  // The old "customers" (Marketing) tab is merged into "kunden" — keep its links
+  // working by folding it in.
   const initialTab: AdminTab =
     sp?.tab === "kpi"
       ? "kpi"
       : sp?.tab === "feedback"
         ? "feedback"
-        : sp?.tab === "kunden"
+        : sp?.tab === "kunden" || sp?.tab === "customers"
           ? "kunden"
-          : sp?.tab === "customers"
-            ? "customers"
-            : "overview";
-  // ?status= deep-links straight into a pre-applied Marketing filter (set by the
-  // Overview quick links), seeding MarketingList's own filter state.
-  const initialMarketingStatus = toStatusFilter(
-    typeof sp?.status === "string" ? sp.status : undefined
-  );
+          : "overview";
+  // Overview deep-links seed a Kunden filter preset via ?filter= (e.g.
+  // "no_purchase", "marketing"); accept the legacy ?status= as a fallback.
+  const initialFilter =
+    (typeof sp?.filter === "string" ? sp.filter : undefined) ??
+    (typeof sp?.status === "string" ? sp.status : undefined);
   const dbReady = isDbConfigured();
 
   // The marketing targets back BOTH the Marketing tab and the Overview headline
@@ -108,129 +106,35 @@ export default async function AdminDashboardPage({
       themeInitial={themeInitial}
       logoutAction={logoutAction}
       overview={<OverviewTab dbReady={dbReady} targets={targets} />}
-      marketing={
-        <CustomersTab
+      kunden={
+        <KundenTab
           dbReady={dbReady}
-          targets={targets}
-          bestandskunden={bestandskunden}
-          bestandskundenSendsApproved={isBestandskundenSendsApproved()}
-          initialStatus={initialMarketingStatus}
+          bestandskundenCount={bestandskunden.length}
+          bestandskundenApproved={isBestandskundenSendsApproved()}
+          initialFilter={initialFilter}
         />
       }
-      kunden={<KundenTab dbReady={dbReady} />}
       kpi={<KpiTab dbReady={dbReady} />}
       feedback={<FeedbackTab dbReady={dbReady} />}
     />
   );
 }
 
-function CustomersTab({
+// The merged customer + marketing workspace: grouped by PERSON (email), not by
+// session. A customer exists only because an email was captured with consent;
+// anonymous sessions never appear here. Renders the master–detail KundenWorkspace
+// (compact searchable list + per-customer sub-tabbed detail incl. marketing).
+async function KundenTab({
   dbReady,
-  targets,
-  bestandskunden,
-  bestandskundenSendsApproved,
-  initialStatus,
+  bestandskundenCount,
+  bestandskundenApproved,
+  initialFilter,
 }: {
   dbReady: boolean;
-  targets: MarketingTarget[];
-  bestandskunden: BestandskundeAudienceRow[];
-  bestandskundenSendsApproved: boolean;
-  initialStatus: StatusFilter;
+  bestandskundenCount: number;
+  bestandskundenApproved: boolean;
+  initialFilter?: string;
 }) {
-  const notPurchased = targets.filter((t) => t.purchase.status === "no_purchase").length;
-
-  return (
-    <>
-      {!dbReady && (
-        <Banner tone="warn">
-          Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Kontakte
-          geladen werden.
-        </Banner>
-      )}
-
-      {/* ── Basis 1: DOI-Einwilligung ──────────────────────────────────── */}
-      <BasisHeading
-        label="DOI-Einwilligung"
-        sub="Double-Opt-In bestätigt (Art. 6 Abs. 1 a DSGVO). Werblicher Versand erlaubt."
-      />
-
-      {dbReady && targets.length === 0 && (
-        <Banner tone="info">
-          Noch keine marketing-berechtigten Kontakte. Sobald Nutzer die
-          Marketing-Einwilligung per Double-Opt-In bestätigen, erscheinen sie hier.
-        </Banner>
-      )}
-
-      {targets.length > 0 && (
-        <>
-          <p className="mb-4 text-sm text-muted-foreground">
-            <strong className="text-foreground">{notPurchased}</strong>{" "}
-            &bdquo;beraten, aber (noch) nicht gekauft&ldquo; — die wichtigste
-            Marketing-Zielgruppe.
-          </p>
-          <MarketingList targets={targets} initialStatus={initialStatus} />
-        </>
-      )}
-
-      {/* ── Basis 2: §7(3) Bestandskunden (SEPARATE basis, never merged) ── */}
-      <div className="mt-8">
-        <BasisHeading
-          label="§ 7 Abs. 3 UWG Bestandskunden"
-          sub="Eigene ähnliche Produkte an Kund:innen mit abgeschlossenem Kauf — OHNE Einwilligung, eigener Widerspruch."
-        />
-
-        <Banner tone={bestandskundenSendsApproved ? "info" : "warn"}>
-          {bestandskundenSendsApproved ? (
-            <>
-              Versand <strong>freigeschaltet</strong>{" "}
-              (BESTANDSKUNDE_SENDS_APPROVED). Nur eigene <em>ähnliche</em> Produkte,
-              mit Widerspruchshinweis &amp; separater Sperrliste.
-            </>
-          ) : (
-            <>
-              Versand <strong>deaktiviert</strong> — wartet auf die anwaltliche
-              Freigabe der &bdquo;ähnliche Produkte&ldquo;-Grenze und des
-              Widerspruchstextes (eigenes Flag{" "}
-              <code>BESTANDSKUNDE_SENDS_APPROVED</code>, getrennt von der
-              DOI-Freigabe). Diese Liste ist nur informativ.
-            </>
-          )}
-        </Banner>
-
-        {dbReady && bestandskunden.length === 0 ? (
-          <Banner tone="info">
-            Noch keine Bestandskunden. Sobald ein Kunde einen Kauf abschließt (und
-            die Käufe aktualisiert werden), erscheint er hier — getrennt von der
-            DOI-Liste.
-          </Banner>
-        ) : (
-          <p className="mb-2 text-sm text-muted-foreground">
-            <strong className="text-foreground">{bestandskunden.length}</strong>{" "}
-            Bestandskund:in(nen) mit abgeschlossenem Kauf, ohne Widerspruch.{" "}
-            {bestandskunden.filter((b) => b.hasDoiConsent).length} davon haben{" "}
-            <em>zusätzlich</em> eine DOI-Einwilligung (beide Basen bleiben getrennt).
-          </p>
-        )}
-      </div>
-    </>
-  );
-}
-
-// Small labelled separator that names a marketing lawful basis, so the two
-// audiences (DOI-consent vs §7(3) Bestandskunden) never blur together visually.
-function BasisHeading({ label, sub }: { label: string; sub: string }) {
-  return (
-    <div className="mb-3 border-b border-border pb-2">
-      <h3 className="text-base font-semibold text-foreground">{label}</h3>
-      <p className="text-xs text-muted-foreground">{sub}</p>
-    </div>
-  );
-}
-
-// The customer view: grouped by PERSON (email), not by session. A customer
-// exists only because an email was captured with consent; anonymous sessions
-// never appear here.
-async function KundenTab({ dbReady }: { dbReady: boolean }) {
   // Auto-capture missing postal addresses from Shopify in the BACKGROUND (after
   // the response), so the operator never has to press "Käufe aktualisieren" per
   // customer. Bounded + throttled (lib/address-capture); captured addresses show
@@ -240,7 +144,6 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
   }
 
   const customers = dbReady ? await listCustomersWithSessions() : [];
-  const returning = customers.filter((c) => c.sessions.length > 1).length;
 
   const personaDisplay = (label: string | null): string | null => {
     if (!label) return null;
@@ -257,6 +160,13 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
     return {
       id: c.id,
       email: c.email,
+      // Best display name for the list (Shopify account), else null → show email.
+      name:
+        c.shopifyAccountSummary?.displayName?.trim() ||
+        c.shopifyAccountSummary?.firstName?.trim() ||
+        null,
+      identityTier: c.identityTier,
+      bestandskundeEligible: c.bestandskundeEligible,
       firstSeenAt: c.firstSeenAt,
       lastSeenAt: c.lastSeenAt,
       transactionalConsent: c.transactionalConsent,
@@ -327,37 +237,32 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
   const unmatched = dbReady ? await listUnmatchedInbound() : [];
   const assignTargets = cards.map((c) => ({ id: c.id, email: c.email }));
 
+  if (!dbReady) {
+    return (
+      <Banner tone="warn">
+        Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Kunden geladen werden.
+      </Banner>
+    );
+  }
+
+  if (cards.length === 0) {
+    return (
+      <Banner tone="info">
+        Noch keine Kunden. Ein Kunde entsteht, sobald jemand im Chat seine E-Mail-Adresse (mit
+        Einwilligung) hinterlässt — anonyme Sessions bleiben unverknüpft.
+      </Banner>
+    );
+  }
+
   return (
-    <>
-      {!dbReady && (
-        <Banner tone="warn">
-          Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Kunden geladen werden.
-        </Banner>
-      )}
-
-      {dbReady && cards.length === 0 && (
-        <Banner tone="info">
-          Noch keine Kunden. Ein Kunde entsteht, sobald jemand im Chat seine E-Mail-Adresse (mit
-          Einwilligung) hinterlässt — anonyme Sessions bleiben unverknüpft.
-        </Banner>
-      )}
-
-      {/* The only non-per-customer surface: unmatched inbound triage (§5). */}
-      <UnmatchedInboundQueue messages={unmatched} customers={assignTargets} />
-
-      {cards.length > 0 && (
-        <p className="mb-4 text-sm text-muted-foreground">
-          {cards.length} Kunde(n) · <strong className="text-foreground">{returning}</strong>{" "}
-          wiederkehrend (mehrere Sessions unter derselben E-Mail).
-        </p>
-      )}
-
-      <div className="flex flex-col gap-4">
-        {cards.map((c) => (
-          <CustomerProfileCard key={c.id} customer={c} />
-        ))}
-      </div>
-    </>
+    <KundenWorkspace
+      customers={cards}
+      unmatched={unmatched}
+      assignTargets={assignTargets}
+      bestandskundenCount={bestandskundenCount}
+      bestandskundenApproved={bestandskundenApproved}
+      initialFilter={initialFilter}
+    />
   );
 }
 

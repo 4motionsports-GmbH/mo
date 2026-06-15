@@ -12,13 +12,12 @@ import { Toaster } from "./ui/toast";
 import { ThemeToggle } from "./ThemeToggle";
 import type { Theme } from "./theme-config";
 
-export type AdminTab = "overview" | "customers" | "kunden" | "kpi" | "feedback";
+export type AdminTab = "overview" | "kunden" | "kpi" | "feedback";
 
-const TAB_ORDER: AdminTab[] = ["overview", "customers", "kunden", "kpi", "feedback"];
+const TAB_ORDER: AdminTab[] = ["overview", "kunden", "kpi", "feedback"];
 
 const TAB_LABEL: Record<AdminTab, string> = {
   overview: "Übersicht",
-  customers: "Marketing",
   kunden: "Kunden",
   kpi: "KPIs",
   feedback: "Feedback",
@@ -26,9 +25,8 @@ const TAB_LABEL: Record<AdminTab, string> = {
 
 const TAB_SUBTITLE: Record<AdminTab, string> = {
   overview: "Übersicht · Kennzahlen & Schnellzugriff auf einen Blick",
-  customers: "Marketing · Nur bestätigte (DOI), nicht abgemeldete Kontakte",
   kunden:
-    "Kunden · Gruppiert nach Person (E-Mail) — Sessions, Käufe & Kundenverständnis",
+    "Kunden · Suche, filtere & öffne eine Person — Profil, Käufe, Marketing, Korrespondenz & Brief",
   kpi: "KPIs · Pseudonyme Analytics (Cluster A) + Shopify-Käufe",
   feedback: "Feedback · Kund:innen-Rückmeldungen aus dem Widget — neueste zuerst",
 };
@@ -44,7 +42,6 @@ export function AdminShell({
   themeInitial,
   logoutAction,
   overview,
-  marketing,
   kunden,
   kpi,
   feedback,
@@ -53,7 +50,6 @@ export function AdminShell({
   themeInitial: Theme | null;
   logoutAction: () => void | Promise<void>;
   overview: React.ReactNode;
-  marketing: React.ReactNode;
   kunden: React.ReactNode;
   kpi: React.ReactNode;
   feedback: React.ReactNode;
@@ -73,8 +69,8 @@ export function AdminShell({
   // Light, optional keyboard shortcuts (dialogs close on Esc via the Dialog
   // primitive itself). Deliberately bare keys, ignored while typing in a field or
   // with a modifier held so they never clobber browser/native shortcuts:
-  //   1–5  switch to the n-th tab
-  //   /    focus the Marketing search box (switching to that tab if needed)
+  //   1–4  switch to the n-th tab
+  //   /    focus the Kunden search box (switching to that tab if needed)
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -100,7 +96,7 @@ export function AdminShell({
 
       if (e.key === "/") {
         e.preventDefault();
-        onTabChange("customers");
+        onTabChange("kunden");
         // Let the tab become visible before focusing its (now un-hidden) input.
         requestAnimationFrame(() => {
           document.getElementById("ms-search")?.focus();
@@ -114,14 +110,17 @@ export function AdminShell({
 
   const bodies: Record<AdminTab, React.ReactNode> = {
     overview,
-    customers: marketing,
     kunden,
     kpi,
     feedback,
   };
 
+  // The Kunden workspace is a master–detail layout that wants the extra width;
+  // the other tabs stay comfortably centred at the narrower measure.
+  const containerWidth = tab === "kunden" ? "max-w-7xl" : "max-w-5xl";
+
   return (
-    <div className="mx-auto max-w-5xl px-5 pb-16 pt-6">
+    <div className={`mx-auto ${containerWidth} px-5 pb-16 pt-6`}>
       <Tabs value={tab} onValueChange={onTabChange}>
         <header className="mb-2 flex flex-wrap items-start justify-between gap-3">
           <div>

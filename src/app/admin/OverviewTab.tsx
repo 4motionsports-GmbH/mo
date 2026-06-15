@@ -106,23 +106,23 @@ export async function OverviewTab({
 
       <Section
         title="Schnellzugriff"
-        subtitle="Direkt in die anderen Tabs springen — der Marketing-Link öffnet die Liste bereits gefiltert."
+        subtitle="Direkt in die anderen Tabs springen — die Kunden-Links öffnen die Liste bereits gefiltert."
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <QuickLink
-            href="/admin?tab=customers&status=no_purchase"
+            href="/admin?tab=kunden&filter=no_purchase"
             title={`${num(marketing.notPurchased)} beraten, nicht gekauft`}
-            desc="Öffnet das Marketing-Tab, gefiltert auf „beraten, nicht gekauft“."
+            desc="Öffnet die Kundenliste, gefiltert auf „bestätigt + nicht gekauft“."
           />
           <QuickLink
-            href="/admin?tab=customers"
+            href="/admin?tab=kunden&filter=marketing"
             title={`${num(marketing.eligible)} Marketing-Kontakte`}
-            desc="Alle bestätigten, aktiven Kontakte im Marketing-Tab."
+            desc="Alle bestätigten (DOI) Kontakte in der Kundenliste."
           />
           <QuickLink
             href="/admin?tab=kunden"
-            title="Kunden ansehen"
-            desc="Profile, Sessions & Käufe — gruppiert nach Person."
+            title="Alle Kunden ansehen"
+            desc="Profile, Sessions, Käufe & Marketing — gruppiert nach Person."
           />
           <QuickLink
             href="/admin?tab=kpi"
