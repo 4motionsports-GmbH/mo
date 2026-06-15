@@ -71,6 +71,25 @@ async function gql(query, variables) {
   return res.json();
 }
 
+// ── Scope check — proves the token carries the rights the address read needs ──
+console.log(`\nShopify Admin API — scope check (store ${storeDomain})\n`);
+try {
+  const scopeData = await gql(`{ currentAppInstallation { accessScopes { handle } } }`);
+  const scopes = (scopeData.data?.currentAppInstallation?.accessScopes ?? []).map((s) => s.handle);
+  const has = (s) => scopes.includes(s);
+  console.log(`  read_orders:    ${has("read_orders") ? "✓" : "✗ MISSING"}`);
+  console.log(
+    `  read_customers: ${
+      has("read_customers")
+        ? "✓"
+        : "✗ MISSING — add it + Protected Customer Data approval (needed for the address)"
+    }`
+  );
+  console.log(`  (all granted scopes: ${scopes.join(", ") || "none"})\n`);
+} catch (e) {
+  console.warn(`  could not read scopes: ${e?.message ?? e}\n`);
+}
+
 const QUERY = `
   query DiagnoseAddress($q: String!) {
     customers(first: 1, query: $q) {
