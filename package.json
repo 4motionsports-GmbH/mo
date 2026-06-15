@@ -13,6 +13,7 @@
     "verify:shopify": "node --env-file=.env scripts/verify-shopify-auth.mjs",
     "verify:pingen": "node --env-file=.env scripts/verify-pingen.mjs",
     "verify:customer-account": "node --env-file=.env scripts/verify-customer-account.mjs",
+    "diagnose:address": "node --env-file=.env scripts/diagnose-address.mjs",
     "db:migrate": "node --env-file=.env scripts/migrate.mjs",
     "db:reset": "node --env-file=.env scripts/reset-test-data.mjs"
   },
