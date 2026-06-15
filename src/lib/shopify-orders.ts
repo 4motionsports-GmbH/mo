@@ -92,6 +92,79 @@ export async function checkRecentPurchase(email: string): Promise<PurchaseCheck>
 }
 
 // ---------------------------------------------------------------------------
+// Customer identity by Shopify id — the storefront-detection ENRICHMENT.
+// ---------------------------------------------------------------------------
+//
+// Backs shop-native already-signed-in detection (/api/auth/storefront): once an
+// App Proxy hands us a Shopify-vouched `logged_in_customer_id`, we have IDENTITY
+// but no name/email and NO customer access token (the customer logged in via the
+// SHOP, not the chatbot OAuth). The recently-granted read_customers Admin scope
+// lets the backend read the customer record directly by id — so detection works
+// REGARDLESS of how the customer logged in. Reads only name + email (protected
+// customer data; never persisted by this function). Never throws.
+
+const ADMIN_CUSTOMER_BY_ID = /* GraphQL */ `
+  query AdminCustomerById($id: ID!) {
+    customer(id: $id) {
+      id
+      firstName
+      lastName
+      displayName
+      email
+    }
+  }
+`;
+
+interface AdminCustomerByIdResponse {
+  customer: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    displayName: string | null;
+    email: string | null;
+  } | null;
+}
+
+export interface AdminCustomerIdentity {
+  /** Full GID: gid://shopify/Customer/<numeric>. */
+  gid: string;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string | null;
+  email: string | null;
+}
+
+/**
+ * Read a customer's identity (name + email) by their Shopify customer id via the
+ * Admin API (read_customers). `shopifyCustomerId` is the numeric id; we build the
+ * canonical GID. Returns null when Shopify is unconfigured, the id is blank, the
+ * customer doesn't exist, or the query fails (fail-closed). Never throws.
+ */
+export async function fetchAdminCustomerById(
+  shopifyCustomerId: string
+): Promise<AdminCustomerIdentity | null> {
+  if (!isShopifyConfigured()) return null;
+  const numeric = String(shopifyCustomerId ?? "").trim();
+  if (!/^\d+$/.test(numeric)) return null;
+  const gid = `gid://shopify/Customer/${numeric}`;
+  try {
+    const data = await adminGraphql<AdminCustomerByIdResponse>(ADMIN_CUSTOMER_BY_ID, { id: gid });
+    const c = data.customer;
+    if (!c?.id) return null;
+    return {
+      gid: c.id,
+      firstName: c.firstName ?? null,
+      lastName: c.lastName ?? null,
+      displayName: c.displayName ?? null,
+      email: c.email ?? null,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/shopify-orders", phase: "fetchAdminCustomerById" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Purchased line items — backs the "recommendation → purchase" KPI loop.
 // ---------------------------------------------------------------------------
 //

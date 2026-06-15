@@ -13,14 +13,11 @@
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
-import { getCustomerById, resolveSignedInCustomer } from "@/lib/customer-store";
+import { resolveSignedInCustomer } from "@/lib/customer-store";
 import { getValidAccessToken } from "@/lib/customer-oauth-store";
 import { fetchCustomerIdentity } from "@/lib/shopify-customer-account";
-
-// A tier-3 row created with no verified Shopify email claim is keyed by this
-// synthetic placeholder — it can't receive a DOI / marketing mail, so the
-// at-sign-in opt-in is NOT actionable for it.
-const SYNTHETIC_EMAIL_PREFIX = "shopify:";
+import { fetchAdminCustomerById } from "@/lib/shopify-orders";
+import { displayNameOf, resolveMarketingOptInState } from "@/lib/signed-in-identity";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -34,19 +31,6 @@ function json(body: unknown, headers: Record<string, string>): Response {
     status: 200,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...headers },
   });
-}
-
-function displayName(identity: {
-  displayName: string | null;
-  firstName: string | null;
-  lastName: string | null;
-}): string | null {
-  if (identity.displayName?.trim()) return identity.displayName.trim();
-  const joined = [identity.firstName, identity.lastName]
-    .map((s) => (s ?? "").trim())
-    .filter(Boolean)
-    .join(" ");
-  return joined || null;
 }
 
 export async function GET(req: Request) {
@@ -73,46 +57,36 @@ export async function GET(req: Request) {
     let name: string | null = null;
     try {
       const identity = await fetchCustomerIdentity(token);
-      if (identity) name = displayName(identity);
+      if (identity) name = displayNameOf(identity);
     } catch (err) {
       // Identity read failed but the linkage + token are valid — still report
       // signed-in (degraded name) rather than logging the user out.
       reportError(err, { route: "api/auth/me", phase: "fetchIdentity" });
     }
 
-    // At-sign-in marketing opt-in state (CA-4). The widget gates its at-sign-in
-    // opt-in card on `marketing.optInActionable`: surface it ONLY for a signed-in
-    // customer who has NOT yet recorded a marketing decision. "No decision yet"
-    // is marketing_status === 'none'; any DOI decision already on record
-    // (pending / confirmed / unsubscribed) makes it non-actionable, as does a
-    // synthetic placeholder email (no real address to send a DOI to). This is
-    // our DOI consent state only — sign-in NEVER imports Shopify's marketing
-    // state, so a signed-in customer always starts at 'none' unless a prior DOI
-    // under their verified email carried forward on merge.
-    let marketingStatus: "none" | "pending" | "confirmed" | "unsubscribed" = "none";
-    let optInActionable = false;
-    try {
-      const customer = await getCustomerById(resolved.customerId);
-      if (customer) {
-        marketingStatus = customer.marketingStatus;
-        const hasRealEmail =
-          !!customer.email &&
-          customer.email.includes("@") &&
-          !customer.email.startsWith(SYNTHETIC_EMAIL_PREFIX);
-        optInActionable = hasRealEmail && marketingStatus === "none";
+    // Name fallback via the Admin API (read_customers): if the Customer-Account
+    // identity read came back empty (CA schema drift, etc.), resolve the name from
+    // the same authoritative source the shop-native detection uses, keyed by the
+    // resolved shopify_customer_id. Best-effort — never downgrades signed-in.
+    if (!name && resolved.shopifyCustomerId) {
+      try {
+        const admin = await fetchAdminCustomerById(resolved.shopifyCustomerId);
+        if (admin) name = displayNameOf(admin);
+      } catch (err) {
+        reportError(err, { route: "api/auth/me", phase: "adminIdentity" });
       }
-    } catch (err) {
-      // Best-effort: a read failure degrades to "not actionable" (fail-closed —
-      // we never invite an opt-in we can't substantiate) without dropping the
-      // signed-in identity.
-      reportError(err, { route: "api/auth/me", phase: "marketingState" });
     }
+
+    // At-sign-in marketing opt-in state (CA-4) — the SHARED contract (the widget
+    // gates its opt-in card on `optInActionable`). Identical rule on the
+    // shop-native detection path; see lib/signed-in-identity.
+    const marketing = await resolveMarketingOptInState(resolved.customerId, "api/auth/me");
 
     return json(
       {
         signedIn: true,
         identity: { name, tier: resolved.tier },
-        marketing: { status: marketingStatus, optInActionable },
+        marketing,
       },
       headers
     );

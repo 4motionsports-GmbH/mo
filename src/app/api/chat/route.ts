@@ -22,7 +22,7 @@ import { EMPTY_PROFILE, type CustomerProfile, type PersonaArchetype, type Update
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
-import { persistTurn, type ToolInvocation } from "@/lib/conversation-store";
+import { persistTurn, ensureConversationStarted, type ToolInvocation } from "@/lib/conversation-store";
 import {
   KPI_EMAIL_CAPTURE_ASK_SHOWN,
   hasDeclinedEmailCapture,
@@ -264,6 +264,15 @@ export async function POST(req: Request) {
     const allowEmailSummaryOffer =
       !emailCaptured && emailOffersMade < MAX_EMAIL_OFFERS_PER_CONVERSATION;
 
+    // The latest user message of this turn — seeds the eager conversation row's
+    // cached title + is persisted up-front (durability), see below.
+    const latestUserMessage = (() => {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "user") return messages[i];
+      }
+      return null;
+    })();
+
     const [hits, customerMemory, emailOfferDeclined] = await Promise.all([
       latestUserText
         ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
@@ -277,6 +286,24 @@ export async function POST(req: Request) {
       allowEmailSummaryOffer
         ? hasDeclinedEmailCapture(sessionId)
         : Promise.resolve(true),
+      // EAGER CREATE (concurrent with retrieval, best-effort, result unused): a
+      // started conversation is durably created + customer-linked NOW, before the
+      // stream — so a "Neue Beratung" thread appears in the signed-in history
+      // immediately and survives a reload even if the answer never lands. Only
+      // when a user turn exists (a bare greeting open mints no listed thread, like
+      // ChatGPT). The onFinish persistTurn fills in the assistant turn on the same
+      // row. See lib/conversation-create + docs/CUSTOMER_ACCOUNT.md §7.6.
+      latestUserMessage
+        ? ensureConversationStarted({
+            sessionId,
+            conversationKey,
+            personaLabel: archetype ?? "unknown",
+            messageCount: messages.length,
+            userText: latestUserText,
+            userMessageId:
+              typeof latestUserMessage.id === "string" ? latestUserMessage.id : null,
+          })
+        : Promise.resolve(null),
     ]);
     // Optional product context (chat opened "about" a product) and/or
     // browsing context (small recently-viewed trail brought along by the

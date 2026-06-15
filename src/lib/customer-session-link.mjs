@@ -37,6 +37,32 @@ export async function linkSessionToCustomer(sql, sessionId, customerId) {
 }
 
 /**
+ * Resolve the customer_id a session is linked to (ANY tier), or null when the
+ * session is blank/unlinked or there's no sql. This is the DIRECT link only — it
+ * does NOT gate on shopify_customer_id (use resolveSignedInCustomerRow for the
+ * signed-in-only gate). It exists so a conversation can be stamped with its
+ * owning customer AT CREATION (lib/conversation-create + persistTurn): a new
+ * "Neue Beratung" thread is created under a session that is already linked, so
+ * resolving the link here and writing conversations.customer_id eagerly is what
+ * makes the thread show up in the customer's history list (the lost-conversation
+ * bug was a new row created with customer_id = NULL, never linked).
+ *
+ * @param {*} sql               tagged-template sql client (or null)
+ * @param {unknown} sessionId   the widget's localStorage session id
+ * @returns {Promise<number|null>}
+ */
+export async function resolveLinkedCustomerId(sql, sessionId) {
+  const sid = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!sql || !sid) return null;
+  const rows = await sql`
+    SELECT customer_id FROM customer_session_links WHERE session_id = ${sid}
+  `;
+  const r = rows && rows[0];
+  const id = r && r.customer_id != null ? Number(r.customer_id) : null;
+  return Number.isFinite(id) ? id : null;
+}
+
+/**
  * Resolve the SIGNED-IN customer for a widget session. Fail-closed: returns null
  * for a blank session, an unlinked session, or a session linked only to a
  * tier-1/2 customer (no shopify_customer_id).

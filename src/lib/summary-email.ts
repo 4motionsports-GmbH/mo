@@ -292,6 +292,14 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
   return { text, html };
 }
 
+/** One product line for the PDF download (same content as the email rows). */
+export interface SummaryProductLine {
+  name: string;
+  priceLabel: string;
+  /** Product page link — set for alternatives, null for the chosen (cart) set. */
+  url: string | null;
+}
+
 export interface SummaryDocument {
   /** Plain-text part (same top-to-bottom order as the HTML). */
   text: string;
@@ -299,6 +307,12 @@ export interface SummaryDocument {
   html: string;
   /** The "Zur Kasse" permalink, or null when no cart could be built. */
   cartUrl: string | null;
+  /** AI-written (or fallback) summary prose — the grey-panel text. */
+  summary: string;
+  /** The CHOSEN products (cart order) — for the PDF "Deine Auswahl" section. */
+  chosen: SummaryProductLine[];
+  /** The alternatives — for the PDF "Vielleicht auch interessant" section. */
+  alternatives: SummaryProductLine[];
 }
 
 /**
@@ -365,7 +379,24 @@ export async function buildSummaryDocument(params: {
     cartUrl: cart.url,
   });
 
-  return { text, html, cartUrl: cart.url };
+  // Structured pieces for the PDF download — derived from the SAME chosen /
+  // alternatives / summary the email rendered, so the two render targets can't
+  // drift. The chosen set links to the cart (no per-row url); alternatives link
+  // to their product page (same as the email's "Vielleicht auch interessant").
+  const toLine = (p: Product, withUrl: boolean): SummaryProductLine => ({
+    name: p.name,
+    priceLabel: formatPrice(p),
+    url: withUrl ? p.shopifyUrl : null,
+  });
+
+  return {
+    text,
+    html,
+    cartUrl: cart.url,
+    summary,
+    chosen: chosenProducts.map((p) => toLine(p, false)),
+    alternatives: alternatives.map((p) => toLine(p, true)),
+  };
 }
 
 export interface SummaryEmailResult {
