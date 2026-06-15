@@ -100,3 +100,79 @@ test("buildLetterPdf: long body paginates onto multiple pages", () => {
   assert.ok(m, "has a Pages /Count");
   assert.ok(Number(m[1]) > 1, "paginated onto more than one page");
 });
+
+// ── Pingen address-window placement (the layout bug this guards) ─────────────
+// Pingen rejects the letter unless the recipient address sits fully inside the
+// Address Area (x:[22,107.5] y:[60,85.5]mm from the page top/left) and nothing
+// else intrudes into the Postage Area above it. A4 height = 841.89pt, 1mm =
+// 72/25.4 pt, and PDF y is measured from the BOTTOM — so the area maps to
+// x ≥ 62.36pt and y ∈ [599.53, 671.81]pt.
+const MM = 72 / 25.4;
+const PAGE_H = 841.89;
+const ADDR_X_MIN = 22 * MM; // 62.36pt
+const ADDR_Y_TOP = PAGE_H - 60 * MM; // 671.81pt (top of the area)
+const ADDR_Y_BOTTOM = PAGE_H - 85.5 * MM; // 599.53pt (bottom of the area)
+
+/** The (x, y) of the text-positioning matrix for the line drawing `label`. */
+function positionOf(pdfText, label) {
+  const m = pdfText.match(
+    new RegExp(`1 0 0 1 (\\d+(?:\\.\\d+)?) (\\d+(?:\\.\\d+)?) Tm \\(${label}\\) Tj`)
+  );
+  return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
+}
+
+test("buildLetterPdf: the recipient address sits inside the Pingen Address Area", () => {
+  const pdf = buildLetterPdf({
+    recipient: {
+      name: "Marcel Kueck",
+      company: null,
+      addressLine1: "Hermann-Löns-Straße 22A",
+      addressLine2: null,
+      postalCode: "82194",
+      city: "Gröbenzell",
+      country: "DE",
+    },
+    subject: "Dein Horizon Tread-XP wartet auf dich",
+    body: "Hallo Marcel,\n\nschön, dass wir sprechen konnten.",
+  });
+  const text = pdf.toString("latin1");
+
+  // First line (name) and last line (postal + city) must both be in the window.
+  const name = positionOf(text, "Marcel Kueck");
+  const city = positionOf(text, "82194 Gröbenzell");
+  assert.ok(name, "address name line is present");
+  assert.ok(city, "address city line is present");
+
+  for (const [label, p] of [["name", name], ["city", city]]) {
+    assert.ok(p.x >= ADDR_X_MIN, `${label} x=${p.x} must be ≥ ${ADDR_X_MIN.toFixed(2)} (22mm)`);
+    assert.ok(
+      p.y <= ADDR_Y_TOP && p.y >= ADDR_Y_BOTTOM,
+      `${label} y=${p.y} must be within [${ADDR_Y_BOTTOM.toFixed(2)}, ${ADDR_Y_TOP.toFixed(2)}]`
+    );
+  }
+  // The name (first line) sits above the city (last line) in the window.
+  assert.ok(name.y > city.y, "name is above the city line");
+});
+
+test("buildLetterPdf: a full 6-line address still fits inside the Address Area", () => {
+  const pdf = buildLetterPdf({
+    recipient: {
+      name: "Dr. Maximilian Mustermann",
+      company: "Muster GmbH & Co. KG",
+      addressLine1: "Musterstraße 123",
+      addressLine2: "Hinterhaus, 4. OG",
+      postalCode: "1000",
+      city: "Wien",
+      country: "AT",
+    },
+    subject: null,
+    body: "Hallo,\n\nText.",
+  });
+  const text = pdf.toString("latin1");
+  const top = positionOf(text, "Dr\\. Maximilian Mustermann");
+  const country = positionOf(text, "AT");
+  assert.ok(top && country, "first + last address lines present");
+  assert.ok(top.y <= ADDR_Y_TOP, "first line not above the area");
+  assert.ok(country.y >= ADDR_Y_BOTTOM, `last line y=${country.y} not below the area`);
+});
+
