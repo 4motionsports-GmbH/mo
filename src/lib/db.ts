@@ -25,16 +25,6 @@ function pooledConnectionString(): string | undefined {
   return process.env.DATABASE_URL || process.env.POSTGRES_URL || undefined;
 }
 
-// Direct (unpooled) connection string — preferred for migrations and other
-// long/DDL-heavy work. Falls back to the pooled string when not provided.
-export function directConnectionString(): string | undefined {
-  return (
-    process.env.DATABASE_URL_UNPOOLED ||
-    process.env.POSTGRES_URL_NON_POOLING ||
-    pooledConnectionString()
-  );
-}
-
 let cached: Sql | null = null;
 let warned = false;
 

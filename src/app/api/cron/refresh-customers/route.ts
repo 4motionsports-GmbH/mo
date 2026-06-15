@@ -18,16 +18,9 @@ import { NextResponse } from "next/server";
 import { listCustomersForDataRefresh } from "@/lib/customer-store";
 import { refreshCustomerData } from "@/lib/customer-refresh";
 import { reportError } from "@/lib/observability";
+import { requireCronAuth } from "@/lib/cron-auth";
 
 export const maxDuration = 300;
-
-function isAuthorized(req: Request): boolean {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) return false;
-  const header = req.headers.get("authorization") ?? "";
-  const m = header.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] === expected : false;
-}
 
 function intEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -36,9 +29,8 @@ function intEnv(name: string, fallback: number): number {
 }
 
 async function handle(req: Request): Promise<Response> {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = requireCronAuth(req);
+  if (denied) return denied;
 
   const batch = intEnv("CUSTOMER_REFRESH_BATCH", 25);
   const staleHours = intEnv("CUSTOMER_REFRESH_STALE_HOURS", 24);
