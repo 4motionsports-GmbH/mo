@@ -34,7 +34,6 @@ import {
 } from "./customer-account-data.mjs";
 import type { OrderHistory } from "./shopify-orders";
 import { chooseLawfulAddress } from "./postal-address.mjs";
-import { isCompletedPurchaseStatus } from "./bestandskunden.mjs";
 import { createPublicKey, verify as cryptoVerify, type JsonWebKey } from "node:crypto";
 
 export const CUSTOMER_ACCOUNT_SCOPES = "openid email customer-account-api:full";
@@ -644,13 +643,6 @@ const CUSTOMER_DATA_QUERY = /* GraphQL */ `
       defaultAddress {
         city
         territoryCode
-        address1
-        address2
-        zip
-        firstName
-        lastName
-        company
-        name
       }
       addresses(first: $addressesFirst) {
         nodes { id }
@@ -662,21 +654,34 @@ const CUSTOMER_DATA_QUERY = /* GraphQL */ `
           processedAt
           financialStatus
           totalPrice { amount currencyCode }
-          shippingAddress {
-            city
-            territoryCode
-            address1
-            address2
-            zip
-            firstName
-            lastName
-            company
-            name
-          }
           lineItems(first: $lineItemsFirst) {
             nodes { title quantity }
           }
         }
+      }
+    }
+  }
+`;
+
+// FULL address read for physical mail — kept in its OWN query, run fault-isolated
+// (lib §4 address acquisition). This must NEVER affect the order-history /
+// account-summary read above: if a field here is unavailable on the Customer
+// Account API schema (or the token can't read addresses), the address read fails
+// soft to "no address" while order history keeps working. defaultAddress is the
+// customer's saved account address → basis 'consented_capture'.
+const CUSTOMER_ADDRESS_QUERY = /* GraphQL */ `
+  query SignedInCustomerAddress {
+    customer {
+      defaultAddress {
+        city
+        territoryCode
+        address1
+        address2
+        zip
+        firstName
+        lastName
+        company
+        name
       }
     }
   }
@@ -754,18 +759,10 @@ export async function fetchSignedInCustomerData(
       displayName: c.displayName ?? null,
       email: c.emailAddress?.emailAddress ?? null,
     };
-    // Derive the FULL lawful address SEPARATELY (never via buildAccountSummary,
-    // which stays minimised). Prefer a completed order's shipping address
-    // (basis 'purchase'); newest-first, completed only, else the profile default.
-    const orders = Array.isArray((dataCustomer as { orders?: { nodes?: unknown[] } }).orders?.nodes)
-      ? ((dataCustomer as { orders: { nodes: Array<Record<string, unknown>> } }).orders.nodes)
-      : [];
-    const orderShippingAddresses = orders
-      .filter((o) => isCompletedPurchaseStatus(o?.financialStatus as string | null | undefined))
-      .map((o) => (o?.shippingAddress as Record<string, unknown> | null) ?? null);
-    const defaultAddress =
-      ((dataCustomer as { defaultAddress?: Record<string, unknown> | null }).defaultAddress) ?? null;
-    const lawfulAddress = chooseLawfulAddress({ orderShippingAddresses, defaultAddress });
+    // Derive the FULL lawful address in a SEPARATE, fault-isolated read so it can
+    // NEVER break the order-history / account-summary result above (a missing
+    // address field or an address-read permission gap → "no address", not a 502).
+    const lawfulAddress = await fetchSignedInLawfulAddress(accessToken);
 
     return {
       identity,
@@ -794,5 +791,28 @@ export async function fetchSignedInCustomerData(
     };
   } catch {
     return { identity: null, accountSummary: null, orderHistory: null, lawfulAddress: null };
+  }
+}
+
+/**
+ * Read the signed-in customer's saved account address for physical mail, FAULT-
+ * ISOLATED: its own Customer Account API query in its own try/catch, so a schema
+ * gap or an address-read permission issue degrades to null WITHOUT affecting the
+ * order-history / account-summary read. The saved default address is the
+ * customer's own account address → lawful basis 'consented_capture'. (The
+ * 'purchase' basis from order shipping addresses is captured on the Admin-API
+ * path, lib/shopify-orders.) Returns null on anything unexpected.
+ */
+async function fetchSignedInLawfulAddress(
+  accessToken: string
+): Promise<{ address: Record<string, unknown>; source: string } | null> {
+  try {
+    const data = await customerAccountGraphql<{
+      customer: { defaultAddress: Record<string, unknown> | null } | null;
+    }>(accessToken, CUSTOMER_ADDRESS_QUERY, {});
+    const defaultAddress = data?.customer?.defaultAddress ?? null;
+    return chooseLawfulAddress({ defaultAddress });
+  } catch {
+    return null;
   }
 }
