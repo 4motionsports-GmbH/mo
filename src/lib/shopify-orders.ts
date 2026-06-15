@@ -309,46 +309,62 @@ export async function fetchOrderHistoryByEmail(
 //
 // For an EMAIL-only (tier-2) customer with completed orders, the shipping
 // address of a completed order is a purchase-derived lawful basis for outbound
-// post. This is a SEPARATE, deliberate read — the address is NEVER added to
-// OrderHistory (which feeds the profile model); it goes only to the dedicated
-// customers.postal_address store. Same read_orders scope + protected-customer-
-// data caveats as the history fetch.
+// post, and the customer's SAVED default address (their Shopify account address)
+// is the fallback. This is a SEPARATE, deliberate read — the address is NEVER
+// added to OrderHistory (which feeds the profile model); it goes only to the
+// dedicated customers.postal_address store. Same read_orders / read_customers
+// scope + protected-customer-data caveats as the history fetch.
 
-const ORDER_SHIPPING_BY_EMAIL = /* GraphQL */ `
-  query CustomerShippingAddressesByEmail($query: String!) {
+// One round-trip: completed orders' shipping addresses (basis 'purchase') AND
+// the customer's saved default address (basis 'consented_capture' fallback).
+// Both shippingAddress and defaultAddress are the MailingAddress type → shared
+// field set via the fragment.
+const LAWFUL_ADDRESS_BY_EMAIL = /* GraphQL */ `
+  query CustomerLawfulAddressByEmail($query: String!) {
     orders(first: 10, query: $query, sortKey: CREATED_AT, reverse: true) {
       nodes {
         displayFinancialStatus
-        shippingAddress {
-          city
-          countryCodeV2
-          address1
-          address2
-          zip
-          firstName
-          lastName
-          company
-          name
-        }
+        shippingAddress { ...MailAddr }
+      }
+    }
+    customers(first: 1, query: $query) {
+      nodes {
+        defaultAddress { ...MailAddr }
       }
     }
   }
+  fragment MailAddr on MailingAddress {
+    city
+    countryCodeV2
+    address1
+    address2
+    zip
+    firstName
+    lastName
+    company
+    name
+  }
 `;
 
-interface OrderShippingResponse {
+interface LawfulAddressResponse {
   orders: {
     nodes: Array<{
       displayFinancialStatus: string | null;
       shippingAddress: Record<string, unknown> | null;
     }>;
   };
+  customers: {
+    nodes: Array<{ defaultAddress: Record<string, unknown> | null }>;
+  };
 }
 
 /**
- * The lawful postal address for an email-identified customer, from the shipping
- * address of their most recent COMPLETED order (basis 'purchase'). Returns null
- * when Shopify is unconfigured, the email is blank, the query fails, or no
- * completed order carries a COMPLETE address (never part-filled). Never throws.
+ * The lawful postal address for an email-identified customer. Prefers the
+ * shipping address of their most recent COMPLETED order (basis 'purchase'), and
+ * falls back to the customer's SAVED default address from their Shopify account
+ * (basis 'consented_capture'). Returns null when Shopify is unconfigured, the
+ * email is blank, the query fails, or nothing carries a COMPLETE address (never
+ * part-filled). Never throws.
  */
 export async function fetchLawfulAddressByEmail(
   email: string
@@ -358,14 +374,17 @@ export async function fetchLawfulAddressByEmail(
   if (!e) return null;
   const query = `email:"${e}"`;
   try {
-    const data = await adminGraphql<OrderShippingResponse>(ORDER_SHIPPING_BY_EMAIL, { query });
+    const data = await adminGraphql<LawfulAddressResponse>(LAWFUL_ADDRESS_BY_EMAIL, { query });
     const nodes = data.orders?.nodes ?? [];
     // Newest-first, completed purchases only — their shipping address is the
     // purchase-derived basis.
     const orderShippingAddresses = nodes
       .filter((o) => isCompletedPurchaseStatus(o.displayFinancialStatus))
       .map((o) => o.shippingAddress);
-    return chooseLawfulAddress({ orderShippingAddresses });
+    // The customer's saved account address — the fallback when no completed
+    // order carries a usable shipping address.
+    const defaultAddress = data.customers?.nodes?.[0]?.defaultAddress ?? null;
+    return chooseLawfulAddress({ orderShippingAddresses, defaultAddress });
   } catch (err) {
     reportError(err, { route: "lib/shopify-orders", phase: "fetchLawfulAddressByEmail" });
     return null;
