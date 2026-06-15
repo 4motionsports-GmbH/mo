@@ -727,6 +727,35 @@ export async function listCustomersMissingAddress(
   }
 }
 
+/** Customers whose cached Shopify data is stale (purchase_summary older than
+ *  `staleBeforeIso`, or never fetched) — the batch the scheduled refresh cron
+ *  processes, most-stale first. Returns the fields refreshCustomerData needs. */
+export async function listCustomersForDataRefresh(
+  limit: number,
+  staleBeforeIso: string,
+  sql: Sql | null = getSql()
+): Promise<Array<{ id: number; email: string; shopifyCustomerId: string | null }>> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT id, email, shopify_customer_id
+        FROM customers
+       WHERE purchase_summary_updated_at IS NULL
+          OR purchase_summary_updated_at < ${staleBeforeIso}
+       ORDER BY purchase_summary_updated_at ASC NULLS FIRST, id ASC
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: Number(r.id),
+      email: String(r.email),
+      shopifyCustomerId: (r.shopify_customer_id as string | null) ?? null,
+    }));
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "listCustomersForDataRefresh" });
+    return [];
+  }
+}
+
 /** Stamp that we attempted an address capture for this customer (throttle), so a
  *  customer with genuinely no Shopify address isn't re-queried every page load. */
 export async function markPostalAddressChecked(
