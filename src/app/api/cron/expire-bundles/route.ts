@@ -14,22 +14,13 @@ import { NextResponse } from "next/server";
 import { expireBundleOffers } from "@/lib/bundle-offers";
 import { isDbConfigured } from "@/lib/db";
 import { reportError } from "@/lib/observability";
+import { requireCronAuth } from "@/lib/cron-auth";
 
 export const maxDuration = 60;
 
-function isAuthorized(req: Request): boolean {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) return false;
-  const header = req.headers.get("authorization") ?? "";
-  const m = header.match(/^Bearer\s+(.+)$/i);
-  if (!m) return false;
-  return m[1] === expected;
-}
-
 async function handle(req: Request): Promise<Response> {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = requireCronAuth(req);
+  if (denied) return denied;
   if (!isDbConfigured()) {
     // No DB — surface as 503 so the run is visibly skipped, not silently "ok".
     return NextResponse.json(

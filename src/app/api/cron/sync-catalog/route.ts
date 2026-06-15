@@ -20,6 +20,8 @@ import {
 } from "@/lib/catalog-store";
 import { buildEmbeddingDoc, mapShopifyProducts } from "@/lib/catalog-mapping";
 import { fetchAllProducts } from "@/lib/shopify";
+import { reportError } from "@/lib/observability";
+import { requireCronAuth } from "@/lib/cron-auth";
 import type { Product } from "@/lib/types";
 
 // Vercel hobby plan caps cron functions at 60s; pro at 300s. Bumping to 300
@@ -28,15 +30,6 @@ export const maxDuration = 300;
 
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const EMBEDDING_CHUNK = 100;
-
-function isAuthorized(req: Request): boolean {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) return false;
-  const header = req.headers.get("authorization") ?? "";
-  const m = header.match(/^Bearer\s+(.+)$/i);
-  if (!m) return false;
-  return m[1] === expected;
-}
 
 async function embedAll(products: Product[]): Promise<EmbeddingsFile> {
   const client = new OpenAI();
@@ -73,63 +66,71 @@ export async function GET(req: Request) {
 }
 
 async function handle(req: Request): Promise<Response> {
-  if (!isAuthorized(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const startedAt = Date.now();
-  const log: Record<string, unknown> = {};
-
-  let products: Product[];
-  let mode: "shopify" | "fallback-bundle" = "shopify";
+  const denied = requireCronAuth(req);
+  if (denied) return denied;
 
   try {
-    const raw = await fetchAllProducts();
-    const { products: mapped, stats } = mapShopifyProducts(raw);
-    log.shopifyRawCount = raw.length;
-    log.filterStats = stats;
-    if (mapped.length === 0) {
-      throw new Error("Shopify returned no products after filtering");
+    const startedAt = Date.now();
+    const log: Record<string, unknown> = {};
+
+    let products: Product[];
+    let mode: "shopify" | "fallback-bundle" = "shopify";
+
+    try {
+      const raw = await fetchAllProducts();
+      const { products: mapped, stats } = mapShopifyProducts(raw);
+      log.shopifyRawCount = raw.length;
+      log.filterStats = stats;
+      if (mapped.length === 0) {
+        throw new Error("Shopify returned no products after filtering");
+      }
+      products = mapped;
+    } catch (err) {
+      mode = "fallback-bundle";
+      log.shopifyError = (err as Error).message;
+      console.error("[cron/sync-catalog] Shopify fetch failed, falling back to bundled JSON", err);
+      products = await fallbackFromBundle();
     }
-    products = mapped;
+
+    const catalogUrl = process.env.BLOB_READ_WRITE_TOKEN
+      ? await writeCatalogToBlob(products)
+      : null;
+
+    let embeddingsUrl: string | null = null;
+    let embeddingsCount = 0;
+    if (process.env.OPENAI_API_KEY) {
+      const file = await embedAll(products);
+      embeddingsCount = file.items.length;
+      if (process.env.BLOB_READ_WRITE_TOKEN) {
+        embeddingsUrl = await writeEmbeddingsToBlob(file);
+      }
+    } else {
+      log.embeddingsSkipped = "OPENAI_API_KEY not set";
+    }
+
+    invalidateCache();
+
+    const elapsedMs = Date.now() - startedAt;
+    const payload = {
+      ok: true,
+      mode,
+      productCount: products.length,
+      embeddingsCount,
+      catalogBlobKey: CATALOG_BLOB_KEY,
+      catalogBlobUrl: catalogUrl,
+      embeddingsBlobKey: EMBEDDINGS_BLOB_KEY,
+      embeddingsBlobUrl: embeddingsUrl,
+      elapsedMs,
+      ...log,
+    };
+    console.log("[cron/sync-catalog] done", payload);
+    return NextResponse.json(payload);
   } catch (err) {
-    mode = "fallback-bundle";
-    log.shopifyError = (err as Error).message;
-    console.error("[cron/sync-catalog] Shopify fetch failed, falling back to bundled JSON", err);
-    products = await fallbackFromBundle();
+    // Match the other three crons: a real failure (e.g. the OpenAI embeddings
+    // call or a Blob write throwing) is reported to Sentry and surfaced as a
+    // 503 envelope, rather than escaping as an unhandled 500 with no capture.
+    // The Shopify-fetch fallback above still degrades to the bundled catalog.
+    reportError(err, { route: "api/cron/sync-catalog" });
+    return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 503 });
   }
-
-  const catalogUrl = process.env.BLOB_READ_WRITE_TOKEN
-    ? await writeCatalogToBlob(products)
-    : null;
-
-  let embeddingsUrl: string | null = null;
-  let embeddingsCount = 0;
-  if (process.env.OPENAI_API_KEY) {
-    const file = await embedAll(products);
-    embeddingsCount = file.items.length;
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
-      embeddingsUrl = await writeEmbeddingsToBlob(file);
-    }
-  } else {
-    log.embeddingsSkipped = "OPENAI_API_KEY not set";
-  }
-
-  invalidateCache();
-
-  const elapsedMs = Date.now() - startedAt;
-  const payload = {
-    ok: true,
-    mode,
-    productCount: products.length,
-    embeddingsCount,
-    catalogBlobKey: CATALOG_BLOB_KEY,
-    catalogBlobUrl: catalogUrl,
-    embeddingsBlobKey: EMBEDDINGS_BLOB_KEY,
-    embeddingsBlobUrl: embeddingsUrl,
-    elapsedMs,
-    ...log,
-  };
-  console.log("[cron/sync-catalog] done", payload);
-  return NextResponse.json(payload);
 }

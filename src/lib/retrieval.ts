@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { loadEmbeddings, loadProductCatalog, type EmbeddingsFile } from "./catalog-store";
 import { recordAiUsage } from "./ai-usage-store";
+import { reportError } from "./observability";
 import type { CustomerProfile, Product, SearchProductsArgs } from "./types";
 
 let openaiClient: OpenAI | null = null;
@@ -118,7 +119,11 @@ export async function embedQuery(text: string): Promise<number[] | null> {
     });
     return res.data[0].embedding;
   } catch (err) {
-    console.error("embedQuery failed", err);
+    // Route through reportError (Sentry) like the rest of src/lib — an embedding
+    // failure on the chat hot path was previously console-only and invisible to
+    // observability. Behaviour is unchanged: retrieval still degrades to the
+    // keyword fallback when this returns null.
+    reportError(err, { route: "lib/retrieval", phase: "embedQuery" });
     return null;
   }
 }
