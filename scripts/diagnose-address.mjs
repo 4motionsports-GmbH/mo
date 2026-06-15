@@ -87,14 +87,18 @@ const QUERY = `
 
 const data = await gql(QUERY, { q: `email:"${email}"` });
 if (data.errors) {
-  console.error("\nShopify returned GraphQL errors:");
-  console.error(JSON.stringify(data.errors, null, 2));
-  console.error(
-    "\nIf these are ACCESS_DENIED on address/customer fields, the app likely lacks\n" +
-      "Shopify Protected Customer Data approval — street/zip then come back empty\n" +
-      "and no address can be stored.\n"
+  // Partial denial (e.g. ACCESS_DENIED on `customers`) still returns whatever
+  // other fields were allowed, so warn and CONTINUE rather than bailing.
+  console.warn("\n⚠ Shopify returned GraphQL errors (some fields were denied):");
+  console.warn(JSON.stringify(data.errors, null, 2));
+  console.warn(
+    "\n  ACCESS_DENIED on `customers`/address fields ⇒ the Admin token lacks\n" +
+      "  read_customers and/or Shopify Protected Customer Data approval. The saved\n" +
+      "  account address can't be read via the Admin API, and order shipping\n" +
+      "  addresses are Protected Customer Data too (often withheld the same way).\n" +
+      "  → Quick test path: have the customer SIGN IN, then the tier-3 Customer\n" +
+      "    Account API returns their OWN address without Admin approval.\n"
   );
-  process.exit(1);
 }
 
 function showRaw(label, node) {
