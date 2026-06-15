@@ -20,6 +20,7 @@ import {
   saveCustomerPostalAddress,
 } from "@/lib/customer-store";
 import { refreshSignedInCustomerCache } from "@/lib/customer-account-cache";
+import { getValidAccessToken } from "@/lib/customer-oauth-store";
 import { fetchOrderHistoryByEmail, fetchLawfulAddressByEmail } from "@/lib/shopify-orders";
 import { isShopifyConfigured } from "@/lib/shopify";
 import { reportError } from "@/lib/observability";
@@ -49,13 +50,38 @@ export async function POST(req: Request) {
 
     // Tier 3 (signed-in): pull from the Customer Account API with the customer's
     // own token — this REPLACES the email-keyed Admin fetch for tier-3 and also
-    // refreshes the cached name + address context.
+    // refreshes the cached name + address context. Distinguish the failure modes
+    // so the admin sees an ACTIONABLE reason instead of an opaque 502.
     if (customer.shopifyCustomerId) {
+      // (a) No usable server-held token ⇒ the customer must sign in again
+      // through the chat widget's "Anmelden" (our customer-account OAuth) — NOT
+      // by logging into the Shopify storefront, which never gives us a token.
+      const token = await getValidAccessToken(customerId);
+      if (!token) {
+        return adminJsonError(
+          "reauth_required",
+          "Kein gültiges Kundenkonto-Token hinterlegt. Der Kunde muss sich erneut über den " +
+            "Chat („Anmelden“) im Customer-Account anmelden — ein Login direkt bei Shopify " +
+            "reicht nicht, wir brauchen das über unseren Anmeldefluss ausgestellte Token.",
+          409
+        );
+      }
       const data = await refreshSignedInCustomerCache(customerId);
-      if (!data || !data.orderHistory) {
+      if (!data || !data.identity) {
+        // (b) Token present but the Customer Account API was unreachable.
         return adminJsonError(
           "upstream_unavailable",
-          "Customer-Account-Daten konnten nicht geladen werden — möglicherweise ist der Kunde ausgeloggt und muss sich erneut anmelden.",
+          "Customer-Account-API nicht erreichbar (Token vorhanden, aber kein Ergebnis).",
+          502
+        );
+      }
+      if (!data.orderHistory) {
+        // (c) Signed in + reachable, but the order/data read came back empty —
+        // typically a Customer-Account-API permission/schema issue, not a login one.
+        return adminJsonError(
+          "upstream_unavailable",
+          "Angemeldet, aber die Customer-Account-Bestelldaten konnten nicht gelesen werden " +
+            "(Berechtigung/Schema). Die Adresse wird separat versucht.",
           502
         );
       }
