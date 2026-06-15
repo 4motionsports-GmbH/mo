@@ -15,6 +15,7 @@ import {
 import { getMarketingFunnel, type MarketingFunnel } from "@/lib/marketing-store";
 import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
 import { getAiCostMetrics, type AiCostMetrics } from "@/lib/ai-usage-store";
+import { getPhysicalLetterStats, type PhysicalLetterStats } from "@/lib/physical-letters-store";
 import { KpiTopQuestions } from "./KpiTopQuestions";
 import { Card, CardContent, CardHeader, CardTitle, Section, Stat, Caveat } from "./ui";
 import {
@@ -59,19 +60,21 @@ export async function KpiTab({ dbReady }: { dbReady: boolean }) {
     );
   }
 
-  const [core, personas, loop, funnel, cachedQuestions, aiCost] = await Promise.all([
+  const [core, personas, loop, funnel, cachedQuestions, aiCost, letterStats] = await Promise.all([
     getCoreMetrics(30),
     getPersonaInsights(5),
     getRecommendationLoop(),
     getMarketingFunnel(),
     getCachedTopQuestionsMap(),
     getAiCostMetrics(),
+    getPhysicalLetterStats(),
   ]);
 
   return (
     <div className="flex flex-col gap-10">
       <CoreSection core={core} />
       <AiCostSection cost={aiCost} />
+      <PhysicalMailCostSection stats={letterStats} />
       <MarketingFunnelSection funnel={funnel} />
       <PersonaSection personas={personas} cachedQuestions={cachedQuestions} />
       <LoopSection loop={loop} />
@@ -259,6 +262,39 @@ function AiCostSection({ cost }: { cost: AiCostMetrics | null }) {
             nur den Chat-Verbrauch je Konversation. Embeddings (Produktsuche) sind
             kostenseitig Rauschen, werden aber ehrlich mitgezählt
             {cost.estimated && " und teils geschätzt, wenn der Anbieter keine Token-Zahl liefert"}.
+          </Caveat>
+        </>
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Physical mail (Pingen): how many letters went out and what postage cost.
+// ---------------------------------------------------------------------------
+function PhysicalMailCostSection({ stats }: { stats: PhysicalLetterStats }) {
+  const totalEur = stats.totalCostCents / 100;
+  const avgEur = stats.totalSent > 0 ? totalEur / stats.totalSent : 0;
+  return (
+    <Section
+      title="Postversand (Brief)"
+      subtitle="Versendete Briefe (Pingen → Deutsche Post) und die angefallenen Portokosten."
+    >
+      {stats.totalSent === 0 ? (
+        <Banner tone="info">Noch keine Briefe versendet.</Banner>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Stat label="Versendete Briefe" value={num(stats.totalSent, 0)} />
+            <Stat label="Portokosten gesamt" value={eur(totalEur, 2)} />
+            <Stat label="Ø Kosten / Brief" value={eur(avgEur, 2)} />
+          </div>
+          <Caveat>
+            Kosten je Brief stammen aus dem von Pingen gemeldeten Preis; wo (noch)
+            kein Preis vorliegt (z. B. Staging), wird ein konfigurierbarer Standard
+            angesetzt (<code>PINGEN_LETTER_COST_CENTS</code>, Standard 106 = 1,06 €).
+            Gezählt werden an Pingen übergebene Briefe (fehlgeschlagene Übermittlungen
+            zählen nicht).
           </Caveat>
         </>
       )}

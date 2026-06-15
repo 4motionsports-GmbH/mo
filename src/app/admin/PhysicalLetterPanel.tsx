@@ -29,10 +29,15 @@ export interface PhysicalLetterProps {
     | "undeliverable";
   recipientCity: string | null;
   recipientCountry: string | null;
+  subject: string | null;
   costCents: number | null;
   error: string | null;
   createdAt: string | null;
 }
+
+// Display fallback per letter when Pingen hasn't reported a price (mirrors the
+// server default PINGEN_LETTER_COST_CENTS). Used only for the panel's estimate.
+const DEFAULT_LETTER_COST_CENTS = 106;
 
 const STATUS_META: Record<
   PhysicalLetterProps["status"],
@@ -48,6 +53,20 @@ const STATUS_META: Record<
   cancelled: { label: "Storniert", variant: "secondary" },
   undeliverable: { label: "Unzustellbar", variant: "destructive" },
 };
+
+/** Per-customer summary: count of letters handed to Pingen + estimated postage
+ *  (Pingen's price where known, else the default fallback). */
+function LetterTotals({ letters }: { letters: PhysicalLetterProps[] }) {
+  const sent = letters.filter((l) => l.status !== "pending" && l.status !== "failed");
+  if (sent.length === 0) return null;
+  const totalCents = sent.reduce((sum, l) => sum + (l.costCents ?? DEFAULT_LETTER_COST_CENTS), 0);
+  return (
+    <p className="mb-1 text-[11px] text-muted-foreground">
+      Gesamt: <strong className="text-foreground">{sent.length}</strong> Brief(e) · Porto ~
+      {(totalCents / 100).toFixed(2)} €
+    </p>
+  );
+}
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -211,22 +230,26 @@ export function PhysicalLetterPanel({
           <em>Noch kein Brief versendet.</em>
         </p>
       ) : (
-        <ol className="flex flex-col gap-1">
-          {letters.map((l) => {
-            const meta = STATUS_META[l.status];
-            return (
-              <li key={l.id} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <Badge variant={meta.variant}>{meta.label}</Badge>
-                <span>{fmtDate(l.createdAt)}</span>
-                {(l.recipientCity || l.recipientCountry) && (
-                  <span>{[l.recipientCity, l.recipientCountry].filter(Boolean).join(", ")}</span>
-                )}
-                {l.costCents != null && <span>{(l.costCents / 100).toFixed(2)} €</span>}
-                {l.error && <span className="text-destructive">· {l.error}</span>}
-              </li>
-            );
-          })}
-        </ol>
+        <>
+          <LetterTotals letters={letters} />
+          <ol className="flex flex-col gap-1">
+            {letters.map((l) => {
+              const meta = STATUS_META[l.status];
+              return (
+                <li key={l.id} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant={meta.variant}>{meta.label}</Badge>
+                  <span>{fmtDate(l.createdAt)}</span>
+                  {l.subject && <span className="truncate">&bdquo;{l.subject}&ldquo;</span>}
+                  {(l.recipientCity || l.recipientCountry) && (
+                    <span>{[l.recipientCity, l.recipientCountry].filter(Boolean).join(", ")}</span>
+                  )}
+                  {l.costCents != null && <span>{(l.costCents / 100).toFixed(2)} €</span>}
+                  {l.error && <span className="text-destructive">· {l.error}</span>}
+                </li>
+              );
+            })}
+          </ol>
+        </>
       )}
     </div>
   );

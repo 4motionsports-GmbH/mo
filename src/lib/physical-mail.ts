@@ -111,11 +111,14 @@ export async function sendPhysicalLetter(customerId: number): Promise<SendPhysic
       body,
     });
 
-    // Create the audit row FIRST so its id seeds a stable Idempotency-Key.
+    // Create the audit row FIRST so its id seeds a stable Idempotency-Key. Snapshot
+    // the printed content (subject + body) onto the row for the audit + the KB (§3).
     const letterId = await createPhysicalLetter({
       customerId: customer.id,
       marketingSendId: null,
       recipient,
+      subject: customer.letterDraftSubject,
+      body,
     });
     if (letterId == null) {
       return { ok: false, reason: "store_failed", message: "Brief konnte nicht angelegt werden (DB)." };
