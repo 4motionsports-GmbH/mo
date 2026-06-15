@@ -327,7 +327,10 @@ function draftSessionBlock(s: CustomerDraftSession, index: number, total: number
   );
 }
 
-function ownedItemsBlock(input: GenerateCustomerDraftInput): string {
+function ownedItemsBlock(input: {
+  purchasesKnown: boolean;
+  ownedItems: Array<{ title: string | null; quantity: number }>;
+}): string {
   if (!input.purchasesKnown) {
     return (
       "(Kaufhistorie nicht geladen — Käufe sind UNBEKANNT, nicht 'keine'. " +
@@ -479,5 +482,159 @@ export async function generateCustomerMarketingDraft(
   } catch (err) {
     reportError(err, { route: "lib/marketing-draft", phase: "generateCustomer" });
     return fallbackCustomerDraft(input);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-CUSTOMER PHYSICAL LETTER draft — a SEPARATE generation from the email
+// (docs/EMAIL_SUBSYSTEM_SPIKE.md §4). A printed letter has NO clickable cart
+// button, NO tracked link and NO email-unsubscribe footer, so the prose is
+// written for paper: a proper salutation (by name when we have it), warm
+// advisory body grounded in the conversations/correspondence, a gentle pointer
+// to the online shop named in plain text, and a handwritten-style sign-off. The
+// discount/cart machinery of the email path deliberately does NOT apply here.
+// ---------------------------------------------------------------------------
+
+export interface GenerateCustomerLetterInput {
+  /** Recipient name from the postal address, for the salutation ("Hallo …"). */
+  recipientName?: string | null;
+  /** ALL linked conversations, chronological (oldest first). */
+  sessions: CustomerDraftSession[];
+  /** The cached "current understanding" profile summary, if generated. */
+  profileSummary: string | null;
+  /** Pre-rendered email correspondence (body text only), or null. */
+  correspondence?: string | null;
+  /** What the customer already OWNS — never re-recommended. */
+  ownedItems: Array<{ title: string | null; quantity: number }>;
+  /** False when no purchase history was loaded (owned items UNKNOWN, not "none"). */
+  purchasesKnown: boolean;
+  /** The products the letter recommends (owned items already excluded). */
+  products: Array<{ name: string }>;
+  /** Operator guidance, woven in naturally (NOT customer data). */
+  adminInstructions: string | null;
+  /** The online shop named in plain text (no clickable link on paper). */
+  shopUrl?: string | null;
+}
+
+function salutation(name: string | null | undefined): string {
+  const n = (name ?? "").trim();
+  // Use the first token as a friendly first-name salutation when present.
+  const first = n ? n.split(/\s+/)[0] : "";
+  return first ? `Hallo ${first},` : "Hallo,";
+}
+
+/** Clean templated fallback letter when the model is unavailable. */
+function fallbackLetterDraft(input: GenerateCustomerLetterInput): MarketingDraft {
+  const first = input.products[0]?.name;
+  const subject = first
+    ? `Deine persönliche Empfehlung: ${first}`
+    : "Deine persönliche Empfehlung von motion sports";
+  const lines: string[] = [
+    salutation(input.recipientName),
+    "",
+    "hier ist Mo von motion sports. Schön, dass wir uns zu deinem Trainingsvorhaben " +
+      "austauschen konnten — ich melde mich heute ganz bewusst per Post bei dir.",
+  ];
+  if (input.products.length > 0) {
+    lines.push(
+      "",
+      "Aus unseren Gesprächen passt aus meiner Sicht besonders gut:",
+      productLine(input.products)
+    );
+  }
+  if (input.shopUrl) {
+    lines.push(
+      "",
+      `Mehr dazu findest du jederzeit in unserem Shop unter ${input.shopUrl}.`
+    );
+  }
+  lines.push(
+    "",
+    "Melde dich gern, wenn ich dich persönlich beraten kann.",
+    "",
+    "Herzliche Grüße",
+    "Mo, dein persönlicher Berater bei motion sports"
+  );
+  return { subject, body: lines.join("\n") };
+}
+
+/**
+ * Generate the per-customer PHYSICAL LETTER draft from the same customer context
+ * as the email draft, but written for print. Never throws — on any error returns
+ * the templated fallback so the workflow continues (the operator reviews/edits
+ * every letter before sending anyway).
+ */
+export async function generateCustomerLetterDraft(
+  input: GenerateCustomerLetterInput
+): Promise<MarketingDraft> {
+  if (!process.env.ANTHROPIC_API_KEY) return fallbackLetterDraft(input);
+
+  const kept = input.sessions.slice(-MAX_SESSIONS_IN_DRAFT_PROMPT);
+  const sessionBlocks = kept.map((s, i) => draftSessionBlock(s, i, kept.length)).join("\n\n");
+  const correspondence = input.correspondence?.trim() || "";
+  const instructions = input.adminInstructions?.trim() || null;
+  const adminBlock = instructions
+    ? `## Hinweise vom motion-sports-Team (NICHT vom Kunden)\n` +
+      `Arbeite die folgenden Punkte natürlich in den Brief ein. Zitiere sie nicht ` +
+      `wörtlich und erwähne nicht, dass es interne Hinweise sind:\n${instructions}\n\n`
+    : "";
+  const shopLine = input.shopUrl
+    ? `Du darfst freundlich auf unseren Online-Shop „${input.shopUrl}" als Anlaufstelle ` +
+      `verweisen (als reinen Text, es ist ein gedruckter Brief — kein anklickbarer Link).`
+    : `Erwähne KEINE konkrete URL.`;
+
+  try {
+    const { object, usage } = await generateObject({
+      model: anthropic(DRAFT_MODEL),
+      schema: draftSchema,
+      system:
+        "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
+        "(Fitness- und Kraftsportgeräte). Du schreibst einen kurzen, warmen, " +
+        "persönlichen BRIEF auf PAPIER (kein E-Mail) auf Deutsch in der Du-Form an " +
+        "einen Kunden, den du aus Chat-Gesprächen kennst.\n\n" +
+        "Regeln für den Brief:\n" +
+        "- Beginne mit einer passenden Anrede (z. B. „Hallo <Vorname>,“ wenn ein " +
+        "Name vorgegeben ist, sonst „Hallo,“).\n" +
+        "- Beziehe dich konkret auf die Gespräche und, falls vorhanden, die bisherige " +
+        "E-Mail-Korrespondenz; bei Widersprüchen gilt das Neuere.\n" +
+        "- Produkte, die der Kunde laut Kaufhistorie BEREITS BESITZT, empfiehlst du " +
+        "NICHT erneut — knüpfe daran an (sinnvolle Ergänzung / nächster Schritt).\n" +
+        "- Empfiehl NUR die vorgegebenen Produkte; sei ehrlich, kein Marktschreier, " +
+        "keine erfundenen Produkte oder Preise.\n" +
+        "- Es ist ein gedruckter Brief: KEINE anklickbaren Buttons, KEINE URL-Links " +
+        "als Knöpfe, KEIN Warenkorb-Button, KEIN Abmeldelink, KEIN Rabattcode-Block. " +
+        "Wenn ein Shop genannt werden soll, nenne ihn als reinen Text.\n" +
+        "- Hinweise vom Team (falls vorhanden) arbeitest du natürlich ein — als deine " +
+        "eigenen Worte, nie als zitierte Anweisung.\n" +
+        "- Schließe mit einer herzlichen Grußformel und der Unterschrift " +
+        "'Mo, dein persönlicher Berater bei motion sports'.\n" +
+        "Der Betreff ist eine kurze Briefbetreffzeile (z. B. „Deine persönliche Empfehlung“).",
+      prompt:
+        `## Empfänger\n${input.recipientName?.trim() || "(Name unbekannt)"}\n\n` +
+        `## Aktuelles Kundenverständnis (verdichtet)\n` +
+        `${input.profileSummary?.trim() || "(noch kein Profil generiert)"}\n\n` +
+        `## Bereits gekauft (NICHT erneut empfehlen)\n${ownedItemsBlock(input)}\n\n` +
+        `## Produkte, die dieser Brief empfehlen soll\n${productLine(input.products)}\n\n` +
+        `## Shop-Hinweis\n${shopLine}\n\n` +
+        adminBlock +
+        `## Bisherige Gespräche (chronologisch, älteste zuerst)\n\n` +
+        `${sessionBlocks || "(keine Gespräche verknüpft)"}\n\n` +
+        `## Bisherige E-Mail-Korrespondenz (chronologisch, älteste zuerst)\n\n` +
+        `${correspondence || "(keine E-Mail-Korrespondenz)"}\n\n` +
+        `Schreibe jetzt den personalisierten Brief (Betreff + Brieftext).`,
+    });
+    await recordAiUsage({
+      callSite: "marketing_draft",
+      model: DRAFT_MODEL,
+      inputTokens: usage?.inputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
+    });
+    const subject = object.subject?.trim();
+    const body = object.body?.trim();
+    if (!subject || !body) return fallbackLetterDraft(input);
+    return { subject, body };
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-draft", phase: "generateLetter" });
+    return fallbackLetterDraft(input);
   }
 }

@@ -178,6 +178,9 @@ export interface CustomerProps {
   physicalReason: string | null;
   /** This customer's physical letters (newest first), as status chips. */
   physicalLetters: PhysicalLetterProps[];
+  /** The SEPARATE letter draft (distinct from the email), if generated. */
+  letterDraftSubject: string | null;
+  letterDraftBody: string | null;
 }
 
 interface ProfileUsage {
@@ -941,15 +944,18 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
         </div>
       )}
 
-      {/* "Brief senden" (§4) — mirrors the email-draft flow: the SAME draft text,
-          rendered to a PDF and submitted to Pingen. Disabled (with a reason) until
-          a complete lawful address + the flag + Pingen config are all present. */}
+      {/* Brief (§4) — its OWN flow: generate a letter-optimised draft (separate
+          from the email), edit it, then send → PDF → Pingen. Disabled (with a
+          reason) until a complete lawful address + the flag + Pingen config are
+          all present. */}
       <PhysicalLetterPanel
+        customerId={customer.id}
         customerEmail={customer.email}
-        sendId={send?.id ?? null}
         eligible={customer.physicalEligible}
         reason={customer.physicalReason}
         letters={customer.physicalLetters}
+        initialSubject={customer.letterDraftSubject}
+        initialBody={customer.letterDraftBody}
       />
     </Section>
   );

@@ -73,6 +73,15 @@ export interface Customer {
   postalAddress: Record<string, unknown> | null;
   postalAddressSource: string | null;
   /**
+   * The SEPARATE, editable physical-letter draft (migration 0023) — distinct
+   * from the email draft (marketing_sends). One open draft per customer; written
+   * by the letter-draft generator, rendered to a PDF + submitted to Pingen on
+   * "Brief senden". Null when no letter draft has been generated.
+   */
+  letterDraftSubject: string | null;
+  letterDraftBody: string | null;
+  letterDraftUpdatedAt: string | null;
+  /**
    * Admin free-text special instructions for the next generated marketing
    * email (migration 0010) — e.g. "mention the new rowing machine line". The
    * CURRENT editable value; the snapshot that went into a specific draft is
@@ -120,6 +129,9 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     shopifyAccountSummaryUpdatedAt: (r.shopify_account_summary_updated_at as string | null) ?? null,
     postalAddress: (r.postal_address as Record<string, unknown> | null) ?? null,
     postalAddressSource: (r.postal_address_source as string | null) ?? null,
+    letterDraftSubject: (r.letter_draft_subject as string | null) ?? null,
+    letterDraftBody: (r.letter_draft_body as string | null) ?? null,
+    letterDraftUpdatedAt: (r.letter_draft_updated_at as string | null) ?? null,
     adminInstructions: (r.admin_instructions as string | null) ?? null,
     adminInstructionsUpdatedAt: (r.admin_instructions_updated_at as string | null) ?? null,
     welcomeCode: (r.welcome_code as string | null) ?? null,
@@ -683,6 +695,34 @@ export async function saveCustomerPostalAddress(
     return rows.length > 0;
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "saveCustomerPostalAddress" });
+    return false;
+  }
+}
+
+/**
+ * Persist the editable physical-letter draft (migration 0023) — subject + body
+ * the operator reviews before "Brief senden". Best-effort; returns false when the
+ * customer doesn't exist or the write failed. Never throws.
+ */
+export async function saveCustomerLetterDraft(
+  customerId: number,
+  subject: string,
+  body: string,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = await sql`
+      UPDATE customers
+         SET letter_draft_subject = ${subject},
+             letter_draft_body = ${body},
+             letter_draft_updated_at = now()
+       WHERE id = ${customerId}
+      RETURNING id
+    `;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "saveCustomerLetterDraft" });
     return false;
   }
 }

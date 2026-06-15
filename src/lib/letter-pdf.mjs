@@ -1,31 +1,38 @@
-// Letter → PDF, dependency-free.
+// Letter → PDF, dependency-free, laid out as a proper German business letter.
 //
 // Pingen reads the recipient address FROM THE PDF at the configured
-// `address_position` (we use 'left'), so the address block MUST sit in the
-// standard DIN-5008 left address window. This builds a minimal, valid A4 PDF
-// (base-14 Helvetica, WinAnsi/Latin-1 so German umlauts/ß render) with the
-// address placed exactly there and the personalised body flowed below it,
-// paginating onto further pages when long.
+// `address_position` (we use 'left'), so the address block sits in the standard
+// DIN-5008 left address window. Above it is a simple letterhead ("motion sports"
+// + a rule); below it a date line, a bold subject, then the personalised body
+// flowed and paginated. Two base-14 fonts are used (Helvetica + Helvetica-Bold,
+// no embedding needed), WinAnsi/Latin-1 so German umlauts/ß render.
 //
-// We hand-write the PDF (no puppeteer/headless Chrome on Vercel, no PDF dep):
-// the layout is fixed and simple, which keeps it deterministic and unit-testable
-// (wrapText/escape are pure). The same personalised content that drives the
-// email draft (lib/marketing-draft) is the body here — see lib/physical-mail.
+// We hand-write the PDF (no headless browser / PDF dep on Vercel): the layout is
+// fixed and simple, which keeps it deterministic and unit-testable. The body is
+// the letter-optimised content from lib/marketing-draft.generateCustomerLetterDraft.
 
 // A4 in PostScript points (1pt = 1/72").
 const PAGE_W = 595.28;
 const PAGE_H = 841.89;
 
+const MARGIN_X = 57; // ≈ 20mm left/right margin
+
+// Letterhead.
+const BRAND_Y = PAGE_H - 64;
+const RULE_Y = BRAND_Y - 10;
+
 // DIN-5008 left address field (≈ window-envelope position): ~20mm from the left,
 // the address top ~45mm from the page top. Pingen 'left' reads it from here.
 export const ADDRESS_LEFT_X = 57; // ≈ 20mm
-export const ADDRESS_TOP_Y = PAGE_H - 128; // ≈ 45mm from top
+export const ADDRESS_TOP_Y = PAGE_H - 150; // ≈ 53mm from top (below the letterhead)
 const ADDRESS_FONT = 11;
 const ADDRESS_LEADING = 14;
 
-// Body text frame.
-const BODY_LEFT_X = 57; // align under the address
-const BODY_TOP_Y_PAGE1 = PAGE_H - 300; // below the address block
+// Date + subject + body frame.
+const DATE_Y = PAGE_H - 300;
+const SUBJECT_Y = PAGE_H - 330;
+const BODY_LEFT_X = 57;
+const BODY_TOP_Y_PAGE1 = PAGE_H - 360; // below the subject
 const BODY_TOP_Y_PAGEN = PAGE_H - 70; // full height on continuation pages
 const BODY_BOTTOM_Y = 70;
 const BODY_FONT = 11;
@@ -66,7 +73,6 @@ export function wrapText(text, maxChars = BODY_MAX_CHARS) {
     let current = "";
     for (const word of para.split(/\s+/)) {
       let w = word;
-      // Hard-split an over-long single token.
       while (w.length > maxChars) {
         if (current) {
           lines.push(current);
@@ -87,26 +93,30 @@ export function wrapText(text, maxChars = BODY_MAX_CHARS) {
   return lines;
 }
 
-/** The recipient address as ordered display lines (no part-filling — callers
- *  pass a validated, complete address; optional company/line2/country handled). */
+/** The recipient address as ordered display lines (caller passes a validated,
+ *  complete address; optional company/line2/country handled). */
 export function addressLines(recipient) {
   const lines = [recipient.name];
   if (recipient.company) lines.push(recipient.company);
   lines.push(recipient.addressLine1);
   if (recipient.addressLine2) lines.push(recipient.addressLine2);
   lines.push(`${recipient.postalCode} ${recipient.city}`.trim());
-  // Domestic (DE) letters omit the country line; foreign mail names it.
   if (recipient.country && recipient.country.toUpperCase() !== "DE") {
     lines.push(recipient.country.toUpperCase());
   }
   return lines;
 }
 
-/** One PDF text line at an absolute position (own BT/ET so positioning is
- *  independent and trivial to reason about). */
-function textOp(x, y, size, str) {
+/** One PDF text line at an absolute position in the given font (F1=Helvetica,
+ *  F2=Helvetica-Bold). Own BT/ET so positioning is trivial to reason about. */
+function textOp(font, x, y, size, str) {
   const safe = escapePdfText(toLatin1Safe(str));
-  return `BT /F1 ${size} Tf 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${safe}) Tj ET\n`;
+  return `BT /${font} ${size} Tf 1 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)} Tm (${safe}) Tj ET\n`;
+}
+
+/** A horizontal rule (stroked line) at y from x1→x2 with the given width. */
+function ruleOp(x1, x2, y, width) {
+  return `${width} w ${x1.toFixed(2)} ${y.toFixed(2)} m ${x2.toFixed(2)} ${y.toFixed(2)} l S\n`;
 }
 
 /**
@@ -114,45 +124,54 @@ function textOp(x, y, size, str) {
  * @param {{ recipient: { name: string, company?: string|null,
  *           addressLine1: string, addressLine2?: string|null,
  *           postalCode: string, city: string, country: string },
- *           senderLine?: string|null, subject?: string|null, body: string }} input
+ *           senderLine?: string|null, subject?: string|null, body: string,
+ *           date?: string|null }} input
  * @returns {Buffer}
  */
 export function buildLetterPdf(input) {
-  const { recipient, senderLine, subject, body } = input;
+  const { recipient, senderLine, subject, body, date } = input;
 
-  // ── Lay out content into per-page content streams ────────────────────────
   /** @type {string[]} */
   const pages = [];
   let content = "";
 
-  // Optional small sender line just above the address window.
-  if (senderLine) {
-    content += textOp(ADDRESS_LEFT_X, ADDRESS_TOP_Y + ADDRESS_LEADING + 6, 8, senderLine);
-  }
-  // Recipient address — the block Pingen reads.
+  // ── Letterhead ───────────────────────────────────────────────────────────
+  content += textOp("F2", MARGIN_X, BRAND_Y, 20, "motion sports");
+  content += ruleOp(MARGIN_X, PAGE_W - MARGIN_X, RULE_Y, 0.8);
+
+  // ── Sender return line (small, just above the address window) ─────────────
+  content += textOp(
+    "F1",
+    ADDRESS_LEFT_X,
+    ADDRESS_TOP_Y + ADDRESS_LEADING + 8,
+    7,
+    senderLine || "motion sports"
+  );
+
+  // ── Recipient address — the block Pingen reads ────────────────────────────
   let ay = ADDRESS_TOP_Y;
   for (const line of addressLines(recipient)) {
-    content += textOp(ADDRESS_LEFT_X, ay, ADDRESS_FONT, line);
+    content += textOp("F1", ADDRESS_LEFT_X, ay, ADDRESS_FONT, line);
     ay -= ADDRESS_LEADING;
   }
 
-  // Body lines (subject as a bold-ish first line — we only have Helvetica, so
-  // it's just emphasised by spacing).
-  const bodyLines = [];
-  if (subject && subject.trim()) {
-    bodyLines.push(subject.trim());
-    bodyLines.push("");
-  }
-  bodyLines.push(...wrapText(body));
+  // ── Date (left-aligned) ───────────────────────────────────────────────────
+  content += textOp("F1", BODY_LEFT_X, DATE_Y, 10, date || new Date().toLocaleDateString("de-DE"));
 
+  // ── Subject (bold) ────────────────────────────────────────────────────────
+  if (subject && subject.trim()) {
+    content += textOp("F2", BODY_LEFT_X, SUBJECT_Y, 12, subject.trim());
+  }
+
+  // ── Body (wrapped, paginated) ─────────────────────────────────────────────
   let y = BODY_TOP_Y_PAGE1;
-  for (const line of bodyLines) {
+  for (const line of wrapText(body)) {
     if (y < BODY_BOTTOM_Y) {
       pages.push(content);
       content = "";
       y = BODY_TOP_Y_PAGEN;
     }
-    if (line !== "") content += textOp(BODY_LEFT_X, y, BODY_FONT, line);
+    if (line !== "") content += textOp("F1", BODY_LEFT_X, y, BODY_FONT, line);
     y -= BODY_LEADING;
   }
   pages.push(content);
@@ -162,9 +181,10 @@ export function buildLetterPdf(input) {
 
 // ── Low-level PDF assembly: objects + a byte-accurate xref table ────────────
 function assemblePdf(pageStreams) {
-  // Object plan: 1 catalog, 2 pages, 3 font, then per page a Page + a Contents.
+  // Object plan: 1 catalog, 2 pages, 3 font F1, 4 font F2, then per page a Page
+  // + a Contents.
   const pageCount = pageStreams.length;
-  const firstPageObj = 4;
+  const firstPageObj = 5;
   const pageObjNums = [];
   for (let i = 0; i < pageCount; i++) pageObjNums.push(firstPageObj + i * 2);
   const kids = pageObjNums.map((n) => `${n} 0 R`).join(" ");
@@ -174,6 +194,7 @@ function assemblePdf(pageStreams) {
   objects[1] = `<< /Type /Catalog /Pages 2 0 R >>`;
   objects[2] = `<< /Type /Pages /Kids [${kids}] /Count ${pageCount} >>`;
   objects[3] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>`;
+  objects[4] = `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>`;
 
   for (let i = 0; i < pageCount; i++) {
     const pageNum = pageObjNums[i];
@@ -182,11 +203,11 @@ function assemblePdf(pageStreams) {
     const length = Buffer.byteLength(stream, "latin1");
     objects[pageNum] =
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] ` +
-      `/Resources << /Font << /F1 3 0 R >> >> /Contents ${contentNum} 0 R >>`;
+      `/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentNum} 0 R >>`;
     objects[contentNum] = `<< /Length ${length} >>\nstream\n${stream}endstream`;
   }
 
-  const totalObjects = 3 + pageCount * 2;
+  const totalObjects = 4 + pageCount * 2;
 
   // Serialise, tracking each object's byte offset for the xref.
   const header = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
