@@ -20,7 +20,7 @@ import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
 
 // Same model the transactional summary uses — one voice across the backend.
-const DRAFT_MODEL = "claude-sonnet-4-5-20250929";
+const DRAFT_MODEL = "claude-sonnet-4-6";
 
 const draftSchema = z.object({
   subject: z.string().describe("Kurze, persönliche Betreffzeile auf Deutsch (max ~60 Zeichen)."),

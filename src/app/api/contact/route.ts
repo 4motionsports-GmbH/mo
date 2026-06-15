@@ -1,6 +1,6 @@
 import { Resend } from "resend";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
-import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { checkRateLimit, checkRateLimitKeyed, clientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 
 export const maxDuration = 10;
@@ -101,6 +101,11 @@ export async function POST(req: Request) {
   try {
     const rl = await checkRateLimit(req, "chat");
     if (!rl.ok) return rateLimitResponse(rl.retryAfter, headers);
+
+    // Per-IP cap (the chat bucket above is keyed by a rotatable session header):
+    // the contact form lands in our own inbox, so cap inbox spam per source IP.
+    const ipRl = await checkRateLimitKeyed("contact-ip", `ip:${clientIp(req)}`);
+    if (!ipRl.ok) return rateLimitResponse(ipRl.retryAfter, headers);
 
     let payload: Partial<ContactPayload>;
     try {

@@ -38,7 +38,7 @@ import { reportError } from "./observability";
 import { recordAiUsage, type AiCallSite } from "./ai-usage-store";
 import type { Product } from "./types";
 
-const SUMMARY_MODEL = "claude-sonnet-4-5-20250929";
+const SUMMARY_MODEL = "claude-sonnet-4-6";
 
 /** Keep only the human-readable turns (drop tool-call bookkeeping rows). */
 function readableTurns(messages: TranscriptMessage[]): TranscriptMessage[] {

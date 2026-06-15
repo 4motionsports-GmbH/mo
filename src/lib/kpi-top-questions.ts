@@ -22,7 +22,7 @@ import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
 
 // Same model family as the other backend LLM calls — one voice across the app.
-const SUMMARY_MODEL = "claude-sonnet-4-5-20250929";
+const SUMMARY_MODEL = "claude-sonnet-4-6";
 
 // How many recent user messages to feed the model. Bounded so a single run stays
 // cheap (a few cents) and well under the context limit.
