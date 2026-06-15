@@ -54,19 +54,9 @@ export function isPingenConfigured(): boolean {
   );
 }
 
-/** The selected environment, for logs / the admin banner. */
-export function pingenEnvironment(): "staging" | "production" {
-  return staging() ? "staging" : "production";
-}
-
 // ── OAuth token cache ─────────────────────────────────────────────────────────
 
 let cachedToken: { token: string | null; expiresAtMs: number } | null = null;
-
-/** Reset the cached token — for tests / after a credential change. */
-export function _resetPingenToken(): void {
-  cachedToken = null;
-}
 
 /**
  * A valid bearer token (client_credentials grant), cached and refreshed early.

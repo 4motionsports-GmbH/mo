@@ -217,6 +217,9 @@ export async function loadConversationForSummary(
         FROM messages
        WHERE conversation_id = ${conv.id}
        ORDER BY created_at ASC, id ASC
+       -- Safety cap: a real consultation is short; bound a pathological thread
+       -- so a single conversation can never return unbounded rows to the model.
+       LIMIT 500
     `;
 
     const messages: TranscriptMessage[] = msgRows.map((r) => ({
