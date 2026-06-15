@@ -7,8 +7,6 @@
 // throwing into the send path.
 
 import { getSql, type Sql } from "./db";
-import { validateFullAddress } from "./physical-address.mjs";
-import type { Customer } from "./customer-store";
 import { reportError } from "./observability";
 
 export type PhysicalLetterStatus =
@@ -31,19 +29,6 @@ export interface RecipientAddress {
   postalCode: string;
   city: string;
   country: string;
-}
-
-/**
- * Read the LAWFUL full postal address held for a customer (customers.postal_address,
- * written only by a consented-capture / purchase-derived flow — NULL by default).
- * Returns the validated, complete recipient or null when none / incomplete is
- * held. NEVER part-fills — an incomplete stored address resolves to null.
- */
-export function loadLawfulPostalAddress(customer: Pick<Customer, "id"> & {
-  postalAddress?: Record<string, unknown> | null;
-}): RecipientAddress | null {
-  const validated = validateFullAddress(customer.postalAddress ?? null);
-  return validated.ok ? validated.address : null;
 }
 
 export interface CreatePhysicalLetterInput {
@@ -274,6 +259,7 @@ export async function listCustomerLetters(
         FROM physical_letters
        WHERE customer_id = ${customerId}
        ORDER BY created_at DESC, id DESC
+       LIMIT 500
     `) as Array<Record<string, unknown>>;
     return rows.map((r) => ({
       id: Number(r.id),

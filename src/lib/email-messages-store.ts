@@ -303,9 +303,12 @@ export async function listCustomerMessages(
              (body_text IS NOT NULL OR body_html IS NOT NULL) AS has_body
         FROM email_messages
        WHERE customer_id = ${customerId}
-       ORDER BY occurred_at ASC, id ASC
+       -- Most-recent 500 (safety cap), re-sorted ASC below for the thread view —
+       -- so a customer with a huge mailbox still shows the latest correspondence.
+       ORDER BY occurred_at DESC, id DESC
+       LIMIT 500
     `) as Array<Record<string, unknown>>;
-    return rows.map(mapListRow);
+    return rows.map(mapListRow).reverse();
   } catch (err) {
     reportError(err, { route: "lib/email-messages-store", phase: "listCustomerMessages" });
     return [];
@@ -445,6 +448,7 @@ export async function listUnmatchedInbound(
        WHERE customer_id IS NULL
          AND direction = 'received'
        ORDER BY occurred_at DESC, id DESC
+       LIMIT 500
     `) as Array<Record<string, unknown>>;
     return rows.map((r) => {
       const attachments = Array.isArray(r.attachments) ? (r.attachments as unknown[]) : [];

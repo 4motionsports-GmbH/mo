@@ -157,6 +157,7 @@ export async function getCustomerConversationTranscript(
         FROM messages
        WHERE conversation_id = ${conversationId}
        ORDER BY created_at ASC, id ASC
+       LIMIT 500
     `) as Array<Record<string, unknown>>;
 
     const messages: TranscriptMessage[] = [];
@@ -227,6 +228,7 @@ export async function loadCustomerConversationForSummary(
         FROM messages
        WHERE conversation_id = ${Number(conv.id)}
        ORDER BY created_at ASC, id ASC
+       LIMIT 500
     `) as Array<Record<string, unknown>>;
 
     const messages: TranscriptMessage[] = msgRows.map((r) => ({
