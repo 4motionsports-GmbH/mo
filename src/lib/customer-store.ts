@@ -72,6 +72,8 @@ export interface Customer {
    */
   postalAddress: Record<string, unknown> | null;
   postalAddressSource: string | null;
+  /** When we last attempted a background Shopify address capture (throttle). */
+  postalAddressCheckedAt: string | null;
   /**
    * The SEPARATE, editable physical-letter draft (migration 0023) — distinct
    * from the email draft (marketing_sends). One open draft per customer; written
@@ -129,6 +131,7 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     shopifyAccountSummaryUpdatedAt: (r.shopify_account_summary_updated_at as string | null) ?? null,
     postalAddress: (r.postal_address as Record<string, unknown> | null) ?? null,
     postalAddressSource: (r.postal_address_source as string | null) ?? null,
+    postalAddressCheckedAt: (r.postal_address_checked_at as string | null) ?? null,
     letterDraftSubject: (r.letter_draft_subject as string | null) ?? null,
     letterDraftBody: (r.letter_draft_body as string | null) ?? null,
     letterDraftUpdatedAt: (r.letter_draft_updated_at as string | null) ?? null,
@@ -696,6 +699,45 @@ export async function saveCustomerPostalAddress(
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "saveCustomerPostalAddress" });
     return false;
+  }
+}
+
+/** Customers WITHOUT a stored postal address that haven't been checked since
+ *  `staleBeforeIso` — the candidates for background address auto-capture. Newest-
+ *  seen first (most likely to matter). Returns [] on no DB / error. */
+export async function listCustomersMissingAddress(
+  limit: number,
+  staleBeforeIso: string,
+  sql: Sql | null = getSql()
+): Promise<Array<{ id: number; email: string }>> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT id, email
+        FROM customers
+       WHERE postal_address IS NULL
+         AND (postal_address_checked_at IS NULL OR postal_address_checked_at < ${staleBeforeIso})
+       ORDER BY last_seen_at DESC, id DESC
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ id: Number(r.id), email: String(r.email) }));
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "listCustomersMissingAddress" });
+    return [];
+  }
+}
+
+/** Stamp that we attempted an address capture for this customer (throttle), so a
+ *  customer with genuinely no Shopify address isn't re-queried every page load. */
+export async function markPostalAddressChecked(
+  customerId: number,
+  sql: Sql | null = getSql()
+): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`UPDATE customers SET postal_address_checked_at = now() WHERE id = ${customerId}`;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "markPostalAddressChecked" });
   }
 }
 
