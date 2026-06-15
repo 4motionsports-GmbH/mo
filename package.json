@@ -11,6 +11,7 @@
     "convert-catalog": "node scripts/convert-catalog.mjs",
     "index": "node scripts/build-embeddings.mjs",
     "verify:shopify": "node --env-file=.env scripts/verify-shopify-auth.mjs",
+    "verify:pingen": "node --env-file=.env scripts/verify-pingen.mjs",
     "verify:customer-account": "node --env-file=.env scripts/verify-customer-account.mjs",
     "db:migrate": "node --env-file=.env scripts/migrate.mjs",
     "db:reset": "node --env-file=.env scripts/reset-test-data.mjs"
