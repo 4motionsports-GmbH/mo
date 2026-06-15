@@ -16,7 +16,9 @@
 //   - KPIs: aggregate analytics + recommendation→purchase loop (KpiTab).
 
 import { cookies } from "next/headers";
+import { after } from "next/server";
 import { redirect } from "next/navigation";
+import { autoCaptureMissingAddresses } from "@/lib/address-capture";
 import { ADMIN_COOKIE_NAME } from "@/lib/admin-auth";
 import { isDbConfigured } from "@/lib/db";
 import {
@@ -229,6 +231,14 @@ function BasisHeading({ label, sub }: { label: string; sub: string }) {
 // exists only because an email was captured with consent; anonymous sessions
 // never appear here.
 async function KundenTab({ dbReady }: { dbReady: boolean }) {
+  // Auto-capture missing postal addresses from Shopify in the BACKGROUND (after
+  // the response), so the operator never has to press "Käufe aktualisieren" per
+  // customer. Bounded + throttled (lib/address-capture); captured addresses show
+  // on the next load. Best-effort — never blocks or breaks the render.
+  if (dbReady) {
+    after(() => autoCaptureMissingAddresses({ limit: 12 }));
+  }
+
   const customers = dbReady ? await listCustomersWithSessions() : [];
   const returning = customers.filter((c) => c.sessions.length > 1).length;
 
