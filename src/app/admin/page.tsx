@@ -314,6 +314,8 @@ async function KundenTab({ dbReady }: { dbReady: boolean }) {
       physicalEligible: physical.eligible,
       physicalReason: physical.reason,
       physicalLetters: await listCustomerLetters(c.id),
+      letterDraftSubject: c.letterDraftSubject,
+      letterDraftBody: c.letterDraftBody,
     };
     })
   );

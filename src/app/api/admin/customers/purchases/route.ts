@@ -48,44 +48,24 @@ export async function POST(req: Request) {
       return adminJsonError("not_found", "Customer not found.", 404);
     }
 
-    // Tier 3 (signed-in): pull from the Customer Account API with the customer's
-    // own token — this REPLACES the email-keyed Admin fetch for tier-3 and also
-    // refreshes the cached name + address context. Distinguish the failure modes
-    // so the admin sees an ACTIONABLE reason instead of an opaque 502.
+    // Tier 3 (signed-in) is PREFERRED but NOT required: when the customer has a
+    // live Customer-Account token we use it (richer + consented, and it needs no
+    // Protected-Customer-Data grant). But operator-driven refresh must ALSO work
+    // for a customer who logged in via the Shopify storefront, whose token
+    // expired, or who never used the chat at all — so on any miss we FALL BACK to
+    // the operator's Admin API by email below instead of failing.
     if (customer.shopifyCustomerId) {
-      // (a) No usable server-held token ⇒ the customer must sign in again
-      // through the chat widget's "Anmelden" (our customer-account OAuth) — NOT
-      // by logging into the Shopify storefront, which never gives us a token.
       const token = await getValidAccessToken(customerId);
-      if (!token) {
-        return adminJsonError(
-          "reauth_required",
-          "Kein gültiges Kundenkonto-Token hinterlegt. Der Kunde muss sich erneut über den " +
-            "Chat („Anmelden“) im Customer-Account anmelden — ein Login direkt bei Shopify " +
-            "reicht nicht, wir brauchen das über unseren Anmeldefluss ausgestellte Token.",
-          409
-        );
+      if (token) {
+        const data = await refreshSignedInCustomerCache(customerId);
+        if (data && data.orderHistory) {
+          return adminJson({ purchaseSummary: data.orderHistory });
+        }
+        // Token present but the CA read came back empty (unreachable / permission /
+        // schema) → don't fail; fall through to the Admin API by email.
       }
-      const data = await refreshSignedInCustomerCache(customerId);
-      if (!data || !data.identity) {
-        // (b) Token present but the Customer Account API was unreachable.
-        return adminJsonError(
-          "upstream_unavailable",
-          "Customer-Account-API nicht erreichbar (Token vorhanden, aber kein Ergebnis).",
-          502
-        );
-      }
-      if (!data.orderHistory) {
-        // (c) Signed in + reachable, but the order/data read came back empty —
-        // typically a Customer-Account-API permission/schema issue, not a login one.
-        return adminJsonError(
-          "upstream_unavailable",
-          "Angemeldet, aber die Customer-Account-Bestelldaten konnten nicht gelesen werden " +
-            "(Berechtigung/Schema). Die Adresse wird separat versucht.",
-          502
-        );
-      }
-      return adminJson({ purchaseSummary: data.orderHistory });
+      // No token (e.g. signed in via Shopify storefront, not our widget) → fall
+      // through to the Admin API by email.
     }
 
     if (!isShopifyConfigured()) {
