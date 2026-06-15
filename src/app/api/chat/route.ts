@@ -46,7 +46,7 @@ const MAX_MESSAGES_PER_CONVERSATION = 40;
 
 // The chat model id — referenced both in the streamText call and when recording
 // token usage for the cost KPI, so the two can never drift apart.
-const CHAT_MODEL = "claude-sonnet-4-5-20250929";
+const CHAT_MODEL = "claude-sonnet-4-6";
 
 // Step budget of the agentic loop (was `stopWhen: stepCountIs(6)`). The
 // custom stop condition below grants ONE extra step beyond this only when the

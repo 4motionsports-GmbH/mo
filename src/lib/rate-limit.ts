@@ -8,7 +8,12 @@ export type RateLimitBucket =
   | "kpi"
   | "tts"
   | "tts-stream"
-  | "feedback";
+  | "feedback"
+  // Keyed by the RECIPIENT email (not the session) — caps how many capture
+  // sends a single address can receive, see /api/capture-email.
+  | "capture-recipient"
+  // Keyed by the client IP — caps contact-form inbox spam, see /api/contact.
+  | "contact-ip";
 
 // Per-bucket sliding-window config: max requests over the given Upstash
 // duration string. Each bucket gets its own window so we can mix short (chat,
@@ -43,6 +48,17 @@ const BUCKET_CONFIG: Record<RateLimitBucket, { max: number; window: `${number} $
   // flooding the table, complementing the per-message length cap in
   // feedback-validation.mjs.
   feedback: { max: 5, window: "300 s" },
+  // Per-RECIPIENT cap on the value-triggered capture send: at most a few
+  // confirmation/summary emails to the SAME address per hour, keyed by the
+  // recipient email rather than the client session — so rotating the
+  // (client-supplied) session header can't turn /api/capture-email into an
+  // email-bombing relay against a chosen victim. Generous for a real "capture,
+  // fix a typo, re-capture" while hard-capping abuse.
+  "capture-recipient": { max: 3, window: "60 m" },
+  // Per-IP cap on the contact form. Its destination is our own inbox, so abuse
+  // is inbox spam; the form is a deliberate, low-frequency human action, so a
+  // tight per-source-IP bucket complements the session bucket it already uses.
+  "contact-ip": { max: 8, window: "60 m" },
 };
 
 const cached: Partial<Record<RateLimitBucket, Ratelimit>> = {};
@@ -85,12 +101,16 @@ function getLimiter(bucket: RateLimitBucket): Ratelimit | null {
   return limiter;
 }
 
+/** Best-effort client IP for IP-keyed limits (the platform sets x-forwarded-for). */
+export function clientIp(req: Request): string {
+  const fwd = req.headers.get("x-forwarded-for");
+  return fwd?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
+}
+
 function clientKey(req: Request): string {
   const sid = req.headers.get("x-ms-session");
   if (sid && sid.trim().length > 0) return `sid:${sid.trim().slice(0, 128)}`;
-  const fwd = req.headers.get("x-forwarded-for");
-  const ip = fwd?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown";
-  return `ip:${ip}`;
+  return `ip:${clientIp(req)}`;
 }
 
 export type RateLimitResult =
@@ -105,6 +125,23 @@ export async function checkRateLimit(
   if (!limiter) return { ok: true };
   const key = clientKey(req);
   const { success, reset } = await limiter.limit(key);
+  if (success) return { ok: true };
+  const retryAfter = Math.max(1, Math.ceil((reset - Date.now()) / 1000));
+  return { ok: false, retryAfter };
+}
+
+/**
+ * Rate-limit against an EXPLICIT key (e.g. a recipient email or a client IP)
+ * instead of the per-session/IP key checkRateLimit derives. Used to cap abuse
+ * vectors a client could otherwise sidestep by rotating its session header.
+ */
+export async function checkRateLimitKeyed(
+  bucket: RateLimitBucket,
+  key: string
+): Promise<RateLimitResult> {
+  const limiter = getLimiter(bucket);
+  if (!limiter) return { ok: true };
+  const { success, reset } = await limiter.limit(key.slice(0, 256));
   if (success) return { ok: true };
   const retryAfter = Math.max(1, Math.ceil((reset - Date.now()) / 1000));
   return { ok: false, retryAfter };

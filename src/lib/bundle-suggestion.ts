@@ -30,7 +30,7 @@ import {
 
 // Same model the marketing draft uses — one voice/quality bar across the
 // dashboard's AI features.
-const SUGGEST_MODEL = "claude-sonnet-4-5-20250929";
+const SUGGEST_MODEL = "claude-sonnet-4-6";
 
 // Bound the prompt: enough candidates for a good pick without an unwieldy list.
 const MAX_CANDIDATES_IN_PROMPT = 60;

@@ -20,7 +20,7 @@
 // failing is reported per-channel without losing the (successful) capture.
 
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
-import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { checkRateLimit, checkRateLimitKeyed, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { validateCaptureRequest } from "@/lib/capture-validation.mjs";
 import { resolveConsentCopyVersion } from "@/lib/consent-copy-version.mjs";
@@ -110,6 +110,16 @@ export async function POST(req: Request) {
     if (!validation.ok) {
       return errorResponse(validation.code, validation.message, 400, headers);
     }
+
+    // Per-recipient abuse cap: the session bucket above is keyed by a client-
+    // supplied header an attacker can rotate, so additionally cap how many sends
+    // a single RECIPIENT address can receive (keyed by the email, lower-cased).
+    // Stops this endpoint being used as an email-bombing relay against a victim.
+    const recipientRl = await checkRateLimitKeyed(
+      "capture-recipient",
+      `email:${email.toLowerCase()}`
+    );
+    if (!recipientRl.ok) return rateLimitResponse(recipientRl.retryAfter, headers);
 
     // Audit-trail version stamp: attest the served copy version only when the
     // echoed consentTextShown is byte-identical to the canonical string the
