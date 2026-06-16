@@ -8,6 +8,7 @@ import {
   isValidDiscountPercent,
   parseDiscountPercent,
   clampDiscountPercent,
+  detectDiscountTextMismatch,
 } from "./discount-validation.mjs";
 
 test("bounds: default 0, range 0–50", () => {
@@ -66,4 +67,57 @@ test("clampDiscountPercent rounds and clamps into range", () => {
   assert.equal(clampDiscountPercent(75), 50);
   assert.equal(clampDiscountPercent(4.6), 5);
   assert.equal(clampDiscountPercent(NaN), DEFAULT_DISCOUNT_PERCENT);
+});
+
+test("detectDiscountTextMismatch: matching depth in prose is NOT a mismatch", () => {
+  for (const body of [
+    "Mit deinem Code bekommst du 10% auf deine Auswahl.",
+    "Du sparst 10 % auf alles.", // spaced
+    "Es sind ganze 10 Prozent Rabatt.", // spelled out
+    "Dein 10%-Code gehört nur dir.",
+    "Du sparst 10 % (mit geschütztem Leerzeichen).", // NBSP before %
+  ]) {
+    assert.equal(detectDiscountTextMismatch(10, body).mismatch, false, body);
+  }
+});
+
+test("detectDiscountTextMismatch: a different in-range percent IS a mismatch", () => {
+  assert.equal(detectDiscountTextMismatch(10, "Du sparst 20 % auf alles.").mismatch, true);
+  assert.equal(detectDiscountTextMismatch(15, "Nutze deine 5 % Ersparnis.").mismatch, true);
+  assert.equal(detectDiscountTextMismatch(10, "10 statt — jetzt 25%!").mismatch, true);
+});
+
+test("detectDiscountTextMismatch: rhetorical out-of-range percentages are ignored", () => {
+  // "100 %" is not a plausible discount depth → must never block a send.
+  assert.equal(detectDiscountTextMismatch(10, "Sei zu 100 % zufrieden!").mismatch, false);
+  // The correct depth present alongside a rhetorical 100 % is fine.
+  assert.equal(
+    detectDiscountTextMismatch(10, "10 % Rabatt und 100 % Zufriedenheit.").mismatch,
+    false
+  );
+  assert.equal(detectDiscountTextMismatch(10, "Spare 200% deiner Zeit.").mismatch, false);
+});
+
+test("detectDiscountTextMismatch: prose with no percentage at all is allowed", () => {
+  // Discount conveyed only via the deterministic code line → don't block.
+  assert.equal(
+    detectDiscountTextMismatch(10, "Dein persönlicher Code liegt im Warenkorb bereit.").mismatch,
+    false
+  );
+  assert.equal(detectDiscountTextMismatch(10, "").mismatch, false);
+});
+
+test("detectDiscountTextMismatch: digit-boundary safe (15 % is 15, not 5)", () => {
+  // depth 5, prose says 15 % → mismatch; the "5" inside "15" must not match.
+  const r = detectDiscountTextMismatch(5, "Du sparst 15 %.");
+  assert.equal(r.mismatch, true);
+  assert.deepEqual(r.found, [15]);
+  // depth 50, prose "50 %" matches; the trailing 0 must not break boundary.
+  assert.equal(detectDiscountTextMismatch(50, "Volle 50% Nachlass.").mismatch, false);
+});
+
+test("detectDiscountTextMismatch: 0 / invalid depth never blocks", () => {
+  assert.equal(detectDiscountTextMismatch(0, "Egal welcher 20 % Text.").mismatch, false);
+  assert.equal(detectDiscountTextMismatch(NaN, "20 %").mismatch, false);
+  assert.equal(detectDiscountTextMismatch(10, undefined).mismatch, false);
 });
