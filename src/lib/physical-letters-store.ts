@@ -8,6 +8,7 @@
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
+import { parseIntEnv } from "./env-num";
 
 export type PhysicalLetterStatus =
   | "pending"
@@ -72,9 +73,7 @@ export async function createPhysicalLetter(
 /** Per-letter postage in cents when Pingen hasn't reported a price (staging, or
  *  not-yet-known). Configurable; defaults to 106 (≈ €1.06). */
 export function defaultLetterCostCents(): number {
-  const raw = process.env.PINGEN_LETTER_COST_CENTS;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n >= 0 ? n : 106;
+  return parseIntEnv("PINGEN_LETTER_COST_CENTS", 106, 0);
 }
 
 export interface PhysicalLetterStats {

@@ -3,18 +3,13 @@
 // external assets — just a small branded page with a heading and a line of
 // copy. German strings come from consent-copy.ts (lawyer-approved).
 
+import { escapeHtml } from "./html-escape";
+
 export interface ResultPageOptions {
   status: number;
   heading: string;
   body: string;
   tone: "success" | "error";
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }
 
 export function renderResultPage(opts: ResultPageOptions): Response {

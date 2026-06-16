@@ -17,6 +17,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getSql, type Sql } from "./db";
 import { isValidEmail } from "./capture-validation.mjs";
+import { parseIntEnv } from "./env-num";
 
 export type MarketingDoiStatus = "none" | "pending" | "confirmed";
 
@@ -36,9 +37,7 @@ export function generateDoiToken(): string {
 }
 
 function doiExpiryDays(): number {
-  const raw = process.env.MARKETING_DOI_EXPIRY_DAYS;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 7;
+  return parseIntEnv("MARKETING_DOI_EXPIRY_DAYS", 7);
 }
 
 // ---------------------------------------------------------------------------

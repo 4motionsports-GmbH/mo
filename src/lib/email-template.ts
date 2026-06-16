@@ -48,14 +48,8 @@ export function emailLogoUrl(): string {
   return process.env.EMAIL_LOGO_URL || DEFAULT_LOGO_URL;
 }
 
-export function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-/** Escape a value used inside a double-quoted HTML attribute (e.g. href). */
-export function escapeAttr(s: string): string {
-  return escapeHtml(s).replace(/"/g, "&quot;");
-}
+import { escapeHtml, escapeAttr } from "./html-escape";
+export { escapeHtml, escapeAttr };
 
 export interface EmailCta {
   label: string;

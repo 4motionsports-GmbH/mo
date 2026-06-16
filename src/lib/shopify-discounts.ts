@@ -36,6 +36,7 @@
 
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { reportError } from "./observability";
+import { parseIntEnv } from "./env-num";
 
 // The admin chooses the discount depth as a whole-number percent (DEFAULT 0,
 // range 0–50). The bounds + validation live in lib/discount-validation.mjs,
@@ -120,9 +121,7 @@ export interface CreatedDiscount {
 // The email must state both the validity period and the concrete end date —
 // see marketing-draft.ts (prompt) and marketing-email.ts (deterministic line).
 function discountExpiryDays(): number {
-  const raw = process.env.MARKETING_DISCOUNT_EXPIRY_DAYS;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 7;
+  return parseIntEnv("MARKETING_DISCOUNT_EXPIRY_DAYS", 7);
 }
 
 /**
