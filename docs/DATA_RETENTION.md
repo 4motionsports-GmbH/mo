@@ -126,9 +126,7 @@ log**: every email we send (a mirror-write at each send site) and every reply we
 receive (the Resend Inbound webhook `/api/inbound/resend`). Answering a customer
 who wrote to us rests on contract / legitimate interest, **independent** of
 `marketing_doi_status`. It is therefore its **own data category** and is **never
-fused** into the consent gates (`canSendMarketing` / `loadEligibleCapture`) or
-the §7(3) Bestandskunden audience — the same "never merge the bases" discipline
-as `migrations/0017`.
+fused** into the consent gates (`canSendMarketing` / `loadEligibleCapture`).
 
 Its only personal link is the nullable `customer_id` (`ON DELETE SET NULL`); a
 reply from an **unknown** address is stored with `customer_id = NULL` (the

@@ -40,8 +40,7 @@ export { CONSENT_COPY_VERSION };
  * Whether the DOI / marketing / personalisation consent copy has been legally
  * approved. Kept as a runtime-visible constant (not just a comment) so the
  * widget payload and the personalisation gate can read a single source of
- * truth. Lawyer-approved June 2026 → true. (The §7(3) Bestandskunden path has
- * its OWN gate, BESTANDSKUNDE_SENDS_APPROVED, which is separate from this.)
+ * truth. Lawyer-approved June 2026 → true.
  */
 export const CONSENT_COPY_LAWYER_APPROVED = true as const;
 

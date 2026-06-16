@@ -6,6 +6,16 @@
 **Prepared by:** engineering (code-grounded, read-only audit — no code was changed to produce this report)
 **Controller (to confirm):** motion sports — *exact legal entity, address, managing director, and DPO/Art. 27 representative to be filled in by the client.*
 
+> **⚠️ Addendum (2026-06-16) — §7(3) UWG "Bestandskunden" feature REMOVED.** After
+> this report was written, the client decided the existing-customer (§7 Abs. 3
+> UWG) marketing feature is not needed, and it was **removed entirely from the
+> codebase** (it was never live). Accordingly, all §7(3) content below is
+> **superseded**: lawful-basis row **LB-05** no longer applies, open question
+> **OQ-06** is **withdrawn**, and the §7(3) processor/data-flow mentions
+> (eligibility cache, separate opt-out list, send routes, `BESTANDSKUNDE_*` flags)
+> no longer exist. The DOI-consented marketing path (Art. 6(1)(a)) is unaffected.
+> Everything else in this report stands.
+
 ---
 
 ## 0. How to read this report
