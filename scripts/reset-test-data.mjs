@@ -19,7 +19,11 @@
 //   customer_oauth_tokens          (FK child of customers — migration 0014)
 //   customer_auth_pending          (standalone CSRF/PKCE state — migration 0014)
 //   customer_merge_conflicts       (standalone sign-in conflict audit — migration 0014)
+//   bestandskunden_suppression_list (standalone §7(3) opt-out — migration 0017)
 //   customer_session_links         (FK child of customers — migration 0019)
+//   feedback                       (standalone — migration 0020)
+//   email_messages                 (FK child of customers + marketing_sends — migration 0021)
+//   physical_letters               (FK child of customers + marketing_sends — migration 0022)
 //
 // What is NOT touched:
 //   _migrations        — schema version tracking; never touch
@@ -97,6 +101,8 @@ const DATA_TABLES = [
   // FK children first (deepest nesting first)
   "messages",              // FK → conversations
   "bundle_offers",         // FK → customers (SET NULL), marketing_sends (SET NULL) — migration 0013
+  "email_messages",        // FK → customers (SET NULL), marketing_sends (SET NULL) — migration 0021
+  "physical_letters",      // FK → customers (SET NULL), marketing_sends (SET NULL) — migration 0022
   "marketing_sends",       // FK → email_captures
   "customer_oauth_tokens", // FK → customers (CASCADE) — migration 0014
   "customer_session_links", // FK → customers (CASCADE) — migration 0019
@@ -111,6 +117,8 @@ const DATA_TABLES = [
   // Standalone tables — no FK constraints
   "customer_auth_pending",    // CSRF/PKCE state — migration 0014
   "customer_merge_conflicts", // sign-in conflict audit — migration 0014
+  "bestandskunden_suppression_list", // §7(3) opt-out — migration 0017
+  "feedback",                 // standalone — migration 0020
 ];
 
 console.log("[reset-test-data] Tables to truncate:");
