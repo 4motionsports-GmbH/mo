@@ -166,12 +166,12 @@ export const CAPTURE_FORM_PRIVACY_URL =
 /** The exact copy the widget needs to render the capture form. */
 export interface CaptureConsentCopy {
   /**
-   * Identifier of the served copy (CONSENT_COPY_VERSION, currently "v2").
-   * Stored alongside `consent_text_shown` on every capture so v1/v2 audit
-   * records stay distinguishable.
+   * Identifier of the served copy (CONSENT_COPY_VERSION, currently "v3").
+   * Stored alongside `consent_text_shown` on every capture so prior-version
+   * audit records stay distinguishable.
    */
   version: string;
-  /** (A) Transactional checkbox label (MUST render UNCHECKED — v2 decision). */
+  /** (A) Transactional checkbox label (MUST render UNCHECKED — v2+ decision). */
   transactionalLabel: string;
   /** (B) Marketing checkbox label (MUST render unchecked — see above). */
   marketingLabel: string;

@@ -42,6 +42,7 @@ import {
   formatGermanExpiryDate,
   PLACEHOLDER_DISCOUNT_CODE,
 } from "./shopify-discounts";
+import { detectDiscountTextMismatch } from "./discount-validation.mjs";
 import { buildPrefilledCartUrlForIds } from "./cart";
 import { getActiveBundleForSend } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
@@ -61,6 +62,7 @@ export type ApproveAndSendResult =
         | "not_eligible"
         | "no_unsubscribe"
         | "claim_failed"
+        | "discount_mismatch"
         | "discount_failed"
         | "email_not_configured"
         | "send_failed";
@@ -123,6 +125,30 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
     }
 
     try {
+      // GATE 3a — the percentage the customer READS comes only from the editable
+      // prose (the code + deadline ship deterministically, but the % does not).
+      // Refuse if the body clearly states a DIFFERENT discount than the chosen
+      // depth, so we never ship copy that promises e.g. 20 % while the coupon
+      // grants 10 %. This is the server-side backstop for the dashboard's
+      // regenerate-lockout; it's conservative (only a clear in-range contradiction
+      // blocks — see detectDiscountTextMismatch) so it can't false-block a send.
+      if (claimed.discountPercent > 0) {
+        const { mismatch } = detectDiscountTextMismatch(
+          claimed.discountPercent,
+          claimed.draftedText ?? ""
+        );
+        if (mismatch) {
+          await revertClaim(sendId);
+          return {
+            ok: false,
+            reason: "discount_mismatch",
+            message:
+              `Der Rabatt im E-Mail-Text stimmt nicht mit dem gewählten Rabatt von ` +
+              `${claimed.discountPercent} % überein. Bitte „↻ Neu generieren" und erneut senden.`,
+          };
+        }
+      }
+
       // GATE 3 — mint the REAL unique single-use code now (not at draft time, so
       // discarded drafts never burn a code). When a discount was selected we MUST
       // get a working code: the body already promises a personal offer, so if
