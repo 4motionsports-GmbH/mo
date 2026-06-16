@@ -4,10 +4,13 @@ The authenticated back office where a human reviews marketing-eligible contacts,
 generates a personalised draft email, edits it, and approves it — after which the
 **system** sends it (the operator never copies text into a personal mail client).
 
-It is deliberately small: a single shared admin password, three tabs
-(**Marketing**, **Kunden** and **KPIs**), and a send path that concentrates every
-legal guarantee in one place. Tabs are switched server-side via `?tab=` — no
-client router.
+It is deliberately small: a single shared admin password, four tabs
+(**Übersicht**, **Kunden**, **KPIs** and **Feedback**), and a send path that
+concentrates every legal guarantee in one place. There is no standalone
+Marketing tab — the marketing capability lives **inside the Kunden
+workspace** (a marketing filter preset, a per-customer "Marketing"
+sub-section, and a bulk-draft bar). Tabs are switched server-side via `?tab=`
+— no client router.
 
 The **Kunden** tab (`?tab=kunden`) groups by CUSTOMER (email), not by session:
 session timeline with transcripts, cached Shopify purchase history, and the
@@ -64,9 +67,10 @@ disabled, every gate denies).
 
 ---
 
-## 2. Customers / Marketing tab
+## 2. Kunden tab — marketing-eligible contacts (marketing filter preset)
 
-Server-rendered at [`/admin`](../src/app/admin/page.tsx). Data comes from
+Server-rendered at [`/admin`](../src/app/admin/page.tsx). The Kunden workspace's
+**marketing filter preset** narrows the list via
 [`listMarketingTargets()`](../src/lib/marketing-store.ts), which lists **only
 marketing-eligible** contacts:
 
@@ -100,16 +104,18 @@ For each contact it surfaces:
 ## 3. Marketing workflow
 
 All actions are `/api/admin/*` POSTs (proxy- and `guardAdminPost`-gated). Drafts
-can be generated from two places with the **same** lifecycle and send path:
-per **capture/session** on the Marketing tab (below), and per **CUSTOMER** with
-full context on the Kunden tab (§3a).
+can be generated from two places within the Kunden workspace, with the **same**
+lifecycle and send path: per **capture/session** from the marketing filter
+preset's contact list (below), and per **CUSTOMER** with full context from the
+per-customer "Marketing" sub-section (§3a).
 
-### Discount selector — chosen BEFORE generating
+### Discount input — chosen BEFORE generating
 
-Each card has a **discount selector**: **Kein Rabatt (default)**, **5 %**, **10 %**,
-**15 %**. **"Kein Rabatt" is the default**, so offering a discount is always a
-deliberate act. The admin picks the depth **before** generating, because the email
-body is written **around** the offer. The chosen depth is persisted on the
+Each card has a **discount input**: a numeric, whole-percent field with a
+**valid range of 0–50**, defaulting to **0 (no discount)**. **`0` ("Kein
+Rabatt") is the default**, so offering a discount is always a deliberate act.
+The admin picks the depth **before** generating, because the email body is
+written **around** the offer. The chosen depth is persisted on the
 `marketing_sends` row (`discount_percent`).
 
 > **No real code is minted at draft time.** Minting a unique single-use Shopify
@@ -122,7 +128,7 @@ body is written **around** the offer. The chosen depth is persisted on the
 ### Generate draft — `POST /api/admin/marketing/draft { captureId, discountPercent, regenerate? }`
 
 1. Re-check the contact is eligible (`loadEligibleCapture`).
-2. Validate `discountPercent` ∈ `{0, 5, 10, 15}`.
+2. Validate `discountPercent` is a whole number in the range `0–50`.
 3. **Idempotent**: if an open (un-sent) draft exists **and** its depth matches the
    request, return it untouched. If the depth changed (or `regenerate: true`), the
    open draft is **overwritten** so the prose and the eventual code never disagree.
@@ -190,7 +196,7 @@ specific draft on `marketing_sends.admin_instructions`, alongside
 `marketing_sends.customer_id` (migration 0010).
 
 **Same rules as the per-capture draft:** eligibility is re-checked via the
-customer's (unique-email) capture row; depth ∈ `{0, 5, 10, 15}` chosen before
+customer's (unique-email) capture row; depth a whole number in `0–50` chosen before
 generating; the preview uses the `MO-XXXX` placeholder and the projected expiry;
 the real **`MS5-` single-use code (7-day expiry, stated in the prose)** is minted
 only at **Approve & send**. The automatic one-time **welcome code**
@@ -200,7 +206,7 @@ no welcome code is ever issued here. Changing the depth **or** the instructions 
 flags a mismatch, disables Send and requires a re-generate, so the prose, the
 code depth and the audit snapshot always agree.
 
-**Edit / approve & send are the SAME endpoints** as the Marketing tab
+**Edit / approve & send are the SAME endpoints** as the per-capture draft flow
 (`/api/admin/marketing/update`, `/api/admin/marketing/send`) on the same
 `marketing_sends` row — every guarantee in §4 applies unchanged.
 

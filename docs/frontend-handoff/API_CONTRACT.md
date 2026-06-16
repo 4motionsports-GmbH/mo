@@ -653,7 +653,7 @@ Example chunk pair (the `tool-input-available` chunk, followed by the
   "output": {
     "ok": true,
     "consentCopy": {
-      "version": "v2",
+      "version": "v3",
       "transactionalLabel": "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl. Direkt-Link zur Kasse).",
       "marketingLabel": "Ja, ich möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten. Jederzeit abbestellbar.",
       "consentFooter": "Verarbeitung durch motion sports gemäß Datenschutzerklärung; Widerruf jederzeit möglich.",
@@ -1100,7 +1100,7 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   back **byte-for-byte** — the widget never composes or hard-codes this text.
   Because the form renders exactly those served strings, the audit record
   cannot diverge from what was displayed. The backend additionally stores a
-  **consent copy version stamp** (`consent_copy_version`, e.g. `"v2"`)
+  **consent copy version stamp** (`consent_copy_version`, e.g. `"v3"`)
   alongside the text — resolved **server-side**: stamped only when the echoed
   string is byte-identical to the currently-served canonical copy, `NULL`
   otherwise (the widget does not send a version field).
@@ -1230,9 +1230,9 @@ Cache-Control: public, max-age=60, stale-while-revalidate=300
 ```
 ```jsonc
 {
-  // Identifier of the served copy ("v2"). Stamped server-side into the audit
+  // Identifier of the served copy ("v3"). Stamped server-side into the audit
   // trail (consent_copy_version) when the echoed consentTextShown matches.
-  "version": "v2",
+  "version": "v3",
   // BOTH checkboxes start UNCHECKED (v2) — never pre-check either box.
   "transactionalLabel": "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl. Direkt-Link zur Kasse).",
   "marketingLabel": "Ja, ich möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten. Jederzeit abbestellbar.",

@@ -259,10 +259,11 @@ by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
    the linked conversations to plain pseudonymous rows (see
    [`CUSTOMERS.md`](./CUSTOMERS.md)), and their `customer_oauth_tokens` cascade
    away.
-5b. Deletes `email_messages` (Korrespondenz) past `CORRESPONDENCE_RETENTION_DAYS`
-   (by `occurred_at`) — its **own** schedule, decoupled from the consent-capture
-   grace; the `ON DELETE SET NULL` customer link means a customer erasure
-   detaches (never cascade-deletes) these rows.
+5b. Deletes `email_messages` (Korrespondenz) **and `physical_letters` (Briefe)**
+   past `CORRESPONDENCE_RETENTION_DAYS` (by `occurred_at`) — their **own**
+   schedule, decoupled from the consent-capture grace; the `ON DELETE SET NULL`
+   customer link means a customer erasure detaches (never cascade-deletes) these
+   rows.
 6. Purges expired `customer_auth_pending` rows (the short-lived sign-in
    CSRF/PKCE state).
 
@@ -286,6 +287,7 @@ The endpoint returns a JSON summary with the counts affected, e.g.:
   "purgedSuppressedCaptures": 1,
   "purgedSuppressedCustomers": 1,
   "deletedEmailMessages": 5,
+  "deletedPhysicalLetters": 2,
   "purgedAuthPending": 3,
   "ranAt": "2026-06-03T03:30:00.000Z"
 }
