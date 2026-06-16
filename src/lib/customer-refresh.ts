@@ -1,5 +1,5 @@
 // Refresh a customer's cached Shopify-sourced data — order history (→ owned
-// items + §7(3) Bestandskunde eligibility) AND the lawful postal address. ONE
+// items) AND the lawful postal address. ONE
 // shared path used by both the on-demand admin button (/api/admin/customers/
 // purchases) and the scheduled cron (/api/cron/refresh-customers), so they can't
 // drift.

@@ -1,8 +1,8 @@
 // POST /api/admin/customers/purchases  { customerId }
 //
 // Refresh ONE customer's cached Shopify data on demand (the dashboard's "Käufe
-// aktualisieren" button): order history (→ owned items + Bestandskunde
-// eligibility) and the lawful postal address. The actual work lives in the
+// aktualisieren" button): order history (→ owned items) and the lawful postal
+// address. The actual work lives in the
 // shared lib/customer-refresh.refreshCustomerData (also used by the scheduled
 // /api/cron/refresh-customers job), so on-demand and scheduled refresh behave
 // identically: Customer Account API when a live token exists, else the operator's

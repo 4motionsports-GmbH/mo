@@ -3,11 +3,7 @@
 // The German-facing DOI / marketing / personalisation / transactional copy in
 // this file has been REVIEWED AND APPROVED by a lawyer (June 2026), so
 // CONSENT_COPY_LAWYER_APPROVED is true. Treat these strings as approved: any
-// wording change is a new legal review. The §7(3) "Bestandskunden" copy near the
-// bottom of the file was ALSO reviewed and approved (June 2026), but that
-// audience remains gated by its OWN separate flag BESTANDSKUNDE_SENDS_APPROVED
-// (default OFF) — copy approval does not flip the send flag (the at-collection
-// objection notice must be live store-side first; see LEGAL_READINESS_REPORT §8).
+// wording change is a new legal review.
 //
 // German marketing email to non-purchasers requires a double opt-in (DOI) and
 // two *separate*, unbundled consents:
@@ -403,58 +399,6 @@ export const UNSUBSCRIBE_CONFIRMED_BODY =
 export const UNSUBSCRIBE_INVALID_HEADING = "Dieser Abmeldelink ist ungültig.";
 export const UNSUBSCRIBE_INVALID_BODY =
   "Bitte nutze den Abmeldelink aus einer unserer E-Mails.";
-
-// ---------------------------------------------------------------------------
-// §7 Abs. 3 UWG Bestandskunden — the SEPARATE existing-customer opt-out
-// ---------------------------------------------------------------------------
-//
-// ⚠️ SEPARATE LAWFUL BASIS, SEPARATE OPT-OUT. A §7(3) existing-customer email
-// is NOT a DOI-consented marketing email — it relies on a completed purchase,
-// not on a double-opt-in. So it carries its OWN objection notice and its OWN
-// opt-out link (honoured via bestandskunden_suppression_list, independently of
-// the DOI unsubscribe). Every §7(3) message MUST state — clearly and for free —
-// that the customer may object at any time (§7 Abs. 3 Nr. 4 UWG).
-//
-// ✅ LAWYER-APPROVED (June 2026): the "own similar products" boundary (encoded in
-// lib/bestandskunden-similarity.mjs — own, in-stock products in a category the
-// customer purchased) and the objection-notice copy below were reviewed and
-// signed off (green/amber scope). The strings here are now approved copy.
-//
-// ⚠️ The SEND flag BESTANDSKUNDE_SENDS_APPROVED stays default OFF regardless:
-// copy approval ≠ go-live. Flipping it additionally requires the §7(3) Nr. 4
-// "at the time the address is collected" notice to be live in the Shopify
-// checkout/order confirmation (store-side) — see docs/LEGAL_READINESS_REPORT §8.
-
-/**
- * Footer placed at the bottom of every §7(3) Bestandskunden email. `optOutUrl`
- * points at GET /api/unsubscribe/bestandskunde. Distinct from
- * `unsubscribeFooter` (the DOI one): it names the legal basis (existing
- * customer of own similar products) and the free, anytime objection.
- * Lawyer-approved (June 2026).
- */
-export function bestandskundenOptOutNotice(optOutUrl: string): { text: string; html: string } {
-  const text =
-    `Du erhältst diese E-Mail als bestehende:r Kund:in von motion sports zu ` +
-    `eigenen, ähnlichen Produkten (§ 7 Abs. 3 UWG). Du kannst dieser Nutzung ` +
-    `deiner E-Mail-Adresse jederzeit kostenlos widersprechen — es entstehen ` +
-    `keine anderen als die Übermittlungskosten nach den Basistarifen: ${optOutUrl}`;
-  const html = `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">
-  Du erh&#228;ltst diese E-Mail als bestehende:r Kund:in von motion sports zu eigenen,
-  &#228;hnlichen Produkten (&#167;&#160;7 Abs.&#160;3 UWG). Du kannst dieser Nutzung deiner
-  E-Mail-Adresse jederzeit kostenlos widersprechen &#8212; es entstehen keine anderen als die
-  &#220;bermittlungskosten nach den Basistarifen:
-  <a href="${escapeAttr(optOutUrl)}" style="color: #212121; text-decoration: underline !important; word-wrap: break-word;">Widersprechen</a>.</p>`;
-  return { text, html };
-}
-
-/** Heading + body for the §7(3) opt-out (objection) confirmation page. Lawyer-approved (June 2026). */
-export const BESTANDSKUNDE_OPT_OUT_CONFIRMED_HEADING =
-  "Dein Widerspruch ist eingetragen.";
-export const BESTANDSKUNDE_OPT_OUT_CONFIRMED_BODY =
-  "Wir senden dir keine weiteren E-Mails zu ähnlichen Produkten als bestehende:r Kund:in mehr. Deine reguläre Newsletter-Einwilligung (falls vorhanden) bleibt davon unberührt.";
-export const BESTANDSKUNDE_OPT_OUT_INVALID_HEADING = "Dieser Widerspruchslink ist ungültig.";
-export const BESTANDSKUNDE_OPT_OUT_INVALID_BODY =
-  "Bitte nutze den Widerspruchslink aus einer unserer E-Mails.";
 
 // ---------------------------------------------------------------------------
 // Transactional summary email subject (the service the user requested)
