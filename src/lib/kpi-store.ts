@@ -86,6 +86,11 @@ export async function getCoreMetrics(
   if (!sql) return null;
   const days = Number.isFinite(windowDays) && windowDays > 0 ? Math.floor(windowDays) : 30;
 
+  // All metrics below are scoped to the SAME `days` window as the daily chart.
+  // The headline totals used to be all-time, which both diverged from the chart
+  // beside them and made every dashboard load scan the full kpi_events /
+  // conversations history. kpi_events already has a created_at index (0001);
+  // conversations gets one in migration 0027.
   try {
     const [totalsRows, dailyRows, statusRows, clickRows, telemetryRows, eventRows] =
       await Promise.all([
@@ -93,6 +98,7 @@ export async function getCoreMetrics(
           SELECT count(*)::int AS total,
                  COALESCE(avg(message_count), 0)::float AS avg_messages
             FROM conversations
+           WHERE created_at >= (current_date - ${days - 1}::int)::date
         `,
         sql`
           SELECT to_char(g.day, 'YYYY-MM-DD') AS day, COALESCE(c.n, 0)::int AS count
@@ -112,6 +118,7 @@ export async function getCoreMetrics(
         sql`
           SELECT status, count(*)::int AS n
             FROM conversations
+           WHERE created_at >= (current_date - ${days - 1}::int)::date
            GROUP BY status
         `,
         sql`
@@ -123,15 +130,18 @@ export async function getCoreMetrics(
               WHERE event ILIKE ${CART_PATTERNS[0]} OR event ILIKE ${CART_PATTERNS[1]}
             )::int AS cart
             FROM kpi_events
+           WHERE created_at >= (current_date - ${days - 1}::int)::date
         `,
         sql`
           SELECT count(DISTINCT session_id)::int AS sessions
             FROM kpi_events
            WHERE session_id IS NOT NULL
+             AND created_at >= (current_date - ${days - 1}::int)::date
         `,
         sql`
           SELECT event, count(*)::int AS n
             FROM kpi_events
+           WHERE created_at >= (current_date - ${days - 1}::int)::date
            GROUP BY event
            ORDER BY n DESC, event ASC
            LIMIT 20
