@@ -3,10 +3,11 @@
 // The German-facing DOI / marketing / personalisation / transactional copy in
 // this file has been REVIEWED AND APPROVED by a lawyer (June 2026), so
 // CONSENT_COPY_LAWYER_APPROVED is true. Treat these strings as approved: any
-// wording change is a new legal review. (The ONE exception is the §7(3)
-// "Bestandskunden" copy near the bottom of the file — that audience is gated by
-// its OWN separate flag BESTANDSKUNDE_SENDS_APPROVED, still OFF pending its own
-// sign-off, and its strings stay marked accordingly.)
+// wording change is a new legal review. The §7(3) "Bestandskunden" copy near the
+// bottom of the file was ALSO reviewed and approved (June 2026), but that
+// audience remains gated by its OWN separate flag BESTANDSKUNDE_SENDS_APPROVED
+// (default OFF) — copy approval does not flip the send flag (the at-collection
+// objection notice must be live store-side first; see LEGAL_READINESS_REPORT §8).
 //
 // German marketing email to non-purchasers requires a double opt-in (DOI) and
 // two *separate*, unbundled consents:
@@ -412,16 +413,24 @@ export const UNSUBSCRIBE_INVALID_BODY =
 // not on a double-opt-in. So it carries its OWN objection notice and its OWN
 // opt-out link (honoured via bestandskunden_suppression_list, independently of
 // the DOI unsubscribe). Every §7(3) message MUST state — clearly and for free —
-// that the customer may object at any time (§7 Abs. 3 Nr. 4 UWG). PLACEHOLDER —
-// lawyer review required, AND gated behind BESTANDSKUNDE_SENDS_APPROVED (OFF)
-// until the "own similar products" boundary + this copy are signed off.
+// that the customer may object at any time (§7 Abs. 3 Nr. 4 UWG).
+//
+// ✅ LAWYER-APPROVED (June 2026): the "own similar products" boundary (encoded in
+// lib/bestandskunden-similarity.mjs — own, in-stock products in a category the
+// customer purchased) and the objection-notice copy below were reviewed and
+// signed off (green/amber scope). The strings here are now approved copy.
+//
+// ⚠️ The SEND flag BESTANDSKUNDE_SENDS_APPROVED stays default OFF regardless:
+// copy approval ≠ go-live. Flipping it additionally requires the §7(3) Nr. 4
+// "at the time the address is collected" notice to be live in the Shopify
+// checkout/order confirmation (store-side) — see docs/LEGAL_READINESS_REPORT §8.
 
 /**
  * Footer placed at the bottom of every §7(3) Bestandskunden email. `optOutUrl`
  * points at GET /api/unsubscribe/bestandskunde. Distinct from
  * `unsubscribeFooter` (the DOI one): it names the legal basis (existing
  * customer of own similar products) and the free, anytime objection.
- * PLACEHOLDER — lawyer review required.
+ * Lawyer-approved (June 2026).
  */
 export function bestandskundenOptOutNotice(optOutUrl: string): { text: string; html: string } {
   const text =
@@ -438,7 +447,7 @@ export function bestandskundenOptOutNotice(optOutUrl: string): { text: string; h
   return { text, html };
 }
 
-/** Heading + body for the §7(3) opt-out (objection) confirmation page. PLACEHOLDER. */
+/** Heading + body for the §7(3) opt-out (objection) confirmation page. Lawyer-approved (June 2026). */
 export const BESTANDSKUNDE_OPT_OUT_CONFIRMED_HEADING =
   "Dein Widerspruch ist eingetragen.";
 export const BESTANDSKUNDE_OPT_OUT_CONFIRMED_BODY =
