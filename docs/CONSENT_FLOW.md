@@ -11,10 +11,13 @@ lawyer must approve before launch.
 > `CONSENT_COPY_LAWYER_APPROVED = true`. Treat these strings as approved — any
 > wording change needs a fresh review.
 >
-> ⚠️ **Still pending — the §7(3) "Bestandskunden" copy only.** That audience is
-> a DISTINCT lawful basis gated by its own flag `BESTANDSKUNDE_SENDS_APPROVED`
-> (still **false**); its strings and the "own similar products" boundary await
-> their own sign-off. See the TODO list at the end.
+> ✅ **§7(3) "Bestandskunden" copy + boundary — LAWYER-APPROVED (June 2026).**
+> That audience is a DISTINCT lawful basis. The "own similar products" boundary
+> is now defined and enforced in code (`lib/bestandskunden-similarity.mjs`) and
+> the opt-out copy is approved. It is STILL gated by its own flag
+> `BESTANDSKUNDE_SENDS_APPROVED` (default **false**) — do not flip it until the
+> §7(3) Nr. 4 "at collection" notice is live store-side (Shopify checkout). See
+> `docs/LEGAL_READINESS_REPORT.md` §8 and the §7(3) section below.
 
 ## Legal background (why it's built this way)
 
@@ -242,12 +245,20 @@ A §7(3) send (when the flag is on) MUST:
   (`bestandskunden_suppression_list`), independently of the DOI unsubscribe — a
   customer objecting to one is **not** auto-removed from the other.
 
-**Built but OFF.** The audience, eligibility, suppression, opt-out link and the
-`canSendBestandskundenMail` gate are all built, but **real §7(3) sends are gated
-behind `BESTANDSKUNDE_SENDS_APPROVED` (default false)** — distinct from
-`CONSENT_COPY_LAWYER_APPROVED`. Nothing existing-customer goes out until a lawyer
-blesses the "own similar products" boundary + the opt-out copy and the flag is
-flipped. The admin dashboard's Marketing tab shows the two audiences under
+**Built, boundary ENFORCED, still flag-gated.** The audience, eligibility,
+suppression, opt-out link and the `canSendBestandskundenMail` gate are built, and
+since the lawyer sign-off (June 2026) the **"own similar products" boundary is
+defined and ENFORCED in code** (`lib/bestandskunden-similarity.mjs`: own,
+in-stock products in a category the customer actually purchased, excluding what
+they already own — fail-closed, no generic blast) and the opt-out/objection copy
+is approved. A **production send path** exists (`POST
+/api/admin/bestandskunden/send`) — deterministic, purchase-history-only (no AI
+profile), with the amber chatbot-launch line allowed only on top of real similar
+products. **Real §7(3) sends remain gated behind `BESTANDSKUNDE_SENDS_APPROVED`
+(default false)** — distinct from `CONSENT_COPY_LAWYER_APPROVED`. Do **not** flip
+the flag until the §7(3) Nr. 4 **"at the time the address is collected"** notice
+is live in the Shopify checkout/order confirmation (store-side) — see
+`docs/LEGAL_READINESS_REPORT.md` §8. The admin dashboard's Marketing tab shows the two audiences under
 **separate labelled headings** ("DOI-Einwilligung" vs "§7 Abs. 3 UWG
 Bestandskunden") so the bases never blur; a Bestandskunde who *also* holds a DOI
 consent is flagged as such without merging the lists.

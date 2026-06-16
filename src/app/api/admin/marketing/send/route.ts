@@ -19,6 +19,7 @@ const STATUS_BY_REASON: Record<string, number> = {
   not_found: 404,
   already_sent: 409,
   not_eligible: 409,
+  too_soon: 429,
   no_unsubscribe: 503,
   claim_failed: 409,
   discount_mismatch: 409,

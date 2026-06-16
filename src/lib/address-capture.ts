@@ -4,9 +4,19 @@
 // get an address: on each Kunden-tab load we pull missing addresses from Shopify
 // in the BACKGROUND (Next `after()`), bounded + throttled. Each pass handles a
 // small batch of customers that have no stored address and haven't been checked
-// recently; over a few visits everyone with a Shopify address is filled in, and
+// recently; over a few visits everyone with a usable address is filled in, and
 // customers with genuinely no address aren't re-queried every load.
 //
+// ⚠️ GDPR — DATA MINIMISATION + LAWFUL ACQUISITION (LEGAL_READINESS_REPORT §8
+// OQ-01). A full postal address is collected here ONLY when BOTH hold:
+//   1. PHYSICAL_MAIL_SENDS_APPROVED is on — the address serves no purpose unless
+//      the physical-mail channel is actually live, so we don't collect it for a
+//      dormant feature; and
+//   2. the address is PURCHASE-derived (the shipping address of a completed
+//      order — obtained "in connection with the sale", a real basis). The saved
+//      Shopify account default address (source 'consented_capture') is NOT
+//      auto-stored here, because no consent for postal use was actually verified
+//      — that path is reserved for a future, explicitly-consented capture flow.
 // READ from Shopify only; writes only customers.postal_address (+ the checked-at
 // throttle). Best-effort and fail-soft — never throws into the page render.
 
@@ -17,6 +27,7 @@ import {
 } from "./customer-store";
 import { fetchLawfulAddressByEmail } from "./shopify-orders";
 import { isShopifyConfigured } from "./shopify";
+import { isPhysicalMailSendsApproved } from "./pingen-flag.mjs";
 import { reportError } from "./observability";
 
 export interface AutoCaptureResult {
@@ -33,6 +44,8 @@ export async function autoCaptureMissingAddresses(
   { limit = 12, throttleDays = 7 }: { limit?: number; throttleDays?: number } = {}
 ): Promise<AutoCaptureResult> {
   if (!isShopifyConfigured()) return { checked: 0, captured: 0 };
+  // Don't collect addresses for a channel that isn't live (data minimisation).
+  if (!isPhysicalMailSendsApproved()) return { checked: 0, captured: 0 };
   try {
     const staleBefore = new Date(Date.now() - throttleDays * 86_400_000).toISOString();
     const candidates = await listCustomersMissingAddress(limit, staleBefore);
@@ -40,7 +53,10 @@ export async function autoCaptureMissingAddresses(
     for (const c of candidates) {
       try {
         const lawful = await fetchLawfulAddressByEmail(c.email);
-        if (lawful) {
+        // PURCHASE-derived only: a completed order's shipping address is a lawful,
+        // sale-derived basis. Never auto-store the account default ('consented_
+        // capture') here — that needs a verified consent we don't have.
+        if (lawful && lawful.source === "purchase") {
           await saveCustomerPostalAddress(c.id, lawful.address, lawful.source);
           captured++;
         }

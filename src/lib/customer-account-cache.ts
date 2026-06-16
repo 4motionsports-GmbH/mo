@@ -23,6 +23,7 @@ import {
   saveCustomerPurchaseSummary,
   saveCustomerPostalAddress,
 } from "./customer-store";
+import { isPhysicalMailSendsApproved } from "./pingen-flag.mjs";
 import { reportError } from "./observability";
 
 /**
@@ -48,10 +49,13 @@ export async function refreshSignedInCustomerCache(
       await saveCustomerPurchaseSummary(customerId, data.orderHistory);
     }
     // Address acquisition (§4): cache the FULL lawful postal address for physical
-    // mail when Shopify gave us a complete one (a completed order's shipping
-    // address, or the saved profile address). Its own column set, never the
-    // minimised summary; absent ⇒ leave any previously-held address intact.
-    if (data.lawfulAddress) {
+    // mail when Shopify gave us a complete one. This is the SIGNED-IN customer's
+    // OWN address, fetched with their own access token — a sound basis — but we
+    // still only store it when the physical-mail channel is actually live (data
+    // minimisation: no full address is held for a dormant feature). Its own
+    // column set, never the minimised summary; absent ⇒ leave any previously-held
+    // address intact. See LEGAL_READINESS_REPORT §8 OQ-01.
+    if (data.lawfulAddress && isPhysicalMailSendsApproved()) {
       await saveCustomerPostalAddress(
         customerId,
         data.lawfulAddress.address,

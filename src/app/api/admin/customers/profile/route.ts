@@ -17,6 +17,7 @@ import {
 } from "@/lib/customer-store";
 import { loadCustomerCorrespondence } from "@/lib/email-messages-store";
 import { generateCustomerProfile } from "@/lib/customer-profile";
+import { recordAdminAccess } from "@/lib/admin-access-log";
 import { reportError } from "@/lib/observability";
 
 // The Anthropic pass over several transcripts can take a while.
@@ -42,6 +43,9 @@ export async function POST(req: Request) {
     if (!customer) {
       return adminJsonError("not_found", "Customer not found.", 404);
     }
+
+    // Audit: this pass reads all of the customer's transcripts + correspondence.
+    await recordAdminAccess({ action: "customer.profile.generate", targetCustomerId: customerId }, req);
 
     const [sessions, correspondence] = await Promise.all([
       loadCustomerSessions(customerId),

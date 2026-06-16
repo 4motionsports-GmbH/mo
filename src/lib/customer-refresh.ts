@@ -23,6 +23,7 @@ import { refreshSignedInCustomerCache } from "./customer-account-cache";
 import { getValidAccessToken } from "./customer-oauth-store";
 import { fetchOrderHistoryByEmail, fetchLawfulAddressByEmail } from "./shopify-orders";
 import { isShopifyConfigured } from "./shopify";
+import { isPhysicalMailSendsApproved } from "./pingen-flag.mjs";
 import type { OrderHistory } from "./shopify-orders";
 import { reportError } from "./observability";
 
@@ -57,9 +58,17 @@ export async function refreshCustomerData(
     const saved = await saveCustomerPurchaseSummary(customer.id, history);
     if (!saved) return { ok: false, reason: "store_failed" };
 
-    // Address (purchase / saved account address) in the same refresh.
-    const lawful = await fetchLawfulAddressByEmail(customer.email);
-    if (lawful) await saveCustomerPostalAddress(customer.id, lawful.address, lawful.source);
+    // Lawful postal address — collected ONLY when the physical-mail channel is
+    // live AND the address is PURCHASE-derived (a completed order's shipping
+    // address, obtained in connection with the sale). The saved account default
+    // ('consented_capture') is deliberately not auto-stored here — no postal-use
+    // consent was verified. See LEGAL_READINESS_REPORT §8 OQ-01.
+    if (isPhysicalMailSendsApproved()) {
+      const lawful = await fetchLawfulAddressByEmail(customer.email);
+      if (lawful && lawful.source === "purchase") {
+        await saveCustomerPostalAddress(customer.id, lawful.address, lawful.source);
+      }
+    }
     await markPostalAddressChecked(customer.id);
 
     return { ok: true, purchaseSummary: history, source: "admin_api" };

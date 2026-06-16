@@ -23,6 +23,7 @@ import { isBestandskundenSendsApproved } from "@/lib/bestandskunden.mjs";
 import { buildBestandskundeTestEmail } from "@/lib/bestandskunde-email";
 import { getBaseUrl } from "@/lib/base-url";
 import { sendEmail } from "@/lib/email";
+import { recordAdminAccess } from "@/lib/admin-access-log";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 30;
@@ -30,6 +31,26 @@ export const maxDuration = 30;
 // Deliberately loose — just enough to reject obvious garbage before we hand the
 // address to Resend (the real validation is Resend's).
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Optional allow-list for the test recipient (GDPR — OQ-17): when
+ * BESTANDSKUNDE_TEST_RECIPIENTS is set (comma-separated full addresses and/or
+ * "@domain" suffixes), the test send is refused for any address not on it — so a
+ * "test" can never be misdirected to a real customer. When unset, the historical
+ * behaviour stands (admin-only + flag-gated): any syntactically-valid address.
+ */
+function isAllowedTestRecipient(email: string): boolean {
+  const raw = process.env.BESTANDSKUNDE_TEST_RECIPIENTS;
+  if (typeof raw !== "string" || !raw.trim()) return true; // not configured → no restriction
+  const e = email.trim().toLowerCase();
+  const entries = raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return entries.some((entry) =>
+    entry.startsWith("@") ? e.endsWith(entry) : e === entry
+  );
+}
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
@@ -50,6 +71,13 @@ export async function POST(req: Request) {
     }
     if (!EMAIL_RE.test(testRecipient)) {
       return adminJsonError("bad_request", "A valid testRecipient email is required", 400);
+    }
+    if (!isAllowedTestRecipient(testRecipient)) {
+      return adminJsonError(
+        "forbidden",
+        "testRecipient is not on BESTANDSKUNDE_TEST_RECIPIENTS — refusing to send a §7(3) test to a non-allow-listed address.",
+        403
+      );
     }
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
@@ -90,6 +118,11 @@ export async function POST(req: Request) {
       );
     }
     const optOutUrl = `${getBaseUrl(req)}/api/unsubscribe/bestandskunde?token=${encodeURIComponent(token)}`;
+
+    await recordAdminAccess(
+      { action: "bestandskunde.test_send", targetCustomerId: customerId, detail: { testRecipient } },
+      req
+    );
 
     const email = buildBestandskundeTestEmail({ optOutUrl, isTest: true });
     const result = await sendEmail({

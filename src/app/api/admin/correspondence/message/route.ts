@@ -16,6 +16,7 @@ import {
   type AttachmentMeta,
 } from "@/lib/email-messages-store";
 import { normalizeInboundMessage } from "@/lib/email-inbound-core.mjs";
+import { recordAdminAccess } from "@/lib/admin-access-log";
 import { reportError } from "@/lib/observability";
 import { Resend } from "resend";
 
@@ -39,6 +40,13 @@ export async function POST(req: Request) {
   try {
     const message = await getMessageById(id);
     if (!message) return adminJsonError("not_found", "Message not found.", 404);
+
+    // Audit: an operator opened the body of a customer's correspondence message.
+    const msgCustomerId = (message as { customerId?: number | null }).customerId ?? null;
+    await recordAdminAccess(
+      { action: "correspondence.read", targetCustomerId: msgCustomerId, detail: { messageId: id } },
+      req
+    );
 
     // Stored body present → return it. No provider round-trip.
     if (message.bodyText || message.bodyHtml) {
