@@ -35,22 +35,27 @@ export function scrubPiiString(input: unknown): string {
   return input.replace(EMAIL_QUERY_RE, 'email:"[redacted]"').replace(EMAIL_RE, "[redacted-email]");
 }
 
+/** The free-text-bearing slice of a Sentry event the scrubber touches. */
+type ScrubbableEvent = {
+  message?: unknown;
+  exception?: { values?: Array<{ value?: unknown }> } | null;
+  breadcrumbs?: Array<{ message?: unknown }> | null;
+};
+
 /**
  * Sentry `beforeSend` hook: scrub PII from the parts of an event that can carry
- * free text. Defensive and total — any failure returns the event unchanged
- * rather than dropping observability. Exported for unit testing.
+ * free text (mutates in place, returns the same event). Defensive and total —
+ * any failure leaves the event unchanged rather than dropping observability.
+ * Generic so it returns the caller's concrete event type unchanged.
  */
-export function scrubSentryEvent<T extends Record<string, unknown>>(event: T): T {
+export function scrubSentryEvent<T extends ScrubbableEvent>(event: T): T {
+  const e: ScrubbableEvent = event;
   try {
-    if (typeof event.message === "string") {
-      (event as Record<string, unknown>).message = scrubPiiString(event.message);
-    }
-    const exception = event.exception as { values?: Array<{ value?: unknown }> } | undefined;
-    for (const v of exception?.values ?? []) {
+    if (typeof e.message === "string") e.message = scrubPiiString(e.message);
+    for (const v of e.exception?.values ?? []) {
       if (typeof v.value === "string") v.value = scrubPiiString(v.value);
     }
-    const breadcrumbs = event.breadcrumbs as Array<{ message?: unknown }> | undefined;
-    for (const b of breadcrumbs ?? []) {
+    for (const b of e.breadcrumbs ?? []) {
       if (typeof b.message === "string") b.message = scrubPiiString(b.message);
     }
   } catch {
@@ -77,8 +82,7 @@ function getSentry(): Promise<SentryModule | null> {
           sendDefaultPii: false,
           // Redact email-shaped PII from message / exception / breadcrumbs before
           // the event leaves the process (GDPR — OQ-04).
-          beforeSend: (event) =>
-            scrubSentryEvent(event as unknown as Record<string, unknown>) as typeof event,
+          beforeSend: (event) => scrubSentryEvent(event),
         });
         return mod;
       } catch (err) {
