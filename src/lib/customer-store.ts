@@ -313,6 +313,117 @@ export interface BindShopifyIdentityResult {
   conflict: boolean;
 }
 
+/** Postgres unique_violation (SQLSTATE 23505) — the signature of a lost identity race. */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "23505";
+}
+
+async function bindShopifyIdentityOnce(
+  sql: Sql,
+  shopifyId: string,
+  email: string,
+  sessionId: string | null,
+  input: BindShopifyIdentityInput
+): Promise<BindShopifyIdentityResult> {
+  const byShopifyRows = (await sql`
+    SELECT id, email FROM customers WHERE shopify_customer_id = ${shopifyId}
+  `) as Array<Record<string, unknown>>;
+  const rowByShopifyId = byShopifyRows[0]
+    ? { id: Number(byShopifyRows[0].id), email: (byShopifyRows[0].email as string | null) ?? null }
+    : null;
+
+  let rowByEmail: { id: number; email: string | null } | null = null;
+  if (email) {
+    const byEmailRows = (await sql`
+      SELECT id, email FROM customers WHERE email = ${email}
+    `) as Array<Record<string, unknown>>;
+    rowByEmail = byEmailRows[0]
+      ? { id: Number(byEmailRows[0].id), email: (byEmailRows[0].email as string | null) ?? null }
+      : null;
+  }
+
+  const decision = decideMerge({ rowByShopifyId, rowByEmail, shopifyEmail: email });
+
+  let customerId: number;
+  if (decision.action === "create") {
+    // No existing row → create a fresh tier-3 customer. If we have no verified
+    // email we still need a unique key; fall back to a synthetic placeholder
+    // keyed by the Shopify id (kept normalised + unique).
+    const insertEmail = email || `shopify:${shopifyId}`;
+    const rows = (await sql`
+      INSERT INTO customers
+        (email, shopify_customer_id, shopify_customer_gid, shopify_linked_at, identity_tier)
+      VALUES (${insertEmail}, ${shopifyId}, ${input.shopifyCustomerGid}, now(), 3)
+      ON CONFLICT (email) DO UPDATE SET last_seen_at = now()
+      RETURNING id
+    `) as Array<Record<string, unknown>>;
+    customerId = Number(rows[0].id);
+  } else {
+    // use | stamp — both target an existing row. Stamp the Shopify ids and
+    // bump to tier 3 (never weakening). We do NOT overwrite the
+    // consent-anchored email even on a mismatch (Shopify is authoritative for
+    // identity, but the consent provenance stays put — the conflict is logged).
+    //
+    // MATCH-UP (email-only → signed-in): in the STAMP case the targeted row is
+    // the existing tier-2 customer matched by the verified email. This UPDATE
+    // touches ONLY identity columns — it NEVER writes marketing_status /
+    // transactional_consent — so a PRIOR DOI consent under that email carries
+    // forward intact (still 'confirmed' in email_captures + the mirrored
+    // customers row): none invented, none silently revoked. Signing in
+    // establishes identity, never marketing consent.
+    customerId = decision.customerId as number;
+    await sql`
+      UPDATE customers SET
+        shopify_customer_id  = ${shopifyId},
+        shopify_customer_gid = ${input.shopifyCustomerGid},
+        shopify_linked_at    = COALESCE(shopify_linked_at, now()),
+        identity_tier        = GREATEST(identity_tier, 3),
+        last_seen_at         = now()
+      WHERE id = ${customerId}
+    `;
+  }
+
+  // Attach the current conversation to this identity (the generalised
+  // "identity bind" — same bridge linkCustomerOnEmailCapture uses).
+  //
+  // MATCH-UP (current-anonymous-session → signed-in): this attaches ONLY the
+  // chat that led to sign-in — the session in the signed `state`/pending
+  // record — by matching `session_id = THIS session`. It deliberately NEVER
+  // scoops other anonymous threads retroactively: a different browser/session
+  // id simply doesn't match, so its conversations stay pseudonymous.
+  if (sessionId) {
+    await sql`
+      UPDATE conversations SET customer_id = ${customerId} WHERE session_id = ${sessionId}
+    `;
+    // THE re-hydration link. The conversation attach above only fires when a
+    // chat row already exists for this session — which it often does NOT at
+    // sign-in (the prompt=none silent check / "Anmelden" before any message).
+    // Persisting the DIRECT session → customer link here (migration 0019) is
+    // what lets /api/auth/me and /api/account/* resolve this session back to
+    // the signed-in customer regardless of whether a conversation exists yet.
+    await linkSessionToCustomer(sql, sessionId, customerId);
+  }
+
+  // Record the id_token subject on the token row later (saveCustomerTokens);
+  // here we only persist identity. Conflicts are audit-logged.
+  let conflict = false;
+  if (decision.conflict) {
+    conflict = true;
+    await sql`
+      INSERT INTO customer_merge_conflicts
+        (shopify_customer_id, shopify_customer_gid, shopify_email,
+         email_row_customer_id, email_row_email, shopify_row_customer_id,
+         conflict_kind, resolved_customer_id, session_id)
+      VALUES (${shopifyId}, ${input.shopifyCustomerGid}, ${email || null},
+              ${decision.conflict.emailRowCustomerId}, ${decision.conflict.emailRowEmail},
+              ${decision.conflict.shopifyRowCustomerId}, ${decision.conflict.kind},
+              ${customerId}, ${sessionId})
+    `;
+  }
+
+  return { customerId, conflict };
+}
+
 /**
  * Bind a verified Shopify identity to a customer row on sign-in, running the
  * email↔Shopify merge rule (see lib/customer-merge.mjs / docs/CUSTOMER_ACCOUNT.md):
@@ -339,108 +450,20 @@ export async function bindShopifyIdentity(
   const email = input.email ? normalizeEmail(input.email) : "";
   const sessionId = input.sessionId?.trim() || null;
 
-  try {
-    const byShopifyRows = (await sql`
-      SELECT id, email FROM customers WHERE shopify_customer_id = ${shopifyId}
-    `) as Array<Record<string, unknown>>;
-    const rowByShopifyId = byShopifyRows[0]
-      ? { id: Number(byShopifyRows[0].id), email: (byShopifyRows[0].email as string | null) ?? null }
-      : null;
-
-    let rowByEmail: { id: number; email: string | null } | null = null;
-    if (email) {
-      const byEmailRows = (await sql`
-        SELECT id, email FROM customers WHERE email = ${email}
-      `) as Array<Record<string, unknown>>;
-      rowByEmail = byEmailRows[0]
-        ? { id: Number(byEmailRows[0].id), email: (byEmailRows[0].email as string | null) ?? null }
-        : null;
+  // Retry up to 3 times on a Postgres unique_violation (SQLSTATE 23505): a
+  // concurrent bind of the same Shopify identity can insert the conflicting row
+  // between our SELECTs and the write. The DB constraints already prevent
+  // duplicates, so retrying re-reads the now-visible row and succeeds cleanly.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await bindShopifyIdentityOnce(sql, shopifyId, email, sessionId, input);
+    } catch (err) {
+      if (isUniqueViolation(err) && attempt < 2) continue;
+      reportError(err, { route: "lib/customer-store", phase: "bindShopifyIdentity" });
+      return null;
     }
-
-    const decision = decideMerge({ rowByShopifyId, rowByEmail, shopifyEmail: email });
-
-    let customerId: number;
-    if (decision.action === "create") {
-      // No existing row → create a fresh tier-3 customer. If we have no verified
-      // email we still need a unique key; fall back to a synthetic placeholder
-      // keyed by the Shopify id (kept normalised + unique).
-      const insertEmail = email || `shopify:${shopifyId}`;
-      const rows = (await sql`
-        INSERT INTO customers
-          (email, shopify_customer_id, shopify_customer_gid, shopify_linked_at, identity_tier)
-        VALUES (${insertEmail}, ${shopifyId}, ${input.shopifyCustomerGid}, now(), 3)
-        ON CONFLICT (email) DO UPDATE SET last_seen_at = now()
-        RETURNING id
-      `) as Array<Record<string, unknown>>;
-      customerId = Number(rows[0].id);
-    } else {
-      // use | stamp — both target an existing row. Stamp the Shopify ids and
-      // bump to tier 3 (never weakening). We do NOT overwrite the
-      // consent-anchored email even on a mismatch (Shopify is authoritative for
-      // identity, but the consent provenance stays put — the conflict is logged).
-      //
-      // MATCH-UP (email-only → signed-in): in the STAMP case the targeted row is
-      // the existing tier-2 customer matched by the verified email. This UPDATE
-      // touches ONLY identity columns — it NEVER writes marketing_status /
-      // transactional_consent — so a PRIOR DOI consent under that email carries
-      // forward intact (still 'confirmed' in email_captures + the mirrored
-      // customers row): none invented, none silently revoked. Signing in
-      // establishes identity, never marketing consent.
-      customerId = decision.customerId as number;
-      await sql`
-        UPDATE customers SET
-          shopify_customer_id  = ${shopifyId},
-          shopify_customer_gid = ${input.shopifyCustomerGid},
-          shopify_linked_at    = COALESCE(shopify_linked_at, now()),
-          identity_tier        = GREATEST(identity_tier, 3),
-          last_seen_at         = now()
-        WHERE id = ${customerId}
-      `;
-    }
-
-    // Attach the current conversation to this identity (the generalised
-    // "identity bind" — same bridge linkCustomerOnEmailCapture uses).
-    //
-    // MATCH-UP (current-anonymous-session → signed-in): this attaches ONLY the
-    // chat that led to sign-in — the session in the signed `state`/pending
-    // record — by matching `session_id = THIS session`. It deliberately NEVER
-    // scoops other anonymous threads retroactively: a different browser/session
-    // id simply doesn't match, so its conversations stay pseudonymous.
-    if (sessionId) {
-      await sql`
-        UPDATE conversations SET customer_id = ${customerId} WHERE session_id = ${sessionId}
-      `;
-      // THE re-hydration link. The conversation attach above only fires when a
-      // chat row already exists for this session — which it often does NOT at
-      // sign-in (the prompt=none silent check / "Anmelden" before any message).
-      // Persisting the DIRECT session → customer link here (migration 0019) is
-      // what lets /api/auth/me and /api/account/* resolve this session back to
-      // the signed-in customer regardless of whether a conversation exists yet.
-      await linkSessionToCustomer(sql, sessionId, customerId);
-    }
-
-    // Record the id_token subject on the token row later (saveCustomerTokens);
-    // here we only persist identity. Conflicts are audit-logged.
-    let conflict = false;
-    if (decision.conflict) {
-      conflict = true;
-      await sql`
-        INSERT INTO customer_merge_conflicts
-          (shopify_customer_id, shopify_customer_gid, shopify_email,
-           email_row_customer_id, email_row_email, shopify_row_customer_id,
-           conflict_kind, resolved_customer_id, session_id)
-        VALUES (${shopifyId}, ${input.shopifyCustomerGid}, ${email || null},
-                ${decision.conflict.emailRowCustomerId}, ${decision.conflict.emailRowEmail},
-                ${decision.conflict.shopifyRowCustomerId}, ${decision.conflict.kind},
-                ${customerId}, ${sessionId})
-      `;
-    }
-
-    return { customerId, conflict };
-  } catch (err) {
-    reportError(err, { route: "lib/customer-store", phase: "bindShopifyIdentity" });
-    return null;
   }
+  return null;
 }
 
 /**
