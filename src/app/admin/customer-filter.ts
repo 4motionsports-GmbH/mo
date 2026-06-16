@@ -17,8 +17,6 @@ export interface CustomerFilterState {
   marketing: MarketingFilter;
   kauf: KaufFilter;
   send: SendFilter;
-  /** Only §7(3) Bestandskunde-eligible customers. */
-  bestandskunde: boolean;
   sort: CustomerSortKey;
 }
 
@@ -28,7 +26,6 @@ export const DEFAULT_FILTER: CustomerFilterState = {
   marketing: "all",
   kauf: "all",
   send: "all",
-  bestandskunde: false,
   sort: "recent",
 };
 
@@ -40,8 +37,6 @@ export function presetFilter(preset: string | undefined): CustomerFilterState {
       return { ...DEFAULT_FILTER, marketing: "confirmed", kauf: "no_purchase" };
     case "marketing":
       return { ...DEFAULT_FILTER, marketing: "confirmed" };
-    case "bestandskunde":
-      return { ...DEFAULT_FILTER, bestandskunde: true };
     case "draft":
       return { ...DEFAULT_FILTER, send: "draft" };
     default:
@@ -55,10 +50,8 @@ export type SendState = "sent" | "draft" | "none";
 /** Whether the cached purchase history shows a purchase. `null` summary = not yet
  *  loaded ("unknown"), distinct from a loaded-but-empty history ("no_purchase"). */
 export function purchaseState(c: CustomerProps): PurchaseState {
-  if (c.purchaseSummary == null) return c.bestandskundeEligible ? "purchased" : "unknown";
-  return c.purchaseSummary.orders.length > 0 || c.bestandskundeEligible
-    ? "purchased"
-    : "no_purchase";
+  if (c.purchaseSummary == null) return "unknown";
+  return c.purchaseSummary.orders.length > 0 ? "purchased" : "no_purchase";
 }
 
 /** The customer's latest marketing-send lifecycle state for the list badge/filter. */
@@ -83,7 +76,6 @@ function matches(c: CustomerProps, f: CustomerFilterState): boolean {
   if (f.marketing !== "all" && c.marketingStatus !== f.marketing) return false;
   if (f.kauf !== "all" && purchaseState(c) !== f.kauf) return false;
   if (f.send !== "all" && sendState(c) !== f.send) return false;
-  if (f.bestandskunde && !c.bestandskundeEligible) return false;
   return true;
 }
 
@@ -133,7 +125,6 @@ export function isFilterActive(f: CustomerFilterState): boolean {
     f.tier !== "all" ||
     f.marketing !== "all" ||
     f.kauf !== "all" ||
-    f.send !== "all" ||
-    f.bestandskunde
+    f.send !== "all"
   );
 }

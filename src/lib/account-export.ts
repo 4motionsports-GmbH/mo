@@ -28,7 +28,7 @@ export interface CustomerDataExport {
   marketingSends: Array<Record<string, unknown>>;
   bundleOffers: Array<Record<string, unknown>>;
   feedback: Array<Record<string, unknown>>;
-  suppression: { marketing: Array<Record<string, unknown>>; bestandskunden: Array<Record<string, unknown>> };
+  suppression: { marketing: Array<Record<string, unknown>> };
 }
 
 /**
@@ -115,9 +115,6 @@ export async function buildCustomerDataExport(
     const suppMarketing = (await sql`
       SELECT email, reason, added_at FROM suppression_list WHERE email = ${email}
     `) as Array<Record<string, unknown>>;
-    const suppBestand = (await sql`
-      SELECT email, reason, added_at FROM bestandskunden_suppression_list WHERE email = ${email}
-    `) as Array<Record<string, unknown>>;
 
     return {
       exportedAt: new Date().toISOString(),
@@ -131,7 +128,7 @@ export async function buildCustomerDataExport(
       marketingSends,
       bundleOffers,
       feedback,
-      suppression: { marketing: suppMarketing, bestandskunden: suppBestand },
+      suppression: { marketing: suppMarketing },
     };
   } catch (err) {
     reportError(err, { route: "lib/account-export", phase: "buildCustomerDataExport" });

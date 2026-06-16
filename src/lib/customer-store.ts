@@ -25,7 +25,6 @@ import type { OrderHistory } from "./shopify-orders";
 import type { SignedInAccountSummary } from "./shopify-customer-account";
 import { reportError } from "./observability";
 import { decideMerge } from "./customer-merge.mjs";
-import { isBestandskundeEligible } from "./bestandskunden.mjs";
 import { linkSessionToCustomer, resolveSignedInCustomerRow } from "./customer-session-link.mjs";
 
 export type CustomerMarketingStatus = "none" | "pending" | "confirmed" | "unsubscribed";
@@ -44,14 +43,6 @@ export interface Customer {
   /** Cached Shopify order-history summary (refreshed on demand). */
   purchaseSummary: OrderHistory | null;
   purchaseSummaryUpdatedAt: string | null;
-  /**
-   * §7 Abs. 3 UWG eligibility (migration 0017): true ⇔ the cached
-   * purchase_summary contains a COMPLETED purchase. A SEPARATE lawful basis
-   * from `marketingStatus` (DOI) — never merge the two. Recomputed whenever the
-   * purchase summary is refreshed (saveCustomerPurchaseSummary).
-   */
-  bestandskundeEligible: boolean;
-  bestandskundeEligibleUpdatedAt: string | null;
   /**
    * Cached signed-in (tier-3) Customer Account snapshot — name + a
    * data-minimised address context (city/country only). Populated from the
@@ -125,8 +116,6 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     profileSummaryUpdatedAt: (r.profile_summary_updated_at as string | null) ?? null,
     purchaseSummary: (r.purchase_summary as OrderHistory | null) ?? null,
     purchaseSummaryUpdatedAt: (r.purchase_summary_updated_at as string | null) ?? null,
-    bestandskundeEligible: Boolean(r.bestandskunde_eligible),
-    bestandskundeEligibleUpdatedAt: (r.bestandskunde_eligible_updated_at as string | null) ?? null,
     shopifyAccountSummary: (r.shopify_account_summary as SignedInAccountSummary | null) ?? null,
     shopifyAccountSummaryUpdatedAt: (r.shopify_account_summary_updated_at as string | null) ?? null,
     postalAddress: (r.postal_address as Record<string, unknown> | null) ?? null,
@@ -737,17 +726,10 @@ export async function saveCustomerPurchaseSummary(
 ): Promise<boolean> {
   if (!sql) return false;
   try {
-    // Recompute the §7(3) Bestandskunden eligibility in the SAME write, so the
-    // cached flag can never drift from the purchase history it is derived from.
-    // SEPARATE basis from marketing_status (DOI) — this only reflects "is there
-    // a completed purchase", nothing about consent. See lib/bestandskunden.mjs.
-    const eligible = isBestandskundeEligible(history);
     const rows = await sql`
       UPDATE customers
          SET purchase_summary = ${JSON.stringify(history)}::jsonb,
-             purchase_summary_updated_at = now(),
-             bestandskunde_eligible = ${eligible},
-             bestandskunde_eligible_updated_at = now()
+             purchase_summary_updated_at = now()
        WHERE id = ${customerId}
       RETURNING id
     `;

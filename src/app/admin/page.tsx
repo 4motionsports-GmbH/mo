@@ -26,11 +26,6 @@ import {
   getLatestSendForEmail,
   type MarketingTarget,
 } from "@/lib/marketing-store";
-import {
-  listBestandskundenAudience,
-  type BestandskundeAudienceRow,
-} from "@/lib/bestandskunden-store";
-import { isBestandskundenSendsApproved } from "@/lib/bestandskunden.mjs";
 import { listCustomersWithSessions } from "@/lib/customer-store";
 import {
   listCustomerMessages,
@@ -88,13 +83,6 @@ export default async function AdminDashboardPage({
   // and hand it to both so the numbers agree and the fan-out isn't doubled.
   const targets: MarketingTarget[] = dbReady ? await listMarketingTargets() : [];
 
-  // The SEPARATE §7(3) Bestandskunden audience (completed-purchase basis, never
-  // the DOI list). Cheap DB read (eligibility is precomputed) — shown apart on
-  // the Marketing tab so the two lawful bases never visually blur together.
-  const bestandskunden: BestandskundeAudienceRow[] = dbReady
-    ? await listBestandskundenAudience()
-    : [];
-
   const store = await cookies();
   const themeCookie = store.get(THEME_COOKIE)?.value;
   const themeInitial: Theme | null =
@@ -109,8 +97,6 @@ export default async function AdminDashboardPage({
       kunden={
         <KundenTab
           dbReady={dbReady}
-          bestandskundenCount={bestandskunden.length}
-          bestandskundenApproved={isBestandskundenSendsApproved()}
           initialFilter={initialFilter}
         />
       }
@@ -126,13 +112,9 @@ export default async function AdminDashboardPage({
 // (compact searchable list + per-customer sub-tabbed detail incl. marketing).
 async function KundenTab({
   dbReady,
-  bestandskundenCount,
-  bestandskundenApproved,
   initialFilter,
 }: {
   dbReady: boolean;
-  bestandskundenCount: number;
-  bestandskundenApproved: boolean;
   initialFilter?: string;
 }) {
   // Auto-capture missing postal addresses from Shopify in the BACKGROUND (after
@@ -166,7 +148,6 @@ async function KundenTab({
         c.shopifyAccountSummary?.firstName?.trim() ||
         null,
       identityTier: c.identityTier,
-      bestandskundeEligible: c.bestandskundeEligible,
       firstSeenAt: c.firstSeenAt,
       lastSeenAt: c.lastSeenAt,
       transactionalConsent: c.transactionalConsent,
@@ -259,8 +240,6 @@ async function KundenTab({
       customers={cards}
       unmatched={unmatched}
       assignTargets={assignTargets}
-      bestandskundenCount={bestandskundenCount}
-      bestandskundenApproved={bestandskundenApproved}
       initialFilter={initialFilter}
     />
   );

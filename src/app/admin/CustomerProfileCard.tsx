@@ -154,8 +154,6 @@ export interface CustomerProps {
   name: string | null;
   /** Identity tier: 1 anonymous · 2 email-identified · 3 signed-in. */
   identityTier: 1 | 2 | 3;
-  /** §7(3) UWG existing-customer eligibility (a completed purchase is on file). */
-  bestandskundeEligible: boolean;
   firstSeenAt: string | null;
   lastSeenAt: string | null;
   transactionalConsent: boolean;
@@ -327,11 +325,6 @@ export function CustomerProfileCard({
           {isReturning && (
             <Badge variant="accent" title="Mehrere Sessions unter derselben E-Mail">
               <RotateCcw className="size-3" /> {customer.sessions.length}×
-            </Badge>
-          )}
-          {customer.bestandskundeEligible && (
-            <Badge variant="success" title="§7 Abs. 3 UWG — abgeschlossener Kauf">
-              Bestandskunde
             </Badge>
           )}
           <Badge variant={marketingStatus.variant}>{marketingStatus.label}</Badge>

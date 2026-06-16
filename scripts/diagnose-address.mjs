@@ -19,7 +19,15 @@ import {
   normalizeShopifyAddress,
   chooseLawfulAddress,
 } from "../src/lib/postal-address.mjs";
-import { isCompletedPurchaseStatus } from "../src/lib/bestandskunden.mjs";
+
+// Local copy of the "completed purchase" check (the shared helper now lives in
+// the TS lib, which this plain-.mjs diagnostic can't import). PAID /
+// PARTIALLY_REFUNDED count as completed; everything else does not.
+const COMPLETED_PURCHASE_STATUSES = new Set(["PAID", "PARTIALLY_REFUNDED"]);
+function isCompletedPurchaseStatus(financialStatus) {
+  if (typeof financialStatus !== "string") return false;
+  return COMPLETED_PURCHASE_STATUSES.has(financialStatus.trim().toUpperCase());
+}
 
 const email = (process.argv[2] ?? "").trim().toLowerCase();
 if (!email) {

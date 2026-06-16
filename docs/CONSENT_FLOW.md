@@ -11,13 +11,9 @@ lawyer must approve before launch.
 > `CONSENT_COPY_LAWYER_APPROVED = true`. Treat these strings as approved — any
 > wording change needs a fresh review.
 >
-> ✅ **§7(3) "Bestandskunden" copy + boundary — LAWYER-APPROVED (June 2026).**
-> That audience is a DISTINCT lawful basis. The "own similar products" boundary
-> is now defined and enforced in code (`lib/bestandskunden-similarity.mjs`) and
-> the opt-out copy is approved. It is STILL gated by its own flag
-> `BESTANDSKUNDE_SENDS_APPROVED` (default **false**) — do not flip it until the
-> §7(3) Nr. 4 "at collection" notice is live store-side (Shopify checkout). See
-> `docs/LEGAL_READINESS_REPORT.md` §8 and the §7(3) section below.
+> ℹ️ **The §7(3) UWG "Bestandskunden" (existing-customer) feature was REMOVED
+> entirely on 2026-06-16 (client decision).** It was never live. Any §7(3)
+> content remaining below this line is historical.
 
 ## Legal background (why it's built this way)
 
@@ -212,56 +208,15 @@ unchanged. See [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §10–§11.
 The widget render contract is in
 [`frontend-handoff/CONSENT_FLOW.md`](./frontend-handoff/CONSENT_FLOW.md) §2.
 
-## §7 Abs. 3 UWG Bestandskunden — a SEPARATE lawful basis
+## §7 Abs. 3 UWG Bestandskunden — REMOVED
 
-Existing-customer email (§7 Abs. 3 UWG) lets us email a customer about our **own
-similar products** **without** prior opt-in consent — a **different lawful basis**
-from the DOI marketing above. **The two bases are NEVER merged.**
-
-| | DOI-consented marketing | §7(3) Bestandskunden |
-|---|---|---|
-| **Lawful basis** | Art. 6(1)(a) — explicit consent | §7 Abs. 3 UWG — existing customer |
-| **Granted by** | the **double-opt-in** (only path to `confirmed`) | a **completed purchase** in Shopify order history |
-| **State** | `email_captures.marketing_doi_status` / `customers.marketing_status` | `customers.bestandskunde_eligible` (migration 0017) |
-| **Opt-out** | `suppression_list` (`/api/unsubscribe`) | **separate** `bestandskunden_suppression_list` (`/api/unsubscribe/bestandskunde`) |
-| **Send gate** | `canSendMarketing` + `CONSENT_COPY_LAWYER_APPROVED` | `canSendBestandskundenMail` + **own** flag `BESTANDSKUNDE_SENDS_APPROVED` |
-
-Eligibility (`lib/bestandskunden.mjs :: isBestandskundeEligible`) is **NOT** an
-account alone and **NOT** a cancelled/abandoned order: it requires at least one
-order whose financial status is a **completed purchase** (`PAID` or
-`PARTIALLY_REFUNDED`; everything else — pending/authorized/voided/refunded/
-unknown — fails closed). It is cached on the customer row, recomputed every time
-the purchase summary is refreshed (`saveCustomerPurchaseSummary`), so the
-audience query is a cheap boolean filter, never a Shopify fan-out.
-
-A §7(3) send (when the flag is on) MUST:
-
-- **(a)** be limited to **own, similar/complementary** products to what was
-  bought — the boundary the lawyer signs off before the flag flips;
-- **(b)** carry the **opt-out notice** in every message
-  (`bestandskundenOptOutNotice` — names the basis, anytime, free of charge,
-  §7 Abs. 3 Nr. 4 UWG);
-- **(c)** honour the **separate** Bestandskunden opt-out
-  (`bestandskunden_suppression_list`), independently of the DOI unsubscribe — a
-  customer objecting to one is **not** auto-removed from the other.
-
-**Built, boundary ENFORCED, still flag-gated.** The audience, eligibility,
-suppression, opt-out link and the `canSendBestandskundenMail` gate are built, and
-since the lawyer sign-off (June 2026) the **"own similar products" boundary is
-defined and ENFORCED in code** (`lib/bestandskunden-similarity.mjs`: own,
-in-stock products in a category the customer actually purchased, excluding what
-they already own — fail-closed, no generic blast) and the opt-out/objection copy
-is approved. A **production send path** exists (`POST
-/api/admin/bestandskunden/send`) — deterministic, purchase-history-only (no AI
-profile), with the amber chatbot-launch line allowed only on top of real similar
-products. **Real §7(3) sends remain gated behind `BESTANDSKUNDE_SENDS_APPROVED`
-(default false)** — distinct from `CONSENT_COPY_LAWYER_APPROVED`. Do **not** flip
-the flag until the §7(3) Nr. 4 **"at the time the address is collected"** notice
-is live in the Shopify checkout/order confirmation (store-side) — see
-`docs/LEGAL_READINESS_REPORT.md` §8. The admin dashboard's Marketing tab shows the two audiences under
-**separate labelled headings** ("DOI-Einwilligung" vs "§7 Abs. 3 UWG
-Bestandskunden") so the bases never blur; a Bestandskunde who *also* holds a DOI
-consent is flagged as such without merging the lists.
+The existing-customer (§7 Abs. 3 UWG) marketing feature was **removed entirely on
+2026-06-16** (client decision; it was never live). The audience, eligibility
+cache, separate opt-out list, email builder, send routes and `BESTANDSKUNDE_*`
+flags are gone (migration `0029` drops the schema). Only the DOI-consented
+marketing path (Art. 6(1)(a)) remains. The "completed purchase" check that the
+physical-address acquisition still needs was retained, relocated into
+`lib/shopify-orders.ts`.
 
 ## Match-up on sign-in (consent carry-forward + session scope)
 
@@ -340,12 +295,6 @@ All strings below are in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts)
 > at-sign-in opt-in strings — was reviewed and approved by the lawyer and went
 > live verbatim. The items below are checked off as a record of what was
 > approved; any wording change requires a fresh review.
->
-> ⚠️ **Two separate sign-offs.** The above is gated by
-> `CONSENT_COPY_LAWYER_APPROVED`. **Real §7(3) Bestandskunden sends are a
-> DISTINCT gate** — `BESTANDSKUNDE_SENDS_APPROVED` (env, default **false**) — and
-> STILL need their own sign-off of the "own similar products" boundary + the
-> opt-out copy. Those items remain unchecked below. Do not conflate them.
 
 ### v3 — at-sign-in marketing opt-in (NEW; replaces v2 in the review)
 
@@ -357,20 +306,6 @@ All strings below are in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts)
       "hinterlegte E-Mail-Adresse" phrasing (we use the verified Shopify email,
       no field), the same scarcity ceiling as the capture box, that it renders
       **UNCHECKED** (no auto-enrol on sign-in), and that it runs the same DOI.
-
-### §7 Abs. 3 UWG Bestandskunden (DISTINCT gate: `BESTANDSKUNDE_SENDS_APPROVED`)
-
-- [ ] **The "own similar products" boundary** — the rule for which products a
-      §7(3) email may advertise relative to what the customer bought. This is the
-      central legal call; the flag stays OFF until it's blessed.
-- [ ] **Bestandskunden opt-out notice** (`bestandskundenOptOutNotice`) — present
-      in every §7(3) email: names the basis, the anytime + free objection
-      (§7 Abs. 3 Nr. 4 UWG), and links the separate opt-out.
-- [ ] **§7(3) opt-out confirmation page** copy
-      (`BESTANDSKUNDE_OPT_OUT_CONFIRMED_*` / `_INVALID_*`).
-- [ ] Confirm the **completed-purchase boundary** (`PAID` / `PARTIALLY_REFUNDED`
-      only; account-alone / cancelled / abandoned excluded) matches the legal
-      "Bestandskunde" definition.
 
 ### Capture-form copy (unchanged text, now v3 set)
 

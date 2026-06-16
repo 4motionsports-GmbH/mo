@@ -2,8 +2,8 @@
 //
 // Triggered by Vercel Cron (see vercel.json). Keeps each customer's cached
 // Shopify data fresh WITHOUT the admin having to press "Käufe aktualisieren":
-// order history (→ owned items + §7(3) Bestandskunde eligibility) and the lawful
-// postal address. So drafts are never built on stale purchase/address data.
+// order history (→ owned items) and the lawful postal address. So drafts are
+// never built on stale purchase/address data.
 //
 // Bounded per run (CUSTOMER_REFRESH_BATCH, default 25) over the MOST-STALE
 // customers (purchase_summary older than CUSTOMER_REFRESH_STALE_HOURS, default

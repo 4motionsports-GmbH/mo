@@ -73,15 +73,11 @@ export function KundenWorkspace({
   customers,
   unmatched,
   assignTargets,
-  bestandskundenCount,
-  bestandskundenApproved,
   initialFilter,
 }: {
   customers: CustomerProps[];
   unmatched: UnmatchedProps["messages"];
   assignTargets: UnmatchedProps["customers"];
-  bestandskundenCount: number;
-  bestandskundenApproved: boolean;
   /** Overview deep-link preset (?filter=) — seeds the filter on load. */
   initialFilter?: string;
 }) {
@@ -299,18 +295,6 @@ export function KundenWorkspace({
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-          <Checkbox
-            checked={filter.bestandskunde}
-            onChange={(e) => set("bestandskunde", e.target.checked)}
-          />
-          Nur Bestandskunden (§7 Abs. 3) · {bestandskundenCount}
-          {!bestandskundenApproved && (
-            <Badge variant="warning" title="BESTANDSKUNDE_SENDS_APPROVED ist aus">
-              Versand gesperrt
-            </Badge>
-          )}
-        </label>
         <p className="text-sm text-muted-foreground">
           {visible.length === customers.length
             ? `${customers.length} Kund(en)`

@@ -19,9 +19,20 @@
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { normalizeEmail } from "./email-capture-store";
 import { chooseLawfulAddress } from "./postal-address.mjs";
-import { isCompletedPurchaseStatus } from "./bestandskunden.mjs";
 import { reportError } from "./observability";
 import { parseIntEnv } from "./env-num";
+
+// Shopify financial statuses that count as a COMPLETED purchase: money was
+// actually received and not fully reversed. Used to pick the PURCHASE-derived
+// lawful postal address (a completed order's shipping address, obtained in
+// connection with the sale). Case-insensitive; null/blank/unknown → false
+// (fail-closed). PARTIALLY_REFUNDED is a real purchase, only partly refunded.
+const COMPLETED_PURCHASE_STATUSES = new Set(["PAID", "PARTIALLY_REFUNDED"]);
+
+function isCompletedPurchaseStatus(financialStatus: string | null | undefined): boolean {
+  if (typeof financialStatus !== "string") return false;
+  return COMPLETED_PURCHASE_STATUSES.has(financialStatus.trim().toUpperCase());
+}
 
 const ORDERS_BY_EMAIL = /* GraphQL */ `
   query MarketingOrdersByEmail($query: String!) {
