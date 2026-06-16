@@ -33,6 +33,7 @@
 
 import { adminGraphql } from "./shopify";
 import { parseNumericVariantId } from "./shopify-cart-url.mjs";
+import { escapeHtml } from "./html-escape";
 import {
   NATIVE_FIXED_BUNDLE,
   PLAIN_UNLISTED_PRODUCT,
@@ -300,14 +301,6 @@ function componentsDescriptionHtml(components: BundleComponentSnapshot[]): strin
     })
     .join("");
   return `<p>Dieses Set enthält:</p><ul>${items}</ul>`;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 async function createPlainUnlistedProduct(

@@ -2,6 +2,7 @@ import { Resend } from "resend";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, checkRateLimitKeyed, clientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
+import { escapeHtml } from "@/lib/html-escape";
 
 export const maxDuration = 10;
 
@@ -61,22 +62,16 @@ function renderBody(p: ContactPayload): { text: string; html: string } {
     p.message,
   ].join("\n");
 
-  const escape = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-
   const rows = fields
     .map(
       ([k, v]) =>
-        `<tr><td style="padding:4px 12px 4px 0;color:#666;vertical-align:top">${escape(k)}</td><td style="padding:4px 0">${escape(v)}</td></tr>`
+        `<tr><td style="padding:4px 12px 4px 0;color:#666;vertical-align:top">${escapeHtml(k)}</td><td style="padding:4px 0">${escapeHtml(v)}</td></tr>`
     )
     .join("");
   const html = `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5">
 <table style="border-collapse:collapse">${rows}</table>
 <h3 style="margin:24px 0 8px 0;font-size:14px">Nachricht</h3>
-<pre style="white-space:pre-wrap;font-family:inherit;margin:0">${escape(p.message)}</pre>
+<pre style="white-space:pre-wrap;font-family:inherit;margin:0">${escapeHtml(p.message)}</pre>
 </div>`;
 
   return { text, html };

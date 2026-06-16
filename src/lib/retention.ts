@@ -21,6 +21,7 @@
 
 import { getSql } from "./db";
 import { purgeExpiredPendingAuth } from "./customer-oauth-store";
+import { parseIntEnv } from "./env-num";
 
 export interface RetentionOptions {
   /** Conversations + messages older than this (by last_activity_at) are deleted. */
@@ -54,23 +55,16 @@ export interface RetentionResult {
   ranAt: string;
 }
 
-function intEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
-
 export function retentionOptionsFromEnv(): RetentionOptions {
   return {
-    retentionDays: intEnv("RETENTION_DAYS", 180),
-    kpiRetentionDays: intEnv("KPI_RETENTION_DAYS", 180),
-    abandonAfterMinutes: intEnv("ABANDON_AFTER_MINUTES", 30),
-    suppressedPurgeDays: intEnv("SUPPRESSED_CAPTURE_PURGE_DAYS", 30),
+    retentionDays: parseIntEnv("RETENTION_DAYS", 180, 0),
+    kpiRetentionDays: parseIntEnv("KPI_RETENTION_DAYS", 180, 0),
+    abandonAfterMinutes: parseIntEnv("ABANDON_AFTER_MINUTES", 30, 0),
+    suppressedPurgeDays: parseIntEnv("SUPPRESSED_CAPTURE_PURGE_DAYS", 30, 0),
     // Correspondence (Art. 6(1)(b)/(f)) is kept longer than analytics — a reply
     // thread stays useful well beyond a chat session. 12 months by default.
-    correspondenceRetentionDays: intEnv("CORRESPONDENCE_RETENTION_DAYS", 365),
-    physicalLetterRetentionDays: intEnv("PHYSICAL_LETTER_RETENTION_DAYS", 365),
+    correspondenceRetentionDays: parseIntEnv("CORRESPONDENCE_RETENTION_DAYS", 365, 0),
+    physicalLetterRetentionDays: parseIntEnv("PHYSICAL_LETTER_RETENTION_DAYS", 365, 0),
   };
 }
 

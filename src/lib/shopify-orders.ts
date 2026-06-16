@@ -21,6 +21,7 @@ import { normalizeEmail } from "./email-capture-store";
 import { chooseLawfulAddress } from "./postal-address.mjs";
 import { isCompletedPurchaseStatus } from "./bestandskunden.mjs";
 import { reportError } from "./observability";
+import { parseIntEnv } from "./env-num";
 
 const ORDERS_BY_EMAIL = /* GraphQL */ `
   query MarketingOrdersByEmail($query: String!) {
@@ -47,9 +48,7 @@ interface OrdersResponse {
 }
 
 function orderLookbackDays(): number {
-  const raw = process.env.MARKETING_ORDER_LOOKBACK_DAYS;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 180;
+  return parseIntEnv("MARKETING_ORDER_LOOKBACK_DAYS", 180);
 }
 
 export type PurchaseCheck =

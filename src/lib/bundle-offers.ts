@@ -41,6 +41,7 @@ import {
   type BundleComponentRecord,
 } from "./bundle-offers-store";
 import { reportError } from "./observability";
+import { parseIntEnv } from "./env-num";
 
 export type {
   BundleOfferRow,
@@ -55,9 +56,7 @@ export function bundleCreationMode(): string {
 
 /** Days an offer stays live before the cron archives it (env-overridable, 7). */
 export function bundleExpiryDays(): number {
-  const raw = process.env.BUNDLE_OFFER_EXPIRY_DAYS;
-  const n = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : 7;
+  return parseIntEnv("BUNDLE_OFFER_EXPIRY_DAYS", 7);
 }
 
 /** The tracked redirect URL the email CTA uses (/api/r/<token>). */
