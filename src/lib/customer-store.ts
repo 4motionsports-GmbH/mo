@@ -586,6 +586,93 @@ export async function loadCustomerSessions(
 }
 
 /**
+ * Batch-load sessions for a set of customers (by id) in two bulk queries:
+ * one for conversations, one for messages. Reproduces the exact output shape,
+ * field names, derivations, and per-customer ordering of loadCustomerSessions.
+ */
+async function batchLoadCustomerSessions(
+  customerIds: number[],
+  sql: Sql
+): Promise<Map<number, CustomerSession[]>> {
+  // Result map: every customer id gets an (initially empty) entry.
+  const result = new Map<number, CustomerSession[]>(customerIds.map((id) => [id, []]));
+
+  // -- 1. Conversations ---------------------------------------------------------
+  // Fetch ALL conversations for the customer set in the same ORDER as
+  // loadCustomerSessions (created_at ASC, id ASC within each customer).
+  // We request the full set and apply the per-customer SESSIONS_PER_CUSTOMER cap
+  // in JS — a single LIMIT here would silently drop rows for some customers.
+  const convRows = (await sql`
+    SELECT id, customer_id, session_id, created_at, last_activity_at, persona_label, message_count
+      FROM conversations
+     WHERE customer_id = ANY(${customerIds})
+     ORDER BY customer_id ASC, created_at ASC, id ASC
+  `) as Array<Record<string, unknown>>;
+
+  if (convRows.length === 0) return result;
+
+  // Group conversations by customer, honouring the per-customer cap.
+  const convsByCustomer = new Map<number, Array<Record<string, unknown>>>();
+  for (const r of convRows) {
+    const cid = Number(r.customer_id);
+    const list = convsByCustomer.get(cid) ?? [];
+    if (list.length < SESSIONS_PER_CUSTOMER) {
+      list.push(r);
+      convsByCustomer.set(cid, list);
+    }
+  }
+
+  // Collect the accepted conversation ids for the messages query.
+  const acceptedConvIds: number[] = [];
+  for (const convs of convsByCustomer.values()) {
+    for (const c of convs) acceptedConvIds.push(Number(c.id));
+  }
+
+  // -- 2. Messages --------------------------------------------------------------
+  // Fetch messages for all accepted conversations in one query.
+  // No global LIMIT — conversations are naturally bounded; replicate
+  // loadCustomerSessions behaviour (no per-conversation message cap there).
+  const msgRows = (await sql`
+    SELECT conversation_id, role, content, tool_name
+      FROM messages
+     WHERE conversation_id = ANY(${acceptedConvIds})
+     ORDER BY created_at ASC, id ASC
+  `) as Array<Record<string, unknown>>;
+
+  // Group readable transcript messages by conversation id.
+  const byConversation = new Map<number, TranscriptMessage[]>();
+  for (const m of msgRows) {
+    const convId = Number(m.conversation_id);
+    const role = m.role as TranscriptMessage["role"];
+    const content = typeof m.content === "string" ? m.content : "";
+    const toolName = (m.tool_name as string | null) ?? null;
+    // Same filter as loadCustomerSessions.
+    if (toolName !== null || (role !== "user" && role !== "assistant") || !content.trim()) {
+      continue;
+    }
+    const list = byConversation.get(convId) ?? [];
+    list.push({ role, content, toolName: null });
+    byConversation.set(convId, list);
+  }
+
+  // -- 3. Assemble CustomerSession[] per customer --------------------------------
+  for (const [customerId, convs] of convsByCustomer.entries()) {
+    const sessions: CustomerSession[] = convs.map((r) => ({
+      conversationId: Number(r.id),
+      sessionId: String(r.session_id),
+      createdAt: (r.created_at as string | null) ?? null,
+      lastActivityAt: (r.last_activity_at as string | null) ?? null,
+      personaLabel: (r.persona_label as string | null) ?? null,
+      messageCount: r.message_count != null ? Number(r.message_count) : 0,
+      transcript: byConversation.get(Number(r.id)) ?? [],
+    }));
+    result.set(customerId, sessions);
+  }
+
+  return result;
+}
+
+/**
  * Customers for the admin dashboard (most recently seen first), each with
  * their session timeline. Returns [] when no DB is configured.
  */
@@ -599,13 +686,17 @@ export async function listCustomersWithSessions(
        ORDER BY last_seen_at DESC, id DESC
        LIMIT ${CUSTOMER_LIST_LIMIT}
     `) as Array<Record<string, unknown>>;
-    return Promise.all(
-      rows.map(async (r) => {
-        const customer = mapCustomer(r);
-        const sessions = await loadCustomerSessions(customer.id, sql);
-        return { ...customer, sessions };
-      })
-    );
+
+    if (rows.length === 0) return [];
+
+    const customers = rows.map(mapCustomer);
+    const customerIds = customers.map((c) => c.id);
+    const sessionsByCustomer = await batchLoadCustomerSessions(customerIds, sql);
+
+    return customers.map((customer) => ({
+      ...customer,
+      sessions: sessionsByCustomer.get(customer.id) ?? [],
+    }));
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "listCustomersWithSessions" });
     return [];
