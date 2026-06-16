@@ -123,18 +123,19 @@ export async function POST(req: Request) {
     const from = process.env.CONTACT_FROM_EMAIL;
 
     if (!apiKey || !to || !from) {
-      // Local-dev fallback: keep working without a Resend key configured.
+      // Local-dev fallback: keep working without a Resend key configured. Do NOT
+      // log the submitter's PII (name / email / phone / message) to stdout —
+      // application logs are a processor-visible sink (GDPR — OQ-18). Log only
+      // non-identifying metadata so the dev still sees a submission arrived.
       console.log(
         "[contact-form] new submission (no email sent — RESEND_API_KEY/CONTACT_TO_EMAIL/CONTACT_FROM_EMAIL not set)",
         {
           timestamp: new Date().toISOString(),
           reason: payload.reason,
-          productIds: payload.productIds ?? [],
-          name: payload.name,
-          email: payload.email,
-          organization: payload.organization ?? "",
-          phone: payload.phone ?? "",
-          message: payload.message,
+          productCount: (payload.productIds ?? []).length,
+          hasOrganization: Boolean(payload.organization?.trim()),
+          hasPhone: Boolean(payload.phone?.trim()),
+          messageLength: payload.message?.length ?? 0,
         }
       );
       return okJson({ ok: true }, headers);

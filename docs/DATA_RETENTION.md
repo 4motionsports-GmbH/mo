@@ -264,6 +264,21 @@ by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
    schedule, decoupled from the consent-capture grace; the `ON DELETE SET NULL`
    customer link means a customer erasure detaches (never cascade-deletes) these
    rows.
+5c. Deletes `feedback` past `FEEDBACK_RETENTION_DAYS` (default **365 days**, by
+   `created_at`; `0` disables) — free-text comments can carry user-supplied PII,
+   so they don't live forever.
+5d. **Storage limitation (Art. 5(1)(e)):** purges IDENTIFIED but **dormant**
+   `customers` whose `last_seen_at` is older than
+   `CUSTOMER_INACTIVITY_RETENTION_DAYS` (default **1095 days / 3 years**; `0`
+   disables), **excluding** anyone holding an active marketing consent
+   (`marketing_status` `confirmed`/`pending` — a live basis to retain). Their
+   `ON DELETE SET NULL` FKs return conversations/correspondence to pseudonymous
+   rows and their OAuth tokens cascade away; the `suppression_list` (keyed by
+   email) is untouched, so opt-outs are still honoured. *(The exact window is a
+   policy choice — confirm with Legal.)*
+5e. Deletes `admin_access_log` past `ADMIN_ACCESS_LOG_RETENTION_DAYS` (default
+   **730 days**, by `occurred_at`; `0` disables) — the admin PII-access security
+   record (migration `0028`).
 6. Purges expired `customer_auth_pending` rows (the short-lived sign-in
    CSRF/PKCE state).
 

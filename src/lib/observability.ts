@@ -11,6 +11,54 @@ type SentryModule = typeof SentryNS;
 
 let sentryPromise: Promise<SentryModule | null> | null = null;
 
+// ---------------------------------------------------------------------------
+// PII scrubbing (GDPR — LEGAL_READINESS_REPORT §8 OQ-04)
+// ---------------------------------------------------------------------------
+//
+// Error messages / stack values can incidentally carry personal data — a chat
+// snippet echoed in an AI-provider error, an address in a Pingen error, or a
+// GraphQL `email:"foo@bar.com"` phrase from a Shopify query. The `reportError`
+// context object is already kept PII-free by contract, but the exception OBJECT
+// is not under our control. So we scrub every outgoing event: redact email
+// addresses and the quoted `email:"…"` order-search phrase from the message,
+// the exception values, and breadcrumb messages, before anything leaves the
+// process. `sendDefaultPii` is also set false so the SDK never auto-attaches
+// IPs / headers / cookies / request bodies.
+
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+// Shopify order-search phrase, e.g. email:"foo@bar.com" — redact the whole thing.
+const EMAIL_QUERY_RE = /email:"[^"]*"/gi;
+
+/** Redact email-shaped PII from a free-text string. */
+export function scrubPiiString(input: unknown): string {
+  if (typeof input !== "string" || !input) return typeof input === "string" ? input : "";
+  return input.replace(EMAIL_QUERY_RE, 'email:"[redacted]"').replace(EMAIL_RE, "[redacted-email]");
+}
+
+/**
+ * Sentry `beforeSend` hook: scrub PII from the parts of an event that can carry
+ * free text. Defensive and total — any failure returns the event unchanged
+ * rather than dropping observability. Exported for unit testing.
+ */
+export function scrubSentryEvent<T extends Record<string, unknown>>(event: T): T {
+  try {
+    if (typeof event.message === "string") {
+      (event as Record<string, unknown>).message = scrubPiiString(event.message);
+    }
+    const exception = event.exception as { values?: Array<{ value?: unknown }> } | undefined;
+    for (const v of exception?.values ?? []) {
+      if (typeof v.value === "string") v.value = scrubPiiString(v.value);
+    }
+    const breadcrumbs = event.breadcrumbs as Array<{ message?: unknown }> | undefined;
+    for (const b of breadcrumbs ?? []) {
+      if (typeof b.message === "string") b.message = scrubPiiString(b.message);
+    }
+  } catch {
+    // never let scrubbing break error reporting
+  }
+  return event;
+}
+
 function getSentry(): Promise<SentryModule | null> {
   if (sentryPromise) return sentryPromise;
   const dsn = process.env.SENTRY_DSN;
@@ -25,6 +73,12 @@ function getSentry(): Promise<SentryModule | null> {
           dsn,
           tracesSampleRate: 0,
           environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+          // Never auto-attach IPs / headers / cookies / request bodies.
+          sendDefaultPii: false,
+          // Redact email-shaped PII from message / exception / breadcrumbs before
+          // the event leaves the process (GDPR — OQ-04).
+          beforeSend: (event) =>
+            scrubSentryEvent(event as unknown as Record<string, unknown>) as typeof event,
         });
         return mod;
       } catch (err) {

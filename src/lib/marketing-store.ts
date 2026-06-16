@@ -224,6 +224,35 @@ export async function getSendById(
   }
 }
 
+/**
+ * The most recent SENT timestamp for this capture (one capture == one email,
+ * since email_captures.email is unique), excluding `excludeSendId`. Backs the
+ * per-recipient send-frequency cap (LEGAL_READINESS_REPORT §8 OQ-16). Returns
+ * null when there is no prior send / no DB / on error (fail-open: the cap never
+ * blocks a send because of an outage — the eligibility gates are the hard ones).
+ */
+export async function lastMarketingSendAt(
+  emailCaptureId: number,
+  excludeSendId: number,
+  sql: Sql | null = getSql()
+): Promise<string | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT max(sent_at) AS last_sent
+        FROM marketing_sends
+       WHERE email_capture_id = ${emailCaptureId}
+         AND status = 'sent'
+         AND id <> ${excludeSendId}
+    `) as Array<Record<string, unknown>>;
+    const v = rows[0]?.last_sent;
+    return v == null ? null : v instanceof Date ? v.toISOString() : String(v);
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "lastMarketingSendAt" });
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Click-tracking — the tracked redirect link in sent marketing emails.
 // ---------------------------------------------------------------------------

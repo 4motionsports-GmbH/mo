@@ -36,6 +36,16 @@ export interface RetentionOptions {
   correspondenceRetentionDays: number;
   /** physical_letters older than this (by created_at) are deleted. */
   physicalLetterRetentionDays: number;
+  /** feedback rows older than this (by created_at) are deleted. 0 disables. */
+  feedbackRetentionDays: number;
+  /**
+   * Storage limitation (Art. 5(1)(e)): purge IDENTIFIED but dormant customers —
+   * last_seen_at older than this AND not holding an active marketing consent
+   * ('confirmed'/'pending', which is its own basis to retain). 0 disables.
+   */
+  customerInactivityRetentionDays: number;
+  /** admin_access_log rows older than this (by occurred_at) are deleted. 0 disables. */
+  adminAccessLogRetentionDays: number;
 }
 
 export interface RetentionResult {
@@ -50,6 +60,12 @@ export interface RetentionResult {
   deletedEmailMessages: number;
   /** physical_letters purged past their retention window. */
   deletedPhysicalLetters: number;
+  /** feedback rows purged past their retention window. */
+  deletedFeedback: number;
+  /** Dormant identified customers purged for storage limitation. */
+  deletedInactiveCustomers: number;
+  /** admin_access_log rows purged past their window. */
+  deletedAdminAccessLog: number;
   /** Expired customer_auth_pending rows (CSRF/PKCE state) removed. */
   purgedAuthPending: number;
   ranAt: string;
@@ -65,6 +81,14 @@ export function retentionOptionsFromEnv(): RetentionOptions {
     // thread stays useful well beyond a chat session. 12 months by default.
     correspondenceRetentionDays: parseIntEnv("CORRESPONDENCE_RETENTION_DAYS", 365, 0),
     physicalLetterRetentionDays: parseIntEnv("PHYSICAL_LETTER_RETENTION_DAYS", 365, 0),
+    // Free-text feedback can carry user-supplied PII; keep it 12 months by default.
+    feedbackRetentionDays: parseIntEnv("FEEDBACK_RETENTION_DAYS", 365, 0),
+    // Storage-limitation backstop for dormant identified customers. Conservative
+    // 3-year default; set 0 to disable. Confirmed/pending-consent customers are
+    // always excluded (their consent is a live basis to retain).
+    customerInactivityRetentionDays: parseIntEnv("CUSTOMER_INACTIVITY_RETENTION_DAYS", 1095, 0),
+    // Admin PII-access audit (security record); kept 2 years by default.
+    adminAccessLogRetentionDays: parseIntEnv("ADMIN_ACCESS_LOG_RETENTION_DAYS", 730, 0),
   };
 }
 
@@ -94,6 +118,9 @@ export async function runRetention(
   const suppressedCutoff = daysAgo(opts.suppressedPurgeDays);
   const correspondenceCutoff = daysAgo(opts.correspondenceRetentionDays);
   const physicalLetterCutoff = daysAgo(opts.physicalLetterRetentionDays);
+  const feedbackCutoff = daysAgo(opts.feedbackRetentionDays);
+  const inactiveCustomerCutoff = daysAgo(opts.customerInactivityRetentionDays);
+  const adminAccessLogCutoff = daysAgo(opts.adminAccessLogRetentionDays);
 
   // 1. Mark stale active conversations abandoned.
   const abandoned = await sql`
@@ -200,6 +227,52 @@ export async function runRetention(
     SELECT count(*)::int AS n FROM del
   `;
 
+  // 5d. Purge free-text feedback past its own window (storage limitation): a
+  //     comment can carry user-supplied PII (an optional email, or PII typed into
+  //     the message), so it doesn't live forever. Independent of the conversation
+  //     it references (no FK; the conversation may already be gone). 0 disables.
+  let deletedFeedback = [{ n: 0 }] as Array<{ n: number }>;
+  if (opts.feedbackRetentionDays > 0) {
+    deletedFeedback = (await sql`
+      WITH del AS (
+        DELETE FROM feedback WHERE created_at < ${feedbackCutoff} RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+  }
+
+  // 5e. Storage limitation (Art. 5(1)(e)): purge IDENTIFIED but DORMANT customers
+  //     — no activity since the inactivity window — UNLESS they hold an active
+  //     marketing consent ('confirmed' = live consent, 'pending' = mid-DOI), which
+  //     is its own lawful basis to retain. Like step 5, the ON DELETE SET NULL FKs
+  //     return their conversations/correspondence to pseudonymous rows and the
+  //     ON DELETE CASCADE drops their OAuth tokens; the suppression_list (keyed by
+  //     email, not customer_id) is untouched, so opt-outs are still honoured.
+  //     Disabled when the window is 0.
+  let deletedInactiveCustomers = [{ n: 0 }] as Array<{ n: number }>;
+  if (opts.customerInactivityRetentionDays > 0) {
+    deletedInactiveCustomers = (await sql`
+      WITH del AS (
+        DELETE FROM customers
+         WHERE last_seen_at < ${inactiveCustomerCutoff}
+           AND marketing_status NOT IN ('confirmed', 'pending')
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+  }
+
+  // 5f. Purge the admin PII-access audit log past its own (security) window.
+  let deletedAdminAccessLog = [{ n: 0 }] as Array<{ n: number }>;
+  if (opts.adminAccessLogRetentionDays > 0) {
+    deletedAdminAccessLog = (await sql`
+      WITH del AS (
+        DELETE FROM admin_access_log WHERE occurred_at < ${adminAccessLogCutoff} RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+  }
+
   // 6. Purge expired pending-auth records (short-lived CSRF/PKCE state). The
   //    encrypted token rows (customer_oauth_tokens) carry no separate window —
   //    they cascade with the customer (ON DELETE CASCADE), so a GDPR erasure /
@@ -215,6 +288,9 @@ export async function runRetention(
     purgedSuppressedCustomers: purgedCustomers[0]?.n ?? 0,
     deletedEmailMessages: deletedEmailMessages[0]?.n ?? 0,
     deletedPhysicalLetters: deletedPhysicalLetters[0]?.n ?? 0,
+    deletedFeedback: deletedFeedback[0]?.n ?? 0,
+    deletedInactiveCustomers: deletedInactiveCustomers[0]?.n ?? 0,
+    deletedAdminAccessLog: deletedAdminAccessLog[0]?.n ?? 0,
     purgedAuthPending,
     ranAt: new Date().toISOString(),
   };

@@ -25,7 +25,9 @@ import {
   revertClaim,
   markSent,
   generateRedirectToken,
+  lastMarketingSendAt,
 } from "./marketing-store";
+import { parseIntEnv } from "./env-num";
 import { sendEmail, senderAddress } from "./email";
 import { outboundThreading } from "./email-inbound";
 import { recordSentMessage } from "./email-messages-store";
@@ -60,6 +62,7 @@ export type ApproveAndSendResult =
         | "not_found"
         | "already_sent"
         | "not_eligible"
+        | "too_soon"
         | "no_unsubscribe"
         | "claim_failed"
         | "discount_mismatch"
@@ -68,6 +71,16 @@ export type ApproveAndSendResult =
         | "send_failed";
       message: string;
     };
+
+/**
+ * Minimum days between two marketing sends to the SAME recipient (per-recipient
+ * frequency cap). 0 disables (default). Configurable via
+ * MARKETING_MIN_SEND_INTERVAL_DAYS — the cadence is a policy choice
+ * (LEGAL_READINESS_REPORT §8 OQ-16).
+ */
+function minSendIntervalDays(): number {
+  return parseIntEnv("MARKETING_MIN_SEND_INTERVAL_DAYS", 0, 0);
+}
 
 /**
  * Approve and send a drafted marketing email through the system. Performs the
@@ -101,6 +114,24 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         reason: "not_eligible",
         message: "Recipient is not marketing-eligible.",
       };
+    }
+
+    // GATE 1c — per-recipient frequency cap. Don't mail the same person more
+    // often than the configured interval (0 = disabled). Checked before the
+    // claim so a too-soon send never burns a code.
+    const intervalDays = minSendIntervalDays();
+    if (intervalDays > 0) {
+      const last = await lastMarketingSendAt(send.emailCaptureId, sendId);
+      if (last) {
+        const ageMs = Date.now() - Date.parse(last);
+        if (Number.isFinite(ageMs) && ageMs < intervalDays * 86_400_000) {
+          return {
+            ok: false,
+            reason: "too_soon",
+            message: `Diese Adresse wurde innerhalb der letzten ${intervalDays} Tage bereits angeschrieben.`,
+          };
+        }
+      }
     }
 
     // GATE 2 — a working unsubscribe link is mandatory. No link → no send.
