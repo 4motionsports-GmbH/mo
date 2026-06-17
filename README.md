@@ -134,9 +134,10 @@ single-line strings. See `.env.example` for the canonical list.
 
 **Observability (optional)**
 
-| Variable     | Description                                                                                          |
-| ------------ | ---------------------------------------------------------------------------------------------------- |
-| `SENTRY_DSN` | Server-side error capture. Skipped silently when unset — routes never crash on missing observability. |
+| Variable                  | Description                                                                                                                                              |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SENTRY_DSN`  | Server-side error capture (**errors only** — `tracesSampleRate` is 0, no tracing). Injected by the Vercel Sentry integration. Unset ⇒ Sentry skipped cleanly, errors logged to stdout, one-time warning emitted. |
+| `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` | **Build-time only** — source-map upload via the Sentry Next.js plugin during `next build`. Vercel injects these in CI/deploys; not needed for local dev or runtime. |
 
 **AI cost tracking (optional — KPI tab)**
 
