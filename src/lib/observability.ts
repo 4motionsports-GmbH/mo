@@ -1,9 +1,16 @@
 // Server-side error logging + optional Sentry integration.
 //
-// Sentry is initialized on first use only when SENTRY_DSN is set. When it's
-// absent we skip the import entirely so missing observability config never
-// crashes the route. Both routes funnel unhandled errors through
-// `reportError` + return a stable JSON envelope via `errorResponse`.
+// Sentry is initialized on first use only when NEXT_PUBLIC_SENTRY_DSN is set —
+// the single DSN injected by the Vercel Sentry integration (a DSN is not a
+// secret; it ships in client bundles by design). When it's absent we skip the
+// import entirely and log a one-time warning, so a missing DSN is visible (not
+// silent) yet observability config never crashes the route. Every route funnels
+// unhandled errors through `reportError` — the single Sentry init path — and
+// returns a stable JSON envelope via `errorResponse`.
+//
+// ERRORS ONLY: tracesSampleRate is pinned to 0 — no performance/transaction
+// events — so we never burn the free-tier event quota on traces. Error capture
+// stays on.
 
 import type * as SentryNS from "@sentry/nextjs";
 
@@ -66,8 +73,17 @@ export function scrubSentryEvent<T extends ScrubbableEvent>(event: T): T {
 
 function getSentry(): Promise<SentryModule | null> {
   if (sentryPromise) return sentryPromise;
-  const dsn = process.env.SENTRY_DSN;
+  // Single source of truth: the DSN injected by the Vercel Sentry integration.
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
   if (!dsn) {
+    // Skip cleanly, but make the missing DSN visible rather than silent. This
+    // branch runs at most once per process — sentryPromise is memoized on the
+    // next line and short-circuits every later call — so the warning is logged
+    // exactly once.
+    console.warn(
+      "[observability] NEXT_PUBLIC_SENTRY_DSN is not set — Sentry is disabled; " +
+        "errors are logged to stdout only."
+    );
     sentryPromise = Promise.resolve(null);
     return sentryPromise;
   }
@@ -76,6 +92,8 @@ function getSentry(): Promise<SentryModule | null> {
       try {
         mod.init({
           dsn,
+          // ERRORS ONLY — 0 disables performance tracing so transaction events
+          // never consume the free-tier event quota. Error capture is unaffected.
           tracesSampleRate: 0,
           environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
           // Never auto-attach IPs / headers / cookies / request bodies.
