@@ -1,5 +1,5 @@
 import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis";
+import { getRedis } from "./redis";
 import { errorEnvelope } from "./observability";
 
 export type RateLimitBucket =
@@ -62,37 +62,17 @@ const BUCKET_CONFIG: Record<RateLimitBucket, { max: number; window: `${number} $
 };
 
 const cached: Partial<Record<RateLimitBucket, Ratelimit>> = {};
-let warned = false;
-let sharedRedis: Redis | null = null;
 
-function getRedis(): Redis | null {
-  if (sharedRedis) return sharedRedis;
-  // Accept either the explicit UPSTASH_REDIS_REST_* names or the KV_REST_API_*
-  // names that Vercel's Upstash Marketplace integration auto-injects.
-  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-  const token =
-    process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-  if (!url || !token) {
-    if (!warned) {
-      console.warn(
-        "[rate-limit] Upstash Redis env vars not set (UPSTASH_REDIS_REST_URL/TOKEN or KV_REST_API_URL/TOKEN) — rate limiting disabled"
-      );
-      warned = true;
-    }
-    return null;
-  }
-  sharedRedis = new Redis({ url, token });
-  return sharedRedis;
-}
-
-function getLimiter(bucket: RateLimitBucket): Ratelimit | null {
+function getLimiter(bucket: RateLimitBucket): Ratelimit {
   const existing = cached[bucket];
   if (existing) return existing;
-  const redis = getRedis();
-  if (!redis) return null;
   const { max, window } = BUCKET_CONFIG[bucket];
+  // getRedis() is the single shared construction point (src/lib/redis.ts). It
+  // throws a loud, explicit error when KV_REST_API_URL / KV_REST_API_TOKEN are
+  // missing, so a misconfiguration surfaces as a 500 from the calling route
+  // rather than silently disabling rate limiting.
   const limiter = new Ratelimit({
-    redis,
+    redis: getRedis(),
     limiter: Ratelimit.slidingWindow(max, window),
     analytics: false,
     prefix: `ms-${bucket}`,
@@ -122,7 +102,6 @@ export async function checkRateLimit(
   bucket: RateLimitBucket = "chat"
 ): Promise<RateLimitResult> {
   const limiter = getLimiter(bucket);
-  if (!limiter) return { ok: true };
   const key = clientKey(req);
   const { success, reset } = await limiter.limit(key);
   if (success) return { ok: true };
@@ -140,7 +119,6 @@ export async function checkRateLimitKeyed(
   key: string
 ): Promise<RateLimitResult> {
   const limiter = getLimiter(bucket);
-  if (!limiter) return { ok: true };
   const { success, reset } = await limiter.limit(key.slice(0, 256));
   if (success) return { ok: true };
   const retryAfter = Math.max(1, Math.ceil((reset - Date.now()) / 1000));

@@ -103,10 +103,10 @@ single-line strings. See `.env.example` for the canonical list.
 
 **Rate limiting**
 
-| Variable                     | Description                                                |
-| ---------------------------- | ---------------------------------------------------------- |
-| `UPSTASH_REDIS_REST_URL`     | Upstash Redis REST URL. If unset, rate limiting no-ops.    |
-| `UPSTASH_REDIS_REST_TOKEN`   | Paired token for the URL above.                            |
+| Variable            | Description                                                                                          |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| `KV_REST_API_URL`   | Upstash Redis REST URL — injected by Vercel's Upstash Marketplace integration. **Required**: the rate limiter fails fast (loud error, no silent no-op) if it or the token is missing. |
+| `KV_REST_API_TOKEN` | Paired REST token for the URL above (same Vercel integration).                                       |
 
 **Contact form**
 
