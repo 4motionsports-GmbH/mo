@@ -6,6 +6,8 @@
 // Tokens TTL ≈ 24h — cached in memory and refreshed when within
 // REFRESH_BUFFER_MS of expiry.
 
+import { planThrottleRetry, THROTTLE_MAX_RETRIES } from "./shopify-throttle.mjs";
+
 interface CachedToken {
   accessToken: string;
   expiresAt: number; // epoch ms
@@ -102,10 +104,25 @@ export async function getAdminToken(): Promise<string> {
   return (await inFlight).accessToken;
 }
 
+interface ShopifyThrottleStatus {
+  maximumAvailable?: number;
+  currentlyAvailable?: number;
+  restoreRate?: number;
+}
+interface ShopifyQueryCost {
+  requestedQueryCost?: number;
+  actualQueryCost?: number | null;
+  throttleStatus?: ShopifyThrottleStatus;
+}
 interface GraphQLResponse<T> {
   data?: T;
   errors?: Array<{ message: string; extensions?: Record<string, unknown> }>;
+  // Top-level cost block — present on every Admin GraphQL response, and the
+  // source of the leaky-bucket state we use to time a throttle retry.
+  extensions?: { cost?: ShopifyQueryCost };
 }
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Run an authenticated Admin GraphQL query/mutation and return `data`. Throws on
@@ -120,7 +137,11 @@ export async function adminGraphql<T>(
   return graphql<T>(query, variables);
 }
 
-async function graphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+async function graphql<T>(
+  query: string,
+  variables?: Record<string, unknown>,
+  attempt = 0
+): Promise<T> {
   const token = await getAdminToken();
   const url = `https://${storeDomain()}/admin/api/${apiVersion()}/graphql.json`;
   const res = await fetch(url, {
@@ -131,15 +152,46 @@ async function graphql<T>(query: string, variables?: Record<string, unknown>): P
     },
     body: JSON.stringify({ query, variables }),
   });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Shopify GraphQL ${res.status} ${res.statusText}: ${body.slice(0, 500)}`);
+
+  // Read the body once; a THROTTLED response is HTTP 200 with errors[] +
+  // extensions.cost.throttleStatus, so we must parse before deciding.
+  const text = await res.text();
+  let json: GraphQLResponse<T> | null = null;
+  try {
+    json = text ? (JSON.parse(text) as GraphQLResponse<T>) : null;
+  } catch {
+    json = null;
   }
-  const json = (await res.json()) as GraphQLResponse<T>;
-  if (json.errors?.length) {
+
+  // RIDE OUT a throttle (HTTP 429 or errors[] code THROTTLED) instead of throwing:
+  // wait for the leaky bucket to refill the deficit, then retry. Only when the
+  // retry cap is exhausted do we fall through and throw (last-resort fallback).
+  const plan = planThrottleRetry({ json, httpStatus: res.status, attempt });
+  if (plan.retry) {
+    // DISTINCT log: a transient throttle we are RETRYING — not a hard failure.
+    console.warn(
+      `[shopify] THROTTLED — retry ${attempt + 1}/${THROTTLE_MAX_RETRIES} in ${plan.waitMs}ms ` +
+        `(throttleStatus=${JSON.stringify(json?.extensions?.cost?.throttleStatus ?? {})})`
+    );
+    await sleep(plan.waitMs);
+    return graphql<T>(query, variables, attempt + 1);
+  }
+  if (plan.reason === "max-retries-exhausted") {
+    // DISTINCT log: throttling PERSISTED past the cap — this is a genuine degrade
+    // (the caller's catch will fall back to the bundled catalog).
+    console.error(
+      `[shopify] THROTTLED — gave up after ${attempt} retries; the request is still ` +
+        `rate-limited. Falling back. (throttleStatus=${JSON.stringify(json?.extensions?.cost?.throttleStatus ?? {})})`
+    );
+  }
+
+  if (!res.ok) {
+    throw new Error(`Shopify GraphQL ${res.status} ${res.statusText}: ${text.slice(0, 500)}`);
+  }
+  if (json?.errors?.length) {
     throw new Error(`Shopify GraphQL errors: ${JSON.stringify(json.errors)}`);
   }
-  if (!json.data) {
+  if (!json?.data) {
     throw new Error("Shopify GraphQL returned no data");
   }
   return json.data;
@@ -505,6 +557,13 @@ function mapProductNode(n: ProductNode): ShopifyProduct {
   };
 }
 
+// Pace the sequential pagination so the cost-based leaky bucket doesn't drain in
+// a burst. Page size stays at the proven-safe 30 (raising it risks the per-query
+// cost ceiling the metaobject expansions already push toward — see above); the
+// small inter-page delay plus graphql()'s THROTTLED-retry are what keep the run
+// on live Shopify data instead of throttling into the bundle fallback.
+const INTER_PAGE_DELAY_MS = 500;
+
 export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   const out: ShopifyProduct[] = [];
   let cursor: string | null = null;
@@ -517,6 +576,8 @@ export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
     cursor = data.products.pageInfo.endCursor;
     if (!cursor) break;
     if (page > 500) throw new Error("fetchAllProducts: exceeded 500 pages — bailing out");
+    // Polite pacing between pages (graphql() still rides out any actual throttle).
+    await sleep(INTER_PAGE_DELAY_MS);
   }
   return out;
 }
