@@ -13,11 +13,19 @@ them up on the next warm invocation.
 | File                                          | Role                                                    |
 | --------------------------------------------- | ------------------------------------------------------- |
 | `scripts/verify-shopify-auth.mjs`             | Standalone check that the Shopify auth grant works.    |
-| `src/lib/shopify.ts`                          | Token cache + GraphQL pagination.                       |
+| `src/lib/shopify.ts`                          | Token cache + GraphQL pagination + targeted by-id fetch.|
 | `src/lib/catalog-mapping.ts`                  | Shopify product → `Product` type (mirrors Path A rules).|
-| `src/lib/catalog-store.ts`                    | Loader: Blob first, bundled JSON fallback. Cached.      |
+| `src/lib/embedding-doc.mjs`                   | The embedded-text builder + `EMBEDDING_DOC_VERSION` (one source of truth). |
+| `src/lib/embed-resilience.mjs`                | Resilient embedding orchestrator (chunk → sub-batch → per-item → carry-forward). |
+| `src/lib/openai-error.mjs`                    | Classifies OpenAI errors (insufficient_quota / billing surfaced distinctly). |
+| `src/lib/catalog-store.ts`                    | Loader: Blob first, bundled JSON fallback. Cached. Atomic-pair writer. |
+| `src/lib/catalog-pair.mjs`                    | Keeps the two blobs a consistent pair (drops orphan vectors). |
+| `src/lib/catalog-merge.mjs` + `catalog-mutate.ts` | Targeted single-product update for the stock webhook. |
+| `src/lib/shopify-webhook.mjs`                 | Shopify webhook HMAC verify + topic routing.            |
+| `src/lib/availability.mjs`                    | Recommendation-time availability guard (Part F).        |
 | `src/app/api/cron/sync-catalog/route.ts`      | Cron handler. Fetch → filter → map → embed → write Blob.|
-| `vercel.json`                                 | Cron schedule (`0 3 * * *`, i.e. 03:00 UTC daily).      |
+| `src/app/api/webhooks/shopify/route.ts`       | Real-time stock webhook (inventory + product changes).  |
+| `vercel.json`                                 | `regions: ["fra1"]` + cron schedule (`0 3 * * *`, i.e. 03:00 UTC daily). |
 
 ## Shopify auth (Jan-2026 model)
 
@@ -49,6 +57,7 @@ SHOPIFY_STORE_DOMAIN     # e.g. motion-sports.myshopify.com (NOT motionsports.de
 SHOPIFY_CLIENT_ID
 SHOPIFY_CLIENT_SECRET    # shpss_…
 SHOPIFY_API_VERSION      # e.g. 2026-04
+SHOPIFY_WEBHOOK_SECRET   # signs the real-time stock webhook (see "Real-time stock webhook")
 BLOB_READ_WRITE_TOKEN    # @vercel/blob token (also picked up automatically on Vercel)
 CRON_SECRET              # protects /api/cron/sync-catalog
 OPENAI_API_KEY           # used to regenerate embeddings
@@ -159,18 +168,72 @@ These are written to the catalog Blob alongside every other field and surfaced
 on `GET /api/products` (`inStock` is what the widget uses for an "Ausverkauft"
 badge — see `docs/API_CONTRACT.md`).
 
-> **Freshness — sync-fresh, not live.** Stock status is only as current as the
-> last successful daily sync (the cron runs `0 3 * * *`). This is a pragmatic,
-> good-enough trade-off: it stops Mo from leading with or checking out
-> sold-out items, while staying simple. The known limitation is a window of up
-> to ~24h where a just-sold-out item can still read as in stock.
->
-> **Future option — live availability check.** If day-stale data proves
-> insufficient (e.g. fast-moving SKUs going out of stock between syncs), a
-> live check can be layered in later: query `ProductVariant.availableForSale`
-> for just the handful of products Mo is about to recommend / add to a
-> checkout, at request time, and override the cached `inStock`. This was
-> deliberately deferred — the sync-fresh approach is enough for now.
+> **Freshness — near-real-time, with a daily baseline.** Stock is refreshed two
+> ways: the **real-time webhook** (below) flips a single product's availability
+> within seconds of a Shopify inventory/product change, and the **daily sync** is
+> the baseline reconciliation (and the catch-all for id-only hard-deletes). On top
+> of both, recommendation surfaces apply an **availability guard** (Part F) so a
+> sold-out item is never recommended even in the gap before a webhook lands.
+
+### Availability guard at recommendation time (Part F)
+
+Regardless of how fresh the sync is, every place that **recommends** a product
+filters out currently-unavailable items via `isAvailable` (`availability.mjs`,
+the rule: unavailable only when `inStock === false`):
+
+- **Chat product tool / retrieval** (`retrieval.ts`) — sold-out products are
+  **hard-filtered** out of the candidate set before ranking (replacing the old
+  soft ranking penalty), so Mo never sees them to recommend.
+- **Bundle composition** (`bundle-suggestion-core.mjs`, `bundle-offer-core.mjs`)
+  — already refuse sold-out components at compose time.
+- **Marketing drafts** (`admin/marketing/draft`, `admin/customers/marketing-draft`)
+  — the prose only recommends available products; the cart link keeps its own
+  send-time `excludeSoldOut` guard.
+
+A restocked item becomes recommendable again automatically the moment its
+`inStock` flips back (via the webhook or the next sync).
+
+## Real-time stock webhook (`/api/webhooks/shopify`)
+
+Keeps availability near-real-time between daily syncs. Shopify POSTs an inventory
+or product change; the route:
+
+1. **Verifies** the `X-Shopify-Hmac-SHA256` signature over the **raw** body before
+   parsing — `base64(HMAC-SHA256(rawBody, SHOPIFY_WEBHOOK_SECRET))`, constant-time
+   (same HMAC-first discipline as the Resend/Pingen webhooks). No secret ⇒ **503**
+   (fail closed); bad signature ⇒ **401**.
+2. **Routes by `X-Shopify-Topic`** to a **targeted single-product update** (never a
+   full resync): it re-fetches just that product from Shopify (same fields +
+   mapping as the sync, so `inStock` is computed identically), then upserts it into
+   the catalog blob — or removes it if it no longer passes the catalog filters.
+   `inventory_levels/*` first resolves the inventory item → its product.
+3. **Re-embeds only when the embedded text changed** (an inventory-only change
+   reuses the stored vector — no OpenAI call), then writes the catalog +
+   embeddings as a consistent pair.
+4. Is **idempotent** (an unchanged product writes nothing — absorbs Shopify's
+   frequent duplicate deliveries) and **burst-guarded** (catalog-blob mutations
+   are serialized behind a best-effort Redis lock; it degrades to no-lock when KV
+   is absent, with the daily sync as backstop). A real failure returns **500** so
+   Shopify retries safely.
+
+### Shopify-side registration (setup step)
+
+Set `SHOPIFY_WEBHOOK_SECRET` (the webhook subscription's signing secret; for
+webhooks created via the app config / Admin API this is the app's API secret key),
+then register these topics against `https://<deployment>/api/webhooks/shopify`
+(Admin API `2026-04`):
+
+- `products/update` — primary signal (fires on stock, price, status, publish
+  changes; carries the full product incl. handle).
+- `products/create` — new products appear without waiting for the daily sync.
+- `products/delete` — best-effort; id-only payloads are reconciled by the daily
+  sync.
+- `inventory_levels/update` — catches pure quantity changes (resolved item →
+  product).
+
+Register either via the Shopify Admin (Settings → Notifications → Webhooks) or
+the Admin API `webhookSubscriptionCreate` mutation. Verify deliveries are
+`2xx`-acked in the Shopify webhook dashboard.
 
 ## How the runtime reads the catalog
 
@@ -190,6 +253,79 @@ the catalog without redeploying code. If embeddings are empty (e.g. OpenAI
 key was absent at sync time), the existing keyword-search fallback in
 `retrieve()` still works.
 
+## Embedding document — what gets embedded (the quality lever)
+
+`src/lib/embedding-doc.mjs` (`buildEmbeddingDoc`) is the **single source of
+truth** for the text we embed per product — shared by the cron sync, the runtime
+mapper (`catalog-mapping.ts` re-exports it), and `scripts/build-embeddings.mjs`,
+so "what we embedded" and "what we'd embed now" can never drift.
+
+The doc is **problem/need-oriented**: it leads with WHAT PROBLEM the product
+solves and WHO it's for, in the language a customer uses in chat, so a product's
+vector lands in the same need-space as the user's described problem (better
+recall). Order:
+
+1. **Identity** — name, category, brand (+ series, price incl. sale).
+2. **Wofür / für wen** — derived use-case / benefit phrases from the product's
+   signals (category, footprint, noise, rehab flag, target group, tags, specs),
+   e.g. *"kniefreundliches, gelenkschonendes Low-Impact-Cardio"*, *"kompaktes,
+   platzsparendes Heim-Gym für kleine Wohnungen"*, *"progressiver, verstellbarer
+   Widerstand für Kraft- und Cardio-Einsteiger"*. This is the new, highest-leverage
+   section. The derivation is deterministic (`deriveUseCases`), so a product
+   always yields the same doc.
+3. **Beschreibung** — the **full** detailed description, clipped to a sane bound
+   (~1200 chars) instead of the old 240-char clip that dropped most of the signal.
+4. **Eigenschaften** — *all* meaningful features (no hard 12 cap; up to ~40).
+5. **Technische Daten** — specs (Material, Maße, Gewicht, Farbe, Zertifizierung…).
+6. **Zielgruppe / Tags** + persona flags (Reha-geeignet, Lautstärke, Stellfläche).
+
+The whole doc is clamped to ~6000 chars (well under the 8192-token per-input cap).
+
+### Re-embed on doc change — `EMBEDDING_DOC_VERSION`
+
+The embeddings blob stores `docVersion` (the `EMBEDDING_DOC_VERSION` the vectors
+were built with) and a per-item `docHash` (hash of the embedded text). Because
+this doc composition changed, the marker was bumped to **v2** — so on the next
+sync **every product is re-embedded** (the carry-forward fallback refuses to
+reuse a vector whose `docVersion`/`docHash` no longer matches; see below). Bump
+the constant whenever `buildEmbeddingDoc`'s output changes in a way that should
+force a full re-embed.
+
+## Reliability — resilient + atomic sync
+
+Two structural fixes (see `docs/CATALOG_SYNC_DIAGNOSIS.md`):
+
+- **Resilient embeddings (`embed-resilience.mjs`).** The old `embedAll` was
+  all-or-nothing — one failed chunk threw and 503'd the whole run, writing zero
+  embeddings. Now each chunk is wrapped; a failed chunk is retried as smaller
+  **sub-batches → per item**, isolating a poison item; an item that *still* fails
+  **carries forward its previous vector** (when it still matches the current doc)
+  or is **skipped** (keyword-search fallback). The OpenAI call is hardened with an
+  explicit `maxRetries` + a small inter-chunk delay (TPM/RPM politeness).
+  `insufficient_quota` / billing is detected and logged **distinctly** (and treated
+  as fatal so we don't fire ~1000 doomed calls) — it's a **billing fix on the
+  OpenAI account, not a code bug**. The route returns **200 on partial success**
+  with a `synced / carriedForward / skipped` summary; **5xx only on total failure**
+  (no fresh vectors AND nothing carried forward — e.g. a billing outage), in which
+  case the last-good blobs are **preserved**, not overwritten with an empty pair.
+- **Atomic write (Part B).** Embeddings are generated **in full before either blob
+  is written**; then both are written together (`writeCatalogPair`, embeddings
+  first, then catalog, orphan vectors reconciled away). A mid-run failure can no
+  longer leave a **fresh catalog paired with stale embeddings**. The two blobs are
+  always a consistent pair.
+
+## Region — data residency + latency (`fra1`)
+
+`vercel.json` pins `"regions": ["fra1"]` (Frankfurt, EU) for **all** functions
+incl. crons. This addresses the EU data-residency flag (esp. the personal-data
+crons `refresh-customers` / `retention`, which previously ran in the US default
+`iad1`) and cuts the EU↔US latency that inflated this sync's wall-time.
+
+> **NOTE — OpenAI egress.** The embeddings calls still egress to OpenAI in the
+> **US** (`api.openai.com`). That is the documented SCC transfer path and is
+> **unchanged here** — pinning `fra1` moves *our* compute to the EU but does not
+> change where OpenAI processes the request.
+
 ## Triggering the cron manually after deploy
 
 ```bash
@@ -199,8 +335,10 @@ curl -X POST \
 ```
 
 Response is a JSON summary with `mode` (`shopify` or `fallback-bundle`),
-`productCount`, `embeddingsCount`, the Blob URLs, and timing. Check Vercel
-function logs for the detailed filter-stats breakdown.
+`productCount`, `embeddingsCount`, `synced` / `carriedForward` / `skipped`,
+`docVersion`, the Blob URLs, and timing. A healthy run returns `ok:true` with a
+full fresh catalog + embeddings pair. Check Vercel function logs for the detailed
+filter-stats breakdown.
 
 The route accepts `GET` and `POST` — Vercel Cron uses GET by default; the
 schedule in `vercel.json` runs daily at 03:00 UTC.

@@ -262,6 +262,52 @@ const METAFIELD_QUERY_FIELDS = METAFIELD_IDENTIFIERS.map(
 // reference expansions on 9 metafields, first:100 blew past the 1000-cost
 // single-query ceiling (observed cost 1550 → MAX_COST_EXCEEDED). 30 keeps the
 // cost comfortably under the limit while staying well within the page cap.
+// The product fields the catalog needs — extracted so the paginated full-sync
+// query AND the targeted single-product query (used by the stock webhook, Part E)
+// request EXACTLY the same shape and map identically. Stock signals are
+// sync-fresh in the cron path and near-real-time on the webhook path; either way
+// availableForSale is the authoritative "can this be sold right now" flag
+// (respects oversell policy), backed by totalInventory / tracksInventory.
+const PRODUCT_NODE_FIELDS = /* GraphQL */ `
+    id
+    handle
+    title
+    descriptionHtml
+    productType
+    vendor
+    status
+    publishedAt
+    tags
+    onlineStoreUrl
+    totalInventory
+    tracksInventory
+    category {
+      fullName
+      name
+    }
+    featuredImage {
+      url
+      altText
+    }
+    images(first: 20) {
+      nodes {
+        url
+        altText
+      }
+    }
+    variants(first: 50) {
+      nodes {
+        id
+        sku
+        price
+        compareAtPrice
+        inventoryQuantity
+        availableForSale
+      }
+    }
+    ${METAFIELD_QUERY_FIELDS}
+`;
+
 const PRODUCTS_PAGE_SIZE = 30;
 const PRODUCTS_QUERY = /* GraphQL */ `
   query CatalogProducts($cursor: String) {
@@ -271,48 +317,32 @@ const PRODUCTS_QUERY = /* GraphQL */ `
         endCursor
       }
       nodes {
-        id
-        handle
-        title
-        descriptionHtml
-        productType
-        vendor
-        status
-        publishedAt
-        tags
-        onlineStoreUrl
-        # Stock signals — sync-fresh (refreshed by the daily catalog cron, not a
-        # live per-request check). totalInventory is the in-stock quantity across
-        # variants/locations; tracksInventory tells us whether that number is
-        # meaningful. Per-variant availableForSale (below) is the authoritative
-        # "can this be sold right now" flag and also respects oversell policy.
-        totalInventory
-        tracksInventory
-        category {
-          fullName
-          name
+        ${PRODUCT_NODE_FIELDS}
+      }
+    }
+  }
+`;
+
+// Targeted fetch of specific products by GID (webhook single-product refresh).
+const PRODUCTS_BY_IDS_QUERY = /* GraphQL */ `
+  query CatalogProductsByIds($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Product {
+        ${PRODUCT_NODE_FIELDS}
+      }
+    }
+  }
+`;
+
+// Resolve which product an inventory item belongs to — the inventory_levels/*
+// webhook carries an inventory_item_id, not a product. Admin API 2026-04.
+const INVENTORY_ITEM_PRODUCT_QUERY = /* GraphQL */ `
+  query InventoryItemProduct($id: ID!) {
+    inventoryItem(id: $id) {
+      variant {
+        product {
+          id
         }
-        featuredImage {
-          url
-          altText
-        }
-        images(first: 20) {
-          nodes {
-            url
-            altText
-          }
-        }
-        variants(first: 50) {
-          nodes {
-            id
-            sku
-            price
-            compareAtPrice
-            inventoryQuantity
-            availableForSale
-          }
-        }
-        ${METAFIELD_QUERY_FIELDS}
       }
     }
   }
@@ -442,6 +472,39 @@ interface ProductsPage {
   };
 }
 
+// One ProductNode (raw GraphQL) → the ShopifyProduct the mapper consumes,
+// resolving each metafield reference to its display value. Shared by the full
+// sync and the targeted webhook fetch so both produce identical shapes.
+function mapProductNode(n: ProductNode): ShopifyProduct {
+  const metafields: ShopifyMetafield[] = [];
+  for (const id of METAFIELD_IDENTIFIERS) {
+    const field = n[id.alias] as RawMetafield | null | undefined;
+    const value = resolveMetafieldValue(field, n.id, `${id.namespace}.${id.key}`);
+    if (value != null && value !== "") {
+      metafields.push({ namespace: id.namespace, key: id.key, value });
+    }
+  }
+  return {
+    id: n.id,
+    handle: n.handle,
+    title: n.title,
+    descriptionHtml: n.descriptionHtml ?? "",
+    productType: n.productType ?? "",
+    vendor: n.vendor ?? "",
+    status: n.status,
+    publishedAt: n.publishedAt,
+    tags: Array.isArray(n.tags) ? n.tags : [],
+    onlineStoreUrl: n.onlineStoreUrl,
+    category: n.category,
+    featuredImage: n.featuredImage,
+    images: n.images?.nodes ?? [],
+    variants: n.variants?.nodes ?? [],
+    totalInventory: n.totalInventory,
+    tracksInventory: n.tracksInventory,
+    metafields,
+  };
+}
+
 export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   const out: ShopifyProduct[] = [];
   let cursor: string | null = null;
@@ -449,45 +512,47 @@ export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   while (true) {
     page++;
     const data: ProductsPage = await graphql<ProductsPage>(PRODUCTS_QUERY, { cursor });
-    for (const n of data.products.nodes) {
-      const metafields: ShopifyMetafield[] = [];
-      for (const id of METAFIELD_IDENTIFIERS) {
-        const field = n[id.alias] as RawMetafield | null | undefined;
-        const value = resolveMetafieldValue(
-          field,
-          n.id,
-          `${id.namespace}.${id.key}`
-        );
-        if (value != null && value !== "") {
-          metafields.push({ namespace: id.namespace, key: id.key, value });
-        }
-      }
-      out.push({
-        id: n.id,
-        handle: n.handle,
-        title: n.title,
-        descriptionHtml: n.descriptionHtml ?? "",
-        productType: n.productType ?? "",
-        vendor: n.vendor ?? "",
-        status: n.status,
-        publishedAt: n.publishedAt,
-        tags: Array.isArray(n.tags) ? n.tags : [],
-        onlineStoreUrl: n.onlineStoreUrl,
-        category: n.category,
-        featuredImage: n.featuredImage,
-        images: n.images?.nodes ?? [],
-        variants: n.variants?.nodes ?? [],
-        totalInventory: n.totalInventory,
-        tracksInventory: n.tracksInventory,
-        metafields,
-      });
-    }
+    for (const n of data.products.nodes) out.push(mapProductNode(n));
     if (!data.products.pageInfo.hasNextPage) break;
     cursor = data.products.pageInfo.endCursor;
     if (!cursor) break;
     if (page > 500) throw new Error("fetchAllProducts: exceeded 500 pages — bailing out");
   }
   return out;
+}
+
+/**
+ * Fetch specific products by GID (e.g. "gid://shopify/Product/123"). Used by the
+ * stock webhook for a TARGETED single-product refresh — same fields/mapping as
+ * the full sync, so the updated record is computed identically. Ids that no
+ * longer resolve to a Product (deleted/inaccessible) are silently dropped, so the
+ * caller can treat a missing id as "remove from catalog".
+ */
+export async function fetchProductsByIds(gids: string[]): Promise<ShopifyProduct[]> {
+  const ids = gids.filter((g) => typeof g === "string" && g.startsWith("gid://"));
+  if (ids.length === 0) return [];
+  const data = await graphql<{ nodes: Array<ProductNode | null> }>(PRODUCTS_BY_IDS_QUERY, { ids });
+  const out: ShopifyProduct[] = [];
+  for (const n of data.nodes ?? []) {
+    // Non-Product nodes come back without a handle (the inline fragment didn't
+    // match) — skip them defensively.
+    if (n && typeof n.handle === "string") out.push(mapProductNode(n));
+  }
+  return out;
+}
+
+/**
+ * Resolve the product GID that an inventory item belongs to (inventory_levels/*
+ * webhooks carry an inventory_item_id, not a product). Returns null when it can't
+ * be resolved (item gone, not tied to a variant/product).
+ */
+export async function resolveProductIdForInventoryItem(
+  inventoryItemGid: string
+): Promise<string | null> {
+  const data = await graphql<{
+    inventoryItem: { variant: { product: { id: string } | null } | null } | null;
+  }>(INVENTORY_ITEM_PRODUCT_QUERY, { id: inventoryItemGid });
+  return data.inventoryItem?.variant?.product?.id ?? null;
 }
 
 export function getMetafield(

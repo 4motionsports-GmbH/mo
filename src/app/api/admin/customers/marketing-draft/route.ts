@@ -50,6 +50,7 @@ import {
   DISCOUNT_PERCENT_MAX,
 } from "@/lib/discount-validation.mjs";
 import { buildPrefilledCartUrlForIds, chooseCustomerProductIds } from "@/lib/cart";
+import { filterAvailable } from "@/lib/availability.mjs";
 import { generateCustomerMarketingDraft } from "@/lib/marketing-draft";
 import {
   getActiveBundleForCustomer,
@@ -173,7 +174,10 @@ export async function POST(req: Request) {
       ) ?? [];
 
     const productIds = chooseCustomerProductIds(selections, ownedHandles);
-    const products = productIds.length ? await getProductsByIds(productIds) : [];
+    // The prose must only RECOMMEND currently-available products (Part F).
+    // The cart link keeps its own send-time excludeSoldOut guard; the persisted
+    // productIds stay intact so a restocked item flows back automatically.
+    const products = productIds.length ? filterAvailable(await getProductsByIds(productIds)) : [];
     // Snapshot persona: the newest session's, the freshest signal.
     const personaLabel = sessions.at(-1)?.personaLabel ?? null;
 
