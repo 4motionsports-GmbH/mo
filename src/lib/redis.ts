@@ -48,3 +48,15 @@ export function getRedis(): Redis {
   }
   return client;
 }
+
+/**
+ * Like getRedis(), but returns null instead of throwing when KV is not
+ * configured. For BEST-EFFORT uses (e.g. the webhook burst-lock) that must still
+ * function — degraded — without Redis, rather than fail closed the way the rate
+ * limiter must.
+ */
+export function tryGetRedis(): Redis | null {
+  if (client) return client;
+  if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) return null;
+  return getRedis();
+}

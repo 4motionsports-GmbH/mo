@@ -7,6 +7,11 @@
 import type { Product } from "./types";
 import { getMetafield, type ShopifyProduct } from "./shopify";
 import { buildShopifyCartUrl, parseNumericVariantId } from "./shopify-cart-url.mjs";
+// The embedded-doc builder lives in its own module (one source of truth shared
+// with the cron sync and scripts/build-embeddings.mjs). Re-exported here so the
+// long-standing `import { buildEmbeddingDoc } from "@/lib/catalog-mapping"`
+// callers keep working unchanged.
+export { buildEmbeddingDoc, EMBEDDING_DOC_VERSION, embeddingDocHash } from "./embedding-doc.mjs";
 
 const SHOP_DOMAIN = "https://motionsports.de";
 
@@ -293,24 +298,5 @@ export function mapShopifyProducts(
   return { products, stats };
 }
 
-// Compact representation embedded by the embeddings model. Must match the doc
-// shape used in scripts/build-embeddings.mjs so vector quality stays comparable.
-export function buildEmbeddingDoc(p: Product): string {
-  const lines = [
-    `Name: ${p.name}`,
-    `Kategorie: ${p.category}`,
-    `Marke: ${p.brand}`,
-    `Preis: ${p.price} EUR`,
-    `Beschreibung: ${p.shortDescription}`,
-    `Features: ${(p.features || []).join("; ")}`,
-    `Zielgruppe: ${(p.targetGroup || []).join(", ")}`,
-    `Tags: ${(p.tags || []).join(", ")}`,
-    `Serie: ${p.series || ""}`,
-  ];
-  if (p.medicalCertification?.suitableForRehab === true) lines.push("Reha-geeignet: ja");
-  if (typeof p.noiseLevelDb === "number") lines.push(`Lautstärke: ${p.noiseLevelDb} dB`);
-  if (typeof p.footprintM2 === "number" && p.footprintM2 > 0) {
-    lines.push(`Stellfläche: ca. ${p.footprintM2} m²`);
-  }
-  return lines.join("\n");
-}
+// buildEmbeddingDoc is re-exported from ./embedding-doc.mjs (see the top of this
+// file) — the embedded-text composition is documented in docs/CATALOG_SYNC.md.

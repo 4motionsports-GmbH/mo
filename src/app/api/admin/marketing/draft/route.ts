@@ -39,6 +39,7 @@ import {
   DISCOUNT_PERCENT_MAX,
 } from "@/lib/discount-validation.mjs";
 import { buildPrefilledCartUrlForIds, chooseCartProductIds } from "@/lib/cart";
+import { filterAvailable } from "@/lib/availability.mjs";
 import { generateMarketingDraft } from "@/lib/marketing-draft";
 import { reportError } from "@/lib/observability";
 
@@ -112,7 +113,9 @@ export async function POST(req: Request) {
     // the user's selection when they made one, otherwise everything discussed.
     // Stored on the draft row, so the send step ships exactly this set.
     const productIds = chooseCartProductIds(conversation);
-    const products = productIds.length ? await getProductsByIds(productIds) : [];
+    // Only RECOMMEND currently-available products in the prose (Part F). The cart
+    // keeps its send-time excludeSoldOut guard; productIds are persisted as-is.
+    const products = productIds.length ? filterAvailable(await getProductsByIds(productIds)) : [];
     const personaLabel = conversation?.personaLabel ?? null;
 
     const hasDiscount = discountPercent > 0;

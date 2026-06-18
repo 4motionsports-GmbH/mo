@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { loadEmbeddings, loadProductCatalog, type EmbeddingsFile } from "./catalog-store";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
+import { isAvailable } from "./availability.mjs";
 import type { CustomerProfile, Product, SearchProductsArgs } from "./types";
 
 let openaiClient: OpenAI | null = null;
@@ -28,12 +29,6 @@ async function getIndexedEmbeddings(): Promise<IndexedEmbeddings> {
   };
   return indexedCache;
 }
-
-// How much to nudge sold-out products down the ranking. Multiplicative and
-// deliberately mild (~15%): a strongly-matching sold-out item can still rank
-// above a weak in-stock one, but in-stock wins whenever the fit is comparable.
-// This is a ranking nudge, not a hard filter.
-const SOLD_OUT_RANK_PENALTY = 0.85;
 
 function cosine(a: number[], b: number[]): number {
   let dot = 0;
@@ -142,7 +137,12 @@ export async function retrieve(opts: {
 }): Promise<RetrievalHit[]> {
   const limit = opts.limit ?? 8;
   const [catalog, emb] = await Promise.all([loadProductCatalog(), getIndexedEmbeddings()]);
-  const candidates = applyHardFilters(catalog, opts.profile, opts.filters);
+  // Availability guard (Part F): filter OUT currently-unavailable products before
+  // ranking, regardless of sync freshness, so a sold-out item is never
+  // recommended — even in the gap between a stock change and the catalog webhook
+  // (Part E) landing. A restocked item re-enters automatically once inStock
+  // flips back. This is a HARD filter, replacing the old soft ranking penalty.
+  const candidates = applyHardFilters(catalog, opts.profile, opts.filters).filter(isAvailable);
 
   let queryVector = opts.queryVector ?? null;
   if (queryVector === undefined) queryVector = null;
@@ -159,14 +159,8 @@ export async function retrieve(opts: {
     if (!queryVector || score === 0) {
       score = keywordScore(product, opts.query);
     }
-    // Gentle de-prioritisation of sold-out items. We deliberately do NOT filter
-    // them out — Mo may still surface a genuinely best-fit item that's
-    // currently unavailable — but in-stock options should rank first when
-    // comparably suitable. A small multiplicative penalty keeps a clearly
-    // superior sold-out match ahead of a much weaker in-stock one, while
-    // letting in-stock win ties and near-ties. (Stock is sync-fresh; see
-    // docs/CATALOG_SYNC.md.)
-    if (product.inStock === false) score *= SOLD_OUT_RANK_PENALTY;
+    // (Sold-out items were already filtered out of `candidates` above, so every
+    // product scored here is currently recommendable.)
     return { product, score };
   });
 

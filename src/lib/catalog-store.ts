@@ -6,15 +6,30 @@
 // cached in module memory for the lifetime of the warm Lambda.
 
 import { list, put } from "@vercel/blob";
+import { reconcileEmbeddingItems } from "./catalog-pair.mjs";
 import type { Product } from "./types";
 
 export const CATALOG_BLOB_KEY = "catalog/product-catalog.json";
 export const EMBEDDINGS_BLOB_KEY = "catalog/product-embeddings.json";
 
+export interface EmbeddingItem {
+  id: string;
+  vector: number[];
+  // Short hash of the embedded doc text (embeddingDocHash). Lets the webhook
+  // single-product update re-embed ONLY when the text actually changed, and lets
+  // the sync's carry-forward refuse a vector whose doc has since changed. Optional
+  // for back-compat with vectors written before this field existed.
+  docHash?: string;
+}
+
 export interface EmbeddingsFile {
   model: string;
   dim: number;
-  items: Array<{ id: string; vector: number[] }>;
+  // The EMBEDDING_DOC_VERSION the vectors were built with. Absent on legacy
+  // blobs (treated as "older than current" ⇒ not carried forward). See
+  // embedding-doc.mjs / embed-resilience.mjs.
+  docVersion?: number;
+  items: EmbeddingItem[];
 }
 
 // How long (ms) a warm Lambda may serve its in-memory snapshot before
@@ -107,6 +122,78 @@ export async function loadEmbeddings(): Promise<EmbeddingsFile> {
   cachedEmbeddings = await loadEmbeddingsFromBundle();
   cachedEmbeddingsAt = Date.now();
   return cachedEmbeddings;
+}
+
+/**
+ * Read the catalog blob DIRECTLY (no module cache, no bundled-JSON fallback).
+ * Returns null when the key doesn't exist or can't be read. Used by the sync
+ * (carry-forward base) and the webhook single-product update, which must operate
+ * on the authoritative current blob, not a possibly-stale warm-Lambda snapshot.
+ */
+export async function readCatalogBlobDirect(): Promise<Product[] | null> {
+  if (!blobConfigured()) return null;
+  try {
+    const url = await findBlobUrl(CATALOG_BLOB_KEY);
+    if (!url) return null;
+    const data = await fetchJson<Product[]>(url);
+    return Array.isArray(data) ? data : null;
+  } catch (err) {
+    console.warn("[catalog-store] direct catalog blob read failed", err);
+    return null;
+  }
+}
+
+/** Direct (uncached, no-fallback) read of the embeddings blob, or null. */
+export async function readEmbeddingsBlobDirect(): Promise<EmbeddingsFile | null> {
+  if (!blobConfigured()) return null;
+  try {
+    const url = await findBlobUrl(EMBEDDINGS_BLOB_KEY);
+    if (!url) return null;
+    const data = await fetchJson<EmbeddingsFile>(url);
+    return data?.items ? data : null;
+  } catch (err) {
+    console.warn("[catalog-store] direct embeddings blob read failed", err);
+    return null;
+  }
+}
+
+/**
+ * The base catalog a webhook update mutates: the live blob when present, else the
+ * committed bundle (so a targeted update still works before the very first sync).
+ */
+export async function readCatalogForMutation(): Promise<Product[]> {
+  return (await readCatalogBlobDirect()) ?? (await loadCatalogFromBundle());
+}
+
+/**
+ * Write BOTH blobs as a consistent pair (Part B). Callers generate the fresh
+ * catalog AND fresh embeddings IN FULL before calling this, so a failure earlier
+ * in the pipeline never leaves one blob fresh and the other stale.
+ *
+ * Ordering is deliberate: embeddings FIRST, then catalog. If the second write
+ * fails, the worst residual state is "catalog no newer than embeddings" (the new
+ * embeddings may contain a few vectors for products not yet in the old catalog —
+ * harmless, they're simply not retrievable). The reverse order could leave a
+ * fresh catalog with stale embeddings — exactly the regression we're fixing.
+ *
+ * Orphan vectors (ids not in the catalog) are reconciled away first so the pair
+ * is internally consistent.
+ */
+export async function writeCatalogPair(
+  products: Product[],
+  embeddings: EmbeddingsFile
+): Promise<{ catalogUrl: string; embeddingsUrl: string }> {
+  const reconciled: EmbeddingsFile = {
+    ...embeddings,
+    items: reconcileEmbeddingItems(
+      products.map((p) => p.id),
+      embeddings.items
+    ) as EmbeddingItem[],
+  };
+  const embeddingsUrl = await writeEmbeddingsToBlob(reconciled);
+  const catalogUrl = await writeCatalogToBlob(products);
+  invalidateCache();
+  return { catalogUrl, embeddingsUrl };
 }
 
 export async function writeCatalogToBlob(products: Product[]): Promise<string> {
