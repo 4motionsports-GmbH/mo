@@ -4,8 +4,14 @@
 // /api/cron/sync-catalog). If Blob is not configured OR the keys don't
 // exist yet, fall back to the JSON committed in src/data/. Results are
 // cached in module memory for the lifetime of the warm Lambda.
+//
+// The store is configured as PRIVATE, so these blobs are written with
+// access:"private" and read back server-side through the SDK with the
+// BLOB_READ_WRITE_TOKEN (get), NOT via an unauthenticated public URL. They are
+// only ever read by the backend (into memory for retrieval) — the browser gets
+// products via /api/products — so they never need public access.
 
-import { list, put } from "@vercel/blob";
+import { get, put } from "@vercel/blob";
 import { reconcileEmbeddingItems } from "./catalog-pair.mjs";
 import type { Product } from "./types";
 
@@ -50,24 +56,21 @@ function blobConfigured(): boolean {
   return !!process.env.BLOB_READ_WRITE_TOKEN;
 }
 
-async function findBlobUrl(pathname: string): Promise<string | null> {
-  try {
-    const res = await list({
-      prefix: pathname,
-      token: process.env.BLOB_READ_WRITE_TOKEN,
-    });
-    const exact = res.blobs.find((b) => b.pathname === pathname);
-    return exact?.url ?? null;
-  } catch (err) {
-    console.warn(`[catalog-store] blob list failed for ${pathname}`, err);
-    return null;
-  }
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`blob fetch ${res.status} ${res.statusText}`);
-  return (await res.json()) as T;
+/**
+ * Read a PRIVATE blob's JSON by pathname through the SDK, authenticated with the
+ * read-write token (get resolves the store from the token). Returns null when the
+ * key doesn't exist; throws on a real read/auth error so callers' try/catch can
+ * fall back. `useCache:false` bypasses the CDN cache so a freshly-synced copy is
+ * read immediately (the private-store equivalent of the old `cache:"no-store"`).
+ */
+async function readPrivateJson<T>(pathname: string): Promise<T | null> {
+  const res = await get(pathname, {
+    access: "private",
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+    useCache: false,
+  });
+  if (!res || res.statusCode !== 200) return null;
+  return (await new Response(res.stream).json()) as T;
 }
 
 async function loadCatalogFromBundle(): Promise<Product[]> {
@@ -84,14 +87,11 @@ export async function loadProductCatalog(): Promise<Product[]> {
   if (cachedCatalog && isFresh(cachedCatalogAt)) return cachedCatalog;
   if (blobConfigured()) {
     try {
-      const url = await findBlobUrl(CATALOG_BLOB_KEY);
-      if (url) {
-        const data = await fetchJson<Product[]>(url);
-        if (Array.isArray(data) && data.length) {
-          cachedCatalog = data;
-          cachedCatalogAt = Date.now();
-          return data;
-        }
+      const data = await readPrivateJson<Product[]>(CATALOG_BLOB_KEY);
+      if (Array.isArray(data) && data.length) {
+        cachedCatalog = data;
+        cachedCatalogAt = Date.now();
+        return data;
       }
     } catch (err) {
       console.warn("[catalog-store] catalog blob load failed, falling back to bundled JSON", err);
@@ -106,14 +106,11 @@ export async function loadEmbeddings(): Promise<EmbeddingsFile> {
   if (cachedEmbeddings && isFresh(cachedEmbeddingsAt)) return cachedEmbeddings;
   if (blobConfigured()) {
     try {
-      const url = await findBlobUrl(EMBEDDINGS_BLOB_KEY);
-      if (url) {
-        const data = await fetchJson<EmbeddingsFile>(url);
-        if (data?.items?.length) {
-          cachedEmbeddings = data;
-          cachedEmbeddingsAt = Date.now();
-          return data;
-        }
+      const data = await readPrivateJson<EmbeddingsFile>(EMBEDDINGS_BLOB_KEY);
+      if (data?.items?.length) {
+        cachedEmbeddings = data;
+        cachedEmbeddingsAt = Date.now();
+        return data;
       }
     } catch (err) {
       console.warn("[catalog-store] embeddings blob load failed, falling back to bundled JSON", err);
@@ -133,9 +130,7 @@ export async function loadEmbeddings(): Promise<EmbeddingsFile> {
 export async function readCatalogBlobDirect(): Promise<Product[] | null> {
   if (!blobConfigured()) return null;
   try {
-    const url = await findBlobUrl(CATALOG_BLOB_KEY);
-    if (!url) return null;
-    const data = await fetchJson<Product[]>(url);
+    const data = await readPrivateJson<Product[]>(CATALOG_BLOB_KEY);
     return Array.isArray(data) ? data : null;
   } catch (err) {
     console.warn("[catalog-store] direct catalog blob read failed", err);
@@ -147,9 +142,7 @@ export async function readCatalogBlobDirect(): Promise<Product[] | null> {
 export async function readEmbeddingsBlobDirect(): Promise<EmbeddingsFile | null> {
   if (!blobConfigured()) return null;
   try {
-    const url = await findBlobUrl(EMBEDDINGS_BLOB_KEY);
-    if (!url) return null;
-    const data = await fetchJson<EmbeddingsFile>(url);
+    const data = await readPrivateJson<EmbeddingsFile>(EMBEDDINGS_BLOB_KEY);
     return data?.items ? data : null;
   } catch (err) {
     console.warn("[catalog-store] direct embeddings blob read failed", err);
@@ -198,14 +191,14 @@ export async function writeCatalogPair(
 
 export async function writeCatalogToBlob(products: Product[]): Promise<string> {
   const res = await put(CATALOG_BLOB_KEY, JSON.stringify(products), {
-    access: "public",
+    // PRIVATE store: the catalog is read back server-side via get() + token, never
+    // fetched by the browser, so it must not request public access (the private
+    // store rejects access:"public"). Reads use useCache:false for freshness, so
+    // no CDN cache-control is needed on write.
+    access: "private",
     contentType: "application/json",
     addRandomSuffix: false,
     allowOverwrite: true,
-    // Overwrite the stable URL on every sync. Without this, Vercel Blob's
-    // default (one month) caches the old copy at the CDN/browser, so a
-    // re-sync wouldn't be visible. Keep it short so updates propagate fast.
-    cacheControlMaxAge: 60,
     token: process.env.BLOB_READ_WRITE_TOKEN,
   });
   return res.url;
@@ -213,11 +206,11 @@ export async function writeCatalogToBlob(products: Product[]): Promise<string> {
 
 export async function writeEmbeddingsToBlob(file: EmbeddingsFile): Promise<string> {
   const res = await put(EMBEDDINGS_BLOB_KEY, JSON.stringify(file), {
-    access: "public",
+    // PRIVATE store — see writeCatalogToBlob. Read back server-side via get().
+    access: "private",
     contentType: "application/json",
     addRandomSuffix: false,
     allowOverwrite: true,
-    cacheControlMaxAge: 60,
     token: process.env.BLOB_READ_WRITE_TOKEN,
   });
   return res.url;
