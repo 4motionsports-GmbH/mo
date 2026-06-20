@@ -206,7 +206,7 @@ Everything else checked out exactly — notable confirmations:
 - **Tool definitions** (`src/lib/tools.ts`) match the documented input schemas
   field-for-field: `show_product`, `compare_products` (2–3 ids), `add_to_cart`
   (`productId` XOR/OR `productIds`, ≥1 required via `.refine`), `suggest_showroom`,
-  `show_contact_form` (7-value reason enum), `offer_email_summary` (5-value trigger
+  `show_contact_form` (8-value reason enum), `offer_email_summary` (5-value trigger
   enum; result carries `{ ok, consentCopy }` — `tools.ts:319`), plus the silent
   `update_customer_profile` / `search_products`.
 - **Two-ask cap** enforced server-side by withholding the tool
@@ -401,7 +401,7 @@ Notes:
 | `compare_products` | `{ productIds: string[] /* 2–3 */; comparisonContext?: string }` | `{ ok: true }` |
 | `add_to_cart` | `{ productId?: string; productIds?: string[] /* min 1 */; message: string }` — at least one of the two id fields | `{ ok: true }` |
 | `suggest_showroom` | `{ productIds: string[] }` | `{ ok: true }` |
-| `show_contact_form` | `{ reason: "studio_consultation"\|"public_sector_quote"\|"physio_consultation"\|"bulk_discount"\|"leasing"\|"maintenance"\|"general"; message: string; productIds?: string[] }` | `{ ok: true }` |
+| `show_contact_form` | `{ reason: "studio_consultation"\|"public_sector_quote"\|"physio_consultation"\|"bulk_discount"\|"leasing"\|"maintenance"\|"order_support"\|"general"; message: string; productIds?: string[] }` | `{ ok: true }` |
 
 **Render as capture form:**
 

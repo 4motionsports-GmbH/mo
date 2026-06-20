@@ -225,16 +225,17 @@ Gib das Ergebnis NICHT roh aus — nutze es um dann show_product oder compare_pr
     }),
 
     show_contact_form: tool({
-      description: `Zeigt ein Kontaktformular für persönliche Beratung an.
+      description: `Zeigt ein Kontaktformular an, das die Anfrage direkt an das motion sports Team weiterleitet (der Kunde muss nichts selbst verschicken). Für persönliche Beratung UND für Service-Anliegen, die einen Menschen beim Team brauchen.
 
 NUTZE dieses Tool bei:
-- segment="studio" sobald der Kunde konkrete Beschaffungssignale zeigt (Stückzahlen, Konzept, Wartung, Mengenrabatt)
-- segment="public_sector" sobald der Kunde formelle Prozesse anspricht (Angebot, Rechnung, Ausschreibung, Zahlungsziel)
-- segment="physio" wenn der Kunde echte Medizinprodukte (CE-Klasse IIa+) oder Reha-spezifische Beratung braucht
-- Anfragen nach Leasing, Wartungsverträgen, Großbestellungen
-- Wenn ein Anliegen die Möglichkeiten eines Chatbots übersteigt
+- segment="studio" sobald der Kunde konkrete Beschaffungssignale zeigt (Stückzahlen, Konzept) → reason="studio_consultation"
+- segment="public_sector" sobald der Kunde formelle Prozesse anspricht (Angebot, Rechnung, Ausschreibung, Zahlungsziel) → reason="public_sector_quote"
+- segment="physio" wenn der Kunde echte Medizinprodukte (CE-Klasse IIa+) oder Reha-spezifische Beratung braucht → reason="physio_consultation"
+- Anfragen nach Mengenrabatt, Leasing oder Wartungsverträgen → reason="bulk_discount"/"leasing"/"maintenance"
+- KUNDENSERVICE / ESKALATION → reason="order_support": jedes Anliegen, das den direkten Draht zum Team braucht — Bestellstatus/Sendungsverfolgung, eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, oder wenn der Kunde ausdrücklich einen Menschen / das Team erreichen möchte. Nenne in diesen Fällen NICHT nur eine E-Mail-Adresse — rufe dieses Tool auf. (Allgemeine Fragen zu den Rückgabe-/Versand-/Zahlungskonditionen beantwortest du weiterhin direkt aus deinem Wissen; das Formular ist für das konkrete, persönliche Anliegen.)
+- Wenn ein Anliegen die Möglichkeiten eines Chatbots übersteigt → reason="general"
 
-Nutze die treffendste reason. Die Nachricht sollte erklären WARUM persönliche Beratung sinnvoll ist und einladend formuliert sein.`,
+Nutze die treffendste reason. Die Nachricht sollte einladend erklären, dass sich das Team kümmert bzw. meldet; info@motionsports.de darf höchstens ergänzend als Alternative vorkommen.`,
       inputSchema: z.object({
         reason: z.enum([
           "studio_consultation",
@@ -243,6 +244,7 @@ Nutze die treffendste reason. Die Nachricht sollte erklären WARUM persönliche 
           "bulk_discount",
           "leasing",
           "maintenance",
+          "order_support",
           "general",
         ]),
         message: z

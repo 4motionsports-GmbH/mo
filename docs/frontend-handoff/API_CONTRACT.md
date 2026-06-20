@@ -569,7 +569,8 @@ Input schema:
 ```ts
 {
   reason: "studio_consultation" | "public_sector_quote" | "physio_consultation"
-        | "bulk_discount" | "leasing" | "maintenance" | "general";
+        | "bulk_discount" | "leasing" | "maintenance" | "order_support"
+        | "general";
   message: string;
   productIds?: string[];
 }
@@ -918,8 +919,8 @@ Same as `/api/chat`:
 
 - `reason` must be one of: `studio_consultation`, `public_sector_quote`,
   `physio_consultation`, `bulk_discount`, `leasing`, `maintenance`,
-  `general`. Anything else is accepted but rendered verbatim in the
-  email subject.
+  `order_support`, `general`. Anything else is accepted but rendered
+  verbatim in the email subject.
 - `email` is validated with `^[^@\s]+@[^@\s]+\.[^@\s]+$`.
 - `name` and `message` must be non-empty after trimming.
 
