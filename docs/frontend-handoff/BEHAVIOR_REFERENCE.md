@@ -227,7 +227,18 @@ Input:
 `{ reason: ContactReason; message: string; productIds?: string[] }`
 where `ContactReason` is one of `studio_consultation`,
 `public_sector_quote`, `physio_consultation`, `bulk_discount`,
-`leasing`, `maintenance`, `general`.
+`leasing`, `maintenance`, `order_support`, `general`.
+
+> **New (`order_support`):** the assistant now also opens this form for
+> customer-service escalations that need a human at motion sports —
+> order status / tracking, starting a return/refund, cancelling an
+> order, complaints, or "I want to reach the team". Render it exactly
+> like the other reasons (it is a normal `show_contact_form` call);
+> only the label row below is new. See
+> `CONTACT_FORM_ORDER_SUPPORT.md` for the full rationale and the
+> recommended copy/field tweaks. Until you add the row, the
+> "unknown reason → `general` label" fallback already renders a working
+> form, so nothing breaks if this ships ahead of the widget.
 
 Behavior — note this is where the widget should **diverge** from the old
 UI. The old card was just a *teaser* that linked to a separate
@@ -249,9 +260,16 @@ reason; reuse the title as the form heading):
 | `bulk_discount`       | Mengenrabatt anfragen            | Wir erstellen ein individuelles Angebot.                      |
 | `leasing`             | Leasing-Anfrage                  | Flexible Finanzierung für gewerbliche Kunden.                 |
 | `maintenance`         | Wartungsvertrag                  | Langfristige Wartung und Ersatzteilversorgung.                |
+| `order_support`       | Kontakt zum motion sports Team   | Bestellstatus, Retoure/Rückgabe, Stornierung oder Reklamation — das Team kümmert sich. |
 | `general`             | Persönliche Beratung             | Wir helfen dir gerne weiter.                                  |
 
 Unknown reason → fall back to the `general` label.
+
+For `order_support` the **Organisation** field stays optional (these are
+usually private customers), and a short **order number** helps the team a
+lot — surface it via the **Nachricht** placeholder for this reason (e.g.
+`"Bestellnummer + kurz dein Anliegen…"`); no backend field change is
+needed since it travels inside `message`.
 
 Card / form behavior:
 - A mail icon + the reason **Title** as heading; the assistant's

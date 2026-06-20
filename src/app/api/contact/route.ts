@@ -35,6 +35,7 @@ const REASON_LABELS: Record<string, string> = {
   bulk_discount: "Mengenrabatt",
   leasing: "Leasing",
   maintenance: "Wartung",
+  order_support: "Bestellung & Service",
   general: "Allgemeine Anfrage",
 };
 

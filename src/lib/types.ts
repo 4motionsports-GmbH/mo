@@ -205,6 +205,7 @@ export type ContactReason =
   | "bulk_discount"
   | "leasing"
   | "maintenance"
+  | "order_support"
   | "general";
 
 export interface ShowContactFormArgs {
