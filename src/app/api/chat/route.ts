@@ -17,7 +17,11 @@ import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
-import { getProductById, getProductsByIds } from "@/lib/product-catalog";
+import { getProductById, getProductsByIds, loadProductCatalog } from "@/lib/product-catalog";
+import {
+  recommendedCardIdsInOrder,
+  guardRecommendedCardIds,
+} from "@/lib/recommended-products.mjs";
 import { EMPTY_PROFILE, type CustomerProfile, type PersonaArchetype, type UpdateCustomerProfileArgs } from "@/lib/types";
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
@@ -484,6 +488,37 @@ export async function POST(req: Request) {
                 askNumber,
               },
             });
+          }
+
+          // Card-selection guard (observability). The visible product cards are
+          // exactly Mo's explicit show_product recommendations in order (see
+          // lib/recommended-products + docs/frontend-handoff). The widget already
+          // renders nothing for an unknown id, and /api/products withholds the
+          // checkout link for a sold-out one — but if the model recommended an
+          // id that is unknown or sold-out, that is a prompt regression we want
+          // to SEE rather than silently ship a wrong/sold-out card. Own try so a
+          // catalog hiccup never touches persistence above.
+          try {
+            const recommended = recommendedCardIdsInOrder(toolCalls);
+            if (recommended.length > 0) {
+              const catalog = await loadProductCatalog();
+              const byId = new Map(catalog.map((p) => [p.id, p]));
+              const { droppedUnknown, droppedSoldOut } = guardRecommendedCardIds(
+                recommended,
+                byId
+              );
+              if (droppedUnknown.length > 0 || droppedSoldOut.length > 0) {
+                reportError(new Error("recommendation_card_guard_dropped"), {
+                  route: "api/chat",
+                  phase: "card-guard",
+                  recommended,
+                  droppedUnknown,
+                  droppedSoldOut,
+                });
+              }
+            }
+          } catch (guardErr) {
+            reportError(guardErr, { route: "api/chat", phase: "card-guard", messageCount });
           }
         } catch (err) {
           reportError(err, { route: "api/chat", phase: "persist", messageCount });

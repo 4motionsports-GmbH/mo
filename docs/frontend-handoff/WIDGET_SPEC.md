@@ -413,6 +413,12 @@ arrives; ignore keep-alive/empty lines).
 
 ## 6. Product hydration & tool cards
 
+Product cards come **only** from the assistant's tool calls (in
+stream-arrival order), never from any retrieval/candidate list — see the
+**card-selection contract** in `BEHAVIOR_REFERENCE.md` §2. `show_product`
+is Mo's explicit, ordered recommendation declaration, so the cards mirror
+what Mo recommends in its prose.
+
 Tool cards reference products by id only; the widget hydrates them from
 `GET ${apiBase}/api/products` (`API_CONTRACT.md` §3):
 

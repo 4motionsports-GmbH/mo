@@ -15,25 +15,10 @@ import { recordAiUsage } from "./ai-usage-store";
 import { resolveLinkedCustomerId } from "./customer-session-link.mjs";
 import { deriveConversationTitle } from "./conversation-title.mjs";
 import { ensureConversationStarted as ensureConversationStartedCore } from "./conversation-create.mjs";
-
-// Tool inputs that reference catalog product ids. Used to accumulate
-// conversations.recommended_product_ids — the "DISCUSSED" set: every product
-// that appeared in the conversation, including compared-and-rejected ones.
-const PRODUCT_TOOLS = new Set([
-  "show_product",
-  "compare_products",
-  "add_to_cart",
-  "suggest_showroom",
-  "show_contact_form",
-  "offer_email_summary",
-]);
-
-// Tools whose firing signals the user actively CHOSE to buy — the "SELECTED"
-// set, distinct from merely discussed. add_to_cart is the direct-checkout CTA:
-// the model fires it only on a clear buy signal ("Das nehme ich"), with ALL
-// wanted items in one call (productId or productIds). show_product /
-// compare_products, by contrast, are pure discussion.
-const SELECTION_TOOLS = new Set(["add_to_cart"]);
+import {
+  collectDiscussedProductIds,
+  latestSelectedProductIds,
+} from "./recommended-products.mjs";
 
 // Keep stored content bounded — tool inputs and messages are small, but never
 // let a pathological turn write an unbounded blob.
@@ -98,49 +83,10 @@ function toolInvocationsOfMessage(msg: UIMessage): ToolInvocation[] {
   return out;
 }
 
-function productIdsFromInvocation(inv: ToolInvocation): string[] {
-  if (!PRODUCT_TOOLS.has(inv.toolName)) return [];
-  const input = inv.input;
-  if (!input || typeof input !== "object") return [];
-  const obj = input as Record<string, unknown>;
-  const out: string[] = [];
-  if (typeof obj.productId === "string") out.push(obj.productId);
-  if (Array.isArray(obj.productIds)) {
-    for (const p of obj.productIds) if (typeof p === "string") out.push(p);
-  }
-  return out;
-}
-
-/**
- * The user's CURRENT selection: the product ids of the LATEST selection-intent
- * (add_to_cart) tool call across the whole conversation, or null when no such
- * call exists.
- *
- * The latest call REPLACES earlier ones instead of accumulating: the model is
- * instructed to put ALL wanted items into ONE add_to_cart call per buying
- * decision, so a newer call after a switch ("nimm doch lieber das andere")
- * reflects the user's current decision — the rejected alternative must not
- * linger in the cart. Deliberately no further inference (no NLP over the
- * transcript): the tool call IS the signal.
- */
-function latestSelectedProductIds(
-  history: UIMessage[],
-  assistantToolCalls: ToolInvocation[]
-): string[] | null {
-  let latest: string[] | null = null;
-  const consider = (inv: ToolInvocation) => {
-    if (!SELECTION_TOOLS.has(inv.toolName)) return;
-    // productIdsFromInvocation reads both `productId` (single checkout) and
-    // `productIds` (multi-product checkout), so every wanted item is captured.
-    const ids = [...new Set(productIdsFromInvocation(inv))];
-    if (ids.length > 0) latest = ids;
-  };
-  for (const msg of history) {
-    for (const inv of toolInvocationsOfMessage(msg)) consider(inv);
-  }
-  for (const inv of assistantToolCalls) consider(inv);
-  return latest;
-}
+// `productIdsFromToolCall`, the DISCUSSED accumulation and the latest-SELECTION
+// logic all live in lib/recommended-products.mjs now — the single card-selection
+// contract shared with the live cards and the summary cart, so these persisted
+// sets can never drift from it.
 
 function latestUserMessage(history: UIMessage[]): UIMessage | null {
   for (let i = history.length - 1; i >= 0; i--) {
@@ -318,26 +264,27 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
   const conversationKey = input.conversationKey?.trim() || sessionId;
 
   try {
-    // Accumulate product ids referenced anywhere in this conversation's tool
-    // calls (history + the new assistant turn). The upsert below de-dupes
-    // against whatever is already stored, so re-sending history is harmless.
-    const productIds = new Set<string>();
-    for (const msg of input.history) {
-      for (const inv of toolInvocationsOfMessage(msg)) {
-        for (const id of productIdsFromInvocation(inv)) productIds.add(id);
-      }
-    }
-    for (const inv of input.assistantToolCalls) {
-      for (const id of productIdsFromInvocation(inv)) productIds.add(id);
-    }
-    const newProductIds = [...productIds];
+    // Every product tool call this conversation has made, in chronological
+    // order (full re-sent history + the new assistant turn). One flat list
+    // feeds both the DISCUSSED accumulation and the latest-SELECTION logic via
+    // the shared card-selection contract (lib/recommended-products).
+    const allToolCalls: ToolInvocation[] = [
+      ...input.history.flatMap(toolInvocationsOfMessage),
+      ...input.assistantToolCalls,
+    ];
+
+    // DISCUSSED set: every product referenced anywhere in this conversation's
+    // tool calls (incl. compared-and-rejected alternatives). The upsert below
+    // de-dupes against whatever is already stored, so re-sending history is
+    // harmless.
+    const newProductIds = collectDiscussedProductIds(allToolCalls);
 
     // The user's current SELECTION (latest add_to_cart across the full
     // conversation), or null when no buy signal has fired. Recomputed from
     // scratch each turn — the widget re-sends the whole history — so the
     // stored value always mirrors the latest selection state, including a
     // switch to an alternative (replacement, not accumulation).
-    const selection = latestSelectedProductIds(input.history, input.assistantToolCalls);
+    const selection = latestSelectedProductIds(allToolCalls);
 
     // Count includes the assistant turn we're about to write.
     const messageCount = input.history.length + 1;
