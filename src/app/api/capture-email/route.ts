@@ -31,8 +31,10 @@ import { outboundThreading } from "@/lib/email-inbound";
 import { recordSentMessage } from "@/lib/email-messages-store";
 import { sendSummaryEmail } from "@/lib/summary-email";
 import { getBaseUrl } from "@/lib/base-url";
+import { resolveLocale } from "@/lib/locale";
+import { apiMessage } from "@/lib/api-messages.mjs";
 import {
-  DOI_EMAIL_SUBJECT,
+  doiEmailSubject,
   doiEmailBody,
   captureConsentCopy,
 } from "@/lib/consent-copy";
@@ -56,6 +58,9 @@ interface CapturePayload {
   // moment the capture card was shown at. Telemetry-only (never stored with
   // the consent record), so the opt-in funnel can be split by trigger.
   trigger?: unknown;
+  // Storefront-selected language ("de" default, "en" on /en). Carried so the
+  // summary + DOI emails and the consent audit string match what was shown.
+  locale?: unknown;
 }
 
 export async function OPTIONS(req: Request) {
@@ -82,9 +87,11 @@ export async function POST(req: Request) {
     try {
       payload = (await req.json()) as CapturePayload;
     } catch {
-      return errorResponse("bad_request", "Ungültiger JSON-Body", 400, headers);
+      // No body parsed yet → fall back to the header/query locale for the error.
+      return errorResponse("bad_request", apiMessage("invalid_json", resolveLocale(req)), 400, headers);
     }
 
+    const locale = resolveLocale(req, payload.locale);
     const email = typeof payload.email === "string" ? payload.email.trim() : "";
     const transactionalConsent = payload.transactionalConsent === true;
     const marketingConsent = payload.marketingConsent === true;
@@ -103,10 +110,13 @@ export async function POST(req: Request) {
     // copy v2 BOTH boxes start unchecked, so a no-transactional submit is a
     // real user state — rejected with the dedicated, documented code
     // `transactional_consent_required` (the widget shows a targeted hint).
-    const validation = validateCaptureRequest({
-      email,
-      transactionalConsent: payload.transactionalConsent,
-    });
+    const validation = validateCaptureRequest(
+      {
+        email,
+        transactionalConsent: payload.transactionalConsent,
+      },
+      locale
+    );
     if (!validation.ok) {
       return errorResponse(validation.code, validation.message, 400, headers);
     }
@@ -127,7 +137,7 @@ export async function POST(req: Request) {
     // itself remains the authoritative Art. 7 record).
     const consentCopyVersion = resolveConsentCopyVersion(
       consentTextShown,
-      captureConsentCopy().consentTextShown
+      captureConsentCopy(locale).consentTextShown
     );
 
     const capture = await upsertEmailCapture({
@@ -137,6 +147,7 @@ export async function POST(req: Request) {
       marketingConsent,
       consentTextShown,
       consentCopyVersion,
+      locale,
     });
     if (!capture) {
       // No DB configured (or the write failed) — we cannot store the consent,
@@ -144,7 +155,7 @@ export async function POST(req: Request) {
       // pretend-success.
       return errorResponse(
         "upstream_unavailable",
-        "Einwilligung konnte nicht gespeichert werden — bitte später erneut versuchen.",
+        apiMessage("consent_save_failed", locale),
         503,
         headers
       );
@@ -179,14 +190,14 @@ export async function POST(req: Request) {
     const baseUrl = getBaseUrl(req);
 
     // 1) Transactional summary email — send immediately (the requested service).
-    const summary = await sendSummaryEmail({ sessionId, email });
+    const summary = await sendSummaryEmail({ sessionId, email, locale });
     // `skipped` means Resend isn't configured (local dev) — not a real failure.
     const summarySkipped = summary.result.ok === false && summary.result.skipped;
     if (!summary.sent && !summarySkipped) {
       // A real delivery failure: surface it. The consent is already stored.
       return errorResponse(
         "upstream_unavailable",
-        "Die Zusammenfassung konnte nicht zugestellt werden.",
+        apiMessage("summary_delivery_failed", locale),
         502,
         headers
       );
@@ -195,12 +206,14 @@ export async function POST(req: Request) {
     // 2) Marketing double-opt-in confirmation email — only when newly pending.
     let doiEmailSent = false;
     if (capture.doiEmailRequired && capture.doiToken) {
-      const confirmUrl = `${baseUrl}/api/confirm-marketing?token=${encodeURIComponent(capture.doiToken)}`;
-      const body = doiEmailBody(confirmUrl);
+      // Carry the locale on the confirmation link so the confirm page renders in
+      // the same language as the email.
+      const confirmUrl = `${baseUrl}/api/confirm-marketing?token=${encodeURIComponent(capture.doiToken)}&locale=${locale}`;
+      const body = doiEmailBody(confirmUrl, locale);
       const threading = outboundThreading();
       const doiResult = await sendEmail({
         to: email,
-        subject: DOI_EMAIL_SUBJECT,
+        subject: doiEmailSubject(locale),
         text: body.text,
         html: body.html,
         kind: "doi",
@@ -215,7 +228,7 @@ export async function POST(req: Request) {
         await recordSentMessage({
           toAddress: email,
           fromAddress: senderAddress() ?? "",
-          subject: DOI_EMAIL_SUBJECT,
+          subject: doiEmailSubject(locale),
           bodyText: body.text,
           bodyHtml: body.html,
           messageId: threading.messageId,

@@ -8,9 +8,11 @@ import { anthropic } from "@ai-sdk/anthropic";
 import {
   browsingPivotNote,
   buildSystemPrompt,
+  greetingTriggerText,
   productPivotNote,
   type ProductContext,
 } from "@/lib/system-prompt";
+import { resolveLocale } from "@/lib/locale";
 import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-context";
 import { resolveChatMemory } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
@@ -212,6 +214,9 @@ export async function POST(req: Request) {
       // the `conversationKey` returned by /api/account/conversations. Absent →
       // defaults to the session id server-side (legacy one-thread-per-session).
       conversationKey?: unknown;
+      // Storefront-selected language ("de" default, "en" on /en). Drives Mo's
+      // output language + the model-facing instructions/tools. Default German.
+      locale?: unknown;
     };
     try {
       body = (await req.json()) as typeof body;
@@ -224,6 +229,10 @@ export async function POST(req: Request) {
       typeof body.conversationKey === "string" && body.conversationKey.trim()
         ? body.conversationKey.trim().slice(0, 200)
         : null;
+    // Storefront-selected language (body.locale → ?locale= → x-ms-locale header
+    // → German). Threaded into the prompt, the tools, the pivot notes and the
+    // greeting trigger so an /en chat is English end to end.
+    const locale = resolveLocale(req, body.locale);
 
     if (!Array.isArray(messages)) {
       return errorResponse("bad_request", "messages must be an array", 400, cors);
@@ -352,16 +361,16 @@ export async function POST(req: Request) {
       greetingBrowsingContext = browsingContext;
       modelMessages.push({
         role: "user",
-        content: productContext
-          ? `[System: Chat auf der Produktseite von "${productContext.name}" geöffnet — begrüße den Nutzer.]`
-          : `[System: Chat geöffnet, nachdem sich der Nutzer im Shop umgesehen hat — begrüße den Nutzer.]`,
+        content: greetingTriggerText(locale, {
+          productName: productContext?.name,
+        }),
       });
     } else if (messages.length > 0) {
       // Existing conversation (including a starter prompt sent as the first
       // message): pivot via lightweight in-conversation notes appended to the
       // latest user turn, leaving prior history intact — never wiped.
-      if (productContext) appendPivotNote(modelMessages, productPivotNote(productContext));
-      if (browsingContext) appendPivotNote(modelMessages, browsingPivotNote(browsingContext));
+      if (productContext) appendPivotNote(modelMessages, productPivotNote(productContext, locale));
+      if (browsingContext) appendPivotNote(modelMessages, browsingPivotNote(browsingContext, locale));
     }
 
     // The full tool set is always built (stable type for the forced-offer
@@ -369,7 +378,7 @@ export async function POST(req: Request) {
     // `activeTools` once the ask cap is reached or the email was captured —
     // an inactive tool is filtered out before the provider call, so "never a
     // third ask" stays a server-side guarantee, not a prompt instruction.
-    const tools = buildChatTools(profile);
+    const tools = buildChatTools(profile, locale);
     const defaultActiveTools = (
       allowEmailSummaryOffer
         ? Object.keys(tools)
@@ -389,6 +398,7 @@ export async function POST(req: Request) {
           offersMade: emailOffersMade,
           emailCaptured,
         },
+        locale,
       }),
       messages: modelMessages,
       tools,

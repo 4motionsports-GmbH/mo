@@ -17,6 +17,8 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getSql, type Sql } from "./db";
 import { isValidEmail } from "./capture-validation.mjs";
+import { normalizeLocale } from "./locale.mjs";
+import type { Locale } from "./locale";
 import { parseIntEnv } from "./env-num";
 
 export type MarketingDoiStatus = "none" | "pending" | "confirmed";
@@ -142,6 +144,12 @@ export interface UpsertCaptureInput {
    * text so v1/v2 audit records stay distinguishable.
    */
   consentCopyVersion: string | null;
+  /**
+   * Storefront language at capture time ("de" default, "en" on /en). Carried so
+   * the summary/DOI emails sent now AND later marketing sends speak the right
+   * language. Defaults to German when absent.
+   */
+  locale?: Locale;
 }
 
 export interface UpsertCaptureResult {
@@ -151,6 +159,8 @@ export interface UpsertCaptureResult {
   doiToken: string | null;
   /** True when a fresh DOI confirmation email must be sent for marketing. */
   doiEmailRequired: boolean;
+  /** The stored language for this address ("de" default). */
+  locale: Locale;
 }
 
 /**
@@ -170,6 +180,7 @@ export async function upsertEmailCapture(
   if (!sql) return null;
   const email = normalizeEmail(input.email);
   const sessionId = input.sessionId?.trim() || null;
+  const locale: Locale = normalizeLocale(input.locale);
 
   // Read existing state to decide the marketing transition.
   const existingRows = await sql`
@@ -215,11 +226,11 @@ export async function upsertEmailCapture(
     INSERT INTO email_captures
       (session_id, email, transactional_consent, marketing_consent,
        marketing_doi_status, doi_token, doi_sent_at, consent_text_shown,
-       consent_copy_version, created_at)
+       consent_copy_version, locale, created_at)
     VALUES
       (${sessionId}, ${email}, ${input.transactionalConsent}, ${marketingConsentColumn},
        ${status}, ${doiToken}, ${doiSentAt}, ${input.consentTextShown},
-       ${input.consentCopyVersion}, now())
+       ${input.consentCopyVersion}, ${locale}, now())
     ON CONFLICT (email) DO UPDATE SET
       session_id            = COALESCE(EXCLUDED.session_id, email_captures.session_id),
       transactional_consent = email_captures.transactional_consent OR EXCLUDED.transactional_consent,
@@ -233,7 +244,9 @@ export async function upsertEmailCapture(
       consent_copy_version  = CASE
         WHEN EXCLUDED.consent_text_shown IS NOT NULL THEN EXCLUDED.consent_copy_version
         ELSE email_captures.consent_copy_version
-      END
+      END,
+      -- Track the latest storefront language this address engaged from.
+      locale                = COALESCE(EXCLUDED.locale, email_captures.locale)
     RETURNING id
   `;
   const id = rows[0]?.id as number | undefined;
@@ -245,7 +258,29 @@ export async function upsertEmailCapture(
     marketingDoiStatus: status,
     doiToken,
     doiEmailRequired,
+    locale,
   };
+}
+
+/**
+ * Best-effort lookup of the storefront language stored for an address, used by
+ * later marketing sends so the unsubscribe footer matches the recipient's
+ * language. Defaults to German (no DB / no row / any error / legacy NULL).
+ */
+export async function getCaptureLocale(
+  email: string,
+  sql: Sql | null = getSql()
+): Promise<Locale> {
+  if (!sql) return "de";
+  const e = normalizeEmail(email);
+  try {
+    const rows = await sql`
+      SELECT locale FROM email_captures WHERE email = ${e} LIMIT 1
+    `;
+    return normalizeLocale(rows[0]?.locale);
+  } catch {
+    return "de";
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -10,12 +10,8 @@
 import { unsubscribeByEmail, verifyUnsubscribeToken } from "@/lib/email-capture-store";
 import { syncCustomerConsent } from "@/lib/customer-store";
 import { reportError } from "@/lib/observability";
-import {
-  UNSUBSCRIBE_CONFIRMED_BODY,
-  UNSUBSCRIBE_CONFIRMED_HEADING,
-  UNSUBSCRIBE_INVALID_BODY,
-  UNSUBSCRIBE_INVALID_HEADING,
-} from "@/lib/consent-copy";
+import { unsubscribePageCopy } from "@/lib/consent-copy";
+import { resolveLocale } from "@/lib/locale";
 import { renderResultPage } from "@/lib/result-page";
 
 export const maxDuration = 10;
@@ -23,15 +19,20 @@ export const maxDuration = 10;
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const token = url.searchParams.get("token") ?? "";
+  // Locale carried in the unsubscribe link (`&locale=` appended at send time);
+  // defaults to German for legacy links.
+  const locale = resolveLocale(req);
+  const copy = unsubscribePageCopy(locale);
 
   try {
     const email = token.trim() ? verifyUnsubscribeToken(token) : null;
     if (!email) {
       return renderResultPage({
         status: 400,
-        heading: UNSUBSCRIBE_INVALID_HEADING,
-        body: UNSUBSCRIBE_INVALID_BODY,
+        heading: copy.invalidHeading,
+        body: copy.invalidBody,
         tone: "error",
+        locale,
       });
     }
 
@@ -41,9 +42,10 @@ export async function GET(req: Request) {
       // claim success we can't back up.
       return renderResultPage({
         status: 503,
-        heading: UNSUBSCRIBE_INVALID_HEADING,
-        body: UNSUBSCRIBE_INVALID_BODY,
+        heading: copy.invalidHeading,
+        body: copy.invalidBody,
         tone: "error",
+        locale,
       });
     }
 
@@ -52,17 +54,19 @@ export async function GET(req: Request) {
 
     return renderResultPage({
       status: 200,
-      heading: UNSUBSCRIBE_CONFIRMED_HEADING,
-      body: UNSUBSCRIBE_CONFIRMED_BODY,
+      heading: copy.confirmedHeading,
+      body: copy.confirmedBody,
       tone: "success",
+      locale,
     });
   } catch (err) {
     reportError(err, { route: "api/unsubscribe" });
     return renderResultPage({
       status: 500,
-      heading: UNSUBSCRIBE_INVALID_HEADING,
-      body: UNSUBSCRIBE_INVALID_BODY,
+      heading: copy.invalidHeading,
+      body: copy.invalidBody,
       tone: "error",
+      locale,
     });
   }
 }

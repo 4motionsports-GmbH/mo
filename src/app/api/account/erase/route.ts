@@ -21,6 +21,8 @@ import { preflightResponse } from "@/lib/security";
 import { errorResponse, reportError } from "@/lib/observability";
 import { requireSignedInCustomer } from "@/lib/account-guard";
 import { eraseSignedInCustomer } from "@/lib/account-history";
+import { resolveLocale } from "@/lib/locale";
+import { apiMessage } from "@/lib/api-messages.mjs";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -35,13 +37,15 @@ export async function POST(req: Request) {
   const guard = await requireSignedInCustomer(req, METHODS);
   if (!guard.ok) return guard.response;
 
+  const locale = resolveLocale(req);
+
   try {
     const result = await eraseSignedInCustomer(guard.customerId);
     if (!result) {
       // No DB / hard failure — be honest rather than claim a phantom erasure.
       return errorResponse(
         "upstream_unavailable",
-        "Löschung konnte nicht durchgeführt werden — bitte später erneut versuchen.",
+        apiMessage("erase_failed", locale),
         503,
         guard.headers
       );

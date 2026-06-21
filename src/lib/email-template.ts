@@ -49,6 +49,7 @@ export function emailLogoUrl(): string {
 }
 
 import { escapeHtml, escapeAttr } from "./html-escape";
+import type { Locale } from "./locale";
 export { escapeHtml, escapeAttr };
 
 export interface EmailCta {
@@ -59,6 +60,13 @@ export interface EmailCta {
 export interface BrandedEmailOptions {
   /** Used for the <title>; the actual Subject header is set by the sender. */
   subject: string;
+  /**
+   * Language of the shell chrome (menu bar + <html lang>). Default German —
+   * unchanged, byte-identical. "en" localises the "Browse" heading and the
+   * Shop/About/Contact/Imprint menu labels; the legal company address in the
+   * footer is locale-agnostic.
+   */
+  locale?: Locale;
   /** Hidden preview line shown next to the subject in inbox lists. */
   preheader?: string;
   /** Large centered heading at the top of the white card. */
@@ -85,12 +93,12 @@ export interface BrandedEmailOptions {
   };
 }
 
-const MENU_ITEMS: ReadonlyArray<{ label: string; url: string }> = [
+const MENU_ITEMS: ReadonlyArray<{ labelDe: string; labelEn: string; url: string }> = [
   // Same destinations as the shop's order-confirmation emails.
-  { label: "Shop", url: "https://www.motionsports.de" },
-  { label: "Über", url: "https://motionsports.de/collections/sale" },
-  { label: "Kontakt", url: "https://motionsports.de/pages/contact" },
-  { label: "Impressum", url: "https://motionsports.de/pages/impressum" },
+  { labelDe: "Shop", labelEn: "Shop", url: "https://www.motionsports.de" },
+  { labelDe: "Über", labelEn: "About", url: "https://motionsports.de/collections/sale" },
+  { labelDe: "Kontakt", labelEn: "Contact", url: "https://motionsports.de/pages/contact" },
+  { labelDe: "Impressum", labelEn: "Imprint", url: "https://motionsports.de/pages/impressum" },
 ];
 
 export function renderCtaButton(cta: EmailCta): string {
@@ -111,22 +119,24 @@ export function renderCtaButton(cta: EmailCta): string {
               </tr>`;
 }
 
-function renderMenuBar(): string {
+function renderMenuBar(locale: Locale): string {
   const count = MENU_ITEMS.length;
   const width = Math.floor(100 / count);
   const cells = MENU_ITEMS.map((item, i) => {
     const borderLeft = i === 0 ? "none" : "solid";
     const borderRight = i === count - 1 ? "none" : "solid";
+    const label = locale === "en" ? item.labelEn : item.labelDe;
     return `
                     <th style="width: ${width}%; mso-line-height-rule: exactly; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; font-weight: 400; line-height: 20px; color: #212121; text-transform: uppercase; border-right-width: 2px; border-right-color: #e5e5e5; border-right-style: ${borderRight}; border-left-width: 2px; border-left-color: #e5e5e5; border-left-style: ${borderLeft};" align="center" bgcolor="#ffffff">
-                      <a href="${escapeAttr(item.url)}" target="_blank" style="color: #212121; text-decoration: none !important; word-wrap: break-word; text-align: center !important; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; font-weight: 400; line-height: 20px; text-transform: uppercase;">${escapeHtml(item.label)}</a>
+                      <a href="${escapeAttr(item.url)}" target="_blank" style="color: #212121; text-decoration: none !important; word-wrap: break-word; text-align: center !important; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; font-weight: 400; line-height: 20px; text-transform: uppercase;">${escapeHtml(label)}</a>
                     </th>`;
   }).join("");
 
+  const browseLabel = locale === "en" ? "Browse" : "Durchsuchen";
   return `
           <tr>
             <th width="100%" style="mso-line-height-rule: exactly; padding-top: 10px;" bgcolor="#ffffff">
-              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; line-height: 20px; font-weight: 400; text-transform: uppercase; color: #212121; Margin: 0;" align="center">Durchsuchen</p>
+              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; line-height: 20px; font-weight: 400; text-transform: uppercase; color: #212121; Margin: 0;" align="center">${browseLabel}</p>
             </th>
           </tr>
           <tr>
@@ -147,6 +157,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
   const logo = emailLogoUrl();
   const showMenu = opts.footer?.showMenu !== false;
   const year = new Date().getFullYear();
+  const locale: Locale = opts.locale ?? "de";
 
   const preheaderHtml = opts.preheader
     ? `
@@ -201,7 +212,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
     : "";
 
   return `<!DOCTYPE html>
-<html lang="de">
+<html lang="${locale}">
   <head>
     <meta name="viewport" content="width=device-width">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
@@ -286,7 +297,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
                             </table>
                           </th>
                         </tr>
-                        <!-- END SECTION: Body content -->${ctaSection}${unsubscribeSection}${showMenu ? renderMenuBar() : ""}
+                        <!-- END SECTION: Body content -->${ctaSection}${unsubscribeSection}${showMenu ? renderMenuBar(locale) : ""}
                       </table>
                       <!-- END : SECTION : MAIN -->
                       <!-- BEGIN : SECTION : FOOTER -->

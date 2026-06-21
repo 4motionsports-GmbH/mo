@@ -17,6 +17,8 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { validateFeedbackRequest } from "@/lib/feedback-validation.mjs";
 import { insertFeedback } from "@/lib/feedback-store";
+import { resolveLocale } from "@/lib/locale";
+import { apiMessage } from "@/lib/api-messages.mjs";
 
 export const maxDuration = 10;
 
@@ -44,10 +46,15 @@ export async function POST(req: Request) {
     try {
       payload = await req.json();
     } catch {
-      return errorResponse("bad_request", "Ungültiger JSON-Body", 400, headers);
+      return errorResponse("bad_request", apiMessage("invalid_json", resolveLocale(req)), 400, headers);
     }
 
-    const validation = validateFeedbackRequest(payload);
+    const locale = resolveLocale(
+      req,
+      payload && typeof payload === "object" ? (payload as { locale?: unknown }).locale : undefined
+    );
+
+    const validation = validateFeedbackRequest(payload, locale);
     if (!validation.ok) {
       const status = validation.code === "payload_too_large" ? 413 : 400;
       return errorResponse(validation.code, validation.message, status, headers);
@@ -66,7 +73,7 @@ export async function POST(req: Request) {
       // whole point of this endpoint, so be honest rather than pretend success.
       return errorResponse(
         "upstream_unavailable",
-        "Feedback konnte nicht gespeichert werden — bitte später erneut versuchen.",
+        apiMessage("feedback_save_failed", locale),
         503,
         headers
       );

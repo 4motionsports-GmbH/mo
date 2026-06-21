@@ -25,6 +25,8 @@ import {
   deleteCustomerConversation,
 } from "@/lib/account-history";
 import { sanitizeTitleInput } from "@/lib/conversation-title.mjs";
+import { resolveLocale } from "@/lib/locale";
+import { apiMessage } from "@/lib/api-messages.mjs";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -53,15 +55,16 @@ function parseId(raw: string): number | null {
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const guard = await requireSignedInCustomer(req, METHODS);
   if (!guard.ok) return guard.response;
+  const locale = resolveLocale(req);
 
   try {
     const conversationId = parseId((await ctx.params).id);
     if (conversationId == null) {
-      return errorResponse("bad_request", "Ungültige Konversations-ID", 400, guard.headers);
+      return errorResponse("bad_request", apiMessage("invalid_conversation_id", locale), 400, guard.headers);
     }
     const transcript = await getCustomerConversationTranscript(guard.customerId, conversationId);
     if (!transcript) {
-      return errorResponse("bad_request", "Konversation nicht gefunden", 404, guard.headers);
+      return errorResponse("bad_request", apiMessage("conversation_not_found", locale), 404, guard.headers);
     }
     return json({ conversation: transcript }, guard.headers);
   } catch (err) {
@@ -73,23 +76,24 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const guard = await requireSignedInCustomer(req, METHODS);
   if (!guard.ok) return guard.response;
+  const locale = resolveLocale(req);
 
   try {
     const conversationId = parseId((await ctx.params).id);
     if (conversationId == null) {
-      return errorResponse("bad_request", "Ungültige Konversations-ID", 400, guard.headers);
+      return errorResponse("bad_request", apiMessage("invalid_conversation_id", locale), 400, guard.headers);
     }
 
     let payload: { title?: unknown };
     try {
       payload = (await req.json()) as { title?: unknown };
     } catch {
-      return errorResponse("bad_request", "Ungültiger JSON-Body", 400, guard.headers);
+      return errorResponse("bad_request", apiMessage("invalid_json", locale), 400, guard.headers);
     }
 
     const sanitized = sanitizeTitleInput(payload.title);
     if (!sanitized.ok) {
-      return errorResponse("bad_request", "Titel darf nicht leer sein", 400, guard.headers);
+      return errorResponse("bad_request", apiMessage("title_empty", locale), 400, guard.headers);
     }
 
     const renamed = await renameCustomerConversation(
@@ -98,7 +102,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       sanitized.title
     );
     if (!renamed) {
-      return errorResponse("bad_request", "Konversation nicht gefunden", 404, guard.headers);
+      return errorResponse("bad_request", apiMessage("conversation_not_found", locale), 404, guard.headers);
     }
     return json({ ok: true, conversationId, title: sanitized.title }, guard.headers);
   } catch (err) {
@@ -110,15 +114,16 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const guard = await requireSignedInCustomer(req, METHODS);
   if (!guard.ok) return guard.response;
+  const locale = resolveLocale(req);
 
   try {
     const conversationId = parseId((await ctx.params).id);
     if (conversationId == null) {
-      return errorResponse("bad_request", "Ungültige Konversations-ID", 400, guard.headers);
+      return errorResponse("bad_request", apiMessage("invalid_conversation_id", locale), 400, guard.headers);
     }
     const deleted = await deleteCustomerConversation(guard.customerId, conversationId);
     if (!deleted) {
-      return errorResponse("bad_request", "Konversation nicht gefunden", 404, guard.headers);
+      return errorResponse("bad_request", apiMessage("conversation_not_found", locale), 404, guard.headers);
     }
     return json({ ok: true, conversationId, deleted: true }, guard.headers);
   } catch (err) {

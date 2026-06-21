@@ -28,8 +28,10 @@ import { sendEmail, senderAddress } from "@/lib/email";
 import { outboundThreading } from "@/lib/email-inbound";
 import { recordSentMessage } from "@/lib/email-messages-store";
 import { getBaseUrl } from "@/lib/base-url";
+import { resolveLocale } from "@/lib/locale";
+import { apiMessage } from "@/lib/api-messages.mjs";
 import {
-  DOI_EMAIL_SUBJECT,
+  doiEmailSubject,
   doiEmailBody,
   signInMarketingConsentCopy,
 } from "@/lib/consent-copy";
@@ -50,6 +52,7 @@ const SYNTHETIC_EMAIL_PREFIX = "shopify:";
 interface OptInPayload {
   marketingConsent?: unknown;
   consentTextShown?: unknown;
+  locale?: unknown;
 }
 
 export async function OPTIONS(req: Request) {
@@ -73,14 +76,16 @@ export async function POST(req: Request) {
     try {
       payload = (await req.json()) as OptInPayload;
     } catch {
-      return errorResponse("bad_request", "Ungültiger JSON-Body", 400, headers);
+      return errorResponse("bad_request", apiMessage("invalid_json", resolveLocale(req)), 400, headers);
     }
+
+    const locale = resolveLocale(req, payload.locale);
 
     // Explicit affirmative act required — the endpoint NEVER enrols on its own.
     if (payload.marketingConsent !== true) {
       return errorResponse(
         "marketing_consent_required",
-        "Bitte bestätige die Einwilligung aktiv (das Häkchen ist standardmäßig nicht gesetzt).",
+        apiMessage("marketing_consent_required", locale),
         400,
         headers
       );
@@ -90,13 +95,13 @@ export async function POST(req: Request) {
     // that the signed-in customer never re-types it.
     const customer = await getCustomerById(guard.customerId);
     if (!customer) {
-      return errorResponse("not_found", "Kunde nicht gefunden", 404, headers);
+      return errorResponse("not_found", apiMessage("customer_not_found", locale), 404, headers);
     }
     const email = customer.email;
     if (!email || email.startsWith(SYNTHETIC_EMAIL_PREFIX)) {
       return errorResponse(
         "no_verified_email",
-        "Für dieses Konto liegt keine verifizierte E-Mail-Adresse vor.",
+        apiMessage("no_verified_email", locale),
         422,
         headers
       );
@@ -111,7 +116,7 @@ export async function POST(req: Request) {
     // (honest "unattested"; the verbatim text stays authoritative).
     const consentCopyVersion = resolveConsentCopyVersion(
       consentTextShown,
-      signInMarketingConsentCopy().consentTextShown
+      signInMarketingConsentCopy(locale).consentTextShown
     );
 
     // Same upsert + DOI machinery as /api/capture-email — only the email source
@@ -124,11 +129,12 @@ export async function POST(req: Request) {
       marketingConsent: true,
       consentTextShown,
       consentCopyVersion,
+      locale,
     });
     if (!capture) {
       return errorResponse(
         "upstream_unavailable",
-        "Einwilligung konnte nicht gespeichert werden — bitte später erneut versuchen.",
+        apiMessage("consent_save_failed", locale),
         503,
         headers
       );
@@ -156,12 +162,12 @@ export async function POST(req: Request) {
     // link is clicked.
     let doiEmailSent = false;
     if (capture.doiEmailRequired && capture.doiToken) {
-      const confirmUrl = `${getBaseUrl(req)}/api/confirm-marketing?token=${encodeURIComponent(capture.doiToken)}`;
-      const body = doiEmailBody(confirmUrl);
+      const confirmUrl = `${getBaseUrl(req)}/api/confirm-marketing?token=${encodeURIComponent(capture.doiToken)}&locale=${locale}`;
+      const body = doiEmailBody(confirmUrl, locale);
       const threading = outboundThreading();
       const doiResult = await sendEmail({
         to: email,
-        subject: DOI_EMAIL_SUBJECT,
+        subject: doiEmailSubject(locale),
         text: body.text,
         html: body.html,
         kind: "doi",
@@ -174,7 +180,7 @@ export async function POST(req: Request) {
         await recordSentMessage({
           toAddress: email,
           fromAddress: senderAddress() ?? "",
-          subject: DOI_EMAIL_SUBJECT,
+          subject: doiEmailSubject(locale),
           bodyText: body.text,
           bodyHtml: body.html,
           messageId: threading.messageId,

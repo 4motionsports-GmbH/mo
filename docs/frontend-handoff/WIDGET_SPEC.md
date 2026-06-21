@@ -77,6 +77,21 @@ minimum:
 The JS must fail gracefully (log a warning, not throw, don't render the
 launcher) if `chatKey` is empty.
 
+### 2.1 Locale (English on `/en`)
+
+Derive a locale from the storefront path — `/en…` → `"en"`, everything else →
+`"de"` (the default) — and send it on every backend call. The simplest approach
+is a default **`x-ms-locale`** header on each `fetch` (e.g. `x-ms-locale: en`
+from the `/en` storefront); you may instead send a `"locale"` field in the POST
+body or `?locale=en` on GET endpoints. Omit it entirely for German — the German
+experience is byte-identical to today. On `en`, Mo replies in English and the
+transactional/DOI/unsubscribe emails + consent copy switch language.
+
+> ⚠️ The English **consent / legal / refund** copy is a translation that is
+> **not yet legally reviewed** (`enLegalReviewed: false` in the consent payload).
+> Gate the English consent flow on a legal sign-off. **Full contract +
+> per-string coverage: [`LOCALE.md`](./LOCALE.md).**
+
 ---
 
 ## 3. Session id and conversation persistence

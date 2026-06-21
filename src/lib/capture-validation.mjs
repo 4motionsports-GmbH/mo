@@ -11,6 +11,8 @@
 // widget can show a targeted "bitte Häkchen setzen" hint instead of a generic
 // error.
 
+import { apiMessage } from "./api-messages.mjs";
+
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 /**
@@ -30,15 +32,17 @@ export function isValidEmail(email) {
 /**
  * Validate the load-bearing fields of a capture request. Returns either
  * `{ ok: true }` or `{ ok: false, code, message }` where `code` is a stable
- * error-envelope code and `message` a user-safe German string. The route maps
- * a failure to HTTP 400 verbatim.
+ * error-envelope code and `message` a user-safe, locale-appropriate string
+ * (German default — byte-identical to before). The route maps a failure to
+ * HTTP 400 verbatim.
  *
  * @param {{ email: unknown, transactionalConsent: unknown }} input
+ * @param {"de" | "en"} [locale]
  * @returns {{ ok: true } | { ok: false, code: "bad_request" | "transactional_consent_required", message: string }}
  */
-export function validateCaptureRequest({ email, transactionalConsent }) {
+export function validateCaptureRequest({ email, transactionalConsent }, locale = "de") {
   if (!isValidEmail(email)) {
-    return { ok: false, code: "bad_request", message: "Ungültige E-Mail-Adresse" };
+    return { ok: false, code: "bad_request", message: apiMessage("invalid_email", locale) };
   }
   // The form exists to send the summary: without the (now actively-checked)
   // transactional consent there is nothing valid to submit. Strictly `true`
@@ -47,8 +51,7 @@ export function validateCaptureRequest({ email, transactionalConsent }) {
     return {
       ok: false,
       code: CAPTURE_ERROR_TRANSACTIONAL_REQUIRED,
-      message:
-        "Bitte bestätige die erste Checkbox — ohne deine Einwilligung können wir dir die Zusammenfassung nicht per E-Mail schicken.",
+      message: apiMessage("transactional_consent_required", locale),
     };
   }
   return { ok: true };

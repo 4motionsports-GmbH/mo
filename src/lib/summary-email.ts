@@ -23,7 +23,8 @@ import { buildPrefilledCartUrlForIds, chooseCartProductIds } from "./cart";
 import { sendEmail, senderAddress, type SendEmailResult } from "./email";
 import { outboundThreading } from "./email-inbound";
 import { recordSentMessage } from "./email-messages-store";
-import { SUMMARY_EMAIL_SUBJECT } from "./consent-copy";
+import { summaryEmailSubject } from "./consent-copy";
+import type { Locale } from "./locale";
 import {
   renderBrandedEmail,
   escapeAttr,
@@ -47,9 +48,11 @@ function readableTurns(messages: TranscriptMessage[]): TranscriptMessage[] {
   );
 }
 
-function formatTranscript(turns: TranscriptMessage[]): string {
+function formatTranscript(turns: TranscriptMessage[], locale: Locale): string {
+  const you = locale === "en" ? "You" : "Du";
+  const advisor = locale === "en" ? "Advisor" : "Berater";
   return turns
-    .map((m) => `${m.role === "user" ? "Du" : "Berater"}: ${m.content.trim()}`)
+    .map((m) => `${m.role === "user" ? you : advisor}: ${m.content.trim()}`)
     .join("\n\n");
 }
 
@@ -66,23 +69,37 @@ function formatTranscript(turns: TranscriptMessage[]): string {
  */
 async function buildSummaryText(
   turns: TranscriptMessage[],
-  usage: { callSite: AiCallSite; conversationId?: number | null }
+  usage: { callSite: AiCallSite; conversationId?: number | null },
+  locale: Locale
 ): Promise<string> {
-  const transcript = formatTranscript(turns);
+  const transcript = formatTranscript(turns, locale);
   if (!transcript) {
-    return "In diesem Gespräch wurde noch kein Beratungsverlauf festgehalten.";
+    return locale === "en"
+      ? "No consultation history has been recorded in this conversation yet."
+      : "In diesem Gespräch wurde noch kein Beratungsverlauf festgehalten.";
   }
   if (!process.env.ANTHROPIC_API_KEY) return transcript;
+
+  const system =
+    locale === "en"
+      ? "You summarise a fitness consultation for an email to the customer in a " +
+        "friendly, clear way and in English. Write in a direct, personal tone, 3–6 " +
+        "short sentences. Name the identified need and the most important recommendations. " +
+        "No invented products, no invented prices, no marketing, no discounts."
+      : "Du fasst ein Fitness-Beratungsgespräch für eine E-Mail an den Kunden " +
+        "freundlich, klar und auf Deutsch zusammen. Schreibe in der Du-Form, 3–6 " +
+        "kurze Sätze. Nenne den ermittelten Bedarf und die wichtigsten Empfehlungen. " +
+        "Keine erfundenen Produkte, keine Preise erfinden, kein Marketing, keine Rabatte.";
+  const prompt =
+    locale === "en"
+      ? `Here is the conversation transcript:\n\n${transcript}\n\nWrite the summary.`
+      : `Hier ist das Gesprächsprotokoll:\n\n${transcript}\n\nSchreibe die Zusammenfassung.`;
 
   try {
     const { text, usage: modelUsage } = await generateText({
       model: anthropic(SUMMARY_MODEL),
-      system:
-        "Du fasst ein Fitness-Beratungsgespräch für eine E-Mail an den Kunden " +
-        "freundlich, klar und auf Deutsch zusammen. Schreibe in der Du-Form, 3–6 " +
-        "kurze Sätze. Nenne den ermittelten Bedarf und die wichtigsten Empfehlungen. " +
-        "Keine erfundenen Produkte, keine Preise erfinden, kein Marketing, keine Rabatte.",
-      prompt: `Hier ist das Gesprächsprotokoll:\n\n${transcript}\n\nSchreibe die Zusammenfassung.`,
+      system,
+      prompt,
     });
     // Cost KPI (S6): same generator, attributed to the requesting surface.
     await recordAiUsage({
@@ -100,17 +117,17 @@ async function buildSummaryText(
   }
 }
 
-// German EUR formatting ("1.234,00 €"), shared by both product sections.
-const PRICE_FORMAT = new Intl.NumberFormat("de-DE", {
-  style: "currency",
-  currency: "EUR",
-});
+// EUR formatting per locale: German "1.234,00 €" vs English (en-GB) "€1,234.00".
+const PRICE_FORMAT: Record<Locale, Intl.NumberFormat> = {
+  de: new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }),
+  en: new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }),
+};
 
 /** Effective price: the sale price when one is set, otherwise the list price. */
-function formatPrice(p: Product): string {
+function formatPrice(p: Product, locale: Locale): string {
   const value =
     typeof p.salePrice === "number" && p.salePrice > 0 ? p.salePrice : p.price;
-  return PRICE_FORMAT.format(value);
+  return PRICE_FORMAT[locale].format(value);
 }
 
 /**
@@ -139,16 +156,20 @@ const DIVIDER_HTML = `
  * (sold-out/unresolved items already excluded upstream). Rendered as an
  * image + name + price list, table-based for Outlook with fixed image dims.
  */
-function renderChosenProducts(products: Product[]): { text: string; html: string } {
+function renderChosenProducts(
+  products: Product[],
+  locale: Locale
+): { text: string; html: string } {
   if (products.length === 0) return { text: "", html: "" };
 
+  const heading = locale === "en" ? "Your selection:" : "Deine Auswahl:";
   const text =
-    "\nDeine Auswahl:\n" +
-    products.map((p) => `- ${p.name} – ${formatPrice(p)}`).join("\n");
+    `\n${heading}\n` +
+    products.map((p) => `- ${p.name} – ${formatPrice(p, locale)}`).join("\n");
 
   // Shared product-row renderer (also used by the bundle special-offer block).
   const html = renderEmailProductRows(
-    products.map((p) => ({ imageUrl: firstImageUrl(p), name: p.name, priceLabel: formatPrice(p) }))
+    products.map((p) => ({ imageUrl: firstImageUrl(p), name: p.name, priceLabel: formatPrice(p, locale) }))
   );
   return { text, html };
 }
@@ -158,13 +179,17 @@ function renderChosenProducts(products: Product[]): { text: string; html: string
  * discussed minus the chosen set. Rendered smaller, each row linking to the
  * product page (NOT the cart).
  */
-function renderAlternatives(products: Product[]): { text: string; html: string } {
+function renderAlternatives(
+  products: Product[],
+  locale: Locale
+): { text: string; html: string } {
   if (products.length === 0) return { text: "", html: "" };
 
+  const heading = locale === "en" ? "You might also like:" : "Vielleicht auch interessant:";
   const text =
-    "\nVielleicht auch interessant:\n" +
+    `\n${heading}\n` +
     products
-      .map((p) => `- ${p.name} – ${formatPrice(p)}: ${p.shopifyUrl}`)
+      .map((p) => `- ${p.name} – ${formatPrice(p, locale)}: ${p.shopifyUrl}`)
       .join("\n");
 
   const rows = products
@@ -188,15 +213,16 @@ function renderAlternatives(products: Product[]): { text: string; html: string }
                       p.name
                     )}</a></p>
                     <p style="${EMAIL_MUTED_TEXT_STYLE} text-align: left; padding-top: 2px;" align="left">${escapeHtml(
-                      formatPrice(p)
+                      formatPrice(p, locale)
                     )}</p>
                   </td>
                 </tr>`;
     })
     .join("");
 
+  const altHeading = locale === "en" ? "You might also like:" : "Vielleicht auch interessant:";
   const html = `
-                <h3 style="font-family: ${EMAIL_FONT_FAMILY}; color: #000000; font-size: 14px; line-height: 20px; font-weight: 700; text-transform: none; text-align: left; Margin: 0 0 6px;" align="left">Vielleicht auch interessant:</h3>
+                <h3 style="font-family: ${EMAIL_FONT_FAMILY}; color: #000000; font-size: 14px; line-height: 20px; font-weight: 700; text-transform: none; text-align: left; Margin: 0 0 6px;" align="left">${altHeading}</h3>
                 <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">${rows}
                 </table>`;
   return { text, html };
@@ -211,6 +237,8 @@ export interface SummaryEmailContentParams {
   alternatives: Product[];
   /** The "Zur Kasse" permalink, or null when no cart could be built. */
   cartUrl: string | null;
+  /** Email language. Default German — byte-identical to today. */
+  locale?: Locale;
 }
 
 /**
@@ -228,35 +256,50 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
   text: string;
   html: string;
 } {
-  const { summary, chosenProducts, alternatives, cartUrl } = params;
-  const chosen = renderChosenProducts(chosenProducts);
-  const alternativesPart = renderAlternatives(alternatives);
+  const { summary, chosenProducts, alternatives, cartUrl, locale = "de" } = params;
+  const en = locale === "en";
+  const chosen = renderChosenProducts(chosenProducts, locale);
+  const alternativesPart = renderAlternatives(alternatives, locale);
 
   // --- text part — same top-to-bottom order as the HTML ---
-  const textLines = [
-    "Hallo,",
-    "",
-    "vielen Dank für deine Beratung bei motion sports. Hier ist deine Zusammenfassung:",
-    "",
-    summary,
-  ];
+  const textLines = en
+    ? [
+        "Hello,",
+        "",
+        "thank you for your consultation at motion sports. Here is your summary:",
+        "",
+        summary,
+      ]
+    : [
+        "Hallo,",
+        "",
+        "vielen Dank für deine Beratung bei motion sports. Hier ist deine Zusammenfassung:",
+        "",
+        summary,
+      ];
   if (chosen.text) textLines.push(chosen.text);
   if (cartUrl) {
-    textLines.push("", `Zur Kasse:\n${cartUrl}`);
+    textLines.push("", `${en ? "To checkout" : "Zur Kasse"}:\n${cartUrl}`);
   }
   if (alternativesPart.text) textLines.push(alternativesPart.text);
   textLines.push(
     "",
-    "Bei Fragen kannst du jederzeit auf diese E-Mail antworten.",
+    en
+      ? "If you have any questions, you can reply to this email at any time."
+      : "Bei Fragen kannst du jederzeit auf diese E-Mail antworten.",
     "",
-    "Viele Grüße",
-    "Dein motion sports Team"
+    en ? "Best regards" : "Viele Grüße",
+    en ? "Your motion sports team" : "Dein motion sports Team"
   );
   const text = textLines.join("\n");
 
   // Closing sign-off, always last. When there are alternatives they (with the
   // divider) render BEFORE it, inside the same below-CTA slot.
-  const signOffHtml = `
+  const signOffHtml = en
+    ? `
+                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="center">If you have any questions, you can reply to this email at any time.</p>
+                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Best regards<br>Your motion sports team</p>`
+    : `
                   <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="center">Bei Fragen kannst du jederzeit auf diese E-Mail antworten.</p>
                   <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`;
   const alternativesBlock = alternativesPart.html
@@ -269,12 +312,19 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
                 </table>`
     : "";
 
-  const html = renderBrandedEmail({
-    subject: SUMMARY_EMAIL_SUBJECT,
-    preheader:
-      "Vielen Dank für deine Beratung bei motion sports — hier sind deine Zusammenfassung und dein Warenkorb.",
-    heading: "Deine Zusammenfassung",
-    bodyHtml: `
+  const bodyHtml = en
+    ? `
+                                  <p style="${EMAIL_TEXT_STYLE}" align="left">Hello,</p>
+                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="left">thank you for your consultation at <strong>motion sports</strong>. Here is your summary:</p>
+                                  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
+                                    <tr>
+                                      <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#f6f6f6" valign="top">
+                                        <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(summary)}</p>
+                                      </th>
+                                    </tr>
+                                  </table>
+                                  ${chosen.html}`
+    : `
                                   <p style="${EMAIL_TEXT_STYLE}" align="left">Hallo,</p>
                                   <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="left">vielen Dank f&#252;r deine Beratung bei <strong>motion sports</strong>. Hier ist deine Zusammenfassung:</p>
                                   <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
@@ -284,9 +334,18 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
                                       </th>
                                     </tr>
                                   </table>
-                                  ${chosen.html}`,
-    ctas: cartUrl ? [{ label: "Zur Kasse", url: cartUrl }] : [],
+                                  ${chosen.html}`;
+
+  const html = renderBrandedEmail({
+    subject: summaryEmailSubject(locale),
+    preheader: en
+      ? "Thank you for your consultation at motion sports — here are your summary and your cart."
+      : "Vielen Dank für deine Beratung bei motion sports — hier sind deine Zusammenfassung und dein Warenkorb.",
+    heading: en ? "Your summary" : "Deine Zusammenfassung",
+    bodyHtml,
+    ctas: cartUrl ? [{ label: en ? "To checkout" : "Zur Kasse", url: cartUrl }] : [],
     footnoteHtml: `${alternativesBlock}${signOffHtml}`,
+    locale,
   });
 
   return { text, html };
@@ -329,8 +388,10 @@ export interface SummaryDocument {
 export async function buildSummaryDocument(params: {
   conversation: ConversationSummaryData | null;
   usage: { callSite: AiCallSite; conversationId?: number | null };
+  /** Output language. Default German — byte-identical to today. */
+  locale?: Locale;
 }): Promise<SummaryDocument> {
-  const { conversation, usage } = params;
+  const { conversation, usage, locale = "de" } = params;
   const turns = conversation ? readableTurns(conversation.messages) : [];
 
   // Prefilled cart for the CHOSEN products — NO discount (transactional).
@@ -370,13 +431,14 @@ export async function buildSummaryDocument(params: {
     discussedProducts
   );
 
-  const summary = await buildSummaryText(turns, usage);
+  const summary = await buildSummaryText(turns, usage, locale);
 
   const { text, html } = buildSummaryEmailContent({
     summary,
     chosenProducts,
     alternatives,
     cartUrl: cart.url,
+    locale,
   });
 
   // Structured pieces for the PDF download — derived from the SAME chosen /
@@ -385,7 +447,7 @@ export async function buildSummaryDocument(params: {
   // to their product page (same as the email's "Vielleicht auch interessant").
   const toLine = (p: Product, withUrl: boolean): SummaryProductLine => ({
     name: p.name,
-    priceLabel: formatPrice(p),
+    priceLabel: formatPrice(p, locale),
     url: withUrl ? p.shopifyUrl : null,
   });
 
@@ -413,8 +475,10 @@ export interface SummaryEmailResult {
 export async function sendSummaryEmail(params: {
   sessionId: string | null;
   email: string;
+  /** Output language. Default German — byte-identical to today. */
+  locale?: Locale;
 }): Promise<SummaryEmailResult> {
-  const { sessionId, email } = params;
+  const { sessionId, email, locale = "de" } = params;
 
   const conversation = sessionId ? await loadConversationForSummary(sessionId) : null;
 
@@ -423,14 +487,16 @@ export async function sendSummaryEmail(params: {
   const { text, html, cartUrl } = await buildSummaryDocument({
     conversation,
     usage: { callSite: "summary_email" },
+    locale,
   });
 
+  const subject = summaryEmailSubject(locale);
   // Our own Message-ID + an inbound Reply-To so a "just reply to this email"
   // answer threads back into the unified mail log (mirror-write below).
   const threading = outboundThreading();
   const result = await sendEmail({
     to: email,
-    subject: SUMMARY_EMAIL_SUBJECT,
+    subject,
     text,
     html,
     kind: "summary",
@@ -445,7 +511,7 @@ export async function sendSummaryEmail(params: {
     await recordSentMessage({
       toAddress: email,
       fromAddress: senderAddress() ?? "",
-      subject: SUMMARY_EMAIL_SUBJECT,
+      subject,
       bodyText: text,
       bodyHtml: html,
       messageId: threading.messageId,

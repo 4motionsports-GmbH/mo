@@ -21,6 +21,8 @@ import { recordEmailClick } from "@/lib/marketing-store";
 import { resolveBundleRedirect } from "@/lib/bundle-offers-store";
 import { SHOP_DOMAIN } from "@/lib/shopify-cart-url.mjs";
 import { reportError } from "@/lib/observability";
+import { resolveLocale, type Locale } from "@/lib/locale";
+import { apiMessage } from "@/lib/api-messages.mjs";
 
 export const maxDuration = 10;
 
@@ -35,15 +37,15 @@ function expiredCollectionUrl(): string {
 }
 
 /** A small branded "offer expired" page (spike §5 graceful degrade). */
-function expiredOfferResponse(): Response {
+function expiredOfferResponse(locale: Locale): Response {
   const shopUrl = expiredCollectionUrl();
   const html = `<!doctype html>
-<html lang="de">
+<html lang="${locale}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
-    <title>Angebot abgelaufen — Motion Sports</title>
+    <title>${apiMessage("offer_expired_title", locale)}</title>
     <style>
       :root { color-scheme: light; }
       body {
@@ -66,12 +68,11 @@ function expiredOfferResponse(): Response {
   </head>
   <body>
     <main class="card">
-      <h1>Dieses Angebot ist leider abgelaufen</h1>
+      <h1>${apiMessage("offer_expired_heading", locale)}</h1>
       <p>
-        Dein persönliches Set ist nicht mehr verfügbar. Stöbere gerne in unserem
-        Shop — vielleicht ist etwas Passendes für dich dabei.
+        ${apiMessage("offer_expired_body", locale)}
       </p>
-      <a class="btn" href="${shopUrl}">Zum Shop</a>
+      <a class="btn" href="${shopUrl}">${apiMessage("offer_expired_cta", locale)}</a>
     </main>
   </body>
 </html>`;
@@ -82,10 +83,12 @@ function expiredOfferResponse(): Response {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ token: string }> }
 ) {
   const { token } = await ctx.params;
+  // Locale carried on the link (`&locale=`); defaults to German for legacy links.
+  const locale = resolveLocale(req);
 
   try {
     // 1. Marketing send token (the established path).
@@ -102,7 +105,7 @@ export async function GET(
       }
       // Expired / archived / failed / pending offer → friendly branded page,
       // never a Shopify 404 or empty cart.
-      return expiredOfferResponse();
+      return expiredOfferResponse(locale);
     }
 
     // Unknown / pruned token, or a marketing row without a cart URL. Don't error

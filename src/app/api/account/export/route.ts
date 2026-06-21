@@ -14,6 +14,8 @@ import { preflightResponse } from "@/lib/security";
 import { errorResponse, reportError } from "@/lib/observability";
 import { requireSignedInCustomer } from "@/lib/account-guard";
 import { buildCustomerDataExport } from "@/lib/account-export";
+import { resolveLocale } from "@/lib/locale";
+import { apiMessage } from "@/lib/api-messages.mjs";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -28,22 +30,26 @@ export async function GET(req: Request) {
   const guard = await requireSignedInCustomer(req, METHODS);
   if (!guard.ok) return guard.response;
 
+  const locale = resolveLocale(req);
+
   try {
     const data = await buildCustomerDataExport(guard.customerId);
     if (!data) {
       return errorResponse(
         "upstream_unavailable",
-        "Export konnte nicht erstellt werden — bitte später erneut versuchen.",
+        apiMessage("export_failed", locale),
         503,
         guard.headers
       );
     }
     const body = JSON.stringify(data, null, 2);
+    const filename =
+      locale === "en" ? "motionsports-my-data.json" : "motionsports-meine-daten.json";
     return new Response(body, {
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "Content-Disposition": `attachment; filename="motionsports-meine-daten.json"`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
         ...guard.headers,
       },
