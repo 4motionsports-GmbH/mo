@@ -2,66 +2,66 @@ import { tool } from "ai";
 import { z } from "zod";
 import { retrieve, embedQuery } from "./retrieval";
 import { captureConsentCopy } from "./consent-copy";
+import { toolCopy } from "./tool-descriptions.mjs";
+import type { Locale } from "./locale";
 import type { CustomerProfile } from "./types";
 
-const profilePatchSchema = z.object({
-  segment: z
-    .enum(["private", "studio", "physio", "public_sector", "unknown"])
-    .optional()
-    .describe(
-      "Kundensegment. studio=Fitnessstudio-Betreiber. physio=Reha/Physio. public_sector=Bundeswehr/Polizei/Schule/Behörde. private=Privatkunde."
-    ),
-  experienceLevel: z
-    .enum(["beginner", "intermediate", "advanced", "unknown"])
-    .optional(),
-  trainingFocus: z
-    .enum(["strength", "cardio", "mixed", "rehab", "unknown"])
-    .optional(),
-  spaceM2: z
-    .union([z.number(), z.literal("unknown")])
-    .optional()
-    .describe("Verfügbare Stellfläche in m²."),
-  budgetEUR: z
-    .union([
-      z.object({ min: z.number().nullable(), max: z.number().nullable() }),
-      z.literal("unknown"),
-    ])
-    .optional(),
-  trainingFrequency: z
-    .enum(["1-2x", "3-5x", "daily", "unknown"])
-    .optional(),
-  housing: z
-    .enum(["apartment", "house_basement_garage", "facility", "unknown"])
-    .optional(),
-  noiseSensitive: z
-    .union([z.boolean(), z.literal("unknown")])
-    .optional(),
-  procurementNeeds: z
-    .array(
-      z.enum([
-        "invoice",
-        "tender",
-        "warranty_docs",
-        "ce_certs",
-        "leasing",
-        "bulk_discount",
-        "maintenance_contract",
+function buildProfilePatchSchema(c: Record<string, string>) {
+  return z.object({
+    segment: z
+      .enum(["private", "studio", "physio", "public_sector", "unknown"])
+      .optional()
+      .describe(c.fieldSegment),
+    experienceLevel: z
+      .enum(["beginner", "intermediate", "advanced", "unknown"])
+      .optional(),
+    trainingFocus: z
+      .enum(["strength", "cardio", "mixed", "rehab", "unknown"])
+      .optional(),
+    spaceM2: z
+      .union([z.number(), z.literal("unknown")])
+      .optional()
+      .describe(c.fieldSpaceM2),
+    budgetEUR: z
+      .union([
+        z.object({ min: z.number().nullable(), max: z.number().nullable() }),
+        z.literal("unknown"),
       ])
-    )
-    .optional(),
-  confidence: z
-    .number()
-    .min(0)
-    .max(1)
-    .optional()
-    .describe("Wie sicher du dir beim Profil bist (0-1)."),
-  rationale: z
-    .string()
-    .optional()
-    .describe(
-      "Kurze Begründung welcher Satz/welches Signal das Update ausgelöst hat. Hilft beim Debuggen."
-    ),
-});
+      .optional(),
+    trainingFrequency: z
+      .enum(["1-2x", "3-5x", "daily", "unknown"])
+      .optional(),
+    housing: z
+      .enum(["apartment", "house_basement_garage", "facility", "unknown"])
+      .optional(),
+    noiseSensitive: z
+      .union([z.boolean(), z.literal("unknown")])
+      .optional(),
+    procurementNeeds: z
+      .array(
+        z.enum([
+          "invoice",
+          "tender",
+          "warranty_docs",
+          "ce_certs",
+          "leasing",
+          "bulk_discount",
+          "maintenance_contract",
+        ])
+      )
+      .optional(),
+    confidence: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe(c.fieldConfidence),
+    rationale: z
+      .string()
+      .optional()
+      .describe(c.fieldRationale),
+  });
+}
 
 // Hard cap on offer_email_summary invitations per conversation. Lives in the
 // pure trigger module (email-offer-trigger.mjs) next to the deterministic
@@ -77,43 +77,23 @@ export { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./email-offer-trigger.mjs";
 // instruction — happens in api/chat via streamText's `activeTools`: an
 // inactive tool is filtered out before the provider call and is invisible to
 // the model, exactly like omitting it from this object.
-export function buildChatTools(profile: CustomerProfile) {
+//
+// LOCALE: `locale` only switches the language of the model-facing descriptions
+// (toolCopy) and the consent copy attached to the offer_email_summary result.
+// The schemas, enums and execute LOGIC are identical across locales.
+export function buildChatTools(profile: CustomerProfile, locale: Locale = "de") {
+  const c = toolCopy(locale);
   return {
     update_customer_profile: tool({
-      description: `Aktualisiert das Kundenprofil basierend auf neuen Signalen aus der Konversation.
-Rufe dieses Tool SOFORT auf wenn du ein neues Signal erkennst — z.B. der Kunde nennt sein Budget, seinen Platz, sein Erfahrungslevel, ob er Studio/Physio/Behörde ist.
-
-Wichtige Trigger-Wörter:
-- "Studio", "Fitnessstudio", "Mengenrabatt", "Großbestellung" → segment="studio"
-- "Praxis", "Reha", "Patient", "Physio", "Therapie" → segment="physio", trainingFocus="rehab"
-- "Behörde", "Bundeswehr", "Polizei", "Schule", "Ausschreibung", "Auf Rechnung" → segment="public_sector" + entsprechende procurementNeeds
-- "Anfänger", "noch nie", "neu" → experienceLevel="beginner"
-- "Wohnung", "Mietwohnung" → housing="apartment", oft noiseSensitive=true
-- "Keller", "Garage", "Haus" → housing="house_basement_garage"
-
-Setze nur Felder die das aktuelle Signal tatsächlich klärt. Bestehende Felder werden gemerged. Aktuelles Profil ist im System-Prompt sichtbar.`,
-      inputSchema: profilePatchSchema,
+      description: c.updateProfileDesc,
+      inputSchema: buildProfilePatchSchema(c),
       execute: async () => ({ ok: true }),
     }),
 
     search_products: tool({
-      description: `Sucht im gesamten Produktkatalog nach passenden Produkten.
-
-Nutze dieses Tool wenn:
-- Du nicht sicher bist welches Produkt am besten passt
-- Der Kunde nach einer Alternative fragt ("günstiger?", "leiser?", "kleiner?")
-- Du eine Kategorie durchsuchen willst (z.B. alle Laufbänder)
-- Du Kompatibilität / Zubehör suchen willst
-
-Die Suche kombiniert semantische Ähnlichkeit mit harten Filtern. Nutze filters wenn du konkrete Constraints hast — z.B. requiresQuiet=true für Wohnungs-Cardio, requiresMedical=true für Reha. Das Kundenprofil wird automatisch berücksichtigt (Budget, Platz, Segment).
-
-Gib das Ergebnis NICHT roh aus — nutze es um dann show_product oder compare_products zu rufen.`,
+      description: c.searchDesc,
       inputSchema: z.object({
-        query: z
-          .string()
-          .describe(
-            "Natürlichsprachliche Suchbeschreibung, z.B. 'leises Laufband klappbar' oder 'stabiles Power Rack mit Klimmzugstange'"
-          ),
+        query: z.string().describe(c.fieldQuery),
         filters: z
           .object({
             category: z.string().optional(),
@@ -150,60 +130,41 @@ Gib das Ergebnis NICHT roh aus — nutze es um dann show_product oder compare_pr
     }),
 
     show_product: tool({
-      description:
-        "Zeigt die Produktkarte für ein Produkt, das du dem Kunden EMPFIEHLST. Die im Chat sichtbaren Produktkarten ergeben sich AUSSCHLIESSLICH aus deinen show_product-Aufrufen — nicht aus der vorretrieveten Vorauswahl. Rufe es genau EINMAL pro Produkt auf, das du in deinem Text tatsächlich empfiehlst, in der REIHENFOLGE deiner Empfehlung. productId MUSS exakt die Katalog-ID des im Text genannten Produkts sein (nicht die eines anderen Treffers). NICHT aufrufen für Produkte, die du nur nebenbei erwähnst, gegenüberstellst oder am Ende verwirfst — und niemals einfach die vorretrieveten Kandidaten durchkarten. Empfiehl nur real existierende, VERFÜGBARE Produkte; für ein Produkt außerhalb der Vorauswahl hol dir zuerst per search_products die echte ID (niemals eine ID raten oder aus dem Gedächtnis nehmen).",
+      description: c.showProductDesc,
       inputSchema: z.object({
-        productId: z.string().describe("Die exakte Katalog-ID des im Text empfohlenen Produkts"),
-        reason: z
-          .string()
-          .optional()
-          .describe("Kurze Begründung warum dieses Produkt passt (1-2 Sätze)"),
+        productId: z.string().describe(c.fieldShowProductId),
+        reason: z.string().optional().describe(c.fieldShowProductReason),
       }),
       execute: async () => ({ ok: true }),
     }),
 
     compare_products: tool({
-      description:
-        "Zeigt einen Produktvergleich als Tabelle an. Nutze dieses Tool wenn der Kunde zwei oder mehr Produkte vergleichen möchte, nach Unterschieden fragt, oder du Alternativen gegenüberstellen willst.",
+      description: c.compareDesc,
       inputSchema: z.object({
         productIds: z
           .array(z.string())
           .min(2)
           .max(3)
-          .describe("Array mit 2-3 Produkt-IDs"),
+          .describe(c.fieldCompareIds),
         comparisonContext: z
           .string()
           .optional()
-          .describe(
-            "Kontext des Vergleichs z.B. 'Preis-Leistung für Einsteiger'"
-          ),
+          .describe(c.fieldComparisonContext),
       }),
       execute: async () => ({ ok: true }),
     }),
 
     add_to_cart: tool({
-      description:
-        "Blendet einen Direkt-Checkout-Button ein. Ein Klick bringt den Privatkunden mit dem/den Produkt(en) (je Menge 1) direkt zur Kasse. Für EIN Produkt: setze productId. Wenn der Kunde klar MEHRERE Produkte zusammen kaufen will ('beides nehme ich', 'das Rack UND die Hantelbank', 'die ganze Kombi'): setze productIds mit ALLEN gewünschten IDs — das ergibt EINEN gemeinsamen Warenkorb mit allen Varianten, NICHT mehrere einzelne Buttons. Rufe das Tool dann nur EINMAL auf. Nutze ihn bei klaren Kaufsignalen ('Das nehme ich', 'Wie bestelle ich?') ODER von dir aus, wenn die Beratung rund ist und der Kunde entschieden wirkt — niedrigschwellig, ohne Druck, pro Kaufentscheidung nur einmal. Immer mit show_product für jedes enthaltene Produkt kombinieren. NUR mit Produkten die AUF LAGER sind — nimm NIEMALS ein ausverkauftes Produkt auf (der Checkout enthält ausschließlich verfügbare Artikel). NUR bei segment=private; bei studio/public_sector/physio stattdessen show_contact_form.",
+      description: c.addToCartDesc,
       inputSchema: z
         .object({
-          productId: z
-            .string()
-            .optional()
-            .describe(
-              "Die ID des Produkts für einen Einzel-Checkout. Nutze entweder productId (ein Produkt) ODER productIds (mehrere)."
-            ),
+          productId: z.string().optional().describe(c.fieldAddProductId),
           productIds: z
             .array(z.string())
             .min(1)
             .optional()
-            .describe(
-              "Mehrere Produkt-IDs für EINEN gemeinsamen Checkout (alle Varianten in einem Warenkorb). Nutze dies, wenn der Kunde klar mehrere Produkte zusammen kaufen will."
-            ),
-          message: z
-            .string()
-            .describe(
-              "Kurze, einladende Nachricht zum Direkt-Checkout — bestätigend und hilfsbereit, nie drängend. z.B. 'Wenn das für dich passt, kannst du beides hier direkt bestellen.'"
-            ),
+            .describe(c.fieldAddProductIds),
+          message: z.string().describe(c.fieldAddMessage),
         })
         // Backward compatible: at least one of productId / productIds must be
         // present. The frontend normalises both to a single id list.
@@ -214,28 +175,15 @@ Gib das Ergebnis NICHT roh aus — nutze es um dann show_product oder compare_pr
     }),
 
     suggest_showroom: tool({
-      description:
-        "Schlägt einen Besuch im Showroom in Gröbenzell bei München vor. Nutzen wenn der Kunde bei teuren Geräten (über 500€) unsicher ist oder Produkte vor dem Kauf testen möchte.",
+      description: c.showroomDesc,
       inputSchema: z.object({
-        productIds: z
-          .array(z.string())
-          .describe("Produkte die im Showroom getestet werden können"),
+        productIds: z.array(z.string()).describe(c.fieldShowroomIds),
       }),
       execute: async () => ({ ok: true }),
     }),
 
     show_contact_form: tool({
-      description: `Zeigt ein Kontaktformular an, das die Anfrage direkt an das motion sports Team weiterleitet (der Kunde muss nichts selbst verschicken). Für persönliche Beratung UND für Service-Anliegen, die einen Menschen beim Team brauchen.
-
-NUTZE dieses Tool bei:
-- segment="studio" sobald der Kunde konkrete Beschaffungssignale zeigt (Stückzahlen, Konzept) → reason="studio_consultation"
-- segment="public_sector" sobald der Kunde formelle Prozesse anspricht (Angebot, Rechnung, Ausschreibung, Zahlungsziel) → reason="public_sector_quote"
-- segment="physio" wenn der Kunde echte Medizinprodukte (CE-Klasse IIa+) oder Reha-spezifische Beratung braucht → reason="physio_consultation"
-- Anfragen nach Mengenrabatt, Leasing oder Wartungsverträgen → reason="bulk_discount"/"leasing"/"maintenance"
-- KUNDENSERVICE / ESKALATION → reason="order_support": jedes Anliegen, das den direkten Draht zum Team braucht — Bestellstatus/Sendungsverfolgung, eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, oder wenn der Kunde ausdrücklich einen Menschen / das Team erreichen möchte. Nenne in diesen Fällen NICHT nur eine E-Mail-Adresse — rufe dieses Tool auf. (Allgemeine Fragen zu den Rückgabe-/Versand-/Zahlungskonditionen beantwortest du weiterhin direkt aus deinem Wissen; das Formular ist für das konkrete, persönliche Anliegen.)
-- Wenn ein Anliegen die Möglichkeiten eines Chatbots übersteigt → reason="general"
-
-Nutze die treffendste reason. Die Nachricht sollte einladend erklären, dass sich das Team kümmert bzw. meldet; info@motionsports.de darf höchstens ergänzend als Alternative vorkommen.`,
+      description: c.contactDesc,
       inputSchema: z.object({
         reason: z.enum([
           "studio_consultation",
@@ -247,38 +195,19 @@ Nutze die treffendste reason. Die Nachricht sollte einladend erklären, dass sic
           "order_support",
           "general",
         ]),
-        message: z
-          .string()
-          .describe(
-            "Kurze, einladende Erklärung warum persönlicher Kontakt der richtige nächste Schritt ist (1-2 Sätze)."
-          ),
+        message: z.string().describe(c.fieldContactMessage),
         productIds: z
           .array(z.string())
           .optional()
-          .describe(
-            "Produkte die im Gespräch relevant sind, werden im Formular vorausgefüllt."
-          ),
+          .describe(c.fieldContactProductIds),
       }),
       execute: async () => ({ ok: true }),
     }),
 
     offer_email_summary: tool({
-      description: `Bietet dem Kunden an, eine Zusammenfassung dieses Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu erhalten. Der Aufruf blendet im Widget ein DSGVO-konformes Erfassungsformular ein (E-Mail-Feld + zwei GETRENNTE Einwilligungs-Checkboxen: Zusammenfassung jetzt vs. optionales Marketing).
-
-WANN aufrufen (wertgetriggert):
-- Erst NACHDEM du nachweislich Wert geliefert hast — der Kunde reagiert positiv auf eine konkrete Empfehlung, du hast einen hilfreichen Vergleich geliefert, der Kunde will in Ruhe überlegen, oder es gibt ein klares Kaufsignal. Setze den passenden trigger.
-- NIE als erste Nachricht, nie bevor du etwas empfohlen hast, nie nach festem Raster — und nie als Bedingung für weitere Beratung.
-- Maximal ZWEI Mal pro Gespräch: Lehnt der Kunde ab oder reagiert nicht, höchstens EIN weiteres Angebot an einem späteren, klar wertvolleren Moment (typisch checkout_intent) — danach nie wieder.
-
-NICHT aufrufen bei segment=studio/public_sector/physio mit Beschaffungssignalen — dort ist show_contact_form der richtige Weg.
-
-Das eigentliche Versenden + die Einwilligungen passieren über das Formular und /api/capture-email. Die Zusammenfassung gibt es IMMER auch ohne Marketing-Einwilligung (nie bündeln); du sammelst hier KEINE E-Mail-Adresse im Chat ein.`,
+      description: c.offerDesc,
       inputSchema: z.object({
-        message: z
-          .string()
-          .describe(
-            "Kurze, freundliche Einladung um den konkreten Nutzen JETZT. z.B. 'Soll ich dir deine persönliche Empfehlung und den fertigen Warenkorb per Mail schicken?'"
-          ),
+        message: z.string().describe(c.fieldOfferMessage),
         trigger: z
           .enum([
             "recommendation_accepted",
@@ -287,23 +216,20 @@ Das eigentliche Versenden + die Einwilligungen passieren über das Formular und 
             "buying_intent",
             "checkout_intent",
           ])
-          .describe(
-            "Der Wert-Moment, der dieses Angebot auslöst. recommendation_accepted=Kunde reagiert positiv auf eine Empfehlung; comparison_delivered=nach hilfreichem Vergleich; consideration_pause=Kunde will in Ruhe überlegen; buying_intent=klares Kaufsignal; checkout_intent=Moment rund um den Direkt-Checkout."
-          ),
+          .describe(c.fieldOfferTrigger),
         productIds: z
           .array(z.string())
           .optional()
-          .describe(
-            "Die im Gespräch besprochenen Produkt-IDs (für die Warenkorb-Vorschau im Formular). Optional/advisory — die tatsächlichen Produkte ermittelt das Backend serverseitig."
-          ),
+          .describe(c.fieldOfferProductIds),
       }),
       // The tool result carries the canonical capture-form consent copy (it
       // streams to the widget as the tool part's `output`). The widget renders
       // these strings verbatim and echoes `consentTextShown` back unchanged on
       // /api/capture-email — the Art. 7 audit record can never drift from what
-      // was displayed, and lawyer copy changes need no widget release. See
-      // src/lib/consent-copy.ts and API_CONTRACT.md §7.4.
-      execute: async () => ({ ok: true, consentCopy: captureConsentCopy() }),
+      // was displayed, and lawyer copy changes need no widget release. The
+      // locale picks the consent language so an /en chat captures /en consent.
+      // See src/lib/consent-copy.ts and API_CONTRACT.md §7.4.
+      execute: async () => ({ ok: true, consentCopy: captureConsentCopy(locale) }),
     }),
   };
 }

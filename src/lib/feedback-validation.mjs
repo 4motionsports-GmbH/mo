@@ -44,6 +44,7 @@ export function cleanContextField(value, max) {
  * documented HTTP status (400 / 413) verbatim.
  *
  * @param {unknown} input — the parsed JSON body (shape not yet trusted)
+ * @param {"de" | "en"} [locale] — message language (German default)
  * @returns {(
  *   { ok: true, value: { message: string, sessionId: string|null,
  *     conversationId: string|null, tier: string|null, email: string|null,
@@ -51,7 +52,7 @@ export function cleanContextField(value, max) {
  *   | { ok: false, code: "bad_request" | "payload_too_large", message: string }
  * )}
  */
-export function validateFeedbackRequest(input) {
+export function validateFeedbackRequest(input, locale = "de") {
   const body = input && typeof input === "object" ? input : {};
   // Accept `message` (canonical) or `feedback` (friendlier alias) for the text.
   const raw =
@@ -66,14 +67,20 @@ export function validateFeedbackRequest(input) {
     return {
       ok: false,
       code: "bad_request",
-      message: "Bitte gib zuerst dein Feedback ein.",
+      message:
+        locale === "en"
+          ? "Please enter your feedback first."
+          : "Bitte gib zuerst dein Feedback ein.",
     };
   }
   if (message.length > FEEDBACK_MESSAGE_MAX_CHARS) {
     return {
       ok: false,
       code: "payload_too_large",
-      message: `Dein Feedback ist zu lang (max. ${FEEDBACK_MESSAGE_MAX_CHARS} Zeichen).`,
+      message:
+        locale === "en"
+          ? `Your feedback is too long (max. ${FEEDBACK_MESSAGE_MAX_CHARS} characters).`
+          : `Dein Feedback ist zu lang (max. ${FEEDBACK_MESSAGE_MAX_CHARS} Zeichen).`,
     };
   }
 

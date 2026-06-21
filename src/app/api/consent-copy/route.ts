@@ -27,6 +27,7 @@ import {
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { captureConsentCopy, signInMarketingConsentCopy } from "@/lib/consent-copy";
+import { resolveLocale } from "@/lib/locale";
 
 export const maxDuration = 10;
 
@@ -46,8 +47,14 @@ export async function GET(req: Request) {
     if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
     const surface = new URL(req.url).searchParams.get("surface");
+    // Storefront-selected language via ?locale= (default German). The widget on
+    // /en requests ?locale=en so the form, the audit string, and the version
+    // stamp all match the language the user will be shown.
+    const locale = resolveLocale(req);
     const copy =
-      surface === "signin" ? signInMarketingConsentCopy() : captureConsentCopy();
+      surface === "signin"
+        ? signInMarketingConsentCopy(locale)
+        : captureConsentCopy(locale);
 
     // Short cache only: a lawyer copy change must propagate to live widgets
     // quickly, since the served strings ARE the audit-trail text.

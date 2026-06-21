@@ -27,6 +27,8 @@ import { requireSignedInCustomer } from "@/lib/account-guard";
 import { loadCustomerConversationForSummary } from "@/lib/account-history";
 import { buildSummaryDocument } from "@/lib/summary-email";
 import { buildSummaryPdf } from "@/lib/summary-pdf.mjs";
+import { resolveLocale } from "@/lib/locale";
+import { apiMessage } from "@/lib/api-messages.mjs";
 
 export const runtime = "nodejs";
 // The summary may make one Anthropic call — give it the same headroom the
@@ -40,21 +42,26 @@ export async function OPTIONS(req: Request) {
 }
 
 /** Safe, descriptive download filename derived from the (opaque) thread key. */
-function downloadFilename(conversationKey: string): string {
+function downloadFilename(conversationKey: string, locale: string): string {
   const slug = conversationKey.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
-  return `motionsports-zusammenfassung-${slug || "beratung"}.pdf`;
+  const stem = locale === "en" ? "summary" : "zusammenfassung";
+  const fallback = locale === "en" ? "consultation" : "beratung";
+  return `motionsports-${stem}-${slug || fallback}.pdf`;
 }
 
 export async function GET(req: Request) {
   const guard = await requireSignedInCustomer(req, METHODS);
   if (!guard.ok) return guard.response;
 
+  // Storefront-selected language (?locale= / x-ms-locale), default German.
+  const locale = resolveLocale(req);
+
   try {
     const conversationKey = (
       new URL(req.url).searchParams.get("conversationKey") ?? ""
     ).trim();
     if (!conversationKey) {
-      return errorResponse("bad_request", "conversationKey fehlt", 400, guard.headers);
+      return errorResponse("bad_request", apiMessage("conversation_key_missing", locale), 400, guard.headers);
     }
 
     // Scoped to the caller (conversation_key + customer_id) — a thread the
@@ -64,7 +71,7 @@ export async function GET(req: Request) {
       conversationKey
     );
     if (!conversation) {
-      return errorResponse("bad_request", "Konversation nicht gefunden", 404, guard.headers);
+      return errorResponse("bad_request", apiMessage("conversation_not_found", locale), 404, guard.headers);
     }
 
     const { summary, chosen, cartUrl, alternatives } = await buildSummaryDocument({
@@ -73,17 +80,18 @@ export async function GET(req: Request) {
         callSite: "summary_download",
         conversationId: conversation.conversationId,
       },
+      locale,
     });
 
     // Render the SAME content to PDF (lib/summary-pdf reuses the shared, dependency-
     // free pdf-core). Any model call already ran + was recorded in buildSummaryDocument.
-    const pdf = buildSummaryPdf({ summary, chosen, cartUrl, alternatives });
+    const pdf = buildSummaryPdf({ summary, chosen, cartUrl, alternatives, locale });
 
     return new Response(new Uint8Array(pdf), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${downloadFilename(conversationKey)}"`,
+        "Content-Disposition": `attachment; filename="${downloadFilename(conversationKey, locale)}"`,
         "Content-Length": String(pdf.length),
         "Cache-Control": "no-store",
         ...guard.headers,

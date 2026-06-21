@@ -11,12 +11,8 @@
 import { confirmMarketingByToken } from "@/lib/email-capture-store";
 import { syncCustomerConsent } from "@/lib/customer-store";
 import { reportError } from "@/lib/observability";
-import {
-  DOI_CONFIRMED_BODY,
-  DOI_CONFIRMED_HEADING,
-  DOI_INVALID_BODY,
-  DOI_INVALID_HEADING,
-} from "@/lib/consent-copy";
+import { doiPageCopy } from "@/lib/consent-copy";
+import { resolveLocale } from "@/lib/locale";
 import { renderResultPage } from "@/lib/result-page";
 import {
   KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED,
@@ -30,14 +26,19 @@ export const maxDuration = 30;
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const token = url.searchParams.get("token") ?? "";
+  // Locale carried in the DOI link (`&locale=` appended at send time from the
+  // stored capture locale); defaults to German for legacy links.
+  const locale = resolveLocale(req);
+  const copy = doiPageCopy(locale);
 
   try {
     if (!token.trim()) {
       return renderResultPage({
         status: 400,
-        heading: DOI_INVALID_HEADING,
-        body: DOI_INVALID_BODY,
+        heading: copy.invalidHeading,
+        body: copy.invalidBody,
         tone: "error",
+        locale,
       });
     }
 
@@ -55,25 +56,28 @@ export async function GET(req: Request) {
       }
       return renderResultPage({
         status: 200,
-        heading: DOI_CONFIRMED_HEADING,
-        body: DOI_CONFIRMED_BODY,
+        heading: copy.confirmedHeading,
+        body: copy.confirmedBody,
         tone: "success",
+        locale,
       });
     }
 
     return renderResultPage({
       status: result.reason === "expired" ? 410 : 400,
-      heading: DOI_INVALID_HEADING,
-      body: DOI_INVALID_BODY,
+      heading: copy.invalidHeading,
+      body: copy.invalidBody,
       tone: "error",
+      locale,
     });
   } catch (err) {
     reportError(err, { route: "api/confirm-marketing" });
     return renderResultPage({
       status: 500,
-      heading: DOI_INVALID_HEADING,
-      body: DOI_INVALID_BODY,
+      heading: copy.invalidHeading,
+      body: copy.invalidBody,
       tone: "error",
+      locale,
     });
   }
 }

@@ -3,6 +3,8 @@ import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, checkRateLimitKeyed, clientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { escapeHtml } from "@/lib/html-escape";
+import { resolveLocale } from "@/lib/locale";
+import { apiMessage } from "@/lib/api-messages.mjs";
 
 export const maxDuration = 10;
 
@@ -107,13 +109,17 @@ export async function POST(req: Request) {
     try {
       payload = await req.json();
     } catch {
-      return errorResponse("bad_request", "Ungültiger JSON-Body", 400, headers);
+      return errorResponse("bad_request", apiMessage("invalid_json", resolveLocale(req)), 400, headers);
     }
+
+    // Storefront-selected language for the user-facing response messages (the
+    // internal team email body stays German). Default German.
+    const locale = resolveLocale(req, (payload as { locale?: unknown }).locale);
 
     if (!isValid(payload)) {
       return errorResponse(
         "bad_request",
-        "Pflichtfelder fehlen oder ungültig (name, email, message, reason)",
+        apiMessage("contact_required_fields", locale),
         400,
         headers
       );
@@ -162,7 +168,7 @@ export async function POST(req: Request) {
         });
         return errorResponse(
           "upstream_unavailable",
-          "E-Mail konnte nicht zugestellt werden",
+          apiMessage("email_delivery_failed", locale),
           502,
           headers
         );

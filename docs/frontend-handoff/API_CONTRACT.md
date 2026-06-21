@@ -181,6 +181,24 @@ Rules:
 > `/api/account/conversations/{id}` routes (rename/delete) — `conversationId`
 > stays the DB id; `conversationKey` is the chat-thread key for `/api/chat`.
 
+#### Optional `locale` — English (`en`) vs German (`de`, default)
+
+The widget MAY send a `locale` derived from the storefront path (`/en` → `en`,
+otherwise `de`) to make Mo converse in English (same persona, rules, tools, the
+corrected 14-day return info — only the language changes):
+
+```jsonc
+{
+  "messages": [ /* … */ ],
+  "locale": "en"   // "de" (default) or "en"; omit for German
+}
+```
+
+Default German; an absent/unknown value resolves to `de` (byte-identical to
+today). The same `locale` can be passed as the `x-ms-locale` header on every
+call instead. **See `LOCALE.md` for the full locale contract, the per-endpoint
+transport, the per-string coverage, and the ⚠️ English-consent legal flag.**
+
 #### Optional `context` — opening the chat "about" a product and/or with a browsing trail
 
 When the widget is opened from a specific product page (e.g. a "Frage zu
@@ -1231,8 +1249,16 @@ origin allowlist + rate limit only (shares the products bucket, 60 req /
 #### Request
 
 ```
-GET /api/consent-copy
+GET /api/consent-copy            # German (default)
+GET /api/consent-copy?locale=en  # English (⚠️ not yet legal-reviewed)
 ```
+
+On `?locale=en` the strings come back in English, and the payload carries
+`"locale": "en"` plus **`"enLegalReviewed": false`** — the English consent copy
+is a translation that still needs a legal review (German is unchanged and
+approved). The widget on `/en` MUST request `?locale=en` **and** send the same
+`locale` on `POST /api/capture-email`, so the echoed `consentTextShown` matches
+the per-locale served string. See [`LOCALE.md`](./LOCALE.md).
 
 #### Response
 

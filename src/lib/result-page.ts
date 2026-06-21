@@ -1,21 +1,27 @@
 // Minimal, self-contained HTML page for the two user-facing GET endpoints that
 // are clicked from an email (confirm-marketing, unsubscribe). No framework, no
 // external assets — just a small branded page with a heading and a line of
-// copy. German strings come from consent-copy.ts (lawyer-approved).
+// copy. Strings come from consent-copy.ts (German lawyer-approved; English
+// pending review) — the page just renders whatever heading/body it's given, in
+// the matching <html lang>.
 
 import { escapeHtml } from "./html-escape";
+import type { Locale } from "./locale";
 
 export interface ResultPageOptions {
   status: number;
   heading: string;
   body: string;
   tone: "success" | "error";
+  /** Language of the page chrome (<html lang>). Default German. */
+  locale?: Locale;
 }
 
 export function renderResultPage(opts: ResultPageOptions): Response {
   const accent = opts.tone === "success" ? "#16a34a" : "#dc2626";
+  const lang = opts.locale ?? "de";
   const html = `<!doctype html>
-<html lang="de">
+<html lang="${lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

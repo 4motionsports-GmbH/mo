@@ -83,9 +83,38 @@ function makeFlow() {
   return { line, paragraph, gap, divider, finish };
 }
 
+// Locale-switched PDF body labels. German is byte-identical to before; English
+// mirrors the summary email's wording. (The shared pdf-core brand footer is
+// locale-agnostic chrome.)
+const PDF_COPY = {
+  de: {
+    heading: "Deine Zusammenfassung",
+    intro: "Hallo, vielen Dank für deine Beratung bei motion sports. Hier ist deine Zusammenfassung:",
+    emptySummary: "In diesem Gespräch wurde noch kein Beratungsverlauf festgehalten.",
+    chosen: "Deine Auswahl:",
+    checkout: "Zur Kasse:",
+    alternatives: "Vielleicht auch interessant:",
+    signOffQuestion: "Bei Fragen kannst du jederzeit auf diese E-Mail antworten.",
+    signOff1: "Viele Grüße",
+    signOff2: "Dein motion sports Team",
+  },
+  en: {
+    heading: "Your summary",
+    intro: "Hello, thank you for your consultation at motion sports. Here is your summary:",
+    emptySummary: "No consultation history has been recorded in this conversation yet.",
+    chosen: "Your selection:",
+    checkout: "To checkout:",
+    alternatives: "You might also like:",
+    signOffQuestion: "If you have any questions, you can reply to this email at any time.",
+    signOff1: "Best regards",
+    signOff2: "Your motion sports team",
+  },
+};
+
 /**
  * Render the summary PDF.
  * @param {{
+ *   locale?: "de" | "en",
  *   heading?: string,
  *   intro?: string,
  *   summary: string,
@@ -96,9 +125,10 @@ function makeFlow() {
  * @returns {Buffer}
  */
 export function buildSummaryPdf(input) {
+  const t = input.locale === "en" ? PDF_COPY.en : PDF_COPY.de;
   const {
-    heading = "Deine Zusammenfassung",
-    intro = "Hallo, vielen Dank für deine Beratung bei motion sports. Hier ist deine Zusammenfassung:",
+    heading = t.heading,
+    intro = t.intro,
     summary,
     chosen = [],
     cartUrl = null,
@@ -113,27 +143,27 @@ export function buildSummaryPdf(input) {
   flow.gap();
 
   // AI summary prose (the same text the email puts in the grey panel).
-  flow.paragraph(summary || "In diesem Gespräch wurde noch kein Beratungsverlauf festgehalten.");
+  flow.paragraph(summary || t.emptySummary);
 
   // Chosen products.
   if (chosen.length) {
     flow.gap();
-    flow.line("Deine Auswahl:", { font: "F2", size: 12, leading: 18 });
+    flow.line(t.chosen, { font: "F2", size: 12, leading: 18 });
     for (const p of chosen) flow.line(`•  ${p.name} – ${p.priceLabel}`);
   }
 
-  // "Zur Kasse" permalink.
+  // Checkout permalink.
   if (cartUrl) {
     flow.gap();
-    flow.line("Zur Kasse:", { font: "F2", size: 12, leading: 18 });
+    flow.line(t.checkout, { font: "F2", size: 12, leading: 18 });
     flow.paragraph(cartUrl, { color: ACCENT_RGB, maxChars: BODY_MAX_CHARS });
   }
 
-  // Alternatives ("Vielleicht auch interessant:"), below a divider.
+  // Alternatives, below a divider.
   if (alternatives.length) {
     flow.gap();
     flow.divider();
-    flow.line("Vielleicht auch interessant:", { font: "F2", size: 12, leading: 18 });
+    flow.line(t.alternatives, { font: "F2", size: 12, leading: 18 });
     for (const p of alternatives) {
       flow.line(`•  ${p.name} – ${p.priceLabel}`);
       if (p.url) flow.line(p.url, { size: 9, leading: 13, color: ACCENT_RGB });
@@ -142,10 +172,10 @@ export function buildSummaryPdf(input) {
 
   // Sign-off (matches the email).
   flow.gap();
-  flow.paragraph("Bei Fragen kannst du jederzeit auf diese E-Mail antworten.");
+  flow.paragraph(t.signOffQuestion);
   flow.gap();
-  flow.line("Viele Grüße", { color: MUTED_RGB });
-  flow.line("Dein motion sports Team", { color: MUTED_RGB });
+  flow.line(t.signOff1, { color: MUTED_RGB });
+  flow.line(t.signOff2, { color: MUTED_RGB });
 
   return flow.finish();
 }
