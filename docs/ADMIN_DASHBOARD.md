@@ -271,15 +271,44 @@ or suppressed address.
 Server-rendered at [`/admin?tab=kpi`](../src/app/admin/KpiTab.tsx). Lightweight by
 design — plain tables and CSS bars, no dashboard framework. Every number is read
 **only** from the pseudonymous analytics cluster (`conversations`, `messages`,
-`kpi_events`), except the recommendation→purchase loop which additionally reads
-Shopify orders. Each KPI carries its caveat inline in the UI.
+`kpi_events`, `ai_usage`), except the revenue KPI and the recommendation→purchase
+loop which additionally read Shopify orders. Each KPI carries its caveat inline in
+the UI.
+
+### 5.0 Date-range picker — [`lib/kpi-range.mjs`](../src/lib/kpi-range.mjs) + [`KpiDateRangePicker`](../src/app/admin/KpiDateRangePicker.tsx)
+
+A period selector at the top of the KPI tab with presets **7 / 30 / 90 days** and a
+**custom** from/to. The chosen window lives in the URL
+(`?kpiRange=7d|30d|90d|custom` plus `?kpiFrom=&kpiTo=`) so a refresh or copied link
+keeps it; [`resolveKpiRange()`](../src/lib/kpi-range.mjs) validates + clamps it
+(UTC, reversed pairs swapped, future end → today, span ≤ 366 days, anything
+invalid → default 30d) into a safe `[from, to]` that the **indexed** range queries
+consume directly. The picker is a small client island that only rewrites the URL;
+the KPI tab stays a server component and re-renders for the new window.
+
+**The period filters the time-based KPIs only:**
+
+| Filtered by the picker | Period-independent (lifetime / cohort) |
+| --- | --- |
+| **Core metrics** (§5.1) — `conversations` / `kpi_events` on `created_at` | Persona-insights (§5.2) |
+| **Umsatz über Mo-Rabattcodes** (§5.5) — order `created_at` | Recommendation → purchase loop (§5.3) |
+| **KI-Kosten** (§5.6) — `ai_usage` on `created_at` | Marketing funnel (§5.4), Postversand |
+
+The split is stated in the UI (a note under the picker + a *"Gesamtwerte (vom
+Zeitraum unabhängig)"* divider before the lifetime sections), so an operator always
+knows which figures the period applies to. The Übersicht (overview) tab is a fixed
+trailing-30d snapshot and has no picker.
 
 ### 5.1 Core metrics — [`lib/kpi-store.ts`](../src/lib/kpi-store.ts)
 
+All core metrics are scoped to the **selected window** (`created_at >= from AND
+created_at < to+1`), served by the `conversations`/`kpi_events` `created_at`
+indexes (migrations 0001 + 0027).
+
 | KPI | Definition | Caveats |
 | --- | --- | --- |
-| **Chats gesamt** | `count(conversations)`. One row exists per chat that sent ≥1 message. | All-time (≈ last 180d given retention). |
-| **Chats pro Tag** | New conversations grouped by `date(created_at)`, trailing 30 days, gap-filled with 0. | — |
+| **Chats gesamt** | `count(conversations)` in the window. One row exists per chat that sent ≥1 message. | Scoped to the picked period (default last 30d). |
+| **Chats pro Tag** | New conversations grouped by `date(created_at)` across the window, gap-filled with 0. | — |
 | **Ø Nachrichten / Chat** | `avg(conversations.message_count)`. | Counts user + assistant + tool-marker turns. |
 | **Abgebrochen** | `count(status='abandoned')` and its share of all chats. | `status` is flipped to `abandoned` lazily by the retention cron after `ABANDON_AFTER_MINUTES` idle — not real-time. "No resolution" ≈ not `converted`. |
 | **Produkt-/CTA-Klicks**, **Add-to-Cart-Klicks** | `kpi_events` counts, **pattern-matched** by event name: CTA = `event ILIKE '%product%click%' OR '%cta%click%'`; cart = `event ILIKE '%cart%' OR '%checkout%'`. Each also shown as a rate per chat. | The literal event names are owned by the **frontend** widget's `track()`. We match by shape (survives a rename) and additionally surface the **full event breakdown** so the raw truth is always visible. If the widget emits different names, adjust the patterns. |
@@ -343,12 +372,61 @@ This funnel is inherently scoped to consented marketing recipients (every send w
 to a DOI-confirmed contact), so it is **not** a site-wide rate and isn't framed as
 one.
 
+### 5.5 Umsatz über Mo-Rabattcodes (revenue) — [`lib/kpi-revenue-store.ts`](../src/lib/kpi-revenue-store.ts)
+
+> 🏷️ **Honest attribution — what we can actually measure.** "Revenue made with Mo"
+> is defined as the **actually-paid totals of real Shopify orders that redeemed a
+> UNIQUE single-use discount code minted by Mo's marketing flow** (`MS5-…` codes;
+> `usageLimit:1`). This is the **only** signal that both ties an order back to Mo
+> *and* exposes its value, so the KPI is labeled precisely — **"Umsatz über
+> Mo-Rabattcodes"**, not a vague "revenue".
+
+**Deliberately NOT counted** (no reliable attribution exists, so counting them would
+be misleading):
+
+- **Plain cart links** — the in-chat quick-checkout (`/api/products` `cartUrl`) and
+  the transactional summary email link to a bare Shopify cart permalink
+  (`/cart/<variant>:1`) with **no** discount, UTM or marker. The resulting order is
+  indistinguishable from any storefront order, so it cannot be attributed.
+- **Bundle offers** — we track the **click** (`bundle_offer_clicked` `kpi_event`),
+  not the purchase.
+- **Welcome code** — that automatic discount has been **retired**.
+
+| Field | Definition |
+| --- | --- |
+| **Umsatz über Mo-Rabattcodes** | `Σ currentTotalPrice` of orders that redeemed a Mo `MS5-…` code **within the window**, counting only **realised** money (`displayFinancialStatus ∈ {PAID, PARTIALLY_REFUNDED}`). |
+| **Bestellungen mit Mo-Code** | Count of those redeemed, paid orders. |
+| **Geprüfte Codes** | Codes checked against Shopify (of the sent, coded emails in scope). |
+
+**How:** candidate codes are the sent marketing emails carrying a code, minted
+`sent_at ≤ window-end`, newest-first, **capped at the 100 newest**
+([`REVENUE_MAX_CODES`](../src/lib/kpi-revenue-store.ts)) to bound the Shopify
+fan-out — same discipline as the funnel/loop. Each is looked up via
+[`fetchCodeRedemption()`](../src/lib/shopify-orders.ts) (`read_orders`,
+`orders(query: 'discount_code:"…" created_at:>=… created_at:<=…')`), reading
+`currentTotalPriceSet` + status + date. The money summation and the realised-status
+policy are the pure, unit-tested
+[`summarizeRedemptions()`](../src/lib/kpi-revenue-core.mjs). Codes where Shopify
+can't answer are **"unknown"**, never counted as zero revenue; the cap and any
+unknowns are disclosed in the UI caveat. When `MARKETING_ORDER_LOOKBACK_DAYS`-style
+limits or Shopify being unconfigured apply, the KPI degrades to an honest empty
+state.
+
+### 5.6 KI-Kosten (AI cost) — [`lib/ai-usage-store.ts`](../src/lib/ai-usage-store.ts)
+
+Cost-per-consultation + total spend (chat vs admin split), priced from the stored
+per-model token counts. Now scoped to the **selected window** via the
+`ai_usage.created_at` index (migration 0012); the Übersicht tab still reads it
+all-time. Unchanged otherwise — see the inline caveat for the pricing/estimation
+notes.
+
 ---
 
 ## 6. Shopify scopes & API versions
 
 - **Scopes:** `write_discounts` (code creation) and `read_orders` (purchase
-  check) — both now provisioned on the app.
+  check, the recommendation→purchase loop **and** the revenue KPI's
+  `discount_code` → order-total lookup) — both now provisioned on the app.
 - **API version:** requests target the configured `SHOPIFY_API_VERSION` (current
   stable, e.g. `2026-04`), not `latest`.
 - The discount + orders code was re-verified against **current** Shopify docs for

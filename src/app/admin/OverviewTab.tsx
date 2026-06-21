@@ -14,6 +14,7 @@ import { ArrowRight, Mail, UserCheck } from "lucide-react";
 import { getCoreMetrics } from "@/lib/kpi-store";
 import { getAiCostMetrics } from "@/lib/ai-usage-store";
 import { getMarketingActivity, type MarketingTarget } from "@/lib/marketing-store";
+import { resolveKpiRange } from "@/lib/kpi-range";
 import {
   summarizeMarketingTargets,
   recentConfirmedContacts,
@@ -60,9 +61,11 @@ export async function OverviewTab({
   }
 
   // Aggregation only — the heavy marketing/Shopify fetch (listMarketingTargets)
-  // already ran once at the page level and is handed in via `targets`.
+  // already ran once at the page level and is handed in via `targets`. The
+  // overview is a fixed trailing-30d snapshot (the date picker lives on the KPI
+  // tab); AI cost stays all-time here.
   const [core, aiCost, activity] = await Promise.all([
-    getCoreMetrics(WINDOW_DAYS),
+    getCoreMetrics(resolveKpiRange({ kpiRange: `${WINDOW_DAYS}d` })),
     getAiCostMetrics(),
     getMarketingActivity({ windowDays: WINDOW_DAYS, limit: RECENT_LIMIT }),
   ]);

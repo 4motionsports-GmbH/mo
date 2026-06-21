@@ -3,6 +3,7 @@
 // EXACT same KPI card / section chrome rather than re-implementing it.
 
 import * as React from "react";
+import { Info } from "lucide-react";
 import { Card, CardContent } from "./card";
 
 // Section — a titled block with an optional subtitle. Used to group the headline
@@ -26,12 +27,37 @@ export function Section({
   );
 }
 
-// Stat — a single headline KPI card (label, value, optional hint).
-export function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+// Stat — a single headline KPI card (label, value, optional hint). An optional
+// `tooltip` adds a small info affordance next to the label whose native title
+// reveals a one-line "what's counted" note on hover/focus (used for the precise
+// revenue KPI); it's also exposed to assistive tech via aria-label.
+export function Stat({
+  label,
+  value,
+  hint,
+  tooltip,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tooltip?: string;
+}) {
   return (
     <Card>
       <CardContent className="p-4">
-        <div className="text-xs text-muted-foreground">{label}</div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <span>{label}</span>
+          {tooltip && (
+            <span
+              title={tooltip}
+              aria-label={tooltip}
+              tabIndex={0}
+              className="inline-flex cursor-help text-muted-foreground/70 hover:text-foreground focus-visible:outline-none focus-visible:text-foreground"
+            >
+              <Info className="size-3" aria-hidden />
+            </span>
+          )}
+        </div>
         <div className="mt-1 text-xl font-semibold text-foreground">{value}</div>
         {hint && <div className="mt-0.5 text-[11px] text-muted-foreground/80">{hint}</div>}
       </CardContent>

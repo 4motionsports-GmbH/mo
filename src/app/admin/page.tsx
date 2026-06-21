@@ -36,6 +36,7 @@ import { physicalEligibilityForCustomer } from "@/lib/physical-mail";
 import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-store";
 import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
 import { ARCHETYPE_META } from "@/lib/persona";
+import { resolveKpiRange } from "@/lib/kpi-range";
 import type { PersonaArchetype } from "@/lib/types";
 import type { CustomerProps } from "./CustomerProfileCard";
 import { KundenWorkspace } from "./KundenWorkspace";
@@ -76,6 +77,15 @@ export default async function AdminDashboardPage({
   const initialFilter =
     (typeof sp?.filter === "string" ? sp.filter : undefined) ??
     (typeof sp?.status === "string" ? sp.status : undefined);
+  // KPI date-range picker state lives in the URL so a refresh / copied link keeps
+  // the window; resolveKpiRange validates + clamps it to a safe [from, to].
+  const firstParam = (v: string | string[] | undefined): string | undefined =>
+    Array.isArray(v) ? v[0] : v;
+  const kpiRange = resolveKpiRange({
+    kpiRange: firstParam(sp?.kpiRange),
+    kpiFrom: firstParam(sp?.kpiFrom),
+    kpiTo: firstParam(sp?.kpiTo),
+  });
   const dbReady = isDbConfigured();
 
   // The marketing targets back BOTH the Marketing tab and the Overview headline
@@ -100,7 +110,7 @@ export default async function AdminDashboardPage({
           initialFilter={initialFilter}
         />
       }
-      kpi={<KpiTab dbReady={dbReady} />}
+      kpi={<KpiTab dbReady={dbReady} range={kpiRange} />}
       feedback={<FeedbackTab dbReady={dbReady} />}
     />
   );

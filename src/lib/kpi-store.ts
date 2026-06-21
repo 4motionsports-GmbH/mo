@@ -16,6 +16,7 @@
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
+import type { KpiRange } from "./kpi-range";
 
 export interface DailyCount {
   /** ISO date (YYYY-MM-DD). */
@@ -37,8 +38,9 @@ export interface StatusBreakdown {
 export interface CoreMetrics {
   /** All-time conversation count (one row per chat that sent ≥1 message). */
   totalChats: number;
-  /** Daily new-chat counts for the trailing `windowDays`, gap-filled with 0s. */
+  /** Daily new-chat counts across the selected window, gap-filled with 0s. */
   chatsByDay: DailyCount[];
+  /** Inclusive day count of the selected window (see lib/kpi-range). */
   windowDays: number;
   /** Mean message_count across conversations (user + assistant + tool turns). */
   avgMessagesPerChat: number;
@@ -78,19 +80,22 @@ function ratePerChat(numerator: number, totalChats: number): number {
  * Aggregate the core dashboard metrics in a handful of round-trips. Returns null
  * when no DB is configured or on a hard failure (the caller renders an empty
  * state rather than crashing the page).
+ *
+ * Scoped to the resolved [from, to] window (the date picker — see lib/kpi-range)
+ * via `created_at >= from AND created_at < to+1` (i.e. `to` inclusive of the
+ * whole day). Both range bounds are calendar dates; conversations has a
+ * created_at index (migration 0027) and kpi_events one from migration 0001, so
+ * these stay index scans.
  */
 export async function getCoreMetrics(
-  windowDays = 30,
+  range: KpiRange,
   sql: Sql | null = getSql()
 ): Promise<CoreMetrics | null> {
   if (!sql) return null;
-  const days = Number.isFinite(windowDays) && windowDays > 0 ? Math.floor(windowDays) : 30;
+  const from = range.from;
+  const to = range.to;
+  const days = Number.isFinite(range.days) && range.days > 0 ? Math.floor(range.days) : 30;
 
-  // All metrics below are scoped to the SAME `days` window as the daily chart.
-  // The headline totals used to be all-time, which both diverged from the chart
-  // beside them and made every dashboard load scan the full kpi_events /
-  // conversations history. kpi_events already has a created_at index (0001);
-  // conversations gets one in migration 0027.
   try {
     const [totalsRows, dailyRows, statusRows, clickRows, telemetryRows, eventRows] =
       await Promise.all([
@@ -98,19 +103,21 @@ export async function getCoreMetrics(
           SELECT count(*)::int AS total,
                  COALESCE(avg(message_count), 0)::float AS avg_messages
             FROM conversations
-           WHERE created_at >= (current_date - ${days - 1}::int)::date
+           WHERE created_at >= ${from}::date
+             AND created_at < (${to}::date + 1)
         `,
         sql`
           SELECT to_char(g.day, 'YYYY-MM-DD') AS day, COALESCE(c.n, 0)::int AS count
             FROM generate_series(
-                   (current_date - ${days - 1}::int)::date,
-                   current_date,
+                   ${from}::date,
+                   ${to}::date,
                    interval '1 day'
                  ) AS g(day)
             LEFT JOIN (
                    SELECT date_trunc('day', created_at)::date AS day, count(*)::int AS n
                      FROM conversations
-                    WHERE created_at >= (current_date - ${days - 1}::int)::date
+                    WHERE created_at >= ${from}::date
+                      AND created_at < (${to}::date + 1)
                     GROUP BY 1
                  ) c ON c.day = g.day::date
            ORDER BY g.day
@@ -118,7 +125,8 @@ export async function getCoreMetrics(
         sql`
           SELECT status, count(*)::int AS n
             FROM conversations
-           WHERE created_at >= (current_date - ${days - 1}::int)::date
+           WHERE created_at >= ${from}::date
+             AND created_at < (${to}::date + 1)
            GROUP BY status
         `,
         sql`
@@ -130,18 +138,21 @@ export async function getCoreMetrics(
               WHERE event ILIKE ${CART_PATTERNS[0]} OR event ILIKE ${CART_PATTERNS[1]}
             )::int AS cart
             FROM kpi_events
-           WHERE created_at >= (current_date - ${days - 1}::int)::date
+           WHERE created_at >= ${from}::date
+             AND created_at < (${to}::date + 1)
         `,
         sql`
           SELECT count(DISTINCT session_id)::int AS sessions
             FROM kpi_events
            WHERE session_id IS NOT NULL
-             AND created_at >= (current_date - ${days - 1}::int)::date
+             AND created_at >= ${from}::date
+             AND created_at < (${to}::date + 1)
         `,
         sql`
           SELECT event, count(*)::int AS n
             FROM kpi_events
-           WHERE created_at >= (current_date - ${days - 1}::int)::date
+           WHERE created_at >= ${from}::date
+             AND created_at < (${to}::date + 1)
            GROUP BY event
            ORDER BY n DESC, event ASC
            LIMIT 20

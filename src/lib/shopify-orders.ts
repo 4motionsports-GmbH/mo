@@ -520,3 +520,107 @@ export async function wasDiscountCodeRedeemed(
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Discount-code revenue — backs the "Umsatz über Mo-Rabattcodes" KPI.
+// ---------------------------------------------------------------------------
+//
+// Same single-use-code premise as wasDiscountCodeRedeemed (usageLimit:1 ⇒ at most
+// ONE order per code), but reads the order's TOTAL + financial status + date so
+// the KPI store can sum REALISED revenue and bound it to a date window. We read
+// currentTotalPriceSet (what the customer actually paid, after edits/refunds) —
+// the same field the order-history fetch uses. Same read_orders scope + protected
+// customer-data caveats; we never persist the order email. Optionally bounded by
+// a calendar window via the order-search `created_at` range so a per-period KPI
+// only pulls orders inside that window.
+
+const ORDER_REVENUE_BY_DISCOUNT_CODE = /* GraphQL */ `
+  query MoRevenueOrderByDiscountCode($query: String!) {
+    orders(first: 1, query: $query, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        name
+        createdAt
+        displayFinancialStatus
+        currentTotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+      }
+    }
+  }
+`;
+
+interface OrderRevenueResponse {
+  orders: {
+    nodes: Array<{
+      name: string | null;
+      createdAt: string | null;
+      displayFinancialStatus: string | null;
+      currentTotalPriceSet: {
+        shopMoney: { amount: string; currencyCode: string } | null;
+      } | null;
+    }>;
+  };
+}
+
+export type CodeRedemption =
+  | {
+      status: "redeemed";
+      /** Order total actually paid (decimal), or null when Shopify omitted it. */
+      amount: number | null;
+      currency: string | null;
+      /** Shopify displayFinancialStatus — the KPI counts only realised (paid). */
+      financialStatus: string | null;
+      orderName: string | null;
+      createdAt: string | null;
+    }
+  | { status: "not_redeemed" }
+  // Shopify unconfigured / blank code / query failed — we don't know, so this is
+  // tallied as "unknown" and never silently counted as zero revenue.
+  | { status: "unknown" };
+
+/**
+ * Look up the (single) order that redeemed `code`, with its paid total, currency,
+ * financial status and date. When `range` is given, the order must fall within
+ * that calendar window (inclusive) — so a per-period revenue KPI only pulls
+ * orders inside the window. Returns `not_redeemed` when the query succeeds and
+ * finds nothing in scope, or `unknown` on any misconfiguration/failure. Never
+ * throws.
+ */
+export async function fetchCodeRedemption(
+  code: string,
+  range?: { from: string; to: string }
+): Promise<CodeRedemption> {
+  if (!isShopifyConfigured()) return { status: "unknown" };
+  const c = code.trim();
+  if (!c) return { status: "unknown" };
+
+  // Quote the code (phrase match). Bound by the order's created_at when a window
+  // is supplied — order-search `created_at` accepts ISO instants (UTC).
+  let query = `discount_code:"${c}"`;
+  if (range?.from && range?.to) {
+    query += ` created_at:>=${range.from}T00:00:00Z created_at:<=${range.to}T23:59:59Z`;
+  }
+
+  try {
+    const data = await adminGraphql<OrderRevenueResponse>(ORDER_REVENUE_BY_DISCOUNT_CODE, {
+      query,
+    });
+    const node = (data.orders?.nodes ?? [])[0];
+    if (!node) return { status: "not_redeemed" };
+    const money = node.currentTotalPriceSet?.shopMoney ?? null;
+    return {
+      status: "redeemed",
+      amount: money?.amount != null ? Number(money.amount) : null,
+      currency: money?.currencyCode ?? null,
+      financialStatus: node.displayFinancialStatus ?? null,
+      orderName: node.name ?? null,
+      createdAt: node.createdAt ?? null,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/shopify-orders", phase: "fetchCodeRedemption" });
+    return { status: "unknown" };
+  }
+}
