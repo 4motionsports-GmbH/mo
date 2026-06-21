@@ -16,7 +16,10 @@ import { getMarketingFunnel, type MarketingFunnel } from "@/lib/marketing-store"
 import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
 import { getAiCostMetrics, type AiCostMetrics } from "@/lib/ai-usage-store";
 import { getPhysicalLetterStats, type PhysicalLetterStats } from "@/lib/physical-letters-store";
+import { getMoRevenue, REVENUE_MAX_CODES, type MoRevenue } from "@/lib/kpi-revenue-store";
+import type { KpiRange } from "@/lib/kpi-range";
 import { KpiTopQuestions } from "./KpiTopQuestions";
+import { KpiDateRangePicker } from "./KpiDateRangePicker";
 import { Card, CardContent, CardHeader, CardTitle, Section, Stat, Caveat } from "./ui";
 import {
   ChatsPerDayChart,
@@ -42,6 +45,20 @@ function eur(n: number, digits = 4): string {
   });
 }
 
+// Money in a given currency, 2 decimals — for the revenue headline. Falls back
+// to the raw amount + code if the currency isn't a valid ISO code.
+function money(n: number, currency: string): string {
+  try {
+    return n.toLocaleString("de-DE", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    });
+  } catch {
+    return `${num(n, 2)} ${currency}`;
+  }
+}
+
 function dateLabel(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -50,7 +67,7 @@ function dateLabel(iso: string | null): string {
 
 const MARKETING_FUNNEL_DISPLAY_CAP = 100;
 
-export async function KpiTab({ dbReady }: { dbReady: boolean }) {
+export async function KpiTab({ dbReady, range }: { dbReady: boolean; range: KpiRange }) {
   if (!dbReady) {
     return (
       <Banner tone="warn">
@@ -60,20 +77,46 @@ export async function KpiTab({ dbReady }: { dbReady: boolean }) {
     );
   }
 
-  const [core, personas, loop, funnel, cachedQuestions, aiCost, letterStats] = await Promise.all([
-    getCoreMetrics(30),
-    getPersonaInsights(5),
-    getRecommendationLoop(),
-    getMarketingFunnel(),
-    getCachedTopQuestionsMap(),
-    getAiCostMetrics(),
-    getPhysicalLetterStats(),
-  ]);
+  // The period (date picker) applies to the time-based metrics — core analytics,
+  // Mo-revenue and AI cost (all bounded by created_at / order date). The
+  // marketing funnel, personas, recommendation-loop and physical-mail figures
+  // are lifecycle/cohort/lifetime aggregates and are shown period-independent.
+  const [core, revenue, aiCost, personas, loop, funnel, cachedQuestions, letterStats] =
+    await Promise.all([
+      getCoreMetrics(range),
+      getMoRevenue(range),
+      getAiCostMetrics(range),
+      getPersonaInsights(5),
+      getRecommendationLoop(),
+      getMarketingFunnel(),
+      getCachedTopQuestionsMap(),
+      getPhysicalLetterStats(),
+    ]);
 
   return (
     <div className="flex flex-col gap-10">
-      <CoreSection core={core} />
-      <AiCostSection cost={aiCost} />
+      <div className="flex flex-col gap-2">
+        <KpiDateRangePicker
+          preset={range.preset}
+          from={range.from}
+          to={range.to}
+          label={range.label}
+        />
+        <p className="text-[11px] text-muted-foreground/80">
+          Der Zeitraum filtert die <strong>Kern-Metriken</strong>, den{" "}
+          <strong>Umsatz über Mo-Rabattcodes</strong> und die{" "}
+          <strong>KI-Kosten</strong>. Marketing-Funnel, Persona-Insights,
+          Empfehlung→Kauf und Postversand sind Gesamtwerte (zeitraumunabhängig).
+        </p>
+      </div>
+
+      <CoreSection core={core} range={range} />
+      <RevenueSection revenue={revenue} range={range} />
+      <AiCostSection cost={aiCost} range={range} />
+
+      <p className="-mb-6 text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
+        Gesamtwerte (vom Zeitraum unabhängig)
+      </p>
       <PhysicalMailCostSection stats={letterStats} />
       <MarketingFunnelSection funnel={funnel} />
       <PersonaSection personas={personas} cachedQuestions={cachedQuestions} />
@@ -86,17 +129,17 @@ export async function KpiTab({ dbReady }: { dbReady: boolean }) {
 // 1. Core metrics — headline stat cards + chats-per-day + status split
 // ---------------------------------------------------------------------------
 
-function CoreSection({ core }: { core: CoreMetrics | null }) {
+function CoreSection({ core, range }: { core: CoreMetrics | null; range: KpiRange }) {
   if (!core) {
     return (
-      <Section title="Kern-Metriken">
+      <Section title="Kern-Metriken" subtitle={`Zeitraum: ${range.label}.`}>
         <Banner tone="info">Noch keine Daten.</Banner>
       </Section>
     );
   }
 
   return (
-    <Section title="Kern-Metriken">
+    <Section title="Kern-Metriken" subtitle={`Zeitraum: ${range.label}.`}>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Chats gesamt" value={num(core.totalChats, 0)} />
         <Stat label="Ø Nachrichten / Chat" value={num(core.avgMessagesPerChat, 1)} />
@@ -116,7 +159,7 @@ function CoreSection({ core }: { core: CoreMetrics | null }) {
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">
-              Chats pro Tag (letzte {core.windowDays} Tage)
+              Chats pro Tag · {range.label}
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
@@ -202,14 +245,77 @@ function CoreSection({ core }: { core: CoreMetrics | null }) {
 }
 
 // ---------------------------------------------------------------------------
+// Revenue attributed to Mo — orders that redeemed a unique Mo marketing code.
+// The ONLY honestly-measurable revenue signal: a Mo-minted single-use code on a
+// real order (verified via Shopify read_orders). Cart links carry no marker and
+// are deliberately NOT counted (see lib/kpi-revenue-store + docs).
+// ---------------------------------------------------------------------------
+
+function RevenueSection({ revenue, range }: { revenue: MoRevenue | null; range: KpiRange }) {
+  return (
+    <Section
+      title="Umsatz über Mo-Rabattcodes"
+      subtitle={`Bestellungen, die einen einmaligen, von Mo verschickten Rabattcode eingelöst haben — Zeitraum: ${range.label}.`}
+    >
+      {!revenue ? (
+        <Banner tone="info">Noch keine Daten.</Banner>
+      ) : !revenue.shopifyConfigured ? (
+        <Banner tone="warn">
+          Shopify ist nicht konfiguriert — der Umsatz kann nicht berechnet werden.
+        </Banner>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Stat
+              label="Umsatz über Mo-Rabattcodes"
+              value={money(revenue.revenueAmount, revenue.currency)}
+              hint={`${num(revenue.orderCount, 0)} Bestellung(en) im Zeitraum`}
+              tooltip="Summe der tatsächlich bezahlten Bestellsummen (Shopify currentTotalPrice, Status PAID/PARTIALLY_REFUNDED) aller Bestellungen, die einen einmaligen, von Mo verschickten Rabattcode (MS5-…) eingelöst haben. Warenkorb-Links ohne Code sind nicht zurechenbar und zählen nicht."
+            />
+            <Stat
+              label="Bestellungen mit Mo-Code"
+              value={num(revenue.orderCount, 0)}
+              hint="eingelöste, bezahlte Bestellungen"
+            />
+            <Stat
+              label="Geprüfte Codes"
+              value={num(revenue.codesChecked, 0)}
+              hint={`${num(revenue.codesInScope, 0)} versendete Codes im Zeitraum`}
+            />
+          </div>
+
+          <Caveat>
+            „Umsatz über Mo-Rabattcodes“ zählt <strong>ausschließlich</strong>{" "}
+            Bestellungen, die einen <strong>einmaligen, von Mo verschickten
+            Rabattcode</strong> (<code>MS5-…</code>, aus der personalisierten
+            Marketing-E-Mail) eingelöst haben — geprüft per Shopify
+            (<code>read_orders</code>) über das Bestellfeld{" "}
+            <code>discount_code</code>, gezählt wird der tatsächlich bezahlte
+            Bestellwert (<code>currentTotalPrice</code>, nur Status PAID /
+            PARTIALLY_REFUNDED). Reine Warenkorb-Links (In-Chat-Checkout,
+            Zusammenfassungs-E-Mail) tragen <strong>keine</strong> Mo-Markierung
+            und sind daher <strong>nicht</strong> zurechenbar — sie werden bewusst
+            NICHT mitgezählt (keine erfundene Zuordnung).
+            {revenue.redemptionUnknown > 0 &&
+              ` Bei ${num(revenue.redemptionUnknown, 0)} Code(s) lieferte Shopify keine Antwort (nicht gezählt).`}
+            {revenue.sampled &&
+              ` Auf die ${REVENUE_MAX_CODES} neuesten Codes begrenzt.`}
+          </Caveat>
+        </>
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // AI cost: average cost per consultation (EUR) + total spend, chat vs admin
 // ---------------------------------------------------------------------------
 
-function AiCostSection({ cost }: { cost: AiCostMetrics | null }) {
+function AiCostSection({ cost, range }: { cost: AiCostMetrics | null; range: KpiRange }) {
   return (
     <Section
       title="KI-Kosten"
-      subtitle="Geschätzte KI-Kosten (EUR) aus erfassten Token-Verbräuchen pro Modell."
+      subtitle={`Geschätzte KI-Kosten (EUR) aus erfassten Token-Verbräuchen pro Modell — Zeitraum: ${range.label}.`}
     >
       {!cost || cost.capturedSince == null ? (
         <Banner tone="info">

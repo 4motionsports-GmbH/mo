@@ -11,6 +11,7 @@
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
+import type { KpiRange } from "./kpi-range";
 import {
   loadModelPrices,
   usdEurRate,
@@ -118,8 +119,15 @@ function median(values: number[]): number {
  * All cost maths runs in JS over per-(conversation,model) and per-(call_site,
  * model) token sums, so the env-overridable price table applies without baking
  * prices into SQL.
+ *
+ * When `range` is given (the KPI date picker — see lib/kpi-range), every
+ * aggregate is bounded to that window via `created_at` (indexed in migration
+ * 0012); without it the figures are all-time (the Overview tab's usage). The
+ * window bounds are applied uniformly to all three queries, so capturedSince and
+ * the per-consultation costs reflect exactly the chosen period.
  */
 export async function getAiCostMetrics(
+  range: KpiRange | null = null,
   sql: Sql | null = getSql()
 ): Promise<AiCostMetrics | null> {
   if (!sql) return null;
@@ -127,9 +135,18 @@ export async function getAiCostMetrics(
   const prices = loadModelPrices();
   const rate = usdEurRate();
 
+  // Uniform [from, to] bounds: a real window when one is given, else an
+  // all-encompassing range so the same parameterised query covers all-time.
+  const from = range ? range.from : "1970-01-01";
+  const to = range ? range.to : "9999-12-31";
+
   try {
     const [sinceRows, chatRows, totalRows] = await Promise.all([
-      sql`SELECT min(created_at) AS since FROM ai_usage`,
+      sql`
+        SELECT min(created_at) AS since
+          FROM ai_usage
+         WHERE created_at >= ${from}::date AND created_at < (${to}::date + 1)
+      `,
       // Per-conversation chat usage, split by model so each row prices correctly.
       sql`
         SELECT conversation_id,
@@ -138,6 +155,7 @@ export async function getAiCostMetrics(
                sum(output_tokens)::bigint AS out_tok
           FROM ai_usage
          WHERE call_site = 'chat' AND conversation_id IS NOT NULL
+           AND created_at >= ${from}::date AND created_at < (${to}::date + 1)
          GROUP BY conversation_id, model
       `,
       // Everything, grouped by call_site + model, for the totals + the split.
@@ -148,6 +166,7 @@ export async function getAiCostMetrics(
                sum(output_tokens)::bigint AS out_tok,
                bool_or(estimated)         AS estimated
           FROM ai_usage
+         WHERE created_at >= ${from}::date AND created_at < (${to}::date + 1)
          GROUP BY call_site, model
       `,
     ]);
