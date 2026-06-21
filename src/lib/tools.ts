@@ -151,9 +151,9 @@ Gib das Ergebnis NICHT roh aus — nutze es um dann show_product oder compare_pr
 
     show_product: tool({
       description:
-        "Zeigt eine Produktkarte im Chat an. Nutze dieses Tool wenn du ein Produkt empfiehlst oder der Kunde nach einem bestimmten Produkt fragt. Nutze es für jedes Produkt das du erwähnst.",
+        "Zeigt die Produktkarte für ein Produkt, das du dem Kunden EMPFIEHLST. Die im Chat sichtbaren Produktkarten ergeben sich AUSSCHLIESSLICH aus deinen show_product-Aufrufen — nicht aus der vorretrieveten Vorauswahl. Rufe es genau EINMAL pro Produkt auf, das du in deinem Text tatsächlich empfiehlst, in der REIHENFOLGE deiner Empfehlung. productId MUSS exakt die Katalog-ID des im Text genannten Produkts sein (nicht die eines anderen Treffers). NICHT aufrufen für Produkte, die du nur nebenbei erwähnst, gegenüberstellst oder am Ende verwirfst — und niemals einfach die vorretrieveten Kandidaten durchkarten. Empfiehl nur real existierende, VERFÜGBARE Produkte; für ein Produkt außerhalb der Vorauswahl hol dir zuerst per search_products die echte ID (niemals eine ID raten oder aus dem Gedächtnis nehmen).",
       inputSchema: z.object({
-        productId: z.string().describe("Die ID des Produkts aus dem Katalog"),
+        productId: z.string().describe("Die exakte Katalog-ID des im Text empfohlenen Produkts"),
         reason: z
           .string()
           .optional()

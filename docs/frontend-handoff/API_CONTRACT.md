@@ -435,6 +435,18 @@ Dispatch on the `toolName` of each `tool-input-available` chunk and
 render the matching card from its `input`, keyed by `toolCallId`. The
 renderable tools, in order of arrival likelihood:
 
+> **Card-selection contract.** These tool calls — and *only* these tool
+> calls — decide which products are carded; the backend's retrieval
+> candidate set is never streamed and must never be rendered. Render
+> cards in stream-arrival order (do not hoist/reorder). `show_product`
+> is the assistant's explicit, ordered recommendation declaration (one
+> call per recommended product, `productId` = the exact id named in the
+> prose), so the cards mirror Mo's recommendation rather than the raw
+> retrieval set. The backend guards every recommended id to a real,
+> in-stock catalog product; the widget's existing `null`-id and
+> sold-out-checkout guards remain the second line of defense. See
+> `BEHAVIOR_REFERENCE.md` §2.
+
 ##### `show_product` → product card
 
 Input schema:

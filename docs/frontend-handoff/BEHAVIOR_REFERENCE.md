@@ -98,6 +98,26 @@ Each renderable tool maps to one card. The old UI looked products up in a
 `GET /api/products`** (`?id=` / `?ids=`) — see `API_CONTRACT.md` §3. The
 visual mapping below is what matters.
 
+> **Card-selection contract (which products get a card).** Product cards
+> are driven **exclusively by the assistant's explicit tool calls**, in
+> their stream-arrival order — **never** by the backend's retrieval
+> candidate set. The model retrieves a Top-K product list for grounding,
+> but that list lives only in the server-side prompt; it is **never**
+> streamed to the widget. So a product is carded **iff** the assistant
+> called a product tool for it. In particular, `show_product` is the
+> assistant's **explicit, ordered recommendation declaration**: one call
+> per product it actually recommends in its prose, in recommendation
+> order — so the cards mirror what Mo says, not the raw retrieval set.
+> Products the assistant only mentions, compares against, or rejects do
+> **not** get a `show_product` card (comparisons go through
+> `compare_products`). The backend additionally guarantees a recommended
+> id is a **real, in-stock catalog product** (availability + membership
+> guard, `lib/recommended-products`); a sold-out item is never put
+> forward as a buyable recommendation, only ever honestly discussed.
+> The widget therefore just renders the tool calls it receives, in order
+> — its existing "unknown id → render nothing" and "no checkout link for
+> sold-out" guards (below) remain the second line of defense.
+
 A field-availability note up front: the old local `Product` type had a
 few fields the public `/api/products` response does **not** expose —
 specifically `dimensions` (width/height/depth/weight) and `targetGroup`.
@@ -109,6 +129,12 @@ the dimensions/target-group rows. This is flagged again in §2.2.
 ### 2.1 `show_product` → product card
 
 Input: `{ productId: string; reason?: string }`.
+
+`show_product` is the assistant's **explicit recommendation card**: it is
+emitted once per product Mo recommends in its prose, in recommendation
+order, and `productId` is the exact catalog id of the product named in the
+text (see the card-selection contract above). Render these cards in the
+order their tool calls arrive — do not reorder or hoist them.
 
 Behavior:
 - Look up the one product (`GET /api/products?id=<productId>`). **If the
