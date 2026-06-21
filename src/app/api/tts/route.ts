@@ -17,42 +17,48 @@ export const maxDuration = 60;
 // (multilingual, steerable via `instructions`, ~$15.9 / 1M characters as of
 // 2026-06; see lib/ai-pricing.mjs).
 //
-// VOICE: alloy — a neutral, gender-neutral voice that the multilingual
-// gpt-4o-mini-tts pronounces cleanly in German. We steer accent/tone toward
-// natural Hochdeutsch with `instructions` below. Warmer alternatives (nova,
-// coral, shimmer) are available by setting TTS_VOICE.
+// VOICE: coral — a warm, friendly, UPBEAT voice that the multilingual
+// gpt-4o-mini-tts pronounces cleanly in German. Picked over the neutral `alloy`
+// so Mo sounds energetic and motivating (fitting a strength-training advisor)
+// rather than flat. We further steer tone + tempo via `instructions` below.
+// Other lively choices: ash (confident), verse (expressive), ballad (emotive);
+// the full set is in .env.example. Override with TTS_VOICE.
 const TTS_MODEL = process.env.TTS_MODEL?.trim() || "gpt-4o-mini-tts";
-const TTS_VOICE = process.env.TTS_VOICE?.trim() || "alloy";
+const TTS_VOICE = process.env.TTS_VOICE?.trim() || "coral";
 const TTS_INSTRUCTIONS =
   process.env.TTS_INSTRUCTIONS?.trim() ||
-  "Sprich natürliches, klares Hochdeutsch in einem freundlichen, hilfsbereiten Ton.";
+  "Sprich natürliches, klares Hochdeutsch in einem freundlichen, energiegeladenen und motivierenden Ton.";
 
 // `instructions` is only honoured by the steerable gpt-4o(-mini)-tts models;
 // the older tts-1 / tts-1-hd models reject it. Gate on the model family so
 // overriding TTS_MODEL to a legacy model can't 400 the whole request.
 const SUPPORTS_INSTRUCTIONS = TTS_MODEL.startsWith("gpt-4o");
 
-// SPEAKING RATE (configurable). A slightly faster voice improves perceived
-// responsiveness in streaming mode (the audio "keeps up" with the streamed
-// text), so the rate is env-overridable. The two TTS model families take the
-// rate differently:
+// SPEAKING RATE (configurable). A faster voice feels more energetic AND keeps
+// the audio "up with" the streamed text in voice mode, so we default to a
+// slightly brisk rate and leave it env-overridable. The two TTS model families
+// take the rate differently:
 //   * legacy tts-1 / tts-1-hd accept the numeric `speed` param (0.25–4.0);
 //   * the steerable gpt-4o(-mini)-tts models REJECT `speed` and are instead
 //     steered via `instructions` — so we fold a tempo hint into the prompt.
-// Default 1.0 leaves the full-message fallback path byte-for-byte unchanged.
+// DEFAULT 1.1 = noticeably brisker than neutral while staying clearly
+// intelligible in German. Set TTS_SPEED=1.0 to restore the old neutral pace.
+const DEFAULT_TTS_SPEED = 1.1;
 const TTS_SPEED = (() => {
   const raw = Number.parseFloat(process.env.TTS_SPEED ?? "");
-  if (!Number.isFinite(raw)) return 1.0;
+  if (!Number.isFinite(raw)) return DEFAULT_TTS_SPEED;
   return Math.min(4.0, Math.max(0.25, raw));
 })();
 const SUPPORTS_SPEED = !SUPPORTS_INSTRUCTIONS;
 
 // Build the steering instructions for gpt-4o models, folding in a tempo hint
-// when TTS_SPEED departs from the default. (No-op for legacy models — they get
-// the numeric `speed` param instead.)
+// scaled by TTS_SPEED. (No-op for legacy models — they get the numeric `speed`
+// param instead.) The hint is the gpt-4o rate lever, since those models ignore
+// the numeric `speed` field.
 function buildInstructions(): string {
   let instr = TTS_INSTRUCTIONS;
-  if (TTS_SPEED >= 1.05) instr += " Sprich in einem zügigen, aber gut verständlichen Tempo.";
+  if (TTS_SPEED >= 1.2) instr += " Sprich flott und dynamisch, mit spürbar erhöhtem Tempo, aber gut verständlich.";
+  else if (TTS_SPEED >= 1.05) instr += " Sprich zügig und dynamisch, mit leicht erhöhtem Tempo, aber gut verständlich.";
   else if (TTS_SPEED <= 0.95) instr += " Sprich in einem ruhigen, langsameren Tempo.";
   return instr;
 }

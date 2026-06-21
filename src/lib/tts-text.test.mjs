@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 
 import {
   MAX_TTS_CHARS,
+  TTS_CHUNK_MIN_CHARS,
+  TTS_CHUNK_MAX_CHARS,
   stripMarkdown,
   truncateAtSentenceBoundary,
   prepareTtsText,
+  splitIntoTtsChunks,
 } from "./tts-text.mjs";
 
 test("stripMarkdown removes emphasis markers but keeps the words", () => {
@@ -83,4 +86,129 @@ test("prepareTtsText reports empty for blank or markup-only bodies", () => {
 
 test("MAX_TTS_CHARS is the documented 2000-char cap", () => {
   assert.equal(MAX_TTS_CHARS, 2000);
+});
+
+// --- splitIntoTtsChunks (streaming TTS chunking) ---------------------------
+
+test("splitIntoTtsChunks emits a complete sentence once a following char confirms it", () => {
+  // Two full sentences, each over the min, with a trailing partial.
+  const text =
+    "Das ATX Power Rack ist sehr stabil und kippsicher. Es passt außerdem prima in einen normalen Keller. Außerdem";
+  const { chunks, rest } = splitIntoTtsChunks(text);
+  assert.deepEqual(chunks, [
+    "Das ATX Power Rack ist sehr stabil und kippsicher.",
+    "Es passt außerdem prima in einen normalen Keller.",
+  ]);
+  // The unterminated tail is held (untrimmed) for the next streamed delta.
+  assert.equal(rest, " Außerdem");
+});
+
+test("splitIntoTtsChunks holds the final sentence until a following char arrives, flush drains it", () => {
+  // A single sentence at the very end of the buffer is NOT emitted yet (it
+  // might still be streaming — e.g. a decimal in progress); flush emits it.
+  const text = "Das Rack ist hervorragend für dein Heimstudio geeignet.";
+  const held = splitIntoTtsChunks(text);
+  assert.deepEqual(held.chunks, []);
+  assert.equal(held.rest, text);
+
+  const flushed = splitIntoTtsChunks(text, { flush: true });
+  assert.deepEqual(flushed.chunks, [text]);
+  assert.equal(flushed.rest, "");
+});
+
+test("splitIntoTtsChunks coalesces fragments shorter than minChars into the next sentence", () => {
+  const text = "Klar! Das ATX Power Rack ist sehr stabil und gut verarbeitet. Rest";
+  const { chunks } = splitIntoTtsChunks(text);
+  // "Klar!" alone is < minChars, so it rides with the following sentence.
+  assert.deepEqual(chunks, [
+    "Klar! Das ATX Power Rack ist sehr stabil und gut verarbeitet.",
+  ]);
+});
+
+test("splitIntoTtsChunks does not split German abbreviations", () => {
+  const text =
+    "Wir führen Power Racks, Hanteln, Bänke usw. für dein Studio im Programm. Der zweite Satz ist hier lang genug dafür. Tail";
+  const { chunks } = splitIntoTtsChunks(text);
+  // "usw." must NOT end the sentence; the first chunk runs through to the real
+  // terminator after "Programm".
+  assert.equal(chunks.length, 2);
+  assert.ok(
+    chunks[0].startsWith("Wir führen") && chunks[0].endsWith("im Programm."),
+    `unexpected first chunk: ${chunks[0]}`
+  );
+});
+
+test("splitIntoTtsChunks keeps 'z. B.' and decimals intact", () => {
+  const text =
+    "Für zu Hause empfehle ich z. B. das ATX Rack mit 3.5 cm Profil und viel Reserve. Danach kommt der nächste vollständige Satz. X";
+  const { chunks } = splitIntoTtsChunks(text);
+  assert.equal(chunks.length, 2);
+  assert.ok(chunks[0].includes("z. B."), `lost abbreviation: ${chunks[0]}`);
+  assert.ok(chunks[0].includes("3.5 cm"), `split a decimal: ${chunks[0]}`);
+});
+
+test("splitIntoTtsChunks force-cuts an over-long run at a clause boundary for latency", () => {
+  // No sentence terminator for a long stretch — must still cut so audio starts.
+  const text =
+    "Das ist ein sehr langer einleitender Satz ohne Punkt, der weiterläuft und weiterläuft und immer noch nicht endet, sondern einfach weiter Inhalt anhängt und anhängt bis er deutlich über die maximale Chunk-Länge hinausgeht";
+  const { chunks } = splitIntoTtsChunks(text, { maxChars: 80 });
+  assert.ok(chunks.length >= 2, `expected a soft cut, got ${chunks.length} chunk(s)`);
+  for (const c of chunks) {
+    assert.ok(c.length <= 80 + 40, `chunk too long: ${c.length}`);
+  }
+  // The cut should land on a clause boundary (comma), not mid-word.
+  assert.ok(chunks[0].endsWith(","), `expected clause cut, got: ${chunks[0]}`);
+});
+
+test("splitIntoTtsChunks treats newlines (list/paragraph breaks) as boundaries", () => {
+  const text =
+    "Hier sind drei starke Optionen für dein Heimstudio:\nDas ATX Power Rack ist ein super Allrounder.\nNächster";
+  const { chunks } = splitIntoTtsChunks(text);
+  assert.deepEqual(chunks, [
+    "Hier sind drei starke Optionen für dein Heimstudio:",
+    "Das ATX Power Rack ist ein super Allrounder.",
+  ]);
+});
+
+test("splitIntoTtsChunks works incrementally as a stream of deltas (queue simulation)", () => {
+  const deltas = [
+    "Das ATX Power Rack ",
+    "ist sehr stabil und gut. ",
+    "Es passt auch ",
+    "wunderbar in einen normalen Keller. ",
+    "Viel Spaß beim Training damit!",
+  ];
+  let buffer = "";
+  const spoken = [];
+  for (const d of deltas) {
+    buffer += d;
+    const { chunks, rest } = splitIntoTtsChunks(buffer);
+    spoken.push(...chunks);
+    buffer = rest;
+  }
+  // Drain the tail at stream end.
+  const tail = splitIntoTtsChunks(buffer, { flush: true });
+  spoken.push(...tail.chunks);
+
+  assert.deepEqual(spoken, [
+    "Das ATX Power Rack ist sehr stabil und gut.",
+    "Es passt auch wunderbar in einen normalen Keller.",
+    "Viel Spaß beim Training damit!",
+  ]);
+  // Every spoken chunk, rejoined, equals the full answer (modulo whitespace).
+  assert.equal(
+    spoken.join(" ").replace(/\s+/g, " ").trim(),
+    deltas.join("").replace(/\s+/g, " ").trim()
+  );
+});
+
+test("splitIntoTtsChunks handles empty / non-string input safely", () => {
+  assert.deepEqual(splitIntoTtsChunks(""), { chunks: [], rest: "" });
+  assert.deepEqual(splitIntoTtsChunks(undefined), { chunks: [], rest: "" });
+  assert.deepEqual(splitIntoTtsChunks("   ", { flush: true }), { chunks: [], rest: "" });
+});
+
+test("splitIntoTtsChunks chunk-size defaults are the documented values", () => {
+  assert.equal(TTS_CHUNK_MIN_CHARS, 40);
+  assert.equal(TTS_CHUNK_MAX_CHARS, 220);
 });

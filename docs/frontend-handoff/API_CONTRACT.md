@@ -1355,37 +1355,61 @@ preflight advertises `POST, OPTIONS` and
 
 ### 8.3 Streaming voice mode — per-sentence calling pattern (the contract)
 
-The widget owns sentence detection and the playback queue; the backend stays a
-simple per-call synthesizer. The pattern:
+The widget owns the playback queue; the backend stays a simple per-call
+synthesizer. Sentence/clause detection follows the backend's **canonical,
+unit-tested reference splitter** — `splitIntoTtsChunks()` in
+`src/lib/tts-text.mjs` (`src/lib/tts-text.test.mjs` is the spec). **Mirror it in
+the widget** so chunk boundaries match what the server expects to synthesize.
+The pattern:
 
-1. **Detect sentences in the streamed chat text.** As SSE chat tokens arrive,
-   accumulate them and split on sentence terminators (`.`, `!`, `?`, `…`,
-   newline). Emit a chunk the moment a terminator completes a sentence; hold
-   the trailing partial until the next terminator. When the chat stream ends,
-   flush whatever remains.
-2. **(Optional) smooth the audio.** Coalesce very short fragments (e.g.
-   `< 60` chars) with the next sentence, and skip chunks that are empty after
-   Markdown stripping, so playback isn't choppy.
-3. **Fire one request per chunk, in stream order:**
-   `POST /api/tts` with `{ text, stream: true, seq }`, where `seq` starts at 0
-   and increments per chunk.
-4. **Play strictly in `seq` order.** Requests complete out of order — enqueue
+1. **Chunk the streamed chat text** with `splitIntoTtsChunks(buffer)` →
+   `{ chunks, rest }`. As SSE chat tokens arrive, append them to a buffer and run
+   the splitter. It:
+   - emits a chunk the moment a sentence terminator (`.`, `!`, `?`, `…`) **or a
+     newline** completes a sentence — so the **first** audio starts right after
+     the first sentence;
+   - **coalesces** fragments shorter than `minChars` (default **40**) into the
+     next sentence, so you never synthesize a one- or two-word clip;
+   - **force-cuts** a run longer than `maxChars` (default **220**) at the last
+     clause boundary (`,` `;` `:` `–` `—`) or space, so a long opening sentence
+     can't stall the first audio;
+   - guards German abbreviations (`z. B.`, `usw.`), decimals (`3.5`) and
+     mid-token dots (`google.com`) so none of those split a sentence.
+
+   The unterminated tail comes back as `rest`: set `buffer = rest` and prepend it
+   to the next delta. When the chat stream **ends**, call
+   `splitIntoTtsChunks(buffer, { flush: true })` to drain whatever remains.
+2. **Fire one request per chunk, in stream order:** `POST /api/tts` with
+   `{ text, stream: true, seq }`, where `seq` starts at 0 and increments per
+   chunk. (The server re-strips Markdown and rejects empties, but pre-cleaning in
+   the widget keeps the audio tidy.)
+3. **Play strictly in `seq` order.** Requests complete out of order — enqueue
    each finished clip by its echoed `X-MS-TTS-Seq` and only advance playback
    when the next-in-order clip is ready (buffer later-but-ready clips). On
    mobile, kick off the `<audio>`/Web-Audio playback from the user's
    voice-mode tap so autoplay is allowed; subsequent queued clips play within
    that gesture's audio context.
-5. **Fallbacks (unchanged, keep them):** on any non-2xx for a chunk (e.g.
+4. **Fallbacks (unchanged, keep them):** on any non-2xx for a chunk (e.g.
    `429 rate_limited`, `502 upstream_unavailable`), stop the per-sentence path
-   for this message and fall back to **either** a single-shot full-message call
-   (omit `stream`) **or** the browser's `speechSynthesis`. Streaming TTS is a
-   latency optimisation layered **on top of** the existing behaviour — never a
-   replacement. If streaming TTS is unavailable for any reason, the widget must
-   still speak via the single-shot or browser path.
+   for this message and fall back to **either** the single-shot **play-after-
+   complete** full-message call (omit `stream`) **or** the browser's
+   `speechSynthesis`. Streaming TTS is a latency optimisation layered **on top
+   of** the existing behaviour — never a replacement. If streaming TTS is
+   unavailable for any reason, the widget must still speak via the single-shot or
+   browser path.
 
-> **Speaking rate.** The server can be configured to speak slightly faster
-> (`TTS_SPEED`, default `1.0`) for better perceived responsiveness while
-> chunks stream — no widget change needed; it's a server-side voice setting.
+> **Usage (S6).** Every streamed chunk records its synthesized-character count
+> just like a single-shot call, so a streamed answer aggregates to the same
+> total TTS spend on the cost KPI — only the request *count* differs.
+
+> **Voice settings (server-side — no widget change needed).** The voice now
+> defaults to a **faster, more energetic** delivery: `TTS_VOICE=coral`
+> (warm/upbeat) at `TTS_SPEED=1.1` (brisk) with an energetic German steering
+> instruction. All three are env-overridable. On the default `gpt-4o-mini-tts`
+> the rate is applied as a **tempo hint** (that model ignores the numeric `speed`
+> field); legacy `tts-1` models take `speed` numerically. Set `TTS_SPEED=1.0`
+> to restore the neutral pace. Defaults for `minChars`/`maxChars` above are also
+> just defaults — tune them in the widget without a backend change.
 
 ### 8.4 Success response — streamed audio
 

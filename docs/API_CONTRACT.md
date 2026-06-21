@@ -1343,26 +1343,45 @@ synthesized characters per window stay bounded.
 
 **Per-sentence calling pattern (the contract):**
 
-1. As chat tokens arrive, accumulate them and split on sentence terminators
-   (`.`, `!`, `?`, `…`, newline). Emit a chunk as soon as a terminator
-   completes a sentence; hold the trailing partial sentence until the next
-   terminator (or until the stream ends — then flush whatever remains).
-2. Optionally coalesce very short fragments (e.g. `< 60` chars) with the next
-   sentence so the audio isn't choppy, and skip chunks that are empty after
-   Markdown stripping.
-3. For each chunk, in stream order, `POST /api/tts` with
+Chunking follows the backend's canonical, unit-tested reference splitter —
+`splitIntoTtsChunks()` in `src/lib/tts-text.mjs` (`tts-text.test.mjs` is the
+spec); the widget mirrors it so chunk boundaries match what the server expects.
+
+1. As chat tokens arrive, append them to a buffer and run
+   `splitIntoTtsChunks(buffer)` → `{ chunks, rest }`. It emits a chunk as soon
+   as a sentence terminator (`.`, `!`, `?`, `…`) **or a newline** completes a
+   sentence; **coalesces** fragments shorter than `minChars` (default `40`) into
+   the next sentence; **force-cuts** a run longer than `maxChars` (default `220`)
+   at the last clause boundary (`,` `;` `:` `–` `—`) or space so a long opening
+   sentence can't stall the first audio; and guards German abbreviations
+   (`z. B.`, `usw.`), decimals (`3.5`) and mid-token dots (`google.com`). Set
+   `buffer = rest` and prepend to the next delta; when the stream ends call
+   `splitIntoTtsChunks(buffer, { flush: true })` to drain the remainder.
+2. For each chunk, in stream order, `POST /api/tts` with
    `{ text, stream: true, seq }` where `seq` is a monotonically increasing
-   index starting at 0.
-4. **Play strictly in `seq` order.** Requests complete out of order; use the
+   index starting at 0. (The server re-strips Markdown and rejects empties.)
+3. **Play strictly in `seq` order.** Requests complete out of order; use the
    echoed `X-MS-TTS-Seq` header (and your own `seq` counter) to enqueue, and
    only advance playback when the next-in-order clip has arrived. Buffer
    later-but-ready clips.
-5. **Fallbacks (unchanged):** if a chunk returns a non-2xx (e.g. `429
+4. **Fallbacks (unchanged):** if a chunk returns a non-2xx (e.g. `429
    rate_limited` or `502 upstream_unavailable`), stop the per-sentence path
-   for this message and fall back to either the single-shot full-message call
-   (`stream` omitted) or the browser's `speechSynthesis`, exactly as today.
-   Streaming TTS is a perceived-latency optimisation layered **on top of** the
-   existing behaviour, never a replacement for it.
+   for this message and fall back to either the single-shot **play-after-
+   complete** full-message call (`stream` omitted) or the browser's
+   `speechSynthesis`, exactly as today. Streaming TTS is a perceived-latency
+   optimisation layered **on top of** the existing behaviour, never a
+   replacement for it.
+
+Every streamed chunk records its synthesized-character count for the cost KPI
+(S6) exactly like a single-shot call, so a streamed answer aggregates to the
+same total spend — only the request count differs.
+
+**Voice settings (server-side).** The voice defaults to a faster, more energetic
+delivery: `TTS_VOICE=coral` (warm/upbeat) at `TTS_SPEED=1.1` (brisk) with an
+energetic German steering instruction — all env-overridable. On the default
+`gpt-4o-mini-tts` the rate is applied as a tempo hint (that model ignores the
+numeric `speed` field); legacy `tts-1` models take `speed` numerically. Set
+`TTS_SPEED=1.0` to restore the neutral pace.
 
 ### Success response — streamed audio
 
