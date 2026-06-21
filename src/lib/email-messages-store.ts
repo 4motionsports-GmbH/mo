@@ -2,7 +2,7 @@
 //
 // This is its OWN data category: Korrespondenz (contract / legitimate interest),
 // NOT marketing consent. It deliberately does NOT touch — and is never read by —
-// canSendMarketing / loadEligibleCapture / the §7(3) audience. Writing here
+// canSendMarketing / loadEligibleCapture. Writing here
 // never gates a send and never blocks one: every write is best-effort and
 // fail-soft (a logged failure, never a throw that breaks the mail path).
 //

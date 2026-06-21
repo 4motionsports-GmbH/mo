@@ -142,7 +142,11 @@ export function reportError(err: unknown, ctx: ErrorContext): void {
   const safeCtx = { ...ctx, errorClass: errorClass(err) };
   console.error(`[${ctx.route}] unhandled error`, {
     ...safeCtx,
-    message: errorMessage(err),
+    // Scrub email-shaped PII before the message hits stdout — application logs
+    // are a processor-visible sink, the same reason beforeSend scrubs Sentry
+    // events below. The Sentry captureException(err) still receives the raw
+    // error (and is scrubbed by scrubSentryEvent), so diagnostics are unchanged.
+    message: scrubPiiString(errorMessage(err)),
   });
   getSentry()
     .then((sentry) => {
