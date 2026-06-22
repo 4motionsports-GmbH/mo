@@ -23,10 +23,17 @@
 //   feedback                       (standalone — migration 0020)
 //   email_messages                 (FK child of customers + marketing_sends — migration 0021)
 //   physical_letters               (FK child of customers + marketing_sends — migration 0022)
+//   admin_access_log               (standalone PII-access audit — migration 0028)
+//
+// The list is CURRENT THROUGH MIGRATION 0030 (email_captures.locale is a new
+// COLUMN — cleared automatically by TRUNCATE, no list change needed;
+// bestandskunden_suppression_list from 0017 was dropped in 0029). A completeness
+// guard below cross-checks this list against the LIVE schema and ABORTS if a
+// later migration added a data table that isn't listed here — so a pre-launch
+// reset can never again silently miss a table.
 //
 // What is NOT touched:
-//   _migrations        — schema version tracking; never touch
-//   Any tables not listed above — schema objects, config, lookup data
+//   _migrations        — schema version tracking; never touch (see PRESERVE_TABLES)
 //
 // Usage:
 //   ALLOW_DB_RESET=true node --env-file=.env.local scripts/reset-test-data.mjs
@@ -117,7 +124,13 @@ const DATA_TABLES = [
   "customer_auth_pending",    // CSRF/PKCE state — migration 0014
   "customer_merge_conflicts", // sign-in conflict audit — migration 0014
   "feedback",                 // standalone — migration 0020
+  "admin_access_log",         // admin PII-access audit — migration 0028 (no FK by design)
 ];
+
+// Tables the reset deliberately PRESERVES. Only the schema-version tracker — the
+// completeness guard below treats every other live base table as data that MUST
+// appear in DATA_TABLES.
+const PRESERVE_TABLES = new Set(["_migrations"]);
 
 console.log("[reset-test-data] Tables to truncate:");
 for (const t of DATA_TABLES) {
@@ -128,6 +141,49 @@ console.log("");
 // ─── Connect and execute ──────────────────────────────────────────────────────
 
 const sql = neon(cs);
+
+// ─── Completeness guard (drift protection) ────────────────────────────────────
+// Cross-check DATA_TABLES against the LIVE schema so a future migration that adds
+// a data table can never be silently missed by a pre-launch reset. Every public
+// base table must be either in DATA_TABLES or in PRESERVE_TABLES; anything else
+// ABORTS with instructions (rather than leaving stray rows behind at go-live).
+try {
+  const liveRows = await sql.query(
+    `SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
+  );
+  const live = liveRows.map((r) => r.table_name);
+  const listed = new Set(DATA_TABLES);
+  const unlisted = live.filter((t) => !listed.has(t) && !PRESERVE_TABLES.has(t));
+  // Also surface a stale list entry (a table that was dropped by a migration) so
+  // the TRUNCATE below doesn't fail on a non-existent relation.
+  const liveSet = new Set(live);
+  const missingFromDb = DATA_TABLES.filter((t) => !liveSet.has(t));
+
+  if (missingFromDb.length > 0) {
+    console.error(
+      "[reset-test-data] ABORTED — DATA_TABLES lists table(s) that don't exist " +
+        "in this database (stale after a DROP, or you're pointed at the wrong DB):\n" +
+        missingFromDb.map((t) => `    • ${t}`).join("\n") +
+        "\n  Remove them from DATA_TABLES (or check the connection).\n"
+    );
+    process.exit(1);
+  }
+  if (unlisted.length > 0) {
+    console.error(
+      "[reset-test-data] ABORTED — the live schema has data table(s) NOT covered " +
+        "by this reset (a newer migration added them):\n" +
+        unlisted.map((t) => `    • ${t}`).join("\n") +
+        "\n  Add each to DATA_TABLES (in FK-safe order) — or to PRESERVE_TABLES if " +
+        "it must survive a reset — then re-run. Refusing to reset with stray data.\n"
+    );
+    process.exit(1);
+  }
+  console.log("[reset-test-data] ✓ Completeness guard: every live data table is covered.\n");
+} catch (err) {
+  console.error("[reset-test-data] Completeness guard could not query the schema:", err.message);
+  process.exit(1);
+}
 
 // Single TRUNCATE statement; CASCADE ensures any FK cascade we might have
 // missed is handled automatically. RESTART IDENTITY resets all sequences to 1.
