@@ -120,7 +120,7 @@ SDK UI-message stream protocol, `x-vercel-ai-ui-message-stream: v1`).
 
 Plus the browser-set `Origin` header, which must be one of
 `ALLOWED_ORIGINS`. The CORS preflight advertises `POST, OPTIONS` and
-`Content-Type, x-ms-chat-key, x-ms-session` in
+`Content-Type, x-ms-chat-key, x-ms-session, x-ms-locale` in
 `Access-Control-Allow-Headers`.
 
 ### Request body
@@ -1286,7 +1286,7 @@ Same as `/api/chat`:
 
 Plus the browser `Origin` header, which must be one of `ALLOWED_ORIGINS`.
 The CORS preflight advertises `POST, OPTIONS` and
-`Content-Type, x-ms-chat-key, x-ms-session`.
+`Content-Type, x-ms-chat-key, x-ms-session, x-ms-locale`.
 
 ### Request body
 

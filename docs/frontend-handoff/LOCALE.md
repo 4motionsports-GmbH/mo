@@ -32,6 +32,12 @@ backend resolves them in this **precedence order**, defaulting to German:
 `normalizeLocale` is tolerant: `"en"`, `"EN"`, `"en-GB"`, `"en_US"` all → `en`;
 anything else → `de`. It never throws.
 
+> **CORS:** `x-ms-locale` is allow-listed in the preflight
+> (`Access-Control-Allow-Headers: Content-Type, x-ms-chat-key, x-ms-session,
+> x-ms-locale`). Sending it is safe on every endpoint — but note it is a *custom*
+> header, so it turns an otherwise "simple" GET into a preflighted request; the
+> backend already handles `OPTIONS` for these routes (with a 24 h `Max-Age`).
+
 > **Simplest integration:** set `x-ms-locale: en` (or `de`) as a default header
 > on every backend `fetch` from the `/en` (or `/de`) storefront, and you're done
 > — no per-endpoint changes required. The body/query options exist for callers

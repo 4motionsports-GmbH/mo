@@ -38,7 +38,11 @@ export function corsHeaders(
   if (origin && isOriginAllowed(origin)) {
     headers["Access-Control-Allow-Origin"] = origin;
     headers["Access-Control-Allow-Methods"] = methods;
-    headers["Access-Control-Allow-Headers"] = `Content-Type, ${SECRET_HEADER}, x-ms-session`;
+    // x-ms-locale lets the widget signal the storefront language (/en vs /de) on
+    // every call. It is a custom header, so a request carrying it triggers a CORS
+    // preflight — it MUST be allow-listed here or the browser blocks the request
+    // (this previously broke /api/auth/me sign-in detection on /en).
+    headers["Access-Control-Allow-Headers"] = `Content-Type, ${SECRET_HEADER}, x-ms-session, x-ms-locale`;
     // Retry-After is not CORS-safelisted, so without this the widget's
     // cross-origin read of the 429 backoff hint returns null.
     headers["Access-Control-Expose-Headers"] = ["Retry-After", ...exposeHeaders].join(", ");
