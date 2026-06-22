@@ -61,10 +61,12 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
   const from = senderAddress();
 
   if (!apiKey || !from) {
-    // Local-dev fallback: there's nothing to send through. Be honest about it.
+    // Local-dev fallback: there's nothing to send through. Be honest about it —
+    // but do NOT log the recipient address or subject (PII; application logs are
+    // a processor-visible sink — GDPR OQ-18, the same rule the contact-form
+    // fallback follows). The `kind` tag is enough to see what was skipped.
     console.log(
-      `[email:${input.kind}] not sent — RESEND_API_KEY/CONTACT_FROM_EMAIL not set`,
-      { to: input.to, subject: input.subject }
+      `[email:${input.kind}] not sent — RESEND_API_KEY/CONTACT_FROM_EMAIL not set`
     );
     return { ok: false, skipped: true };
   }

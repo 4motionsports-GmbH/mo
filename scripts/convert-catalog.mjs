@@ -157,7 +157,6 @@ function extractSpecsFromTable(html) {
   if (!html) return specs;
   const tableRe = /<table[\s\S]*?<\/table>/gi;
   const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  const tdRe = /<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi;
   let tm;
   while ((tm = tableRe.exec(html)) !== null) {
     const table = tm[0];
@@ -243,10 +242,6 @@ async function main() {
     const i = header.indexOf(name);
     if (i < 0) return -1;
     return i;
-  };
-  const get = (row, name) => {
-    const i = idx(name);
-    return i < 0 ? "" : row[i] ?? "";
   };
 
   // Build column-name lookups ahead of time for hot-path columns
