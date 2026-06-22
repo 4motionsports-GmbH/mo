@@ -10,6 +10,7 @@ import {
   safeReturnUrl,
   withParams,
   withAuthMarker,
+  isRevokedTokenError,
 } from "./customer-account-oauth.mjs";
 
 test("base64url has no +, /, or = padding", () => {
@@ -104,4 +105,25 @@ test("withParams appends without clobbering existing query", () => {
   assert.equal(url.searchParams.get("x"), "1");
   assert.equal(url.searchParams.get("client_id"), "cid");
   assert.equal(url.searchParams.get("state"), "s t/a=te");
+});
+
+test("isRevokedTokenError detects a 401 (revoked/invalid token), not other failures", () => {
+  // Typed status (what CustomerAccountApiError carries on a 401).
+  assert.equal(isRevokedTokenError({ status: 401 }), true);
+  assert.equal(isRevokedTokenError(Object.assign(new Error("x"), { status: 401 })), true);
+  // Message fallback (robust even if the error wasn't wrapped with a status).
+  assert.equal(
+    isRevokedTokenError(
+      new Error('Customer Account GraphQL 401: {"errors":[{"message":"Access token is invalid or revoked"}]}')
+    ),
+    true
+  );
+  assert.equal(isRevokedTokenError(new Error("Access token is invalid or revoked")), true);
+  // NOT a revoked-token signal → keep the session (no false logout).
+  assert.equal(isRevokedTokenError({ status: 500 }), false);
+  assert.equal(isRevokedTokenError(new Error("network timeout")), false);
+  assert.equal(isRevokedTokenError(new Error("Customer Account GraphQL 503: upstream")), false);
+  assert.equal(isRevokedTokenError(null), false);
+  assert.equal(isRevokedTokenError(undefined), false);
+  assert.equal(isRevokedTokenError("401"), false);
 });
