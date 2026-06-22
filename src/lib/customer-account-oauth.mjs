@@ -139,3 +139,25 @@ export function withAuthMarker(returnUrl, marker) {
     return returnUrl;
   }
 }
+
+/**
+ * True when an error from a Customer Account API call means the customer's
+ * access token is invalid/revoked — an authoritative "signed out" signal (the
+ * customer logged out of Shopify out-of-band, so our stored token is dead).
+ * Detects the typed HTTP status (401) first, with a message fallback so it stays
+ * robust even if the error wasn't wrapped. Anything else (transient 5xx,
+ * network, schema drift) returns false so a valid session is not logged out
+ * over a hiccup.
+ *
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isRevokedTokenError(err) {
+  if (!err || typeof err !== "object") return false;
+  if (/** @type {{ status?: unknown }} */ (err).status === 401) return true;
+  const msg = typeof (/** @type {{ message?: unknown }} */ (err).message) === "string"
+    ? /** @type {{ message: string }} */ (err).message
+    : "";
+  return /\b401\b|invalid or revoked|unauthenticated|access denied/i.test(msg);
+}
+

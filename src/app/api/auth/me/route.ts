@@ -14,8 +14,9 @@ import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { resolveSignedInCustomer } from "@/lib/customer-store";
-import { getValidAccessToken } from "@/lib/customer-oauth-store";
+import { getValidAccessToken, deleteCustomerTokens } from "@/lib/customer-oauth-store";
 import { fetchCustomerIdentity } from "@/lib/shopify-customer-account";
+import { isRevokedTokenError } from "@/lib/customer-account-oauth.mjs";
 import { fetchAdminCustomerById } from "@/lib/shopify-orders";
 import { displayNameOf, resolveMarketingOptInState } from "@/lib/signed-in-identity";
 
@@ -59,8 +60,19 @@ export async function GET(req: Request) {
       const identity = await fetchCustomerIdentity(token);
       if (identity) name = displayNameOf(identity);
     } catch (err) {
-      // Identity read failed but the linkage + token are valid — still report
-      // signed-in (degraded name) rather than logging the user out.
+      // A 401 here means the access token is revoked/invalid — the customer
+      // logged out of Shopify OUT-OF-BAND (our own widget logout deletes the
+      // tokens, but a logout on Shopify directly never reaches us). That is an
+      // authoritative "signed out": drop the dead tokens so the next call fails
+      // closed at getValidAccessToken, and report signed-out NOW — do NOT fall
+      // through to the Admin-API name fallback, which would mask the logout.
+      if (isRevokedTokenError(err)) {
+        await deleteCustomerTokens(resolved.customerId);
+        return json({ signedIn: false }, headers);
+      }
+      // Any other error (transient 5xx / network / CA schema drift): the token
+      // is still valid, so keep the user signed in with a degraded name rather
+      // than logging them out over a hiccup.
       reportError(err, { route: "api/auth/me", phase: "fetchIdentity" });
     }
 

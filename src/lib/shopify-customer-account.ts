@@ -559,6 +559,21 @@ interface CustomerQueryData {
 }
 
 /**
+ * A Customer Account API call rejected at the HTTP layer. Carries the status so
+ * callers can distinguish a revoked/invalid access token (401 — e.g. the
+ * customer logged out of Shopify out-of-band) from a transient failure and fail
+ * closed accordingly. See lib/customer-account-oauth.isRevokedTokenError.
+ */
+export class CustomerAccountApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "CustomerAccountApiError";
+    this.status = status;
+  }
+}
+
+/**
  * Run a Customer Account API GraphQL query with the customer-scoped access
  * token. The endpoint takes the access token DIRECTLY in the Authorization
  * header (no "Bearer " prefix), per Shopify. Throws on HTTP / GraphQL errors so
@@ -582,7 +597,12 @@ async function customerAccountGraphql<T>(
   });
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(`Customer Account GraphQL ${res.status}: ${text.slice(0, 300)}`);
+    // Typed so callers can detect a revoked/invalid token (401) and sign out;
+    // the message format is unchanged (logs stay the same).
+    throw new CustomerAccountApiError(
+      res.status,
+      `Customer Account GraphQL ${res.status}: ${text.slice(0, 300)}`
+    );
   }
   let json: { data?: T; errors?: unknown[] };
   try {
