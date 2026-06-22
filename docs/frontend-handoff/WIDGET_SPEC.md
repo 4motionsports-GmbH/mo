@@ -562,7 +562,7 @@ lawyer copy change ship as a backend deploy with no widget release.
 ### Submit behaviour
 
 On submit the widget POSTs to `${apiBase}/api/capture-email` with headers
-`Content-Type`, `x-ms-chat-key`, `x-ms-session`, and body:
+`Content-Type`, `x-ms-chat-key`, `x-ms-session`, `x-ms-locale`, and body:
 
 ```jsonc
 { "sessionId", "email", "transactionalConsent": true, "marketingConsent", "consentTextShown", "trigger"? }
