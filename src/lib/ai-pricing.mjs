@@ -26,6 +26,9 @@ export const DEFAULT_MODEL_PRICES = {
   // Anthropic — Opus tier (customer-profile regeneration).
   "claude-opus-4-8": { input: 5, output: 25 },
   "claude-opus-4-7": { input: 5, output: 25 },
+  // Anthropic — Haiku tier (back-office conversation analysis + insights rollup):
+  // cheap categorisation + short summaries, not the consultation model.
+  "claude-haiku-4-5": { input: 1, output: 5 },
   // OpenAI — query embedding model. Embeddings have no output tokens.
   "text-embedding-3-small": { input: 0.02, output: 0 },
   // OpenAI — text-to-speech (voice mode, /api/tts). UNIT NOTE: TTS is billed

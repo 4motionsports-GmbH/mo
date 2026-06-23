@@ -4,9 +4,9 @@ The authenticated back office where a human reviews marketing-eligible contacts,
 generates a personalised draft email, edits it, and approves it — after which the
 **system** sends it (the operator never copies text into a personal mail client).
 
-It is deliberately small: a single shared admin password, four tabs
-(**Übersicht**, **Kunden**, **KPIs** and **Feedback**), and a send path that
-concentrates every legal guarantee in one place. There is no standalone
+It is deliberately small: a single shared admin password, five tabs
+(**Übersicht**, **Kunden**, **KPIs**, **Feedback** and **Gespräche**), and a
+send path that concentrates every legal guarantee in one place. There is no standalone
 Marketing tab — the marketing capability lives **inside the Kunden
 workspace** (a marketing filter preset, a per-customer "Marketing"
 sub-section, and a bulk-draft bar). Tabs are switched server-side via `?tab=`
@@ -567,3 +567,84 @@ anomaly is logged server-side.
 
 > GDPR note: this logs a click on a link the user **chose** to click — there
 > is deliberately **no** open-tracking pixel.
+
+---
+
+## Gespräche — conversation inspector
+
+The **Gespräche** tab (`?tab=gespraeche`) is a read-only inspector over ALL
+conversations (every tier, NOT grouped by person) for understanding how users
+interact with Mo and refining it. Three layers, the first two costing zero tokens.
+Code: [`src/lib/admin-conversations.ts`](../src/lib/admin-conversations.ts),
+[`src/lib/conversation-analysis.ts`](../src/lib/conversation-analysis.ts),
+[`src/lib/conversation-insights.ts`](../src/lib/conversation-insights.ts),
+[`src/app/admin/GespraecheTab.tsx`](../src/app/admin/GespraecheTab.tsx).
+
+### Part 1 — list + transcript (pure DB, ZERO tokens)
+
+A paginated (25/page), newest-first list with, per row: created/updated
+timestamps, readable message count, **tier** (anonymous / email-only / signed-in —
+the label only, NEVER an identity), persona label, the cached analysis
+category/quality if present, and outcome signals derived from existing data:
+
+| Signal | Source | Notes |
+| --- | --- | --- |
+| tools fired | distinct `messages.tool_name` | reliable |
+| checkout offered | `conversations.selected_product_ids` non-empty | `add_to_cart` fired |
+| cart link used | `kpi_events` `%cart%`/`%checkout%` by session | session-grained |
+| email captured | `email_captures` EXISTS by session | session-grained |
+| "keine Antwort" (error proxy) | user turn present, zero assistant turns | see below |
+
+Filter by **date range** (reuses the KPI range resolver), **tier**, and
+**"nur ohne Bot-Antwort"**. Clicking a row opens the readable **transcript**
+(Kunde/Berater turns + timestamps, bot markdown rendered like the chat) — reusing
+the same readable-turn filter as the session/account transcript views
+(`tool_name IS NULL AND role IN ('user','assistant')`, applied in SQL).
+
+No model call. Tier is derived from `customer_id`/`shopify_customer_id` joins as
+booleans only — no email or identity value is ever selected (guardrail).
+
+> **"An error occurred" is not in the DB.** Runtime errors go to Sentry/logs
+> ([`lib/observability.ts`](../src/lib/observability.ts)), not to a
+> conversation/session row. The inspector therefore surfaces the closest
+> DB-derivable proxy — a conversation where the user wrote but Mo never replied —
+> and labels it "keine Antwort". A precise signal would need a fail-silent
+> `chat_error` `kpi_events` row in the chat path (out of scope here: read-only).
+
+### Part 2 — on-demand, CACHED per-conversation analysis (Haiku)
+
+The **Analysieren** button runs ONE pass over the readable transcript and caches a
+short summary + category + tags + quality signal **on the conversation row**
+(migration 0031: `analysis_summary` … `analysis_updated_at`). Re-opening shows the
+cache for FREE; re-analysing is the deliberate "Neu analysieren" button — never on
+list load. Modelled on the per-customer "Kundenverständnis generieren" flow. A
+confirmed **bulk action** analyses up to `BULK_ANALYZE_LIMIT` un-analysed
+conversations per run, showing the estimated cost (N × cheap-model cost) before
+confirming and the remaining count after.
+
+### Part 3 — aggregate insights rollup (the refinement engine)
+
+The **Insights generieren** button summarises the already-CACHED per-conversation
+summaries + categories (NOT raw transcripts — that is what makes it cheap and
+scalable) into a Markdown report for the window: top themes, where consultations
+stall, unmet needs, and concrete "consider refining X" suggestions. Cached by date
+range (`conversation_insights`). A free SQL `GROUP BY` over the cached
+categories/qualities renders the distribution alongside it.
+
+> **Deliberate boundary (out of scope):** the system NEVER rewrites Mo's prompt or
+> behaviour automatically. Mo gives legally + product-sensitive advice; refinement
+> stays **human-in-the-loop** — the insights inform a human who decides any prompt
+> change. Every report carries this note in its footer.
+
+### Model + cost + retention
+
+Both AI passes use **Claude Haiku 4.5** (`claude-haiku-4-5`, $1/$5 per MTok in/out
+— priced in [`lib/ai-pricing.mjs`](../src/lib/ai-pricing.mjs)), not the
+consultation model. Usage is recorded in `ai_usage` (`conversation_analysis`
+carries the conversation FK → cascade-deletes with it; `conversation_insights` is
+dashboard-side, no FK). The approximate EUR cost is shown per analysis, per rollup
+and per bulk run. The per-conversation analysis lives on the conversation row, so
+it is dropped automatically when the conversation is deleted (retention) or erased
+— same lifecycle as `title`/`title_auto`; its `ai_usage` rows cascade via the FK.
+The rollup cache is derived, pseudonymous text (no session/email), regenerated on
+demand like `kpi_persona_question_summaries`.

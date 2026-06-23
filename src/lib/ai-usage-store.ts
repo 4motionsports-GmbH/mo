@@ -32,6 +32,13 @@ export type AiCallSite =
   | "marketing_draft"
   | "customer_profile"
   | "top_questions"
+  // Admin conversation inspector: the per-conversation AI analysis pass
+  // ("Analysieren") carries its conversation FK so the usage row cascade-deletes
+  // with the conversation on retention / erasure, like chat + summary_download.
+  | "conversation_analysis"
+  // Admin conversation inspector: the aggregate insights rollup over a date
+  // range. Dashboard/admin-side spend (no conversation), purged by created_at.
+  | "conversation_insights"
   | "embeddings"
   | "bundle_suggestions"
   // Text-to-speech for voice mode (/api/tts). NB: for this call site the

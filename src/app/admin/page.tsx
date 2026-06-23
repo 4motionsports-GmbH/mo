@@ -37,11 +37,13 @@ import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-stor
 import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
 import { ARCHETYPE_META } from "@/lib/persona";
 import { resolveKpiRange } from "@/lib/kpi-range";
+import { parseAdminConversationFilter } from "@/lib/admin-conversations";
 import type { PersonaArchetype } from "@/lib/types";
 import type { CustomerProps } from "./CustomerProfileCard";
 import { KundenWorkspace } from "./KundenWorkspace";
 import { KpiTab } from "./KpiTab";
 import { FeedbackTab } from "./FeedbackTab";
+import { GespraecheTab } from "./GespraecheTab";
 import { OverviewTab } from "./OverviewTab";
 import { AdminShell, type AdminTab } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
@@ -69,9 +71,11 @@ export default async function AdminDashboardPage({
       ? "kpi"
       : sp?.tab === "feedback"
         ? "feedback"
-        : sp?.tab === "kunden" || sp?.tab === "customers"
-          ? "kunden"
-          : "overview";
+        : sp?.tab === "gespraeche"
+          ? "gespraeche"
+          : sp?.tab === "kunden" || sp?.tab === "customers"
+            ? "kunden"
+            : "overview";
   // Overview deep-links seed a Kunden filter preset via ?filter= (e.g.
   // "no_purchase", "marketing"); accept the legacy ?status= as a fallback.
   const initialFilter =
@@ -85,6 +89,16 @@ export default async function AdminDashboardPage({
     kpiRange: firstParam(sp?.kpiRange),
     kpiFrom: firstParam(sp?.kpiFrom),
     kpiTo: firstParam(sp?.kpiTo),
+  });
+  // Conversation inspector ("Gespräche") filter — date range / tier / has-error /
+  // page all live in the URL (g*) so a refresh / copied link keeps the view.
+  const convFilter = parseAdminConversationFilter({
+    grange: firstParam(sp?.grange),
+    gfrom: firstParam(sp?.gfrom),
+    gto: firstParam(sp?.gto),
+    gtier: firstParam(sp?.gtier),
+    gerr: firstParam(sp?.gerr),
+    gpage: firstParam(sp?.gpage),
   });
   const dbReady = isDbConfigured();
 
@@ -112,6 +126,7 @@ export default async function AdminDashboardPage({
       }
       kpi={<KpiTab dbReady={dbReady} range={kpiRange} />}
       feedback={<FeedbackTab dbReady={dbReady} />}
+      gespraeche={<GespraecheTab dbReady={dbReady} filter={convFilter} />}
     />
   );
 }
