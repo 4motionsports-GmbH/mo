@@ -12,15 +12,16 @@ import { Toaster } from "./ui/toast";
 import { ThemeToggle } from "./ThemeToggle";
 import type { Theme } from "./theme-config";
 
-export type AdminTab = "overview" | "kunden" | "kpi" | "feedback";
+export type AdminTab = "overview" | "kunden" | "kpi" | "feedback" | "gespraeche";
 
-const TAB_ORDER: AdminTab[] = ["overview", "kunden", "kpi", "feedback"];
+const TAB_ORDER: AdminTab[] = ["overview", "kunden", "kpi", "feedback", "gespraeche"];
 
 const TAB_LABEL: Record<AdminTab, string> = {
   overview: "Übersicht",
   kunden: "Kunden",
   kpi: "KPIs",
   feedback: "Feedback",
+  gespraeche: "Gespräche",
 };
 
 const TAB_SUBTITLE: Record<AdminTab, string> = {
@@ -29,6 +30,8 @@ const TAB_SUBTITLE: Record<AdminTab, string> = {
     "Kunden · Suche, filtere & öffne eine Person — Profil, Käufe, Marketing, Korrespondenz & Brief",
   kpi: "KPIs · Pseudonyme Analytics (Cluster A) + Shopify-Käufe",
   feedback: "Feedback · Kund:innen-Rückmeldungen aus dem Widget — neueste zuerst",
+  gespraeche:
+    "Gespräche · Alle Beratungen einsehen & auswerten — Transkripte, Signale, KI-Analyse",
 };
 
 // The Übersicht tab is the bare /admin (the default landing tab); every other
@@ -45,6 +48,7 @@ export function AdminShell({
   kunden,
   kpi,
   feedback,
+  gespraeche,
 }: {
   initialTab: AdminTab;
   themeInitial: Theme | null;
@@ -53,6 +57,7 @@ export function AdminShell({
   kunden: React.ReactNode;
   kpi: React.ReactNode;
   feedback: React.ReactNode;
+  gespraeche: React.ReactNode;
 }) {
   const [tab, setTab] = React.useState<AdminTab>(initialTab);
 
@@ -113,11 +118,13 @@ export function AdminShell({
     kunden,
     kpi,
     feedback,
+    gespraeche,
   };
 
-  // The Kunden workspace is a master–detail layout that wants the extra width;
-  // the other tabs stay comfortably centred at the narrower measure.
-  const containerWidth = tab === "kunden" ? "max-w-7xl" : "max-w-5xl";
+  // The Kunden + Gespräche workspaces are master–detail layouts that want the
+  // extra width; the other tabs stay comfortably centred at the narrower measure.
+  const containerWidth =
+    tab === "kunden" || tab === "gespraeche" ? "max-w-7xl" : "max-w-5xl";
 
   return (
     <div className={`mx-auto ${containerWidth} px-5 pb-16 pt-6`}>

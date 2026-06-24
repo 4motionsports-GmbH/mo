@@ -13,6 +13,7 @@
 //   email_captures                 (Cluster B)
 //   suppression_list               (Cluster B)
 //   kpi_persona_question_summaries (Cluster A — derived analytics cache)
+//   conversation_insights          (Cluster A — derived insights rollup cache — migration 0031)
 //   customers                      (Cluster B — migration 0008)
 //   ai_usage                       (standalone — migration 0012)
 //   bundle_offers                  (FK child of customers + marketing_sends — migration 0013)
@@ -25,8 +26,10 @@
 //   physical_letters               (FK child of customers + marketing_sends — migration 0022)
 //   admin_access_log               (standalone PII-access audit — migration 0028)
 //
-// The list is CURRENT THROUGH MIGRATION 0030 (email_captures.locale is a new
-// COLUMN — cleared automatically by TRUNCATE, no list change needed;
+// The list is CURRENT THROUGH MIGRATION 0031 (migration 0031 added the
+// conversation_insights table — listed below — and the analysis_* COLUMNS on
+// conversations, which are cleared automatically by TRUNCATE conversations, no
+// list change needed; email_captures.locale from 0030 is likewise a column;
 // bestandskunden_suppression_list from 0017 was dropped in 0029). A completeness
 // guard below cross-checks this list against the LIVE schema and ABORTS if a
 // later migration added a data table that isn't listed here — so a pre-launch
@@ -118,6 +121,7 @@ const DATA_TABLES = [
   "email_captures",
   "suppression_list",
   "kpi_persona_question_summaries",
+  "conversation_insights",    // derived insights rollup cache (no FK) — migration 0031
   "customers",             // added migration 0008; email_captures/conversations truncated first
   "ai_usage",              // added migration 0012
   // Standalone tables — no FK constraints
