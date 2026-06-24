@@ -7,6 +7,11 @@
 // REFRESH_BUFFER_MS of expiry.
 
 import { planThrottleRetry, THROTTLE_MAX_RETRIES } from "./shopify-throttle.mjs";
+import {
+  planTransientRetry,
+  isMutation,
+  TRANSIENT_MAX_RETRIES,
+} from "./shopify-retry.mjs";
 
 interface CachedToken {
   accessToken: string;
@@ -144,14 +149,41 @@ async function graphql<T>(
 ): Promise<T> {
   const token = await getAdminToken();
   const url = `https://${storeDomain()}/admin/api/${apiVersion()}/graphql.json`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": token,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  // Only idempotent ops (queries) are auto-retried on a transport failure — a
+  // mutation might already have taken effect when a 502 / socket reset arrives, so
+  // retrying it could double a write (see shopify-retry.mjs). `attempt` is a single
+  // shared budget across throttle + transient retries, so the recursion always
+  // terminates regardless of which failure modes interleave.
+  const idempotent = !isMutation(query);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": token,
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+  } catch (err) {
+    // NETWORK-level failure: fetch() rejected before any response — a connect
+    // timeout, socket reset or DNS hiccup, all surfaced by Node's undici as
+    // `TypeError: fetch failed` (specifics on .cause). The request never
+    // completed, so retrying an idempotent op is safe. Ride out a transient blip
+    // with backoff; rethrow once the cap is hit (→ the webhook 500s so Shopify
+    // redelivers, or a read path trips its bundled-catalog fallback).
+    const plan = planTransientRetry({ networkError: true, idempotent, attempt });
+    if (plan.retry) {
+      console.warn(
+        `[shopify] network error — retry ${attempt + 1}/${TRANSIENT_MAX_RETRIES} ` +
+          `in ${plan.waitMs}ms (${(err as Error).message})`
+      );
+      await sleep(plan.waitMs);
+      return graphql<T>(query, variables, attempt + 1);
+    }
+    throw err;
+  }
 
   // Read the body once; a THROTTLED response is HTTP 200 with errors[] +
   // extensions.cost.throttleStatus, so we must parse before deciding.
@@ -183,6 +215,21 @@ async function graphql<T>(
       `[shopify] THROTTLED — gave up after ${attempt} retries; the request is still ` +
         `rate-limited. Falling back. (throttleStatus=${JSON.stringify(json?.extensions?.cost?.throttleStatus ?? {})})`
     );
+  }
+
+  // RIDE OUT a transient upstream failure — a 502/503/504 (or 500/408) from
+  // Shopify's origin or its Cloudflare front. DISTINCT from a throttle: the
+  // request was fine, the server momentarily wasn't. Retry idempotent ops with
+  // backoff; a mutation (or the exhausted cap) falls through to the throw below so
+  // the error still surfaces.
+  const transient = planTransientRetry({ httpStatus: res.status, idempotent, attempt });
+  if (transient.retry) {
+    console.warn(
+      `[shopify] HTTP ${res.status} ${res.statusText} — retry ${attempt + 1}/` +
+        `${TRANSIENT_MAX_RETRIES} in ${transient.waitMs}ms (transient upstream error)`
+    );
+    await sleep(transient.waitMs);
+    return graphql<T>(query, variables, attempt + 1);
   }
 
   if (!res.ok) {
