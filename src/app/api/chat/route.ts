@@ -451,7 +451,7 @@ export async function POST(req: Request) {
           phase: "stream",
         });
       },
-      onFinish: async ({ text, steps, response, totalUsage }) => {
+      onFinish: async ({ steps, response, totalUsage }) => {
         // Persist the completed turn AFTER generation, so this never delays
         // token delivery. persistTurn is fully self-contained (best-effort,
         // logs and swallows on failure) — but guard here too so a thrown
@@ -463,12 +463,29 @@ export async function POST(req: Request) {
               input: (tc as { input?: unknown }).input,
             }))
           );
+
+          // The FULL assistant text of this turn — every step's prose joined in
+          // order, NOT just the last step's. In ai@6 the onFinish `text` (and
+          // the last StepResult's `text`) is ONLY the text generated in the
+          // FINAL step. An agentic turn streams the assistant's prose across
+          // several steps (e.g. "Ich schaue mal nach …" → search_products →
+          // "Hier sind drei passende Geräte:" → show_product → "Welches
+          // interessiert dich?"). The widget renders all of it as one assistant
+          // message, but persisting only `text` stored just the last fragment —
+          // so every tool-using turn looked like the bot's message went missing
+          // in the conversation inspector + the customer's own history. Re-join
+          // the per-step text so the stored transcript matches what was shown.
+          const assistantText = steps
+            .map((s) => (s.text ?? "").trim())
+            .filter((t) => t.length > 0)
+            .join("\n\n");
+
           await persistTurn({
             sessionId,
             conversationKey,
             history: messages,
             personaLabel: archetype ?? "unknown",
-            assistantText: text ?? "",
+            assistantText,
             assistantToolCalls: toolCalls,
             assistantMessageId: response.id,
             // `totalUsage` aggregates input/output tokens across all agentic

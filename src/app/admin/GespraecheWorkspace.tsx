@@ -591,7 +591,14 @@ function ConversationDetail({ conversationId }: { conversationId: number | null 
     );
   }
 
-  if (loading) {
+  // Show the skeleton while loading AND on the very first render after a
+  // selection — this component is remounted per conversation (key={selectedId}),
+  // so its first paint happens BEFORE the fetch effect flips `loading` on. Without
+  // the `!detail && !error` guard that first frame fell through to the error
+  // branch below and flashed "Nicht gefunden." for a tick before the request even
+  // started. After the fetch resolves exactly one of `detail`/`error` is set, so
+  // this only ever covers the genuine pending window.
+  if (loading || (!detail && !error)) {
     return (
       <Card>
         <CardContent className="space-y-2 p-4" aria-hidden>
