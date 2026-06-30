@@ -36,6 +36,19 @@ export async function guardAdminPost(req: Request): Promise<Response | null> {
   return null;
 }
 
+/**
+ * Guard a non-mutating admin GET (e.g. a file download). The proxy already gates
+ * /api/admin/*; this re-asserts the session cookie defensively (no CSRF / content-
+ * type constraint — a GET carries no body). Returns a 401 Response or null.
+ */
+export async function guardAdminGet(): Promise<Response | null> {
+  const token = (await cookies()).get(ADMIN_COOKIE_NAME)?.value;
+  if (!(await verifyAdminSessionToken(token))) {
+    return jsonError("unauthorized", "Admin authentication required", 401);
+  }
+  return null;
+}
+
 /** JSON success helper mirroring the error envelope shape. */
 export function adminJson(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {

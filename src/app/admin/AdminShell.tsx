@@ -7,6 +7,8 @@
 // one is visible and keeps the URL in sync for deep links / refresh.
 
 import * as React from "react";
+import Link from "next/link";
+import { Sparkles } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import { Toaster } from "./ui/toast";
 import { ThemeToggle } from "./ThemeToggle";
@@ -147,7 +149,7 @@ export function AdminShell({
           </div>
         </header>
 
-        <nav className="my-5">
+        <nav className="my-5 flex flex-wrap items-center justify-between gap-2">
           <TabsList>
             {TAB_ORDER.map((t) => (
               <TabsTrigger key={t} value={t}>
@@ -155,6 +157,15 @@ export function AdminShell({
               </TabsTrigger>
             ))}
           </TabsList>
+          {/* Dedicated section (its own sidebar of stored reports), so it's a real
+              navigation, not an in-page tab. */}
+          <Link
+            href="/admin/analytics"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-3 text-sm font-semibold text-accent transition-colors hover:bg-accent/20"
+          >
+            <Sparkles className="size-4" />
+            Komplettanalyse
+          </Link>
         </nav>
 
         {/* All bodies stay mounted (forceMount) so switching tabs preserves any
