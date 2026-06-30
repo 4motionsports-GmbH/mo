@@ -45,6 +45,7 @@ import { KpiTab } from "./KpiTab";
 import { FeedbackTab } from "./FeedbackTab";
 import { GespraecheTab } from "./GespraecheTab";
 import { OverviewTab } from "./OverviewTab";
+import { AnalyseTab } from "./AnalyseTab";
 import { AdminShell, type AdminTab } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
 
@@ -73,9 +74,11 @@ export default async function AdminDashboardPage({
         ? "feedback"
         : sp?.tab === "gespraeche"
           ? "gespraeche"
-          : sp?.tab === "kunden" || sp?.tab === "customers"
-            ? "kunden"
-            : "overview";
+          : sp?.tab === "analyse"
+            ? "analyse"
+            : sp?.tab === "kunden" || sp?.tab === "customers"
+              ? "kunden"
+              : "overview";
   // Overview deep-links seed a Kunden filter preset via ?filter= (e.g.
   // "no_purchase", "marketing"); accept the legacy ?status= as a fallback.
   const initialFilter =
@@ -127,6 +130,7 @@ export default async function AdminDashboardPage({
       kpi={<KpiTab dbReady={dbReady} range={kpiRange} />}
       feedback={<FeedbackTab dbReady={dbReady} />}
       gespraeche={<GespraecheTab dbReady={dbReady} filter={convFilter} />}
+      analyse={<AnalyseTab dbReady={dbReady} />}
     />
   );
 }

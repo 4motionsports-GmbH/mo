@@ -7,16 +7,21 @@
 // one is visible and keeps the URL in sync for deep links / refresh.
 
 import * as React from "react";
-import Link from "next/link";
-import { Sparkles } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import { Toaster } from "./ui/toast";
 import { ThemeToggle } from "./ThemeToggle";
 import type { Theme } from "./theme-config";
 
-export type AdminTab = "overview" | "kunden" | "kpi" | "feedback" | "gespraeche";
+export type AdminTab = "overview" | "kunden" | "kpi" | "feedback" | "gespraeche" | "analyse";
 
-const TAB_ORDER: AdminTab[] = ["overview", "kunden", "kpi", "feedback", "gespraeche"];
+const TAB_ORDER: AdminTab[] = [
+  "overview",
+  "kunden",
+  "kpi",
+  "feedback",
+  "gespraeche",
+  "analyse",
+];
 
 const TAB_LABEL: Record<AdminTab, string> = {
   overview: "Übersicht",
@@ -24,6 +29,7 @@ const TAB_LABEL: Record<AdminTab, string> = {
   kpi: "KPIs",
   feedback: "Feedback",
   gespraeche: "Gespräche",
+  analyse: "Analyse",
 };
 
 const TAB_SUBTITLE: Record<AdminTab, string> = {
@@ -34,6 +40,8 @@ const TAB_SUBTITLE: Record<AdminTab, string> = {
   feedback: "Feedback · Kund:innen-Rückmeldungen aus dem Widget — neueste zuerst",
   gespraeche:
     "Gespräche · Alle Beratungen einsehen & auswerten — Transkripte, Signale, KI-Analyse",
+  analyse:
+    "Analyse · Komplettanalysen je Zeitintervall — alle KI-Auswertungen verdichtet, gespeichert & als PDF",
 };
 
 // The Übersicht tab is the bare /admin (the default landing tab); every other
@@ -51,6 +59,7 @@ export function AdminShell({
   kpi,
   feedback,
   gespraeche,
+  analyse,
 }: {
   initialTab: AdminTab;
   themeInitial: Theme | null;
@@ -60,6 +69,7 @@ export function AdminShell({
   kpi: React.ReactNode;
   feedback: React.ReactNode;
   gespraeche: React.ReactNode;
+  analyse: React.ReactNode;
 }) {
   const [tab, setTab] = React.useState<AdminTab>(initialTab);
 
@@ -121,12 +131,16 @@ export function AdminShell({
     kpi,
     feedback,
     gespraeche,
+    analyse,
   };
 
-  // The Kunden + Gespräche workspaces are master–detail layouts that want the
-  // extra width; the other tabs stay comfortably centred at the narrower measure.
+  // The Kunden + Gespräche + Analyse workspaces are master–detail layouts that
+  // want the extra width; the other tabs stay comfortably centred at the narrower
+  // measure.
   const containerWidth =
-    tab === "kunden" || tab === "gespraeche" ? "max-w-7xl" : "max-w-5xl";
+    tab === "kunden" || tab === "gespraeche" || tab === "analyse"
+      ? "max-w-7xl"
+      : "max-w-5xl";
 
   return (
     <div className={`mx-auto ${containerWidth} px-5 pb-16 pt-6`}>
@@ -149,7 +163,7 @@ export function AdminShell({
           </div>
         </header>
 
-        <nav className="my-5 flex flex-wrap items-center justify-between gap-2">
+        <nav className="my-5">
           <TabsList>
             {TAB_ORDER.map((t) => (
               <TabsTrigger key={t} value={t}>
@@ -157,15 +171,6 @@ export function AdminShell({
               </TabsTrigger>
             ))}
           </TabsList>
-          {/* Dedicated section (its own sidebar of stored reports), so it's a real
-              navigation, not an in-page tab. */}
-          <Link
-            href="/admin/analytics"
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-3 text-sm font-semibold text-accent transition-colors hover:bg-accent/20"
-          >
-            <Sparkles className="size-4" />
-            Komplettanalyse
-          </Link>
         </nav>
 
         {/* All bodies stay mounted (forceMount) so switching tabs preserves any

@@ -5,7 +5,6 @@
 // generator and refreshes so the sidebar drops the row.
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { Download, Trash2, Loader2 } from "lucide-react";
 import {
   Button,
@@ -20,8 +19,15 @@ import {
 import { buttonVariants } from "../ui/button";
 import { cn } from "../ui/cn";
 
-export function ReportActions({ id, canDownload }: { id: number; canDownload: boolean }) {
-  const router = useRouter();
+export function ReportActions({
+  id,
+  canDownload,
+  onDeleted,
+}: {
+  id: number;
+  canDownload: boolean;
+  onDeleted: () => void;
+}) {
   const [open, setOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
 
@@ -44,8 +50,7 @@ export function ReportActions({ id, canDownload }: { id: number; canDownload: bo
         return;
       }
       setOpen(false);
-      router.push("/admin/analytics");
-      router.refresh();
+      onDeleted();
     } catch {
       toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen.", duration: 6000 });
     } finally {
