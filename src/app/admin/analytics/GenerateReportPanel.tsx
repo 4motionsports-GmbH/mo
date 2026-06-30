@@ -6,7 +6,6 @@
 // the client is navigated to its page, where the progress driver finishes it.
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { Sparkles, Loader2, CalendarRange, Users, ListTree } from "lucide-react";
 import {
   Button,
@@ -42,8 +41,7 @@ interface Estimate {
   estimateEur: number;
 }
 
-export function GenerateReportPanel() {
-  const router = useRouter();
+export function GenerateReportPanel({ onCreated }: { onCreated: (id: number) => void }) {
   const [preset, setPreset] = React.useState<"7d" | "30d" | "90d" | "custom">("30d");
   const [customFrom, setCustomFrom] = React.useState(todayYmd());
   const [customTo, setCustomTo] = React.useState(todayYmd());
@@ -115,9 +113,9 @@ export function GenerateReportPanel() {
         });
         return;
       }
-      // The report row is created 'running'; its page drives generation to the end.
-      router.push(`/admin/analytics/${data.id}`);
-      router.refresh();
+      // The report row is created 'running'; the workspace selects it and its
+      // progress driver finishes generation in place.
+      onCreated(data.id);
     } catch {
       toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen.", duration: 6000 });
     } finally {

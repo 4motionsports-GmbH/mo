@@ -1,13 +1,11 @@
 "use client";
 
-// The "side panel" of stored Komplettanalysen. Each generated report is a page;
-// this lists them newest-first and highlights the active one (usePathname), with
-// a status pill + spinner for in-progress reports. The "Neue Komplettanalyse"
-// entry links to the generator (the section's base route).
+// The "side panel" of stored Komplettanalysen, inside the Analyse tab. Each
+// generated report is selectable here and shown in the main area; the active one
+// is highlighted. Selection is in-tab client state (no route navigation), so
+// switching reports is instant. "Neue Komplettanalyse" returns to the generator.
 
 import * as React from "react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { Loader2, Plus, FileText, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "../ui/cn";
 import { Badge } from "../ui";
@@ -55,16 +53,26 @@ function StatusPill({ status }: { status: SidebarReport["status"] }) {
   );
 }
 
-export function ReportSidebar({ reports }: { reports: SidebarReport[] }) {
-  const pathname = usePathname();
-  const onGenerator = pathname === "/admin/analytics";
+export function ReportSidebar({
+  reports,
+  activeId,
+  onSelect,
+  onNew,
+}: {
+  reports: SidebarReport[];
+  activeId: number | null;
+  onSelect: (id: number) => void;
+  onNew: () => void;
+}) {
+  const onGenerator = activeId === null;
 
   return (
     <nav className="space-y-2" aria-label="Gespeicherte Analysen">
-      <Link
-        href="/admin/analytics"
+      <button
+        type="button"
+        onClick={onNew}
         className={cn(
-          "flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold transition-colors",
+          "flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm font-semibold transition-colors",
           onGenerator
             ? "border-accent/40 bg-accent/10 text-accent"
             : "border-border bg-card text-foreground hover:bg-secondary"
@@ -72,7 +80,7 @@ export function ReportSidebar({ reports }: { reports: SidebarReport[] }) {
       >
         <Plus className="size-4" />
         Neue Komplettanalyse
-      </Link>
+      </button>
 
       <div className="px-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         Gespeichert ({reports.length})
@@ -85,13 +93,14 @@ export function ReportSidebar({ reports }: { reports: SidebarReport[] }) {
       ) : (
         <ul className="space-y-1">
           {reports.map((r) => {
-            const active = pathname === `/admin/analytics/${r.id}`;
+            const active = activeId === r.id;
             return (
               <li key={r.id}>
-                <Link
-                  href={`/admin/analytics/${r.id}`}
+                <button
+                  type="button"
+                  onClick={() => onSelect(r.id)}
                   className={cn(
-                    "block rounded-md border px-3 py-2 transition-colors",
+                    "block w-full rounded-md border px-3 py-2 text-left transition-colors",
                     active
                       ? "border-accent/40 bg-accent/10"
                       : "border-border bg-card hover:bg-secondary"
@@ -117,7 +126,7 @@ export function ReportSidebar({ reports }: { reports: SidebarReport[] }) {
                       </span>
                     )}
                   </div>
-                </Link>
+                </button>
               </li>
             );
           })}

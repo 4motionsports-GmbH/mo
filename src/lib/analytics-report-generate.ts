@@ -588,6 +588,8 @@ async function stepAssemble(report: AnalyticsReportDetail): Promise<void> {
     phase: "done",
     sections,
     completed: true,
-    progress: { ...progress, scratch: { ...scratch, notes } },
+    // The intermediate work-queues now live in `sections`; drop scratch so the
+    // finished row (and the sidebar list payload) stays lean.
+    progress: { ...progress, scratch: {} },
   });
 }

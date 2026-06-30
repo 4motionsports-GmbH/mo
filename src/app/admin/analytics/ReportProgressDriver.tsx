@@ -6,7 +6,6 @@
 // the cost so far, and can be paused (the report stays resumable server-side).
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import { Loader2, Check, Circle, Pause, Play, AlertTriangle } from "lucide-react";
 import { Button, Card, CardContent } from "../ui";
 import { cn } from "../ui/cn";
@@ -43,6 +42,7 @@ export function ReportProgressDriver({
   initialProgress,
   initialCostEur,
   options,
+  onDone,
 }: {
   id: number;
   title: string;
@@ -50,8 +50,10 @@ export function ReportProgressDriver({
   initialProgress: DriverProgress;
   initialCostEur: number;
   options: { includePerCustomer: boolean };
+  /** Called once the report reaches a terminal state, so the workspace can
+   *  reload the finished report + refresh the sidebar. */
+  onDone: () => void;
 }) {
-  const router = useRouter();
   const [phase, setPhase] = React.useState(initialPhase);
   const [progress, setProgress] = React.useState<DriverProgress>(initialProgress);
   const [costEur, setCostEur] = React.useState(initialCostEur);
@@ -60,6 +62,12 @@ export function ReportProgressDriver({
 
   const pausedRef = React.useRef(false);
   const runningRef = React.useRef(false);
+  // Keep the latest onDone without making it a runLoop dependency, so a parent
+  // re-render passing a fresh callback identity never restarts the stepping loop.
+  const onDoneRef = React.useRef(onDone);
+  React.useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
 
   const runLoop = React.useCallback(async () => {
     if (runningRef.current) return;
@@ -74,6 +82,8 @@ export function ReportProgressDriver({
         });
         const data = (await res.json().catch(() => ({}))) as StepResponse;
         if (!res.ok) {
+          // Transient (network / 5xx): the report is still 'running' server-side,
+          // so the inline "Erneut versuchen" resumes from where it stopped.
           const msg = typeof data.error === "object" ? data.error?.message : data.error;
           setError(msg ?? "Ein Schritt ist fehlgeschlagen.");
           break;
@@ -81,20 +91,17 @@ export function ReportProgressDriver({
         if (data.phase) setPhase(data.phase);
         if (data.progress) setProgress((p) => ({ ...p, ...data.progress }));
         if (typeof data.costEur === "number") setCostEur(data.costEur);
-        if (data.status === "failed") {
-          const msg = typeof data.error === "object" ? data.error?.message : data.error;
-          setError(msg ?? "Erstellung fehlgeschlagen.");
-          break;
-        }
         if (data.done) {
-          router.refresh();
+          // Terminal (complete OR failed): hand back to the workspace to reload
+          // the finished report + refresh the sidebar.
+          onDoneRef.current();
           break;
         }
       }
     } finally {
       runningRef.current = false;
     }
-  }, [id, router]);
+  }, [id]);
 
   // Auto-start on mount; stop stepping if the component unmounts.
   React.useEffect(() => {

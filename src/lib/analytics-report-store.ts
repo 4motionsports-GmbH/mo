@@ -192,6 +192,11 @@ function costOf(usage: unknown): number {
 }
 
 function mapListItem(r: Record<string, unknown>): AnalyticsReportListItem {
+  // The list (sidebar) never needs the transient `scratch` work-queue — and for a
+  // completed report it can hold the full per-customer profiles — so strip it here
+  // to keep the list payload small (JSON omits the undefined). mapDetail re-attaches
+  // the full progress.
+  const progress: ReportProgress = { ...mapProgress(r.progress), scratch: undefined };
   return {
     id: Number(r.id),
     title: String(r.title ?? ""),
@@ -200,7 +205,7 @@ function mapListItem(r: Record<string, unknown>): AnalyticsReportListItem {
     preset: String(r.preset ?? "custom"),
     status: (String(r.status ?? "running") as ReportStatus),
     phase: String(r.phase ?? "analyze"),
-    progress: mapProgress(r.progress),
+    progress,
     costEur: costOf(r.usage),
     createdAt: toIso(r.created_at),
     completedAt: toIsoOrNull(r.completed_at),
@@ -211,6 +216,8 @@ function mapDetail(r: Record<string, unknown>): AnalyticsReportDetail {
   const usage = asObject(r.usage) as ReportUsage;
   return {
     ...mapListItem(r),
+    // The generator reads progress.scratch, so detail carries the FULL progress.
+    progress: mapProgress(r.progress),
     options: normalizeOptions(asObject(r.options)) as ReportOptions,
     usage,
     tokens: totalTokens(usage),
