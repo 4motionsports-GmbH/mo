@@ -39,6 +39,9 @@ export type AiCallSite =
   // Admin conversation inspector: the aggregate insights rollup over a date
   // range. Dashboard/admin-side spend (no conversation), purged by created_at.
   | "conversation_insights"
+  // "Komplettanalyse": the aggregate customer-knowledge synthesis pass of a full
+  // analytics report. Dashboard/admin-side spend (no conversation FK).
+  | "analytics_report"
   | "embeddings"
   | "bundle_suggestions"
   // Text-to-speech for voice mode (/api/tts). NB: for this call site the
