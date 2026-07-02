@@ -17,6 +17,7 @@ import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-con
 import { resolveChatMemory } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
+import { sanitizeToolParts } from "@/lib/chat-message-sanitize.mjs";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
 import { getProductById, getProductsByIds, loadProductCatalog } from "@/lib/product-catalog";
@@ -345,18 +346,32 @@ export async function POST(req: Request) {
       ...contextProducts,
       ...hits.map((h) => h.product).filter((p) => !contextProductIds.includes(p.id)),
     ];
-    const modelMessages = await convertToModelMessages(messages);
+    // Strip tool-part debris a client resend can carry (aborted streams,
+    // failed-validation inputs) BEFORE conversion — replayed as-is it makes
+    // the provider call itself fail with AI_APICallError
+    // "tool_use.input: Input should be an object". Only broken tool parts are
+    // dropped, never messages, so the model sees exactly the history the
+    // widget rendered minus calls that never completed.
+    const modelMessages = await convertToModelMessages(sanitizeToolParts(messages));
 
     let greetingContext: ProductContext | undefined;
     let greetingBrowsingContext: BrowsingContext | undefined;
-    if (messages.length === 0 && (productContext || browsingContext)) {
-      // Fresh open: seed the greeting as a system-level note and add a
-      // minimal, server-internal trigger turn so the model actually emits
-      // the opener. The trigger is never streamed back nor stored by the
-      // widget (it sent an empty conversation), so no fake user message
+    if (modelMessages.length === 0) {
+      // Fresh open (messages: []): seed the greeting as a system-level note
+      // and add a minimal, server-internal trigger turn so the model actually
+      // emits the opener. The trigger is never streamed back nor stored by
+      // the widget (it sent an empty conversation), so no fake user message
       // lands in the rendered history — the greeting is just an extra seed.
       // When both contexts are present, the product-page greeting wins and
       // the browsing trail becomes background info (see system-prompt.ts).
+      //
+      // The trigger is seeded even WITHOUT any resolved context: the API
+      // contract promises that an invalid/stale context is ignored
+      // gracefully, so a fresh open whose productId no longer exists must
+      // still stream a (generic) greeting rather than hand streamText an
+      // empty prompt (Sentry: AI_InvalidPromptError "messages must not be
+      // empty"). Keyed off modelMessages so a non-empty request can never
+      // gain a trigger turn — every user message survives conversion.
       greetingContext = productContext;
       greetingBrowsingContext = browsingContext;
       modelMessages.push({
@@ -365,7 +380,7 @@ export async function POST(req: Request) {
           productName: productContext?.name,
         }),
       });
-    } else if (messages.length > 0) {
+    } else {
       // Existing conversation (including a starter prompt sent as the first
       // message): pivot via lightweight in-conversation notes appended to the
       // latest user turn, leaving prior history intact — never wiped.

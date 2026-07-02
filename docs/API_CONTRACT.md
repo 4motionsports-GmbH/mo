@@ -232,6 +232,10 @@ The backend keys its behavior off whether `messages` is empty:
   `messages: []` and renders the streamed assistant greeting like any other
   turn. No fake user message is fabricated in the history.
 
+  A fresh open whose context does not survive validation (or that carries no
+  `context` at all) is NOT an error: the backend still streams a generic
+  greeting, consistent with the ignored-gracefully rule above.
+
 - **Existing conversation (`messages` non-empty + valid `context`).** The
   backend injects lightweight in-conversation notes (product pivot and/or
   browsing note) so the assistant can **pivot toward the context without
