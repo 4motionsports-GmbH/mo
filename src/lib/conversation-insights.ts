@@ -97,8 +97,11 @@ export async function generateConversationInsights(
   try {
     const { text, usage } = await generateText({
       model: anthropic(INSIGHTS_MODEL),
-      // Raised from 1300 to leave room for the ```json:refs block after the report.
-      maxOutputTokens: 2000,
+      // Raised from the original 1300 to leave room for the ```json:refs block
+      // after the report. 2000 proved too tight in production (the block was
+      // truncated away at the limit and the report carried no references), so
+      // give it comfortable headroom — Haiku output is cheap.
+      maxOutputTokens: 3500,
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
         "erhältst KURZ-ZUSAMMENFASSUNGEN vieler Beratungsgespräche (bereits " +
@@ -148,7 +151,20 @@ export async function generateConversationInsights(
     // validated against the IDs actually fed to this rollup (anti-hallucination);
     // any parse failure yields [] while the narrative is kept.
     const validIds = new Set(analyses.map((a) => a.id));
-    const { markdown, references } = parseInsightsReferences(text, validIds);
+    const { markdown, references, blockFound } = parseInsightsReferences(text, validIds);
+
+    // References failing is tolerated (the narrative always survives) but must
+    // not be silent — surface WHY they are missing so it is debuggable.
+    if (references.length === 0) {
+      reportError(
+        new Error(
+          blockFound
+            ? "insights refs block present but yielded no valid references"
+            : "insights refs block missing from model output"
+        ),
+        { route: "lib/conversation-insights", phase: "parse-refs" }
+      );
+    }
 
     const body = markdown.trim() || "_Keine klaren Muster erkennbar._";
     const inputTokens = usage?.inputTokens ?? 0;

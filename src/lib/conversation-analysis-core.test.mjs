@@ -256,12 +256,52 @@ test("parseInsightsReferences: garbage input is safe", () => {
   assert.deepEqual(parseInsightsReferences(undefined, new Set()), {
     markdown: "",
     references: [],
+    blockFound: false,
   });
   const arr = parseInsightsReferences(
     REPORT + "\n" + block(JSON.stringify({ references: "nope" })),
     new Set([1])
   );
   assert.deepEqual(arr.references, []);
+});
+
+test("parseInsightsReferences: truncated (unclosed) block — salvages complete refs, strips the rest", () => {
+  // Output cut off at the token limit mid-entry: no closing fence, last entry incomplete.
+  const raw =
+    REPORT +
+    "\n\n```json:refs\n" +
+    '{ "references": [\n' +
+    '  { "section": "top_themen", "conversationId": 11, "reason": "Fragt nach Laufband." },\n' +
+    '  { "section": "stockend", "conversationId": 22, "reason": "Bricht beim Pre';
+  const { markdown, references, blockFound } = parseInsightsReferences(raw, new Set([11, 22]));
+  assert.equal(blockFound, true);
+  assert.equal(markdown, REPORT, "half-block stripped from the markdown");
+  assert.deepEqual(references, [
+    { section: "top_themen", conversationId: 11, reason: "Fragt nach Laufband." },
+  ]);
+});
+
+test("parseInsightsReferences: plain ```json fence with a references array is accepted + stripped", () => {
+  const raw =
+    REPORT +
+    "\n\n```json\n" +
+    JSON.stringify({
+      references: [{ section: "beduerfnisse", conversationId: 33, reason: "Wollte Lieferzeit wissen." }],
+    }) +
+    "\n```";
+  const { markdown, references, blockFound } = parseInsightsReferences(raw, new Set([33]));
+  assert.equal(blockFound, true);
+  assert.equal(markdown, REPORT);
+  assert.equal(references.length, 1);
+  assert.equal(references[0].conversationId, 33);
+});
+
+test("parseInsightsReferences: a non-refs JSON code block in the report is left alone", () => {
+  const withCode = REPORT + '\n\n```json\n{ "beispiel": true }\n```';
+  const { markdown, references, blockFound } = parseInsightsReferences(withCode, new Set([1]));
+  assert.equal(blockFound, false);
+  assert.equal(markdown, withCode.trim(), "unrelated code block stays in the markdown");
+  assert.deepEqual(references, []);
 });
 
 test("INSIGHTS_SECTIONS covers exactly the four report sections", () => {

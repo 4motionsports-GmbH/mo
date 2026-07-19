@@ -281,31 +281,91 @@ export const MAX_REFS_PER_SECTION = 8;
 /** Max length of a reference's reason sentence. */
 export const MAX_REF_REASON_CHARS = 200;
 
-// Matches the whole ```json:refs … ``` fence (first occurrence).
+// Matches a whole ```json:refs … ``` fence (closed).
 const REFS_BLOCK_RE = /```json:refs\s*([\s\S]*?)```/i;
+// An OPENED-but-never-closed ```json:refs fence — happens when the model's
+// output is truncated at the token limit mid-block. Everything to the end of
+// the text belongs to the block (nothing follows it per the prompt contract).
+const REFS_BLOCK_OPEN_RE = /```json:refs\s*([\s\S]*)$/i;
+// Generic fenced JSON blocks — fallback for a model that ignored the ":refs"
+// info string and emitted a plain ```json fence. Only a block whose payload
+// actually carries a `references` array is treated (and stripped) as refs.
+const GENERIC_JSON_BLOCK_RE = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
+
+/**
+ * Parse a refs JSON payload, tolerating truncation: if straight JSON.parse
+ * fails, cut back to the last complete `}` (the last fully-emitted reference)
+ * and try to close the array/object. Returns the parsed object or null.
+ */
+function tryParseRefsJson(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  try {
+    return JSON.parse(s);
+  } catch {
+    // fall through to salvage
+  }
+  const cut = s.slice(0, s.lastIndexOf("}") + 1);
+  if (!cut) return null;
+  for (const closer of ["", "]}", "}]}"]) {
+    try {
+      return JSON.parse(cut + closer);
+    } catch {
+      // try the next closer
+    }
+  }
+  return null;
+}
 
 /**
  * Extract + strip the ```json:refs block from the model's rollup output.
- * Returns { markdown, references }:
+ * Tolerates a truncated (unclosed) block and a plain ```json fence that
+ * carries a `references` array. Returns { markdown, references, blockFound }:
  *   - markdown: the report WITHOUT the block (it must never render);
  *   - references: validated entries only — section must be one of the four
  *     keys, conversationId must be in `validIds` (anti-hallucination: only IDs
  *     actually fed to this rollup survive), reason trimmed + capped, and at most
- *     MAX_REFS_PER_SECTION per section.
+ *     MAX_REFS_PER_SECTION per section;
+ *   - blockFound: whether any refs-looking block was present (observability —
+ *     lets the caller distinguish "model omitted the block" from "bad JSON").
  * Any parse failure ⇒ references = [] while the narrative is still returned.
  */
 export function parseInsightsReferences(rawText, validIds) {
   const text = typeof rawText === "string" ? rawText : "";
-  const match = text.match(REFS_BLOCK_RE);
-  const markdown = match ? text.replace(REFS_BLOCK_RE, "").trim() : text.trim();
-  if (!match) return { markdown, references: [] };
 
-  let parsed;
-  try {
-    parsed = JSON.parse(match[1]);
-  } catch {
-    return { markdown, references: [] };
+  let markdown = text.trim();
+  let parsed = null;
+  let blockFound = false;
+
+  const closed = text.match(REFS_BLOCK_RE);
+  if (closed) {
+    blockFound = true;
+    markdown = text.replace(REFS_BLOCK_RE, "").trim();
+    parsed = tryParseRefsJson(closed[1]);
+  } else {
+    const open = text.match(REFS_BLOCK_OPEN_RE);
+    if (open) {
+      // Truncated output: strip from the opening fence to the end so the
+      // half-block never renders, then salvage what was fully emitted.
+      blockFound = true;
+      markdown = text.replace(REFS_BLOCK_OPEN_RE, "").trim();
+      parsed = tryParseRefsJson(open[1]);
+    } else {
+      // Fallback: a plain fenced JSON block whose payload is a refs object.
+      for (const m of text.matchAll(GENERIC_JSON_BLOCK_RE)) {
+        const candidate = tryParseRefsJson(m[1]);
+        if (candidate && Array.isArray(candidate.references)) {
+          blockFound = true;
+          markdown = text.replace(m[0], "").trim();
+          parsed = candidate;
+          break;
+        }
+      }
+    }
   }
+
+  if (!blockFound) return { markdown, references: [], blockFound };
+
   const raw = Array.isArray(parsed?.references) ? parsed.references : [];
   const ids = validIds instanceof Set ? validIds : new Set(validIds ?? []);
 
@@ -330,5 +390,5 @@ export function parseInsightsReferences(rawText, validIds) {
     perSection.set(section, n + 1);
     references.push({ section, conversationId, reason });
   }
-  return { markdown, references };
+  return { markdown, references, blockFound };
 }
