@@ -275,8 +275,10 @@ export const INSIGHTS_SECTIONS = [
   "vorschlaege",
 ];
 
-/** Max references kept per section (the prompt asks for ~6; hard cap 8). */
-export const MAX_REFS_PER_SECTION = 8;
+/** Hard cap on references kept per section. The refs pass is asked to list
+ *  EVERY conversation that backs a section, so this is an anti-runaway bound
+ *  (output budget + UI sanity), not a curation target. */
+export const MAX_REFS_PER_SECTION = 40;
 
 /** Max length of a reference's reason sentence. */
 export const MAX_REF_REASON_CHARS = 200;

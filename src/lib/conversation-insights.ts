@@ -110,7 +110,10 @@ export async function generateConversationInsights(
 
     const { text, usage, finishReason } = await generateText({
       model: anthropic(INSIGHTS_MODEL),
-      maxOutputTokens: 3000,
+      // Well above the instructed ~700-word length so the report always ends
+      // cleanly even when the model overshoots (observed: 400 summaries pushed
+      // it past 3000 and it was cut mid-sentence — reported via finishReason).
+      maxOutputTokens: 4500,
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
         "erhältst KURZ-ZUSAMMENFASSUNGEN vieler Beratungsgespräche (bereits " +
@@ -158,7 +161,10 @@ export async function generateConversationInsights(
     try {
       const refsRes = await generateText({
         model: anthropic(INSIGHTS_MODEL),
-        maxOutputTokens: 1500,
+        // Exhaustive listing: up to MAX_REFS_PER_SECTION (40) refs × 4 sections
+        // at ~30 tokens each needs real room. Haiku output is cheap and the
+        // route budget (maxDuration) is sized for it.
+        maxOutputTokens: 8000,
         system:
           "Du bist Analyst bei motion sports. Du erhältst (a) KURZ-" +
           "ZUSAMMENFASSUNGEN von Beratungsgesprächen, jede mit ihrer Gesprächs-ID " +
@@ -172,16 +178,25 @@ export async function generateConversationInsights(
           "Regeln:\n" +
           "- \"section\" ist GENAU einer dieser Schlüssel: top_themen (Abschnitt 1), " +
           "stockend (Abschnitt 2), beduerfnisse (Abschnitt 3), vorschlaege (Abschnitt 4).\n" +
-          "- Gib für JEDEN der vier Abschnitte Referenzen an, sofern es Belege " +
-          "gibt; maximal 6 pro Abschnitt (die aussagekräftigsten zuerst).\n" +
+          "- Sei VOLLSTÄNDIG: Referenziere JEDES Gespräch, dessen Zusammenfassung " +
+          "ein Muster des jeweiligen Abschnitts belegt — nicht nur eine Auswahl. " +
+          "Die relevantesten zuerst, maximal 40 pro Abschnitt. Ein Gespräch darf " +
+          "in mehreren Abschnitten erscheinen, wenn es mehrere Muster belegt.\n" +
+          "- Gib für JEDEN der vier Abschnitte Referenzen an, sofern es Belege gibt.\n" +
           "- \"conversationId\" MUSS eine der [#…]-IDs aus den gelieferten " +
           "Zusammenfassungen sein — erfinde NIEMALS IDs.\n" +
-          "- \"reason\" ist EIN kurzer deutscher Satz, gestützt auf die jeweilige " +
-          "Zusammenfassung.",
+          "- \"reason\" ist EIN kurzer deutscher Satz (max. ~15 Wörter), gestützt " +
+          "auf die jeweilige Zusammenfassung.",
         prompt:
           `${summariesBlock}\n\n## Insights-Report\n\n${markdown}\n\n` +
           "Gib jetzt NUR das references-JSON aus.",
       });
+      if (refsRes.finishReason === "length") {
+        reportError(new Error("insights refs pass truncated at maxOutputTokens"), {
+          route: "lib/conversation-insights",
+          phase: "refs-truncated",
+        });
+      }
       refsInputTokens = refsRes.usage?.inputTokens ?? 0;
       refsOutputTokens = refsRes.usage?.outputTokens ?? 0;
       const passRefs = parseInsightsRefsPayload(refsRes.text, validIds);

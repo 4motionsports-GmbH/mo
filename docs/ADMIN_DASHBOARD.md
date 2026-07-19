@@ -647,9 +647,13 @@ parsed defensively (`parseInsightsReferences` / `parseInsightsRefsPayload` in
 - **Validation rule (anti-hallucination):** a reference survives only if its
   `conversationId` is in the set of IDs actually loaded for that rollup, its
   section is one of the four keys, the reason is trimmed/capped (~200 chars), and
-  at most 8 references per section are kept. Hallucinated or out-of-window IDs
-  never reach the DB or UI. A malformed block costs the references, never the
-  narrative (`references_json = []`).
+  at most 40 references per section are kept (the refs pass is asked to list
+  EVERY backing conversation; the cap is an anti-runaway bound). Hallucinated or
+  out-of-window IDs never reach the DB or UI. A malformed block costs the
+  references, never the narrative (`references_json = []`).
+- **Scope:** only ANALYZED conversations can be referenced — the rollup reads
+  cached summaries, so un-analyzed conversations in the window are invisible to
+  it. Run the bulk action until the window is fully analyzed for full coverage.
 
 References are stored in `conversation_insights.references_json` (migration
 0033, nullable) and rendered below the report as one collapsible per section

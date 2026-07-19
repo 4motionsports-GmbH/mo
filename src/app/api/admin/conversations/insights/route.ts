@@ -17,11 +17,12 @@ import { recordAdminAccess } from "@/lib/admin-access-log";
 import { isDbConfigured } from "@/lib/db";
 import { reportError } from "@/lib/observability";
 
-// The rollup now writes the report PLUS the json:refs block (up to ~3.5k output
-// tokens) — at Haiku generation speed that can exceed 30s on a large window, and
-// the platform 504s the request when maxDuration is hit. 120s gives ample room;
-// the route only ever runs on an explicit admin click.
-export const maxDuration = 120;
+// The rollup runs TWO model passes (report, then an exhaustive references list —
+// combined up to ~12k output tokens on a large window). At Haiku generation
+// speed that far exceeds the old 30s ceiling, and the platform 504s the request
+// when maxDuration is hit. 300s matches the chat route; this endpoint only ever
+// runs on an explicit admin click.
+export const maxDuration = 300;
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 

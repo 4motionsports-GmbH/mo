@@ -234,7 +234,7 @@ test("parseInsightsReferences: no block → markdown untouched, empty refs", () 
 });
 
 test("parseInsightsReferences: per-section cap + duplicate + reason clamp", () => {
-  const ids = Array.from({ length: 20 }, (_, i) => i + 1);
+  const ids = Array.from({ length: MAX_REFS_PER_SECTION + 12 }, (_, i) => i + 1);
   const refs = ids.map((id) => ({
     section: "vorschlaege",
     conversationId: id,
