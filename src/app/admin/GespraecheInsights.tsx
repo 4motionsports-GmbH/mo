@@ -14,11 +14,12 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, BarChart3, Layers } from "lucide-react";
+import { Sparkles, BarChart3, Layers, MessageSquare } from "lucide-react";
 import {
   Button,
   Card,
   CardContent,
+  Badge,
   Markdown,
   Skeleton,
   Dialog,
@@ -29,7 +30,12 @@ import {
   DialogFooter,
   toast,
 } from "./ui";
-import type { ConversationStats, InsightsRollup } from "@/lib/admin-conversations";
+import type {
+  ConversationStats,
+  InsightsRollup,
+  InsightsReference,
+  InsightsSection,
+} from "@/lib/admin-conversations";
 
 function fmtTs(iso: string): string {
   try {
@@ -84,6 +90,69 @@ function Distribution({
   );
 }
 
+// German section labels matching the report's headings (order = report order).
+const SECTION_LABELS: Record<InsightsSection, string> = {
+  top_themen: "Top-Themen & Fragen",
+  stockend: "Wo Beratungen stocken oder scheitern",
+  beduerfnisse: "Häufige unerfüllte Bedürfnisse",
+  vorschlaege: "Vorschläge zur Verfeinerung",
+};
+const SECTION_ORDER: InsightsSection[] = [
+  "top_themen",
+  "stockend",
+  "beduerfnisse",
+  "vorschlaege",
+];
+
+/** Per-section collapsibles listing the conversations that back each finding.
+ *  Clicking an entry opens that conversation in the detail panel. */
+function InsightsReferences({
+  references,
+  onOpenConversation,
+}: {
+  references: InsightsReference[];
+  onOpenConversation?: (id: number) => void;
+}) {
+  return (
+    <div className="mt-3 space-y-1.5">
+      {SECTION_ORDER.map((section) => {
+        const refs = references.filter((r) => r.section === section);
+        if (refs.length === 0) return null;
+        return (
+          <details
+            key={section}
+            className="group rounded-lg border border-border bg-muted/30"
+          >
+            <summary className="flex cursor-pointer flex-wrap items-center gap-2 px-3 py-2 text-[12px] font-medium text-foreground [&::-webkit-details-marker]:hidden">
+              <MessageSquare className="size-3.5 text-muted-foreground" />
+              {SECTION_LABELS[section]}
+              <Badge variant="secondary" className="text-[10px]">
+                Relevante Gespräche ({refs.length})
+              </Badge>
+            </summary>
+            <ul className="space-y-1.5 border-t border-border/60 px-3 py-2">
+              {refs.map((r) => (
+                <li key={`${r.section}-${r.conversationId}`} className="text-[12px]">
+                  <button
+                    type="button"
+                    className="font-medium text-accent underline-offset-2 hover:underline"
+                    onClick={() => onOpenConversation?.(r.conversationId)}
+                  >
+                    Gespräch #{r.conversationId} öffnen
+                  </button>
+                  {r.reason && (
+                    <span className="text-muted-foreground"> — {r.reason}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
 export function GespraecheInsights({
   from,
   to,
@@ -91,6 +160,7 @@ export function GespraecheInsights({
   unanalyzed,
   bulkEstimateEur,
   initialInsights,
+  onOpenConversation,
 }: {
   from: string;
   to: string;
@@ -98,6 +168,7 @@ export function GespraecheInsights({
   unanalyzed: number;
   bulkEstimateEur: number;
   initialInsights: InsightsRollup | null;
+  onOpenConversation?: (id: number) => void;
 }) {
   const router = useRouter();
   const [insights, setInsights] = React.useState<InsightsRollup | null>(initialInsights);
@@ -267,6 +338,19 @@ export function GespraecheInsights({
           {insights && insights.summaryMd && (
             <div className={loading ? "opacity-60 transition-opacity" : undefined}>
               <Markdown content={insights.summaryMd} className="mt-2 text-[13px]" />
+              {insights.references.length > 0 ? (
+                <InsightsReferences
+                  references={insights.references}
+                  onOpenConversation={onOpenConversation}
+                />
+              ) : (
+                insights.cached &&
+                insights.model != null && (
+                  <p className="mt-2 text-[11px] italic text-muted-foreground">
+                    Neu generieren, um verlinkte Gespräche zu erhalten.
+                  </p>
+                )
+              )}
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {insights.analyzedCount} Zusammenfassung(en) ·{" "}
                 {insights.cached ? "zwischengespeichert" : "frisch generiert"} ·{" "}

@@ -22,6 +22,9 @@ import {
   tallyCategories,
   tallyQualities,
   buildRollupPrompt,
+  parseInsightsReferences,
+  INSIGHTS_SECTIONS,
+  MAX_REFS_PER_SECTION,
   ANALYSIS_CATEGORIES,
   ANALYSIS_QUALITIES,
 } from "./conversation-analysis-core.mjs";
@@ -148,6 +151,128 @@ test("buildRollupPrompt: uses only cached summary fields (never a transcript)", 
   assert.equal(prompt.split("\n").length, 1);
 });
 
+test("buildRollupPrompt: prefixes lines with the real conversation ID when present", () => {
+  const prompt = buildRollupPrompt([
+    { id: 1234, summary: "Kunde sucht Laufband.", category: "product-advice", quality: "handled_well", tags: [] },
+  ]);
+  assert.ok(prompt.startsWith("[#1234]"), "line starts with the real ID");
+  assert.ok(!prompt.startsWith("1."), "no running index when an ID is present");
+});
+
+// ── parseInsightsReferences (verlinkte Gespräche) ─────────────────────────────
+
+const REPORT = "## Top-Themen\n\nViele fragen nach Laufbändern.";
+const block = (json) => "```json:refs\n" + json + "\n```";
+
+test("parseInsightsReferences: valid block parsed and stripped from markdown", () => {
+  const raw =
+    REPORT +
+    "\n\n" +
+    block(
+      JSON.stringify({
+        references: [
+          { section: "top_themen", conversationId: 11, reason: "Fragt nach Laufband." },
+          { section: "stockend", conversationId: 22, reason: "Bricht beim Preis ab." },
+        ],
+      })
+    );
+  const { markdown, references } = parseInsightsReferences(raw, new Set([11, 22]));
+  assert.equal(markdown, REPORT);
+  assert.ok(!markdown.includes("json:refs"), "block stripped");
+  assert.deepEqual(references, [
+    { section: "top_themen", conversationId: 11, reason: "Fragt nach Laufband." },
+    { section: "stockend", conversationId: 22, reason: "Bricht beim Preis ab." },
+  ]);
+});
+
+test("parseInsightsReferences: unknown/hallucinated IDs are dropped", () => {
+  const raw =
+    REPORT +
+    "\n" +
+    block(
+      JSON.stringify({
+        references: [
+          { section: "top_themen", conversationId: 11, reason: "ok" },
+          { section: "top_themen", conversationId: 999, reason: "erfunden" },
+        ],
+      })
+    );
+  const { references } = parseInsightsReferences(raw, new Set([11]));
+  assert.equal(references.length, 1);
+  assert.equal(references[0].conversationId, 11);
+});
+
+test("parseInsightsReferences: invalid section is dropped", () => {
+  const raw =
+    REPORT +
+    "\n" +
+    block(
+      JSON.stringify({
+        references: [
+          { section: "banana", conversationId: 11, reason: "x" },
+          { section: "beduerfnisse", conversationId: 11, reason: "x" },
+        ],
+      })
+    );
+  const { references } = parseInsightsReferences(raw, new Set([11]));
+  assert.equal(references.length, 1);
+  assert.equal(references[0].section, "beduerfnisse");
+});
+
+test("parseInsightsReferences: malformed JSON → empty refs, block still stripped", () => {
+  const raw = REPORT + "\n" + block("{ not json !!");
+  const { markdown, references } = parseInsightsReferences(raw, new Set([11]));
+  assert.deepEqual(references, []);
+  assert.equal(markdown, REPORT, "narrative kept, block gone");
+});
+
+test("parseInsightsReferences: no block → markdown untouched, empty refs", () => {
+  const { markdown, references } = parseInsightsReferences(REPORT, new Set([1]));
+  assert.equal(markdown, REPORT);
+  assert.deepEqual(references, []);
+});
+
+test("parseInsightsReferences: per-section cap + duplicate + reason clamp", () => {
+  const ids = Array.from({ length: 20 }, (_, i) => i + 1);
+  const refs = ids.map((id) => ({
+    section: "vorschlaege",
+    conversationId: id,
+    reason: "r".repeat(500),
+  }));
+  // duplicate of an already-listed conversation in the same section
+  refs.push({ section: "vorschlaege", conversationId: 1, reason: "doppelt" });
+  const raw = REPORT + "\n" + block(JSON.stringify({ references: refs }));
+  const { references } = parseInsightsReferences(raw, new Set(ids));
+  assert.equal(references.length, MAX_REFS_PER_SECTION, "capped per section");
+  assert.ok(references.every((r) => r.reason.length <= 200), "reason clamped");
+  assert.equal(
+    new Set(references.map((r) => r.conversationId)).size,
+    references.length,
+    "no duplicate conversation per section"
+  );
+});
+
+test("parseInsightsReferences: garbage input is safe", () => {
+  assert.deepEqual(parseInsightsReferences(undefined, new Set()), {
+    markdown: "",
+    references: [],
+  });
+  const arr = parseInsightsReferences(
+    REPORT + "\n" + block(JSON.stringify({ references: "nope" })),
+    new Set([1])
+  );
+  assert.deepEqual(arr.references, []);
+});
+
+test("INSIGHTS_SECTIONS covers exactly the four report sections", () => {
+  assert.deepEqual(INSIGHTS_SECTIONS, [
+    "top_themen",
+    "stockend",
+    "beduerfnisse",
+    "vorschlaege",
+  ]);
+});
+
 test("category/quality vocabularies cover the documented set", () => {
   for (const c of ["product-advice", "refund/return", "sizing", "price/discount", "technical-question", "complaint", "off-topic"]) {
     assert.ok(ANALYSIS_CATEGORIES.includes(c), `category ${c}`);
@@ -178,6 +303,12 @@ test("GUARDRAIL: the rollup reads cached summaries, not transcripts", () => {
   assert.ok(ins.includes("buildRollupPrompt"), "insights builds the prompt from summaries");
   assert.ok(!ins.includes("getAdminConversationDetail"), "insights never loads a transcript");
   assert.ok(!ins.includes(".transcript"), "insights never reads a transcript field");
+});
+
+test("GUARDRAIL: insights references migration exists and adds references_json", () => {
+  const mig = read("../../migrations/0033_insights_references.sql");
+  assert.ok(mig.includes("ALTER TABLE conversation_insights"), "alters conversation_insights");
+  assert.ok(mig.includes("references_json"), "adds the references_json column");
 });
 
 test("GUARDRAIL: analysis cache lives on the conversation row (dropped on erase)", () => {

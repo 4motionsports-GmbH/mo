@@ -253,7 +253,82 @@ export function buildRollupPrompt(analyses) {
     const qual = QUALITY_LABELS[coerceQuality(a.quality)] ?? a.quality;
     const tags = coerceTags(a.tags);
     const tagStr = tags.length ? ` · Tags: ${tags.join(", ")}` : "";
-    return `${i + 1}. [${cat} · ${qual}${tagStr}] ${a.summary.trim()}`;
+    // Real conversation ID when available — the insights pass asks the model to
+    // reference these IDs back, so they must be the DB ids, not a running index.
+    const prefix = Number.isInteger(a.id) && a.id > 0 ? `[#${a.id}]` : `${i + 1}.`;
+    return `${prefix} [${cat} · ${qual}${tagStr}] ${a.summary.trim()}`;
   });
   return lines.join("\n");
+}
+
+// ── Insights references (verlinkte Gespräche) ─────────────────────────────────
+// The rollup model appends a ```json:refs fenced block mapping report sections to
+// the conversation IDs that back them. The parser below is deliberately paranoid:
+// the block must NEVER render, a bad block must NEVER cost the narrative, and a
+// hallucinated ID must NEVER reach the DB or UI.
+
+/** The four report sections a reference may point at (keys are the contract). */
+export const INSIGHTS_SECTIONS = [
+  "top_themen",
+  "stockend",
+  "beduerfnisse",
+  "vorschlaege",
+];
+
+/** Max references kept per section (the prompt asks for ~6; hard cap 8). */
+export const MAX_REFS_PER_SECTION = 8;
+
+/** Max length of a reference's reason sentence. */
+export const MAX_REF_REASON_CHARS = 200;
+
+// Matches the whole ```json:refs … ``` fence (first occurrence).
+const REFS_BLOCK_RE = /```json:refs\s*([\s\S]*?)```/i;
+
+/**
+ * Extract + strip the ```json:refs block from the model's rollup output.
+ * Returns { markdown, references }:
+ *   - markdown: the report WITHOUT the block (it must never render);
+ *   - references: validated entries only — section must be one of the four
+ *     keys, conversationId must be in `validIds` (anti-hallucination: only IDs
+ *     actually fed to this rollup survive), reason trimmed + capped, and at most
+ *     MAX_REFS_PER_SECTION per section.
+ * Any parse failure ⇒ references = [] while the narrative is still returned.
+ */
+export function parseInsightsReferences(rawText, validIds) {
+  const text = typeof rawText === "string" ? rawText : "";
+  const match = text.match(REFS_BLOCK_RE);
+  const markdown = match ? text.replace(REFS_BLOCK_RE, "").trim() : text.trim();
+  if (!match) return { markdown, references: [] };
+
+  let parsed;
+  try {
+    parsed = JSON.parse(match[1]);
+  } catch {
+    return { markdown, references: [] };
+  }
+  const raw = Array.isArray(parsed?.references) ? parsed.references : [];
+  const ids = validIds instanceof Set ? validIds : new Set(validIds ?? []);
+
+  const perSection = new Map();
+  const seen = new Set();
+  const references = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const section = typeof r.section === "string" ? r.section.trim() : "";
+    if (!INSIGHTS_SECTIONS.includes(section)) continue;
+    const conversationId = Number(r.conversationId);
+    if (!Number.isInteger(conversationId) || !ids.has(conversationId)) continue;
+    const key = `${section}:${conversationId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const reason =
+      typeof r.reason === "string"
+        ? r.reason.trim().slice(0, MAX_REF_REASON_CHARS)
+        : "";
+    const n = perSection.get(section) ?? 0;
+    if (n >= MAX_REFS_PER_SECTION) continue;
+    perSection.set(section, n + 1);
+    references.push({ section, conversationId, reason });
+  }
+  return { markdown, references };
 }

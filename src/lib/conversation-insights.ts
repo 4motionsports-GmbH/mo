@@ -28,7 +28,10 @@ import {
   getCachedInsights,
   type InsightsRollup,
 } from "./admin-conversations";
-import { buildRollupPrompt } from "./conversation-analysis-core.mjs";
+import {
+  buildRollupPrompt,
+  parseInsightsReferences,
+} from "./conversation-analysis-core.mjs";
 
 /** Cheap Haiku-class model — summarising summaries, not consultation. */
 export const INSIGHTS_MODEL = "claude-haiku-4-5";
@@ -71,6 +74,7 @@ export async function generateConversationInsights(
       costEur: 0,
       generatedAt: nowIso(),
       cached: false,
+      references: [],
     };
   }
 
@@ -86,18 +90,21 @@ export async function generateConversationInsights(
       costEur: 0,
       generatedAt: nowIso(),
       cached: false,
+      references: [],
     };
   }
 
   try {
     const { text, usage } = await generateText({
       model: anthropic(INSIGHTS_MODEL),
-      maxOutputTokens: 1300,
+      // Raised from 1300 to leave room for the ```json:refs block after the report.
+      maxOutputTokens: 2000,
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
         "erhältst KURZ-ZUSAMMENFASSUNGEN vieler Beratungsgespräche (bereits " +
-        "verdichtet) zwischen Kunden und dem Chatbot 'Mo', jeweils mit Kategorie " +
-        "und Qualitätssignal. Erstelle daraus EINEN kompakten, umsetzbaren " +
+        "verdichtet) zwischen Kunden und dem Chatbot 'Mo', jeweils mit ihrer " +
+        "Gesprächs-ID (z. B. [#1234]) sowie Kategorie und Qualitätssignal. " +
+        "Erstelle daraus EINEN kompakten, umsetzbaren " +
         "Insights-Report auf Deutsch (Markdown) für das Produkt-/Beratungsteam.\n\n" +
         "Gliederung (mit Markdown-Überschriften):\n" +
         "1. **Top-Themen & Fragen** — worüber Kund:innen am häufigsten sprechen.\n" +
@@ -109,7 +116,25 @@ export async function generateConversationInsights(
         "umsetzbare Hinweise, z. B. 'X im Prompt/Verhalten von Mo verfeinern'. " +
         "Formuliere sie als EMPFEHLUNGEN, nicht als automatische Änderungen.\n\n" +
         "Sei faktenbasiert, knapp und priorisiere nach Häufigkeit/Wirkung. Erfinde " +
-        "nichts, was nicht aus den Zusammenfassungen hervorgeht.",
+        "nichts, was nicht aus den Zusammenfassungen hervorgeht. Nenne im " +
+        "Report-Text selbst KEINE Gesprächs-IDs.\n\n" +
+        "NACH dem Report hänge GENAU EINEN Codeblock an, der die Belege " +
+        "(referenzierte Gespräche) je Abschnitt maschinenlesbar auflistet:\n" +
+        "```json:refs\n" +
+        '{ "references": [ { "section": "top_themen", "conversationId": 1234, ' +
+        '"reason": "Ein kurzer deutscher Satz, warum dieses Gespräch das Muster belegt." } ] }\n' +
+        "```\n" +
+        "Regeln für den Block:\n" +
+        "- \"section\" ist GENAU einer dieser Schlüssel: top_themen, stockend, " +
+        "beduerfnisse, vorschlaege (1→top_themen, 2→stockend, 3→beduerfnisse, " +
+        "4→vorschlaege).\n" +
+        "- Gib für JEDEN der vier Abschnitte Referenzen an, sofern es Belege gibt; " +
+        "maximal ca. 6 pro Abschnitt (die aussagekräftigsten zuerst).\n" +
+        "- \"conversationId\" MUSS eine der [#…]-IDs aus den gelieferten " +
+        "Zusammenfassungen sein — erfinde NIEMALS IDs.\n" +
+        "- \"reason\" ist EIN kurzer deutscher Satz, der sich auf die jeweilige " +
+        "Zusammenfassung stützt.\n" +
+        "- Nach dem Block folgt NICHTS mehr.",
       prompt:
         `Zeitraum: ${from} bis ${to}\n` +
         `Anzahl analysierter Gespräche: ${analyses.length}\n\n` +
@@ -118,7 +143,14 @@ export async function generateConversationInsights(
         "Erstelle jetzt den Insights-Report.",
     });
 
-    const body = text.trim() || "_Keine klaren Muster erkennbar._";
+    // Extract + strip the ```json:refs block BEFORE the boundary note is appended
+    // and the markdown is saved — the block must never render. References are
+    // validated against the IDs actually fed to this rollup (anti-hallucination);
+    // any parse failure yields [] while the narrative is kept.
+    const validIds = new Set(analyses.map((a) => a.id));
+    const { markdown, references } = parseInsightsReferences(text, validIds);
+
+    const body = markdown.trim() || "_Keine klaren Muster erkennbar._";
     const inputTokens = usage?.inputTokens ?? 0;
     const outputTokens = usage?.outputTokens ?? 0;
 
@@ -138,6 +170,7 @@ export async function generateConversationInsights(
       model: INSIGHTS_MODEL,
       inputTokens,
       outputTokens,
+      references,
     });
 
     // Re-read the freshly-saved row so the displayed cost is priced by the SAME
@@ -155,6 +188,7 @@ export async function generateConversationInsights(
       costEur: 0,
       generatedAt: nowIso(),
       cached: false,
+      references,
     };
   } catch (err) {
     reportError(err, { route: "lib/conversation-insights", phase: "generate" });
@@ -167,6 +201,7 @@ export async function generateConversationInsights(
       costEur: 0,
       generatedAt: nowIso(),
       cached: false,
+      references: [],
     };
   }
 }

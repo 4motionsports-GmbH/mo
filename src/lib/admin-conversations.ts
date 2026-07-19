@@ -116,10 +116,24 @@ export interface ConversationStats {
 }
 
 export interface RollupAnalysis {
+  /** Real conversation ID — fed to the rollup model so its references can be
+   *  validated against exactly this set (anti-hallucination). */
+  id: number;
   summary: string;
   category: string | null;
   quality: string | null;
   tags: string[];
+}
+
+/** The four rollup report sections a reference can point at. */
+export type InsightsSection = "top_themen" | "stockend" | "beduerfnisse" | "vorschlaege";
+
+/** One "this conversation backs this finding" link in the rollup. */
+export interface InsightsReference {
+  section: InsightsSection;
+  conversationId: number;
+  /** One short German sentence: why this chat exemplifies the finding. */
+  reason: string;
 }
 
 export interface InsightsRollup {
@@ -131,6 +145,8 @@ export interface InsightsRollup {
   costEur: number;
   generatedAt: string;
   cached: boolean;
+  /** Validated per-section conversation links ([] for pre-feature cached rows). */
+  references: InsightsReference[];
 }
 
 export interface AdminConversationFilter {
@@ -651,7 +667,8 @@ export async function loadAnalysesForRollup(
   if (!sql) return [];
   try {
     const rows = (await sql`
-      SELECT analysis_summary AS summary,
+      SELECT id,
+             analysis_summary AS summary,
              analysis_category AS category,
              analysis_quality AS quality,
              analysis_tags AS tags
@@ -662,12 +679,14 @@ export async function loadAnalysesForRollup(
        ORDER BY created_at DESC, id DESC
        LIMIT ${limit}
     `) as Array<{
+      id: number;
       summary: string;
       category: string | null;
       quality: string | null;
       tags: string[] | null;
     }>;
     return rows.map((r) => ({
+      id: Number(r.id),
       summary: r.summary,
       category: r.category,
       quality: r.quality,
@@ -677,6 +696,33 @@ export async function loadAnalysesForRollup(
     reportError(err, { route: "lib/admin-conversations", phase: "loadRollup" });
     return [];
   }
+}
+
+/** Coerce a stored references_json value into validated InsightsReference[]
+ *  (null column ⇒ [] — old cached rollups predate the feature). */
+function mapInsightsReferences(v: unknown): InsightsReference[] {
+  if (!Array.isArray(v)) return [];
+  const out: InsightsReference[] = [];
+  for (const raw of v) {
+    const r = raw as { section?: unknown; conversationId?: unknown; reason?: unknown };
+    if (!r || typeof r !== "object") continue;
+    const section = r.section;
+    if (
+      section !== "top_themen" &&
+      section !== "stockend" &&
+      section !== "beduerfnisse" &&
+      section !== "vorschlaege"
+    )
+      continue;
+    const conversationId = Number(r.conversationId);
+    if (!Number.isInteger(conversationId) || conversationId <= 0) continue;
+    out.push({
+      section,
+      conversationId,
+      reason: typeof r.reason === "string" ? r.reason : "",
+    });
+  }
+  return out;
 }
 
 function mapInsights(r: Record<string, unknown>, cached: boolean): InsightsRollup {
@@ -694,6 +740,7 @@ function mapInsights(r: Record<string, unknown>, cached: boolean): InsightsRollu
     ),
     generatedAt: toIso(r.generated_at),
     cached,
+    references: mapInsightsReferences(r.references_json),
   };
 }
 
@@ -707,7 +754,7 @@ export async function getCachedInsights(
   try {
     const rows = (await sql`
       SELECT date_from, date_to, summary_md, analyzed_count, model,
-             input_tokens, output_tokens, generated_at
+             input_tokens, output_tokens, generated_at, references_json
         FROM conversation_insights
        WHERE date_from = ${from}::date AND date_to = ${to}::date
     `) as Array<Record<string, unknown>>;
@@ -728,6 +775,7 @@ export async function saveInsights(
     model: string | null;
     inputTokens: number;
     outputTokens: number;
+    references: InsightsReference[];
   },
   sql: Sql | null = getSql()
 ): Promise<boolean> {
@@ -735,16 +783,18 @@ export async function saveInsights(
   try {
     await sql`
       INSERT INTO conversation_insights
-        (date_from, date_to, summary_md, analyzed_count, model, input_tokens, output_tokens, generated_at)
+        (date_from, date_to, summary_md, analyzed_count, model, input_tokens, output_tokens, references_json, generated_at)
       VALUES
         (${rollup.from}::date, ${rollup.to}::date, ${rollup.summaryMd}, ${rollup.analyzedCount},
-         ${rollup.model}, ${rollup.inputTokens}, ${rollup.outputTokens}, now())
+         ${rollup.model}, ${rollup.inputTokens}, ${rollup.outputTokens},
+         ${JSON.stringify(rollup.references ?? [])}::jsonb, now())
       ON CONFLICT (date_from, date_to) DO UPDATE SET
         summary_md = EXCLUDED.summary_md,
         analyzed_count = EXCLUDED.analyzed_count,
         model = EXCLUDED.model,
         input_tokens = EXCLUDED.input_tokens,
         output_tokens = EXCLUDED.output_tokens,
+        references_json = EXCLUDED.references_json,
         generated_at = now()
     `;
     return true;

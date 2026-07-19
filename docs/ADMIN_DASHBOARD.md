@@ -631,6 +631,30 @@ stall, unmet needs, and concrete "consider refining X" suggestions. Cached by da
 range (`conversation_insights`). A free SQL `GROUP BY` over the cached
 categories/qualities renders the distribution alongside it.
 
+**Verlinkte Gespräche (references).** Each rollup also carries per-section
+conversation references: the model sees each summary prefixed with its real
+conversation ID (`[#1234] …`) and appends a fenced ` ```json:refs ` block mapping
+the four report sections (`top_themen`, `stockend`, `beduerfnisse`,
+`vorschlaege`) to the conversations that back them, each with a one-sentence
+German reason. The block is **extracted and stripped server-side before the
+report is saved** (it never renders) and parsed defensively
+(`parseInsightsReferences` in
+[`lib/conversation-analysis-core.mjs`](../src/lib/conversation-analysis-core.mjs)):
+
+- **Validation rule (anti-hallucination):** a reference survives only if its
+  `conversationId` is in the set of IDs actually loaded for that rollup, its
+  section is one of the four keys, the reason is trimmed/capped (~200 chars), and
+  at most 8 references per section are kept. Hallucinated or out-of-window IDs
+  never reach the DB or UI. A malformed block costs the references, never the
+  narrative (`references_json = []`).
+
+References are stored in `conversation_insights.references_json` (migration
+0033, nullable) and rendered below the report as one collapsible per section
+(„Relevante Gespräche (n)"); clicking „Gespräch #1234 öffnen" opens that
+conversation in the detail panel (fetch-by-ID, so it works even off the current
+list page; a since-erased conversation shows the normal error message). Old
+cached rollups without references render unchanged, with a hint to regenerate.
+
 > **Deliberate boundary (out of scope):** the system NEVER rewrites Mo's prompt or
 > behaviour automatically. Mo gives legally + product-sensitive advice; refinement
 > stays **human-in-the-loop** — the insights inform a human who decides any prompt

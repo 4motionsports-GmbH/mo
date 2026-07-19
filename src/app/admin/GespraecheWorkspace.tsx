@@ -157,6 +157,15 @@ export function GespraecheWorkspace({
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [selectedId, setSelectedId] = React.useState<number | null>(null);
+  const detailRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Insights reference links select by ID (the detail endpoint fetches directly,
+  // so this works even when the conversation is not on the current list page) and
+  // scroll the detail panel into view — mobile layouts stack vertically.
+  const openConversation = React.useCallback((id: number) => {
+    setSelectedId(id);
+    detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
 
   // URL navigation: build the next g* state and let the server re-render.
   const go = React.useCallback(
@@ -188,6 +197,7 @@ export function GespraecheWorkspace({
         unanalyzed={unanalyzed}
         bulkEstimateEur={bulkEstimateEur}
         initialInsights={insights}
+        onOpenConversation={openConversation}
       />
 
       <div className="grid gap-4 lg:grid-cols-[24rem_1fr]">
@@ -241,7 +251,9 @@ export function GespraecheWorkspace({
           </ul>
         </div>
 
-        <ConversationDetail key={selectedId ?? "none"} conversationId={selectedId} />
+        <div ref={detailRef} className="scroll-mt-4">
+          <ConversationDetail key={selectedId ?? "none"} conversationId={selectedId} />
+        </div>
       </div>
     </div>
   );
