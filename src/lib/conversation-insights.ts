@@ -31,6 +31,7 @@ import {
 import {
   buildRollupPrompt,
   parseInsightsReferences,
+  parseInsightsRefsPayload,
 } from "./conversation-analysis-core.mjs";
 
 /** Cheap Haiku-class model — summarising summaries, not consultation. */
@@ -95,13 +96,21 @@ export async function generateConversationInsights(
   }
 
   try {
-    const { text, usage } = await generateText({
+    // ── Pass 1: the narrative report ─────────────────────────────────────────
+    // References are deliberately NOT part of this call: on large windows the
+    // report alone can approach the output ceiling, and anything appended after
+    // it (a refs block) is the first thing truncation destroys. Seen in
+    // production — the report ran long, got cut mid-sentence, and no refs block
+    // was ever emitted. The refs therefore get their own bounded pass below.
+    const summariesBlock =
+      `Zeitraum: ${from} bis ${to}\n` +
+      `Anzahl analysierter Gespräche: ${analyses.length}\n\n` +
+      `## Zusammenfassungen (verdichtet, mit [Kategorie · Qualität])\n\n` +
+      `${buildRollupPrompt(analyses)}`;
+
+    const { text, usage, finishReason } = await generateText({
       model: anthropic(INSIGHTS_MODEL),
-      // Raised from the original 1300 to leave room for the ```json:refs block
-      // after the report. 2000 proved too tight in production (the block was
-      // truncated away at the limit and the report carried no references), so
-      // give it comfortable headroom — Haiku output is cheap.
-      maxOutputTokens: 3500,
+      maxOutputTokens: 3000,
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
         "erhältst KURZ-ZUSAMMENFASSUNGEN vieler Beratungsgespräche (bereits " +
@@ -118,57 +127,81 @@ export async function generateConversationInsights(
         "4. **Vorschläge zur Verfeinerung (für einen Menschen)** — konkrete, " +
         "umsetzbare Hinweise, z. B. 'X im Prompt/Verhalten von Mo verfeinern'. " +
         "Formuliere sie als EMPFEHLUNGEN, nicht als automatische Änderungen.\n\n" +
-        "Sei faktenbasiert, knapp und priorisiere nach Häufigkeit/Wirkung. Erfinde " +
+        "Sei faktenbasiert und priorisiere nach Häufigkeit/Wirkung. Erfinde " +
         "nichts, was nicht aus den Zusammenfassungen hervorgeht. Nenne im " +
-        "Report-Text selbst KEINE Gesprächs-IDs.\n\n" +
-        "NACH dem Report hänge GENAU EINEN Codeblock an, der die Belege " +
-        "(referenzierte Gespräche) je Abschnitt maschinenlesbar auflistet:\n" +
-        "```json:refs\n" +
-        '{ "references": [ { "section": "top_themen", "conversationId": 1234, ' +
-        '"reason": "Ein kurzer deutscher Satz, warum dieses Gespräch das Muster belegt." } ] }\n' +
-        "```\n" +
-        "Regeln für den Block:\n" +
-        "- \"section\" ist GENAU einer dieser Schlüssel: top_themen, stockend, " +
-        "beduerfnisse, vorschlaege (1→top_themen, 2→stockend, 3→beduerfnisse, " +
-        "4→vorschlaege).\n" +
-        "- Gib für JEDEN der vier Abschnitte Referenzen an, sofern es Belege gibt; " +
-        "maximal ca. 6 pro Abschnitt (die aussagekräftigsten zuerst).\n" +
-        "- \"conversationId\" MUSS eine der [#…]-IDs aus den gelieferten " +
-        "Zusammenfassungen sein — erfinde NIEMALS IDs.\n" +
-        "- \"reason\" ist EIN kurzer deutscher Satz, der sich auf die jeweilige " +
-        "Zusammenfassung stützt.\n" +
-        "- Nach dem Block folgt NICHTS mehr.",
-      prompt:
-        `Zeitraum: ${from} bis ${to}\n` +
-        `Anzahl analysierter Gespräche: ${analyses.length}\n\n` +
-        `## Zusammenfassungen (verdichtet, mit [Kategorie · Qualität])\n\n` +
-        `${buildRollupPrompt(analyses)}\n\n` +
-        "Erstelle jetzt den Insights-Report.",
+        "Report-Text KEINE Gesprächs-IDs (keine [#…]-Verweise — die Belege " +
+        "werden separat erfasst).\n\n" +
+        "WICHTIG — Länge: Der GESAMTE Report muss unter ca. 700 Wörtern bleiben " +
+        "und vollständig enden. Lieber die 3–5 wichtigsten Punkte pro Abschnitt " +
+        "sauber ausführen als viele anreißen.",
+      prompt: `${summariesBlock}\n\nErstelle jetzt den Insights-Report.`,
     });
 
-    // Extract + strip the ```json:refs block BEFORE the boundary note is appended
-    // and the markdown is saved — the block must never render. References are
-    // validated against the IDs actually fed to this rollup (anti-hallucination);
-    // any parse failure yields [] while the narrative is kept.
+    if (finishReason === "length") {
+      reportError(new Error("insights report truncated at maxOutputTokens"), {
+        route: "lib/conversation-insights",
+        phase: "report-truncated",
+      });
+    }
+
+    // Strip any ```json:refs block the model may still have appended (belt and
+    // braces — the block must never render); its refs serve as a fallback.
     const validIds = new Set(analyses.map((a) => a.id));
-    const { markdown, references, blockFound } = parseInsightsReferences(text, validIds);
+    const { markdown, references: inlineRefs } = parseInsightsReferences(text, validIds);
+
+    // ── Pass 2: references only (JSON out, nothing else) ─────────────────────
+    // A dedicated bounded pass cannot be starved by report length. Failure here
+    // must never cost the narrative, so it is fenced in its own try/catch.
+    let references = inlineRefs;
+    let refsInputTokens = 0;
+    let refsOutputTokens = 0;
+    try {
+      const refsRes = await generateText({
+        model: anthropic(INSIGHTS_MODEL),
+        maxOutputTokens: 1500,
+        system:
+          "Du bist Analyst bei motion sports. Du erhältst (a) KURZ-" +
+          "ZUSAMMENFASSUNGEN von Beratungsgesprächen, jede mit ihrer Gesprächs-ID " +
+          "(z. B. [#1234]), und (b) einen fertigen Insights-Report mit vier " +
+          "Abschnitten. Deine EINZIGE Aufgabe: Belege liefern — welche Gespräche " +
+          "stützen welchen Report-Abschnitt.\n\n" +
+          "Antworte AUSSCHLIESSLICH mit diesem JSON (kein Markdown, kein Text " +
+          "davor oder danach):\n" +
+          '{ "references": [ { "section": "top_themen", "conversationId": 1234, ' +
+          '"reason": "Ein kurzer deutscher Satz, warum dieses Gespräch das Muster belegt." } ] }\n\n' +
+          "Regeln:\n" +
+          "- \"section\" ist GENAU einer dieser Schlüssel: top_themen (Abschnitt 1), " +
+          "stockend (Abschnitt 2), beduerfnisse (Abschnitt 3), vorschlaege (Abschnitt 4).\n" +
+          "- Gib für JEDEN der vier Abschnitte Referenzen an, sofern es Belege " +
+          "gibt; maximal 6 pro Abschnitt (die aussagekräftigsten zuerst).\n" +
+          "- \"conversationId\" MUSS eine der [#…]-IDs aus den gelieferten " +
+          "Zusammenfassungen sein — erfinde NIEMALS IDs.\n" +
+          "- \"reason\" ist EIN kurzer deutscher Satz, gestützt auf die jeweilige " +
+          "Zusammenfassung.",
+        prompt:
+          `${summariesBlock}\n\n## Insights-Report\n\n${markdown}\n\n` +
+          "Gib jetzt NUR das references-JSON aus.",
+      });
+      refsInputTokens = refsRes.usage?.inputTokens ?? 0;
+      refsOutputTokens = refsRes.usage?.outputTokens ?? 0;
+      const passRefs = parseInsightsRefsPayload(refsRes.text, validIds);
+      if (passRefs.length > 0) references = passRefs;
+    } catch (refsErr) {
+      reportError(refsErr, { route: "lib/conversation-insights", phase: "refs-pass" });
+    }
 
     // References failing is tolerated (the narrative always survives) but must
-    // not be silent — surface WHY they are missing so it is debuggable.
+    // not be silent — surface it so it is debuggable in observability.
     if (references.length === 0) {
-      reportError(
-        new Error(
-          blockFound
-            ? "insights refs block present but yielded no valid references"
-            : "insights refs block missing from model output"
-        ),
-        { route: "lib/conversation-insights", phase: "parse-refs" }
-      );
+      reportError(new Error("insights references empty after both passes"), {
+        route: "lib/conversation-insights",
+        phase: "parse-refs",
+      });
     }
 
     const body = markdown.trim() || "_Keine klaren Muster erkennbar._";
-    const inputTokens = usage?.inputTokens ?? 0;
-    const outputTokens = usage?.outputTokens ?? 0;
+    const inputTokens = (usage?.inputTokens ?? 0) + refsInputTokens;
+    const outputTokens = (usage?.outputTokens ?? 0) + refsOutputTokens;
 
     await recordAiUsage({
       callSite: "conversation_insights",

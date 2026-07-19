@@ -23,6 +23,7 @@ import {
   tallyQualities,
   buildRollupPrompt,
   parseInsightsReferences,
+  parseInsightsRefsPayload,
   INSIGHTS_SECTIONS,
   MAX_REFS_PER_SECTION,
   ANALYSIS_CATEGORIES,
@@ -302,6 +303,52 @@ test("parseInsightsReferences: a non-refs JSON code block in the report is left 
   assert.equal(blockFound, false);
   assert.equal(markdown, withCode.trim(), "unrelated code block stays in the markdown");
   assert.deepEqual(references, []);
+});
+
+test("parseInsightsRefsPayload: raw JSON from the dedicated refs pass", () => {
+  const refs = parseInsightsRefsPayload(
+    JSON.stringify({
+      references: [{ section: "top_themen", conversationId: 11, reason: "Belegt das Muster." }],
+    }),
+    new Set([11])
+  );
+  assert.deepEqual(refs, [
+    { section: "top_themen", conversationId: 11, reason: "Belegt das Muster." },
+  ]);
+});
+
+test("parseInsightsRefsPayload: tolerates fences, prose framing and truncation", () => {
+  const fenced = parseInsightsRefsPayload(
+    'Hier die Belege:\n```json\n{"references":[{"section":"stockend","conversationId":22,"reason":"x"}]}\n```',
+    new Set([22])
+  );
+  assert.equal(fenced.length, 1);
+  assert.equal(fenced[0].conversationId, 22);
+
+  // truncated mid-entry: only the complete reference survives
+  const truncated = parseInsightsRefsPayload(
+    '{"references":[{"section":"beduerfnisse","conversationId":33,"reason":"ok"},{"section":"vorschlaege","conversationId":44,"reason":"abgeschni',
+    new Set([33, 44])
+  );
+  assert.deepEqual(truncated, [
+    { section: "beduerfnisse", conversationId: 33, reason: "ok" },
+  ]);
+});
+
+test("parseInsightsRefsPayload: same validation as the block parser (bad IDs/sections/garbage)", () => {
+  assert.deepEqual(parseInsightsRefsPayload("kein json", new Set([1])), []);
+  assert.deepEqual(parseInsightsRefsPayload(undefined, new Set([1])), []);
+  const refs = parseInsightsRefsPayload(
+    JSON.stringify({
+      references: [
+        { section: "banana", conversationId: 1, reason: "x" },
+        { section: "top_themen", conversationId: 999, reason: "erfunden" },
+        { section: "top_themen", conversationId: 1, reason: "ok" },
+      ],
+    }),
+    new Set([1])
+  );
+  assert.deepEqual(refs, [{ section: "top_themen", conversationId: 1, reason: "ok" }]);
 });
 
 test("INSIGHTS_SECTIONS covers exactly the four report sections", () => {

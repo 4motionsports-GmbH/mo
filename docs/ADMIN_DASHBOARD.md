@@ -633,12 +633,15 @@ categories/qualities renders the distribution alongside it.
 
 **Verlinkte Gespräche (references).** Each rollup also carries per-section
 conversation references: the model sees each summary prefixed with its real
-conversation ID (`[#1234] …`) and appends a fenced ` ```json:refs ` block mapping
-the four report sections (`top_themen`, `stockend`, `beduerfnisse`,
-`vorschlaege`) to the conversations that back them, each with a one-sentence
-German reason. The block is **extracted and stripped server-side before the
-report is saved** (it never renders) and parsed defensively
-(`parseInsightsReferences` in
+conversation ID (`[#1234] …`). References are produced by a **dedicated second
+model pass** (JSON-only output, same cheap model, same summaries + the finished
+report as input) mapping the four report sections (`top_themen`, `stockend`,
+`beduerfnisse`, `vorschlaege`) to the conversations that back them, each with a
+one-sentence German reason — a separate pass because appending a refs block to
+the report itself proved fragile (a long report truncates the block away). Any
+` ```json:refs ` block the report pass still emits is stripped server-side
+before saving (it never renders) and used as a fallback. Both payloads are
+parsed defensively (`parseInsightsReferences` / `parseInsightsRefsPayload` in
 [`lib/conversation-analysis-core.mjs`](../src/lib/conversation-analysis-core.mjs)):
 
 - **Validation rule (anti-hallucination):** a reference survives only if its

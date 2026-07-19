@@ -366,6 +366,12 @@ export function parseInsightsReferences(rawText, validIds) {
 
   if (!blockFound) return { markdown, references: [], blockFound };
 
+  return { markdown, references: validateRefsList(parsed, validIds), blockFound };
+}
+
+/** Validate a parsed refs payload down to trustworthy entries (shared by the
+ *  in-report block parser and the dedicated refs-pass parser). */
+function validateRefsList(parsed, validIds) {
   const raw = Array.isArray(parsed?.references) ? parsed.references : [];
   const ids = validIds instanceof Set ? validIds : new Set(validIds ?? []);
 
@@ -390,5 +396,19 @@ export function parseInsightsReferences(rawText, validIds) {
     perSection.set(section, n + 1);
     references.push({ section, conversationId, reason });
   }
-  return { markdown, references, blockFound };
+  return references;
+}
+
+/**
+ * Parse the DEDICATED refs pass's response — the model is asked for raw JSON
+ * ({"references": [...]}), but fences, prose framing and truncation are all
+ * tolerated. Same validation as the in-report block. Returns references[].
+ */
+export function parseInsightsRefsPayload(rawText, validIds) {
+  const text = typeof rawText === "string" ? rawText : "";
+  const unfenced = text.replace(/```(?:json(?::refs)?)?/gi, "").trim();
+  const start = unfenced.indexOf("{");
+  if (start === -1) return [];
+  const parsed = tryParseRefsJson(unfenced.slice(start));
+  return validateRefsList(parsed, validIds);
 }
