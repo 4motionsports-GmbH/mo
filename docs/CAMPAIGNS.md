@@ -220,6 +220,9 @@ out of the sync ages out; drafts cascade with their contact). The
 | Batch prepare | `POST /api/admin/campaign/prepare` |
 | Single draft / regenerate | `POST /api/admin/campaign/draft` |
 | Save edits | `POST /api/admin/campaign/update` |
+| Curate recommendations (+ bundle rebuild) | `POST /api/admin/campaign/recommendations` |
+| Set discount post-generation | `POST /api/admin/campaign/discount` |
+| Rebuild queue (discard all open drafts → pending) | `POST /api/admin/campaign/reset-queue` |
 | Skip / mark-done / send | `POST /api/admin/campaign/{skip,mark-done,send}` |
 | UI | `src/app/admin/KampagneTab.tsx` + `KampagneWorkspace.tsx` |
 | Libs | `campaign-{sync,store,prepare,draft,recommendations,email}.ts`, `campaign-{language,flags,gates,sync-core,draft-core}.mjs`, `discount-swap.mjs`, `shopify-customers.ts` |

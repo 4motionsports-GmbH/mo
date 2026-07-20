@@ -181,8 +181,19 @@ export function KampagneWorkspace({
   const [optInFilter, setOptInFilter] = React.useState<"all" | "doi" | "soi">("all");
   const [search, setSearch] = React.useState("");
   const [busy, setBusy] = React.useState<
-    null | "send" | "skip" | "regen" | "sync" | "prepare" | "markdone" | "bundle" | "recs" | "discount"
+    | null
+    | "send"
+    | "skip"
+    | "regen"
+    | "sync"
+    | "prepare"
+    | "markdone"
+    | "bundle"
+    | "recs"
+    | "discount"
+    | "reset"
   >(null);
+  const [resetOpen, setResetOpen] = React.useState(false);
   const [prepareProgress, setPrepareProgress] = React.useState<string | null>(null);
   const [prepareDepth, setPrepareDepth] = React.useState(0);
   const [copiedId, setCopiedId] = React.useState<number | null>(null);
@@ -607,6 +618,34 @@ export function KampagneWorkspace({
     }
   }, [busy]);
 
+  /** Rebuild the queue: all open drafts are discarded (edits included), the
+   * contacts return to 'pending', and "Prepare" regenerates them with the
+   * current code. Called only from the confirm dialog. */
+  const doResetQueue = React.useCallback(async () => {
+    if (busy) return;
+    setResetOpen(false);
+    setBusy("reset");
+    try {
+      const json = (await callApi("/api/admin/campaign/reset-queue", {})) as {
+        reset?: number;
+      };
+      toast({
+        variant: "success",
+        title: `${json.reset ?? 0} Entwürfe verworfen`,
+        description:
+          "Kontakte sind wieder „Offen“ — mit „Nächste 50 vorbereiten“ neu generieren. Seite wird neu geladen…",
+      });
+      window.location.reload();
+    } catch (err) {
+      toast({
+        variant: "error",
+        title: "Zurücksetzen fehlgeschlagen",
+        description: String((err as Error).message ?? err),
+      });
+      setBusy(null);
+    }
+  }, [busy]);
+
   const doPrepare = React.useCallback(async () => {
     if (busy) return;
     setBusy("prepare");
@@ -744,6 +783,14 @@ export function KampagneWorkspace({
                 : `Nächste ${PREPARE_TOTAL} vorbereiten`}
             </Button>
           </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setResetOpen(true)}
+            disabled={busy !== null || items.length === 0}
+          >
+            {busy === "reset" ? "Setzt zurück…" : "Warteschlange neu aufbauen"}
+          </Button>
         </span>
       </div>
 
@@ -988,6 +1035,30 @@ export function KampagneWorkspace({
           </CardContent>
         </Card>
       )}
+
+      {/* Rebuild-queue confirmation */}
+      <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Warteschlange neu aufbauen?</DialogTitle>
+            <DialogDescription>
+              Alle {items.length} offenen Entwürfe werden verworfen — auch manuelle
+              Änderungen an Betreff/Text gehen verloren. Die Kontakte werden wieder
+              „Offen“ und mit „Nächste {PREPARE_TOTAL} vorbereiten“ neu generiert
+              (erneute API-Kosten). Gesendete, übersprungene und unterdrückte Kontakte
+              sowie angehängte Set-Angebote bleiben unberührt.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetOpen(false)}>
+              Abbrechen
+            </Button>
+            <Button variant="destructive" onClick={doResetQueue}>
+              Entwürfe verwerfen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* First-send-of-the-day confirmation */}
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
