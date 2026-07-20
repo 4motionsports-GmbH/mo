@@ -654,20 +654,27 @@ parsed defensively (`parseInsightsReferences` / `parseInsightsRefsPayload` in
 - **Validation rule (anti-hallucination):** a reference survives only if its
   `conversationId` is in the set of IDs actually loaded for that rollup, its
   section is one of the four keys, the reason is trimmed/capped (~200 chars), and
-  at most 40 references per section are kept (the refs pass is asked to list
-  EVERY backing conversation; the cap is an anti-runaway bound). Hallucinated or
-  out-of-window IDs never reach the DB or UI. A malformed block costs the
-  references, never the narrative (`references_json = []`).
+  at most 8 references per section are kept — the refs are CURATED evidence for
+  the report's findings; complete "all chats for X" listings are the
+  category/quality list filters' job. Hallucinated or out-of-window IDs never
+  reach the DB or UI. A malformed block costs the references, never the
+  narrative (`references_json = []`).
 - **Scope:** only ANALYZED conversations can be referenced — the rollup reads
   cached summaries, so un-analyzed conversations in the window are invisible to
   it. Run the bulk action until the window is fully analyzed for full coverage.
 
 References are stored in `conversation_insights.references_json` (migration
 0033, nullable) and rendered below the report as one collapsible per section
-(„Relevante Gespräche (n)"); clicking „Gespräch #1234 öffnen" opens that
+(„Beleg-Gespräche (n)"); clicking „Gespräch #1234 öffnen" opens that
 conversation in the detail panel (fetch-by-ID, so it works even off the current
 list page; a since-erased conversation shows the normal error message). Old
 cached rollups without references render unchanged, with a hint to regenerate.
+
+**Layout:** the tab is ordered around the master–detail grid: filters → compact
+stats/distribution card (clickable filter bars directly above the list they
+filter) → conversation list + detail → the report card last, COLLAPSED by
+default (meta line + „Report anzeigen"), auto-expanded after a fresh
+generation — so the long narrative never pushes the work area off screen.
 
 > **Deliberate boundary (out of scope):** the system NEVER rewrites Mo's prompt or
 > behaviour automatically. Mo gives legally + product-sensitive advice; refinement

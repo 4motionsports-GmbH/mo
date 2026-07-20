@@ -53,7 +53,7 @@ import type {
   InsightsRollup,
   AdminTier,
 } from "@/lib/admin-conversations";
-import { GespraecheInsights } from "./GespraecheInsights";
+import { GespraecheStatsPanel, GespraecheReportPanel } from "./GespraecheInsights";
 
 interface FilterProps {
   preset: string;
@@ -194,14 +194,12 @@ export function GespraecheWorkspace({
     <div className="space-y-4">
       <ConversationFilters filter={filter} pending={pending} go={go} />
 
-      <GespraecheInsights
+      <GespraecheStatsPanel
         from={filter.from}
         to={filter.to}
         stats={stats}
         unanalyzed={unanalyzed}
         bulkEstimateEur={bulkEstimateEur}
-        initialInsights={insights}
-        onOpenConversation={openConversation}
         activeCategory={filter.category}
         activeQuality={filter.quality}
         onFilterCategory={(category) => go({ category, page: 1 })}
@@ -263,6 +261,14 @@ export function GespraecheWorkspace({
           <ConversationDetail key={selectedId ?? "none"} conversationId={selectedId} />
         </div>
       </div>
+
+      <GespraecheReportPanel
+        from={filter.from}
+        to={filter.to}
+        analyzedCount={stats.analyzedCount}
+        initialInsights={insights}
+        onOpenConversation={openConversation}
+      />
     </div>
   );
 }

@@ -161,10 +161,9 @@ export async function generateConversationInsights(
     try {
       const refsRes = await generateText({
         model: anthropic(INSIGHTS_MODEL),
-        // Exhaustive listing: up to MAX_REFS_PER_SECTION (40) refs × 4 sections
-        // at ~30 tokens each needs real room. Haiku output is cheap and the
-        // route budget (maxDuration) is sized for it.
-        maxOutputTokens: 8000,
+        // Curated examples (≤8 per section × 4 sections at ~30 tokens each) —
+        // complete listings are the list filters' job, not the model's.
+        maxOutputTokens: 2500,
         system:
           "Du bist Analyst bei motion sports. Du erhältst (a) KURZ-" +
           "ZUSAMMENFASSUNGEN von Beratungsgesprächen, jede mit ihrer Gesprächs-ID " +
@@ -178,9 +177,8 @@ export async function generateConversationInsights(
           "Regeln:\n" +
           "- \"section\" ist GENAU einer dieser Schlüssel: top_themen (Abschnitt 1), " +
           "stockend (Abschnitt 2), beduerfnisse (Abschnitt 3), vorschlaege (Abschnitt 4).\n" +
-          "- Sei VOLLSTÄNDIG: Referenziere JEDES Gespräch, dessen Zusammenfassung " +
-          "ein Muster des jeweiligen Abschnitts belegt — nicht nur eine Auswahl. " +
-          "Die relevantesten zuerst, maximal 40 pro Abschnitt. Ein Gespräch darf " +
+          "- KURATIERE: Wähle je Abschnitt die aussagekräftigsten Beleg-Gespräche " +
+          "aus, maximal 8 pro Abschnitt (die stärksten zuerst). Ein Gespräch darf " +
           "in mehreren Abschnitten erscheinen, wenn es mehrere Muster belegt.\n" +
           "- Gib für JEDEN der vier Abschnitte Referenzen an, sofern es Belege gibt.\n" +
           "- \"conversationId\" MUSS eine der [#…]-IDs aus den gelieferten " +

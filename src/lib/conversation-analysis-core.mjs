@@ -275,10 +275,10 @@ export const INSIGHTS_SECTIONS = [
   "vorschlaege",
 ];
 
-/** Hard cap on references kept per section. The refs pass is asked to list
- *  EVERY conversation that backs a section, so this is an anti-runaway bound
- *  (output budget + UI sanity), not a curation target. */
-export const MAX_REFS_PER_SECTION = 40;
+/** Hard cap on references kept per section. The refs are CURATED evidence for
+ *  the report's findings (the most telling examples) — complete "all chats for
+ *  X" listings are the deterministic category/quality list filters' job. */
+export const MAX_REFS_PER_SECTION = 8;
 
 /** Max length of a reference's reason sentence. */
 export const MAX_REF_REASON_CHARS = 200;
