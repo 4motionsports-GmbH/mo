@@ -65,6 +65,8 @@ export async function GespraecheTab({
         label: filter.range.label,
         tier: filter.tier,
         hasError: filter.hasError,
+        category: filter.category,
+        quality: filter.quality,
         page: filter.page,
       }}
     />

@@ -595,8 +595,15 @@ category/quality if present, and outcome signals derived from existing data:
 | email captured | `email_captures` EXISTS by session | session-grained |
 | "keine Antwort" (error proxy) | user turn present, zero assistant turns | see below |
 
-Filter by **date range** (reuses the KPI range resolver), **tier**, and
-**"nur ohne Bot-Antwort"**. Clicking a row opens the readable **transcript**
+Filter by **date range** (reuses the KPI range resolver), **tier**,
+**"nur ohne Bot-Antwort"**, and — over the cached analysis columns — by
+**Kategorie** and **Qualität** (`gcat`/`gqual`; only analysed conversations can
+match). The category/quality distribution bars in the insights panel are
+clickable and apply the same filters, so "show me ALL dropped-off chats in this
+window" is a deterministic one-click query, complete by construction (unlike the
+model-curated section references). Analysed rows show their cached one-line
+summary directly in the list as the per-chat explanation. Clicking a row opens
+the readable **transcript**
 (Kunde/Berater turns + timestamps, bot markdown rendered like the chat) — reusing
 the same readable-turn filter as the session/account transcript views
 (`tool_name IS NULL AND role IN ('user','assistant')`, applied in SQL).

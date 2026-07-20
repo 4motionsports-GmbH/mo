@@ -62,6 +62,8 @@ interface FilterProps {
   label: string;
   tier: AdminTier | null;
   hasError: boolean;
+  category: string | null;
+  quality: string | null;
   page: number;
 }
 
@@ -178,6 +180,8 @@ export function GespraecheWorkspace({
       }
       if (s.tier) sp.set("gtier", s.tier);
       if (s.hasError) sp.set("gerr", "1");
+      if (s.category) sp.set("gcat", s.category);
+      if (s.quality) sp.set("gqual", s.quality);
       if (s.page > 1) sp.set("gpage", String(s.page));
       startTransition(() => router.push(`/admin?${sp.toString()}`, { scroll: false }));
     },
@@ -198,6 +202,10 @@ export function GespraecheWorkspace({
         bulkEstimateEur={bulkEstimateEur}
         initialInsights={insights}
         onOpenConversation={openConversation}
+        activeCategory={filter.category}
+        activeQuality={filter.quality}
+        onFilterCategory={(category) => go({ category, page: 1 })}
+        onFilterQuality={(quality) => go({ quality, page: 1 })}
       />
 
       <div className="grid gap-4 lg:grid-cols-[24rem_1fr]">
@@ -332,6 +340,36 @@ function ConversationFilters({
             <option value="anonymous">Anonym</option>
             <option value="email-only">E-Mail</option>
             <option value="signed-in">Angemeldet</option>
+          </Select>
+
+          <span className="ml-2 text-xs font-medium text-muted-foreground">Kategorie:</span>
+          <Select
+            value={filter.category ?? ""}
+            disabled={pending}
+            className="h-8 w-auto"
+            onChange={(e) => go({ category: e.target.value || null, page: 1 })}
+          >
+            <option value="">Alle</option>
+            {Object.entries(CATEGORY_LABELS as Record<string, string>).map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </Select>
+
+          <span className="ml-1 text-xs font-medium text-muted-foreground">Qualität:</span>
+          <Select
+            value={filter.quality ?? ""}
+            disabled={pending}
+            className="h-8 w-auto"
+            onChange={(e) => go({ quality: e.target.value || null, page: 1 })}
+          >
+            <option value="">Alle</option>
+            {Object.entries(QUALITY_LABELS as Record<string, string>).map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
           </Select>
 
           <label className="ml-1 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -498,11 +536,19 @@ function ConversationRow({
           <OutcomeChips item={item} />
         </div>
         {item.analysis ? (
-          <div className="mt-1.5">
+          <div className="mt-1.5 space-y-1">
             <CategoryBadge
               category={item.analysis.category}
               quality={item.analysis.quality}
             />
+            {item.analysis.summary && (
+              <p
+                className="line-clamp-2 text-[11px] leading-snug text-muted-foreground"
+                title={item.analysis.summary}
+              >
+                {item.analysis.summary}
+              </p>
+            )}
           </div>
         ) : (
           <div className="mt-1.5 text-[10px] italic text-muted-foreground">nicht analysiert</div>

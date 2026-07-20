@@ -52,10 +52,16 @@ function Distribution({
   title,
   icon,
   rows,
+  activeValue,
+  onSelect,
 }: {
   title: string;
   icon: React.ReactNode;
-  rows: Array<{ label: string; count: number }>;
+  rows: Array<{ value: string; label: string; count: number }>;
+  /** Currently applied list-filter value (highlighted; click again clears). */
+  activeValue?: string | null;
+  /** Makes the rows clickable: filters the conversation list to this value. */
+  onSelect?: (value: string | null) => void;
 }) {
   const max = rows.reduce((m, r) => Math.max(m, r.count), 0) || 1;
   return (
@@ -68,22 +74,48 @@ function Distribution({
         <p className="text-[12px] text-muted-foreground">— noch keine Daten</p>
       ) : (
         <ul className="space-y-1">
-          {rows.map((r) => (
-            <li key={r.label} className="flex items-center gap-2 text-[12px]">
-              <span className="w-40 shrink-0 truncate text-muted-foreground" title={r.label}>
-                {r.label}
-              </span>
-              <span className="relative h-3 flex-1 overflow-hidden rounded-sm bg-muted">
-                <span
-                  className="absolute inset-y-0 left-0 rounded-sm bg-accent/70"
-                  style={{ width: `${Math.round((r.count / max) * 100)}%` }}
-                />
-              </span>
-              <span className="w-8 shrink-0 text-right tabular-nums text-foreground">
-                {r.count}
-              </span>
-            </li>
-          ))}
+          {rows.map((r) => {
+            const active = activeValue != null && activeValue === r.value;
+            const bar = (
+              <>
+                <span className="w-40 shrink-0 truncate text-left text-muted-foreground" title={r.label}>
+                  {r.label}
+                </span>
+                <span className="relative h-3 flex-1 overflow-hidden rounded-sm bg-muted">
+                  <span
+                    className={`absolute inset-y-0 left-0 rounded-sm ${active ? "bg-accent" : "bg-accent/70"}`}
+                    style={{ width: `${Math.round((r.count / max) * 100)}%` }}
+                  />
+                </span>
+                <span className="w-8 shrink-0 text-right tabular-nums text-foreground">
+                  {r.count}
+                </span>
+              </>
+            );
+            return (
+              <li key={r.value} className="text-[12px]">
+                {onSelect ? (
+                  <button
+                    type="button"
+                    onClick={() => onSelect(active ? null : r.value)}
+                    aria-pressed={active}
+                    title={
+                      active
+                        ? "Filter entfernen"
+                        : `Liste auf „${r.label}" filtern — zeigt ALLE passenden Gespräche`
+                    }
+                    className={`flex w-full cursor-pointer items-center gap-2 rounded-sm px-0.5 py-px transition-colors hover:bg-secondary/60 ${
+                      active ? "bg-accent/10" : ""
+                    }`}
+                  >
+                    {bar}
+                  </button>
+                ) : (
+                  <span className="flex items-center gap-2">{bar}</span>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -161,6 +193,10 @@ export function GespraecheInsights({
   bulkEstimateEur,
   initialInsights,
   onOpenConversation,
+  activeCategory,
+  activeQuality,
+  onFilterCategory,
+  onFilterQuality,
 }: {
   from: string;
   to: string;
@@ -169,6 +205,10 @@ export function GespraecheInsights({
   bulkEstimateEur: number;
   initialInsights: InsightsRollup | null;
   onOpenConversation?: (id: number) => void;
+  activeCategory?: string | null;
+  activeQuality?: string | null;
+  onFilterCategory?: (category: string | null) => void;
+  onFilterQuality?: (quality: string | null) => void;
 }) {
   const router = useRouter();
   const [insights, setInsights] = React.useState<InsightsRollup | null>(initialInsights);
@@ -293,14 +333,31 @@ export function GespraecheInsights({
           <Distribution
             title="Kategorien"
             icon={<Layers className="size-3.5 text-muted-foreground" />}
-            rows={stats.categories}
+            rows={stats.categories.map((c) => ({
+              value: c.category,
+              label: c.label,
+              count: c.count,
+            }))}
+            activeValue={activeCategory}
+            onSelect={onFilterCategory}
           />
           <Distribution
             title="Qualität"
             icon={<BarChart3 className="size-3.5 text-muted-foreground" />}
-            rows={stats.qualities}
+            rows={stats.qualities.map((q) => ({
+              value: q.quality,
+              label: q.label,
+              count: q.count,
+            }))}
+            activeValue={activeQuality}
+            onSelect={onFilterQuality}
           />
         </div>
+        <p className="-mt-2 text-[11px] text-muted-foreground">
+          Klick auf einen Balken filtert die Gesprächsliste unten auf ALLE passenden
+          (analysierten) Gespräche — jedes mit seiner Kurz-Erklärung. Erneuter Klick hebt
+          den Filter auf.
+        </p>
 
         <div className="border-t border-dashed border-border pt-3">
           <div className="flex flex-wrap items-center gap-2.5">

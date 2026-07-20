@@ -27,6 +27,8 @@ import {
   TIERS,
   CATEGORY_LABELS,
   QUALITY_LABELS,
+  ANALYSIS_CATEGORIES,
+  ANALYSIS_QUALITIES,
 } from "./conversation-analysis-core.mjs";
 
 /** Conversations per list page. */
@@ -153,6 +155,11 @@ export interface AdminConversationFilter {
   range: KpiRange;
   tier: AdminTier | null;
   hasError: boolean;
+  /** Filter by cached analysis category (null = no filter). Only analysed
+   *  conversations can match — the deterministic "all chats for X" view. */
+  category: string | null;
+  /** Filter by cached analysis quality signal (null = no filter). */
+  quality: string | null;
   page: number;
 }
 
@@ -188,6 +195,8 @@ export function parseAdminConversationFilter(params: {
   gto?: string | null;
   gtier?: string | null;
   gerr?: string | null;
+  gcat?: string | null;
+  gqual?: string | null;
   gpage?: string | null;
 }): AdminConversationFilter {
   const range = resolveKpiRange({
@@ -200,9 +209,17 @@ export function parseAdminConversationFilter(params: {
       ? (params.gtier as AdminTier)
       : null;
   const hasError = params.gerr === "1" || params.gerr === "true";
+  const category =
+    params.gcat && (ANALYSIS_CATEGORIES as string[]).includes(params.gcat)
+      ? params.gcat
+      : null;
+  const quality =
+    params.gqual && (ANALYSIS_QUALITIES as string[]).includes(params.gqual)
+      ? params.gqual
+      : null;
   const pageNum = Number.parseInt(params.gpage ?? "1", 10);
   const page = Number.isFinite(pageNum) && pageNum > 0 ? pageNum : 1;
-  return { range, tier, hasError, page };
+  return { range, tier, hasError, category, quality, page };
 }
 
 interface ListRow {
@@ -288,7 +305,7 @@ export async function listAdminConversations(
   sql: Sql | null = getSql()
 ): Promise<{ items: AdminConversationListItem[]; total: number }> {
   if (!sql) return { items: [], total: 0 };
-  const { tier, hasError, page } = filter;
+  const { tier, hasError, category, quality, page } = filter;
   const from = filter.range.from;
   const to = filter.range.to;
   const offset = (page - 1) * PAGE_SIZE;
@@ -330,6 +347,8 @@ export async function listAdminConversations(
                             AND ma.tool_name IS NULL AND length(btrim(ma.content)) > 0)
                )
              )
+             AND (${category}::text IS NULL OR c.analysis_category = ${category})
+             AND (${quality}::text IS NULL OR c.analysis_quality = ${quality})
            ORDER BY c.created_at DESC, c.id DESC
            LIMIT ${PAGE_SIZE} OFFSET ${offset}
         )
@@ -386,6 +405,8 @@ export async function listAdminConversations(
                           AND ma.tool_name IS NULL AND length(btrim(ma.content)) > 0)
              )
            )
+           AND (${category}::text IS NULL OR c.analysis_category = ${category})
+           AND (${quality}::text IS NULL OR c.analysis_quality = ${quality})
       `,
     ]);
 
