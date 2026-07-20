@@ -141,20 +141,42 @@ fallback discipline as `marketing-draft.ts`):
    blocking a send. Archive-on-expiry stays with the existing cron; "Set
    entfernen" uses the existing archive route.
 5. Mo promo block + deep link (`CAMPAIGN_MO_DEEPLINK_URL`, default
-   `https://motionsports.de/?mo=open&utm_source=campaign&utm_medium=email`) —
-   appended **deterministically** at send time, both languages
-   (`moPromoBlockText`), never editable prose. The theme-side `?mo=open`
-   handling (auto-open the widget, strip the param) is **Task F in the theme
-   repo** — a separate follow-up.
+   `https://motionsports.de/?mo=open&mo_new=1&mo_view=fullscreen&utm_source=campaign&utm_medium=email`)
+   — appended **deterministically** at send time, both languages
+   (`moPromoBlockText`), never editable prose. Theme-side handling (Task F in
+   the theme repo — a separate follow-up): `mo=open` auto-opens the widget
+   after init and strips the params; the modifiers `mo_new=1` (start a FRESH
+   consultation, no old thread resumed) and `mo_view=fullscreen` (open the
+   panel full-screen) shape how it opens.
 6. Footer: signed unsubscribe + Impressum/privacy via the existing
    composition (`unsubscribeFooter` + branded template).
 
 ## 5. Review workflow (Kampagne tab)
 
 One contact at a time, keyboard-driven (`N`/`P` next/previous, `C` copy,
-`S` send, `X` skip; legend shown). Left: name, email, language + opt-in
-badges, compact purchase history, recommendations, discount display. Right:
-editable subject + body (edits persist via `POST /api/admin/campaign/update`).
+`S` send, `X` skip; legend shown). The queue can be **filtered by opt-in
+level** (Alle / Nur DOI / Nur Single-Opt-in+Unbekannt) and searched by
+email/name — mutations are keyed by contact id, so filtering never
+mis-targets a card. Left: name, email, language + opt-in badges, compact
+purchase history, the manual controls below. Right: editable subject + body
+(edits persist via `POST /api/admin/campaign/update`).
+
+The workflow is generated-first but everything stays adjustable per card
+WITHOUT regenerating (the deterministic send-time blocks make that safe):
+
+- **Recommendations** are editable: remove per item, add via the shared
+  catalog picker (`/api/admin/catalog/search`); each change persists
+  immediately (`POST /api/admin/campaign/recommendations` — validates against
+  the sync-fresh catalog, refuses sold-out products, clears `low_confidence`)
+  and an attached bundle offer is **rebuilt to match** (snapshots are
+  immutable, so "update" = archive + recreate through the unchanged bundle
+  mechanism). The prose only changes on "↻ Neu generieren" — the UI says so.
+- **Discount** can be set/changed/cleared AFTER generation
+  (`POST /api/admin/campaign/discount`): the depth lives on the draft, the
+  real MK- code + deadline ship deterministically outside the prose, and the
+  route warns when the current prose clearly states a different percentage
+  (which the send route would refuse — regenerate then).
+- **Bundle** can be attached/removed after generation (see §4).
 
 Actions:
 

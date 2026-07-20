@@ -39,6 +39,6 @@ test("Mo promo copy: calm — no urgency/countdown vocabulary", () => {
       assert.ok(!text.includes(banned), `"${banned}" must not appear`);
     }
   }
-  assert.equal(moPromoCtaLabel("de"), "Mit Mo chatten");
-  assert.equal(moPromoCtaLabel("en"), "Chat with Mo");
+  assert.equal(moPromoCtaLabel("de"), "Beratung mit Mo starten");
+  assert.equal(moPromoCtaLabel("en"), "Start your consultation with Mo");
 });

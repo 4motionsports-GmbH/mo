@@ -51,14 +51,16 @@ export function isSingleOptInAllowed(env = process.env) {
 }
 
 /**
- * The Mo-promo deep link every campaign email ends with (auto-opens the chat
- * widget on the storefront — theme-side `?mo=open` handling, Task F).
- * Configurable via CAMPAIGN_MO_DEEPLINK_URL.
+ * The Mo-promo deep link every campaign email ends with. Theme-side handling
+ * (Task F): `mo=open` auto-opens the chat widget after init; the modifiers
+ * `mo_new=1` (start a FRESH consultation rather than resuming an old thread)
+ * and `mo_view=fullscreen` (open the panel in full-screen mode) shape how it
+ * opens. Configurable via CAMPAIGN_MO_DEEPLINK_URL.
  * @param {Record<string, string | undefined>} [env]
  * @returns {string}
  */
 export function campaignMoDeeplinkUrl(env = process.env) {
   const raw = env.CAMPAIGN_MO_DEEPLINK_URL;
   if (typeof raw === "string" && raw.trim()) return raw.trim();
-  return "https://motionsports.de/?mo=open&utm_source=campaign&utm_medium=email";
+  return "https://motionsports.de/?mo=open&mo_new=1&mo_view=fullscreen&utm_source=campaign&utm_medium=email";
 }

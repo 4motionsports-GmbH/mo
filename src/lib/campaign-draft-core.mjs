@@ -37,15 +37,18 @@ export function shouldReuseCampaignDraft(existing, requestedPercent, regenerate)
 export function moPromoIntroText(language) {
   if (language === "en") {
     return (
-      "By the way: there's now a personal advisor on our shop. Mo answers your " +
-      "training and equipment questions in the chat — from finding the right " +
-      "machine to planning your home gym. Just try it out:"
+      "By the way: our shop now has a personal advisor — Mo. Ask him anything " +
+      "about training and equipment in the chat: which machine fits you, how to " +
+      "plan your home gym, what pairs well with what you already own. One click " +
+      "and your personal consultation starts right away, in full screen:"
     );
   }
   return (
-    "Übrigens: In unserem Shop gibt es jetzt einen persönlichen Berater. Mo " +
-    "beantwortet dir im Chat alle Fragen rund um Training und Ausstattung — von " +
-    "der Gerätewahl bis zur Planung deines Home-Gyms. Probier es einfach aus:"
+    "Übrigens: In unserem Shop berät dich jetzt Mo — dein persönlicher " +
+    "KI-Berater. Stell ihm im Chat alle Fragen rund um Training und Ausstattung: " +
+    "welches Gerät zu dir passt, wie du dein Home-Gym planst, was gut zu deiner " +
+    "vorhandenen Ausstattung passt. Ein Klick genügt und deine persönliche " +
+    "Beratung startet direkt im Vollbild:"
   );
 }
 
@@ -55,7 +58,7 @@ export function moPromoIntroText(language) {
  * @returns {string}
  */
 export function moPromoCtaLabel(language) {
-  return language === "en" ? "Chat with Mo" : "Mit Mo chatten";
+  return language === "en" ? "Start your consultation with Mo" : "Beratung mit Mo starten";
 }
 
 /**

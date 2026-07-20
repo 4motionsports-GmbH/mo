@@ -105,7 +105,7 @@ test("flags: fail-closed parsing (default FALSE for absent/garbage values)", () 
 test("deeplink: env override wins, documented default otherwise", () => {
   assert.equal(
     campaignMoDeeplinkUrl({}),
-    "https://motionsports.de/?mo=open&utm_source=campaign&utm_medium=email"
+    "https://motionsports.de/?mo=open&mo_new=1&mo_view=fullscreen&utm_source=campaign&utm_medium=email"
   );
   assert.equal(
     campaignMoDeeplinkUrl({ CAMPAIGN_MO_DEEPLINK_URL: "https://example.com/?mo=open" }),

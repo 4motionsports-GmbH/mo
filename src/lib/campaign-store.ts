@@ -482,6 +482,74 @@ export async function updateCampaignDraftText(
   }
 }
 
+/**
+ * Persist manually-curated recommendations on a draft (review-time control:
+ * the admin swaps products in/out via the catalog picker). Only while the
+ * contact is still in review ('drafted'). Curated picks are trusted picks —
+ * the low_confidence flag is cleared. Returns the updated draft or null.
+ */
+export async function updateCampaignDraftRecommendations(
+  contactId: number,
+  productIds: string[],
+  sql: Sql | null = getSql()
+): Promise<CampaignDraftRow | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      UPDATE campaign_drafts d
+         SET recommended_product_ids = ${productIds}::text[],
+             low_confidence = false,
+             updated_at = now()
+        FROM campaign_contacts c
+       WHERE d.contact_id = ${contactId}
+         AND c.id = d.contact_id
+         AND c.status = 'drafted'
+      RETURNING d.*
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? mapDraftRow(rows[0]) : null;
+  } catch (err) {
+    reportError(err, {
+      route: "lib/campaign-store",
+      phase: "updateCampaignDraftRecommendations",
+    });
+    return null;
+  }
+}
+
+/**
+ * Set the discount depth on an EXISTING draft without regenerating the prose
+ * (review-time control). Safe because the code + deadline ship
+ * DETERMINISTICALLY outside the editable prose at send time; prose that states
+ * a CONTRADICTING percentage is still refused by the send route's
+ * detectDiscountTextMismatch backstop — the caller surfaces that warning.
+ * Only while the contact is still 'drafted'. Returns the updated draft or null.
+ */
+export async function updateCampaignDraftDiscount(
+  contactId: number,
+  discountPercent: number,
+  discountExpiresAt: string | null,
+  sql: Sql | null = getSql()
+): Promise<CampaignDraftRow | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      UPDATE campaign_drafts d
+         SET discount_percent = ${discountPercent},
+             discount_expires_at = ${discountExpiresAt},
+             updated_at = now()
+        FROM campaign_contacts c
+       WHERE d.contact_id = ${contactId}
+         AND c.id = d.contact_id
+         AND c.status = 'drafted'
+      RETURNING d.*
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? mapDraftRow(rows[0]) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "updateCampaignDraftDiscount" });
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Status transitions
 // ---------------------------------------------------------------------------
