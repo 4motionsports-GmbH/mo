@@ -550,6 +550,35 @@ export async function updateCampaignDraftDiscount(
   }
 }
 
+/**
+ * Rebuild-queue reset: delete the drafts of ALL contacts still in review
+ * ('drafted') and return those contacts to 'pending', so the next "Prepare"
+ * run regenerates them with the current generation code. Deliberately narrow:
+ * sent/skipped/suppressed/sending contacts are untouched, and attached bundle
+ * offers stay active (the regenerated draft picks them up again). Returns the
+ * number of contacts reset. Throws on failure so the route surfaces the reason.
+ */
+export async function resetDraftedContacts(
+  sql: Sql | null = getSql()
+): Promise<number> {
+  if (!sql) return 0;
+  await sql`
+    DELETE FROM campaign_drafts d
+     USING campaign_contacts c
+     WHERE c.id = d.contact_id AND c.status = 'drafted'
+  `;
+  const rows = (await sql`
+    WITH upd AS (
+      UPDATE campaign_contacts
+         SET status = 'pending'
+       WHERE status = 'drafted'
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM upd
+  `) as Array<{ n: number }>;
+  return rows[0]?.n ?? 0;
+}
+
 // ---------------------------------------------------------------------------
 // Status transitions
 // ---------------------------------------------------------------------------
