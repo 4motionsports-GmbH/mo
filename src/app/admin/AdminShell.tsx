@@ -12,11 +12,19 @@ import { Toaster } from "./ui/toast";
 import { ThemeToggle } from "./ThemeToggle";
 import type { Theme } from "./theme-config";
 
-export type AdminTab = "overview" | "kunden" | "kpi" | "feedback" | "gespraeche" | "analyse";
+export type AdminTab =
+  | "overview"
+  | "kunden"
+  | "kampagne"
+  | "kpi"
+  | "feedback"
+  | "gespraeche"
+  | "analyse";
 
 const TAB_ORDER: AdminTab[] = [
   "overview",
   "kunden",
+  "kampagne",
   "kpi",
   "feedback",
   "gespraeche",
@@ -26,6 +34,7 @@ const TAB_ORDER: AdminTab[] = [
 const TAB_LABEL: Record<AdminTab, string> = {
   overview: "Übersicht",
   kunden: "Kunden",
+  kampagne: "Kampagne",
   kpi: "KPIs",
   feedback: "Feedback",
   gespraeche: "Gespräche",
@@ -36,6 +45,8 @@ const TAB_SUBTITLE: Record<AdminTab, string> = {
   overview: "Übersicht · Kennzahlen & Schnellzugriff auf einen Blick",
   kunden:
     "Kunden · Suche, filtere & öffne eine Person — Profil, Käufe, Marketing, Korrespondenz & Brief",
+  kampagne:
+    "Kampagne · Personalisierte E-Mails an Shopify-Marketing-Abonnent:innen — prüfen, anpassen, senden",
   kpi: "KPIs · Pseudonyme Analytics (Cluster A) + Shopify-Käufe",
   feedback: "Feedback · Kund:innen-Rückmeldungen aus dem Widget — neueste zuerst",
   gespraeche:
@@ -56,6 +67,7 @@ export function AdminShell({
   logoutAction,
   overview,
   kunden,
+  kampagne,
   kpi,
   feedback,
   gespraeche,
@@ -66,6 +78,7 @@ export function AdminShell({
   logoutAction: () => void | Promise<void>;
   overview: React.ReactNode;
   kunden: React.ReactNode;
+  kampagne: React.ReactNode;
   kpi: React.ReactNode;
   feedback: React.ReactNode;
   gespraeche: React.ReactNode;
@@ -128,17 +141,18 @@ export function AdminShell({
   const bodies: Record<AdminTab, React.ReactNode> = {
     overview,
     kunden,
+    kampagne,
     kpi,
     feedback,
     gespraeche,
     analyse,
   };
 
-  // The Kunden + Gespräche + Analyse workspaces are master–detail layouts that
-  // want the extra width; the other tabs stay comfortably centred at the narrower
-  // measure.
+  // The Kunden + Kampagne + Gespräche + Analyse workspaces are master–detail
+  // layouts that want the extra width; the other tabs stay comfortably centred
+  // at the narrower measure.
   const containerWidth =
-    tab === "kunden" || tab === "gespraeche" || tab === "analyse"
+    tab === "kunden" || tab === "kampagne" || tab === "gespraeche" || tab === "analyse"
       ? "max-w-7xl"
       : "max-w-5xl";
 

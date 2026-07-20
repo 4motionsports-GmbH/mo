@@ -84,6 +84,29 @@ needed for that and is justified by legitimate interest. The richer capture
 
 ---
 
+## Cluster B (cont.) — Campaign audience (Shopify marketing subscribers)
+
+**Lawful basis: the customer's Shopify marketing consent (Art. 6(1)(a),
+recorded by Shopify as `emailMarketingConsent`).** The campaign module
+([`CAMPAIGNS.md`](./CAMPAIGNS.md), migration `0034`) syncs the shop's
+SUBSCRIBED marketing contacts into `campaign_contacts` (name, email,
+language, opt-in level, order aggregates), keeps ONE editable draft per
+contact (`campaign_drafts`, incl. a compact purchase snapshot) and an
+immutable send record (`campaign_sends` — email, subject, **body hash**, the
+`MK-` discount code). ⚠️ Because this consent is not our own provable double
+opt-in, the whole channel is send-gated (`CAMPAIGN_SENDS_APPROVED`,
+`CAMPAIGN_ALLOW_SINGLE_OPT_IN` — see the legal model in `CAMPAIGNS.md`).
+
+### Retention windows (campaign)
+
+| Data                | Default window | Env var                           | Action on expiry |
+| ------------------- | -------------- | --------------------------------- | ---------------- |
+| `campaign_contacts` (+ drafts, cascade) | **365 days** by `COALESCE(last_synced_at, created_at)` | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete (an actively re-synced contact keeps refreshing the timestamp and stays; a contact that dropped out of the sync ages out) |
+| `campaign_sends`    | **365 days** by `sent_at` | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete      |
+| `suppression_list`  | **Kept**       | —                                 | Retained to keep honouring the opt-out (unchanged) |
+
+---
+
 ## Cluster B (cont.) — Bundle offers
 
 **Lawful basis: explicit consent (Art. 6(1)(a)).** A **bundle offer**
@@ -277,6 +300,11 @@ by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
 5e. Deletes `admin_access_log` past `ADMIN_ACCESS_LOG_RETENTION_DAYS` (default
    **730 days**, by `occurred_at`; `0` disables) — the admin PII-access security
    record (migration `0028`).
+5f. Deletes campaign data past `CAMPAIGN_CONTACT_RETENTION_DAYS` (default
+   **365 days**; `0` disables): `campaign_sends` by `sent_at`, then
+   `campaign_contacts` by `COALESCE(last_synced_at, created_at)` (drafts
+   cascade with their contact). The `suppression_list` is untouched — see
+   [`CAMPAIGNS.md`](./CAMPAIGNS.md).
 6. Purges expired `customer_auth_pending` rows (the short-lived sign-in
    CSRF/PKCE state).
 

@@ -33,6 +33,14 @@ export interface SendEmailInput {
    */
   inReplyTo?: string;
   references?: string[];
+  /**
+   * RFC-8058/2369 unsubscribe URL, set on the wire as a `List-Unsubscribe`
+   * header so mail clients can surface their native unsubscribe affordance.
+   * Additive — only marketing-type sends pass it; the URL is the same signed
+   * /api/unsubscribe link the footer carries. (No `List-Unsubscribe-Post`
+   * one-click header: our unsubscribe endpoint is a GET confirmation page.)
+   */
+  listUnsubscribeUrl?: string;
   /** Tag used in error logs to identify which mail failed. */
   kind: string;
 }
@@ -80,6 +88,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     if (input.inReplyTo) headers["In-Reply-To"] = input.inReplyTo;
     if (input.references && input.references.length > 0) {
       headers["References"] = input.references.join(" ");
+    }
+    if (input.listUnsubscribeUrl) {
+      headers["List-Unsubscribe"] = `<${input.listUnsubscribeUrl}>`;
     }
     const result = await resend.emails.send({
       from,

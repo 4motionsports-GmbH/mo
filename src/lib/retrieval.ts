@@ -30,7 +30,10 @@ async function getIndexedEmbeddings(): Promise<IndexedEmbeddings> {
   return indexedCache;
 }
 
-function cosine(a: number[], b: number[]): number {
+// Exported so the campaign recommendations (campaign-recommendations.ts) reuse
+// the SAME similarity primitive over the same embeddings instead of duplicating
+// it — no separate vector store exists or should exist.
+export function cosine(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;
   let nb = 0;

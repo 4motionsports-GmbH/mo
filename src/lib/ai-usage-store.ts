@@ -30,6 +30,9 @@ export type AiCallSite =
   // erasure, like chat usage.
   | "summary_download"
   | "marketing_draft"
+  // Campaign module (docs/CAMPAIGNS.md): the per-contact AI draft for the
+  // Shopify-subscriber audience. Dashboard/admin-side spend (no conversation).
+  | "campaign_draft"
   | "customer_profile"
   | "top_questions"
   // Admin conversation inspector: the per-conversation AI analysis pass

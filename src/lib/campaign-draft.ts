@@ -1,0 +1,295 @@
+// AI-drafted personalised CAMPAIGN email (Kampagnen-Modul, R12) — the sibling
+// of marketing-draft.ts for the Shopify-subscriber audience.
+//
+// These customers never used Mo: there is NO conversation data. Personalisation
+// is purely Shopify profile (name, language) + order history + catalog
+// recommendations. The draft prose contains:
+//   1. a personal greeting by first name (graceful fallback),
+//   2. a natural, warm reference to the purchase history — a category or ONE
+//      specific item, never an itemised dump,
+//   3. 2–3 recommended products WITH their product URLs, briefly reasoned,
+//   4. optionally the personal discount offer, woven around the clearly-marked
+//      PLACEHOLDER code (MO-XXXX) + projected expiry — the real MK- code is
+//      minted only at send time (campaign-email.ts), exactly like the existing
+//      marketing flow.
+// The Mo-promo block (deep link) and the unsubscribe/Impressum footer are NOT
+// part of the prose — they are appended deterministically at render time
+// (campaign-draft-core.moPromoBlockText / campaign-email.ts) so an edit can
+// never remove them.
+//
+// Provider: Anthropic via @ai-sdk/anthropic + the Vercel AI SDK, same model as
+// the existing drafts — one voice across the backend. Defensive: any model
+// error / missing API key falls back to a clean templated email so a batch
+// prepare run is never blocked.
+
+import { generateObject } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
+import { z } from "zod";
+import { reportError } from "./observability";
+import { recordAiUsage } from "./ai-usage-store";
+import type { DraftDiscountInput, MarketingDraft } from "./marketing-draft";
+import type { CampaignPurchaseSummary } from "./campaign-store";
+
+// Same model the existing marketing drafts use.
+const DRAFT_MODEL = "claude-sonnet-4-6";
+
+const draftSchema = z.object({
+  subject: z
+    .string()
+    .describe("Kurze, persönliche Betreffzeile in der Zielsprache (max ~60 Zeichen)."),
+  body: z
+    .string()
+    .describe(
+      "Der E-Mail-Text in der Zielsprache (Deutsch: Du-Form), warm und persönlich, " +
+        "unterschrieben mit 'Mo, dein persönlicher Berater bei motion sports' " +
+        "(Englisch: 'Mo, your personal advisor at motion sports'). OHNE Abmeldelink, " +
+        "OHNE Chatbot-Hinweis (beides wird separat angehängt)."
+    ),
+});
+
+export interface CampaignRecommendationInput {
+  name: string;
+  /** Absolute storefront product URL — the model links exactly this. */
+  url: string;
+  category: string | null;
+}
+
+export interface GenerateCampaignDraftInput extends DraftDiscountInput {
+  language: "de" | "en";
+  firstName: string | null;
+  /** Compact order snapshot (titles/dates/totals) the prose references. */
+  purchaseSummary: CampaignPurchaseSummary | null;
+  /** The 2–3 products the email recommends (owned items already excluded). */
+  recommendations: CampaignRecommendationInput[];
+  /** True when the recommendations are representative fallbacks. */
+  lowConfidence: boolean;
+}
+
+function purchaseBlock(summary: CampaignPurchaseSummary | null, language: "de" | "en"): string {
+  if (!summary || summary.orders.length === 0) {
+    return language === "en"
+      ? "(no order details available — refer to them as a valued customer, do not invent purchases)"
+      : "(keine Bestelldetails verfügbar — sprich die Person als geschätzte:n Kund:in an, erfinde KEINE Käufe)";
+  }
+  return summary.orders
+    .map((o) => {
+      const date = o.createdAt
+        ? new Date(o.createdAt).toLocaleDateString(language === "en" ? "en-GB" : "de-DE")
+        : "?";
+      const items = o.items
+        .map((i) => `${i.quantity}× ${i.title ?? "?"}`)
+        .join(", ");
+      return `- ${date} (${o.name}): ${items}`;
+    })
+    .join("\n");
+}
+
+function recommendationsBlock(recs: CampaignRecommendationInput[]): string {
+  if (recs.length === 0) return "(keine)";
+  return recs
+    .map((r) => `- ${r.name}${r.category ? ` (${r.category})` : ""} — ${r.url}`)
+    .join("\n");
+}
+
+/** Discount paragraph for the templated fallbacks (no cart button on this
+ * channel — the code + deadline are stated plainly). */
+function fallbackDiscountParagraph(
+  input: DraftDiscountInput,
+  language: "de" | "en"
+): string | null {
+  if (!input.discountCode || input.discountPercent <= 0) return null;
+  if (language === "en") {
+    const validity = input.discountExpiresLabel
+      ? ` It is valid until ${input.discountExpiresLabel}.`
+      : "";
+    return (
+      `As a small thank-you I've set up a personal discount code just for you: ` +
+      `with ${input.discountCode} you get ${input.discountPercent}% off your ` +
+      `order. The code is yours alone and can be used once.${validity}`
+    );
+  }
+  const validity = input.discountExpiresLabel
+    ? ` Er ist bis ${input.discountExpiresLabel} gültig.`
+    : "";
+  return (
+    `Als kleines Dankeschön habe ich einen persönlichen Rabattcode für dich ` +
+    `angelegt: Mit ${input.discountCode} bekommst du ${input.discountPercent}% ` +
+    `auf deine Bestellung. Der Code gehört nur dir und ist einmalig einlösbar.${validity}`
+  );
+}
+
+/** Clean templated fallback used when the model is unavailable. */
+function fallbackCampaignDraft(input: GenerateCampaignDraftInput): MarketingDraft {
+  const en = input.language === "en";
+  const first = input.firstName?.trim();
+  const greeting = en
+    ? first
+      ? `Hello ${first},`
+      : "Hello,"
+    : first
+      ? `Hallo ${first},`
+      : "Hallo,";
+  const subject = en
+    ? "Your personal recommendation from motion sports"
+    : "Deine persönliche Empfehlung von motion sports";
+
+  const lines: string[] = [
+    greeting,
+    "",
+    en
+      ? "thank you for being a motion sports customer — I hope your equipment is serving you well."
+      : "schön, dass du bei motion sports einkaufst — ich hoffe, deine Ausstattung macht dir weiter Freude.",
+  ];
+  if (input.recommendations.length > 0) {
+    lines.push(
+      "",
+      en
+        ? "Building on what you already have, these could be a great fit:"
+        : "Passend zu dem, was du schon hast, könnten diese Produkte gut passen:",
+      ...input.recommendations.map((r) => `- ${r.name}: ${r.url}`)
+    );
+  }
+  const discountParagraph = fallbackDiscountParagraph(input, input.language);
+  if (discountParagraph) lines.push("", discountParagraph);
+  lines.push(
+    "",
+    en
+      ? "If you have any questions, just reply — I'm happy to help."
+      : "Wenn du Fragen hast, melde dich jederzeit — ich helfe dir gern weiter.",
+    "",
+    en ? "Best regards" : "Herzliche Grüße",
+    en
+      ? "Mo, your personal advisor at motion sports"
+      : "Mo, dein persönlicher Berater bei motion sports"
+  );
+  return { subject, body: lines.join("\n") };
+}
+
+/** The prompt section describing the personal offer (or its absence) — the
+ * campaign variant of marketing-draft's discountHint: same placeholder/expiry
+ * rules, but NO cart button exists on this channel. */
+function discountHint(input: DraftDiscountInput, language: "de" | "en"): string {
+  const hasDiscount = Boolean(input.discountCode) && input.discountPercent > 0;
+  if (!hasDiscount) {
+    return language === "en"
+      ? "There is NO discount offer this time — do not mention any discount, code, or price reduction."
+      : "Es gibt diesmal KEIN Rabattangebot — erwähne also weder einen Rabatt noch einen Code und versprich keinen Preisnachlass.";
+  }
+  const validityPhrase = input.discountValidityDays
+    ? `${input.discountValidityDays} ${language === "en" ? "days" : "Tage"}`
+    : language === "en"
+      ? "a short time"
+      : "kurze Zeit";
+  if (language === "en") {
+    return (
+      `IMPORTANT — this customer receives a personal offer you MUST weave into ` +
+      `the text clearly and warmly (no hype, no artificial pressure):\n` +
+      `- ${input.discountPercent}% off their order.\n` +
+      `- The code was created ONCE, for THIS customer only — make clear it is ` +
+      `their personal code, not a mass promotion.\n` +
+      `- The code is exactly ${input.discountCode}. Use EXACTLY this string, unchanged.\n` +
+      `- It can be redeemed only ONCE (single-use), entered at checkout.\n` +
+      `- It is valid for ${validityPhrase}` +
+      (input.discountExpiresLabel
+        ? ` — until ${input.discountExpiresLabel}. State BOTH the validity period and the concrete end date, naturally, without pressure.`
+        : `. Mention kindly that it does not last forever.`)
+    );
+  }
+  return (
+    `WICHTIG — dieser Kunde bekommt ein persönliches Angebot, das du klar, warm ` +
+    `und einladend in den Text einweben MUSST (kein Marktschreier, kein ` +
+    `künstlicher Druck):\n` +
+    `- ${input.discountPercent}% Rabatt auf die Bestellung.\n` +
+    `- Der Code ist EINMALIG und EXTRA für DIESEN Kunden erstellt — kein ` +
+    `allgemeiner Gutschein, keine Massenaktion.\n` +
+    `- Der Code lautet exakt ${input.discountCode}. Verwende GENAU diese ` +
+    `Zeichenfolge unverändert im Text.\n` +
+    `- Der Code ist nur EIN EINZIGES MAL einlösbar (single-use) und wird im ` +
+    `Checkout eingegeben.\n` +
+    `- Er ist ${validityPhrase} gültig` +
+    (input.discountExpiresLabel
+      ? ` — bis ${input.discountExpiresLabel}. Sage BEIDES klar im Text: die Gültigkeitsdauer UND das konkrete Ablaufdatum, natürlich formuliert, ohne Druck.`
+      : `. Weise freundlich darauf hin, dass er nicht ewig gilt.`)
+  );
+}
+
+/**
+ * Generate the personalised campaign draft. Never throws — on any error
+ * returns the templated fallback so the batch prepare continues (the admin
+ * reviews and edits every draft before sending anyway).
+ */
+export async function generateCampaignDraft(
+  input: GenerateCampaignDraftInput
+): Promise<MarketingDraft> {
+  if (!process.env.ANTHROPIC_API_KEY) return fallbackCampaignDraft(input);
+
+  const en = input.language === "en";
+  const languageRule = en
+    ? "Write the email in natural, warm ENGLISH."
+    : "Schreibe die E-Mail auf DEUTSCH in der Du-Form.";
+
+  try {
+    const { object, usage } = await generateObject({
+      model: anthropic(DRAFT_MODEL),
+      schema: draftSchema,
+      system:
+        "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
+        "(Fitness- und Kraftsportgeräte). Du schreibst eine kurze, warme, " +
+        "persönliche Marketing-E-Mail an eine:n Bestandskund:in des Shops. " +
+        "Diese Person kennt dich NOCH NICHT aus einem Chat — es gibt KEIN " +
+        "Gespräch, auf das du dich beziehen kannst. Personalisiere " +
+        "ausschließlich über die Kaufhistorie und die vorgegebenen " +
+        "Produktempfehlungen.\n\n" +
+        "Regeln:\n" +
+        `- ${languageRule}\n` +
+        "- Beginne mit einer persönlichen Anrede mit Vornamen, wenn einer " +
+        "vorgegeben ist; sonst eine freundliche Anrede ohne Namen.\n" +
+        "- Beziehe dich natürlich und warm auf die Kaufhistorie: nenne die " +
+        "Produktkategorie oder EIN konkretes Produkt (z. B. „wie läuft's mit " +
+        "deinem Laufband?“) — NIEMALS eine aufgezählte Liste aller Käufe, kein " +
+        "Daten-Vorlesen.\n" +
+        "- Empfiehl NUR die vorgegebenen 2–3 Produkte, jeweils mit ihrer " +
+        "EXAKTEN Produkt-URL als Link im Text und einer kurzen Begründung " +
+        "(„passt gut zu …“). Keine erfundenen Produkte, keine erfundenen Preise.\n" +
+        "- Sei ehrlich, kein Marktschreier: keine künstliche Dringlichkeit, " +
+        "keine Countdown-Rhetorik.\n" +
+        "- Wenn ein persönliches Rabattangebot vorgegeben ist, webe es klar und " +
+        "einladend ein (mit dem exakten Code).\n" +
+        "- Baue KEINEN Abmeldelink und KEINEN Hinweis auf den neuen Chat-" +
+        "Berater ein — beides wird separat angehängt.\n" +
+        "- Unterschreibe mit " +
+        (en
+          ? "'Mo, your personal advisor at motion sports'."
+          : "'Mo, dein persönlicher Berater bei motion sports'."),
+      prompt:
+        `## Kund:in\n` +
+        `Vorname: ${input.firstName?.trim() || "(unbekannt)"}\n` +
+        `Sprache der E-Mail: ${en ? "Englisch" : "Deutsch"}\n\n` +
+        `## Kaufhistorie (nur als Kontext — NICHT aufzählen)\n` +
+        `${purchaseBlock(input.purchaseSummary, input.language)}\n\n` +
+        (input.lowConfidence
+          ? `Hinweis: Die Käufe konnten keinem aktuellen Katalogprodukt zugeordnet ` +
+            `werden — bleibe bei der Kaufhistorie deshalb ALLGEMEIN (kein konkretes ` +
+            `Produkt nennen) und führe die Empfehlungen als Inspiration ein.\n\n`
+          : "") +
+        `## Produkte, die diese E-Mail empfehlen soll (mit exakter URL)\n` +
+        `${recommendationsBlock(input.recommendations)}\n\n` +
+        `${discountHint(input, input.language)}\n\n` +
+        `Schreibe jetzt die personalisierte E-Mail (Betreff + Text).`,
+    });
+    // Cost KPI (dashboard/admin side).
+    await recordAiUsage({
+      callSite: "campaign_draft",
+      model: DRAFT_MODEL,
+      inputTokens: usage?.inputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
+    });
+    const subject = object.subject?.trim();
+    const body = object.body?.trim();
+    if (!subject || !body) return fallbackCampaignDraft(input);
+    return { subject, body };
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-draft", phase: "generate" });
+    return fallbackCampaignDraft(input);
+  }
+}

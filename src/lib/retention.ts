@@ -46,6 +46,11 @@ export interface RetentionOptions {
   customerInactivityRetentionDays: number;
   /** admin_access_log rows older than this (by occurred_at) are deleted. 0 disables. */
   adminAccessLogRetentionDays: number;
+  /**
+   * Campaign audience + send records (campaign_contacts by last sync/creation,
+   * campaign_sends by sent_at) older than this are deleted. 0 disables.
+   */
+  campaignContactRetentionDays: number;
 }
 
 export interface RetentionResult {
@@ -66,6 +71,10 @@ export interface RetentionResult {
   deletedInactiveCustomers: number;
   /** admin_access_log rows purged past their window. */
   deletedAdminAccessLog: number;
+  /** campaign_contacts purged past the campaign retention window. */
+  deletedCampaignContacts: number;
+  /** campaign_sends purged past the campaign retention window. */
+  deletedCampaignSends: number;
   /** Expired customer_auth_pending rows (CSRF/PKCE state) removed. */
   purgedAuthPending: number;
   ranAt: string;
@@ -89,6 +98,9 @@ export function retentionOptionsFromEnv(): RetentionOptions {
     customerInactivityRetentionDays: parseIntEnv("CUSTOMER_INACTIVITY_RETENTION_DAYS", 1095, 0),
     // Admin PII-access audit (security record); kept 2 years by default.
     adminAccessLogRetentionDays: parseIntEnv("ADMIN_ACCESS_LOG_RETENTION_DAYS", 730, 0),
+    // Campaign audience (Shopify marketing subscribers) + campaign send records
+    // — PII under the shop's marketing consent; 12 months by default.
+    campaignContactRetentionDays: parseIntEnv("CAMPAIGN_CONTACT_RETENTION_DAYS", 365, 0),
   };
 }
 
@@ -273,6 +285,33 @@ export async function runRetention(
     `) as Array<{ n: number }>;
   }
 
+  // 5g. Purge campaign audience + send records past their OWN window
+  //     (CAMPAIGN_CONTACT_RETENTION_DAYS — docs/CAMPAIGNS.md). Contacts leave
+  //     by their last sync/creation timestamp: an actively re-synced contact
+  //     keeps refreshing last_synced_at and stays; one that dropped out of the
+  //     sync (e.g. suppressed) ages out. Send records (which carry only email,
+  //     subject + a body HASH) leave by sent_at. The suppression_list is
+  //     untouched — opt-outs are honoured forever. 0 disables.
+  let deletedCampaignContacts = [{ n: 0 }] as Array<{ n: number }>;
+  let deletedCampaignSends = [{ n: 0 }] as Array<{ n: number }>;
+  if (opts.campaignContactRetentionDays > 0) {
+    const campaignCutoff = daysAgo(opts.campaignContactRetentionDays);
+    deletedCampaignSends = (await sql`
+      WITH del AS (
+        DELETE FROM campaign_sends WHERE sent_at < ${campaignCutoff} RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+    deletedCampaignContacts = (await sql`
+      WITH del AS (
+        DELETE FROM campaign_contacts
+         WHERE COALESCE(last_synced_at, created_at) < ${campaignCutoff}
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+  }
+
   // 6. Purge expired pending-auth records (short-lived CSRF/PKCE state). The
   //    encrypted token rows (customer_oauth_tokens) carry no separate window —
   //    they cascade with the customer (ON DELETE CASCADE), so a GDPR erasure /
@@ -291,6 +330,8 @@ export async function runRetention(
     deletedFeedback: deletedFeedback[0]?.n ?? 0,
     deletedInactiveCustomers: deletedInactiveCustomers[0]?.n ?? 0,
     deletedAdminAccessLog: deletedAdminAccessLog[0]?.n ?? 0,
+    deletedCampaignContacts: deletedCampaignContacts[0]?.n ?? 0,
+    deletedCampaignSends: deletedCampaignSends[0]?.n ?? 0,
     purgedAuthPending,
     ranAt: new Date().toISOString(),
   };

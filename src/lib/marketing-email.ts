@@ -45,6 +45,7 @@ import {
   PLACEHOLDER_DISCOUNT_CODE,
 } from "./shopify-discounts";
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
+import { applyMintedDiscountToBody } from "./discount-swap.mjs";
 import { buildPrefilledCartUrlForIds } from "./cart";
 import { getActiveBundleForSend } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
@@ -206,20 +207,18 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         discountCode = minted.code;
         discountCodeGid = minted.gid;
         discountExpiresAt = minted.expiresAt;
-        // Swap the preview placeholder for the real code wherever it appears so
-        // the prose and the working code never disagree.
-        body = body.split(PLACEHOLDER_DISCOUNT_CODE).join(minted.code);
-        // Same for the expiry date: the prose names the date PROJECTED at draft
-        // time, but the real code minted just now expires N days from NOW. If
-        // the draft sat around, swap the stale date string for the real one so
-        // the stated deadline always matches the code that ships.
-        const realExpiryLabel = formatGermanExpiryDate(minted.expiresAt);
-        if (claimed.discountExpiresAt) {
-          const draftExpiryLabel = formatGermanExpiryDate(claimed.discountExpiresAt);
-          if (draftExpiryLabel !== realExpiryLabel) {
-            body = body.split(draftExpiryLabel).join(realExpiryLabel);
-          }
-        }
+        // Swap the preview placeholder for the real code wherever it appears,
+        // and a stale projected expiry date for the real one, so the prose and
+        // the working code/deadline never disagree. Shared with the campaign
+        // send path — see discount-swap.mjs.
+        body = applyMintedDiscountToBody(body, {
+          placeholder: PLACEHOLDER_DISCOUNT_CODE,
+          code: minted.code,
+          draftExpiryLabel: claimed.discountExpiresAt
+            ? formatGermanExpiryDate(claimed.discountExpiresAt)
+            : null,
+          realExpiryLabel: formatGermanExpiryDate(minted.expiresAt),
+        });
       }
 
       // Build the cart permalink that actually ships: it carries ?discount=CODE

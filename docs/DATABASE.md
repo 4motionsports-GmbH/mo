@@ -112,6 +112,9 @@ The schema is split into **two clusters** (see the separation rationale below).
 | `suppression_list` | `email` (PK), `added_at`, `reason`                                                                       |
 | `marketing_sends`  | `email_capture_id` (FK, cascade), `drafted_text`, `discount_code`, `sent_at`, `status` (draft/approved/sent), `shopify_order_matched` |
 | `customers`        | `email` (unique — the person key), `first_seen_at`/`last_seen_at`, `transactional_consent` + `marketing_status` (aggregated mirror of the capture), `profile_summary` + `profile_summary_updated_at` (regenerated "current understanding"), `purchase_summary` (jsonb Shopify order history) + `purchase_summary_updated_at` |
+| `campaign_contacts` | Campaign module (migration 0034, [`CAMPAIGNS.md`](./CAMPAIGNS.md)): Shopify marketing subscribers — `shopify_customer_id` (unique), `email`, name, `language`, `opt_in_level` (Shopify DOI quality), `orders_count`/`total_spent_cents`, `last_synced_at`, review `status` (pending/drafted/sending/sent/skipped/suppressed/draft_failed) |
+| `campaign_drafts`  | One editable draft per contact (`contact_id` unique, cascade): `subject`, `body` (MO-XXXX placeholder), `discount_percent`, projected `discount_expires_at`, compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
+| `campaign_sends`   | Immutable campaign send record: `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `sent_via` (email/copy), real `discount_code` (`MK-…`) + gid + expiry, `sent_at` |
 
 ### The customer entity (migration 0008)
 
