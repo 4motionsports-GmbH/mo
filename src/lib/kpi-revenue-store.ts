@@ -1,7 +1,9 @@
 // "Umsatz über Mo-Rabattcodes" — the revenue attributable to Mo, computed
 // HONESTLY from the ONLY signal that ties an order back to Mo and exposes its
-// value: a UNIQUE single-use discount code minted by Mo's marketing flow
-// (MS5-… codes on marketing_sends, usageLimit:1). See docs/ADMIN_DASHBOARD.md.
+// value: a UNIQUE single-use discount code minted by Mo's outbound flows
+// (MS5-… codes on marketing_sends, MK-… codes on campaign_sends — the prefix
+// keeps the two channels separable; both usageLimit:1). See
+// docs/ADMIN_DASHBOARD.md and docs/CAMPAIGNS.md.
 //
 // Deliberately NOT counted (no reliable attribution exists for them):
 //   - plain in-chat / summary cart permalinks — they carry NO discount, UTM, or
@@ -61,15 +63,23 @@ export async function getMoRevenue(
   const shopifyConfigured = isShopifyConfigured();
 
   try {
-    // Candidate codes: sent marketing emails that carried a code, minted on or
-    // before the window end, newest-first, capped (+1 to detect truncation).
+    // Candidate codes: sent marketing emails (MS5-) AND campaign emails (MK-)
+    // that carried a code, minted on or before the window end, newest-first
+    // across both channels, capped (+1 to detect truncation).
     const codeRows = (await sql`
-      SELECT discount_code
-        FROM marketing_sends
-       WHERE status = 'sent'
-         AND discount_code IS NOT NULL
-         AND sent_at < (${range.to}::date + 1)
-       ORDER BY sent_at DESC NULLS LAST, id DESC
+      SELECT t.discount_code FROM (
+        SELECT discount_code, sent_at
+          FROM marketing_sends
+         WHERE status = 'sent'
+           AND discount_code IS NOT NULL
+           AND sent_at < (${range.to}::date + 1)
+        UNION ALL
+        SELECT discount_code, sent_at
+          FROM campaign_sends
+         WHERE discount_code IS NOT NULL
+           AND sent_at < (${range.to}::date + 1)
+      ) t
+       ORDER BY t.sent_at DESC NULLS LAST
        LIMIT ${REVENUE_MAX_CODES + 1}
     `) as Array<{ discount_code: string }>;
 

@@ -7,6 +7,10 @@
       "schedule": "0 2 * * *"
     },
     {
+      "path": "/api/cron/sync-campaign-audience",
+      "schedule": "30 2 * * *"
+    },
+    {
       "path": "/api/cron/sync-catalog",
       "schedule": "0 3 * * *"
     },

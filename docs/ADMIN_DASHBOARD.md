@@ -4,13 +4,22 @@ The authenticated back office where a human reviews marketing-eligible contacts,
 generates a personalised draft email, edits it, and approves it — after which the
 **system** sends it (the operator never copies text into a personal mail client).
 
-It is deliberately small: a single shared admin password, five tabs
-(**Übersicht**, **Kunden**, **KPIs**, **Feedback** and **Gespräche**), and a
-send path that concentrates every legal guarantee in one place. There is no standalone
-Marketing tab — the marketing capability lives **inside the Kunden
-workspace** (a marketing filter preset, a per-customer "Marketing"
-sub-section, and a bulk-draft bar). Tabs are switched server-side via `?tab=`
-— no client router.
+It is deliberately small: a single shared admin password, a handful of tabs
+(**Übersicht**, **Kunden**, **Kampagne**, **KPIs**, **Feedback**,
+**Gespräche** and **Analyse**), and a send path that concentrates every legal
+guarantee in one place. There is no standalone Marketing tab — the marketing
+capability lives **inside the Kunden workspace** (a marketing filter preset,
+a per-customer "Marketing" sub-section, and a bulk-draft bar). Tabs are
+switched server-side via `?tab=` — no client router.
+
+The **Kampagne** tab (`?tab=kampagne`) is the review queue for the campaign
+module — personalized emails to the shop's **Shopify marketing subscribers**
+(a separate audience with its own consent basis, tables, send path and legal
+gates: `CAMPAIGN_SENDS_APPROVED` master flag, per-contact opt-in-level gate,
+send-time suppression re-check, cross-channel frequency cap, `MK-` discount
+codes). Fully documented in [`CAMPAIGNS.md`](./CAMPAIGNS.md); the `MK-` codes
+feed the same revenue KPI as the `MS5-` marketing codes (separable by
+prefix).
 
 The **Kunden** tab (`?tab=kunden`) groups by CUSTOMER (email), not by session:
 session timeline with transcripts, cached Shopify purchase history, and the
