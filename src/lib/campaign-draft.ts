@@ -63,6 +63,18 @@ export interface GenerateCampaignDraftInput extends DraftDiscountInput {
   recommendations: CampaignRecommendationInput[];
   /** True when the recommendations are representative fallbacks. */
   lowConfidence: boolean;
+  /**
+   * An attached bundle offer, so the prose references the set NATURALLY. The
+   * actual offer block (products, price, "statt", CTA — see bundle-email.ts)
+   * is appended deterministically at send time; the prose just mentions the
+   * set, exactly like the marketing draft's bundleHint. Null = none.
+   */
+  attachedBundle?: {
+    title: string;
+    componentNames: string[];
+    /** True when the bundle price is below the component sum (a real saving). */
+    hasSaving: boolean;
+  } | null;
 }
 
 function purchaseBlock(summary: CampaignPurchaseSummary | null, language: "de" | "en"): string {
@@ -118,6 +130,44 @@ function fallbackDiscountParagraph(
   );
 }
 
+/** The prompt section describing an attached bundle (or empty when none) — the
+ * campaign variant of marketing-draft's bundleHint: reference the set warmly,
+ * near the recommendations, WITHOUT inventing a price or a link (the offer
+ * block is appended at send time). */
+function bundleHint(
+  bundle: GenerateCampaignDraftInput["attachedBundle"],
+  language: "de" | "en"
+): string {
+  if (!bundle || bundle.componentNames.length === 0) return "";
+  const items = bundle.componentNames.map((n) => `  - ${n}`).join("\n");
+  if (language === "en") {
+    return (
+      `## Attached set offer (mention naturally in the text)\n` +
+      `A personal product set "${bundle.title}" has been prepared for this ` +
+      `customer; it appears below the text as its own offer with image, price ` +
+      `and button. Mention the set invitingly, as if you put it together ` +
+      `personally.` +
+      (bundle.hasSaving
+        ? ` It costs less than the individual products combined — point out the advantage kindly.`
+        : ``) +
+      ` Do NOT state a price and do NOT include a link (both are appended ` +
+      `automatically). The set contains:\n${items}\n\n`
+    );
+  }
+  return (
+    `## Angehängtes Set-Angebot (im Text natürlich erwähnen)\n` +
+    `Für diese:n Kund:in ist ein persönliches Produkt-Set „${bundle.title}“ ` +
+    `vorbereitet, das unten in der E-Mail als eigenes Angebot mit Bild, Preis ` +
+    `und Button erscheint. Erwähne dieses Set einladend im Text, als hättest ` +
+    `du es persönlich zusammengestellt.` +
+    (bundle.hasSaving
+      ? ` Es ist günstiger als die Einzelprodukte zusammen — weise freundlich auf den Vorteil hin.`
+      : ``) +
+    ` Nenne KEINEN Preis und baue KEINEN Link ein (beides wird automatisch ` +
+    `angehängt). Das Set enthält:\n${items}\n\n`
+  );
+}
+
 /** Clean templated fallback used when the model is unavailable. */
 function fallbackCampaignDraft(input: GenerateCampaignDraftInput): MarketingDraft {
   const en = input.language === "en";
@@ -151,6 +201,14 @@ function fallbackCampaignDraft(input: GenerateCampaignDraftInput): MarketingDraf
   }
   const discountParagraph = fallbackDiscountParagraph(input, input.language);
   if (discountParagraph) lines.push("", discountParagraph);
+  if (input.attachedBundle && input.attachedBundle.componentNames.length > 0) {
+    lines.push(
+      "",
+      en
+        ? `I've also put together a personal set for you: ${input.attachedBundle.title}. You'll find the details and your offer right below.`
+        : `Ich habe dir außerdem ein persönliches Set zusammengestellt: ${input.attachedBundle.title}. Die Details und dein Angebot findest du gleich unten.`
+    );
+  }
   lines.push(
     "",
     en
@@ -255,6 +313,9 @@ export async function generateCampaignDraft(
         "keine Countdown-Rhetorik.\n" +
         "- Wenn ein persönliches Rabattangebot vorgegeben ist, webe es klar und " +
         "einladend ein (mit dem exakten Code).\n" +
+        "- Wenn ein persönliches Set-Angebot angehängt ist, erwähne es natürlich " +
+        "im Text (es erscheint unten als eigenes Angebot mit Bild, Preis und " +
+        "Button) — nenne aber selbst KEINEN Preis und KEINEN Link dafür.\n" +
         "- Baue KEINEN Abmeldelink und KEINEN Hinweis auf den neuen Chat-" +
         "Berater ein — beides wird separat angehängt.\n" +
         "- Unterschreibe mit " +
@@ -275,6 +336,7 @@ export async function generateCampaignDraft(
         `## Produkte, die diese E-Mail empfehlen soll (mit exakter URL)\n` +
         `${recommendationsBlock(input.recommendations)}\n\n` +
         `${discountHint(input, input.language)}\n\n` +
+        bundleHint(input.attachedBundle, input.language) +
         `Schreibe jetzt die personalisierte E-Mail (Betreff + Text).`,
     });
     // Cost KPI (dashboard/admin side).

@@ -66,7 +66,13 @@ import {
 } from "./shopify-discounts";
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
 import { applyMintedDiscountToBody } from "./discount-swap.mjs";
+import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
+import { buildBundleRedirectUrl } from "./bundle-offers";
+import { renderBundleOfferBlock } from "./bundle-email";
+import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
+import { loadProductCatalog } from "./catalog-store";
 import { reportError } from "./observability";
+import type { Product } from "./types";
 
 /** Code prefix for campaign codes — distinct from the marketing "MS5" so
  * campaign revenue stays separable in the KPI dashboard. */
@@ -237,6 +243,12 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         });
       }
 
+      // SPECIAL-OFFER block — ADDITIVE, exactly like the marketing path: when
+      // a created, still-active bundle is attached to this contact, its offer
+      // block rides below the prose. Touches NONE of the send safeguards; a
+      // bundle resolution failure degrades to "no block", never blocks a send.
+      const bundle = await buildBundleBlockForContact(contactId);
+
       const { text, html } = renderCampaignEmail({
         subject: draft.subject,
         body,
@@ -246,6 +258,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           ? formatGermanExpiryDate(discountExpiresAt)
           : null,
         unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
+        bundle,
       });
 
       const threading = outboundThreading();
@@ -296,12 +309,56 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
   }
 }
 
+/** First usable absolute-https catalog image, or null (mail clients won't load
+ * a relative/http image). Mirrors the marketing path's helper. */
+function firstImageUrl(p: Product | undefined): string | null {
+  return p?.images?.find((u) => typeof u === "string" && u.startsWith("https://")) ?? null;
+}
+
 /**
- * Render the campaign email (text + HTML): the (edited) prose, then the
- * deterministic Mo-promo block with the deep-link CTA, the deterministic
- * discount line (code + deadline outside the editable prose), and the
- * unsubscribe footer. The branded shell carries the Impressum menu + legal
- * company footer (email-template.ts), matching every other outgoing mail.
+ * Resolve the bundle attached to a campaign contact (if any) and render its
+ * special-offer block — the campaign sibling of marketing-email's
+ * buildBundleBlockForSend: same active-only guard (shouldRenderBundleBlock),
+ * same tracked redirect, same renderer, fresh catalog images. Never throws; a
+ * failure degrades to "no block" so a send is never blocked by the bundle path.
+ */
+async function buildBundleBlockForContact(
+  contactId: number
+): Promise<{ text: string; html: string } | null> {
+  try {
+    const bundle = await getActiveBundleForCampaignContact(contactId);
+    if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
+    const offerUrl = buildBundleRedirectUrl(bundle.redirectToken);
+    if (!offerUrl) return null;
+
+    const catalog = await loadProductCatalog();
+    const byId = new Map(catalog.map((p) => [p.id, p]));
+    const components = bundle.components.map((c) => ({
+      name: c.title,
+      imageUrl: firstImageUrl(byId.get(c.productId)),
+    }));
+
+    return renderBundleOfferBlock({
+      title: bundle.title ?? "Dein persönliches Set",
+      components,
+      bundlePrice: bundle.bundlePrice,
+      componentsSum: bundle.componentsSum,
+      currency: bundle.currency,
+      offerUrl,
+    });
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-email", phase: "buildBundleBlockForContact" });
+    return null;
+  }
+}
+
+/**
+ * Render the campaign email (text + HTML): the (edited) prose, an optional
+ * bundle special-offer block, then the deterministic Mo-promo block with the
+ * deep-link CTA, the deterministic discount line (code + deadline outside the
+ * editable prose), and the unsubscribe footer. The branded shell carries the
+ * Impressum menu + legal company footer (email-template.ts), matching every
+ * other outgoing mail.
  */
 function renderCampaignEmail(opts: {
   subject: string;
@@ -310,8 +367,11 @@ function renderCampaignEmail(opts: {
   discountCode: string | null;
   discountExpiresLabel: string | null;
   unsubscribe: { text: string; html: string };
+  /** Optional special-offer block for an attached bundle (text + HTML parts). */
+  bundle: { text: string; html: string } | null;
 }): { text: string; html: string } {
-  const { subject, body, language, discountCode, discountExpiresLabel, unsubscribe } = opts;
+  const { subject, body, language, discountCode, discountExpiresLabel, unsubscribe, bundle } =
+    opts;
   const en = language === "en";
   const deeplink = campaignMoDeeplinkUrl();
 
@@ -323,6 +383,9 @@ function renderCampaignEmail(opts: {
 
   // --- text part ---
   const textLines = [body.trim()];
+  // The special-offer block (when a bundle is attached) sits right after the
+  // prose, before the discount line / promo / unsubscribe footer.
+  if (bundle) textLines.push(bundle.text);
   if (discountCode) {
     textLines.push(
       "",
@@ -352,7 +415,7 @@ function renderCampaignEmail(opts: {
     bodyHtml: `
                                   <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(
                                     body.trim()
-                                  )}</p>${promoHtml}`,
+                                  )}</p>${bundle ? bundle.html : ""}${promoHtml}`,
     ctas: [{ label: moPromoCtaLabel(language), url: deeplink }],
     footnoteHtml: discountNote || undefined,
     footer: {

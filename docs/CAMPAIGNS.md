@@ -126,9 +126,20 @@ fallback discipline as `marketing-draft.ts`):
    (`formatGermanExpiryDate`/`discountExpiryDaysPublic`); the real `MK-` code
    is minted **only at send**. Changed depth or explicit regenerate overwrites
    the open draft (`shouldReuseCampaignDraft`) so text and eventual code never
-   disagree. *Bundle offers are a documented TODO for a later round — this
-   round ships percentage-only (wiring the bundle special-offer block into a
-   second send path adds significant complexity; see `docs/BUNDLES.md`).*
+   disagree.
+   **Bundle offers** (alternative or addition to a percentage code): the card's
+   "Set-Angebot" section creates a real UNLISTED Shopify set from the card's
+   recommendations via the **existing** bundle mechanism
+   (`/api/admin/bundles/create` with `campaignContactId` — migration `0035`
+   adds the nullable FK on `bundle_offers`, parallel to
+   `customer_id`/`marketing_send_id`; see [`BUNDLES.md`](./BUNDLES.md) for
+   scopes, pricing/PAngV and expiry). A regenerate weaves a natural mention
+   into the prose (`bundleHint`); the deterministic offer block (components,
+   price, genuine "statt", tracked `/api/r/<token>` CTA) is appended at send
+   time (`buildBundleBlockForContact`, same active-only guard + renderer as
+   the marketing path) and a resolution failure degrades to "no block", never
+   blocking a send. Archive-on-expiry stays with the existing cron; "Set
+   entfernen" uses the existing archive route.
 5. Mo promo block + deep link (`CAMPAIGN_MO_DEEPLINK_URL`, default
    `https://motionsports.de/?mo=open&utm_source=campaign&utm_medium=email`) —
    appended **deterministically** at send time, both languages

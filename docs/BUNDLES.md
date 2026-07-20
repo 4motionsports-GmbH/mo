@@ -50,6 +50,7 @@ auto-recomputes (spike §2).
 | `id`                  | offer id (BIGINT identity)                                              |
 | `customer_id`         | recipient → `customers(id)` `ON DELETE SET NULL`; **nullable** (ad-hoc) |
 | `marketing_send_id`   | the email send this rode out with → `marketing_sends(id)` `SET NULL`    |
+| `campaign_contact_id` | campaign-channel recipient → `campaign_contacts(id)` `SET NULL`; **nullable** (migration `0035`, see [`CAMPAIGNS.md`](./CAMPAIGNS.md)) |
 | `components`          | JSONB array; each entry pins productId + variant + **unitPrice snapshot** + qty |
 | `components_sum`      | TRUE sum of component prices ⇒ `compareAtPrice` / "statt"               |
 | `bundle_price`        | admin-set selling price (defaults to `components_sum`)                  |

@@ -12,6 +12,7 @@ import {
   listDraftedQueue,
   listCampaignSendHistory,
 } from "@/lib/campaign-store";
+import { listActiveBundlesForCampaignContacts } from "@/lib/bundle-offers-store";
 import { getProductsByIds } from "@/lib/product-catalog";
 import {
   isCampaignSendsApproved,
@@ -56,6 +57,11 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
     : [];
   const productById = new Map(recommendedProducts.map((p) => [p.id, p]));
 
+  // Attached (active) bundle offers for the whole queue in one query.
+  const bundleByContact = await listActiveBundlesForCampaignContacts(
+    queue.map((q) => q.contact.id)
+  );
+
   const queueItems: CampaignQueueItemProps[] = queue.map((q) => ({
     contactId: q.contact.id,
     email: q.contact.email,
@@ -75,6 +81,20 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
       const p = productById.get(id);
       return { id, name: p?.name ?? id, url: p?.shopifyUrl ?? null };
     }),
+    bundle: (() => {
+      const b = bundleByContact.get(q.contact.id);
+      return b
+        ? {
+            id: b.id,
+            title: b.title ?? "Dein persönliches Set",
+            components: b.components.map((c) => c.title),
+            bundlePrice: b.bundlePrice,
+            componentsSum: b.componentsSum,
+            currency: b.currency,
+            expiresAt: b.expiresAt,
+          }
+        : null;
+    })(),
   }));
 
   // Redemption status for the history sub-view (bounded fan-out; null =

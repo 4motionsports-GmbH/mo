@@ -26,6 +26,8 @@ export interface BundleOfferRow {
   id: number;
   customerId: number | null;
   marketingSendId: number | null;
+  /** Campaign contact this offer is attached to (migration 0035), or null. */
+  campaignContactId: number | null;
   components: BundleComponentRecord[];
   /** Decimal Money strings (NUMERIC columns come back as strings). */
   componentsSum: string;
@@ -53,6 +55,7 @@ function mapRow(r: Record<string, unknown>): BundleOfferRow {
     id: Number(r.id),
     customerId: r.customer_id != null ? Number(r.customer_id) : null,
     marketingSendId: r.marketing_send_id != null ? Number(r.marketing_send_id) : null,
+    campaignContactId: r.campaign_contact_id != null ? Number(r.campaign_contact_id) : null,
     // jsonb comes back already parsed from the neon driver; tolerate a string too.
     components:
       typeof r.components === "string"
@@ -82,6 +85,8 @@ function mapRow(r: Record<string, unknown>): BundleOfferRow {
 export interface InsertPendingOfferInput {
   customerId: number | null;
   marketingSendId: number | null;
+  /** Campaign contact this offer is attached to (campaign channel), or null. */
+  campaignContactId?: number | null;
   components: BundleComponentRecord[];
   componentsSum: string;
   bundlePrice: string;
@@ -106,11 +111,12 @@ export async function insertPendingOffer(
   try {
     const rows = (await sql`
       INSERT INTO bundle_offers
-        (customer_id, marketing_send_id, components, components_sum, bundle_price,
-         currency, title, creation_mode, status, redirect_token, expires_at,
-         created_at, updated_at)
+        (customer_id, marketing_send_id, campaign_contact_id, components,
+         components_sum, bundle_price, currency, title, creation_mode, status,
+         redirect_token, expires_at, created_at, updated_at)
       VALUES
         (${input.customerId}, ${input.marketingSendId},
+         ${input.campaignContactId ?? null},
          ${JSON.stringify(input.components)}::jsonb,
          ${input.componentsSum}, ${input.bundlePrice}, ${input.currency},
          ${input.title}, ${input.creationMode}, 'pending', ${token},
@@ -423,6 +429,64 @@ export async function fetchDueBundleOffers(
   } catch (err) {
     reportError(err, { route: "lib/bundle-offers-store", phase: "fetchDueBundleOffers" });
     throw err;
+  }
+}
+
+/** The ACTIVE offer attached to a campaign contact — what the campaign card
+ * shows and the campaign send path renders as the special-offer block. Null
+ * when none. Newest first, mirroring getActiveBundleForSend. */
+export async function getActiveBundleForCampaignContact(
+  contactId: number,
+  sql: Sql | null = getSql()
+): Promise<BundleOfferRow | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT * FROM bundle_offers
+       WHERE campaign_contact_id = ${contactId} AND status = 'active'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? mapRow(rows[0]) : null;
+  } catch (err) {
+    reportError(err, {
+      route: "lib/bundle-offers-store",
+      phase: "getActiveBundleForCampaignContact",
+    });
+    return null;
+  }
+}
+
+/**
+ * Bulk variant for the campaign review queue: the active offer per contact id
+ * (at most one — the newest — per contact, matching the single-lookup above).
+ * One query for the whole queue instead of a per-card fan-out. Never throws.
+ */
+export async function listActiveBundlesForCampaignContacts(
+  contactIds: number[],
+  sql: Sql | null = getSql()
+): Promise<Map<number, BundleOfferRow>> {
+  const out = new Map<number, BundleOfferRow>();
+  if (!sql || contactIds.length === 0) return out;
+  try {
+    const rows = (await sql`
+      SELECT DISTINCT ON (campaign_contact_id) *
+        FROM bundle_offers
+       WHERE campaign_contact_id = ANY(${contactIds}::bigint[])
+         AND status = 'active'
+       ORDER BY campaign_contact_id, created_at DESC, id DESC
+    `) as Array<Record<string, unknown>>;
+    for (const r of rows) {
+      const mapped = mapRow(r);
+      if (mapped.campaignContactId != null) out.set(mapped.campaignContactId, mapped);
+    }
+    return out;
+  } catch (err) {
+    reportError(err, {
+      route: "lib/bundle-offers-store",
+      phase: "listActiveBundlesForCampaignContacts",
+    });
+    return out;
   }
 }
 

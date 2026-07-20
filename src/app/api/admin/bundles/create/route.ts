@@ -1,10 +1,12 @@
 // POST /api/admin/bundles/create
 //   { customerId?, components: [{ productId, quantity? }],
-//     bundlePriceOverride?, title?, expiryDays?, marketingSendId? }
+//     bundlePriceOverride?, title?, expiryDays?, marketingSendId?,
+//     campaignContactId? }
 //
 // Create a personalized bundle offer (S10). customerId is optional (null = an
-// ad-hoc offer). All the validation, snapshotting, Shopify creation and
-// persistence live in createBundleOffer (lib/bundle-offers).
+// ad-hoc offer); campaignContactId attaches the offer to a campaign contact
+// instead (docs/CAMPAIGNS.md §4). All the validation, snapshotting, Shopify
+// creation and persistence live in createBundleOffer (lib/bundle-offers).
 //
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 
@@ -45,6 +47,7 @@ export async function POST(req: Request) {
       title?: unknown;
       expiryDays?: unknown;
       marketingSendId?: unknown;
+      campaignContactId?: unknown;
     };
 
     // customerId optional (null = ad-hoc); when present it must be a positive int.
@@ -76,6 +79,15 @@ export async function POST(req: Request) {
       return adminJsonError("bad_request", "expiryDays must be a positive number", 400);
     }
     const marketingSendId = body.marketingSendId != null ? Number(body.marketingSendId) : null;
+    const campaignContactId =
+      body.campaignContactId != null ? Number(body.campaignContactId) : null;
+    if (campaignContactId != null && (!Number.isInteger(campaignContactId) || campaignContactId <= 0)) {
+      return adminJsonError(
+        "bad_request",
+        "campaignContactId must be a positive integer or omitted",
+        400
+      );
+    }
 
     options = {
       bundlePriceOverride:
@@ -83,6 +95,7 @@ export async function POST(req: Request) {
       title: body.title != null ? String(body.title) : null,
       ...(expiryDays != null ? { expiryDays } : {}),
       marketingSendId: Number.isInteger(marketingSendId) ? marketingSendId : null,
+      campaignContactId,
     };
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);

@@ -20,6 +20,8 @@ import {
 } from "./shopify-discounts";
 import { generateCampaignDraft } from "./campaign-draft";
 import { loadCampaignPersonalization } from "./campaign-recommendations";
+import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
+import { bundleStattPrice } from "./bundle-email-core.mjs";
 import {
   listNextPendingContacts,
   markContactDraftFailed,
@@ -52,6 +54,18 @@ export async function prepareDraftForContact(
   const hasDiscount = discountPercent > 0;
   const expiry = hasDiscount ? projectedExpiry() : null;
 
+  // An attached (active) bundle offer is referenced NATURALLY in the prose;
+  // the deterministic offer block itself is appended at send time
+  // (campaign-email.ts). Same division of labour as the marketing draft.
+  const bundle = await getActiveBundleForCampaignContact(contact.id);
+  const attachedBundle = bundle
+    ? {
+        title: bundle.title ?? "Dein persönliches Set",
+        componentNames: bundle.components.map((c) => c.title),
+        hasSaving: bundleStattPrice(bundle.bundlePrice, bundle.componentsSum) != null,
+      }
+    : null;
+
   const draft = await generateCampaignDraft({
     language: contact.language,
     firstName: contact.firstName,
@@ -62,6 +76,7 @@ export async function prepareDraftForContact(
       category: p.category || null,
     })),
     lowConfidence: recommendations.lowConfidence,
+    attachedBundle,
     discountCode: hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountPercent,
     discountExpiresLabel: expiry ? formatGermanExpiryDate(expiry) : null,
