@@ -116,6 +116,11 @@ The schema is split into **two clusters** (see the separation rationale below).
 | `campaign_drafts`  | One editable draft per contact (`contact_id` unique, cascade): `subject`, `body` (MO-XXXX placeholder), `discount_percent`, projected `discount_expires_at`, compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
 | `campaign_sends`   | Immutable campaign send record: `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `sent_via` (email/copy), real `discount_code` (`MK-…`) + gid + expiry, `sent_at` |
 
+Campaign contacts can additionally carry a **bundle offer**: `bundle_offers`
+(migration 0013, [`BUNDLES.md`](./BUNDLES.md)) gained a nullable
+`campaign_contact_id` FK (`ON DELETE SET NULL`, migration 0035) parallel to
+its `customer_id`/`marketing_send_id` links.
+
 ### The customer entity (migration 0008)
 
 A **customer** is keyed by email — the only reliable cross-session identifier

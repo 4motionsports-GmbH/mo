@@ -70,6 +70,17 @@ export interface CampaignQueueItemProps {
     truncated: boolean;
   } | null;
   recommendations: Array<{ id: string; name: string; url: string | null }>;
+  /** Attached ACTIVE bundle offer (docs/CAMPAIGNS.md §4), or null. */
+  bundle: {
+    id: number;
+    title: string;
+    components: string[];
+    /** Decimal Money strings (as stored). */
+    bundlePrice: string;
+    componentsSum: string;
+    currency: string;
+    expiresAt: string | null;
+  } | null;
 }
 
 export interface CampaignHistoryItemProps {
@@ -165,7 +176,7 @@ export function KampagneWorkspace({
   const [items, setItems] = React.useState(queue);
   const [index, setIndex] = React.useState(0);
   const [busy, setBusy] = React.useState<
-    null | "send" | "skip" | "regen" | "sync" | "prepare" | "markdone"
+    null | "send" | "skip" | "regen" | "sync" | "prepare" | "markdone" | "bundle"
   >(null);
   const [prepareProgress, setPrepareProgress] = React.useState<string | null>(null);
   const [prepareDepth, setPrepareDepth] = React.useState(0);
@@ -310,6 +321,91 @@ export function KampagneWorkspace({
       setBusy(null);
     }
   }, [current, busy, removeCurrent]);
+
+  const setCurrentBundle = React.useCallback(
+    (bundle: CampaignQueueItemProps["bundle"]) => {
+      setItems((prev) => {
+        const next = [...prev];
+        const item = next[index];
+        if (item) next[index] = { ...item, bundle };
+        return next;
+      });
+    },
+    [index]
+  );
+
+  const doCreateBundle = React.useCallback(
+    async (productIds: string[], priceOverride: string) => {
+      if (!current || busy) return;
+      setBusy("bundle");
+      try {
+        const json = (await callApi("/api/admin/bundles/create", {
+          campaignContactId: current.contactId,
+          components: productIds.map((productId) => ({ productId })),
+          ...(priceOverride.trim() ? { bundlePriceOverride: priceOverride.trim() } : {}),
+        })) as {
+          offer?: {
+            id: number;
+            title: string | null;
+            components: Array<{ title: string }>;
+            bundlePrice: string;
+            componentsSum: string;
+            currency: string;
+            expiresAt: string | null;
+          };
+        };
+        if (json.offer) {
+          setCurrentBundle({
+            id: json.offer.id,
+            title: json.offer.title ?? "Dein persönliches Set",
+            components: json.offer.components.map((c) => c.title),
+            bundlePrice: json.offer.bundlePrice,
+            componentsSum: json.offer.componentsSum,
+            currency: json.offer.currency,
+            expiresAt: json.offer.expiresAt,
+          });
+          toast({
+            variant: "success",
+            title: "Set-Angebot erstellt",
+            description:
+              "„↻ Neu generieren“ klicken, damit der E-Mail-Text das Set erwähnt — der Angebots-Block selbst wird beim Versand automatisch angehängt.",
+          });
+        }
+      } catch (err) {
+        toast({
+          variant: "error",
+          title: "Set-Erstellung fehlgeschlagen",
+          description: String((err as Error).message ?? err),
+        });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [current, busy, setCurrentBundle]
+  );
+
+  const doArchiveBundle = React.useCallback(async () => {
+    if (!current?.bundle || busy) return;
+    setBusy("bundle");
+    try {
+      await callApi("/api/admin/bundles/archive", { id: current.bundle.id });
+      setCurrentBundle(null);
+      toast({
+        variant: "success",
+        title: "Set-Angebot archiviert",
+        description:
+          "Falls der Text das Set erwähnt: „↻ Neu generieren“, damit die Erwähnung verschwindet.",
+      });
+    } catch (err) {
+      toast({
+        variant: "error",
+        title: "Archivieren fehlgeschlagen",
+        description: String((err as Error).message ?? err),
+      });
+    } finally {
+      setBusy(null);
+    }
+  }, [current, busy, setCurrentBundle]);
 
   const doRegenerate = React.useCallback(
     async (depth: number) => {
@@ -696,6 +792,16 @@ export function KampagneWorkspace({
                     )}
                   </div>
                 </div>
+
+                <BundleSection
+                  bundle={current.bundle}
+                  recommendations={current.recommendations}
+                  shopifyConfigured={shopifyConfigured}
+                  busy={busy !== null}
+                  creating={busy === "bundle"}
+                  onCreate={doCreateBundle}
+                  onArchive={doArchiveBundle}
+                />
               </div>
 
               {/* Right: editable draft + actions */}
@@ -782,6 +888,139 @@ export function KampagneWorkspace({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/** Per-card bundle-offer section: shows the attached active set (price, "statt"
+ * when genuinely cheaper, expiry, archive), or a small composer that creates a
+ * set from the card's recommended products via the EXISTING bundle mechanism
+ * (/api/admin/bundles/create with campaignContactId — docs/BUNDLES.md). */
+function BundleSection({
+  bundle,
+  recommendations,
+  shopifyConfigured,
+  busy,
+  creating,
+  onCreate,
+  onArchive,
+}: {
+  bundle: CampaignQueueItemProps["bundle"];
+  recommendations: Array<{ id: string; name: string; url: string | null }>;
+  shopifyConfigured: boolean;
+  busy: boolean;
+  creating: boolean;
+  onCreate: (productIds: string[], priceOverride: string) => void;
+  onArchive: () => void;
+}) {
+  const [selected, setSelected] = React.useState<Set<string>>(
+    () => new Set(recommendations.map((r) => r.id))
+  );
+  const [priceOverride, setPriceOverride] = React.useState("");
+  // Re-seed the composer when the card (its recommendations) changes.
+  const recKey = recommendations.map((r) => r.id).join("|");
+  React.useEffect(() => {
+    setSelected(new Set(recommendations.map((r) => r.id)));
+    setPriceOverride("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recKey]);
+
+  if (bundle) {
+    const price = Number(bundle.bundlePrice);
+    const sum = Number(bundle.componentsSum);
+    const money = (n: number) =>
+      n.toLocaleString("de-DE", { style: "currency", currency: bundle.currency || "EUR" });
+    return (
+      <div>
+        <div className="mb-1 font-medium">Set-Angebot</div>
+        <div className="rounded-md border border-border px-2.5 py-1.5 text-xs">
+          <div className="font-medium">{bundle.title}</div>
+          <div className="text-muted-foreground">{bundle.components.join(" + ")}</div>
+          <div className="mt-1">
+            {Number.isFinite(price) ? money(price) : bundle.bundlePrice}
+            {Number.isFinite(price) && Number.isFinite(sum) && price < sum && (
+              <span className="text-muted-foreground"> (statt {money(sum)})</span>
+            )}
+            {bundle.expiresAt ? (
+              <span className="text-muted-foreground">
+                {" "}
+                · läuft ab {formatDate(bundle.expiresAt)}
+              </span>
+            ) : null}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            onClick={onArchive}
+            disabled={busy}
+          >
+            Set entfernen (archivieren)
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!shopifyConfigured || recommendations.length === 0) {
+    return (
+      <div>
+        <div className="mb-1 font-medium">Set-Angebot</div>
+        <div className="text-xs text-muted-foreground">
+          {shopifyConfigured
+            ? "Keine Empfehlungen, aus denen ein Set gebaut werden könnte."
+            : "Shopify nicht konfiguriert — keine Set-Angebote möglich."}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-1 font-medium">Set-Angebot</div>
+      <div className="space-y-1 text-xs">
+        {recommendations.map((r) => (
+          <label key={r.id} className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={selected.has(r.id)}
+              onChange={(e) => {
+                setSelected((prev) => {
+                  const next = new Set(prev);
+                  if (e.target.checked) next.add(r.id);
+                  else next.delete(r.id);
+                  return next;
+                });
+              }}
+            />
+            {r.name}
+          </label>
+        ))}
+        <div className="flex items-center gap-1.5 pt-1">
+          <Input
+            type="text"
+            inputMode="decimal"
+            placeholder="Set-Preis € (optional)"
+            value={priceOverride}
+            onChange={(e) => setPriceOverride(e.target.value)}
+            className="h-8 w-40 text-xs"
+            aria-label="Set-Preis (optional, sonst Summe der Einzelpreise)"
+            disabled={busy}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onCreate([...selected], priceOverride)}
+            disabled={busy || selected.size === 0}
+          >
+            {creating ? "Erstellt…" : "Set aus Empfehlungen erstellen"}
+          </Button>
+        </div>
+        <p className="text-muted-foreground">
+          Erstellt ein echtes (unlisted) Shopify-Set über den bestehenden
+          Bundle-Mechanismus; der Angebots-Block wird beim Versand automatisch angehängt.
+        </p>
+      </div>
     </div>
   );
 }

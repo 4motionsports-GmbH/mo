@@ -79,6 +79,8 @@ export interface CreateBundleOfferOptions {
   expiryDays?: number;
   /** Link to the marketing send this offer rides out with, if any. */
   marketingSendId?: number | null;
+  /** Campaign contact this offer is attached to (campaign channel), if any. */
+  campaignContactId?: number | null;
 }
 
 export type CreateBundleOfferResult =
@@ -175,6 +177,7 @@ export async function createBundleOffer(
     pending = await insertPendingOffer({
       customerId,
       marketingSendId: options.marketingSendId ?? null,
+      campaignContactId: options.campaignContactId ?? null,
       components: snapshot,
       componentsSum,
       bundlePrice,
