@@ -11,6 +11,7 @@ import {
   getCampaignCounts,
   listDraftedQueue,
   listCampaignSendHistory,
+  listSkippedContacts,
 } from "@/lib/campaign-store";
 import { listActiveBundlesForCampaignContacts } from "@/lib/bundle-offers-store";
 import { getProductsByIds } from "@/lib/product-catalog";
@@ -41,10 +42,11 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
   }
 
   const shopifyConfigured = isShopifyConfigured();
-  const [counts, queue, history] = await Promise.all([
+  const [counts, queue, history, skipped] = await Promise.all([
     getCampaignCounts(),
     listDraftedQueue(),
     listCampaignSendHistory(),
+    listSkippedContacts(),
   ]);
 
   // Resolve the recommended products once for the whole queue (names + URLs
@@ -138,6 +140,13 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
       }
       queue={queueItems}
       history={historyItems}
+      skipped={skipped.map((s) => ({
+        contactId: s.contact.id,
+        email: s.contact.email,
+        firstName: s.contact.firstName,
+        lastName: s.contact.lastName,
+        hasDraft: s.hasDraft,
+      }))}
       sendsApproved={isCampaignSendsApproved()}
       allowSingleOptIn={isSingleOptInAllowed()}
       shopifyConfigured={shopifyConfigured}

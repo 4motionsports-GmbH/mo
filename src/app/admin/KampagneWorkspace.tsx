@@ -155,10 +155,19 @@ function rememberFirstSendConfirm(): void {
   }
 }
 
+export interface CampaignSkippedItemProps {
+  contactId: number;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  hasDraft: boolean;
+}
+
 export function KampagneWorkspace({
   counts,
   queue,
   history,
+  skipped,
   sendsApproved,
   allowSingleOptIn,
   shopifyConfigured,
@@ -166,6 +175,7 @@ export function KampagneWorkspace({
   counts: CampaignCountsProps;
   queue: CampaignQueueItemProps[];
   history: CampaignHistoryItemProps[];
+  skipped: CampaignSkippedItemProps[];
   sendsApproved: boolean;
   allowSingleOptIn: boolean;
   shopifyConfigured: boolean;
@@ -175,11 +185,12 @@ export function KampagneWorkspace({
   // card always shows the next reviewable draft without a server round-trip.
   const [items, setItems] = React.useState(queue);
   const [index, setIndex] = React.useState(0);
-  // Review filters: opt-in level (all / provable DOI only / SOI+unknown only)
-  // + a free-text contact search. Both narrow the WORKING view; mutations are
-  // keyed by contactId so filtering can never mis-target a card.
+  // Review filter: opt-in level (all / provable DOI only / SOI+unknown only)
+  // narrows the WORKING view; mutations are keyed by contactId so filtering
+  // can never mis-target a card. (Contact SEARCH is global — see QueueRail —
+  // and deliberately not a queue filter.)
   const [optInFilter, setOptInFilter] = React.useState<"all" | "doi" | "soi">("all");
-  const [search, setSearch] = React.useState("");
+  const [skippedList, setSkippedList] = React.useState(skipped);
   const [busy, setBusy] = React.useState<
     | null
     | "send"
@@ -200,27 +211,32 @@ export function KampagneWorkspace({
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   const visibleItems = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
     return items.filter((it) => {
       if (optInFilter === "doi" && it.optInLevel !== "CONFIRMED_OPT_IN") return false;
       if (optInFilter === "soi" && it.optInLevel === "CONFIRMED_OPT_IN") return false;
-      if (
-        q &&
-        !`${it.email} ${it.firstName ?? ""} ${it.lastName ?? ""}`.toLowerCase().includes(q)
-      ) {
-        return false;
-      }
       return true;
     });
-  }, [items, optInFilter, search]);
-
-  // A filter change restarts at the top of the (new) view.
-  React.useEffect(() => {
-    setIndex(0);
-  }, [optInFilter, search]);
+  }, [items, optInFilter]);
 
   const clampedIndex = Math.min(index, Math.max(0, visibleItems.length - 1));
   const current = visibleItems[clampedIndex] ?? null;
+
+  /** Filter-button handler: switching the view restarts at its top. */
+  const applyOptInFilter = React.useCallback((next: "all" | "doi" | "soi") => {
+    setOptInFilter(next);
+    setIndex(0);
+  }, []);
+
+  /** Jump straight to a queue card (rail click / global search "Öffnen").
+   * Clears the opt-in filter so the target is always in view. */
+  const jumpToContact = React.useCallback(
+    (contactId: number) => {
+      setOptInFilter("all");
+      const idx = items.findIndex((it) => it.contactId === contactId);
+      if (idx >= 0) setIndex(idx);
+    },
+    [items]
+  );
 
   /** Patch one card by contactId (filter-safe — never by list position). */
   const patchItem = React.useCallback(
@@ -314,6 +330,18 @@ export function KampagneWorkspace({
     setBusy("skip");
     try {
       await callApi("/api/admin/campaign/skip", { contactId: current.contactId });
+      // Skips are undoable: the contact moves to the rail's "Übersprungen"
+      // section, where "Wiederherstellen" puts it straight back in the queue.
+      setSkippedList((prev) => [
+        {
+          contactId: current.contactId,
+          email: current.email,
+          firstName: current.firstName,
+          lastName: current.lastName,
+          hasDraft: true,
+        },
+        ...prev,
+      ]);
       removeCurrent();
     } catch (err) {
       toast({
@@ -325,6 +353,76 @@ export function KampagneWorkspace({
       setBusy(null);
     }
   }, [current, busy, removeCurrent]);
+
+  /** Undo a skip. If the contact still has its draft it lands straight back
+   * in the queue; otherwise a fresh draft is generated first. Reloads so the
+   * server-rendered queue (recommendations, bundle, purchase card) is
+   * complete. */
+  const doUnskip = React.useCallback(
+    async (contactId: number) => {
+      if (busy) return;
+      setBusy("skip");
+      try {
+        const json = (await callApi("/api/admin/campaign/unskip", { contactId })) as {
+          status?: string;
+        };
+        if (json.status === "pending") {
+          toast({ title: "Wiederhergestellt — Entwurf wird generiert…", duration: 0 });
+          await callApi("/api/admin/campaign/draft", {
+            contactId,
+            discountPercent: prepareDepth,
+            regenerate: true,
+          });
+        }
+        toast({
+          variant: "success",
+          title: "Kontakt zurück in der Warteschlange",
+          description: "Seite wird neu geladen…",
+        });
+        window.location.reload();
+      } catch (err) {
+        toast({
+          variant: "error",
+          title: "Wiederherstellen fehlgeschlagen",
+          description: String((err as Error).message ?? err),
+        });
+        setBusy(null);
+      }
+    },
+    [busy, prepareDepth]
+  );
+
+  /** Global-search action: generate a draft for a contact that is NOT in the
+   * queue yet (status pending/draft_failed) and pull them in. Reloads so the
+   * full server-rendered card data is present. */
+  const doDraftContact = React.useCallback(
+    async (contactId: number) => {
+      if (busy) return;
+      setBusy("regen");
+      try {
+        toast({ title: "Entwurf wird generiert…", duration: 0 });
+        await callApi("/api/admin/campaign/draft", {
+          contactId,
+          discountPercent: prepareDepth,
+          regenerate: true,
+        });
+        toast({
+          variant: "success",
+          title: "Entwurf erstellt — Kontakt ist in der Warteschlange",
+          description: "Seite wird neu geladen…",
+        });
+        window.location.reload();
+      } catch (err) {
+        toast({
+          variant: "error",
+          title: "Entwurf fehlgeschlagen",
+          description: String((err as Error).message ?? err),
+        });
+        setBusy(null);
+      }
+    },
+    [busy, prepareDepth]
+  );
 
   const doCopy = React.useCallback(async () => {
     if (!current) return;
@@ -370,6 +468,39 @@ export function KampagneWorkspace({
     [current, patchItem]
   );
 
+  /** Regenerate a contact's draft with the current depth and patch the card.
+   * No busy guard — callers own the busy state so offer changes (products /
+   * discount / bundle) can CHAIN a regenerate in the same action. Throws on
+   * failure. */
+  const runRegenerate = React.useCallback(
+    async (contactId: number, depth: number) => {
+      const json = (await callApi("/api/admin/campaign/draft", {
+        contactId,
+        discountPercent: depth,
+        regenerate: true,
+      })) as {
+        draft?: {
+          subject: string;
+          body: string;
+          discountPercent: number;
+          discountExpiresAt: string | null;
+          lowConfidence: boolean;
+        };
+      };
+      if (json.draft) {
+        const d = json.draft;
+        patchItem(contactId, {
+          subject: d.subject,
+          body: d.body,
+          discountPercent: d.discountPercent,
+          discountExpiresAt: d.discountExpiresAt,
+          lowConfidence: d.lowConfidence,
+        });
+      }
+    },
+    [patchItem]
+  );
+
   const doCreateBundle = React.useCallback(
     async (productIds: string[], priceOverride: string) => {
       if (!current || busy) return;
@@ -403,9 +534,10 @@ export function KampagneWorkspace({
           toast({
             variant: "success",
             title: "Set-Angebot erstellt",
-            description:
-              "„↻ Neu generieren“ klicken, damit der E-Mail-Text das Set erwähnt — der Angebots-Block selbst wird beim Versand automatisch angehängt.",
+            description: "Text wird neu generiert, damit er das Set erwähnt…",
           });
+          await runRegenerate(current.contactId, current.discountPercent);
+          toast({ variant: "success", title: "Text aktualisiert" });
         }
       } catch (err) {
         toast({
@@ -417,7 +549,7 @@ export function KampagneWorkspace({
         setBusy(null);
       }
     },
-    [current, busy, setCurrentBundle]
+    [current, busy, setCurrentBundle, runRegenerate]
   );
 
   const doArchiveBundle = React.useCallback(async () => {
@@ -429,9 +561,10 @@ export function KampagneWorkspace({
       toast({
         variant: "success",
         title: "Set-Angebot archiviert",
-        description:
-          "Falls der Text das Set erwähnt: „↻ Neu generieren“, damit die Erwähnung verschwindet.",
+        description: "Text wird neu generiert…",
       });
+      await runRegenerate(current.contactId, current.discountPercent);
+      toast({ variant: "success", title: "Text aktualisiert" });
     } catch (err) {
       toast({
         variant: "error",
@@ -441,37 +574,15 @@ export function KampagneWorkspace({
     } finally {
       setBusy(null);
     }
-  }, [current, busy, setCurrentBundle]);
+  }, [current, busy, setCurrentBundle, runRegenerate]);
 
   const doRegenerate = React.useCallback(
     async (depth: number) => {
       if (!current || busy) return;
       setBusy("regen");
       try {
-        const json = (await callApi("/api/admin/campaign/draft", {
-          contactId: current.contactId,
-          discountPercent: depth,
-          regenerate: true,
-        })) as {
-          draft?: {
-            subject: string;
-            body: string;
-            discountPercent: number;
-            discountExpiresAt: string | null;
-            lowConfidence: boolean;
-          };
-        };
-        if (json.draft) {
-          const d = json.draft;
-          patchItem(current.contactId, {
-            subject: d.subject,
-            body: d.body,
-            discountPercent: d.discountPercent,
-            discountExpiresAt: d.discountExpiresAt,
-            lowConfidence: d.lowConfidence,
-          });
-          toast({ variant: "success", title: "Entwurf neu generiert" });
-        }
+        await runRegenerate(current.contactId, depth);
+        toast({ variant: "success", title: "Entwurf neu generiert" });
       } catch (err) {
         toast({
           variant: "error",
@@ -482,7 +593,7 @@ export function KampagneWorkspace({
         setBusy(null);
       }
     },
-    [current, busy, patchItem]
+    [current, busy, runRegenerate]
   );
 
   /** Persist a curated recommendation list; the server also rebuilds an
@@ -509,14 +620,14 @@ export function KampagneWorkspace({
         });
         if (json.bundleError) {
           toast({ variant: "warning", title: "Set-Angebot", description: json.bundleError });
-        } else {
-          toast({
-            variant: "success",
-            title: "Empfehlungen gespeichert",
-            description:
-              "„↻ Neu generieren“, damit der E-Mail-Text die neuen Produkte empfiehlt.",
-          });
         }
+        toast({
+          variant: "success",
+          title: "Empfehlungen gespeichert",
+          description: "Text wird neu generiert…",
+        });
+        await runRegenerate(current.contactId, current.discountPercent);
+        toast({ variant: "success", title: "Text aktualisiert" });
       } catch (err) {
         toast({
           variant: "error",
@@ -527,12 +638,12 @@ export function KampagneWorkspace({
         setBusy(null);
       }
     },
-    [current, busy, patchItem]
+    [current, busy, patchItem, runRegenerate]
   );
 
-  /** Set the discount depth on the existing draft WITHOUT regenerating — the
-   * code + deadline ship deterministically at send time. Warns when the prose
-   * clearly states a different percentage (the send route blocks that). */
+  /** Set the discount depth on the existing draft, then auto-regenerate the
+   * prose so it weaves the new offer in (the code + deadline additionally
+   * ship deterministically at send time). */
   const doSetDiscount = React.useCallback(
     async (depth: number) => {
       if (!current || busy) return;
@@ -551,27 +662,16 @@ export function KampagneWorkspace({
           discountPercent: json.discountPercent,
           discountExpiresAt: json.discountExpiresAt,
         });
-        if (json.proseMismatch) {
-          toast({
-            variant: "warning",
-            title: "Text erwähnt einen anderen Rabatt",
-            description:
-              `Im Text steht ${json.prosePercents.join("/")} % — bitte „↻ Neu generieren“, ` +
-              `sonst wird der Versand abgelehnt.`,
-          });
-        } else {
-          toast({
-            variant: "success",
-            title:
-              json.discountPercent > 0
-                ? `Rabatt auf ${json.discountPercent} % gesetzt`
-                : "Rabatt entfernt",
-            description:
-              json.discountPercent > 0
-                ? "Der echte MK-Code + die Rabattzeile werden beim Versand automatisch angehängt."
-                : undefined,
-          });
-        }
+        toast({
+          variant: "success",
+          title:
+            json.discountPercent > 0
+              ? `Rabatt auf ${json.discountPercent} % gesetzt`
+              : "Rabatt entfernt",
+          description: "Text wird neu generiert…",
+        });
+        await runRegenerate(current.contactId, json.discountPercent);
+        toast({ variant: "success", title: "Text aktualisiert" });
       } catch (err) {
         toast({
           variant: "error",
@@ -582,7 +682,7 @@ export function KampagneWorkspace({
         setBusy(null);
       }
     },
-    [current, busy, patchItem]
+    [current, busy, patchItem, runRegenerate]
   );
 
   const doSync = React.useCallback(async () => {
@@ -825,19 +925,12 @@ export function KampagneWorkspace({
                   key={key}
                   variant={optInFilter === key ? "secondary" : "ghost"}
                   size="sm"
-                  onClick={() => setOptInFilter(key)}
+                  onClick={() => applyOptInFilter(key)}
                 >
                   {label}
                 </Button>
               ))}
             </span>
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Kontakt suchen (E-Mail/Name)…"
-              className="h-8 w-56 text-xs"
-              aria-label="Kontakt suchen"
-            />
             <span className="ms-auto text-xs text-muted-foreground">
               Tasten: <Kbd>N</Kbd> weiter · <Kbd>P</Kbd> zurück · <Kbd>C</Kbd> kopieren ·{" "}
               <Kbd>S</Kbd> senden · <Kbd>X</Kbd> überspringen
@@ -848,12 +941,24 @@ export function KampagneWorkspace({
 
       {view === "sent" ? (
         <SentHistory history={history} />
-      ) : !current ? (
-        <div className="rounded-lg border border-info/30 bg-info/10 px-3.5 py-3 text-sm text-info">
-          Keine Entwürfe in der Warteschlange. „Sync“ holt die Shopify-Abonnent:innen,
-          „Nächste {PREPARE_TOTAL} vorbereiten“ erzeugt die Entwürfe.
-        </div>
       ) : (
+        <div className="grid items-start gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
+          <QueueRail
+            items={visibleItems}
+            currentContactId={current?.contactId ?? null}
+            skipped={skippedList}
+            busy={busy !== null}
+            onJump={jumpToContact}
+            onUnskip={doUnskip}
+            onDraft={doDraftContact}
+          />
+          {!current ? (
+            <div className="rounded-lg border border-info/30 bg-info/10 px-3.5 py-3 text-sm text-info">
+              Keine Entwürfe in der Warteschlange. „Sync“ holt die Shopify-Abonnent:innen,
+              „Nächste {PREPARE_TOTAL} vorbereiten“ erzeugt die Entwürfe — oder über die
+              Kontaktsuche links eine:n einzelne:n Kund:in aufnehmen.
+            </div>
+          ) : (
         <Card>
           <CardContent className="p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
@@ -1034,6 +1139,8 @@ export function KampagneWorkspace({
             </div>
           </CardContent>
         </Card>
+          )}
+        </div>
       )}
 
       {/* Rebuild-queue confirmation */}
@@ -1209,17 +1316,222 @@ function BundleSection({
         </div>
         <p className="text-muted-foreground">
           Erstellt ein echtes (unlisted) Shopify-Set über den bestehenden
-          Bundle-Mechanismus; der Angebots-Block wird beim Versand automatisch angehängt.
+          Bundle-Mechanismus; der Text wird automatisch neu generiert und der
+          Angebots-Block beim Versand angehängt.
         </p>
       </div>
     </div>
   );
 }
 
+/** Left rail of the queue view: contact list (click to jump), the GLOBAL
+ * contact search (all statuses — pull anyone into the queue), and the
+ * restorable "Übersprungen" section. */
+function QueueRail({
+  items,
+  currentContactId,
+  skipped,
+  busy,
+  onJump,
+  onUnskip,
+  onDraft,
+}: {
+  items: CampaignQueueItemProps[];
+  currentContactId: number | null;
+  skipped: CampaignSkippedItemProps[];
+  busy: boolean;
+  onJump: (contactId: number) => void;
+  onUnskip: (contactId: number) => void;
+  onDraft: (contactId: number) => void;
+}) {
+  const [query, setQuery] = React.useState("");
+  const [results, setResults] = React.useState<
+    Array<{
+      id: number;
+      email: string;
+      firstName: string | null;
+      lastName: string | null;
+      status: string;
+      optInLevel: string;
+      hasDraft: boolean;
+    }>
+  >([]);
+  const [searching, setSearching] = React.useState(false);
+  const [showSkipped, setShowSkipped] = React.useState(false);
+  const searchSeq = React.useRef(0);
+
+  // Search-as-you-type over ALL campaign contacts (any status), debounced;
+  // results clear below 2 chars. Same pattern as the Kunden bundle composer.
+  React.useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      searchSeq.current++;
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    const seq = ++searchSeq.current;
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        const json = (await callApi("/api/admin/campaign/contacts", { query: q })) as {
+          contacts?: typeof results;
+        };
+        if (seq !== searchSeq.current) return;
+        setResults(json.contacts ?? []);
+      } catch {
+        // Non-fatal: an empty result list; the next keystroke retries.
+        if (seq === searchSeq.current) setResults([]);
+      } finally {
+        if (seq === searchSeq.current) setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [query]);
+
+  const name = (c: { email: string; firstName: string | null; lastName: string | null }) =>
+    [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email;
+
+  const statusAction = (c: (typeof results)[number]) => {
+    switch (c.status) {
+      case "drafted":
+        return (
+          <Button variant="outline" size="sm" onClick={() => onJump(c.id)}>
+            Öffnen
+          </Button>
+        );
+      case "pending":
+      case "draft_failed":
+        return (
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => onDraft(c.id)}>
+            Entwurf erstellen
+          </Button>
+        );
+      case "skipped":
+        return (
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => onUnskip(c.id)}>
+            Wiederherstellen
+          </Button>
+        );
+      case "sent":
+        return <Badge variant="success">Gesendet</Badge>;
+      case "suppressed":
+        return <Badge variant="warning">Unterdrückt</Badge>;
+      default:
+        return <Badge variant="outline">{c.status}</Badge>;
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-card p-3 text-sm lg:sticky lg:top-4">
+      <div>
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Alle Kontakte durchsuchen…"
+          className="h-8 text-xs"
+          aria-label="Alle Kampagnen-Kontakte durchsuchen"
+        />
+        {searching && <div className="mt-1 text-xs text-muted-foreground">Sucht…</div>}
+        {!searching && query.trim().length >= 2 && (
+          <ul className="mt-1.5 space-y-1">
+            {results.length === 0 && (
+              <li className="text-xs text-muted-foreground">Keine Treffer.</li>
+            )}
+            {results.map((c) => (
+              <li
+                key={c.id}
+                className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-medium">{name(c)}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {c.email}
+                  </span>
+                </span>
+                {statusAction(c)}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <div className="mb-1 text-xs font-medium text-muted-foreground">
+          Warteschlange ({items.length})
+        </div>
+        <ul className="max-h-96 space-y-0.5 overflow-y-auto">
+          {items.map((it, i) => (
+            <li key={it.contactId}>
+              <button
+                type="button"
+                onClick={() => onJump(it.contactId)}
+                className={`w-full rounded-md px-2 py-1 text-start text-xs transition-colors ${
+                  it.contactId === currentContactId
+                    ? "bg-secondary font-medium"
+                    : "hover:bg-secondary/60"
+                }`}
+              >
+                <span className="text-muted-foreground">{i + 1}.</span>{" "}
+                {name(it)}
+                {it.optInLevel !== "CONFIRMED_OPT_IN" && (
+                  <span className="text-warning" title="Kein nachweisbares Double-Opt-in">
+                    {" "}
+                    ⚠
+                  </span>
+                )}
+              </button>
+            </li>
+          ))}
+          {items.length === 0 && (
+            <li className="px-2 py-1 text-xs text-muted-foreground">Leer.</li>
+          )}
+        </ul>
+      </div>
+
+      <div>
+        <button
+          type="button"
+          className="text-xs font-medium text-muted-foreground underline-offset-2 hover:underline"
+          onClick={() => setShowSkipped((v) => !v)}
+        >
+          Übersprungen ({skipped.length}) {showSkipped ? "▾" : "▸"}
+        </button>
+        {showSkipped && (
+          <ul className="mt-1 space-y-1">
+            {skipped.length === 0 && (
+              <li className="text-xs text-muted-foreground">Keine übersprungenen Kontakte.</li>
+            )}
+            {skipped.map((s) => (
+              <li
+                key={s.contactId}
+                className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-xs">{name(s)}</span>
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => onUnskip(s.contactId)}
+                >
+                  Wiederherstellen
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Editable recommendation list: remove per item, add via the shared catalog
- * search (/api/admin/catalog/search — the bundle composer's picker backend).
- * Every change persists immediately (onChange → the recommendations route,
- * which also rebuilds an attached bundle to match). */
+ * search (/api/admin/catalog/search — the bundle composer's picker backend),
+ * SEARCH-AS-YOU-TYPE like the Kunden bundle composer. Every change persists
+ * immediately (onChange → the recommendations route, which also rebuilds an
+ * attached bundle and regenerates the prose). */
 function RecommendationsEditor({
   recommendations,
   busy,
@@ -1236,25 +1548,40 @@ function RecommendationsEditor({
     Array<{ productId: string; title: string; inStock: boolean }>
   >([]);
   const [searching, setSearching] = React.useState(false);
+  const searchSeq = React.useRef(0);
 
-  const doSearch = React.useCallback(async () => {
+  // Search-as-you-type over the synced catalog, debounced — the same pattern
+  // as the Kunden bundle composer. Results clear below a 2-char query.
+  React.useEffect(() => {
     const q = query.trim();
-    if (!q) return;
-    setSearching(true);
-    try {
-      const json = (await callApi("/api/admin/catalog/search", { query: q })) as {
-        products?: Array<{ productId: string; title: string; inStock: boolean }>;
-      };
-      setResults(json.products ?? []);
-    } catch (err) {
-      toast({
-        variant: "error",
-        title: "Katalogsuche fehlgeschlagen",
-        description: String((err as Error).message ?? err),
-      });
-    } finally {
+    if (q.length < 2) {
+      searchSeq.current++;
+      setResults([]);
       setSearching(false);
+      return;
     }
+    const seq = ++searchSeq.current;
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        const json = (await callApi("/api/admin/catalog/search", { query: q })) as {
+          products?: Array<{ productId: string; title: string; inStock: boolean }>;
+        };
+        if (seq !== searchSeq.current) return;
+        setResults(json.products ?? []);
+      } catch (err) {
+        if (seq === searchSeq.current) {
+          toast({
+            variant: "error",
+            title: "Katalogsuche fehlgeschlagen",
+            description: String((err as Error).message ?? err),
+          });
+        }
+      } finally {
+        if (seq === searchSeq.current) setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(handle);
   }, [query]);
 
   const ids = recommendations.map((r) => r.id);
@@ -1299,20 +1626,12 @@ function RecommendationsEditor({
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void doSearch();
-            }
-          }}
-          placeholder="Produkt suchen…"
-          className="h-8 w-44 text-xs"
+          placeholder="Produkt suchen (tippen)…"
+          className="h-8 w-52 text-xs"
           aria-label="Produkt für Empfehlung suchen"
           disabled={busy}
         />
-        <Button variant="outline" size="sm" onClick={doSearch} disabled={busy || !query.trim()}>
-          {searching ? "Sucht…" : "Suchen"}
-        </Button>
+        {searching && <span className="text-xs text-muted-foreground">Sucht…</span>}
       </div>
       {results.length > 0 && (
         <ul className="mt-1 space-y-0.5 text-xs">
@@ -1336,8 +1655,8 @@ function RecommendationsEditor({
         </ul>
       )}
       <p className="mt-1 text-xs text-muted-foreground">
-        Änderungen werden sofort gespeichert und ein angehängtes Set wird angepasst; „↻ Neu
-        generieren“, damit der Text sie empfiehlt.
+        Änderungen werden sofort gespeichert, ein angehängtes Set wird angepasst und der Text
+        automatisch neu generiert.
       </p>
     </div>
   );
@@ -1389,11 +1708,11 @@ function DiscountControl({
         {percent > 0 ? (
           <>
             Aktuell {percent} % — echter <code>MK-</code>-Code wird beim Senden erzeugt
-            {expiresAt ? ` (voraussichtlich gültig bis ${formatDate(expiresAt)})` : ""}. Auch
-            ohne Neu-Generieren wirksam: Code + Ablaufdatum werden automatisch angehängt.
+            {expiresAt ? ` (voraussichtlich gültig bis ${formatDate(expiresAt)})` : ""}.
+            „Übernehmen“ generiert den Text automatisch neu.
           </>
         ) : (
-          "Kein Rabatt. Kann auch nach der Generierung gesetzt werden — Code + Rabattzeile werden beim Versand automatisch angehängt."
+          "Kein Rabatt. Kann jederzeit gesetzt werden — „Übernehmen“ generiert den Text automatisch neu; Code + Rabattzeile werden beim Versand angehängt."
         )}
       </div>
     </div>
