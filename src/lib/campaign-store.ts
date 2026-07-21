@@ -365,6 +365,99 @@ export async function listNextPendingContacts(
   return rows.map(mapContactRow);
 }
 
+/** A contact row + whether a draft exists — the global contact search /
+ * skipped-list shape (any status, so the admin can find sent/skipped/pending
+ * people, not just the queue). */
+export interface CampaignContactSearchHit {
+  contact: CampaignContactRow;
+  hasDraft: boolean;
+}
+
+/**
+ * Case-insensitive substring search over ALL campaign contacts (email, first
+ * and last name), any status, newest-synced first. Backs the review UI's
+ * global contact search — deliberately not limited to the drafted queue, so a
+ * specific person can be looked up and pulled INTO the queue. Never throws.
+ */
+export async function searchCampaignContacts(
+  query: string,
+  limit = 10,
+  sql: Sql | null = getSql()
+): Promise<CampaignContactSearchHit[]> {
+  if (!sql) return [];
+  const q = query.trim();
+  if (!q) return [];
+  const pattern = `%${q}%`;
+  try {
+    const rows = (await sql`
+      SELECT c.*,
+             EXISTS (SELECT 1 FROM campaign_drafts d WHERE d.contact_id = c.id) AS has_draft
+        FROM campaign_contacts c
+       WHERE c.email ILIKE ${pattern}
+          OR c.first_name ILIKE ${pattern}
+          OR c.last_name ILIKE ${pattern}
+       ORDER BY c.last_synced_at DESC NULLS LAST, c.id DESC
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ contact: mapContactRow(r), hasDraft: r.has_draft === true }));
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "searchCampaignContacts" });
+    return [];
+  }
+}
+
+/** Skipped contacts (newest skip first) + draft-existence, for the review
+ * rail's "Übersprungen" section with its restore action. Never throws. */
+export async function listSkippedContacts(
+  limit = 100,
+  sql: Sql | null = getSql()
+): Promise<CampaignContactSearchHit[]> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT c.*,
+             EXISTS (SELECT 1 FROM campaign_drafts d WHERE d.contact_id = c.id) AS has_draft
+        FROM campaign_contacts c
+       WHERE c.status = 'skipped'
+       ORDER BY c.skipped_at DESC NULLS LAST, c.id DESC
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ contact: mapContactRow(r), hasDraft: r.has_draft === true }));
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "listSkippedContacts" });
+    return [];
+  }
+}
+
+/**
+ * Undo a skip: 'skipped' → 'drafted' when a draft still exists (straight back
+ * into the queue), else → 'pending' (the caller may generate a draft next).
+ * Returns the new status, or null when the contact wasn't skipped.
+ */
+export async function unskipContact(
+  contactId: number,
+  sql: Sql | null = getSql()
+): Promise<CampaignContactStatus | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      UPDATE campaign_contacts c
+         SET status = CASE
+               WHEN EXISTS (SELECT 1 FROM campaign_drafts d WHERE d.contact_id = c.id)
+                 THEN 'drafted'
+               ELSE 'pending'
+             END,
+             skipped_at = NULL
+       WHERE c.id = ${contactId} AND c.status = 'skipped'
+      RETURNING c.status
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? (rows[0].status as CampaignContactStatus) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "unskipContact" });
+    return null;
+  }
+}
+
 export async function getContactById(
   contactId: number,
   sql: Sql | null = getSql()

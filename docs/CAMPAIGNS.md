@@ -60,10 +60,15 @@ The gates (evaluated in one tested place,
 [`campaign-gates.mjs`](../src/lib/campaign-gates.mjs), consumed by the single
 send chokepoint [`campaign-email.ts`](../src/lib/campaign-email.ts)):
 
-| Gate | Flag / source | Default | Effect |
+> ✅ **APPROVED by the lawyer (2026-07-21)** — both flags below are enabled in
+> the documented defaults (`.env.example`). The code still fails closed (an
+> absent env var means false), so the EFFECTIVE switch is the deployment env;
+> either flag can be set false there at any time to re-lock the channel.
+
+| Gate | Flag / source | Code default | Effect |
 | --- | --- | --- | --- |
-| Master send gate | `CAMPAIGN_SENDS_APPROVED` | **false** | While false, **every** campaign send is refused server-side (403) — UI *and* direct API calls. Drafting, preview and Copy keep working. The tab shows a banner that the lawyer sign-off for this channel is pending. Separate from `CONSENT_COPY_LAWYER_APPROVED` and `PHYSICAL_MAIL_SENDS_APPROVED`. |
-| Opt-in level | `CAMPAIGN_ALLOW_SINGLE_OPT_IN` | **false** | `SINGLE_OPT_IN` / `UNKNOWN` contacts are visible in the queue but send-blocked ("Erneute Einwilligung erforderlich"; Copy allowed). Only the lawyer's go-ahead flips the flag. |
+| Master send gate | `CAMPAIGN_SENDS_APPROVED` | **false** (approved 2026-07-21 → set true in deployment) | While false, **every** campaign send is refused server-side (403) — UI *and* direct API calls. Drafting, preview and Copy keep working. The tab shows a banner that the lawyer sign-off for this channel is pending. Separate from `CONSENT_COPY_LAWYER_APPROVED` and `PHYSICAL_MAIL_SENDS_APPROVED`. |
+| Opt-in level | `CAMPAIGN_ALLOW_SINGLE_OPT_IN` | **false** (approved 2026-07-21 → set true in deployment) | `SINGLE_OPT_IN` / `UNKNOWN` contacts are visible in the queue but send-blocked ("Erneute Einwilligung erforderlich"; Copy allowed) while false. |
 | Suppression | our opt-out store | — | Re-checked at sync, prepare AND send time; fail-closed (a DB error blocks the send). |
 | Frequency cap | `MARKETING_MIN_SEND_INTERVAL_DAYS` | 0 (off) | Spans **both** channels in both directions: the newest send to the address across `marketing_sends` *and* `campaign_sends` must be older than the window (429 otherwise). |
 
@@ -223,7 +228,8 @@ out of the sync ages out; drafts cascade with their contact). The
 | Curate recommendations (+ bundle rebuild) | `POST /api/admin/campaign/recommendations` |
 | Set discount post-generation | `POST /api/admin/campaign/discount` |
 | Rebuild queue (discard all open drafts → pending) | `POST /api/admin/campaign/reset-queue` |
-| Skip / mark-done / send | `POST /api/admin/campaign/{skip,mark-done,send}` |
+| Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` |
+| Global contact search (all statuses) | `POST /api/admin/campaign/contacts` |
 | UI | `src/app/admin/KampagneTab.tsx` + `KampagneWorkspace.tsx` |
 | Libs | `campaign-{sync,store,prepare,draft,recommendations,email}.ts`, `campaign-{language,flags,gates,sync-core,draft-core}.mjs`, `discount-swap.mjs`, `shopify-customers.ts` |
 
