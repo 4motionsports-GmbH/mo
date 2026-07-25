@@ -14,7 +14,8 @@
 // Supported subset (what the model actually emits in these flows): headings
 // (#..######), bold (**/__), italic (*/_), inline code (`…`), links
 // ([text](url)), unordered (-/*/+) and ordered (1.) lists, blockquotes (>),
-// horizontal rules (---), paragraphs and single line breaks.
+// GFM tables (| … | with a |---| delimiter row), horizontal rules (---),
+// paragraphs and single line breaks.
 
 import * as React from "react";
 import { cn } from "./cn";
@@ -124,6 +125,61 @@ function isBlockStart(line: string): boolean {
   );
 }
 
+// ── Tables (GFM) ──────────────────────────────────────────────────────────────
+
+function isTableRow(line: string): boolean {
+  return /^\s*\|.*\|\s*$/.test(line);
+}
+
+/** The `|---|:---:|` delimiter row that must follow a table's header row. */
+function isTableDelimiter(line: string): boolean {
+  return /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(line);
+}
+
+/** A table starts only when a pipe row is immediately followed by a delimiter
+ * row — a lone pipe line stays part of the surrounding paragraph. */
+function isTableStart(lines: string[], i: number): boolean {
+  return isTableRow(lines[i]) && i + 1 < lines.length && isTableDelimiter(lines[i + 1]);
+}
+
+/** Split a `| a | b |` row into trimmed cell strings, honouring `\|` escapes. */
+function splitTableRow(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  const cells: string[] = [];
+  let buf = "";
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (ch === "\\" && trimmed[i + 1] === "|") {
+      buf += "|";
+      i += 1;
+    } else if (ch === "|") {
+      cells.push(buf.trim());
+      buf = "";
+    } else {
+      buf += ch;
+    }
+  }
+  cells.push(buf.trim());
+  return cells;
+}
+
+/** Per-column alignment from the delimiter row (`:---:` → center, `---:` → right). */
+function tableAlignments(delimiter: string): Array<"left" | "center" | "right"> {
+  return splitTableRow(delimiter).map((cell) => {
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return "left";
+  });
+}
+
+const ALIGN_CLASS: Record<"left" | "center" | "right", string> = {
+  left: "text-left",
+  center: "text-center",
+  right: "text-right",
+};
+
 /** Block parser: splits the source into headings, lists, blockquotes, rules and
  * paragraphs, each rendered with inline formatting. */
 function parseBlocks(md: string): React.ReactNode[] {
@@ -216,9 +272,58 @@ function parseBlocks(md: string): React.ReactNode[] {
       continue;
     }
 
+    // Table — a `| … |` header row immediately followed by a delimiter row.
+    if (isTableStart(lines, i)) {
+      const header = splitTableRow(lines[i]);
+      const aligns = tableAlignments(lines[i + 1]);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && isTableRow(lines[i]) && !isTableDelimiter(lines[i])) {
+        rows.push(splitTableRow(lines[i]));
+        i += 1;
+      }
+      const alignOf = (ci: number) => ALIGN_CLASS[aligns[ci] ?? "left"];
+      const k = key++;
+      blocks.push(
+        <div key={`tbl${k}`} className="overflow-x-auto">
+          <table className="w-full border-collapse text-[0.95em]">
+            <thead>
+              <tr className="border-b border-border">
+                {header.map((cell, ci) => (
+                  <th
+                    key={`tbl${k}-h${ci}`}
+                    className={cn("px-2 py-1.5 align-top font-semibold text-foreground", alignOf(ci))}
+                  >
+                    {parseInline(cell, `tbl${k}-h${ci}`)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((cells, ri) => (
+                <tr key={`tbl${k}-r${ri}`} className="border-b border-border/60 last:border-0">
+                  {header.map((_, ci) => (
+                    <td key={`tbl${k}-r${ri}-c${ci}`} className={cn("px-2 py-1.5 align-top", alignOf(ci))}>
+                      {parseInline(cells[ci] ?? "", `tbl${k}-r${ri}-c${ci}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      continue;
+    }
+
     // Paragraph — gather consecutive lines until a blank line or a new block.
     const para: string[] = [];
-    while (i < lines.length && lines[i].trim() && !isBlockStart(lines[i])) {
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !isBlockStart(lines[i]) &&
+      !isTableStart(lines, i)
+    ) {
       para.push(lines[i]);
       i += 1;
     }
