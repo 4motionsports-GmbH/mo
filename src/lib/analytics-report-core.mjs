@@ -167,7 +167,9 @@ export function reportCostEur(usage, prices, rate) {
 
 const EST = {
   analyze: { in: 3000, out: 250, model: ANALYZE_MODEL },
-  insights: { in: 6000, out: 1300, model: INSIGHTS_MODEL },
+  // Two Haiku passes (narrative report + curated references) — see
+  // conversation-insights.ts, which the report's insights phase delegates to.
+  insights: { in: 13000, out: 3000, model: INSIGHTS_MODEL },
   persona: { in: 5000, out: 450, model: PERSONA_MODEL },
   synthesis: { in: 6000, out: 1100, model: SYNTHESIS_MODEL },
   profile: { in: 9000, out: 1300, model: PROFILE_MODEL },

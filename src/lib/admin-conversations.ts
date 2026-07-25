@@ -145,6 +145,10 @@ export interface InsightsRollup {
   analyzedCount: number;
   model: string | null;
   costEur: number;
+  /** Raw token counts behind costEur — lets a caller (the Komplettanalyse) fold
+   *  this generation into its own per-model usage accounting. */
+  inputTokens: number;
+  outputTokens: number;
   generatedAt: string;
   cached: boolean;
   /** Validated per-section conversation links ([] for pre-feature cached rows). */
@@ -759,6 +763,8 @@ function mapInsights(r: Record<string, unknown>, cached: boolean): InsightsRollu
       r.input_tokens as number | null,
       r.output_tokens as number | null
     ),
+    inputTokens: Number(r.input_tokens ?? 0),
+    outputTokens: Number(r.output_tokens ?? 0),
     generatedAt: toIso(r.generated_at),
     cached,
     references: mapInsightsReferences(r.references_json),

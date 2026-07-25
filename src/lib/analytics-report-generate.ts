@@ -7,13 +7,15 @@
 // conversations never blocks a single request past maxDuration.
 //
 // It deliberately RE-USES the app's existing AI passes rather than re-implementing
-// them: the per-conversation analysis (conversation-analysis), the customer
-// "current understanding" profile (customer-profile), and the rollup data-loaders
-// + prompt builder (admin-conversations / conversation-analysis-core). The
-// aggregate insights, the range-scoped persona top-questions and the aggregate
-// customer-knowledge synthesis are run here directly so their token usage can be
-// captured into the report's own per-model cost (each ALSO records into ai_usage
-// for the global cost KPI, like every other backend LLM call).
+// them: the per-conversation analysis (conversation-analysis), the aggregate
+// insights rollup (conversation-insights — which ALSO writes the shared
+// conversation_insights cache, so the Gespräche report panel is filled in by a
+// report run), the customer "current understanding" profile (customer-profile),
+// and the rollup data-loaders (admin-conversations / conversation-analysis-core).
+// The range-scoped persona top-questions and the aggregate customer-knowledge
+// synthesis are run here directly so their token usage can be captured into the
+// report's own per-model cost (each ALSO records into ai_usage for the global
+// cost KPI, like every other backend LLM call).
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
@@ -44,14 +46,14 @@ import {
   getConversationStats,
 } from "./admin-conversations";
 import { generateConversationAnalysis, ANALYSIS_MODEL } from "./conversation-analysis";
+import { generateConversationInsights } from "./conversation-insights";
 import { generateCustomerProfile } from "./customer-profile";
 import { getCustomerById, loadCustomerSessions, saveCustomerProfileSummary } from "./customer-store";
 import { loadCustomerCorrespondence } from "./email-messages-store";
-import { buildRollupPrompt, CATEGORY_LABELS } from "./conversation-analysis-core.mjs";
+import { CATEGORY_LABELS } from "./conversation-analysis-core.mjs";
 import {
   mergeUsage,
   nextPhase,
-  INSIGHTS_MODEL,
   PERSONA_MODEL,
   SYNTHESIS_MODEL,
   PROFILE_MODEL,
@@ -63,15 +65,9 @@ const PERSONA_BATCH = 2; // Sonnet top-questions
 const PROFILE_BATCH = 1; // Opus per-customer profile (slow → one per step)
 
 // Bounds on the heavier inputs/outputs so a huge interval stays sane.
-const ROLLUP_MAX = 400;
 const SYNTHESIS_SUMMARIES = 150;
 const PERSONA_SAMPLE = 80;
 const APPENDIX_HARD_CAP = 800;
-
-const BOUNDARY_NOTE =
-  "\n\n---\n\n_**Grenze (bewusst):** Diese Insights sind Entscheidungsgrundlage für " +
-  "einen Menschen. Mo passt seinen Prompt bzw. sein Verhalten NICHT automatisch an — " +
-  "ein Mensch entscheidet über jede Verfeinerung._";
 
 interface ReportScratch {
   // Index signature so a ReportScratch is structurally a progress `scratch`
@@ -263,47 +259,25 @@ async function stepInsights(report: AnalyticsReportDetail): Promise<void> {
   const { from, to, options } = report;
   const progress = report.progress;
   const scratch = getScratch(progress);
-  let usage: ReportUsage = report.usage;
 
-  const analyses = await loadAnalysesForRollup(from, to, ROLLUP_MAX);
-  let insightsMd: string;
-
-  if (analyses.length === 0) {
-    insightsMd = "_Keine analysierten Gespräche im Zeitraum — keine Insights möglich._";
-  } else if (!process.env.ANTHROPIC_API_KEY) {
-    insightsMd = "_Anthropic-Key nicht konfiguriert — Insights nicht möglich._";
-  } else {
-    const { text, usage: u } = await generateText({
-      model: anthropic(INSIGHTS_MODEL),
-      maxOutputTokens: 1300,
-      system:
-        "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du erhältst " +
-        "KURZ-ZUSAMMENFASSUNGEN vieler Beratungsgespräche (bereits verdichtet) zwischen " +
-        "Kunden und dem Chatbot 'Mo', jeweils mit Kategorie und Qualitätssignal. Erstelle " +
-        "daraus EINEN kompakten, umsetzbaren Insights-Report auf Deutsch (Markdown) für das " +
-        "Produkt-/Beratungsteam.\n\nGliederung (mit Markdown-Überschriften):\n" +
-        "1. **Top-Themen & Fragen**\n2. **Wo Beratungen stocken oder scheitern**\n" +
-        "3. **Häufige unerfüllte Bedürfnisse**\n4. **Vorschläge zur Verfeinerung (für einen Menschen)** " +
-        "— als Empfehlungen, nicht als automatische Änderungen.\n\nSei faktenbasiert, knapp und " +
-        "priorisiere nach Häufigkeit/Wirkung. Erfinde nichts.",
-      prompt:
-        `Zeitraum: ${from} bis ${to}\nAnzahl analysierter Gespräche: ${analyses.length}\n\n` +
-        `## Zusammenfassungen (verdichtet, mit [Kategorie · Qualität])\n\n` +
-        `${buildRollupPrompt(analyses)}\n\nErstelle jetzt den Insights-Report.`,
-    });
-    insightsMd = (text.trim() || "_Keine klaren Muster erkennbar._") + BOUNDARY_NOTE;
-    await recordAiUsage({
-      callSite: "conversation_insights",
-      model: INSIGHTS_MODEL,
-      inputTokens: u?.inputTokens ?? 0,
-      outputTokens: u?.outputTokens ?? 0,
-    });
-    usage = mergeUsage(usage, INSIGHTS_MODEL, u?.inputTokens ?? 0, u?.outputTokens ?? 0);
-  }
+  // Delegate to the Gespräche insights rollup instead of a private inline pass:
+  // one generation produces one shared artifact — it lands in the report AND in
+  // the conversation_insights cache (with the curated "Belege"), so the
+  // inspector's report panel for this window is already filled in afterwards.
+  // The rollup handles the empty/unconfigured/error cases itself (clear German
+  // notices, never throws) and records its ai_usage; the token counts it returns
+  // are folded into this report's own per-model cost.
+  const rollup = await generateConversationInsights(from, to);
+  const usage = mergeUsage(
+    report.usage,
+    rollup.model,
+    rollup.inputTokens,
+    rollup.outputTokens
+  );
 
   await updateAnalyticsReport(report.id, {
     phase: nextPhase("insights", options),
-    progress: { ...progress, scratch: { ...scratch, insightsMd } },
+    progress: { ...progress, scratch: { ...scratch, insightsMd: rollup.summaryMd } },
     usage,
   });
 }
