@@ -204,6 +204,20 @@ export function buildEmbeddingDoc(p) {
     for (const [k, v] of specEntries) lines.push(`- ${k}: ${v}`);
   }
 
+  // Published customer Q&A (the "Wissen" feature) — real customer questions in
+  // real customer language are gold for retrieval: the next shopper asking the
+  // same thing lands on this product. Conditional section, so products without
+  // Q&A produce byte-identical docs (no forced re-embed of the whole catalog).
+  const qaPairs = (Array.isArray(p?.qa) ? p.qa : [])
+    .filter((e) => e && e.question && e.answer)
+    .slice(0, 10);
+  if (qaPairs.length) {
+    lines.push("", "Kundenfragen & Antworten:");
+    for (const e of qaPairs) {
+      lines.push(`- Frage: ${clip(e.question, 200)} Antwort: ${clip(e.answer, 300)}`);
+    }
+  }
+
   // Structured audience / discovery signals.
   const targetGroup = uniqueNonEmpty(p?.targetGroup, 12);
   if (targetGroup.length) lines.push("", `Zielgruppe: ${targetGroup.join(", ")}`);

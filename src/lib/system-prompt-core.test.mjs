@@ -102,6 +102,47 @@ test("retrieved-product block renders rating, accessories and related products",
   assert.match(en, /- Related products \(product ids\): atx-power-rack-620/);
 });
 
+// The "Wissen" feature: product-level Q&A renders inside the product card;
+// general Q&A gets its own knowledge-base section; both absent → byte-identical
+// prompt (pinned by the golden, which passes no generalQa and no product qa).
+test("Q&A knowledge reaches the prompt (product-level + general block)", () => {
+  const withQa = {
+    ...product(),
+    qa: [
+      {
+        question: "Welche Deckenhöhe brauche ich?",
+        answer: "Mindestens 2,30 m — das Gerät ist 2.195 mm hoch.",
+      },
+    ],
+  };
+  const de = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [withQa],
+    generalQa: [
+      {
+        question: "Bietet motion sports Ratenzahlung an?",
+        answer: "Ja, über Klarna in 3 Raten.",
+      },
+    ],
+    locale: "de",
+  });
+  assert.match(de, /- Geprüfte Kunden-Q&A:/);
+  assert.match(de, /Frage: Welche Deckenhöhe brauche ich\? → Antwort: Mindestens 2,30 m/);
+  assert.match(de, /## Wissensbasis aus Kundenfragen \(vom motion sports Team beantwortet & geprüft\)/);
+  assert.match(de, /- Frage: Bietet motion sports Ratenzahlung an\?\n {2}Antwort: Ja, über Klarna in 3 Raten\./);
+
+  // Empty generalQa → no knowledge-base section at all.
+  const bare = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [product()],
+    generalQa: [],
+    locale: "de",
+  });
+  assert.doesNotMatch(bare, /Wissensbasis aus Kundenfragen/);
+});
+
 test("German prompt keeps the corrected 14-day return info (both locales agree on 14)", () => {
   const de = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], locale: "de" });
   const en = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], locale: "en" });

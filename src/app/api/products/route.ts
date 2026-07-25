@@ -57,6 +57,9 @@ export interface PublicProduct {
   sku?: string;
   rating?: number;
   ratingCount?: number;
+  // Published customer Q&A pairs (the PDP Q&A tab shows the same list from
+  // the product's custom.qa metafield — this mirror lets the widget reuse it).
+  qa?: Array<{ question: string; answer: string }>;
 }
 
 function toPublic(p: Product): PublicProduct {
@@ -86,6 +89,7 @@ function toPublic(p: Product): PublicProduct {
     ...(p.sku ? { sku: p.sku } : {}),
     ...(typeof p.rating === "number" ? { rating: p.rating } : {}),
     ...(typeof p.ratingCount === "number" ? { ratingCount: p.ratingCount } : {}),
+    ...(p.qa?.length ? { qa: p.qa } : {}),
   };
 }
 

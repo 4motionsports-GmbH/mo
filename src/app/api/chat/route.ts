@@ -20,6 +20,7 @@ import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
 import { sanitizeToolParts } from "@/lib/chat-message-sanitize.mjs";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
+import { getCachedGeneralQa } from "@/lib/qa-store";
 import { getProductById, getProductsByIds, loadProductCatalog } from "@/lib/product-catalog";
 import {
   recommendedCardIdsInOrder,
@@ -287,7 +288,7 @@ export async function POST(req: Request) {
       return null;
     })();
 
-    const [hits, customerMemory, emailOfferDeclined] = await Promise.all([
+    const [hits, customerMemory, emailOfferDeclined, generalQa] = await Promise.all([
       latestUserText
         ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
         : Promise.resolve([]),
@@ -300,6 +301,10 @@ export async function POST(req: Request) {
       allowEmailSummaryOffer
         ? hasDeclinedEmailCapture(sessionId)
         : Promise.resolve(true),
+      // Published GENERAL Q&A pairs for the knowledge-base prompt block (the
+      // "Wissen" feature) — in-memory cached (5 min TTL), so this is free on
+      // most turns and never breaks the chat (errors → []).
+      getCachedGeneralQa(),
       // EAGER CREATE (concurrent with retrieval, best-effort, result unused): a
       // started conversation is durably created + customer-linked NOW, before the
       // stream — so a "Neue Beratung" thread appears in the signed-in history
@@ -413,6 +418,7 @@ export async function POST(req: Request) {
           offersMade: emailOffersMade,
           emailCaptured,
         },
+        generalQa,
         locale,
       }),
       messages: modelMessages,
