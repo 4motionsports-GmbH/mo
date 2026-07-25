@@ -323,10 +323,33 @@ function renderRetrievedProducts(products, locale) {
       if (p.features?.length) {
         lines.push(`- Features: ${p.features.slice(0, 5).join("; ")}`);
       }
-      const specs = Object.entries(p.specifications || {}).slice(0, 5);
+      // Since the sync captures ALL admin metafields (taxonomy specs, Versand-
+      // art, Vorlaufzeit, …), allow a few more spec entries than before.
+      const specs = Object.entries(p.specifications || {}).slice(0, 10);
       if (specs.length) {
         lines.push(
           `- Specs: ${specs.map(([k, v]) => `${k}=${v}`).join(", ")}`
+        );
+      }
+      if (typeof p.rating === "number" && p.ratingCount) {
+        lines.push(
+          en
+            ? `- Customer rating: ${p.rating}/5 (${p.ratingCount} reviews)`
+            : `- Kundenbewertung: ${p.rating}/5 (${p.ratingCount} Bewertungen)`
+        );
+      }
+      if (p.compatibleWith?.length) {
+        lines.push(
+          en
+            ? `- Matching accessories (product ids): ${p.compatibleWith.slice(0, 6).join(", ")}`
+            : `- Passendes Zubehör (Produkt-IDs): ${p.compatibleWith.slice(0, 6).join(", ")}`
+        );
+      }
+      if (p.relatedProducts?.length) {
+        lines.push(
+          en
+            ? `- Related products (product ids): ${p.relatedProducts.slice(0, 6).join(", ")}`
+            : `- Ähnliche Produkte (Produkt-IDs): ${p.relatedProducts.slice(0, 6).join(", ")}`
         );
       }
       lines.push(

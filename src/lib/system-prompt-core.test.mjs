@@ -57,6 +57,44 @@ test("English prompt switches language and carries the same structure", () => {
   assert.doesNotMatch(en, /## Deine Persönlichkeit/);
 });
 
+// New admin-data fields (rating, accessories/related, >5 specs) must reach the
+// pre-retrieved product block in both locales. The golden fixtures predate
+// these fields, so this pins the rendering separately.
+test("retrieved-product block renders rating, accessories and related products", () => {
+  const rich = {
+    ...product(),
+    rating: 4.7,
+    ratingCount: 23,
+    compatibleWith: ["atx-hantelscheiben-50", "atx-j-hooks"],
+    relatedProducts: ["atx-power-rack-620"],
+    specifications: Object.fromEntries(
+      Array.from({ length: 12 }, (_, i) => [`Spec${i + 1}`, `v${i + 1}`])
+    ),
+  };
+  const de = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [rich],
+    locale: "de",
+  });
+  assert.match(de, /- Kundenbewertung: 4\.7\/5 \(23 Bewertungen\)/);
+  assert.match(de, /- Passendes Zubehör \(Produkt-IDs\): atx-hantelscheiben-50, atx-j-hooks/);
+  assert.match(de, /- Ähnliche Produkte \(Produkt-IDs\): atx-power-rack-620/);
+  // Spec cap raised to 10 — the 10th survives, the 11th is trimmed.
+  assert.match(de, /Spec10=v10/);
+  assert.doesNotMatch(de, /Spec11=v11/);
+
+  const en = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [rich],
+    locale: "en",
+  });
+  assert.match(en, /- Customer rating: 4\.7\/5 \(23 reviews\)/);
+  assert.match(en, /- Matching accessories \(product ids\): atx-hantelscheiben-50, atx-j-hooks/);
+  assert.match(en, /- Related products \(product ids\): atx-power-rack-620/);
+});
+
 test("German prompt keeps the corrected 14-day return info (both locales agree on 14)", () => {
   const de = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], locale: "de" });
   const en = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], locale: "en" });

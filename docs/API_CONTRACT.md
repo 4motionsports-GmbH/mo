@@ -821,6 +821,14 @@ type PublicProduct = {
   inventoryQuantity?: number;
   anyVariantAvailable?: boolean;
   deliveryTime: string;
+  // Public PDP facts captured by the catalog sync (all optional — omitted when
+  // the shop has no data for the product):
+  //   sku         — article number of the first variant (e.g. "MS-ATX-MPX-780-B")
+  //   rating      — average customer review rating (reviews app), e.g. 4.7
+  //   ratingCount — number of customer reviews behind `rating`
+  sku?: string;
+  rating?: number;
+  ratingCount?: number;
 };
 
 type ProductsResponse = {

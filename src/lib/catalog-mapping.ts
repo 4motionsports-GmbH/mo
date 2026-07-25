@@ -116,6 +116,92 @@ function deriveCategory(fullName: string | null | undefined, productType: string
   return t || "Sonstiges";
 }
 
+// German display labels for the Shopify standard-taxonomy ("category")
+// metafields, mirroring the labels the admin shows (taken from the product
+// CSV export's column headers). Any `shopify.*` metafield the sync returns
+// lands in `specifications` — known keys get their proper German label,
+// unknown/new taxonomy keys fall back to a humanized key so new categories
+// keep working without a code change.
+const TAXONOMY_SPEC_LABELS: Record<string, string> = {
+  "accessory-size": "Zubehörgröße",
+  "age-group": "Altersgruppe",
+  "animal-type": "Tierart",
+  "ball-material": "Kugelmaterial",
+  "bar-mounting-type": "Stangenmontagetyp",
+  "collar-lock-type": "Ringschlosstyp",
+  "color-pattern": "Farbe",
+  "compatible-bench-positions": "Kompatible Bankpositionen",
+  "compatible-exercises": "Kompatible Übungen",
+  "compatible-weight-lifting-accessory": "Kompatibles Gewichthebezubehör",
+  "detailed-ingredients": "Detaillierte Inhaltsstoffe",
+  "dietary-preferences": "Ernährungsgewohnheiten",
+  "exercise-equipment-included": "Trainingsgeräte inklusive",
+  "exercise-equipment-material": "Trainingsgeräte-Material",
+  "exercise-machine-features": "Eigenschaften des Trainingsgeräts",
+  "exercise-mat-material": "Material der Trainingsmatte",
+  fabric: "Stoff",
+  "fastener-finish": "Oberflächenbehandlung des Befestigungselements",
+  flavor: "Geschmack",
+  "handwear-material": "Handschuhmaterial",
+  "hardware-material": "Hardwarematerial",
+  "ingredient-category": "Bestandteilkategorie",
+  "j-cup-type": "J-Cup-Typ",
+  "jump-rope-design": "Springseil-Design",
+  "leash-design": "Leinendesign",
+  "massage-technique": "Massagetechnik",
+  material: "Material",
+  "material-hardness": "Materialhärte",
+  "power-source": "Energiequelle",
+  "pull-up-bar": "Klimmzugstange",
+  "resistance-level": "Widerstandsgrad",
+  "resistance-system": "Widerstandssystem",
+  "target-gender": "Zielgeschlecht",
+  "weight-bar-activity": "Hantelstangenaktivität",
+  "weight-bar-type": "Hantelstangentyp",
+};
+
+function taxonomySpecLabel(key: string): string {
+  return (
+    TAXONOMY_SPEC_LABELS[key] ??
+    key
+      .split("-")
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ")
+  );
+}
+
+function isTruthyFlag(s: string | null | undefined): boolean {
+  if (s == null) return false;
+  const v = String(s).trim().toLowerCase();
+  return v === "true" || v === "1" || v === "yes" || v === "ja";
+}
+
+// Handles resolved from a product-reference metafield come back ", "-joined
+// (see shopify.ts resolveMetafieldNode); handles never contain commas.
+function splitHandleList(s: string | null): string[] {
+  if (!s) return [];
+  return s
+    .split(",")
+    .map((h) => h.trim())
+    .filter(Boolean);
+}
+
+// reviews.rating is a JSON payload like {"scale_min":"1.0","scale_max":"5.0",
+// "value":"4.7"} (Shopify review-app convention); tolerate a bare number too.
+function parseRating(s: string | null): number | null {
+  if (!s) return null;
+  const direct = parseNumber(s);
+  if (direct != null) return direct;
+  try {
+    const obj = JSON.parse(s) as { value?: unknown };
+    const v = parseNumber(typeof obj?.value === "string" ? obj.value : String(obj?.value ?? ""));
+    return v;
+  } catch {
+    return null;
+  }
+}
+
 function deliveryTimeLabel(minDays: number | null): string {
   if (minDays == null) return "Nach Verfügbarkeit";
   if (minDays <= 1) return "1-3 Werktage";
@@ -188,18 +274,46 @@ export function mapShopifyProducts(
     }
 
     const bodyHtml = p.descriptionHtml || "";
-    const detailedDescription = stripHtml(bodyHtml);
+    let detailedDescription = stripHtml(bodyHtml);
     const features = extractFeatures(bodyHtml);
     const specs: Record<string, string | number> = { ...extractSpecsFromTable(bodyHtml) };
 
-    const material = getMetafield(p, "shopify", "material");
-    if (material) specs["Material"] = material;
-    const color = getMetafield(p, "shopify", "color-pattern");
-    if (color) specs["Farbe"] = color;
+    // Every Shopify standard-taxonomy ("category") metafield becomes a spec —
+    // Farbe, Material, Klimmzugstange, Widerstandssystem, … — labelled like
+    // the admin shows them.
+    for (const mf of p.metafields) {
+      if (mf.namespace !== "shopify") continue;
+      if (!mf.value || mf.value === "—") continue;
+      specs[taxonomySpecLabel(mf.key)] = mf.value;
+    }
+
     const certification = getMetafield(p, "custom", "zertifizierung");
     if (certification) specs["Zertifizierung"] = certification;
     const serieMeta = getMetafield(p, "custom", "serie");
     if (serieMeta) specs["Serie"] = serieMeta;
+
+    // Logistics facts the merchant maintains as custom metafields — relevant
+    // consultation signals (Speditionslieferung, Vorlauf, Verkaufseinheit).
+    const versandtyp = getMetafield(p, "custom", "versandtyp");
+    if (versandtyp) specs["Versandart"] = versandtyp;
+    if (isTruthyFlag(getMetafield(p, "custom", "sperrgut"))) {
+      specs["Sperrgut"] = "Ja";
+    }
+    const vorlaufzeit = getMetafield(p, "custom", "vorlaufzeit");
+    if (vorlaufzeit) specs["Vorlaufzeit"] = vorlaufzeit;
+    const liefereinheit = getMetafield(p, "custom", "liefereinheit");
+    if (liefereinheit) specs["Liefereinheit"] = liefereinheit;
+
+    // custom.kurztext is the merchant's condensed spec sheet ("Marke: ATX
+    // Serie: 700 Breite: 2000 mm …") — appended to the description so Mo and
+    // the embeddings see the full technical picture even when the HTML body
+    // is thin.
+    const kurztext = getMetafield(p, "custom", "kurztext");
+    if (kurztext && !detailedDescription.includes(kurztext)) {
+      detailedDescription = detailedDescription
+        ? `${detailedDescription}\n\nTechnische Daten: ${kurztext}`
+        : `Technische Daten: ${kurztext}`;
+    }
 
     const heightCm = parseNumber(getMetafield(p, "custom", "hoehe"));
     const lengthCm = parseNumber(getMetafield(p, "custom", "laenge"));
@@ -217,7 +331,13 @@ export function mapShopifyProducts(
         : undefined;
 
     const tags = Array.isArray(p.tags) ? p.tags : [];
-    const shortDescription = trimToWords(detailedDescription, 240);
+    // Short description preference: the merchant-curated Kurzinfo metafield,
+    // then the SEO description (mirrors convert-catalog.mjs), then a trim of
+    // the long description.
+    const kurzinfo = getMetafield(p, "custom", "kurzinfo");
+    const seoDescription = (p.seo?.description || "").trim();
+    const shortDescription =
+      (kurzinfo || "").trim() || seoDescription || trimToWords(detailedDescription, 240);
     const category = deriveCategory(p.category?.fullName, p.productType);
     const brand = (p.vendor || "").trim() || "Motion Sports";
     const deliveryMinDays = parseNumber(getMetafield(p, "custom", "lieferzeit_min"));
@@ -258,6 +378,22 @@ export function mapShopifyProducts(
     // degrades gracefully rather than linking to a broken cart.
     const shopifyVariantId = parseNumericVariantId(variant?.id) ?? undefined;
     const shopifyCartUrl = buildShopifyCartUrl(variant?.id) ?? undefined;
+
+    // Review signals (the shop's review app writes reviews.rating /
+    // reviews.rating_count) + the Search & Discovery recommendations that
+    // power the PDP's "Ergänzende/Zugehörige Produkte" (accessory) sections.
+    const rating = parseRating(getMetafield(p, "reviews", "rating"));
+    const ratingCount = parseNumber(getMetafield(p, "reviews", "rating_count"));
+    const compatibleWith = splitHandleList(
+      getMetafield(p, "shopify--discovery--product_recommendation", "complementary_products")
+    );
+    const relatedProducts = splitHandleList(
+      getMetafield(p, "shopify--discovery--product_recommendation", "related_products")
+    );
+    const hideFromSearch = isTruthyFlag(getMetafield(p, "custom", "hide_from_search"));
+    const sku = (variant?.sku || "").trim();
+    const barcode = (variant?.barcode || "").trim();
+
     const product: Product = {
       id: p.handle,
       name: (p.title || "").trim(),
@@ -273,6 +409,8 @@ export function mapShopifyProducts(
       features,
       dimensions,
       targetGroup: [],
+      ...(compatibleWith.length ? { compatibleWith } : {}),
+      ...(relatedProducts.length ? { relatedProducts } : {}),
       shopifyUrl: p.onlineStoreUrl || `${SHOP_DOMAIN}/products/${p.handle}`,
       ...(shopifyVariantId ? { shopifyVariantId } : {}),
       ...(shopifyCartUrl ? { shopifyCartUrl } : {}),
@@ -283,6 +421,13 @@ export function mapShopifyProducts(
       deliveryTime,
       ...(series ? { series } : {}),
       tags,
+      ...(sku ? { sku } : {}),
+      ...(barcode ? { barcode } : {}),
+      ...(rating != null ? { rating: Math.round(rating * 10) / 10 } : {}),
+      ...(ratingCount != null && ratingCount > 0
+        ? { ratingCount: Math.round(ratingCount) }
+        : {}),
+      ...(hideFromSearch ? { hideFromSearch: true } : {}),
       medicalCertification: {
         ceClass: "unknown",
         suitableForRehab: "unknown",

@@ -80,13 +80,44 @@ installed on the store, wrong API version, etc).
 Required scope: `read_products` (or `write_products`, which implicitly
 covers reads).
 
-## Metaobject / metafield reference resolution
+## Metafield capture & reference resolution
 
-Some product fields are backed by **Shopify metaobjects** rather than plain
-text — most notably the standard-taxonomy `shopify.color-pattern` (→ "Farbe")
-and `shopify.material` (→ "Material") metafields, and potentially custom
-metafields like `custom.zertifizierung` if the merchant modelled them as
-metaobject references.
+The products query fetches **all product metafields** via the generic
+`metafields(first: 60) { nodes { namespace key value type } }` connection —
+not a hardcoded whitelist. Everything the merchant maintains on the product in
+the admin flows into the catalog:
+
+- `custom.*` merchant fields: `kurzinfo` (→ `shortDescription`), `kurztext`
+  (→ appended to `detailedDescription` as "Technische Daten: …"), `hoehe` /
+  `laenge` / `gewicht` (→ dimensions), `lieferzeit_min` (→ `deliveryTime`),
+  `serie`, `zertifizierung`, `versandtyp` / `sperrgut` / `vorlaufzeit` /
+  `liefereinheit` (→ `specifications`), `hide_from_search`
+  (→ `Product.hideFromSearch`; retrieval skips these products).
+- Standard-taxonomy ("category") metafields (`shopify.*`): every populated one
+  becomes a `specifications` entry with its German admin label
+  (`color-pattern` → "Farbe", `pull-up-bar` → "Klimmzugstange", …; unknown new
+  keys get a humanized fallback label — see `TAXONOMY_SPEC_LABELS` in
+  `catalog-mapping.ts`).
+- Review app fields: `reviews.rating` / `reviews.rating_count`
+  (→ `Product.rating` / `ratingCount`).
+- Search & Discovery recommendations:
+  `shopify--discovery--product_recommendation.complementary_products`
+  (→ `Product.compatibleWith`, the PDP's accessory section) and
+  `related_products` (→ `Product.relatedProducts`) — resolved to product
+  **handles**, i.e. catalog `Product.id`s.
+- File/media references (slide images, Zusatzbilder) are skipped — images come
+  from the `images` connection.
+
+The query also fetches `seo { title description }` (SEO description feeds
+`shortDescription` when no Kurzinfo exists) and the first variant's `sku` /
+`barcode` (→ `Product.sku` / `barcode`).
+
+Deliberately **not** captured: "Cost per item" (internal margin data — must
+never reach a customer-facing bot), per-location inventory breakdowns
+(`totalInventory` + `availableForSale` are sufficient), HS code / country of
+origin, and Google Shopping fields.
+
+### Reference resolution (metaobjects & product references)
 
 For reference-type metafields the Admin API returns a **GID** (or a JSON
 array of GIDs for list references) in the metafield's `value` — e.g.
@@ -94,51 +125,46 @@ array of GIDs for list references) in the metafield's `value` — e.g.
 If passed through verbatim, product cards would display the raw GID instead of
 "Schwarz".
 
-`src/lib/shopify.ts` now resolves these at sync time. The products query
-requests the reference expansion alongside the raw value:
+`src/lib/shopify.ts` resolves these at sync time. After each products page,
+all reference GIDs are collected and resolved in **one batched `nodes(ids:)`
+query** (chunked at 50) against a per-run cache — taxonomy metaobjects repeat
+across products, so most pages resolve entirely from cache:
 
 ```graphql
-metafield(namespace: "shopify", key: "color-pattern") {
-  value
-  type
-  reference  { ... on Metaobject { fields { key value } } }   # single ref
-  references(first: 25) { nodes { ... on Metaobject { fields { key value } } } }  # list ref
+query ResolveReferenceNodes($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Metaobject { id fields { key value } }   # → display label
+    ... on Product    { id handle }                  # → catalog product id
+  }
 }
 ```
 
-`fetchAllProducts()` then resolves each metafield to a clean string before it
-reaches `mapShopifyProducts`:
-
-- **List reference** → each metaobject's display value joined with `", "`
-  (e.g. `"Schwarz, Anthrazit"`).
-- **Single reference** → the metaobject's display value (e.g. `"Stahl"`).
+- **Metaobject reference** → display value, list refs joined with `", "`
+  (e.g. `"Schwarz, Anthrazit"`). The display value is taken from the
+  metaobject's first matching field key in priority order: `label` → `name` →
+  `title` → `value` → first non-empty, non-GID text field.
+- **Product reference** → the product's **handle** (the catalog `Product.id`).
+- **JSON list of plain strings** (`list.single_line_text_field`) → `", "`-joined.
 - **Plain text/number** → passed through unchanged.
 
-The display value is taken from the metaobject's first matching field key in
-priority order: `label` → `name` → `title` → `value` → first non-empty,
-non-GID text field. This covers Shopify standard-taxonomy metaobjects (which
-use `label`) and most custom metaobjects.
+### Troubleshooting: a field is missing
 
-The downstream `Product` type is unchanged — only the **values** stored in
-`specifications` (Farbe, Material, Zertifizierung, …) change from GIDs to
-labels. The chat route, tools, retrieval, and `/api/products` are unaffected.
-
-### Troubleshooting: a field shows "—" or is empty
-
-If a field that should have a value shows `"—"` (or is missing) on the
-frontend, the source metaobject could not be resolved to a display value.
-`fetchAllProducts()` emits a `"—"` sentinel (never a raw GID) and logs a
-warning to the Vercel function logs with the product id and metafield, e.g.:
+If a metafield that should have a value is missing from the catalog, the
+reference could not be resolved (deleted node, unsupported reference type, or
+a metaobject without a usable label field). The sync **drops** such fields
+(never emits a raw GID) and logs a warning to the Vercel function logs with
+the product id and metafield, e.g.:
 
 ```
-[shopify] product gid://shopify/Product/123: metafield custom.serie reference
-did not resolve to a display value — check the source metaobject's field keys
+[shopify] product gid://shopify/Product/123: metafield custom.serie references
+did not resolve (gid://shopify/Metaobject/456) — dropped
 ```
 
 To fix it, the merchant should open the referenced metaobject in the Shopify
 admin and ensure it has a populated **`label`** (or `name`/`title`) field.
 Once the metaobject has the expected field, re-run the sync (see below) and
-the label will flow through.
+the label will flow through. A product with more than 60 metafields logs a
+`raise METAFIELDS_PAGE_SIZE` warning instead of silently truncating.
 
 ## Stock / availability status
 
