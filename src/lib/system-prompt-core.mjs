@@ -296,6 +296,16 @@ ${summaryBlock}
 // Pre-retrieved products block
 // ---------------------------------------------------------------------------
 
+// Clip long free text for the prompt block: collapse whitespace/newlines so
+// it stays one markdown list line, and cut at a word boundary.
+function clipText(s, max) {
+  const str = String(s ?? "").replace(/\s+/g, " ").trim();
+  if (str.length <= max) return str;
+  const cut = str.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trim() + "…";
+}
+
 function renderRetrievedProducts(products, locale) {
   const en = locale === "en";
   if (products.length === 0) {
@@ -319,6 +329,16 @@ function renderRetrievedProducts(products, locale) {
           `- Kategorie: ${p.category} | Marke: ${p.brand} | Preis: ${price} €${p.salePrice ? ` (statt ${p.price} €)` : ""}`,
           `- ${p.shortDescription}`
         );
+      }
+      // The full product description (incl. the merchant's "Technische
+      // Daten" Kurztext appended by the catalog sync) — clipped, and skipped
+      // when it adds nothing beyond the short description, so Mo can answer
+      // detail questions (Breite, Belastbarkeit, Lochraster, …) without
+      // hallucinating. This is the SAME text the embeddings index, so what
+      // retrieval matched on is also what Mo gets to read.
+      const detail = clipText(p.detailedDescription, 700);
+      if (detail && !(p.shortDescription || "").includes(detail)) {
+        lines.push(`- Details: ${detail}`);
       }
       if (p.features?.length) {
         lines.push(`- Features: ${p.features.slice(0, 5).join("; ")}`);

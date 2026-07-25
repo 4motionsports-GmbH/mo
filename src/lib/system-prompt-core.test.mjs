@@ -63,6 +63,8 @@ test("English prompt switches language and carries the same structure", () => {
 test("retrieved-product block renders rating, accessories and related products", () => {
   const rich = {
     ...product(),
+    detailedDescription:
+      "Die Multipresse im Detail.\nTechnische Daten: Breite: 2000 mm Höhe: 2195 mm Belastbarkeit: Rahmenlast 650 kg",
     rating: 4.7,
     ratingCount: 23,
     compatibleWith: ["atx-hantelscheiben-50", "atx-j-hooks"],
@@ -78,6 +80,11 @@ test("retrieved-product block renders rating, accessories and related products",
     locale: "de",
   });
   assert.match(de, /- Kundenbewertung: 4\.7\/5 \(23 Bewertungen\)/);
+  // The long description (incl. Kurztext) reaches the block, newline-collapsed.
+  assert.match(
+    de,
+    /- Details: Die Multipresse im Detail\. Technische Daten: Breite: 2000 mm/
+  );
   assert.match(de, /- Passendes Zubehör \(Produkt-IDs\): atx-hantelscheiben-50, atx-j-hooks/);
   assert.match(de, /- Ähnliche Produkte \(Produkt-IDs\): atx-power-rack-620/);
   // Spec cap raised to 10 — the 10th survives, the 11th is trimmed.
