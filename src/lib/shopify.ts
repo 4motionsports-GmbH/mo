@@ -256,6 +256,7 @@ export interface ShopifyProductImage {
 export interface ShopifyProductVariant {
   id: string;
   sku?: string | null;
+  barcode?: string | null; // GTIN/EAN as maintained in the admin ("Barcode")
   price: string; // GraphQL Money — decimal string
   compareAtPrice?: string | null;
   inventoryQuantity?: number | null;
@@ -274,6 +275,11 @@ export interface ShopifyMetafield {
   type?: string | null;
 }
 
+export interface ShopifyProductSeo {
+  title?: string | null;
+  description?: string | null;
+}
+
 export interface ShopifyProduct {
   id: string;
   handle: string;
@@ -285,6 +291,7 @@ export interface ShopifyProduct {
   publishedAt: string | null;
   tags: string[];
   onlineStoreUrl?: string | null;
+  seo?: ShopifyProductSeo | null;
   category?: { fullName?: string | null; name?: string | null } | null;
   featuredImage?: ShopifyProductImage | null;
   images: ShopifyProductImage[];
@@ -302,59 +309,27 @@ export interface ShopifyProduct {
   tracksInventory?: boolean | null;
 }
 
-// Metafields we want surfaced for product mapping. The (namespace,key) pairs
-// mirror what convert-catalog.mjs reads from the CSV column names. The alias
-// is the GraphQL field alias used in the products query — it must be a valid
-// GraphQL identifier (no hyphens), and is stored back as the metafield key
-// when we hand the data to the mapper.
-const METAFIELD_IDENTIFIERS: Array<{
-  alias: string;
-  namespace: string;
-  key: string;
-}> = [
-  { alias: "mf_custom_hoehe", namespace: "custom", key: "hoehe" },
-  { alias: "mf_custom_laenge", namespace: "custom", key: "laenge" },
-  { alias: "mf_custom_gewicht", namespace: "custom", key: "gewicht" },
-  { alias: "mf_custom_lieferzeit_min", namespace: "custom", key: "lieferzeit_min" },
-  { alias: "mf_custom_serie", namespace: "custom", key: "serie" },
-  { alias: "mf_custom_typ", namespace: "custom", key: "typ" },
-  { alias: "mf_custom_zertifizierung", namespace: "custom", key: "zertifizierung" },
-  { alias: "mf_shopify_material", namespace: "shopify", key: "material" },
-  { alias: "mf_shopify_color_pattern", namespace: "shopify", key: "color-pattern" },
-];
-
-// One `metafield(namespace, key)` field per identifier, aliased so the
-// response is a flat object: { mf_custom_hoehe: { value: "120", … }, … }.
+// Product metafields are fetched via the generic `metafields(first:)`
+// connection — scalar-only (namespace/key/value/type) — instead of a
+// hardcoded alias list. This captures EVERYTHING the merchant maintains in
+// the admin (custom.kurzinfo / kurztext / versandtyp / sperrgut / vorlaufzeit
+// / liefereinheit, the reviews.* rating fields, the Search & Discovery
+// complementary/related products, and the per-category taxonomy metafields
+// like shopify.pull-up-bar) without a code change per new metafield.
 //
-// We request the raw `value` AND the reference expansion. Reference-type
-// metafields (e.g. the Shopify standard-taxonomy `shopify.material` /
-// `shopify.color-pattern` metaobjects) return a GID — or a JSON array of
-// GIDs — in `value`; the human-readable label lives on the referenced
-// Metaobject's fields. `reference` resolves single references, `references`
-// resolves list references. Both are null for non-reference metafields, so
-// requesting them on plain text/number metafields is harmless.
+// Reference-type metafields carry a GID (or JSON array of GIDs) in `value`.
+// Instead of expanding references inline (which multiplied query cost by the
+// products page size and forced the old 9-alias whitelist), the GIDs are
+// resolved AFTER each page via one batched `nodes(ids:)` lookup with a
+// per-run cache — taxonomy metaobjects (colors, materials, …) repeat across
+// products, so the cache collapses most of the work. See
+// resolveReferenceGids().
 //
-// `references(first:)` is kept small: it is multiplied by the products page
-// size when Shopify computes the query's static cost, and 9 metafields each
-// with a reference connection adds up fast (the single-query cost ceiling is
-// 1000). Observed catalog data tops out at ~8-9 list values (colors), so 15
-// covers every real product without truncation.
-const METAFIELD_REFERENCES_PAGE_SIZE = 15;
-const METAFIELD_QUERY_FIELDS = METAFIELD_IDENTIFIERS.map(
-  (m) =>
-    `${m.alias}: metafield(namespace: "${m.namespace}", key: "${m.key}") {
-          value
-          type
-          reference {
-            ... on Metaobject { fields { key value } }
-          }
-          references(first: ${METAFIELD_REFERENCES_PAGE_SIZE}) {
-            nodes {
-              ... on Metaobject { fields { key value } }
-            }
-          }
-        }`
-).join("\n        ");
+// 60 comfortably covers the store's densest products (the full metafield
+// vocabulary across ALL categories is ~90 columns in the CSV export, but a
+// single product only ever populates a small subset). pageInfo lets us warn
+// if a product ever exceeds it instead of silently truncating.
+const METAFIELDS_PAGE_SIZE = 60;
 
 // Page size is deliberately modest. Shopify computes a static query cost by
 // multiplying each node's subtree cost by `first`; with the metaobject
@@ -380,6 +355,10 @@ const PRODUCT_NODE_FIELDS = /* GraphQL */ `
     onlineStoreUrl
     totalInventory
     tracksInventory
+    seo {
+      title
+      description
+    }
     category {
       fullName
       name
@@ -398,13 +377,24 @@ const PRODUCT_NODE_FIELDS = /* GraphQL */ `
       nodes {
         id
         sku
+        barcode
         price
         compareAtPrice
         inventoryQuantity
         availableForSale
       }
     }
-    ${METAFIELD_QUERY_FIELDS}
+    metafields(first: ${METAFIELDS_PAGE_SIZE}) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        namespace
+        key
+        value
+        type
+      }
+    }
 `;
 
 const PRODUCTS_PAGE_SIZE = 30;
@@ -447,24 +437,24 @@ const INVENTORY_ITEM_PRODUCT_QUERY = /* GraphQL */ `
   }
 `;
 
-// Raw metafield shape as returned by the products query (post reference
-// expansion). `value` is the literal Shopify value (a GID or JSON array of
-// GIDs for reference types); `reference` / `references` carry the resolved
-// metaobject(s) when the metafield is a reference type.
+// Raw metafield node from the generic `metafields(first:)` connection.
+// `value` is the literal Shopify value: plain text/number, a JSON array for
+// list types, or a GID / JSON array of GIDs for reference types.
+interface RawMetafieldNode {
+  namespace: string;
+  key: string;
+  value: string | null;
+  type?: string | null;
+}
+
 interface RawMetaobjectField {
   key: string;
   value: string | null;
 }
 interface RawMetaobjectRef {
-  // Empty (no `fields`) when the reference is not a Metaobject (the inline
-  // fragment didn't match) or the metaobject has no fields.
+  // Empty (no `fields`) when the resolved node is not a Metaobject (the
+  // inline fragment didn't match) or the metaobject has no fields.
   fields?: RawMetaobjectField[] | null;
-}
-interface RawMetafield {
-  value: string | null;
-  type?: string | null;
-  reference?: RawMetaobjectRef | null;
-  references?: { nodes: Array<RawMetaobjectRef | null> | null } | null;
 }
 
 function looksLikeGid(s: string | null | undefined): boolean {
@@ -494,50 +484,162 @@ function metaobjectDisplayValue(node: RawMetaobjectRef | null | undefined): stri
   );
 }
 
-// Resolve one metafield to a clean, human-readable string for the catalog.
-// - List reference   → join each resolved metaobject label with ", ".
-// - Single reference → the resolved metaobject label.
-// - Plain value      → returned as-is (text/number metafields).
-// Defensive fallback: if a value that should have resolved is still a raw GID
-// (reference came back null/empty/unexpected), emit "—" and warn with the
-// product id rather than leaking the GID to the frontend.
-function resolveMetafieldValue(
-  raw: RawMetafield | null | undefined,
-  productId: string,
-  identifier: string
+// ---------------- Metafield reference resolution ----------------
+
+/** GID → resolved display value. `null` marks a GID we tried and could not
+ *  resolve (deleted node, unsupported type), so it is never re-queried. */
+type ReferenceCache = Map<string, string | null>;
+
+// Extract the reference GIDs a metafield value carries: a single GID for
+// `*_reference` types, a JSON array of GIDs for `list.*_reference` types.
+// Returns [] for plain values (including non-GID JSON like list.text or the
+// reviews.rating JSON object), so callers can branch on "is this a reference".
+function extractReferenceGids(value: string | null | undefined): string[] {
+  if (!value) return [];
+  const v = value.trim();
+  if (v.startsWith("[")) {
+    try {
+      const arr: unknown = JSON.parse(v);
+      return Array.isArray(arr)
+        ? arr.filter((x): x is string => looksLikeGid(typeof x === "string" ? x : null))
+        : [];
+    } catch {
+      return [];
+    }
+  }
+  return looksLikeGid(v) ? [v] : [];
+}
+
+// File/media references (slide images, Zusatzbilder, …) are theme assets —
+// the catalog's images come from the images connection, so resolving these
+// would only add noise. Skipped wholesale.
+function isFileReference(type: string | null | undefined): boolean {
+  return typeof type === "string" && type.includes("file_reference");
+}
+
+// Batched lookup for reference GIDs collected from a page of products.
+// Metaobjects (taxonomy values: colors, materials, pull-up-bar, …) resolve to
+// their display label; Products (Search & Discovery complementary/related
+// products) resolve to their HANDLE — the catalog's Product.id — so the
+// mapper can link accessories directly. Chunked to stay far below the query
+// cost ceiling; the per-run cache collapses repeats (taxonomy values are
+// shared by many products).
+const RESOLVE_REFERENCES_QUERY = /* GraphQL */ `
+  query ResolveReferenceNodes($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on Metaobject {
+        id
+        fields {
+          key
+          value
+        }
+      }
+      ... on Product {
+        id
+        handle
+      }
+    }
+  }
+`;
+const RESOLVE_CHUNK_SIZE = 50;
+
+async function resolveReferenceGids(
+  gids: Iterable<string>,
+  cache: ReferenceCache
+): Promise<void> {
+  const pending = Array.from(new Set(gids)).filter((g) => !cache.has(g));
+  for (let i = 0; i < pending.length; i += RESOLVE_CHUNK_SIZE) {
+    const chunk = pending.slice(i, i + RESOLVE_CHUNK_SIZE);
+    const data = await graphql<{
+      nodes: Array<
+        | ({ __typename?: string; id?: string; handle?: string } & RawMetaobjectRef)
+        | null
+      >;
+    }>(RESOLVE_REFERENCES_QUERY, { ids: chunk });
+    const byId = new Map<string, { handle?: string } & RawMetaobjectRef>();
+    for (const node of data.nodes ?? []) {
+      if (node?.id) byId.set(node.id, node);
+    }
+    for (const gid of chunk) {
+      const node = byId.get(gid);
+      if (!node) {
+        cache.set(gid, null);
+        continue;
+      }
+      cache.set(
+        gid,
+        typeof node.handle === "string" && node.handle
+          ? node.handle
+          : metaobjectDisplayValue(node)
+      );
+    }
+  }
+}
+
+// Collect every reference GID a set of raw product nodes carries, so one
+// batched resolution pass can warm the cache before mapping.
+function collectReferenceGids(nodes: ProductNode[]): string[] {
+  const gids: string[] = [];
+  for (const n of nodes) {
+    for (const mf of n.metafields?.nodes ?? []) {
+      if (isFileReference(mf.type)) continue;
+      gids.push(...extractReferenceGids(mf.value));
+    }
+  }
+  return gids;
+}
+
+// Resolve one raw metafield node to a clean, human-readable string:
+// - Reference (single/list) → resolved label(s)/handle(s), ", "-joined.
+// - JSON list of plain strings (list.single_line_text_field …) → ", "-joined.
+// - Plain value → as-is (the mapper parses JSON payloads like reviews.rating).
+// Returns null (drop the metafield) for empty values, file references, and
+// references that could not be resolved — a raw GID must never reach the
+// catalog/frontend.
+function resolveMetafieldNode(
+  mf: RawMetafieldNode,
+  cache: ReferenceCache,
+  productId: string
 ): string | null {
-  if (!raw) return null;
-
-  const refNodes = raw.references?.nodes;
-  if (Array.isArray(refNodes) && refNodes.length > 0) {
-    const parts = refNodes
-      .map((n) => metaobjectDisplayValue(n))
-      .filter((v): v is string => !!v);
-    if (parts.length > 0) return parts.join(", ");
-    console.warn(
-      `[shopify] product ${productId}: metafield ${identifier} list references did not resolve to a display value — check the source metaobject's field keys`
-    );
-    return "—";
-  }
-
-  if (raw.reference) {
-    const v = metaobjectDisplayValue(raw.reference);
-    if (v) return v;
-    console.warn(
-      `[shopify] product ${productId}: metafield ${identifier} reference did not resolve to a display value — check the source metaobject's field keys`
-    );
-    return "—";
-  }
-
-  const value = raw.value;
+  const value = mf.value;
   if (value == null || value === "") return null;
-  // A reference-type metafield whose expansion came back empty still has a GID
-  // (or JSON array of GIDs) in `value` — never let that reach the catalog.
+  if (isFileReference(mf.type)) return null;
+
+  const gids = extractReferenceGids(value);
+  if (gids.length > 0) {
+    const parts = gids
+      .map((g) => cache.get(g))
+      .filter((v): v is string => !!v);
+    if (parts.length === 0) {
+      console.warn(
+        `[shopify] product ${productId}: metafield ${mf.namespace}.${mf.key} references did not resolve (${value.slice(0, 80)}) — dropped`
+      );
+      return null;
+    }
+    return parts.join(", ");
+  }
+
+  // JSON list of plain strings → readable joined text.
+  const v = value.trim();
+  if (v.startsWith("[")) {
+    try {
+      const arr: unknown = JSON.parse(v);
+      if (Array.isArray(arr) && arr.every((x) => typeof x === "string")) {
+        const parts = (arr as string[]).map((s) => s.trim()).filter(Boolean);
+        if (parts.length > 0) return parts.join(", ");
+        return null;
+      }
+    } catch {
+      // fall through — keep the raw value
+    }
+  }
+
   if (looksLikeGid(value)) {
     console.warn(
-      `[shopify] product ${productId}: metafield ${identifier} is an unresolved reference (${value.slice(0, 80)}) — check the source metaobject`
+      `[shopify] product ${productId}: metafield ${mf.namespace}.${mf.key} is an unresolved reference (${value.slice(0, 80)}) — dropped`
     );
-    return "—";
+    return null;
   }
   return value;
 }
@@ -555,13 +657,15 @@ type ProductNode = {
   onlineStoreUrl: string | null;
   totalInventory: number | null;
   tracksInventory: boolean | null;
+  seo: ShopifyProductSeo | null;
   category: { fullName: string | null; name: string | null } | null;
   featuredImage: ShopifyProductImage | null;
   images: { nodes: ShopifyProductImage[] };
   variants: { nodes: ShopifyProductVariant[] };
-} & {
-  // Each alias becomes its own field on the response.
-  [alias: string]: RawMetafield | null | unknown;
+  metafields: {
+    pageInfo?: { hasNextPage?: boolean | null } | null;
+    nodes: RawMetafieldNode[];
+  } | null;
 };
 
 interface ProductsPage {
@@ -572,15 +676,25 @@ interface ProductsPage {
 }
 
 // One ProductNode (raw GraphQL) → the ShopifyProduct the mapper consumes,
-// resolving each metafield reference to its display value. Shared by the full
-// sync and the targeted webhook fetch so both produce identical shapes.
-function mapProductNode(n: ProductNode): ShopifyProduct {
+// resolving each metafield reference to its display value via the pre-warmed
+// cache. Shared by the full sync and the targeted webhook fetch so both
+// produce identical shapes.
+function mapProductNode(n: ProductNode, cache: ReferenceCache): ShopifyProduct {
   const metafields: ShopifyMetafield[] = [];
-  for (const id of METAFIELD_IDENTIFIERS) {
-    const field = n[id.alias] as RawMetafield | null | undefined;
-    const value = resolveMetafieldValue(field, n.id, `${id.namespace}.${id.key}`);
+  if (n.metafields?.pageInfo?.hasNextPage) {
+    console.warn(
+      `[shopify] product ${n.id}: more than ${METAFIELDS_PAGE_SIZE} metafields — the overflow was not fetched (raise METAFIELDS_PAGE_SIZE)`
+    );
+  }
+  for (const mf of n.metafields?.nodes ?? []) {
+    const value = resolveMetafieldNode(mf, cache, n.id);
     if (value != null && value !== "") {
-      metafields.push({ namespace: id.namespace, key: id.key, value });
+      metafields.push({
+        namespace: mf.namespace,
+        key: mf.key,
+        value,
+        type: mf.type ?? null,
+      });
     }
   }
   return {
@@ -594,6 +708,7 @@ function mapProductNode(n: ProductNode): ShopifyProduct {
     publishedAt: n.publishedAt,
     tags: Array.isArray(n.tags) ? n.tags : [],
     onlineStoreUrl: n.onlineStoreUrl,
+    seo: n.seo ?? null,
     category: n.category,
     featuredImage: n.featuredImage,
     images: n.images?.nodes ?? [],
@@ -613,12 +728,17 @@ const INTER_PAGE_DELAY_MS = 500;
 
 export async function fetchAllProducts(): Promise<ShopifyProduct[]> {
   const out: ShopifyProduct[] = [];
+  // One reference cache for the whole run — taxonomy metaobjects (colors,
+  // materials, …) repeat across products, so later pages resolve mostly from
+  // cache instead of extra API calls.
+  const cache: ReferenceCache = new Map();
   let cursor: string | null = null;
   let page = 0;
   while (true) {
     page++;
     const data: ProductsPage = await graphql<ProductsPage>(PRODUCTS_QUERY, { cursor });
-    for (const n of data.products.nodes) out.push(mapProductNode(n));
+    await resolveReferenceGids(collectReferenceGids(data.products.nodes), cache);
+    for (const n of data.products.nodes) out.push(mapProductNode(n, cache));
     if (!data.products.pageInfo.hasNextPage) break;
     cursor = data.products.pageInfo.endCursor;
     if (!cursor) break;
@@ -640,13 +760,14 @@ export async function fetchProductsByIds(gids: string[]): Promise<ShopifyProduct
   const ids = gids.filter((g) => typeof g === "string" && g.startsWith("gid://"));
   if (ids.length === 0) return [];
   const data = await graphql<{ nodes: Array<ProductNode | null> }>(PRODUCTS_BY_IDS_QUERY, { ids });
-  const out: ShopifyProduct[] = [];
-  for (const n of data.nodes ?? []) {
-    // Non-Product nodes come back without a handle (the inline fragment didn't
-    // match) — skip them defensively.
-    if (n && typeof n.handle === "string") out.push(mapProductNode(n));
-  }
-  return out;
+  // Non-Product nodes come back without a handle (the inline fragment didn't
+  // match) — skip them defensively.
+  const nodes = (data.nodes ?? []).filter(
+    (n): n is ProductNode => !!n && typeof n.handle === "string"
+  );
+  const cache: ReferenceCache = new Map();
+  await resolveReferenceGids(collectReferenceGids(nodes), cache);
+  return nodes.map((n) => mapProductNode(n, cache));
 }
 
 /**

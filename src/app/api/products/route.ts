@@ -53,6 +53,10 @@ export interface PublicProduct {
   inventoryQuantity?: number;
   anyVariantAvailable?: boolean;
   deliveryTime: string;
+  // Public PDP facts captured by the sync: article number, review signals.
+  sku?: string;
+  rating?: number;
+  ratingCount?: number;
 }
 
 function toPublic(p: Product): PublicProduct {
@@ -79,6 +83,9 @@ function toPublic(p: Product): PublicProduct {
     ...(typeof p.inventoryQuantity === "number" ? { inventoryQuantity: p.inventoryQuantity } : {}),
     ...(typeof p.anyVariantAvailable === "boolean" ? { anyVariantAvailable: p.anyVariantAvailable } : {}),
     deliveryTime: p.deliveryTime,
+    ...(p.sku ? { sku: p.sku } : {}),
+    ...(typeof p.rating === "number" ? { rating: p.rating } : {}),
+    ...(typeof p.ratingCount === "number" ? { ratingCount: p.ratingCount } : {}),
   };
 }
 

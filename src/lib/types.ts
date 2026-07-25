@@ -50,6 +50,21 @@ export interface Product {
   deliveryTime: string;
   series?: string;
   tags: string[];
+  // Merchant article identifiers (first variant) — lets Mo answer "which
+  // article number is that?" and disambiguate B-Ware/variants precisely.
+  sku?: string;
+  barcode?: string;
+  // Customer review signals from the shop's review app (reviews.rating /
+  // reviews.rating_count metafields). Omitted when the product has no reviews.
+  rating?: number;
+  ratingCount?: number;
+  // "Zugehörige Produkte" from Shopify Search & Discovery (product handles).
+  // compatibleWith (above) carries the "Ergänzende Produkte" (accessories).
+  relatedProducts?: string[];
+  // custom.hide_from_search ("Von Suche ausschließen") — the merchant excluded
+  // this product from storefront search. Mo's retrieval mirrors that: the
+  // product stays resolvable by id but is never recommended proactively.
+  hideFromSearch?: boolean;
   // Persona-relevant fields (added for persona-aware recommendations)
   medicalCertification?: MedicalCertification;
   noiseLevelDb?: number | "unknown";

@@ -52,6 +52,11 @@ function applyHardFilters(
   filters: SearchProductsArgs["filters"]
 ): Product[] {
   return products.filter((p) => {
+    // Merchant opt-out ("Von Suche ausschließen" / custom.hide_from_search):
+    // mirror the storefront — never recommend or surface these proactively.
+    // The product stays resolvable by id (show_product / hydration), just like
+    // its PDP stays reachable by direct link.
+    if (p.hideFromSearch) return false;
     if (filters?.category && p.category !== filters.category) return false;
     if (filters?.maxPriceEUR != null && (p.salePrice ?? p.price) > filters.maxPriceEUR) return false;
     if (filters?.minPriceEUR != null && (p.salePrice ?? p.price) < filters.minPriceEUR) return false;

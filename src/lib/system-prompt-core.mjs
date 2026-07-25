@@ -296,6 +296,16 @@ ${summaryBlock}
 // Pre-retrieved products block
 // ---------------------------------------------------------------------------
 
+// Clip long free text for the prompt block: collapse whitespace/newlines so
+// it stays one markdown list line, and cut at a word boundary.
+function clipText(s, max) {
+  const str = String(s ?? "").replace(/\s+/g, " ").trim();
+  if (str.length <= max) return str;
+  const cut = str.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trim() + "…";
+}
+
 function renderRetrievedProducts(products, locale) {
   const en = locale === "en";
   if (products.length === 0) {
@@ -320,13 +330,46 @@ function renderRetrievedProducts(products, locale) {
           `- ${p.shortDescription}`
         );
       }
+      // The full product description (incl. the merchant's "Technische
+      // Daten" Kurztext appended by the catalog sync) — clipped, and skipped
+      // when it adds nothing beyond the short description, so Mo can answer
+      // detail questions (Breite, Belastbarkeit, Lochraster, …) without
+      // hallucinating. This is the SAME text the embeddings index, so what
+      // retrieval matched on is also what Mo gets to read.
+      const detail = clipText(p.detailedDescription, 700);
+      if (detail && !(p.shortDescription || "").includes(detail)) {
+        lines.push(`- Details: ${detail}`);
+      }
       if (p.features?.length) {
         lines.push(`- Features: ${p.features.slice(0, 5).join("; ")}`);
       }
-      const specs = Object.entries(p.specifications || {}).slice(0, 5);
+      // Since the sync captures ALL admin metafields (taxonomy specs, Versand-
+      // art, Vorlaufzeit, …), allow a few more spec entries than before.
+      const specs = Object.entries(p.specifications || {}).slice(0, 10);
       if (specs.length) {
         lines.push(
           `- Specs: ${specs.map(([k, v]) => `${k}=${v}`).join(", ")}`
+        );
+      }
+      if (typeof p.rating === "number" && p.ratingCount) {
+        lines.push(
+          en
+            ? `- Customer rating: ${p.rating}/5 (${p.ratingCount} reviews)`
+            : `- Kundenbewertung: ${p.rating}/5 (${p.ratingCount} Bewertungen)`
+        );
+      }
+      if (p.compatibleWith?.length) {
+        lines.push(
+          en
+            ? `- Matching accessories (product ids): ${p.compatibleWith.slice(0, 6).join(", ")}`
+            : `- Passendes Zubehör (Produkt-IDs): ${p.compatibleWith.slice(0, 6).join(", ")}`
+        );
+      }
+      if (p.relatedProducts?.length) {
+        lines.push(
+          en
+            ? `- Related products (product ids): ${p.relatedProducts.slice(0, 6).join(", ")}`
+            : `- Ähnliche Produkte (Produkt-IDs): ${p.relatedProducts.slice(0, 6).join(", ")}`
         );
       }
       lines.push(
