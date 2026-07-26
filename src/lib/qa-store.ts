@@ -253,6 +253,32 @@ export async function markQaPublished(
   }
 }
 
+/**
+ * Pull a published entry back to 'answered' ("Zurückziehen"). The caller is
+ * responsible for removing the pair from Shopify / invalidating the general-QA
+ * cache FIRST — this only records the state transition.
+ */
+export async function markQaUnpublished(
+  id: number,
+  sql: Sql | null = getSql()
+): Promise<QaEntry | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      UPDATE qa_entries
+         SET status = 'answered', published_at = NULL, updated_at = now()
+       WHERE id = ${id} AND status = 'published'
+      RETURNING id, conversation_id, product_id, product_title, gap_summary,
+                question, answer, status, model, input_tokens, output_tokens,
+                created_at, updated_at, answered_at, published_at
+    `) as QaRow[];
+    return rows[0] ? rowToEntry(rows[0]) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/qa-store", phase: "unpublish" });
+    return null;
+  }
+}
+
 export async function dismissQaEntry(
   id: number,
   sql: Sql | null = getSql()

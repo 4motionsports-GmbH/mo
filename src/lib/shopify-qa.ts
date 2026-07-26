@@ -21,6 +21,7 @@ import {
   QA_METAFIELD_NAMESPACE,
   mergeQaList,
   parseQaMetafield,
+  removeQaFromList,
   serializeQaMetafield,
 } from "./qa-core.mjs";
 import { refreshProductInCatalog } from "./catalog-mutate";
@@ -145,4 +146,92 @@ export async function publishQaToProduct(input: {
   }
 
   return { ok: true, productGid: product.id, qaCount: merged.length, catalogRefreshed };
+}
+
+export type UnpublishQaResult =
+  | { ok: true; removed: boolean; qaCount: number; catalogRefreshed: boolean }
+  | { ok: false; reason: "shopify_error"; message: string };
+
+/**
+ * Remove one Q&A pair (matched by question fingerprint) from a product's
+ * custom.qa metafield — the "Zurückziehen" inverse of publishQaToProduct.
+ * Idempotent: a question that is already gone (or a product that no longer
+ * exists) reports ok with removed:false instead of failing, so the queue
+ * entry can always be pulled back to 'answered'.
+ */
+export async function unpublishQaFromProduct(input: {
+  handle: string;
+  question: string;
+}): Promise<UnpublishQaResult> {
+  let product: ProductForQa["productByIdentifier"];
+  try {
+    const data = await adminGraphql<ProductForQa>(PRODUCT_FOR_QA_QUERY, {
+      handle: input.handle,
+    });
+    product = data.productByIdentifier;
+  } catch (err) {
+    return {
+      ok: false,
+      reason: "shopify_error",
+      message: `Produkt-Lookup fehlgeschlagen: ${(err as Error).message}`,
+    };
+  }
+  // Product deleted since publishing → nothing carries the pair anymore.
+  if (!product?.id) {
+    return { ok: true, removed: false, qaCount: 0, catalogRefreshed: false };
+  }
+
+  const existing = parseQaMetafield(product.metafield?.value);
+  const reduced = removeQaFromList(existing, input.question);
+  const removed = reduced.length !== existing.length;
+
+  if (removed) {
+    try {
+      const res = await adminGraphql<{
+        metafieldsSet: {
+          metafields: Array<{ id: string }> | null;
+          userErrors: Array<{ field?: string[] | null; message: string }>;
+        };
+      }>(METAFIELDS_SET_MUTATION, {
+        metafields: [
+          {
+            ownerId: product.id,
+            namespace: QA_METAFIELD_NAMESPACE,
+            key: QA_METAFIELD_KEY,
+            type: "json",
+            // An empty list is written as "[]" (not deleted) — keeps the
+            // definition attached and the theme simply hides the tab.
+            value: serializeQaMetafield(reduced),
+          },
+        ],
+      });
+      const errors = res.metafieldsSet?.userErrors ?? [];
+      if (errors.length > 0) {
+        return {
+          ok: false,
+          reason: "shopify_error",
+          message: `metafieldsSet: ${errors.map((e) => e.message).join("; ")}`,
+        };
+      }
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "shopify_error",
+        message: `metafieldsSet fehlgeschlagen: ${(err as Error).message}`,
+      };
+    }
+  }
+
+  // Best-effort immediate catalog refresh so Mo forgets the pair right away
+  // (nightly sync as backstop). Refresh even when removed=false — a stale
+  // catalog copy might still carry the pair.
+  let catalogRefreshed = false;
+  try {
+    const r = await refreshProductInCatalog(product.id);
+    catalogRefreshed = r.ok;
+  } catch (err) {
+    reportError(err, { route: "lib/shopify-qa", phase: "catalog-refresh-unpublish" });
+  }
+
+  return { ok: true, removed, qaCount: reduced.length, catalogRefreshed };
 }
