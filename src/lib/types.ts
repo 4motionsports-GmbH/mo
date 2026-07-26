@@ -65,6 +65,10 @@ export interface Product {
   // this product from storefront search. Mo's retrieval mirrors that: the
   // product stays resolvable by id but is never recommended proactively.
   hideFromSearch?: boolean;
+  // Published customer Q&A pairs from the `custom.qa` metafield (the "Wissen"
+  // feature, docs/QA_KNOWLEDGE.md) — shown in the PDP Q&A tab and given to Mo
+  // so an already-answered question never stumps him again.
+  qa?: Array<{ question: string; answer: string }>;
   // Persona-relevant fields (added for persona-aware recommendations)
   medicalCertification?: MedicalCertification;
   noiseLevelDb?: number | "unknown";

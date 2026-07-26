@@ -826,9 +826,12 @@ type PublicProduct = {
   //   sku         — article number of the first variant (e.g. "MS-ATX-MPX-780-B")
   //   rating      — average customer review rating (reviews app), e.g. 4.7
   //   ratingCount — number of customer reviews behind `rating`
+  //   qa          — published, team-answered customer Q&A pairs (same list the
+  //                 PDP Q&A tab renders from the custom.qa metafield)
   sku?: string;
   rating?: number;
   ratingCount?: number;
+  qa?: Array<{ question: string; answer: string }>;
 };
 
 type ProductsResponse = {

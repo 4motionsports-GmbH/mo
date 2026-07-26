@@ -6,7 +6,7 @@ generates a personalised draft email, edits it, and approves it — after which 
 
 It is deliberately small: a single shared admin password, a handful of tabs
 (**Übersicht**, **Kunden**, **Kampagne**, **KPIs**, **Feedback**,
-**Gespräche** and **Analyse**), and a send path that concentrates every legal
+**Gespräche**, **Wissen** and **Analyse**), and a send path that concentrates every legal
 guarantee in one place. There is no standalone Marketing tab — the marketing
 capability lives **inside the Kunden workspace** (a marketing filter preset,
 a per-customer "Marketing" sub-section, and a bulk-draft bar). Tabs are
@@ -702,3 +702,16 @@ it is dropped automatically when the conversation is deleted (retention) or eras
 — same lifecycle as `title`/`title_auto`; its `ai_usage` rows cascade via the FK.
 The rollup cache is derived, pseudonymous text (no session/email), regenerated on
 demand like `kpi_persona_question_summaries`.
+
+## Wissen tab — Q&A knowledge enhancement (`?tab=wissen`)
+
+The review queue that turns "Mo konnte nicht helfen" conversations into
+published Q&A: an explicit "Gespräche scannen" click drafts
+{ Wissenslücke, präzise Frage, Produkt? } from eligible conversations
+(analysis quality `unmet_need`/`dropped_off` or a `show_contact_form`
+hand-over); the operator answers and publishes. Product-linked pairs are
+written to the Shopify `custom.qa` metafield (storefront PDP Q&A tab + Mo's
+product context, with an immediate targeted catalog refresh); general pairs
+enter Mo's system-prompt knowledge base. Full flow, files, Shopify
+prerequisites (write_products scope, `custom.qa` metafield definition) and
+cost notes: see docs/QA_KNOWLEDGE.md.

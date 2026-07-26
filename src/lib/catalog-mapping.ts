@@ -7,6 +7,7 @@
 import type { Product } from "./types";
 import { getMetafield, type ShopifyProduct } from "./shopify";
 import { buildShopifyCartUrl, parseNumericVariantId } from "./shopify-cart-url.mjs";
+import { QA_METAFIELD_KEY, QA_METAFIELD_NAMESPACE, parseQaMetafield } from "./qa-core.mjs";
 // The embedded-doc builder lives in its own module (one source of truth shared
 // with the cron sync and scripts/build-embeddings.mjs). Re-exported here so the
 // long-standing `import { buildEmbeddingDoc } from "@/lib/catalog-mapping"`
@@ -391,6 +392,9 @@ export function mapShopifyProducts(
       getMetafield(p, "shopify--discovery--product_recommendation", "related_products")
     );
     const hideFromSearch = isTruthyFlag(getMetafield(p, "custom", "hide_from_search"));
+    // Published Q&A pairs (the "Wissen" feature) — the metafield carries the
+    // canonical {q,a} JSON list; parse defensively (junk → []).
+    const qa = parseQaMetafield(getMetafield(p, QA_METAFIELD_NAMESPACE, QA_METAFIELD_KEY));
     const sku = (variant?.sku || "").trim();
     const barcode = (variant?.barcode || "").trim();
 
@@ -428,6 +432,7 @@ export function mapShopifyProducts(
         ? { ratingCount: Math.round(ratingCount) }
         : {}),
       ...(hideFromSearch ? { hideFromSearch: true } : {}),
+      ...(qa.length ? { qa } : {}),
       medicalCertification: {
         ceClass: "unknown",
         suitableForRehab: "unknown",

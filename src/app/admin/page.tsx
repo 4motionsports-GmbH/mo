@@ -44,6 +44,7 @@ import { KundenWorkspace } from "./KundenWorkspace";
 import { KpiTab } from "./KpiTab";
 import { FeedbackTab } from "./FeedbackTab";
 import { GespraecheTab } from "./GespraecheTab";
+import { WissenTab } from "./WissenTab";
 import { OverviewTab } from "./OverviewTab";
 import { AnalyseTab } from "./AnalyseTab";
 import { KampagneTab } from "./KampagneTab";
@@ -75,8 +76,10 @@ export default async function AdminDashboardPage({
         ? "feedback"
         : sp?.tab === "gespraeche"
           ? "gespraeche"
-          : sp?.tab === "analyse"
-            ? "analyse"
+          : sp?.tab === "wissen"
+            ? "wissen"
+            : sp?.tab === "analyse"
+              ? "analyse"
             : sp?.tab === "kampagne"
               ? "kampagne"
               : sp?.tab === "kunden" || sp?.tab === "customers"
@@ -136,6 +139,7 @@ export default async function AdminDashboardPage({
       kpi={<KpiTab dbReady={dbReady} range={kpiRange} />}
       feedback={<FeedbackTab dbReady={dbReady} />}
       gespraeche={<GespraecheTab dbReady={dbReady} filter={convFilter} />}
+      wissen={<WissenTab dbReady={dbReady} />}
       analyse={<AnalyseTab dbReady={dbReady} />}
     />
   );

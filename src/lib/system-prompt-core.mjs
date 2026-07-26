@@ -372,6 +372,18 @@ function renderRetrievedProducts(products, locale) {
             : `- Ähnliche Produkte (Produkt-IDs): ${p.relatedProducts.slice(0, 6).join(", ")}`
         );
       }
+      // Published, team-verified customer Q&A for this product — trustworthy
+      // answers Mo may use verbatim.
+      if (p.qa?.length) {
+        lines.push(en ? `- Verified customer Q&A:` : `- Geprüfte Kunden-Q&A:`);
+        for (const e of p.qa.slice(0, 5)) {
+          lines.push(
+            en
+              ? `  - Q: ${clipText(e.question, 200)} → A: ${clipText(e.answer, 350)}`
+              : `  - Frage: ${clipText(e.question, 200)} → Antwort: ${clipText(e.answer, 350)}`
+          );
+        }
+      }
       lines.push(
         en
           ? `- Dimensions (WxHxD): ${p.dimensions.width}×${p.dimensions.height}×${p.dimensions.depth} cm | Weight: ${p.dimensions.weight} kg`
@@ -416,6 +428,30 @@ function renderRetrievedProducts(products, locale) {
       return lines.join("\n");
     })
     .join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// General knowledge-base Q&A block (the "Wissen" feature)
+// ---------------------------------------------------------------------------
+
+// Published, team-answered Q&A pairs WITHOUT a product link (shipping,
+// warranty, financing, …) — loaded from the qa_entries table by the chat
+// route. Product-linked pairs travel on the product itself (Product.qa).
+// Returns "" when there are none, so prompts without knowledge entries stay
+// byte-identical to before the feature existed.
+function renderGeneralKnowledgeQa(generalQa, locale) {
+  const entries = (Array.isArray(generalQa) ? generalQa : [])
+    .filter((e) => e && e.question && e.answer)
+    .slice(0, 30);
+  if (entries.length === 0) return "";
+  const en = locale === "en";
+  const lines = entries.map(
+    (e) =>
+      `- ${en ? "Q" : "Frage"}: ${clipText(e.question, 200)}\n  ${en ? "A" : "Antwort"}: ${clipText(e.answer, 500)}`
+  );
+  return en
+    ? `\n\n## Knowledge base from customer questions (answered & verified by the motion sports team)\n\nThese Q&A pairs come from real consultations and were answered by the team — treat them as reliable, current facts and use them directly when they match the customer's question:\n\n${lines.join("\n")}`
+    : `\n\n## Wissensbasis aus Kundenfragen (vom motion sports Team beantwortet & geprüft)\n\nDiese Q&A-Paare stammen aus echten Beratungen und wurden vom Team beantwortet — behandle sie als verlässliche, aktuelle Fakten und nutze sie direkt, wenn sie zur Kundenfrage passen:\n\n${lines.join("\n")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -801,6 +837,7 @@ export function greetingTriggerText(locale, ctx) {
  *   productContext?: { id: string, name: string },
  *   browsingContext?: object,
  *   customerMemory?: object,
+ *   generalQa?: Array<{ question: string, answer: string }>,
  *   locale?: "de" | "en",
  * }} opts
  * @returns {string}
@@ -813,12 +850,14 @@ export function buildSystemPrompt({
   browsingContext,
   customerMemory,
   emailOffer,
+  generalQa,
   locale = "de",
 }) {
   const profileBlock = renderProfileForPrompt(profile, locale);
   const archetypeAddendum = getPersonaAddendum(archetype, locale);
   const archetypeLabel = archetypePromptLabel(archetype, locale);
   const productsBlock = renderRetrievedProducts(retrievedProducts, locale);
+  const generalQaBlock = renderGeneralKnowledgeQa(generalQa, locale);
   const productContextBlock = productContext
     ? `\n\n${renderProductContext(productContext, locale)}`
     : "";
@@ -934,7 +973,7 @@ ${emailOfferSection}
 
 > Background context for research — NOT a card list. Product cards arise solely from your \`show_product\` calls. Recommend deliberately and card exactly what you recommended, instead of working through this list.
 
-${productsBlock}
+${productsBlock}${generalQaBlock}
 
 ## Additional knowledge
 
@@ -1061,7 +1100,7 @@ ${emailOfferSection}
 
 > Hintergrund-Kontext zum Recherchieren — KEINE Karten-Liste. Produktkarten entstehen ausschließlich durch deine \`show_product\`-Aufrufe. Empfiehl gezielt und karte genau das Empfohlene, statt diese Liste durchzukarten.
 
-${productsBlock}
+${productsBlock}${generalQaBlock}
 
 ## Zusatzwissen
 

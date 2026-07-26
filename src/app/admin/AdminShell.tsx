@@ -19,6 +19,7 @@ export type AdminTab =
   | "kpi"
   | "feedback"
   | "gespraeche"
+  | "wissen"
   | "analyse";
 
 const TAB_ORDER: AdminTab[] = [
@@ -28,6 +29,7 @@ const TAB_ORDER: AdminTab[] = [
   "kpi",
   "feedback",
   "gespraeche",
+  "wissen",
   "analyse",
 ];
 
@@ -38,6 +40,7 @@ const TAB_LABEL: Record<AdminTab, string> = {
   kpi: "KPIs",
   feedback: "Feedback",
   gespraeche: "Gespräche",
+  wissen: "Wissen",
   analyse: "Analyse",
 };
 
@@ -51,6 +54,8 @@ const TAB_SUBTITLE: Record<AdminTab, string> = {
   feedback: "Feedback · Kund:innen-Rückmeldungen aus dem Widget — neueste zuerst",
   gespraeche:
     "Gespräche · Alle Beratungen einsehen & auswerten — Transkripte, Signale, KI-Analyse",
+  wissen:
+    "Wissen · Offene Kundenfragen aus Beratungen beantworten & als Q&A veröffentlichen — für Produktseite & Mo",
   analyse:
     "Analyse · Komplettanalysen je Zeitintervall — alle KI-Auswertungen verdichtet, gespeichert & als PDF",
 };
@@ -71,6 +76,7 @@ export function AdminShell({
   kpi,
   feedback,
   gespraeche,
+  wissen,
   analyse,
 }: {
   initialTab: AdminTab;
@@ -82,6 +88,7 @@ export function AdminShell({
   kpi: React.ReactNode;
   feedback: React.ReactNode;
   gespraeche: React.ReactNode;
+  wissen: React.ReactNode;
   analyse: React.ReactNode;
 }) {
   const [tab, setTab] = React.useState<AdminTab>(initialTab);
@@ -145,6 +152,7 @@ export function AdminShell({
     kpi,
     feedback,
     gespraeche,
+    wissen,
     analyse,
   };
 

@@ -45,6 +45,10 @@ export type AiCallSite =
   // "Komplettanalyse": the aggregate customer-knowledge synthesis pass of a full
   // analytics report. Dashboard/admin-side spend (no conversation FK).
   | "analytics_report"
+  // Admin "Wissen" queue: the knowledge-gap Q&A draft pass over an eligible
+  // conversation (docs/QA_KNOWLEDGE.md). Carries its conversation FK so the
+  // usage row cascade-deletes with the conversation, like conversation_analysis.
+  | "qa_draft"
   | "embeddings"
   | "bundle_suggestions"
   // Text-to-speech for voice mode (/api/tts). NB: for this call site the
