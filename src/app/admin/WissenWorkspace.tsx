@@ -11,7 +11,15 @@
 // not-yet-scanned conversations (explicit click — the only token spend here).
 
 import * as React from "react";
-import { Sparkles, Send, Save, Trash2, RefreshCw, Undo2 } from "lucide-react";
+import {
+  Sparkles,
+  Send,
+  Save,
+  Trash2,
+  RefreshCw,
+  Undo2,
+  ArchiveRestore,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -196,7 +204,7 @@ function QaEntryCard({
     Boolean(entry.questionEn || entry.answerEn)
   );
   const [busy, setBusy] = React.useState<
-    null | "save" | "publish" | "dismiss" | "unpublish"
+    null | "save" | "publish" | "dismiss" | "unpublish" | "restore"
   >(null);
 
   // Keep local edits in sync when a reload replaces the entry object.
@@ -285,6 +293,27 @@ function QaEntryCard({
         description: entry.productId
           ? "Aus dem Shopify-Metafeld entfernt und aus Mos Wissen gelöscht. Der Eintrag steht wieder auf „Beantwortet“."
           : "Aus Mos allgemeiner Wissensbasis entfernt. Der Eintrag steht wieder auf „Beantwortet“.",
+      });
+      await onChanged();
+    } catch (e) {
+      fail(e);
+    }
+    setBusy(null);
+  };
+
+  const onRestore = async () => {
+    setBusy("restore");
+    try {
+      const res = (await call("/api/admin/qa/restore", { id: entry.id })) as {
+        entry?: { status?: string };
+      };
+      toast({
+        variant: "success",
+        title: "Wiederhergestellt",
+        description:
+          res.entry?.status === "answered"
+            ? "Der Eintrag ist zurück in der Warteschlange (Beantwortet — Antwort blieb erhalten)."
+            : "Der Eintrag ist zurück in der Offen-Warteschlange.",
       });
       await onChanged();
     } catch (e) {
@@ -431,6 +460,15 @@ function QaEntryCard({
                 Verwerfen
               </Button>
             )}
+          </div>
+        )}
+
+        {entry.status === "dismissed" && (
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={onRestore} disabled={busy !== null} variant="outline">
+              <ArchiveRestore className="mr-1.5 h-4 w-4" />
+              {busy === "restore" ? "Stelle wieder her …" : "Wiederherstellen"}
+            </Button>
           </div>
         )}
       </CardContent>
