@@ -209,6 +209,23 @@ export function mergeQaList(existing, next) {
 }
 
 /**
+ * Remove a question (matched by fingerprint, like mergeQaList's replace) from
+ * a Q&A list — the inverse of a publish. Removing a question that is not in
+ * the list is a no-op, so unpublish stays idempotent.
+ * @param {Array<{ question: string, answer: string }>} existing
+ * @param {string} question
+ * @returns {Array<{ question: string, answer: string }>}
+ */
+export function removeQaFromList(existing, question) {
+  const fp = questionFingerprint(question);
+  const base = Array.isArray(existing) ? existing : [];
+  if (!fp) return base.slice(0, QA_MAX_PER_PRODUCT);
+  return base
+    .filter((e) => e && questionFingerprint(e.question) !== fp)
+    .slice(0, QA_MAX_PER_PRODUCT);
+}
+
+/**
  * Serialize a Q&A list to the metafield's canonical JSON ({q,a} objects).
  * @param {Array<{ question: string, answer: string }>} list
  * @returns {string}

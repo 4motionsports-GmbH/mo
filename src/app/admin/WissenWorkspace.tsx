@@ -11,7 +11,7 @@
 // not-yet-scanned conversations (explicit click — the only token spend here).
 
 import * as React from "react";
-import { Sparkles, Send, Save, Trash2, RefreshCw } from "lucide-react";
+import { Sparkles, Send, Save, Trash2, RefreshCw, Undo2 } from "lucide-react";
 import {
   Badge,
   Button,
@@ -190,7 +190,9 @@ function QaEntryCard({
   const [question, setQuestion] = React.useState(entry.question);
   const [answer, setAnswer] = React.useState(entry.answer ?? "");
   const [productId, setProductId] = React.useState(entry.productId ?? "");
-  const [busy, setBusy] = React.useState<null | "save" | "publish" | "dismiss">(null);
+  const [busy, setBusy] = React.useState<
+    null | "save" | "publish" | "dismiss" | "unpublish"
+  >(null);
 
   // Keep local edits in sync when a reload replaces the entry object.
   React.useEffect(() => {
@@ -246,6 +248,24 @@ function QaEntryCard({
       } catch (e) {
         fail(e);
       }
+    }
+    setBusy(null);
+  };
+
+  const onUnpublish = async () => {
+    setBusy("unpublish");
+    try {
+      await call("/api/admin/qa/unpublish", { id: entry.id });
+      toast({
+        variant: "success",
+        title: "Zurückgezogen",
+        description: entry.productId
+          ? "Aus dem Shopify-Metafeld entfernt und aus Mos Wissen gelöscht. Der Eintrag steht wieder auf „Beantwortet“."
+          : "Aus Mos allgemeiner Wissensbasis entfernt. Der Eintrag steht wieder auf „Beantwortet“.",
+      });
+      await onChanged();
+    } catch (e) {
+      fail(e);
     }
     setBusy(null);
   };
@@ -341,7 +361,12 @@ function QaEntryCard({
                   ? "Änderung erneut veröffentlichen"
                   : "Veröffentlichen"}
             </Button>
-            {entry.status !== "published" && (
+            {entry.status === "published" ? (
+              <Button onClick={onUnpublish} disabled={busy !== null} variant="ghost">
+                <Undo2 className="mr-1.5 h-4 w-4" />
+                {busy === "unpublish" ? "Ziehe zurück …" : "Zurückziehen"}
+              </Button>
+            ) : (
               <Button onClick={onDismiss} disabled={busy !== null} variant="ghost">
                 <Trash2 className="mr-1.5 h-4 w-4" />
                 Verwerfen

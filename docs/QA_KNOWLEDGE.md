@@ -78,6 +78,23 @@ analysis).
   definition makes values visible in the Shopify admin product page and
   readable from Liquid.
 
+## Reversibility ("Zurückziehen")
+
+Every publish is one-click reversible from the Wissen tab: a published entry
+shows **Zurückziehen** instead of Verwerfen. It
+
+- product-linked → removes the pair from the product's `custom.qa` metafield
+  (fingerprint match, idempotent; an empty list is written as `[]`, the theme
+  hides the tab) and runs the same targeted catalog refresh as publish, so Mo
+  forgets it immediately;
+- general → drops it from Mo's prompt knowledge base (cache invalidated;
+  other warm instances follow within the 5-minute TTL);
+- returns the entry to **answered**, so it can be edited, re-published or
+  dismissed.
+
+Route: `POST /api/admin/qa/unpublish { id }` (access-logged as
+`qa.unpublish`).
+
 ## Cost & safety
 
 - Only the explicit "Gespräche scannen" / "Entwurf" clicks spend tokens

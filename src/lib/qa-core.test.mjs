@@ -7,6 +7,7 @@ import {
   questionFingerprint,
   parseQaMetafield,
   mergeQaList,
+  removeQaFromList,
   serializeQaMetafield,
   QA_MAX_PER_PRODUCT,
 } from "./qa-core.mjs";
@@ -122,6 +123,21 @@ test("mergeQaList caps at QA_MAX_PER_PRODUCT by dropping the oldest", () => {
   assert.equal(merged.length, QA_MAX_PER_PRODUCT);
   assert.equal(merged.at(-1).question, "Neue Frage?");
   assert.equal(merged[0].question, "Frage 1?"); // Frage 0 dropped
+});
+
+test("removeQaFromList removes by fingerprint and is idempotent (unpublish)", () => {
+  const list = [
+    { question: "Wie schwer ist die MPX-780?", answer: "176 kg" },
+    { question: "Welche Deckenhöhe brauche ich?", answer: "2,30 m" },
+  ];
+  // Punctuation/case variants of the same question match (same rule as merge).
+  const removed = removeQaFromList(list, "wie schwer ist die MPX 780???");
+  assert.deepEqual(removed, [
+    { question: "Welche Deckenhöhe brauche ich?", answer: "2,30 m" },
+  ]);
+  // Removing an absent question is a no-op — unpublish stays idempotent.
+  assert.deepEqual(removeQaFromList(removed, "Gibt es Ratenzahlung?"), removed);
+  assert.deepEqual(removeQaFromList([], "x"), []);
 });
 
 test("serializeQaMetafield emits the terse {q,a} shape", () => {
