@@ -373,14 +373,17 @@ function renderRetrievedProducts(products, locale) {
         );
       }
       // Published, team-verified customer Q&A for this product — trustworthy
-      // answers Mo may use verbatim.
+      // answers Mo may use verbatim. In the English prompt, prefer the
+      // publish-time English pair; fall back to German (Mo translates).
       if (p.qa?.length) {
         lines.push(en ? `- Verified customer Q&A:` : `- Geprüfte Kunden-Q&A:`);
         for (const e of p.qa.slice(0, 5)) {
+          const q = en && e.questionEn ? e.questionEn : e.question;
+          const a = en && e.answerEn ? e.answerEn : e.answer;
           lines.push(
             en
-              ? `  - Q: ${clipText(e.question, 200)} → A: ${clipText(e.answer, 350)}`
-              : `  - Frage: ${clipText(e.question, 200)} → Antwort: ${clipText(e.answer, 350)}`
+              ? `  - Q: ${clipText(q, 200)} → A: ${clipText(a, 350)}`
+              : `  - Frage: ${clipText(q, 200)} → Antwort: ${clipText(a, 350)}`
           );
         }
       }
@@ -445,10 +448,13 @@ function renderGeneralKnowledgeQa(generalQa, locale) {
     .slice(0, 30);
   if (entries.length === 0) return "";
   const en = locale === "en";
-  const lines = entries.map(
-    (e) =>
-      `- ${en ? "Q" : "Frage"}: ${clipText(e.question, 200)}\n  ${en ? "A" : "Antwort"}: ${clipText(e.answer, 500)}`
-  );
+  // English prompt prefers the publish-time English pair (falls back to
+  // German — Mo translates on the fly when needed).
+  const lines = entries.map((e) => {
+    const q = en && e.questionEn ? e.questionEn : e.question;
+    const a = en && e.answerEn ? e.answerEn : e.answer;
+    return `- ${en ? "Q" : "Frage"}: ${clipText(q, 200)}\n  ${en ? "A" : "Antwort"}: ${clipText(a, 500)}`;
+  });
   return en
     ? `\n\n## Knowledge base from customer questions (answered & verified by the motion sports team)\n\nThese Q&A pairs come from real consultations and were answered by the team — treat them as reliable, current facts and use them directly when they match the customer's question:\n\n${lines.join("\n")}`
     : `\n\n## Wissensbasis aus Kundenfragen (vom motion sports Team beantwortet & geprüft)\n\nDiese Q&A-Paare stammen aus echten Beratungen und wurden vom Team beantwortet — behandle sie als verlässliche, aktuelle Fakten und nutze sie direkt, wenn sie zur Kundenfrage passen:\n\n${lines.join("\n")}`;

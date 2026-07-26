@@ -67,8 +67,15 @@ export interface Product {
   hideFromSearch?: boolean;
   // Published customer Q&A pairs from the `custom.qa` metafield (the "Wissen"
   // feature, docs/QA_KNOWLEDGE.md) — shown in the PDP Q&A tab and given to Mo
-  // so an already-answered question never stumps him again.
-  qa?: Array<{ question: string; answer: string }>;
+  // so an already-answered question never stumps him again. German (question/
+  // answer) is the source of truth; the English pair is present when the
+  // publish-time auto-translation ran (consumers fall back to German).
+  qa?: Array<{
+    question: string;
+    answer: string;
+    questionEn?: string;
+    answerEn?: string;
+  }>;
   // Persona-relevant fields (added for persona-aware recommendations)
   medicalCertification?: MedicalCertification;
   noiseLevelDb?: number | "unknown";

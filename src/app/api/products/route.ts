@@ -59,7 +59,14 @@ export interface PublicProduct {
   ratingCount?: number;
   // Published customer Q&A pairs (the PDP Q&A tab shows the same list from
   // the product's custom.qa metafield — this mirror lets the widget reuse it).
-  qa?: Array<{ question: string; answer: string }>;
+  // question/answer are German (source of truth); the En pair is present when
+  // the publish-time auto-translation ran — fall back to German if absent.
+  qa?: Array<{
+    question: string;
+    answer: string;
+    questionEn?: string;
+    answerEn?: string;
+  }>;
 }
 
 function toPublic(p: Product): PublicProduct {

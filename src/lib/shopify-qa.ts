@@ -74,6 +74,10 @@ export async function publishQaToProduct(input: {
   handle: string;
   question: string;
   answer: string;
+  // Optional English pair (auto-translated or operator-provided) — stored as
+  // q_en/a_en in the metafield; absent → the storefront falls back to German.
+  questionEn?: string | null;
+  answerEn?: string | null;
 }): Promise<PublishQaResult> {
   let product: ProductForQa["productByIdentifier"];
   try {
@@ -99,6 +103,9 @@ export async function publishQaToProduct(input: {
   const merged = mergeQaList(parseQaMetafield(product.metafield?.value), {
     question: input.question,
     answer: input.answer,
+    ...(input.questionEn && input.answerEn
+      ? { questionEn: input.questionEn, answerEn: input.answerEn }
+      : {}),
   });
 
   try {

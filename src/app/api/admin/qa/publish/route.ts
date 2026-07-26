@@ -16,9 +16,12 @@ import { recordAdminAccess } from "@/lib/admin-access-log";
 import {
   getQaEntry,
   markQaPublished,
+  saveQaTranslation,
   invalidateGeneralQaCache,
 } from "@/lib/qa-store";
+import { generateQaTranslation } from "@/lib/qa-translate";
 import { publishQaToProduct } from "@/lib/shopify-qa";
+import { reportError } from "@/lib/observability";
 import { isShopifyConfigured } from "@/lib/shopify";
 import { isDbConfigured } from "@/lib/db";
 
@@ -57,6 +60,32 @@ export async function POST(req: Request) {
     req
   );
 
+  // i18n: the team writes German only — fill the English pair automatically
+  // (one cheap Haiku pass) unless the operator already provided/edited it.
+  // A failed translation NEVER blocks the publish: the pair goes out
+  // German-only and the storefront/prompt fall back to German; re-publishing
+  // retries the translation.
+  let questionEn = entry.questionEn;
+  let answerEn = entry.answerEn;
+  let translated = false;
+  if (!questionEn || !answerEn) {
+    const t = await generateQaTranslation({
+      question: entry.question,
+      answer: entry.answer,
+    });
+    if (t.ok) {
+      questionEn = t.questionEn;
+      answerEn = t.answerEn;
+      translated = true;
+      await saveQaTranslation({ id, questionEn, answerEn });
+    } else {
+      reportError(new Error(t.message), {
+        route: "api/admin/qa/publish",
+        phase: "translate",
+      });
+    }
+  }
+
   let catalogRefreshed = false;
   if (entry.productId) {
     if (!isShopifyConfigured()) {
@@ -70,6 +99,8 @@ export async function POST(req: Request) {
       handle: entry.productId,
       question: entry.question,
       answer: entry.answer,
+      questionEn,
+      answerEn,
     });
     if (!res.ok) {
       const status = res.reason === "product_not_found" ? 404 : 502;
@@ -80,5 +111,10 @@ export async function POST(req: Request) {
 
   const updated = await markQaPublished(id);
   invalidateGeneralQaCache();
-  return adminJson({ entry: updated ?? entry, catalogRefreshed });
+  return adminJson({
+    entry: updated ?? entry,
+    catalogRefreshed,
+    translated,
+    hasEnglish: Boolean(questionEn && answerEn),
+  });
 }

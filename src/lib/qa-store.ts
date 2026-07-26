@@ -17,6 +17,10 @@ export interface QaEntry {
   gapSummary: string;
   question: string;
   answer: string | null;
+  // Optional English pair for the bilingual metafield / EN prompt — auto-
+  // translated at publish time, operator-overridable. null = not translated.
+  questionEn: string | null;
+  answerEn: string | null;
   status: QaStatus;
   model: string | null;
   inputTokens: number | null;
@@ -42,6 +46,8 @@ interface QaRow {
   gap_summary: string;
   question: string;
   answer: string | null;
+  question_en: string | null;
+  answer_en: string | null;
   status: string;
   model: string | null;
   input_tokens: number | null;
@@ -70,6 +76,8 @@ function rowToEntry(r: QaRow): QaEntry {
     gapSummary: r.gap_summary,
     question: r.question,
     answer: r.answer,
+    questionEn: r.question_en,
+    answerEn: r.answer_en,
     status: (r.status as QaStatus) ?? "open",
     model: r.model,
     inputTokens: r.input_tokens == null ? null : Number(r.input_tokens),
@@ -92,7 +100,8 @@ export async function listQaEntries(
   try {
     const rows = (await sql`
       SELECT id, conversation_id, product_id, product_title, gap_summary,
-             question, answer, status, model, input_tokens, output_tokens,
+             question, answer, question_en, answer_en, status, model,
+             input_tokens, output_tokens,
              created_at, updated_at, answered_at, published_at
         FROM qa_entries
        WHERE (${status}::text IS NULL OR status = ${status})
@@ -114,7 +123,8 @@ export async function getQaEntry(
   try {
     const rows = (await sql`
       SELECT id, conversation_id, product_id, product_title, gap_summary,
-             question, answer, status, model, input_tokens, output_tokens,
+             question, answer, question_en, answer_en, status, model,
+             input_tokens, output_tokens,
              created_at, updated_at, answered_at, published_at
         FROM qa_entries WHERE id = ${id}
     `) as QaRow[];
@@ -176,7 +186,8 @@ export async function createQaEntry(
       ON CONFLICT (question_fingerprint) WHERE status <> 'dismissed'
       DO NOTHING
       RETURNING id, conversation_id, product_id, product_title, gap_summary,
-                question, answer, status, model, input_tokens, output_tokens,
+                question, answer, question_en, answer_en, status, model,
+                input_tokens, output_tokens,
                 created_at, updated_at, answered_at, published_at
     `) as QaRow[];
     return rows[0] ? rowToEntry(rows[0]) : null;
@@ -198,6 +209,11 @@ export async function saveQaAnswer(
     answer: string;
     productId?: string | null;
     productTitle?: string | null;
+    // Operator override for the English pair. Empty strings CLEAR the cached
+    // translation (forcing a fresh auto-translation on the next publish);
+    // undefined leaves it untouched.
+    questionEn?: string;
+    answerEn?: string;
   },
   sql: Sql | null = getSql()
 ): Promise<QaEntry | null> {
@@ -205,12 +221,18 @@ export async function saveQaAnswer(
   const answer = input.answer.trim();
   const question = input.question?.trim();
   const fp = question ? questionFingerprint(question) : null;
+  const questionEn =
+    input.questionEn === undefined ? undefined : input.questionEn.trim() || null;
+  const answerEn =
+    input.answerEn === undefined ? undefined : input.answerEn.trim() || null;
   try {
     const rows = (await sql`
       UPDATE qa_entries
          SET answer = ${answer || null},
              question = COALESCE(${question ?? null}, question),
              question_fingerprint = COALESCE(${fp}, question_fingerprint),
+             question_en = CASE WHEN ${questionEn !== undefined} THEN ${questionEn ?? null} ELSE question_en END,
+             answer_en = CASE WHEN ${answerEn !== undefined} THEN ${answerEn ?? null} ELSE answer_en END,
              product_id = ${input.productId === undefined ? null : input.productId},
              product_title = ${input.productTitle === undefined ? null : input.productTitle},
              status = CASE
@@ -222,7 +244,8 @@ export async function saveQaAnswer(
              updated_at = now()
        WHERE id = ${input.id} AND status <> 'dismissed'
       RETURNING id, conversation_id, product_id, product_title, gap_summary,
-                question, answer, status, model, input_tokens, output_tokens,
+                question, answer, question_en, answer_en, status, model,
+                input_tokens, output_tokens,
                 created_at, updated_at, answered_at, published_at
     `) as QaRow[];
     return rows[0] ? rowToEntry(rows[0]) : null;
@@ -243,13 +266,37 @@ export async function markQaPublished(
          SET status = 'published', published_at = now(), updated_at = now()
        WHERE id = ${id} AND status IN ('answered', 'published')
       RETURNING id, conversation_id, product_id, product_title, gap_summary,
-                question, answer, status, model, input_tokens, output_tokens,
+                question, answer, question_en, answer_en, status, model,
+                input_tokens, output_tokens,
                 created_at, updated_at, answered_at, published_at
     `) as QaRow[];
     return rows[0] ? rowToEntry(rows[0]) : null;
   } catch (err) {
     reportError(err, { route: "lib/qa-store", phase: "publish" });
     return null;
+  }
+}
+
+/**
+ * Cache an auto-generated English translation on the entry (publish-time
+ * fill; never overwrites an operator-provided value — the publish route only
+ * calls this when both EN fields were empty).
+ */
+export async function saveQaTranslation(
+  input: { id: number; questionEn: string; answerEn: string },
+  sql: Sql | null = getSql()
+): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`
+      UPDATE qa_entries
+         SET question_en = ${input.questionEn},
+             answer_en = ${input.answerEn},
+             updated_at = now()
+       WHERE id = ${input.id}
+    `;
+  } catch (err) {
+    reportError(err, { route: "lib/qa-store", phase: "save-translation" });
   }
 }
 
@@ -269,7 +316,8 @@ export async function markQaUnpublished(
          SET status = 'answered', published_at = NULL, updated_at = now()
        WHERE id = ${id} AND status = 'published'
       RETURNING id, conversation_id, product_id, product_title, gap_summary,
-                question, answer, status, model, input_tokens, output_tokens,
+                question, answer, question_en, answer_en, status, model,
+                input_tokens, output_tokens,
                 created_at, updated_at, answered_at, published_at
     `) as QaRow[];
     return rows[0] ? rowToEntry(rows[0]) : null;
@@ -451,11 +499,11 @@ export async function getConversationProductHandles(
 // read on EVERY chat turn, but changes only when an operator publishes — a
 // 5-minute staleness is invisible, a per-turn query is not free. Never throws;
 // on any failure the chat simply gets the last known (or empty) list.
-let generalQaCache: { at: number; entries: Array<{ question: string; answer: string }> } | null =
+let generalQaCache: { at: number; entries: GeneralQaEntry[] } | null =
   null;
 const GENERAL_QA_TTL_MS = 5 * 60 * 1000;
 
-export async function getCachedGeneralQa(): Promise<Array<{ question: string; answer: string }>> {
+export async function getCachedGeneralQa(): Promise<GeneralQaEntry[]> {
   if (generalQaCache && Date.now() - generalQaCache.at < GENERAL_QA_TTL_MS) {
     return generalQaCache.entries;
   }
@@ -469,23 +517,41 @@ export function invalidateGeneralQaCache(): void {
   generalQaCache = null;
 }
 
+export interface GeneralQaEntry {
+  question: string;
+  answer: string;
+  questionEn?: string;
+  answerEn?: string;
+}
+
 export async function listPublishedGeneralQa(
   limit = 30,
   sql: Sql | null = getSql()
-): Promise<Array<{ question: string; answer: string }>> {
+): Promise<GeneralQaEntry[]> {
   if (!sql) return [];
   const n = Math.max(1, Math.min(100, Math.floor(limit)));
   try {
     const rows = (await sql`
-      SELECT question, answer
+      SELECT question, answer, question_en, answer_en
         FROM qa_entries
        WHERE status = 'published' AND product_id IS NULL AND answer IS NOT NULL
        ORDER BY published_at ASC
        LIMIT ${n}
-    `) as Array<{ question: string; answer: string }>;
+    `) as Array<{
+      question: string;
+      answer: string;
+      question_en: string | null;
+      answer_en: string | null;
+    }>;
     return rows
       .filter((r) => r.question && r.answer)
-      .map((r) => ({ question: r.question, answer: r.answer }));
+      .map((r) => ({
+        question: r.question,
+        answer: r.answer,
+        ...(r.question_en && r.answer_en
+          ? { questionEn: r.question_en, answerEn: r.answer_en }
+          : {}),
+      }));
   } catch (err) {
     reportError(err, { route: "lib/qa-store", phase: "general-qa" });
     return [];

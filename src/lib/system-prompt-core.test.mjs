@@ -132,6 +132,39 @@ test("Q&A knowledge reaches the prompt (product-level + general block)", () => {
   assert.match(de, /## Wissensbasis aus Kundenfragen \(vom motion sports Team beantwortet & geprüft\)/);
   assert.match(de, /- Frage: Bietet motion sports Ratenzahlung an\?\n {2}Antwort: Ja, über Klarna in 3 Raten\./);
 
+  // English prompt prefers the publish-time English pair (i18n) and falls
+  // back to German when a pair has none.
+  const en = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [
+      {
+        ...withQa,
+        qa: [
+          {
+            question: "Welche Deckenhöhe brauche ich?",
+            answer: "Mindestens 2,30 m.",
+            questionEn: "What ceiling height do I need?",
+            answerEn: "At least 2.30 m.",
+          },
+          { question: "Nur-Deutsch-Frage?", answer: "Nur-Deutsch-Antwort." },
+        ],
+      },
+    ],
+    generalQa: [
+      {
+        question: "Bietet motion sports Ratenzahlung an?",
+        answer: "Ja, über Klarna.",
+        questionEn: "Does motion sports offer installments?",
+        answerEn: "Yes, via Klarna.",
+      },
+    ],
+    locale: "en",
+  });
+  assert.match(en, /- Q: What ceiling height do I need\? → A: At least 2\.30 m\./);
+  assert.match(en, /- Q: Nur-Deutsch-Frage\? → A: Nur-Deutsch-Antwort\./);
+  assert.match(en, /- Q: Does motion sports offer installments\?\n {2}A: Yes, via Klarna\./);
+
   // Empty generalQa → no knowledge-base section at all.
   const bare = buildSystemPrompt({
     profile: emptyProfile(),

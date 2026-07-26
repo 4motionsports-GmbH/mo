@@ -56,8 +56,14 @@ interface BuildPromptOpts {
   // Published, team-answered GENERAL Q&A pairs (the "Wissen" feature,
   // docs/QA_KNOWLEDGE.md) — injected as a knowledge-base section. Product-
   // linked Q&A rides on the products themselves (Product.qa). Empty/absent →
-  // the prompt is byte-identical to before the feature existed.
-  generalQa?: Array<{ question: string; answer: string }>;
+  // the prompt is byte-identical to before the feature existed. The optional
+  // English pair is preferred in the English prompt.
+  generalQa?: Array<{
+    question: string;
+    answer: string;
+    questionEn?: string;
+    answerEn?: string;
+  }>;
   // Storefront-selected language. Default German — every legacy caller and the
   // German output stay byte-identical; "en" switches Mo to English.
   locale?: Locale;

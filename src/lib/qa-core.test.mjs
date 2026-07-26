@@ -144,3 +144,58 @@ test("serializeQaMetafield emits the terse {q,a} shape", () => {
   const s = serializeQaMetafield([{ question: " F? ", answer: " A. " }]);
   assert.deepEqual(JSON.parse(s), [{ q: "F?", a: "A." }]);
 });
+
+// ── i18n: the English pair rides along, complete-or-not-at-all ───────────────
+
+test("English pair round-trips through serialize/parse; incomplete pairs are dropped", () => {
+  const s = serializeQaMetafield([
+    {
+      question: "Wie hoch ist die MPX-780?",
+      answer: "2.195 mm.",
+      questionEn: "How tall is the MPX-780?",
+      answerEn: "2,195 mm.",
+    },
+    { question: "Nur Deutsch?", answer: "Ja.", questionEn: "orphan without answerEn" },
+  ]);
+  assert.deepEqual(JSON.parse(s), [
+    {
+      q: "Wie hoch ist die MPX-780?",
+      a: "2.195 mm.",
+      q_en: "How tall is the MPX-780?",
+      a_en: "2,195 mm.",
+    },
+    { q: "Nur Deutsch?", a: "Ja." },
+  ]);
+  const parsed = parseQaMetafield(s);
+  assert.deepEqual(parsed[0], {
+    question: "Wie hoch ist die MPX-780?",
+    answer: "2.195 mm.",
+    questionEn: "How tall is the MPX-780?",
+    answerEn: "2,195 mm.",
+  });
+  assert.deepEqual(parsed[1], { question: "Nur Deutsch?", answer: "Ja." });
+});
+
+test("mergeQaList carries the English pair and replacement updates it", () => {
+  const merged = mergeQaList(
+    [
+      {
+        question: "Wie schwer?",
+        answer: "Alt",
+        questionEn: "How heavy?",
+        answerEn: "Old",
+      },
+    ],
+    { question: "Wie schwer???", answer: "Neu", questionEn: "How heavy?", answerEn: "New" }
+  );
+  assert.equal(merged.length, 1);
+  assert.deepEqual(merged[0], {
+    question: "Wie schwer???",
+    answer: "Neu",
+    questionEn: "How heavy?",
+    answerEn: "New",
+  });
+  // German-only replacement drops the stale English pair (no half-updated i18n).
+  const deOnly = mergeQaList(merged, { question: "Wie schwer?", answer: "Neuer" });
+  assert.deepEqual(deOnly, [{ question: "Wie schwer?", answer: "Neuer" }]);
+});

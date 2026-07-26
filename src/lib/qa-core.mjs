@@ -151,9 +151,12 @@ export function questionFingerprint(q) {
 // ── custom.qa metafield format ───────────────────────────────────────────────
 // ONE canonical shape, shared by the publisher (shopify-qa.ts), the catalog
 // mapper (catalog-mapping.ts) and the storefront theme: a JSON array of
-//   { "q": "<Frage>", "a": "<Antwort>" }
-// objects, oldest first. Kept deliberately terse ("q"/"a") — it lives in a
-// Shopify metafield and is parsed by Liquid/JS in the theme.
+//   { "q": "<Frage>", "a": "<Antwort>", "q_en": "<Question>", "a_en": "<Answer>" }
+// objects, oldest first. Kept deliberately terse — it lives in a Shopify
+// metafield and is parsed by Liquid/JS in the theme. German (q/a) is the
+// REQUIRED source of truth (the team writes German only); q_en/a_en are the
+// OPTIONAL English pair, auto-translated at publish time — consumers fall
+// back to German when they are absent, so pre-i18n values keep working.
 
 export const QA_METAFIELD_NAMESPACE = "custom";
 export const QA_METAFIELD_KEY = "qa";
@@ -181,7 +184,15 @@ export function parseQaMetafield(value) {
     const q = typeof item.q === "string" ? item.q.trim() : "";
     const a = typeof item.a === "string" ? item.a.trim() : "";
     if (!q || !a) continue;
-    out.push({ question: q, answer: a });
+    const qEn = typeof item.q_en === "string" ? item.q_en.trim() : "";
+    const aEn = typeof item.a_en === "string" ? item.a_en.trim() : "";
+    out.push({
+      question: q,
+      answer: a,
+      // The English pair only travels complete — a lone question or answer
+      // would render half-translated on the storefront.
+      ...(qEn && aEn ? { questionEn: qEn, answerEn: aEn } : {}),
+    });
     if (out.length >= QA_MAX_PER_PRODUCT) break;
   }
   return out;
@@ -190,21 +201,28 @@ export function parseQaMetafield(value) {
 /**
  * Merge a new Q&A pair into an existing list (as parsed by parseQaMetafield).
  * Same-fingerprint questions are REPLACED (answer updates win); the list is
- * capped at QA_MAX_PER_PRODUCT by dropping the OLDEST entries.
- * @param {Array<{ question: string, answer: string }>} existing
- * @param {{ question: string, answer: string }} next
- * @returns {Array<{ question: string, answer: string }>}
+ * capped at QA_MAX_PER_PRODUCT by dropping the OLDEST entries. The optional
+ * English pair (questionEn/answerEn) rides along only when complete.
+ * @param {Array<{ question: string, answer: string, questionEn?: string, answerEn?: string }>} existing
+ * @param {{ question: string, answer: string, questionEn?: string, answerEn?: string }} next
+ * @returns {Array<{ question: string, answer: string, questionEn?: string, answerEn?: string }>}
  */
 export function mergeQaList(existing, next) {
   const q = String(next?.question ?? "").trim();
   const a = String(next?.answer ?? "").trim();
   const base = Array.isArray(existing) ? existing : [];
   if (!q || !a) return base.slice(0, QA_MAX_PER_PRODUCT);
+  const qEn = String(next?.questionEn ?? "").trim();
+  const aEn = String(next?.answerEn ?? "").trim();
   const fp = questionFingerprint(q);
   const kept = base.filter(
     (e) => e && questionFingerprint(e.question) !== fp
   );
-  kept.push({ question: q, answer: a });
+  kept.push({
+    question: q,
+    answer: a,
+    ...(qEn && aEn ? { questionEn: qEn, answerEn: aEn } : {}),
+  });
   return kept.slice(-QA_MAX_PER_PRODUCT);
 }
 
@@ -226,14 +244,23 @@ export function removeQaFromList(existing, question) {
 }
 
 /**
- * Serialize a Q&A list to the metafield's canonical JSON ({q,a} objects).
- * @param {Array<{ question: string, answer: string }>} list
+ * Serialize a Q&A list to the metafield's canonical JSON ({q,a[,q_en,a_en]}
+ * objects).
+ * @param {Array<{ question: string, answer: string, questionEn?: string, answerEn?: string }>} list
  * @returns {string}
  */
 export function serializeQaMetafield(list) {
   const arr = (Array.isArray(list) ? list : [])
     .filter((e) => e && e.question && e.answer)
     .slice(-QA_MAX_PER_PRODUCT)
-    .map((e) => ({ q: String(e.question).trim(), a: String(e.answer).trim() }));
+    .map((e) => {
+      const qEn = String(e.questionEn ?? "").trim();
+      const aEn = String(e.answerEn ?? "").trim();
+      return {
+        q: String(e.question).trim(),
+        a: String(e.answer).trim(),
+        ...(qEn && aEn ? { q_en: qEn, a_en: aEn } : {}),
+      };
+    });
   return JSON.stringify(arr);
 }
