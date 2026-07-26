@@ -24,12 +24,16 @@ export async function POST(req: Request) {
   let answer: string;
   let question: string | undefined;
   let productId: string | null;
+  let questionEn: string | undefined;
+  let answerEn: string | undefined;
   try {
     const body = (await req.json()) as {
       id?: unknown;
       answer?: unknown;
       question?: unknown;
       productId?: unknown;
+      questionEn?: unknown;
+      answerEn?: unknown;
     };
     id = Number(body.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -44,6 +48,12 @@ export async function POST(req: Request) {
       typeof body.productId === "string" && body.productId.trim()
         ? body.productId.trim()
         : null;
+    // English override (i18n): a string always applies — "" clears the cached
+    // translation (→ fresh auto-translation on next publish); absent = keep.
+    questionEn =
+      typeof body.questionEn === "string" ? body.questionEn.trim().slice(0, 500) : undefined;
+    answerEn =
+      typeof body.answerEn === "string" ? body.answerEn.trim().slice(0, 4000) : undefined;
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
@@ -66,7 +76,15 @@ export async function POST(req: Request) {
 
   await recordAdminAccess({ action: "qa.answer", detail: { id } }, req);
 
-  const entry = await saveQaAnswer({ id, answer, question, productId, productTitle });
+  const entry = await saveQaAnswer({
+    id,
+    answer,
+    question,
+    productId,
+    productTitle,
+    questionEn,
+    answerEn,
+  });
   if (!entry) return adminJsonError("not_found", "Eintrag nicht gefunden.", 404);
   return adminJson({ entry });
 }

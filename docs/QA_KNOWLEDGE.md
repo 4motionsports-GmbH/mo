@@ -78,6 +78,25 @@ analysis).
   definition makes values visible in the Shopify admin product page and
   readable from Liquid.
 
+## i18n (German + English) — the team writes German ONLY
+
+The storefront runs German and English, but nobody maintains two answers:
+
+- The operator writes the German pair. At **publish time** the backend runs
+  ONE cheap Haiku translation pass (call site `qa_translate`) — unless the
+  entry already carries an English pair (cached from an earlier publish, or
+  operator-provided in the Wissen tab's optional "Englische Version" fields).
+- The metafield stores both: `[{ "q", "a", "q_en", "a_en" }]`. The theme picks
+  the storefront language and falls back to German when `q_en`/`a_en` are
+  absent; pre-i18n values (plain `{q,a}`) keep working everywhere.
+- Mo's context is locale-aware: the English prompt (product Q&A lines + the
+  general knowledge block) prefers the English pair and falls back to German
+  (Mo translates on the fly).
+- A failed translation NEVER blocks a publish — the pair goes out German-only
+  and re-publishing retries. Clearing the English override fields forces a
+  fresh auto-translation on the next publish (e.g. after editing the German).
+- Columns: `qa_entries.question_en` / `answer_en` (migration 0037).
+
 ## Reversibility ("Zurückziehen")
 
 Every publish is one-click reversible from the Wissen tab: a published entry

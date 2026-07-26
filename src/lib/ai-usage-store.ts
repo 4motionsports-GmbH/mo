@@ -49,6 +49,10 @@ export type AiCallSite =
   // conversation (docs/QA_KNOWLEDGE.md). Carries its conversation FK so the
   // usage row cascade-deletes with the conversation, like conversation_analysis.
   | "qa_draft"
+  // Admin "Wissen" queue: the publish-time German→English translation of a
+  // Q&A pair (docs/QA_KNOWLEDGE.md, i18n). Dashboard/admin-side spend, no
+  // conversation FK — the pair may outlive its source conversation.
+  | "qa_translate"
   | "embeddings"
   | "bundle_suggestions"
   // Text-to-speech for voice mode (/api/tts). NB: for this call site the

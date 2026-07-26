@@ -190,6 +190,11 @@ function QaEntryCard({
   const [question, setQuestion] = React.useState(entry.question);
   const [answer, setAnswer] = React.useState(entry.answer ?? "");
   const [productId, setProductId] = React.useState(entry.productId ?? "");
+  const [questionEn, setQuestionEn] = React.useState(entry.questionEn ?? "");
+  const [answerEn, setAnswerEn] = React.useState(entry.answerEn ?? "");
+  const [showEnglish, setShowEnglish] = React.useState(
+    Boolean(entry.questionEn || entry.answerEn)
+  );
   const [busy, setBusy] = React.useState<
     null | "save" | "publish" | "dismiss" | "unpublish"
   >(null);
@@ -199,7 +204,18 @@ function QaEntryCard({
     setQuestion(entry.question);
     setAnswer(entry.answer ?? "");
     setProductId(entry.productId ?? "");
-  }, [entry.id, entry.question, entry.answer, entry.productId, entry.updatedAt]);
+    setQuestionEn(entry.questionEn ?? "");
+    setAnswerEn(entry.answerEn ?? "");
+    setShowEnglish(Boolean(entry.questionEn || entry.answerEn));
+  }, [
+    entry.id,
+    entry.question,
+    entry.answer,
+    entry.productId,
+    entry.questionEn,
+    entry.answerEn,
+    entry.updatedAt,
+  ]);
 
   const save = async (): Promise<boolean> => {
     try {
@@ -208,6 +224,8 @@ function QaEntryCard({
         question,
         answer,
         productId: productId.trim() || null,
+        questionEn,
+        answerEn,
       });
       return true;
     } catch (e) {
@@ -236,13 +254,18 @@ function QaEntryCard({
       try {
         const res = (await call("/api/admin/qa/publish", { id: entry.id })) as {
           catalogRefreshed?: boolean;
+          hasEnglish?: boolean;
         };
+        const enNote = res.hasEnglish
+          ? " Englische Version inklusive."
+          : " ⚠️ Ohne englische Übersetzung (Fallback: Deutsch) — erneut veröffentlichen versucht es nochmal.";
         toast({
           variant: "success",
           title: "Veröffentlicht",
-          description: entry.productId
-            ? `In Shopify (custom.qa) gespeichert${res.catalogRefreshed ? " und Mos Katalog sofort aktualisiert" : " — Mos Katalog folgt mit dem nächsten Sync"}.`
-            : "In Mos allgemeine Wissensbasis übernommen.",
+          description:
+            (entry.productId
+              ? `In Shopify (custom.qa) gespeichert${res.catalogRefreshed ? " und Mos Katalog sofort aktualisiert" : " — Mos Katalog folgt mit dem nächsten Sync"}.`
+              : "In Mos allgemeine Wissensbasis übernommen.") + enNote,
         });
         await onChanged();
       } catch (e) {
@@ -346,6 +369,42 @@ function QaEntryCard({
             disabled={entry.status === "dismissed"}
           />
         </div>
+
+        {/* i18n: English is auto-translated at publish time — these fields are
+            an OPTIONAL override. Clearing both forces a fresh auto-translation
+            on the next publish. */}
+        {entry.status !== "dismissed" && (
+          <div className="grid gap-2">
+            {showEnglish ? (
+              <>
+                <label className="text-xs font-medium text-muted-foreground">
+                  Englische Version (optional — leer lassen für automatische
+                  Übersetzung beim Veröffentlichen)
+                </label>
+                <Input
+                  value={questionEn}
+                  onChange={(e) => setQuestionEn(e.target.value)}
+                  placeholder="Question (English) — auto-translated if empty"
+                />
+                <Textarea
+                  value={answerEn}
+                  onChange={(e) => setAnswerEn(e.target.value)}
+                  rows={3}
+                  placeholder="Answer (English) — auto-translated if empty"
+                />
+              </>
+            ) : (
+              <button
+                type="button"
+                className="w-fit text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                onClick={() => setShowEnglish(true)}
+              >
+                Englische Version anzeigen/anpassen (wird sonst beim
+                Veröffentlichen automatisch übersetzt)
+              </button>
+            )}
+          </div>
+        )}
 
         {entry.status !== "dismissed" && (
           <div className="flex flex-wrap gap-2">
