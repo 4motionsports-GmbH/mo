@@ -327,6 +327,59 @@ export async function markQaUnpublished(
   }
 }
 
+export type RestoreQaResult =
+  | { status: "restored"; entry: QaEntry }
+  | { status: "duplicate" } // an active entry with the same question exists
+  | { status: "not_found" };
+
+/**
+ * Bring a dismissed entry back into the queue ("Wiederherstellen"): with an
+ * answer it returns as 'answered', otherwise as 'open'. Guarded against the
+ * fingerprint de-dup rule: if the same question was re-drafted (or manually
+ * re-created) while this one was dismissed, restoring would create two active
+ * copies — that case reports 'duplicate' instead.
+ */
+export async function restoreQaEntry(
+  id: number,
+  sql: Sql | null = getSql()
+): Promise<RestoreQaResult> {
+  if (!sql) return { status: "not_found" };
+  try {
+    // Duplicate probe FIRST (the partial unique index on question_fingerprint
+    // covers non-dismissed rows — an UPDATE into a collision would throw).
+    const dup = (await sql`
+      SELECT EXISTS (
+        SELECT 1 FROM qa_entries other
+         WHERE other.question_fingerprint =
+               (SELECT question_fingerprint FROM qa_entries WHERE id = ${id})
+           AND other.id <> ${id}
+           AND other.status <> 'dismissed'
+      ) AS dup
+    `) as Array<{ dup: boolean }>;
+    if (dup[0]?.dup === true) return { status: "duplicate" };
+
+    const rows = (await sql`
+      UPDATE qa_entries
+         SET status = CASE
+                        WHEN answer IS NOT NULL AND length(btrim(answer)) > 0 THEN 'answered'
+                        ELSE 'open'
+                      END,
+             updated_at = now()
+       WHERE id = ${id} AND status = 'dismissed'
+      RETURNING id, conversation_id, product_id, product_title, gap_summary,
+                question, answer, question_en, answer_en, status, model,
+                input_tokens, output_tokens,
+                created_at, updated_at, answered_at, published_at
+    `) as QaRow[];
+    return rows[0]
+      ? { status: "restored", entry: rowToEntry(rows[0]) }
+      : { status: "not_found" };
+  } catch (err) {
+    reportError(err, { route: "lib/qa-store", phase: "restore" });
+    return { status: "not_found" };
+  }
+}
+
 export async function dismissQaEntry(
   id: number,
   sql: Sql | null = getSql()

@@ -114,6 +114,12 @@ shows **Zurückziehen** instead of Verwerfen. It
 Route: `POST /api/admin/qa/unpublish { id }` (access-logged as
 `qa.unpublish`).
 
+Dismissed entries are recoverable too: the "Verworfen" view shows a
+**Wiederherstellen** button (`POST /api/admin/qa/restore`, access-logged as
+`qa.restore`) that returns the entry to *open* (or *answered* when it already
+carries an answer). Refused with 409 when the same question meanwhile exists
+actively in the queue — two active copies would fight the de-dup rule.
+
 ## Cost & safety
 
 - Only the explicit "Gespräche scannen" / "Entwurf" clicks spend tokens
