@@ -46,6 +46,11 @@ import {
 } from "./shopify-discounts";
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
 import { applyMintedDiscountToBody } from "./discount-swap.mjs";
+import {
+  renderEmailProseHtml,
+  emailProseToText,
+  productNameLookup,
+} from "./email-prose.mjs";
 import { buildPrefilledCartUrlForIds } from "./cart";
 import { getActiveBundleForSend } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
@@ -266,6 +271,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
           : null,
         unsubscribe: unsubscribeFooter(unsubscribeUrl),
         bundle,
+        labelForUrl: await catalogNameLookup(),
       });
 
       // Our own Message-ID + an inbound Reply-To so a reply threads back into
@@ -375,6 +381,18 @@ async function buildBundleBlockForSend(
   }
 }
 
+/** URL → product-name lookup over the synced catalog, so bare product URLs in
+ * the prose render as the product name (email-prose.mjs). Never throws — a
+ * catalog failure degrades to compact URL labels, never blocks a send. */
+async function catalogNameLookup(): Promise<(url: string) => string | null> {
+  try {
+    return productNameLookup(await loadProductCatalog());
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-email", phase: "catalogNameLookup" });
+    return () => null;
+  }
+}
+
 function renderMarketingEmail(opts: {
   /** Subject line — reused for the HTML <title>/preview line. */
   subject: string;
@@ -389,6 +407,9 @@ function renderMarketingEmail(opts: {
   unsubscribe: { text: string; html: string };
   /** Optional special-offer block for an attached bundle (text + HTML parts). */
   bundle: { text: string; html: string } | null;
+  /** Names a bare product URL in the prose (catalog lookup); null → compact
+   * host/path label. Markdown links carry their own label. */
+  labelForUrl?: (url: string) => string | null;
 }): { text: string; html: string } {
   const { subject, body, linkUrl, discountCode, discountExpiresLabel, unsubscribe, bundle } = opts;
 
@@ -396,8 +417,8 @@ function renderMarketingEmail(opts: {
     ? `, gültig bis ${discountExpiresLabel}`
     : "";
 
-  // --- text part ---
-  const textLines = [body.trim()];
+  // --- text part — markdown links flatten to "Label (URL)" ---
+  const textLines = [emailProseToText(body.trim())];
   // The special-offer block (when a bundle is attached) sits right after the
   // prose, before the cart link + unsubscribe footer.
   if (bundle) textLines.push(bundle.text);
@@ -439,11 +460,15 @@ function renderMarketingEmail(opts: {
     subject,
     preheader: body.trim().split("\n")[0]?.slice(0, 140) || undefined,
     heading: "Deine persönliche Empfehlung",
+    // The email is written by Mo — the brand orb makes that recognizable.
+    moAvatar: true,
     // The bundle special-offer block (if any) is appended to the prose body so
-    // it renders above the cart CTA/unsubscribe footer.
+    // it renders above the cart CTA/unsubscribe footer. Prose links (markdown
+    // + bare URLs) render as clickable text — never a raw pasted URL.
     bodyHtml: `
-                                  <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(
-                                    body.trim()
+                                  <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
+                                    body.trim(),
+                                    { labelForUrl: opts.labelForUrl }
                                   )}</p>${bundle ? bundle.html : ""}`,
     ctas: linkUrl ? [{ label: "Warenkorb öffnen", url: linkUrl }] : [],
     footnoteHtml: discountNote || undefined,

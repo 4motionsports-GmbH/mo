@@ -16,6 +16,10 @@
 //   - images referenced by absolute https URLs only
 //   - the header logo is a STATIC image (animated logos do not animate
 //     reliably in mail clients)
+//   - the OPTIONAL Mo avatar (moAvatar) is the one deliberate exception: an
+//     animated GIF is the only animation email clients broadly support
+//     (Gmail/Apple Mail play it; Outlook desktop shows the first frame).
+//     Everything else stays static.
 
 /** Brand accent used for CTA buttons (matches the shop's order emails). */
 export const EMAIL_ACCENT_COLOR = "#008ccb";
@@ -48,7 +52,19 @@ export function emailLogoUrl(): string {
   return process.env.EMAIL_LOGO_URL || DEFAULT_LOGO_URL;
 }
 
+/**
+ * The Mo brand-orb avatar — the chat widget's ACTUAL animated mark, exported
+ * from the frontend (theme) repo: public/moorb.gif (animated, white background
+ * to blend into the email card; public/moorb2x.png is the transparent static
+ * variant). Served from THIS deployment's public/. Override with
+ * EMAIL_MO_ICON_URL to host a different asset.
+ */
+export function emailMoIconUrl(): string {
+  return process.env.EMAIL_MO_ICON_URL || `${getBaseUrl()}/moorb.gif`;
+}
+
 import { escapeHtml, escapeAttr } from "./html-escape";
+import { getBaseUrl } from "./base-url";
 import type { Locale } from "./locale";
 export { escapeHtml, escapeAttr };
 
@@ -77,6 +93,13 @@ export interface BrandedEmailOptions {
    * EMAIL_TEXT_STYLE / EMAIL_MUTED_TEXT_STYLE.
    */
   bodyHtml: string;
+  /**
+   * Show the Mo brand-orb avatar (emailMoIconUrl) centered between heading
+   * and body — the same mark the shop's chat widget uses, so the reader
+   * associates the email with Mo. Animated GIF; clients without GIF playback
+   * show its first frame.
+   */
+  moAvatar?: boolean;
   /** Table-based "bulletproof" CTA button(s) rendered after the body. */
   ctas?: EmailCta[];
   /** Small-print HTML under the CTA(s) (e.g. discount code + expiry note). */
@@ -196,6 +219,17 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
       <!-- END SECTION: CTA -->`
       : "";
 
+  const moAvatarSection = opts.moAvatar
+    ? `
+                        <!-- BEGIN SECTION: Mo avatar (brand orb, animated GIF) -->
+                        <tr>
+                          <th class="section_border" style="mso-line-height-rule: exactly; padding: 0 80px;" align="center" bgcolor="#ffffff">
+                            <img src="${escapeAttr(emailMoIconUrl())}" alt="Mo" width="64" height="64" border="0" style="width: 64px; height: 64px; display: block; Margin: 0 auto;">
+                          </th>
+                        </tr>
+                        <!-- END SECTION: Mo avatar -->`
+    : "";
+
   const unsubscribeSection = opts.footer?.unsubscribeHtml
     ? `
       <!-- BEGIN SECTION: Unsubscribe (legally required on marketing email) -->
@@ -285,7 +319,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
                             </table>
                           </th>
                         </tr>
-                        <!-- END SECTION: Heading -->
+                        <!-- END SECTION: Heading -->${moAvatarSection}
                         <!-- BEGIN SECTION: Body content -->
                         <tr>
                           <th class="section_border" style="mso-line-height-rule: exactly; padding: 0 80px 5px;" bgcolor="#ffffff">

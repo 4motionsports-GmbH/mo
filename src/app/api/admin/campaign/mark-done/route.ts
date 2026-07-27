@@ -19,6 +19,7 @@ import {
   markContactSent,
   recordCampaignSend,
 } from "@/lib/campaign-store";
+import { emailProseToText } from "@/lib/email-prose.mjs";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 10;
@@ -55,13 +56,16 @@ export async function POST(req: Request) {
     if (!marked) {
       return adminJsonError("not_markable", "Contact is no longer markable.", 409);
     }
+    // The clipboard flattens markdown links to "Label (URL)" — hash and retain
+    // exactly that flattened form (what the operator actually pasted/sent).
+    const copiedText = emailProseToText(draft.body);
     await recordCampaignSend({
       contactId,
       email: contact.email,
       subject: draft.subject,
-      bodyHash: hashCampaignBody(draft.body),
+      bodyHash: hashCampaignBody(copiedText),
       // Retain the copied prose (0038); no HTML was delivered on this path.
-      bodyText: draft.body,
+      bodyText: copiedText,
       bodyHtml: null,
       sentVia: "copy",
       discountCode: null,

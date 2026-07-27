@@ -34,6 +34,7 @@ import {
   EMAIL_FONT_FAMILY,
 } from "./email-template";
 import { partitionSummaryProducts } from "./summary-products.mjs";
+import { renderEmailProseHtml, productNameLookup } from "./email-prose.mjs";
 import { renderEmailProductRows } from "./email-products";
 import { reportError } from "./observability";
 import { recordAiUsage, type AiCallSite } from "./ai-usage-store";
@@ -260,6 +261,11 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
   const en = locale === "en";
   const chosen = renderChosenProducts(chosenProducts, locale);
   const alternativesPart = renderAlternatives(alternatives, locale);
+  // Any URL the summary prose mentions renders as clickable text (product
+  // name when it's a known product URL) — never a raw pasted URL.
+  const summaryHtml = renderEmailProseHtml(summary, {
+    labelForUrl: productNameLookup([...chosenProducts, ...alternatives]),
+  });
 
   // --- text part — same top-to-bottom order as the HTML ---
   const textLines = en
@@ -319,7 +325,7 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
                                   <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
                                     <tr>
                                       <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#f6f6f6" valign="top">
-                                        <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(summary)}</p>
+                                        <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${summaryHtml}</p>
                                       </th>
                                     </tr>
                                   </table>
@@ -330,7 +336,7 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
                                   <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
                                     <tr>
                                       <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#f6f6f6" valign="top">
-                                        <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(summary)}</p>
+                                        <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${summaryHtml}</p>
                                       </th>
                                     </tr>
                                   </table>
@@ -342,6 +348,8 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
       ? "Thank you for your consultation at motion sports — here are your summary and your cart."
       : "Vielen Dank für deine Beratung bei motion sports — hier sind deine Zusammenfassung und dein Warenkorb.",
     heading: en ? "Your summary" : "Deine Zusammenfassung",
+    // The consultation was with Mo — the brand orb makes that recognizable.
+    moAvatar: true,
     bodyHtml,
     ctas: cartUrl ? [{ label: en ? "To checkout" : "Zur Kasse", url: cartUrl }] : [],
     footnoteHtml: `${alternativesBlock}${signOffHtml}`,
