@@ -66,6 +66,11 @@ import {
 } from "./shopify-discounts";
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
 import { applyMintedDiscountToBody } from "./discount-swap.mjs";
+import {
+  renderEmailProseHtml,
+  emailProseToText,
+  productNameLookup,
+} from "./email-prose.mjs";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
 import { renderBundleOfferBlock } from "./bundle-email";
@@ -259,6 +264,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           : null,
         unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
         bundle,
+        labelForUrl: await catalogNameLookup(),
       });
 
       const threading = outboundThreading();
@@ -316,6 +322,18 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
  * a relative/http image). Mirrors the marketing path's helper. */
 function firstImageUrl(p: Product | undefined): string | null {
   return p?.images?.find((u) => typeof u === "string" && u.startsWith("https://")) ?? null;
+}
+
+/** URL → product-name lookup over the synced catalog, so bare product URLs in
+ * the prose render as the product name (email-prose.mjs). Never throws — a
+ * catalog failure degrades to compact URL labels, never blocks a send. */
+async function catalogNameLookup(): Promise<(url: string) => string | null> {
+  try {
+    return productNameLookup(await loadProductCatalog());
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-email", phase: "catalogNameLookup" });
+    return () => null;
+  }
 }
 
 /**
@@ -407,6 +425,7 @@ export async function renderCampaignEmailPreview(
         : null,
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
     bundle,
+    labelForUrl: await catalogNameLookup(),
   });
   return { ok: true, subject, html };
 }
@@ -428,6 +447,9 @@ function renderCampaignEmail(opts: {
   unsubscribe: { text: string; html: string };
   /** Optional special-offer block for an attached bundle (text + HTML parts). */
   bundle: { text: string; html: string } | null;
+  /** Names a bare product URL in the prose (catalog lookup); null → compact
+   * host/path label. Markdown links carry their own label. */
+  labelForUrl?: (url: string) => string | null;
 }): { text: string; html: string } {
   const { subject, body, language, discountCode, discountExpiresLabel, unsubscribe, bundle } =
     opts;
@@ -440,8 +462,9 @@ function renderCampaignEmail(opts: {
       : `, gültig bis ${discountExpiresLabel}`
     : "";
 
-  // --- text part ---
-  const textLines = [body.trim()];
+  // --- text part — markdown links flatten to "Label (URL)" ---
+  const textBody = emailProseToText(body.trim());
+  const textLines = [textBody];
   // The special-offer block (when a bundle is attached) sits right after the
   // prose, before the discount line / promo / unsubscribe footer.
   if (bundle) textLines.push(bundle.text);
@@ -469,11 +492,16 @@ function renderCampaignEmail(opts: {
 
   const html = renderBrandedEmail({
     subject,
-    preheader: body.trim().split("\n")[0]?.slice(0, 140) || undefined,
+    preheader: textBody.split("\n")[0]?.slice(0, 140) || undefined,
     heading: en ? "Your personal recommendation" : "Deine persönliche Empfehlung",
+    // The email is written by Mo — the brand orb makes that recognizable.
+    moAvatar: true,
+    // Prose links (markdown + bare URLs) render as clickable text — never a
+    // raw pasted URL (email-prose.mjs).
     bodyHtml: `
-                                  <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${escapeHtml(
-                                    body.trim()
+                                  <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
+                                    body.trim(),
+                                    { labelForUrl: opts.labelForUrl }
                                   )}</p>${bundle ? bundle.html : ""}${promoHtml}`,
     ctas: [{ label: moPromoCtaLabel(language), url: deeplink }],
     footnoteHtml: discountNote || undefined,

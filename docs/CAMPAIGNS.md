@@ -121,7 +121,13 @@ fallback discipline as `marketing-draft.ts`):
 2. A natural, warm reference to the purchase history — one category or one
    item, never an itemized dump.
 3. 2–3 recommendations with product URLs, briefly reasoned
-   ([`campaign-recommendations.ts`](../src/lib/campaign-recommendations.ts)):
+   ([`campaign-recommendations.ts`](../src/lib/campaign-recommendations.ts)),
+   written as **markdown links** `[Produktname](URL)` — the HTML part renders
+   every link as clickable text, never a raw pasted URL
+   ([`email-prose.mjs`](../src/lib/email-prose.mjs): markdown links keep their
+   label; bare URLs in older/edited drafts are linkified with the catalog
+   product name, or a compact host/path label). The text part and the Copy
+   workflow flatten links to `Label (URL)`:
    purchased handles → catalog products, then the **existing** in-memory
    embedding similarity (catalog embeddings + `retrieval.cosine` — no vector
    DB), excluding owned items, filtered through `filterAvailable`. No catalog
@@ -156,6 +162,13 @@ fallback discipline as `marketing-draft.ts`):
    panel full-screen) shape how it opens.
 6. Footer: signed unsubscribe + Impressum/privacy via the existing
    composition (`unsubscribeFooter` + branded template).
+7. The **Mo brand orb** (the chat widget's actual animated mark, exported
+   from the frontend repo — `public/moorb.gif`, animated with a white
+   background; `public/moorb2x.png` is the transparent static variant;
+   override via `EMAIL_MO_ICON_URL`) renders centered between heading and
+   prose (`moAvatar` in `email-template.ts`), on campaign, marketing and
+   summary emails alike, so the reader recognizes Mo again on the shop.
+   Clients without GIF playback (Outlook desktop) show the first frame.
 
 ## 5. Review workflow (Kampagne tab)
 

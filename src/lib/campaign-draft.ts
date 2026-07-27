@@ -196,7 +196,8 @@ function fallbackCampaignDraft(input: GenerateCampaignDraftInput): MarketingDraf
       en
         ? "Building on what you already have, these could be a great fit:"
         : "Passend zu dem, was du schon hast, könnten diese Produkte gut passen:",
-      ...input.recommendations.map((r) => `- ${r.name}: ${r.url}`)
+      // Markdown links — the renderer turns them into clickable product names.
+      ...input.recommendations.map((r) => `- [${r.name}](${r.url})`)
     );
   }
   const discountParagraph = fallbackDiscountParagraph(input, input.language);
@@ -306,9 +307,11 @@ export async function generateCampaignDraft(
         "Produktkategorie oder EIN konkretes Produkt (z. B. „wie läuft's mit " +
         "deinem Laufband?“) — NIEMALS eine aufgezählte Liste aller Käufe, kein " +
         "Daten-Vorlesen.\n" +
-        "- Empfiehl NUR die vorgegebenen 2–3 Produkte, jeweils mit ihrer " +
-        "EXAKTEN Produkt-URL als Link im Text und einer kurzen Begründung " +
-        "(„passt gut zu …“). Keine erfundenen Produkte, keine erfundenen Preise.\n" +
+        "- Empfiehl NUR die vorgegebenen 2–3 Produkte, jeweils mit einer kurzen " +
+        "Begründung („passt gut zu …“). Verlinke jedes Produkt als Markdown-Link " +
+        "mit dem Produktnamen als Linktext und seiner EXAKTEN Produkt-URL: " +
+        "[Produktname](URL). Schreibe NIE eine nackte URL in den Text. " +
+        "Keine erfundenen Produkte, keine erfundenen Preise.\n" +
         "- Sei ehrlich, kein Marktschreier: keine künstliche Dringlichkeit, " +
         "keine Countdown-Rhetorik.\n" +
         "- Wenn ein persönliches Rabattangebot vorgegeben ist, webe es klar und " +

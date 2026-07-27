@@ -45,6 +45,7 @@ import {
   DISCOUNT_PERCENT_MAX,
   clampDiscountPercent,
 } from "@/lib/discount-validation.mjs";
+import { emailProseToText } from "@/lib/email-prose.mjs";
 
 export interface CampaignQueueItemProps {
   contactId: number;
@@ -512,7 +513,10 @@ export function KampagneWorkspace({
   const doCopy = React.useCallback(async () => {
     if (!current) return;
     try {
-      await navigator.clipboard.writeText(`${current.subject}\n\n${current.body}`);
+      // Markdown links flatten to "Label (URL)" — the clipboard is plain text.
+      await navigator.clipboard.writeText(
+        `${current.subject}\n\n${emailProseToText(current.body)}`
+      );
       setCopiedId(current.contactId);
       toast({
         variant: "success",
