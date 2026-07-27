@@ -122,6 +122,7 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
     discountCode: h.discountCode,
     sentAt: h.sentAt,
     redeemed: h.discountCode ? (redemptionByCode.get(h.discountCode) ?? null) : null,
+    hasContent: h.hasContent,
   }));
 
   return (

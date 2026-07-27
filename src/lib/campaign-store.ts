@@ -792,6 +792,10 @@ export interface RecordCampaignSendInput {
   email: string;
   subject: string;
   bodyHash: string;
+  /** The shipped text part (real code swapped in); for 'copy' the copied prose. */
+  bodyText: string | null;
+  /** The shipped branded HTML part; NULL on the copy path (nothing HTML shipped). */
+  bodyHtml: string | null;
   sentVia: "email" | "copy";
   discountCode: string | null;
   discountCodeGid: string | null;
@@ -807,11 +811,12 @@ export async function recordCampaignSend(
   if (!sql) throw new Error("No database configured — cannot record campaign send");
   await sql`
     INSERT INTO campaign_sends
-      (contact_id, email, subject, body_hash, sent_via,
+      (contact_id, email, subject, body_hash, body_text, body_html, sent_via,
        discount_code, discount_code_gid, discount_expires_at, sent_at, created_at)
     VALUES
       (${input.contactId}, ${normalizeEmail(input.email)}, ${input.subject},
-       ${input.bodyHash}, ${input.sentVia}, ${input.discountCode},
+       ${input.bodyHash}, ${input.bodyText}, ${input.bodyHtml},
+       ${input.sentVia}, ${input.discountCode},
        ${input.discountCodeGid}, ${input.discountExpiresAt}, now(), now())
   `;
 }
@@ -860,6 +865,9 @@ export interface CampaignSendHistoryRow {
   discountCode: string | null;
   discountExpiresAt: string | null;
   sentAt: string | null;
+  /** True when the shipped content was retained (body_text/body_html — sends
+   * recorded before migration 0038 have neither). */
+  hasContent: boolean;
 }
 
 /** Recent campaign sends (newest first) for the history sub-view. */
@@ -871,7 +879,8 @@ export async function listCampaignSendHistory(
   try {
     const rows = (await sql`
       SELECT id, contact_id, email, subject, sent_via, discount_code,
-             discount_expires_at, sent_at
+             discount_expires_at, sent_at,
+             (body_text IS NOT NULL OR body_html IS NOT NULL) AS has_content
         FROM campaign_sends
        ORDER BY sent_at DESC, id DESC
        LIMIT ${limit}
@@ -885,9 +894,51 @@ export async function listCampaignSendHistory(
       discountCode: (r.discount_code as string | null) ?? null,
       discountExpiresAt: toIso(r.discount_expires_at),
       sentAt: toIso(r.sent_at),
+      hasContent: r.has_content === true,
     }));
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "listCampaignSendHistory" });
     return [];
+  }
+}
+
+/** The retained content of ONE send record, for the "Gesendet" viewer. */
+export interface CampaignSendContentRow {
+  id: number;
+  email: string;
+  subject: string | null;
+  sentVia: "email" | "copy";
+  sentAt: string | null;
+  bodyText: string | null;
+  bodyHtml: string | null;
+}
+
+/** Read one send record incl. the retained body parts. Null when the record
+ * doesn't exist (the caller distinguishes "no record" from "no content"). */
+export async function getCampaignSendContent(
+  sendId: number,
+  sql: Sql | null = getSql()
+): Promise<CampaignSendContentRow | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT id, email, subject, sent_via, sent_at, body_text, body_html
+        FROM campaign_sends
+       WHERE id = ${sendId}
+    `) as Array<Record<string, unknown>>;
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      id: Number(r.id),
+      email: String(r.email),
+      subject: (r.subject as string | null) ?? null,
+      sentVia: r.sent_via === "copy" ? "copy" : "email",
+      sentAt: toIso(r.sent_at),
+      bodyText: (r.body_text as string | null) ?? null,
+      bodyHtml: (r.body_html as string | null) ?? null,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "getCampaignSendContent" });
+    return null;
   }
 }
