@@ -165,10 +165,13 @@ fallback discipline as `marketing-draft.ts`):
 7. The **Mo brand orb** (the chat widget's actual animated mark, exported
    from the frontend repo — `public/moorb.gif`, animated with a white
    background; `public/moorb2x.png` is the transparent static variant;
-   override via `EMAIL_MO_ICON_URL`) renders centered between heading and
-   prose (`moAvatar` in `email-template.ts`), on campaign, marketing and
-   summary emails alike, so the reader recognizes Mo again on the shop.
-   Clients without GIF playback (Outlook desktop) show the first frame.
+   override via `EMAIL_MO_ICON_URL`) makes Mo recognizable: on campaign
+   emails it renders **beside the Mo promo text** as a chat-style media row
+   (orb left, "Übrigens: … im Chat" right — mirroring the shop's
+   product-page CTA), directly above the deep-link button. Marketing and
+   summary emails (no chat-hint line) keep the centered orb between heading
+   and prose (`moAvatar` in `email-template.ts`). Clients without GIF
+   playback (Outlook desktop) show the first frame.
 
 ## 5. Review workflow (Kampagne tab)
 

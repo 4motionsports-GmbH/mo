@@ -53,7 +53,9 @@ import { sendEmail } from "./email";
 import { outboundThreading } from "./email-inbound";
 import {
   renderBrandedEmail,
+  emailMoIconUrl,
   escapeHtml,
+  escapeAttr,
   EMAIL_TEXT_STYLE,
   EMAIL_MUTED_TEXT_STYLE,
 } from "./email-template";
@@ -486,16 +488,27 @@ function renderCampaignEmail(opts: {
         en ? "Your personal code" : "Dein pers&#246;nlicher Code"
       }: <strong>${escapeHtml(discountCode)}</strong>${escapeHtml(validityNote)}.</p>`
     : "";
-  const promoHtml = `<p style="${EMAIL_TEXT_STYLE} padding-top: 16px;" align="left">${escapeHtml(
-    moPromoIntroText(language)
-  )}</p>`;
+  // The Mo promo renders as a chat-style media row — the animated brand orb
+  // (the widget's launcher mark) beside Mo's chat hint, mirroring the shop's
+  // product-page CTA (orb + text). Table-based + inline styles for Outlook.
+  const promoHtml = `
+                                  <table width="100%" cellspacing="0" cellpadding="0" border="0" role="presentation" style="min-width: 100%; direction: ltr; Margin-top: 16px;">
+                                    <tr>
+                                      <td valign="middle" width="68" style="mso-line-height-rule: exactly; padding-right: 12px;">
+                                        <img src="${escapeAttr(emailMoIconUrl())}" alt="Mo" width="56" height="56" border="0" style="width: 56px; height: 56px; display: block;">
+                                      </td>
+                                      <td valign="middle" style="mso-line-height-rule: exactly;">
+                                        <p style="${EMAIL_TEXT_STYLE}" align="left">${escapeHtml(
+                                          moPromoIntroText(language)
+                                        )}</p>
+                                      </td>
+                                    </tr>
+                                  </table>`;
 
   const html = renderBrandedEmail({
     subject,
     preheader: textBody.split("\n")[0]?.slice(0, 140) || undefined,
     heading: en ? "Your personal recommendation" : "Deine persönliche Empfehlung",
-    // The email is written by Mo — the brand orb makes that recognizable.
-    moAvatar: true,
     // Prose links (markdown + bare URLs) render as clickable text — never a
     // raw pasted URL (email-prose.mjs).
     bodyHtml: `
