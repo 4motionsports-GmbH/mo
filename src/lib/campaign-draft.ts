@@ -310,8 +310,9 @@ export async function generateCampaignDraft(
         "- Empfiehl NUR die vorgegebenen 2–3 Produkte, jeweils mit einer kurzen " +
         "Begründung („passt gut zu …“). Verlinke jedes Produkt als Markdown-Link " +
         "mit dem Produktnamen als Linktext und seiner EXAKTEN Produkt-URL: " +
-        "[Produktname](URL). Schreibe NIE eine nackte URL in den Text. " +
-        "Keine erfundenen Produkte, keine erfundenen Preise.\n" +
+        "[Produktname](URL). Schreibe NIE eine nackte URL in den Text und " +
+        "verwende NIEMALS HTML (kein <a href=…>) — die E-Mail ist reiner Text " +
+        "mit Markdown-Links. Keine erfundenen Produkte, keine erfundenen Preise.\n" +
         "- Sei ehrlich, kein Marktschreier: keine künstliche Dringlichkeit, " +
         "keine Countdown-Rhetorik.\n" +
         "- Wenn ein persönliches Rabattangebot vorgegeben ist, webe es klar und " +

@@ -49,6 +49,51 @@ test("non-http(s) markdown URL is not linkified", () => {
 });
 
 // ---------------------------------------------------------------------------
+// renderEmailProseHtml — literal HTML anchors in the prose
+// ---------------------------------------------------------------------------
+
+test("literal HTML anchor renders as ONE clean link (no tag soup)", () => {
+  const html = renderEmailProseHtml(
+    'könnte die <a href="https://shop.example/products/hex-bar">Hex Bar 50mm in Chrom</a> passen.'
+  );
+  assert.equal((html.match(/<a /g) ?? []).length, 1);
+  assert.match(html, /<a href="https:\/\/shop\.example\/products\/hex-bar"/);
+  assert.match(html, />Hex Bar 50mm in Chrom<\/a>/);
+  assert.doesNotMatch(html, /&lt;a\s|&lt;\/a&gt;/);
+});
+
+test("HTML anchor with single-quoted href and extra attributes works", () => {
+  const html = renderEmailProseHtml(
+    "<a target='_blank' href='https://a.example/x' class='y'>Label</a>"
+  );
+  assert.equal((html.match(/<a /g) ?? []).length, 1);
+  assert.match(html, /href="https:\/\/a\.example\/x"/);
+  assert.match(html, />Label<\/a>/);
+});
+
+test("HTML anchor with empty/taggy label falls back to a URL label", () => {
+  const html = renderEmailProseHtml('<a href="https://a.example/products/rack"><b></b></a>', {
+    labelForUrl: (url) => (url.endsWith("/rack") ? "Power Rack" : null),
+  });
+  assert.match(html, />Power Rack<\/a>/);
+});
+
+test("non-http anchor href is not linkified and never emits raw tags", () => {
+  const html = renderEmailProseHtml('<a href="javascript:alert(1)">x</a>');
+  assert.doesNotMatch(html, /<a /);
+  assert.doesNotMatch(html, /javascript:alert\(1\)">/);
+});
+
+test("markdown and HTML anchors mix in one body", () => {
+  const html = renderEmailProseHtml(
+    '[A](https://a.example/1) und <a href="https://a.example/2">B</a>'
+  );
+  assert.equal((html.match(/<a /g) ?? []).length, 2);
+  assert.match(html, />A<\/a> und <a /);
+  assert.match(html, />B<\/a>/);
+});
+
+// ---------------------------------------------------------------------------
 // renderEmailProseHtml — bare URLs
 // ---------------------------------------------------------------------------
 
@@ -96,6 +141,13 @@ test("markdown links flatten to 'label (url)' for the text part", () => {
   assert.equal(
     emailProseToText("Schau dir [das Laufband](https://a.example/x) an."),
     "Schau dir das Laufband (https://a.example/x) an."
+  );
+});
+
+test("HTML anchors flatten to 'label (url)' for the text part", () => {
+  assert.equal(
+    emailProseToText('Die <a href="https://a.example/x">Hex Bar</a> passt.'),
+    "Die Hex Bar (https://a.example/x) passt."
   );
 });
 

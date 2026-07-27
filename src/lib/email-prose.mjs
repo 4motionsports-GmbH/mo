@@ -24,6 +24,19 @@ const DEFAULT_LINK_STYLE =
 // without whitespace/closing paren (matches what the draft prompts request).
 const MD_LINK_RE = /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s()]+)\)/g;
 
+// Literal HTML anchor in the prose: <a href="https://…">label</a>. The prompts
+// forbid HTML, but models occasionally emit it anyway (and pre-markdown drafts
+// may carry it) — without this pass the tags would escape into visible
+// "<a href=…>" tag soup. Only http(s) hrefs match; the label may itself
+// contain stray inline tags, which are stripped.
+const HTML_ANCHOR_RE =
+  /<a\s[^>]*?href\s*=\s*(?:"(https?:\/\/[^"]+)"|'(https?:\/\/[^']+)')[^>]*>([\s\S]{0,300}?)<\/a\s*>/gi;
+
+/** Visible text of an HTML fragment (tags dropped, entities kept as-is). */
+function stripTags(s) {
+  return s.replace(/<[^>]*>/g, "");
+}
+
 // Bare URL: stops at whitespace/quotes/brackets; trailing punctuation that is
 // almost certainly sentence punctuation (.,;:!?…) is not part of the link.
 const BARE_URL_RE = /https?:\/\/[^\s<>()[\]"']+/g;
@@ -73,14 +86,26 @@ export function renderEmailProseHtml(body, opts = {}) {
   const linkStyle = opts.linkStyle ?? DEFAULT_LINK_STYLE;
   const labelForUrl = opts.labelForUrl ?? (() => null);
 
-  // Pass 1 — split on markdown links so their URLs/labels are handled as
-  // units and never double-processed by the bare-URL pass.
+  // Pass 1 — split on explicit links (markdown AND literal HTML anchors) so
+  // their URLs/labels are handled as units and never double-processed by the
+  // bare-URL pass. Matches are merged by position; overlaps keep the earlier.
+  const matches = [];
+  for (const m of body.matchAll(MD_LINK_RE)) {
+    matches.push({ index: m.index, length: m[0].length, url: m[2], label: m[1].trim() });
+  }
+  for (const m of body.matchAll(HTML_ANCHOR_RE)) {
+    const url = m[1] ?? m[2];
+    matches.push({ index: m.index, length: m[0].length, url, label: stripTags(m[3]).trim() });
+  }
+  matches.sort((a, b) => a.index - b.index);
+
   const parts = [];
   let last = 0;
-  for (const m of body.matchAll(MD_LINK_RE)) {
+  for (const m of matches) {
+    if (m.index < last) continue; // overlap — earlier match already consumed it
     if (m.index > last) parts.push({ text: body.slice(last, m.index) });
-    parts.push({ link: { url: m[2], label: m[1].trim() || m[2] } });
-    last = m.index + m[0].length;
+    parts.push({ link: { url: m.url, label: m.label || labelForUrl(m.url) || compactUrlLabel(m.url) } });
+    last = m.index + m.length;
   }
   if (last < body.length) parts.push({ text: body.slice(last) });
 
@@ -109,12 +134,19 @@ export function renderEmailProseHtml(body, opts = {}) {
 }
 
 /**
- * Convert prose with markdown links to the plain-text part / clipboard form:
- * `[Laufband X](https://…)` → `Laufband X (https://…)`. Bare URLs stay as
- * they are — a text part must show real URLs.
+ * Convert prose with markdown links (or literal HTML anchors) to the
+ * plain-text part / clipboard form: `[Laufband X](https://…)` and
+ * `<a href="https://…">Laufband X</a>` both become `Laufband X (https://…)`.
+ * Bare URLs stay as they are — a text part must show real URLs.
  */
 export function emailProseToText(body) {
-  return body.replace(MD_LINK_RE, (_all, label, url) => `${label.trim() || url} (${url})`);
+  return body
+    .replace(MD_LINK_RE, (_all, label, url) => `${label.trim() || url} (${url})`)
+    .replace(HTML_ANCHOR_RE, (_all, urlDq, urlSq, label) => {
+      const url = urlDq ?? urlSq;
+      const text = stripTags(label).trim();
+      return `${text || url} (${url})`;
+    });
 }
 
 /**
