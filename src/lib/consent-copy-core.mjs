@@ -3,8 +3,10 @@
 // and shared by consent-copy.ts. See that file's header for the DOI / Art. 7
 // background.
 //
-// GERMAN (de): LAWYER-APPROVED (June 2026). Byte-identical to the strings that
-// shipped before i18n — any change is a new legal review.
+// GERMAN (de): LAWYER-APPROVED. The v3 set was approved June 2026; the v4
+// additions/changes (chat consent-gate strings + the upgraded personalised-
+// offers headlines, plus the button-consent mechanic) were approved July 2026.
+// Any wording change is a new legal review.
 //
 // ENGLISH (en): ⚠️ NOT YET LEGALLY REVIEWED. CONSENT_COPY_EN_LEGAL_REVIEWED is
 // false. The English consent / DOI / refund / unsubscribe copy below is a
@@ -45,10 +47,22 @@ const DE = {
   // Returning-customer hint near the email input (informational — NOT consent).
   returningHint:
     "Schon einmal von Mo beraten worden? Gib deine E-Mail an — Mo erkennt dich wieder und knüpft an deine letzte Beratung an.",
-  // At-sign-in marketing opt-in.
-  signinHeadline: "Bleib auf dem Laufenden — als angemeldete:r Kund:in.",
+  // At-sign-in marketing opt-in. Headline is v4 (upgraded personalised-offers
+  // benefit framing, lawyer-approved July 2026) — framing only, NOT part of the
+  // consentTextShown audit string. The label is unchanged from v3.
+  signinHeadline:
+    "Persönliche Angebote und exklusive Rabatt-Aktionen — direkt an deine hinterlegte E-Mail-Adresse.",
   signinLabel:
     "Ja, schickt mir an meine hinterlegte E-Mail-Adresse exklusive Angebote und Aktionen — nur für Abonnenten. Jederzeit abbestellbar.",
+  // Chat consent gate (v4): anonymous typed-email, MARKETING-ONLY signup shown
+  // once per session after the first chat message. The headline sells
+  // personalised offers + exclusive discount promotions (lawyer-approved
+  // benefit framing, July 2026) and is NOT part of consentTextShown; the label
+  // + shared footer ARE the consent text.
+  chatGateHeadline:
+    "Persönliche Angebote und exklusive Rabatt-Aktionen — abgestimmt auf deine Beratung.",
+  chatGateLabel:
+    "Ja, schickt mir persönliche Angebote und exklusive Rabatt-Aktionen an diese E-Mail-Adresse — nur für Abonnenten. Jederzeit abbestellbar.",
   // Email subjects.
   doiSubject: "Bitte bestätige deine Anmeldung bei motion sports",
   summarySubject: "Deine Beratung bei motion sports — Zusammenfassung & Warenkorb",
@@ -76,9 +90,14 @@ const EN = {
     "Processing by motion sports in accordance with the privacy policy; withdrawal possible at any time.",
   returningHint:
     "Been advised by Mo before? Enter your email — Mo recognises you and picks up where your last consultation left off.",
-  signinHeadline: "Stay in the loop — as a signed-in customer.",
+  signinHeadline:
+    "Personalised offers and exclusive discount promotions — straight to your stored email address.",
   signinLabel:
     "Yes, send exclusive offers and promotions to my stored email address — subscribers only. Unsubscribe any time.",
+  chatGateHeadline:
+    "Personalised offers and exclusive discount promotions — tailored to your consultation.",
+  chatGateLabel:
+    "Yes, send personalised offers and exclusive discount promotions to this email address — subscribers only. Unsubscribe any time.",
   doiSubject: "Please confirm your sign-up with motion sports",
   summarySubject: "Your consultation at motion sports — summary & cart",
   doiConfirmedHeading: "Thanks, your sign-up is confirmed.",

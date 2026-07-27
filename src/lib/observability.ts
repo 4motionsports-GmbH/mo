@@ -176,9 +176,13 @@ export type ErrorCode =
   // Capture form submitted without the (no-longer-pre-checked) transactional
   // consent — see capture-validation.mjs + API_CONTRACT.md §7.1.
   | "transactional_consent_required"
-  // At-sign-in opt-in POSTed without the explicit affirmative marketing tick —
-  // a Shopify account never implies consent. See /api/account/marketing-opt-in.
+  // A marketing opt-in POSTed without the explicit affirmative act (tick /
+  // accept tap) — an account or a typed email never implies consent. See
+  // /api/account/marketing-opt-in + /api/chat-marketing-opt-in.
   | "marketing_consent_required"
+  // Chat consent gate submitted with a missing/invalid typed email — the
+  // documented §7.6 code (the capture form uses "bad_request" for this).
+  | "invalid_email"
   // At-sign-in opt-in for an account with no verified email (synthetic
   // shopify:<id> placeholder) — can't run the DOI without a real address.
   | "no_verified_email"

@@ -8,12 +8,17 @@
 // forms NOT triggered by the tool (e.g. a proactive share-form entry point),
 // and lets the widget refresh its copy without a theme release.
 //
-// Two surfaces, ONE version stamp (v3):
+// Three surfaces, ONE version stamp (v4):
 //   * default            — the in-chat capture form (email + two checkboxes).
 //   * ?surface=signin    — the AT-SIGN-IN marketing opt-in for a signed-in
-//                          customer (one UNCHECKED benefit-framed box, no email
-//                          field — we already hold the verified address). The
-//                          widget POSTs the tick to /api/account/marketing-opt-in.
+//                          customer (benefit-framed button-consent block, no
+//                          email field — we already hold the verified address).
+//                          The widget POSTs to /api/account/marketing-opt-in.
+//   * ?surface=chat      — the CHAT CONSENT GATE (v4): anonymous typed-email,
+//                          marketing-only signup shown once per session after
+//                          the first chat message; same button-consent
+//                          mechanic. The widget POSTs the accept to
+//                          /api/chat-marketing-opt-in.
 //
 // Public read-only strings already shown to every form user, so no
 // shared-secret auth is required — origin allowlist + rate limit are the
@@ -26,7 +31,11 @@ import {
 } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
-import { captureConsentCopy, signInMarketingConsentCopy } from "@/lib/consent-copy";
+import {
+  captureConsentCopy,
+  chatGateMarketingConsentCopy,
+  signInMarketingConsentCopy,
+} from "@/lib/consent-copy";
 import { resolveLocale } from "@/lib/locale";
 
 export const maxDuration = 10;
@@ -54,7 +63,9 @@ export async function GET(req: Request) {
     const copy =
       surface === "signin"
         ? signInMarketingConsentCopy(locale)
-        : captureConsentCopy(locale);
+        : surface === "chat"
+          ? chatGateMarketingConsentCopy(locale)
+          : captureConsentCopy(locale);
 
     // Short cache only: a lawyer copy change must propagate to live widgets
     // quickly, since the served strings ARE the audit-trail text.

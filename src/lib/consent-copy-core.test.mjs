@@ -33,6 +33,30 @@ test("German consent strings are byte-identical to the lawyer-approved copy", ()
   assert.equal(de.unsubscribeInvalidHeading, "Dieser Abmeldelink ist ungültig.");
 });
 
+test("German v4 strings (chat gate + upgraded headlines) are byte-identical to the approved copy", () => {
+  const de = consentStrings("de");
+  // Headlines — benefit framing (personalised offers + exclusive discount
+  // promotions), NOT part of the consentTextShown audit string.
+  assert.equal(
+    de.signinHeadline,
+    "Persönliche Angebote und exklusive Rabatt-Aktionen — direkt an deine hinterlegte E-Mail-Adresse."
+  );
+  assert.equal(
+    de.chatGateHeadline,
+    "Persönliche Angebote und exklusive Rabatt-Aktionen — abgestimmt auf deine Beratung."
+  );
+  // Chat-gate consent label (typed email, marketing-only) — IS consent text.
+  assert.equal(
+    de.chatGateLabel,
+    "Ja, schickt mir persönliche Angebote und exklusive Rabatt-Aktionen an diese E-Mail-Adresse — nur für Abonnenten. Jederzeit abbestellbar."
+  );
+  // The sign-in label is unchanged from v3.
+  assert.equal(
+    de.signinLabel,
+    "Ja, schickt mir an meine hinterlegte E-Mail-Adresse exklusive Angebote und Aktionen — nur für Abonnenten. Jederzeit abbestellbar."
+  );
+});
+
 test("English consent strings are present, in English, and distinct from German", () => {
   const de = consentStrings("de");
   const en = consentStrings("en");

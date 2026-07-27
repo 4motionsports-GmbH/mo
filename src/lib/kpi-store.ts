@@ -17,6 +17,12 @@
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import type { KpiRange } from "./kpi-range";
+import {
+  KPI_CONSENT_GATE_ACCEPTED,
+  KPI_CONSENT_GATE_DECLINED,
+  KPI_CONSENT_GATE_DISMISSED,
+  KPI_CONSENT_GATE_SHOWN,
+} from "./kpi-events";
 
 export interface DailyCount {
   /** ISO date (YYYY-MM-DD). */
@@ -198,6 +204,87 @@ export async function getCoreMetrics(
     } satisfies CoreMetrics;
   } catch (err) {
     reportError(err, { route: "lib/kpi-store", phase: "getCoreMetrics" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Consent-gate funnel (v4) — shown → accepted, with decline/dismiss split
+// ---------------------------------------------------------------------------
+
+/** Event counts for one gate surface (or the total across surfaces). */
+export interface ConsentGateCounts {
+  shown: number;
+  accepted: number;
+  declined: number;
+  dismissed: number;
+}
+
+export interface ConsentGateFunnel {
+  total: ConsentGateCounts;
+  /**
+   * Split by the widget-reported `data.surface` ("chat" = the in-chat consent
+   * gate, "signin" = the at-sign-in opt-in card). Events without a surface (a
+   * misbehaving widget) land in neither split but still count in `total`.
+   */
+  bySurface: { chat: ConsentGateCounts; signin: ConsentGateCounts };
+}
+
+const EMPTY_GATE_COUNTS: ConsentGateCounts = {
+  shown: 0,
+  accepted: 0,
+  declined: 0,
+  dismissed: 0,
+};
+
+/**
+ * Aggregate the widget-emitted consent-gate events (consent_gate_shown /
+ * _accepted / _declined / _dismissed, each carrying `data.surface`) over the
+ * selected window. All four are widget-truth — the backend only observes the
+ * accept as an opt-in POST — so this funnel measures the UI, not the DOI
+ * outcome (that's the email-capture funnel). Returns null when no DB is
+ * configured or on a hard failure.
+ */
+export async function getConsentGateFunnel(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<ConsentGateFunnel | null> {
+  if (!sql) return null;
+  try {
+    const rows = await sql`
+      SELECT event,
+             COALESCE(data->>'surface', '') AS surface,
+             count(*)::int AS n
+        FROM kpi_events
+       WHERE event IN (${KPI_CONSENT_GATE_SHOWN}, ${KPI_CONSENT_GATE_ACCEPTED},
+                       ${KPI_CONSENT_GATE_DECLINED}, ${KPI_CONSENT_GATE_DISMISSED})
+         AND created_at >= ${range.from}::date
+         AND created_at < (${range.to}::date + 1)
+       GROUP BY 1, 2
+    `;
+
+    const funnel: ConsentGateFunnel = {
+      total: { ...EMPTY_GATE_COUNTS },
+      bySurface: { chat: { ...EMPTY_GATE_COUNTS }, signin: { ...EMPTY_GATE_COUNTS } },
+    };
+    const keyByEvent: Record<string, keyof ConsentGateCounts> = {
+      [KPI_CONSENT_GATE_SHOWN]: "shown",
+      [KPI_CONSENT_GATE_ACCEPTED]: "accepted",
+      [KPI_CONSENT_GATE_DECLINED]: "declined",
+      [KPI_CONSENT_GATE_DISMISSED]: "dismissed",
+    };
+    for (const r of rows as Array<{ event: string; surface: string; n: number }>) {
+      const key = keyByEvent[r.event];
+      if (!key) continue;
+      const n = Number(r.n);
+      funnel.total[key] += n;
+      if (r.surface === "chat" || r.surface === "signin") {
+        funnel.bySurface[r.surface][key] += n;
+      }
+    }
+    return funnel;
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-store", phase: "getConsentGateFunnel" });
     return null;
   }
 }

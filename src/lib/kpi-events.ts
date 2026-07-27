@@ -31,6 +31,26 @@ export const KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED =
 /** Widget-emitted: the user dismissed/declined the capture card. */
 export const KPI_EMAIL_CAPTURE_DECLINED = "email_capture_declined";
 
+// ---------------------------------------------------------------------------
+// Consent-gate funnel (v4 button-consent marketing surfaces)
+// ---------------------------------------------------------------------------
+//
+// ALL widget-emitted through POST /api/kpi (the gate render and its taps are
+// UI moments the backend never observes directly; the accept ALSO reaches the
+// backend as POST /api/chat-marketing-opt-in or /api/account/marketing-opt-in).
+// Each event carries `data: { surface: "signin" | "chat" }` so the two gate
+// placements split out. These names REPLACE the retired `starter_shown` /
+// `starter_clicked` widget events. Shapes in docs/API_CONTRACT.md §5.
+
+/** The consent gate was rendered (once per session per surface). */
+export const KPI_CONSENT_GATE_SHOWN = "consent_gate_shown";
+/** The user tapped the affirmative "Ja, Angebote aktivieren" button. */
+export const KPI_CONSENT_GATE_ACCEPTED = "consent_gate_accepted";
+/** The user tapped the decline option. */
+export const KPI_CONSENT_GATE_DECLINED = "consent_gate_declined";
+/** The user dismissed the gate without an explicit accept/decline. */
+export const KPI_CONSENT_GATE_DISMISSED = "consent_gate_dismissed";
+
 /**
  * Record one pseudonymous KPI event from server code. Same table and shape as
  * the widget's fail-silent track() → POST /api/kpi path, so dashboard

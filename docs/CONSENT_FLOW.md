@@ -6,10 +6,12 @@ the suppression logic, and the audit trail. It also lists exactly which copy a
 lawyer must approve before launch.
 
 > ✅ **The DOI / marketing / personalisation / transactional copy is
-> LAWYER-APPROVED** (June 2026). It lives in
-> [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts), marked with
-> `CONSENT_COPY_LAWYER_APPROVED = true`. Treat these strings as approved — any
-> wording change needs a fresh review.
+> LAWYER-APPROVED** (v3 set June 2026; the **v4** additions — the chat
+> consent-gate strings, the upgraded personalised-offers benefit headlines,
+> and the **button-consent mechanic** on the marketing surfaces — July 2026).
+> It lives in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts), marked
+> with `CONSENT_COPY_LAWYER_APPROVED = true`. Treat these strings as approved —
+> any wording change needs a fresh review.
 >
 > ℹ️ **The §7(3) UWG "Bestandskunden" (existing-customer) feature was REMOVED
 > entirely on 2026-06-16 (client decision).** It was never live. Any §7(3)
@@ -37,17 +39,23 @@ Rules baked into the code:
   summary, so a no-transactional submit is invalid — see
   `src/lib/capture-validation.mjs` and [`API_CONTRACT.md`](./API_CONTRACT.md)
   §7.1).
-- The marketing checkbox is a **separate**, **unchecked-by-default** box with
-  its own explicit text. **Documented decision** (`src/lib/consent-copy.ts`):
-  pre-ticked marketing consent is invalid under the GDPR's
-  clear-affirmative-act requirement (CJEU C-673/17 *Planet49*) and a common
-  Abmahnung trigger under the German UWG — we deliberately reject pre-checking
-  it, regardless of what other platforms do. The box may be **prominent**;
-  the opt-in is won through copy, never a pre-tick. **Copy ceiling (UWG /
-  dark-pattern exposure, agreed with the client):** the v2 label promises
-  "exklusive Angebote …, nur für Abonnenten" and nothing more — accurate
-  scarcity only; no countdowns, no invented urgency, no concrete discount
-  promise.
+- The marketing consent is a **separate**, **never-pre-selected** affirmative
+  act with its own explicit text. **Documented decision**
+  (`src/lib/consent-copy.ts`): pre-ticked/pre-selected marketing consent is
+  invalid under the GDPR's clear-affirmative-act requirement (CJEU C-673/17
+  *Planet49*) and a common Abmahnung trigger under the German UWG — we
+  deliberately reject pre-selection, regardless of what other platforms do.
+  The surface may be **prominent**; the opt-in is won through copy, never a
+  pre-selection. On the **email-capture form** this is still a checkbox; on
+  the **v4 marketing surfaces** (chat consent gate + at-sign-in card) it is
+  **button-consent** — see "Button-consent mechanic (v4)" below. **Copy
+  ceiling (UWG / dark-pattern exposure, agreed with the client and
+  re-reviewed for v4):** the labels promise accurate scarcity ("exklusive
+  Angebote …, nur für Abonnenten"), and the v4 benefit **headlines**
+  (framing, not consent text) may additionally sell **personalised offers and
+  exclusive discount promotions** ("persönliche Angebote und exklusive
+  Rabatt-Aktionen") — this upgraded wording is lawyer-approved (July 2026).
+  Still no countdowns, no invented urgency, no concrete discount amount.
 - A **shared one-line footer** (`CONSENT_SHARED_FOOTER`) is rendered beneath
   both checkboxes — the Art. 7 minimum (controller + policy + anytime
   withdrawal) — with the existing imprint/privacy link placement next to it.
@@ -56,14 +64,16 @@ Rules baked into the code:
 - Every marketing email MUST contain a working unsubscribe link.
 - The exact consent text shown to the user is stored verbatim
   (`consent_text_shown`) as **Art. 7 proof of consent**, together with a
-  **consent copy version stamp** (`consent_copy_version`, currently `"v3"` —
-  `CONSENT_COPY_VERSION` in `src/lib/consent-copy-version.mjs`), so v1/v2/v3
-  records stay distinguishable in the audit trail. One linear version spans
-  **every** consent surface (the in-chat capture form **and** the at-sign-in
-  opt-in, see below); the verbatim text disambiguates which surface a record
-  came from. **v3** adds the at-sign-in opt-in and is the copy now under lawyer
-  review (it REPLACES v2 there); the capture-form labels are unchanged from v2
-  but ship in the v3 set. The stamp is resolved
+  **consent copy version stamp** (`consent_copy_version`, currently `"v4"` —
+  `CONSENT_COPY_VERSION` in `src/lib/consent-copy-version.mjs`), so
+  v1/v2/v3/v4 records stay distinguishable in the audit trail. One linear
+  version spans **every** consent surface (the in-chat capture form, the
+  at-sign-in opt-in, **and** the chat consent gate, see below); the verbatim
+  text disambiguates which surface a record came from. **v3** added the
+  at-sign-in opt-in (lawyer-approved June 2026). **v4** adds the **chat
+  consent gate** surface, the upgraded personalised-offers headlines, and the
+  button-consent mechanic (lawyer-approved July 2026); the capture-form labels
+  are unchanged but ship in the v4 set. The stamp is resolved
   server-side: it is set only when the echoed text is byte-identical to the
   copy the backend currently serves, and `NULL` otherwise (honest
   "unattested" — e.g. a ≤60s-stale cached copy across a deploy boundary; the
@@ -104,7 +114,7 @@ Email lives **only** in the consent/marketing cluster (see
 | `doi_sent_at` | When the token was issued; drives expiry. |
 | `doi_confirmed_at` | When the user clicked confirm. |
 | `consent_text_shown` | Verbatim copy the user saw (audit trail). |
-| `consent_copy_version` | Which canonical copy that text is (`'v1'`/`'v2'`; `NULL` = unattested echo). See migration `0011`. |
+| `consent_copy_version` | Which canonical copy that text is (`'v1'`…`'v4'`; `NULL` = unattested echo). See migration `0011`. |
 | `unsubscribed_at` | Set on unsubscribe; the address also goes to `suppression_list`. |
 
 `suppression_list (email, added_at, reason)` is the hard block-list checked
@@ -153,7 +163,14 @@ Later, every marketing email carries:
         └─ render "Du wurdest abgemeldet."
 ```
 
-## At-sign-in marketing opt-in (presentation-maximised, lawful) — copy v3
+## At-sign-in marketing opt-in (presentation-maximised, lawful) — copy v3, button-consent since v4
+
+> ℹ️ **v4 update:** this surface now uses the **button-consent mechanic** (see
+> the dedicated section below) instead of a checkbox, and its `headline` was
+> upgraded to the approved personalised-offers framing. Where this section says
+> "ticks the (unchecked) box", read "taps the explicit accept button" — the
+> legal analysis is unchanged: nothing pre-selected, a clear affirmative act,
+> `marketingConsent: true` only sent on that act, same DOI, same audit.
 
 A **signed-in** Shopify customer can opt into marketing **without re-typing their
 email**. This is a *presentation* optimisation only — the lawful basis is
@@ -207,6 +224,79 @@ unchanged. See [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §10–§11.
 
 The widget render contract is in
 [`frontend-handoff/CONSENT_FLOW.md`](./frontend-handoff/CONSENT_FLOW.md) §2.
+
+## Chat consent gate (anonymous, marketing-only) — copy v4
+
+The widget shows a **consent gate** once per session after the user's **first
+chat message**: an Accept/Decline marketing opt-in dialog with a typed email
+field, for **anonymous** sessions. It is the same consent path B — marketing
+only, full DOI — with a typed email instead of a stored one:
+
+- **Copy is backend-served**: `GET /api/consent-copy?surface=chat` →
+  `chatGateMarketingConsentCopy()` (same guards + 60s cache as
+  `surface=signin`). Payload mirrors the sign-in surface: `headline`
+  (benefit framing — personalised offers + exclusive discount promotions —
+  NOT part of `consentTextShown`), `marketingLabel`, `consentFooter`,
+  `consentTextShown` (label + footer), `imprintUrl`, `privacyUrl`,
+  `lawyerApproved: true`. The widget renders nothing while `lawyerApproved`
+  is `false`.
+- **Accept posts to `POST /api/chat-marketing-opt-in`** (guards like
+  `/api/capture-email`: origin allowlist + `x-ms-chat-key` + `x-ms-session`).
+  Body: `{ sessionId, email, marketingConsent: true, consentTextShown
+  (echoed verbatim), locale, trigger: "chat_gate" }`. **Deliberately not
+  `/api/capture-email`**: that endpoint hard-requires the transactional tick
+  and its audit string covers both consents — neither fits a marketing-only
+  signup.
+- **It runs the EXISTING DOI**: the accept sets `marketing_doi_status =
+  'pending'`, issues a token, and sends the **same** confirmation email;
+  consent becomes `'confirmed'` only after the link is clicked. A
+  suppressed/unsubscribed address is never re-pended. Withdrawable via the
+  **same** unsubscribe. Response `{ ok, marketing: { status, doiEmailSent,
+  alreadyConfirmed } }`; errors `400 invalid_email |
+  marketing_consent_required`, `429` (+`Retry-After`), `503
+  upstream_unavailable`.
+- **Same consent audit**: the exact label + footer shown are stored verbatim
+  as `consent_text_shown` with the `consent_copy_version` stamp (v4).
+- **Session recording**: the capture stores the `session_id` and runs
+  `linkCustomerOnEmailCapture` exactly like `/api/capture-email`, so the
+  returning-customer memory gate on `/api/chat`
+  (`wasEmailCapturedFromSession`) passes for a gate-captured email too.
+
+```
+anonymous widget (after 1st message)          backend
+────────────────────────────────              ───────
+GET /api/consent-copy?surface=chat  ─────────► { headline, marketingLabel, consentFooter,
+                                                 consentTextShown, version: v4, lawyerApproved: true, … }
+user taps "Ja, Angebote aktivieren" ─────────► POST /api/chat-marketing-opt-in
+  (typed email in the gate's field)              (guard: origin + secret + session)
+                                                 ├─ require marketingConsent === true + valid email
+                                                 ├─ upsertEmailCapture(marketing=true, session_id) → 'pending' + token
+                                                 ├─ linkCustomerOnEmailCapture (attach session)
+                                                 └─ send DOI email
+user clicks confirm link ────────────────────► GET /api/confirm-marketing  → 'confirmed'
+```
+
+## Button-consent mechanic (v4) — the marketing surfaces
+
+**Lawyer-approved (July 2026).** The widget's two marketing surfaces — the
+**chat consent gate** and the **at-sign-in opt-in card** — no longer render a
+checkbox. Instead:
+
+- the served `marketingLabel` + `consentFooter` are **fully visible** (no
+  truncation, no "read more" hiding the consent text),
+- the **explicit tap on "Ja, Angebote aktivieren"** is the affirmative act
+  (Art. 4(11) / Art. 7 GDPR — a clear affirmative action, equivalent to
+  actively ticking a box),
+- **nothing is pre-selected**, and **decline is equally reachable** (no
+  visual burying of the decline option),
+- `marketingConsent: true` is **only ever sent on that tap** — the backends
+  still refuse anything else (`400 marketing_consent_required`), so an
+  auto-submit can never enrol anyone.
+
+The button caption is UI chrome, **not** consent text: the Art. 7 audit string
+(`consentTextShown`) remains label + footer, exactly what is displayed. The
+**email-capture form is unchanged** — still two separate, never-pre-ticked
+checkboxes, and its audit string still covers both consents.
 
 ## §7 Abs. 3 UWG Bestandskunden — REMOVED
 
@@ -268,11 +358,14 @@ while keeping the `suppression_list` row, so we keep honouring the opt-out (see
 The ask → submit → opt-in → DOI-confirm funnel is tracked through
 session-keyed `kpi_events` (`email_capture_ask_shown` / `_submitted` /
 `_marketing_opted_in` / `_marketing_confirmed`, plus the widget-emitted
-`_declined`), each carrying the trigger moment of the ask. **No email address
-ever appears in an event** — see `src/lib/kpi-events.ts` and
-[`API_CONTRACT.md`](./API_CONTRACT.md) §5. The optional `trigger` echoed to
-`/api/capture-email` is telemetry-only and is never stored on the consent
-record.
+`_declined`), each carrying the trigger moment of the ask. The v4 consent-gate
+surfaces additionally emit the widget-side `consent_gate_shown` /
+`_accepted` / `_declined` / `_dismissed` events (payload
+`{ surface: "signin" | "chat" }`), shown as their own funnel on the KPI tab.
+**No email address ever appears in an event** — see `src/lib/kpi-events.ts`
+and [`API_CONTRACT.md`](./API_CONTRACT.md) §5. The optional `trigger` echoed
+to `/api/capture-email` / `/api/chat-marketing-opt-in` is telemetry-only and
+is never stored on the consent record.
 
 ## Defensive email handling
 
@@ -290,11 +383,31 @@ result and logs to stdout (local-dev), rather than faking success.
 All strings below are in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts).
 `CONSENT_COPY_LAWYER_APPROVED` governs the DOI marketing + personalisation path.
 
-> ✅ **DONE — `CONSENT_COPY_LAWYER_APPROVED = true` (June 2026).** The v3 copy
-> (`CONSENT_COPY_VERSION`) — DOI/marketing/personalisation/transactional plus the
-> at-sign-in opt-in strings — was reviewed and approved by the lawyer and went
-> live verbatim. The items below are checked off as a record of what was
-> approved; any wording change requires a fresh review.
+> ✅ **DONE — `CONSENT_COPY_LAWYER_APPROVED = true`.** The v3 copy — DOI/
+> marketing/personalisation/transactional plus the at-sign-in opt-in strings —
+> was reviewed and approved June 2026 and went live verbatim. The **v4**
+> additions (below) were approved July 2026. The items are checked off as a
+> record of what was approved; any wording change requires a fresh review.
+
+### v4 — chat consent gate + button-consent (NEW; approved July 2026)
+
+- [x] **Button-consent mechanic** on the marketing surfaces (consent gate +
+      at-sign-in card): served label + footer fully visible, explicit
+      "Ja, Angebote aktivieren" tap as the affirmative act, nothing
+      pre-selected, decline equally reachable, `marketingConsent: true` only
+      sent on the tap. The email-capture form keeps its two checkboxes.
+- [x] **Chat-gate headline** (`chatGateHeadline`, v4: "Persönliche Angebote
+      und exklusive Rabatt-Aktionen — abgestimmt auf deine Beratung.") —
+      upgraded benefit framing (personalised offers + exclusive discount
+      promotions); NOT part of `consentTextShown`.
+- [x] **Chat-gate consent label** (`chatGateLabel`, v4: "Ja, schickt mir
+      persönliche Angebote und exklusive Rabatt-Aktionen an diese
+      E-Mail-Adresse — nur für Abonnenten. Jederzeit abbestellbar.") —
+      worded for an anonymous typed email; same DOI, same footer.
+- [x] **Sign-in headline** (`signinHeadline`, v4: "Persönliche Angebote und
+      exklusive Rabatt-Aktionen — direkt an deine hinterlegte
+      E-Mail-Adresse.") — same upgraded framing; the sign-in label itself is
+      unchanged from v3.
 
 ### v3 — at-sign-in marketing opt-in (NEW; replaces v2 in the review)
 

@@ -27,7 +27,8 @@ Endpoints:
 | POST   | `/api/kpi`                | Pseudonymous telemetry ingestion (fire-and-forget).      |
 | POST   | `/api/feedback`           | Customer feedback capture (free text + optional context). §9. |
 | POST   | `/api/capture-email`      | GDPR email capture + double opt-in (summary + marketing).|
-| GET    | `/api/consent-copy`       | Canonical capture-form consent copy (labels + links).     |
+| POST   | `/api/chat-marketing-opt-in` | Chat consent gate: marketing-only opt-in, typed email (DOI). §7.6. |
+| GET    | `/api/consent-copy`       | Canonical consent copy (capture form / `?surface=signin` / `?surface=chat`). |
 | GET    | `/api/confirm-marketing`  | Marketing double-opt-in confirmation link (HTML page).   |
 | GET    | `/api/unsubscribe`        | Signed unsubscribe link → suppression (HTML page).        |
 | GET    | `/api/auth/shopify/login` | Customer Account sign-in (top-level redirect). |
@@ -1031,7 +1032,26 @@ duplicate them:
 `trigger` is the value moment from the `offer_email_summary` tool call
 (`recommendation_accepted`, `comparison_delivered`, `consideration_pause`,
 `buying_intent`, `checkout_intent`), so opt-in rates can be compared per
-trigger moment and per ask number.
+trigger moment and per ask number. Captures via the chat consent gate
+(§7.6) ride in the same funnel with `trigger: "chat_gate"`; the at-sign-in
+opt-in with `trigger: "signin_optin"`.
+
+### Consent-gate events (canonical names, v4)
+
+The v4 button-consent marketing surfaces (the in-chat consent gate and the
+at-sign-in opt-in card) are measured through four **widget-emitted** events
+(the backend only observes the accept as an opt-in POST). Each carries
+`data: { surface: "signin" | "chat" }`:
+
+| Event                    | When                                                        |
+| ------------------------ | ----------------------------------------------------------- |
+| `consent_gate_shown`     | The gate/card was rendered (once per session per surface).  |
+| `consent_gate_accepted`  | The explicit "Ja, Angebote aktivieren" tap.                 |
+| `consent_gate_declined`  | The explicit decline tap.                                   |
+| `consent_gate_dismissed` | The gate was closed without an explicit accept/decline.     |
+
+> ⚠️ **Retired:** stop sending `starter_shown` / `starter_clicked` — nothing
+> aggregates them anymore.
 
 ### Success response
 
@@ -1239,12 +1259,13 @@ marketing send. See [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
 ### 7.4 `GET /api/consent-copy`
 
-Serves the canonical capture-form consent copy. The same payload is already
-attached to every `offer_email_summary` tool result (§2), so the widget only
-needs this endpoint for capture forms **not** triggered by the tool (e.g. a
-proactive share-form entry point). The widget MUST source all consent copy
-from one of these two paths and **never hard-code it** — the strings are the
-Art. 7 audit text.
+Serves the canonical consent copy for the widget's consent surfaces. The
+capture-form payload is already attached to every `offer_email_summary` tool
+result (§2), so the widget only needs this endpoint for capture forms **not**
+triggered by the tool (e.g. a proactive share-form entry point) and for the
+`surface=signin` / `surface=chat` marketing surfaces. The widget MUST source
+all consent copy from these paths and **never hard-code it** — the strings
+are the Art. 7 audit text.
 
 Like `/api/products`: **no shared secret** (the strings are public form copy),
 origin allowlist + rate limit only (shares the products bucket, 60 req /
@@ -1253,9 +1274,18 @@ origin allowlist + rate limit only (shares the products bucket, 60 req /
 #### Request
 
 ```
-GET /api/consent-copy            # German (default)
-GET /api/consent-copy?locale=en  # English (⚠️ not yet legal-reviewed)
+GET /api/consent-copy                   # in-chat capture form (default), German
+GET /api/consent-copy?surface=signin    # at-sign-in opt-in card
+GET /api/consent-copy?surface=chat      # chat consent gate (v4) — submit via §7.6
+GET /api/consent-copy?locale=en         # English (⚠️ not yet legal-reviewed); combines with surface
 ```
+
+The `signin` and `chat` surfaces share one payload shape (`headline`,
+`marketingLabel`, `consentFooter`, `consentTextShown`, `imprintUrl`,
+`privacyUrl`, `lawyerApproved`, `version`, `locale`, `enLegalReviewed`) — only
+the strings differ; see [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §2–§3 for the
+render contract (button-consent). `headline` is benefit framing and NOT part
+of `consentTextShown` (label + footer only).
 
 On `?locale=en` the strings come back in English, and the payload carries
 `"locale": "en"` plus **`"enLegalReviewed": false`** — the English consent copy
@@ -1273,9 +1303,9 @@ Cache-Control: public, max-age=60, stale-while-revalidate=300
 ```
 ```jsonc
 {
-  // Identifier of the served copy ("v3"). Stamped server-side into the audit
+  // Identifier of the served copy ("v4"). Stamped server-side into the audit
   // trail (consent_copy_version) when the echoed consentTextShown matches.
-  "version": "v3",
+  "version": "v4",
   // BOTH checkboxes start UNCHECKED (v2) — never pre-check either box.
   "transactionalLabel": "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl. Direkt-Link zur Kasse).",
   "marketingLabel": "Ja, ich möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten. Jederzeit abbestellbar.",
@@ -1326,6 +1356,69 @@ do not persist it across sessions.
 | `UNSUBSCRIBE_SECRET`      | HMAC secret for unsubscribe tokens (falls back to `CHAT_SHARED_SECRET`). |
 | `CONTACT_FROM_EMAIL`      | Reused as the sender for summary + DOI emails.                       |
 | `RETURNING_HINT_ENABLED`  | **Default `true`.** Server-side switch for `returningHint.enabled` (§7.4); set `false` to make the widget hide the hint. |
+
+### 7.6 `POST /api/chat-marketing-opt-in`
+
+The **chat consent gate** accept (v4): a marketing-ONLY opt-in with a typed
+email, for **anonymous** chat sessions. The widget shows the gate once per
+session after the user's first chat message (copy from
+`GET /api/consent-copy?surface=chat`, §7.4) and POSTs here on the explicit
+"Ja, Angebote aktivieren" tap. Not `/api/capture-email` — that endpoint
+hard-requires the transactional tick and its audit string covers both
+consents. Full render contract in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §2.
+
+#### Required request headers
+
+Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
+
+#### Request body
+
+```jsonc
+{
+  "sessionId": "b3c1…",           // optional; falls back to the x-ms-session header
+  "email": "max@example.de",       // the email typed into the gate
+  "marketingConsent": true,        // MUST be the user's actual accept tap — never hard-code true
+  "consentTextShown": "Ja, schickt mir persönliche Angebote … | Verarbeitung durch motion sports …",  // the served surface=chat consentTextShown, echoed VERBATIM
+  "locale": "de",                  // optional ("de" default, "en" on /en)
+  "trigger": "chat_gate"           // optional echo; telemetry-only, ≤40 chars
+}
+```
+
+Runs the **same double-opt-in pipeline** as `/api/capture-email` (marketing
+half): DOI `pending` + confirmation email; **no marketing until the link is
+clicked**. After a success the widget MAY attach the email as
+`customer.email` on this session's subsequent `/api/chat` requests to enable
+returning-customer memory (§2 privacy rules: in-memory only, this session
+only, never from `localStorage`).
+
+#### Success response
+
+```jsonc
+{
+  "ok": true,
+  "marketing": {
+    "status": "pending",        // "pending" → DOI email sent; "confirmed" → was already confirmed
+    "doiEmailSent": true,
+    "alreadyConfirmed": false   // true when the address was already DOI-confirmed (re-opt-in)
+  }
+}
+```
+
+After a `pending` response, tell the user to check their inbox and click the
+confirmation link — they are **not** subscribed until they do.
+
+#### Error responses
+
+| Status | Code                         | When                                                       |
+| ------ | ---------------------------- | ---------------------------------------------------------- |
+| 400    | `bad_request`                | Invalid JSON body.                                         |
+| 400    | `invalid_email`              | Email missing or not a valid address.                      |
+| 400    | `marketing_consent_required` | `marketingConsent` not `true` (no real accept tap).        |
+| 401    | `unauthorized`               | Missing / wrong shared secret.                             |
+| 403    | `forbidden`                  | Cross-origin from an origin not in allowlist.              |
+| 429    | `rate_limited`               | Chat bucket (20 req / 60 s) or per-recipient DOI cap (3 / 60 min); carries `Retry-After`. |
+| 503    | `upstream_unavailable`       | No database configured — consent could not be stored.      |
+| 500    | `internal_error`             | Anything else.                                             |
 
 ---
 
