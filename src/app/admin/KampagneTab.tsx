@@ -70,6 +70,7 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
     firstName: q.contact.firstName,
     lastName: q.contact.lastName,
     language: q.contact.language,
+    languageOverride: q.contact.languageOverride,
     optInLevel: q.contact.optInLevel ?? "UNKNOWN",
     ordersCount: q.contact.ordersCount,
     totalSpentCents: q.contact.totalSpentCents,

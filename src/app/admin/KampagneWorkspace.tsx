@@ -52,7 +52,10 @@ export interface CampaignQueueItemProps {
   email: string;
   firstName: string | null;
   lastName: string | null;
+  /** EFFECTIVE email language (operator override, else Shopify-derived). */
   language: "de" | "en";
+  /** Operator-pinned language, or null when the derivation applies. */
+  languageOverride: "de" | "en" | null;
   optInLevel: string;
   ordersCount: number;
   totalSpentCents: number;
@@ -685,6 +688,44 @@ export function KampagneWorkspace({
     [current, busy, runRegenerate]
   );
 
+  /** Switch the card's email language (DE/EN). Persists the per-contact
+   * override (a re-sync never clobbers it; picking the derived language clears
+   * the pin), then CHAINS a regenerate so the prose matches — the send-time
+   * blocks (Mo-Hinweis, Rabattzeile, Set-Angebot, Footer) follow the effective
+   * language automatically. */
+  const doSetLanguage = React.useCallback(
+    async (language: "de" | "en") => {
+      if (!current || busy || language === current.language) return;
+      setBusy("regen");
+      try {
+        const json = (await callApi("/api/admin/campaign/language", {
+          contactId: current.contactId,
+          // Choosing the profile-derived language = back to automatic.
+          language,
+        })) as { language?: "de" | "en"; languageOverride?: "de" | "en" | null };
+        patchItem(current.contactId, {
+          language: json.language ?? language,
+          languageOverride: json.languageOverride ?? null,
+        });
+        toast({
+          title: `Sprache: ${language === "en" ? "Englisch" : "Deutsch"} — Text wird neu generiert…`,
+          duration: 0,
+        });
+        await runRegenerate(current.contactId, current.discountPercent);
+        toast({ variant: "success", title: "Text in neuer Sprache generiert" });
+      } catch (err) {
+        toast({
+          variant: "error",
+          title: "Sprachwechsel fehlgeschlagen",
+          description: String((err as Error).message ?? err),
+        });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [current, busy, patchItem, runRegenerate]
+  );
+
   /** Persist a curated recommendation list; the server also rebuilds an
    * attached bundle to match. Immediate persist per change — no save button. */
   const doUpdateRecommendations = React.useCallback(
@@ -1102,7 +1143,12 @@ export function KampagneWorkspace({
                   <div className="text-muted-foreground">{current.email}</div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <Badge variant="outline">{current.language.toUpperCase()}</Badge>
+                  <LanguageToggle
+                    language={current.language}
+                    overridden={current.languageOverride !== null}
+                    disabled={busy !== null}
+                    onSelect={doSetLanguage}
+                  />
                   <OptInBadge level={current.optInLevel} blocked={optInBlocked} />
                   {current.lowConfidence && (
                     <Badge variant="warning">
@@ -1923,6 +1969,55 @@ function HeaderStat({ label, value, warn }: { label: string; value: number; warn
     <span className={warn ? "text-warning" : undefined}>
       <strong>{value}</strong> <span className="text-muted-foreground">{label}</span>
     </span>
+  );
+}
+
+/** DE/EN switch for the card's email language. Shows the EFFECTIVE language
+ * (normally derived from the Shopify profile — see campaign-language.mjs);
+ * clicking the other one pins it per contact and regenerates the text. */
+function LanguageToggle({
+  language,
+  overridden,
+  disabled,
+  onSelect,
+}: {
+  language: "de" | "en";
+  overridden: boolean;
+  disabled: boolean;
+  onSelect: (language: "de" | "en") => void;
+}) {
+  return (
+    <div
+      className="inline-flex overflow-hidden rounded-md border border-border text-xs"
+      role="group"
+      aria-label="Sprache der E-Mail"
+      title={
+        overridden
+          ? "Sprache manuell festgelegt (Sync ändert sie nicht mehr)."
+          : "Sprache aus dem Shopify-Profil abgeleitet — Klick legt sie manuell fest und generiert den Text neu."
+      }
+    >
+      {(["de", "en"] as const).map((lang) => (
+        <button
+          key={lang}
+          type="button"
+          disabled={disabled || language === lang}
+          onClick={() => onSelect(lang)}
+          className={
+            language === lang
+              ? "bg-primary px-2 py-0.5 font-semibold text-primary-foreground"
+              : "px-2 py-0.5 text-muted-foreground hover:bg-muted disabled:opacity-50"
+          }
+        >
+          {lang.toUpperCase()}
+        </button>
+      ))}
+      {overridden && (
+        <span className="border-l border-border px-1.5 py-0.5 text-muted-foreground" title="Manuell festgelegt">
+          ✎
+        </span>
+      )}
+    </div>
   );
 }
 

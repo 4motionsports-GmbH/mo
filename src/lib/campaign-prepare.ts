@@ -16,7 +16,7 @@ import { isSuppressed } from "./email-capture-store";
 import {
   PLACEHOLDER_DISCOUNT_CODE,
   discountExpiryDaysPublic,
-  formatGermanExpiryDate,
+  formatExpiryDateForLanguage,
 } from "./shopify-discounts";
 import { generateCampaignDraft } from "./campaign-draft";
 import { loadCampaignPersonalization } from "./campaign-recommendations";
@@ -60,7 +60,9 @@ export async function prepareDraftForContact(
   const bundle = await getActiveBundleForCampaignContact(contact.id);
   const attachedBundle = bundle
     ? {
-        title: bundle.title ?? "Dein persönliches Set",
+        title:
+          bundle.title ??
+          (contact.language === "en" ? "Your personal set" : "Dein persönliches Set"),
         componentNames: bundle.components.map((c) => c.title),
         hasSaving: bundleStattPrice(bundle.bundlePrice, bundle.componentsSum) != null,
       }
@@ -79,7 +81,11 @@ export async function prepareDraftForContact(
     attachedBundle,
     discountCode: hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountPercent,
-    discountExpiresLabel: expiry ? formatGermanExpiryDate(expiry) : null,
+    // The expiry label the prose states, in the contact's language (English
+    // drafts get "31 July 2026" instead of the German 31.07.2026).
+    discountExpiresLabel: expiry
+      ? formatExpiryDateForLanguage(expiry, contact.language)
+      : null,
     discountValidityDays: hasDiscount ? discountExpiryDaysPublic() : null,
   });
 

@@ -37,13 +37,36 @@ export interface BundleOfferBlockInput {
   currency?: string;
   /** The tracked redirect link (/api/r/<token>) the "Zum Angebot" button uses. */
   offerUrl: string;
+  /** Label language. The campaign channel is bilingual (contact.language);
+   * the marketing channel stays German — hence the "de" default. */
+  language?: "de" | "en";
 }
 
-function money(value: string | number, currency: string): string {
+function money(value: string | number, currency: string, language: "de" | "en"): string {
   const n = typeof value === "number" ? value : Number(String(value).replace(",", "."));
   if (!Number.isFinite(n)) return String(value);
-  return n.toLocaleString("de-DE", { style: "currency", currency });
+  return n.toLocaleString(language === "en" ? "en-IE" : "de-DE", {
+    style: "currency",
+    currency,
+  });
 }
+
+/** The block's fixed labels, per language (PAngV wording stays intact in
+ * German; the English mirror keeps the same honest "instead of" framing). */
+const BUNDLE_LABELS = {
+  de: {
+    kicker: "Dein persönliches Angebot",
+    price: "Set-Preis",
+    instead: "statt",
+    cta: "Zum Angebot",
+  },
+  en: {
+    kicker: "Your personal offer",
+    price: "Set price",
+    instead: "instead of",
+    cta: "View offer",
+  },
+} as const;
 
 /**
  * Render the special-offer block (text + HTML parts) for an attached bundle.
@@ -52,20 +75,24 @@ function money(value: string | number, currency: string): string {
  */
 export function renderBundleOfferBlock(input: BundleOfferBlockInput): { text: string; html: string } {
   const currency = input.currency ?? "EUR";
-  const priceLabel = money(input.bundlePrice, currency);
+  const language = input.language ?? "de";
+  const labels = BUNDLE_LABELS[language];
+  const priceLabel = money(input.bundlePrice, currency, language);
   // PAngV: the strike "statt" price is the genuine component sum, ONLY when the
   // bundle is actually cheaper than its parts; otherwise no strike line at all.
   const statt = bundleStattPrice(input.bundlePrice, input.componentsSum);
-  const stattLabel = statt != null ? money(statt, currency) : null;
+  const stattLabel = statt != null ? money(statt, currency, language) : null;
 
   // --- text part ---
   const textLines = [
     "",
     "—",
-    `Dein persönliches Angebot: ${input.title}`,
+    `${labels.kicker}: ${input.title}`,
     ...input.components.map((c) => `- ${c.name}`),
-    stattLabel ? `Set-Preis: ${priceLabel} (statt ${stattLabel})` : `Set-Preis: ${priceLabel}`,
-    `Zum Angebot: ${input.offerUrl}`,
+    stattLabel
+      ? `${labels.price}: ${priceLabel} (${labels.instead} ${stattLabel})`
+      : `${labels.price}: ${priceLabel}`,
+    `${labels.cta}: ${input.offerUrl}`,
   ];
   const text = textLines.join("\n");
 
@@ -78,9 +105,9 @@ export function renderBundleOfferBlock(input: BundleOfferBlockInput): { text: st
   const priceHtml = stattLabel
     ? `<p style="${EMAIL_TEXT_STYLE} font-weight: 700; padding-top: 8px;" align="left">${escapeHtml(
         priceLabel
-      )} <span style="${EMAIL_MUTED_TEXT_STYLE} text-decoration: line-through; font-weight: 400;">statt ${escapeHtml(
-        stattLabel
-      )}</span></p>`
+      )} <span style="${EMAIL_MUTED_TEXT_STYLE} text-decoration: line-through; font-weight: 400;">${
+        labels.instead
+      } ${escapeHtml(stattLabel)}</span></p>`
     : `<p style="${EMAIL_TEXT_STYLE} font-weight: 700; padding-top: 8px;" align="left">${escapeHtml(
         priceLabel
       )}</p>`;
@@ -91,13 +118,13 @@ export function renderBundleOfferBlock(input: BundleOfferBlockInput): { text: st
                 <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr; Margin-top: 16px;" role="presentation">
                   <tr>
                     <td style="mso-line-height-rule: exactly; padding: 16px 20px; border: 2px solid #e5e5e5; border-radius: 8px;" bgcolor="#f6f6f6" valign="top">
-                      <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; line-height: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #008ccb; Margin: 0 0 4px;" align="left">Dein persönliches Angebot</p>
+                      <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; line-height: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #008ccb; Margin: 0 0 4px;" align="left">${escapeHtml(labels.kicker)}</p>
                       <h3 style="font-family: ${EMAIL_FONT_FAMILY}; color: #000000; font-size: 16px; line-height: 22px; font-weight: 700; text-align: left; Margin: 0 0 6px;" align="left">${escapeHtml(
                         input.title
                       )}</h3>${rowsHtml}
                       ${priceHtml}
                       <table cellspacing="0" cellpadding="0" border="0" width="100%" style="direction: ltr; Margin-top: 6px;" role="presentation">${renderCtaButton(
-                        { label: "Zum Angebot", url: input.offerUrl }
+                        { label: labels.cta, url: input.offerUrl }
                       )}
                       </table>
                     </td>

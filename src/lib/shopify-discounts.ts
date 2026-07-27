@@ -141,6 +141,26 @@ export function formatGermanExpiryDate(d: string | Date): string {
 }
 
 /**
+ * Language-aware sibling of formatGermanExpiryDate for the campaign channel,
+ * whose audience is bilingual (campaign_contacts.language): German keeps the
+ * exact TT.MM.JJJJ format above; English uses a written month ("31 July 2026")
+ * because a numeric day/month order would be ambiguous to an international
+ * reader. Same store timezone so the day can never shift.
+ */
+export function formatExpiryDateForLanguage(
+  d: string | Date,
+  language: "de" | "en"
+): string {
+  if (language !== "en") return formatGermanExpiryDate(d);
+  return new Date(d).toLocaleDateString("en-GB", {
+    timeZone: "Europe/Berlin",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/**
  * Generate a fresh, hard-to-guess code string. Short enough to read in an email,
  * random enough not to collide or be enumerated. Prefix marks its origin:
  * "MS5" = marketing sends, "WELCOME" = the one-time welcome code.
