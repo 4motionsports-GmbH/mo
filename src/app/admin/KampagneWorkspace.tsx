@@ -20,6 +20,7 @@ import {
   AlertTriangle,
   Check,
   Copy,
+  Eye,
   RefreshCw,
   Send,
   SkipForward,
@@ -92,6 +93,9 @@ export interface CampaignHistoryItemProps {
   sentAt: string | null;
   /** true/false when Shopify answered; null = unknown/unchecked. */
   redeemed: boolean | null;
+  /** True when the shipped content was retained (viewable via „Ansehen“);
+   * sends recorded before migration 0038 have nothing stored. */
+  hasContent: boolean;
 }
 
 export interface CampaignCountsProps {
@@ -209,6 +213,58 @@ export function KampagneWorkspace({
   const [prepareDepth, setPrepareDepth] = React.useState(0);
   const [copiedId, setCopiedId] = React.useState<number | null>(null);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  // Rendered-HTML viewer (queue draft preview + sent-email view). Own busy
+  // flag — a read-only preview never blocks the review state machine. The
+  // object URL is revoked on replace/close.
+  const [emailView, setEmailView] = React.useState<{
+    title: string;
+    description: string;
+    url: string;
+  } | null>(null);
+  const [emailViewBusy, setEmailViewBusy] = React.useState(false);
+
+  /** Fetch rendered email HTML from a guarded admin route and open it in the
+   * viewer dialog (same fetch→blob→object-URL pattern as the letter preview). */
+  const openEmailView = React.useCallback(
+    async (title: string, description: string, path: string, payload: Record<string, unknown>) => {
+      setEmailViewBusy(true);
+      try {
+        const res = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const json = (await res.json().catch(() => ({}))) as {
+            error?: { message?: string };
+          };
+          throw new Error(json?.error?.message ?? `Fehler (${res.status})`);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        setEmailView((prev) => {
+          if (prev) URL.revokeObjectURL(prev.url);
+          return { title, description, url };
+        });
+      } catch (err) {
+        toast({
+          variant: "error",
+          title: "E-Mail-Ansicht fehlgeschlagen",
+          description: String((err as Error).message ?? err),
+        });
+      } finally {
+        setEmailViewBusy(false);
+      }
+    },
+    []
+  );
+
+  const closeEmailView = React.useCallback(() => {
+    setEmailView((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+  }, []);
 
   const visibleItems = React.useMemo(() => {
     return items.filter((it) => {
@@ -422,6 +478,35 @@ export function KampagneWorkspace({
       }
     },
     [busy, prepareDepth]
+  );
+
+  /** Rendered-HTML preview of the CURRENT card — the on-screen (possibly
+   * unsaved) subject/body ride along so edits preview correctly. */
+  const doPreview = React.useCallback(() => {
+    if (!current || emailViewBusy) return;
+    void openEmailView(
+      `Vorschau — ${current.email}`,
+      "So wird die E-Mail im Postfach gerendert. Der Rabatt zeigt den Platzhalter-Code " +
+        "MO-XXXX — der echte MK-Code wird erst beim Senden erzeugt.",
+      "/api/admin/campaign/email-preview",
+      { contactId: current.contactId, subject: current.subject, body: current.body }
+    );
+  }, [current, emailViewBusy, openEmailView]);
+
+  /** Open the retained content of a send record from the "Gesendet" view. */
+  const doViewSent = React.useCallback(
+    (h: CampaignHistoryItemProps) => {
+      if (emailViewBusy) return;
+      void openEmailView(
+        `Gesendet an ${h.email}`,
+        h.sentVia === "copy"
+          ? "Kopier-Versand — gespeichert ist der kopierte Text (kein HTML verschickt)."
+          : "Genau dieser Inhalt wurde verschickt.",
+        "/api/admin/campaign/sent-email",
+        { sendId: h.id }
+      );
+    },
+    [emailViewBusy, openEmailView]
   );
 
   const doCopy = React.useCallback(async () => {
@@ -797,6 +882,8 @@ export function KampagneWorkspace({
         return;
       }
       if (view !== "queue") return;
+      // No review shortcuts while a dialog is open (S must never send blind).
+      if (emailView || confirmOpen || resetOpen) return;
       const k = e.key.toLowerCase();
       if (k === "n") {
         e.preventDefault();
@@ -813,11 +900,24 @@ export function KampagneWorkspace({
       } else if (k === "x") {
         e.preventDefault();
         void doSkip();
+      } else if (k === "v") {
+        e.preventDefault();
+        doPreview();
       }
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [view, visibleItems.length, doCopy, doSend, doSkip]);
+  }, [
+    view,
+    visibleItems.length,
+    doCopy,
+    doSend,
+    doSkip,
+    doPreview,
+    emailView,
+    confirmOpen,
+    resetOpen,
+  ]);
 
   // ---- render --------------------------------------------------------------
   return (
@@ -932,15 +1032,15 @@ export function KampagneWorkspace({
               ))}
             </span>
             <span className="ms-auto text-xs text-muted-foreground">
-              Tasten: <Kbd>N</Kbd> weiter · <Kbd>P</Kbd> zurück · <Kbd>C</Kbd> kopieren ·{" "}
-              <Kbd>S</Kbd> senden · <Kbd>X</Kbd> überspringen
+              Tasten: <Kbd>N</Kbd> weiter · <Kbd>P</Kbd> zurück · <Kbd>V</Kbd> Vorschau ·{" "}
+              <Kbd>C</Kbd> kopieren · <Kbd>S</Kbd> senden · <Kbd>X</Kbd> überspringen
             </span>
           </>
         )}
       </div>
 
       {view === "sent" ? (
-        <SentHistory history={history} />
+        <SentHistory history={history} viewBusy={emailViewBusy} onView={doViewSent} />
       ) : (
         <div className="grid items-start gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
           <QueueRail
@@ -1107,6 +1207,15 @@ export function KampagneWorkspace({
                     <Send className="me-1.5 h-4 w-4" />
                     {busy === "send" ? "Sendet…" : "Senden"}
                   </Button>
+                  <Button
+                    variant="outline"
+                    onClick={doPreview}
+                    disabled={emailViewBusy}
+                    title="Gerenderte E-Mail-Vorschau (inkl. Mo-Hinweis, Rabattzeile und Footer)"
+                  >
+                    <Eye className="me-1.5 h-4 w-4" />
+                    {emailViewBusy ? "Lädt…" : "Vorschau"}
+                  </Button>
                   <Button variant="outline" onClick={doCopy} disabled={busy !== null}>
                     <Copy className="me-1.5 h-4 w-4" />
                     Kopieren
@@ -1164,6 +1273,24 @@ export function KampagneWorkspace({
               Entwürfe verwerfen
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rendered-email viewer (draft preview + sent content) */}
+      <Dialog open={emailView !== null} onOpenChange={(v) => !v && closeEmailView()}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{emailView?.title}</DialogTitle>
+            <DialogDescription>{emailView?.description}</DialogDescription>
+          </DialogHeader>
+          {emailView && (
+            <iframe
+              title={emailView.title}
+              src={emailView.url}
+              sandbox=""
+              className="mt-3 h-[65vh] w-full rounded-md border border-border bg-white"
+            />
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1719,7 +1846,15 @@ function DiscountControl({
   );
 }
 
-function SentHistory({ history }: { history: CampaignHistoryItemProps[] }) {
+function SentHistory({
+  history,
+  viewBusy,
+  onView,
+}: {
+  history: CampaignHistoryItemProps[];
+  viewBusy: boolean;
+  onView: (h: CampaignHistoryItemProps) => void;
+}) {
   if (history.length === 0) {
     return (
       <div className="rounded-lg border border-info/30 bg-info/10 px-3.5 py-3 text-sm text-info">
@@ -1738,6 +1873,7 @@ function SentHistory({ history }: { history: CampaignHistoryItemProps[] }) {
             <th className="px-3 py-2 text-start font-medium">Code</th>
             <th className="px-3 py-2 text-start font-medium">Eingelöst</th>
             <th className="px-3 py-2 text-start font-medium">Gesendet</th>
+            <th className="px-3 py-2 text-start font-medium">Inhalt</th>
           </tr>
         </thead>
         <tbody>
@@ -1754,6 +1890,21 @@ function SentHistory({ history }: { history: CampaignHistoryItemProps[] }) {
               </td>
               <td className="px-3 py-2 text-muted-foreground">
                 {h.sentAt ? new Date(h.sentAt).toLocaleString("de-DE") : "—"}
+              </td>
+              <td className="px-3 py-2">
+                {h.hasContent ? (
+                  <Button variant="outline" size="sm" disabled={viewBusy} onClick={() => onView(h)}>
+                    <Eye className="me-1 h-3.5 w-3.5" />
+                    Ansehen
+                  </Button>
+                ) : (
+                  <span
+                    className="text-xs text-muted-foreground"
+                    title="Für diesen Versand wurde kein Inhalt gespeichert (vor Einführung der Speicherung gesendet)."
+                  >
+                    —
+                  </span>
+                )}
               </td>
             </tr>
           ))}

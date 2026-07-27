@@ -97,12 +97,13 @@ marketing drafts, enforced in the prompt and in the deterministic promo copy.
 | --- | --- | --- |
 | `campaign_contacts` | The synced audience + review-queue lifecycle | `shopify_customer_id` (unique), normalized `email`, `first_name`/`last_name`, `language` (de/en), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `draft_failed`), `sent_at`, `skipped_at` |
 | `campaign_drafts` | ONE editable draft per contact (unique `contact_id`) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
-| `campaign_sends` | Immutable send record (audit + KPI) | `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `sent_at` |
+| `campaign_sends` | Immutable send record (audit + KPI) | `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — migration `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `sent_at` |
 
 Deliberately **not** stored: full order history (read from Shopify at draft
 time; only the compact `purchase_summary` snapshot needed for the review card
-is kept) and a second full copy of the shipped body (`body_hash` proves what
-was sent).
+is kept). Since migration `0038` the shipped body IS retained next to its
+`body_hash`, so the "Gesendet" view can open exactly what the recipient
+received; rows purge on the same retention window (§6).
 
 ## 4. Draft generation
 
@@ -158,8 +159,9 @@ fallback discipline as `marketing-draft.ts`):
 
 ## 5. Review workflow (Kampagne tab)
 
-One contact at a time, keyboard-driven (`N`/`P` next/previous, `C` copy,
-`S` send, `X` skip; legend shown). The queue can be **filtered by opt-in
+One contact at a time, keyboard-driven (`N`/`P` next/previous, `V` preview,
+`C` copy, `S` send, `X` skip; legend shown — shortcuts pause while a dialog
+is open). The queue can be **filtered by opt-in
 level** (Alle / Nur DOI / Nur Single-Opt-in+Unbekannt) and searched by
 email/name — mutations are keyed by contact id, so filtering never
 mis-targets a card. Left: name, email, language + opt-in badges, compact
@@ -197,6 +199,14 @@ Actions:
   /api/admin/campaign/mark-done`) marks the contact `sent` with
   `sent_via='copy'`. No code is minted on this path (the UI warns that the
   placeholder is not a working code).
+- **Vorschau** (`POST /api/admin/campaign/email-preview`) — renders the
+  CURRENT card (the on-screen, possibly unsaved subject/body) through the
+  exact send-path composition (`renderCampaignEmailPreview` reuses
+  `renderCampaignEmail`: branded shell, bundle block, Mo promo, discount
+  line, unsubscribe footer) and returns `text/html`, shown in an in-tab
+  dialog iframe — the campaign sibling of the Kunden letter-preview route.
+  READ-ONLY and gate-free: nothing is claimed, minted, sent or recorded; the
+  discount line shows the `MO-XXXX` placeholder with the projected expiry.
 - **Regenerate** (`POST /api/admin/campaign/draft`, with a per-card depth
   input) and **Skip** (`POST /api/admin/campaign/skip`).
 
@@ -204,7 +214,10 @@ The "Gesendet" sub-view lists sent campaign emails with redemption status
 (existing `wasDiscountCodeRedeemed`, bounded fan-out). `MK-` codes also feed
 the existing revenue KPI (`kpi-revenue-store.ts` unions `campaign_sends`
 codes) — campaign revenue stays separable from `MS5-` marketing revenue by
-prefix.
+prefix. Per row, **Ansehen** (`POST /api/admin/campaign/sent-email`) opens
+the retained content (`0038`) in the same viewer dialog: system sends show
+the exact delivered HTML, copy-path rows show the copied text; pre-0038
+rows retained nothing and say so.
 
 ## 6. Retention
 
@@ -230,6 +243,8 @@ out of the sync ages out; drafts cascade with their contact). The
 | Rebuild queue (discard all open drafts → pending) | `POST /api/admin/campaign/reset-queue` |
 | Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` |
 | Global contact search (all statuses) | `POST /api/admin/campaign/contacts` |
+| Rendered draft preview (read-only, `text/html`) | `POST /api/admin/campaign/email-preview` |
+| Retained sent content (read-only, `text/html`) | `POST /api/admin/campaign/sent-email` |
 | UI | `src/app/admin/KampagneTab.tsx` + `KampagneWorkspace.tsx` |
 | Libs | `campaign-{sync,store,prepare,draft,recommendations,email}.ts`, `campaign-{language,flags,gates,sync-core,draft-core}.mjs`, `discount-swap.mjs`, `shopify-customers.ts` |
 

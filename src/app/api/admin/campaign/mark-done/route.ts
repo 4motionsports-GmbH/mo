@@ -60,6 +60,9 @@ export async function POST(req: Request) {
       email: contact.email,
       subject: draft.subject,
       bodyHash: hashCampaignBody(draft.body),
+      // Retain the copied prose (0038); no HTML was delivered on this path.
+      bodyText: draft.body,
+      bodyHtml: null,
       sentVia: "copy",
       discountCode: null,
       discountCodeGid: null,

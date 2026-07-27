@@ -286,12 +286,15 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       }
 
       // Immutable audit/KPI record — the redemption + revenue reads pick the
-      // MK- code up from here.
+      // MK- code up from here. The shipped parts are retained (0038) so the
+      // admin can open exactly what the recipient received.
       await recordCampaignSend({
         contactId,
         email: contact.email,
         subject: draft.subject,
         bodyHash: hashCampaignBody(text),
+        bodyText: text,
+        bodyHtml: html,
         sentVia: "email",
         discountCode,
         discountCodeGid,
@@ -350,6 +353,62 @@ async function buildBundleBlockForContact(
     reportError(err, { route: "lib/campaign-email", phase: "buildBundleBlockForContact" });
     return null;
   }
+}
+
+export type CampaignPreviewResult =
+  | { ok: true; subject: string; html: string }
+  | { ok: false; reason: "not_found" | "no_draft"; message: string };
+
+/**
+ * Render the REVIEW-TIME preview of a drafted campaign email: the exact same
+ * renderer/composition the send path uses (branded shell, optional bundle
+ * block, Mo-promo, discount line, unsubscribe footer) — but READ-ONLY and
+ * gate-free: nothing is claimed, minted, sent or recorded. The discount line
+ * shows the MO-XXXX placeholder with the PROJECTED expiry; the real MK- code
+ * exists only at send time. `overrides` carries the operator's on-screen
+ * subject/body so unsaved edits preview correctly.
+ */
+export async function renderCampaignEmailPreview(
+  contactId: number,
+  overrides: { subject?: string; body?: string } = {}
+): Promise<CampaignPreviewResult> {
+  const contact = await getContactById(contactId);
+  if (!contact) return { ok: false, reason: "not_found", message: "Contact not found." };
+  const draft = await getDraftForContact(contactId);
+  if (!draft) {
+    return { ok: false, reason: "no_draft", message: "No draft exists for this contact." };
+  }
+
+  const subject =
+    typeof overrides.subject === "string" && overrides.subject.trim()
+      ? overrides.subject
+      : draft.subject;
+  const body =
+    typeof overrides.body === "string" && overrides.body.trim() ? overrides.body : draft.body;
+
+  // Real unsubscribe link when the signing secret is configured; otherwise an
+  // inert anchor so the footer still shows (the preview never delivers).
+  const unsubToken = buildUnsubscribeToken(contact.email);
+  const unsubscribeUrl = unsubToken
+    ? `${getBaseUrl()}/api/unsubscribe?token=${encodeURIComponent(unsubToken)}` +
+      (contact.language === "en" ? "&locale=en" : "")
+    : "#";
+
+  const bundle = await buildBundleBlockForContact(contactId);
+
+  const { html } = renderCampaignEmail({
+    subject,
+    body,
+    language: contact.language,
+    discountCode: draft.discountPercent > 0 ? PLACEHOLDER_DISCOUNT_CODE : null,
+    discountExpiresLabel:
+      draft.discountPercent > 0 && draft.discountExpiresAt
+        ? formatGermanExpiryDate(draft.discountExpiresAt)
+        : null,
+    unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
+    bundle,
+  });
+  return { ok: true, subject, html };
 }
 
 /**
