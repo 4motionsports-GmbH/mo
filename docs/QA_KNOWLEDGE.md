@@ -97,6 +97,32 @@ The storefront runs German and English, but nobody maintains two answers:
   fresh auto-translation on the next publish (e.g. after editing the German).
 - Columns: `qa_entries.question_en` / `answer_en` (migration 0037).
 
+## Produkt-Links in Antworten (markdown)
+
+Answers may contain **markdown links** `[Angezeigter Text](https://…)` — the
+storefront and the admin preview render them as clickable text, never as a raw
+URL. Questions stay plain text.
+
+- **Eingabe:** the Wissen tab's answer field explains the syntax; the
+  „Produkt verlinken“ helper searches the synced catalog
+  (`/api/admin/catalog/search`, which returns the storefront `url`) and
+  inserts a ready `[Produktname](URL)` at the cursor. A live preview appears
+  as soon as the answer contains a link (`qa-links.mjs` — the SAME renderer
+  used at publish time, so preview = storefront).
+- **Metafeld:** the serializer writes the raw markdown as `a` (source of
+  truth) and ADDITIONALLY `a_html` / `a_en_html` — pre-rendered, escaped HTML
+  with plain anchors (`target="_blank" rel="noopener noreferrer"`, no inline
+  styles) — but only for answers that actually contain a link. **Theme rule:**
+  render `a_html` when present, else `a` (no markdown parser needed in
+  Liquid); style the anchors with theme CSS. The HTML is recomputed from the
+  text on every publish/unpublish, so text and HTML can never drift.
+- **Mo:** the prompt context keeps the raw markdown (`a`) — the chat renders
+  markdown links natively, so Mo reuses them verbatim.
+- **Übersetzung:** the publish-time translation pass is instructed to keep
+  `[text](url)` intact — label translated, URL byte-identical.
+- **Sicherheit:** `qa-links.mjs` escapes every fragment and only ever links
+  http(s) URLs (bare URLs are linkified with a compact host/path label).
+
 ## Reversibility ("Zurückziehen")
 
 Every publish is one-click reversible from the Wissen tab: a published entry

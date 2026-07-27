@@ -4,7 +4,9 @@
 //
 // Flow per entry: the AI drafted { Wissenslücke, präzise Frage, Produkt? } →
 // the operator (optionally edits the question / product handle,) writes the
-// answer → "Speichern" (status answered) → "Veröffentlichen" pushes a
+// answer — product links go in as markdown `[Text](URL)` ("Produkt verlinken"
+// inserts them; the preview shows the rendered, clickable form)
+// → "Speichern" (status answered) → "Veröffentlichen" pushes a
 // product-linked pair to Shopify's custom.qa metafield (PDP Q&A tab + Mo) or
 // activates a general pair for Mo's prompt knowledge base. "Verwerfen" drops
 // a non-gap. The "Gespräche scannen" action drafts new entries from eligible,
@@ -19,6 +21,7 @@ import {
   RefreshCw,
   Undo2,
   ArchiveRestore,
+  Link2,
 } from "lucide-react";
 import {
   Badge,
@@ -30,6 +33,7 @@ import {
   toast,
 } from "./ui";
 import { QA_STATUS_LABELS } from "@/lib/qa-core.mjs";
+import { qaAnswerHasLink, qaAnswerHtml } from "@/lib/qa-links.mjs";
 import type { QaCounts, QaEntry, QaStatus } from "@/lib/qa-store";
 
 type StatusFilter = QaStatus | "all";
@@ -206,6 +210,29 @@ function QaEntryCard({
   const [busy, setBusy] = React.useState<
     null | "save" | "publish" | "dismiss" | "unpublish" | "restore"
   >(null);
+  const answerRef = React.useRef<HTMLTextAreaElement>(null);
+
+  /** Insert a markdown product link at the answer's cursor position (falls
+   * back to appending) and put the cursor right after it. */
+  const insertProductLink = React.useCallback(
+    (markdown: string) => {
+      const el = answerRef.current;
+      setAnswer((prev) => {
+        const at = el && el.selectionStart != null ? el.selectionStart : prev.length;
+        const end = el && el.selectionEnd != null ? el.selectionEnd : at;
+        const sepBefore = at > 0 && !/\s$/.test(prev.slice(0, at)) ? " " : "";
+        const insert = `${sepBefore}${markdown}`;
+        const next = prev.slice(0, at) + insert + prev.slice(end);
+        const cursor = at + insert.length;
+        requestAnimationFrame(() => {
+          el?.focus();
+          el?.setSelectionRange(cursor, cursor);
+        });
+        return next;
+      });
+    },
+    []
+  );
 
   // Keep local edits in sync when a reload replaces the entry object.
   React.useEffect(() => {
@@ -391,12 +418,25 @@ function QaEntryCard({
         <div className="grid gap-2">
           <label className="text-xs font-medium text-muted-foreground">Antwort</label>
           <Textarea
+            ref={answerRef}
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
             rows={4}
             placeholder="Die Antwort des motion sports Teams — erscheint öffentlich im Q&A und in Mos Wissen."
             disabled={entry.status === "dismissed"}
           />
+          {entry.status !== "dismissed" && (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <ProductLinkPicker onInsert={insertProductLink} />
+                <span className="text-xs text-muted-foreground">
+                  Links als <code>[Angezeigter Text](https://…)</code> schreiben —
+                  sie erscheinen im Q&A als klickbarer Text statt als URL.
+                </span>
+              </div>
+              <QaAnswerPreview answer={answer} />
+            </>
+          )}
         </div>
 
         {/* i18n: English is auto-translated at publish time — these fields are
@@ -421,6 +461,7 @@ function QaEntryCard({
                   rows={3}
                   placeholder="Answer (English) — auto-translated if empty"
                 />
+                <QaAnswerPreview answer={answerEn} />
               </>
             ) : (
               <button
@@ -473,5 +514,129 @@ function QaEntryCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Live preview of an answer's rendered form — shown only when the text
+ * actually contains a link. The HTML comes from qa-links.mjs, which escapes
+ * everything and only ever emits http(s) anchors (the same renderer the
+ * published metafield's a_html uses, so the preview IS what the storefront
+ * shows). */
+function QaAnswerPreview({ answer }: { answer: string }) {
+  if (!qaAnswerHasLink(answer)) return null;
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+      <div className="mb-1 text-xs font-medium text-muted-foreground">
+        Vorschau (so erscheint die Antwort im Q&A)
+      </div>
+      <div
+        className="whitespace-pre-line [&_a]:text-info [&_a]:underline [&_a]:underline-offset-2"
+        dangerouslySetInnerHTML={{ __html: qaAnswerHtml(answer) }}
+      />
+    </div>
+  );
+}
+
+/** "Produkt verlinken": search the synced catalog (same debounced pattern as
+ * the Kampagne recommendations editor) and hand the picked product back as a
+ * ready markdown link `[Titel](URL)`. */
+function ProductLinkPicker({ onInsert }: { onInsert: (markdown: string) => void }) {
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState("");
+  const [results, setResults] = React.useState<
+    Array<{ productId: string; title: string; url: string | null }>
+  >([]);
+  const [searching, setSearching] = React.useState(false);
+  const searchSeq = React.useRef(0);
+
+  React.useEffect(() => {
+    const q = query.trim();
+    if (!open || q.length < 2) {
+      searchSeq.current++;
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    const seq = ++searchSeq.current;
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        const json = (await call("/api/admin/catalog/search", { query: q })) as {
+          products?: Array<{ productId: string; title: string; url?: string | null }>;
+        };
+        if (seq !== searchSeq.current) return;
+        setResults(
+          (json.products ?? []).map((p) => ({
+            productId: p.productId,
+            title: p.title,
+            url: p.url ?? null,
+          }))
+        );
+      } catch (e) {
+        if (seq === searchSeq.current) fail(e);
+      } finally {
+        if (seq === searchSeq.current) setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [open, query]);
+
+  if (!open) {
+    return (
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        <Link2 className="mr-1.5 h-3.5 w-3.5" />
+        Produkt verlinken
+      </Button>
+    );
+  }
+
+  return (
+    <div className="w-full space-y-1">
+      <div className="flex items-center gap-1.5">
+        <Input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Produkt suchen (tippen)…"
+          className="h-8 w-64 text-xs"
+          aria-label="Produkt zum Verlinken suchen"
+        />
+        {searching && <span className="text-xs text-muted-foreground">Sucht…</span>}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setOpen(false);
+            setQuery("");
+            setResults([]);
+          }}
+        >
+          Abbrechen
+        </Button>
+      </div>
+      {results.length > 0 && (
+        <ul className="space-y-0.5 text-xs">
+          {results.slice(0, 6).map((p) => (
+            <li key={p.productId}>
+              <button
+                type="button"
+                className="underline underline-offset-2 disabled:no-underline disabled:opacity-50"
+                disabled={!p.url}
+                title={p.url ? undefined : "Für dieses Produkt ist keine Shop-URL bekannt"}
+                onClick={() => {
+                  if (!p.url) return;
+                  onInsert(`[${p.title}](${p.url})`);
+                  setOpen(false);
+                  setQuery("");
+                  setResults([]);
+                }}
+              >
+                + {p.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

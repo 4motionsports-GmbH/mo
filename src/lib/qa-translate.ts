@@ -22,7 +22,10 @@ const SYSTEM_PROMPT =
   "storefront. Keep product names, model numbers, units and measurements " +
   "EXACTLY as written (e.g. 'MPX-780', '2.195 mm' stays '2,195 mm' in " +
   "English digit-grouping only if unambiguous — when unsure, keep the " +
-  "original notation). Do not add, drop or soften information.\n\n" +
+  "original notation). Do not add, drop or soften information.\n" +
+  "Markdown links like [Linktext](https://…) must survive translation: " +
+  "translate the visible link text, keep the URL EXACTLY unchanged, and " +
+  "keep the [text](url) markdown syntax intact.\n\n" +
   "Respond with EXACTLY ONE JSON object, no code fences, no other text:\n" +
   '{ "question_en": "...", "answer_en": "..." }';
 
