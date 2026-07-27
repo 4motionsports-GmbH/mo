@@ -1,13 +1,15 @@
-// Pure, dependency-free core for the "Wissen" (Q&A / knowledge enhancement)
-// feature. No I/O, no DB, no model — imported by the draft pass (qa-draft.ts),
-// the store (qa-store.ts), the Shopify publisher (shopify-qa.ts), the catalog
-// mapper (catalog-mapping.ts) AND the node:test suite, so it stays a plain
-// .mjs like conversation-analysis-core.mjs.
+// Pure core for the "Wissen" (Q&A / knowledge enhancement) feature. No I/O,
+// no DB, no model — imported by the draft pass (qa-draft.ts), the store
+// (qa-store.ts), the Shopify publisher (shopify-qa.ts), the catalog mapper
+// (catalog-mapping.ts) AND the node:test suite, so it stays a plain .mjs like
+// conversation-analysis-core.mjs. Only pure-module imports (qa-links.mjs).
 //
 // It owns: the status vocabulary, the eligibility rule (which conversations
 // the knowledge-gap scan looks at), the draft prompt + defensive JSON parser,
 // the question fingerprint (de-dup), and the `custom.qa` metafield format
 // (parse / merge) shared by the publisher and the catalog mapper.
+
+import { qaAnswerHasLink, qaAnswerHtml } from "./qa-links.mjs";
 
 // ── Statuses ─────────────────────────────────────────────────────────────────
 
@@ -157,6 +159,14 @@ export function questionFingerprint(q) {
 // REQUIRED source of truth (the team writes German only); q_en/a_en are the
 // OPTIONAL English pair, auto-translated at publish time — consumers fall
 // back to German when they are absent, so pre-i18n values keep working.
+//
+// Product links: answers may contain markdown links `[Text](https://…)`
+// (entered in the Wissen tab). For answers that contain a link the serializer
+// ALSO writes `a_html` / `a_en_html` — the pre-rendered, escaped HTML with
+// plain clickable anchors (qa-links.mjs) — so the theme shows "Text" as a
+// clickable link without parsing markdown in Liquid: render `a_html` when
+// present, else `a`. `a` keeps the raw markdown as the source of truth (and
+// Mo's chat context, which renders markdown natively, uses exactly that).
 
 export const QA_METAFIELD_NAMESPACE = "custom";
 export const QA_METAFIELD_KEY = "qa";
@@ -165,9 +175,12 @@ export const QA_MAX_PER_PRODUCT = 20;
 
 /**
  * Parse a `custom.qa` metafield value into a clean list. Tolerates junk:
- * non-JSON, non-arrays and malformed items yield [] / are skipped.
+ * non-JSON, non-arrays and malformed items yield [] / are skipped. The
+ * pre-rendered link HTML (a_html/a_en_html) rides along when present so the
+ * widget mirror (/api/products → Product.qa) can render clickable links; it
+ * is IGNORED by the write path (serialize recomputes it from the text).
  * @param {unknown} value
- * @returns {Array<{ question: string, answer: string }>}
+ * @returns {Array<{ question: string, answer: string, answerHtml?: string, questionEn?: string, answerEn?: string, answerEnHtml?: string }>}
  */
 export function parseQaMetafield(value) {
   if (typeof value !== "string" || !value.trim().startsWith("[")) return [];
@@ -186,12 +199,17 @@ export function parseQaMetafield(value) {
     if (!q || !a) continue;
     const qEn = typeof item.q_en === "string" ? item.q_en.trim() : "";
     const aEn = typeof item.a_en === "string" ? item.a_en.trim() : "";
+    const aHtml = typeof item.a_html === "string" ? item.a_html.trim() : "";
+    const aEnHtml = typeof item.a_en_html === "string" ? item.a_en_html.trim() : "";
     out.push({
       question: q,
       answer: a,
+      ...(aHtml ? { answerHtml: aHtml } : {}),
       // The English pair only travels complete — a lone question or answer
       // would render half-translated on the storefront.
-      ...(qEn && aEn ? { questionEn: qEn, answerEn: aEn } : {}),
+      ...(qEn && aEn
+        ? { questionEn: qEn, answerEn: aEn, ...(aEnHtml ? { answerEnHtml: aEnHtml } : {}) }
+        : {}),
     });
     if (out.length >= QA_MAX_PER_PRODUCT) break;
   }
@@ -245,7 +263,9 @@ export function removeQaFromList(existing, question) {
 
 /**
  * Serialize a Q&A list to the metafield's canonical JSON ({q,a[,q_en,a_en]}
- * objects).
+ * objects). Answers containing a link additionally carry the pre-rendered
+ * `a_html`/`a_en_html` for the theme (recomputed from the raw text on EVERY
+ * serialize, so text and HTML can never drift apart).
  * @param {Array<{ question: string, answer: string, questionEn?: string, answerEn?: string }>} list
  * @returns {string}
  */
@@ -256,10 +276,18 @@ export function serializeQaMetafield(list) {
     .map((e) => {
       const qEn = String(e.questionEn ?? "").trim();
       const aEn = String(e.answerEn ?? "").trim();
+      const a = String(e.answer).trim();
       return {
         q: String(e.question).trim(),
-        a: String(e.answer).trim(),
-        ...(qEn && aEn ? { q_en: qEn, a_en: aEn } : {}),
+        a,
+        ...(qaAnswerHasLink(a) ? { a_html: qaAnswerHtml(a) } : {}),
+        ...(qEn && aEn
+          ? {
+              q_en: qEn,
+              a_en: aEn,
+              ...(qaAnswerHasLink(aEn) ? { a_en_html: qaAnswerHtml(aEn) } : {}),
+            }
+          : {}),
       };
     });
   return JSON.stringify(arr);

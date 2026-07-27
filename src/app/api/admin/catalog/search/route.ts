@@ -49,6 +49,9 @@ export async function POST(req: Request) {
       unitPrice: effectivePrice(p),
       currency: p.currency ?? "EUR",
       inStock: p.inStock !== false,
+      // Storefront URL — the Wissen tab's "Produkt verlinken" helper builds
+      // its markdown link from this. Null for products without a URL.
+      url: p.shopifyUrl ?? null,
     }));
 
     return adminJson({ products: matches });

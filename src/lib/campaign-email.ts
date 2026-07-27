@@ -63,6 +63,7 @@ import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
   createUniqueDiscountCode,
+  formatExpiryDateForLanguage,
   formatGermanExpiryDate,
   PLACEHOLDER_DISCOUNT_CODE,
 } from "./shopify-discounts";
@@ -240,13 +241,26 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         discountExpiresAt = minted.expiresAt;
         // Same swap logic as the marketing path (discount-swap.mjs): real code
         // in for the placeholder, real expiry label in for a stale projection.
+        // Labels are formatted in the contact's language — the same formatter
+        // the draft used, so the swap finds the stale string.
+        body = applyMintedDiscountToBody(body, {
+          placeholder: PLACEHOLDER_DISCOUNT_CODE,
+          code: minted.code,
+          draftExpiryLabel: draft.discountExpiresAt
+            ? formatExpiryDateForLanguage(draft.discountExpiresAt, contact.language)
+            : null,
+          realExpiryLabel: formatExpiryDateForLanguage(minted.expiresAt, contact.language),
+        });
+        // Legacy backstop: English drafts generated BEFORE the language-aware
+        // formatter carry the German numeric label — try that format too (a
+        // no-op for German contacts, where both formats are identical).
         body = applyMintedDiscountToBody(body, {
           placeholder: PLACEHOLDER_DISCOUNT_CODE,
           code: minted.code,
           draftExpiryLabel: draft.discountExpiresAt
             ? formatGermanExpiryDate(draft.discountExpiresAt)
             : null,
-          realExpiryLabel: formatGermanExpiryDate(minted.expiresAt),
+          realExpiryLabel: formatExpiryDateForLanguage(minted.expiresAt, contact.language),
         });
       }
 
@@ -254,7 +268,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       // a created, still-active bundle is attached to this contact, its offer
       // block rides below the prose. Touches NONE of the send safeguards; a
       // bundle resolution failure degrades to "no block", never blocks a send.
-      const bundle = await buildBundleBlockForContact(contactId);
+      const bundle = await buildBundleBlockForContact(contactId, contact.language);
 
       const { text, html } = renderCampaignEmail({
         subject: draft.subject,
@@ -262,7 +276,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         language: contact.language,
         discountCode,
         discountExpiresLabel: discountExpiresAt
-          ? formatGermanExpiryDate(discountExpiresAt)
+          ? formatExpiryDateForLanguage(discountExpiresAt, contact.language)
           : null,
         unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
         bundle,
@@ -346,7 +360,8 @@ async function catalogNameLookup(): Promise<(url: string) => string | null> {
  * failure degrades to "no block" so a send is never blocked by the bundle path.
  */
 async function buildBundleBlockForContact(
-  contactId: number
+  contactId: number,
+  language: "de" | "en"
 ): Promise<{ text: string; html: string } | null> {
   try {
     const bundle = await getActiveBundleForCampaignContact(contactId);
@@ -362,12 +377,14 @@ async function buildBundleBlockForContact(
     }));
 
     return renderBundleOfferBlock({
-      title: bundle.title ?? "Dein persönliches Set",
+      title:
+        bundle.title ?? (language === "en" ? "Your personal set" : "Dein persönliches Set"),
       components,
       bundlePrice: bundle.bundlePrice,
       componentsSum: bundle.componentsSum,
       currency: bundle.currency,
       offerUrl,
+      language,
     });
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "buildBundleBlockForContact" });
@@ -414,7 +431,7 @@ export async function renderCampaignEmailPreview(
       (contact.language === "en" ? "&locale=en" : "")
     : "#";
 
-  const bundle = await buildBundleBlockForContact(contactId);
+  const bundle = await buildBundleBlockForContact(contactId, contact.language);
 
   const { html } = renderCampaignEmail({
     subject,
@@ -423,7 +440,7 @@ export async function renderCampaignEmailPreview(
     discountCode: draft.discountPercent > 0 ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountExpiresLabel:
       draft.discountPercent > 0 && draft.discountExpiresAt
-        ? formatGermanExpiryDate(draft.discountExpiresAt)
+        ? formatExpiryDateForLanguage(draft.discountExpiresAt, contact.language)
         : null,
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
     bundle,

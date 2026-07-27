@@ -61,11 +61,15 @@ export interface PublicProduct {
   // the product's custom.qa metafield — this mirror lets the widget reuse it).
   // question/answer are German (source of truth); the En pair is present when
   // the publish-time auto-translation ran — fall back to German if absent.
+  // answerHtml/answerEnHtml carry pre-rendered, escaped link HTML when the
+  // answer contains a product link — render them when present, else the text.
   qa?: Array<{
     question: string;
     answer: string;
+    answerHtml?: string;
     questionEn?: string;
     answerEn?: string;
+    answerEnHtml?: string;
   }>;
 }
 

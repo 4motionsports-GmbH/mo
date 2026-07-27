@@ -31,7 +31,13 @@ export interface CampaignContactRow {
   email: string;
   firstName: string | null;
   lastName: string | null;
+  /** EFFECTIVE email language: the operator override when set, else the
+   * profile-derived value — every consumer (draft, preview, send) uses this. */
   language: "de" | "en";
+  /** Profile-derived language (campaign-language.mjs), refreshed by the sync. */
+  derivedLanguage: "de" | "en";
+  /** Operator-pinned language (Kampagne tab), or null. Survives re-syncs. */
+  languageOverride: "de" | "en" | null;
   optInLevel: string | null;
   consentUpdatedAt: string | null;
   ordersCount: number;
@@ -75,13 +81,20 @@ function toIso(v: unknown): string | null {
 }
 
 function mapContactRow(r: Record<string, unknown>): CampaignContactRow {
+  const derivedLanguage = r.language === "en" ? ("en" as const) : ("de" as const);
+  const languageOverride =
+    r.language_override === "en" ? ("en" as const)
+    : r.language_override === "de" ? ("de" as const)
+    : null;
   return {
     id: Number(r.id),
     shopifyCustomerId: String(r.shopify_customer_id),
     email: String(r.email),
     firstName: (r.first_name as string | null) ?? null,
     lastName: (r.last_name as string | null) ?? null,
-    language: r.language === "en" ? "en" : "de",
+    language: languageOverride ?? derivedLanguage,
+    derivedLanguage,
+    languageOverride,
     optInLevel: (r.opt_in_level as string | null) ?? null,
     consentUpdatedAt: toIso(r.consent_updated_at),
     ordersCount: Number(r.orders_count ?? 0),
@@ -472,6 +485,28 @@ export async function getContactById(
     reportError(err, { route: "lib/campaign-store", phase: "getContactById" });
     return null;
   }
+}
+
+/**
+ * Pin (or clear, with null) the operator's language override for a contact —
+ * the Kampagne tab's DE/EN switch (migration 0040). Lives in its own column so
+ * the sync's language re-derivation can never clobber it. Returns the updated
+ * row (with the new EFFECTIVE language) or null when the contact is unknown.
+ * Throws on DB failure so the route can answer with a real error.
+ */
+export async function setContactLanguageOverride(
+  contactId: number,
+  language: "de" | "en" | null,
+  sql: Sql | null = getSql()
+): Promise<CampaignContactRow | null> {
+  if (!sql) return null;
+  const rows = (await sql`
+    UPDATE campaign_contacts
+       SET language_override = ${language}
+     WHERE id = ${contactId}
+    RETURNING *
+  `) as Array<Record<string, unknown>>;
+  return rows[0] ? mapContactRow(rows[0]) : null;
 }
 
 export async function getDraftForContact(

@@ -49,6 +49,17 @@ Rules:
 - **Language derivation** ([`campaign-language.mjs`](../src/lib/campaign-language.mjs)):
   customer `locale` if present (`de*` → de, otherwise en); fallback
   `defaultAddress` country DE/AT/CH → de, else en; final fallback de.
+- **Language override** (migration `0040`): the operator can pin DE/EN per
+  contact in the review card (`POST /api/admin/campaign/language`) when the
+  derivation is wrong for a person. The pin lives in its own column
+  (`language_override`) so a re-sync never clobbers it; picking the language
+  the profile already derives clears the pin (back to automatic). The
+  EFFECTIVE language (override ?? derived, computed in `campaign-store.ts`)
+  drives the AI draft, the deterministic send-time blocks (Mo promo, discount
+  line, bundle offer labels, unsubscribe footer) and the expiry-date format
+  (German `31.07.2026` vs English `31 July 2026`,
+  `formatExpiryDateForLanguage`). Switching the language in the UI chains a
+  regenerate so the prose matches.
 
 ## 2. Legal gating model (Germany: GDPR + §7 UWG)
 
@@ -259,6 +270,7 @@ out of the sync ages out; drafts cascade with their contact). The
 | Rebuild queue (discard all open drafts → pending) | `POST /api/admin/campaign/reset-queue` |
 | Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` |
 | Global contact search (all statuses) | `POST /api/admin/campaign/contacts` |
+| Pin/clear the contact's email language | `POST /api/admin/campaign/language` |
 | Rendered draft preview (read-only, `text/html`) | `POST /api/admin/campaign/email-preview` |
 | Retained sent content (read-only, `text/html`) | `POST /api/admin/campaign/sent-email` |
 | UI | `src/app/admin/KampagneTab.tsx` + `KampagneWorkspace.tsx` |

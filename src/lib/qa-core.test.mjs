@@ -199,3 +199,46 @@ test("mergeQaList carries the English pair and replacement updates it", () => {
   const deOnly = mergeQaList(merged, { question: "Wie schwer?", answer: "Neuer" });
   assert.deepEqual(deOnly, [{ question: "Wie schwer?", answer: "Neuer" }]);
 });
+
+// ── Product links in answers (markdown → a_html) ─────────────────────────────
+
+test("serializeQaMetafield adds a_html only for answers containing a link", () => {
+  const s = serializeQaMetafield([
+    { question: "Ohne Link?", answer: "Nur Text." },
+    {
+      question: "Passendes Zubehör?",
+      answer: "Wir empfehlen die [ATX Hantelbank](https://motionsports.de/products/atx-bank).",
+      questionEn: "Matching accessories?",
+      answerEn: "We recommend the [ATX bench](https://motionsports.de/products/atx-bank).",
+    },
+  ]);
+  const arr = JSON.parse(s);
+  assert.equal(arr[0].a_html, undefined);
+  assert.equal(
+    arr[1].a_html,
+    'Wir empfehlen die <a href="https://motionsports.de/products/atx-bank" target="_blank" rel="noopener noreferrer">ATX Hantelbank</a>.'
+  );
+  assert.equal(
+    arr[1].a_en_html,
+    'We recommend the <a href="https://motionsports.de/products/atx-bank" target="_blank" rel="noopener noreferrer">ATX bench</a>.'
+  );
+  // The raw markdown stays the source of truth and survives the round-trip.
+  const parsed = parseQaMetafield(s);
+  assert.ok(parsed[1].answer.includes("[ATX Hantelbank]("));
+});
+
+test("a_html is recomputed from the text on every serialize (no drift)", () => {
+  const roundTripped = parseQaMetafield(
+    serializeQaMetafield([
+      { question: "F?", answer: "Alt: [A](https://a.de/alt)" },
+    ])
+  );
+  const edited = mergeQaList(roundTripped, {
+    question: "F?",
+    answer: "Neu: [B](https://a.de/neu)",
+  });
+  const arr = JSON.parse(serializeQaMetafield(edited));
+  assert.equal(arr.length, 1);
+  assert.ok(arr[0].a_html.includes('href="https://a.de/neu"'));
+  assert.ok(!arr[0].a_html.includes("alt"));
+});

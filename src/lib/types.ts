@@ -70,11 +70,16 @@ export interface Product {
   // so an already-answered question never stumps him again. German (question/
   // answer) is the source of truth; the English pair is present when the
   // publish-time auto-translation ran (consumers fall back to German).
+  // answerHtml/answerEnHtml are present when the answer contains a link
+  // (markdown `[Text](URL)` → pre-rendered anchors, qa-links.mjs) — render
+  // the HTML variant when present, else the plain text.
   qa?: Array<{
     question: string;
     answer: string;
+    answerHtml?: string;
     questionEn?: string;
     answerEn?: string;
+    answerEnHtml?: string;
   }>;
   // Persona-relevant fields (added for persona-aware recommendations)
   medicalCertification?: MedicalCertification;
