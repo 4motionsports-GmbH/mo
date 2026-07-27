@@ -70,8 +70,17 @@ const CHAT_SIDE_CALL_SITES = new Set<AiCallSite>(["chat", "embeddings", "tts"]);
 export interface RecordAiUsageInput {
   callSite: AiCallSite;
   model: string;
+  /** TOTAL input tokens (ai@6 convention — includes any cached tokens). */
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Prompt-cache splits (subsets of inputTokens, migration 0039): tokens read
+   * from / written to Anthropic's prompt cache. Reads bill at 0.1× and writes
+   * at 1.25× the input price (see ai-pricing.mjs). Omitted/0 for call sites
+   * that don't cache — pricing then matches the pre-caching behaviour exactly.
+   */
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
   /** True when the counts are estimated rather than provider-reported. */
   estimated?: boolean;
   /** Set for chat usage so the row cascade-deletes with its conversation. */
@@ -95,14 +104,18 @@ export async function recordAiUsage(
   if (!sql) return;
   const inputTokens = clampTokens(input.inputTokens);
   const outputTokens = clampTokens(input.outputTokens);
+  const cacheReadTokens = clampTokens(input.cacheReadTokens ?? 0);
+  const cacheWriteTokens = clampTokens(input.cacheWriteTokens ?? 0);
   if (inputTokens === 0 && outputTokens === 0) return;
   try {
     await sql`
       INSERT INTO ai_usage
-        (conversation_id, call_site, model, input_tokens, output_tokens, estimated)
+        (conversation_id, call_site, model, input_tokens, output_tokens,
+         cache_read_tokens, cache_write_tokens, estimated)
       VALUES
         (${input.conversationId ?? null}, ${input.callSite}, ${input.model},
-         ${inputTokens}, ${outputTokens}, ${input.estimated ?? false})
+         ${inputTokens}, ${outputTokens},
+         ${cacheReadTokens}, ${cacheWriteTokens}, ${input.estimated ?? false})
     `;
   } catch (err) {
     reportError(err, { route: "lib/ai-usage-store", phase: "recordAiUsage" });
@@ -172,8 +185,10 @@ export async function getAiCostMetrics(
       sql`
         SELECT conversation_id,
                model,
-               sum(input_tokens)::bigint  AS in_tok,
-               sum(output_tokens)::bigint AS out_tok
+               sum(input_tokens)::bigint       AS in_tok,
+               sum(output_tokens)::bigint      AS out_tok,
+               sum(cache_read_tokens)::bigint  AS cache_read_tok,
+               sum(cache_write_tokens)::bigint AS cache_write_tok
           FROM ai_usage
          WHERE call_site = 'chat' AND conversation_id IS NOT NULL
            AND created_at >= ${from}::date AND created_at < (${to}::date + 1)
@@ -183,9 +198,11 @@ export async function getAiCostMetrics(
       sql`
         SELECT call_site,
                model,
-               sum(input_tokens)::bigint  AS in_tok,
-               sum(output_tokens)::bigint AS out_tok,
-               bool_or(estimated)         AS estimated
+               sum(input_tokens)::bigint       AS in_tok,
+               sum(output_tokens)::bigint      AS out_tok,
+               sum(cache_read_tokens)::bigint  AS cache_read_tok,
+               sum(cache_write_tokens)::bigint AS cache_write_tok,
+               bool_or(estimated)              AS estimated
           FROM ai_usage
          WHERE created_at >= ${from}::date AND created_at < (${to}::date + 1)
          GROUP BY call_site, model
@@ -205,10 +222,18 @@ export async function getAiCostMetrics(
       model: string;
       in_tok: string | number;
       out_tok: string | number;
+      cache_read_tok: string | number;
+      cache_write_tok: string | number;
     }>) {
       const eur = usdToEur(
         usdCostForUsage(
-          { model: r.model, inputTokens: Number(r.in_tok), outputTokens: Number(r.out_tok) },
+          {
+            model: r.model,
+            inputTokens: Number(r.in_tok),
+            outputTokens: Number(r.out_tok),
+            cacheReadTokens: Number(r.cache_read_tok),
+            cacheWriteTokens: Number(r.cache_write_tok),
+          },
           prices
         ),
         rate
@@ -235,11 +260,19 @@ export async function getAiCostMetrics(
       model: string;
       in_tok: string | number;
       out_tok: string | number;
+      cache_read_tok: string | number;
+      cache_write_tok: string | number;
       estimated: boolean;
     }>) {
       const eur = usdToEur(
         usdCostForUsage(
-          { model: r.model, inputTokens: Number(r.in_tok), outputTokens: Number(r.out_tok) },
+          {
+            model: r.model,
+            inputTokens: Number(r.in_tok),
+            outputTokens: Number(r.out_tok),
+            cacheReadTokens: Number(r.cache_read_tok),
+            cacheWriteTokens: Number(r.cache_write_tok),
+          },
           prices
         ),
         rate

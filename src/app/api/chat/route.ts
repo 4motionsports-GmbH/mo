@@ -405,23 +405,53 @@ export async function POST(req: Request) {
         : Object.keys(tools).filter((name) => name !== "offer_email_summary")
     ) as Array<keyof typeof tools>;
 
+    // PROMPT CACHING (see docs/PROMPT_CACHING.md). Anthropic bills cached
+    // prefix reads at ~0.1× the input price (writes at 1.25×). Every agentic
+    // step of this turn re-sends the full prompt, so with up to
+    // MAX_STEPS_PER_TURN steps the same tools+system+history prefix is billed
+    // repeatedly — the two breakpoints below make steps 2..n (and the tools
+    // block even across turns/users) cache reads instead. The prompt BYTES are
+    // unchanged; only cache_control markers are added, so answers are
+    // unaffected. A third marker sits on the last always-active tool (see
+    // lib/tools.ts).
+    const cacheEphemeral = {
+      anthropic: { cacheControl: { type: "ephemeral" as const } },
+    };
+    // Breakpoint 2 (messages tier): marks the conversation history INCLUDING
+    // this turn's user message. Step 1 writes the prefix; every follow-up step
+    // in this turn (tool loop) reads it. The provider applies the marker to the
+    // message's last content part — set AFTER the greeting/pivot mutations
+    // above so it lands on the final content.
+    const lastModelMessage = modelMessages[modelMessages.length - 1];
+    if (lastModelMessage) lastModelMessage.providerOptions = cacheEphemeral;
+
     const result = streamText({
       model: anthropic(CHAT_MODEL),
-      system: buildSystemPrompt({
-        profile,
-        archetype,
-        retrievedProducts,
-        productContext: greetingContext,
-        browsingContext: greetingBrowsingContext,
-        customerMemory: customerMemory ?? undefined,
-        emailOffer: {
-          offersMade: emailOffersMade,
-          emailCaptured,
+      // The system prompt travels as a leading system MESSAGE (not the
+      // `system` option) solely so it can carry breakpoint 1 (system tier,
+      // covers tools+system): the AI SDK's `system` string cannot hold
+      // providerOptions. The provider renders both forms identically.
+      messages: [
+        {
+          role: "system",
+          content: buildSystemPrompt({
+            profile,
+            archetype,
+            retrievedProducts,
+            productContext: greetingContext,
+            browsingContext: greetingBrowsingContext,
+            customerMemory: customerMemory ?? undefined,
+            emailOffer: {
+              offersMade: emailOffersMade,
+              emailCaptured,
+            },
+            generalQa,
+            locale,
+          }),
+          providerOptions: cacheEphemeral,
         },
-        generalQa,
-        locale,
-      }),
-      messages: modelMessages,
+        ...modelMessages,
+      ],
       tools,
       activeTools: defaultActiveTools,
       // DETERMINISTIC EMAIL-OFFER TRIGGER (highest-intent moment): when this
@@ -512,10 +542,16 @@ export async function POST(req: Request) {
             // `totalUsage` aggregates input/output tokens across all agentic
             // steps this turn (ai@6 LanguageModelUsage; fields may be undefined,
             // so coalesce to 0). Recorded for the cost-per-consultation KPI.
+            // NB: in ai@6 `inputTokens` is the TOTAL including cached tokens;
+            // the cache read/write splits are recorded alongside so the cost
+            // KPI can price them at their real (0.1× / 1.25×) rates — see
+            // lib/ai-pricing.mjs.
             usage: {
               model: CHAT_MODEL,
               inputTokens: totalUsage?.inputTokens ?? 0,
               outputTokens: totalUsage?.outputTokens ?? 0,
+              cacheReadTokens: totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0,
+              cacheWriteTokens: totalUsage?.inputTokenDetails?.cacheWriteTokens ?? 0,
             },
           });
 

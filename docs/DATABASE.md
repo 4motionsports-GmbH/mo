@@ -56,7 +56,7 @@ The schema is split into **two clusters** (see the separation rationale below).
 | `conversations` | `session_id` (unique), `created_at`/`updated_at`/`last_activity_at`, `persona_label`, `message_count`, `recommended_product_ids` (text[]), `selected_product_ids` (text[]), `status` (active/abandoned/converted) |
 | `messages`      | `conversation_id` (FK, cascade), `client_message_id` (idempotency), `role`, `content`, `tool_name`  |
 | `kpi_events`    | `session_id`, `event`, `data` (jsonb), `created_at`                                                  |
-| `ai_usage`      | `conversation_id` (FK, cascade, nullable), `call_site`, `model`, `input_tokens`, `output_tokens`, `estimated`, `created_at` (migration 0012) |
+| `ai_usage`      | `conversation_id` (FK, cascade, nullable), `call_site`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (migration 0039 — prompt-cache splits, see docs/PROMPT_CACHING.md), `estimated`, `created_at` (migration 0012) |
 | `feedback`      | `message` (the comment), optional context: `session_id`, `conversation_id`, `tier`, `email`, `page`; `created_at` (migration 0020) |
 
 - **Write path:** `/api/chat` calls `persistTurn()` (`src/lib/conversation-store.ts`)

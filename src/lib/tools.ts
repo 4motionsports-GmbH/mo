@@ -184,6 +184,14 @@ export function buildChatTools(profile: CustomerProfile, locale: Locale = "de") 
 
     show_contact_form: tool({
       description: c.contactDesc,
+      // PROMPT-CACHE BREAKPOINT (tools tier): Anthropic renders tools → system
+      // → messages; a cache_control marker on a tool caches the tool prefix up
+      // to and including it. This sits on the LAST always-active tool —
+      // offer_email_summary (below) is sometimes withheld via activeTools, and
+      // a marker there would vanish with it. The tool definitions are byte-
+      // stable per locale, so this prefix hits across turns, sessions and
+      // users. See docs/PROMPT_CACHING.md.
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
       inputSchema: z.object({
         reason: z.enum([
           "studio_consultation",

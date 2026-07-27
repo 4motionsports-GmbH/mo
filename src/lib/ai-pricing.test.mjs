@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  CACHE_READ_INPUT_MULTIPLIER,
+  CACHE_WRITE_INPUT_MULTIPLIER,
   DEFAULT_MODEL_PRICES,
   DEFAULT_USD_EUR_RATE,
   parseModelPrices,
@@ -53,6 +55,51 @@ test("usdCostForUsage floors negative / non-finite token counts to 0", () => {
     usdCostForUsage({ model: "claude-opus-4-8", inputTokens: -50, outputTokens: NaN }),
     0
   );
+});
+
+test("usdCostForUsage prices prompt-cache reads at 0.1× and writes at 1.25×", () => {
+  assert.equal(CACHE_READ_INPUT_MULTIPLIER, 0.1);
+  assert.equal(CACHE_WRITE_INPUT_MULTIPLIER, 1.25);
+  // Sonnet 4.6 ($3/MTok input): 1M total input of which 600k cache-read and
+  // 200k cache-write → 200k uncached @ $3 + 600k @ $0.30 + 200k @ $3.75.
+  const cost = usdCostForUsage({
+    model: "claude-sonnet-4-6",
+    inputTokens: 1_000_000,
+    outputTokens: 0,
+    cacheReadTokens: 600_000,
+    cacheWriteTokens: 200_000,
+  });
+  assert.ok(Math.abs(cost - (0.2 * 3 + 0.6 * 0.3 + 0.2 * 3.75)) < 1e-9);
+});
+
+test("usdCostForUsage without cache fields prices exactly as before", () => {
+  const plain = usdCostForUsage({
+    model: "claude-sonnet-4-6",
+    inputTokens: 500_000,
+    outputTokens: 100_000,
+  });
+  const zeroed = usdCostForUsage({
+    model: "claude-sonnet-4-6",
+    inputTokens: 500_000,
+    outputTokens: 100_000,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  });
+  assert.equal(plain, zeroed);
+  assert.ok(Math.abs(plain - (0.5 * 3 + 0.1 * 15)) < 1e-9);
+});
+
+test("usdCostForUsage never lets the uncached remainder go negative", () => {
+  // Inconsistent record: splits exceed the total. The uncached share clamps to
+  // 0 rather than subtracting cost.
+  const cost = usdCostForUsage({
+    model: "claude-sonnet-4-6",
+    inputTokens: 100_000,
+    outputTokens: 0,
+    cacheReadTokens: 150_000,
+    cacheWriteTokens: 0,
+  });
+  assert.ok(Math.abs(cost - 0.15 * 0.1 * 3) < 1e-9);
 });
 
 test("usdToEur applies the rate; default is 0.92", () => {

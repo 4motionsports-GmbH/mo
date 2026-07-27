@@ -54,7 +54,14 @@ export interface PersistTurnInput {
    * `totalUsage`), recorded against the conversation for the cost-per-
    * consultation KPI. Optional — omitted when usage is unavailable.
    */
-  usage?: { model: string; inputTokens: number; outputTokens: number };
+  usage?: {
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    /** Prompt-cache splits (subsets of inputTokens) — see lib/ai-pricing.mjs. */
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  };
 }
 
 function truncate(s: string): string {
@@ -403,6 +410,8 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
           model: input.usage.model,
           inputTokens: input.usage.inputTokens,
           outputTokens: input.usage.outputTokens,
+          cacheReadTokens: input.usage.cacheReadTokens,
+          cacheWriteTokens: input.usage.cacheWriteTokens,
           conversationId,
         },
         sql

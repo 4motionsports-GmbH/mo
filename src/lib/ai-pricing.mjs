@@ -102,17 +102,45 @@ export function priceForModel(model, prices = DEFAULT_MODEL_PRICES) {
   return prices[model] ?? null;
 }
 
+// Anthropic prompt-caching multipliers on the INPUT price (provider-wide, not
+// per-model): a cached-prefix READ bills at 0.1× input, a cache WRITE (prefix
+// creation, 5-minute TTL) at 1.25× input. Chat requests set cache_control
+// breakpoints (see api/chat/route.ts), and the usage store records the
+// read/write splits so the cost KPI prices them at their real rates.
+export const CACHE_READ_INPUT_MULTIPLIER = 0.1;
+export const CACHE_WRITE_INPUT_MULTIPLIER = 1.25;
+
 /**
  * USD cost of one usage record. Returns 0 for an unknown model (no guessing —
  * an untracked model contributes 0 rather than a fabricated number). Negative /
  * non-finite token counts are floored to 0.
+ *
+ * `inputTokens` is the TOTAL input count (the ai@6 convention — it already
+ * includes cached tokens). `cacheReadTokens` / `cacheWriteTokens` are the
+ * subsets served from / written to the prompt cache; the uncached remainder
+ * bills at the full input price. Records without the cache fields (all rows
+ * written before caching existed, and non-caching call sites) price exactly as
+ * before.
  */
-export function usdCostForUsage({ model, inputTokens, outputTokens }, prices = DEFAULT_MODEL_PRICES) {
+export function usdCostForUsage(
+  { model, inputTokens, outputTokens, cacheReadTokens = 0, cacheWriteTokens = 0 },
+  prices = DEFAULT_MODEL_PRICES
+) {
   const p = priceForModel(model, prices);
   if (!p) return 0;
   const inTok = isNonNegNumber(inputTokens) ? inputTokens : 0;
   const outTok = isNonNegNumber(outputTokens) ? outputTokens : 0;
-  return (inTok * p.input + outTok * p.output) / 1_000_000;
+  const readTok = isNonNegNumber(cacheReadTokens) ? cacheReadTokens : 0;
+  const writeTok = isNonNegNumber(cacheWriteTokens) ? cacheWriteTokens : 0;
+  // Guard against inconsistent records (splits exceeding the total): never let
+  // the uncached remainder go negative.
+  const uncachedTok = Math.max(0, inTok - readTok - writeTok);
+  const inputUsd =
+    (uncachedTok +
+      readTok * CACHE_READ_INPUT_MULTIPLIER +
+      writeTok * CACHE_WRITE_INPUT_MULTIPLIER) *
+    p.input;
+  return (inputUsd + outTok * p.output) / 1_000_000;
 }
 
 /** Convert USD to EUR at the given rate (default 0.92). */
