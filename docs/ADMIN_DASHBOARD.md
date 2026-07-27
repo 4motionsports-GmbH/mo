@@ -300,8 +300,9 @@ the KPI tab stays a server component and re-renders for the new window.
 | Filtered by the picker | Period-independent (lifetime / cohort) |
 | --- | --- |
 | **Core metrics** (§5.1) — `conversations` / `kpi_events` on `created_at` | Persona-insights (§5.2) |
-| **Umsatz über Mo-Rabattcodes** (§5.5) — order `created_at` | Recommendation → purchase loop (§5.3) |
-| **KI-Kosten** (§5.6) — `ai_usage` on `created_at` | Marketing funnel (§5.4), Postversand |
+| **Consent-Gate-Funnel** (§5.7) — `kpi_events` on `created_at` | Recommendation → purchase loop (§5.3) |
+| **Umsatz über Mo-Rabattcodes** (§5.5) — order `created_at` | Marketing funnel (§5.4), Postversand |
+| **KI-Kosten** (§5.6) — `ai_usage` on `created_at` | |
 
 The split is stated in the UI (a note under the picker + a *"Gesamtwerte (vom
 Zeitraum unabhängig)"* divider before the lifetime sections), so an operator always
@@ -428,6 +429,25 @@ per-model token counts. Now scoped to the **selected window** via the
 `ai_usage.created_at` index (migration 0012); the Übersicht tab still reads it
 all-time. Unchanged otherwise — see the inline caveat for the pricing/estimation
 notes.
+
+### 5.7 Consent-Gate-Funnel — [`getConsentGateFunnel()`](../src/lib/kpi-store.ts)
+
+The v4 button-consent marketing surfaces (the in-chat **consent gate** and the
+**at-sign-in opt-in card**) measured as **angezeigt → akzeptiert**, with the
+decline/dismiss split and a per-surface breakdown (`chat` vs `signin`). Built
+from the four **widget-emitted** `kpi_events` (`consent_gate_shown` /
+`_accepted` / `_declined` / `_dismissed`, each carrying
+`data.surface`) — see [`API_CONTRACT.md`](./API_CONTRACT.md) §5. Scoped to the
+selected window (`kpi_events.created_at`).
+
+> ⚠️ **Measures the UI, not the DOI.** An "Akzeptiert" is the gate tap; the
+> consent only becomes an effective marketing subscription after the
+> double-opt-in link is clicked (that outcome is the email-capture funnel in
+> the event breakdown: `email_capture_marketing_opted_in` with
+> `trigger: chat_gate|signin_optin` → `email_capture_marketing_confirmed`).
+> Events without a `surface` payload count in the totals but in neither
+> surface split. The retired `starter_shown` / `starter_clicked` widget events
+> are no longer aggregated anywhere (raw breakdown only).
 
 ---
 

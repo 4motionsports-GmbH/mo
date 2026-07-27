@@ -1,9 +1,11 @@
 // ⚠️ CONSENT COPY — GERMAN IS LAWYER-APPROVED (CONSENT_COPY_LAWYER_APPROVED) ⚠️
 //
 // The German-facing DOI / marketing / personalisation / transactional copy in
-// this file has been REVIEWED AND APPROVED by a lawyer (June 2026), so
-// CONSENT_COPY_LAWYER_APPROVED is true. Treat the German strings as approved:
-// any wording change is a new legal review.
+// this file has been REVIEWED AND APPROVED by a lawyer (v3 set June 2026; the
+// v4 additions — chat consent-gate strings, the upgraded personalised-offers
+// headlines, and the button-consent mechanic on the marketing surfaces — July
+// 2026), so CONSENT_COPY_LAWYER_APPROVED is true. Treat the German strings as
+// approved: any wording change is a new legal review.
 //
 // ⚠️ ENGLISH IS NOT YET LEGALLY REVIEWED (CONSENT_COPY_EN_LEGAL_REVIEWED=false).
 // The English consent / DOI / refund / unsubscribe copy (added for the /en
@@ -137,13 +139,22 @@ export function captureConsentCopy(locale: Locale = "de"): CaptureConsentCopy {
   };
 }
 
-/** The exact copy the widget needs to render the at-sign-in opt-in. */
+/**
+ * The exact copy the widget needs to render the at-sign-in opt-in.
+ *
+ * v4 mechanic (lawyer-approved July 2026): this surface is BUTTON-CONSENT —
+ * the widget renders `headline` + `marketingLabel` + `consentFooter` fully
+ * visible and an explicit "Ja, Angebote aktivieren" tap is the affirmative act
+ * (nothing pre-selected, decline equally reachable; `marketingConsent: true`
+ * is only ever sent on that tap). The audit string stays label + footer — the
+ * button caption is UI chrome, not consent text.
+ */
 export interface SignInMarketingConsentCopy {
   version: string;
   locale: Locale;
-  /** Attractive headline above the checkbox (framing — NOT consent text). */
+  /** Attractive headline above the consent block (framing — NOT consent text). */
   headline: string;
-  /** The marketing checkbox label (MUST render UNCHECKED). IS the consent text. */
+  /** The marketing consent label (nothing pre-selected). IS the consent text. */
   marketingLabel: string;
   /** Shared one-line Art. 7 footer rendered beneath the checkbox. */
   consentFooter: string;
@@ -171,6 +182,39 @@ export function signInMarketingConsentCopy(
     consentFooter: s.consentFooter,
     // Audit string = label + footer only (the headline is framing, not consent).
     consentTextShown: composeConsentTextShown([s.signinLabel, s.consentFooter]),
+    imprintUrl: CAPTURE_FORM_IMPRINT_URL,
+    privacyUrl: CAPTURE_FORM_PRIVACY_URL,
+    lawyerApproved: CONSENT_COPY_LAWYER_APPROVED,
+    enLegalReviewed: locale === "en" ? CONSENT_COPY_EN_LEGAL_REVIEWED : true,
+  };
+}
+
+/**
+ * The exact copy the widget needs to render the CHAT CONSENT GATE (v4): an
+ * anonymous typed-email, MARKETING-ONLY signup shown once per session after
+ * the user's first chat message. Same shape as the sign-in surface — the only
+ * differences are the strings (worded for a typed email instead of the stored
+ * account address) and the submit endpoint (POST /api/chat-marketing-opt-in).
+ *
+ * Button-consent mechanic (lawyer-approved July 2026), same as sign-in: the
+ * served `marketingLabel` + `consentFooter` are fully visible; the explicit
+ * "Ja, Angebote aktivieren" tap is the affirmative act (nothing pre-selected,
+ * decline equally reachable). The `headline` is benefit framing — it sells
+ * personalised offers and exclusive discount promotions — and is NOT part of
+ * the `consentTextShown` audit string (label + footer only).
+ */
+export function chatGateMarketingConsentCopy(
+  locale: Locale = "de"
+): SignInMarketingConsentCopy {
+  const s = consentStrings(locale);
+  return {
+    version: CONSENT_COPY_VERSION,
+    locale,
+    headline: s.chatGateHeadline,
+    marketingLabel: s.chatGateLabel,
+    consentFooter: s.consentFooter,
+    // Audit string = label + footer only (the headline is framing, not consent).
+    consentTextShown: composeConsentTextShown([s.chatGateLabel, s.consentFooter]),
     imprintUrl: CAPTURE_FORM_IMPRINT_URL,
     privacyUrl: CAPTURE_FORM_PRIVACY_URL,
     lawyerApproved: CONSENT_COPY_LAWYER_APPROVED,

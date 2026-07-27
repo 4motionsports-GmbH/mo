@@ -24,10 +24,21 @@
  *            opts into the SAME double-opt-in without re-typing their verified
  *            email; benefit-framed, UNTICKED, no dark patterns). The in-chat
  *            capture-form labels are unchanged from v2 but ship as part of the
- *            v3 copy set, so new captures on either surface stamp "v3". v3 is
- *            the copy now under lawyer review (it REPLACES v2 there).
+ *            v3 copy set, so new captures on either surface stamp "v3".
+ *            Lawyer-approved June 2026.
+ *   - "v4" — adds the CHAT CONSENT-GATE surface (anonymous typed-email,
+ *            marketing-only signup shown once per session after the first chat
+ *            message), upgrades the benefit headlines on the marketing surfaces
+ *            to the personalised-offers / exclusive-discount-promotions
+ *            framing, and switches those surfaces (consent gate + at-sign-in
+ *            card) to BUTTON-CONSENT: the served label + footer fully visible,
+ *            an explicit "Ja, Angebote aktivieren" tap as the affirmative act
+ *            (nothing pre-selected, decline equally reachable). The capture
+ *            form keeps its two checkboxes; its labels are unchanged but ship
+ *            as part of the v4 set. Lawyer-approved July 2026 (mechanic +
+ *            wording).
  */
-export const CONSENT_COPY_VERSION = "v3";
+export const CONSENT_COPY_VERSION = "v4";
 
 /**
  * Compose the pre-served `consentTextShown` audit string from the copy blocks

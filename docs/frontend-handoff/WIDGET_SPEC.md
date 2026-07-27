@@ -753,12 +753,15 @@ neither the content type nor the session header). It sends
 `product_cta_opened` (`productId`). The engagement layer (§9c) adds:
 `nudge_shown` (`pageType`, `contextual` true/false, `trigger`
 dwell/scroll/exit), `nudge_dismissed` (`pageType`, `contextual`),
-`nudge_clicked` (`pageType`, `contextual`), `starter_shown` (`variant`
-product/category/generic + `count`), `starter_clicked` (`variant` +
-`index` — which starter), `launcher_attention_played`. The capture form
+`nudge_clicked` (`pageType`, `contextual`), `launcher_attention_played`.
+(**Retired:** `starter_shown` / `starter_clicked` are no longer sent.)
+The v4 consent-gate surfaces emit `consent_gate_shown` /
+`consent_gate_accepted` / `consent_gate_declined` /
+`consent_gate_dismissed`, each with `{ surface: "signin" | "chat" }`
+(`API_CONTRACT.md` §5). The capture form
 additionally emits `email_capture_declined` (`trigger` only) when its
-decline link is clicked — the one funnel event the contract assigns to
-the widget (`API_CONTRACT.md` §5; shown/submitted/opted-in/confirmed are
+decline link is clicked — the one capture-funnel event the contract assigns
+to the widget (`API_CONTRACT.md` §5; shown/submitted/opted-in/confirmed are
 all recorded server-side and MUST NOT be duplicated). All are
 session-keyed and carry **no personal data and no browsed product names**
 (page type + variant flags only). This is pseudonymous analytics keyed

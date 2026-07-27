@@ -6,7 +6,13 @@
 // (./KpiCharts) are the only client islands; no KPI is fetched or recomputed in
 // the browser. Every KPI keeps its honesty caveat inline.
 
-import { getCoreMetrics, type CoreMetrics } from "@/lib/kpi-store";
+import {
+  getConsentGateFunnel,
+  getCoreMetrics,
+  type ConsentGateCounts,
+  type ConsentGateFunnel,
+  type CoreMetrics,
+} from "@/lib/kpi-store";
 import { getPersonaInsights, type PersonaInsight } from "@/lib/kpi-persona";
 import {
   getRecommendationLoop,
@@ -81,7 +87,7 @@ export async function KpiTab({ dbReady, range }: { dbReady: boolean; range: KpiR
   // Mo-revenue and AI cost (all bounded by created_at / order date). The
   // marketing funnel, personas, recommendation-loop and physical-mail figures
   // are lifecycle/cohort/lifetime aggregates and are shown period-independent.
-  const [core, revenue, aiCost, personas, loop, funnel, cachedQuestions, letterStats] =
+  const [core, revenue, aiCost, personas, loop, funnel, gateFunnel, cachedQuestions, letterStats] =
     await Promise.all([
       getCoreMetrics(range),
       getMoRevenue(range),
@@ -89,6 +95,7 @@ export async function KpiTab({ dbReady, range }: { dbReady: boolean; range: KpiR
       getPersonaInsights(5),
       getRecommendationLoop(),
       getMarketingFunnel(),
+      getConsentGateFunnel(range),
       getCachedTopQuestionsMap(),
       getPhysicalLetterStats(),
     ]);
@@ -104,6 +111,7 @@ export async function KpiTab({ dbReady, range }: { dbReady: boolean; range: KpiR
         />
         <p className="text-[11px] text-muted-foreground/80">
           Der Zeitraum filtert die <strong>Kern-Metriken</strong>, den{" "}
+          <strong>Consent-Gate-Funnel</strong>, den{" "}
           <strong>Umsatz über Mo-Rabattcodes</strong> und die{" "}
           <strong>KI-Kosten</strong>. Marketing-Funnel, Persona-Insights,
           Empfehlung→Kauf und Postversand sind Gesamtwerte (zeitraumunabhängig).
@@ -111,6 +119,7 @@ export async function KpiTab({ dbReady, range }: { dbReady: boolean; range: KpiR
       </div>
 
       <CoreSection core={core} range={range} />
+      <ConsentGateSection funnel={gateFunnel} range={range} />
       <RevenueSection revenue={revenue} range={range} />
       <AiCostSection cost={aiCost} range={range} />
 
@@ -241,6 +250,99 @@ function CoreSection({ core, range }: { core: CoreMetrics | null; range: KpiRang
         </>
       )}
     </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Consent-gate funnel (v4): shown → accepted, plus decline/dismiss split and
+// the chat vs. sign-in surface breakdown. Widget-emitted events (the backend
+// only sees the accept as an opt-in POST) — measures the UI, not the DOI.
+// ---------------------------------------------------------------------------
+
+function ConsentGateSection({
+  funnel,
+  range,
+}: {
+  funnel: ConsentGateFunnel | null;
+  range: KpiRange;
+}) {
+  const acceptRate =
+    funnel && funnel.total.shown > 0 ? funnel.total.accepted / funnel.total.shown : null;
+  const stages = funnel
+    ? [
+        { name: "Angezeigt", value: funnel.total.shown },
+        { name: "Akzeptiert", value: funnel.total.accepted },
+      ]
+    : [];
+
+  return (
+    <Section
+      title="Consent-Gate-Funnel (Marketing-Opt-in)"
+      subtitle={`Das Einwilligungs-Gate im Chat und die Opt-in-Karte bei der Anmeldung: angezeigt → akzeptiert („Ja, Angebote aktivieren") — Zeitraum: ${range.label}.`}
+    >
+      {!funnel ? (
+        <Banner tone="info">Noch keine Daten.</Banner>
+      ) : funnel.total.shown === 0 ? (
+        <Banner tone="info">Noch keine Consent-Gate-Events im Zeitraum.</Banner>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Card>
+              <CardContent className="p-4">
+                <StageFunnelChart stages={stages} />
+              </CardContent>
+            </Card>
+            <div className="grid grid-cols-2 content-start gap-3">
+              <Stat label="Angezeigt" value={num(funnel.total.shown, 0)} />
+              <Stat
+                label="Akzeptiert"
+                value={num(funnel.total.accepted, 0)}
+                hint={acceptRate == null ? undefined : `${pct(acceptRate)} Akzeptanzrate`}
+              />
+              <Stat label="Abgelehnt" value={num(funnel.total.declined, 0)} />
+              <Stat label="Weggeklickt" value={num(funnel.total.dismissed, 0)} />
+            </div>
+          </div>
+
+          <h4 className="mt-4 mb-2 text-sm font-medium text-foreground">
+            Nach Oberfläche
+          </h4>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <SurfaceGateStat label="Chat-Gate (anonym)" counts={funnel.bySurface.chat} />
+            <SurfaceGateStat
+              label="Bei Anmeldung (eingeloggt)"
+              counts={funnel.bySurface.signin}
+            />
+          </div>
+
+          <Caveat>
+            Alle vier Events sendet das Widget (<code>consent_gate_shown</code> /{" "}
+            <code>_accepted</code> / <code>_declined</code> /{" "}
+            <code>_dismissed</code>, mit <code>surface: chat|signin</code>) —
+            gemessen wird die Oberfläche, nicht die bestätigte Anmeldung: ein
+            „Akzeptiert&ldquo; wird erst mit dem Klick auf den Double-Opt-in-Link zur
+            wirksamen Marketing-Einwilligung (siehe E-Mail-Capture-Funnel in der
+            Event-Übersicht). Events ohne <code>surface</code> zählen nur in den
+            Gesamtwerten.
+          </Caveat>
+        </>
+      )}
+    </Section>
+  );
+}
+
+function SurfaceGateStat({ label, counts }: { label: string; counts: ConsentGateCounts }) {
+  const rate = counts.shown > 0 ? counts.accepted / counts.shown : null;
+  return (
+    <Stat
+      label={label}
+      value={`${num(counts.accepted, 0)} / ${num(counts.shown, 0)}`}
+      hint={
+        rate == null
+          ? "akzeptiert / angezeigt"
+          : `${pct(rate)} Akzeptanzrate · ${num(counts.declined, 0)} abgelehnt · ${num(counts.dismissed, 0)} weggeklickt`
+      }
+    />
   );
 }
 
