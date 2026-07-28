@@ -70,7 +70,7 @@ test("retrieved-product block renders rating, accessories and related products",
     compatibleWith: ["atx-hantelscheiben-50", "atx-j-hooks"],
     relatedProducts: ["atx-power-rack-620"],
     specifications: Object.fromEntries(
-      Array.from({ length: 12 }, (_, i) => [`Spec${i + 1}`, `v${i + 1}`])
+      Array.from({ length: 27 }, (_, i) => [`Spec${i + 1}`, `v${i + 1}`])
     ),
   };
   const de = buildSystemPrompt({
@@ -87,9 +87,10 @@ test("retrieved-product block renders rating, accessories and related products",
   );
   assert.match(de, /- Passendes Zubehör \(Produkt-IDs\): atx-hantelscheiben-50, atx-j-hooks/);
   assert.match(de, /- Ähnliche Produkte \(Produkt-IDs\): atx-power-rack-620/);
-  // Spec cap raised to 10 — the 10th survives, the 11th is trimmed.
-  assert.match(de, /Spec10=v10/);
-  assert.doesNotMatch(de, /Spec11=v11/);
+  // Spec cap raised to 25 (the Kurztext spec sheet alone can carry ~15
+  // entries) — the 25th survives, the 26th is trimmed.
+  assert.match(de, /Spec25=v25/);
+  assert.doesNotMatch(de, /Spec26=v26/);
 
   const en = buildSystemPrompt({
     profile: emptyProfile(),
@@ -100,6 +101,35 @@ test("retrieved-product block renders rating, accessories and related products",
   assert.match(en, /- Customer rating: 4\.7\/5 \(23 reviews\)/);
   assert.match(en, /- Matching accessories \(product ids\): atx-hantelscheiben-50, atx-j-hooks/);
   assert.match(en, /- Related products \(product ids\): atx-power-rack-620/);
+});
+
+// Unmaintained dimensions must not render as facts: "0×225×0 cm" told the
+// model width and depth are zero. Partially known dims list only the known
+// parts; fully unknown dims render no Maße line at all. The complete-dims
+// format is unchanged (pinned by the golden).
+test("dimension line renders only the known parts", () => {
+  const base = { profile: emptyProfile(), archetype: "unknown", locale: "de" };
+  const heightOnly = product({
+    dimensions: { width: 0, height: 230, depth: 0, weight: 456 },
+  });
+  const de = buildSystemPrompt({ ...base, retrievedProducts: [heightOnly] });
+  assert.match(de, /- Maße: Höhe: 230 cm \| Gewicht: 456 kg/);
+  assert.doesNotMatch(de, /0×230×0/);
+
+  const en = buildSystemPrompt({
+    ...base,
+    locale: "en",
+    retrievedProducts: [heightOnly],
+  });
+  assert.match(en, /- Dimensions: Height: 230 cm \| Weight: 456 kg/);
+
+  const unknown = product({ dimensions: { width: 0, height: 0, depth: 0, weight: 0 } });
+  const bare = buildSystemPrompt({ ...base, retrievedProducts: [unknown] });
+  assert.doesNotMatch(bare, /- Maße/);
+
+  const full = product(); // fixture has all three dims — compact format stays
+  const withAll = buildSystemPrompt({ ...base, retrievedProducts: [full] });
+  assert.match(withAll, /- Maße \(BxHxT\): 150×140×80 cm \| Gewicht: 90 kg/);
 });
 
 // The "Wissen" feature: product-level Q&A renders inside the product card;
