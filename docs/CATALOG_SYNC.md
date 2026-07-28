@@ -88,11 +88,26 @@ not a hardcoded whitelist. Everything the merchant maintains on the product in
 the admin flows into the catalog:
 
 - `custom.*` merchant fields: `kurzinfo` (→ `shortDescription`), `kurztext`
-  (→ appended to `detailedDescription` as "Technische Daten: …"), `hoehe` /
-  `laenge` / `gewicht` (→ dimensions), `lieferzeit_min` (→ `deliveryTime`),
-  `serie`, `zertifizierung`, `versandtyp` / `sperrgut` / `vorlaufzeit` /
-  `liefereinheit` (→ `specifications`), `hide_from_search`
-  (→ `Product.hideFromSearch`; retrieval skips these products).
+  (→ parsed into `specifications` **and** appended to `detailedDescription` as
+  "Technische Daten: …"), `hoehe` / `laenge` / `gewicht` (→ dimensions, see
+  below), `lieferzeit_min` (→ `deliveryTime`), `serie`, `zertifizierung`,
+  `versandtyp` / `sperrgut` / `vorlaufzeit` / `liefereinheit`
+  (→ `specifications`), `hide_from_search` (→ `Product.hideFromSearch`;
+  retrieval skips these products). Any **other** `custom.*` metafield the
+  merchant adds later becomes a `specifications` entry automatically
+  (humanized label, values ≤ 300 chars), so new admin fields reach Mo without
+  a code change.
+- **Kurztext = the PDP details tab.** `custom.kurztext` is the spec sheet the
+  storefront renders as "Technische Daten" — dimensions there are in **mm**
+  ("Höhe: 2300"). `src/lib/kurztext.mjs` parses it into `Key: Value` spec
+  entries (visible to Mo and the embeddings even when the description is long)
+  and extracts Breite/Höhe/Tiefe/Länge/Gewicht **normalised to cm/kg** for
+  `Product.dimensions`. These kurztext values are authoritative; the legacy
+  `custom.hoehe` / `laenge` / `gewicht` metafields (maintained in cm/kg, not
+  always in sync with the details tab) are only the fallback. This fixes Mo
+  quoting a stale height (e.g. "225 cm" from `custom.hoehe`) while the
+  product page's details tab says 2300 (mm). `footprintM2` prefers
+  width × depth when the kurztext provides both.
 - Standard-taxonomy ("category") metafields (`shopify.*`): every populated one
   becomes a `specifications` entry with its German admin label
   (`color-pattern` → "Farbe", `pull-up-bar` → "Klimmzugstange", …; unknown new

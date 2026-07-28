@@ -344,8 +344,10 @@ function renderRetrievedProducts(products, locale) {
         lines.push(`- Features: ${p.features.slice(0, 5).join("; ")}`);
       }
       // Since the sync captures ALL admin metafields (taxonomy specs, Versand-
-      // art, Vorlaufzeit, …), allow a few more spec entries than before.
-      const specs = Object.entries(p.specifications || {}).slice(0, 10);
+      // art, Vorlaufzeit, …) AND the parsed Kurztext spec sheet (the PDP's
+      // "Technische Daten" details tab), allow enough entries that the tech
+      // data the customer sees on the product page is never cut off here.
+      const specs = Object.entries(p.specifications || {}).slice(0, 25);
       if (specs.length) {
         lines.push(
           `- Specs: ${specs.map(([k, v]) => `${k}=${v}`).join(", ")}`
@@ -387,11 +389,29 @@ function renderRetrievedProducts(products, locale) {
           );
         }
       }
-      lines.push(
-        en
-          ? `- Dimensions (WxHxD): ${p.dimensions.width}×${p.dimensions.height}×${p.dimensions.depth} cm | Weight: ${p.dimensions.weight} kg`
-          : `- Maße (BxHxT): ${p.dimensions.width}×${p.dimensions.height}×${p.dimensions.depth} cm | Gewicht: ${p.dimensions.weight} kg`
-      );
+      // Dimensions: the compact WxHxD line only when ALL three are known — a
+      // zero is "not maintained", and rendering "0×225×0 cm" reads like a
+      // fact and misleads the model. Partially known dims list just the known
+      // parts; fully unknown dims render nothing.
+      {
+        const d = p.dimensions || {};
+        if (d.width > 0 && d.height > 0 && d.depth > 0) {
+          lines.push(
+            en
+              ? `- Dimensions (WxHxD): ${d.width}×${d.height}×${d.depth} cm | Weight: ${d.weight} kg`
+              : `- Maße (BxHxT): ${d.width}×${d.height}×${d.depth} cm | Gewicht: ${d.weight} kg`
+          );
+        } else {
+          const parts = [];
+          if (d.width > 0) parts.push(en ? `Width: ${d.width} cm` : `Breite: ${d.width} cm`);
+          if (d.height > 0) parts.push(en ? `Height: ${d.height} cm` : `Höhe: ${d.height} cm`);
+          if (d.depth > 0) parts.push(en ? `Depth: ${d.depth} cm` : `Tiefe: ${d.depth} cm`);
+          if (d.weight > 0) parts.push(en ? `Weight: ${d.weight} kg` : `Gewicht: ${d.weight} kg`);
+          if (parts.length) {
+            lines.push(`- ${en ? "Dimensions" : "Maße"}: ${parts.join(" | ")}`);
+          }
+        }
+      }
       if (typeof p.footprintM2 === "number" && p.footprintM2 > 0) {
         lines.push(
           en

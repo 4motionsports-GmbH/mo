@@ -8,6 +8,7 @@ import type { Product } from "./types";
 import { getMetafield, type ShopifyProduct } from "./shopify";
 import { buildShopifyCartUrl, parseNumericVariantId } from "./shopify-cart-url.mjs";
 import { QA_METAFIELD_KEY, QA_METAFIELD_NAMESPACE, parseQaMetafield } from "./qa-core.mjs";
+import { parseKurztextSpecs, extractKurztextDimensions } from "./kurztext.mjs";
 // The embedded-doc builder lives in its own module (one source of truth shared
 // with the cron sync and scripts/build-embeddings.mjs). Re-exported here so the
 // long-standing `import { buildEmbeddingDoc } from "@/lib/catalog-mapping"`
@@ -279,6 +280,17 @@ export function mapShopifyProducts(
     const features = extractFeatures(bodyHtml);
     const specs: Record<string, string | number> = { ...extractSpecsFromTable(bodyHtml) };
 
+    // custom.kurztext is the merchant's condensed spec sheet AND the source of
+    // the storefront PDP's "Technische Daten" details tab — the spec values the
+    // customer actually sees (dimensions there are in mm, e.g. "Höhe: 2300").
+    // Parse it into structured spec entries so every value on the details tab
+    // reaches Mo and the embeddings, no matter how long the description is.
+    // Kurztext values overwrite body-table rows on key collision: the details
+    // tab is the authoritative sheet.
+    const kurztext = getMetafield(p, "custom", "kurztext");
+    const kurztextPairs = parseKurztextSpecs(kurztext);
+    for (const [k, v] of kurztextPairs) specs[k] = v;
+
     // Every Shopify standard-taxonomy ("category") metafield becomes a spec —
     // Farbe, Material, Klimmzugstange, Widerstandssystem, … — labelled like
     // the admin shows them.
@@ -305,31 +317,69 @@ export function mapShopifyProducts(
     const liefereinheit = getMetafield(p, "custom", "liefereinheit");
     if (liefereinheit) specs["Liefereinheit"] = liefereinheit;
 
-    // custom.kurztext is the merchant's condensed spec sheet ("Marke: ATX
-    // Serie: 700 Breite: 2000 mm …") — appended to the description so Mo and
-    // the embeddings see the full technical picture even when the HTML body
-    // is thin.
-    const kurztext = getMetafield(p, "custom", "kurztext");
+    // Any remaining custom.* metafield the merchant adds in the admin becomes
+    // a spec automatically (humanized label), so new fields reach Mo without a
+    // code change. Keys that feed dedicated Product fields above/below are
+    // excluded — they'd only duplicate or leak internals.
+    const HANDLED_CUSTOM_KEYS = new Set([
+      "kurzinfo",
+      "kurztext",
+      "hoehe",
+      "laenge",
+      "gewicht",
+      "lieferzeit_min",
+      "zertifizierung",
+      "serie",
+      "versandtyp",
+      "sperrgut",
+      "vorlaufzeit",
+      "liefereinheit",
+      "hide_from_search",
+      QA_METAFIELD_KEY,
+    ]);
+    for (const mf of p.metafields) {
+      if (mf.namespace !== "custom" || HANDLED_CUSTOM_KEYS.has(mf.key)) continue;
+      if (!mf.value || mf.value === "—" || mf.value.length > 300) continue;
+      const label = mf.key
+        .split(/[_-]/)
+        .filter(Boolean)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+      if (!(label in specs)) specs[label] = mf.value;
+    }
+
+    // The kurztext also travels verbatim on the description (prose context for
+    // Mo and the embeddings even when the HTML body is thin).
     if (kurztext && !detailedDescription.includes(kurztext)) {
       detailedDescription = detailedDescription
         ? `${detailedDescription}\n\nTechnische Daten: ${kurztext}`
         : `Technische Daten: ${kurztext}`;
     }
 
-    const heightCm = parseNumber(getMetafield(p, "custom", "hoehe"));
-    const lengthCm = parseNumber(getMetafield(p, "custom", "laenge"));
+    // Dimensions: the kurztext (= PDP details tab, mm) is authoritative;
+    // the legacy custom.hoehe/laenge/gewicht metafields (cm/kg) are the
+    // fallback — they are not always kept in sync with the details tab.
+    const ktDims = extractKurztextDimensions(kurztextPairs);
+    const widthCm = ktDims.widthCm;
+    const heightCm = ktDims.heightCm ?? parseNumber(getMetafield(p, "custom", "hoehe"));
+    const lengthCm = ktDims.depthCm ?? parseNumber(getMetafield(p, "custom", "laenge"));
     const weightKgMeta = parseNumber(getMetafield(p, "custom", "gewicht"));
-    const weightKg = weightKgMeta ?? 0;
+    const weightKg = ktDims.weightKg ?? weightKgMeta ?? 0;
     const dimensions = {
-      width: 0,
+      width: widthCm ?? 0,
       height: heightCm ?? 0,
       depth: lengthCm ?? 0,
       weight: weightKg,
     };
+    // Floor space: width × depth when both are known (the physically correct
+    // footprint, now possible since the kurztext carries Breite). The legacy
+    // height × length estimate stays as fallback for older data shapes.
     const footprintM2 =
-      heightCm && lengthCm
-        ? Math.round(((heightCm * lengthCm) / 10000) * 10) / 10
-        : undefined;
+      widthCm && lengthCm
+        ? Math.round(((widthCm * lengthCm) / 10000) * 10) / 10
+        : heightCm && lengthCm && !ktDims.heightCm
+          ? Math.round(((heightCm * lengthCm) / 10000) * 10) / 10
+          : undefined;
 
     const tags = Array.isArray(p.tags) ? p.tags : [];
     // Short description preference: the merchant-curated Kurzinfo metafield,
