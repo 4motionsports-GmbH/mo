@@ -30,6 +30,7 @@ import {
   ANALYSIS_CATEGORIES,
   ANALYSIS_QUALITIES,
 } from "./conversation-analysis-core.mjs";
+import { CART_PATTERNS } from "./kpi-event-patterns.mjs";
 
 /** Conversations per list page. */
 export const PAGE_SIZE = 25;
@@ -285,7 +286,7 @@ async function loadSessionSignals(
     sql`SELECT DISTINCT session_id FROM email_captures WHERE session_id = ANY(${sessionIds}::text[])`,
     sql`SELECT DISTINCT session_id FROM kpi_events
          WHERE session_id = ANY(${sessionIds}::text[])
-           AND (event ILIKE '%cart%' OR event ILIKE '%checkout%')`,
+           AND (event ILIKE ${CART_PATTERNS[0]} OR event ILIKE ${CART_PATTERNS[1]})`,
   ]);
   const emailed = new Set(
     (emailRows as Array<{ session_id: string }>).map((r) => r.session_id)

@@ -5,6 +5,7 @@ import { errorResponse, reportError } from "@/lib/observability";
 import { escapeHtml } from "@/lib/html-escape";
 import { resolveLocale } from "@/lib/locale";
 import { apiMessage } from "@/lib/api-messages.mjs";
+import { recordKpiEvent, KPI_CONTACT_FORM_SUBMITTED } from "@/lib/kpi-events";
 
 export const maxDuration = 10;
 
@@ -16,6 +17,9 @@ interface ContactPayload {
   organization?: string;
   phone?: string;
   message: string;
+  /** Pseudonymous widget session (optional) — Cluster-A telemetry key only;
+   * never stored alongside the submitted PII. */
+  sessionId?: string;
 }
 
 function isValid(p: Partial<ContactPayload>): p is ContactPayload {
@@ -124,6 +128,23 @@ export async function POST(req: Request) {
         headers
       );
     }
+
+    // Cluster-A telemetry: ONE pseudonymous event per accepted submission, so
+    // the KPI tab can compare show_contact_form tool-fires against actual
+    // submissions. Reason + product count only — never the name/email/message.
+    // Best-effort (recordKpiEvent never throws) and BEFORE the delivery branch
+    // so dev-fallback submissions count too.
+    await recordKpiEvent({
+      sessionId:
+        typeof payload.sessionId === "string" && payload.sessionId.trim()
+          ? payload.sessionId.trim().slice(0, 128)
+          : null,
+      event: KPI_CONTACT_FORM_SUBMITTED,
+      data: {
+        reason: payload.reason,
+        productCount: (payload.productIds ?? []).length,
+      },
+    });
 
     const apiKey = process.env.RESEND_API_KEY;
     const to = process.env.CONTACT_TO_EMAIL;

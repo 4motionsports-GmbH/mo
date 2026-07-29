@@ -541,3 +541,89 @@ export async function resolveBundleRedirect(
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Bundle KPIs (KPI tab)
+// ---------------------------------------------------------------------------
+
+export interface BundleKpis {
+  /** Offers CREATED inside the window, by lifecycle status (current status —
+   * an offer created in the window and expired since counts as expired). */
+  created: { total: number; pending: number; active: number; expired: number; failed: number };
+  /** Currently active offers (regardless of creation date) — the live stock. */
+  activeNow: number;
+  /** bundle_offer_clicked events inside the window (every click counts). */
+  clicks: number;
+  /** Distinct offers clicked inside the window. */
+  clickedOffers: number;
+  /** Discount vs. the true component sum across windowed offers: averages of
+   * bundle_price / components_sum (only rows with a positive sum). */
+  avgDiscountPct: number | null;
+}
+
+/**
+ * Aggregate the bundle-offer channel for the KPI tab, scoped to the picker
+ * window. Clicks come from the bundle_offer_clicked kpi_events the tracked
+ * redirect writes; PURCHASES of a bundle are deliberately NOT attributed here
+ * (no reliable order↔offer signal is stored — see lib/kpi-revenue-store's
+ * honesty note). Returns null when no DB is configured or on a hard failure.
+ */
+export async function getBundleKpis(
+  range: { from: string; to: string },
+  sql: Sql | null = getSql()
+): Promise<BundleKpis | null> {
+  if (!sql) return null;
+  try {
+    const [offerRows, activeRows, clickRows, discountRows] = await Promise.all([
+      sql`
+        SELECT status, count(*)::int AS n
+          FROM bundle_offers
+         WHERE created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY status
+      `,
+      sql`SELECT count(*)::int AS n FROM bundle_offers WHERE status = 'active'`,
+      sql`
+        SELECT count(*)::int AS clicks,
+               count(DISTINCT data->>'offerId')::int AS offers
+          FROM kpi_events
+         WHERE event = 'bundle_offer_clicked'
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+      `,
+      sql`
+        SELECT avg(1 - bundle_price / components_sum)::float AS avg_discount
+          FROM bundle_offers
+         WHERE components_sum > 0
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+      `,
+    ]);
+
+    const created = { total: 0, pending: 0, active: 0, expired: 0, failed: 0 };
+    for (const r of offerRows as Array<{ status: string; n: number }>) {
+      const n = Number(r.n);
+      created.total += n;
+      if (r.status in created && r.status !== "total") {
+        created[r.status as BundleOfferStatus] = n;
+      }
+    }
+    const avgDiscountRaw = (discountRows as Array<{ avg_discount: number | null }>)[0]
+      ?.avg_discount;
+    return {
+      created,
+      activeNow: Number((activeRows as Array<{ n: number }>)[0]?.n ?? 0),
+      clicks: Number((clickRows as Array<{ clicks: number }>)[0]?.clicks ?? 0),
+      clickedOffers: Number(
+        (clickRows as Array<{ offers: number }>)[0]?.offers ?? 0
+      ),
+      avgDiscountPct:
+        avgDiscountRaw == null || !Number.isFinite(Number(avgDiscountRaw))
+          ? null
+          : Number(avgDiscountRaw),
+    } satisfies BundleKpis;
+  } catch (err) {
+    reportError(err, { route: "lib/bundle-offers-store", phase: "getBundleKpis" });
+    return null;
+  }
+}

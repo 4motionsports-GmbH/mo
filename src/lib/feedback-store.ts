@@ -1,8 +1,9 @@
 // Feedback data access — the only module that reads/writes the `feedback` table
 // (migration 0020).
 //
-//   - insertFeedback()  POST /api/feedback  (widget submission)
-//   - listFeedback()    admin FEEDBACK tab  (read-only, newest-first)
+//   - insertFeedback()   POST /api/feedback  (widget submission)
+//   - listFeedback()     admin FEEDBACK tab  (read-only, newest-first)
+//   - getFeedbackKpis()  KPI tab             (windowed volume aggregate)
 //
 // Like every store here it degrades gracefully when no database is configured
 // (`getSql()` → null): the insert no-ops and the list returns []. A persistence
@@ -89,5 +90,66 @@ export async function listFeedback(
     }));
   } catch {
     return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Feedback KPIs (KPI tab)
+// ---------------------------------------------------------------------------
+
+export interface FeedbackKpis {
+  /** Submissions inside the window. */
+  total: number;
+  /** Of those, submissions that could be tied to a conversation. */
+  withConversation: number;
+  /** Of those, submissions that arrived with a known contact email. */
+  withEmail: number;
+  /** Split by the widget-reported customer tier (telemetry-grade), largest
+   * first; null tiers land under "unknown". */
+  byTier: Array<{ tier: string; count: number }>;
+}
+
+/**
+ * Windowed feedback volume for the KPI tab — pure counts, never the message
+ * text or the email value (the KPI surface stays Cluster-A shaped even though
+ * the table may carry user-supplied contact context). Returns null when no DB
+ * is configured or on a read failure.
+ */
+export async function getFeedbackKpis(
+  range: { from: string; to: string },
+  sql: Sql | null = getSql()
+): Promise<FeedbackKpis | null> {
+  if (!sql) return null;
+  try {
+    const [totalRows, tierRows] = await Promise.all([
+      sql`
+        SELECT count(*)::int AS total,
+               count(*) FILTER (WHERE conversation_id IS NOT NULL)::int AS with_conversation,
+               count(*) FILTER (WHERE email IS NOT NULL)::int AS with_email
+          FROM feedback
+         WHERE created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+      `,
+      sql`
+        SELECT COALESCE(NULLIF(btrim(tier), ''), 'unknown') AS tier, count(*)::int AS n
+          FROM feedback
+         WHERE created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY 1
+         ORDER BY n DESC, 1 ASC
+      `,
+    ]);
+    const t = (totalRows as Array<Record<string, unknown>>)[0] ?? {};
+    return {
+      total: Number(t.total ?? 0),
+      withConversation: Number(t.with_conversation ?? 0),
+      withEmail: Number(t.with_email ?? 0),
+      byTier: (tierRows as Array<{ tier: string; n: number }>).map((r) => ({
+        tier: String(r.tier),
+        count: Number(r.n),
+      })),
+    } satisfies FeedbackKpis;
+  } catch {
+    return null;
   }
 }

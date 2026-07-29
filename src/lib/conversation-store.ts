@@ -43,6 +43,10 @@ export interface PersistTurnInput {
   history: UIMessage[];
   /** Persona archetype the backend derived this turn (e.g. 'pragmatic_beginner'). */
   personaLabel: string;
+  /** Storefront-selected chat language this turn ('de'/'en', lib/locale) —
+   * stamped on the conversation (migration 0041, latest turn wins) for the
+   * KPI language split. Optional so out-of-band callers stay unchanged. */
+  locale?: string | null;
   /** Assistant text produced this turn. */
   assistantText: string;
   /** Tool calls the assistant fired this turn. */
@@ -317,15 +321,17 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
     const rows = await sql`
       INSERT INTO conversations
         (session_id, conversation_key, customer_id, persona_label, message_count,
-         title_auto, recommended_product_ids, selected_product_ids, status,
+         title_auto, recommended_product_ids, selected_product_ids, status, locale,
          created_at, updated_at, last_activity_at)
       VALUES
         (${sessionId}, ${conversationKey}, ${linkedCustomerId}, ${input.personaLabel}, ${messageCount},
          ${titleAuto}, ${newProductIds}::text[], ${selection ?? []}::text[],
-         'active', now(), now(), now())
+         'active', ${input.locale ?? null}, now(), now(), now())
       ON CONFLICT (conversation_key) DO UPDATE SET
         customer_id = COALESCE(conversations.customer_id, EXCLUDED.customer_id),
         title_auto = COALESCE(conversations.title_auto, EXCLUDED.title_auto),
+        -- Latest turn wins; a turn without a locale keeps the stored value.
+        locale = COALESCE(EXCLUDED.locale, conversations.locale),
         persona_label = EXCLUDED.persona_label,
         message_count = EXCLUDED.message_count,
         recommended_product_ids = (

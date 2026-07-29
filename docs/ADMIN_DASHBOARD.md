@@ -295,13 +295,21 @@ invalid → default 30d) into a safe `[from, to]` that the **indexed** range que
 consume directly. The picker is a small client island that only rewrites the URL;
 the KPI tab stays a server component and re-renders for the new window.
 
-**The period filters the time-based KPIs only:**
+**The period filters every section above the "Gesamtwerte" divider:**
 
 | Filtered by the picker | Period-independent (lifetime / cohort) |
 | --- | --- |
 | **Core metrics** (§5.1) — `conversations` / `kpi_events` on `created_at` | Persona-insights (§5.2) |
 | **Consent-Gate-Funnel** (§5.7) — `kpi_events` on `created_at` | Recommendation → purchase loop (§5.3) |
-| **Umsatz über Mo-Rabattcodes** (§5.5) — order `created_at` | Marketing funnel (§5.4), Postversand |
+| **E-Mail-Capture-Funnel** (§5.8) — `kpi_events` on `created_at` | Marketing funnel (§5.4), Postversand |
+| **Umsatz über Mo-Rabatt­codes** (§5.5) — order `created_at` | |
+| **Kampagnen-Funnel** (§5.9) — `campaign_sends` on `sent_at` | |
+| **Bundle-Angebote** (§5.10) — `bundle_offers` / clicks on `created_at` | |
+| **Wissen-KPIs** (§5.11) — `qa_entries` on `created_at`/`published_at` | |
+| **Feedback** (§5.12) — `feedback` on `created_at` | |
+| **Gesprächsqualität** (§5.13) — `conversations` on `created_at` | |
+| **Sprachen DE/EN** (§5.14) — `conversations`/`email_captures` on `created_at` | |
+| **Kundenkonto & Self-Service** (§5.15) — `kpi_events`/`ai_usage` on `created_at` | |
 | **KI-Kosten** (§5.6) — `ai_usage` on `created_at` | |
 
 The split is stated in the UI (a note under the picker + a *"Gesamtwerte (vom
@@ -376,7 +384,7 @@ dashboard actually sent (`marketing_sends.status = 'sent'`):
 | --- | --- |
 | **Gesendet (sent)** | `count(status = 'sent')`. |
 | **Geklickt (clicked)** | `count(clicked_at IS NOT NULL)` + click rate. `clicked_at` is the **first** click on the tracked `/api/r/<token>` redirect (see §10). No pixel — only the link the user chose to click. |
-| **Eingelöst (converted)** | The send's **unique single-use** code was redeemed in a real order. Reuses `read_orders` via [`wasDiscountCodeRedeemed()`](../src/lib/shopify-orders.ts) (`orders(query: 'discount_code:"…"')`). Capped at the **100 newest** coded sends to bound Shopify calls; codes where Shopify can't answer are "unknown", never counted as "not redeemed". |
+| **Eingelöst (converted)** | The send's **unique single-use** code was redeemed in a real order. Reuses `read_orders` via [`wasDiscountCodeRedeemed()`](../src/lib/shopify-orders.ts) (`orders(query: 'discount_code:"…"')`). Capped at the **100 newest** coded sends to bound Shopify calls; codes where Shopify can't answer are "unknown", never counted as "not redeemed". The **rate** divides by the checked codes with a definite answer (`codesChecked − redemptionUnknown`) — **never** by the uncapped `sent`, which would systematically under-report once more than the cap exist (uncoded sends can't convert at all). |
 
 This funnel is inherently scoped to consented marketing recipients (every send went
 to a DOI-confirmed contact), so it is **not** a site-wide rate and isn't framed as
@@ -425,10 +433,20 @@ state.
 ### 5.6 KI-Kosten (AI cost) — [`lib/ai-usage-store.ts`](../src/lib/ai-usage-store.ts)
 
 Cost-per-consultation + total spend (chat vs admin split), priced from the stored
-per-model token counts. Now scoped to the **selected window** via the
+per-model token counts. Scoped to the **selected window** via the
 `ai_usage.created_at` index (migration 0012); the Übersicht tab still reads it
-all-time. Unchanged otherwise — see the inline caveat for the pricing/estimation
-notes.
+all-time. Two additional breakdowns:
+
+- **Nach Einsatzort** — EUR per `call_site` (all 15 sites, largest first), so the
+  operator sees exactly which feature spends what instead of only the binary
+  chat/admin split. TTS unit caveat is stated in the UI: for `call_site='tts'`
+  the `input_tokens` column carries **characters**, not tokens.
+- **Prompt-Caching (Chat)** — cache **hit rate** (`cache_read_tokens ÷ total chat
+  input tokens`) and the **net EUR saving** vs. the same calls without caching
+  (read discount 0.9× minus write premium 0.25×, pure + unit-tested in
+  [`usdCacheSavingsForUsage()`](../src/lib/ai-pricing.mjs)). Can be negative for
+  a write-heavy pattern — reported honestly. See
+  [`PROMPT_CACHING.md`](./PROMPT_CACHING.md).
 
 ### 5.7 Consent-Gate-Funnel — [`getConsentGateFunnel()`](../src/lib/kpi-store.ts)
 
@@ -448,6 +466,84 @@ selected window (`kpi_events.created_at`).
 > Events without a `surface` payload count in the totals but in neither
 > surface split. The retired `starter_shown` / `starter_clicked` widget events
 > are no longer aggregated anywhere (raw breakdown only).
+
+### 5.8 E-Mail-Capture-Funnel — [`getEmailCaptureFunnel()`](../src/lib/kpi-store.ts)
+
+The five canonical capture events ([`lib/kpi-events.ts`](../src/lib/kpi-events.ts))
+rendered as a dedicated funnel: **angeboten → Formular gesendet → Marketing-Haken →
+DOI bestätigt**, plus the widget-reported declines and an **asks-by-trigger** split
+(the `offer_email_summary` trigger enum). Windowed on `kpi_events.created_at`.
+
+> ⚠️ Event counting, not per-session chaining: a DOI click confirming yesterday's
+> opt-in counts in the window of the click. Stated in the UI caveat.
+
+### 5.9 Kampagnen-Funnel — [`getCampaignKpis()`](../src/lib/campaign-store.ts)
+
+The MK- channel (Shopify marketing subscribers, see
+[`CAMPAIGNS.md`](./CAMPAIGNS.md)) as **gesendet → geklickt → eingelöst**, windowed
+on `campaign_sends.sent_at`:
+
+- **Geklickt** — campaign emails' main CTA (the Mo-promo deep link) routes through
+  the tracked redirect since migration **0041** (`campaign_sends.redirect_token` /
+  `clicked_at`, `campaign_email_clicked` kpi_event — §10). The click-rate base is
+  the **tracked** sends only: copy-path sends and sends from before 0041 carry no
+  link and can never count as clicked.
+- **Eingelöst** — per-send `wasDiscountCodeRedeemed()` over the windowed MK-
+  codes, capped at the 100 newest (`CAMPAIGN_KPI_MAX_CODES`); the rate divides by
+  the checked codes with an answer, mirroring §5.4.
+- **Sprache** — sends by the recipient contact's *effective* language
+  (`language_override ?? language`); purged contacts land in "unbekannt".
+
+### 5.10 Bundle-Angebote — [`getBundleKpis()`](../src/lib/bundle-offers-store.ts)
+
+Offers **created** in the window by lifecycle status, the current live count
+(`activeNow`, period-independent by nature), clicks on the tracked offer link
+(`bundle_offer_clicked` events + distinct offers clicked) and the average
+discount depth vs. the true component sum. **Purchases are deliberately NOT
+attributed** — no order↔offer signal is stored (same honesty rule as §5.5).
+
+### 5.11 Wissen-KPIs — [`getQaKpis()`](../src/lib/qa-store.ts)
+
+Knowledge-loop throughput: lifetime queue state (open / answered / published /
+dismissed — the Wissen tab's own numbers), **gaps found** and **published** inside
+the window, the **median hours** from draft→answer and draft→publish (over entries
+answered/published in the window), and the current **scan backlog**
+(`countScanCandidates()` — eligible, not-yet-scanned conversations). Whether Mo
+actually *used* a published answer is not measurable and not claimed.
+
+### 5.12 Feedback — [`getFeedbackKpis()`](../src/lib/feedback-store.ts)
+
+Windowed volume over the `feedback` table: total, with-conversation share,
+with-email share ("answerable"), and the tier split (widget self-reported,
+telemetry-grade). Counts only — never the message text or email value; content
+stays in the Feedback tab.
+
+### 5.13 Gesprächsqualität — [`getConversationStats()`](../src/lib/admin-conversations.ts)
+
+The Gespräche inspector's cached analysis columns surfaced as KPIs for the
+window: **analysis coverage** (analysed ÷ total — the representativeness of
+everything below), the **quality distribution** (handled_well / unmet_need /
+dropped_off / …) and the **top categories**. Reuses the exact same range-scoped
+getter the Gespräche tab calls — one definition, two surfaces. Distributions
+cover only operator-analysed conversations (analysis is on-demand).
+
+### 5.14 Sprachen (DE/EN) — [`getLocaleSplit()`](../src/lib/kpi-store.ts)
+
+Chats by `conversations.locale` (stamped by `persistTurn` since migration
+**0041**, latest turn wins; older rows show as "Unbekannt") and captures by
+`email_captures.locale` (migration 0030). The capture query is a pure locale
+GROUP BY — no identity value is read.
+
+### 5.15 Kundenkonto & Self-Service — [`getAccountActivity()`](../src/lib/kpi-store.ts)
+
+Adoption + GDPR self-service volume, windowed: completed **sign-ins**
+(`account_signin_succeeded`, with the `prompt=none` silent-detect share),
+**data exports** (`account_export_requested`), **erasures** (`account_erased`),
+**contact-form submissions** (`contact_form_submitted` — comparable against the
+`show_contact_form` tool-fires in the Gespräche tab), and summary deliveries
+(`summary_email` / `summary_download` rows in `ai_usage` — one row per generated
+summary). All pseudonymous counters; export/erase events carry no session or
+customer key at all.
 
 ---
 

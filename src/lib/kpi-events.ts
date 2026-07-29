@@ -51,6 +51,41 @@ export const KPI_CONSENT_GATE_DECLINED = "consent_gate_declined";
 /** The user dismissed the gate without an explicit accept/decline. */
 export const KPI_CONSENT_GATE_DISMISSED = "consent_gate_dismissed";
 
+// ---------------------------------------------------------------------------
+// Outbound-email click events (server-emitted from the tracked redirect)
+// ---------------------------------------------------------------------------
+
+/** A tracked marketing-email link (/api/r/<token>) was clicked. Emitted by
+ * marketing-store.recordEmailClick with `data: {sendId, captureId, firstClick}`
+ * and a NULL session (email clicks have no widget session). */
+export const KPI_MARKETING_EMAIL_CLICKED = "marketing_email_clicked";
+/** A tracked CAMPAIGN-email CTA (/api/r/<token>, MK- channel) was clicked.
+ * Emitted by campaign-store.recordCampaignClick with
+ * `data: {sendId, firstClick}` and a NULL session. */
+export const KPI_CAMPAIGN_EMAIL_CLICKED = "campaign_email_clicked";
+/** A bundle-offer link was clicked (bundle-offers-store.resolveBundleRedirect,
+ * `data: {offerId, status, expired}`, NULL session). */
+export const KPI_BUNDLE_OFFER_CLICKED = "bundle_offer_clicked";
+
+// ---------------------------------------------------------------------------
+// Contact-form hand-over + customer-account lifecycle (server-emitted)
+// ---------------------------------------------------------------------------
+//
+// All pseudonymous: session-keyed where the caller has a widget session,
+// NULL-session otherwise; `data` never carries an email or another direct
+// identifier. Shapes in docs/API_CONTRACT.md §5.
+
+/** A storefront contact-form submission was accepted (before delivery — the
+ * form is the outcome the `show_contact_form` tool asks for, so tool-fires vs
+ * submissions become comparable). `data: {reason, productCount}`. */
+export const KPI_CONTACT_FORM_SUBMITTED = "contact_form_submitted";
+/** A Shopify customer-account sign-in completed (OAuth callback success). */
+export const KPI_ACCOUNT_SIGNIN_SUCCEEDED = "account_signin_succeeded";
+/** A signed-in customer requested their GDPR data export. */
+export const KPI_ACCOUNT_EXPORT_REQUESTED = "account_export_requested";
+/** A signed-in customer completed self-service erasure. */
+export const KPI_ACCOUNT_ERASED = "account_erased";
+
 /**
  * Record one pseudonymous KPI event from server code. Same table and shape as
  * the widget's fail-silent track() → POST /api/kpi path, so dashboard

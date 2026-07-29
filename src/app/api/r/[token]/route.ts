@@ -1,8 +1,9 @@
 // GET /api/r/[token] — tracked redirect for marketing email links.
 //
-// Two kinds of token resolve here, tried in order:
+// Three kinds of token resolve here, tried in order:
 //   1. MARKETING send token  → the prefilled Shopify cart (?discount=CODE intact).
-//   2. BUNDLE OFFER token     → the bundle's materialized /cart permalink.
+//   2. CAMPAIGN send token    → the Mo-promo deep link (opens the chat widget).
+//   3. BUNDLE OFFER token     → the bundle's materialized /cart permalink.
 // Either way we record the click (clicked_at / a kpi_event), then 302 to the
 // real destination. The customer experiences a perfectly normal click.
 //
@@ -18,6 +19,8 @@
 // Clicked as a top-level navigation from a mail client → no CORS/secret guard.
 
 import { recordEmailClick } from "@/lib/marketing-store";
+import { recordCampaignClick } from "@/lib/campaign-store";
+import { campaignMoDeeplinkUrl } from "@/lib/campaign-flags.mjs";
 import { resolveBundleRedirect } from "@/lib/bundle-offers-store";
 import { SHOP_DOMAIN } from "@/lib/shopify-cart-url.mjs";
 import { reportError } from "@/lib/observability";
@@ -97,7 +100,15 @@ export async function GET(
       return Response.redirect(marketing.destination, 302);
     }
 
-    // 2. Bundle offer token.
+    // 2. Campaign send token (0041): destination is the Mo-promo deep link the
+    // untracked CTA pointed at before — computed at click time so a config
+    // change (CAMPAIGN_MO_DEEPLINK_URL) applies to already-sent emails too.
+    const campaign = await recordCampaignClick(token);
+    if (campaign) {
+      return Response.redirect(campaignMoDeeplinkUrl(), 302);
+    }
+
+    // 3. Bundle offer token.
     const bundle = await resolveBundleRedirect(token);
     if (bundle) {
       if (bundle.status === "active" && bundle.destination) {

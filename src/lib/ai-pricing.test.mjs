@@ -11,6 +11,7 @@ import {
   usdEurRate,
   priceForModel,
   usdCostForUsage,
+  usdCacheSavingsForUsage,
   usdToEur,
   eurCostForUsage,
 } from "./ai-pricing.mjs";
@@ -100,6 +101,41 @@ test("usdCostForUsage never lets the uncached remainder go negative", () => {
     cacheWriteTokens: 0,
   });
   assert.ok(Math.abs(cost - 0.15 * 0.1 * 3) < 1e-9);
+});
+
+test("usdCacheSavingsForUsage: reads save 0.9×, writes cost 0.25× the input price", () => {
+  // Sonnet ($3/MTok input): 1M cache reads would have cost $3 uncached but
+  // billed $0.30 → $2.70 saved; 1M cache writes billed $3.75 vs $3 → $0.75
+  // premium. Net = 2.70 − 0.75 = 1.95.
+  const usd = usdCacheSavingsForUsage({
+    model: "claude-sonnet-4-6",
+    cacheReadTokens: 1_000_000,
+    cacheWriteTokens: 1_000_000,
+  });
+  assert.ok(Math.abs(usd - 1.95) < 1e-9);
+  // Sanity against the multipliers themselves.
+  const expected =
+    3 * (1 - CACHE_READ_INPUT_MULTIPLIER) - 3 * (CACHE_WRITE_INPUT_MULTIPLIER - 1);
+  assert.ok(Math.abs(usd - expected) < 1e-9);
+});
+
+test("usdCacheSavingsForUsage: write-heavy usage reports a NEGATIVE net saving", () => {
+  const usd = usdCacheSavingsForUsage({
+    model: "claude-sonnet-4-6",
+    cacheReadTokens: 0,
+    cacheWriteTokens: 1_000_000,
+  });
+  assert.ok(usd < 0);
+  assert.ok(Math.abs(usd - -0.75) < 1e-9);
+});
+
+test("usdCacheSavingsForUsage: unknown model / missing fields / bad counts → 0", () => {
+  assert.equal(usdCacheSavingsForUsage({ model: "who-dis", cacheReadTokens: 1e6 }), 0);
+  assert.equal(usdCacheSavingsForUsage({ model: "claude-sonnet-4-6" }), 0);
+  assert.equal(
+    usdCacheSavingsForUsage({ model: "claude-sonnet-4-6", cacheReadTokens: -5 }),
+    0
+  );
 });
 
 test("usdToEur applies the rate; default is 0.92", () => {

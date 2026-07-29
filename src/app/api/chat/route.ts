@@ -536,6 +536,8 @@ export async function POST(req: Request) {
             conversationKey,
             history: messages,
             personaLabel: archetype ?? "unknown",
+            // Storefront-selected chat language → KPI language split (0041).
+            locale,
             assistantText,
             assistantToolCalls: toolCalls,
             assistantMessageId: response.id,

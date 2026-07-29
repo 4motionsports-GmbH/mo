@@ -279,7 +279,12 @@ export interface MarketingFunnel {
   shopifyConfigured: boolean;
   /** Sent emails whose UNIQUE single-use code was redeemed in a real order. */
   converted: number;
-  /** converted / sent — null when nothing was sent. */
+  /** converted / (codesChecked − redemptionUnknown) — the redemption rate over
+   * the coded sends Shopify actually answered for. NEVER converted/sent: the
+   * numerator is capped to the newest MARKETING_FUNNEL_MAX_CODES codes, so
+   * dividing by the uncapped `sent` would systematically under-report once
+   * more than the cap exist (and uncoded sends can't convert at all). Null
+   * when no code produced an answer. */
   conversionRate: number | null;
   /** Codes actually checked against Shopify (capped sample). */
   codesChecked: number;
@@ -337,6 +342,9 @@ export async function getMarketingFunnel(
       // Can't check — every coded send is "unknown" rather than "not converted".
       redemptionUnknown = codes.length;
     }
+    // Rate base: the coded sends Shopify gave a definite answer for (see the
+    // interface note — the capped numerator must never divide by uncapped sent).
+    const checkedKnown = codes.length - redemptionUnknown;
 
     return {
       sent,
@@ -344,7 +352,7 @@ export async function getMarketingFunnel(
       clickRate: sent > 0 ? clicked / sent : null,
       shopifyConfigured,
       converted,
-      conversionRate: sent > 0 ? converted / sent : null,
+      conversionRate: checkedKnown > 0 ? converted / checkedKnown : null,
       codesChecked: codes.length,
       redemptionUnknown,
       sampled,
