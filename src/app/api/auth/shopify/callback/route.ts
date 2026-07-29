@@ -27,6 +27,7 @@ import { bindShopifyIdentity } from "@/lib/customer-store";
 import { refreshSignedInCustomerCache } from "@/lib/customer-account-cache";
 import { verifyState, withAuthMarker } from "@/lib/customer-account-oauth.mjs";
 import { numericFromCustomerGid } from "@/lib/customer-merge.mjs";
+import { recordKpiEvent, KPI_ACCOUNT_SIGNIN_SUCCEEDED } from "@/lib/kpi-events";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -121,6 +122,16 @@ export async function GET(req: Request) {
     }
 
     await saveCustomerTokens(bind.customerId, tokens, idTokenSub);
+
+    // Cluster-A telemetry: one pseudonymous event per completed sign-in, so the
+    // KPI tab can show account adoption. Session-keyed (the pending record's
+    // widget session); `silent` marks the prompt=none already-signed-in detect.
+    // Best-effort — never blocks the redirect.
+    await recordKpiEvent({
+      sessionId: pending.sessionId || null,
+      event: KPI_ACCOUNT_SIGNIN_SUCCEEDED,
+      data: { silent: pending.promptNone },
+    });
 
     // Warm the tier-3 cache (name + address context + order history) from the
     // Customer Account API so the live chat and the marketing profile have it on

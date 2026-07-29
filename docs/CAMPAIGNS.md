@@ -108,7 +108,7 @@ marketing drafts, enforced in the prompt and in the deterministic promo copy.
 | --- | --- | --- |
 | `campaign_contacts` | The synced audience + review-queue lifecycle | `shopify_customer_id` (unique), normalized `email`, `first_name`/`last_name`, `language` (de/en), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `draft_failed`), `sent_at`, `skipped_at` |
 | `campaign_drafts` | ONE editable draft per contact (unique `contact_id`) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
-| `campaign_sends` | Immutable send record (audit + KPI) | `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — migration `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `sent_at` |
+| `campaign_sends` | Immutable send record (audit + KPI) | `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — migration `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `redirect_token`/`clicked_at` (migration `0041` — the tracked Mo-promo CTA, see below; NULL for copy sends and pre-0041 rows), `sent_at` |
 
 Deliberately **not** stored: full order history (read from Shopify at draft
 time; only the compact `purchase_summary` snapshot needed for the review card
@@ -245,6 +245,22 @@ prefix. Per row, **Ansehen** (`POST /api/admin/campaign/sent-email`) opens
 the retained content (`0038`) in the same viewer dialog: system sends show
 the exact delivered HTML, copy-path rows show the copied text; pre-0038
 rows retained nothing and say so.
+
+### Click tracking (migration 0041)
+
+System sends route the email's main CTA — the Mo-promo deep link — through the
+tracked redirect `GET /api/r/<token>`, exactly like the marketing channel's
+cart link (no pixel; only the link the recipient chose to click). At send time
+`approveAndSendCampaign` mints a `redirect_token`, embeds
+`/api/r/<token>` as the CTA/promo URL and stores the token on the
+`campaign_sends` row. The redirect resolves campaign tokens via
+`recordCampaignClick` (`campaign-store.ts`): first click stamps `clicked_at`,
+every click logs a `campaign_email_clicked` kpi_event, and the visitor is
+302'd to `campaignMoDeeplinkUrl()` (computed at click time, so a config change
+applies to already-sent emails). Copy-path sends and the review-time preview
+stay untracked. This powers the **Kampagnen-Funnel** on the KPI tab
+(`getCampaignKpis` — sent → clicked → redeemed, plus the language split); see
+`ADMIN_DASHBOARD.md` §5.9.
 
 ## 6. Retention
 

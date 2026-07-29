@@ -22,7 +22,20 @@ import {
   KPI_CONSENT_GATE_DECLINED,
   KPI_CONSENT_GATE_DISMISSED,
   KPI_CONSENT_GATE_SHOWN,
+  KPI_EMAIL_CAPTURE_ASK_SHOWN,
+  KPI_EMAIL_CAPTURE_SUBMITTED,
+  KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
+  KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED,
+  KPI_EMAIL_CAPTURE_DECLINED,
+  KPI_ACCOUNT_SIGNIN_SUCCEEDED,
+  KPI_ACCOUNT_EXPORT_REQUESTED,
+  KPI_ACCOUNT_ERASED,
+  KPI_CONTACT_FORM_SUBMITTED,
 } from "./kpi-events";
+// The two headline click-signal shapes — shared with the Gespräche inspector
+// and the Komplettanalyse (kpi-event-patterns.mjs) so the definition of a
+// "click" can never drift between surfaces.
+import { CTA_PATTERNS, CART_PATTERNS } from "./kpi-event-patterns.mjs";
 
 export interface DailyCount {
   /** ISO date (YYYY-MM-DD). */
@@ -71,12 +84,6 @@ export interface CoreMetrics {
   topEvents: EventCount[];
 }
 
-// Pattern matching for the two headline click signals. These are SQL ILIKE
-// patterns, kept here (and documented) because the widget owns the literal event
-// names; matching by shape survives a rename like product_card_click →
-// product_cta_click without a code change.
-const CTA_PATTERNS = ["%product%click%", "%cta%click%"] as const;
-const CART_PATTERNS = ["%cart%", "%checkout%"] as const;
 
 function ratePerChat(numerator: number, totalChats: number): number {
   return totalChats > 0 ? numerator / totalChats : 0;
@@ -285,6 +292,240 @@ export async function getConsentGateFunnel(
     return funnel;
   } catch (err) {
     reportError(err, { route: "lib/kpi-store", phase: "getConsentGateFunnel" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Email-capture funnel — ask → submitted → marketing opt-in → DOI confirmed
+// ---------------------------------------------------------------------------
+
+export interface EmailCaptureFunnel {
+  /** Mo made the email-summary offer (server-emitted, one per tool call). */
+  askShown: number;
+  /** The user submitted the capture form (transactional consent). */
+  submitted: number;
+  /** The user also ticked the separate marketing checkbox (pre-DOI intent). */
+  marketingOptedIn: number;
+  /** The user clicked the DOI link — marketing consent confirmed. */
+  confirmed: number;
+  /** Widget-emitted: the capture card was dismissed/declined. */
+  declined: number;
+  /** submitted / askShown — null when nothing was asked. */
+  submitRate: number | null;
+  /** confirmed / marketingOptedIn — null when nobody opted in. */
+  doiRate: number | null;
+  /** askShown split by the offer trigger (data.trigger from the tool call);
+   * events without a trigger land under "unknown". */
+  asksByTrigger: Array<{ trigger: string; count: number }>;
+}
+
+/**
+ * Aggregate the five canonical email-capture events (lib/kpi-events) over the
+ * selected window. Counts are per-event, not per-session — each stage counts
+ * events INSIDE the window, so a DOI click confirming yesterday's opt-in counts
+ * in today's `confirmed` (documented in the UI caveat; the stages are close
+ * enough in time that the funnel reads correctly at every practical window).
+ * Returns null when no DB is configured or on a hard failure.
+ */
+export async function getEmailCaptureFunnel(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<EmailCaptureFunnel | null> {
+  if (!sql) return null;
+  try {
+    const [countRows, triggerRows] = await Promise.all([
+      sql`
+        SELECT event, count(*)::int AS n
+          FROM kpi_events
+         WHERE event IN (${KPI_EMAIL_CAPTURE_ASK_SHOWN}, ${KPI_EMAIL_CAPTURE_SUBMITTED},
+                         ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN},
+                         ${KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED},
+                         ${KPI_EMAIL_CAPTURE_DECLINED})
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY event
+      `,
+      sql`
+        SELECT COALESCE(NULLIF(data->>'trigger', ''), 'unknown') AS trigger,
+               count(*)::int AS n
+          FROM kpi_events
+         WHERE event = ${KPI_EMAIL_CAPTURE_ASK_SHOWN}
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY 1
+         ORDER BY n DESC, 1 ASC
+      `,
+    ]);
+
+    const byEvent: Record<string, number> = {};
+    for (const r of countRows as Array<{ event: string; n: number }>) {
+      byEvent[r.event] = Number(r.n);
+    }
+    const askShown = byEvent[KPI_EMAIL_CAPTURE_ASK_SHOWN] ?? 0;
+    const submitted = byEvent[KPI_EMAIL_CAPTURE_SUBMITTED] ?? 0;
+    const marketingOptedIn = byEvent[KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN] ?? 0;
+    const confirmed = byEvent[KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED] ?? 0;
+
+    return {
+      askShown,
+      submitted,
+      marketingOptedIn,
+      confirmed,
+      declined: byEvent[KPI_EMAIL_CAPTURE_DECLINED] ?? 0,
+      submitRate: askShown > 0 ? submitted / askShown : null,
+      doiRate: marketingOptedIn > 0 ? confirmed / marketingOptedIn : null,
+      asksByTrigger: (triggerRows as Array<{ trigger: string; n: number }>).map((r) => ({
+        trigger: String(r.trigger),
+        count: Number(r.n),
+      })),
+    } satisfies EmailCaptureFunnel;
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-store", phase: "getEmailCaptureFunnel" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Language split (de/en) — chats + email captures
+// ---------------------------------------------------------------------------
+
+export interface LocaleCount {
+  /** 'de' | 'en' | 'unknown' (rows from before the locale columns). */
+  locale: string;
+  count: number;
+}
+
+export interface LocaleSplit {
+  /** Conversations in the window by storefront-selected chat language
+   * (conversations.locale, migration 0041 — null ⇒ 'unknown'). */
+  chats: LocaleCount[];
+  /** Email captures in the window by capture locale (migration 0030). */
+  captures: LocaleCount[];
+}
+
+/**
+ * The DE/EN dimension over the window: chats by conversations.locale and
+ * captures by email_captures.locale. Counts only — the capture side reads no
+ * email/identity value (Cluster-B table, but a pure GROUP BY over locale).
+ * Returns null when no DB is configured or on a hard failure.
+ */
+export async function getLocaleSplit(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<LocaleSplit | null> {
+  if (!sql) return null;
+  try {
+    const [chatRows, captureRows] = await Promise.all([
+      sql`
+        SELECT COALESCE(locale, 'unknown') AS locale, count(*)::int AS n
+          FROM conversations
+         WHERE created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY 1
+         ORDER BY n DESC, 1 ASC
+      `,
+      sql`
+        SELECT COALESCE(locale, 'unknown') AS locale, count(*)::int AS n
+          FROM email_captures
+         WHERE created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY 1
+         ORDER BY n DESC, 1 ASC
+      `,
+    ]);
+    const map = (rows: unknown) =>
+      (rows as Array<{ locale: string; n: number }>).map((r) => ({
+        locale: String(r.locale),
+        count: Number(r.n),
+      }));
+    return { chats: map(chatRows), captures: map(captureRows) } satisfies LocaleSplit;
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-store", phase: "getLocaleSplit" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Customer-account activity — sign-ins, GDPR self-service, summaries
+// ---------------------------------------------------------------------------
+
+export interface AccountActivity {
+  /** Completed sign-ins (OAuth callback success), incl. silent re-detects. */
+  signins: number;
+  /** Of those, prompt=none silent already-signed-in detections. */
+  silentSignins: number;
+  /** GDPR data exports downloaded (Art. 15/20 self-service). */
+  exports: number;
+  /** Full self-service erasures completed (Art. 17). */
+  erasures: number;
+  /** Contact-form submissions accepted (widget hand-over). */
+  contactFormSubmissions: number;
+  /** Chat-summary PDFs downloaded by signed-in customers (ai_usage). */
+  summaryDownloads: number;
+  /** Chat-summary emails generated after a capture (ai_usage). */
+  summaryEmails: number;
+}
+
+/**
+ * Windowed account/self-service usage: the server-emitted kpi_events from the
+ * auth callback, export/erase routes and the contact form, plus the two
+ * summary call sites from ai_usage (each generation = one row = one delivered
+ * summary). Returns null when no DB is configured or on a hard failure.
+ */
+export async function getAccountActivity(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<AccountActivity | null> {
+  if (!sql) return null;
+  try {
+    const [eventRows, usageRows] = await Promise.all([
+      sql`
+        SELECT event,
+               count(*)::int AS n,
+               count(*) FILTER (WHERE data->>'silent' = 'true')::int AS silent
+          FROM kpi_events
+         WHERE event IN (${KPI_ACCOUNT_SIGNIN_SUCCEEDED}, ${KPI_ACCOUNT_EXPORT_REQUESTED},
+                         ${KPI_ACCOUNT_ERASED}, ${KPI_CONTACT_FORM_SUBMITTED})
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY event
+      `,
+      sql`
+        SELECT call_site, count(*)::int AS n
+          FROM ai_usage
+         WHERE call_site IN ('summary_download', 'summary_email')
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY call_site
+      `,
+    ]);
+
+    const activity: AccountActivity = {
+      signins: 0,
+      silentSignins: 0,
+      exports: 0,
+      erasures: 0,
+      contactFormSubmissions: 0,
+      summaryDownloads: 0,
+      summaryEmails: 0,
+    };
+    for (const r of eventRows as Array<{ event: string; n: number; silent: number }>) {
+      const n = Number(r.n);
+      if (r.event === KPI_ACCOUNT_SIGNIN_SUCCEEDED) {
+        activity.signins = n;
+        activity.silentSignins = Number(r.silent);
+      } else if (r.event === KPI_ACCOUNT_EXPORT_REQUESTED) activity.exports = n;
+      else if (r.event === KPI_ACCOUNT_ERASED) activity.erasures = n;
+      else if (r.event === KPI_CONTACT_FORM_SUBMITTED) activity.contactFormSubmissions = n;
+    }
+    for (const r of usageRows as Array<{ call_site: string; n: number }>) {
+      if (r.call_site === "summary_download") activity.summaryDownloads = Number(r.n);
+      else if (r.call_site === "summary_email") activity.summaryEmails = Number(r.n);
+    }
+    return activity;
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-store", phase: "getAccountActivity" });
     return null;
   }
 }

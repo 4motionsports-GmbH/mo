@@ -143,6 +143,29 @@ export function usdCostForUsage(
   return (inputUsd + outTok * p.output) / 1_000_000;
 }
 
+/**
+ * NET USD saved by prompt caching for one usage record, versus the same call
+ * with no cache: every cache-read token would have billed at the full input
+ * price (saving 1 − 0.1 = 0.9× each), while every cache-write token cost a
+ * 1.25 − 1 = 0.25× premium. Can be NEGATIVE for a pathological write-heavy /
+ * read-light pattern — that is the honest answer, not an error. Returns 0 for
+ * an unknown model or a record without cache fields.
+ */
+export function usdCacheSavingsForUsage(
+  { model, cacheReadTokens = 0, cacheWriteTokens = 0 },
+  prices = DEFAULT_MODEL_PRICES
+) {
+  const p = priceForModel(model, prices);
+  if (!p) return 0;
+  const readTok = isNonNegNumber(cacheReadTokens) ? cacheReadTokens : 0;
+  const writeTok = isNonNegNumber(cacheWriteTokens) ? cacheWriteTokens : 0;
+  const savedUsd =
+    (readTok * (1 - CACHE_READ_INPUT_MULTIPLIER) -
+      writeTok * (CACHE_WRITE_INPUT_MULTIPLIER - 1)) *
+    p.input;
+  return savedUsd / 1_000_000;
+}
+
 /** Convert USD to EUR at the given rate (default 0.92). */
 export function usdToEur(usd, rate = DEFAULT_USD_EUR_RATE) {
   return usd * rate;

@@ -74,6 +74,7 @@ import {
   emailProseToText,
   productNameLookup,
 } from "./email-prose.mjs";
+import { generateRedirectToken } from "./marketing-store";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
 import { renderBundleOfferBlock } from "./bundle-email";
@@ -270,6 +271,14 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       // bundle resolution failure degrades to "no block", never blocks a send.
       const bundle = await buildBundleBlockForContact(contactId, contact.language);
 
+      // Tracked CTA (migration 0041): the Mo-promo deep link — the email's main
+      // CTA — routes through /api/r/<token> so the Kampagnen-Funnel can count
+      // clicks, exactly like the marketing channel's cart link. The redirect
+      // resolves back to campaignMoDeeplinkUrl(); the customer experiences a
+      // perfectly normal click. Preview/copy paths stay untracked.
+      const redirectToken = generateRedirectToken();
+      const trackedCtaUrl = `${getBaseUrl()}/api/r/${redirectToken}`;
+
       const { text, html } = renderCampaignEmail({
         subject: draft.subject,
         body,
@@ -281,6 +290,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
         bundle,
         labelForUrl: await catalogNameLookup(),
+        ctaUrl: trackedCtaUrl,
       });
 
       const threading = outboundThreading();
@@ -321,6 +331,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         discountCode,
         discountCodeGid,
         discountExpiresAt,
+        redirectToken,
       });
       await markContactSent(contactId);
       return { ok: true, sentTo: contact.email };
@@ -469,11 +480,14 @@ function renderCampaignEmail(opts: {
   /** Names a bare product URL in the prose (catalog lookup); null → compact
    * host/path label. Markdown links carry their own label. */
   labelForUrl?: (url: string) => string | null;
+  /** The tracked /api/r/<token> CTA URL at send time; omitted (preview) the
+   * promo links straight to the untracked Mo deep link. */
+  ctaUrl?: string;
 }): { text: string; html: string } {
   const { subject, body, language, discountCode, discountExpiresLabel, unsubscribe, bundle } =
     opts;
   const en = language === "en";
-  const deeplink = campaignMoDeeplinkUrl();
+  const deeplink = opts.ctaUrl ?? campaignMoDeeplinkUrl();
 
   const validityNote = discountExpiresLabel
     ? en

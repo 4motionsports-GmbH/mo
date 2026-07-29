@@ -33,6 +33,7 @@ import {
 } from "./conversation-analysis-core.mjs";
 import { ARCHETYPE_META } from "./persona";
 import { getProductsByIds } from "./product-catalog";
+import { CART_PATTERNS } from "./kpi-event-patterns.mjs";
 import type { PersonaArchetype } from "./types";
 
 export const REPORT_LIST_LIMIT = 100;
@@ -419,7 +420,7 @@ export async function getReportKpis(
          WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
            AND EXISTS (SELECT 1 FROM kpi_events k
                         WHERE k.session_id = c.session_id
-                          AND (k.event ILIKE '%cart%' OR k.event ILIKE '%checkout%'))
+                          AND (k.event ILIKE ${CART_PATTERNS[0]} OR k.event ILIKE ${CART_PATTERNS[1]}))
       `,
     ]);
     const core = (coreRows as Array<Record<string, number>>)[0] ?? {};

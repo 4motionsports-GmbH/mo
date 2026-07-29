@@ -16,6 +16,7 @@ import {
   loadModelPrices,
   usdEurRate,
   usdCostForUsage,
+  usdCacheSavingsForUsage,
   usdToEur,
 } from "./ai-pricing.mjs";
 
@@ -139,6 +140,24 @@ export interface AiCostMetrics {
   adminSpendEur: number;
   /** True when any counted usage was estimated rather than provider-reported. */
   estimated: boolean;
+  /** EUR spend per call site (all models summed), largest first. Zero-cost
+   * sites (unknown model / free rows) still appear so usage stays visible. */
+  perCallSite: Array<{ callSite: string; spendEur: number }>;
+  /** Prompt-cache economics over the window (chat is the only caching call
+   * site today — see docs/PROMPT_CACHING.md). */
+  cache: {
+    /** Tokens served from the Anthropic prompt cache (billed 0.1×). */
+    readTokens: number;
+    /** Tokens written to the cache (billed 1.25×). */
+    writeTokens: number;
+    /** TOTAL chat input tokens (incl. cached) — the hit-rate denominator. */
+    chatInputTokens: number;
+    /** readTokens / chatInputTokens — null before any chat input exists. */
+    hitRate: number | null;
+    /** NET EUR saved vs. the same calls without caching (read discount minus
+     * write premium). Can be negative — that is reported honestly. */
+    savedEur: number;
+  };
 }
 
 function median(values: number[]): number {
@@ -250,11 +269,17 @@ export async function getAiCostMetrics(
       consultationCount > 0 ? totalChatConsultation / consultationCount : 0;
     const medianCostPerConsultationEur = median(consultationCosts);
 
-    // Totals + chat/admin split across every call site.
+    // Totals + chat/admin split + per-call-site breakdown + cache economics,
+    // all folded from the same per-(call_site, model) rows.
     let totalSpendEur = 0;
     let chatSpendEur = 0;
     let adminSpendEur = 0;
     let estimated = false;
+    const spendByCallSite = new Map<string, number>();
+    let cacheReadTokens = 0;
+    let cacheWriteTokens = 0;
+    let chatInputTokens = 0;
+    let cacheSavedEur = 0;
     for (const r of totalRows as Array<{
       call_site: string;
       model: string;
@@ -264,22 +289,22 @@ export async function getAiCostMetrics(
       cache_write_tok: string | number;
       estimated: boolean;
     }>) {
-      const eur = usdToEur(
-        usdCostForUsage(
-          {
-            model: r.model,
-            inputTokens: Number(r.in_tok),
-            outputTokens: Number(r.out_tok),
-            cacheReadTokens: Number(r.cache_read_tok),
-            cacheWriteTokens: Number(r.cache_write_tok),
-          },
-          prices
-        ),
-        rate
-      );
+      const usage = {
+        model: r.model,
+        inputTokens: Number(r.in_tok),
+        outputTokens: Number(r.out_tok),
+        cacheReadTokens: Number(r.cache_read_tok),
+        cacheWriteTokens: Number(r.cache_write_tok),
+      };
+      const eur = usdToEur(usdCostForUsage(usage, prices), rate);
       totalSpendEur += eur;
       if (CHAT_SIDE_CALL_SITES.has(r.call_site as AiCallSite)) chatSpendEur += eur;
       else adminSpendEur += eur;
+      spendByCallSite.set(r.call_site, (spendByCallSite.get(r.call_site) ?? 0) + eur);
+      cacheReadTokens += usage.cacheReadTokens;
+      cacheWriteTokens += usage.cacheWriteTokens;
+      if (r.call_site === "chat") chatInputTokens += usage.inputTokens;
+      cacheSavedEur += usdToEur(usdCacheSavingsForUsage(usage, prices), rate);
       if (r.estimated && eur > 0) estimated = true;
     }
 
@@ -292,6 +317,16 @@ export async function getAiCostMetrics(
       chatSpendEur,
       adminSpendEur,
       estimated,
+      perCallSite: [...spendByCallSite.entries()]
+        .map(([callSite, spendEur]) => ({ callSite, spendEur }))
+        .sort((a, b) => b.spendEur - a.spendEur || a.callSite.localeCompare(b.callSite)),
+      cache: {
+        readTokens: cacheReadTokens,
+        writeTokens: cacheWriteTokens,
+        chatInputTokens,
+        hitRate: chatInputTokens > 0 ? cacheReadTokens / chatInputTokens : null,
+        savedEur: cacheSavedEur,
+      },
     } satisfies AiCostMetrics;
   } catch (err) {
     reportError(err, { route: "lib/ai-usage-store", phase: "getAiCostMetrics" });

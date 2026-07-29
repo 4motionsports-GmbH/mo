@@ -15,6 +15,10 @@ import { createHash } from "node:crypto";
 import { getSql, type Sql } from "./db";
 import { normalizeEmail } from "./email-capture-store";
 import { reportError } from "./observability";
+import { wasDiscountCodeRedeemed } from "./shopify-orders";
+import { isShopifyConfigured } from "./shopify";
+import { KPI_CAMPAIGN_EMAIL_CLICKED } from "./kpi-events";
+import type { KpiRange } from "./kpi-range";
 
 export type CampaignContactStatus =
   | "pending"
@@ -835,6 +839,9 @@ export interface RecordCampaignSendInput {
   discountCode: string | null;
   discountCodeGid: string | null;
   discountExpiresAt: string | null;
+  /** Token behind the tracked CTA link (/api/r/<token>, migration 0041). NULL
+   * on the copy path — nothing tracked left the system. */
+  redirectToken?: string | null;
 }
 
 /** Append the immutable send record. Throws on failure (the send path treats a
@@ -847,13 +854,194 @@ export async function recordCampaignSend(
   await sql`
     INSERT INTO campaign_sends
       (contact_id, email, subject, body_hash, body_text, body_html, sent_via,
-       discount_code, discount_code_gid, discount_expires_at, sent_at, created_at)
+       discount_code, discount_code_gid, discount_expires_at, redirect_token,
+       sent_at, created_at)
     VALUES
       (${input.contactId}, ${normalizeEmail(input.email)}, ${input.subject},
        ${input.bodyHash}, ${input.bodyText}, ${input.bodyHtml},
        ${input.sentVia}, ${input.discountCode},
-       ${input.discountCodeGid}, ${input.discountExpiresAt}, now(), now())
+       ${input.discountCodeGid}, ${input.discountExpiresAt},
+       ${input.redirectToken ?? null}, now(), now())
   `;
+}
+
+/**
+ * Resolve a CAMPAIGN redirect token and record the click — the campaign sibling
+ * of marketing-store.recordEmailClick, same two-step contract:
+ *   - stamp clicked_at on the FIRST click only (`clicked_at IS NULL` guard),
+ *   - log a campaign_email_clicked kpi_event on EVERY click so click volume
+ *     stays visible (session NULL — an email click has no widget session).
+ * Returns the send id + firstClick flag, or null when the token isn't a
+ * campaign token (the caller then tries the other channels). Never throws.
+ */
+export async function recordCampaignClick(
+  token: string,
+  sql: Sql | null = getSql()
+): Promise<{ sendId: number; firstClick: boolean } | null> {
+  if (!sql) return null;
+  const t = token.trim();
+  if (!t) return null;
+  try {
+    const rows = (await sql`
+      SELECT id, clicked_at FROM campaign_sends
+       WHERE redirect_token = ${t}
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    const row = rows[0];
+    if (!row) return null;
+
+    const sendId = Number(row.id);
+    const firstClick = row.clicked_at == null;
+
+    await sql`
+      UPDATE campaign_sends
+         SET clicked_at = now()
+       WHERE id = ${sendId} AND clicked_at IS NULL
+    `;
+    await sql`
+      INSERT INTO kpi_events (session_id, event, data)
+      VALUES (NULL, ${KPI_CAMPAIGN_EMAIL_CLICKED},
+              ${JSON.stringify({ sendId, firstClick })}::jsonb)
+    `;
+    return { sendId, firstClick };
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "recordCampaignClick" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Campaign KPIs (KPI tab) — the MK- channel funnel + language split
+// ---------------------------------------------------------------------------
+
+// Bound the per-load Shopify redemption fan-out, mirroring the marketing
+// funnel's cap discipline (newest coded sends first).
+export const CAMPAIGN_KPI_MAX_CODES = 100;
+
+export interface CampaignKpis {
+  /** Send records inside the window (both delivery paths). */
+  sent: number;
+  sentViaEmail: number;
+  sentViaCopy: number;
+  /** Windowed sends that carry a tracked CTA link (redirect_token minted —
+   * 'email' sends after migration 0041). The honest click-rate base. */
+  trackedSends: number;
+  /** Of the tracked windowed sends, how many were clicked at least once. */
+  clicked: number;
+  /** clicked / trackedSends — null when nothing tracked yet. */
+  clickRate: number | null;
+  /** Windowed sends by the recipient contact's EFFECTIVE language. Sends whose
+   * contact was purged (SET NULL) land in `unknown`. */
+  byLanguage: { de: number; en: number; unknown: number };
+  /** Whether Shopify is wired up (false ⇒ redemption is unknowable). */
+  shopifyConfigured: boolean;
+  /** Windowed coded sends whose unique MK- code was redeemed in a real order. */
+  converted: number;
+  /** converted / codesChecked — the rate over the CHECKED sample (never over
+   * uncoded or unchecked sends). Null when no code was checked. */
+  conversionRate: number | null;
+  codesChecked: number;
+  /** Codes where Shopify couldn't answer (unconfigured / error) — not counted. */
+  redemptionUnknown: number;
+  /** True when the checked set was truncated to CAMPAIGN_KPI_MAX_CODES. */
+  sampled: boolean;
+}
+
+/**
+ * Aggregate the campaign channel for the KPI tab, scoped to the picker window
+ * via sent_at. Cheap DB aggregates plus the capped per-code Shopify redemption
+ * check the revenue KPI already does for MK- codes — here per send so the
+ * funnel (gesendet → geklickt → eingelöst) lines up. Returns null when no DB is
+ * configured or on a hard failure.
+ */
+export async function getCampaignKpis(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<CampaignKpis | null> {
+  if (!sql) return null;
+  const shopifyConfigured = isShopifyConfigured();
+  try {
+    const [totalRows, langRows, codeRows] = await Promise.all([
+      sql`
+        SELECT
+          count(*)::int AS sent,
+          count(*) FILTER (WHERE sent_via = 'email')::int AS via_email,
+          count(*) FILTER (WHERE sent_via = 'copy')::int  AS via_copy,
+          count(*) FILTER (WHERE redirect_token IS NOT NULL)::int AS tracked,
+          count(*) FILTER (WHERE redirect_token IS NOT NULL
+                             AND clicked_at IS NOT NULL)::int AS clicked
+          FROM campaign_sends
+         WHERE sent_at >= ${range.from}::date
+           AND sent_at < (${range.to}::date + 1)
+      `,
+      sql`
+        SELECT COALESCE(c.language_override, c.language, 'unknown') AS lang,
+               count(*)::int AS n
+          FROM campaign_sends s
+          LEFT JOIN campaign_contacts c ON c.id = s.contact_id
+         WHERE s.sent_at >= ${range.from}::date
+           AND s.sent_at < (${range.to}::date + 1)
+         GROUP BY 1
+      `,
+      sql`
+        SELECT discount_code
+          FROM campaign_sends
+         WHERE discount_code IS NOT NULL
+           AND sent_at >= ${range.from}::date
+           AND sent_at < (${range.to}::date + 1)
+         ORDER BY sent_at DESC, id DESC
+         LIMIT ${CAMPAIGN_KPI_MAX_CODES + 1}
+      `,
+    ]);
+
+    const t = (totalRows as Array<Record<string, unknown>>)[0] ?? {};
+    const byLanguage = { de: 0, en: 0, unknown: 0 };
+    for (const r of langRows as Array<{ lang: string; n: number }>) {
+      const key = r.lang === "de" || r.lang === "en" ? r.lang : "unknown";
+      byLanguage[key] += Number(r.n);
+    }
+
+    const codeList = (codeRows as Array<{ discount_code: string }>).map((r) =>
+      String(r.discount_code)
+    );
+    const sampled = codeList.length > CAMPAIGN_KPI_MAX_CODES;
+    const codes = codeList.slice(0, CAMPAIGN_KPI_MAX_CODES);
+
+    let converted = 0;
+    let redemptionUnknown = 0;
+    if (shopifyConfigured && codes.length) {
+      const results = await Promise.all(codes.map((c) => wasDiscountCodeRedeemed(c)));
+      for (const r of results) {
+        if (r === null) redemptionUnknown++;
+        else if (r) converted++;
+      }
+    } else {
+      // Can't check — every coded send is "unknown" rather than "not converted".
+      redemptionUnknown = codes.length;
+    }
+    const checkedKnown = codes.length - redemptionUnknown;
+
+    const trackedSends = Number(t.tracked ?? 0);
+    const clicked = Number(t.clicked ?? 0);
+    return {
+      sent: Number(t.sent ?? 0),
+      sentViaEmail: Number(t.via_email ?? 0),
+      sentViaCopy: Number(t.via_copy ?? 0),
+      trackedSends,
+      clicked,
+      clickRate: trackedSends > 0 ? clicked / trackedSends : null,
+      byLanguage,
+      shopifyConfigured,
+      converted,
+      conversionRate: checkedKnown > 0 ? converted / checkedKnown : null,
+      codesChecked: codes.length,
+      redemptionUnknown,
+      sampled,
+    } satisfies CampaignKpis;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "getCampaignKpis" });
+    return null;
+  }
 }
 
 /**

@@ -16,6 +16,7 @@ import { requireSignedInCustomer } from "@/lib/account-guard";
 import { buildCustomerDataExport } from "@/lib/account-export";
 import { resolveLocale } from "@/lib/locale";
 import { apiMessage } from "@/lib/api-messages.mjs";
+import { recordKpiEvent, KPI_ACCOUNT_EXPORT_REQUESTED } from "@/lib/kpi-events";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -42,6 +43,10 @@ export async function GET(req: Request) {
         guard.headers
       );
     }
+    // Pseudonymous usage counter (no session/customer key — a pure volume
+    // signal for the KPI tab's account section). Best-effort, never blocks.
+    await recordKpiEvent({ sessionId: null, event: KPI_ACCOUNT_EXPORT_REQUESTED });
+
     const body = JSON.stringify(data, null, 2);
     const filename =
       locale === "en" ? "motionsports-my-data.json" : "motionsports-meine-daten.json";

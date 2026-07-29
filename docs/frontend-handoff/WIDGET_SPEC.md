@@ -892,7 +892,9 @@ conversation; the email ask stays where it is (§6a, after value).
       multi-product cart permalink), degrading to product-page links when
       `cartUrl` is `null`.
 - [ ] Inline contact form posts to `/api/contact`; success + error +
-      retry states.
+      retry states. Include the pseudonymous `sessionId` in the payload
+      (optional field, `API_CONTRACT.md` §4) so the backend's
+      `contact_form_submitted` KPI event is session-keyed.
 - [ ] Email-summary capture form (§6a) renders from both the
       `offer_email_summary` tool part and the header "Per E-Mail teilen"
       button (hidden until the first user message); consent copy is the

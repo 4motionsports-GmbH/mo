@@ -135,6 +135,84 @@ export async function getQaEntry(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Wissen KPIs (KPI tab)
+// ---------------------------------------------------------------------------
+
+export interface QaKpis {
+  /** Lifetime queue state (same numbers as the Wissen tab header). */
+  queue: QaCounts;
+  /** Entries CREATED inside the window (gaps found by the scan). */
+  createdInWindow: number;
+  /** Entries PUBLISHED inside the window (knowledge shipped to Mo/PDP). */
+  publishedInWindow: number;
+  /** Median hours from draft to operator answer, over entries answered inside
+   * the window. Null when none. */
+  medianHoursToAnswer: number | null;
+  /** Median hours from draft to publish, over entries published inside the
+   * window. Null when none. */
+  medianHoursToPublish: number | null;
+  /** Conversations currently eligible for a knowledge-gap scan but not yet
+   * scanned (the backlog the operator can burn down). */
+  scanBacklog: number;
+}
+
+/**
+ * Aggregate the knowledge queue for the KPI tab: lifetime queue state plus
+ * windowed throughput (gaps found / published) and the operator's answering
+ * latency. Returns null when no DB is configured or on a hard failure.
+ */
+export async function getQaKpis(
+  range: { from: string; to: string },
+  sql: Sql | null = getSql()
+): Promise<QaKpis | null> {
+  if (!sql) return null;
+  try {
+    const [queue, backlog, windowRows, latencyRows] = await Promise.all([
+      getQaCounts(sql),
+      countScanCandidates(sql),
+      sql`
+        SELECT
+          count(*) FILTER (WHERE created_at >= ${range.from}::date
+                             AND created_at < (${range.to}::date + 1))::int AS created_n,
+          count(*) FILTER (WHERE published_at >= ${range.from}::date
+                             AND published_at < (${range.to}::date + 1))::int AS published_n
+          FROM qa_entries
+      `,
+      sql`
+        SELECT
+          percentile_cont(0.5) WITHIN GROUP (
+            ORDER BY EXTRACT(EPOCH FROM (answered_at - created_at)) / 3600.0
+          ) FILTER (WHERE answered_at >= ${range.from}::date
+                      AND answered_at < (${range.to}::date + 1)) AS med_answer_h,
+          percentile_cont(0.5) WITHIN GROUP (
+            ORDER BY EXTRACT(EPOCH FROM (published_at - created_at)) / 3600.0
+          ) FILTER (WHERE published_at >= ${range.from}::date
+                      AND published_at < (${range.to}::date + 1)) AS med_publish_h
+          FROM qa_entries
+      `,
+    ]);
+
+    const w = (windowRows as Array<Record<string, unknown>>)[0] ?? {};
+    const l = (latencyRows as Array<Record<string, unknown>>)[0] ?? {};
+    const toHours = (v: unknown): number | null => {
+      const n = Number(v);
+      return v == null || !Number.isFinite(n) ? null : n;
+    };
+    return {
+      queue,
+      createdInWindow: Number(w.created_n ?? 0),
+      publishedInWindow: Number(w.published_n ?? 0),
+      medianHoursToAnswer: toHours(l.med_answer_h),
+      medianHoursToPublish: toHours(l.med_publish_h),
+      scanBacklog: backlog,
+    } satisfies QaKpis;
+  } catch (err) {
+    reportError(err, { route: "lib/qa-store", phase: "kpis" });
+    return null;
+  }
+}
+
 /** Per-status counts for the tab header (missing statuses come back 0). */
 export async function getQaCounts(sql: Sql | null = getSql()): Promise<QaCounts> {
   const counts: QaCounts = { open: 0, answered: 0, published: 0, dismissed: 0 };

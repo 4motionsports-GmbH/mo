@@ -23,6 +23,7 @@ import { requireSignedInCustomer } from "@/lib/account-guard";
 import { eraseSignedInCustomer } from "@/lib/account-history";
 import { resolveLocale } from "@/lib/locale";
 import { apiMessage } from "@/lib/api-messages.mjs";
+import { recordKpiEvent, KPI_ACCOUNT_ERASED } from "@/lib/kpi-events";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -50,6 +51,10 @@ export async function POST(req: Request) {
         guard.headers
       );
     }
+    // Pseudonymous usage counter — a volume-only signal (no session/customer
+    // key; the person was just erased). Best-effort, never blocks the response.
+    await recordKpiEvent({ sessionId: null, event: KPI_ACCOUNT_ERASED });
+
     return new Response(
       JSON.stringify({
         ok: true,

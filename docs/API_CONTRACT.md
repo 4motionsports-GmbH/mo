@@ -908,7 +908,8 @@ Same as `/api/chat`:
   "email": "max@example.de",
   "organization": "Fitstudio München GmbH",          // optional
   "phone": "+49 89 1234567",                         // optional
-  "message": "Wir planen ein neues Studio mit ca. 200 m² Krafttraining..."
+  "message": "Wir planen ein neues Studio mit ca. 200 m² Krafttraining...",
+  "sessionId": "b3c1…"                               // optional, pseudonymous
 }
 ```
 
@@ -918,6 +919,10 @@ Same as `/api/chat`:
   verbatim in the email subject.
 - `email` is validated with `^[^@\s]+@[^@\s]+\.[^@\s]+$`.
 - `name` and `message` must be non-empty after trimming.
+- `sessionId` (optional) keys the pseudonymous `contact_form_submitted`
+  KPI event (§5) so submissions can be compared against `show_contact_form`
+  tool-fires. It is telemetry-only — never stored alongside the submitted
+  contact details.
 
 ### Success response
 
@@ -1017,6 +1022,25 @@ They feed the Consent-Gate funnel on the admin KPI tab
 > `starter_clicked`. The endpoint (which accepts any event name) doesn't
 > reject them, but nothing aggregates them anymore beyond the raw
 > event-name breakdown.
+
+### Server-emitted lifecycle events (canonical names)
+
+These land in the same `kpi_events` stream but are emitted **exclusively
+server-side** (names in `src/lib/kpi-events.ts`) — the widget must never send
+them:
+
+| Event                      | Emitted by | `data` |
+| -------------------------- | ---------- | ------ |
+| `marketing_email_clicked`  | `GET /api/r/<token>` (marketing send) | `{ sendId, captureId, firstClick }`, session `NULL` |
+| `campaign_email_clicked`   | `GET /api/r/<token>` (campaign send, migration 0041) | `{ sendId, firstClick }`, session `NULL` |
+| `bundle_offer_clicked`     | `GET /api/r/<token>` (bundle offer) | `{ offerId, status, expired }`, session `NULL` |
+| `contact_form_submitted`   | `POST /api/contact` (accepted submissions) | `{ reason, productCount }` — never the name/email/message. Session-keyed when the widget sends `sessionId` in the payload. |
+| `account_signin_succeeded` | `GET /api/auth/shopify/callback` (success) | `{ silent }` — `prompt=none` re-detects flagged. Session-keyed. |
+| `account_export_requested` | `GET /api/account/export` | `{}`, session `NULL` (pure volume counter) |
+| `account_erased`           | `POST /api/account/erase` | `{}`, session `NULL` (pure volume counter) |
+
+They feed the Kampagnen-Funnel, Bundle and Kundenkonto/Self-Service sections
+of the admin KPI tab (see `ADMIN_DASHBOARD.md` §5.9/§5.10/§5.15).
 
 ### Success response
 

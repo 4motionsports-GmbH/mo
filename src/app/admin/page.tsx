@@ -113,10 +113,20 @@ export default async function AdminDashboardPage({
   });
   const dbReady = isDbConfigured();
 
-  // The marketing targets back BOTH the Marketing tab and the Overview headline
-  // KPIs / "not purchased" count — fetch the (Shopify-touching) list once here
-  // and hand it to both so the numbers agree and the fan-out isn't doubled.
-  const targets: MarketingTarget[] = dbReady ? await listMarketingTargets() : [];
+  // PERF: the Übersicht and KPI bodies are the two Shopify-heavy pipelines
+  // (marketing-target list resp. up to ~400 Admin-API calls for the
+  // revenue/funnel/loop checks). They are rendered ONLY when their tab is the
+  // one being opened — the shell gets `null` for the other one and turns a
+  // client tab switch into a real navigation to the deep link (AdminShell).
+  // Every other body stays force-mounted for instant switching + preserved
+  // edit state.
+  const renderOverview = initialTab === "overview";
+  const renderKpi = initialTab === "kpi";
+
+  // The marketing targets back the Overview headline KPIs / "not purchased"
+  // count — a Shopify-touching list, fetched only when the overview renders.
+  const targets: MarketingTarget[] =
+    dbReady && renderOverview ? await listMarketingTargets() : [];
 
   const store = await cookies();
   const themeCookie = store.get(THEME_COOKIE)?.value;
@@ -128,7 +138,7 @@ export default async function AdminDashboardPage({
       initialTab={initialTab}
       themeInitial={themeInitial}
       logoutAction={logoutAction}
-      overview={<OverviewTab dbReady={dbReady} targets={targets} />}
+      overview={renderOverview ? <OverviewTab dbReady={dbReady} targets={targets} /> : null}
       kunden={
         <KundenTab
           dbReady={dbReady}
@@ -136,7 +146,7 @@ export default async function AdminDashboardPage({
         />
       }
       kampagne={<KampagneTab dbReady={dbReady} />}
-      kpi={<KpiTab dbReady={dbReady} range={kpiRange} />}
+      kpi={renderKpi ? <KpiTab dbReady={dbReady} range={kpiRange} /> : null}
       feedback={<FeedbackTab dbReady={dbReady} />}
       gespraeche={<GespraecheTab dbReady={dbReady} filter={convFilter} />}
       wissen={<WissenTab dbReady={dbReady} />}
