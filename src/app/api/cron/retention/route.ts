@@ -6,11 +6,18 @@
 // captures. Configurable via env (RETENTION_DAYS, KPI_RETENTION_DAYS,
 // ABANDON_AFTER_MINUTES, SUPPRESSED_CAPTURE_PURGE_DAYS).
 //
+// Piggybacked on the same daily run (status maintenance, not deletion): the
+// CONVERSION SWEEP (lib/conversion-sweep) — the bounded Shopify check that
+// marks redeemed MS5- codes (shopify_order_matched) and flips their source
+// conversation to status='converted'. Best-effort: a sweep failure never
+// fails the retention run.
+//
 // Protected by CRON_SECRET — Vercel Cron sends Authorization: Bearer <secret>.
 // Manual invocation: curl -H "Authorization: Bearer $CRON_SECRET" $URL
 
 import { NextResponse } from "next/server";
 import { runRetention, retentionOptionsFromEnv } from "@/lib/retention";
+import { runConversionSweep } from "@/lib/conversion-sweep";
 import { reportError } from "@/lib/observability";
 import { requireCronAuth } from "@/lib/cron-auth";
 
@@ -23,8 +30,10 @@ async function handle(req: Request): Promise<Response> {
   const opts = retentionOptionsFromEnv();
   try {
     const result = await runRetention(opts);
-    console.log("[cron/retention] done", { ...opts, ...result });
-    return NextResponse.json({ ok: true, options: opts, ...result });
+    // Never throws; skips itself when Shopify/DB is unconfigured or the cap is 0.
+    const conversionSweep = await runConversionSweep();
+    console.log("[cron/retention] done", { ...opts, ...result, conversionSweep });
+    return NextResponse.json({ ok: true, options: opts, ...result, conversionSweep });
   } catch (err) {
     reportError(err, { route: "api/cron/retention" });
     // No database configured (or a transient failure) — surface as 503 so the

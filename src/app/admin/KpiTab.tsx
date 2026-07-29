@@ -242,6 +242,14 @@ function CoreSection({ core, range }: { core: CoreMetrics | null; range: KpiRang
           </CardContent>
         </Card>
       </div>
+      <Caveat>
+        „Konvertiert“ setzt der tägliche Conversion-Sweep: der einmalige
+        Mo-Rabattcode (MS5-…) der aus dieser Beratung entstandenen
+        Marketing-E-Mail wurde in einer echten Bestellung eingelöst — dieselbe
+        ehrliche Zuordnung wie beim Umsatz-Abschnitt. Käufe ohne Mo-Code sind
+        nicht zurechenbar und erscheinen hier nicht; „Konvertiert“ ist eine
+        Untergrenze.
+      </Caveat>
 
       <h4 className="mt-6 mb-2 text-sm font-medium text-foreground">
         In-Chat-Klicks (Buttons im Chat)

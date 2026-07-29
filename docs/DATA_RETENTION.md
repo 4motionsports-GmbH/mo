@@ -42,10 +42,21 @@ survives. Do not log message content to third parties.
 | KPI / telemetry events        | **180 days**   | `KPI_RETENTION_DAYS`  | Hard delete                 |
 | AI usage — chat               | follows the conversation | `RETENTION_DAYS` | Cascade-deleted with the conversation (FK) |
 | AI usage — dashboard/admin    | **180 days**   | `KPI_RETENTION_DAYS`  | Hard delete (by `created_at`) |
+| Insights rollups (`conversation_insights`) | **180 days** by `generated_at` | `KPI_RETENTION_DAYS` | Hard delete (derived from Cluster A — leaves when its sources would; regenerable on demand) |
+| Persona top-question cache (`kpi_persona_question_summaries`) | **180 days** by `generated_at` | `KPI_RETENTION_DAYS` | Hard delete (derived cache, regenerable on demand) |
+| Komplettanalyse reports (`analytics_reports`) | **365 days** by `created_at` | `ANALYTICS_REPORT_RETENTION_DAYS` | Hard delete — reports generated with per-customer profiles carry customer display names and must not live forever. 0 disables. |
 | Active → abandoned transition | **30 minutes** idle | `ABANDON_AFTER_MINUTES` | Status flip (not deletion) |
 
-Windows are measured from `last_activity_at` (conversations) and `created_at`
-(kpi_events, dashboard/admin `ai_usage`).
+Windows are measured from `last_activity_at` (conversations) and `created_at` /
+`generated_at` (kpi_events, dashboard/admin `ai_usage`, derived caches).
+
+**Conversion sweep (status maintenance, not deletion).** The same daily cron
+run also executes the bounded conversion sweep
+(`src/lib/conversion-sweep.ts`, `CONVERSION_SWEEP_MAX_CODES`, default 25,
+0 disables): sent marketing emails whose unique `MS5-` code was redeemed in a
+real Shopify order are marked (`marketing_sends.shopify_order_matched`) and
+their source conversation flips to `status='converted'`. Pseudonymous status
+maintenance — no new data category, no PII written into Cluster A.
 
 **AI usage rows follow their conversation.** Chat `ai_usage` rows carry a
 `conversation_id` foreign key with `ON DELETE CASCADE`, so they are deleted

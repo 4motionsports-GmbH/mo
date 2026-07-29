@@ -284,6 +284,15 @@ design — plain tables and CSS bars, no dashboard framework. Every number is re
 loop which additionally read Shopify orders. Each KPI carries its caveat inline in
 the UI.
 
+> ⚡ **Rendered only when opened.** The KPI and Übersicht bodies are the two
+> Shopify-heavy pipelines, so [`page.tsx`](../src/app/admin/page.tsx) renders
+> them **only for the tab actually being opened** — the shell
+> ([`AdminShell`](../src/app/admin/AdminShell.tsx)) receives `null` for the
+> other one and turns a click on that tab into a real navigation to its deep
+> link. All other tab bodies stay force-mounted (instant switching, preserved
+> in-progress edits). Landing on `/admin?tab=kunden` therefore no longer runs
+> the KPI pipeline's Shopify fan-out at all.
+
 ### 5.0 Date-range picker — [`lib/kpi-range.mjs`](../src/lib/kpi-range.mjs) + [`KpiDateRangePicker`](../src/app/admin/KpiDateRangePicker.tsx)
 
 A period selector at the top of the KPI tab with presets **7 / 30 / 90 days** and a
@@ -328,7 +337,8 @@ indexes (migrations 0001 + 0027).
 | **Chats gesamt** | `count(conversations)` in the window. One row exists per chat that sent ≥1 message. | Scoped to the picked period (default last 30d). |
 | **Chats pro Tag** | New conversations grouped by `date(created_at)` across the window, gap-filled with 0. | — |
 | **Ø Nachrichten / Chat** | `avg(conversations.message_count)`. | Counts user + assistant + tool-marker turns. |
-| **Abgebrochen** | `count(status='abandoned')` and its share of all chats. | `status` is flipped to `abandoned` lazily by the retention cron after `ABANDON_AFTER_MINUTES` idle — not real-time. "No resolution" ≈ not `converted`. |
+| **Abgebrochen** | `count(status='abandoned')` and its share of all chats. | `status` is flipped to `abandoned` lazily by the retention cron after `ABANDON_AFTER_MINUTES` idle — not real-time. |
+| **Konvertiert** (status split) | `status='converted'`, set by the daily **conversion sweep** ([`lib/conversion-sweep.ts`](../src/lib/conversion-sweep.ts), runs with the retention cron): the unique `MS5-` code of the marketing email drafted from this conversation was redeemed in a real order (`wasDiscountCodeRedeemed`), bookkept via `marketing_sends.shopify_order_matched`. Attributed to the session's most-recently-active thread as of the send. | A **lower bound**: purchases without a Mo code are unattributable (same honesty rule as §5.5) and never flip a conversation. Campaign (MK-) sends carry no session and can't convert a conversation. Bounded to `CONVERSION_SWEEP_MAX_CODES` (default 25) checks/run; unmatched codes retry while their discount is still redeemable. |
 | **Produkt-/CTA-Klicks**, **Add-to-Cart-Klicks** | `kpi_events` counts, **pattern-matched** by event name: CTA = `event ILIKE '%product%click%' OR '%cta%click%'`; cart = `event ILIKE '%cart%' OR '%checkout%'`. Each also shown as a rate per chat. | The literal event names are owned by the **frontend** widget's `track()`. We match by shape (survives a rename) and additionally surface the **full event breakdown** so the raw truth is always visible. If the widget emits different names, adjust the patterns. |
 | **Engagement** | `chatsWithMessages ÷ sessionsWithTelemetry`, where `sessionsWithTelemetry = count(distinct session_id)` in `kpi_events`. | A proxy for "opened vs message-sent": a conversation row only exists once a message is sent, while any telemetry implies the widget was opened. Depends on the widget emitting telemetry on open. |
 

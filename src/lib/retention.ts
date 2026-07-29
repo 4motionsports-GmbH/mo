@@ -51,6 +51,12 @@ export interface RetentionOptions {
    * campaign_sends by sent_at) older than this are deleted. 0 disables.
    */
   campaignContactRetentionDays: number;
+  /**
+   * Stored Komplettanalyse reports (analytics_reports, by created_at) older
+   * than this are deleted. Reports generated with per-customer profiles carry
+   * customer display names, so they must not live forever. 0 disables.
+   */
+  analyticsReportRetentionDays: number;
 }
 
 export interface RetentionResult {
@@ -75,6 +81,12 @@ export interface RetentionResult {
   deletedCampaignContacts: number;
   /** campaign_sends purged past the campaign retention window. */
   deletedCampaignSends: number;
+  /** analytics_reports (Komplettanalyse) purged past their own window. */
+  deletedAnalyticsReports: number;
+  /** conversation_insights rollups purged on the analytics window. */
+  deletedConversationInsights: number;
+  /** kpi_persona_question_summaries purged on the analytics window. */
+  deletedPersonaSummaries: number;
   /** Expired customer_auth_pending rows (CSRF/PKCE state) removed. */
   purgedAuthPending: number;
   ranAt: string;
@@ -101,6 +113,9 @@ export function retentionOptionsFromEnv(): RetentionOptions {
     // Campaign audience (Shopify marketing subscribers) + campaign send records
     // — PII under the shop's marketing consent; 12 months by default.
     campaignContactRetentionDays: parseIntEnv("CAMPAIGN_CONTACT_RETENTION_DAYS", 365, 0),
+    // Stored Komplettanalyse reports — may contain customer display names when
+    // generated with per-customer profiles; 12 months by default, 0 disables.
+    analyticsReportRetentionDays: parseIntEnv("ANALYTICS_REPORT_RETENTION_DAYS", 365, 0),
   };
 }
 
@@ -312,6 +327,40 @@ export async function runRetention(
     `) as Array<{ n: number }>;
   }
 
+  // 5h. Purge the DERIVED analytics caches — they were previously never purged
+  //     (the gap migration 0032 promised to close). Two windows:
+  //     * analytics_reports on their OWN window (ANALYTICS_REPORT_RETENTION_DAYS)
+  //       — a report generated with per-customer profiles carries customer
+  //       display names and must not outlive every other identified record.
+  //     * conversation_insights + kpi_persona_question_summaries on the shared
+  //       ANALYTICS window (kpiRetentionDays): both are derived exclusively from
+  //       Cluster-A data, so they leave when their sources would. Regenerable on
+  //       demand from whatever conversations still exist.
+  let deletedAnalyticsReports = [{ n: 0 }] as Array<{ n: number }>;
+  if (opts.analyticsReportRetentionDays > 0) {
+    const reportCutoff = daysAgo(opts.analyticsReportRetentionDays);
+    deletedAnalyticsReports = (await sql`
+      WITH del AS (
+        DELETE FROM analytics_reports WHERE created_at < ${reportCutoff} RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+  }
+  const deletedConversationInsights = await sql`
+    WITH del AS (
+      DELETE FROM conversation_insights WHERE generated_at < ${kpiCutoff} RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM del
+  `;
+  const deletedPersonaSummaries = await sql`
+    WITH del AS (
+      DELETE FROM kpi_persona_question_summaries
+       WHERE generated_at < ${kpiCutoff}
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM del
+  `;
+
   // 6. Purge expired pending-auth records (short-lived CSRF/PKCE state). The
   //    encrypted token rows (customer_oauth_tokens) carry no separate window —
   //    they cascade with the customer (ON DELETE CASCADE), so a GDPR erasure /
@@ -332,6 +381,9 @@ export async function runRetention(
     deletedAdminAccessLog: deletedAdminAccessLog[0]?.n ?? 0,
     deletedCampaignContacts: deletedCampaignContacts[0]?.n ?? 0,
     deletedCampaignSends: deletedCampaignSends[0]?.n ?? 0,
+    deletedAnalyticsReports: deletedAnalyticsReports[0]?.n ?? 0,
+    deletedConversationInsights: deletedConversationInsights[0]?.n ?? 0,
+    deletedPersonaSummaries: deletedPersonaSummaries[0]?.n ?? 0,
     purgedAuthPending,
     ranAt: new Date().toISOString(),
   };

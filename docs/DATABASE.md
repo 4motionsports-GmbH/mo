@@ -53,7 +53,7 @@ The schema is split into **two clusters** (see the separation rationale below).
 
 | Table           | Key columns                                                                                          |
 | --------------- | --------------------------------------------------------------------------------------------------- |
-| `conversations` | `session_id` (unique), `created_at`/`updated_at`/`last_activity_at`, `persona_label`, `message_count`, `recommended_product_ids` (text[]), `selected_product_ids` (text[]), `status` (active/abandoned/converted), `locale` (migration 0041 — storefront chat language, stamped by `persistTurn`, latest turn wins; NULL for pre-0041 rows) |
+| `conversations` | `session_id` (unique), `created_at`/`updated_at`/`last_activity_at`, `persona_label`, `message_count`, `recommended_product_ids` (text[]), `selected_product_ids` (text[]), `status` (active/abandoned/converted — `converted` is set by the daily conversion sweep, `src/lib/conversion-sweep.ts`: the conversation's marketing email's unique `MS5-` code was redeemed in a real order), `locale` (migration 0041 — storefront chat language, stamped by `persistTurn`, latest turn wins; NULL for pre-0041 rows) |
 | `messages`      | `conversation_id` (FK, cascade), `client_message_id` (idempotency), `role`, `content`, `tool_name`  |
 | `kpi_events`    | `session_id`, `event`, `data` (jsonb), `created_at`                                                  |
 | `ai_usage`      | `conversation_id` (FK, cascade, nullable), `call_site`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (migration 0039 — prompt-cache splits, see docs/PROMPT_CACHING.md), `estimated`, `created_at` (migration 0012) |

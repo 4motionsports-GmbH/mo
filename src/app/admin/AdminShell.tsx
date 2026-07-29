@@ -2,9 +2,16 @@
 
 // Client app-shell for /admin. Owns the active-tab state (replacing the old
 // server-side ?tab= switch), the theme toggle, the logout chrome and the single
-// Toaster mount. Data is NOT fetched here: the three tab bodies are rendered on
-// the SERVER (in page.tsx) and passed in as nodes; the shell only decides which
+// Toaster mount. Data is NOT fetched here: the tab bodies are rendered on the
+// SERVER (in page.tsx) and passed in as nodes; the shell only decides which
 // one is visible and keeps the URL in sync for deep links / refresh.
+//
+// DEFERRED tabs: a body passed as `null` was deliberately NOT rendered by the
+// server (page.tsx only renders the Shopify-heavy Übersicht/KPI pipelines for
+// the tab actually being opened). Switching to a deferred tab is a real
+// navigation to its deep link — the server then renders exactly that tab.
+// All other bodies stay force-mounted so switching between them is instant
+// and preserves in-progress edits in the client cards.
 
 import * as React from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
@@ -93,15 +100,47 @@ export function AdminShell({
 }) {
   const [tab, setTab] = React.useState<AdminTab>(initialTab);
 
+  // Re-sync when a SERVER navigation changes the tab (KPI range picker
+  // router.push, browser back/forward): the shell instance survives those, but
+  // the deferred bodies are rendered for `initialTab` — staying on a stale
+  // client tab could show a deferred tab's empty shell.
+  React.useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
+
+  const bodies: Record<AdminTab, React.ReactNode> = {
+    overview,
+    kunden,
+    kampagne,
+    kpi,
+    feedback,
+    gespraeche,
+    wissen,
+    analyse,
+  };
+
   // Graceful URL sync: keep the query param current so a refresh or a copied
-  // link lands on the same tab, without a full server navigation.
-  const onTabChange = React.useCallback((next: string) => {
-    const value = (TAB_ORDER as string[]).includes(next) ? (next as AdminTab) : "overview";
-    setTab(value);
-    if (typeof window !== "undefined") {
-      window.history.replaceState(window.history.state, "", tabToQuery(value));
-    }
-  }, []);
+  // link lands on the same tab, without a full server navigation. A DEFERRED
+  // tab (body === null — the server didn't render it, see the header note)
+  // instead navigates for real so the server renders it.
+  const onTabChange = React.useCallback(
+    (next: string) => {
+      const value = (TAB_ORDER as string[]).includes(next) ? (next as AdminTab) : "overview";
+      if (bodies[value] == null) {
+        if (typeof window !== "undefined") {
+          window.location.assign(tabToQuery(value));
+        }
+        return;
+      }
+      setTab(value);
+      if (typeof window !== "undefined") {
+        window.history.replaceState(window.history.state, "", tabToQuery(value));
+      }
+    },
+    // The body nodes are stable for the lifetime of one server render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   // Light, optional keyboard shortcuts (dialogs close on Esc via the Dialog
   // primitive itself). Deliberately bare keys, ignored while typing in a field or
@@ -145,17 +184,6 @@ export function AdminShell({
     return () => document.removeEventListener("keydown", onKey);
   }, [onTabChange]);
 
-  const bodies: Record<AdminTab, React.ReactNode> = {
-    overview,
-    kunden,
-    kampagne,
-    kpi,
-    feedback,
-    gespraeche,
-    wissen,
-    analyse,
-  };
-
   // The Kunden + Kampagne + Gespräche + Analyse workspaces are master–detail
   // layouts that want the extra width; the other tabs stay comfortably centred
   // at the narrower measure.
@@ -195,13 +223,17 @@ export function AdminShell({
           </TabsList>
         </nav>
 
-        {/* All bodies stay mounted (forceMount) so switching tabs preserves any
-            in-progress edits in the client cards. */}
-        {TAB_ORDER.map((t) => (
-          <TabsContent key={t} value={t} forceMount>
-            {bodies[t]}
-          </TabsContent>
-        ))}
+        {/* Server-rendered bodies stay mounted (forceMount) so switching between
+            them preserves any in-progress edits in the client cards. Deferred
+            (null) bodies render nothing — reaching them is a real navigation
+            (see onTabChange). */}
+        {TAB_ORDER.map((t) =>
+          bodies[t] == null ? null : (
+            <TabsContent key={t} value={t} forceMount>
+              {bodies[t]}
+            </TabsContent>
+          )
+        )}
       </Tabs>
 
       <Toaster />
