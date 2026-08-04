@@ -12,6 +12,9 @@
 // Identity guardrail: the tier is derived from booleans only (is there a
 // Shopify-linked / email-linked customer) — this file NEVER selects an email or
 // any identity value. Anonymous sessions show the tier label, not a person.
+// The free-text search MATCHES against the linked customer's email / Shopify
+// customer id (so the operator can find "the chat of anna@…"), but only as a
+// WHERE predicate — no identity value is ever returned or displayed.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
@@ -165,6 +168,15 @@ export interface AdminConversationFilter {
   category: string | null;
   /** Filter by cached analysis quality signal (null = no filter). */
   quality: string | null;
+  /**
+   * Free-text search (null = no search). Every whitespace-separated term must
+   * match somewhere in the conversation: message contents (incl. tool rows),
+   * conversation id/key, session id, persona label, the cached analysis
+   * (summary/category/quality/tags) or the linked customer's email / Shopify
+   * customer id (match-only — identity is never selected). IMPORTANT: an active
+   * search spans ALL chats — the date window is intentionally bypassed.
+   */
+  q: string | null;
   page: number;
 }
 
@@ -189,6 +201,26 @@ function analysisCostEur(
   return usdToEur(usd, usdEurRate());
 }
 
+/** Longest accepted search input (defensive cap; URLs stay shareable). */
+const SEARCH_MAX_LENGTH = 200;
+/** At most this many whitespace-separated search terms are evaluated. */
+const SEARCH_MAX_TERMS = 8;
+
+/**
+ * Split a raw search input into ILIKE patterns ('%term%'), one per
+ * whitespace-separated term, with LIKE wildcards escaped so the operator can
+ * search for literal '%', '_' or '\'. Empty input → empty array (no search).
+ */
+function searchPatterns(q: string | null): string[] {
+  if (!q) return [];
+  return q
+    .slice(0, SEARCH_MAX_LENGTH)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, SEARCH_MAX_TERMS)
+    .map((term) => `%${term.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+}
+
 /**
  * Parse the inspector's URL params into a validated filter. The date window
  * reuses the KPI range resolver (same presets/clamping as the KPI tab), so an
@@ -202,6 +234,7 @@ export function parseAdminConversationFilter(params: {
   gerr?: string | null;
   gcat?: string | null;
   gqual?: string | null;
+  gq?: string | null;
   gpage?: string | null;
 }): AdminConversationFilter {
   const range = resolveKpiRange({
@@ -222,9 +255,11 @@ export function parseAdminConversationFilter(params: {
     params.gqual && (ANALYSIS_QUALITIES as string[]).includes(params.gqual)
       ? params.gqual
       : null;
+  const qRaw = (params.gq ?? "").trim().slice(0, SEARCH_MAX_LENGTH);
+  const q = qRaw.length > 0 ? qRaw : null;
   const pageNum = Number.parseInt(params.gpage ?? "1", 10);
   const page = Number.isFinite(pageNum) && pageNum > 0 ? pageNum : 1;
-  return { range, tier, hasError, category, quality, page };
+  return { range, tier, hasError, category, quality, q, page };
 }
 
 interface ListRow {
@@ -304,6 +339,12 @@ async function loadSessionSignals(
  * the CACHED analysis (read-only; never triggers a model call). The message-
  * derived fields are computed by LATERALs bounded to the page (the CTE LIMITs
  * first), and the two session-keyed signals are batch-probed for the page.
+ *
+ * Search: when filter.q is set, every term must ILIKE-match somewhere in the
+ * conversation (see AdminConversationFilter.q) and the date window is BYPASSED —
+ * "find that chat" must work across the whole history, not just the KPI window.
+ * The predicate is fully parameterized (unnest + bool_and over '%term%'
+ * patterns): no dynamic SQL.
  */
 export async function listAdminConversations(
   filter: AdminConversationFilter,
@@ -314,6 +355,8 @@ export async function listAdminConversations(
   const from = filter.range.from;
   const to = filter.range.to;
   const offset = (page - 1) * PAGE_SIZE;
+  const patterns = searchPatterns(filter.q);
+  const searching = patterns.length > 0;
 
   try {
     const [pageRows, countRows] = await Promise.all([
@@ -330,7 +373,33 @@ export async function listAdminConversations(
             LEFT JOIN customers cu ON cu.id = c.customer_id
             LEFT JOIN customer_session_links csl ON csl.session_id = c.session_id
             LEFT JOIN customers cul ON cul.id = csl.customer_id
-           WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+           WHERE (${searching} = true
+                  OR (c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)))
+             AND (
+               ${searching} = false OR (
+                 SELECT bool_and(
+                          c.id::text ILIKE t.pat
+                          OR c.conversation_key ILIKE t.pat
+                          OR c.session_id ILIKE t.pat
+                          OR COALESCE(c.persona_label, '') ILIKE t.pat
+                          OR COALESCE(c.analysis_summary, '') ILIKE t.pat
+                          OR COALESCE(c.analysis_category, '') ILIKE t.pat
+                          OR COALESCE(c.analysis_quality, '') ILIKE t.pat
+                          OR COALESCE(array_to_string(c.analysis_tags, ' '), '') ILIKE t.pat
+                          OR COALESCE(cu.email, '') ILIKE t.pat
+                          OR COALESCE(cul.email, '') ILIKE t.pat
+                          OR COALESCE(cu.shopify_customer_id, '') ILIKE t.pat
+                          OR COALESCE(cul.shopify_customer_id, '') ILIKE t.pat
+                          OR EXISTS (
+                               SELECT 1 FROM messages ms
+                                WHERE ms.conversation_id = c.id
+                                  AND (COALESCE(ms.content, '') ILIKE t.pat
+                                       OR COALESCE(ms.tool_name, '') ILIKE t.pat)
+                             )
+                        )
+                   FROM unnest(${patterns}::text[]) AS t(pat)
+               )
+             )
              AND (
                ${tier}::text IS NULL
                OR (${tier} = 'signed-in'
@@ -388,7 +457,33 @@ export async function listAdminConversations(
           LEFT JOIN customers cu ON cu.id = c.customer_id
           LEFT JOIN customer_session_links csl ON csl.session_id = c.session_id
           LEFT JOIN customers cul ON cul.id = csl.customer_id
-         WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+         WHERE (${searching} = true
+                OR (c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)))
+           AND (
+             ${searching} = false OR (
+               SELECT bool_and(
+                        c.id::text ILIKE t.pat
+                        OR c.conversation_key ILIKE t.pat
+                        OR c.session_id ILIKE t.pat
+                        OR COALESCE(c.persona_label, '') ILIKE t.pat
+                        OR COALESCE(c.analysis_summary, '') ILIKE t.pat
+                        OR COALESCE(c.analysis_category, '') ILIKE t.pat
+                        OR COALESCE(c.analysis_quality, '') ILIKE t.pat
+                        OR COALESCE(array_to_string(c.analysis_tags, ' '), '') ILIKE t.pat
+                        OR COALESCE(cu.email, '') ILIKE t.pat
+                        OR COALESCE(cul.email, '') ILIKE t.pat
+                        OR COALESCE(cu.shopify_customer_id, '') ILIKE t.pat
+                        OR COALESCE(cul.shopify_customer_id, '') ILIKE t.pat
+                        OR EXISTS (
+                             SELECT 1 FROM messages ms
+                              WHERE ms.conversation_id = c.id
+                                AND (COALESCE(ms.content, '') ILIKE t.pat
+                                     OR COALESCE(ms.tool_name, '') ILIKE t.pat)
+                           )
+                      )
+                 FROM unnest(${patterns}::text[]) AS t(pat)
+             )
+           )
            AND (
              ${tier}::text IS NULL
              OR (${tier} = 'signed-in'

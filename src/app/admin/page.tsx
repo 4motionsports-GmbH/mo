@@ -109,6 +109,7 @@ export default async function AdminDashboardPage({
     gerr: firstParam(sp?.gerr),
     gcat: firstParam(sp?.gcat),
     gqual: firstParam(sp?.gqual),
+    gq: firstParam(sp?.gq),
     gpage: firstParam(sp?.gpage),
   });
   const dbReady = isDbConfigured();

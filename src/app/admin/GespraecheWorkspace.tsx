@@ -25,6 +25,8 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
+  Search,
+  X,
 } from "lucide-react";
 import {
   Button,
@@ -64,6 +66,8 @@ interface FilterProps {
   hasError: boolean;
   category: string | null;
   quality: string | null;
+  /** Free-text search over ALL chats (date window bypassed while active). */
+  q: string | null;
   page: number;
 }
 
@@ -182,6 +186,7 @@ export function GespraecheWorkspace({
       if (s.hasError) sp.set("gerr", "1");
       if (s.category) sp.set("gcat", s.category);
       if (s.quality) sp.set("gqual", s.quality);
+      if (s.q) sp.set("gq", s.q);
       if (s.page > 1) sp.set("gpage", String(s.page));
       startTransition(() => router.push(`/admin?${sp.toString()}`, { scroll: false }));
     },
@@ -211,8 +216,10 @@ export function GespraecheWorkspace({
           <div className="mb-2 flex items-center justify-between text-[12px] text-muted-foreground">
             <span>
               {total === 0
-                ? "Keine Gespräche"
-                : `${total} Gespräch(e) · Seite ${filter.page}/${totalPages}`}
+                ? filter.q
+                  ? "Keine Treffer"
+                  : "Keine Gespräche"
+                : `${total} ${filter.q ? "Treffer" : "Gespräch(e)"} · Seite ${filter.page}/${totalPages}`}
             </span>
             <span className="flex gap-1">
               <Button
@@ -243,7 +250,9 @@ export function GespraecheWorkspace({
           >
             {items.length === 0 && (
               <li className="px-2 py-6 text-center text-sm text-muted-foreground">
-                Keine Gespräche für diesen Zeitraum/Filter.
+                {filter.q
+                  ? `Keine Gespräche gefunden für „${filter.q}”.`
+                  : "Keine Gespräche für diesen Zeitraum/Filter."}
               </li>
             )}
             {items.map((it) => (
@@ -297,16 +306,74 @@ function ConversationFilters({
   const [showCustom, setShowCustom] = React.useState(filter.preset === "custom");
   const [cFrom, setCFrom] = React.useState(filter.from);
   const [cTo, setCTo] = React.useState(filter.to);
+  // Local draft of the search input — applied on Enter / "Suchen", so typing
+  // doesn't fire a server re-render per keystroke.
+  const [qDraft, setQDraft] = React.useState(filter.q ?? "");
   React.useEffect(() => {
     setCFrom(filter.from);
     setCTo(filter.to);
     setShowCustom(filter.preset === "custom");
   }, [filter.from, filter.to, filter.preset]);
+  React.useEffect(() => {
+    setQDraft(filter.q ?? "");
+  }, [filter.q]);
   const customValid = Boolean(cFrom && cTo && cFrom <= cTo);
+
+  const applySearch = React.useCallback(() => {
+    const q = qDraft.trim();
+    go({ q: q.length > 0 ? q : null, page: 1 });
+  }, [qDraft, go]);
 
   return (
     <Card>
       <CardContent className="flex flex-col gap-2 p-3">
+        {/* Free-text search — spans ALL chats (the date window below is bypassed
+            while a search is active), so any remembered word, name or id finds
+            its conversation no matter how old it is. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[16rem] flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={qDraft}
+              disabled={pending}
+              placeholder="Alle Gespräche durchsuchen — Wörter, Namen, IDs, E-Mail, Tags …"
+              className="h-8 w-full pl-8"
+              aria-label="Gespräche durchsuchen"
+              onChange={(e) => setQDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  applySearch();
+                }
+              }}
+            />
+          </div>
+          <Button size="sm" variant="secondary" disabled={pending} onClick={applySearch}>
+            <Search /> Suchen
+          </Button>
+          {filter.q && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => {
+                setQDraft("");
+                go({ q: null, page: 1 });
+              }}
+            >
+              <X /> Zurücksetzen
+            </Button>
+          )}
+          {filter.q && (
+            <span className="text-[11px] text-muted-foreground">
+              Suche nach <strong className="text-foreground">„{filter.q}&rdquo;</strong> über{" "}
+              <strong className="text-foreground">alle</strong> Gespräche — der Zeitraum
+              wird ignoriert.
+            </span>
+          )}
+        </div>
+
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-muted-foreground">Zeitraum:</span>
           {PRESETS.map((p) => (

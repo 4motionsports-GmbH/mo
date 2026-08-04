@@ -733,7 +733,16 @@ category/quality if present, and outcome signals derived from existing data:
 Filter by **date range** (reuses the KPI range resolver), **tier**,
 **"nur ohne Bot-Antwort"**, and — over the cached analysis columns — by
 **Kategorie** and **Qualität** (`gcat`/`gqual`; only analysed conversations can
-match). The category/quality distribution bars in the insights panel are
+match). A **free-text search** (`gq`) finds a conversation by anything stored
+for it: message contents (incl. tool payloads/names), conversation id/key,
+session id, persona label, the cached analysis
+(summary/category/quality/tags), or the linked customer's email / Shopify
+customer id (match-only — identity values are never selected or displayed).
+Terms are whitespace-split and AND-ed (each must match somewhere,
+case-insensitive substring), and an active search deliberately **bypasses the
+date window** — "find that chat" works across the whole history. The predicate
+is fully parameterized SQL (`unnest` + `bool_and` over escaped `%term%`
+patterns); the other filters (tier, category, …) still combine with it. The category/quality distribution bars in the insights panel are
 clickable and apply the same filters, so "show me ALL dropped-off chats in this
 window" is a deterministic one-click query, complete by construction (unlike the
 model-curated section references). Analysed rows show their cached one-line
