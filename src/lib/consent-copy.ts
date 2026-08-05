@@ -279,7 +279,7 @@ export function doiEmailBody(
                                   <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">Please confirm this consent with a click on the button:</p>`,
       ctas: [{ label: "Confirm sign-up", url: confirmUrl }],
       footnoteHtml: `
-                  <p style="${EMAIL_MUTED_TEXT_STYLE}" align="center">If the button doesn't work, copy this link into your browser:<br><a href="${escapeAttr(confirmUrl)}" style="color: #212121; word-wrap: break-word;">${escapeHtml(confirmUrl)}</a></p>
+                  <p style="${EMAIL_MUTED_TEXT_STYLE}" align="center">If the button doesn't work, copy this link into your browser:<br><a href="${escapeAttr(confirmUrl)}" style="color: #000000; word-wrap: break-word;">${escapeHtml(confirmUrl)}</a></p>
                   <p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px;" align="center">We will only send you marketing emails after your confirmation. If you did not request this, simply ignore this email &#8212; then nothing happens.</p>
                   <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Best regards<br>Your motion sports team</p>`,
       locale,
@@ -321,7 +321,7 @@ export function doiEmailBody(
                                   <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">Bitte best&#228;tige diese Einwilligung mit einem Klick auf den Button:</p>`,
     ctas: [{ label: "Anmeldung bestätigen", url: confirmUrl }],
     footnoteHtml: `
-                  <p style="${EMAIL_MUTED_TEXT_STYLE}" align="center">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:<br><a href="${escapeAttr(confirmUrl)}" style="color: #212121; word-wrap: break-word;">${escapeHtml(confirmUrl)}</a></p>
+                  <p style="${EMAIL_MUTED_TEXT_STYLE}" align="center">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:<br><a href="${escapeAttr(confirmUrl)}" style="color: #000000; word-wrap: break-word;">${escapeHtml(confirmUrl)}</a></p>
                   <p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px;" align="center">Erst nach deiner Best&#228;tigung senden wir dir Marketing-E-Mails. Wenn du das nicht angefordert hast, ignoriere diese E-Mail einfach &#8212; dann passiert nichts.</p>
                   <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
     locale,
@@ -372,7 +372,7 @@ export function unsubscribeFooter(
   You&#39;re receiving this email because you consented to being contacted by motion
   sports. If you no longer wish to receive emails, you can unsubscribe here free of
   charge at any time:
-  <a href="${escapeAttr(unsubscribeUrl)}" style="color: #212121; text-decoration: underline !important; word-wrap: break-word;">Unsubscribe</a>.</p>`;
+  <a href="${escapeAttr(unsubscribeUrl)}" style="color: #000000; text-decoration: underline !important; word-wrap: break-word;">Unsubscribe</a>.</p>`;
     return { text, html };
   }
 
@@ -386,7 +386,7 @@ export function unsubscribeFooter(
   Du erh&#228;ltst diese E-Mail, weil du der Kontaktaufnahme durch motion sports
   zugestimmt hast. Wenn du keine weiteren E-Mails erhalten m&#246;chtest, kannst du
   dich hier jederzeit kostenlos abmelden:
-  <a href="${escapeAttr(unsubscribeUrl)}" style="color: #212121; text-decoration: underline !important; word-wrap: break-word;">Abmelden</a>.</p>`;
+  <a href="${escapeAttr(unsubscribeUrl)}" style="color: #000000; text-decoration: underline !important; word-wrap: break-word;">Abmelden</a>.</p>`;
   return { text, html };
 }
 

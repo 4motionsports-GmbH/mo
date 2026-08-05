@@ -541,12 +541,15 @@ function renderCampaignEmail(opts: {
     preheader: textBody.split("\n")[0]?.slice(0, 140) || undefined,
     heading: en ? "Your personal recommendation" : "Deine persönliche Empfehlung",
     // Prose links (markdown + bare URLs) render as clickable text — never a
-    // raw pasted URL (email-prose.mjs).
+    // raw pasted URL (email-prose.mjs). The Mo-promo media row closes the body.
     bodyHtml: `
-                                  <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
-                                    body.trim(),
-                                    { labelForUrl: opts.labelForUrl }
-                                  )}</p>${bundle ? bundle.html : ""}${promoHtml}`,
+                    <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
+                      body.trim(),
+                      { labelForUrl: opts.labelForUrl }
+                    )}</p>${promoHtml}`,
+    // The bundle special-offer block (if any) renders as full-width newsletter
+    // sections (black band + picture grid) between the body and the CTA pill.
+    preCtaRowsHtml: bundle ? bundle.html : undefined,
     ctas: [{ label: moPromoCtaLabel(language), url: deeplink }],
     footnoteHtml: discountNote || undefined,
     footer: {

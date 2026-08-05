@@ -27,15 +27,13 @@ import { summaryEmailSubject } from "./consent-copy";
 import type { Locale } from "./locale";
 import {
   renderBrandedEmail,
-  escapeAttr,
-  escapeHtml,
+  renderSectionBand,
+  renderSectionRow,
   EMAIL_TEXT_STYLE,
-  EMAIL_MUTED_TEXT_STYLE,
-  EMAIL_FONT_FAMILY,
 } from "./email-template";
 import { partitionSummaryProducts } from "./summary-products.mjs";
 import { renderEmailProseHtml, productNameLookup } from "./email-prose.mjs";
-import { renderEmailProductRows } from "./email-products";
+import { renderEmailProductGrid, type EmailProductGridItem } from "./email-products";
 import { reportError } from "./observability";
 import { recordAiUsage, type AiCallSite } from "./ai-usage-store";
 import type { Product } from "./types";
@@ -132,6 +130,32 @@ function formatPrice(p: Product, locale: Locale): string {
 }
 
 /**
+ * Price split for the newsletter grid: when a genuine sale price exists the
+ * original list price becomes the red strikethrough compare-at label.
+ */
+function priceParts(
+  p: Product,
+  locale: Locale
+): { priceLabel: string; compareAtLabel: string | null } {
+  const onSale =
+    typeof p.salePrice === "number" && p.salePrice > 0 && p.salePrice < p.price;
+  return {
+    priceLabel: PRICE_FORMAT[locale].format(onSale ? p.salePrice! : p.price),
+    compareAtLabel: onSale ? PRICE_FORMAT[locale].format(p.price) : null,
+  };
+}
+
+/** Newsletter-grid items for a product list (image + name + price, linked). */
+function toGridItems(products: Product[], locale: Locale): EmailProductGridItem[] {
+  return products.map((p) => ({
+    imageUrl: firstImageUrl(p),
+    name: p.name,
+    url: p.shopifyUrl,
+    ...priceParts(p, locale),
+  }));
+}
+
+/**
  * First usable catalog image (absolute https only — mail clients won't load a
  * relative or http image). Returns null so the row can render without an image
  * cell rather than emit a broken <img>.
@@ -143,90 +167,46 @@ function firstImageUrl(p: Product): string | null {
   return img ?? null;
 }
 
-// Outlook-safe horizontal divider: a single-cell table whose top border is the
-// rule (a bare <hr> renders inconsistently across clients).
-const DIVIDER_HTML = `
-                <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
-                  <tr>
-                    <td style="mso-line-height-rule: exactly; border-top-width: 2px; border-top-color: #e5e5e5; border-top-style: solid; font-size: 0px; line-height: 0px; height: 0px;">&#160;</td>
-                  </tr>
-                </table>`;
-
 /**
- * The CHOSEN products — the exact set the "Zur Kasse" cart permalink contains
- * (sold-out/unresolved items already excluded upstream). Rendered as an
- * image + name + price list, table-based for Outlook with fixed image dims.
+ * A newsletter-style product section: the signature black separator band with
+ * the section title, then the two-column product grid (big images, name links,
+ * red strikethrough compare-at prices). Returns full-width card rows.
  */
-function renderChosenProducts(
+function renderProductSection(
+  title: string,
   products: Product[],
   locale: Locale
-): { text: string; html: string } {
-  if (products.length === 0) return { text: "", html: "" };
-
-  const heading = locale === "en" ? "Your selection:" : "Deine Auswahl:";
-  const text =
-    `\n${heading}\n` +
-    products.map((p) => `- ${p.name} – ${formatPrice(p, locale)}`).join("\n");
-
-  // Shared product-row renderer (also used by the bundle special-offer block).
-  const html = renderEmailProductRows(
-    products.map((p) => ({ imageUrl: firstImageUrl(p), name: p.name, priceLabel: formatPrice(p, locale) }))
+): string {
+  if (products.length === 0) return "";
+  return (
+    renderSectionBand(title) +
+    renderSectionRow(renderEmailProductGrid(toGridItems(products, locale)), {
+      padding: "30px 60px 10px",
+      align: "center",
+    })
   );
-  return { text, html };
 }
 
-/**
- * The OTHER discussed products ("Vielleicht auch interessant:") — everything
- * discussed minus the chosen set. Rendered smaller, each row linking to the
- * product page (NOT the cart).
- */
-function renderAlternatives(
-  products: Product[],
-  locale: Locale
-): { text: string; html: string } {
-  if (products.length === 0) return { text: "", html: "" };
+/** Plain-text part of the CHOSEN products (the cart permalink's exact set). */
+function chosenProductsText(products: Product[], locale: Locale): string {
+  if (products.length === 0) return "";
+  const heading = locale === "en" ? "Your selection:" : "Deine Auswahl:";
+  return (
+    `\n${heading}\n` +
+    products.map((p) => `- ${p.name} – ${formatPrice(p, locale)}`).join("\n")
+  );
+}
 
+/** Plain-text part of the alternatives (linking to the product pages). */
+function alternativesText(products: Product[], locale: Locale): string {
+  if (products.length === 0) return "";
   const heading = locale === "en" ? "You might also like:" : "Vielleicht auch interessant:";
-  const text =
+  return (
     `\n${heading}\n` +
     products
       .map((p) => `- ${p.name} – ${formatPrice(p, locale)}: ${p.shopifyUrl}`)
-      .join("\n");
-
-  const rows = products
-    .map((p) => {
-      const img = firstImageUrl(p);
-      const imageCell = img
-        ? `<td width="68" valign="top" style="mso-line-height-rule: exactly; padding: 6px 12px 6px 0;"><a href="${escapeAttr(
-            p.shopifyUrl
-          )}" target="_blank" style="text-decoration: none !important;"><img src="${escapeAttr(
-            img
-          )}" alt="${escapeAttr(
-            p.name
-          )}" width="56" height="56" border="0" style="width: 56px; height: 56px; display: block; border: none; outline: none; object-fit: cover;"></a></td>`
-        : "";
-      return `
-                <tr>${imageCell}
-                  <td valign="middle" style="mso-line-height-rule: exactly; padding: 6px 0;">
-                    <p style="${EMAIL_MUTED_TEXT_STYLE} text-align: left;" align="left"><a href="${escapeAttr(
-                      p.shopifyUrl
-                    )}" target="_blank" style="color: #000000; text-decoration: underline !important; font-weight: 700; word-wrap: break-word;">${escapeHtml(
-                      p.name
-                    )}</a></p>
-                    <p style="${EMAIL_MUTED_TEXT_STYLE} text-align: left; padding-top: 2px;" align="left">${escapeHtml(
-                      formatPrice(p, locale)
-                    )}</p>
-                  </td>
-                </tr>`;
-    })
-    .join("");
-
-  const altHeading = locale === "en" ? "You might also like:" : "Vielleicht auch interessant:";
-  const html = `
-                <h3 style="font-family: ${EMAIL_FONT_FAMILY}; color: #000000; font-size: 14px; line-height: 20px; font-weight: 700; text-transform: none; text-align: left; Margin: 0 0 6px;" align="left">${altHeading}</h3>
-                <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">${rows}
-                </table>`;
-  return { text, html };
+      .join("\n")
+  );
 }
 
 export interface SummaryEmailContentParams {
@@ -259,8 +239,8 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
 } {
   const { summary, chosenProducts, alternatives, cartUrl, locale = "de" } = params;
   const en = locale === "en";
-  const chosen = renderChosenProducts(chosenProducts, locale);
-  const alternativesPart = renderAlternatives(alternatives, locale);
+  const chosenText = chosenProductsText(chosenProducts, locale);
+  const alternativesTextPart = alternativesText(alternatives, locale);
   // Any URL the summary prose mentions renders as clickable text (product
   // name when it's a known product URL) — never a raw pasted URL.
   const summaryHtml = renderEmailProseHtml(summary, {
@@ -283,11 +263,11 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
         "",
         summary,
       ];
-  if (chosen.text) textLines.push(chosen.text);
+  if (chosenText) textLines.push(chosenText);
   if (cartUrl) {
     textLines.push("", `${en ? "To checkout" : "Zur Kasse"}:\n${cartUrl}`);
   }
-  if (alternativesPart.text) textLines.push(alternativesPart.text);
+  if (alternativesTextPart) textLines.push(alternativesTextPart);
   textLines.push(
     "",
     en
@@ -299,48 +279,41 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
   );
   const text = textLines.join("\n");
 
-  // Closing sign-off, always last. When there are alternatives they (with the
-  // divider) render BEFORE it, inside the same below-CTA slot.
-  const signOffHtml = en
-    ? `
-                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="center">If you have any questions, you can reply to this email at any time.</p>
-                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Best regards<br>Your motion sports team</p>`
-    : `
-                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="center">Bei Fragen kannst du jederzeit auf diese E-Mail antworten.</p>
-                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`;
-  const alternativesBlock = alternativesPart.html
-    ? `
-                <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
-                  <tr>
-                    <td align="left" style="mso-line-height-rule: exactly; text-align: left; padding-top: 10px;">${DIVIDER_HTML}${alternativesPart.html}
-                    </td>
-                  </tr>
-                </table>`
-    : "";
-
+  // Intro + AI summary in the padded body; the product sections render as
+  // full-width newsletter sections (black band + two-column grid) around the
+  // "Zur Kasse" pill; the sign-off closes the card before the footer.
   const bodyHtml = en
     ? `
-                                  <p style="${EMAIL_TEXT_STYLE}" align="left">Hello,</p>
-                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="left">thank you for your consultation at <strong>motion sports</strong>. Here is your summary:</p>
-                                  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
-                                    <tr>
-                                      <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#f6f6f6" valign="top">
-                                        <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${summaryHtml}</p>
-                                      </th>
-                                    </tr>
-                                  </table>
-                                  ${chosen.html}`
+                    <p style="${EMAIL_TEXT_STYLE}" align="left">Hello,</p>
+                    <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="left">thank you for your consultation at <strong>motion sports</strong>. Here is your summary:</p>
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
+                      <tr>
+                        <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#eeeeee" valign="top">
+                          <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${summaryHtml}</p>
+                        </th>
+                      </tr>
+                    </table>`
     : `
-                                  <p style="${EMAIL_TEXT_STYLE}" align="left">Hallo,</p>
-                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="left">vielen Dank f&#252;r deine Beratung bei <strong>motion sports</strong>. Hier ist deine Zusammenfassung:</p>
-                                  <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
-                                    <tr>
-                                      <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#f6f6f6" valign="top">
-                                        <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${summaryHtml}</p>
-                                      </th>
-                                    </tr>
-                                  </table>
-                                  ${chosen.html}`;
+                    <p style="${EMAIL_TEXT_STYLE}" align="left">Hallo,</p>
+                    <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="left">vielen Dank f&#252;r deine Beratung bei <strong>motion sports</strong>. Hier ist deine Zusammenfassung:</p>
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
+                      <tr>
+                        <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#eeeeee" valign="top">
+                          <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${summaryHtml}</p>
+                        </th>
+                      </tr>
+                    </table>`;
+
+  const signOffRow = renderSectionRow(
+    en
+      ? `
+                    <p style="${EMAIL_TEXT_STYLE}" align="center">If you have any questions, you can reply to this email at any time.</p>
+                    <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="center">Best regards<br>Your motion sports team</p>`
+      : `
+                    <p style="${EMAIL_TEXT_STYLE}" align="center">Bei Fragen kannst du jederzeit auf diese E-Mail antworten.</p>
+                    <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
+    { padding: "20px 60px 10px", align: "center" }
+  );
 
   const html = renderBrandedEmail({
     subject: summaryEmailSubject(locale),
@@ -351,8 +324,18 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
     // The consultation was with Mo — the brand orb makes that recognizable.
     moAvatar: true,
     bodyHtml,
+    preCtaRowsHtml: renderProductSection(
+      en ? "Your selection" : "Deine Auswahl",
+      chosenProducts,
+      locale
+    ),
     ctas: cartUrl ? [{ label: en ? "To checkout" : "Zur Kasse", url: cartUrl }] : [],
-    footnoteHtml: `${alternativesBlock}${signOffHtml}`,
+    postCtaRowsHtml:
+      renderProductSection(
+        en ? "You might also like" : "Vielleicht auch interessant",
+        alternatives,
+        locale
+      ) + signOffRow,
     locale,
   });
 

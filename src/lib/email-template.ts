@@ -1,17 +1,19 @@
 // Shared branded email shell for EVERY outgoing customer email (conversation
-// summary, marketing, double-opt-in confirmation). One template, one brand.
+// summary, marketing, campaign, double-opt-in confirmation). One template, one
+// brand.
 //
-// The design is lifted from the shop's existing Shopify/OrderlyEmails order
-// confirmation so backend emails look exactly like the store's own mail:
-// white card on #f6f6f6, the motion sports logo on top, Montserrat/Verdana
-// type, the #008ccb pill button, the Shop/Über/Kontakt/Impressum menu bar and
-// the legal footer with the company address.
+// The design is lifted from the shop's own Shopify newsletter emails so backend
+// emails look exactly like the store's manually sent mail: a 600px white card
+// on #fafafa, the centered motion sports logo, Verdana/Geneva 13px type,
+// FULL-WIDTH BLACK SEPARATOR BANDS with white text between sections, the
+// #008ccb pill button, and the grey footer with social icons, the company
+// block and the unsubscribe line.
 //
 // EMAIL-CLIENT ROBUSTNESS RULES — do NOT "modernise" this file:
 //   - table-based layout with role="presentation" and bgcolor= attributes
 //   - EVERY visual style is INLINE; the <style> block in <head> is progressive
-//     enhancement only (mobile width tweaks + webfont) and the email must
-//     render correctly in Gmail, Apple Mail and Outlook without it
+//     enhancement only (mobile width tweaks) and the email must render
+//     correctly in Gmail, Apple Mail and Outlook without it
 //   - no flexbox/grid/SVG/background-images/external CSS
 //   - images referenced by absolute https URLs only
 //   - the header logo is a STATIC image (animated logos do not animate
@@ -21,11 +23,14 @@
 //     (Gmail/Apple Mail play it; Outlook desktop shows the first frame).
 //     Everything else stays static.
 
-/** Brand accent used for CTA buttons (matches the shop's order emails). */
+/** Brand accent used for CTA buttons (matches the shop's newsletter emails). */
 export const EMAIL_ACCENT_COLOR = "#008ccb";
 
-/** Font stack used on every inline style (Montserrat is enhancement-only). */
-export const EMAIL_FONT_FAMILY = "Verdana,sans-serif,'Montserrat'";
+/** Red used for struck-through compare-at prices (newsletter product grid). */
+export const EMAIL_SALE_STRIKE_COLOR = "#c61724";
+
+/** Font stack used on every inline style (same as the shop's newsletters). */
+export const EMAIL_FONT_FAMILY = "Verdana, Geneva, sans-serif";
 
 /**
  * Inline style for a normal body paragraph/text cell. Callers building
@@ -33,20 +38,20 @@ export const EMAIL_FONT_FAMILY = "Verdana,sans-serif,'Montserrat'";
  */
 export const EMAIL_TEXT_STYLE =
   `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
-  `font-size: 14px; line-height: 20px; font-weight: 400; text-transform: none; ` +
+  `font-size: 13px; line-height: 1.5; font-weight: 400; text-transform: none; ` +
   `color: #000000; Margin: 0;`;
 
-/** Inline style for muted small print (12px grey). */
+/** Inline style for small print (12px, black like the newsletter footer). */
 export const EMAIL_MUTED_TEXT_STYLE =
   `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
-  `font-size: 12px; line-height: 18px; font-weight: 400; text-transform: none; ` +
-  `color: #212121; Margin: 0;`;
+  `font-size: 12px; line-height: 1.5; font-weight: 400; text-transform: none; ` +
+  `color: #000000; Margin: 0;`;
 
-// Static brand logo (the same asset the shop's order-confirmation emails use —
-// an absolute https URL on a public CDN, NOT an animated file). Override with
-// EMAIL_LOGO_URL once a dedicated static Mo logo is hosted somewhere public.
+// Static brand logo — the SAME square asset the shop's Shopify newsletter
+// emails use (absolute https URL on a public CDN, NOT an animated file).
+// Override with EMAIL_LOGO_URL to host a different asset.
 const DEFAULT_LOGO_URL =
-  "https://cdn.filepicker.io/api/file/RTi7jHZzSB6uteZL4etr/convert?fit=max&w=422";
+  "https://cdn.shopify.com/shopify-email/5qyp9svuofng6eftj0lt3qeva83o.png?width=960&height=960";
 
 export function emailLogoUrl(): string {
   return process.env.EMAIL_LOGO_URL || DEFAULT_LOGO_URL;
@@ -77,99 +82,155 @@ export interface BrandedEmailOptions {
   /** Used for the <title>; the actual Subject header is set by the sender. */
   subject: string;
   /**
-   * Language of the shell chrome (menu bar + <html lang>). Default German —
-   * unchanged, byte-identical. "en" localises the "Browse" heading and the
-   * Shop/About/Contact/Imprint menu labels; the legal company address in the
-   * footer is locale-agnostic.
+   * Language of the shell chrome (<html lang> + footer unsubscribe hint).
+   * Default German.
    */
   locale?: Locale;
   /** Hidden preview line shown next to the subject in inbox lists. */
   preheader?: string;
-  /** Large centered heading at the top of the white card. */
+  /**
+   * Heading rendered as the signature FULL-WIDTH BLACK BAND (white 20px text)
+   * under the logo — the newsletter's section-separator look.
+   */
   heading: string;
   /**
-   * Inner HTML of the content block (between heading and CTA). Callers MUST
-   * escape any user-derived data themselves and should style text with
+   * Inner HTML of the content block (between heading band and CTA). Callers
+   * MUST escape any user-derived data themselves and should style text with
    * EMAIL_TEXT_STYLE / EMAIL_MUTED_TEXT_STYLE.
    */
   bodyHtml: string;
   /**
-   * Show the Mo brand-orb avatar (emailMoIconUrl) centered between heading
-   * and body — the same mark the shop's chat widget uses, so the reader
-   * associates the email with Mo. Animated GIF; clients without GIF playback
-   * show its first frame.
+   * Show the Mo brand-orb avatar (emailMoIconUrl) centered between the heading
+   * band and the body — the same mark the shop's chat widget uses, so the
+   * reader associates the email with Mo. Animated GIF; clients without GIF
+   * playback show its first frame.
    */
   moAvatar?: boolean;
-  /** Table-based "bulletproof" CTA button(s) rendered after the body. */
+  /**
+   * RAW full-width <tr> rows rendered between the body and the CTA — built
+   * with renderSectionBand / renderSectionRow so callers can compose
+   * newsletter-style sections (black band + product grid) at full card width.
+   */
+  preCtaRowsHtml?: string;
+  /** Table-based "bulletproof" pill CTA button(s) rendered after the body. */
   ctas?: EmailCta[];
   /** Small-print HTML under the CTA(s) (e.g. discount code + expiry note). */
   footnoteHtml?: string;
+  /**
+   * RAW full-width <tr> rows rendered after the CTA/footnote and before the
+   * footer (e.g. the summary's "Vielleicht auch interessant" section).
+   */
+  postCtaRowsHtml?: string;
   footer?: {
     /**
      * Legal unsubscribe block — REQUIRED on marketing emails; rendered as its
-     * own bordered section above the menu/footer so a content edit can never
-     * remove it.
+     * own slot inside the grey footer so a content edit can never remove it.
      */
     unsubscribeHtml?: string;
-    /** Show the Shop/Über/Kontakt/Impressum menu bar (default true). */
-    showMenu?: boolean;
+    /** Show the social-icons row in the footer (default true). */
+    showSocial?: boolean;
   };
 }
 
-const MENU_ITEMS: ReadonlyArray<{ labelDe: string; labelEn: string; url: string }> = [
-  // Same destinations as the shop's order-confirmation emails.
-  { labelDe: "Shop", labelEn: "Shop", url: "https://www.motionsports.de" },
-  { labelDe: "Über", labelEn: "About", url: "https://motionsports.de/collections/sale" },
-  { labelDe: "Kontakt", labelEn: "Contact", url: "https://motionsports.de/pages/contact" },
-  { labelDe: "Impressum", labelEn: "Imprint", url: "https://motionsports.de/pages/impressum" },
+// Social profiles — same icons (Shopify CDN, PNG-rendered) and destinations as
+// the shop's newsletter footer.
+const SOCIAL_LINKS: ReadonlyArray<{ alt: string; icon: string; url: string }> = [
+  {
+    alt: "facebook",
+    icon: "https://cdn.shopify.com/shopify-email/nrqu6w5pn43waa7da6r8ifkgkl9v.svg?width=60&height=60&format=png",
+    url: "https://www.facebook.com/people/motion-sports/100075824244572/",
+  },
+  {
+    alt: "instagram",
+    icon: "https://cdn.shopify.com/shopify-email/mezbe8bg2srefo0ca2vqbbv13mjg.svg?width=60&height=60&format=png",
+    url: "https://www.instagram.com/motionsports_/",
+  },
+  {
+    alt: "pinterest",
+    icon: "https://cdn.shopify.com/shopify-email/khppknaggzolc0nmq1zaai69okxu.svg?width=60&height=60&format=png",
+    url: "https://de.pinterest.com/0fmasbgzwae9oi9mjc9s6e2q9oamwk/",
+  },
+  {
+    alt: "tiktok",
+    icon: "https://cdn.shopify.com/shopify-email/4s0eae5xdawkwa9aals5ya8qujky.svg?width=60&height=60&format=png",
+    url: "https://www.tiktok.com/@motionsports_",
+  },
+  {
+    alt: "whatsapp",
+    icon: "https://cdn.shopify.com/shopify-email/0rt1gsbm6sbgfm9nay94cxrw7lns.svg?width=60&height=60&format=png",
+    url: "https://api.whatsapp.com/send?phone=%2B498142448666&text=",
+  },
+  {
+    alt: "youtube",
+    icon: "https://cdn.shopify.com/shopify-email/b44b9z24d10ct9dov9fozqqm8vqf.svg?width=60&height=60&format=png",
+    url: "https://www.youtube.com/@motionsports-fitness",
+  },
 ];
 
-export function renderCtaButton(cta: EmailCta): string {
-  // "Bulletproof" pill button straight from the reference design: a one-cell
-  // table whose th carries bgcolor + border-radius (works in Outlook) and a
-  // block-level <a> with a thick same-color border for the clickable padding.
+const IMPRINT_URL = "https://motionsports.de/pages/impressum";
+
+/**
+ * The signature newsletter element: a FULL-WIDTH black band with white 20px
+ * text, used to separate sections ("Deine Auswahl", "Bestseller", …). Returns
+ * a raw <tr> for the 600px card table — use in preCtaRowsHtml/postCtaRowsHtml,
+ * or rely on the shell's heading which renders through this too.
+ */
+export function renderSectionBand(title: string): string {
   return `
-              <tr>
-                <th class="column_button" style="mso-line-height-rule: exactly; Margin: 0; padding: 10px 0;" align="center" bgcolor="#ffffff" valign="top">
-                  <table cellspacing="0" cellpadding="0" border="0" role="presentation" style="direction: ltr; text-align: center; Margin: 0 auto;" bgcolor="transparent">
-                    <tr>
-                      <th style="mso-line-height-rule: exactly; border-radius: 30px;" align="center" bgcolor="${EMAIL_ACCENT_COLOR}" valign="top">
-                        <a href="${escapeAttr(cta.url)}" target="_blank" style="color: #ffffff !important; text-decoration: none !important; word-wrap: break-word; line-height: 14px; font-family: ${EMAIL_FONT_FAMILY}; font-size: 14px; font-weight: 400; text-transform: none; text-align: center; display: block; background-color: ${EMAIL_ACCENT_COLOR}; border-radius: 30px; padding: 1px 20px; border: 15px solid ${EMAIL_ACCENT_COLOR};"><span style="line-height: 14px; color: #ffffff; font-weight: 400; text-decoration: none; letter-spacing: 0.5px;"><!--[if mso]>&nbsp;&nbsp;&nbsp;&nbsp;<![endif]-->${escapeHtml(cta.label)}<!--[if mso]>&nbsp;&nbsp;&nbsp;&nbsp;<![endif]--></span></a>
-                      </th>
-                    </tr>
-                  </table>
-                </th>
-              </tr>`;
+                <tr>
+                  <td class="content-pad" align="center" bgcolor="#000000" style="mso-line-height-rule: exactly; padding: 25px 60px;">
+                    <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 20px; line-height: 1.4; font-weight: 400; color: #ffffff; Margin: 0;" align="center">${escapeHtml(title)}</p>
+                  </td>
+                </tr>`;
 }
 
-function renderMenuBar(locale: Locale): string {
-  const count = MENU_ITEMS.length;
-  const width = Math.floor(100 / count);
-  const cells = MENU_ITEMS.map((item, i) => {
-    const borderLeft = i === 0 ? "none" : "solid";
-    const borderRight = i === count - 1 ? "none" : "solid";
-    const label = locale === "en" ? item.labelEn : item.labelDe;
-    return `
-                    <th style="width: ${width}%; mso-line-height-rule: exactly; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; font-weight: 400; line-height: 20px; color: #212121; text-transform: uppercase; border-right-width: 2px; border-right-color: #e5e5e5; border-right-style: ${borderRight}; border-left-width: 2px; border-left-color: #e5e5e5; border-left-style: ${borderLeft};" align="center" bgcolor="#ffffff">
-                      <a href="${escapeAttr(item.url)}" target="_blank" style="color: #212121; text-decoration: none !important; word-wrap: break-word; text-align: center !important; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; font-weight: 400; line-height: 20px; text-transform: uppercase;">${escapeHtml(label)}</a>
-                    </th>`;
-  }).join("");
-
-  const browseLabel = locale === "en" ? "Browse" : "Durchsuchen";
+/**
+ * A white content row with the card's standard 60px side padding (15px on
+ * mobile via .content-pad). Returns a raw <tr> for preCtaRowsHtml /
+ * postCtaRowsHtml. `padding` overrides the default vertical rhythm.
+ */
+export function renderSectionRow(
+  innerHtml: string,
+  opts: { padding?: string; align?: "left" | "center"; bgcolor?: string } = {}
+): string {
+  const padding = opts.padding ?? "20px 60px";
+  const align = opts.align ?? "left";
+  const bgcolor = opts.bgcolor ?? "#ffffff";
   return `
-          <tr>
-            <th width="100%" style="mso-line-height-rule: exactly; padding-top: 10px;" bgcolor="#ffffff">
-              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; line-height: 20px; font-weight: 400; text-transform: uppercase; color: #212121; Margin: 0;" align="center">${browseLabel}</p>
-            </th>
-          </tr>
-          <tr>
-            <td style="mso-line-height-rule: exactly; padding: 20px 0;" bgcolor="#ffffff">
-              <table border="0" width="100%" cellpadding="0" cellspacing="0" role="presentation" style="direction: ltr; text-align: center;">
-                <tr align="center">${cells}
-                </tr>
-              </table>
-            </td>
-          </tr>`;
+                <tr>
+                  <td class="content-pad" align="${align}" bgcolor="${bgcolor}" style="mso-line-height-rule: exactly; padding: ${padding};" valign="top">${innerHtml}
+                  </td>
+                </tr>`;
+}
+
+/**
+ * "Bulletproof" pill button in the newsletter style: full-width #008ccb pill
+ * (border-radius 200px), bold white 12px label, generous padding. Returns a
+ * standalone table — the shell (or a section like the bundle card) places it.
+ */
+export function renderCtaButton(cta: EmailCta): string {
+  return `
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important;">
+                      <tr>
+                        <td align="center" bgcolor="${EMAIL_ACCENT_COLOR}" style="mso-line-height-rule: exactly; border-radius: 200px;" valign="top">
+                          <a href="${escapeAttr(cta.url)}" target="_blank" style="font-size: 12px; color: #ffffff; text-decoration: none; border-radius: 200px; background-color: ${EMAIL_ACCENT_COLOR}; display: block; min-width: 80px; font-family: ${EMAIL_FONT_FAMILY}; font-weight: 400; font-style: normal; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; word-break: break-word; padding: 14px 28px; border: 3px solid ${EMAIL_ACCENT_COLOR};"><strong>${escapeHtml(cta.label)}</strong></a>
+                        </td>
+                      </tr>
+                    </table>`;
+}
+
+function renderSocialRow(): string {
+  const cells = SOCIAL_LINKS.map(
+    (s) => `
+                          <td align="center" valign="middle" style="mso-line-height-rule: exactly; padding: 0 6px;">
+                            <a href="${escapeAttr(s.url)}" target="_blank" style="text-decoration: none;"><img src="${escapeAttr(s.icon)}" alt="${escapeAttr(s.alt)}" width="20" height="20" border="0" style="width: 20px; height: 20px; display: block; border: none; outline: none;"></a>
+                          </td>`
+  ).join("");
+  return `
+                    <table cellspacing="0" cellpadding="0" border="0" align="center" role="presentation" style="direction: ltr; Margin: 0 auto 12px;">
+                      <tr>${cells}
+                      </tr>
+                    </table>`;
 }
 
 /**
@@ -178,9 +239,10 @@ function renderMenuBar(locale: Locale): string {
  */
 export function renderBrandedEmail(opts: BrandedEmailOptions): string {
   const logo = emailLogoUrl();
-  const showMenu = opts.footer?.showMenu !== false;
+  const showSocial = opts.footer?.showSocial !== false;
   const year = new Date().getFullYear();
   const locale: Locale = opts.locale ?? "de";
+  const en = locale === "en";
 
   const preheaderHtml = opts.preheader
     ? `
@@ -188,195 +250,130 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
   <div style="display: none; overflow: hidden; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; mso-hide: all;">&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;</div>`
     : "";
 
-  const ctasHtml = (opts.ctas ?? [])
+  const moAvatarRow = opts.moAvatar
+    ? `
+                <!-- BEGIN SECTION: Mo avatar (brand orb, animated GIF) -->
+                <tr>
+                  <td class="content-pad" align="center" bgcolor="#ffffff" style="mso-line-height-rule: exactly; padding: 25px 60px 0;">
+                    <img src="${escapeAttr(emailMoIconUrl())}" alt="Mo" width="64" height="64" border="0" style="width: 64px; height: 64px; display: block; Margin: 0 auto;">
+                  </td>
+                </tr>
+                <!-- END SECTION: Mo avatar -->`
+    : "";
+
+  const ctaRows = (opts.ctas ?? [])
     .filter((c) => c.url && c.label)
-    .map(renderCtaButton)
+    .map((c) =>
+      renderSectionRow(renderCtaButton(c), { padding: "10px 60px", align: "center" })
+    )
     .join("");
 
-  const footnoteHtml = opts.footnoteHtml
-    ? `
-              <tr>
-                <th style="mso-line-height-rule: exactly; padding: 5px 0 0;" align="center" bgcolor="#ffffff" valign="top">${opts.footnoteHtml}</th>
-              </tr>`
+  const footnoteRow = opts.footnoteHtml
+    ? renderSectionRow(opts.footnoteHtml, { padding: "10px 60px", align: "center" })
     : "";
 
-  const ctaSection =
-    ctasHtml || footnoteHtml
-      ? `
-      <!-- BEGIN SECTION: CTA -->
-      <tr>
-        <th class="section_border" style="mso-line-height-rule: exactly; padding: 5px 80px;" bgcolor="#ffffff">
-          <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr;" role="presentation">
-            <tr>
-              <th class="section_content" style="mso-line-height-rule: exactly; padding: 5px 20px;" bgcolor="#ffffff" valign="top">
-                <table cellspacing="0" cellpadding="0" border="0" width="100%" style="direction: ltr;" role="presentation">${ctasHtml}${footnoteHtml}
-                </table>
-              </th>
-            </tr>
-          </table>
-        </th>
-      </tr>
-      <!-- END SECTION: CTA -->`
-      : "";
-
-  const moAvatarSection = opts.moAvatar
+  const unsubscribeBlock = opts.footer?.unsubscribeHtml
     ? `
-                        <!-- BEGIN SECTION: Mo avatar (brand orb, animated GIF) -->
-                        <tr>
-                          <th class="section_border" style="mso-line-height-rule: exactly; padding: 0 80px;" align="center" bgcolor="#ffffff">
-                            <img src="${escapeAttr(emailMoIconUrl())}" alt="Mo" width="64" height="64" border="0" style="width: 64px; height: 64px; display: block; Margin: 0 auto;">
-                          </th>
-                        </tr>
-                        <!-- END SECTION: Mo avatar -->`
-    : "";
-
-  const unsubscribeSection = opts.footer?.unsubscribeHtml
-    ? `
-      <!-- BEGIN SECTION: Unsubscribe (legally required on marketing email) -->
-      <tr>
-        <th class="section_border" style="mso-line-height-rule: exactly; padding: 5px 80px;" bgcolor="#ffffff">
-          <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr;" role="presentation">
-            <tr>
-              <th class="section_content" style="mso-line-height-rule: exactly; padding: 5px 20px; border-top-width: 1px; border-top-color: #e5e5e5; border-top-style: solid;" align="center" bgcolor="#ffffff" valign="top">${opts.footer.unsubscribeHtml}</th>
-            </tr>
-          </table>
-        </th>
-      </tr>
-      <!-- END SECTION: Unsubscribe -->`
+                          <!-- BEGIN: Unsubscribe (legally required on marketing email) -->
+                          <tr>
+                            <td align="center" style="mso-line-height-rule: exactly; padding: 8px 0 0;" valign="top">${opts.footer.unsubscribeHtml}</td>
+                          </tr>
+                          <!-- END: Unsubscribe -->`
     : "";
 
   return `<!DOCTYPE html>
 <html lang="${locale}">
   <head>
-    <meta name="viewport" content="width=device-width">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="x-apple-disable-message-reformatting">
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no">
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light only">
     <title>${escapeHtml(opts.subject)}</title>
-    <!--[if !mso]><!-->
-    <style type="text/css" data-premailer="ignore">
-      @import url("https://fonts.googleapis.com/css?family=Montserrat:400,700&subset=latin-ext");
+    <!--[if mso]>
+    <style>
+      * { font-family: sans-serif !important; }
     </style>
-    <!--<![endif]-->
+    <![endif]-->
     <style type="text/css">
       /* Progressive enhancement ONLY — every critical style is inline. */
       html, body { Margin: 0 auto !important; padding: 0 !important; width: 100% !important; }
       * { -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
-      table, th { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+      table, th, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
       table { border-spacing: 0 !important; border-collapse: collapse !important; border: none; Margin: 0 auto; }
       img { -ms-interpolation-mode: bicubic; border: none !important; outline: none !important; text-decoration: none !important; }
+      .grid-column { max-width: 50%; }
       @media only screen and (max-width:480px) {
         .email-container { width: 100% !important; min-width: 100% !important; }
-        .section_border { padding-right: 10px !important; padding-left: 10px !important; }
-        .section_content { padding-right: 20px !important; padding-left: 20px !important; }
-        h1, h2, h3 { line-height: 1.4 !important; }
+        .content-pad { padding-right: 15px !important; padding-left: 15px !important; }
+        .grid-image { width: 100% !important; height: auto !important; }
       }
     </style>
   </head>
-  <body id="body" bgcolor="#f6f6f6" style="-webkit-text-size-adjust: none; -ms-text-size-adjust: none; Margin: 0; padding: 0;">${preheaderHtml}
+  <body id="body" bgcolor="#fafafa" style="-webkit-text-size-adjust: none; -ms-text-size-adjust: none; background-color: #fafafa; Margin: 0; padding: 0;">${preheaderHtml}
     <!-- BEGIN: CONTAINER -->
-    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse: collapse; min-width: 100%; direction: ltr;" role="presentation" bgcolor="#f6f6f6">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse: collapse; min-width: 100%; direction: ltr;" role="presentation" bgcolor="#fafafa">
       <tbody>
         <tr>
-          <th valign="top" style="mso-line-height-rule: exactly;">
-            <center style="width: 100%;">
-              <table border="0" width="640" cellpadding="0" cellspacing="0" align="center" style="width: 640px; min-width: 640px; max-width: 640px; direction: ltr; Margin: auto;" class="email-container" role="presentation">
-                <tbody>
-                  <tr>
-                    <th valign="top" style="mso-line-height-rule: exactly; padding: 10px 0;">
-                      <!-- BEGIN : SECTION : HEADER -->
-                      <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr;" role="presentation" bgcolor="#ffffff">
-                        <tr>
-                          <th class="section_border" style="mso-line-height-rule: exactly; padding: 20px 80px 0px;" bgcolor="#ffffff">
-                            <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr;" role="presentation">
-                              <tr>
-                                <th class="section_content" style="mso-line-height-rule: exactly; padding: 5px 20px;" align="center" bgcolor="#ffffff">
-                                  <!-- Logo (STATIC image, absolute https URL) : BEGIN -->
-                                  <a href="https://www.motionsports.de" target="_blank" style="text-decoration: none !important;">
-                                    <img src="${escapeAttr(logo)}" alt="motion sports" width="211" border="0" style="width: 211px; height: auto !important; display: block; Margin: 0 auto;">
-                                  </a>
-                                  <!-- Logo : END -->
-                                </th>
-                              </tr>
-                            </table>
-                          </th>
-                        </tr>
-                      </table>
-                      <!-- END : SECTION : HEADER -->
-                      <!-- BEGIN : SECTION : MAIN -->
-                      <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr;" role="presentation" bgcolor="#ffffff">
-                        <!-- BEGIN SECTION: Heading -->
-                        <tr>
-                          <th class="section_border" style="mso-line-height-rule: exactly; padding: 10px 80px 0;" bgcolor="#ffffff">
-                            <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr;" role="presentation">
-                              <tr>
-                                <th class="section_content" style="mso-line-height-rule: exactly; color: #000000; padding: 20px;" align="center" bgcolor="#ffffff" valign="top">
-                                  <h1 style="font-family: ${EMAIL_FONT_FAMILY}; font-size: 30px; line-height: 28px; padding-top: 7px; padding-bottom: 7px; font-weight: 400; color: #000000; text-transform: none; letter-spacing: 0.5px; Margin: 0;" align="center">${escapeHtml(opts.heading)}</h1>
-                                </th>
-                              </tr>
-                            </table>
-                          </th>
-                        </tr>
-                        <!-- END SECTION: Heading -->${moAvatarSection}
-                        <!-- BEGIN SECTION: Body content -->
-                        <tr>
-                          <th class="section_border" style="mso-line-height-rule: exactly; padding: 0 80px 5px;" bgcolor="#ffffff">
-                            <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr;" role="presentation">
-                              <tr>
-                                <th class="section_content" style="mso-line-height-rule: exactly; padding: 5px 20px;" align="left" bgcolor="#ffffff" valign="top">${opts.bodyHtml}
-                                </th>
-                              </tr>
-                            </table>
-                          </th>
-                        </tr>
-                        <!-- END SECTION: Body content -->${ctaSection}${unsubscribeSection}${showMenu ? renderMenuBar(locale) : ""}
-                      </table>
-                      <!-- END : SECTION : MAIN -->
-                      <!-- BEGIN : SECTION : FOOTER -->
-                      <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr;" role="presentation" bgcolor="#f9f9f9">
-                        <tr align="center">
-                          <td class="section_border" style="mso-line-height-rule: exactly; padding: 30px 80px 20px;" align="center" bgcolor="#f9f9f9">
-                            <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr; text-align: center;" role="presentation">
-                              <tr align="center">
-                                <th class="section_content" style="mso-line-height-rule: exactly; padding: 5px 20px;" align="center" bgcolor="#f9f9f9">
-                                  <table border="0" width="100%" cellpadding="0" cellspacing="0" role="presentation" style="direction: ltr; text-align: center;">
-                                    <tr align="center">
-                                      <th width="100%" style="mso-line-height-rule: exactly; padding-top: 5px; padding-bottom: 20px; font-family: ${EMAIL_FONT_FAMILY}; font-size: 14px; line-height: 20px; font-weight: 400; color: #3c3c3c; text-transform: none;" align="center" bgcolor="#f9f9f9">
-                                        <a href="https://www.motionsports.de" target="_blank" style="color: #000000; text-decoration: none !important; font-size: 14px; font-weight: 400; text-transform: none; text-align: center;">motionsports.de</a>
-                                      </th>
-                                    </tr>
-                                    <tr align="center">
-                                      <th width="100%" style="mso-line-height-rule: exactly; padding-top: 5px; padding-bottom: 5px; font-family: ${EMAIL_FONT_FAMILY}; font-size: 14px; line-height: 20px; font-weight: 400; color: #3c3c3c; text-transform: none;" align="center" bgcolor="#f9f9f9">
-                                        <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 14px; line-height: 20px; font-weight: 400; text-transform: none; color: #3c3c3c; Margin: 0;" align="center">4 motionsports GmbH<br style="text-align: center;">
-                                          Am Weidegrund 1<br style="text-align: center;">
-                                          82194 Gr&#246;benzell</p>
-                                        <br style="text-align: center;">
-                                        Copyright &#169; ${year}
-                                      </th>
-                                    </tr>
-                                    <tr align="center">
-                                      <th width="50%" style="mso-line-height-rule: exactly; padding-top: 20px; padding-bottom: 20px;" align="center" bgcolor="#f9f9f9">
-                                        <a href="https://www.motionsports.de" target="_blank" style="color: #000000; text-decoration: none !important; font-size: 14px; text-align: center;">
-                                          <img src="${escapeAttr(logo)}" alt="motion sports" width="100" border="0" style="width: 100px; height: auto !important; display: block; text-align: center; Margin: auto;">
-                                        </a>
-                                      </th>
-                                    </tr>
-                                  </table>
-                                </th>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                      </table>
-                      <!-- END : SECTION : FOOTER -->
-                    </th>
-                  </tr>
-                </tbody>
-              </table>
-            </center>
-          </th>
+          <td align="center" valign="top" style="mso-line-height-rule: exactly;">
+            <!-- BEGIN: CARD -->
+            <table border="0" width="600" cellpadding="0" cellspacing="0" align="center" style="width: 600px; max-width: 600px; direction: ltr; Margin: auto; table-layout: fixed;" class="email-container" role="presentation" bgcolor="#ffffff">
+              <tbody>
+                <!-- BEGIN SECTION: Header (logo — STATIC image, absolute https URL) -->
+                <tr>
+                  <td class="content-pad" align="center" bgcolor="#ffffff" style="mso-line-height-rule: exactly; padding: 30px 60px 20px;">
+                    <a href="https://www.motionsports.de" target="_blank" style="text-decoration: none !important;">
+                      <img src="${escapeAttr(logo)}" alt="motion sports" width="144" border="0" style="width: 144px; height: auto !important; max-width: 100%; display: block; Margin: 0 auto;">
+                    </a>
+                  </td>
+                </tr>
+                <!-- END SECTION: Header -->
+                <!-- BEGIN SECTION: Heading band (signature black separator) -->${renderSectionBand(opts.heading)}
+                <!-- END SECTION: Heading band -->${moAvatarRow}
+                <!-- BEGIN SECTION: Body content -->
+                <tr>
+                  <td class="content-pad" align="left" bgcolor="#ffffff" style="mso-line-height-rule: exactly; padding: 25px 60px 10px;" valign="top">${opts.bodyHtml}
+                  </td>
+                </tr>
+                <!-- END SECTION: Body content -->${opts.preCtaRowsHtml ?? ""}${ctaRows}${footnoteRow}${opts.postCtaRowsHtml ?? ""}
+                <tr>
+                  <td height="20" bgcolor="#ffffff" style="mso-line-height-rule: exactly; font-size: 0; line-height: 20px;">&nbsp;</td>
+                </tr>
+                <!-- BEGIN : SECTION : FOOTER (newsletter style: social + company + unsubscribe) -->
+                <tr>
+                  <td class="content-pad" align="center" bgcolor="#f9f9f9" style="mso-line-height-rule: exactly; padding: 24px 60px;">
+                    <table border="0" width="100%" cellpadding="0" cellspacing="0" align="center" style="min-width: 100%; direction: ltr; text-align: center;" role="presentation">
+                      <tbody>${
+                        showSocial
+                          ? `
+                          <tr>
+                            <td align="center" style="mso-line-height-rule: exactly;" valign="top">${renderSocialRow()}
+                            </td>
+                          </tr>`
+                          : ""
+                      }
+                          <tr>
+                            <td align="center" style="mso-line-height-rule: exactly; padding-bottom: 8px;" valign="top">
+                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 11px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center">4motionsports GmbH<br>Am Weidegrund 1, 82194 Gr&#246;benzell, Deutschland<br>Gesch&#228;ftsf&#252;hrer: Sabine Brunner, Lucas Brunner</p>
+                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 11px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center"><a href="tel:+49(0)8142%20448666" style="color: #000000; text-decoration: underline;">+49(0)8142 448666</a> <strong>&#183;</strong> <a href="mailto:info@motionsports.de" style="color: #000000; text-decoration: underline;">info@motionsports.de</a></p>
+                            </td>
+                          </tr>${unsubscribeBlock}
+                          <tr>
+                            <td align="center" style="mso-line-height-rule: exactly; padding-top: 8px;" valign="top">
+                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center">&#169; ${year} motion sports &#183; <a href="${escapeAttr(IMPRINT_URL)}" target="_blank" style="color: #000000; text-decoration: underline;">${en ? "Imprint" : "Impressum"}</a></p>
+                            </td>
+                          </tr>
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+                <!-- END : SECTION : FOOTER -->
+              </tbody>
+            </table>
+            <!-- END: CARD -->
+          </td>
         </tr>
       </tbody>
     </table>

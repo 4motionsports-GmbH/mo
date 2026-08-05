@@ -33,10 +33,13 @@ import { outboundThreading } from "./email-inbound";
 import { recordSentMessage } from "./email-messages-store";
 import {
   renderBrandedEmail,
+  renderSectionBand,
+  renderSectionRow,
   escapeHtml,
   EMAIL_TEXT_STYLE,
   EMAIL_MUTED_TEXT_STYLE,
 } from "./email-template";
+import { renderEmailProductGrid, type EmailProductGridItem } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -235,8 +238,16 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
             discountCode: discountCode ?? undefined,
             excludeSoldOut: true,
           })
-        : { url: null as string | null };
+        : { url: null as string | null, lines: [] };
       const cartUrl = cart.url;
+
+      // The recommended products, exactly as the shipped cart contains them —
+      // rendered as the newsletter's picture grid above the cart CTA. Purely
+      // presentational (the cart link stays the source of truth), so a resolve
+      // failure just drops the grid, never the send.
+      const recommendedProducts = (cart.lines ?? [])
+        .map((l) => l.product)
+        .filter((p): p is Product => p != null);
 
       // CLICK-TRACKING: route the click through our own redirect so it's visible
       // to the KPI dashboard. The REAL Shopify cart URL (with ?discount=CODE)
@@ -263,6 +274,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         body,
         // The customer sees/clicks the tracked redirect URL, not the raw cart.
         linkUrl,
+        products: recommendedProducts,
         discountCode,
         // Deterministic deadline next to the code, derived from the REAL minted
         // expiry — stated even if the AI prose were edited to drop it.
@@ -393,6 +405,26 @@ async function catalogNameLookup(): Promise<(url: string) => string | null> {
   }
 }
 
+// EUR formatting for the product grid (marketing stays German-only).
+const GRID_PRICE_FORMAT = new Intl.NumberFormat("de-DE", {
+  style: "currency",
+  currency: "EUR",
+});
+
+/** Newsletter-grid item for a catalog product (red strikethrough compare-at
+ * price when a genuine sale price exists). */
+function toGridItem(p: Product): EmailProductGridItem {
+  const onSale =
+    typeof p.salePrice === "number" && p.salePrice > 0 && p.salePrice < p.price;
+  return {
+    imageUrl: firstImageUrl(p),
+    name: p.name,
+    url: p.shopifyUrl,
+    priceLabel: GRID_PRICE_FORMAT.format(onSale ? p.salePrice! : p.price),
+    compareAtLabel: onSale ? GRID_PRICE_FORMAT.format(p.price) : null,
+  };
+}
+
 function renderMarketingEmail(opts: {
   /** Subject line — reused for the HTML <title>/preview line. */
   subject: string;
@@ -400,6 +432,9 @@ function renderMarketingEmail(opts: {
   /** The URL the cart button/link points at — the tracked /api/r/<token>
    *  redirect, NOT the raw Shopify cart (which is kept server-side). */
   linkUrl: string | null;
+  /** The recommended products (the shipped cart's contents) — rendered as the
+   *  newsletter picture grid above the cart CTA. */
+  products: Product[];
   discountCode: string | null;
   /** German-formatted expiry date of the minted code ("TT.MM.JJJJ"); stated
    *  deterministically next to the code so the deadline always ships. */
@@ -411,7 +446,7 @@ function renderMarketingEmail(opts: {
    * host/path label. Markdown links carry their own label. */
   labelForUrl?: (url: string) => string | null;
 }): { text: string; html: string } {
-  const { subject, body, linkUrl, discountCode, discountExpiresLabel, unsubscribe, bundle } = opts;
+  const { subject, body, linkUrl, products, discountCode, discountExpiresLabel, unsubscribe, bundle } = opts;
 
   const validityNote = discountExpiresLabel
     ? `, gültig bis ${discountExpiresLabel}`
@@ -419,6 +454,13 @@ function renderMarketingEmail(opts: {
 
   // --- text part — markdown links flatten to "Label (URL)" ---
   const textLines = [emailProseToText(body.trim())];
+  if (products.length) {
+    textLines.push(
+      "",
+      "Für dich ausgesucht:",
+      ...products.map((p) => `- ${p.name}`)
+    );
+  }
   // The special-offer block (when a bundle is attached) sits right after the
   // prose, before the cart link + unsubscribe footer.
   if (bundle) textLines.push(bundle.text);
@@ -456,20 +498,31 @@ function renderMarketingEmail(opts: {
         )}</strong>${escapeHtml(validityNote)}.</p>`
       : "";
 
+  // Newsletter-style product section: black separator band + picture grid.
+  const productsRows = products.length
+    ? renderSectionBand("Für dich ausgesucht") +
+      renderSectionRow(renderEmailProductGrid(products.map(toGridItem)), {
+        padding: "30px 60px 10px",
+        align: "center",
+      })
+    : "";
+
   const html = renderBrandedEmail({
     subject,
     preheader: body.trim().split("\n")[0]?.slice(0, 140) || undefined,
     heading: "Deine persönliche Empfehlung",
     // The email is written by Mo — the brand orb makes that recognizable.
     moAvatar: true,
-    // The bundle special-offer block (if any) is appended to the prose body so
-    // it renders above the cart CTA/unsubscribe footer. Prose links (markdown
-    // + bare URLs) render as clickable text — never a raw pasted URL.
+    // Prose links (markdown + bare URLs) render as clickable text — never a
+    // raw pasted URL.
     bodyHtml: `
-                                  <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
-                                    body.trim(),
-                                    { labelForUrl: opts.labelForUrl }
-                                  )}</p>${bundle ? bundle.html : ""}`,
+                    <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
+                      body.trim(),
+                      { labelForUrl: opts.labelForUrl }
+                    )}</p>`,
+    // Full-width newsletter sections between prose and the cart pill: the
+    // product picture grid, then the bundle special-offer block (if any).
+    preCtaRowsHtml: `${productsRows}${bundle ? bundle.html : ""}`,
     ctas: linkUrl ? [{ label: "Warenkorb öffnen", url: linkUrl }] : [],
     footnoteHtml: discountNote || undefined,
     footer: {
