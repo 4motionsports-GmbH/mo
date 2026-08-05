@@ -308,6 +308,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
       @media only screen and (max-width:480px) {
         .email-container { width: 100% !important; min-width: 100% !important; }
         .content-pad { padding-right: 15px !important; padding-left: 15px !important; }
+        .grid-tile { width: 100% !important; max-width: 100% !important; }
         .grid-image { width: 100% !important; height: auto !important; }
       }
     </style>
@@ -318,8 +319,9 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
       <tbody>
         <tr>
           <td align="center" valign="top" style="mso-line-height-rule: exactly;">
+            <center style="width: 100%;">
             <!-- BEGIN: CARD -->
-            <table border="0" width="600" cellpadding="0" cellspacing="0" align="center" style="width: 600px; max-width: 600px; direction: ltr; Margin: auto; table-layout: fixed;" class="email-container" role="presentation" bgcolor="#ffffff">
+            <table border="0" width="600" cellpadding="0" cellspacing="0" align="center" style="width: 600px; max-width: 600px; direction: ltr; Margin: 0 auto; table-layout: fixed;" class="email-container" role="presentation" bgcolor="#ffffff">
               <tbody>
                 <!-- BEGIN SECTION: Header (logo — STATIC image, absolute https URL) -->
                 <tr>
@@ -373,6 +375,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
               </tbody>
             </table>
             <!-- END: CARD -->
+            </center>
           </td>
         </tr>
       </tbody>

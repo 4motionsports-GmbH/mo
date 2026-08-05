@@ -118,7 +118,7 @@ function renderTile(item: EmailProductGridItem): string {
                         </tr>`;
   }
 
-  return `<div class="grid-column" style="width: 100%; vertical-align: top; font-size: 0px; display: inline-block; max-width: 50%;"><table cellspacing="0" cellpadding="0" border="0" align="center" width="240" role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important; table-layout: fixed !important;">
+  return `<div class="grid-column" style="width: 100%; vertical-align: top; font-size: 0px; display: inline-block; max-width: 50%;"><table cellspacing="0" cellpadding="0" border="0" align="center" width="240" role="presentation" class="grid-tile" style="width: 100%; max-width: 240px; direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important; table-layout: fixed !important;">
                       <tbody>${imageCell}
                         <tr>
                           <td align="center" style="mso-line-height-rule: exactly; vertical-align: top; padding: 0 15px;">
