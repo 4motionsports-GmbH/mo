@@ -1239,8 +1239,9 @@ export function KampagneWorkspace({
                   className="font-mono text-xs leading-relaxed"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Mo-Hinweis (Deep-Link), Rabattzeile und Abmelde-/Impressum-Footer werden
-                  beim Versand automatisch angehängt und sind hier nicht editierbar.
+                  Produktbilder-Raster, Mo-Hinweis (Deep-Link), Rabattzeile und
+                  Abmelde-/Impressum-Footer werden beim Versand automatisch angehängt und
+                  sind hier nicht editierbar.
                 </p>
 
                 {optInBlocked && (
@@ -1261,7 +1262,7 @@ export function KampagneWorkspace({
                     variant="outline"
                     onClick={doPreview}
                     disabled={emailViewBusy}
-                    title="Gerenderte E-Mail-Vorschau (inkl. Mo-Hinweis, Rabattzeile und Footer)"
+                    title="Gerenderte E-Mail-Vorschau (inkl. Produktbilder, Mo-Hinweis, Rabattzeile und Footer)"
                   >
                     <Eye className="me-1.5 h-4 w-4" />
                     {emailViewBusy ? "Lädt…" : "Vorschau"}

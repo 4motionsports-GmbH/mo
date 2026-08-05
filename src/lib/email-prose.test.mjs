@@ -187,3 +187,34 @@ test("productNameLookup matches exact URL ignoring trailing slash", () => {
   assert.equal(lookup("https://shop.example/products/other"), null);
   assert.equal(lookup("https://shop.example/products/empty"), null);
 });
+
+// ---------------------------------------------------------------------------
+// markdown bold (**…**) — renders as <strong>, never as literal asterisks
+// ---------------------------------------------------------------------------
+
+test("renderEmailProseHtml renders **bold** as <strong>", () => {
+  const html = renderEmailProseHtml("Hallo,\n\n**Gezielte Kraft & Stabilität:**\nDer Trainer passt gut.");
+  assert.match(html, /<strong>Gezielte Kraft &amp; Stabilität:<\/strong>/);
+  assert.doesNotMatch(html, /\*\*/);
+});
+
+test("renderEmailProseHtml bolds a markdown-linked label (**[Name](url)**)", () => {
+  const html = renderEmailProseHtml(
+    "**[Laufband X](https://shop.example/products/laufband-x)** ist super."
+  );
+  assert.match(html, /<strong><a [^>]*>Laufband X<\/a><\/strong>/);
+});
+
+test("renderEmailProseHtml leaves unpaired/empty asterisks alone", () => {
+  assert.match(renderEmailProseHtml("2 ** 3 und 5 * 7"), /2 \*\* 3 und 5 \* 7/);
+  assert.equal(renderEmailProseHtml("****"), "****");
+  // No pairing across lines.
+  assert.doesNotMatch(renderEmailProseHtml("**a\nb**"), /<strong>/);
+});
+
+test("emailProseToText strips bold markers", () => {
+  assert.equal(
+    emailProseToText("**Rücken und Core:** Die [Bank](https://s.example/p) hilft."),
+    "Rücken und Core: Die Bank (https://s.example/p) hilft."
+  );
+});

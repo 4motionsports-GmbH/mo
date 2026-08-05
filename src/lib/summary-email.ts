@@ -33,7 +33,7 @@ import {
 } from "./email-template";
 import { partitionSummaryProducts } from "./summary-products.mjs";
 import { renderEmailProseHtml, productNameLookup } from "./email-prose.mjs";
-import { renderEmailProductGrid, type EmailProductGridItem } from "./email-products";
+import { renderEmailProductGrid, productGridItem } from "./email-products";
 import { reportError } from "./observability";
 import { recordAiUsage, type AiCallSite } from "./ai-usage-store";
 import type { Product } from "./types";
@@ -129,31 +129,6 @@ function formatPrice(p: Product, locale: Locale): string {
   return PRICE_FORMAT[locale].format(value);
 }
 
-/**
- * Price split for the newsletter grid: when a genuine sale price exists the
- * original list price becomes the red strikethrough compare-at label.
- */
-function priceParts(
-  p: Product,
-  locale: Locale
-): { priceLabel: string; compareAtLabel: string | null } {
-  const onSale =
-    typeof p.salePrice === "number" && p.salePrice > 0 && p.salePrice < p.price;
-  return {
-    priceLabel: PRICE_FORMAT[locale].format(onSale ? p.salePrice! : p.price),
-    compareAtLabel: onSale ? PRICE_FORMAT[locale].format(p.price) : null,
-  };
-}
-
-/** Newsletter-grid items for a product list (image + name + price, linked). */
-function toGridItems(products: Product[], locale: Locale): EmailProductGridItem[] {
-  return products.map((p) => ({
-    imageUrl: firstImageUrl(p),
-    name: p.name,
-    url: p.shopifyUrl,
-    ...priceParts(p, locale),
-  }));
-}
 
 /**
  * First usable catalog image (absolute https only — mail clients won't load a
@@ -180,10 +155,10 @@ function renderProductSection(
   if (products.length === 0) return "";
   return (
     renderSectionBand(title) +
-    renderSectionRow(renderEmailProductGrid(toGridItems(products, locale)), {
-      padding: "30px 60px 10px",
-      align: "center",
-    })
+    renderSectionRow(
+      renderEmailProductGrid(products.map((p) => productGridItem(p, locale))),
+      { padding: "30px 60px 10px", align: "center" }
+    )
   );
 }
 

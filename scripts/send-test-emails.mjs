@@ -149,6 +149,7 @@ async function sendTest(label, { subject, text, html }) {
       "digitaler Berater, stellt dir in wenigen Minuten eine persönliche " +
       "Empfehlung zusammen.",
     language: "de",
+    products: withImages.slice(2, 5),
     discountCode: "MK-TEST123",
     discountExpiresLabel: "31.12.2026",
     unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),

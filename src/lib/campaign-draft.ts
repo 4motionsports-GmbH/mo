@@ -7,7 +7,10 @@
 //   1. a personal greeting by first name (graceful fallback),
 //   2. a natural, warm reference to the purchase history — a category or ONE
 //      specific item, never an itemised dump,
-//   3. 2–3 recommended products WITH their product URLs, briefly reasoned,
+//   3. short, natural mentions of the 2–3 recommended products (markdown links
+//      on the names) — the products themselves render BELOW the prose as the
+//      newsletter picture grid (campaign-email.ts), so the prose stays a
+//      personal introduction, not a catalog block,
 //   4. optionally the personal discount offer, woven around the clearly-marked
 //      PLACEHOLDER code (MO-XXXX) + projected expiry — the real MK- code is
 //      minted only at send time (campaign-email.ts), exactly like the existing
@@ -307,12 +310,20 @@ export async function generateCampaignDraft(
         "Produktkategorie oder EIN konkretes Produkt (z. B. „wie läuft's mit " +
         "deinem Laufband?“) — NIEMALS eine aufgezählte Liste aller Käufe, kein " +
         "Daten-Vorlesen.\n" +
-        "- Empfiehl NUR die vorgegebenen 2–3 Produkte, jeweils mit einer kurzen " +
-        "Begründung („passt gut zu …“). Verlinke jedes Produkt als Markdown-Link " +
+        "- WICHTIG zum Layout: Die empfohlenen Produkte erscheinen unterhalb " +
+        "deines Textes AUTOMATISCH als Bildkacheln mit Produktfoto, Name, Preis " +
+        "und Link. Dein Text ist die persönliche Einleitung dazu — KEIN " +
+        "Produktkatalog. Halte ihn kurz (3–5 kurze Absätze) und erwähne die " +
+        "Produkte im Fließtext nur knapp und natürlich (warum sie zu dieser " +
+        "Person passen).\n" +
+        "- Schreibe reinen Fließtext OHNE Überschriften, OHNE Aufzählungsblöcke " +
+        "pro Produkt und OHNE Fettdruck-Zeilen wie „**Kategorie:**“ — keine " +
+        "Markdown-Formatierung außer Produkt-Links.\n" +
+        "- Wenn du ein Produkt im Text nennst, verlinke es als Markdown-Link " +
         "mit dem Produktnamen als Linktext und seiner EXAKTEN Produkt-URL: " +
         "[Produktname](URL). Schreibe NIE eine nackte URL in den Text und " +
-        "verwende NIEMALS HTML (kein <a href=…>) — die E-Mail ist reiner Text " +
-        "mit Markdown-Links. Keine erfundenen Produkte, keine erfundenen Preise.\n" +
+        "verwende NIEMALS HTML (kein <a href=…>). Keine erfundenen Produkte, " +
+        "keine erfundenen Preise.\n" +
         "- Sei ehrlich, kein Marktschreier: keine künstliche Dringlichkeit, " +
         "keine Countdown-Rhetorik.\n" +
         "- Wenn ein persönliches Rabattangebot vorgegeben ist, webe es klar und " +

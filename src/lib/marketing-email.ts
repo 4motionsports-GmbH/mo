@@ -39,7 +39,7 @@ import {
   EMAIL_TEXT_STYLE,
   EMAIL_MUTED_TEXT_STYLE,
 } from "./email-template";
-import { renderEmailProductGrid, type EmailProductGridItem } from "./email-products";
+import { renderEmailProductGrid, productGridItem } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -473,26 +473,6 @@ export async function renderMarketingEmailPreview(
   return { ok: true, subject, html };
 }
 
-// EUR formatting for the product grid (marketing stays German-only).
-const GRID_PRICE_FORMAT = new Intl.NumberFormat("de-DE", {
-  style: "currency",
-  currency: "EUR",
-});
-
-/** Newsletter-grid item for a catalog product (red strikethrough compare-at
- * price when a genuine sale price exists). */
-function toGridItem(p: Product): EmailProductGridItem {
-  const onSale =
-    typeof p.salePrice === "number" && p.salePrice > 0 && p.salePrice < p.price;
-  return {
-    imageUrl: firstImageUrl(p),
-    name: p.name,
-    url: p.shopifyUrl,
-    priceLabel: GRID_PRICE_FORMAT.format(onSale ? p.salePrice! : p.price),
-    compareAtLabel: onSale ? GRID_PRICE_FORMAT.format(p.price) : null,
-  };
-}
-
 // Exported for scripts/send-test-emails.mjs (design test-sends with sample
 // data) — production sends still go exclusively through approveAndSend().
 export function renderMarketingEmail(opts: {
@@ -571,10 +551,10 @@ export function renderMarketingEmail(opts: {
   // Newsletter-style product section: black separator band + picture grid.
   const productsRows = products.length
     ? renderSectionBand("Für dich ausgesucht") +
-      renderSectionRow(renderEmailProductGrid(products.map(toGridItem)), {
-        padding: "30px 60px 10px",
-        align: "center",
-      })
+      renderSectionRow(
+        renderEmailProductGrid(products.map((p) => productGridItem(p, "de"))),
+        { padding: "30px 60px 10px", align: "center" }
+      )
     : "";
 
   const html = renderBrandedEmail({

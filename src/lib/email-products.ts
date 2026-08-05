@@ -17,6 +17,7 @@ import {
   EMAIL_FONT_FAMILY,
   EMAIL_SALE_STRIKE_COLOR,
 } from "./email-template";
+import type { Product } from "./types";
 
 export interface EmailProductGridItem {
   /** Absolute https image URL, or null to render the tile without an image. */
@@ -31,6 +32,39 @@ export interface EmailProductGridItem {
    * current price (newsletter sale style). Omit when not on sale.
    */
   compareAtLabel?: string | null;
+}
+
+// EUR formatting per locale: German "1.234,00 €" vs English (en-GB) "€1,234.00".
+const GRID_PRICE_FORMATS: Record<"de" | "en", Intl.NumberFormat> = {
+  de: new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }),
+  en: new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }),
+};
+
+/** First usable absolute-https catalog image, or null (mail clients won't load
+ * a relative or http image; null renders the tile without an image). */
+export function firstProductImageUrl(p: Product): string | null {
+  return (
+    p.images?.find((u) => typeof u === "string" && u.startsWith("https://")) ?? null
+  );
+}
+
+/**
+ * Grid item for a catalog product: image + name + product-page link, price in
+ * the newsletter's sale style (red strikethrough list price when a genuine
+ * sale price exists). The ONE mapping every product grid uses, so the summary,
+ * marketing and campaign grids can never drift apart.
+ */
+export function productGridItem(p: Product, locale: "de" | "en" = "de"): EmailProductGridItem {
+  const fmt = GRID_PRICE_FORMATS[locale];
+  const onSale =
+    typeof p.salePrice === "number" && p.salePrice > 0 && p.salePrice < p.price;
+  return {
+    imageUrl: firstProductImageUrl(p),
+    name: p.name,
+    url: p.shopifyUrl,
+    priceLabel: fmt.format(onSale ? (p.salePrice as number) : p.price),
+    compareAtLabel: onSale ? fmt.format(p.price) : null,
+  };
 }
 
 const NAME_STYLE =

@@ -42,6 +42,11 @@ function stripTags(s) {
 const BARE_URL_RE = /https?:\/\/[^\s<>()[\]"']+/g;
 const TRAILING_PUNCT_RE = /[.,;:!?…]+$/;
 
+// Markdown bold: **text** on one line (first inner char must not be another
+// asterisk so "****" never matches). Models emit this despite the plain-text
+// instruction — without this pass the asterisks render literally.
+const BOLD_RE = /\*\*([^\n*][^\n]*?)\*\*/g;
+
 function escapeHtml(s) {
   return s
     .replaceAll("&", "&amp;")
@@ -130,7 +135,10 @@ export function renderEmailProseHtml(body, opts = {}) {
     }
     html += escapeHtml(part.text.slice(fragLast));
   }
-  return html;
+  // Pass 3 — markdown bold. Runs on the assembled HTML: everything is already
+  // escaped (or a link we built ourselves), so wrapping a span in <strong> is
+  // safe, and a bolded link label ("**[Name](url)**") works too.
+  return html.replace(BOLD_RE, "<strong>$1</strong>");
 }
 
 /**
@@ -146,7 +154,8 @@ export function emailProseToText(body) {
       const url = urlDq ?? urlSq;
       const text = stripTags(label).trim();
       return `${text || url} (${url})`;
-    });
+    })
+    .replace(BOLD_RE, "$1"); // markdown bold markers never ship in plain text
 }
 
 /**

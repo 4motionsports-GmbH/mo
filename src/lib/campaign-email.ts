@@ -53,12 +53,15 @@ import { sendEmail } from "./email";
 import { outboundThreading } from "./email-inbound";
 import {
   renderBrandedEmail,
+  renderSectionBand,
+  renderSectionRow,
   emailMoIconUrl,
   escapeHtml,
   escapeAttr,
   EMAIL_TEXT_STYLE,
   EMAIL_MUTED_TEXT_STYLE,
 } from "./email-template";
+import { renderEmailProductGrid, productGridItem } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -283,6 +286,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         subject: draft.subject,
         body,
         language: contact.language,
+        products: await resolveRecommendedProducts(draft.recommendedProductIds),
         discountCode,
         discountExpiresLabel: discountExpiresAt
           ? formatExpiryDateForLanguage(discountExpiresAt, contact.language)
@@ -360,6 +364,27 @@ async function catalogNameLookup(): Promise<(url: string) => string | null> {
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "catalogNameLookup" });
     return () => null;
+  }
+}
+
+/**
+ * Resolve the draft's recommended product ids (including review-time curation)
+ * against the live catalog — the campaign's picture-grid source, exactly like
+ * the marketing channel's cart contents. Purely presentational: a resolve
+ * failure just drops the grid (the prose keeps its product links), it never
+ * blocks a send.
+ */
+async function resolveRecommendedProducts(productIds: string[]): Promise<Product[]> {
+  if (productIds.length === 0) return [];
+  try {
+    const catalog = await loadProductCatalog();
+    const byId = new Map(catalog.map((p) => [p.id, p]));
+    return productIds
+      .map((id) => byId.get(id))
+      .filter((p): p is Product => p !== undefined);
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-email", phase: "resolveRecommendedProducts" });
+    return [];
   }
 }
 
@@ -448,6 +473,7 @@ export async function renderCampaignEmailPreview(
     subject,
     body,
     language: contact.language,
+    products: await resolveRecommendedProducts(draft.recommendedProductIds),
     discountCode: draft.discountPercent > 0 ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountExpiresLabel:
       draft.discountPercent > 0 && draft.discountExpiresAt
@@ -461,12 +487,14 @@ export async function renderCampaignEmailPreview(
 }
 
 /**
- * Render the campaign email (text + HTML): the (edited) prose, an optional
- * bundle special-offer block, then the deterministic Mo-promo block with the
+ * Render the campaign email (text + HTML): the (edited) prose, the recommended
+ * products as the newsletter's picture-grid section ("Für dich ausgesucht" —
+ * black separator band + two-column image grid), an optional bundle
+ * special-offer block, then the deterministic Mo-promo block with the
  * deep-link CTA, the deterministic discount line (code + deadline outside the
  * editable prose), and the unsubscribe footer. The branded shell carries the
- * Impressum menu + legal company footer (email-template.ts), matching every
- * other outgoing mail.
+ * social/company/Impressum footer (email-template.ts), matching every other
+ * outgoing mail.
  */
 // Exported for scripts/send-test-emails.mjs (design test-sends with sample
 // data) — production sends still go exclusively through approveAndSendCampaign().
@@ -474,6 +502,10 @@ export function renderCampaignEmail(opts: {
   subject: string;
   body: string;
   language: "de" | "en";
+  /** The draft's recommended products (curation included) — rendered as the
+   *  newsletter picture grid between prose and CTA. Optional so the test-send
+   *  script and legacy callers can omit it. */
+  products?: Product[];
   discountCode: string | null;
   discountExpiresLabel: string | null;
   unsubscribe: { text: string; html: string };
@@ -488,6 +520,7 @@ export function renderCampaignEmail(opts: {
 }): { text: string; html: string } {
   const { subject, body, language, discountCode, discountExpiresLabel, unsubscribe, bundle } =
     opts;
+  const products = opts.products ?? [];
   const en = language === "en";
   const deeplink = opts.ctaUrl ?? campaignMoDeeplinkUrl();
 
@@ -538,20 +571,36 @@ export function renderCampaignEmail(opts: {
                                     </tr>
                                   </table>`;
 
+  // Newsletter-style product section: black separator band + picture grid of
+  // the draft's recommended products (image, name link, price with red
+  // strikethrough compare-at) — the visual weight lives here, the prose stays
+  // short and personal.
+  const productsRows = products.length
+    ? renderSectionBand(en ? "Picked for you" : "Für dich ausgesucht") +
+      renderSectionRow(
+        renderEmailProductGrid(products.map((p) => productGridItem(p, language))),
+        { padding: "30px 60px 10px", align: "center" }
+      )
+    : "";
+
   const html = renderBrandedEmail({
     subject,
     preheader: textBody.split("\n")[0]?.slice(0, 140) || undefined,
     heading: en ? "Your personal recommendation" : "Deine persönliche Empfehlung",
     // Prose links (markdown + bare URLs) render as clickable text — never a
-    // raw pasted URL (email-prose.mjs). The Mo-promo media row closes the body.
+    // raw pasted URL (email-prose.mjs).
     bodyHtml: `
                     <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
                       body.trim(),
                       { labelForUrl: opts.labelForUrl }
-                    )}</p>${promoHtml}`,
-    // The bundle special-offer block (if any) renders as full-width newsletter
-    // sections (black band + picture grid) between the body and the CTA pill.
-    preCtaRowsHtml: bundle ? bundle.html : undefined,
+                    )}</p>`,
+    // Full-width newsletter sections between the body and the CTA pill: the
+    // recommended-products picture grid, the bundle offer block (if any), and
+    // last the Mo-promo media row — directly above its "Beratung starten" CTA.
+    preCtaRowsHtml:
+      `${productsRows}${bundle ? bundle.html : ""}${renderSectionRow(promoHtml, {
+        padding: "10px 60px",
+      })}` || undefined,
     ctas: [{ label: moPromoCtaLabel(language), url: deeplink }],
     footnoteHtml: discountNote || undefined,
     footer: {
