@@ -1,3 +1,10 @@
+> **⚠️ SUPERSEDED (2026-08-05):** This report reflects the June 2026 state. The
+> current, complete document for legal counsel is
+> [`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) (German) — it incorporates the
+> remediation shipped since June and all features added afterwards (campaign
+> channel, consent v4, conversation analysis, Q&A knowledge, i18n, TTS, …).
+> Keep this file for the historical OQ-xx references only.
+
 # DSGVO / GDPR Readiness Report — motion sports Chatbot Backend
 
 **Prepared for:** external legal counsel (final DSGVO/GDPR sign-off)
