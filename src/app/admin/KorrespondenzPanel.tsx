@@ -30,6 +30,7 @@ import {
   Textarea,
   toast,
 } from "./ui";
+import { EmailPreviewButton } from "./EmailPreviewButton";
 
 export interface CorrespondenceMessageProps {
   id: number;
@@ -424,6 +425,13 @@ function Composer({
         <Button onClick={onSend} disabled={busy}>
           <Send /> {busy ? "Sende…" : "Senden"}
         </Button>
+        <EmailPreviewButton
+          path="/api/admin/correspondence/email-preview"
+          getPayload={() => ({ body: text })}
+          title={`Vorschau — ${customerEmail}`}
+          description="So wird deine Nachricht beim Kunden gerendert — bewusst schlichtes Text-Layout ohne Marketing-Elemente."
+          disabled={busy || !text.trim()}
+        />
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           Abbrechen
         </Button>

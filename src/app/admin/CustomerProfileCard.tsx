@@ -66,6 +66,7 @@ import {
   toast,
 } from "./ui";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
+import { EmailPreviewButton } from "./EmailPreviewButton";
 import {
   KorrespondenzPanel,
   type CorrespondenceMessageProps,
@@ -927,6 +928,18 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
             <Button variant="secondary" onClick={onSave} disabled={busy !== null}>
               <Save /> {busy === "save" ? "Speichere…" : "Entwurf speichern"}
             </Button>
+            <EmailPreviewButton
+              path="/api/admin/marketing/email-preview"
+              getPayload={() => ({ sendId: send?.id, subject, body })}
+              title={`Vorschau — ${customer.email}`}
+              description={
+                "So wird die E-Mail im Postfach gerendert (inkl. Produktbilder, Bundle und Footer). " +
+                (discountPercent > 0
+                  ? "Der Rabatt zeigt den Platzhalter-Code MO-XXXX — der echte Code und der getrackte Warenkorb-Link entstehen erst beim Senden."
+                  : "Der getrackte Warenkorb-Link entsteht erst beim Senden.")
+              }
+              disabled={busy !== null || !send}
+            />
             <Button
               onClick={onSend}
               disabled={busy !== null || needsRegenerate}

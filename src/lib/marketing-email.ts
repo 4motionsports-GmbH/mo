@@ -405,6 +405,74 @@ async function catalogNameLookup(): Promise<(url: string) => string | null> {
   }
 }
 
+export type MarketingPreviewResult =
+  | { ok: true; subject: string; html: string }
+  | { ok: false; reason: "not_found" | "no_draft"; message: string };
+
+/**
+ * Render the REVIEW-TIME preview of a drafted marketing email: the exact same
+ * renderer/composition the send path uses (branded shell, product grid, bundle
+ * block, discount line, unsubscribe footer) — but READ-ONLY and gate-free:
+ * nothing is claimed, minted, sent or recorded. The discount line shows the
+ * MO-XXXX placeholder with the PROJECTED expiry; the real MS5- code exists
+ * only at send time, and the cart link is the plain (untracked, discount-free)
+ * permalink since the tracked redirect token is minted only at send time.
+ * `overrides` carries the operator's on-screen subject/body so unsaved edits
+ * preview correctly. The marketing sibling of renderCampaignEmailPreview.
+ */
+export async function renderMarketingEmailPreview(
+  sendId: number,
+  overrides: { subject?: string; body?: string } = {}
+): Promise<MarketingPreviewResult> {
+  const send = await getSendById(sendId);
+  if (!send) return { ok: false, reason: "not_found", message: "Draft not found." };
+
+  const subject =
+    typeof overrides.subject === "string" && overrides.subject.trim()
+      ? overrides.subject
+      : (send.subject ?? "motion sports");
+  const body =
+    typeof overrides.body === "string" && overrides.body.trim()
+      ? overrides.body
+      : (send.draftedText ?? "");
+
+  // Real unsubscribe link when the capture resolves and the signing secret is
+  // configured; otherwise an inert anchor so the footer still shows (the
+  // preview never delivers).
+  const capture = await loadEligibleCapture(send.emailCaptureId);
+  const unsubToken = capture ? buildUnsubscribeToken(capture.email) : null;
+  const unsubscribeUrl = unsubToken
+    ? `${getBaseUrl()}/api/unsubscribe?token=${encodeURIComponent(unsubToken)}`
+    : "#";
+
+  // Same cart resolution as the send path, minus discount + tracking (both
+  // exist only at send time). The grid shows exactly the cart's contents.
+  const cart = send.productIds.length
+    ? await buildPrefilledCartUrlForIds(send.productIds, { excludeSoldOut: true })
+    : { url: null as string | null, lines: [] };
+  const products = (cart.lines ?? [])
+    .map((l) => l.product)
+    .filter((p): p is Product => p != null);
+
+  const bundle = await buildBundleBlockForSend(sendId);
+
+  const { html } = renderMarketingEmail({
+    subject,
+    body,
+    linkUrl: cart.url,
+    products,
+    discountCode: send.discountPercent > 0 ? PLACEHOLDER_DISCOUNT_CODE : null,
+    discountExpiresLabel:
+      send.discountPercent > 0 && send.discountExpiresAt
+        ? formatGermanExpiryDate(send.discountExpiresAt)
+        : null,
+    unsubscribe: unsubscribeFooter(unsubscribeUrl),
+    bundle,
+    labelForUrl: await catalogNameLookup(),
+  });
+  return { ok: true, subject, html };
+}
+
 // EUR formatting for the product grid (marketing stays German-only).
 const GRID_PRICE_FORMAT = new Intl.NumberFormat("de-DE", {
   style: "currency",

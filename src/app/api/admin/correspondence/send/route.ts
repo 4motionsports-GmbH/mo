@@ -25,6 +25,7 @@ import {
   ensureAngle,
   replySubject,
 } from "@/lib/email-inbound-core.mjs";
+import { renderCorrespondenceEmail } from "@/lib/correspondence-email";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 30;
@@ -151,21 +152,5 @@ export async function POST(req: Request) {
   }
 }
 
-// A DELIBERATELY minimal text+HTML pair for correspondence — NOT the marketing
-// template (no cart button, no discount, no unsubscribe footer). The body is the
-// operator's plain text; the HTML escapes it and turns newlines into <br/> so
-// there is no HTML-injection surface (mirrors the sanitized-render discipline of
-// the admin Markdown renderer). The reply still reads the inbound Reply-To.
-function renderCorrespondenceEmail(body: string): { text: string; html: string } {
-  const escaped = body
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-  const html =
-    `<div style="font-family:system-ui,Segoe UI,Helvetica,Arial,sans-serif;` +
-    `font-size:15px;line-height:1.6;color:#111;white-space:pre-wrap;">` +
-    escaped +
-    `</div>`;
-  return { text: body, html };
-}
+// renderCorrespondenceEmail lives in @/lib/correspondence-email so the
+// Vorschau route renders the exact same minimal HTML this route ships.
