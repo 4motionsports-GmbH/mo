@@ -468,7 +468,9 @@ export async function renderCampaignEmailPreview(
  * Impressum menu + legal company footer (email-template.ts), matching every
  * other outgoing mail.
  */
-function renderCampaignEmail(opts: {
+// Exported for scripts/send-test-emails.mjs (design test-sends with sample
+// data) — production sends still go exclusively through approveAndSendCampaign().
+export function renderCampaignEmail(opts: {
   subject: string;
   body: string;
   language: "de" | "en";

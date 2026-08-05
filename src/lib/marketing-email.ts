@@ -425,7 +425,9 @@ function toGridItem(p: Product): EmailProductGridItem {
   };
 }
 
-function renderMarketingEmail(opts: {
+// Exported for scripts/send-test-emails.mjs (design test-sends with sample
+// data) — production sends still go exclusively through approveAndSend().
+export function renderMarketingEmail(opts: {
   /** Subject line — reused for the HTML <title>/preview line. */
   subject: string;
   body: string;
