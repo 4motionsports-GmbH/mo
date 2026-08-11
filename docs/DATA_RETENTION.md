@@ -45,6 +45,8 @@ survives. Do not log message content to third parties.
 | Insights rollups (`conversation_insights`) | **180 days** by `generated_at` | `KPI_RETENTION_DAYS` | Hard delete (derived from Cluster A — leaves when its sources would; regenerable on demand) |
 | Persona top-question cache (`kpi_persona_question_summaries`) | **180 days** by `generated_at` | `KPI_RETENTION_DAYS` | Hard delete (derived cache, regenerable on demand) |
 | Komplettanalyse reports (`analytics_reports`) | **365 days** by `created_at` | `ANALYTICS_REPORT_RETENTION_DAYS` | Hard delete — reports generated with per-customer profiles carry customer display names and must not live forever. 0 disables. |
+| Order-attribution rows (`mo_orders`) | **180 days** by `COALESCE(processed_at, created_at)` | `KPI_RETENTION_DAYS` | Hard delete (Cluster-A analytics like `kpi_events`; pseudonymous order facts only — see `docs/ORDER_ATTRIBUTION.md`) |
+| Attribution tokens (`mo_attribution_tokens`) | **window + 7 days** by `created_at` | `MO_ATTRIBUTION_WINDOW_DAYS` (window, default 30) | Hard delete — a token past the attribution window can never attribute again |
 | Active → abandoned transition | **30 minutes** idle | `ABANDON_AFTER_MINUTES` | Status flip (not deletion) |
 
 Windows are measured from `last_activity_at` (conversations) and `created_at` /

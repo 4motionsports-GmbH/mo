@@ -20,6 +20,8 @@ import {
 } from "./conversation-store";
 import { getProductsByIds } from "./product-catalog";
 import { buildPrefilledCartUrlForIds, chooseCartProductIds } from "./cart";
+import { mintAttributionToken } from "./mo-orders-store";
+import { withCartAttribution } from "./order-attribution.mjs";
 import { sendEmail, senderAddress, type SendEmailResult } from "./email";
 import { outboundThreading } from "./email-inbound";
 import { recordSentMessage } from "./email-messages-store";
@@ -356,8 +358,12 @@ export async function buildSummaryDocument(params: {
   usage: { callSite: AiCallSite; conversationId?: number | null };
   /** Output language. Default German — byte-identical to today. */
   locale?: Locale;
+  /** Optional order-attribution token stamped onto the cart link as
+   * `attributes[_mo]` (docs/ORDER_ATTRIBUTION.md). The mailed summary passes
+   * one; the signed-in PDF/download path passes none (unstamped link). */
+  attributionToken?: string | null;
 }): Promise<SummaryDocument> {
-  const { conversation, usage, locale = "de" } = params;
+  const { conversation, usage, locale = "de", attributionToken = null } = params;
   const turns = conversation ? readableTurns(conversation.messages) : [];
 
   // Prefilled cart for the CHOSEN products — NO discount (transactional).
@@ -373,6 +379,9 @@ export async function buildSummaryDocument(params: {
         unresolvedProductIds: [],
         soldOutProductIds: [],
       };
+  // Stamp AFTER building: the marker is a query param, the cart lines are not
+  // affected. A null token leaves the URL untouched.
+  const cartUrl = withCartAttribution(cart.url, attributionToken);
 
   // The CHOSEN section renders exactly what the cart permalink contains
   // (cart.resolvedProductIds, in URL order) — the cart builder already dropped
@@ -403,7 +412,7 @@ export async function buildSummaryDocument(params: {
     summary,
     chosenProducts,
     alternatives,
-    cartUrl: cart.url,
+    cartUrl,
     locale,
   });
 
@@ -420,7 +429,7 @@ export async function buildSummaryDocument(params: {
   return {
     text,
     html,
-    cartUrl: cart.url,
+    cartUrl,
     summary,
     chosen: chosenProducts.map((p) => toLine(p, false)),
     alternatives: alternatives.map((p) => toLine(p, true)),
@@ -448,12 +457,19 @@ export async function sendSummaryEmail(params: {
 
   const conversation = sessionId ? await loadConversationForSummary(sessionId) : null;
 
+  // ORDER ATTRIBUTION: stamp the mailed "Zur Kasse" link with the session's
+  // opaque token so a later checkout through it is attributable even without a
+  // discount code (docs/ORDER_ATTRIBUTION.md). Minting failure → unstamped
+  // link; the summary must never block on attribution.
+  const attributionToken = await mintAttributionToken(sessionId, "summary_email");
+
   // The transactional email is fire-on-request — no conversation link on the
   // usage row (cost stays on the dashboard/admin side, like before).
   const { text, html, cartUrl } = await buildSummaryDocument({
     conversation,
     usage: { callSite: "summary_email" },
     locale,
+    attributionToken,
   });
 
   const subject = summaryEmailSubject(locale);

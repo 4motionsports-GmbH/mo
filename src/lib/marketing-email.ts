@@ -55,6 +55,8 @@ import {
   productNameLookup,
 } from "./email-prose.mjs";
 import { buildPrefilledCartUrlForIds } from "./cart";
+import { mintAttributionToken } from "./mo-orders-store";
+import { withCartAttribution } from "./order-attribution.mjs";
 import { getActiveBundleForSend } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
 import { renderBundleOfferBlock } from "./bundle-email";
@@ -239,7 +241,12 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
             excludeSoldOut: true,
           })
         : { url: null as string | null, lines: [] };
-      const cartUrl = cart.url;
+      // ORDER ATTRIBUTION: stamp the shipped cart with the session's opaque
+      // token (attributes[_mo]) so even a code-less checkout via this link is
+      // attributable (docs/ORDER_ATTRIBUTION.md). Minting failure → unstamped
+      // link (the send must never block on attribution).
+      const moToken = await mintAttributionToken(capture.sessionId, "marketing_email");
+      const cartUrl = withCartAttribution(cart.url, moToken);
 
       // The recommended products, exactly as the shipped cart contains them —
       // rendered as the newsletter's picture grid above the cart CTA. Purely

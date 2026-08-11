@@ -555,6 +555,30 @@ Adoption + GDPR self-service volume, windowed: completed **sign-ins**
 summary). All pseudonymous counters; export/erase events carry no session or
 customer key at all.
 
+### 5.16 Mo-zugeordneter Umsatz (Bestell-Webhook) — [`getMoAttributionKpis()`](../src/lib/mo-orders-store.ts)
+
+The tiered order-attribution KPI (design: [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)):
+orders/create + orders/paid webhooks push every order carrying a **Mo marker**
+(the opaque cart attribute `attributes[_mo]` from Mo-built cart links or the
+widget's live-cart stamp, and/or an MS5-/MK- code) into `mo_orders`
+(migration **0042**). The section is a plain DB aggregate — **no Shopify
+calls, no caps, no sampling** — split into three honest tiers:
+
+| Tier | Definition |
+| --- | --- |
+| **Direkt** | Mo code redeemed, or the order came through a Mo-built cart link (summary/marketing e-mail, bundle). |
+| **Beraten & gekauft** | Widget cart stamp + ≥1 purchased line was discussed/selected in that session (catches manual search-bar purchases). |
+| **Beraten, anderes gekauft** | Cart stamp present, no product overlap. |
+
+Only realised money counts (PAID/PARTIALLY_REFUNDED — `kpi-revenue-core`
+policy); unpaid ingested orders are disclosed separately. Unmarked orders are
+never stored; ingestion starts at webhook registration (not retroactive), and
+the section shows an explicit empty state until the first delivery. The
+attribution window (`MO_ATTRIBUTION_WINDOW_DAYS`, default 30 days) and the
+cross-device blind spot are stated in the UI caveat. §5.5's code-only revenue
+KPI deliberately stays separate (exact definition preserved); orders can
+appear in both when a coded order also carries the cart marker.
+
 ---
 
 ## 6. Shopify scopes & API versions

@@ -39,6 +39,7 @@ import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
 import { getAiCostMetrics, type AiCostMetrics } from "@/lib/ai-usage-store";
 import { getPhysicalLetterStats, type PhysicalLetterStats } from "@/lib/physical-letters-store";
 import { getMoRevenue, REVENUE_MAX_CODES, type MoRevenue } from "@/lib/kpi-revenue-store";
+import { getMoAttributionKpis, type MoAttributionKpis } from "@/lib/mo-orders-store";
 import type { KpiRange } from "@/lib/kpi-range";
 import { KpiTopQuestions } from "./KpiTopQuestions";
 import { KpiDateRangePicker } from "./KpiDateRangePicker";
@@ -106,6 +107,7 @@ export async function KpiTab({ dbReady, range }: { dbReady: boolean; range: KpiR
   const [
     core,
     revenue,
+    attribution,
     aiCost,
     personas,
     loop,
@@ -124,6 +126,7 @@ export async function KpiTab({ dbReady, range }: { dbReady: boolean; range: KpiR
   ] = await Promise.all([
     getCoreMetrics(range),
     getMoRevenue(range),
+    getMoAttributionKpis(range),
     getAiCostMetrics(range),
     getPersonaInsights(5),
     getRecommendationLoop(),
@@ -164,6 +167,7 @@ export async function KpiTab({ dbReady, range }: { dbReady: boolean; range: KpiR
       <ConsentGateSection funnel={gateFunnel} range={range} />
       <EmailCaptureSection funnel={captureFunnel} range={range} />
       <RevenueSection revenue={revenue} range={range} />
+      <AttributionSection attribution={attribution} range={range} />
       <CampaignSection kpis={campaign} range={range} />
       <BundleSection kpis={bundles} range={range} />
       <QaSection kpis={qa} range={range} />
@@ -450,14 +454,86 @@ function RevenueSection({ revenue, range }: { revenue: MoRevenue | null; range: 
             (<code>read_orders</code>) über das Bestellfeld{" "}
             <code>discount_code</code>, gezählt wird der tatsächlich bezahlte
             Bestellwert (<code>currentTotalPrice</code>, nur Status PAID /
-            PARTIALLY_REFUNDED). Reine Warenkorb-Links (In-Chat-Checkout,
-            Zusammenfassungs-E-Mail) tragen <strong>keine</strong> Mo-Markierung
-            und sind daher <strong>nicht</strong> zurechenbar — sie werden bewusst
-            NICHT mitgezählt (keine erfundene Zuordnung).
+            PARTIALLY_REFUNDED). Käufe über Warenkorb-Links (In-Chat-Checkout,
+            Zusammenfassungs-E-Mail, Bundles) zählen hier bewusst NICHT — sie
+            werden seit der Attributions-Runde separat im Abschnitt
+            „Mo-zugeordneter Umsatz (Bestell-Webhook)“ gemessen.
             {revenue.redemptionUnknown > 0 &&
               ` Bei ${num(revenue.redemptionUnknown, 0)} Code(s) lieferte Shopify keine Antwort (nicht gezählt).`}
             {revenue.sampled &&
               ` Auf die ${REVENUE_MAX_CODES} neuesten Codes begrenzt.`}
+          </Caveat>
+        </>
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mo-attributed orders (webhook ingest) — the tiered attribution pipeline:
+// orders/create + orders/paid webhooks push every Mo-marked order (cart-
+// attribute token and/or Mo code) into mo_orders; this section is a plain DB
+// aggregate — no Shopify calls, no caps, no sampling. docs/ORDER_ATTRIBUTION.md.
+// ---------------------------------------------------------------------------
+
+function AttributionSection({
+  attribution,
+  range,
+}: {
+  attribution: MoAttributionKpis | null;
+  range: KpiRange;
+}) {
+  return (
+    <Section
+      title="Mo-zugeordneter Umsatz (Bestell-Webhook)"
+      subtitle={`Bestellungen mit Mo-Markierung (Warenkorb-Attribut oder Mo-Rabattcode), per Shopify-Webhook erfasst — Zeitraum: ${range.label}.`}
+    >
+      {!attribution ? (
+        <Banner tone="info">Noch keine Daten.</Banner>
+      ) : !attribution.ingestionSeen ? (
+        <Banner tone="info">
+          Noch keine Bestellung über den Webhook erfasst. Voraussetzung: die
+          Shopify-Webhooks <code>orders/create</code> + <code>orders/paid</code>{" "}
+          sind auf <code>/api/webhooks/shopify</code> registriert (siehe
+          docs/ORDER_ATTRIBUTION.md) — erfasst wird ab Registrierung, rückwirkend
+          nicht.
+        </Banner>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Stat
+              label="Direkt"
+              value={money(attribution.direct.revenueAmount, attribution.currency)}
+              hint={`${num(attribution.direct.orderCount, 0)} Bestellung(en)`}
+              tooltip="Bestellungen über einen von Mo gebauten Kauf-Weg: ein eingelöster Mo-Rabattcode (MS5-/MK-) oder ein von Mo verschickter Warenkorb-Link (Zusammenfassung, Marketing-E-Mail, Bundle). Nur bezahlte Bestellungen (PAID/PARTIALLY_REFUNDED)."
+            />
+            <Stat
+              label="Beraten & gekauft"
+              value={money(attribution.assisted.revenueAmount, attribution.currency)}
+              hint={`${num(attribution.assisted.orderCount, 0)} Bestellung(en)`}
+              tooltip="Der Warenkorb trug die Session-Markierung des Widgets UND mindestens ein gekauftes Produkt wurde in dieser Beratung besprochen/ausgewählt — auch wenn es manuell über die Suche in den Warenkorb gelegt wurde."
+            />
+            <Stat
+              label="Beraten, anderes gekauft"
+              value={money(attribution.influenced.revenueAmount, attribution.currency)}
+              hint={`${num(attribution.influenced.orderCount, 0)} Bestellung(en)`}
+              tooltip="Session-Markierung vorhanden, aber kein gekauftes Produkt stammt aus der Beratung — Mo hat beraten, gekauft wurde etwas anderes."
+            />
+          </div>
+
+          <Caveat>
+            Erfasst werden <strong>ausschließlich</strong> Bestellungen mit
+            Mo-Markierung: dem opaken Warenkorb-Attribut{" "}
+            <code>attributes[_mo]</code> (von Mo-Links oder dem Widget-Stempel
+            gesetzt, Zuordnungsfenster{" "}
+            {num(attribution.attributionWindowDays, 0)} Tage) oder einem
+            Mo-Rabattcode. Unmarkierte Bestellungen werden{" "}
+            <strong>gar nicht gespeichert</strong> (Datenminimierung); die
+            Zeilen sind pseudonym (keine Kundendaten). Geräteübergreifende
+            Käufe (Beratung am Handy, Kauf am Laptop) bleiben ohne E-Mail/Code
+            unsichtbar — physikalische Grenze, keine Messlücke.
+            {attribution.unrealisedOrders > 0 &&
+              ` ${num(attribution.unrealisedOrders, 0)} erfasste Bestellung(en) im Zeitraum sind (noch) nicht bezahlt und zählen nicht zum Umsatz.`}
           </Caveat>
         </>
       )}

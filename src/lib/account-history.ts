@@ -360,13 +360,31 @@ export async function eraseSignedInCustomer(
     const email = (custRows[0].email as string | null) ?? "";
     const realEmail = email.includes("@") && !email.startsWith("shopify:") ? email : null;
 
-    // All three steps run in ONE transaction so an erasure is all-or-nothing:
+    // All steps run in ONE transaction so an erasure is all-or-nothing:
+    //   0) SEVER the order-attribution rows (migration 0042) for this
+    //      customer's sessions: mo_orders keeps only de-identified aggregate
+    //      order facts (session_id + token NULLed), the attribution tokens are
+    //      deleted. MUST run before step 1, which removes the conversations
+    //      rows the session ids are read from;
     //   1) PURGE the transcripts (messages + chat ai_usage cascade);
     //   2) suppress + purge the consent record (marketing_sends cascade) for a
     //      real email — skipped for the synthetic shopify:<id> placeholder;
     //   3) DELETE the customer row — clears profile + cached summaries, cascades
     //      (revokes) the OAuth tokens, SET NULLs the de-identifiable FK refs.
     const queries = [
+      sql`
+        UPDATE mo_orders
+           SET session_id = NULL, attribution_token = NULL, updated_at = now()
+         WHERE session_id IN (
+                 SELECT session_id FROM conversations WHERE customer_id = ${customerId}
+               )
+      `,
+      sql`
+        DELETE FROM mo_attribution_tokens
+         WHERE session_id IN (
+                 SELECT session_id FROM conversations WHERE customer_id = ${customerId}
+               )
+      `,
       sql`
         WITH del AS (
           DELETE FROM conversations WHERE customer_id = ${customerId} RETURNING 1
@@ -385,8 +403,9 @@ export async function eraseSignedInCustomer(
     queries.push(sql`DELETE FROM customers WHERE id = ${customerId}`);
 
     const results = (await sql.transaction(queries)) as Array<Array<Record<string, unknown>>>;
+    // Index 2 = the conversations delete (after the two attribution severs).
     const deletedConversations =
-      results[0]?.[0]?.n != null ? Number(results[0][0].n) : 0;
+      results[2]?.[0]?.n != null ? Number(results[2][0].n) : 0;
 
     return { deletedConversations };
   } catch (err) {

@@ -1678,3 +1678,56 @@ Content-Type: application/json
 | 429    | `rate_limited`         | Dedicated `feedback` bucket (5 req / 5 min). `Retry-After` set.      |
 | 503    | `upstream_unavailable` | No database configured, or the insert failed (comment not stored).   |
 | 500    | `internal_error`       | Anything else.                                                       |
+
+## 10. `POST /api/attribution/token`
+
+Mints (or returns the existing) **order-attribution token** for the widget's
+session — the opaque marker the widget stamps onto the live storefront cart so
+a later purchase can be attributed to the consultation (tiered, honest
+attribution; full design in [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)).
+
+**Consent gate lives in the widget:** call this (and stamp the cart) only when
+the storefront's Shopify Customer Privacy state allows analytics processing.
+
+### Request
+
+Same guards as `/api/capture-email`: origin allowlist + `x-ms-chat-key` +
+`x-ms-session`. No body required.
+
+```http
+POST /api/attribution/token
+Origin: https://www.motionsports.de
+x-ms-chat-key: <shared secret>
+x-ms-session: <session id>
+```
+
+### Response
+
+```json
+{ "ok": true, "token": "…", "cartAttributes": { "_mo": "…" } }
+```
+
+`cartAttributes` is the exact object to pass to the storefront cart:
+
+```js
+fetch("/cart/update.js", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ attributes: cartAttributes }),
+});
+```
+
+Minting is idempotent per session (repeat calls return the same token). Stamp
+fail-silent, re-stamp before opening any Mo cart link and after each
+add-to-cart click (a completed checkout clears the cart and its attributes).
+
+### Error responses
+
+| Status | Code                   | When                                                       |
+| ------ | ---------------------- | ---------------------------------------------------------- |
+| 400    | `bad_request`          | Missing `x-ms-session` header.                             |
+| 401    | `unauthorized`         | Missing / wrong shared secret.                             |
+| 403    | `forbidden`            | Origin not in the allowlist.                               |
+| 429    | `rate_limited`         | Shared `kpi` bucket. `Retry-After` set.                    |
+| 503    | `upstream_unavailable` | No database configured / token could not be minted.        |
+| 500    | `internal_error`       | Anything else.                                             |

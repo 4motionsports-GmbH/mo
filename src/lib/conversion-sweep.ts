@@ -7,10 +7,11 @@
 // (wasDiscountCodeRedeemed, read_orders). That code is minted for ONE
 // marketing email drafted from ONE capture, and the capture carries the
 // pseudonymous session_id bridge — so the redemption can honestly be walked
-// back to the conversation the email came from. Everything else stays
-// unattributed on purpose (plain cart links carry no marker, campaign MK-
-// contacts have no session, bundles store no order signal) — see
-// lib/kpi-revenue-store's honesty note.
+// back to the conversation the email came from. Campaign MK- contacts have no
+// session and stay out of the status flip. Cart-link/bundle orders are
+// measured by the separate order-attribution pipeline (lib/mo-orders-store,
+// docs/ORDER_ATTRIBUTION.md), which this sweep also uses as a cheap
+// short-circuit before asking Shopify.
 //
 // BOOKKEEPING: marketing_sends.shopify_order_matched (a 0001 column that was
 // never written until now) marks a send whose redemption has been observed, so
@@ -32,6 +33,7 @@
 
 import { getSql } from "./db";
 import { wasDiscountCodeRedeemed } from "./shopify-orders";
+import { wasCodeSeenOnIngestedOrder } from "./mo-orders-store";
 import { isShopifyConfigured } from "./shopify";
 import { reportError } from "./observability";
 import { parseIntEnv } from "./env-num";
@@ -102,7 +104,14 @@ export async function runConversionSweep(
     const result: ConversionSweepResult = { ...EMPTY, ran: true };
     for (const row of candidates) {
       result.checked++;
-      const redeemed = await wasDiscountCodeRedeemed(String(row.discount_code));
+      // Short-circuit via the orders-webhook ingest (migration 0042): a code
+      // already seen on an ingested order is definitively redeemed — no
+      // Shopify round-trip. A miss means "ask Shopify" (mo_orders only fills
+      // once the orders webhooks are registered; it is not a census).
+      const code = String(row.discount_code);
+      const redeemed = (await wasCodeSeenOnIngestedOrder(code))
+        ? true
+        : await wasDiscountCodeRedeemed(code);
       if (redeemed === null) {
         result.unknown++;
         continue; // unknown ≠ not redeemed — retry next run

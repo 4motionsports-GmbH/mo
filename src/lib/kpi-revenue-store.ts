@@ -5,11 +5,13 @@
 // keeps the two channels separable; both usageLimit:1). See
 // docs/ADMIN_DASHBOARD.md and docs/CAMPAIGNS.md.
 //
-// Deliberately NOT counted (no reliable attribution exists for them):
-//   - plain in-chat / summary cart permalinks — they carry NO discount, UTM, or
-//     marker, so the resulting order is indistinguishable from any storefront
-//     order. Inventing attribution here would be misleading.
-//   - bundle offers — we track the CLICK (kpi_events) but not the purchase.
+// Deliberately NOT counted HERE (this KPI stays code-only by definition):
+//   - cart permalinks and bundle offers — since the order-attribution round
+//     (migration 0042, docs/ORDER_ATTRIBUTION.md) Mo-built cart links DO carry
+//     an opaque attribution marker, and those orders are measured by the
+//     SEPARATE "Mo-zugeordneter Umsatz" KPI (lib/mo-orders-store), fed by the
+//     orders webhooks. Keeping the two KPIs separate keeps this one's
+//     definition ("Umsatz über Mo-Rabattcodes") exact.
 //   - the welcome code — that automatic discount has been retired.
 //
 // Cost: a bounded per-code fan-out to Shopify (capped, newest-first, only codes

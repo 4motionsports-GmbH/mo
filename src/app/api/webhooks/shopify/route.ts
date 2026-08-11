@@ -1,7 +1,12 @@
-// POST /api/webhooks/shopify — Shopify inventory + product webhook (Part E).
+// POST /api/webhooks/shopify — Shopify inventory + product + ORDER webhook.
 //
 // Shopify POSTs a product or inventory-level change here so the catalog's stock
-// status is near-real-time, not just sync-fresh. We:
+// status is near-real-time, not just sync-fresh. Since the order-attribution
+// round it ALSO receives orders/create + orders/paid: verified order payloads
+// go to lib/mo-orders-store.ingestShopifyOrder, which stores ONLY orders
+// carrying a Mo marker (attribution token / MS5- / MK- code) as pseudonymous
+// rows — the payload's customer fields are never read. See
+// docs/ORDER_ATTRIBUTION.md. We:
 //   1. VERIFY the X-Shopify-Hmac-SHA256 signature over the RAW body BEFORE
 //      parsing it — an unverified request never touches the catalog (mirrors the
 //      Resend/Pingen HMAC-first discipline).
@@ -22,6 +27,7 @@
 import { NextResponse } from "next/server";
 import { verifyShopifyWebhook, planCatalogAction } from "@/lib/shopify-webhook.mjs";
 import { refreshProductInCatalog, refreshInventoryItemInCatalog } from "@/lib/catalog-mutate";
+import { ingestShopifyOrder } from "@/lib/mo-orders-store";
 import { reportError } from "@/lib/observability";
 
 // A single-product Shopify fetch + (optional) one embedding + two blob writes —
@@ -58,7 +64,30 @@ export async function POST(req: Request) {
   }
 
   try {
-    // (2) Decide what this event means for the catalog (pure routing).
+    // (2a) ORDER topics → the attribution ingest (not a catalog action).
+    //      orders/create captures the order early (possibly still pending);
+    //      orders/paid updates the same row's financial status/total. Every
+    //      other orders/* topic is acked-ignored. The ingest is idempotent, so
+    //      a 500 (→ Shopify retry) is safe on a real processing failure.
+    const t = String(topic ?? "").trim().toLowerCase();
+    if (t.startsWith("orders/")) {
+      if (t !== "orders/create" && t !== "orders/paid") {
+        return NextResponse.json({ ok: true, ignored: `unhandled-topic:${t}` });
+      }
+      const ingest = await ingestShopifyOrder(payload);
+      if (!ingest.ok) {
+        return NextResponse.json({ ok: false, error: ingest.reason }, { status: 500 });
+      }
+      return NextResponse.json({
+        ok: true,
+        topic,
+        action: ingest.action,
+        ...(ingest.reason ? { reason: ingest.reason } : {}),
+        ...(ingest.tier ? { tier: ingest.tier } : {}),
+      });
+    }
+
+    // (2b) Decide what this event means for the catalog (pure routing).
     const plan = planCatalogAction(topic, payload);
 
     // (3) Apply the TARGETED single-product update. products/update +

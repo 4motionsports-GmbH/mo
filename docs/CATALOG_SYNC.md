@@ -271,6 +271,10 @@ then register these topics against `https://<deployment>/api/webhooks/shopify`
   sync.
 - `inventory_levels/update` — catches pure quantity changes (resolved item →
   product).
+- `orders/create` + `orders/paid` — NOT a catalog concern: the same endpoint
+  routes verified order payloads to the order-attribution ingest
+  ([`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)); register them here so
+  the Mo-attributed-revenue KPI fills.
 
 Register either via the Shopify Admin (Settings → Notifications → Webhooks) or
 the Admin API `webhookSubscriptionCreate` mutation. Verify deliveries are

@@ -12,6 +12,8 @@
 
 import { loadProductCatalog } from "./catalog-store";
 import { buildShopifyCartUrl } from "./shopify-cart-url.mjs";
+import { mintAttributionToken } from "./mo-orders-store";
+import { withCartAttribution } from "./order-attribution.mjs";
 import { getBaseUrl } from "./base-url";
 import { isShopifyConfigured } from "./shopify";
 import {
@@ -208,8 +210,16 @@ export async function createBundleOffer(
       compareAtPrice,
     });
 
-    // 5. Materialize the REAL cart permalink from the parent variant.
-    const cartUrl = buildShopifyCartUrl(product.numericVariantId ?? product.variantId);
+    // 5. Materialize the REAL cart permalink from the parent variant, stamped
+    //    with a (sessionless) attribution token so a bundle purchase is
+    //    attributable as a Mo order even though no discount code is involved
+    //    (docs/ORDER_ATTRIBUTION.md; closes the "bundle offers — click only"
+    //    gap in the revenue KPI's honesty note). Minting failure → unstamped.
+    const moToken = await mintAttributionToken(null, "bundle");
+    const cartUrl = withCartAttribution(
+      buildShopifyCartUrl(product.numericVariantId ?? product.variantId),
+      moToken
+    );
 
     const active = await markOfferActive(pending.id, {
       shopifyProductId: product.productId,

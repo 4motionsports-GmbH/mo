@@ -146,6 +146,12 @@ single-line strings. See `.env.example` for the canonical list.
 | `MODEL_PRICES_JSON` | JSON `{ "<model>": { "input": N, "output": N } }` in USD per million tokens. Overrides/extends the built-in defaults. Unset ⇒ defaults. |
 | `USD_EUR_RATE`      | USD→EUR rate applied to computed AI costs. Default `0.92`.                                     |
 
+**Order attribution (optional — KPI tab, see `docs/ORDER_ATTRIBUTION.md`)**
+
+| Variable                     | Description                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------------- |
+| `MO_ATTRIBUTION_WINDOW_DAYS` | Max days between a consultation's attribution token and an order for the order to count as Mo-attributed. Default `30`. Requires the `orders/create` + `orders/paid` webhooks to be registered on `/api/webhooks/shopify`. |
+
 ### Deploy checklist
 
 Run these in order. Don't skip the manual cron trigger or the

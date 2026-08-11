@@ -57,6 +57,13 @@ export interface RetentionOptions {
    * customer display names, so they must not live forever. 0 disables.
    */
   analyticsReportRetentionDays: number;
+  /**
+   * Order-attribution window (days) between token minting and an order —
+   * mirrors MO_ATTRIBUTION_WINDOW_DAYS (lib/mo-orders-store). Tokens older
+   * than this (+ grace) can never attribute again and are purged; mo_orders
+   * rows purge on the shared analytics window (kpiRetentionDays).
+   */
+  attributionWindowDays: number;
 }
 
 export interface RetentionResult {
@@ -87,6 +94,10 @@ export interface RetentionResult {
   deletedConversationInsights: number;
   /** kpi_persona_question_summaries purged on the analytics window. */
   deletedPersonaSummaries: number;
+  /** mo_orders (order-attribution rows) purged on the analytics window. */
+  deletedMoOrders: number;
+  /** mo_attribution_tokens past the attribution window (+ grace) removed. */
+  deletedAttributionTokens: number;
   /** Expired customer_auth_pending rows (CSRF/PKCE state) removed. */
   purgedAuthPending: number;
   ranAt: string;
@@ -116,6 +127,8 @@ export function retentionOptionsFromEnv(): RetentionOptions {
     // Stored Komplettanalyse reports — may contain customer display names when
     // generated with per-customer profiles; 12 months by default, 0 disables.
     analyticsReportRetentionDays: parseIntEnv("ANALYTICS_REPORT_RETENTION_DAYS", 365, 0),
+    // Same env the ingest reads (lib/mo-orders-store.attributionWindowDays).
+    attributionWindowDays: parseIntEnv("MO_ATTRIBUTION_WINDOW_DAYS", 30, 1),
   };
 }
 
@@ -361,6 +374,29 @@ export async function runRetention(
     SELECT count(*)::int AS n FROM del
   `;
 
+  // 5i. Order-attribution rows (migration 0042). mo_orders are Cluster-A
+  //     analytics like kpi_events, so they leave on the SAME analytics window
+  //     (by the order's processed_at; NULL-dated rows leave by created_at).
+  //     Tokens can only ever attribute within the attribution window, so any
+  //     token older than window + 7 days grace is inert and purged.
+  const deletedMoOrders = await sql`
+    WITH del AS (
+      DELETE FROM mo_orders
+       WHERE COALESCE(processed_at, created_at) < ${kpiCutoff}
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM del
+  `;
+  const attributionTokenCutoff = daysAgo(opts.attributionWindowDays + 7);
+  const deletedAttributionTokens = await sql`
+    WITH del AS (
+      DELETE FROM mo_attribution_tokens
+       WHERE created_at < ${attributionTokenCutoff}
+      RETURNING 1
+    )
+    SELECT count(*)::int AS n FROM del
+  `;
+
   // 6. Purge expired pending-auth records (short-lived CSRF/PKCE state). The
   //    encrypted token rows (customer_oauth_tokens) carry no separate window —
   //    they cascade with the customer (ON DELETE CASCADE), so a GDPR erasure /
@@ -384,6 +420,8 @@ export async function runRetention(
     deletedAnalyticsReports: deletedAnalyticsReports[0]?.n ?? 0,
     deletedConversationInsights: deletedConversationInsights[0]?.n ?? 0,
     deletedPersonaSummaries: deletedPersonaSummaries[0]?.n ?? 0,
+    deletedMoOrders: deletedMoOrders[0]?.n ?? 0,
+    deletedAttributionTokens: deletedAttributionTokens[0]?.n ?? 0,
     purgedAuthPending,
     ranAt: new Date().toISOString(),
   };
