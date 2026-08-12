@@ -285,6 +285,9 @@ export async function updateImprovementRun(
 ): Promise<void> {
   if (!sql) return;
   try {
+    // Every update here ends a step (phase transition, completion or failure),
+    // so it also RELEASES the step claim (migration 0045) — the next /step may
+    // proceed immediately.
     await sql`
       UPDATE improvement_runs
          SET status = COALESCE(${patch.status ?? null}, status),
@@ -293,11 +296,46 @@ export async function updateImprovementRun(
              effect_check_md = COALESCE(${patch.effectCheckMd ?? null}, effect_check_md),
              usage = COALESCE(${patch.usage ? JSON.stringify(patch.usage) : null}::jsonb, usage),
              completed_at = CASE WHEN ${patch.completed === true} THEN now() ELSE completed_at END,
+             step_claimed_at = NULL,
              updated_at = now()
        WHERE id = ${id}
     `;
   } catch (err) {
     reportError(err, { route: "lib/improvement-store", phase: "update" });
+  }
+}
+
+// How long a step claim shields against concurrent stepping before it is
+// considered stale (a crashed function never cleared it). Comfortably above
+// the step route's maxDuration.
+export const STEP_CLAIM_TTL_MINUTES = 6;
+
+/**
+ * Atomically claim the run for ONE step (migration 0045). Returns
+ *  - 'claimed' — proceed with the model call;
+ *  - 'busy'    — another /step is live on this run (client should poll);
+ *  - 'error'   — DB unavailable/failed (caller treats like busy: no work).
+ * A stale claim (older than STEP_CLAIM_TTL_MINUTES) is taken over.
+ */
+export async function claimRunStep(
+  id: number,
+  sql: Sql | null = getSql()
+): Promise<"claimed" | "busy" | "error"> {
+  if (!sql) return "error";
+  try {
+    const rows = (await sql`
+      UPDATE improvement_runs
+         SET step_claimed_at = now()
+       WHERE id = ${id}
+         AND status = 'running'
+         AND (step_claimed_at IS NULL
+              OR step_claimed_at < now() - make_interval(mins => ${STEP_CLAIM_TTL_MINUTES}))
+      RETURNING id
+    `) as Array<{ id: number }>;
+    return rows.length > 0 ? "claimed" : "busy";
+  } catch (err) {
+    reportError(err, { route: "lib/improvement-store", phase: "claim" });
+    return "error";
   }
 }
 

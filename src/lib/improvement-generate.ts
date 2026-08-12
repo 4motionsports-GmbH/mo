@@ -26,6 +26,7 @@ import {
   createImprovementRun,
   getImprovementRun,
   updateImprovementRun,
+  claimRunStep,
   insertSuggestions,
   listPriorSuggestions,
   listMeasuresForEffectCheck,
@@ -100,6 +101,8 @@ export interface RunStepResult {
   phase?: string;
   costEur?: number;
   done: boolean;
+  /** True when another /step is already live on this run — poll, don't work. */
+  busy?: boolean;
   error?: string;
 }
 
@@ -109,6 +112,18 @@ export async function stepImprovementRun(id: number): Promise<RunStepResult> {
   if (!run) return { ok: false, done: true, error: "not_found" };
   if (run.status !== "running") {
     return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: true };
+  }
+
+  // Retry-safety (migration 0045): a client whose request was aborted locally
+  // (e.g. Chrome net::ERR_NETWORK_CHANGED) retries — while the original
+  // function may still be mid-model-call. The atomic claim makes the retry a
+  // cheap "busy" poll instead of a duplicate model call.
+  // 'error' (e.g. migration 0045 not applied yet, transient DB failure) falls
+  // through fail-open — that is exactly the pre-claim behavior, so the loop
+  // can never get stuck on an unclaimable run.
+  const claim = await claimRunStep(id);
+  if (claim === "busy") {
+    return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: false, busy: true };
   }
 
   try {

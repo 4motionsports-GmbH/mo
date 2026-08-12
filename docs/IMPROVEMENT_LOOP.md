@@ -134,6 +134,17 @@ shop pass. Orchestrator:
 passes use **Sonnet** (`claude-sonnet-4-6`) and record into `ai_usage` under
 the new call site `improvement`.
 
+**Retry safety (migration 0045).** Browsers abort in-flight requests on a
+local network change (Chrome `net::ERR_NETWORK_CHANGED`) while the serverless
+step keeps working, so the workspace driver auto-retries dropped requests
+instead of stopping. Retrying is made safe by an atomic per-run **step claim**
+(`improvement_runs.step_claimed_at`): a `/step` that lands while another is
+live returns `busy: true` (the client polls every 5 s), every step-finishing
+update releases the claim, and a stale claim expires after 6 minutes
+(crash guard, above `maxDuration`). Claim-check failures fall through
+fail-open — exactly the pre-claim behavior — so an unapplied migration can
+never wedge a run.
+
 The `wirkung` phase runs only when there is BOTH a previous completed run (a
 baseline to diff against) and at least one prior accepted/implemented
 suggestion; otherwise the run starts straight at `vorschlaege`.
