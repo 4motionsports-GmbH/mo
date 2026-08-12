@@ -21,15 +21,20 @@ export const SUGGEST_MODEL = "claude-sonnet-4-6";
 
 // ── Phase state-machine ───────────────────────────────────────────────────────
 // Stepped like the Komplettanalyse: ONE bounded model call per /step request.
-//   wirkung     — assess previously implemented/accepted suggestions against
-//                 the measured KPI movement (skipped when there is no history)
-//   vorschlaege — produce this run's suggestions (the big pass)
+//   wirkung          — assess previously implemented/accepted suggestions
+//                      against the measured KPI movement (skipped without history)
+//   vorschlaege_shop — suggestions for the ONLINE STORE lane
+//   vorschlaege_mo   — suggestions for the MO lane (gets the full self-snapshot)
+// The suggestions work is deliberately split per lane so each step is a SHORT
+// model call — a single monolithic pass proved to outlive the serverless
+// function budget in production (killed mid-call → "Netzwerkfehler" in the UI).
 
-export const RUN_PHASES = ["wirkung", "vorschlaege", "done"];
+export const RUN_PHASES = ["wirkung", "vorschlaege_shop", "vorschlaege_mo", "done"];
 
 export const RUN_PHASE_LABELS = {
   wirkung: "Wirkungs-Check der bisherigen Maßnahmen",
-  vorschlaege: "Verbesserungsvorschläge erarbeiten",
+  vorschlaege_shop: "Vorschläge für den Online-Shop erarbeiten",
+  vorschlaege_mo: "Vorschläge für Mo erarbeiten",
   done: "Fertig",
 };
 
@@ -86,6 +91,8 @@ export const IMPACT_LEVELS = ["hoch", "mittel", "niedrig"];
 // ── Bounds ────────────────────────────────────────────────────────────────────
 
 export const MAX_SUGGESTIONS_PER_RUN = 12;
+// Per lane-pass cap (the run total stays MAX_SUGGESTIONS_PER_RUN across both).
+export const MAX_SUGGESTIONS_PER_LANE = 6;
 export const MAX_TITLE_CHARS = 140;
 export const MAX_RATIONALE_CHARS = 1200;
 export const MAX_PROPOSAL_CHARS = 1600;
@@ -246,9 +253,14 @@ function stripCodeFences(text) {
  * Never throws. Invalid items are dropped; a malformed payload returns
  * { ok: false } so the caller can fail the run with a clear message. The
  * returned items are clamped, validated against the lane vocabularies and
- * capped at MAX_SUGGESTIONS_PER_RUN.
+ * capped at `max` (default MAX_SUGGESTIONS_PER_RUN). When `lane` is given
+ * (the per-lane passes), items of any other lane are dropped instead of kept —
+ * each pass owns exactly one lane.
+ *
+ * @param {string} text
+ * @param {{ lane?: "shop" | "mo" | null, max?: number }} [opts]
  */
-export function parseSuggestionsResponse(text) {
+export function parseSuggestionsResponse(text, { lane = null, max = MAX_SUGGESTIONS_PER_RUN } = {}) {
   let payload;
   try {
     payload = JSON.parse(stripCodeFences(text));
@@ -268,9 +280,9 @@ export function parseSuggestionsResponse(text) {
   const out = [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
-    const lane = LANES.includes(item.lane) ? item.lane : null;
-    if (!lane) continue;
-    const categories = categoriesForLane(lane);
+    const itemLane = LANES.includes(item.lane) ? item.lane : lane;
+    if (!itemLane || (lane && itemLane !== lane)) continue;
+    const categories = categoriesForLane(itemLane);
     const category = Object.prototype.hasOwnProperty.call(categories, item.category)
       ? item.category
       : Object.keys(categories)[0];
@@ -279,13 +291,13 @@ export function parseSuggestionsResponse(text) {
     const proposal = clampText(item.proposal, MAX_PROPOSAL_CHARS);
     if (!title || !rationale || !proposal) continue;
     const directive =
-      lane === "mo" ? clampText(item.directive, MAX_DIRECTIVE_CHARS) || null : null;
+      itemLane === "mo" ? clampText(item.directive, MAX_DIRECTIVE_CHARS) || null : null;
     const evidence = (Array.isArray(item.evidence) ? item.evidence : [])
       .filter((e) => typeof e === "string" && e.trim())
       .slice(0, MAX_EVIDENCE_ITEMS)
       .map((e) => clampText(e, MAX_EVIDENCE_CHARS));
     out.push({
-      lane,
+      lane: itemLane,
       category,
       title,
       fingerprint: suggestionFingerprint(title),
@@ -297,7 +309,7 @@ export function parseSuggestionsResponse(text) {
       effort: IMPACT_LEVELS.includes(item.effort) ? item.effort : "mittel",
       evidence,
     });
-    if (out.length >= MAX_SUGGESTIONS_PER_RUN) break;
+    if (out.length >= max) break;
   }
   if (out.length === 0) return { ok: false, reason: "no_valid_items" };
   return { ok: true, suggestions: out };
@@ -353,7 +365,9 @@ export function buildEffectPrompt({ deltaMd, priorSuggestions, reportExtract }) 
 }
 
 /**
- * User prompt of the suggestions pass: the full evidence package.
+ * User prompt of a suggestions pass: the evidence package. `selfSnapshot` is
+ * optional — the Mo-lane pass sends the full self-snapshot, the shop-lane pass
+ * deliberately omits it (smaller input, the report IS the shop evidence).
  */
 export function buildSuggestPrompt({
   reportTitle,
@@ -367,9 +381,13 @@ export function buildSuggestPrompt({
 }) {
   const parts = [
     `## Analysebericht „${reportTitle}“ (${rangeFrom} bis ${rangeTo})\n${reportMd}`,
-    `## Mos aktuelle Konfiguration (Selbstbild)\n${selfSnapshot}`,
-    `## Bisherige Vorschläge (NICHT wiederholen — auch verworfene nicht)\n${renderPriorSuggestions(priorSuggestions)}`,
   ];
+  if (selfSnapshot) {
+    parts.push(`## Mos aktuelle Konfiguration (Selbstbild)\n${selfSnapshot}`);
+  }
+  parts.push(
+    `## Bisherige Vorschläge (NICHT wiederholen — auch verworfene nicht)\n${renderPriorSuggestions(priorSuggestions)}`
+  );
   if (deltaMd) parts.push(`## Kennzahlen-Veränderung seit dem letzten Lauf\n${deltaMd}`);
   if (effectCheckMd) parts.push(`## Wirkungs-Check dieses Laufs\n${effectCheckMd}`);
   parts.push(`Erstelle jetzt die Verbesserungsvorschläge als JSON.`);

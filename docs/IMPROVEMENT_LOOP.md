@@ -122,9 +122,15 @@ Tables (migration [`0044_improvement_loop.sql`](../migrations/0044_improvement_l
 Generation is **client-stepped** exactly like the Komplettanalyse: `POST
 /api/admin/improve/run { reportId }` creates the row instantly; the workspace
 then calls `POST /api/admin/improve/step { id }` until `done` — ONE bounded
-model call per request (`wirkung`, then `vorschlaege`), so no request
-approaches `maxDuration`. Orchestrator:
-[`lib/improvement-generate.ts`](../src/lib/improvement-generate.ts). Both
+model call per request. The suggestion work is deliberately split **per lane**
+(`wirkung` → `vorschlaege_shop` → `vorschlaege_mo`, ≤ 6 suggestions and ~2.5k
+output tokens each; the shop pass also omits the big self-snapshot input): a
+single monolithic pass proved to outlive the serverless function budget in
+production (the function was killed mid-call, surfacing as a dropped
+connection in the admin). The step route runs with `maxDuration = 300` for
+headroom; a legacy `vorschlaege` phase value (pre-split runs) resumes as the
+shop pass. Orchestrator:
+[`lib/improvement-generate.ts`](../src/lib/improvement-generate.ts). All
 passes use **Sonnet** (`claude-sonnet-4-6`) and record into `ai_usage` under
 the new call site `improvement`.
 
@@ -153,7 +159,7 @@ envelopes like every other admin route:
 | `GET /api/admin/improve` | run list (sidebar) |
 | `GET /api/admin/improve/[id]` | run detail incl. suggestions |
 | `POST /api/admin/improve/run` | create run over a completed report |
-| `POST /api/admin/improve/step` | advance one model call (`maxDuration 90`) |
+| `POST /api/admin/improve/step` | advance one model call (`maxDuration 300`) |
 | `POST /api/admin/improve/delete` | delete run (+ suggestions, CASCADE) |
 | `POST /api/admin/improve/suggestion` | set suggestion status (+ note) |
 | `POST /api/admin/improve/adopt` | adopt a suggestion's directive text as a live directive |

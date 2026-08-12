@@ -12,10 +12,13 @@ import { isDbConfigured } from "@/lib/db";
 import { stepImprovementRun } from "@/lib/improvement-generate";
 import { reportError } from "@/lib/observability";
 
-// The suggestions pass is ONE Sonnet call, but with a big input (report extract
-// + Mo's full self-snapshot) and structured output — give it more headroom than
-// the report step's batched Haiku calls.
-export const maxDuration = 90;
+// Each step is ONE Sonnet call, and the suggestion phases are split per lane
+// so no single call produces more than ~2.5k output tokens. Still, a Sonnet
+// call with the self-snapshot input can take well over a minute — give the
+// route the full Fluid-compute headroom so the platform never kills the
+// function mid-call (which surfaced as a dropped connection / "Netzwerkfehler"
+// in the admin when the original single-pass design exceeded its budget).
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
