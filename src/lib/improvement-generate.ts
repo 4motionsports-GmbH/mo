@@ -38,7 +38,7 @@ import {
   SUGGEST_MODEL,
   SHOP_CATEGORIES,
   MO_CATEGORIES,
-  MAX_SUGGESTIONS_PER_RUN,
+  MAX_SUGGESTIONS_PER_LANE,
   MAX_DIRECTIVE_CHARS,
   computeKpiBaseline,
   computeBaselineDelta,
@@ -77,8 +77,8 @@ export async function startImprovementRun(reportId: number): Promise<StartRunRes
   const baseline = computeKpiBaseline(report.sections);
   const delta = previous ? computeBaselineDelta(previous.baseline, baseline) : null;
   // The Wirkungs-Check needs BOTH a measured movement and measures to assess;
-  // otherwise the run starts straight at the suggestions pass.
-  const phase = delta && measures.length > 0 ? "wirkung" : "vorschlaege";
+  // otherwise the run starts straight at the first suggestions pass.
+  const phase = delta && measures.length > 0 ? "wirkung" : "vorschlaege_shop";
 
   const runId = await createImprovementRun({
     reportId,
@@ -117,8 +117,13 @@ export async function stepImprovementRun(id: number): Promise<RunStepResult> {
     }
     if (run.phase === "wirkung") {
       await stepEffectCheck(run);
+    } else if (run.phase === "vorschlaege_mo") {
+      await stepSuggestLane(run, "mo");
     } else {
-      await stepSuggestions(run);
+      // Covers "vorschlaege_shop" AND the legacy single-pass phase value
+      // "vorschlaege" (runs created before the per-lane split — they resume
+      // here and continue through the mo pass).
+      await stepSuggestLane(run, "shop");
     }
   } catch (err) {
     reportError(err, { route: "lib/improvement-generate", phase: run.phase });
@@ -188,55 +193,40 @@ async function stepEffectCheck(run: ImprovementRunDetail): Promise<void> {
   });
 }
 
-// ── Phase: Vorschläge ─────────────────────────────────────────────────────────
+// ── Phases: Vorschläge (one SHORT pass per lane) ─────────────────────────────
+// Split deliberately: one monolithic pass over both lanes produced a single
+// long model call that outlived the serverless function budget in production
+// (the function was killed mid-call and the browser saw a dropped connection).
+// Per lane the output is roughly halved and the shop pass also skips the big
+// self-snapshot input, so each step finishes comfortably inside maxDuration.
 
-function suggestionSystemPrompt(): string {
-  const shopCats = Object.entries(SHOP_CATEGORIES)
-    .map(([k, v]) => `\`${k}\` (${v})`)
-    .join(", ");
-  const moCats = Object.entries(MO_CATEGORIES)
-    .map(([k, v]) => `\`${k}\` (${v})`)
-    .join(", ");
+const COMMON_RULES =
+  "Qualitäts-Regeln (KRITISCH):\n" +
+  "- NUR was die Daten belegen. Jeder Vorschlag zitiert seine Evidenz (Kennzahl, Kategorie, " +
+  "Persona-Befund) — nichts erfinden, keine Allgemeinplätze („mehr Marketing machen“).\n" +
+  "- KEINE Wiederholungen: Vorschläge, die inhaltlich schon in der Liste der bisherigen " +
+  "Vorschläge stehen (egal mit welchem Status, auch verworfene), NICHT erneut bringen.\n" +
+  "- Konkret und umsetzbar: `proposal` beschreibt die Änderung so genau, dass ein Mensch sie " +
+  "direkt umsetzen kann.\n" +
+  "- `expected_effect`: welche Kennzahl sich messbar bewegen soll (die Grundlage des " +
+  "nächsten Wirkungs-Checks).\n" +
+  "- Priorisiere: wenige Vorschläge mit hoher Wirkung schlagen viele kleine. Maximal " +
+  MAX_SUGGESTIONS_PER_LANE + ".\n\n" +
+  "WICHTIG: Du schlägst nur VOR. Nichts wird automatisch geändert — ein Mensch prüft und " +
+  "entscheidet jede Maßnahme.\n\n";
+
+function jsonShape(lane: "shop" | "mo"): string {
   return (
-    "Du bist der Verbesserungs-Analyst von motion sports (Fitness- und Kraftsportgeräte). " +
-    "Der Shop setzt den KI-Berater 'Mo' ein. Du erhältst: (1) den verdichteten Analysebericht " +
-    "eines Zeitraums, (2) Mos AKTUELLE Konfiguration (System-Prompt, Tools, Personas, Wissen, " +
-    "Team-Anweisungen) — sein „Selbstbild“, (3) die bisherigen Vorschläge mit Status und ggf. " +
-    "(4) die Kennzahlen-Veränderung samt Wirkungs-Check.\n\n" +
-    "Erarbeite daraus die WENIGEN besten Verbesserungsvorschläge in zwei Bahnen:\n" +
-    "- `shop` — der Online-Shop selbst. Kategorien: " + shopCats + ".\n" +
-    "- `mo` — Mo selbst (sein Prompt, Wissen, Verhalten, Tools). Kategorien: " + moCats + ".\n\n" +
-    "Qualitäts-Regeln (KRITISCH):\n" +
-    "- NUR was die Daten belegen. Jeder Vorschlag zitiert seine Evidenz (Kennzahl, Kategorie, " +
-    "Persona-Befund) — nichts erfinden, keine Allgemeinplätze („mehr Marketing machen“).\n" +
-    "- KEINE Wiederholungen: Vorschläge, die inhaltlich schon in der Liste der bisherigen " +
-    "Vorschläge stehen (egal mit welchem Status, auch verworfene), NICHT erneut bringen.\n" +
-    "- Konkret und umsetzbar: `proposal` beschreibt die Änderung so genau, dass ein Mensch sie " +
-    "direkt umsetzen kann.\n" +
-    "- Für `mo`-Vorschläge der Kategorie `anweisung`: liefere in `directive` den fertigen " +
-    "deutschen Anweisungstext (max. " + MAX_DIRECTIVE_CHARS + " Zeichen), so wie er 1:1 in Mos " +
-    "System-Prompt übernommen werden kann — als Verhaltensregel formuliert, an Mo gerichtet " +
-    "(„Wenn …, dann …“). Eine directive darf NIE rechtliche Zusagen, Medizin-Beratung, " +
-    "Preisnachlässe oder Versprechen enthalten, die der Shop nicht hält. Für alle anderen " +
-    "Kategorien: `directive` = null.\n" +
-    "- Für Kategorie `prompt_kern`: beschreibe die Änderung als konkreten Textvorschlag für den " +
-    "Kern-Prompt (der per Code/Git geändert wird) — welcher Abschnitt, welcher neue Wortlaut.\n" +
-    "- `expected_effect`: welche Kennzahl sich messbar bewegen soll (die Grundlage des " +
-    "nächsten Wirkungs-Checks).\n" +
-    "- Priorisiere: wenige Vorschläge mit hoher Wirkung schlagen viele kleine. Maximal " +
-    MAX_SUGGESTIONS_PER_RUN + ".\n\n" +
-    "WICHTIG: Du schlägst nur VOR. Nichts wird automatisch geändert — ein Mensch prüft und " +
-    "entscheidet jede Maßnahme.\n\n" +
     "Antworte AUSSCHLIESSLICH mit EINEM JSON-Objekt (keine Code-Fences, kein Text davor/danach):\n" +
     "{\n" +
     '  "vorschlaege": [\n' +
     "    {\n" +
-    '      "lane": "shop" | "mo",\n' +
-    '      "category": "<Kategorie-Schlüssel der Bahn>",\n' +
+    `      "lane": "${lane}",\n` +
+    '      "category": "<Kategorie-Schlüssel>",\n' +
     '      "title": "<prägnanter deutscher Titel>",\n' +
     '      "rationale": "<WARUM — mit Evidenz aus dem Bericht, Markdown>",\n' +
     '      "proposal": "<WAS genau ändern — konkret umsetzbar, Markdown>",\n' +
-    '      "directive": "<fertiger Anweisungstext>" | null,\n' +
+    (lane === "mo" ? '      "directive": "<fertiger Anweisungstext>" | null,\n' : "") +
     '      "expected_effect": "<welche Kennzahl sich wie bewegen soll>",\n' +
     '      "impact": "hoch" | "mittel" | "niedrig",\n' +
     '      "effort": "hoch" | "mittel" | "niedrig",\n' +
@@ -247,23 +237,65 @@ function suggestionSystemPrompt(): string {
   );
 }
 
-async function stepSuggestions(run: ImprovementRunDetail): Promise<void> {
+function shopSystemPrompt(): string {
+  const cats = Object.entries(SHOP_CATEGORIES)
+    .map(([k, v]) => `\`${k}\` (${v})`)
+    .join(", ");
+  return (
+    "Du bist der Verbesserungs-Analyst von motion sports (Fitness- und Kraftsportgeräte, " +
+    "Online-Shop mit KI-Berater 'Mo'). Du erhältst den verdichteten Analysebericht eines " +
+    "Zeitraums, die bisherigen Vorschläge mit Status und ggf. die Kennzahlen-Veränderung samt " +
+    "Wirkungs-Check.\n\n" +
+    "Erarbeite daraus die WENIGEN besten Verbesserungsvorschläge für den ONLINE-SHOP selbst " +
+    "(lane `shop`). Kategorien: " + cats + ".\n\n" +
+    COMMON_RULES +
+    jsonShape("shop")
+  );
+}
+
+function moSystemPrompt(): string {
+  const cats = Object.entries(MO_CATEGORIES)
+    .map(([k, v]) => `\`${k}\` (${v})`)
+    .join(", ");
+  return (
+    "Du bist der Verbesserungs-Analyst von motion sports (Fitness- und Kraftsportgeräte). " +
+    "Der Shop setzt den KI-Berater 'Mo' ein. Du erhältst den verdichteten Analysebericht eines " +
+    "Zeitraums, Mos AKTUELLE Konfiguration (System-Prompt, Tools, Personas, Wissen, " +
+    "Team-Anweisungen) — sein „Selbstbild“ —, die bisherigen Vorschläge mit Status und ggf. " +
+    "die Kennzahlen-Veränderung samt Wirkungs-Check.\n\n" +
+    "Erarbeite daraus die WENIGEN besten Verbesserungsvorschläge für MO SELBST (lane `mo` — " +
+    "sein Prompt, Wissen, Verhalten, Tools). Kategorien: " + cats + ".\n\n" +
+    COMMON_RULES +
+    "Zusatz-Regeln für Mo-Vorschläge:\n" +
+    "- Kategorie `anweisung`: liefere in `directive` den fertigen deutschen Anweisungstext " +
+    "(max. " + MAX_DIRECTIVE_CHARS + " Zeichen), so wie er 1:1 in Mos System-Prompt übernommen " +
+    "werden kann — als Verhaltensregel formuliert, an Mo gerichtet („Wenn …, dann …“). Eine " +
+    "directive darf NIE rechtliche Zusagen, Medizin-Beratung, Preisnachlässe oder Versprechen " +
+    "enthalten, die der Shop nicht hält. Für alle anderen Kategorien: `directive` = null.\n" +
+    "- Kategorie `prompt_kern`: beschreibe die Änderung als konkreten Textvorschlag für den " +
+    "Kern-Prompt (der per Code/Git geändert wird) — welcher Abschnitt, welcher neue Wortlaut.\n\n" +
+    jsonShape("mo")
+  );
+}
+
+async function stepSuggestLane(run: ImprovementRunDetail, lane: "shop" | "mo"): Promise<void> {
+  const isMoLane = lane === "mo";
   const [snapshot, prior, reportMd] = await Promise.all([
-    buildMoSelfSnapshot(),
+    isMoLane ? buildMoSelfSnapshot() : Promise.resolve(null),
     listPriorSuggestions(),
     loadReportExtract(run),
   ]);
 
   const { text, usage } = await generateText({
     model: anthropic(SUGGEST_MODEL),
-    maxOutputTokens: 4000,
-    system: suggestionSystemPrompt(),
+    maxOutputTokens: 2500,
+    system: isMoLane ? moSystemPrompt() : shopSystemPrompt(),
     prompt: buildSuggestPrompt({
       reportTitle: run.reportTitle,
       rangeFrom: run.rangeFrom,
       rangeTo: run.rangeTo,
       reportMd,
-      selfSnapshot: snapshot.text,
+      selfSnapshot: snapshot?.text ?? null,
       priorSuggestions: prior,
       deltaMd: run.delta ? renderDeltaMd(run.delta) : null,
       effectCheckMd: run.effectCheckMd,
@@ -284,27 +316,38 @@ async function stepSuggestions(run: ImprovementRunDetail): Promise<void> {
     usage?.outputTokens ?? 0
   );
 
-  const parsed = parseSuggestionsResponse(text);
+  const parsed = parseSuggestionsResponse(text, { lane, max: MAX_SUGGESTIONS_PER_LANE });
   if (!parsed.ok) {
     await updateImprovementRun(run.id, {
       status: "failed",
-      error: `Vorschläge nicht lesbar (${parsed.reason}).`,
+      error: `Vorschläge (${lane}) nicht lesbar (${parsed.reason}).`,
       usage: mergedUsage,
     });
     return;
   }
 
-  // Hard dedup against every non-dismissed prior suggestion — the prompt also
-  // forbids repeats, this is the guard. A dismissed idea MAY return (the model
-  // was told not to, but if it insists with new evidence the operator decides).
-  const priorActiveFps = prior.filter((p) => p.status !== "dismissed").map((p) => p.fingerprint);
-  const fresh = dedupeSuggestions(parsed.suggestions, priorActiveFps);
-
+  // Hard dedup against every non-dismissed prior suggestion AND anything the
+  // earlier lane pass of THIS run already inserted — the prompt also forbids
+  // repeats, this is the guard. A dismissed idea MAY return (the model was
+  // told not to, but if it insists with new evidence the operator decides).
+  const existingFps = [
+    ...prior.filter((p) => p.status !== "dismissed").map((p) => p.fingerprint),
+    ...run.suggestions.map((s) => s.fingerprint),
+  ];
+  const fresh = dedupeSuggestions(parsed.suggestions, existingFps);
   await insertSuggestions(run.id, fresh);
-  await updateImprovementRun(run.id, {
-    status: "complete",
-    phase: "done",
-    usage: mergedUsage,
-    completed: true,
-  });
+
+  if (isMoLane) {
+    await updateImprovementRun(run.id, {
+      status: "complete",
+      phase: "done",
+      usage: mergedUsage,
+      completed: true,
+    });
+  } else {
+    await updateImprovementRun(run.id, {
+      phase: "vorschlaege_mo",
+      usage: mergedUsage,
+    });
+  }
 }

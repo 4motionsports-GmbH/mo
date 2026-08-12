@@ -17,9 +17,10 @@ import {
 
 // ── Phase machine ─────────────────────────────────────────────────────────────
 
-test("nextRunPhase walks wirkung → vorschlaege → done and tolerates junk", () => {
-  assert.equal(nextRunPhase("wirkung"), "vorschlaege");
-  assert.equal(nextRunPhase("vorschlaege"), "done");
+test("nextRunPhase walks wirkung → shop → mo → done and tolerates junk", () => {
+  assert.equal(nextRunPhase("wirkung"), "vorschlaege_shop");
+  assert.equal(nextRunPhase("vorschlaege_shop"), "vorschlaege_mo");
+  assert.equal(nextRunPhase("vorschlaege_mo"), "done");
   assert.equal(nextRunPhase("done"), "done");
   assert.equal(nextRunPhase("nonsense"), "done");
 });
@@ -170,6 +171,26 @@ test("directive is kept only for lane=mo and clamped to the directive cap", () =
   assert.equal(res.ok, true);
   assert.ok(res.suggestions[0].directive.length <= MAX_DIRECTIVE_CHARS);
   assert.equal(res.suggestions[1].directive, null);
+});
+
+test("lane option filters foreign-lane items, defaults missing lanes, and caps per lane", () => {
+  const res = parseSuggestionsResponse(
+    JSON.stringify({
+      vorschlaege: [
+        validItem({ lane: "mo", category: "anweisung", title: "Mo-Vorschlag" }),
+        validItem({ title: "Shop-Vorschlag" }), // lane 'shop' → dropped in mo pass
+        validItem({ lane: undefined, category: "wissen", title: "Ohne Lane" }), // defaults to pass lane
+      ],
+    }),
+    { lane: "mo", max: 2 }
+  );
+  assert.equal(res.ok, true);
+  assert.equal(res.suggestions.length, 2);
+  assert.ok(res.suggestions.every((s) => s.lane === "mo"));
+  assert.deepEqual(
+    res.suggestions.map((s) => s.title),
+    ["Mo-Vorschlag", "Ohne Lane"]
+  );
 });
 
 test("parser caps the number of suggestions per run", () => {

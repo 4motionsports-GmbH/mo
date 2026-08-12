@@ -390,7 +390,7 @@ function NewRunPanel({
             </div>
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
-                1–2 Modell-Aufrufe (Sonnet) · typischerweise deutlich unter 0,50 €. Es wird
+                2–3 Modell-Aufrufe (Sonnet) · typischerweise deutlich unter 0,50 €. Es wird
                 nichts automatisch geändert — jeder Vorschlag wartet auf deine Entscheidung.
               </p>
               <Button onClick={start} disabled={busy || !reportId}>
@@ -663,7 +663,8 @@ function RunDriver({
           </div>
         )}
         <p className="text-[11px] text-muted-foreground">
-          Ein bis zwei Modell-Aufrufe — das kann bis zu ein-zwei Minuten dauern.
+          Zwei bis drei Modell-Aufrufe nacheinander — insgesamt kann das einige Minuten dauern.
+          Bei einem Abbruch einfach „Fortsetzen“ klicken, der Lauf macht dort weiter.
         </p>
       </CardContent>
     </Card>
