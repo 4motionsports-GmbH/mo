@@ -134,6 +134,16 @@ shop pass. Orchestrator:
 passes use **Sonnet** (`claude-sonnet-4-6`) and record into `ai_usage` under
 the new call site `improvement`.
 
+**Structured output.** The suggestion passes use `generateObject` with a zod
+schema (the marketing/campaign-draft pattern) — the model fills a forced tool
+call, so the payload is valid JSON by construction. Free-text JSON proved
+fragile in production (literal newlines inside strings, truncation →
+`invalid_json` run failures). `normalizeSuggestionsPayload` in
+improvement-core still hardens every item (lane filter, category fallback,
+clamping, caps); `parseSuggestionsResponse` remains as the text-input fallback
+and for tests. A terminal `NoObjectGeneratedError` records the spent tokens
+and fails the run with a clear German message.
+
 **Retry safety (migration 0045).** Browsers abort in-flight requests on a
 local network change (Chrome `net::ERR_NETWORK_CHANGED`) while the serverless
 step keeps working, so the workspace driver auto-retries dropped requests
