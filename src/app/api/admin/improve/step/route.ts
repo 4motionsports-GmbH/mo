@@ -49,6 +49,7 @@ export async function POST(req: Request) {
       phase: result.phase,
       costEur: result.costEur,
       done: result.done,
+      busy: result.busy,
       error: result.error,
     });
   } catch (err) {

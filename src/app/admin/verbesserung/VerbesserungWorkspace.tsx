@@ -598,20 +598,52 @@ function RunDriver({
     onDoneRef.current = onDone;
   }, [onDone]);
 
+  const [reconnecting, setReconnecting] = React.useState(false);
+
+  // The loop must SURVIVE dropped connections: browsers abort in-flight
+  // requests on a local network change (Chrome net::ERR_NETWORK_CHANGED) while
+  // the serverless step keeps working. Retrying is safe — the server holds a
+  // per-run step claim (migration 0045), so a retry that lands while the
+  // original call is still running just gets `busy: true` and we poll. Only
+  // after many consecutive failures (~5 min offline) do we stop and show the
+  // manual "Fortsetzen" button.
+  const MAX_CONSECUTIVE_FAILURES = 60;
+  const RETRY_DELAY_MS = 5_000;
+
   const runLoop = React.useCallback(async () => {
     if (runningRef.current) return;
     runningRef.current = true;
     setError(null);
+    setReconnecting(false);
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let failures = 0;
     try {
       for (;;) {
-        const res = await fetch("/api/admin/improve/step", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id }),
-        });
+        let res: Response;
+        try {
+          res = await fetch("/api/admin/improve/step", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id }),
+          });
+        } catch {
+          // Local network hiccup — the server may still be working. Keep the
+          // spinner, mark the reconnect state and try again shortly.
+          failures += 1;
+          if (failures >= MAX_CONSECUTIVE_FAILURES) {
+            setError("Verbindung dauerhaft unterbrochen — bitte „Fortsetzen“ klicken.");
+            return;
+          }
+          setReconnecting(true);
+          await sleep(RETRY_DELAY_MS);
+          continue;
+        }
+        failures = 0;
+        setReconnecting(false);
         const data = (await res.json().catch(() => ({}))) as {
           phase?: string;
           done?: boolean;
+          busy?: boolean;
           error?: string | { message?: string };
         };
         if (!res.ok) {
@@ -626,6 +658,11 @@ function RunDriver({
         if (data.done) {
           onDoneRef.current();
           return;
+        }
+        if (data.busy) {
+          // A step (ours from before the drop, or another tab's) is already
+          // running server-side — poll until it finishes.
+          await sleep(RETRY_DELAY_MS);
         }
       }
     } catch {
@@ -660,11 +697,17 @@ function RunDriver({
           <div className="flex items-center gap-2 text-foreground">
             <Loader2 className="size-4 animate-spin text-accent" />
             {label}…
+            {reconnecting && (
+              <span className="text-[12px] text-muted-foreground">
+                (Verbindung unterbrochen — es wird automatisch weiter versucht)
+              </span>
+            )}
           </div>
         )}
         <p className="text-[11px] text-muted-foreground">
           Zwei bis drei Modell-Aufrufe nacheinander — insgesamt kann das einige Minuten dauern.
-          Bei einem Abbruch einfach „Fortsetzen“ klicken, der Lauf macht dort weiter.
+          Kurze Verbindungsabbrüche überbrückt die Seite automatisch; der Lauf läuft serverseitig
+          weiter.
         </p>
       </CardContent>
     </Card>
