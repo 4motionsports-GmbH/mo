@@ -27,7 +27,8 @@ export type AdminTab =
   | "feedback"
   | "gespraeche"
   | "wissen"
-  | "analyse";
+  | "analyse"
+  | "verbesserung";
 
 const TAB_ORDER: AdminTab[] = [
   "overview",
@@ -38,6 +39,7 @@ const TAB_ORDER: AdminTab[] = [
   "gespraeche",
   "wissen",
   "analyse",
+  "verbesserung",
 ];
 
 const TAB_LABEL: Record<AdminTab, string> = {
@@ -49,6 +51,7 @@ const TAB_LABEL: Record<AdminTab, string> = {
   gespraeche: "Gespräche",
   wissen: "Wissen",
   analyse: "Analyse",
+  verbesserung: "Verbesserung",
 };
 
 const TAB_SUBTITLE: Record<AdminTab, string> = {
@@ -65,6 +68,8 @@ const TAB_SUBTITLE: Record<AdminTab, string> = {
     "Wissen · Offene Kundenfragen aus Beratungen beantworten & als Q&A veröffentlichen — für Produktseite & Mo",
   analyse:
     "Analyse · Komplettanalysen je Zeitintervall — alle KI-Auswertungen verdichtet, gespeichert & als PDF",
+  verbesserung:
+    "Verbesserung · Mo analysiert die Komplettanalyse & schlägt Verbesserungen vor — für den Shop & für sich selbst",
 };
 
 // The Übersicht tab is the bare /admin (the default landing tab); every other
@@ -85,6 +90,7 @@ export function AdminShell({
   gespraeche,
   wissen,
   analyse,
+  verbesserung,
 }: {
   initialTab: AdminTab;
   themeInitial: Theme | null;
@@ -97,6 +103,7 @@ export function AdminShell({
   gespraeche: React.ReactNode;
   wissen: React.ReactNode;
   analyse: React.ReactNode;
+  verbesserung: React.ReactNode;
 }) {
   const [tab, setTab] = React.useState<AdminTab>(initialTab);
 
@@ -117,6 +124,7 @@ export function AdminShell({
     gespraeche,
     wissen,
     analyse,
+    verbesserung,
   };
 
   // Graceful URL sync: keep the query param current so a refresh or a copied
@@ -188,7 +196,11 @@ export function AdminShell({
   // layouts that want the extra width; the other tabs stay comfortably centred
   // at the narrower measure.
   const containerWidth =
-    tab === "kunden" || tab === "kampagne" || tab === "gespraeche" || tab === "analyse"
+    tab === "kunden" ||
+    tab === "kampagne" ||
+    tab === "gespraeche" ||
+    tab === "analyse" ||
+    tab === "verbesserung"
       ? "max-w-7xl"
       : "max-w-5xl";
 

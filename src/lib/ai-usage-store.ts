@@ -54,6 +54,10 @@ export type AiCallSite =
   // Q&A pair (docs/QA_KNOWLEDGE.md, i18n). Dashboard/admin-side spend, no
   // conversation FK — the pair may outlive its source conversation.
   | "qa_translate"
+  // "Verbesserung" tab (docs/IMPROVEMENT_LOOP.md): the improvement engine's two
+  // passes (Wirkungs-Check + Vorschläge) over a completed Komplettanalyse.
+  // Dashboard/admin-side spend (no conversation FK).
+  | "improvement"
   | "embeddings"
   | "bundle_suggestions"
   // Text-to-speech for voice mode (/api/tts). NB: for this call site the

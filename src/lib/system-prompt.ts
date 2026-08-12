@@ -64,6 +64,11 @@ interface BuildPromptOpts {
     questionEn?: string;
     answerEn?: string;
   }>;
+  // Active team directives (the "Verbesserung" loop's live instruction layer,
+  // docs/IMPROVEMENT_LOOP.md) — short operator-approved behaviour adjustments,
+  // versioned in mo_directives. Empty/absent → the prompt is byte-identical to
+  // before the feature existed, exactly like generalQa.
+  directives?: Array<{ content: string }>;
   // Storefront-selected language. Default German — every legacy caller and the
   // German output stay byte-identical; "en" switches Mo to English.
   locale?: Locale;
