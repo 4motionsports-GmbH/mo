@@ -80,6 +80,7 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
     discountExpiresAt: q.draft.discountExpiresAt,
     lowConfidence: q.draft.lowConfidence,
     purchaseSummary: q.draft.purchaseSummary,
+    purchaseSelectedIds: q.draft.purchaseSelectedIds,
     recommendations: q.draft.recommendedProductIds.map((id) => {
       const p = productById.get(id);
       return { id, name: p?.name ?? id, url: p?.shopifyUrl ?? null };

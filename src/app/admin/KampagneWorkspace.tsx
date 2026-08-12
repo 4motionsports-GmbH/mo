@@ -30,6 +30,7 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -70,10 +71,19 @@ export interface CampaignQueueItemProps {
       createdAt: string | null;
       totalAmount: string | null;
       currencyCode: string | null;
-      items: Array<{ title: string | null; quantity: number }>;
+      items: Array<{
+        title: string | null;
+        quantity: number;
+        /** Catalog product id when the item maps to a current catalog product
+         * (selectable as recommendation basis); null/absent otherwise. */
+        productId?: string | null;
+      }>;
     }>;
     truncated: boolean;
   } | null;
+  /** Operator-narrowed purchase basis for the recommendations (product ids);
+   * null = all purchases (the default). */
+  purchaseSelectedIds: string[] | null;
   recommendations: Array<{ id: string; name: string; url: string | null }>;
   /** Attached ACTIVE bundle offer (docs/CAMPAIGNS.md §4), or null. */
   bundle: {
@@ -209,6 +219,7 @@ export function KampagneWorkspace({
     | "markdone"
     | "bundle"
     | "recs"
+    | "selection"
     | "discount"
     | "reset"
   >(null);
@@ -560,16 +571,25 @@ export function KampagneWorkspace({
     [current, patchItem]
   );
 
-  /** Regenerate a contact's draft with the current depth and patch the card.
-   * No busy guard — callers own the busy state so offer changes (products /
-   * discount / bundle) can CHAIN a regenerate in the same action. Throws on
-   * failure. */
+  /** Regenerate a contact's draft with the current depth and patch the card
+   * from the full response (text, recommendations, bundle, purchase basis) so
+   * the card never drifts from what was persisted. No busy guard — callers own
+   * the busy state so offer changes (products / discount / bundle) can CHAIN a
+   * regenerate in the same action. Throws on failure. */
   const runRegenerate = React.useCallback(
-    async (contactId: number, depth: number) => {
+    async (
+      contactId: number,
+      depth: number,
+      extra?: { refreshRecommendations?: boolean; purchaseSelection?: string[] | null }
+    ) => {
       const json = (await callApi("/api/admin/campaign/draft", {
         contactId,
         discountPercent: depth,
         regenerate: true,
+        ...(extra?.refreshRecommendations ? { refreshRecommendations: true } : {}),
+        ...(extra && "purchaseSelection" in extra
+          ? { purchaseSelection: extra.purchaseSelection }
+          : {}),
       })) as {
         draft?: {
           subject: string;
@@ -577,7 +597,11 @@ export function KampagneWorkspace({
           discountPercent: number;
           discountExpiresAt: string | null;
           lowConfidence: boolean;
+          purchaseSummary: CampaignQueueItemProps["purchaseSummary"];
+          purchaseSelectedIds: string[] | null;
         };
+        recommendations?: Array<{ id: string; name: string; url: string | null }>;
+        bundle?: CampaignQueueItemProps["bundle"];
       };
       if (json.draft) {
         const d = json.draft;
@@ -587,6 +611,10 @@ export function KampagneWorkspace({
           discountPercent: d.discountPercent,
           discountExpiresAt: d.discountExpiresAt,
           lowConfidence: d.lowConfidence,
+          purchaseSummary: d.purchaseSummary,
+          purchaseSelectedIds: d.purchaseSelectedIds,
+          ...(json.recommendations ? { recommendations: json.recommendations } : {}),
+          bundle: json.bundle ?? null,
         });
       }
     },
@@ -769,6 +797,36 @@ export function KampagneWorkspace({
       }
     },
     [current, busy, patchItem, runRegenerate]
+  );
+
+  /** Apply the operator's purchase-basis selection: persist it, recompute the
+   * recommendations from the selected purchases (an attached bundle is rebuilt
+   * to match) and regenerate the prose — one action, one server round-trip. */
+  const doApplyPurchaseSelection = React.useCallback(
+    async (selection: string[] | null) => {
+      if (!current || busy) return;
+      setBusy("selection");
+      try {
+        toast({
+          title: "Auswahl wird angewendet — Empfehlungen & Text werden neu erzeugt…",
+          duration: 0,
+        });
+        await runRegenerate(current.contactId, current.discountPercent, {
+          refreshRecommendations: true,
+          purchaseSelection: selection,
+        });
+        toast({ variant: "success", title: "Empfehlungen und Text aktualisiert" });
+      } catch (err) {
+        toast({
+          variant: "error",
+          title: "Auswahl konnte nicht angewendet werden",
+          description: String((err as Error).message ?? err),
+        });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [current, busy, runRegenerate]
   );
 
   /** Set the discount depth on the existing draft, then auto-regenerate the
@@ -1005,7 +1063,7 @@ export function KampagneWorkspace({
             onClick={doSync}
             disabled={busy !== null || !shopifyConfigured}
           >
-            <RefreshCw className="me-1.5 h-3.5 w-3.5" />
+            <RefreshCw className="h-3.5 w-3.5" />
             {busy === "sync" ? "Sync läuft…" : "Sync"}
           </Button>
           <span className="flex items-center gap-1.5">
@@ -1162,39 +1220,14 @@ export function KampagneWorkspace({
                   Umsatz
                 </div>
 
-                <div>
-                  <div className="mb-1 font-medium">Kaufhistorie</div>
-                  {current.purchaseSummary && current.purchaseSummary.orders.length > 0 ? (
-                    <ul className="space-y-1.5">
-                      {current.purchaseSummary.orders.map((o) => (
-                        <li key={o.name} className="rounded-md border border-border px-2.5 py-1.5">
-                          <div className="flex justify-between text-xs text-muted-foreground">
-                            <span>
-                              {o.name} · {formatDate(o.createdAt)}
-                            </span>
-                            <span>
-                              {o.totalAmount
-                                ? `${Number(o.totalAmount).toLocaleString("de-DE", {
-                                    style: "currency",
-                                    currency: o.currencyCode ?? "EUR",
-                                  })}`
-                                : ""}
-                            </span>
-                          </div>
-                          <div className="text-xs">
-                            {o.items
-                              .map((i) => `${i.quantity}× ${i.title ?? "?"}`)
-                              .join(", ")}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="text-xs text-muted-foreground">
-                      Keine Bestelldetails verfügbar.
-                    </div>
-                  )}
-                </div>
+                <PurchaseHistorySection
+                  key={`hist-${current.contactId}`}
+                  summary={current.purchaseSummary}
+                  appliedSelection={current.purchaseSelectedIds}
+                  busy={busy !== null}
+                  applying={busy === "selection"}
+                  onApply={doApplyPurchaseSelection}
+                />
 
                 <RecommendationsEditor
                   key={`recs-${current.contactId}`}
@@ -1253,45 +1286,42 @@ export function KampagneWorkspace({
                   </div>
                 )}
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button onClick={doSend} disabled={sendBlocked || busy !== null}>
-                    <Send className="me-1.5 h-4 w-4" />
-                    {busy === "send" ? "Sendet…" : "Senden"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={doPreview}
-                    disabled={emailViewBusy}
-                    title="Gerenderte E-Mail-Vorschau (inkl. Produktbilder, Mo-Hinweis, Rabattzeile und Footer)"
-                  >
-                    <Eye className="me-1.5 h-4 w-4" />
-                    {emailViewBusy ? "Lädt…" : "Vorschau"}
-                  </Button>
-                  <Button variant="outline" onClick={doCopy} disabled={busy !== null}>
-                    <Copy className="me-1.5 h-4 w-4" />
-                    Kopieren
-                  </Button>
-                  {copiedId === current.contactId && (
-                    <Button variant="outline" onClick={doMarkDone} disabled={busy !== null}>
-                      <Check className="me-1.5 h-4 w-4" />
-                      Als erledigt markieren
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button onClick={doSend} disabled={sendBlocked || busy !== null}>
+                      <Send className="h-4 w-4" />
+                      {busy === "send" ? "Sendet…" : "Senden"}
                     </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    onClick={() => doRegenerate(current.discountPercent)}
-                    disabled={busy !== null}
-                  >
-                    <RefreshCw className="me-1.5 h-4 w-4" />
-                    {busy === "regen" ? "Generiert…" : "↻ Neu generieren"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={doSkip}
-                    disabled={busy !== null}
-                    className="ms-auto"
-                  >
-                    <SkipForward className="me-1.5 h-4 w-4" />
+                    <Button
+                      variant="outline"
+                      onClick={doPreview}
+                      disabled={emailViewBusy}
+                      title="Gerenderte E-Mail-Vorschau (inkl. Produktbilder, Mo-Hinweis, Rabattzeile und Footer)"
+                    >
+                      <Eye className="h-4 w-4" />
+                      {emailViewBusy ? "Lädt…" : "Vorschau"}
+                    </Button>
+                    <Button variant="outline" onClick={doCopy} disabled={busy !== null}>
+                      <Copy className="h-4 w-4" />
+                      Kopieren
+                    </Button>
+                    {copiedId === current.contactId && (
+                      <Button variant="outline" onClick={doMarkDone} disabled={busy !== null}>
+                        <Check className="h-4 w-4" />
+                        Als erledigt markieren
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      onClick={() => doRegenerate(current.discountPercent)}
+                      disabled={busy !== null}
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      {busy === "regen" ? "Generiert…" : "Neu generieren"}
+                    </Button>
+                  </div>
+                  <Button variant="outline" onClick={doSkip} disabled={busy !== null}>
+                    <SkipForward className="h-4 w-4" />
                     Überspringen
                   </Button>
                 </div>
@@ -1364,6 +1394,178 @@ export function KampagneWorkspace({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/** Purchase history with the recommendation-basis selection: every purchased
+ * item that maps to a CURRENT catalog product gets a checkbox (all selected by
+ * default = the whole history is the basis). Changing the selection shows an
+ * apply button that recomputes the recommendations from the selected purchases
+ * and regenerates the text in one round-trip; the selection is persisted on
+ * the draft so later regenerates keep it. Items without a catalog match stay
+ * informational (they can't steer the similarity search). */
+function PurchaseHistorySection({
+  summary,
+  appliedSelection,
+  busy,
+  applying,
+  onApply,
+}: {
+  summary: CampaignQueueItemProps["purchaseSummary"];
+  appliedSelection: string[] | null;
+  busy: boolean;
+  applying: boolean;
+  onApply: (selection: string[] | null) => void;
+}) {
+  // All selectable product ids (catalog-matched purchases), first-seen order.
+  const selectableIds = React.useMemo(() => {
+    const ids: string[] = [];
+    for (const o of summary?.orders ?? []) {
+      for (const i of o.items) {
+        if (i.productId && !ids.includes(i.productId)) ids.push(i.productId);
+      }
+    }
+    return ids;
+  }, [summary]);
+
+  // The selection as APPLIED on the draft, clipped to what's selectable
+  // (null = all). Local checkbox state seeds from it and re-seeds after an
+  // apply round-trip patches the card.
+  const appliedIds = React.useMemo(
+    () =>
+      appliedSelection === null
+        ? selectableIds
+        : selectableIds.filter((id) => appliedSelection.includes(id)),
+    [appliedSelection, selectableIds]
+  );
+  const [selected, setSelected] = React.useState<Set<string>>(() => new Set(appliedIds));
+  const appliedKey = appliedIds.join("|");
+  React.useEffect(() => {
+    setSelected(new Set(appliedIds));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appliedKey]);
+
+  const dirty =
+    selected.size !== appliedIds.length || appliedIds.some((id) => !selected.has(id));
+  const allSelected = selectableIds.length > 0 && selected.size === selectableIds.length;
+
+  // Drafts saved before the selection feature lack the productId field
+  // entirely — a regenerate refreshes the snapshot and enables the checkboxes.
+  const legacySummary =
+    selectableIds.length === 0 &&
+    (summary?.orders ?? []).some((o) => o.items.some((i) => !("productId" in i)));
+
+  const toggle = (productId: string, checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(productId);
+      else next.delete(productId);
+      return next;
+    });
+  };
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="font-medium">Kaufhistorie</span>
+        {selectableIds.length > 1 && (
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+            <Checkbox
+              className="size-3.5"
+              checked={allSelected}
+              indeterminate={selected.size > 0 && !allSelected}
+              disabled={busy}
+              onChange={(e) =>
+                setSelected(e.target.checked ? new Set(selectableIds) : new Set())
+              }
+            />
+            Alle
+          </label>
+        )}
+      </div>
+      {summary && summary.orders.length > 0 ? (
+        <ul className="space-y-1.5">
+          {summary.orders.map((o) => (
+            <li key={o.name} className="rounded-md border border-border px-2.5 py-1.5">
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>
+                  {o.name} · {formatDate(o.createdAt)}
+                </span>
+                <span>
+                  {o.totalAmount
+                    ? `${Number(o.totalAmount).toLocaleString("de-DE", {
+                        style: "currency",
+                        currency: o.currencyCode ?? "EUR",
+                      })}`
+                    : ""}
+                </span>
+              </div>
+              <div className="mt-0.5 space-y-0.5">
+                {o.items.map((i, idx) =>
+                  i.productId ? (
+                    <label
+                      key={idx}
+                      className="flex cursor-pointer items-start gap-1.5 text-xs"
+                    >
+                      <Checkbox
+                        className="mt-px size-3.5"
+                        checked={selected.has(i.productId)}
+                        disabled={busy}
+                        onChange={(e) => toggle(i.productId as string, e.target.checked)}
+                      />
+                      <span>
+                        {i.quantity}× {i.title ?? "?"}
+                      </span>
+                    </label>
+                  ) : (
+                    <div key={idx} className="ps-5 text-xs text-muted-foreground">
+                      {i.quantity}× {i.title ?? "?"}
+                    </div>
+                  )
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="text-xs text-muted-foreground">Keine Bestelldetails verfügbar.</div>
+      )}
+      {selectableIds.length > 0 && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          {appliedSelection !== null && !dirty
+            ? `Empfehlungsbasis: ${appliedIds.length} von ${selectableIds.length} Käufen ausgewählt.`
+            : "Ausgewählte Käufe sind die Basis für Empfehlungen und Text."}
+        </p>
+      )}
+      {legacySummary && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Kaufauswahl wird nach „Neu generieren“ verfügbar.
+        </p>
+      )}
+      {dirty && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <Button
+            size="sm"
+            onClick={() => onApply(allSelected ? null : [...selected])}
+            disabled={busy || selected.size === 0}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {applying ? "Erzeugt neu…" : "Empfehlungen & Text neu erzeugen"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelected(new Set(appliedIds))}
+            disabled={busy}
+          >
+            Verwerfen
+          </Button>
+          {selected.size === 0 && (
+            <span className="text-xs text-warning">Mindestens einen Kauf auswählen.</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1945,7 +2147,7 @@ function SentHistory({
               <td className="px-3 py-2">
                 {h.hasContent ? (
                   <Button variant="outline" size="sm" disabled={viewBusy} onClick={() => onView(h)}>
-                    <Eye className="me-1 h-3.5 w-3.5" />
+                    <Eye className="h-3.5 w-3.5" />
                     Ansehen
                   </Button>
                 ) : (

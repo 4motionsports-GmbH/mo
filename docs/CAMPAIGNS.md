@@ -143,6 +143,15 @@ fallback discipline as `marketing-draft.ts`):
    embedding similarity (catalog embeddings + `retrieval.cosine` — no vector
    DB), excluding owned items, filtered through `filterAvailable`. No catalog
    match → representative fallback picks + `low_confidence` flag on the card.
+   The similarity **basis** defaults to ALL catalog-matched purchases; the
+   review card can narrow it to selected purchases (migration `0043`,
+   `purchase_selected_ids` on the draft — see §5). Deselecting a purchase
+   never makes it recommendable: owned products stay excluded from the
+   candidates regardless of the basis.
+   A **regenerate preserves the draft's stored product list** (auto-picked or
+   manually curated) so the prose, the picture grid and the review card can
+   never drift apart; recommendations are recomputed only for the first
+   draft or an explicit basis change (`refreshRecommendations`).
 4. Optional discount block — the **exact existing mechanism**: admin picks
    0–50 % (`discount-validation.mjs`), the draft weaves in the
    `MO-XXXX` placeholder + projected expiry
@@ -204,7 +213,19 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   the sync-fresh catalog, refuses sold-out products, clears `low_confidence`)
   and an attached bundle offer is **rebuilt to match** (snapshots are
   immutable, so "update" = archive + recreate through the unchanged bundle
-  mechanism). The prose only changes on "↻ Neu generieren" — the UI says so.
+  mechanism). The UI then chains a regenerate; because a regenerate
+  preserves the stored list (§4.3), the fresh prose talks about exactly the
+  curated products.
+- **Purchase basis** is selectable: every purchased item that maps to a
+  current catalog product gets a checkbox in the card's Kaufhistorie (all
+  selected = default). Changing the selection and clicking "Empfehlungen &
+  Text neu erzeugen" recomputes the recommendations from the selected
+  purchases, focuses the prose's purchase reference on them, rebuilds an
+  attached bundle, and regenerates the text — one round-trip
+  (`POST /api/admin/campaign/draft` with `refreshRecommendations` +
+  `purchaseSelection`). The selection persists on the draft
+  (`purchase_selected_ids`, migration `0043`), so later regenerates /
+  discount changes / language switches keep the same basis.
 - **Discount** can be set/changed/cleared AFTER generation
   (`POST /api/admin/campaign/discount`): the depth lives on the draft, the
   real MK- code + deadline ship deterministically outside the prose, and the
@@ -279,7 +300,7 @@ out of the sync ages out; drafts cascade with their contact). The
 | Sync (admin) | `POST /api/admin/campaign/sync` |
 | Sync (cron, daily) | `GET/POST /api/cron/sync-campaign-audience` (`CRON_SECRET`) |
 | Batch prepare | `POST /api/admin/campaign/prepare` |
-| Single draft / regenerate | `POST /api/admin/campaign/draft` |
+| Single draft / regenerate / purchase-basis selection | `POST /api/admin/campaign/draft` |
 | Save edits | `POST /api/admin/campaign/update` |
 | Curate recommendations (+ bundle rebuild) | `POST /api/admin/campaign/recommendations` |
 | Set discount post-generation | `POST /api/admin/campaign/discount` |

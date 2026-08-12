@@ -62,6 +62,12 @@ export interface GenerateCampaignDraftInput extends DraftDiscountInput {
   firstName: string | null;
   /** Compact order snapshot (titles/dates/totals) the prose references. */
   purchaseSummary: CampaignPurchaseSummary | null;
+  /**
+   * Titles of the purchased products the operator selected as the basis
+   * (review-card purchase selection) — the prose's purchase reference sticks
+   * to THESE. Null = no narrowing (any purchase may be referenced).
+   */
+  focusPurchaseTitles?: string[] | null;
   /** The 2–3 products the email recommends (owned items already excluded). */
   recommendations: CampaignRecommendationInput[];
   /** True when the recommendations are representative fallbacks. */
@@ -343,6 +349,15 @@ export async function generateCampaignDraft(
         `Sprache der E-Mail: ${en ? "Englisch" : "Deutsch"}\n\n` +
         `## Kaufhistorie (nur als Kontext — NICHT aufzählen)\n` +
         `${purchaseBlock(input.purchaseSummary, input.language)}\n\n` +
+        (input.focusPurchaseTitles && input.focusPurchaseTitles.length > 0
+          ? en
+            ? `Focus: when referring to the purchase history, refer ONLY to ` +
+              `the following purchase(s) — do not mention the other ones: ` +
+              `${input.focusPurchaseTitles.join(", ")}\n\n`
+            : `Fokus: Beziehe dich bei der Kaufhistorie AUSSCHLIESSLICH auf ` +
+              `folgende(n) Kauf/Käufe — erwähne die übrigen Käufe nicht: ` +
+              `${input.focusPurchaseTitles.join(", ")}\n\n`
+          : "") +
         (input.lowConfidence
           ? `Hinweis: Die Käufe konnten keinem aktuellen Katalogprodukt zugeordnet ` +
             `werden — bleibe bei der Kaufhistorie deshalb ALLGEMEIN (kein konkretes ` +

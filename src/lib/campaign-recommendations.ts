@@ -42,8 +42,14 @@ export interface CampaignRecommendations {
   lowConfidence: boolean;
 }
 
-/** Compact the full Shopify order history into the review-card snapshot. */
-export function compactPurchaseSummary(history: OrderHistory): CampaignPurchaseSummary {
+/** Compact the full Shopify order history into the review-card snapshot.
+ * `catalogIds` marks which purchased handles map to a CURRENT catalog product
+ * (item.productId) — those items are selectable as the recommendation basis in
+ * the review card; unmatched items stay informational. */
+export function compactPurchaseSummary(
+  history: OrderHistory,
+  catalogIds?: Set<string>
+): CampaignPurchaseSummary {
   return {
     orders: history.orders.slice(0, SUMMARY_MAX_ORDERS).map((o) => ({
       name: o.name,
@@ -53,6 +59,7 @@ export function compactPurchaseSummary(history: OrderHistory): CampaignPurchaseS
       items: o.items.slice(0, SUMMARY_MAX_ITEMS_PER_ORDER).map((i) => ({
         title: i.title,
         quantity: i.quantity,
+        productId: i.handle && catalogIds?.has(i.handle) ? i.handle : null,
       })),
     })),
     truncated:
@@ -95,9 +102,15 @@ function representativePicks(candidates: Product[]): Product[] {
  * Pick recommendations for a contact from their (already-fetched) order
  * history. Pure over its inputs apart from the catalog/embeddings loads —
  * callers pass the history so the Shopify read happens exactly once per draft.
+ *
+ * `selectedProductIds` narrows the SIMILARITY BASIS to those owned products
+ * (review-card purchase selection); null/undefined = all owned products. The
+ * exclusion of already-owned products from the candidates always covers the
+ * FULL owned set — deselecting a purchase never makes it recommendable.
  */
 export async function pickCampaignRecommendations(
-  history: OrderHistory | null
+  history: OrderHistory | null,
+  selectedProductIds?: string[] | null
 ): Promise<CampaignRecommendations> {
   const [catalog, embeddings] = await Promise.all([loadProductCatalog(), loadEmbeddings()]);
   const byId = new Map(catalog.map((p) => [p.id, p]));
@@ -118,8 +131,14 @@ export async function pickCampaignRecommendations(
     return { products: [], ownedProductIds, lowConfidence: true };
   }
 
+  // The similarity basis: the operator's narrowed selection when given (only
+  // ids that are actually owned count), else every owned product.
+  const basisIds = selectedProductIds
+    ? ownedProductIds.filter((id) => selectedProductIds.includes(id))
+    : ownedProductIds;
+
   const vectorIndex = new Map(embeddings.items.map((it) => [it.id, it.vector]));
-  const ownedVectors = ownedProductIds
+  const ownedVectors = basisIds
     .map((id) => vectorIndex.get(id))
     .filter((v): v is number[] => Array.isArray(v) && v.length > 0);
 
@@ -163,16 +182,23 @@ export async function pickCampaignRecommendations(
  * whether that blocks the draft (it doesn't; the summary is then empty and the
  * picks are low-confidence fallbacks).
  */
-export async function loadCampaignPersonalization(email: string): Promise<{
+export async function loadCampaignPersonalization(
+  email: string,
+  selectedProductIds?: string[] | null
+): Promise<{
   history: OrderHistory | null;
   purchaseSummary: CampaignPurchaseSummary | null;
   recommendations: CampaignRecommendations;
 }> {
   const history = await fetchOrderHistoryByEmail(email);
-  const recommendations = await pickCampaignRecommendations(history);
+  const recommendations = await pickCampaignRecommendations(history, selectedProductIds);
+  // Catalog-matched purchases (= the selectable basis) are exactly the owned
+  // ids the picker resolved — the summary marks them for the review card.
   return {
     history,
-    purchaseSummary: history ? compactPurchaseSummary(history) : null,
+    purchaseSummary: history
+      ? compactPurchaseSummary(history, new Set(recommendations.ownedProductIds))
+      : null,
     recommendations,
   };
 }

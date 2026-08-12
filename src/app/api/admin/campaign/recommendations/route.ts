@@ -9,8 +9,9 @@
 // unchanged bundle mechanism. A bundle rebuild failure never loses the saved
 // recommendations; it is reported so the admin can retry.
 //
-// The PROSE is not touched — the admin regenerates when the text should
-// reflect the new picks (the UI says so). Auth + CSRF via guardAdminPost.
+// The PROSE is not touched here — the UI chains a regenerate right after,
+// which PRESERVES this curated list (prepareDraftForContact), so the fresh
+// text talks about exactly these products. Auth + CSRF via guardAdminPost.
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import {
