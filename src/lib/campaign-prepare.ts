@@ -21,8 +21,12 @@ import {
 import { generateCampaignDraft } from "./campaign-draft";
 import { loadCampaignPersonalization } from "./campaign-recommendations";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
+import { archiveBundleOffer, createBundleOffer } from "./bundle-offers";
 import { bundleStattPrice } from "./bundle-email-core.mjs";
+import { getProductsByIds } from "./product-catalog";
+import { isAvailable } from "./availability.mjs";
 import {
+  getDraftForContact,
   listNextPendingContacts,
   markContactDraftFailed,
   saveCampaignDraft,
@@ -39,17 +43,89 @@ function projectedExpiry(): Date {
   return new Date(Date.now() + discountExpiryDaysPublic() * 86_400_000);
 }
 
+export interface PrepareDraftOptions {
+  /**
+   * Recompute the recommended products from the (possibly narrowed) purchase
+   * basis instead of PRESERVING the draft's stored list. Default false: a
+   * plain regenerate (text, discount depth, language) keeps the products the
+   * card shows — including manual curation — so the prose and the picture grid
+   * can never drift apart from the review card.
+   */
+  refreshRecommendations?: boolean;
+  /**
+   * New purchase-basis selection to persist (catalog product ids; null = all
+   * purchases). Omit to keep the draft's stored selection.
+   */
+  purchaseSelection?: string[] | null;
+}
+
 /**
  * Generate + persist the draft for ONE contact. Throws on failure — batch
  * callers catch per contact. Returns null only when the DB vanished mid-run.
  */
 export async function prepareDraftForContact(
   contact: CampaignContactRow,
-  discountPercent: number
+  discountPercent: number,
+  opts: PrepareDraftOptions = {}
 ): Promise<CampaignDraftRow | null> {
-  const { purchaseSummary, recommendations } = await loadCampaignPersonalization(
-    contact.email
+  const existing = await getDraftForContact(contact.id);
+  // The effective purchase basis: an explicit new selection wins, else the
+  // draft's stored one, else all purchases.
+  const purchaseSelection =
+    opts.purchaseSelection !== undefined
+      ? opts.purchaseSelection
+      : (existing?.purchaseSelectedIds ?? null);
+
+  const { history, purchaseSummary, recommendations } = await loadCampaignPersonalization(
+    contact.email,
+    purchaseSelection
   );
+
+  // Which products the email recommends: preserve the draft's stored list
+  // (auto-picked or manually curated) on a plain regenerate; recompute only
+  // for the first draft or an explicit refresh. Stored products that dropped
+  // out of the catalog / went out of stock are silently dropped; when nothing
+  // survives, fall back to a fresh auto-pick.
+  let recommendedProducts = recommendations.products;
+  let lowConfidence = recommendations.lowConfidence;
+  if (!opts.refreshRecommendations && existing && existing.recommendedProductIds.length > 0) {
+    const stored = (await getProductsByIds(existing.recommendedProductIds)).filter((p) =>
+      isAvailable(p)
+    );
+    if (stored.length > 0) {
+      recommendedProducts = stored;
+      lowConfidence = existing.lowConfidence;
+    }
+  }
+
+  // An explicit recommendation refresh keeps an attached bundle in sync with
+  // the new product set: snapshots are immutable, so "update" = archive + new
+  // offer from the fresh picks (same rule as the /recommendations route).
+  if (opts.refreshRecommendations && recommendedProducts.length > 0) {
+    const active = await getActiveBundleForCampaignContact(contact.id);
+    const newIds = recommendedProducts.map((p) => p.id);
+    const sameSet =
+      active &&
+      active.components.length === newIds.length &&
+      active.components.every((c) => newIds.includes(c.productId));
+    if (active && !sameSet) {
+      const archived = await archiveBundleOffer(active.id);
+      if (archived.ok) {
+        const created = await createBundleOffer(
+          null,
+          newIds.map((productId) => ({ productId })),
+          { campaignContactId: contact.id }
+        );
+        if (!created.ok) {
+          reportError(new Error(`Bundle rebuild failed: ${created.message}`), {
+            route: "lib/campaign-prepare",
+            phase: "rebuildBundle",
+            contactId: String(contact.id),
+          });
+        }
+      }
+    }
+  }
 
   const hasDiscount = discountPercent > 0;
   const expiry = hasDiscount ? projectedExpiry() : null;
@@ -68,16 +144,32 @@ export async function prepareDraftForContact(
       }
     : null;
 
+  // A narrowed basis also steers the PROSE: the purchase reference sticks to
+  // the selected products (titles resolved from the fetched history).
+  const focusPurchaseTitles =
+    purchaseSelection && history
+      ? [
+          ...new Set(
+            history.orders
+              .flatMap((o) => o.items)
+              .filter((i) => i.handle && purchaseSelection.includes(i.handle))
+              .map((i) => i.title)
+              .filter((t): t is string => Boolean(t))
+          ),
+        ]
+      : null;
+
   const draft = await generateCampaignDraft({
     language: contact.language,
     firstName: contact.firstName,
     purchaseSummary,
-    recommendations: recommendations.products.map((p) => ({
+    focusPurchaseTitles,
+    recommendations: recommendedProducts.map((p) => ({
       name: p.name,
       url: p.shopifyUrl,
       category: p.category || null,
     })),
-    lowConfidence: recommendations.lowConfidence,
+    lowConfidence,
     attachedBundle,
     discountCode: hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountPercent,
@@ -96,8 +188,9 @@ export async function prepareDraftForContact(
     discountPercent,
     discountExpiresAt: expiry ? expiry.toISOString() : null,
     purchaseSummary,
-    recommendedProductIds: recommendations.products.map((p) => p.id),
-    lowConfidence: recommendations.lowConfidence,
+    recommendedProductIds: recommendedProducts.map((p) => p.id),
+    purchaseSelectedIds: purchaseSelection,
+    lowConfidence,
   });
 }
 

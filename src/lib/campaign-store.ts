@@ -60,7 +60,15 @@ export interface CampaignPurchaseSummary {
     createdAt: string | null;
     totalAmount: string | null;
     currencyCode: string | null;
-    items: Array<{ title: string | null; quantity: number }>;
+    items: Array<{
+      title: string | null;
+      quantity: number;
+      /** Catalog product id (= Shopify handle) when the purchased item maps to
+       * a current catalog product — the key the purchase-basis selection uses.
+       * Null/absent = unmatched (old/removed item; drafts saved before
+       * migration 0043 have no value at all). */
+      productId?: string | null;
+    }>;
   }>;
   /** True when the underlying Shopify read may have been truncated. */
   truncated: boolean;
@@ -75,6 +83,9 @@ export interface CampaignDraftRow {
   discountExpiresAt: string | null;
   purchaseSummary: CampaignPurchaseSummary | null;
   recommendedProductIds: string[];
+  /** Operator-narrowed purchase basis for the recommendations (catalog product
+   * ids). NULL = all past purchases (the default). Survives regenerates. */
+  purchaseSelectedIds: string[] | null;
   lowConfidence: boolean;
   createdAt: string | null;
   updatedAt: string | null;
@@ -123,6 +134,9 @@ function mapDraftRow(r: Record<string, unknown>): CampaignDraftRow {
     recommendedProductIds: Array.isArray(r.recommended_product_ids)
       ? (r.recommended_product_ids as string[])
       : [],
+    purchaseSelectedIds: Array.isArray(r.purchase_selected_ids)
+      ? (r.purchase_selected_ids as string[])
+      : null,
     lowConfidence: r.low_confidence === true,
     createdAt: toIso(r.created_at),
     updatedAt: toIso(r.updated_at),
@@ -333,6 +347,7 @@ export async function listDraftedQueue(
              d.discount_expires_at AS d_discount_expires_at,
              d.purchase_summary AS d_purchase_summary,
              d.recommended_product_ids AS d_recommended_product_ids,
+             d.purchase_selected_ids AS d_purchase_selected_ids,
              d.low_confidence AS d_low_confidence,
              d.created_at AS d_created_at, d.updated_at AS d_updated_at
         FROM campaign_contacts c
@@ -352,6 +367,7 @@ export async function listDraftedQueue(
         discount_expires_at: r.d_discount_expires_at,
         purchase_summary: r.d_purchase_summary,
         recommended_product_ids: r.d_recommended_product_ids,
+        purchase_selected_ids: r.d_purchase_selected_ids,
         low_confidence: r.d_low_confidence,
         created_at: r.d_created_at,
         updated_at: r.d_updated_at,
@@ -542,6 +558,8 @@ export interface SaveCampaignDraftInput {
   discountExpiresAt: string | null;
   purchaseSummary: CampaignPurchaseSummary | null;
   recommendedProductIds: string[];
+  /** Narrowed purchase basis to persist (null = all purchases). */
+  purchaseSelectedIds: string[] | null;
   lowConfidence: boolean;
 }
 
@@ -559,13 +577,14 @@ export async function saveCampaignDraft(
   const rows = (await sql`
     INSERT INTO campaign_drafts
       (contact_id, subject, body, discount_percent, discount_expires_at,
-       purchase_summary, recommended_product_ids, low_confidence,
-       created_at, updated_at)
+       purchase_summary, recommended_product_ids, purchase_selected_ids,
+       low_confidence, created_at, updated_at)
     VALUES
       (${input.contactId}, ${input.subject}, ${input.body},
        ${input.discountPercent}, ${input.discountExpiresAt},
        ${input.purchaseSummary ? JSON.stringify(input.purchaseSummary) : null}::jsonb,
-       ${input.recommendedProductIds}::text[], ${input.lowConfidence},
+       ${input.recommendedProductIds}::text[],
+       ${input.purchaseSelectedIds}::text[], ${input.lowConfidence},
        now(), now())
     ON CONFLICT (contact_id) DO UPDATE SET
       subject                 = EXCLUDED.subject,
@@ -574,6 +593,7 @@ export async function saveCampaignDraft(
       discount_expires_at     = EXCLUDED.discount_expires_at,
       purchase_summary        = EXCLUDED.purchase_summary,
       recommended_product_ids = EXCLUDED.recommended_product_ids,
+      purchase_selected_ids   = EXCLUDED.purchase_selected_ids,
       low_confidence          = EXCLUDED.low_confidence,
       updated_at              = now()
     RETURNING *
