@@ -47,6 +47,7 @@ import { GespraecheTab } from "./GespraecheTab";
 import { WissenTab } from "./WissenTab";
 import { OverviewTab } from "./OverviewTab";
 import { AnalyseTab } from "./AnalyseTab";
+import { VerbesserungTab } from "./VerbesserungTab";
 import { KampagneTab } from "./KampagneTab";
 import { AdminShell, type AdminTab } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
@@ -80,6 +81,8 @@ export default async function AdminDashboardPage({
             ? "wissen"
             : sp?.tab === "analyse"
               ? "analyse"
+            : sp?.tab === "verbesserung"
+              ? "verbesserung"
             : sp?.tab === "kampagne"
               ? "kampagne"
               : sp?.tab === "kunden" || sp?.tab === "customers"
@@ -152,6 +155,7 @@ export default async function AdminDashboardPage({
       gespraeche={<GespraecheTab dbReady={dbReady} filter={convFilter} />}
       wissen={<WissenTab dbReady={dbReady} />}
       analyse={<AnalyseTab dbReady={dbReady} />}
+      verbesserung={<VerbesserungTab dbReady={dbReady} />}
     />
   );
 }

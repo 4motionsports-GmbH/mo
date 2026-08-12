@@ -6,7 +6,7 @@ generates a personalised draft email, edits it, and approves it — after which 
 
 It is deliberately small: a single shared admin password, a handful of tabs
 (**Übersicht**, **Kunden**, **Kampagne**, **KPIs**, **Feedback**,
-**Gespräche**, **Wissen** and **Analyse**), and a send path that concentrates every legal
+**Gespräche**, **Wissen**, **Analyse** and **Verbesserung**), and a send path that concentrates every legal
 guarantee in one place. There is no standalone Marketing tab — the marketing
 capability lives **inside the Kunden workspace** (a marketing filter preset,
 a per-customer "Marketing" sub-section, and a bulk-draft bar). Tabs are
@@ -874,3 +874,20 @@ product context, with an immediate targeted catalog refresh); general pairs
 enter Mo's system-prompt knowledge base. Full flow, files, Shopify
 prerequisites (write_products scope, `custom.qa` metafield definition) and
 cost notes: see docs/QA_KNOWLEDGE.md.
+
+## Verbesserung tab — the closed improvement loop (`?tab=verbesserung`)
+
+Mo reads a **completed Komplettanalyse** together with his own current
+configuration (the rendered system prompt, tools, personas, knowledge and team
+directives — hashed as a prompt version) and produces evidence-based
+improvement suggestions in two lanes: the **online store** and **Mo himself**.
+Suggestions carry an operator lifecycle (open → accepted → implemented /
+dismissed); every new run first runs an honest **Wirkungs-Check** — did the
+previously decided measures move the comparable KPI rates? — which is what
+closes the loop. `mo`-lane suggestions of category `anweisung` ship a
+ready-made directive text the operator can adopt with one click into the
+**live, versioned team-directive layer** of the system prompt (bounded, cached
+like the Q&A knowledge block, full append-only history; the core prompt stays
+in git). The Gespräche boundary is unchanged: nothing is ever applied
+automatically — the engine only proposes. Full design, tables (migration
+0044), routes and honesty rules: see [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md).

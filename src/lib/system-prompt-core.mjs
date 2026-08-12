@@ -481,6 +481,30 @@ function renderGeneralKnowledgeQa(generalQa, locale) {
 }
 
 // ---------------------------------------------------------------------------
+// Live team directives (the "Verbesserung" loop's editable instruction layer,
+// docs/IMPROVEMENT_LOOP.md). Injected like the Q&A knowledge base: empty/absent
+// → empty string, so the prompt stays byte-identical without the feature. The
+// directive texts are maintained in German (the admin's language); the English
+// prompt injects them unchanged under an English framing — Mo handles the
+// language switch himself, exactly like un-translated Q&A pairs.
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {Array<{ content: string }> | undefined} directives
+ * @param {"de" | "en"} locale
+ */
+function renderTeamDirectives(directives, locale) {
+  const entries = (Array.isArray(directives) ? directives : [])
+    .filter((d) => d && typeof d.content === "string" && d.content.trim())
+    .slice(0, 20);
+  if (entries.length === 0) return "";
+  const lines = entries.map((d, i) => `${i + 1}. ${clipText(d.content.trim(), 600)}`);
+  return locale === "en"
+    ? `\n\n## Current instructions from the motion sports team\n\nThe team has left the following standing instructions for you (in German). They refine your behaviour; if one ever conflicts with your core rules or legal limits above, the core rules win:\n\n${lines.join("\n")}`
+    : `\n\n## Aktuelle Anweisungen vom motion sports Team\n\nDas Team hat folgende Anweisungen für dich hinterlegt. Sie verfeinern dein Verhalten; falls eine davon deinen Grundregeln oder rechtlichen Grenzen oben widerspricht, gelten die Grundregeln:\n\n${lines.join("\n")}`;
+}
+
+// ---------------------------------------------------------------------------
 // Email-summary offer section (value-triggered capture)
 // ---------------------------------------------------------------------------
 
@@ -864,6 +888,7 @@ export function greetingTriggerText(locale, ctx) {
  *   browsingContext?: object,
  *   customerMemory?: object,
  *   generalQa?: Array<{ question: string, answer: string }>,
+ *   directives?: Array<{ content: string }>,
  *   locale?: "de" | "en",
  * }} opts
  * @returns {string}
@@ -877,6 +902,7 @@ export function buildSystemPrompt({
   customerMemory,
   emailOffer,
   generalQa,
+  directives,
   locale = "de",
 }) {
   const profileBlock = renderProfileForPrompt(profile, locale);
@@ -884,6 +910,7 @@ export function buildSystemPrompt({
   const archetypeLabel = archetypePromptLabel(archetype, locale);
   const productsBlock = renderRetrievedProducts(retrievedProducts, locale);
   const generalQaBlock = renderGeneralKnowledgeQa(generalQa, locale);
+  const directivesBlock = renderTeamDirectives(directives, locale);
   const productContextBlock = productContext
     ? `\n\n${renderProductContext(productContext, locale)}`
     : "";
@@ -999,7 +1026,7 @@ ${emailOfferSection}
 
 > Background context for research — NOT a card list. Product cards arise solely from your \`show_product\` calls. Recommend deliberately and card exactly what you recommended, instead of working through this list.
 
-${productsBlock}${generalQaBlock}
+${productsBlock}${generalQaBlock}${directivesBlock}
 
 ## Additional knowledge
 
@@ -1126,7 +1153,7 @@ ${emailOfferSection}
 
 > Hintergrund-Kontext zum Recherchieren — KEINE Karten-Liste. Produktkarten entstehen ausschließlich durch deine \`show_product\`-Aufrufe. Empfiehl gezielt und karte genau das Empfohlene, statt diese Liste durchzukarten.
 
-${productsBlock}${generalQaBlock}
+${productsBlock}${generalQaBlock}${directivesBlock}
 
 ## Zusatzwissen
 

@@ -21,6 +21,7 @@ import { sanitizeToolParts } from "@/lib/chat-message-sanitize.mjs";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
 import { getCachedGeneralQa } from "@/lib/qa-store";
+import { getCachedActiveDirectives } from "@/lib/directives-store";
 import { getProductById, getProductsByIds, loadProductCatalog } from "@/lib/product-catalog";
 import {
   recommendedCardIdsInOrder,
@@ -288,7 +289,7 @@ export async function POST(req: Request) {
       return null;
     })();
 
-    const [hits, customerMemory, emailOfferDeclined, generalQa] = await Promise.all([
+    const [hits, customerMemory, emailOfferDeclined, generalQa, directives] = await Promise.all([
       latestUserText
         ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
         : Promise.resolve([]),
@@ -305,6 +306,10 @@ export async function POST(req: Request) {
       // "Wissen" feature) — in-memory cached (5 min TTL), so this is free on
       // most turns and never breaks the chat (errors → []).
       getCachedGeneralQa(),
+      // Active team directives (the "Verbesserung" loop's live instruction
+      // layer) — same TTL-cache + never-throws contract as the Q&A block; an
+      // empty list leaves the prompt byte-identical.
+      getCachedActiveDirectives(),
       // EAGER CREATE (concurrent with retrieval, best-effort, result unused): a
       // started conversation is durably created + customer-linked NOW, before the
       // stream — so a "Neue Beratung" thread appears in the signed-in history
@@ -446,6 +451,7 @@ export async function POST(req: Request) {
               emailCaptured,
             },
             generalQa,
+            directives,
             locale,
           }),
           providerOptions: cacheEphemeral,

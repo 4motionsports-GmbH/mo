@@ -251,3 +251,78 @@ test("pivot + greeting trigger notes localise", () => {
   assert.match(greetingTriggerText("de", {}), /sich der Nutzer im Shop umgesehen/);
   assert.match(greetingTriggerText("en", {}), /browsed the shop/);
 });
+
+// ── Team directives (the "Verbesserung" loop's live instruction layer) ────────
+
+test("empty/absent directives leave the prompt byte-identical (both locales)", () => {
+  for (const locale of ["de", "en"]) {
+    const base = buildSystemPrompt({
+      profile: emptyProfile(),
+      archetype: "unknown",
+      retrievedProducts: [],
+      locale,
+    });
+    const withEmpty = buildSystemPrompt({
+      profile: emptyProfile(),
+      archetype: "unknown",
+      retrievedProducts: [],
+      directives: [],
+      locale,
+    });
+    assert.equal(withEmpty, base);
+    assert.doesNotMatch(base, /Anweisungen vom motion sports Team/);
+    assert.doesNotMatch(base, /instructions from the motion sports team/);
+  }
+});
+
+test("active directives render as a numbered team-instruction section", () => {
+  const directives = [
+    { content: "Weise bei Speditionsware proaktiv auf die Bordsteinkanten-Lieferung hin." },
+    { content: "Erwähne den Showroom bei Produkten über 500 €." },
+  ];
+  const de = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    directives,
+    locale: "de",
+  });
+  assert.match(de, /## Aktuelle Anweisungen vom motion sports Team/);
+  assert.match(de, /1\. Weise bei Speditionsware/);
+  assert.match(de, /2\. Erwähne den Showroom/);
+  // Placed before the Zusatzwissen block, like the knowledge base.
+  assert.ok(de.indexOf("Aktuelle Anweisungen") < de.indexOf("## Zusatzwissen"));
+
+  // English prompt injects the (German) directives under the English framing.
+  const en = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    directives,
+    locale: "en",
+  });
+  assert.match(en, /## Current instructions from the motion sports team/);
+  assert.match(en, /1\. Weise bei Speditionsware/);
+});
+
+test("directive rendering is bounded: blank entries dropped, long text clipped, max 20", () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ content: `Anweisung ${i + 1}` }));
+  const de = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    directives: [{ content: "   " }, ...many],
+    locale: "de",
+  });
+  assert.match(de, /20\. Anweisung 20/);
+  assert.doesNotMatch(de, /Anweisung 21/);
+
+  const clipped = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    directives: [{ content: "x".repeat(700) }],
+    locale: "de",
+  });
+  assert.doesNotMatch(clipped, /x{601}/);
+});
