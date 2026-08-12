@@ -246,21 +246,16 @@ function stripCodeFences(text) {
 }
 
 /**
- * Parse + validate the suggestions pass output. Expected shape:
- *   { "vorschlaege": [ { lane, category, title, rationale, proposal,
- *                        directive?, expected_effect?, impact?, effort?,
- *                        evidence? } ] }
- * Never throws. Invalid items are dropped; a malformed payload returns
- * { ok: false } so the caller can fail the run with a clear message. The
- * returned items are clamped, validated against the lane vocabularies and
- * capped at `max` (default MAX_SUGGESTIONS_PER_RUN). When `lane` is given
- * (the per-lane passes), items of any other lane are dropped instead of kept —
- * each pass owns exactly one lane.
+ * Parse + validate the suggestions pass output from free TEXT. Kept as the
+ * fallback path (and for tests); the engine now gets an already-parsed object
+ * from structured generation and calls normalizeSuggestionsPayload directly —
+ * free-text JSON from the model proved fragile in production (literal
+ * newlines inside strings, truncation → "invalid_json").
  *
  * @param {string} text
  * @param {{ lane?: "shop" | "mo" | null, max?: number }} [opts]
  */
-export function parseSuggestionsResponse(text, { lane = null, max = MAX_SUGGESTIONS_PER_RUN } = {}) {
+export function parseSuggestionsResponse(text, opts = {}) {
   let payload;
   try {
     payload = JSON.parse(stripCodeFences(text));
@@ -274,6 +269,25 @@ export function parseSuggestionsResponse(text, { lane = null, max = MAX_SUGGESTI
       return { ok: false, reason: "invalid_json" };
     }
   }
+  return normalizeSuggestionsPayload(payload, opts);
+}
+
+/**
+ * Validate an already-parsed suggestions payload:
+ *   { vorschlaege: [ { lane, category, title, rationale, proposal,
+ *                      directive?, expected_effect?, impact?, effort?,
+ *                      evidence? } ] }
+ * Never throws. Invalid items are dropped; a malformed payload returns
+ * { ok: false } so the caller can fail the run with a clear message. The
+ * returned items are clamped, validated against the lane vocabularies and
+ * capped at `max` (default MAX_SUGGESTIONS_PER_RUN). When `lane` is given
+ * (the per-lane passes), items of any other lane are dropped instead of kept —
+ * each pass owns exactly one lane.
+ *
+ * @param {unknown} payload
+ * @param {{ lane?: "shop" | "mo" | null, max?: number }} [opts]
+ */
+export function normalizeSuggestionsPayload(payload, { lane = null, max = MAX_SUGGESTIONS_PER_RUN } = {}) {
   const raw = Array.isArray(payload?.vorschlaege) ? payload.vorschlaege : null;
   if (!raw) return { ok: false, reason: "missing_vorschlaege" };
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   nextRunPhase,
   suggestionFingerprint,
+  normalizeSuggestionsPayload,
   computeKpiBaseline,
   computeBaselineDelta,
   renderDeltaMd,
@@ -191,6 +192,14 @@ test("lane option filters foreign-lane items, defaults missing lanes, and caps p
     res.suggestions.map((s) => s.title),
     ["Mo-Vorschlag", "Ohne Lane"]
   );
+});
+
+test("normalizeSuggestionsPayload validates an already-parsed object (structured generation path)", () => {
+  const ok = normalizeSuggestionsPayload({ vorschlaege: [validItem()] }, { lane: "shop" });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.suggestions[0].lane, "shop");
+  assert.equal(normalizeSuggestionsPayload({ foo: 1 }).ok, false);
+  assert.equal(normalizeSuggestionsPayload(null).ok, false);
 });
 
 test("parser caps the number of suggestions per run", () => {

@@ -16,7 +16,8 @@
 // PROPOSES. Nothing here mutates Mo's prompt, the directives, the catalog or
 // any store content — adoption is an explicit admin action on the suggestion.
 
-import { generateText } from "ai";
+import { generateText, generateObject, NoObjectGeneratedError } from "ai";
+import { z } from "zod";
 import { anthropic } from "@ai-sdk/anthropic";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
@@ -47,7 +48,7 @@ import {
   renderReportExtract,
   buildEffectPrompt,
   buildSuggestPrompt,
-  parseSuggestionsResponse,
+  normalizeSuggestionsPayload,
   dedupeSuggestions,
   nextRunPhase,
 } from "./improvement-core.mjs";
@@ -223,34 +224,49 @@ const COMMON_RULES =
   "Vorschläge stehen (egal mit welchem Status, auch verworfene), NICHT erneut bringen.\n" +
   "- Konkret und umsetzbar: `proposal` beschreibt die Änderung so genau, dass ein Mensch sie " +
   "direkt umsetzen kann.\n" +
+  "- Kompakt: `rationale` unter ~600 Zeichen, `proposal` unter ~800 Zeichen — dicht statt " +
+  "ausschweifend.\n" +
   "- `expected_effect`: welche Kennzahl sich messbar bewegen soll (die Grundlage des " +
   "nächsten Wirkungs-Checks).\n" +
   "- Priorisiere: wenige Vorschläge mit hoher Wirkung schlagen viele kleine. Maximal " +
   MAX_SUGGESTIONS_PER_LANE + ".\n\n" +
   "WICHTIG: Du schlägst nur VOR. Nichts wird automatisch geändert — ein Mensch prüft und " +
-  "entscheidet jede Maßnahme.\n\n";
+  "entscheidet jede Maßnahme.";
 
-function jsonShape(lane: "shop" | "mo"): string {
-  return (
-    "Antworte AUSSCHLIESSLICH mit EINEM JSON-Objekt (keine Code-Fences, kein Text davor/danach):\n" +
-    "{\n" +
-    '  "vorschlaege": [\n' +
-    "    {\n" +
-    `      "lane": "${lane}",\n` +
-    '      "category": "<Kategorie-Schlüssel>",\n' +
-    '      "title": "<prägnanter deutscher Titel>",\n' +
-    '      "rationale": "<WARUM — mit Evidenz aus dem Bericht, Markdown>",\n' +
-    '      "proposal": "<WAS genau ändern — konkret umsetzbar, Markdown>",\n' +
-    (lane === "mo" ? '      "directive": "<fertiger Anweisungstext>" | null,\n' : "") +
-    '      "expected_effect": "<welche Kennzahl sich wie bewegen soll>",\n' +
-    '      "impact": "hoch" | "mittel" | "niedrig",\n' +
-    '      "effort": "hoch" | "mittel" | "niedrig",\n' +
-    '      "evidence": ["<kurzer Beleg>", …]\n' +
-    "    }\n" +
-    "  ]\n" +
-    "}"
-  );
-}
+// Output schema for the structured suggestion passes (generateObject, like the
+// marketing/campaign drafts). Anthropic fills a forced tool call whose input
+// matches this schema — valid JSON by construction; the free-text-JSON path
+// broke in production (literal newlines in strings / truncation →
+// "invalid_json"). Only the essential fields are strict; everything else is
+// tolerated loose and hardened by normalizeSuggestionsPayload afterwards.
+const laneOutputSchema = z.object({
+  vorschlaege: z
+    .array(
+      z.object({
+        lane: z.enum(["shop", "mo"]).describe("Bahn dieses Vorschlags"),
+        category: z.string().describe("Kategorie-Schlüssel der Bahn"),
+        title: z.string().describe("Prägnanter deutscher Titel"),
+        rationale: z
+          .string()
+          .describe("WARUM — mit Evidenz aus dem Bericht (Markdown, unter ~600 Zeichen)"),
+        proposal: z
+          .string()
+          .describe("WAS genau ändern — konkret umsetzbar (Markdown, unter ~800 Zeichen)"),
+        directive: z
+          .string()
+          .nullable()
+          .describe("Nur Bahn 'mo', Kategorie 'anweisung': fertiger Anweisungstext; sonst null"),
+        expected_effect: z
+          .string()
+          .nullable()
+          .describe("Welche Kennzahl sich wie messbar bewegen soll"),
+        impact: z.enum(["hoch", "mittel", "niedrig"]),
+        effort: z.enum(["hoch", "mittel", "niedrig"]),
+        evidence: z.array(z.string()).describe("Kurze Belege aus dem Bericht"),
+      })
+    )
+    .describe(`Die besten Vorschläge, maximal ${MAX_SUGGESTIONS_PER_LANE}`),
+});
 
 function shopSystemPrompt(): string {
   const cats = Object.entries(SHOP_CATEGORIES)
@@ -262,9 +278,8 @@ function shopSystemPrompt(): string {
     "Zeitraums, die bisherigen Vorschläge mit Status und ggf. die Kennzahlen-Veränderung samt " +
     "Wirkungs-Check.\n\n" +
     "Erarbeite daraus die WENIGEN besten Verbesserungsvorschläge für den ONLINE-SHOP selbst " +
-    "(lane `shop`). Kategorien: " + cats + ".\n\n" +
-    COMMON_RULES +
-    jsonShape("shop")
+    "(lane `shop`). Kategorien: " + cats + ". `directive` ist in dieser Bahn immer null.\n\n" +
+    COMMON_RULES
   );
 }
 
@@ -280,7 +295,7 @@ function moSystemPrompt(): string {
     "die Kennzahlen-Veränderung samt Wirkungs-Check.\n\n" +
     "Erarbeite daraus die WENIGEN besten Verbesserungsvorschläge für MO SELBST (lane `mo` — " +
     "sein Prompt, Wissen, Verhalten, Tools). Kategorien: " + cats + ".\n\n" +
-    COMMON_RULES +
+    COMMON_RULES + "\n\n" +
     "Zusatz-Regeln für Mo-Vorschläge:\n" +
     "- Kategorie `anweisung`: liefere in `directive` den fertigen deutschen Anweisungstext " +
     "(max. " + MAX_DIRECTIVE_CHARS + " Zeichen), so wie er 1:1 in Mos System-Prompt übernommen " +
@@ -288,8 +303,7 @@ function moSystemPrompt(): string {
     "directive darf NIE rechtliche Zusagen, Medizin-Beratung, Preisnachlässe oder Versprechen " +
     "enthalten, die der Shop nicht hält. Für alle anderen Kategorien: `directive` = null.\n" +
     "- Kategorie `prompt_kern`: beschreibe die Änderung als konkreten Textvorschlag für den " +
-    "Kern-Prompt (der per Code/Git geändert wird) — welcher Abschnitt, welcher neue Wortlaut.\n\n" +
-    jsonShape("mo")
+    "Kern-Prompt (der per Code/Git geändert wird) — welcher Abschnitt, welcher neue Wortlaut."
   );
 }
 
@@ -301,21 +315,51 @@ async function stepSuggestLane(run: ImprovementRunDetail, lane: "shop" | "mo"): 
     loadReportExtract(run),
   ]);
 
-  const { text, usage } = await generateText({
-    model: anthropic(SUGGEST_MODEL),
-    maxOutputTokens: 2500,
-    system: isMoLane ? moSystemPrompt() : shopSystemPrompt(),
-    prompt: buildSuggestPrompt({
-      reportTitle: run.reportTitle,
-      rangeFrom: run.rangeFrom,
-      rangeTo: run.rangeTo,
-      reportMd,
-      selfSnapshot: snapshot?.text ?? null,
-      priorSuggestions: prior,
-      deltaMd: run.delta ? renderDeltaMd(run.delta) : null,
-      effectCheckMd: run.effectCheckMd,
-    }),
+  const prompt = buildSuggestPrompt({
+    reportTitle: run.reportTitle,
+    rangeFrom: run.rangeFrom,
+    rangeTo: run.rangeTo,
+    reportMd,
+    selfSnapshot: snapshot?.text ?? null,
+    priorSuggestions: prior,
+    deltaMd: run.delta ? renderDeltaMd(run.delta) : null,
+    effectCheckMd: run.effectCheckMd,
   });
+
+  let object: z.infer<typeof laneOutputSchema>;
+  let usage: { inputTokens?: number; outputTokens?: number } | undefined;
+  try {
+    ({ object, usage } = await generateObject({
+      model: anthropic(SUGGEST_MODEL),
+      schema: laneOutputSchema,
+      maxOutputTokens: 4000,
+      system: isMoLane ? moSystemPrompt() : shopSystemPrompt(),
+      prompt,
+    }));
+  } catch (err) {
+    // Structured generation failed terminally (schema mismatch after the
+    // SDK's own repair attempts, or output truncated at the token cap). Record
+    // what was spent, fail the run with a clear German message — the operator
+    // deletes and restarts. Anything else (network, 5xx) bubbles to the
+    // stepper's catch as before.
+    if (NoObjectGeneratedError.isInstance(err)) {
+      reportError(err, { route: "lib/improvement-generate", phase: `vorschlaege_${lane}` });
+      const u = err.usage;
+      await recordAiUsage({
+        callSite: "improvement",
+        model: SUGGEST_MODEL,
+        inputTokens: u?.inputTokens ?? 0,
+        outputTokens: u?.outputTokens ?? 0,
+      });
+      await updateImprovementRun(run.id, {
+        status: "failed",
+        error: `Vorschläge (${lane}): KI-Antwort nicht lesbar — bitte Lauf löschen und neu starten.`,
+        usage: mergeUsage(run.usage, SUGGEST_MODEL, u?.inputTokens ?? 0, u?.outputTokens ?? 0),
+      });
+      return;
+    }
+    throw err;
+  }
 
   await recordAiUsage({
     callSite: "improvement",
@@ -331,7 +375,7 @@ async function stepSuggestLane(run: ImprovementRunDetail, lane: "shop" | "mo"): 
     usage?.outputTokens ?? 0
   );
 
-  const parsed = parseSuggestionsResponse(text, { lane, max: MAX_SUGGESTIONS_PER_LANE });
+  const parsed = normalizeSuggestionsPayload(object, { lane, max: MAX_SUGGESTIONS_PER_LANE });
   if (!parsed.ok) {
     await updateImprovementRun(run.id, {
       status: "failed",
