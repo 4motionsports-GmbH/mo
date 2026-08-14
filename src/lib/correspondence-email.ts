@@ -15,7 +15,11 @@ export function renderCorrespondenceEmail(body: string): { text: string; html: s
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
   const html =
-    `<div style="font-family:system-ui,Segoe UI,Helvetica,Arial,sans-serif;` +
+    // Montserrat is the brand font; the <style> @import is progressive
+    // enhancement (Apple Mail etc.) — clients that strip it fall back to the
+    // system stack in the inline style below.
+    `<style>@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');</style>` +
+    `<div style="font-family:'Montserrat',system-ui,Segoe UI,Helvetica,Arial,sans-serif;` +
     `font-size:15px;line-height:1.6;color:#111;white-space:pre-wrap;">` +
     escaped +
     `</div>`;

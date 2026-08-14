@@ -4,7 +4,8 @@
 //
 // The design is lifted from the shop's own Shopify newsletter emails so backend
 // emails look exactly like the store's manually sent mail: a 600px white card
-// on #fafafa, the centered motion sports logo, Verdana/Geneva 13px type,
+// on #fafafa, the centered motion sports logo, Montserrat 13px type (with
+// Verdana/Geneva fallback where web fonts are unsupported),
 // FULL-WIDTH BLACK SEPARATOR BANDS with white text between sections, the
 // #008ccb pill button, and the grey footer with social icons, the company
 // block and the unsubscribe line.
@@ -14,7 +15,9 @@
 //   - EVERY visual style is INLINE; the <style> block in <head> is progressive
 //     enhancement only (mobile width tweaks) and the email must render
 //     correctly in Gmail, Apple Mail and Outlook without it
-//   - no flexbox/grid/SVG/background-images/external CSS
+//   - no flexbox/grid/SVG/background-images/external CSS — the one deliberate
+//     exception is the Montserrat web-font <link>/@import in <head> (brand
+//     font); clients that block it fall back to Verdana via the inline stacks
 //   - images referenced by absolute https URLs only
 //   - the header logo is a STATIC image (animated logos do not animate
 //     reliably in mail clients)
@@ -29,8 +32,13 @@ export const EMAIL_ACCENT_COLOR = "#008ccb";
 /** Red used for struck-through compare-at prices (newsletter product grid). */
 export const EMAIL_SALE_STRIKE_COLOR = "#c61724";
 
-/** Font stack used on every inline style (same as the shop's newsletters). */
-export const EMAIL_FONT_FAMILY = "Verdana, Geneva, sans-serif";
+/**
+ * Font stack used on every inline style. Montserrat is the brand font (loaded
+ * via the web-font <link>/@import in the shell's <head>); clients that don't
+ * load web fonts (Gmail, Outlook, …) fall back to Verdana/Geneva — the shop's
+ * previous newsletter type.
+ */
+export const EMAIL_FONT_FAMILY = "'Montserrat', Verdana, Geneva, sans-serif";
 
 /**
  * Inline style for a normal body paragraph/text cell. Callers building
@@ -294,9 +302,15 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
     <title>${escapeHtml(opts.subject)}</title>
     <!--[if mso]>
     <style>
-      * { font-family: sans-serif !important; }
+      * { font-family: Verdana, Geneva, sans-serif !important; }
     </style>
     <![endif]-->
+    <!--[if !mso]><!-->
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&amp;display=swap" rel="stylesheet" type="text/css">
+    <style type="text/css">
+      @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');
+    </style>
+    <!--<![endif]-->
     <style type="text/css">
       /* Progressive enhancement ONLY — every critical style is inline. */
       html, body { Margin: 0 auto !important; padding: 0 !important; width: 100% !important; }

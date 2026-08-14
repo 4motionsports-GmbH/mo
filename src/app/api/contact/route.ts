@@ -75,7 +75,8 @@ function renderBody(p: ContactPayload): { text: string; html: string } {
         `<tr><td style="padding:4px 12px 4px 0;color:#666;vertical-align:top">${escapeHtml(k)}</td><td style="padding:4px 0">${escapeHtml(v)}</td></tr>`
     )
     .join("");
-  const html = `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5">
+  const html = `<style>@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');</style>
+<div style="font-family:'Montserrat',system-ui,sans-serif;font-size:14px;line-height:1.5">
 <table style="border-collapse:collapse">${rows}</table>
 <h3 style="margin:24px 0 8px 0;font-size:14px">Nachricht</h3>
 <pre style="white-space:pre-wrap;font-family:inherit;margin:0">${escapeHtml(p.message)}</pre>
