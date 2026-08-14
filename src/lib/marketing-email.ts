@@ -39,7 +39,11 @@ import {
   EMAIL_TEXT_STYLE,
   EMAIL_MUTED_TEXT_STYLE,
 } from "./email-template";
-import { renderEmailProductGrid, productGridItem } from "./email-products";
+import {
+  renderEmailProductRows,
+  productRowItems,
+  highlightDescriptionFor,
+} from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -274,7 +278,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       // discount minting, click-tracking) — a send may carry a discount, a
       // bundle, both, or neither. A bundle resolution failure must never block a
       // send, so it degrades to "no block".
-      const bundle = await buildBundleBlockForSend(sendId);
+      const bundle = await buildBundleBlockForSend(sendId, claimed.productHighlights);
 
       const { text, html } = renderMarketingEmail({
         subject: claimed.subject ?? "motion sports",
@@ -282,6 +286,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         // The customer sees/clicks the tracked redirect URL, not the raw cart.
         linkUrl,
         products: recommendedProducts,
+        productHighlights: claimed.productHighlights,
         discountCode,
         // Deterministic deadline next to the code, derived from the REAL minted
         // expiry — stated even if the AI prose were edited to drop it.
@@ -365,12 +370,14 @@ function firstImageUrl(p: Product | undefined): string | null {
  * Resolve the bundle attached to this send (if any) and render its special-offer
  * block. Returns null when no live bundle is attached — so the block is OMITTED
  * (the pure shouldRenderBundleBlock guard centralizes that "active-only" rule).
- * Never throws; a failure degrades to "no block" so a send is never blocked by
- * the bundle path.
+ * Also returns the component names so the recommendation section can drop
+ * products the set already shows (no duplicate presentation). Never throws; a
+ * failure degrades to "no block" so a send is never blocked by the bundle path.
  */
 async function buildBundleBlockForSend(
-  sendId: number
-): Promise<{ text: string; html: string } | null> {
+  sendId: number,
+  highlights: Array<{ name: string; description: string }> | null = null
+): Promise<{ text: string; html: string; componentNames: string[] } | null> {
   try {
     const bundle = await getActiveBundleForSend(sendId);
     if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
@@ -378,15 +385,23 @@ async function buildBundleBlockForSend(
     if (!offerUrl) return null;
 
     // Resolve component images from the live catalog (the row snapshots names +
-    // prices, not images — the latter can drift, so we look them up fresh).
+    // prices, not images — the latter can drift, so we look them up fresh) and
+    // the per-component description: personalised highlight → catalog copy.
     const catalog = await loadProductCatalog();
     const byId = new Map(catalog.map((p) => [p.id, p]));
-    const components = bundle.components.map((c) => ({
-      name: c.title,
-      imageUrl: firstImageUrl(byId.get(c.productId)),
-    }));
+    const components = bundle.components.map((c) => {
+      const product = byId.get(c.productId);
+      return {
+        name: c.title,
+        imageUrl: firstImageUrl(product),
+        description:
+          highlightDescriptionFor(c.title, highlights) ||
+          product?.shortDescription?.trim() ||
+          null,
+      };
+    });
 
-    return renderBundleOfferBlock({
+    const block = renderBundleOfferBlock({
       title: bundle.title ?? "Dein persönliches Set",
       components,
       bundlePrice: bundle.bundlePrice,
@@ -394,6 +409,7 @@ async function buildBundleBlockForSend(
       currency: bundle.currency,
       offerUrl,
     });
+    return { ...block, componentNames: components.map((c) => c.name) };
   } catch (err) {
     reportError(err, { route: "lib/marketing-email", phase: "buildBundleBlockForSend" });
     return null;
@@ -461,13 +477,14 @@ export async function renderMarketingEmailPreview(
     .map((l) => l.product)
     .filter((p): p is Product => p != null);
 
-  const bundle = await buildBundleBlockForSend(sendId);
+  const bundle = await buildBundleBlockForSend(sendId, send.productHighlights);
 
   const { html } = renderMarketingEmail({
     subject,
     body,
     linkUrl: cart.url,
     products,
+    productHighlights: send.productHighlights,
     discountCode: send.discountPercent > 0 ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountExpiresLabel:
       send.discountPercent > 0 && send.discountExpiresAt
@@ -489,16 +506,20 @@ export function renderMarketingEmail(opts: {
   /** The URL the cart button/link points at — the tracked /api/r/<token>
    *  redirect, NOT the raw Shopify cart (which is kept server-side). */
   linkUrl: string | null;
-  /** The recommended products (the shipped cart's contents) — rendered as the
-   *  newsletter picture grid above the cart CTA. */
+  /** The recommended products (the shipped cart's contents) — rendered as
+   *  personalised rows (image/name/price | description) above the cart CTA. */
   products: Product[];
+  /** The draft's stored per-product personalised descriptions (matched by
+   *  name; catalog shortDescription is the fallback). */
+  productHighlights?: Array<{ name: string; description: string }> | null;
   discountCode: string | null;
   /** German-formatted expiry date of the minted code ("TT.MM.JJJJ"); stated
    *  deterministically next to the code so the deadline always ships. */
   discountExpiresLabel: string | null;
   unsubscribe: { text: string; html: string };
-  /** Optional special-offer block for an attached bundle (text + HTML parts). */
-  bundle: { text: string; html: string } | null;
+  /** Optional special-offer block for an attached bundle (text + HTML parts +
+   *  component names, so those products aren't shown twice). */
+  bundle: { text: string; html: string; componentNames?: string[] } | null;
   /** Names a bare product URL in the prose (catalog lookup); null → compact
    * host/path label. Markdown links carry their own label. */
   labelForUrl?: (url: string) => string | null;
@@ -509,13 +530,24 @@ export function renderMarketingEmail(opts: {
     ? `, gültig bis ${discountExpiresLabel}`
     : "";
 
+  // The personalised recommendation rows — products the attached set already
+  // shows are dropped here so nothing appears twice (the set block is their
+  // presentation), each remaining row carrying its personalised description.
+  const rowItems = productRowItems(products, {
+    locale: "de",
+    highlights: opts.productHighlights,
+    excludeNames: bundle?.componentNames ?? null,
+  });
+
   // --- text part — markdown links flatten to "Label (URL)" ---
   const textLines = [emailProseToText(body.trim())];
-  if (products.length) {
+  if (rowItems.length) {
     textLines.push(
       "",
       "Für dich ausgesucht:",
-      ...products.map((p) => `- ${p.name}`)
+      ...rowItems.map((item) =>
+        item.description ? `- ${item.name}: ${item.description}` : `- ${item.name}`
+      )
     );
   }
   // The special-offer block (when a bundle is attached) sits right after the
@@ -555,13 +587,15 @@ export function renderMarketingEmail(opts: {
         )}</strong>${escapeHtml(validityNote)}.</p>`
       : "";
 
-  // Newsletter-style product section: black separator band + picture grid.
-  const productsRows = products.length
+  // Personalised product section: black separator band + one ROW per product
+  // (image/name/price in the first third, the personalised description + a
+  // product button in the remaining two thirds).
+  const productsRows = rowItems.length
     ? renderSectionBand("Für dich ausgesucht") +
-      renderSectionRow(
-        renderEmailProductGrid(products.map((p) => productGridItem(p, "de"))),
-        { padding: "30px 60px 10px", align: "center" }
-      )
+      renderSectionRow(renderEmailProductRows(rowItems), {
+        padding: "10px 60px 20px",
+        align: "center",
+      })
     : "";
 
   const html = renderBrandedEmail({

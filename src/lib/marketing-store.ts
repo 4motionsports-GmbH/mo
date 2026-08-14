@@ -49,6 +49,10 @@ export interface MarketingSendRow {
   discountExpiresAt: string | null;
   cartUrl: string | null;
   productIds: string[];
+  /** Per-product personalised descriptions from the draft model (migration
+   * 0046), matched to products by name at render time. Null = legacy/fallback
+   * draft — the renderer falls back to catalog copy. */
+  productHighlights: Array<{ name: string; description: string }> | null;
   personaLabel: string | null;
   /** Unique token for the tracked redirect link (/api/r/<token>); minted at send. */
   redirectToken: string | null;
@@ -89,6 +93,27 @@ function personaDisplayLabel(label: string | null): string | null {
   return meta ? meta.label : label;
 }
 
+/** Defensive jsonb → highlights mapping (accepts parsed arrays or JSON text;
+ * anything malformed degrades to null, never throws). */
+function mapHighlights(raw: unknown): Array<{ name: string; description: string }> | null {
+  let value = raw;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(value)) return null;
+  const out: Array<{ name: string; description: string }> = [];
+  for (const h of value as Array<Record<string, unknown>>) {
+    if (typeof h?.name === "string" && typeof h?.description === "string") {
+      out.push({ name: h.name, description: h.description });
+    }
+  }
+  return out.length > 0 ? out : null;
+}
+
 function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
   return {
     id: Number(r.id),
@@ -103,6 +128,7 @@ function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
     discountExpiresAt: (r.discount_expires_at as string | null) ?? null,
     cartUrl: (r.cart_url as string | null) ?? null,
     productIds: Array.isArray(r.product_ids) ? (r.product_ids as string[]) : [],
+    productHighlights: mapHighlights(r.product_highlights),
     personaLabel: (r.persona_label as string | null) ?? null,
     redirectToken: (r.redirect_token as string | null) ?? null,
     clickedAt: (r.clicked_at as string | null) ?? null,
@@ -613,7 +639,17 @@ export interface CreateDraftInput {
   discountExpiresAt: string | null;
   cartUrl: string | null;
   productIds: string[];
+  /** Per-product personalised descriptions from the draft model (may be empty —
+   * stored as NULL so render falls back to catalog copy). */
+  productHighlights?: Array<{ name: string; description: string }> | null;
   personaLabel: string | null;
+}
+
+/** Highlights → jsonb parameter (NULL when absent/empty). */
+function highlightsParam(
+  highlights: Array<{ name: string; description: string }> | null | undefined
+): string | null {
+  return highlights && highlights.length > 0 ? JSON.stringify(highlights) : null;
 }
 
 /**
@@ -632,13 +668,14 @@ export async function createDraft(
       INSERT INTO marketing_sends
         (email_capture_id, customer_id, admin_instructions, status, subject,
          drafted_text, discount_percent, discount_code, discount_code_gid,
-         discount_expires_at, cart_url, product_ids, persona_label,
-         created_at, updated_at)
+         discount_expires_at, cart_url, product_ids, product_highlights,
+         persona_label, created_at, updated_at)
       VALUES
         (${input.captureId}, ${input.customerId ?? null}, ${input.adminInstructions ?? null},
          'draft', ${input.subject}, ${input.draftedText},
          ${input.discountPercent}, ${input.discountCode}, ${input.discountCodeGid},
          ${input.discountExpiresAt}, ${input.cartUrl}, ${input.productIds}::text[],
+         ${highlightsParam(input.productHighlights)}::jsonb,
          ${input.personaLabel}, now(), now())
       ON CONFLICT (email_capture_id) WHERE status <> 'sent'
         DO NOTHING
@@ -742,6 +779,9 @@ export interface RegenerateDraftInput {
   discountExpiresAt: string | null;
   cartUrl: string | null;
   productIds: string[];
+  /** See CreateDraftInput — replaced on regenerate so highlights and prose
+   * always come from the same generation. */
+  productHighlights?: Array<{ name: string; description: string }> | null;
   personaLabel: string | null;
   /** See CreateDraftInput. Re-stamped on regenerate so the audit snapshot
    *  always matches the text that was actually generated. */
@@ -773,6 +813,7 @@ export async function saveRegeneratedDraft(
              discount_expires_at = ${input.discountExpiresAt},
              cart_url = ${input.cartUrl},
              product_ids = ${input.productIds}::text[],
+             product_highlights = ${highlightsParam(input.productHighlights)}::jsonb,
              persona_label = ${input.personaLabel},
              customer_id = ${input.customerId ?? null},
              admin_instructions = ${input.adminInstructions ?? null},

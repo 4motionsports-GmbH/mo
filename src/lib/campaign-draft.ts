@@ -48,7 +48,43 @@ const draftSchema = z.object({
         "(Englisch: 'Mo, your personal advisor at motion sports'). OHNE Abmeldelink, " +
         "OHNE Chatbot-Hinweis (beides wird separat angehängt)."
     ),
+  // Per-product personalised descriptions for the product-rows layout — same
+  // contract as marketing-draft's productHighlights (matched by EXACT name).
+  productHighlights: z
+    .array(
+      z.object({
+        name: z
+          .string()
+          .describe("EXAKT der vorgegebene Produktname (unverändert kopiert)."),
+        description: z
+          .string()
+          .describe(
+            "1–3 kurze Sätze in der ZIELSPRACHE der E-Mail, warum genau dieses " +
+              "Produkt zu dieser Person passt — persönlich aus der Kaufhistorie " +
+              "begründet; ohne Chat-Wissen allgemeiner, aber trotzdem persönlich " +
+              "formuliert. Keine Preise, keine Links, keine erfundenen Fakten."
+          ),
+      })
+    )
+    .describe(
+      "Für JEDES empfohlene Produkt (und jedes Set-Produkt, falls ein Set " +
+        "angehängt ist) genau EIN Eintrag mit einer persönlichen Kurzbeschreibung."
+    ),
 });
+
+/** Trim + drop unusable entries; never trust model output blindly. */
+function sanitizeHighlights(
+  raw: Array<{ name?: unknown; description?: unknown }> | undefined | null
+): Array<{ name: string; description: string }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ name: string; description: string }> = [];
+  for (const h of raw) {
+    const name = typeof h?.name === "string" ? h.name.trim() : "";
+    const description = typeof h?.description === "string" ? h.description.trim() : "";
+    if (name && description) out.push({ name, description });
+  }
+  return out;
+}
 
 export interface CampaignRecommendationInput {
   name: string;
@@ -230,7 +266,7 @@ function fallbackCampaignDraft(input: GenerateCampaignDraftInput): MarketingDraf
       ? "Mo, your personal advisor at motion sports"
       : "Mo, dein persönlicher Berater bei motion sports"
   );
-  return { subject, body: lines.join("\n") };
+  return { subject, body: lines.join("\n"), productHighlights: [] };
 }
 
 /** The prompt section describing the personal offer (or its absence) — the
@@ -379,7 +415,7 @@ export async function generateCampaignDraft(
     const subject = object.subject?.trim();
     const body = object.body?.trim();
     if (!subject || !body) return fallbackCampaignDraft(input);
-    return { subject, body };
+    return { subject, body, productHighlights: sanitizeHighlights(object.productHighlights) };
   } catch (err) {
     reportError(err, { route: "lib/campaign-draft", phase: "generate" });
     return fallbackCampaignDraft(input);

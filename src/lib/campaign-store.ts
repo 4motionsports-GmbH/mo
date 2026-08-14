@@ -83,6 +83,10 @@ export interface CampaignDraftRow {
   discountExpiresAt: string | null;
   purchaseSummary: CampaignPurchaseSummary | null;
   recommendedProductIds: string[];
+  /** Per-product personalised descriptions from the draft model (migration
+   * 0046), matched to products by name at render time. Null = legacy/fallback
+   * draft — the renderer falls back to catalog copy. */
+  productHighlights: Array<{ name: string; description: string }> | null;
   /** Operator-narrowed purchase basis for the recommendations (catalog product
    * ids). NULL = all past purchases (the default). Survives regenerates. */
   purchaseSelectedIds: string[] | null;
@@ -122,6 +126,27 @@ function mapContactRow(r: Record<string, unknown>): CampaignContactRow {
   };
 }
 
+/** Defensive jsonb → highlights mapping (accepts parsed arrays or JSON text;
+ * anything malformed degrades to null, never throws). */
+function mapHighlights(raw: unknown): Array<{ name: string; description: string }> | null {
+  let value = raw;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(value)) return null;
+  const out: Array<{ name: string; description: string }> = [];
+  for (const h of value as Array<Record<string, unknown>>) {
+    if (typeof h?.name === "string" && typeof h?.description === "string") {
+      out.push({ name: h.name, description: h.description });
+    }
+  }
+  return out.length > 0 ? out : null;
+}
+
 function mapDraftRow(r: Record<string, unknown>): CampaignDraftRow {
   return {
     id: Number(r.id),
@@ -134,6 +159,7 @@ function mapDraftRow(r: Record<string, unknown>): CampaignDraftRow {
     recommendedProductIds: Array.isArray(r.recommended_product_ids)
       ? (r.recommended_product_ids as string[])
       : [],
+    productHighlights: mapHighlights(r.product_highlights),
     purchaseSelectedIds: Array.isArray(r.purchase_selected_ids)
       ? (r.purchase_selected_ids as string[])
       : null,
@@ -347,6 +373,7 @@ export async function listDraftedQueue(
              d.discount_expires_at AS d_discount_expires_at,
              d.purchase_summary AS d_purchase_summary,
              d.recommended_product_ids AS d_recommended_product_ids,
+             d.product_highlights AS d_product_highlights,
              d.purchase_selected_ids AS d_purchase_selected_ids,
              d.low_confidence AS d_low_confidence,
              d.created_at AS d_created_at, d.updated_at AS d_updated_at
@@ -367,6 +394,7 @@ export async function listDraftedQueue(
         discount_expires_at: r.d_discount_expires_at,
         purchase_summary: r.d_purchase_summary,
         recommended_product_ids: r.d_recommended_product_ids,
+        product_highlights: r.d_product_highlights,
         purchase_selected_ids: r.d_purchase_selected_ids,
         low_confidence: r.d_low_confidence,
         created_at: r.d_created_at,
@@ -558,6 +586,9 @@ export interface SaveCampaignDraftInput {
   discountExpiresAt: string | null;
   purchaseSummary: CampaignPurchaseSummary | null;
   recommendedProductIds: string[];
+  /** Per-product personalised descriptions from the draft model (may be empty —
+   * stored as NULL so render falls back to catalog copy). */
+  productHighlights?: Array<{ name: string; description: string }> | null;
   /** Narrowed purchase basis to persist (null = all purchases). */
   purchaseSelectedIds: string[] | null;
   lowConfidence: boolean;
@@ -577,13 +608,14 @@ export async function saveCampaignDraft(
   const rows = (await sql`
     INSERT INTO campaign_drafts
       (contact_id, subject, body, discount_percent, discount_expires_at,
-       purchase_summary, recommended_product_ids, purchase_selected_ids,
-       low_confidence, created_at, updated_at)
+       purchase_summary, recommended_product_ids, product_highlights,
+       purchase_selected_ids, low_confidence, created_at, updated_at)
     VALUES
       (${input.contactId}, ${input.subject}, ${input.body},
        ${input.discountPercent}, ${input.discountExpiresAt},
        ${input.purchaseSummary ? JSON.stringify(input.purchaseSummary) : null}::jsonb,
        ${input.recommendedProductIds}::text[],
+       ${input.productHighlights && input.productHighlights.length > 0 ? JSON.stringify(input.productHighlights) : null}::jsonb,
        ${input.purchaseSelectedIds}::text[], ${input.lowConfidence},
        now(), now())
     ON CONFLICT (contact_id) DO UPDATE SET
@@ -593,6 +625,7 @@ export async function saveCampaignDraft(
       discount_expires_at     = EXCLUDED.discount_expires_at,
       purchase_summary        = EXCLUDED.purchase_summary,
       recommended_product_ids = EXCLUDED.recommended_product_ids,
+      product_highlights      = EXCLUDED.product_highlights,
       purchase_selected_ids   = EXCLUDED.purchase_selected_ids,
       low_confidence          = EXCLUDED.low_confidence,
       updated_at              = now()

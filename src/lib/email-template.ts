@@ -324,6 +324,8 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
         .content-pad { padding-right: 15px !important; padding-left: 15px !important; }
         .grid-tile { width: 100% !important; max-width: 100% !important; }
         .grid-image { width: 100% !important; height: auto !important; }
+        /* Product ROWS (1/3 | 2/3) stack to full-width blocks on phones. */
+        .prow-col { display: block !important; width: 100% !important; padding-left: 0 !important; padding-right: 0 !important; }
       }
     </style>
   </head>

@@ -61,7 +61,11 @@ import {
   EMAIL_TEXT_STYLE,
   EMAIL_MUTED_TEXT_STYLE,
 } from "./email-template";
-import { renderEmailProductGrid, productGridItem } from "./email-products";
+import {
+  renderEmailProductRows,
+  productRowItems,
+  highlightDescriptionFor,
+} from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -272,7 +276,11 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       // a created, still-active bundle is attached to this contact, its offer
       // block rides below the prose. Touches NONE of the send safeguards; a
       // bundle resolution failure degrades to "no block", never blocks a send.
-      const bundle = await buildBundleBlockForContact(contactId, contact.language);
+      const bundle = await buildBundleBlockForContact(
+        contactId,
+        contact.language,
+        draft.productHighlights
+      );
 
       // Tracked CTA (migration 0041): the Mo-promo deep link — the email's main
       // CTA — routes through /api/r/<token> so the Kampagnen-Funnel can count
@@ -287,6 +295,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         body,
         language: contact.language,
         products: await resolveRecommendedProducts(draft.recommendedProductIds),
+        productHighlights: draft.productHighlights,
         discountCode,
         discountExpiresLabel: discountExpiresAt
           ? formatExpiryDateForLanguage(discountExpiresAt, contact.language)
@@ -397,22 +406,32 @@ async function resolveRecommendedProducts(productIds: string[]): Promise<Product
  */
 async function buildBundleBlockForContact(
   contactId: number,
-  language: "de" | "en"
-): Promise<{ text: string; html: string } | null> {
+  language: "de" | "en",
+  highlights: Array<{ name: string; description: string }> | null = null
+): Promise<{ text: string; html: string; componentNames: string[] } | null> {
   try {
     const bundle = await getActiveBundleForCampaignContact(contactId);
     if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
     const offerUrl = buildBundleRedirectUrl(bundle.redirectToken);
     if (!offerUrl) return null;
 
+    // Component images fresh from the catalog; the per-component description
+    // resolves personalised highlight → catalog copy (same as the rows above).
     const catalog = await loadProductCatalog();
     const byId = new Map(catalog.map((p) => [p.id, p]));
-    const components = bundle.components.map((c) => ({
-      name: c.title,
-      imageUrl: firstImageUrl(byId.get(c.productId)),
-    }));
+    const components = bundle.components.map((c) => {
+      const product = byId.get(c.productId);
+      return {
+        name: c.title,
+        imageUrl: firstImageUrl(product),
+        description:
+          highlightDescriptionFor(c.title, highlights) ||
+          product?.shortDescription?.trim() ||
+          null,
+      };
+    });
 
-    return renderBundleOfferBlock({
+    const block = renderBundleOfferBlock({
       title:
         bundle.title ?? (language === "en" ? "Your personal set" : "Dein persönliches Set"),
       components,
@@ -422,6 +441,7 @@ async function buildBundleBlockForContact(
       offerUrl,
       language,
     });
+    return { ...block, componentNames: components.map((c) => c.name) };
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "buildBundleBlockForContact" });
     return null;
@@ -467,13 +487,18 @@ export async function renderCampaignEmailPreview(
       (contact.language === "en" ? "&locale=en" : "")
     : "#";
 
-  const bundle = await buildBundleBlockForContact(contactId, contact.language);
+  const bundle = await buildBundleBlockForContact(
+    contactId,
+    contact.language,
+    draft.productHighlights
+  );
 
   const { html } = renderCampaignEmail({
     subject,
     body,
     language: contact.language,
     products: await resolveRecommendedProducts(draft.recommendedProductIds),
+    productHighlights: draft.productHighlights,
     discountCode: draft.discountPercent > 0 ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountExpiresLabel:
       draft.discountPercent > 0 && draft.discountExpiresAt
@@ -502,15 +527,19 @@ export function renderCampaignEmail(opts: {
   subject: string;
   body: string;
   language: "de" | "en";
-  /** The draft's recommended products (curation included) — rendered as the
-   *  newsletter picture grid between prose and CTA. Optional so the test-send
+  /** The draft's recommended products (curation included) — rendered as
+   *  personalised rows between prose and CTA. Optional so the test-send
    *  script and legacy callers can omit it. */
   products?: Product[];
+  /** The draft's stored per-product personalised descriptions (matched by
+   *  name; catalog shortDescription is the fallback). */
+  productHighlights?: Array<{ name: string; description: string }> | null;
   discountCode: string | null;
   discountExpiresLabel: string | null;
   unsubscribe: { text: string; html: string };
-  /** Optional special-offer block for an attached bundle (text + HTML parts). */
-  bundle: { text: string; html: string } | null;
+  /** Optional special-offer block for an attached bundle (text + HTML parts +
+   *  component names, so those products aren't shown twice). */
+  bundle: { text: string; html: string; componentNames?: string[] } | null;
   /** Names a bare product URL in the prose (catalog lookup); null → compact
    * host/path label. Markdown links carry their own label. */
   labelForUrl?: (url: string) => string | null;
@@ -523,6 +552,14 @@ export function renderCampaignEmail(opts: {
   const products = opts.products ?? [];
   const en = language === "en";
   const deeplink = opts.ctaUrl ?? campaignMoDeeplinkUrl();
+
+  // The personalised recommendation rows — products the attached set already
+  // shows are dropped so nothing appears twice (the set block presents them).
+  const rowItems = productRowItems(products, {
+    locale: language,
+    highlights: opts.productHighlights,
+    excludeNames: bundle?.componentNames ?? null,
+  });
 
   const validityNote = discountExpiresLabel
     ? en
@@ -571,16 +608,16 @@ export function renderCampaignEmail(opts: {
                                     </tr>
                                   </table>`;
 
-  // Newsletter-style product section: black separator band + picture grid of
-  // the draft's recommended products (image, name link, price with red
-  // strikethrough compare-at) — the visual weight lives here, the prose stays
-  // short and personal.
-  const productsRows = products.length
+  // Personalised product section: black separator band + one ROW per product
+  // (image, name link, price with red strikethrough compare-at in the first
+  // third; the personalised description + product button in the remaining two
+  // thirds) — the visual weight lives here, the prose stays short and personal.
+  const productsRows = rowItems.length
     ? renderSectionBand(en ? "Picked for you" : "Für dich ausgesucht") +
-      renderSectionRow(
-        renderEmailProductGrid(products.map((p) => productGridItem(p, language))),
-        { padding: "30px 60px 10px", align: "center" }
-      )
+      renderSectionRow(renderEmailProductRows(rowItems), {
+        padding: "10px 60px 20px",
+        align: "center",
+      })
     : "";
 
   const html = renderBrandedEmail({
