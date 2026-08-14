@@ -189,6 +189,7 @@ export async function prepareDraftForContact(
     discountExpiresAt: expiry ? expiry.toISOString() : null,
     purchaseSummary,
     recommendedProductIds: recommendedProducts.map((p) => p.id),
+    productHighlights: draft.productHighlights,
     purchaseSelectedIds: purchaseSelection,
     lowConfidence,
   });

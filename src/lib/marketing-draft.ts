@@ -35,9 +35,64 @@ const draftSchema = z.object({
     ),
 });
 
+/** The per-product personalised description schema, shared by the EMAIL drafts
+ * (the printed letter has no product table, so it keeps the plain schema). The
+ * render path matches entries to products by name — the model must copy the
+ * given product names EXACTLY. */
+const productHighlightsField = z
+  .array(
+    z.object({
+      name: z
+        .string()
+        .describe("EXAKT der vorgegebene Produktname (unverändert kopiert)."),
+      description: z
+        .string()
+        .describe(
+          "1–3 kurze Sätze, warum GENAU DIESES Produkt zu GENAU DIESEM Kunden " +
+            "passt — persönlich aus dem Kundenwissen (Gespräche, Profil, " +
+            "Käufe) begründet, in derselben Sprache und Du-Form wie die E-Mail. " +
+            "Wenig Kundenwissen → allgemeiner, aber trotzdem persönlich " +
+            "formuliert (z. B. an bisherige Käufe anknüpfend). Keine Preise, " +
+            "keine Links, keine erfundenen Fakten."
+        ),
+    })
+  )
+  .describe(
+    "Für JEDES empfohlene Produkt (und jedes Set-Produkt, falls ein Set " +
+      "angehängt ist) genau EIN Eintrag mit einer persönlichen Kurzbeschreibung."
+  );
+
+const draftWithHighlightsSchema = draftSchema.extend({
+  productHighlights: productHighlightsField,
+});
+
+/** One personalised per-product description, stored on the draft row and
+ * rendered in the product-rows layout (email-products.renderEmailProductRows). */
+export interface ProductHighlight {
+  name: string;
+  description: string;
+}
+
 export interface MarketingDraft {
   subject: string;
   body: string;
+  /** Per-product personalised descriptions. Empty for fallback drafts — the
+   * renderer then falls back to the catalog shortDescription. */
+  productHighlights: ProductHighlight[];
+}
+
+/** Trim + drop unusable entries; never trust model output blindly. */
+function sanitizeHighlights(
+  raw: Array<{ name?: unknown; description?: unknown }> | undefined | null
+): ProductHighlight[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ProductHighlight[] = [];
+  for (const h of raw) {
+    const name = typeof h?.name === "string" ? h.name.trim() : "";
+    const description = typeof h?.description === "string" ? h.description.trim() : "";
+    if (name && description) out.push({ name, description });
+  }
+  return out;
 }
 
 /** The personal-offer parameters, shared by the per-session and per-customer
@@ -135,7 +190,7 @@ function fallbackDraft(input: GenerateDraftInput): MarketingDraft {
     "Herzliche Grüße",
     "Mo, dein persönlicher Berater bei motion sports"
   );
-  return { subject, body: lines.join("\n") };
+  return { subject, body: lines.join("\n"), productHighlights: [] };
 }
 
 /**
@@ -193,7 +248,7 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
-      schema: draftSchema,
+      schema: draftWithHighlightsSchema,
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
         "(Fitness- und Kraftsportgeräte). Du schreibst eine kurze, warme, " +
@@ -223,7 +278,7 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
     const subject = object.subject?.trim();
     const body = object.body?.trim();
     if (!subject || !body) return fallbackDraft(input);
-    return { subject, body };
+    return { subject, body, productHighlights: sanitizeHighlights(object.productHighlights) };
   } catch (err) {
     reportError(err, { route: "lib/marketing-draft", phase: "generate" });
     return fallbackDraft(input);
@@ -389,7 +444,7 @@ function fallbackCustomerDraft(input: GenerateCustomerDraftInput): MarketingDraf
     "Herzliche Grüße",
     "Mo, dein persönlicher Berater bei motion sports"
   );
-  return { subject, body: lines.join("\n") };
+  return { subject, body: lines.join("\n"), productHighlights: [] };
 }
 
 /**
@@ -423,7 +478,7 @@ export async function generateCustomerMarketingDraft(
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
-      schema: draftSchema,
+      schema: draftWithHighlightsSchema,
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
         "(Fitness- und Kraftsportgeräte). Du schreibst eine kurze, warme, " +
@@ -478,7 +533,7 @@ export async function generateCustomerMarketingDraft(
     const subject = object.subject?.trim();
     const body = object.body?.trim();
     if (!subject || !body) return fallbackCustomerDraft(input);
-    return { subject, body };
+    return { subject, body, productHighlights: sanitizeHighlights(object.productHighlights) };
   } catch (err) {
     reportError(err, { route: "lib/marketing-draft", phase: "generateCustomer" });
     return fallbackCustomerDraft(input);
@@ -555,7 +610,7 @@ function fallbackLetterDraft(input: GenerateCustomerLetterInput): MarketingDraft
     "Herzliche Grüße",
     "Mo, dein persönlicher Berater bei motion sports"
   );
-  return { subject, body: lines.join("\n") };
+  return { subject, body: lines.join("\n"), productHighlights: [] };
 }
 
 /**
@@ -632,7 +687,7 @@ export async function generateCustomerLetterDraft(
     const subject = object.subject?.trim();
     const body = object.body?.trim();
     if (!subject || !body) return fallbackLetterDraft(input);
-    return { subject, body };
+    return { subject, body, productHighlights: [] };
   } catch (err) {
     reportError(err, { route: "lib/marketing-draft", phase: "generateLetter" });
     return fallbackLetterDraft(input);

@@ -157,6 +157,7 @@ export async function POST(req: Request) {
           discountExpiresAt: expiresAtIso,
           cartUrl: cart.url,
           productIds,
+          productHighlights: draft.productHighlights,
           personaLabel,
         });
         if (!updated) {
@@ -181,6 +182,7 @@ export async function POST(req: Request) {
         discountExpiresAt: expiresAtIso,
         cartUrl: cart.url,
         productIds,
+        productHighlights: draft.productHighlights,
         personaLabel,
       });
 

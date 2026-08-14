@@ -233,6 +233,7 @@ export async function POST(req: Request) {
           discountExpiresAt: expiresAtIso,
           cartUrl: cart.url,
           productIds,
+          productHighlights: draft.productHighlights,
           personaLabel,
           customerId,
           adminInstructions,
@@ -261,6 +262,7 @@ export async function POST(req: Request) {
         discountExpiresAt: expiresAtIso,
         cartUrl: cart.url,
         productIds,
+        productHighlights: draft.productHighlights,
         personaLabel,
       });
 
