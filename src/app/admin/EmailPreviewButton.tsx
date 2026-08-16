@@ -21,6 +21,7 @@ import {
   DialogTitle,
   toast,
 } from "./ui";
+import { EmailPreviewFrame } from "./EmailPreviewFrame";
 
 export function EmailPreviewButton({
   path,
@@ -107,14 +108,7 @@ export function EmailPreviewButton({
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
-          {url && (
-            <iframe
-              title={title}
-              src={url}
-              sandbox=""
-              className="mt-3 h-[65vh] w-full rounded-md border border-border bg-white"
-            />
-          )}
+          {url && <EmailPreviewFrame title={title} src={url} />}
         </DialogContent>
       </Dialog>
     </>

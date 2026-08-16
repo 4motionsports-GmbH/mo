@@ -42,6 +42,7 @@ import {
   Textarea,
   toast,
 } from "./ui";
+import { EmailPreviewFrame } from "./EmailPreviewFrame";
 import {
   DISCOUNT_PERCENT_MAX,
   clampDiscountPercent,
@@ -1364,14 +1365,7 @@ export function KampagneWorkspace({
             <DialogTitle>{emailView?.title}</DialogTitle>
             <DialogDescription>{emailView?.description}</DialogDescription>
           </DialogHeader>
-          {emailView && (
-            <iframe
-              title={emailView.title}
-              src={emailView.url}
-              sandbox=""
-              className="mt-3 h-[65vh] w-full rounded-md border border-border bg-white"
-            />
-          )}
+          {emailView && <EmailPreviewFrame title={emailView.title} src={emailView.url} />}
         </DialogContent>
       </Dialog>
 
