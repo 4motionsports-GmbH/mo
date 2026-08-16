@@ -184,12 +184,12 @@ export interface EmailProductRowItem extends EmailProductGridItem {
 
 const ROW_NAME_STYLE =
   `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
-  `font-size: 13px; line-height: 1.4; color: #000000; font-weight: 700; ` +
-  `Margin: 12px 0 4px; padding: 0;`;
+  `font-size: 14px; line-height: 1.35; color: #000000; font-weight: 700; ` +
+  `Margin: 0 0 4px; padding: 0;`;
 
 const ROW_PRICE_STYLE =
   `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
-  `font-size: 13px; line-height: 1.4; color: #000000; font-weight: 400; Margin: 0; padding: 0;`;
+  `font-size: 13px; line-height: 1.4; color: #000000; font-weight: 400; Margin: 0 0 8px; padding: 0;`;
 
 const ROW_DESC_STYLE =
   `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
@@ -227,8 +227,8 @@ function renderProductRow(item: EmailProductRowItem, isFirst: boolean): string {
 
   const price = item.priceLabel
     ? item.compareAtLabel
-      ? `<p style="${ROW_PRICE_STYLE}" align="center"><span style="text-decoration: line-through; color: ${EMAIL_SALE_STRIKE_COLOR};">${escapeHtml(item.compareAtLabel)}</span> <strong style="color: #000000;">${escapeHtml(item.priceLabel)}</strong></p>`
-      : `<p style="${ROW_PRICE_STYLE}" align="center"><strong style="color: #000000;">${escapeHtml(item.priceLabel)}</strong></p>`
+      ? `<p style="${ROW_PRICE_STYLE}" align="left"><span style="text-decoration: line-through; color: ${EMAIL_SALE_STRIKE_COLOR};">${escapeHtml(item.compareAtLabel)}</span> <strong style="color: #000000;">${escapeHtml(item.priceLabel)}</strong></p>`
+      : `<p style="${ROW_PRICE_STYLE}" align="left"><strong style="color: #000000;">${escapeHtml(item.priceLabel)}</strong></p>`
     : "";
 
   const description = item.description?.trim()
@@ -246,20 +246,29 @@ function renderProductRow(item: EmailProductRowItem, isFirst: boolean): string {
                         </td>
                       </tr>`;
 
-  // First column = ONE THIRD of the table (image + name + price), second
-  // column = TWO THIRDS (personalised description + product button). Fixed
-  // pixel widths for Outlook (480px usable card width → 160/320); the mobile
-  // media query (.prow-col) stacks the two cells.
+  // Magazine-style row: the image alone fills the left THIRD, ALL text — bold
+  // linked name, price, personalised description, product button — sits in the
+  // right TWO THIRDS. The same side-by-side layout holds on phones (no
+  // stacking): the image simply shrinks to its cell (.prow-image media rule),
+  // so every row reads as one symmetric block on any screen.
+  const textCell = `
+                          <p style="${ROW_NAME_STYLE}" align="left">${name}</p>
+                          ${price}
+                          ${description}
+                          ${cta}`;
+  if (!linkedImage) {
+    return `${divider}
+                      <tr>
+                        <td colspan="2" align="left" valign="middle" style="mso-line-height-rule: exactly; padding: 18px 0 0; vertical-align: middle;">${textCell}
+                        </td>
+                      </tr>`;
+  }
   return `${divider}
                       <tr>
-                        <td class="prow-col" width="33%" align="center" valign="top" style="mso-line-height-rule: exactly; width: 33%; padding: 18px 10px 0 0; vertical-align: top;">
+                        <td width="33%" align="center" valign="middle" style="mso-line-height-rule: exactly; width: 33%; padding: 18px 12px 0 0; vertical-align: middle;">
                           ${linkedImage}
-                          <p style="${ROW_NAME_STYLE}" align="center">${name}</p>
-                          ${price}
                         </td>
-                        <td class="prow-col" width="67%" align="left" valign="middle" style="mso-line-height-rule: exactly; width: 67%; padding: 18px 0 0 10px; vertical-align: middle;">
-                          ${description}
-                          ${cta}
+                        <td width="67%" align="left" valign="middle" style="mso-line-height-rule: exactly; width: 67%; padding: 18px 0 0 4px; vertical-align: middle;">${textCell}
                         </td>
                       </tr>`;
 }
