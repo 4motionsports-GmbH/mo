@@ -183,3 +183,11 @@ test("productPriceRange spans effective prices", () => {
   assert.deepEqual(productPriceRange(legacyProduct), { min: 89, max: 89 });
   assert.equal(productPriceRange({ variants: [] , price: 0 }), null);
 });
+
+test("normalizeVariantId handles digits, GIDs and junk", async () => {
+  const { normalizeVariantId } = await import("./product-ref.mjs");
+  assert.equal(normalizeVariantId("123"), "123");
+  assert.equal(normalizeVariantId("gid://shopify/ProductVariant/456"), "456");
+  assert.equal(normalizeVariantId("SKU-1"), null);
+  assert.equal(normalizeVariantId(null), null);
+});

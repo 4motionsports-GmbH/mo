@@ -87,6 +87,7 @@ import { buildBundleRedirectUrl } from "./bundle-offers";
 import { renderBundleOfferBlock } from "./bundle-email";
 import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
 import { loadProductCatalog } from "./catalog-store";
+import { resolveProductSelections } from "./product-catalog";
 import { reportError } from "./observability";
 import type { Product } from "./types";
 
@@ -377,20 +378,36 @@ async function catalogNameLookup(): Promise<(url: string) => string | null> {
 }
 
 /**
- * Resolve the draft's recommended product ids (including review-time curation)
- * against the live catalog — the campaign's picture-grid source, exactly like
- * the marketing channel's cart contents. Purely presentational: a resolve
+ * Resolve the draft's recommended product ids (including review-time curation;
+ * possibly variant-pinned refs) against the live catalog — the campaign's
+ * picture-grid source, exactly like the marketing channel's cart contents.
+ * Returns variant-projected display products, so the grid shows the CHOSEN
+ * variant's name, price and deep link. Purely presentational: a resolve
  * failure just drops the grid (the prose keeps its product links), it never
  * blocks a send.
+ *
+ * Hard block: a ref whose pinned variant no longer exists is DROPPED (and
+ * reported), never silently downgraded to the default variant — a marketing
+ * mail must not show a price the admin didn't approve (PAngV).
  */
 async function resolveRecommendedProducts(productIds: string[]): Promise<Product[]> {
   if (productIds.length === 0) return [];
   try {
-    const catalog = await loadProductCatalog();
-    const byId = new Map(catalog.map((p) => [p.id, p]));
-    return productIds
-      .map((id) => byId.get(id))
-      .filter((p): p is Product => p !== undefined);
+    const selections = await resolveProductSelections(productIds);
+    const gone = selections.filter((s) => s.missingVariant);
+    if (gone.length > 0) {
+      reportError(
+        new Error(
+          `campaign email: pinned variant(s) vanished, dropped from grid: ${gone
+            .map((s) => s.ref)
+            .join(", ")}`
+        ),
+        { route: "lib/campaign-email", phase: "resolveRecommendedProducts" }
+      );
+    }
+    return selections
+      .map((s) => s.display)
+      .filter((p): p is Product => p !== null);
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "resolveRecommendedProducts" });
     return [];

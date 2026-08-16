@@ -22,8 +22,8 @@ import {
   getActiveBundleForCampaignContact,
 } from "@/lib/bundle-offers-store";
 import { archiveBundleOffer, createBundleOffer } from "@/lib/bundle-offers";
-import { getProductsByIds } from "@/lib/product-catalog";
-import { isAvailable } from "@/lib/availability.mjs";
+import { resolveProductSelections } from "@/lib/product-catalog";
+import { parseProductRef } from "@/lib/product-ref.mjs";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 60;
@@ -67,19 +67,34 @@ export async function POST(req: Request) {
       return adminJsonError("not_editable", "Contact is not in review.", 409);
     }
 
-    // Validate against the sync-fresh catalog; refuse unknown or sold-out
-    // products (a recommendation must be currently recommendable — same bar as
-    // generation's filterAvailable and the bundle's compose-time check).
-    const products = await getProductsByIds(productIds);
-    const foundIds = new Set(products.map((p) => p.id));
-    const unknown = productIds.filter((id) => !foundIds.has(id));
+    // Validate against the sync-fresh catalog; refuse unknown products,
+    // vanished pinned variants and sold-out picks (a recommendation must be
+    // currently recommendable — same bar as generation's filterAvailable and
+    // the bundle's compose-time check). productIds may be refs
+    // ("handle~variantId") pinning a concrete variant.
+    const selections = await resolveProductSelections(productIds);
+    const foundRefs = new Set(selections.map((s) => s.ref));
+    const unknown = productIds.filter((id) => !foundRefs.has(id));
     if (unknown.length > 0) {
       return adminJson(
         { error: { code: "unknown_products", message: "Not in the catalog." }, offenders: unknown },
         400
       );
     }
-    const soldOut = products.filter((p) => !isAvailable(p)).map((p) => p.id);
+    const goneVariants = selections.filter((s) => s.missingVariant).map((s) => s.ref);
+    if (goneVariants.length > 0) {
+      return adminJson(
+        {
+          error: {
+            code: "variant_not_found",
+            message: "The selected variant no longer exists — re-pick it.",
+          },
+          offenders: goneVariants,
+        },
+        409
+      );
+    }
+    const soldOut = selections.filter((s) => !s.available).map((s) => s.ref);
     if (soldOut.length > 0) {
       return adminJson(
         { error: { code: "sold_out", message: "Sold-out products cannot be recommended." }, offenders: soldOut },
@@ -103,7 +118,10 @@ export async function POST(req: Request) {
       } else {
         const created = await createBundleOffer(
           null,
-          productIds.map((productId) => ({ productId })),
+          productIds.map((ref) => {
+            const { productId, variantId } = parseProductRef(ref);
+            return { productId, ...(variantId ? { variantId } : {}) };
+          }),
           { campaignContactId: contactId }
         );
         if (created.ok) bundle = created.offer;
@@ -113,10 +131,12 @@ export async function POST(req: Request) {
 
     return adminJson({
       ok: true,
-      recommendations: products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        url: p.shopifyUrl ?? null,
+      // id = the full ref, so the review card round-trips variants intact;
+      // name/url are the variant-projected display values.
+      recommendations: selections.map((s) => ({
+        id: s.ref,
+        name: s.display?.name ?? s.product.name,
+        url: s.display?.shopifyUrl ?? s.product.shopifyUrl ?? null,
       })),
       bundle: bundle
         ? {

@@ -41,6 +41,7 @@ import {
   Select,
   Textarea,
   toast,
+  CatalogProductPicker,
 } from "./ui";
 import { EmailPreviewFrame } from "./EmailPreviewFrame";
 import {
@@ -1902,9 +1903,10 @@ function QueueRail({
   );
 }
 
-/** Editable recommendation list: remove per item, add via the shared catalog
- * search (/api/admin/catalog/search — the bundle composer's picker backend),
- * SEARCH-AS-YOU-TYPE like the Kunden bundle composer. Every change persists
+/** Editable recommendation list: remove per item, add via the SHARED catalog
+ * picker (ui/product-picker — the bundle composer's widget), including the
+ * second-stage variant chooser: a pinned variant is stored as a
+ * "handle~variantId" ref in recommendedProductIds. Every change persists
  * immediately (onChange → the recommendations route, which also rebuilds an
  * attached bundle and regenerates the prose). */
 function RecommendationsEditor({
@@ -1918,47 +1920,6 @@ function RecommendationsEditor({
   saving: boolean;
   onChange: (productIds: string[]) => void;
 }) {
-  const [query, setQuery] = React.useState("");
-  const [results, setResults] = React.useState<
-    Array<{ productId: string; title: string; inStock: boolean }>
-  >([]);
-  const [searching, setSearching] = React.useState(false);
-  const searchSeq = React.useRef(0);
-
-  // Search-as-you-type over the synced catalog, debounced — the same pattern
-  // as the Kunden bundle composer. Results clear below a 2-char query.
-  React.useEffect(() => {
-    const q = query.trim();
-    if (q.length < 2) {
-      searchSeq.current++;
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-    const seq = ++searchSeq.current;
-    setSearching(true);
-    const handle = setTimeout(async () => {
-      try {
-        const json = (await callApi("/api/admin/catalog/search", { query: q })) as {
-          products?: Array<{ productId: string; title: string; inStock: boolean }>;
-        };
-        if (seq !== searchSeq.current) return;
-        setResults(json.products ?? []);
-      } catch (err) {
-        if (seq === searchSeq.current) {
-          toast({
-            variant: "error",
-            title: "Katalogsuche fehlgeschlagen",
-            description: String((err as Error).message ?? err),
-          });
-        }
-      } finally {
-        if (seq === searchSeq.current) setSearching(false);
-      }
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [query]);
-
   const ids = recommendations.map((r) => r.id);
 
   return (
@@ -1997,38 +1958,38 @@ function RecommendationsEditor({
       ) : (
         <div className="text-xs text-muted-foreground">Keine.</div>
       )}
-      <div className="mt-1.5 flex items-center gap-1.5">
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+      <div className="mt-1.5">
+        <CatalogProductPicker
           placeholder="Produkt suchen (tippen)…"
-          className="h-8 w-52 text-xs"
-          aria-label="Produkt für Empfehlung suchen"
-          disabled={busy}
+          ariaLabel="Produkt für Empfehlung suchen"
+          maxResults={6}
+          showThumbnails={false}
+          onSelect={(hit, variant) => {
+            const ref = variant?.variantId
+              ? `${hit.productId}~${variant.variantId}`
+              : hit.productId;
+            if (busy || ids.includes(ref)) return;
+            onChange([...ids, ref]);
+          }}
+          isSelected={(hit, variant) =>
+            ids.includes(
+              variant?.variantId ? `${hit.productId}~${variant.variantId}` : hit.productId
+            )
+          }
+          disableReason={(hit, variant) => {
+            if (busy) return "Speichert…";
+            if (variant ? !variant.available : !hit.inStock) return "Ausverkauft";
+            return null;
+          }}
+          onError={(err) =>
+            toast({
+              variant: "error",
+              title: "Katalogsuche fehlgeschlagen",
+              description: String(err.message ?? err),
+            })
+          }
         />
-        {searching && <span className="text-xs text-muted-foreground">Sucht…</span>}
       </div>
-      {results.length > 0 && (
-        <ul className="mt-1 space-y-0.5 text-xs">
-          {results.slice(0, 6).map((p) => (
-            <li key={p.productId}>
-              <button
-                type="button"
-                className="underline underline-offset-2 disabled:no-underline disabled:opacity-50"
-                disabled={busy || !p.inStock || ids.includes(p.productId)}
-                onClick={() => {
-                  setResults([]);
-                  setQuery("");
-                  onChange([...ids, p.productId]);
-                }}
-              >
-                + {p.title}
-              </button>
-              {!p.inStock && <span className="text-muted-foreground"> (ausverkauft)</span>}
-            </li>
-          ))}
-        </ul>
-      )}
       <p className="mt-1 text-xs text-muted-foreground">
         Änderungen werden sofort gespeichert, ein angehängtes Set wird angepasst und der Text
         automatisch neu generiert.

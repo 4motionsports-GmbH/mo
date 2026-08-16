@@ -23,8 +23,8 @@ import { loadCampaignPersonalization } from "./campaign-recommendations";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
 import { archiveBundleOffer, createBundleOffer } from "./bundle-offers";
 import { bundleStattPrice } from "./bundle-email-core.mjs";
-import { getProductsByIds } from "./product-catalog";
-import { isAvailable } from "./availability.mjs";
+import { resolveProductSelections } from "./product-catalog";
+import type { Product } from "./types";
 import {
   getDraftForContact,
   listNextPendingContacts,
@@ -82,18 +82,24 @@ export async function prepareDraftForContact(
   );
 
   // Which products the email recommends: preserve the draft's stored list
-  // (auto-picked or manually curated) on a plain regenerate; recompute only
-  // for the first draft or an explicit refresh. Stored products that dropped
-  // out of the catalog / went out of stock are silently dropped; when nothing
-  // survives, fall back to a fresh auto-pick.
+  // (auto-picked or manually curated, possibly variant-pinned refs) on a plain
+  // regenerate; recompute only for the first draft or an explicit refresh.
+  // Stored entries that dropped out of the catalog, went out of stock, or
+  // whose PINNED VARIANT vanished are dropped (never silently downgraded to
+  // the default variant — the operator approved a concrete price); when
+  // nothing survives, fall back to a fresh auto-pick.
+  // recommendedProducts are DISPLAY products (variant-projected for refs);
+  // recommendedRefs is what gets re-saved, keeping variants intact.
   let recommendedProducts = recommendations.products;
+  let recommendedRefs = recommendations.products.map((p) => p.id);
   let lowConfidence = recommendations.lowConfidence;
   if (!opts.refreshRecommendations && existing && existing.recommendedProductIds.length > 0) {
-    const stored = (await getProductsByIds(existing.recommendedProductIds)).filter((p) =>
-      isAvailable(p)
+    const stored = (await resolveProductSelections(existing.recommendedProductIds)).filter(
+      (s) => !s.missingVariant && s.available && s.display
     );
     if (stored.length > 0) {
-      recommendedProducts = stored;
+      recommendedProducts = stored.map((s) => s.display as Product);
+      recommendedRefs = stored.map((s) => s.ref);
       lowConfidence = existing.lowConfidence;
     }
   }
@@ -103,6 +109,7 @@ export async function prepareDraftForContact(
   // offer from the fresh picks (same rule as the /recommendations route).
   if (opts.refreshRecommendations && recommendedProducts.length > 0) {
     const active = await getActiveBundleForCampaignContact(contact.id);
+    // A refresh always holds fresh auto-picks — bare product ids, no refs.
     const newIds = recommendedProducts.map((p) => p.id);
     const sameSet =
       active &&
@@ -188,7 +195,7 @@ export async function prepareDraftForContact(
     discountPercent,
     discountExpiresAt: expiry ? expiry.toISOString() : null,
     purchaseSummary,
-    recommendedProductIds: recommendedProducts.map((p) => p.id),
+    recommendedProductIds: recommendedRefs,
     productHighlights: draft.productHighlights,
     purchaseSelectedIds: purchaseSelection,
     lowConfidence,
