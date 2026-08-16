@@ -24,16 +24,14 @@
 // MO-XXXX placeholder preview, read-only sent rows, and the per-run token-cost
 // disclosure on the profile (honest cost, kept verbatim).
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ExternalLink,
   Gift,
   MessageSquare,
-  Plus,
   RotateCcw,
   Save,
-  Search,
   Send,
   Sparkles,
   Trash2,
@@ -64,6 +62,9 @@ import {
   TableRow,
   Textarea,
   toast,
+  CatalogProductPicker,
+  type CatalogSearchHit,
+  type CatalogVariantHit,
 } from "./ui";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import { EmailPreviewButton } from "./EmailPreviewButton";
@@ -994,6 +995,9 @@ const BUNDLE_MAX = 5;
 
 interface ComposerComponent {
   productId: string;
+  /** Numeric Shopify variant id when the operator pinned a variant; null =
+   *  default variant (also what the AI suggest path produces). */
+  variantId?: string | null;
   title: string;
   imageUrl: string | null;
   unitPrice: number;
@@ -1002,13 +1006,9 @@ interface ComposerComponent {
   rationale?: string;
 }
 
-interface CatalogSearchHit {
-  productId: string;
-  title: string;
-  imageUrl: string | null;
-  unitPrice: number;
-  currency: string;
-  inStock: boolean;
+/** Composite key — the same product may appear once per pinned variant. */
+function componentKey(c: { productId: string; variantId?: string | null }): string {
+  return c.variantId ? `${c.productId}~${c.variantId}` : c.productId;
 }
 
 /** Loose shape of the bundle/catalog admin JSON responses (only the fields the
@@ -1020,7 +1020,6 @@ interface BundleApiResponse {
   redirectUrl?: string | null;
   title?: string;
   components?: ComposerComponent[];
-  products?: CatalogSearchHit[];
   offer?: {
     id: number;
     title: string | null;
@@ -1069,13 +1068,7 @@ function BundleOfferSection({
   const [price, setPrice] = useState<string>("");
   const [priceEdited, setPriceEdited] = useState(false);
   const [expiryDays, setExpiryDays] = useState<number>(DEFAULT_EXPIRY_DAYS);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<CatalogSearchHit[]>([]);
-  const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState<null | "suggest" | "create">(null);
-  // Monotonic token so an out-of-order debounced response can't clobber a newer
-  // one (the operator types fast; an early request may resolve last).
-  const searchSeq = useRef(0);
   const [bundles, setBundles] = useState<CustomerBundleProps[]>(initialBundles);
 
   const componentSum = components.reduce((s, c) => s + c.unitPrice, 0);
@@ -1137,46 +1130,24 @@ function BundleOfferSection({
     }
   }
 
-  // Search-as-you-type over the synced catalog. Debounced so each keystroke
-  // doesn't fire a request; the backend handles case-insensitive +
-  // umlaut-tolerant matching. Results clear below a 2-char query (a single
-  // letter is too coarse to be useful and would just dump the cap).
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 2) {
-      searchSeq.current++; // invalidate any in-flight response for a longer query
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-    const seq = ++searchSeq.current;
-    setSearching(true);
-    const handle = setTimeout(async () => {
-      try {
-        const { ok, json } = await post("/api/admin/catalog/search", { query: q });
-        if (seq !== searchSeq.current) return; // a newer query superseded this one
-        if (!ok) {
-          toast({ variant: "error", title: "Fehler", description: json?.error?.message ?? "Suche fehlgeschlagen." });
-          return;
-        }
-        setResults(json.products ?? []);
-      } catch (e) {
-        if (seq === searchSeq.current) reportError(e);
-      } finally {
-        if (seq === searchSeq.current) setSearching(false);
-      }
-    }, 250);
-    return () => clearTimeout(handle);
-    // `post` is a stable local helper; re-running only on query change is intended.
-  }, [query]);
-
-  function addProduct(hit: CatalogSearchHit) {
-    if (components.some((c) => c.productId === hit.productId)) return;
-    applyComponents([...components, { ...hit }]);
+  // Catalog search + the variant chooser live in the shared picker
+  // (ui/product-picker) — this section only decides what a selection means.
+  function addProduct(hit: CatalogSearchHit, variant: CatalogVariantHit | null) {
+    const next: ComposerComponent = {
+      productId: hit.productId,
+      variantId: variant?.variantId ?? null,
+      title: variant?.title ? `${hit.title} – ${variant.title}` : hit.title,
+      imageUrl: hit.imageUrl,
+      unitPrice: variant?.unitPrice ?? hit.unitPrice,
+      currency: variant?.currency ?? hit.currency,
+      inStock: variant ? variant.available : hit.inStock,
+    };
+    if (components.some((c) => componentKey(c) === componentKey(next))) return;
+    applyComponents([...components, next]);
   }
 
-  function removeProduct(productId: string) {
-    applyComponents(components.filter((c) => c.productId !== productId));
+  function removeProduct(key: string) {
+    applyComponents(components.filter((c) => componentKey(c) !== key));
   }
 
   async function onCreate() {
@@ -1192,7 +1163,10 @@ function BundleOfferSection({
     try {
       const { ok, json } = await post("/api/admin/bundles/create", {
         customerId,
-        components: components.map((c) => ({ productId: c.productId })),
+        components: components.map((c) => ({
+          productId: c.productId,
+          ...(c.variantId ? { variantId: c.variantId } : {}),
+        })),
         bundlePriceOverride: priceNum,
         title: title.trim() || DEFAULT_BUNDLE_TITLE,
         expiryDays,
@@ -1244,8 +1218,6 @@ function BundleOfferSection({
       setTitle(DEFAULT_BUNDLE_TITLE);
       setPrice("");
       setPriceEdited(false);
-      setResults([]);
-      setQuery("");
       toast({
         variant: "success",
         title: "Bundle erstellt",
@@ -1328,7 +1300,7 @@ function BundleOfferSection({
             <div className="mb-3 flex flex-col gap-1.5">
               {components.map((c) => (
                 <div
-                  key={c.productId}
+                  key={componentKey(c)}
                   className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-2.5 py-1.5"
                 >
                   {c.imageUrl ? (
@@ -1356,7 +1328,7 @@ function BundleOfferSection({
                     className="size-7"
                     title="Entfernen"
                     aria-label={`${c.title} aus dem Bundle entfernen`}
-                    onClick={() => removeProduct(c.productId)}
+                    onClick={() => removeProduct(componentKey(c))}
                   >
                     <X />
                   </Button>
@@ -1368,67 +1340,28 @@ function BundleOfferSection({
             </div>
           )}
 
-          {/* Add product by name search — filters the synced catalog as you type */}
+          {/* Add product (and variant) — shared catalog picker */}
           <div className="mb-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Produkt suchen (Name)…"
-                className="pl-9 pr-16"
-                aria-label="Produkt im Katalog suchen"
-              />
-              {searching && (
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                  Suche…
-                </span>
-              )}
-            </div>
-            {results.length > 0 && (
-              <div className="mt-1.5 flex flex-col gap-1">
-                {results.map((r) => {
-                  const added = components.some((c) => c.productId === r.productId);
-                  return (
-                    <div
-                      key={r.productId}
-                      className="flex items-center gap-2 rounded-md border border-border bg-card px-2 py-1 text-sm"
-                    >
-                      {r.imageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={r.imageUrl}
-                          alt={r.title}
-                          width={28}
-                          height={28}
-                          className="size-7 shrink-0 rounded object-cover"
-                        />
-                      ) : (
-                        <div className="size-7 shrink-0 rounded bg-muted" />
-                      )}
-                      <span className="min-w-0 flex-1">
-                        {r.title} <span className="text-muted-foreground">· {fmtMoney(r.unitPrice, r.currency)}</span>
-                        {!r.inStock && <span className="text-destructive"> · ausverkauft</span>}
-                      </span>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => addProduct(r)}
-                        disabled={added || !r.inStock}
-                        title={!r.inStock ? "Ausverkauft — nicht hinzufügbar" : undefined}
-                      >
-                        {added ? "✓ drin" : <><Plus /> hinzufügen</>}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {query.trim().length >= 2 && !searching && results.length === 0 && (
-              <div className="mt-1.5 text-xs text-muted-foreground">
-                Keine Treffer für „{query.trim()}“.
-              </div>
-            )}
+            <CatalogProductPicker
+              placeholder="Produkt suchen (Name)…"
+              onSelect={addProduct}
+              isSelected={(hit, variant) =>
+                components.some(
+                  (c) =>
+                    componentKey(c) ===
+                    componentKey({ productId: hit.productId, variantId: variant?.variantId ?? null })
+                )
+              }
+              disableReason={(hit, variant) =>
+                (variant ? !variant.available : !hit.inStock)
+                  ? "Ausverkauft — nicht hinzufügbar"
+                  : null
+              }
+              onError={(e) => {
+                toast({ variant: "error", title: "Fehler", description: e.message || "Suche fehlgeschlagen." });
+                reportError(e);
+              }}
+            />
           </div>
 
           {/* Price / title / expiry */}

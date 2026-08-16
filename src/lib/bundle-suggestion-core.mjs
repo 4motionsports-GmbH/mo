@@ -11,6 +11,8 @@
 // FIRST place that rule is applied, so the model is never even offered a product
 // that S10's createBundleOffer would later reject.
 
+import { productVariants } from "./product-ref.mjs";
+
 /** Min / max products a bundle suggestion may contain (the editable list). */
 export const BUNDLE_MIN_PRODUCTS = 2;
 export const BUNDLE_MAX_PRODUCTS = 5;
@@ -23,7 +25,7 @@ export const BUNDLE_MAX_PRODUCTS = 5;
  * purchase history's handles exclude owned products directly.
  *
  * @param {Array<{ id: string, inStock?: boolean, shopifyVariantId?: string,
- *   price?: number, salePrice?: number }>} catalog
+ *   price?: number, salePrice?: number, variants?: Array<object> }>} catalog
  * @param {Iterable<string>} ownedHandles
  * @returns {Array<object>} the eligible candidate products
  */
@@ -34,7 +36,9 @@ export function selectBundleCandidates(catalog, ownedHandles = []) {
     if (!p || typeof p.id !== "string") return false;
     if (owned.has(p.id)) return false; // never re-bundle an owned product
     if (p.inStock === false) return false; // sold-out is refused by S10 anyway
-    if (!p.shopifyVariantId) return false; // no variant ⇒ no bundle component
+    // No resolvable variant id at all ⇒ no bundle component (the suggestion is
+    // product-level; ANY variant with a numeric id qualifies).
+    if (!productVariants(p).some((v) => v && v.id)) return false;
     const price = p.salePrice != null ? p.salePrice : p.price;
     if (!(typeof price === "number" && Number.isFinite(price) && price > 0)) return false;
     return true;

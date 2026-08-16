@@ -14,7 +14,10 @@ export type BundleOfferStatus = "pending" | "active" | "expired" | "failed";
 /** A persisted component snapshot (one entry of the components JSONB array). */
 export interface BundleComponentRecord {
   productId: string;
+  /** Display title — "Produktname – Variantentitel" for pinned variants. */
   title: string;
+  /** The chosen variant's label ("16 kg"); absent for default/single-variant. */
+  variantTitle?: string;
   variantId: string;
   numericVariantId: string | null;
   quantity: number;

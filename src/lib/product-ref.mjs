@@ -64,6 +64,15 @@ export function isVariantRef(ref) {
   return parseProductRef(ref).variantId != null;
 }
 
+/** Numeric form of a variant id (bare digits or the digits of a variant GID). */
+export function normalizeVariantId(id) {
+  if (id == null) return null;
+  const s = String(id).trim();
+  if (/^\d+$/.test(s)) return s;
+  const m = s.match(/\/ProductVariant\/(\d+)/);
+  return m ? m[1] : null;
+}
+
 /**
  * Effective (customer-facing) price of a variant: sale price when a genuine
  * one exists, else the regular price. Mirrors the convention used across the
@@ -131,7 +140,10 @@ export function resolveProductRef(catalogById, ref) {
   if (!product) return null;
   const variants = productVariants(product);
   if (variantId != null) {
-    const match = variants.find((v) => v && String(v.id ?? "") === variantId) ?? null;
+    // Tolerant id compare: catalog variant ids are numeric strings, but a
+    // legacy synthesized default may carry a full GID — match on the digits.
+    const match =
+      variants.find((v) => v && normalizeVariantId(v.id) === variantId) ?? null;
     if (!match) return { product, variant: null, variantId, missingVariant: true };
     return { product, variant: match, variantId, missingVariant: false };
   }

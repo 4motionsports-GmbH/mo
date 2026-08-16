@@ -77,3 +77,24 @@ test("respects the result cap", () => {
 test("non-array catalog is handled safely", () => {
   assert.deepEqual(searchCatalogByName(null, "laufband"), []);
 });
+
+test("searchCatalogByName matches variant titles and SKUs", () => {
+  const catalog = [
+    {
+      name: "ATX Kettlebell",
+      brand: "ATX",
+      category: "Kettlebells",
+      inStock: true,
+      variants: [
+        { title: "16 kg", sku: "MS-ATX-KB-16" },
+        { title: "24 kg", sku: "MS-ATX-KB-24" },
+      ],
+    },
+    { name: "Langhantel", brand: "ATX", category: "Hanteln", inStock: true },
+  ];
+  const hits = searchCatalogByName(catalog, "kettlebell 16");
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].name, "ATX Kettlebell");
+  const skuHits = searchCatalogByName(catalog, "MS-ATX-KB-24");
+  assert.equal(skuHits.length, 1);
+});

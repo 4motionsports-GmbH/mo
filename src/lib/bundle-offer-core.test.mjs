@@ -256,3 +256,66 @@ test("runBundleExpirySweep keeps a failed archive due for the next run", async (
   assert.deepEqual(second, { archived: 1, failed: 0, scanned: 1 });
   assert.equal(store[0].status, "expired");
 });
+
+// ── Variant-pinned components ─────────────────────────────────────────────────
+
+const KETTLEBELL = {
+  id: "atx-kettlebell",
+  name: "ATX Kettlebell",
+  price: 24.9,
+  currency: "EUR",
+  shopifyVariantId: "111",
+  inStock: true,
+  variants: [
+    { id: "111", title: "8 kg", options: [], price: 24.9, available: true, isDefault: true },
+    { id: "222", title: "16 kg", options: [], price: 46.9, salePrice: 39.9, available: true, isDefault: false },
+    { id: "333", title: "24 kg", options: [], price: 69.9, available: false, isDefault: false },
+  ],
+};
+
+test("a pinned variant snapshots ITS price, id and display title", () => {
+  const cat = catalog([KETTLEBELL]);
+  const result = validateAndSnapshotComponents(cat, [
+    { productId: "atx-kettlebell", variantId: "222" },
+  ]);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.components[0], {
+    productId: "atx-kettlebell",
+    title: "ATX Kettlebell – 16 kg",
+    variantTitle: "16 kg",
+    variantId: "222",
+    numericVariantId: "222",
+    quantity: 1,
+    unitPrice: "39.90",
+    currency: "EUR",
+  });
+});
+
+test("no variantId → default variant (pre-variant behaviour)", () => {
+  const cat = catalog([KETTLEBELL]);
+  const result = validateAndSnapshotComponents(cat, [{ productId: "atx-kettlebell" }]);
+  assert.equal(result.ok, true);
+  assert.equal(result.components[0].variantId, "111");
+  assert.equal(result.components[0].unitPrice, "24.90");
+  assert.equal(result.components[0].title, "ATX Kettlebell – 8 kg");
+});
+
+test("a pinned variant that vanished is variant_not_found — never default fallback", () => {
+  const cat = catalog([KETTLEBELL]);
+  const result = validateAndSnapshotComponents(cat, [
+    { productId: "atx-kettlebell", variantId: "99999" },
+  ]);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "variant_not_found");
+  assert.deepEqual(result.variantNotFound, ["atx-kettlebell~99999"]);
+});
+
+test("a sold-out VARIANT of an in-stock product is refused", () => {
+  const cat = catalog([KETTLEBELL]);
+  const result = validateAndSnapshotComponents(cat, [
+    { productId: "atx-kettlebell", variantId: "333" },
+  ]);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "sold_out");
+  assert.deepEqual(result.soldOut, ["atx-kettlebell"]);
+});

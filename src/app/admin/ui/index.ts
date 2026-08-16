@@ -42,3 +42,12 @@ export {
 export { toast, Toaster, type ToastOptions, type ToastVariant } from "./toast";
 export { Section, Stat, Caveat } from "./stat";
 export { Markdown } from "./markdown";
+export {
+  CatalogProductPicker,
+  useCatalogSearch,
+  fmtPickerMoney,
+  hasVariantChoice,
+  type CatalogSearchHit,
+  type CatalogVariantHit,
+  type CatalogProductPickerProps,
+} from "./product-picker";
