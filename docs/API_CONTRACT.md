@@ -851,6 +851,38 @@ type ProductsResponse = {
 Unknown ids return as `null` at the matching index — never a 404 — so
 the widget can render partial results without aborting.
 
+### Product variants (additive)
+
+`PublicProduct` additionally carries the product's sellable variants:
+
+```ts
+variants?: Array<{
+  id: string | null;        // numeric Shopify variant id
+  title: string;            // "16 kg" — empty for single-variant products
+  sku?: string;
+  price: number;
+  salePrice?: number;
+  available: boolean;       // per-variant availability (sync-fresh)
+  cartUrl?: string;         // /cart/<id>:1 — omitted when unavailable
+  isDefault: boolean;
+}>;
+selectedVariantId?: string; // set when the request pinned a variant
+priceMin?: number;          // effective price range across variants
+priceMax?: number;
+```
+
+Requested ids may be **variant refs** of the form `handle~<numericVariantId>`
+(the `~` separator is URL-safe). For a ref, the returned entry's flat fields
+(`name`, `price`, `salePrice`, `shopifyCartUrl`, `inStock`, `sku`) describe
+the CHOSEN variant, `selectedVariantId` is set, and the combined `cartUrl`
+uses that variant. A ref whose variant does not exist returns `null` (like an
+unknown id — never a silent fallback to the default variant). All variant
+fields are additive: widgets that ignore them behave exactly as before, with
+the flat fields describing the default variant. A widget MAY render its own
+variant selector from `variants[]` and deep-link the PDP via
+`shopifyUrl + "?variant=<id>"`.
+
+
 The top-level **`cartUrl`** is new: it is the one-click checkout link for a
 **multi-product** `add_to_cart` (and works for the single-product case too).
 It is built server-side from the resolvable numeric variant ids, so the widget

@@ -32,7 +32,7 @@ import {
 import { prepareDraftForContact } from "@/lib/campaign-prepare";
 import { shouldReuseCampaignDraft } from "@/lib/campaign-draft-core.mjs";
 import { getActiveBundleForCampaignContact } from "@/lib/bundle-offers-store";
-import { getProductsByIds } from "@/lib/product-catalog";
+import { resolveProductSelections } from "@/lib/product-catalog";
 import { isSuppressed } from "@/lib/email-capture-store";
 import {
   parseDiscountPercent,
@@ -46,16 +46,22 @@ export const maxDuration = 60;
 // purchases, not a free-form cart).
 const MAX_SELECTION = 100;
 
-/** The card-facing payload: draft + resolved products + attached bundle. */
+/** The card-facing payload: draft + resolved products + attached bundle.
+ * recommendedProductIds may be variant-pinned refs; the id round-trips the
+ * full ref while name/url show the chosen variant. */
 async function draftResponsePayload(contactId: number, draft: CampaignDraftRow) {
-  const products = await getProductsByIds(draft.recommendedProductIds);
-  const byId = new Map(products.map((p) => [p.id, p]));
+  const selections = await resolveProductSelections(draft.recommendedProductIds);
+  const byRef = new Map(selections.map((s) => [s.ref, s]));
   const bundle = await getActiveBundleForCampaignContact(contactId);
   return {
     draft,
     recommendations: draft.recommendedProductIds.map((id) => {
-      const p = byId.get(id);
-      return { id, name: p?.name ?? id, url: p?.shopifyUrl ?? null };
+      const s = byRef.get(id);
+      return {
+        id,
+        name: s?.display?.name ?? s?.product.name ?? id,
+        url: s?.display?.shopifyUrl ?? s?.product.shopifyUrl ?? null,
+      };
     }),
     bundle: bundle
       ? {

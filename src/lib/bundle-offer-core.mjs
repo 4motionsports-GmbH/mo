@@ -10,6 +10,14 @@
 // unit prices are SNAPSHOTTED at creation so the "statt €X" compare-at stays
 // auditable after catalog prices drift (spike §2).
 
+import {
+  formatProductRef,
+  resolveProductRef,
+  effectiveVariantPrice,
+  isVariantAvailable,
+  variantDisplayName,
+} from "./product-ref.mjs";
+
 // ── Creation modes (the seam) ────────────────────────────────────────────────
 
 /** PRIMARY: native Shopify fixed bundle (productBundleCreate → poll → …). */
@@ -167,12 +175,20 @@ export function computeCompareAtPrice(bundlePrice, componentsSum) {
  * I/O. `unitPrice` is the component's effective current price — the sale price
  * when on sale, else the list price — i.e. what a customer pays for it alone.
  *
+ * Variant-aware: an input may pin a specific variant via `variantId` (numeric
+ * Shopify id, the picker's selection). Without one, the product's default
+ * variant is used — exactly the pre-variant behaviour. A pinned variant that
+ * no longer exists in the catalog is a hard refusal (`variant_not_found`),
+ * NEVER silently downgraded to the default (the operator approved a concrete
+ * price — see product-ref.mjs module doc).
+ *
  * @param {Map<string, { id: string, name?: string, price?: number, salePrice?: number,
- *   currency?: string, shopifyVariantId?: string, inStock?: boolean }>} catalogById
- * @param {Array<{ productId: string, quantity?: number }>} inputs
+ *   currency?: string, shopifyVariantId?: string, inStock?: boolean,
+ *   variants?: Array<object> }>} catalogById
+ * @param {Array<{ productId: string, variantId?: string|null, quantity?: number }>} inputs
  * @returns {{ ok: true, components: Array<object> } |
- *   { ok: false, reason: "empty" | "unknown_products" | "sold_out" | "no_variant",
- *     unknown?: string[], soldOut?: string[], noVariant?: string[] }}
+ *   { ok: false, reason: "empty" | "unknown_products" | "sold_out" | "no_variant" | "variant_not_found",
+ *     unknown?: string[], soldOut?: string[], noVariant?: string[], variantNotFound?: string[] }}
  */
 export function validateAndSnapshotComponents(catalogById, inputs) {
   const list = Array.isArray(inputs) ? inputs : [];
@@ -181,10 +197,15 @@ export function validateAndSnapshotComponents(catalogById, inputs) {
   const unknown = [];
   const soldOut = [];
   const noVariant = [];
+  const variantNotFound = [];
   const components = [];
 
   for (const input of list) {
     const productId = String(input?.productId ?? "").trim();
+    const requestedVariantId =
+      input?.variantId != null && String(input.variantId).trim() !== ""
+        ? String(input.variantId).trim()
+        : null;
     const quantity =
       Number.isFinite(input?.quantity) && input.quantity > 0 ? Math.floor(input.quantity) : 1;
     const product = productId ? catalogById.get(productId) : undefined;
@@ -192,28 +213,39 @@ export function validateAndSnapshotComponents(catalogById, inputs) {
       unknown.push(productId || "(empty)");
       continue;
     }
-    // Sync-fresh stock gate: a sold-out component would make the native bundle
-    // unbuyable the moment it's created — refuse now (spike §4 mitigation 1).
-    if (product.inStock === false) {
+    const resolved = resolveProductRef(
+      catalogById,
+      formatProductRef(productId, requestedVariantId)
+    );
+    if (!resolved || resolved.missingVariant) {
+      variantNotFound.push(formatProductRef(productId, requestedVariantId));
+      continue;
+    }
+    const variant = resolved.variant;
+    // Sync-fresh stock gate, per chosen variant: a sold-out component would
+    // make the native bundle unbuyable the moment it's created — refuse now
+    // (spike §4 mitigation 1).
+    if (!isVariantAvailable(product, variant)) {
       soldOut.push(productId);
       continue;
     }
-    const variantId = product.shopifyVariantId ?? null;
+    const variantId = variant?.id ?? null;
     if (!variantId) {
       noVariant.push(productId);
       continue;
     }
-    const effectivePrice = product.salePrice != null ? product.salePrice : product.price;
-    const unitCents = toCents(effectivePrice);
+    const unitCents = toCents(effectiveVariantPrice(variant));
     if (unitCents == null) {
       // Treat an unpriceable component like a missing variant — it can't be a
       // defensible "statt" contributor.
       noVariant.push(productId);
       continue;
     }
+    const variantTitle = (variant?.title ?? "").trim();
     components.push({
       productId: product.id,
-      title: product.name ?? product.id,
+      title: variantDisplayName(product, variant) || product.id,
+      ...(variantTitle ? { variantTitle } : {}),
       variantId,
       numericVariantId: parseNumericVariantId(variantId),
       quantity,
@@ -223,6 +255,7 @@ export function validateAndSnapshotComponents(catalogById, inputs) {
   }
 
   if (unknown.length) return { ok: false, reason: "unknown_products", unknown };
+  if (variantNotFound.length) return { ok: false, reason: "variant_not_found", variantNotFound };
   if (soldOut.length) return { ok: false, reason: "sold_out", soldOut };
   if (noVariant.length) return { ok: false, reason: "no_variant", noVariant };
   return { ok: true, components };

@@ -1,7 +1,10 @@
 // POST /api/admin/bundles/create
-//   { customerId?, components: [{ productId, quantity? }],
+//   { customerId?, components: [{ productId, variantId?, quantity? }],
 //     bundlePriceOverride?, title?, expiryDays?, marketingSendId?,
 //     campaignContactId? }
+//
+// variantId (numeric Shopify id) pins a specific variant of the component —
+// the picker's second-stage selection; omitted = default variant.
 //
 // Create a personalized bundle offer (S10). customerId is optional (null = an
 // ad-hoc offer); campaignContactId attaches the offer to a campaign contact
@@ -28,6 +31,9 @@ const STATUS_BY_REASON: Record<string, number> = {
   unknown_products: 400,
   sold_out: 409,
   no_variant: 422,
+  // The pinned variant vanished between picking and creating (catalog sync
+  // ran in between) — a conflict the UI resolves by re-picking.
+  variant_not_found: 409,
   bad_price: 400,
   create_failed: 502,
 };
@@ -65,10 +71,18 @@ export async function POST(req: Request) {
       return adminJsonError("bad_request", "components must be a non-empty array", 400);
     }
     components = body.components.map((c) => {
-      const item = c as { productId?: unknown; quantity?: unknown };
+      const item = c as { productId?: unknown; variantId?: unknown; quantity?: unknown };
       const productId = String(item.productId ?? "").trim();
+      const variantId =
+        item.variantId != null && String(item.variantId).trim() !== ""
+          ? String(item.variantId).trim()
+          : null;
       const quantity = item.quantity != null ? Number(item.quantity) : undefined;
-      return { productId, ...(quantity != null ? { quantity } : {}) };
+      return {
+        productId,
+        ...(variantId ? { variantId } : {}),
+        ...(quantity != null ? { quantity } : {}),
+      };
     });
     if (components.some((c) => !c.productId)) {
       return adminJsonError("bad_request", "every component needs a productId", 400);

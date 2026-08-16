@@ -26,8 +26,9 @@ import { createHash } from "node:crypto";
 
 // Bump whenever buildEmbeddingDoc's OUTPUT shape changes in a way that should
 // force a full re-embed on the next sync. v1 = the old "Name/Kategorie/…/≤12
-// features/240-char description" doc; v2 = this problem-oriented doc.
-export const EMBEDDING_DOC_VERSION = 2;
+// features/240-char description" doc; v2 = the problem-oriented doc;
+// v3 = variant-aware (price range + Varianten section).
+export const EMBEDDING_DOC_VERSION = 3;
 
 // Upper bounds — generous (the old doc dropped real signal) but safely under the
 // model's 8192-token-per-input cap. ~6000 chars of German ≈ ~2000 tokens.
@@ -35,6 +36,9 @@ const MAX_DESCRIPTION_CHARS = 1200;
 const MAX_FEATURES = 40;
 const MAX_SPECS = 40;
 const MAX_DOC_CHARS = 6000;
+// Variant lines are high-signal ("16 kg", "Stärke 5") but must not crowd out
+// the description — beyond this cap the section collapses to a summary line.
+const MAX_VARIANT_LINES = 15;
 
 /** Stable short hash of a doc string — used to detect that a product's embedded
  *  text changed (so the webhook path re-embeds only when it actually must). */
@@ -165,8 +169,20 @@ export function buildEmbeddingDoc(p) {
   if (ident) lines.push(ident);
   if (p?.series) lines.push(`Serie: ${p.series}`);
 
-  // Price (incl. sale) — shoppers filter hard on budget.
-  if (typeof p?.price === "number") {
+  // Price (incl. sale) — shoppers filter hard on budget. Multi-variant
+  // products state their effective range ("ab X bis Y EUR") instead of the
+  // misleading default-variant price.
+  const variantList = Array.isArray(p?.variants) ? p.variants : [];
+  const variantPrices = variantList
+    .map((v) =>
+      typeof v?.salePrice === "number" && v.salePrice > 0 ? v.salePrice : v?.price
+    )
+    .filter((n) => typeof n === "number" && n > 0);
+  const priceMin = variantPrices.length ? Math.min(...variantPrices) : null;
+  const priceMax = variantPrices.length ? Math.max(...variantPrices) : null;
+  if (priceMin != null && priceMax != null && priceMax > priceMin) {
+    lines.push(`Preis: ab ${priceMin} EUR bis ${priceMax} EUR (je nach Variante)`);
+  } else if (typeof p?.price === "number") {
     const sale =
       typeof p?.salePrice === "number" && p.salePrice > 0 && p.salePrice < p.price
         ? ` (reduziert auf ${p.salePrice} EUR)`
@@ -202,6 +218,27 @@ export function buildEmbeddingDoc(p) {
   if (specEntries.length) {
     lines.push("", "Technische Daten:");
     for (const [k, v] of specEntries) lines.push(`- ${k}: ${v}`);
+  }
+
+  // Available variants ("16 kg", "Stärke 5", "Eiche") — makes variant-level
+  // queries ("Kettlebell 16 kg") retrieve this product. Only for genuinely
+  // multi-variant products (a lone empty-titled default adds no signal).
+  const namedVariants = variantList.filter((v) => v && (v.title || "").trim());
+  if (namedVariants.length > 1) {
+    lines.push("", "Varianten:");
+    if (namedVariants.length <= MAX_VARIANT_LINES) {
+      for (const v of namedVariants) {
+        const eff =
+          typeof v.salePrice === "number" && v.salePrice > 0 ? v.salePrice : v.price;
+        const priceStr = typeof eff === "number" && eff > 0 ? ` — ${eff} EUR` : "";
+        lines.push(`- ${v.title.trim()}${priceStr}`);
+      }
+    } else {
+      const titles = uniqueNonEmpty(namedVariants.map((v) => v.title), MAX_VARIANT_LINES);
+      lines.push(
+        `- ${namedVariants.length} Varianten: ${titles.join(", ")}${namedVariants.length > titles.length ? ", …" : ""}`
+      );
+    }
   }
 
   // Published customer Q&A (the "Wissen" feature) — real customer questions in

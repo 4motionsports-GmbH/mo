@@ -33,12 +33,14 @@ export function foldGerman(s) {
  * Name-first catalog search for the composer's add-product box. Pure: takes the
  * catalog + raw query, returns the matched products (a subset of the input,
  * in-stock first then by name, capped at `max`). Every whitespace-separated
- * term must appear (AND) somewhere in name/brand/category — a focused name
- * search, not fuzzy recall. Single-character terms are dropped unless that's all
- * the operator typed, so "ab" still narrows while a stray "a" beside a real word
- * doesn't widen the match back to everything.
+ * term must appear (AND) somewhere in name/brand/category — or in a variant's
+ * title/SKU, so "kettlebell 16" finds the kettlebell whose variants carry
+ * "16 kg" — a focused name search, not fuzzy recall. Single-character terms are
+ * dropped unless that's all the operator typed, so "ab" still narrows while a
+ * stray "a" beside a real word doesn't widen the match back to everything.
  *
- * @param {Array<{ name?: string, brand?: string, category?: string, inStock?: boolean }>} catalog
+ * @param {Array<{ name?: string, brand?: string, category?: string, inStock?: boolean,
+ *   variants?: Array<{ title?: string, sku?: string }> }>} catalog
  * @param {unknown} query
  * @param {number} [max]
  * @returns {Array<object>}
@@ -54,7 +56,12 @@ export function searchCatalogByName(catalog, query, max = MAX_SEARCH_RESULTS) {
 
   return list
     .filter((p) => {
-      const haystack = foldGerman(`${p?.name ?? ""} ${p?.brand ?? ""} ${p?.category ?? ""}`);
+      const variantText = (Array.isArray(p?.variants) ? p.variants : [])
+        .map((v) => `${v?.title ?? ""} ${v?.sku ?? ""}`)
+        .join(" ");
+      const haystack = foldGerman(
+        `${p?.name ?? ""} ${p?.brand ?? ""} ${p?.category ?? ""} ${variantText}`
+      );
       return terms.every((t) => haystack.includes(t));
     })
     .sort((a, b) => {

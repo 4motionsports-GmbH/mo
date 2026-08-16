@@ -20,7 +20,13 @@ import {
   parseNumericVariantId,
   SHOP_DOMAIN,
 } from "./shopify-cart-url.mjs";
-import type { Product } from "./types";
+import {
+  parseProductRef,
+  productVariants,
+  normalizeVariantId,
+  isVariantAvailable,
+} from "./product-ref.mjs";
+import type { Product, ProductVariant } from "./types";
 
 export interface CartLine {
   productId: string;
@@ -167,27 +173,46 @@ export function buildPrefilledCartUrl(
   // and also "recommended"), while preserving first-seen order.
   const seenVariants = new Set<string>();
 
-  for (const productId of productIds) {
+  for (const ref of productIds) {
+    // Ids may be variant-pinned refs ("handle~variantId"); a bare id means the
+    // default variant, exactly the pre-variant behaviour.
+    const { productId, variantId: pinnedVariantId } = parseProductRef(ref);
     const product = productsById.get(productId);
-    // Hard guarantee: a sold-out product never enters the checkout link when
-    // the caller opts in. We still record it (lines + soldOutProductIds) so the
-    // caller can explain the omission rather than silently dropping it.
-    if (options.excludeSoldOut && product && product.inStock === false) {
-      lines.push({ productId, variantId: null, product });
-      soldOutProductIds.push(productId);
+    const variant = product
+      ? (productVariants(product).find((v) =>
+          pinnedVariantId != null
+            ? normalizeVariantId((v as ProductVariant).id) === pinnedVariantId
+            : (v as ProductVariant).isDefault
+        ) as ProductVariant | undefined) ?? null
+      : null;
+    // A pinned variant that no longer exists is UNRESOLVED — never silently
+    // fall back to the default variant (the selection meant a concrete price).
+    if (product && pinnedVariantId != null && !variant) {
+      lines.push({ productId: ref, variantId: null, product });
+      unresolvedProductIds.push(ref);
+      continue;
+    }
+    // Hard guarantee: a sold-out product/variant never enters the checkout
+    // link when the caller opts in. We still record it (lines +
+    // soldOutProductIds) so the caller can explain the omission rather than
+    // silently dropping it.
+    if (options.excludeSoldOut && product && !isVariantAvailable(product, variant)) {
+      lines.push({ productId: ref, variantId: null, product });
+      soldOutProductIds.push(ref);
       continue;
     }
     const variantId = product
-      ? parseNumericVariantId(product.shopifyVariantId ?? null)
+      ? normalizeVariantId((variant as ProductVariant | null)?.id ?? null) ??
+        parseNumericVariantId(product.shopifyVariantId ?? null)
       : null;
-    lines.push({ productId, variantId, product });
+    lines.push({ productId: ref, variantId, product });
     if (!variantId) {
-      unresolvedProductIds.push(productId);
+      unresolvedProductIds.push(ref);
       continue;
     }
     if (seenVariants.has(variantId)) continue;
     seenVariants.add(variantId);
-    resolvedProductIds.push(productId);
+    resolvedProductIds.push(ref);
     variantIds.push(variantId);
   }
 

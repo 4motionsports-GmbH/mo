@@ -1,3 +1,31 @@
+// One sellable variant of a product ("16 kg", "Stärke 5", "Eiche"). Present on
+// every Product after the variant-aware sync (length >= 1 — single-variant
+// products carry one entry with an empty title). Consumers must tolerate its
+// absence (old blob / CSV fallback) — src/lib/product-ref.mjs synthesizes the
+// default variant from the flat Product fields in that case.
+export interface ProductVariant {
+  // Numeric Shopify variant id (cart-url + ?variant= deep-link source).
+  // Null when unresolvable (CSV fallback has no variant ids).
+  id: string | null;
+  // Human variant label from the Shopify options ("16 kg"). Empty string for
+  // single-variant products (Shopify's placeholder "Default Title" is mapped
+  // away at ingestion).
+  title: string;
+  options: Array<{ name: string; value: string }>;
+  sku?: string;
+  barcode?: string;
+  price: number;
+  salePrice?: number;
+  // ProductVariant.availableForSale — whether THIS variant can be sold now.
+  available: boolean;
+  inventoryQuantity?: number;
+  // Storefront cart permalink for this variant; omitted when id is null.
+  cartUrl?: string;
+  // True for the variant in Shopify position 1 — the one the flat Product
+  // fields (price, sku, shopifyVariantId, …) project.
+  isDefault: boolean;
+}
+
 export interface MedicalCertification {
   ceClass?: "I" | "IIa" | "IIb" | "III" | "none" | "unknown";
   suitableForRehab: boolean | "unknown";
@@ -87,6 +115,16 @@ export interface Product {
   // Rough footprint requirement for the trainee in m². Distinct from raw dimensions
   // because some equipment needs clearance around it (e.g. rack with bench, treadmill run-out).
   footprintM2?: number;
+  // All sellable variants (length >= 1 when present). The flat fields above
+  // stay the default-variant projection for back-compat; variant-granular
+  // consumers resolve through src/lib/product-ref.mjs instead of reading
+  // price/sku/shopifyVariantId directly. Optional: old blobs and the CSV
+  // fallback predate this field.
+  variants?: ProductVariant[];
+  // Effective (sale-aware) price range across variants — "ab 3,60 €"
+  // rendering and price filters. Equal to price for single-variant products.
+  priceMin?: number;
+  priceMax?: number;
 }
 
 // ---------------- Customer profile / persona ----------------
@@ -223,6 +261,11 @@ export interface SearchProductsResult {
     name: string;
     category: string;
     price: number;
+    /** Effective price range + variant count — present only for products with
+     * a genuine multi-variant price spread. */
+    priceFrom?: number;
+    priceTo?: number;
+    variantCount?: number;
     shortDescription: string;
     score: number;
   }>;

@@ -13,7 +13,12 @@
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { loadProductCatalog } from "@/lib/catalog-store";
 import { searchCatalogByName, MAX_SEARCH_RESULTS } from "@/lib/catalog-search-core.mjs";
-import type { Product } from "@/lib/types";
+import {
+  productVariants,
+  effectiveVariantPrice,
+  isVariantAvailable,
+} from "@/lib/product-ref.mjs";
+import type { Product, ProductVariant } from "@/lib/types";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 15;
@@ -52,6 +57,20 @@ export async function POST(req: Request) {
       // Storefront URL — the Wissen tab's "Produkt verlinken" helper builds
       // its markdown link from this. Null for products without a URL.
       url: p.shopifyUrl ?? null,
+      // Effective price range across variants ("ab 3,60 €" rendering).
+      priceMin: p.priceMin ?? effectivePrice(p),
+      priceMax: p.priceMax ?? effectivePrice(p),
+      // Compact variant projection for the picker's second-stage chooser.
+      // Length >= 1 (a synthesized default for pre-variant catalog data);
+      // pickers only show the chooser when length > 1.
+      variants: (productVariants(p) as ProductVariant[]).map((v) => ({
+        variantId: v.id ?? null,
+        title: v.title ?? "",
+        unitPrice: effectiveVariantPrice(v),
+        currency: p.currency ?? "EUR",
+        available: isVariantAvailable(p, v),
+        ...(v.sku ? { sku: v.sku } : {}),
+      })),
     }));
 
     return adminJson({ products: matches });

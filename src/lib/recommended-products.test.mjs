@@ -100,3 +100,30 @@ test("empty / missing tool calls never throw", () => {
   assert.equal(latestSelectedProductIds([]), null);
   assert.deepEqual(guardRecommendedCardIds(undefined, CATALOG).cardIds, []);
 });
+
+// ── Variant-pinned refs ───────────────────────────────────────────────────────
+
+test("guardRecommendedCardIds resolves variant refs against the chosen variant", () => {
+  const catalog = new Map([
+    [
+      "kb",
+      {
+        id: "kb",
+        inStock: true,
+        variants: [
+          { id: "1", title: "8 kg", price: 24.9, available: true, isDefault: true },
+          { id: "2", title: "16 kg", price: 46.9, available: true, isDefault: false },
+          { id: "3", title: "24 kg", price: 69.9, available: false, isDefault: false },
+        ],
+      },
+    ],
+  ]);
+  const { cardIds, droppedUnknown, droppedSoldOut } = guardRecommendedCardIds(
+    ["kb~2", "kb~3", "kb~999", "kb"],
+    catalog
+  );
+  // Valid pinned variant survives; sold-out variant and hallucinated variant drop.
+  assert.deepEqual(cardIds, ["kb~2", "kb"]);
+  assert.deepEqual(droppedUnknown, ["kb~999"]);
+  assert.deepEqual(droppedSoldOut, ["kb~3"]);
+});

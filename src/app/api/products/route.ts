@@ -17,7 +17,15 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { loadProductCatalog } from "@/lib/catalog-store";
 import { buildPrefilledCartUrl } from "@/lib/cart";
-import type { Product } from "@/lib/types";
+import { projectVariant } from "@/lib/product-catalog";
+import {
+  parseProductRef,
+  productVariants,
+  normalizeVariantId,
+  isVariantAvailable,
+  effectiveVariantPrice,
+} from "@/lib/product-ref.mjs";
+import type { Product, ProductVariant } from "@/lib/types";
 
 export const maxDuration = 10;
 
@@ -71,11 +79,47 @@ export interface PublicProduct {
     answerEn?: string;
     answerEnHtml?: string;
   }>;
+  // ── Variants (additive; absent on pre-variant catalog data) ──
+  // All sellable variants of the product. Length >= 1; single-variant products
+  // carry one entry with an empty title. `cartUrl` is omitted for unavailable
+  // variants (same guarantee as shopifyCartUrl above).
+  variants?: Array<{
+    id: string | null;
+    title: string;
+    sku?: string;
+    price: number;
+    salePrice?: number;
+    available: boolean;
+    cartUrl?: string;
+    isDefault: boolean;
+  }>;
+  // Set when the request pinned a variant (?ids=handle~variantId): the flat
+  // fields above (name, price, cart link, inStock) then describe THAT variant.
+  selectedVariantId?: string;
+  // Effective price range across variants ("ab 3,60 €" rendering).
+  priceMin?: number;
+  priceMax?: number;
 }
 
-function toPublic(p: Product): PublicProduct {
+/**
+ * Public projection. `p` is the (possibly variant-projected) product whose
+ * flat fields the card shows; `base` is the underlying catalog product the
+ * variant list comes from (defaults to `p`).
+ */
+function toPublic(p: Product, base?: Product, selectedVariantId?: string): PublicProduct {
+  const source = base ?? p;
+  const variants = (productVariants(source) as ProductVariant[]).map((v) => ({
+    id: v.id ?? null,
+    title: v.title ?? "",
+    ...(v.sku ? { sku: v.sku } : {}),
+    price: v.price,
+    ...(typeof v.salePrice === "number" && v.salePrice > 0 ? { salePrice: v.salePrice } : {}),
+    available: isVariantAvailable(source, v),
+    ...(v.cartUrl && isVariantAvailable(source, v) ? { cartUrl: v.cartUrl } : {}),
+    isDefault: v.isDefault === true,
+  }));
   return {
-    id: p.id,
+    id: source.id,
     name: p.name,
     slug: p.slug,
     brand: p.brand,
@@ -101,6 +145,10 @@ function toPublic(p: Product): PublicProduct {
     ...(typeof p.rating === "number" ? { rating: p.rating } : {}),
     ...(typeof p.ratingCount === "number" ? { ratingCount: p.ratingCount } : {}),
     ...(p.qa?.length ? { qa: p.qa } : {}),
+    ...(variants.length ? { variants } : {}),
+    ...(selectedVariantId ? { selectedVariantId } : {}),
+    ...(source.priceMin != null ? { priceMin: source.priceMin } : {}),
+    ...(source.priceMax != null ? { priceMax: source.priceMax } : {}),
   };
 }
 
@@ -156,10 +204,24 @@ export async function GET(req: Request) {
     const catalog = await loadProductCatalog();
     const byId = new Map(catalog.map((p) => [p.id, p]));
     // Preserve request order and represent unknown ids as null entries so
-    // the widget can render partial results without a 404.
+    // the widget can render partial results without a 404. An id may be a
+    // variant-pinned ref ("handle~variantId") — the entry then carries the
+    // CHOSEN variant in its flat fields plus selectedVariantId. A pinned
+    // variant that doesn't exist is treated as unknown (null), never silently
+    // downgraded to the default variant.
     const products = ids.map((id) => {
-      const p = byId.get(id);
-      return p ? toPublic(p) : null;
+      const { productId, variantId } = parseProductRef(id);
+      const p = byId.get(productId);
+      if (!p) return null;
+      if (variantId != null) {
+        const variant =
+          (productVariants(p) as ProductVariant[]).find(
+            (v) => normalizeVariantId(v.id) === variantId
+          ) ?? null;
+        if (!variant || effectiveVariantPrice(variant) == null) return null;
+        return toPublic(projectVariant(p, variant), p, variantId);
+      }
+      return toPublic(p);
     });
 
     // Combined prefilled-cart permalink covering ALL requested (resolvable)

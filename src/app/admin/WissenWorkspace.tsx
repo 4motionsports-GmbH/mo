@@ -31,6 +31,7 @@ import {
   Input,
   Textarea,
   toast,
+  CatalogProductPicker,
 } from "./ui";
 import { QA_STATUS_LABELS } from "@/lib/qa-core.mjs";
 import { qaAnswerHasLink, qaAnswerHtml } from "@/lib/qa-links.mjs";
@@ -537,49 +538,11 @@ function QaAnswerPreview({ answer }: { answer: string }) {
   );
 }
 
-/** "Produkt verlinken": search the synced catalog (same debounced pattern as
- * the Kampagne recommendations editor) and hand the picked product back as a
- * ready markdown link `[Titel](URL)`. */
+/** "Produkt verlinken": the SHARED catalog picker (ui/product-picker) hands
+ * the picked product — or a specific VARIANT — back as a ready markdown link:
+ * `[Titel](URL)` resp. `[Titel – Variante](URL?variant=<id>)`. */
 function ProductLinkPicker({ onInsert }: { onInsert: (markdown: string) => void }) {
   const [open, setOpen] = React.useState(false);
-  const [query, setQuery] = React.useState("");
-  const [results, setResults] = React.useState<
-    Array<{ productId: string; title: string; url: string | null }>
-  >([]);
-  const [searching, setSearching] = React.useState(false);
-  const searchSeq = React.useRef(0);
-
-  React.useEffect(() => {
-    const q = query.trim();
-    if (!open || q.length < 2) {
-      searchSeq.current++;
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-    const seq = ++searchSeq.current;
-    setSearching(true);
-    const handle = setTimeout(async () => {
-      try {
-        const json = (await call("/api/admin/catalog/search", { query: q })) as {
-          products?: Array<{ productId: string; title: string; url?: string | null }>;
-        };
-        if (seq !== searchSeq.current) return;
-        setResults(
-          (json.products ?? []).map((p) => ({
-            productId: p.productId,
-            title: p.title,
-            url: p.url ?? null,
-          }))
-        );
-      } catch (e) {
-        if (seq === searchSeq.current) fail(e);
-      } finally {
-        if (seq === searchSeq.current) setSearching(false);
-      }
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [open, query]);
 
   if (!open) {
     return (
@@ -592,51 +555,35 @@ function ProductLinkPicker({ onInsert }: { onInsert: (markdown: string) => void 
 
   return (
     <div className="w-full space-y-1">
-      <div className="flex items-center gap-1.5">
-        <Input
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Produkt suchen (tippen)…"
-          className="h-8 w-64 text-xs"
-          aria-label="Produkt zum Verlinken suchen"
-        />
-        {searching && <span className="text-xs text-muted-foreground">Sucht…</span>}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            setOpen(false);
-            setQuery("");
-            setResults([]);
-          }}
-        >
+      <div className="flex items-start gap-1.5">
+        <div className="min-w-0 flex-1">
+          <CatalogProductPicker
+            autoFocus
+            showThumbnails={false}
+            maxResults={6}
+            selectLabel="verlinken"
+            placeholder="Produkt suchen (tippen)…"
+            ariaLabel="Produkt zum Verlinken suchen"
+            disableReason={(hit) =>
+              hit.url ? null : "Für dieses Produkt ist keine Shop-URL bekannt"
+            }
+            onSelect={(hit, variant) => {
+              if (!hit.url) return;
+              const url =
+                variant?.variantId != null
+                  ? `${hit.url}${hit.url.includes("?") ? "&" : "?"}variant=${variant.variantId}`
+                  : hit.url;
+              const label = variant?.title ? `${hit.title} – ${variant.title}` : hit.title;
+              onInsert(`[${label}](${url})`);
+              setOpen(false);
+            }}
+            onError={(e) => fail(e)}
+          />
+        </div>
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
           Abbrechen
         </Button>
       </div>
-      {results.length > 0 && (
-        <ul className="space-y-0.5 text-xs">
-          {results.slice(0, 6).map((p) => (
-            <li key={p.productId}>
-              <button
-                type="button"
-                className="underline underline-offset-2 disabled:no-underline disabled:opacity-50"
-                disabled={!p.url}
-                title={p.url ? undefined : "Für dieses Produkt ist keine Shop-URL bekannt"}
-                onClick={() => {
-                  if (!p.url) return;
-                  onInsert(`[${p.title}](${p.url})`);
-                  setOpen(false);
-                  setQuery("");
-                  setResults([]);
-                }}
-              >
-                + {p.title}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

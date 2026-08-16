@@ -326,3 +326,43 @@ test("directive rendering is bounded: blank entries dropped, long text clipped, 
   });
   assert.doesNotMatch(clipped, /x{601}/);
 });
+
+test("multi-variant products render a Varianten line with refs, prices and stock", () => {
+  const kb = {
+    ...product(),
+    id: "atx-kettlebell",
+    name: "ATX Kettlebell",
+    priceMin: 24.9,
+    priceMax: 69.9,
+    variants: [
+      { id: "1", title: "8 kg", price: 24.9, available: true, isDefault: true, sku: "KB-08" },
+      { id: "2", title: "16 kg", price: 46.9, salePrice: 39.9, available: true, isDefault: false },
+      { id: "3", title: "24 kg", price: 69.9, available: false, isDefault: false },
+    ],
+  };
+  const prompt = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [kb],
+    locale: "de",
+  });
+  // Price range instead of the misleading default-variant price.
+  assert.match(prompt, /ab 24\.9 € bis 69\.9 € \(je nach Variante\)/);
+  // Ref syntax + per-variant price/SKU/stock.
+  assert.match(prompt, /`atx-kettlebell~<VariantenID>`/);
+  assert.match(prompt, /~2 „16 kg" 39\.9 €/);
+  assert.match(prompt, /~1 „8 kg" 24\.9 € SKU KB-08/);
+  assert.match(prompt, /~3 „24 kg" 69\.9 € AUSVERKAUFT/);
+});
+
+test("single-variant products keep the flat price and render the SKU line", () => {
+  const single = { ...product(), sku: "MS-123" };
+  const prompt = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [single],
+    locale: "de",
+  });
+  assert.match(prompt, /Artikelnummer \(SKU\): MS-123/);
+  assert.doesNotMatch(prompt, /Varianten \(gezielt/);
+});

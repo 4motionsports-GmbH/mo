@@ -14,7 +14,7 @@ import {
   listSkippedContacts,
 } from "@/lib/campaign-store";
 import { listActiveBundlesForCampaignContacts } from "@/lib/bundle-offers-store";
-import { getProductsByIds } from "@/lib/product-catalog";
+import { resolveProductSelections } from "@/lib/product-catalog";
 import {
   isCampaignSendsApproved,
   isSingleOptInAllowed,
@@ -54,10 +54,12 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
   const allRecommendedIds = [
     ...new Set(queue.flatMap((q) => q.draft.recommendedProductIds)),
   ];
-  const recommendedProducts = allRecommendedIds.length
-    ? await getProductsByIds(allRecommendedIds)
+  // Ids may be variant-pinned refs — resolve keyed by the full ref so the
+  // review card shows the chosen variant's name and deep link.
+  const recommendedSelections = allRecommendedIds.length
+    ? await resolveProductSelections(allRecommendedIds)
     : [];
-  const productById = new Map(recommendedProducts.map((p) => [p.id, p]));
+  const productByRef = new Map(recommendedSelections.map((s) => [s.ref, s]));
 
   // Attached (active) bundle offers for the whole queue in one query.
   const bundleByContact = await listActiveBundlesForCampaignContacts(
@@ -82,8 +84,12 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
     purchaseSummary: q.draft.purchaseSummary,
     purchaseSelectedIds: q.draft.purchaseSelectedIds,
     recommendations: q.draft.recommendedProductIds.map((id) => {
-      const p = productById.get(id);
-      return { id, name: p?.name ?? id, url: p?.shopifyUrl ?? null };
+      const s = productByRef.get(id);
+      return {
+        id,
+        name: s?.display?.name ?? s?.product.name ?? id,
+        url: s?.display?.shopifyUrl ?? s?.product.shopifyUrl ?? null,
+      };
     }),
     bundle: (() => {
       const b = bundleByContact.get(q.contact.id);

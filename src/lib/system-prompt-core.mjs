@@ -319,16 +319,64 @@ function renderRetrievedProducts(products, locale) {
     .map((p) => {
       const price = p.salePrice ?? p.price;
       const lines = [`### ${p.name}  \`${p.id}\``];
+      // Multi-variant products state their effective price RANGE up front (the
+      // flat price is only the default variant's) — the per-variant prices
+      // follow in the Varianten line below.
+      const namedVariants = (Array.isArray(p.variants) ? p.variants : []).filter(
+        (v) => v && (v.title || "").trim()
+      );
+      const multiVariant = namedVariants.length > 1;
+      const priceLabel =
+        multiVariant && p.priceMin != null && p.priceMax != null && p.priceMax > p.priceMin
+          ? en
+            ? `from €${p.priceMin} to €${p.priceMax} (depending on variant)`
+            : `ab ${p.priceMin} € bis ${p.priceMax} € (je nach Variante)`
+          : en
+            ? `€${price}${p.salePrice ? ` (instead of €${p.price})` : ""}`
+            : `${price} €${p.salePrice ? ` (statt ${p.price} €)` : ""}`;
       if (en) {
         lines.push(
-          `- Category: ${p.category} | Brand: ${p.brand} | Price: €${price}${p.salePrice ? ` (instead of €${p.price})` : ""}`,
+          `- Category: ${p.category} | Brand: ${p.brand} | Price: ${priceLabel}`,
           `- ${p.shortDescription}`
         );
       } else {
         lines.push(
-          `- Kategorie: ${p.category} | Marke: ${p.brand} | Preis: ${price} €${p.salePrice ? ` (statt ${p.price} €)` : ""}`,
+          `- Kategorie: ${p.category} | Marke: ${p.brand} | Preis: ${priceLabel}`,
           `- ${p.shortDescription}`
         );
+      }
+      // The sellable variants, each with the ref suffix the tools accept
+      // (`id~variantId` — see the tool descriptions): Mo can recommend and
+      // check out a SPECIFIC strength/weight/colour. Capped so a 30-variant
+      // dumbbell series doesn't flood the prompt.
+      if (multiVariant) {
+        const MAX_PROMPT_VARIANTS = 12;
+        const shown = namedVariants.slice(0, MAX_PROMPT_VARIANTS).map((v) => {
+          const vPrice = typeof v.salePrice === "number" && v.salePrice > 0 ? v.salePrice : v.price;
+          const bits = [
+            v.id ? `~${v.id}` : null,
+            `„${v.title}"`,
+            typeof vPrice === "number" ? `${vPrice} €` : null,
+            v.sku ? `SKU ${v.sku}` : null,
+            v.available === false ? (en ? "SOLD OUT" : "AUSVERKAUFT") : null,
+          ].filter(Boolean);
+          return bits.join(" ");
+        });
+        const more =
+          namedVariants.length > MAX_PROMPT_VARIANTS
+            ? en
+              ? ` | … +${namedVariants.length - MAX_PROMPT_VARIANTS} more`
+              : ` | … +${namedVariants.length - MAX_PROMPT_VARIANTS} weitere`
+            : "";
+        lines.push(
+          en
+            ? `- Variants (recommend a specific one via \`${p.id}~<variantId>\`): ${shown.join(" | ")}${more}`
+            : `- Varianten (gezielt empfehlen über \`${p.id}~<VariantenID>\`): ${shown.join(" | ")}${more}`
+        );
+      } else if (p.sku) {
+        // Single-variant: the article number, so "welche Artikelnummer ist
+        // das?" is answerable (types.ts documents this promise).
+        lines.push(en ? `- SKU (article no.): ${p.sku}` : `- Artikelnummer (SKU): ${p.sku}`);
       }
       // The full product description (incl. the merchant's "Technische
       // Daten" Kurztext appended by the catalog sync) — clipped, and skipped

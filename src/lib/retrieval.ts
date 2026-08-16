@@ -58,14 +58,28 @@ function applyHardFilters(
     // its PDP stays reachable by direct link.
     if (p.hideFromSearch) return false;
     if (filters?.category && p.category !== filters.category) return false;
-    if (filters?.maxPriceEUR != null && (p.salePrice ?? p.price) > filters.maxPriceEUR) return false;
-    if (filters?.minPriceEUR != null && (p.salePrice ?? p.price) < filters.minPriceEUR) return false;
+    // Variant-aware price gates: a multi-variant product matches a max-price
+    // filter when its CHEAPEST variant fits (and a min-price filter when its
+    // most expensive one reaches it) — the flat price is only the default
+    // variant's. priceMin/priceMax are absent on pre-variant data → flat price.
+    if (
+      filters?.maxPriceEUR != null &&
+      (p.priceMin ?? p.salePrice ?? p.price) > filters.maxPriceEUR
+    )
+      return false;
+    if (
+      filters?.minPriceEUR != null &&
+      (p.priceMax ?? p.salePrice ?? p.price) < filters.minPriceEUR
+    )
+      return false;
     if (filters?.maxFootprintM2 != null && typeof p.footprintM2 === "number" && p.footprintM2 > filters.maxFootprintM2) return false;
     if (filters?.requiresMedical && p.medicalCertification?.suitableForRehab !== true) return false;
     if (filters?.requiresQuiet && typeof p.noiseLevelDb === "number" && p.noiseLevelDb > 65) return false;
 
     if (typeof profile.budgetEUR === "object" && profile.budgetEUR) {
-      const price = p.salePrice ?? p.price;
+      // Cheapest variant decides — an entry-level variant can fit the budget
+      // even when the default variant doesn't.
+      const price = p.priceMin ?? p.salePrice ?? p.price;
       if (profile.budgetEUR.max != null && price > profile.budgetEUR.max * 1.15) return false;
     }
     if (typeof profile.spaceM2 === "number" && typeof p.footprintM2 === "number" && p.footprintM2 > 0) {

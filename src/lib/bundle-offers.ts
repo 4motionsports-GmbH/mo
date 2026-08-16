@@ -69,6 +69,9 @@ export function buildBundleRedirectUrl(redirectToken: string | null): string | n
 
 export interface BundleComponentInput {
   productId: string; // catalog id == Shopify handle
+  /** Numeric Shopify variant id pinning a specific variant; omitted/null =
+   *  the product's default variant (pre-variant behaviour). */
+  variantId?: string | null;
   quantity?: number;
 }
 
@@ -96,6 +99,7 @@ export type CreateBundleOfferResult =
         | "unknown_products"
         | "sold_out"
         | "no_variant"
+        | "variant_not_found"
         | "bad_price"
         | "create_failed";
       message: string;
@@ -115,6 +119,8 @@ const VALIDATION_MESSAGES: Record<string, string> = {
   unknown_products: "One or more components are not in the catalog.",
   sold_out: "One or more components are sold out — a native bundle would be unbuyable.",
   no_variant: "One or more components have no resolvable Shopify variant / price.",
+  variant_not_found:
+    "One or more selected variants no longer exist in the catalog — re-pick the variant.",
 };
 
 /**
@@ -142,7 +148,11 @@ export async function createBundleOffer(
   const validated = validateAndSnapshotComponents(byId, components);
   if (!validated.ok) {
     const offenders =
-      validated.unknown ?? validated.soldOut ?? validated.noVariant ?? undefined;
+      validated.unknown ??
+      validated.variantNotFound ??
+      validated.soldOut ??
+      validated.noVariant ??
+      undefined;
     return {
       ok: false,
       reason: validated.reason,

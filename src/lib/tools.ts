@@ -122,6 +122,18 @@ export function buildChatTools(profile: CustomerProfile, locale: Locale = "de") 
             name: h.product.name,
             category: h.product.category,
             price: h.product.salePrice ?? h.product.price,
+            // Effective price range + count for multi-variant products (the
+            // flat price is only the default variant's; details + per-variant
+            // refs are in the retrieved-products prompt block).
+            ...(h.product.priceMin != null &&
+            h.product.priceMax != null &&
+            h.product.priceMax > h.product.priceMin
+              ? {
+                  priceFrom: h.product.priceMin,
+                  priceTo: h.product.priceMax,
+                  variantCount: h.product.variants?.length,
+                }
+              : {}),
             shortDescription: h.product.shortDescription,
             score: Number(h.score.toFixed(3)),
           })),

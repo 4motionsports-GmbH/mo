@@ -317,3 +317,16 @@ All admin routes sit behind the existing proxy gate + `guardAdminPost`
 (auth + JSON-content-type CSRF defense). Everything fails closed: missing
 Shopify/DB config → "not configured" in the UI, never a crash, never an
 ungated send.
+
+## Product variants
+
+The review card's recommendations editor uses the shared catalog picker with
+a variant chooser. A pinned variant is stored as a ref (`handle~variantId`,
+see `docs/PRODUCT_VARIANTS_PLAN.md`) in the existing
+`campaign_drafts.recommended_product_ids` TEXT[] — no migration. The
+recommendations route validates per variant (`variant_not_found` 409 when it
+vanished mid-review), the drafter sees "Produktname – Variante" + the
+`?variant=` deep link, and the email grid renders the chosen variant's name,
+price and link. Regenerates preserve refs; a ref whose variant disappeared
+is DROPPED from the email and reported — never silently downgraded to the
+default variant (PAngV).
