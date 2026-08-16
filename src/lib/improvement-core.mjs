@@ -79,10 +79,13 @@ export function categoriesForLane(lane) {
 
 export const SUGGESTION_STATUSES = ["open", "accepted", "implemented", "dismissed"];
 
+// Plain-language labels — the UI's mental model is a simple to-do list:
+// Neu (nobody decided yet) → Geplant (we'll do it) → Erledigt (it's live) /
+// Verworfen (we won't). The stored status keys are unchanged.
 export const SUGGESTION_STATUS_LABELS = {
-  open: "Offen",
-  accepted: "Angenommen",
-  implemented: "Umgesetzt",
+  open: "Neu",
+  accepted: "Geplant",
+  implemented: "Erledigt",
   dismissed: "Verworfen",
 };
 

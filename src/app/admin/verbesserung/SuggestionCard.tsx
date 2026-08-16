@@ -1,21 +1,27 @@
 "use client";
 
-// One improvement suggestion with its operator lifecycle. The card shows WHY
-// (rationale + evidence), WHAT (proposal) and — for adoptable Mo suggestions —
-// the ready-made directive text with the one-click "Als Anweisung übernehmen"
-// action (the only path from suggestion to live behaviour, always explicit).
-// Status changes ask for an optional note; the note feeds the next run's
-// Wirkungs-Check, so honesty here pays off later.
+// One improvement suggestion, presented as a simple decision card:
+//
+//   priority line + status  →  title  →  THE ACTION (directive text or
+//   proposal)  →  collapsible "Warum? Details & Belege"  →  buttons.
+//
+// The operator's mental model is a to-do list: Neu → Geplant → Erledigt /
+// Verworfen. Cards with a ready-made directive have ONE primary action
+// („Übernehmen") that adopts the text as a live directive and marks the card
+// Erledigt in one click. Everything explanatory (evidence, expected KPI
+// effect, category) lives behind the details toggle so the card stays
+// scannable. Only „Verwerfen" asks for an optional note (it feeds the next
+// run's Wirkungs-Check); the positive actions apply instantly.
 
 import * as React from "react";
-import { Loader2, Check, Wand2, X, ThumbsUp } from "lucide-react";
+import { Loader2, Check, Wand2, X, ListTodo, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { Badge, Button, Card, CardContent, Input, Markdown, toast } from "../ui";
 import {
-  LANE_LABELS,
   SHOP_CATEGORIES,
   MO_CATEGORIES,
   SUGGESTION_STATUS_LABELS,
 } from "@/lib/improvement-core.mjs";
+import { cn } from "../ui/cn";
 
 export interface SuggestionItem {
   id: number;
@@ -51,6 +57,22 @@ function statusBadge(status: SuggestionItem["status"]) {
   return <Badge variant={variant}>{label}</Badge>;
 }
 
+// Impact + effort condensed into ONE plain-language priority line with a
+// traffic-light dot, instead of two separate jargon chips.
+function priority(impact: string, effort: string): { text: string; dot: string } {
+  const impactTxt =
+    impact === "hoch" ? "Große Wirkung" : impact === "niedrig" ? "Kleine Wirkung" : "Mittlere Wirkung";
+  const effortTxt =
+    effort === "niedrig" ? "wenig Aufwand" : effort === "hoch" ? "viel Aufwand" : "mittlerer Aufwand";
+  const dot =
+    impact === "hoch" && effort !== "hoch"
+      ? "bg-success"
+      : impact === "niedrig"
+        ? "bg-muted-foreground"
+        : "bg-info";
+  return { text: `${impactTxt} · ${effortTxt}`, dot };
+}
+
 export function SuggestionCard({
   suggestion,
   onChanged,
@@ -58,44 +80,48 @@ export function SuggestionCard({
   suggestion: SuggestionItem;
   onChanged: (s: SuggestionItem) => void;
 }) {
-  const [pending, setPending] = React.useState<SuggestionItem["status"] | null>(null);
+  const [showDetails, setShowDetails] = React.useState(false);
+  const [dismissing, setDismissing] = React.useState(false);
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
-  const submitStatus = React.useCallback(async () => {
-    if (!pending || busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch("/api/admin/improve/suggestion", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          suggestionId: suggestion.id,
-          status: pending,
-          note: note.trim() || undefined,
-        }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        suggestion?: SuggestionItem;
-        error?: { message?: string };
-      };
-      if (!res.ok || !data.suggestion) {
-        toast({
-          variant: "error",
-          title: "Status-Änderung fehlgeschlagen",
-          description: data.error?.message,
+  const applyStatus = React.useCallback(
+    async (status: SuggestionItem["status"], statusNote?: string) => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        const res = await fetch("/api/admin/improve/suggestion", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            suggestionId: suggestion.id,
+            status,
+            note: statusNote?.trim() || undefined,
+          }),
         });
-        return;
+        const data = (await res.json().catch(() => ({}))) as {
+          suggestion?: SuggestionItem;
+          error?: { message?: string };
+        };
+        if (!res.ok || !data.suggestion) {
+          toast({
+            variant: "error",
+            title: "Änderung fehlgeschlagen",
+            description: data.error?.message,
+          });
+          return;
+        }
+        onChanged(data.suggestion);
+        setDismissing(false);
+        setNote("");
+      } catch {
+        toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
+      } finally {
+        setBusy(false);
       }
-      onChanged(data.suggestion);
-      setPending(null);
-      setNote("");
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
-    } finally {
-      setBusy(false);
-    }
-  }, [pending, busy, note, suggestion.id, onChanged]);
+    },
+    [busy, suggestion.id, onChanged]
+  );
 
   const adopt = React.useCallback(async () => {
     if (busy) return;
@@ -108,7 +134,6 @@ export function SuggestionCard({
       });
       const data = (await res.json().catch(() => ({}))) as {
         suggestion?: SuggestionItem;
-        directive?: { id: number };
         error?: { message?: string };
       };
       if (!res.ok || !data.suggestion) {
@@ -122,9 +147,9 @@ export function SuggestionCard({
       onChanged(data.suggestion);
       toast({
         variant: "success",
-        title: "Anweisung übernommen",
+        title: "Übernommen — Mo berät ab sofort so",
         description:
-          "Die Anweisung ist aktiv und fließt innerhalb weniger Minuten in Mos System-Prompt ein (Karte „Anweisungen an Mo“ unten).",
+          "Die Regel steht jetzt in „Anweisungen an Mo“ (unten) und kann dort jederzeit angepasst oder abgeschaltet werden.",
       });
     } catch {
       toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
@@ -133,64 +158,81 @@ export function SuggestionCard({
     }
   }, [busy, suggestion.id, onChanged]);
 
-  const terminal = suggestion.status === "implemented" || suggestion.status === "dismissed";
+  const prio = priority(suggestion.impact, suggestion.effort);
+  const hasDirective = Boolean(suggestion.directiveText);
+  const { status } = suggestion;
 
   return (
     <Card>
       <CardContent className="space-y-3 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <h4 className="min-w-0 text-sm font-semibold text-foreground">{suggestion.title}</h4>
-          {statusBadge(suggestion.status)}
+        {/* Priority + status, then the title. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+            <span className={cn("size-2 rounded-full", prio.dot)} aria-hidden />
+            {prio.text}
+          </span>
+          {statusBadge(status)}
         </div>
+        <h4 className="text-sm font-semibold text-foreground">{suggestion.title}</h4>
 
-        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-          <Badge variant="secondary">{(LANE_LABELS as Record<string, string>)[suggestion.lane]}</Badge>
-          <Badge variant="secondary">{categoryLabel(suggestion)}</Badge>
-          <Badge variant={suggestion.impact === "hoch" ? "accent" : "outline"}>
-            Wirkung: {suggestion.impact}
-          </Badge>
-          <Badge variant="outline">Aufwand: {suggestion.effort}</Badge>
-        </div>
-
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Warum (Evidenz)
-          </p>
-          <Markdown content={suggestion.rationaleMd} className="mt-1 text-[13px]" />
-          {suggestion.evidence.length > 0 && (
-            <ul className="mt-1.5 space-y-0.5 text-[12px] text-muted-foreground">
-              {suggestion.evidence.map((e, i) => (
-                <li key={i}>· {e}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Vorschlag
-          </p>
-          <Markdown content={suggestion.proposalMd} className="mt-1 text-[13px]" />
-        </div>
-
-        {suggestion.expectedEffect && (
-          <p className="text-[12px] text-muted-foreground">
-            <span className="font-medium text-foreground">Erwartete Wirkung:</span>{" "}
-            {suggestion.expectedEffect}
-          </p>
-        )}
-
-        {suggestion.directiveText && (
+        {/* THE action — for directive cards the exact rule Mo would follow,
+            otherwise the concrete change to make. */}
+        {hasDirective ? (
           <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Fertiger Anweisungstext
+              So würde Mo künftig beraten
             </p>
             <p className="mt-1 text-[13px] text-foreground">{suggestion.directiveText}</p>
-            {suggestion.status !== "implemented" && (
-              <Button size="sm" className="mt-2" onClick={adopt} disabled={busy}>
-                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
-                Als Anweisung übernehmen
-              </Button>
+          </div>
+        ) : (
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Was zu tun ist
+            </p>
+            <Markdown content={suggestion.proposalMd} className="mt-1 text-[13px]" />
+          </div>
+        )}
+
+        {/* Everything explanatory folds away. */}
+        <button
+          type="button"
+          onClick={() => setShowDetails((v) => !v)}
+          className="flex items-center gap-1 text-[13px] font-medium text-accent hover:underline"
+        >
+          {showDetails ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          Warum? Details & Belege
+        </button>
+        {showDetails && (
+          <div className="space-y-3 rounded-lg border border-border bg-secondary/40 p-3">
+            <p className="text-[12px] text-muted-foreground">
+              Kategorie: <span className="text-foreground">{categoryLabel(suggestion)}</span>
+            </p>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Begründung
+              </p>
+              <Markdown content={suggestion.rationaleMd} className="mt-1 text-[13px]" />
+            </div>
+            {hasDirective && (
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Ausführlicher Vorschlag
+                </p>
+                <Markdown content={suggestion.proposalMd} className="mt-1 text-[13px]" />
+              </div>
+            )}
+            {suggestion.evidence.length > 0 && (
+              <ul className="space-y-0.5 text-[12px] text-muted-foreground">
+                {suggestion.evidence.map((e, i) => (
+                  <li key={i}>· {e}</li>
+                ))}
+              </ul>
+            )}
+            {suggestion.expectedEffect && (
+              <p className="text-[12px] text-muted-foreground">
+                <span className="font-medium text-foreground">Daran messen wir den Erfolg:</span>{" "}
+                {suggestion.expectedEffect}
+              </p>
             )}
           </div>
         )}
@@ -201,50 +243,57 @@ export function SuggestionCard({
           </p>
         )}
 
-        {pending ? (
+        {/* Decision row — one clear set of actions per state. */}
+        {dismissing ? (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[12px] text-muted-foreground">
-              „{(SUGGESTION_STATUS_LABELS as Record<string, string>)[pending]}“ — Notiz (optional):
-            </span>
+            <span className="text-[12px] text-muted-foreground">Warum nicht? (optional)</span>
             <Input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="z. B. warum verworfen / wie umgesetzt"
+              placeholder="z. B. zu teuer, Evidenz zu dünn"
               className="h-8 w-64 text-[13px]"
             />
-            <Button size="sm" onClick={submitStatus} disabled={busy}>
-              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-              Bestätigen
+            <Button size="sm" variant="outline" onClick={() => applyStatus("dismissed", note)} disabled={busy}>
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
+              Endgültig verwerfen
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setPending(null)} disabled={busy}>
+            <Button size="sm" variant="ghost" onClick={() => setDismissing(false)} disabled={busy}>
               Abbrechen
             </Button>
           </div>
-        ) : (
+        ) : status === "dismissed" ? (
           <div className="flex flex-wrap items-center gap-2">
-            {suggestion.status !== "accepted" && !terminal && (
-              <Button size="sm" variant="outline" onClick={() => setPending("accepted")}>
-                <ThumbsUp className="size-3.5" />
-                Annehmen
+            <Button size="sm" variant="outline" onClick={() => applyStatus("open")} disabled={busy}>
+              <RotateCcw className="size-3.5" />
+              Wieder öffnen
+            </Button>
+          </div>
+        ) : status === "implemented" ? null : (
+          <div className="flex flex-wrap items-center gap-2">
+            {hasDirective ? (
+              // One-click path: adopt = live in Mo's prompt + card is Erledigt.
+              <Button size="sm" onClick={adopt} disabled={busy}>
+                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
+                Übernehmen — gilt ab sofort
               </Button>
+            ) : (
+              <>
+                {status === "open" && (
+                  <Button size="sm" onClick={() => applyStatus("accepted")} disabled={busy}>
+                    {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ListTodo className="size-3.5" />}
+                    Machen wir — auf die To-do-Liste
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={() => applyStatus("implemented")} disabled={busy}>
+                  <Check className="size-3.5" />
+                  {status === "accepted" ? "Jetzt erledigt" : "Schon erledigt"}
+                </Button>
+              </>
             )}
-            {suggestion.status !== "implemented" && (
-              <Button size="sm" variant="outline" onClick={() => setPending("implemented")}>
-                <Check className="size-3.5" />
-                Umgesetzt
-              </Button>
-            )}
-            {suggestion.status !== "dismissed" && (
-              <Button size="sm" variant="outline" onClick={() => setPending("dismissed")}>
-                <X className="size-3.5" />
-                Verwerfen
-              </Button>
-            )}
-            {terminal && suggestion.status === "dismissed" && (
-              <Button size="sm" variant="outline" onClick={() => setPending("open")}>
-                Wieder öffnen
-              </Button>
-            )}
+            <Button size="sm" variant="ghost" onClick={() => setDismissing(true)} disabled={busy}>
+              <X className="size-3.5" />
+              Verwerfen
+            </Button>
           </div>
         )}
       </CardContent>
