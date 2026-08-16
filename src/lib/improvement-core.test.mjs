@@ -241,7 +241,7 @@ test("renderPriorSuggestions lists status + effect and has an empty state", () =
     },
   ]);
   assert.match(md, /\[Mo\] · Titel A/);
-  assert.match(md, /Umgesetzt/);
+  assert.match(md, /Erledigt/);
   assert.match(md, /Quote X steigt/);
   assert.match(md, /seit Mai live/);
 });

@@ -11,7 +11,16 @@
 // system prompt + version hash).
 
 import * as React from "react";
-import { Loader2, AlertTriangle, Plus, Sparkles, Trash2, RefreshCcw } from "lucide-react";
+import {
+  Loader2,
+  AlertTriangle,
+  Plus,
+  Sparkles,
+  Trash2,
+  RefreshCcw,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { Button, Card, CardContent, Badge, Select, toast, Markdown } from "../ui";
 import { cn } from "../ui/cn";
 import { RUN_PHASE_LABELS } from "@/lib/improvement-core.mjs";
@@ -209,9 +218,50 @@ export function VerbesserungWorkspace({
       </aside>
       <main className="min-w-0 flex-1 space-y-6">
         {main}
-        <DirectivesCard initialDirectives={initialDirectives} limits={directiveLimits} />
-        <SelfSnapshotCard info={selfSnapshot} />
+        {/* The two tool cards stay out of the way until needed — the everyday
+            flow is run → decide on cards; directives/prompt are occasional. */}
+        <div className="space-y-2">
+          <ToolSection
+            title="Anweisungen an Mo"
+            summary={`${initialDirectives.filter((d) => d.active).length} aktiv`}
+          >
+            <DirectivesCard initialDirectives={initialDirectives} limits={directiveLimits} />
+          </ToolSection>
+          <ToolSection title="Mos Selbstbild (System-Prompt)" summary={`Version ${selfSnapshot.shortHash}`}>
+            <SelfSnapshotCard info={selfSnapshot} />
+          </ToolSection>
+        </div>
       </main>
+    </div>
+  );
+}
+
+// ── Collapsible tool section (collapsed by default) ───────────────────────────
+
+function ToolSection({
+  title,
+  summary,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between rounded-lg border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-secondary"
+      >
+        <span className="text-sm font-semibold text-foreground">{title}</span>
+        <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          {summary}
+          {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+        </span>
+      </button>
+      {open && children}
     </div>
   );
 }
@@ -356,13 +406,24 @@ function NewRunPanel({
             <Sparkles className="size-4 text-accent" />
             Neuer Verbesserungslauf
           </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Mo liest eine fertige Komplettanalyse zusammen mit seiner eigenen aktuellen
-            Konfiguration (System-Prompt, Wissen, Anweisungen) und erarbeitet daraus konkrete,
-            belegte Verbesserungsvorschläge — für den Online-Shop und für sich selbst.
-            {hasRuns &&
-              " Da es bereits Läufe gibt, prüft er zuerst ehrlich, ob die zuletzt beschlossenen Maßnahmen laut Kennzahlen wirken (Wirkungs-Check)."}
-          </p>
+          <ol className="mt-2 space-y-1.5 text-sm text-muted-foreground">
+            <li>
+              <span className="font-semibold text-foreground">1 · Mo schlägt vor:</span> Er liest
+              die gewählte Komplettanalyse und seine eigene Konfiguration und macht daraus
+              belegte Vorschläge — für den Shop und für sich selbst.
+            </li>
+            <li>
+              <span className="font-semibold text-foreground">2 · Du entscheidest:</span> Jede
+              Karte übernehmen, auf die To-do-Liste setzen oder verwerfen. Nichts passiert
+              automatisch.
+            </li>
+            <li>
+              <span className="font-semibold text-foreground">3 · Der nächste Lauf misst:</span>{" "}
+              {hasRuns
+                ? "Dieser Lauf beginnt mit dem Wirkungs-Check — haben die beschlossenen Maßnahmen die Kennzahlen bewegt?"
+                : "Ab dem zweiten Lauf prüft Mo ehrlich, ob die beschlossenen Maßnahmen die Kennzahlen bewegt haben."}
+            </li>
+          </ol>
         </div>
 
         {completedReports.length === 0 ? (
@@ -505,9 +566,9 @@ function RunView({
           )}
 
           <p className="text-[11px] text-muted-foreground">
-            Mo passt sein Verhalten nie automatisch an: Jeder Vorschlag wird erst wirksam, wenn
-            du ihn hier annimmst bzw. als Anweisung übernimmst oder die Änderung selbst umsetzt.
-            Der Status fließt in den Wirkungs-Check des nächsten Laufs ein.
+            Nichts passiert automatisch: Ein Vorschlag wird erst wirksam, wenn du ihn übernimmst
+            oder selbst umsetzt. Deine Entscheidungen (Geplant / Erledigt / Verworfen) fließen in
+            den Wirkungs-Check des nächsten Laufs ein.
           </p>
         </>
       )}
