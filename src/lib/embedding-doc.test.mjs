@@ -76,3 +76,45 @@ test("missing fields degrade cleanly (fallback-bundle shaped product)", () => {
   const doc = buildEmbeddingDoc({ id: "x", name: "Nur Name" });
   assert.ok(doc.includes("Nur Name"));
 });
+
+test("multi-variant products embed a price range and a Varianten section", () => {
+  const bands = {
+    id: "widerstandsbaender",
+    name: "Widerstandsbänder Gummi",
+    category: "Widerstandsbänder",
+    price: 3.6,
+    variants: [
+      { id: "1", title: "Level 1", price: 3.6, available: true, isDefault: true },
+      { id: "2", title: "Level 2", price: 4.9, available: true, isDefault: false },
+      { id: "9", title: "Level 9", price: 43.9, salePrice: 39.9, available: true, isDefault: false },
+    ],
+  };
+  const doc = buildEmbeddingDoc(bands);
+  assert.ok(doc.includes("Preis: ab 3.6 EUR bis 39.9 EUR"));
+  assert.ok(doc.includes("Varianten:"));
+  assert.ok(doc.includes("- Level 9 — 39.9 EUR"));
+});
+
+test("single-variant products keep the flat price line and no Varianten section", () => {
+  const doc = buildEmbeddingDoc({
+    id: "x",
+    name: "Bank",
+    price: 99,
+    variants: [{ id: "1", title: "", price: 99, available: true, isDefault: true }],
+  });
+  assert.ok(doc.includes("Preis: 99 EUR"));
+  assert.ok(!doc.includes("Varianten:"));
+});
+
+test("many variants collapse to a summary line", () => {
+  const variants = Array.from({ length: 24 }, (_, i) => ({
+    id: String(i + 1),
+    title: `${(i + 1) * 2.5} kg`,
+    price: 10 + i,
+    available: true,
+    isDefault: i === 0,
+  }));
+  const doc = buildEmbeddingDoc({ id: "y", name: "Hantel", price: 10, variants });
+  assert.ok(doc.includes("24 Varianten:"));
+  assert.ok(doc.includes("2.5 kg"));
+});

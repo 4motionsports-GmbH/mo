@@ -1,6 +1,6 @@
 # Product variants — plan for variant-granular selection & recommendation
 
-Status: **proposal / plan** (no implementation yet)
+Status: **being implemented** (this branch)
 
 ## 1. Problem
 
@@ -33,7 +33,7 @@ clean, maintainable structure instead of per-feature hacks.
 |---|---|---|
 | Catalog shape | **One `Product` per handle + embedded `variants[]` array** (not one catalog entry per variant) | `Product.id` = handle is the id-space of embeddings, QA entries, campaign drafts, bundles, attribution, `compatibleWith`/`relatedProducts`, conversation `selected_product_ids`. Exploding products would break all of them and bloat retrieval. |
 | Top-level fields | **Unchanged semantics** (default-variant projection) | Full backward compatibility: every existing consumer keeps working untouched until it opts into variants. |
-| Variant reference | **One canonical "product ref" string: `handle` or `handle#<numericVariantId>`**, implemented in a single pure module `src/lib/product-ref.mjs` | All existing rails carry plain id strings (tool params `productId`/`productIds`, `campaign_drafts.recommended_product_ids TEXT[]`, `marketing_sends.product_ids`, conversation selections). A suffix encoding upgrades ALL of them to variant granularity with **zero schema migrations and zero tool-schema churn**. `#` cannot appear in a Shopify handle, and a ref without `#` keeps meaning "the product / its default variant". |
+| Variant reference | **One canonical "product ref" string: `handle` or `handle~<numericVariantId>`**, implemented in a single pure module `src/lib/product-ref.mjs` | All existing rails carry plain id strings (tool params `productId`/`productIds`, `campaign_drafts.recommended_product_ids TEXT[]`, `marketing_sends.product_ids`, conversation selections). A suffix encoding upgrades ALL of them to variant granularity with **zero schema migrations and zero tool-schema churn**. `~` cannot appear in a Shopify handle and is URL-safe (unreserved per RFC 3986 — a `#` would start a URL fragment and be silently truncated in query strings), and a ref without `~` keeps meaning "the product / its default variant". |
 | Structured stores | Bundle `components` JSONB keeps its explicit `variantId` field — it already has one; it just stops being hardwired to the default | Snapshots stay self-describing. |
 | Embeddings | **Still one vector per product**; the embedding doc gains a `Varianten:` section | Variants share 95 % of their text; per-variant vectors would multiply cost and dilute retrieval. Variant titles/prices in the doc make "kettlebell 16 kg" retrievable. |
 | Picker UI | Extract the 4 copy-paste search widgets into a shared `useCatalogSearch` hook + `<CatalogProductPicker>` (in `src/app/admin/ui/`), with a built-in second-stage **variant chooser** when a hit has >1 variant | The pickers in `CustomerProfileCard.tsx:1139-1170`, `KampagneWorkspace.tsx:1930-1960`, `WissenWorkspace.tsx:552-583` are line-for-line duplicates (250 ms debounce + seq-guard). Variants would otherwise be implemented three times. |
@@ -71,7 +71,7 @@ back-compat contract for the whole plan.
 Pure, dependency-free (usable from `.ts`, `.mjs`, tests, scripts):
 
 ```
-formatProductRef(productId, variantId?)   → "handle" | "handle#123"
+formatProductRef(productId, variantId?)   → "handle" | "handle~123"
 parseProductRef(ref)                      → { productId, variantId: string|null }
 resolveProductRef(catalogById, ref)       → { product, variant } | null
   // variant = matching variants[] entry, else default variant, else
@@ -82,7 +82,7 @@ effectiveVariantPrice(variant)            → salePrice ?? price
 Every consumer that today does `getProductById(id)` and reads
 `product.price` / `product.shopifyVariantId` migrates to
 `resolveProductRef` and reads from the resolved variant. One resolution
-path, unit-testable, no scattered `split("#")`.
+path, unit-testable, no scattered `split("~")`.
 
 ## 3. Phased implementation
 
@@ -140,7 +140,7 @@ Each phase is independently shippable and leaves the system fully working.
 ### Phase 2 — Campaign recommendations & marketing emails
 
 1. **`RecommendationsEditor`** (`KampagneWorkspace.tsx`) — use the shared
-   picker; store refs (`handle#variant`) in the existing
+   picker; store refs (`handle~variant`) in the existing
    `recommended_product_ids TEXT[]` — **no migration**.
    `/api/admin/campaign/recommendations` validates refs via
    `resolveProductRef` (409 `sold_out` checks the chosen variant).
@@ -154,6 +154,11 @@ Each phase is independently shippable and leaves the system fully working.
    deep link `${shopifyUrl}?variant=<numericVariantId>`; product name shown
    as „Name – Variante". Bundle email block already renders snapshot titles —
    include the variant title in the snapshot `title`.
+   **Dangling-ref hard block:** a stored ref whose variant no longer exists
+   in the catalog is NEVER silently downgraded to the default variant in
+   outbound rendering (wrong price in marketing mail = PAngV risk). The
+   resolver distinguishes "variant gone" from "product gone"; senders skip
+   the item and surface the problem to the admin instead.
 4. Campaign recommendation *scoring* stays product-level (one vector);
    the drafter/editor picks the variant.
 
@@ -161,13 +166,13 @@ Each phase is independently shippable and leaves the system fully working.
 
 1. **System prompt** (`system-prompt-core.mjs` `renderRetrievedProducts`) —
    per retrieved product render a compact variant table:
-   `Varianten (ID nach # anhängen für gezielte Empfehlung): #123 „16 kg" — 46,90 € — auf Lager | …`
+   `Varianten (für gezielte Empfehlung `produkt-id~variantennummer` verwenden): ~123 „16 kg" — 46,90 € — auf Lager | …`
    capped (~12 rows, else price-range summary). Also finally render
    `sku` (Artikelnummer) per variant — closing the documented gap that Mo
    can't answer article-number questions.
 2. **Tool layer — no schema changes.** `productId`/`productIds` keep their
    string types; `tool-descriptions.mjs` teaches the ref syntax („für eine
-   konkrete Variante `produkt-id#variantennummer` aus dem Katalogblock").
+   konkrete Variante `produkt-id~variantennummer` aus dem Katalogblock").
    `productIdsFromToolCall` stays untouched (refs are strings);
    `guardRecommendedCardIds` resolves refs and checks the chosen variant's
    availability.
@@ -188,7 +193,7 @@ Each phase is independently shippable and leaves the system fully working.
 
 1. **`order-attribution.mjs` `matchOrderLineItems`** — index **all**
    variants' numeric ids in `byVariant` (today: default only). Store the
-   matched ref (`handle#variant`) on the line-item match so KPIs can
+   matched ref (`handle~variant`) on the line-item match so KPIs can
    distinguish *which* strength/weight was bought. Title fallback stays as
    the product-level safety net.
 2. **Wissen „Produkt verlinken"** — shared picker; a chosen variant

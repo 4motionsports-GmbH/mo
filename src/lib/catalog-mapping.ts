@@ -4,8 +4,8 @@
 // runtime catalog stays consistent regardless of whether it came from the
 // committed CSV-derived JSON or from a live Shopify sync.
 
-import type { Product } from "./types";
-import { getMetafield, type ShopifyProduct } from "./shopify";
+import type { Product, ProductVariant } from "./types";
+import { getMetafield, type ShopifyProduct, type ShopifyProductVariant } from "./shopify";
 import { buildShopifyCartUrl, parseNumericVariantId } from "./shopify-cart-url.mjs";
 import { QA_METAFIELD_KEY, QA_METAFIELD_NAMESPACE, parseQaMetafield } from "./qa-core.mjs";
 import { parseKurztextSpecs, extractKurztextDimensions } from "./kurztext.mjs";
@@ -219,6 +219,51 @@ export interface MapStats {
   noImage: number;
   notActive: number;
   kept: number;
+}
+
+// Shopify's placeholder for the sole variant of an option-less product.
+const DEFAULT_VARIANT_TITLE = "Default Title";
+
+/**
+ * Map ONE Shopify variant to the catalog's ProductVariant. Pricing mirrors the
+ * flat-field rule: compareAtPrice > price means "on sale" (compare = regular,
+ * price = sale). The placeholder "Default Title" becomes an empty title so
+ * single-variant products don't render a meaningless label.
+ */
+function mapVariant(v: ShopifyProductVariant, isDefault: boolean): ProductVariant | null {
+  const variantPrice = parseNumber(v.price);
+  if (!variantPrice || variantPrice <= 0) return null;
+  const comparePrice = parseNumber(v.compareAtPrice);
+  let price = variantPrice;
+  let salePrice: number | undefined;
+  if (comparePrice && comparePrice > variantPrice) {
+    price = comparePrice;
+    salePrice = variantPrice;
+  }
+  const rawTitle = (v.title || "").trim();
+  const title = rawTitle === DEFAULT_VARIANT_TITLE ? "" : rawTitle;
+  const options = (v.selectedOptions ?? [])
+    .filter((o) => o && o.name && o.name !== "Title" && o.value && o.value !== DEFAULT_VARIANT_TITLE)
+    .map((o) => ({ name: o.name.trim(), value: o.value.trim() }));
+  const numericId = parseNumericVariantId(v.id);
+  const cartUrl = buildShopifyCartUrl(v.id) ?? undefined;
+  const sku = (v.sku || "").trim();
+  const barcode = (v.barcode || "").trim();
+  return {
+    id: numericId,
+    title,
+    options,
+    ...(sku ? { sku } : {}),
+    ...(barcode ? { barcode } : {}),
+    price: Math.round(price * 100) / 100,
+    ...(salePrice != null ? { salePrice: Math.round(salePrice * 100) / 100 } : {}),
+    // availableForSale already factors in the inventory policy; treat missing
+    // data permissively (mirrors the product-level inStock fallback).
+    available: v.availableForSale !== false,
+    ...(typeof v.inventoryQuantity === "number" ? { inventoryQuantity: v.inventoryQuantity } : {}),
+    ...(cartUrl ? { cartUrl } : {}),
+    isDefault,
+  };
 }
 
 /**
@@ -448,6 +493,20 @@ export function mapShopifyProducts(
     const sku = (variant?.sku || "").trim();
     const barcode = (variant?.barcode || "").trim();
 
+    // All sellable variants (position 1 = default — the flat-field projection
+    // above). Unpriceable variants are dropped; the product itself already
+    // passed the "default variant has a price" filter, so length >= 1.
+    const variants = p.variants
+      .map((v, i) => mapVariant(v, i === 0))
+      .filter((v): v is ProductVariant => v !== null);
+    const variantPrices = variants
+      .map((v) =>
+        typeof v.salePrice === "number" && v.salePrice > 0 ? v.salePrice : v.price
+      )
+      .filter((n) => n > 0);
+    const priceMin = variantPrices.length ? Math.min(...variantPrices) : undefined;
+    const priceMax = variantPrices.length ? Math.max(...variantPrices) : undefined;
+
     const product: Product = {
       id: p.handle,
       name: (p.title || "").trim(),
@@ -489,6 +548,9 @@ export function mapShopifyProducts(
       },
       noiseLevelDb: "unknown",
       ...(footprintM2 != null ? { footprintM2 } : {}),
+      ...(variants.length ? { variants } : {}),
+      ...(priceMin != null ? { priceMin } : {}),
+      ...(priceMax != null ? { priceMax } : {}),
     };
     products.push(product);
     stats.kept++;

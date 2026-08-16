@@ -248,6 +248,12 @@ async function main() {
   const COLS = {
     handle: idx("Handle"),
     title: idx("Title"),
+    option1Name: idx("Option1 Name"),
+    option1Value: idx("Option1 Value"),
+    option2Name: idx("Option2 Name"),
+    option2Value: idx("Option2 Value"),
+    option3Name: idx("Option3 Name"),
+    option3Value: idx("Option3 Value"),
     body: idx("Body (HTML)"),
     vendor: idx("Vendor"),
     productCategory: idx("Product Category"),
@@ -451,6 +457,59 @@ async function main() {
     // Brand
     const brand = (first[COLS.vendor] || "").trim() || "Motion Sports";
 
+    // Variants: every group row with a positive Variant Price is a variant row
+    // (image-only continuation rows carry no price). Option NAMES live on the
+    // first row; option VALUES on each variant row. The CSV export has no
+    // numeric variant id, so id stays null (cart links degrade gracefully —
+    // same as the omitted shopifyCartUrl below); titles/prices still give Mo
+    // and the pickers full variant knowledge in the fallback.
+    const optionNames = [
+      COLS.option1Name >= 0 ? (first[COLS.option1Name] || "").trim() : "",
+      COLS.option2Name >= 0 ? (first[COLS.option2Name] || "").trim() : "",
+      COLS.option3Name >= 0 ? (first[COLS.option3Name] || "").trim() : "",
+    ];
+    const optionValueCols = [COLS.option1Value, COLS.option2Value, COLS.option3Value];
+    const variants = [];
+    for (const row of groupRows) {
+      const rowPrice = parseNumber(row[COLS.price]);
+      if (!rowPrice || rowPrice <= 0) continue;
+      const values = optionValueCols.map((c, i) =>
+        c >= 0 && optionNames[i] && optionNames[i] !== "Title"
+          ? (row[c] || "").trim()
+          : ""
+      );
+      const title = values.filter((v) => v && v !== "Default Title").join(" / ");
+      const rowCompare = parseNumber(row[COLS.comparePrice]);
+      let vPrice = rowPrice;
+      let vSale;
+      if (rowCompare && rowCompare > rowPrice) {
+        vPrice = rowCompare;
+        vSale = rowPrice;
+      }
+      const vSku = (row[COLS.sku] || "").trim();
+      variants.push({
+        id: null,
+        title,
+        options: values
+          .map((v, i) => ({ name: optionNames[i], value: v }))
+          .filter((o) => o.name && o.name !== "Title" && o.value && o.value !== "Default Title"),
+        ...(vSku ? { sku: vSku } : {}),
+        price: Math.round(vPrice * 100) / 100,
+        ...(vSale != null ? { salePrice: Math.round(vSale * 100) / 100 } : {}),
+        available: true, // finer-grained stock not in export
+        isDefault: variants.length === 0,
+      });
+    }
+    const variantEffectivePrices = variants
+      .map((v) => (typeof v.salePrice === "number" && v.salePrice > 0 ? v.salePrice : v.price))
+      .filter((n) => n > 0);
+    const priceMin = variantEffectivePrices.length
+      ? Math.min(...variantEffectivePrices)
+      : undefined;
+    const priceMax = variantEffectivePrices.length
+      ? Math.max(...variantEffectivePrices)
+      : undefined;
+
     const product = {
       id: handle,
       name: (first[COLS.title] || "").trim(),
@@ -489,6 +548,9 @@ async function main() {
       },
       noiseLevelDb: "unknown",
       ...(footprintM2 != null ? { footprintM2 } : {}),
+      ...(variants.length ? { variants } : {}),
+      ...(priceMin != null ? { priceMin } : {}),
+      ...(priceMax != null ? { priceMax } : {}),
     };
 
     products.push(product);

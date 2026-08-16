@@ -255,6 +255,12 @@ export interface ShopifyProductImage {
 
 export interface ShopifyProductVariant {
   id: string;
+  // Variant display label ("16 kg"; Shopify's placeholder for single-variant
+  // products is "Default Title" — mapped away in catalog-mapping.ts).
+  title?: string | null;
+  // The option name/value pairs behind the title (option name "Title" is the
+  // single-variant placeholder).
+  selectedOptions?: Array<{ name: string; value: string }> | null;
   sku?: string | null;
   barcode?: string | null; // GTIN/EAN as maintained in the admin ("Barcode")
   price: string; // GraphQL Money — decimal string
@@ -376,6 +382,11 @@ const PRODUCT_NODE_FIELDS = /* GraphQL */ `
     variants(first: 50) {
       nodes {
         id
+        title
+        selectedOptions {
+          name
+          value
+        }
         sku
         barcode
         price
