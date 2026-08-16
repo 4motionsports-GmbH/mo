@@ -103,7 +103,8 @@ export function EmailPreviewButton({
       </Button>
 
       <Dialog open={url !== null} onOpenChange={(v) => !v && close()}>
-        <DialogContent className="max-w-4xl">
+        {/* Near-fullscreen: inline style beats the base max-w-lg class. */}
+        <DialogContent className="flex flex-col" style={{ maxWidth: "95vw", height: "92vh" }}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>

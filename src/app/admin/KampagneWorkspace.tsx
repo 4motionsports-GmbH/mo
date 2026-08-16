@@ -1360,7 +1360,8 @@ export function KampagneWorkspace({
 
       {/* Rendered-email viewer (draft preview + sent content) */}
       <Dialog open={emailView !== null} onOpenChange={(v) => !v && closeEmailView()}>
-        <DialogContent className="max-w-4xl">
+        {/* Near-fullscreen: inline style beats the base max-w-lg class. */}
+        <DialogContent className="flex flex-col" style={{ maxWidth: "95vw", height: "92vh" }}>
           <DialogHeader>
             <DialogTitle>{emailView?.title}</DialogTitle>
             <DialogDescription>{emailView?.description}</DialogDescription>
