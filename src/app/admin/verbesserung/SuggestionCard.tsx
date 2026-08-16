@@ -14,7 +14,7 @@
 // run's Wirkungs-Check); the positive actions apply instantly.
 
 import * as React from "react";
-import { Loader2, Check, Wand2, X, ListTodo, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
+import { Loader2, Check, Wand2, X, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { Badge, Button, Card, CardContent, Input, Markdown, Textarea, toast } from "../ui";
 import {
   SHOP_CATEGORIES,
@@ -300,18 +300,12 @@ export function SuggestionCard({
                 Übernehmen — gilt ab sofort
               </Button>
             ) : (
-              <>
-                {status === "open" && (
-                  <Button size="sm" onClick={() => applyStatus("accepted")} disabled={busy}>
-                    {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ListTodo className="size-3.5" />}
-                    Machen wir — auf die To-do-Liste
-                  </Button>
-                )}
-                <Button size="sm" variant="outline" onClick={() => applyStatus("implemented")} disabled={busy}>
-                  <Check className="size-3.5" />
-                  {status === "accepted" ? "Jetzt erledigt" : "Schon erledigt"}
-                </Button>
-              </>
+              // Non-directive cards: mark done once the change is really live
+              // (the next run's Wirkungs-Check measures it), else dismiss.
+              <Button size="sm" onClick={() => applyStatus("implemented")} disabled={busy}>
+                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                Erledigt — ist umgesetzt
+              </Button>
             )}
             <Button size="sm" variant="ghost" onClick={() => setDismissing(true)} disabled={busy}>
               <X className="size-3.5" />

@@ -414,7 +414,7 @@ function NewRunPanel({
             </li>
             <li>
               <span className="font-semibold text-foreground">2 · Du entscheidest:</span> Jede
-              Karte übernehmen, auf die To-do-Liste setzen oder verwerfen. Nichts passiert
+              Karte übernehmen, als erledigt markieren oder verwerfen. Nichts passiert
               automatisch.
             </li>
             <li>
@@ -567,8 +567,8 @@ function RunView({
 
           <p className="text-[11px] text-muted-foreground">
             Nichts passiert automatisch: Ein Vorschlag wird erst wirksam, wenn du ihn übernimmst
-            oder selbst umsetzt. Deine Entscheidungen (Geplant / Erledigt / Verworfen) fließen in
-            den Wirkungs-Check des nächsten Laufs ein.
+            oder selbst umsetzt. Deine Entscheidungen (Erledigt / Verworfen) fließen in den
+            Wirkungs-Check des nächsten Laufs ein.
           </p>
         </>
       )}
