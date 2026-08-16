@@ -183,7 +183,7 @@ envelopes like every other admin route:
 | `POST /api/admin/improve/step` | advance one model call (`maxDuration 300`) |
 | `POST /api/admin/improve/delete` | delete run (+ suggestions, CASCADE) |
 | `POST /api/admin/improve/suggestion` | set suggestion status (+ note) |
-| `POST /api/admin/improve/adopt` | adopt a suggestion's directive text as a live directive |
+| `POST /api/admin/improve/adopt` | adopt a suggestion's directive text as a live directive (optional `content` = operator-edited text) |
 | `GET /api/admin/directives` | directive list + limits |
 | `POST /api/admin/directives/save` | create / edit (versioned) |
 | `POST /api/admin/directives/toggle` | activate / deactivate (versioned, capped) |
