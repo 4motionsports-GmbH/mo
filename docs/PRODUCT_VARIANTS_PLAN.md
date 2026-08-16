@@ -1,6 +1,6 @@
 # Product variants — plan for variant-granular selection & recommendation
 
-Status: **being implemented** (this branch)
+Status: **implemented** (all phases; see the phase commits on this branch)
 
 ## 1. Problem
 

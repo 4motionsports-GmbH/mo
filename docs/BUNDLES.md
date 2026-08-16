@@ -265,3 +265,16 @@ The probe confirmed the path end-to-end on 2026-06-13. To re-verify after deploy
 5. **Archived + friendly page** — confirm the Shopify product is **ARCHIVED**
    (not deleted) and the offer is `expired`; re-open `/api/r/<token>` → the
    branded **"Angebot abgelaufen"** page (not a Shopify 404 / empty cart).
+
+## Product variants
+
+Bundle components can pin a specific variant: `POST /api/admin/bundles/create`
+accepts `components: [{ productId, variantId?, quantity? }]` (numeric Shopify
+variant id from the shared picker's variant chooser). Validation
+(`validateAndSnapshotComponents`) resolves price/availability PER CHOSEN
+variant; a pinned variant that vanished from the catalog is refused with
+`variant_not_found` (HTTP 409) — never silently replaced by the default
+variant. The snapshot's `variantId`/`numericVariantId` carry the chosen
+variant, `title` becomes "Produktname – Variantentitel" (plus a separate
+`variantTitle`), and the native `productBundleCreate` path pins the option
+selections from `numericVariantId` as before.

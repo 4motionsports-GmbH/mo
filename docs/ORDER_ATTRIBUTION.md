@@ -62,13 +62,19 @@ them. That is a physical limit, not a measurement bug.
 ## Line-item → catalog matching
 
 Webhook line items carry no handle. Matching (`matchOrderLineItems`):
-1. exact numeric `variant_id` against the catalog's default-variant
-   `shopifyVariantId`;
+1. exact numeric `variant_id` against **every** catalog variant id (the
+   catalog's `variants[]`, plus the flat default `shopifyVariantId` as a
+   pre-variant safety net) — a purchase of the 16 kg kettlebell matches by
+   its own variant id, not only the default's;
 2. else normalised title vs. normalised catalog id — Shopify derives handles
    from titles, and `normalizeHandle` strips exactly what Shopify strips
-   (®, casing, separators), so this also covers non-default variants.
-Unmatched lines keep `handle: null` (never guessed) and simply can't
-contribute to the overlap check.
+   (®, casing, separators).
+A variant-id match on a NON-default variant of a multi-variant product
+additionally stamps `ref` (`handle~variantId`,
+`docs/PRODUCT_VARIANTS_PLAN.md`) on the matched item, so KPIs can tell which
+strength/weight/colour was bought; `handle` stays the product-level grouping
+key everywhere. Unmatched lines keep `handle: null` (never guessed) and
+simply can't contribute to the overlap check.
 
 ## GDPR posture
 

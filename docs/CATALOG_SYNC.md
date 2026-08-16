@@ -412,3 +412,22 @@ from it. This keeps the deployment healthy even when Shopify is degraded.
 
 If the auth flow itself cannot be made to work at all, see
 `docs/SHOPIFY_AUTH_BLOCKER.md` (created lazily when first hit).
+
+## Product variants (variant-aware catalog)
+
+Since the variant rollout (`docs/PRODUCT_VARIANTS_PLAN.md`) the sync maps
+ALL variants, not only `variants[0]`:
+
+* The GraphQL fragment additionally fetches `title` + `selectedOptions`.
+* `catalog-mapping.ts` emits `Product.variants[]` (id, title, options, sku,
+  barcode, price/salePrice, `availableForSale`, per-variant cart url,
+  `isDefault`) plus `priceMin`/`priceMax` (effective price range).
+* The FLAT fields (`price`, `sku`, `shopifyVariantId`, `shopifyCartUrl`)
+  keep their default-variant semantics — full back-compat; variant-granular
+  consumers resolve through `src/lib/product-ref.mjs`.
+* The embedding doc (v3) states the price range and a `Varianten:` section,
+  so variant-level queries ("Kettlebell 16 kg") retrieve correctly. The
+  version bump forces a one-time full re-embed on the next sync.
+* The CSV fallback (`convert-catalog.mjs`) builds variants from the
+  `Option1-3` columns; variant ids are null there (no numeric id in the
+  export), so cart links degrade exactly as the fallback always has.

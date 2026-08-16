@@ -260,3 +260,29 @@ test("isWithinAttributionWindow fails closed on missing input", () => {
   assert.equal(isWithinAttributionWindow("2026-08-01T00:00:00Z", null, 30), false);
   assert.equal(isWithinAttributionWindow("2026-08-01T00:00:00Z", "2026-08-01T00:00:00Z", 0), false);
 });
+
+test("matchOrderLineItems matches NON-default variants by id and reports the ref", () => {
+  const catalog = [
+    {
+      id: "atx-kettlebell",
+      shopifyVariantId: "111",
+      variants: [
+        { id: "111", title: "8 kg", price: 24.9, available: true, isDefault: true },
+        { id: "222", title: "16 kg", price: 46.9, available: true, isDefault: false },
+      ],
+    },
+  ];
+  const { items, matchedHandles } = matchOrderLineItems(
+    [
+      { title: "ATX Kettlebell", quantity: 1, price: "46.90", variantId: "222", productId: "9" },
+      { title: "ATX Kettlebell", quantity: 1, price: "24.90", variantId: "111", productId: "9" },
+    ],
+    catalog
+  );
+  assert.deepEqual(matchedHandles, ["atx-kettlebell"]);
+  // Non-default variant carries the ref; default stays the bare handle.
+  assert.equal(items[0].handle, "atx-kettlebell");
+  assert.equal(items[0].ref, "atx-kettlebell~222");
+  assert.equal(items[1].handle, "atx-kettlebell");
+  assert.equal(items[1].ref, undefined);
+});

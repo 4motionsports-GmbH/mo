@@ -27,6 +27,11 @@
 //                bought something else).
 
 import { normalizeHandle } from "./kpi-match.mjs";
+import {
+  productVariants,
+  normalizeVariantId,
+  formatProductRef,
+} from "./product-ref.mjs";
 
 // ---------------------------------------------------------------------------
 // Cart-link marker
@@ -189,16 +194,38 @@ export function hasMoMarker(parsed) {
  *      holds for non-default variants too.
  * Unmatched lines keep handle: null (never guessed).
  *
+ * Variant-aware: ALL catalog variants are indexed (not only the default), so
+ * an order for the 16 kg kettlebell matches by exact variant id — and the
+ * matched item additionally carries `ref` ("handle~variantId") when the
+ * purchase pinned a non-default variant of a multi-variant product, so KPIs
+ * can tell WHICH strength/weight was bought. `handle` stays the product-level
+ * key (back-compat for every existing consumer).
+ *
  * @param {ParsedOrder["lineItems"]} lineItems
- * @param {ReadonlyArray<{ id: string, shopifyVariantId?: string }>} catalog
- * @returns {{ items: Array<ParsedOrder["lineItems"][number] & { handle: string | null }>, matchedHandles: string[] }}
+ * @param {ReadonlyArray<{ id: string, shopifyVariantId?: string, variants?: Array<object> }>} catalog
+ * @returns {{ items: Array<ParsedOrder["lineItems"][number] & { handle: string | null, ref?: string }>, matchedHandles: string[] }}
  */
 export function matchOrderLineItems(lineItems, catalog) {
-  const byVariant = new Map();
+  const byVariant = new Map(); // numeric variant id → { handle, ref }
   const byNormalizedId = new Map();
   for (const p of catalog ?? []) {
     if (!p || typeof p.id !== "string") continue;
-    if (p.shopifyVariantId) byVariant.set(String(p.shopifyVariantId), p.id);
+    const variants = productVariants(p);
+    const multi = variants.filter((v) => v && (v.title || "").trim()).length > 1;
+    for (const v of variants) {
+      const vid = normalizeVariantId(v?.id);
+      if (!vid || byVariant.has(vid)) continue;
+      byVariant.set(vid, {
+        handle: p.id,
+        // Only a non-default variant of a genuinely multi-variant product
+        // earns a ref — everything else stays the plain handle, keeping KPI
+        // grouping keys unchanged for single-variant products.
+        ref: multi && !v.isDefault ? formatProductRef(p.id, vid) : p.id,
+      });
+    }
+    // Pre-variant safety net (older blob rows): the flat default variant id.
+    const flat = normalizeVariantId(p.shopifyVariantId);
+    if (flat && !byVariant.has(flat)) byVariant.set(flat, { handle: p.id, ref: p.id });
     const key = normalizeHandle(p.id);
     if (key) byNormalizedId.set(key, p.id);
   }
@@ -207,14 +234,15 @@ export function matchOrderLineItems(lineItems, catalog) {
   const matched = new Set();
   for (const li of lineItems ?? []) {
     let handle = null;
+    let ref = null;
     if (li.variantId && byVariant.has(li.variantId)) {
-      handle = byVariant.get(li.variantId);
+      ({ handle, ref } = byVariant.get(li.variantId));
     } else {
       const key = normalizeHandle(li.title);
       if (key && byNormalizedId.has(key)) handle = byNormalizedId.get(key);
     }
     if (handle) matched.add(handle);
-    items.push({ ...li, handle });
+    items.push({ ...li, handle, ...(ref && ref !== handle ? { ref } : {}) });
   }
   return { items, matchedHandles: [...matched] };
 }
