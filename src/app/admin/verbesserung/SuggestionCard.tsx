@@ -15,11 +15,12 @@
 
 import * as React from "react";
 import { Loader2, Check, Wand2, X, ListTodo, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
-import { Badge, Button, Card, CardContent, Input, Markdown, toast } from "../ui";
+import { Badge, Button, Card, CardContent, Input, Markdown, Textarea, toast } from "../ui";
 import {
   SHOP_CATEGORIES,
   MO_CATEGORIES,
   SUGGESTION_STATUS_LABELS,
+  MAX_DIRECTIVE_CHARS,
 } from "@/lib/improvement-core.mjs";
 import { cn } from "../ui/cn";
 
@@ -84,6 +85,9 @@ export function SuggestionCard({
   const [dismissing, setDismissing] = React.useState(false);
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  // The directive text is directly editable BEFORE adopting — whatever stands
+  // in the box is exactly what goes live into Mo's system prompt.
+  const [directiveDraft, setDirectiveDraft] = React.useState(suggestion.directiveText ?? "");
 
   const applyStatus = React.useCallback(
     async (status: SuggestionItem["status"], statusNote?: string) => {
@@ -124,13 +128,17 @@ export function SuggestionCard({
   );
 
   const adopt = React.useCallback(async () => {
-    if (busy) return;
+    if (busy || !directiveDraft.trim()) return;
     setBusy(true);
     try {
       const res = await fetch("/api/admin/improve/adopt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suggestionId: suggestion.id }),
+        body: JSON.stringify({
+          suggestionId: suggestion.id,
+          // Send the (possibly edited) text — the server stores exactly this.
+          content: directiveDraft,
+        }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         suggestion?: SuggestionItem;
@@ -156,7 +164,7 @@ export function SuggestionCard({
     } finally {
       setBusy(false);
     }
-  }, [busy, suggestion.id, onChanged]);
+  }, [busy, directiveDraft, suggestion.id, onChanged]);
 
   const prio = priority(suggestion.impact, suggestion.effort);
   const hasDirective = Boolean(suggestion.directiveText);
@@ -182,7 +190,22 @@ export function SuggestionCard({
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               So würde Mo künftig beraten
             </p>
-            <p className="mt-1 text-[13px] text-foreground">{suggestion.directiveText}</p>
+            {status === "implemented" || status === "dismissed" ? (
+              <p className="mt-1 text-[13px] text-foreground">{suggestion.directiveText}</p>
+            ) : (
+              <>
+                <Textarea
+                  value={directiveDraft}
+                  onChange={(e) => setDirectiveDraft(e.target.value)}
+                  maxLength={MAX_DIRECTIVE_CHARS}
+                  className="mt-1 min-h-[80px] bg-card text-[13px]"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Direkt anpassbar — genau dieser Text gilt nach dem Übernehmen ·{" "}
+                  {directiveDraft.trim().length}/{MAX_DIRECTIVE_CHARS} Zeichen
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <div>
@@ -272,7 +295,7 @@ export function SuggestionCard({
           <div className="flex flex-wrap items-center gap-2">
             {hasDirective ? (
               // One-click path: adopt = live in Mo's prompt + card is Erledigt.
-              <Button size="sm" onClick={adopt} disabled={busy}>
+              <Button size="sm" onClick={adopt} disabled={busy || !directiveDraft.trim()}>
                 {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
                 Übernehmen — gilt ab sofort
               </Button>
