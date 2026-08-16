@@ -15,6 +15,12 @@
 // products.mjs / email-offer-trigger.mjs.
 
 import { isAvailable } from "./availability.mjs";
+import {
+  parseProductRef,
+  productVariants,
+  normalizeVariantId,
+  isVariantAvailable,
+} from "./product-ref.mjs";
 
 // Tool inputs that reference catalog product ids — the DISCUSSED universe
 // (everything that came up, including compared-and-rejected alternatives).
@@ -109,10 +115,12 @@ export function recommendedCardIdsInOrder(toolCalls) {
 }
 
 /**
- * Apply the load-bearing guards to an ordered id list:
- *  - MEMBERSHIP: drop ids that are not in the catalog (never card a phantom id).
- *  - AVAILABILITY: drop ids that are sold out (never card a sold-out item as a
- *    recommendation — the same guard retrieval already applies upstream).
+ * Apply the load-bearing guards to an ordered id list (ids may be
+ * variant-pinned refs, "handle~variantId"):
+ *  - MEMBERSHIP: drop ids whose product is not in the catalog, and refs whose
+ *    pinned variant doesn't exist (a hallucinated variant id must never card).
+ *  - AVAILABILITY: drop ids whose product — or, for a ref, whose CHOSEN
+ *    variant — is sold out (the same guard retrieval applies upstream).
  * Order is preserved. The dropped ids are returned too, so callers can surface a
  * regression (the model recommending something invalid) instead of shipping a
  * wrong card silently.
@@ -128,10 +136,26 @@ export function guardRecommendedCardIds(orderedIds, catalogById) {
   const droppedUnknown = [];
   const droppedSoldOut = [];
   for (const id of orderedIds ?? []) {
-    const product = lookup(id);
+    const { productId, variantId } = parseProductRef(id);
+    const product = lookup(productId);
     if (!product) {
       droppedUnknown.push(id);
-    } else if (!isAvailable(product)) {
+      continue;
+    }
+    if (variantId != null) {
+      const variant =
+        productVariants(product).find((v) => v && normalizeVariantId(v.id) === variantId) ??
+        null;
+      if (!variant) {
+        droppedUnknown.push(id);
+      } else if (!isVariantAvailable(product, variant)) {
+        droppedSoldOut.push(id);
+      } else {
+        cardIds.push(id);
+      }
+      continue;
+    }
+    if (!isAvailable(product)) {
       droppedSoldOut.push(id);
     } else {
       cardIds.push(id);

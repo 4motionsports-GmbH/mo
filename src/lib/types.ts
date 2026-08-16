@@ -261,6 +261,11 @@ export interface SearchProductsResult {
     name: string;
     category: string;
     price: number;
+    /** Effective price range + variant count — present only for products with
+     * a genuine multi-variant price spread. */
+    priceFrom?: number;
+    priceTo?: number;
+    variantCount?: number;
     shortDescription: string;
     score: number;
   }>;
