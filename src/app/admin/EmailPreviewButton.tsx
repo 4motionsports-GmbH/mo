@@ -103,7 +103,7 @@ export function EmailPreviewButton({
       </Button>
 
       <Dialog open={url !== null} onOpenChange={(v) => !v && close()}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>

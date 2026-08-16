@@ -1360,7 +1360,7 @@ export function KampagneWorkspace({
 
       {/* Rendered-email viewer (draft preview + sent content) */}
       <Dialog open={emailView !== null} onOpenChange={(v) => !v && closeEmailView()}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>{emailView?.title}</DialogTitle>
             <DialogDescription>{emailView?.description}</DialogDescription>
