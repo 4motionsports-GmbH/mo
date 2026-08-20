@@ -35,7 +35,14 @@ import { mapShopifyProducts } from "./catalog-mapping";
 import {
   fetchProductsByIds,
   resolveProductIdForInventoryItem,
+  ShopifyThrottledError,
 } from "./shopify";
+import {
+  isThrottleGateActive,
+  requeuePendingEntry,
+  takePendingRefreshes,
+} from "./shopify-throttle-gate";
+import { DRAIN_MAX_ITEMS, DRAIN_TIME_BUDGET_MS, parsePendingEntry } from "./shopify-backpressure.mjs";
 import { tryGetRedis } from "./redis";
 import { reportError } from "./observability";
 import type { Product } from "./types";
@@ -49,7 +56,10 @@ const LOCK_POLL_MS = 250;
 
 export type MutateResult =
   | { ok: true; action: "upserted" | "removed" | "noop"; productId: string | null; reembedded: boolean }
-  | { ok: false; reason: string };
+  // `throttled` marks "Shopify is momentarily saturated — defer, don't 500":
+  // the webhook route queues the target and acks instead of triggering a
+  // Shopify redelivery storm. NOT a Sentry-worthy error (self-healing).
+  | { ok: false; reason: string; throttled?: boolean };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -163,6 +173,12 @@ export async function refreshProductInCatalog(productGid: string): Promise<Mutat
     await persist(up.catalog as Product[], embFile, nextItems);
     return { ok: true, action: "upserted", productId: product.id, reembedded };
   } catch (err) {
+    if (err instanceof ShopifyThrottledError) {
+      // Persistent rate limiting is BACKPRESSURE, not a bug: the caller defers
+      // (queue + 200) and the drain/daily sync catch up. Warn, don't Sentry.
+      console.warn(`[catalog-mutate] Shopify throttled — deferring refresh of ${productGid}`);
+      return { ok: false, reason: err.message, throttled: true };
+    }
     reportError(err, { route: "lib/catalog-mutate", phase: "refreshProduct" });
     return { ok: false, reason: (err as Error).message };
   } finally {
@@ -179,9 +195,54 @@ export async function refreshInventoryItemInCatalog(
     if (!productGid) return { ok: true, action: "noop", productId: null, reembedded: false };
     return await refreshProductInCatalog(productGid);
   } catch (err) {
+    if (err instanceof ShopifyThrottledError) {
+      console.warn(`[catalog-mutate] Shopify throttled — deferring refresh of ${inventoryItemGid}`);
+      return { ok: false, reason: err.message, throttled: true };
+    }
     reportError(err, { route: "lib/catalog-mutate", phase: "refreshInventoryItem" });
     return { ok: false, reason: (err as Error).message };
   }
+}
+
+/**
+ * Opportunistically work off targets that were queued while the throttle gate
+ * held (see shopify-backpressure.mjs). Called after a SUCCESSFUL webhook
+ * mutation — the bucket demonstrably has budget again — with a hard item + time
+ * budget so it can never push the route toward its function timeout. An entry
+ * that hits the gate (or fails) is REQUEUED, not lost; the daily full sync
+ * remains the final reconciliation backstop.
+ */
+export async function drainPendingRefreshes(
+  opts: { maxItems?: number; timeBudgetMs?: number } = {}
+): Promise<{ drained: number; requeued: number }> {
+  const deadline = Date.now() + (opts.timeBudgetMs ?? DRAIN_TIME_BUDGET_MS);
+  const entries = await takePendingRefreshes(opts.maxItems ?? DRAIN_MAX_ITEMS);
+  let drained = 0;
+  let requeued = 0;
+  let stopped = false;
+  for (const entry of entries) {
+    // Out of budget or throttled again → put the remaining entries back.
+    if (stopped || Date.now() >= deadline || (await isThrottleGateActive())) {
+      if (await requeuePendingEntry(entry)) requeued++;
+      stopped = true;
+      continue;
+    }
+    const target = parsePendingEntry(entry);
+    if (!target) continue; // foreign/malformed value — drop, never dispatch
+    const result =
+      target.kind === "inventory_item"
+        ? await refreshInventoryItemInCatalog(target.gid)
+        : await refreshProductInCatalog(target.gid);
+    if (result.ok) {
+      drained++;
+    } else {
+      // Throttled or real failure (already warned/reported above) — requeue so
+      // the update isn't lost, and stop: this invocation's budget is spent.
+      if (await requeuePendingEntry(entry)) requeued++;
+      stopped = true;
+    }
+  }
+  return { drained, requeued };
 }
 
 /** Persist the mutated catalog + embeddings as a consistent pair. */
