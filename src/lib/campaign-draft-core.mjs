@@ -10,19 +10,30 @@
 // its exact deep link, and its no-dark-pattern copy are guaranteed — an edit to
 // the prose can never remove it.
 
+import { storedTextMode } from "./email-text-mode.mjs";
+
 /**
  * Whether an existing open draft may be reused as-is (same offer, no explicit
  * regenerate). Mirrors /api/admin/marketing/draft.
  *
- * @param {{ discountPercent: number } | null | undefined} existing
+ * `requestedTextMode` is the explicitly requested text mode, or null/undefined
+ * when the request did not name one — an unnamed mode keeps the draft's stored
+ * mode, so it never blocks reuse. A named mode that differs from the stored
+ * one (NULL = legacy 'detailed') forces a regenerate, so the visible text and
+ * the selected mode can never disagree.
+ *
+ * @param {{ discountPercent: number, textMode?: string | null } | null | undefined} existing
  * @param {number} requestedPercent
  * @param {boolean} regenerate
+ * @param {string | null | undefined} [requestedTextMode]
  * @returns {boolean}
  */
-export function shouldReuseCampaignDraft(existing, requestedPercent, regenerate) {
+export function shouldReuseCampaignDraft(existing, requestedPercent, regenerate, requestedTextMode) {
   if (!existing) return false;
   if (regenerate === true) return false;
-  return Number(existing.discountPercent) === Number(requestedPercent);
+  if (Number(existing.discountPercent) !== Number(requestedPercent)) return false;
+  if (requestedTextMode != null && storedTextMode(existing) !== requestedTextMode) return false;
+  return true;
 }
 
 /**

@@ -13,6 +13,7 @@
 
 import { createHash } from "node:crypto";
 import { getSql, type Sql } from "./db";
+import { parseEmailTextMode } from "./email-text-mode.mjs";
 import { normalizeEmail } from "./email-capture-store";
 import { reportError } from "./observability";
 import { wasDiscountCodeRedeemed } from "./shopify-orders";
@@ -90,6 +91,9 @@ export interface CampaignDraftRow {
   /** Operator-narrowed purchase basis for the recommendations (catalog product
    * ids). NULL = all past purchases (the default). Survives regenerates. */
   purchaseSelectedIds: string[] | null;
+  /** Text mode this draft was generated with (migration 0047). Null = legacy
+   * row from before the mode existed — reads as 'detailed'. */
+  textMode: "detailed" | "compact" | "minimal" | null;
   lowConfidence: boolean;
   createdAt: string | null;
   updatedAt: string | null;
@@ -163,6 +167,7 @@ function mapDraftRow(r: Record<string, unknown>): CampaignDraftRow {
     purchaseSelectedIds: Array.isArray(r.purchase_selected_ids)
       ? (r.purchase_selected_ids as string[])
       : null,
+    textMode: parseEmailTextMode(r.text_mode),
     lowConfidence: r.low_confidence === true,
     createdAt: toIso(r.created_at),
     updatedAt: toIso(r.updated_at),
@@ -375,6 +380,7 @@ export async function listDraftedQueue(
              d.recommended_product_ids AS d_recommended_product_ids,
              d.product_highlights AS d_product_highlights,
              d.purchase_selected_ids AS d_purchase_selected_ids,
+             d.text_mode AS d_text_mode,
              d.low_confidence AS d_low_confidence,
              d.created_at AS d_created_at, d.updated_at AS d_updated_at
         FROM campaign_contacts c
@@ -396,6 +402,7 @@ export async function listDraftedQueue(
         recommended_product_ids: r.d_recommended_product_ids,
         product_highlights: r.d_product_highlights,
         purchase_selected_ids: r.d_purchase_selected_ids,
+        text_mode: r.d_text_mode,
         low_confidence: r.d_low_confidence,
         created_at: r.d_created_at,
         updated_at: r.d_updated_at,
@@ -591,6 +598,8 @@ export interface SaveCampaignDraftInput {
   productHighlights?: Array<{ name: string; description: string }> | null;
   /** Narrowed purchase basis to persist (null = all purchases). */
   purchaseSelectedIds: string[] | null;
+  /** Text mode the draft was generated with (migration 0047). */
+  textMode?: "detailed" | "compact" | "minimal" | null;
   lowConfidence: boolean;
 }
 
@@ -609,14 +618,14 @@ export async function saveCampaignDraft(
     INSERT INTO campaign_drafts
       (contact_id, subject, body, discount_percent, discount_expires_at,
        purchase_summary, recommended_product_ids, product_highlights,
-       purchase_selected_ids, low_confidence, created_at, updated_at)
+       purchase_selected_ids, text_mode, low_confidence, created_at, updated_at)
     VALUES
       (${input.contactId}, ${input.subject}, ${input.body},
        ${input.discountPercent}, ${input.discountExpiresAt},
        ${input.purchaseSummary ? JSON.stringify(input.purchaseSummary) : null}::jsonb,
        ${input.recommendedProductIds}::text[],
        ${input.productHighlights && input.productHighlights.length > 0 ? JSON.stringify(input.productHighlights) : null}::jsonb,
-       ${input.purchaseSelectedIds}::text[], ${input.lowConfidence},
+       ${input.purchaseSelectedIds}::text[], ${input.textMode ?? null}, ${input.lowConfidence},
        now(), now())
     ON CONFLICT (contact_id) DO UPDATE SET
       subject                 = EXCLUDED.subject,
@@ -627,6 +636,7 @@ export async function saveCampaignDraft(
       recommended_product_ids = EXCLUDED.recommended_product_ids,
       product_highlights      = EXCLUDED.product_highlights,
       purchase_selected_ids   = EXCLUDED.purchase_selected_ids,
+      text_mode               = EXCLUDED.text_mode,
       low_confidence          = EXCLUDED.low_confidence,
       updated_at              = now()
     RETURNING *

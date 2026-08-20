@@ -30,7 +30,9 @@ import {
   DISCOUNT_PERCENT_MAX,
   clampDiscountPercent,
 } from "@/lib/discount-validation.mjs";
+import { DEFAULT_EMAIL_TEXT_MODE } from "@/lib/email-text-mode.mjs";
 import { CustomerProfileCard, type CustomerProps } from "./CustomerProfileCard";
+import { EmailTextModeToggle, type EmailTextModeValue } from "./EmailTextModeToggle";
 import { UnmatchedInboundQueue } from "./UnmatchedInboundQueue";
 import {
   DEFAULT_FILTER,
@@ -85,9 +87,13 @@ export function KundenWorkspace({
   const [filter, setFilter] = useState<CustomerFilterState>(() => presetFilter(initialFilter));
   const [selectedId, setSelectedId] = useState<number | null>(customers[0]?.id ?? null);
 
-  // Bulk-draft selection (confirmed-marketing customers only) + the shared depth.
+  // Bulk-draft selection (confirmed-marketing customers only) + the shared
+  // depth and text mode.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkDepth, setBulkDepth] = useState(0);
+  const [bulkTextMode, setBulkTextMode] = useState<EmailTextModeValue>(
+    DEFAULT_EMAIL_TEXT_MODE as EmailTextModeValue
+  );
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const visible = useMemo(() => filterCustomers(customers, filter), [customers, filter]);
@@ -132,9 +138,14 @@ export function KundenWorkspace({
     const res = await fetch("/api/admin/customers/marketing-draft", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // regenerate:false → an existing open draft at this depth is reused
-      // untouched; the server re-checks eligibility on every call.
-      body: JSON.stringify({ customerId, discountPercent: bulkDepth, regenerate: false }),
+      // regenerate:false → an existing open draft at this depth + mode is
+      // reused untouched; the server re-checks eligibility on every call.
+      body: JSON.stringify({
+        customerId,
+        discountPercent: bulkDepth,
+        textMode: bulkTextMode,
+        regenerate: false,
+      }),
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -379,6 +390,14 @@ export function KundenWorkspace({
                 disabled={bulkBusy}
                 onChange={(e) => setBulkDepth(clampDiscountPercent(e.target.valueAsNumber))}
                 className="w-20"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-muted-foreground">Textmodus</Label>
+              <EmailTextModeToggle
+                value={bulkTextMode}
+                disabled={bulkBusy}
+                onSelect={setBulkTextMode}
               />
             </div>
             <p className="order-last w-full text-xs text-muted-foreground sm:order-none sm:w-auto sm:flex-1 sm:min-w-[12rem]">

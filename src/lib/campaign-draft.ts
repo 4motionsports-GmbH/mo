@@ -28,49 +28,60 @@
 import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
+import {
+  LEGACY_EMAIL_TEXT_MODE,
+  textModeBodyRule,
+  textModeHighlightRule,
+} from "./email-text-mode.mjs";
 import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
-import type { DraftDiscountInput, MarketingDraft } from "./marketing-draft";
+import type { DraftDiscountInput, EmailTextMode, MarketingDraft } from "./marketing-draft";
 import type { CampaignPurchaseSummary } from "./campaign-store";
 
 // Same model the existing marketing drafts use.
 const DRAFT_MODEL = "claude-sonnet-4-6";
 
-const draftSchema = z.object({
-  subject: z
-    .string()
-    .describe("Kurze, persönliche Betreffzeile in der Zielsprache (max ~60 Zeichen)."),
-  body: z
-    .string()
-    .describe(
-      "Der E-Mail-Text in der Zielsprache (Deutsch: Du-Form), warm und persönlich, " +
-        "unterschrieben mit 'Mo, dein persönlicher Berater bei motion sports' " +
-        "(Englisch: 'Mo, your personal advisor at motion sports'). OHNE Abmeldelink, " +
-        "OHNE Chatbot-Hinweis (beides wird separat angehängt)."
-    ),
-  // Per-product personalised descriptions for the product-rows layout — same
-  // contract as marketing-draft's productHighlights (matched by EXACT name).
-  productHighlights: z
-    .array(
-      z.object({
-        name: z
-          .string()
-          .describe("EXAKT der vorgegebene Produktname (unverändert kopiert)."),
-        description: z
-          .string()
-          .describe(
-            "1–3 kurze Sätze in der ZIELSPRACHE der E-Mail, warum genau dieses " +
-              "Produkt zu dieser Person passt — persönlich aus der Kaufhistorie " +
-              "begründet; ohne Chat-Wissen allgemeiner, aber trotzdem persönlich " +
-              "formuliert. Keine Preise, keine Links, keine erfundenen Fakten."
-          ),
-      })
-    )
-    .describe(
-      "Für JEDES empfohlene Produkt (und jedes Set-Produkt, falls ein Set " +
-        "angehängt ist) genau EIN Eintrag mit einer persönlichen Kurzbeschreibung."
-    ),
-});
+/** The draft schema, parameterised by the selected text mode — the per-product
+ * description length follows the mode (detailed: 1–3 sentences … minimal:
+ * caption-like fragment), exactly like marketing-draft's variant. */
+function draftSchema(textMode: EmailTextMode) {
+  return z.object({
+    subject: z
+      .string()
+      .describe("Kurze, persönliche Betreffzeile in der Zielsprache (max ~60 Zeichen)."),
+    body: z
+      .string()
+      .describe(
+        "Der E-Mail-Text in der Zielsprache (Deutsch: Du-Form), warm und persönlich, " +
+          "unterschrieben mit 'Mo, dein persönlicher Berater bei motion sports' " +
+          "(Englisch: 'Mo, your personal advisor at motion sports'). OHNE Abmeldelink, " +
+          "OHNE Chatbot-Hinweis (beides wird separat angehängt)."
+      ),
+    // Per-product personalised descriptions for the product-rows layout — same
+    // contract as marketing-draft's productHighlights (matched by EXACT name).
+    productHighlights: z
+      .array(
+        z.object({
+          name: z
+            .string()
+            .describe("EXAKT der vorgegebene Produktname (unverändert kopiert)."),
+          description: z
+            .string()
+            .describe(
+              `${textModeHighlightRule(textMode)} in der ZIELSPRACHE der E-Mail, ` +
+                "warum genau dieses Produkt zu dieser Person passt — persönlich " +
+                "aus der Kaufhistorie begründet; ohne Chat-Wissen allgemeiner, " +
+                "aber trotzdem persönlich formuliert. Keine Preise, keine Links, " +
+                "keine erfundenen Fakten."
+            ),
+        })
+      )
+      .describe(
+        "Für JEDES empfohlene Produkt (und jedes Set-Produkt, falls ein Set " +
+          "angehängt ist) genau EIN Eintrag mit einer persönlichen Kurzbeschreibung."
+      ),
+  });
+}
 
 /** Trim + drop unusable entries; never trust model output blindly. */
 function sanitizeHighlights(
@@ -120,6 +131,9 @@ export interface GenerateCampaignDraftInput extends DraftDiscountInput {
     /** True when the bundle price is below the component sum (a real saving). */
     hasSaving: boolean;
   } | null;
+  /** Prose length for the generated text (operator-selected in the admin UI).
+   * Omitted = 'detailed' (the classic long-form behaviour). */
+  textMode?: EmailTextMode;
 }
 
 function purchaseBlock(summary: CampaignPurchaseSummary | null, language: "de" | "en"): string {
@@ -331,14 +345,15 @@ export async function generateCampaignDraft(
   const languageRule = en
     ? "Write the email in natural, warm ENGLISH."
     : "Schreibe die E-Mail auf DEUTSCH in der Du-Form.";
+  const textMode = input.textMode ?? LEGACY_EMAIL_TEXT_MODE;
 
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
-      schema: draftSchema,
+      schema: draftSchema(textMode),
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
-        "(Fitness- und Kraftsportgeräte). Du schreibst eine kurze, warme, " +
+        "(Fitness- und Kraftsportgeräte). Du schreibst eine warme, " +
         "persönliche Marketing-E-Mail an eine:n Bestandskund:in des Shops. " +
         "Diese Person kennt dich NOCH NICHT aus einem Chat — es gibt KEIN " +
         "Gespräch, auf das du dich beziehen kannst. Personalisiere " +
@@ -355,9 +370,8 @@ export async function generateCampaignDraft(
         "- WICHTIG zum Layout: Die empfohlenen Produkte erscheinen unterhalb " +
         "deines Textes AUTOMATISCH als Bildkacheln mit Produktfoto, Name, Preis " +
         "und Link. Dein Text ist die persönliche Einleitung dazu — KEIN " +
-        "Produktkatalog. Halte ihn kurz (3–5 kurze Absätze) und erwähne die " +
-        "Produkte im Fließtext nur knapp und natürlich (warum sie zu dieser " +
-        "Person passen).\n" +
+        "Produktkatalog.\n" +
+        `- ${textModeBodyRule(textMode, input.language)}\n` +
         "- Schreibe reinen Fließtext OHNE Überschriften, OHNE Aufzählungsblöcke " +
         "pro Produkt und OHNE Fettdruck-Zeilen wie „**Kategorie:**“ — keine " +
         "Markdown-Formatierung außer Produkt-Links.\n" +

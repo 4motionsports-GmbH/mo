@@ -1,5 +1,5 @@
 // POST /api/admin/customers/marketing-draft
-//   { customerId, discountPercent, adminInstructions?, regenerate? }
+//   { customerId, discountPercent, adminInstructions?, regenerate?, textMode? }
 //
 // Generate (or re-generate) the PER-CUSTOMER marketing draft — the
 // full-context upgrade of /api/admin/marketing/draft. Instead of one
@@ -49,9 +49,18 @@ import {
   parseDiscountPercent,
   DISCOUNT_PERCENT_MAX,
 } from "@/lib/discount-validation.mjs";
+import {
+  DEFAULT_EMAIL_TEXT_MODE,
+  EMAIL_TEXT_MODES,
+  parseEmailTextMode,
+  storedTextMode,
+} from "@/lib/email-text-mode.mjs";
 import { buildPrefilledCartUrlForIds, chooseCustomerProductIds } from "@/lib/cart";
 import { filterAvailable } from "@/lib/availability.mjs";
-import { generateCustomerMarketingDraft } from "@/lib/marketing-draft";
+import {
+  generateCustomerMarketingDraft,
+  type EmailTextMode,
+} from "@/lib/marketing-draft";
 import {
   getActiveBundleForCustomer,
   linkBundleOfferToSend,
@@ -80,12 +89,14 @@ export async function POST(req: Request) {
   let discountPercent: number;
   let adminInstructions: string | null;
   let regenerate: boolean;
+  let requestedTextMode: EmailTextMode | null;
   try {
     const body = (await req.json()) as {
       customerId?: unknown;
       discountPercent?: unknown;
       adminInstructions?: unknown;
       regenerate?: unknown;
+      textMode?: unknown;
     };
     customerId = Number(body.customerId);
     if (!Number.isInteger(customerId) || customerId <= 0) {
@@ -113,6 +124,20 @@ export async function POST(req: Request) {
       );
     }
     regenerate = body.regenerate === true;
+    // Optional prose length. Omitted/null = keep an existing draft's stored
+    // mode; a brand-new draft falls back to the modern default below.
+    if (body.textMode == null) {
+      requestedTextMode = null;
+    } else {
+      requestedTextMode = parseEmailTextMode(body.textMode);
+      if (requestedTextMode === null) {
+        return adminJsonError(
+          "bad_request",
+          `textMode must be one of: ${EMAIL_TEXT_MODES.join(", ")}.`,
+          400
+        );
+      }
+    }
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
@@ -139,14 +164,20 @@ export async function POST(req: Request) {
     await saveCustomerAdminInstructions(customerId, adminInstructions);
 
     const existing = await getOpenDraftForCapture(capture.id);
-    // Reuse only when nothing about the request changed — depth AND
-    // instructions; otherwise re-generate so prose, code depth and the audit
+    // The effective text mode: an explicit request wins, else the existing
+    // draft's stored mode (legacy NULL = 'detailed'), else the modern default
+    // for a brand-new draft.
+    const textMode: EmailTextMode =
+      requestedTextMode ?? (existing ? storedTextMode(existing) : DEFAULT_EMAIL_TEXT_MODE);
+    // Reuse only when nothing about the request changed — depth, instructions
+    // AND text mode; otherwise re-generate so prose, code depth and the audit
     // snapshot always agree.
     if (
       existing &&
       !regenerate &&
       existing.discountPercent === discountPercent &&
-      (existing.adminInstructions ?? "") === (adminInstructions ?? "")
+      (existing.adminInstructions ?? "") === (adminInstructions ?? "") &&
+      storedTextMode(existing) === textMode
     ) {
       return adminJson({ send: existing, reused: true });
     }
@@ -213,6 +244,7 @@ export async function POST(req: Request) {
       products: products.map((p) => ({ name: p.name })),
       adminInstructions,
       attachedBundle,
+      textMode,
       discountCode: placeholderCode,
       discountPercent,
       discountExpiresLabel: expiry ? formatGermanExpiryDate(expiry) : null,
@@ -234,6 +266,7 @@ export async function POST(req: Request) {
           cartUrl: cart.url,
           productIds,
           productHighlights: draft.productHighlights,
+          textMode,
           personaLabel,
           customerId,
           adminInstructions,
@@ -263,6 +296,7 @@ export async function POST(req: Request) {
         cartUrl: cart.url,
         productIds,
         productHighlights: draft.productHighlights,
+        textMode,
         personaLabel,
       });
 

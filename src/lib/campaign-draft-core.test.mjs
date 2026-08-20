@@ -23,6 +23,31 @@ test("draft idempotency: explicit regenerate always overwrites; no draft → gen
   assert.equal(shouldReuseCampaignDraft(undefined, 0, false), false);
 });
 
+test("draft idempotency: a changed text mode overwrites; an unnamed mode keeps the draft", () => {
+  // No mode named → stored mode applies, reuse stands.
+  assert.equal(shouldReuseCampaignDraft({ discountPercent: 10, textMode: "compact" }, 10, false), true);
+  assert.equal(
+    shouldReuseCampaignDraft({ discountPercent: 10, textMode: "compact" }, 10, false, null),
+    true
+  );
+  // Same named mode → reuse.
+  assert.equal(
+    shouldReuseCampaignDraft({ discountPercent: 10, textMode: "compact" }, 10, false, "compact"),
+    true
+  );
+  // Different named mode → regenerate.
+  assert.equal(
+    shouldReuseCampaignDraft({ discountPercent: 10, textMode: "compact" }, 10, false, "minimal"),
+    false
+  );
+  // Legacy rows (textMode NULL) count as 'detailed'.
+  assert.equal(shouldReuseCampaignDraft({ discountPercent: 10 }, 10, false, "detailed"), true);
+  assert.equal(
+    shouldReuseCampaignDraft({ discountPercent: 10, textMode: null }, 10, false, "compact"),
+    false
+  );
+});
+
 test("Mo promo block: both languages end with the exact deep link", () => {
   const url = "https://motionsports.de/?mo=open&utm_source=campaign&utm_medium=email";
   for (const lang of ["de", "en"]) {

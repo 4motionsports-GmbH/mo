@@ -218,6 +218,7 @@ async function KundenTab({
               discountCode: s.discountCode,
               discountExpiresAt: s.discountExpiresAt,
               adminInstructions: s.adminInstructions,
+              textMode: s.textMode,
               sentAt: s.sentAt,
             }
           : null

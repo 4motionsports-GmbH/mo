@@ -11,6 +11,7 @@
 // send path re-checks independently (see canSendMarketing).
 
 import { getSql, type Sql } from "./db";
+import { parseEmailTextMode } from "./email-text-mode.mjs";
 import { normalizeEmail } from "./email-capture-store";
 import { loadConversationForSummary, type TranscriptMessage } from "./conversation-store";
 import { getProductsByIds } from "./product-catalog";
@@ -53,6 +54,9 @@ export interface MarketingSendRow {
    * 0046), matched to products by name at render time. Null = legacy/fallback
    * draft — the renderer falls back to catalog copy. */
   productHighlights: Array<{ name: string; description: string }> | null;
+  /** Text mode this draft was generated with (migration 0047). Null = legacy
+   * row from before the mode existed — reads as 'detailed'. */
+  textMode: "detailed" | "compact" | "minimal" | null;
   personaLabel: string | null;
   /** Unique token for the tracked redirect link (/api/r/<token>); minted at send. */
   redirectToken: string | null;
@@ -129,6 +133,7 @@ function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
     cartUrl: (r.cart_url as string | null) ?? null,
     productIds: Array.isArray(r.product_ids) ? (r.product_ids as string[]) : [],
     productHighlights: mapHighlights(r.product_highlights),
+    textMode: parseEmailTextMode(r.text_mode),
     personaLabel: (r.persona_label as string | null) ?? null,
     redirectToken: (r.redirect_token as string | null) ?? null,
     clickedAt: (r.clicked_at as string | null) ?? null,
@@ -642,6 +647,8 @@ export interface CreateDraftInput {
   /** Per-product personalised descriptions from the draft model (may be empty —
    * stored as NULL so render falls back to catalog copy). */
   productHighlights?: Array<{ name: string; description: string }> | null;
+  /** Text mode the draft was generated with (migration 0047). */
+  textMode?: "detailed" | "compact" | "minimal" | null;
   personaLabel: string | null;
 }
 
@@ -669,14 +676,14 @@ export async function createDraft(
         (email_capture_id, customer_id, admin_instructions, status, subject,
          drafted_text, discount_percent, discount_code, discount_code_gid,
          discount_expires_at, cart_url, product_ids, product_highlights,
-         persona_label, created_at, updated_at)
+         text_mode, persona_label, created_at, updated_at)
       VALUES
         (${input.captureId}, ${input.customerId ?? null}, ${input.adminInstructions ?? null},
          'draft', ${input.subject}, ${input.draftedText},
          ${input.discountPercent}, ${input.discountCode}, ${input.discountCodeGid},
          ${input.discountExpiresAt}, ${input.cartUrl}, ${input.productIds}::text[],
          ${highlightsParam(input.productHighlights)}::jsonb,
-         ${input.personaLabel}, now(), now())
+         ${input.textMode ?? null}, ${input.personaLabel}, now(), now())
       ON CONFLICT (email_capture_id) WHERE status <> 'sent'
         DO NOTHING
       RETURNING *
@@ -782,6 +789,9 @@ export interface RegenerateDraftInput {
   /** See CreateDraftInput — replaced on regenerate so highlights and prose
    * always come from the same generation. */
   productHighlights?: Array<{ name: string; description: string }> | null;
+  /** See CreateDraftInput. Re-stamped on regenerate so the stored mode always
+   * matches the text that was actually generated. */
+  textMode?: "detailed" | "compact" | "minimal" | null;
   personaLabel: string | null;
   /** See CreateDraftInput. Re-stamped on regenerate so the audit snapshot
    *  always matches the text that was actually generated. */
@@ -814,6 +824,7 @@ export async function saveRegeneratedDraft(
              cart_url = ${input.cartUrl},
              product_ids = ${input.productIds}::text[],
              product_highlights = ${highlightsParam(input.productHighlights)}::jsonb,
+             text_mode = ${input.textMode ?? null},
              persona_label = ${input.personaLabel},
              customer_id = ${input.customerId ?? null},
              admin_instructions = ${input.adminInstructions ?? null},
