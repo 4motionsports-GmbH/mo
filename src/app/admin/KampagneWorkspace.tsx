@@ -44,10 +44,15 @@ import {
   CatalogProductPicker,
 } from "./ui";
 import { EmailPreviewFrame } from "./EmailPreviewFrame";
+import { EmailTextModeToggle, type EmailTextModeValue } from "./EmailTextModeToggle";
 import {
   DISCOUNT_PERCENT_MAX,
   clampDiscountPercent,
 } from "@/lib/discount-validation.mjs";
+import {
+  DEFAULT_EMAIL_TEXT_MODE,
+  EMAIL_TEXT_MODE_LABELS,
+} from "@/lib/email-text-mode.mjs";
 import { emailProseToText } from "@/lib/email-prose.mjs";
 
 export interface CampaignQueueItemProps {
@@ -66,6 +71,8 @@ export interface CampaignQueueItemProps {
   body: string;
   discountPercent: number;
   discountExpiresAt: string | null;
+  /** Text mode the draft was generated with (legacy drafts map to 'detailed'). */
+  textMode: EmailTextModeValue;
   lowConfidence: boolean;
   purchaseSummary: {
     orders: Array<{
@@ -228,6 +235,9 @@ export function KampagneWorkspace({
   const [resetOpen, setResetOpen] = React.useState(false);
   const [prepareProgress, setPrepareProgress] = React.useState<string | null>(null);
   const [prepareDepth, setPrepareDepth] = React.useState(0);
+  const [prepareTextMode, setPrepareTextMode] = React.useState<EmailTextModeValue>(
+    DEFAULT_EMAIL_TEXT_MODE as EmailTextModeValue
+  );
   const [copiedId, setCopiedId] = React.useState<number | null>(null);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   // Rendered-HTML viewer (queue draft preview + sent-email view). Own busy
@@ -444,6 +454,7 @@ export function KampagneWorkspace({
           await callApi("/api/admin/campaign/draft", {
             contactId,
             discountPercent: prepareDepth,
+            textMode: prepareTextMode,
             regenerate: true,
           });
         }
@@ -462,7 +473,7 @@ export function KampagneWorkspace({
         setBusy(null);
       }
     },
-    [busy, prepareDepth]
+    [busy, prepareDepth, prepareTextMode]
   );
 
   /** Global-search action: generate a draft for a contact that is NOT in the
@@ -477,6 +488,7 @@ export function KampagneWorkspace({
         await callApi("/api/admin/campaign/draft", {
           contactId,
           discountPercent: prepareDepth,
+          textMode: prepareTextMode,
           regenerate: true,
         });
         toast({
@@ -494,7 +506,7 @@ export function KampagneWorkspace({
         setBusy(null);
       }
     },
-    [busy, prepareDepth]
+    [busy, prepareDepth, prepareTextMode]
   );
 
   /** Rendered-HTML preview of the CURRENT card — the on-screen (possibly
@@ -582,7 +594,12 @@ export function KampagneWorkspace({
     async (
       contactId: number,
       depth: number,
-      extra?: { refreshRecommendations?: boolean; purchaseSelection?: string[] | null }
+      extra?: {
+        refreshRecommendations?: boolean;
+        purchaseSelection?: string[] | null;
+        /** Explicit new text mode; omitted = the draft keeps its stored mode. */
+        textMode?: EmailTextModeValue;
+      }
     ) => {
       const json = (await callApi("/api/admin/campaign/draft", {
         contactId,
@@ -592,12 +609,14 @@ export function KampagneWorkspace({
         ...(extra && "purchaseSelection" in extra
           ? { purchaseSelection: extra.purchaseSelection }
           : {}),
+        ...(extra?.textMode ? { textMode: extra.textMode } : {}),
       })) as {
         draft?: {
           subject: string;
           body: string;
           discountPercent: number;
           discountExpiresAt: string | null;
+          textMode: EmailTextModeValue | null;
           lowConfidence: boolean;
           purchaseSummary: CampaignQueueItemProps["purchaseSummary"];
           purchaseSelectedIds: string[] | null;
@@ -612,6 +631,7 @@ export function KampagneWorkspace({
           body: d.body,
           discountPercent: d.discountPercent,
           discountExpiresAt: d.discountExpiresAt,
+          textMode: d.textMode ?? "detailed",
           lowConfidence: d.lowConfidence,
           purchaseSummary: d.purchaseSummary,
           purchaseSelectedIds: d.purchaseSelectedIds,
@@ -754,6 +774,33 @@ export function KampagneWorkspace({
       }
     },
     [current, busy, patchItem, runRegenerate]
+  );
+
+  /** Switch the card's text mode (Ausführlich / Kompakt / Minimal) and CHAIN a
+   * regenerate so the visible prose matches the selected mode — same pattern
+   * as the language toggle. The mode is persisted on the draft row. */
+  const doSetTextMode = React.useCallback(
+    async (mode: EmailTextModeValue) => {
+      if (!current || busy || mode === current.textMode) return;
+      setBusy("regen");
+      try {
+        toast({
+          title: `Textmodus: ${EMAIL_TEXT_MODE_LABELS[mode]} — Text wird neu generiert…`,
+          duration: 0,
+        });
+        await runRegenerate(current.contactId, current.discountPercent, { textMode: mode });
+        toast({ variant: "success", title: "Text im neuen Modus generiert" });
+      } catch (err) {
+        toast({
+          variant: "error",
+          title: "Textmodus-Wechsel fehlgeschlagen",
+          description: String((err as Error).message ?? err),
+        });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [current, busy, runRegenerate]
   );
 
   /** Persist a curated recommendation list; the server also rebuilds an
@@ -948,6 +995,7 @@ export function KampagneWorkspace({
         const json = (await callApi("/api/admin/campaign/prepare", {
           count: PREPARE_CHUNK,
           discountPercent: prepareDepth,
+          textMode: prepareTextMode,
         })) as {
           prepared: number;
           failed: number;
@@ -975,7 +1023,7 @@ export function KampagneWorkspace({
       setBusy(null);
       setPrepareProgress(null);
     }
-  }, [busy, prepareDepth]);
+  }, [busy, prepareDepth, prepareTextMode]);
 
   // ---- keyboard shortcuts --------------------------------------------------
   React.useEffect(() => {
@@ -1081,6 +1129,18 @@ export function KampagneWorkspace({
               <option value="10">10 %</option>
               <option value="15">15 %</option>
               <option value="20">20 %</option>
+            </Select>
+            <Select
+              value={prepareTextMode}
+              onChange={(e) => setPrepareTextMode(e.target.value as EmailTextModeValue)}
+              className="h-8 w-32"
+              aria-label="Textmodus für neue Entwürfe"
+              disabled={busy !== null}
+              title="Wie viel Fließtext die KI über den Produktkacheln schreibt."
+            >
+              <option value="detailed">{EMAIL_TEXT_MODE_LABELS.detailed}</option>
+              <option value="compact">{EMAIL_TEXT_MODE_LABELS.compact}</option>
+              <option value="minimal">{EMAIL_TEXT_MODE_LABELS.minimal}</option>
             </Select>
             <Button size="sm" onClick={doPrepare} disabled={busy !== null}>
               {busy === "prepare"
@@ -1208,6 +1268,11 @@ export function KampagneWorkspace({
                     overridden={current.languageOverride !== null}
                     disabled={busy !== null}
                     onSelect={doSetLanguage}
+                  />
+                  <EmailTextModeToggle
+                    value={current.textMode}
+                    disabled={busy !== null}
+                    onSelect={doSetTextMode}
                   />
                   <OptInBadge level={current.optInLevel} blocked={optInBlocked} />
                   {current.lowConfidence && (

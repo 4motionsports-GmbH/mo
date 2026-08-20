@@ -16,11 +16,20 @@ import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import type { TranscriptMessage } from "./conversation-store";
+import {
+  LEGACY_EMAIL_TEXT_MODE,
+  textModeBodyRule,
+  textModeHighlightRule,
+} from "./email-text-mode.mjs";
 import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
 
 // Same model the transactional summary uses — one voice across the backend.
 const DRAFT_MODEL = "claude-sonnet-4-6";
+
+/** Operator-selected prose length for the generated email — see
+ * email-text-mode.mjs for the semantics of each mode. */
+export type EmailTextMode = "detailed" | "compact" | "minimal";
 
 const draftSchema = z.object({
   subject: z.string().describe("Kurze, persönliche Betreffzeile auf Deutsch (max ~60 Zeichen)."),
@@ -38,33 +47,38 @@ const draftSchema = z.object({
 /** The per-product personalised description schema, shared by the EMAIL drafts
  * (the printed letter has no product table, so it keeps the plain schema). The
  * render path matches entries to products by name — the model must copy the
- * given product names EXACTLY. */
-const productHighlightsField = z
-  .array(
-    z.object({
-      name: z
-        .string()
-        .describe("EXAKT der vorgegebene Produktname (unverändert kopiert)."),
-      description: z
-        .string()
-        .describe(
-          "1–3 kurze Sätze, warum GENAU DIESES Produkt zu GENAU DIESEM Kunden " +
-            "passt — persönlich aus dem Kundenwissen (Gespräche, Profil, " +
-            "Käufe) begründet, in derselben Sprache und Du-Form wie die E-Mail. " +
-            "Wenig Kundenwissen → allgemeiner, aber trotzdem persönlich " +
-            "formuliert (z. B. an bisherige Käufe anknüpfend). Keine Preise, " +
-            "keine Links, keine erfundenen Fakten."
-        ),
-    })
-  )
-  .describe(
-    "Für JEDES empfohlene Produkt (und jedes Set-Produkt, falls ein Set " +
-      "angehängt ist) genau EIN Eintrag mit einer persönlichen Kurzbeschreibung."
-  );
+ * given product names EXACTLY. The description length follows the selected
+ * text mode (detailed: 1–3 sentences … minimal: caption-like fragment). */
+function productHighlightsField(textMode: EmailTextMode) {
+  return z
+    .array(
+      z.object({
+        name: z
+          .string()
+          .describe("EXAKT der vorgegebene Produktname (unverändert kopiert)."),
+        description: z
+          .string()
+          .describe(
+            `${textModeHighlightRule(textMode)}, warum GENAU DIESES Produkt zu ` +
+              "GENAU DIESEM Kunden passt — persönlich aus dem Kundenwissen " +
+              "(Gespräche, Profil, Käufe) begründet, in derselben Sprache und " +
+              "Du-Form wie die E-Mail. Wenig Kundenwissen → allgemeiner, aber " +
+              "trotzdem persönlich formuliert (z. B. an bisherige Käufe " +
+              "anknüpfend). Keine Preise, keine Links, keine erfundenen Fakten."
+          ),
+      })
+    )
+    .describe(
+      "Für JEDES empfohlene Produkt (und jedes Set-Produkt, falls ein Set " +
+        "angehängt ist) genau EIN Eintrag mit einer persönlichen Kurzbeschreibung."
+    );
+}
 
-const draftWithHighlightsSchema = draftSchema.extend({
-  productHighlights: productHighlightsField,
-});
+function draftWithHighlightsSchema(textMode: EmailTextMode) {
+  return draftSchema.extend({
+    productHighlights: productHighlightsField(textMode),
+  });
+}
 
 /** One personalised per-product description, stored on the draft row and
  * rendered in the product-rows layout (email-products.renderEmailProductRows). */
@@ -124,6 +138,9 @@ export interface GenerateDraftInput extends DraftDiscountInput {
   personaLabel: string | null;
   products: Array<{ name: string }>;
   transcript: TranscriptMessage[];
+  /** Prose length for the generated text. Omitted = 'detailed' (the classic
+   * long-form behaviour, so callers without a mode picker stay unchanged). */
+  textMode?: EmailTextMode;
 }
 
 function readableTranscript(messages: TranscriptMessage[]): string {
@@ -244,14 +261,15 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
   if (!process.env.ANTHROPIC_API_KEY) return fallbackDraft(input);
 
   const transcript = readableTranscript(input.transcript);
+  const textMode = input.textMode ?? LEGACY_EMAIL_TEXT_MODE;
 
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
-      schema: draftWithHighlightsSchema,
+      schema: draftWithHighlightsSchema(textMode),
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
-        "(Fitness- und Kraftsportgeräte). Du schreibst eine kurze, warme, " +
+        "(Fitness- und Kraftsportgeräte). Du schreibst eine warme, " +
         "persönliche Marketing-E-Mail auf Deutsch in der Du-Form an einen Kunden, " +
         "mit dem du im Chat gesprochen hast. Beziehe dich konkret auf das Gespräch " +
         "und empfiehl die besprochenen Produkte. Sei ehrlich, kein Marktschreier, " +
@@ -260,7 +278,9 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
         "einladend in den Text ein (mit dem exakten Code) — als persönliches " +
         "Angebot für genau diesen Kunden, nicht als Massen-Promo. Unterschreibe mit " +
         "'Mo, dein persönlicher Berater bei motion sports'. Baue KEINEN " +
-        "Warenkorb-Link und KEINEN Abmeldelink ein — die werden separat angehängt.",
+        "Warenkorb-Link und KEINEN Abmeldelink ein — die werden separat angehängt.\n\n" +
+        `Die empfohlenen Produkte erscheinen unterhalb deines Textes AUTOMATISCH ` +
+        `als Bildkacheln mit Produktfoto, Name und Preis.\n${textModeBodyRule(textMode)}`,
       prompt:
         `Persona des Kunden: ${input.personaLabel ?? "unbekannt"}\n\n` +
         `Besprochene Produkte:\n${productLine(input.products)}\n\n` +
@@ -346,6 +366,9 @@ export interface GenerateCustomerDraftInput extends DraftDiscountInput {
     /** True when the bundle price is below the component sum (a real saving). */
     hasSaving: boolean;
   } | null;
+  /** Prose length for the generated text (operator-selected in the admin UI).
+   * Omitted = 'detailed' (the classic long-form behaviour). */
+  textMode?: EmailTextMode;
 }
 
 /** The prompt section describing an attached bundle (or null when none). The
@@ -475,19 +498,24 @@ export async function generateCustomerMarketingDraft(
       `${instructions}\n\n`
     : "";
 
+  const textMode = input.textMode ?? LEGACY_EMAIL_TEXT_MODE;
+
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
-      schema: draftWithHighlightsSchema,
+      schema: draftWithHighlightsSchema(textMode),
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
-        "(Fitness- und Kraftsportgeräte). Du schreibst eine kurze, warme, " +
+        "(Fitness- und Kraftsportgeräte). Du schreibst eine warme, " +
         "persönliche Marketing-E-Mail auf Deutsch in der Du-Form an einen " +
         "Stammkunden, den du aus einem oder mehreren Chat-Gesprächen kennst. " +
         "Du bekommst ALLES, was wir über diesen Kunden wissen: alle bisherigen " +
         "Gespräche, die bisherige E-Mail-Korrespondenz, ein verdichtetes " +
         "Kundenverständnis und die Kaufhistorie.\n\n" +
         "Regeln:\n" +
+        "- Die empfohlenen Produkte erscheinen unterhalb deines Textes " +
+        "AUTOMATISCH als Bildkacheln mit Produktfoto, Name und Preis.\n" +
+        `- ${textModeBodyRule(textMode)}\n` +
         "- Beziehe dich konkret auf die Gespräche UND, falls vorhanden, auf die " +
         "bisherige E-Mail-Korrespondenz (z. B. auf eine offene Frage aus einer " +
         "Antwort); bei Widersprüchen zwischen älteren und neueren Aussagen gilt " +

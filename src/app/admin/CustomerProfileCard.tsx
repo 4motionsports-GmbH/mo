@@ -68,6 +68,8 @@ import {
 } from "./ui";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import { EmailPreviewButton } from "./EmailPreviewButton";
+import { EmailTextModeToggle, type EmailTextModeValue } from "./EmailTextModeToggle";
+import { DEFAULT_EMAIL_TEXT_MODE, EMAIL_TEXT_MODE_HINTS } from "@/lib/email-text-mode.mjs";
 import {
   KorrespondenzPanel,
   type CorrespondenceMessageProps,
@@ -124,6 +126,8 @@ export interface CustomerMarketingSendProps {
   discountExpiresAt: string | null;
   /** The instructions snapshot this draft was generated with. */
   adminInstructions: string | null;
+  /** The text mode this draft was generated with (null = legacy long-form). */
+  textMode: EmailTextModeValue | null;
   sentAt: string | null;
 }
 
@@ -660,6 +664,11 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
   const [discountPercent, setDiscountPercent] = useState<number>(
     hasDraft ? (send?.discountPercent ?? 0) : 0
   );
+  // Seed from the open draft's stored mode (legacy rows without one were
+  // generated long-form → 'detailed'); new drafts start on the modern default.
+  const [textMode, setTextMode] = useState<EmailTextModeValue>(
+    hasDraft ? (send?.textMode ?? "detailed") : (DEFAULT_EMAIL_TEXT_MODE as EmailTextModeValue)
+  );
   const [busy, setBusy] = useState<null | "draft" | "save" | "send" | "delete">(null);
 
   if (customer.marketingStatus !== "confirmed") {
@@ -672,13 +681,14 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
     );
   }
 
-  // Depth or instructions changed vs. the open draft ⇒ the visible text was
-  // generated with other inputs — force a re-generate before sending.
+  // Depth, instructions or text mode changed vs. the open draft ⇒ the visible
+  // text was generated with other inputs — force a re-generate before sending.
   const needsRegenerate =
     hasDraft &&
     send != null &&
     (discountPercent !== send.discountPercent ||
-      instructions.trim() !== (send.adminInstructions ?? ""));
+      instructions.trim() !== (send.adminInstructions ?? "") ||
+      textMode !== (send.textMode ?? "detailed"));
 
   async function call(path: string, payload: unknown): Promise<unknown> {
     const res = await fetch(path, {
@@ -702,6 +712,7 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
         customerId: customer.id,
         discountPercent,
         adminInstructions: instructions.trim() || null,
+        textMode,
         // Overwrite an existing open draft; after a SENT mail this creates a
         // fresh one (the sent row stays as immutable history).
         regenerate: hasDraft,
@@ -712,6 +723,7 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
         setBody(json.send.draftedText ?? "");
         setDiscountPercent(json.send.discountPercent ?? 0);
         setInstructions(json.send.adminInstructions ?? "");
+        setTextMode(json.send.textMode ?? "detailed");
       }
       toast({ variant: "success", title: "Entwurf generiert", description: customer.email });
       router.refresh();
@@ -761,7 +773,7 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
     if (needsRegenerate) {
       toast({
         variant: "warning",
-        title: "Rabatt oder Hinweise geändert",
+        title: "Rabatt, Textmodus oder Hinweise geändert",
         description: "Bitte zuerst neu generieren, damit Text und Eingaben übereinstimmen.",
       });
       return;
@@ -880,13 +892,22 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
         </div>
       </div>
 
+      {/* Text mode: how much prose the AI writes above the (automatic) product
+          tiles — Ausführlich / Kompakt (default) / Minimal. Changing it joins
+          the same regenerate lockout as discount + instructions. */}
+      <div className="mt-3">
+        <Label className="mb-1.5 block text-muted-foreground">Textmodus</Label>
+        <EmailTextModeToggle value={textMode} disabled={busy !== null} onSelect={setTextMode} />
+        <p className="mt-1 text-[11px] text-muted-foreground">{EMAIL_TEXT_MODE_HINTS[textMode]}</p>
+      </div>
+
       {hasDraft ? (
         <div className="mt-3">
           <Badge variant="info">Entwurf — noch nicht gesendet</Badge>
 
           {needsRegenerate ? (
             <div className="my-2 flex flex-wrap items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-              <span>Rabatt oder Hinweise geändert — der aktuelle Text passt nicht mehr.</span>
+              <span>Rabatt, Textmodus oder Hinweise geändert — der aktuelle Text passt nicht mehr.</span>
               <Button variant="secondary" size="sm" onClick={onGenerate} disabled={busy !== null}>
                 <RotateCcw /> {busy === "draft" ? "Generiere…" : "Neu generieren"}
               </Button>

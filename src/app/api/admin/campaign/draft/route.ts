@@ -1,6 +1,6 @@
 // POST /api/admin/campaign/draft
 //   { contactId, discountPercent, regenerate?, refreshRecommendations?,
-//     purchaseSelection? }
+//     purchaseSelection?, textMode? }
 //
 // Generate (or re-generate) the draft for ONE campaign contact — the single-
 // contact sibling of /prepare, used by the queue's "Regenerate" action, by
@@ -38,6 +38,8 @@ import {
   parseDiscountPercent,
   DISCOUNT_PERCENT_MAX,
 } from "@/lib/discount-validation.mjs";
+import { EMAIL_TEXT_MODES, parseEmailTextMode } from "@/lib/email-text-mode.mjs";
+import type { EmailTextMode } from "@/lib/marketing-draft";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 60;
@@ -86,6 +88,7 @@ export async function POST(req: Request) {
   let regenerate: boolean;
   let refreshRecommendations: boolean;
   let purchaseSelection: string[] | null | undefined;
+  let textMode: EmailTextMode | null;
   try {
     const body = (await req.json()) as {
       contactId?: unknown;
@@ -93,6 +96,7 @@ export async function POST(req: Request) {
       regenerate?: unknown;
       refreshRecommendations?: unknown;
       purchaseSelection?: unknown;
+      textMode?: unknown;
     };
     contactId = Number(body.contactId);
     if (!Number.isInteger(contactId) || contactId <= 0) {
@@ -134,6 +138,20 @@ export async function POST(req: Request) {
         400
       );
     }
+    // Optional prose length. Omitted/null = keep the existing draft's stored
+    // mode (campaign-prepare resolves the effective value).
+    if (body.textMode == null) {
+      textMode = null;
+    } else {
+      textMode = parseEmailTextMode(body.textMode);
+      if (textMode === null) {
+        return adminJsonError(
+          "bad_request",
+          `textMode must be one of: ${EMAIL_TEXT_MODES.join(", ")}.`,
+          400
+        );
+      }
+    }
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
@@ -156,13 +174,14 @@ export async function POST(req: Request) {
     // draft that ignores the new basis.
     const wantsFresh = regenerate || refreshRecommendations || purchaseSelection !== undefined;
     const existing = await getDraftForContact(contactId);
-    if (shouldReuseCampaignDraft(existing, discountPercent, wantsFresh) && existing) {
+    if (shouldReuseCampaignDraft(existing, discountPercent, wantsFresh, textMode) && existing) {
       return adminJson({ ...(await draftResponsePayload(contactId, existing)), reused: true });
     }
 
     const draft = await prepareDraftForContact(contact, discountPercent, {
       refreshRecommendations,
       purchaseSelection,
+      textMode,
     });
     if (!draft) {
       return adminJsonError("internal_error", "Could not persist the draft.", 500);

@@ -1,4 +1,4 @@
-// POST /api/admin/campaign/prepare  { count, discountPercent }
+// POST /api/admin/campaign/prepare  { count, discountPercent, textMode? }
 //
 // Batch pre-generation (Task C): draft the next `count` PENDING campaign
 // contacts so the review queue is instant. Sequential with modest concurrency;
@@ -17,6 +17,12 @@ import {
   parseDiscountPercent,
   DISCOUNT_PERCENT_MAX,
 } from "@/lib/discount-validation.mjs";
+import {
+  DEFAULT_EMAIL_TEXT_MODE,
+  EMAIL_TEXT_MODES,
+  parseEmailTextMode,
+} from "@/lib/email-text-mode.mjs";
+import type { EmailTextMode } from "@/lib/marketing-draft";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 300;
@@ -30,8 +36,13 @@ export async function POST(req: Request) {
 
   let count: number;
   let discountPercent: number;
+  let textMode: EmailTextMode;
   try {
-    const body = (await req.json()) as { count?: unknown; discountPercent?: unknown };
+    const body = (await req.json()) as {
+      count?: unknown;
+      discountPercent?: unknown;
+      textMode?: unknown;
+    };
     count = Number(body.count);
     if (!Number.isInteger(count) || count <= 0 || count > MAX_COUNT_PER_REQUEST) {
       return adminJsonError(
@@ -49,12 +60,22 @@ export async function POST(req: Request) {
       );
     }
     discountPercent = parsedPercent;
+    // Optional prose length for the whole batch (default: the modern compact).
+    const parsedMode = body.textMode == null ? DEFAULT_EMAIL_TEXT_MODE : parseEmailTextMode(body.textMode);
+    if (parsedMode === null) {
+      return adminJsonError(
+        "bad_request",
+        `textMode must be one of: ${EMAIL_TEXT_MODES.join(", ")}.`,
+        400
+      );
+    }
+    textMode = parsedMode;
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
 
   try {
-    const result = await prepareNextDrafts(count, discountPercent);
+    const result = await prepareNextDrafts(count, discountPercent, textMode);
     return adminJson(result);
   } catch (err) {
     reportError(err, { route: "api/admin/campaign/prepare" });

@@ -19,6 +19,8 @@ import {
   formatExpiryDateForLanguage,
 } from "./shopify-discounts";
 import { generateCampaignDraft } from "./campaign-draft";
+import type { EmailTextMode } from "./marketing-draft";
+import { DEFAULT_EMAIL_TEXT_MODE, storedTextMode } from "./email-text-mode.mjs";
 import { loadCampaignPersonalization } from "./campaign-recommendations";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
 import { archiveBundleOffer, createBundleOffer } from "./bundle-offers";
@@ -57,6 +59,12 @@ export interface PrepareDraftOptions {
    * purchases). Omit to keep the draft's stored selection.
    */
   purchaseSelection?: string[] | null;
+  /**
+   * Text mode for the generated prose (email-text-mode.mjs). Omit to keep the
+   * existing draft's stored mode (legacy NULL = 'detailed'); a FIRST draft
+   * without an explicit mode uses the modern default ('compact').
+   */
+  textMode?: EmailTextMode | null;
 }
 
 /**
@@ -75,6 +83,11 @@ export async function prepareDraftForContact(
     opts.purchaseSelection !== undefined
       ? opts.purchaseSelection
       : (existing?.purchaseSelectedIds ?? null);
+  // The effective text mode: an explicit request wins, else the existing
+  // draft's stored mode (legacy NULL = 'detailed'), else the modern default
+  // for a brand-new draft.
+  const textMode: EmailTextMode =
+    opts.textMode ?? (existing ? storedTextMode(existing) : DEFAULT_EMAIL_TEXT_MODE);
 
   const { history, purchaseSummary, recommendations } = await loadCampaignPersonalization(
     contact.email,
@@ -178,6 +191,7 @@ export async function prepareDraftForContact(
     })),
     lowConfidence,
     attachedBundle,
+    textMode,
     discountCode: hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountPercent,
     // The expiry label the prose states, in the contact's language (English
@@ -198,6 +212,7 @@ export async function prepareDraftForContact(
     recommendedProductIds: recommendedRefs,
     productHighlights: draft.productHighlights,
     purchaseSelectedIds: purchaseSelection,
+    textMode,
     lowConfidence,
   });
 }
@@ -220,6 +235,7 @@ export interface PrepareBatchResult {
 export async function prepareNextDrafts(
   count: number,
   discountPercent: number,
+  textMode: EmailTextMode = DEFAULT_EMAIL_TEXT_MODE,
   concurrency = 3
 ): Promise<PrepareBatchResult> {
   const contacts = await listNextPendingContacts(count);
@@ -254,7 +270,7 @@ export async function prepareNextDrafts(
           result.suppressed++;
           continue;
         }
-        const draft = await prepareDraftForContact(contact, discountPercent);
+        const draft = await prepareDraftForContact(contact, discountPercent, { textMode });
         if (draft) result.prepared++;
         else result.failed++;
       } catch (err) {
