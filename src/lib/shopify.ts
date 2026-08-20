@@ -12,6 +12,22 @@ import {
   isMutation,
   TRANSIENT_MAX_RETRIES,
 } from "./shopify-retry.mjs";
+import { tripThrottleGate } from "./shopify-throttle-gate";
+
+/**
+ * Thrown when a request is STILL rate-limited after the throttle retry budget.
+ * Typed so callers can tell "Shopify is momentarily saturated — defer/queue"
+ * (webhook path) apart from a real query/data error that deserves a Sentry
+ * report and a 500.
+ */
+export class ShopifyThrottledError extends Error {
+  readonly throttleStatus: ShopifyThrottleStatus | undefined;
+  constructor(message: string, throttleStatus?: ShopifyThrottleStatus) {
+    super(message);
+    this.name = "ShopifyThrottledError";
+    this.throttleStatus = throttleStatus;
+  }
+}
 
 interface CachedToken {
   accessToken: string;
@@ -200,6 +216,10 @@ async function graphql<T>(
   // retry cap is exhausted do we fall through and throw (last-resort fallback).
   const plan = planThrottleRetry({ json, httpStatus: res.status, attempt });
   if (plan.retry) {
+    // Raise the SHARED gate before sleeping: the bucket is per-shop, so the
+    // clearest signal a webhook storm can get is "someone is already throttled —
+    // defer, don't pile on". Best-effort (no-op without Redis).
+    await tripThrottleGate({ waitMs: plan.waitMs });
     // DISTINCT log: a transient throttle we are RETRYING — not a hard failure.
     console.warn(
       `[shopify] THROTTLED — retry ${attempt + 1}/${THROTTLE_MAX_RETRIES} in ${plan.waitMs}ms ` +
@@ -209,11 +229,18 @@ async function graphql<T>(
     return graphql<T>(query, variables, attempt + 1);
   }
   if (plan.reason === "max-retries-exhausted") {
-    // DISTINCT log: throttling PERSISTED past the cap — this is a genuine degrade
-    // (the caller's catch will fall back to the bundled catalog).
+    // Throttling PERSISTED past the cap — sustained demand on the bucket. Hold
+    // the gate for the longer exhausted cooldown and throw TYPED, so the webhook
+    // path defers/queues (200) instead of 500ing into a Shopify redelivery storm,
+    // while read paths still trip their bundled-catalog fallback.
+    await tripThrottleGate({ exhausted: true });
     console.error(
       `[shopify] THROTTLED — gave up after ${attempt} retries; the request is still ` +
         `rate-limited. Falling back. (throttleStatus=${JSON.stringify(json?.extensions?.cost?.throttleStatus ?? {})})`
+    );
+    throw new ShopifyThrottledError(
+      `Shopify GraphQL throttled after ${attempt} retries`,
+      json?.extensions?.cost?.throttleStatus
     );
   }
 

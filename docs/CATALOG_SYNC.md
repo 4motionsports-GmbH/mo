@@ -256,6 +256,21 @@ or product change; the route:
    are serialized behind a best-effort Redis lock; it degrades to no-lock when KV
    is absent, with the daily sync as backstop). A real failure returns **500** so
    Shopify retries safely.
+5. Applies **throttle backpressure** (`shopify-backpressure.mjs` +
+   `shopify-throttle-gate.ts`): a bulk change in Shopify (ERP stock sync, an app
+   re-saving all products) fires hundreds of deliveries in minutes, whose
+   concurrent Admin API calls drain the shop's cost-based leaky bucket together —
+   per-invocation retries can't win against that, and 500ing made Shopify
+   *redeliver* into the storm. Now the first `THROTTLED` response trips a shared,
+   short-lived Redis gate; while it holds, deliveries skip Shopify entirely — the
+   product/inventory-item GID is queued in a Redis **set** (which coalesces
+   duplicates) and the delivery is acked `200 {deferred:true}`. Later successful
+   deliveries drain a few queued targets each (a refresh always re-fetches
+   current truth, so deferral/coalescing is lossless); the daily sync reconciles
+   whatever remains. Without KV this degrades to the old behavior (in-function
+   retries, then `503` so Shopify's spaced redelivery acts as the queue).
+   Persistent throttling is logged as a warning, not a Sentry error — it is
+   self-healing backpressure, not a bug.
 
 ### Shopify-side registration (setup step)
 
