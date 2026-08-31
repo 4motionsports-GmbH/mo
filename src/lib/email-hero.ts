@@ -10,10 +10,12 @@
 //      personal scene followed by the fixed brand-style + constraint
 //      sentences, so the operator sees EXACTLY what the image model gets.
 //   2. generateHeroImage — render the (operator-edited) prompt with OpenAI
-//      gpt-image-1 (landscape 1536×1024 for the full-bleed hero), upload the
-//      PNG to Vercel Blob (public), and store URL + prompt on the draft row
-//      (email-hero-store) so preview and send show the same image and the
-//      audit trail keeps prompt + image together.
+//      gpt-image-1 (landscape 1536×1024 for the full-bleed hero), store the
+//      PNG in the PRIVATE Vercel Blob store and publish it through our own
+//      /api/email-hero-image route (email-hero-blob.mjs explains why), then
+//      save that URL + the prompt on the draft row (email-hero-store) so
+//      preview and send show the same image and the audit trail keeps prompt
+//      and image together.
 //
 // Both are admin-triggered (never on the send path) and fail-soft: any error
 // returns ok:false with a German message for the toast — a hero problem can
@@ -42,12 +44,17 @@ import {
   seasonHint,
   MAX_PROFILE_CHARS,
 } from "./email-hero-context.mjs";
+import {
+  heroBlobFileFromPathname,
+  heroBlobKey,
+  heroImagePublicUrl,
+} from "./email-hero-blob.mjs";
 import { setEmailHero, type EmailHeroKind } from "./email-hero-store";
+import { recordAiUsage } from "./ai-usage-store";
+import { reportError } from "./observability";
 
 // Re-exported so callers keep one import site for the hero vocabulary.
 export { HERO_PROMPT_STYLE_TAIL, ensureHeroStyleTail };
-import { recordAiUsage } from "./ai-usage-store";
-import { reportError } from "./observability";
 
 const PROMPT_MODEL = "claude-sonnet-4-6";
 const IMAGE_MODEL = "gpt-image-1";
@@ -331,13 +338,22 @@ export async function generateHeroImage(
       outputTokens: res.usage?.output_tokens ?? 0,
     });
 
-    const blob = await put(
-      `email-heroes/${kind}-${id}-${Date.now()}.png`,
-      Buffer.from(b64, "base64"),
-      { access: "public", contentType: "image/png", addRandomSuffix: false }
+    // The blob store is PRIVATE (it also holds the catalog + embeddings), so
+    // the image is written privately and published through our own route —
+    // see email-hero-blob.mjs for why, and for the validation that keeps that
+    // route from reaching anything but hero images.
+    const blob = await put(heroBlobKey(kind, id), Buffer.from(b64, "base64"), {
+      access: "private",
+      contentType: "image/png",
+      addRandomSuffix: true,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+    const publicUrl = heroImagePublicUrl(
+      getBaseUrl(),
+      heroBlobFileFromPathname(blob.pathname)
     );
 
-    const saved = await setEmailHero(kind, id, blob.url, ensureHeroStyleTail(trimmed));
+    const saved = await setEmailHero(kind, id, publicUrl, ensureHeroStyleTail(trimmed));
     if (!saved.ok) {
       return {
         ok: false,
@@ -346,7 +362,7 @@ export async function generateHeroImage(
           : "Bild erzeugt, aber Speichern am Entwurf fehlgeschlagen.",
       };
     }
-    return { ok: true, url: blob.url };
+    return { ok: true, url: publicUrl };
   } catch (err) {
     reportError(err, { route: "lib/email-hero", phase: "generate" });
     return { ok: false, message: "Bild-Generierung fehlgeschlagen — bitte erneut versuchen." };
