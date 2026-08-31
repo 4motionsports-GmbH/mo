@@ -149,6 +149,16 @@ Alte gespeicherte Prompts werden beim Generieren automatisch auf die aktuellen
 Stil-Regeln gehoben (`ensureHeroStyleTail`) — ein vor der Querformat-Umstellung
 gespeicherter Prompt kann das Layout nicht mehr sabotieren.
 
+**Speicherung:** Der Blob-Store dieses Deployments ist PRIVAT (dort liegen auch
+Katalog und Embeddings) und lehnt `access: "public"` ab. Hero-Bilder werden
+deshalb ebenfalls privat geschrieben und über die eigene öffentliche Route
+`GET /api/email-hero-image/<datei>` ausgeliefert (Mail-Clients laden Bilder
+anonym aus dem Postfach). Die Route kann ausschließlich Dateien unter
+`email-heroes/` erreichen — `parseHeroBlobFile` (getestet) weist Separatoren,
+Traversal und Nicht-PNG-Namen ab; das ist die Grenze, die die privaten
+Katalog-Blobs unerreichbar hält. Ausgeliefert wird mit
+`Cache-Control: immutable` (Dateinamen tragen ein Zufalls-Suffix).
+
 Benötigt: `OPENAI_API_KEY` + `BLOB_READ_WRITE_TOKEN`. Alles fail-soft: ohne
 Konfiguration/Bild rendert immer das Standard-Bild, nie ein gebrochener
 Versand.
@@ -177,6 +187,7 @@ würde es links und rechts beschnitten und der Text stünde auf dem Motiv.)
 | `src/lib/email-designs/registry.ts` | Registry + `EmailDesignDefinition` + Auflösung (classic ← base ← variant) |
 | `src/lib/email-designs/studio.ts` | Beispiel-Design (Referenz zum Kopieren) |
 | `src/lib/email-designs/performance.ts` | Bild-orientiertes Conversion-Design (Voll-Shell + Hero) |
+| `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Privater Blob-Write & öffentliche Auslieferung der Hero-Bilder (mit Pfad-Validierung) |
 | `src/lib/email-hero-context.mjs` | Was die KI über die Person erfährt (Kaufhistorie, Profil, Kategorien, Saison) — pur & getestet |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |
 | `src/app/admin/HeroImagePanel.tsx` | Hero-Panel (Bild + Schlagzeile) in Kunden-/Kampagnen-Workspace |
