@@ -51,8 +51,9 @@ import {
 import { parseIntEnv } from "./env-num";
 import { sendEmail } from "./email";
 import { outboundThreading } from "./email-inbound";
-import { withEmailDesign } from "./email-design-context";
+import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
+import { getEmailHeroUrl } from "./email-hero-store";
 import {
   renderBrandedEmail,
   renderSectionBand,
@@ -296,8 +297,11 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
 
       // Render inside the design selected for this email type (admin
       // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
+      // The per-contact hero image (email-hero.ts) rides along for hero designs.
       const emailDesign = await getCachedEmailDesignForKind("campaign");
-      const { text, html } = await withEmailDesign(emailDesign, async () => renderCampaignEmail({
+      const heroImageUrl = await getEmailHeroUrl("campaign", contactId);
+      const { text, html } = await withEmailDesign(emailDesign, () =>
+        withEmailRenderData({ heroImageUrl }, async () => renderCampaignEmail({
         subject: draft.subject,
         body,
         language: contact.language,
@@ -311,7 +315,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         bundle,
         labelForUrl: await catalogNameLookup(),
         ctaUrl: trackedCtaUrl,
-      }));
+      })));
 
       const threading = outboundThreading();
       const result = await sendEmail({
@@ -516,10 +520,13 @@ export async function renderCampaignEmailPreview(
     draft.productHighlights
   );
 
-  // The preview renders inside the SAME selected design as the send path,
-  // so what the operator reviews is what ships.
+  // The preview renders inside the SAME selected design as the send path —
+  // including the per-contact hero image — so what the operator reviews is
+  // what ships.
   const emailDesign = await getCachedEmailDesignForKind("campaign");
-  const { html } = await withEmailDesign(emailDesign, async () => renderCampaignEmail({
+  const heroImageUrl = await getEmailHeroUrl("campaign", contactId);
+  const { html } = await withEmailDesign(emailDesign, () =>
+    withEmailRenderData({ heroImageUrl }, async () => renderCampaignEmail({
     subject,
     body,
     language: contact.language,
@@ -533,7 +540,7 @@ export async function renderCampaignEmailPreview(
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
     bundle,
     labelForUrl: await catalogNameLookup(),
-  }));
+  })));
   return { ok: true, subject, html };
 }
 

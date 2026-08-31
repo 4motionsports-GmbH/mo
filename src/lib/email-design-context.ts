@@ -25,6 +25,25 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { withEmailTheme, type EmailTheme } from "./email-theme-context";
 import type { BrandedEmailOptions, EmailCta } from "./email-template";
 import type { EmailProductGridItem, EmailProductRowItem } from "./email-products";
+import type { BundleOfferBlockInput } from "./bundle-email";
+
+/**
+ * Precomputed, PAngV-checked bundle labels handed to a bundleBlock override —
+ * strike/saving values are non-null ONLY when the saving is genuine
+ * (bundle-email.ts computes them once for every design).
+ */
+export interface BundleBlockComputed {
+  /** Formatted set price (e.g. "159,90 €"). */
+  priceLabel: string;
+  /** Formatted genuine component sum, or null → NO strike line allowed. */
+  stattLabel: string | null;
+  /** Formatted genuine saving amount, or null → NO saving line allowed. */
+  savingLabel: string | null;
+  /** Whole-percent saving matching savingLabel, or null. */
+  savingPct: number | null;
+  /** Locale-correct fixed labels (kicker/price/instead/save/cta). */
+  labels: { kicker: string; price: string; instead: string; save: string; cta: string };
+}
 
 /** Options of renderSectionRow — mirrored here to keep the interface local. */
 export interface EmailSectionRowOptions {
@@ -60,6 +79,13 @@ export interface EmailDesignRenderers {
   mutedTextStyle?: () => string;
   /** Inline style for prose links (overrides emailLinkStyle()). */
   linkStyle?: () => string;
+  /**
+   * The bundle special-offer block's HTML (full-width card rows for the
+   * preCtaRows slot). The TEXT part and the PAngV price computation stay with
+   * bundle-email.ts for every design — the override only restyles the visuals
+   * and MUST show strike/saving lines only when `computed` carries them.
+   */
+  bundleBlock?: (input: BundleOfferBlockInput, computed: BundleBlockComputed) => string;
 }
 
 /** A design resolved for ONE email kind: merged tokens + merged renderers. */
@@ -86,4 +112,30 @@ export function withEmailDesign<T>(design: ResolvedEmailDesign | null, fn: () =>
 /** The active renderer overrides, or null outside any withEmailDesign. */
 export function activeEmailDesignRenderers(): EmailDesignRenderers | null {
   return designStorage.getStore() ?? null;
+}
+
+// ── Per-send render data ──────────────────────────────────────────────────────
+// Data that belongs to ONE email being rendered (not to the design): today the
+// operator-generated hero image of hero-driven designs. Carried in its own ALS
+// so the send/preview entry points can pass it without widening every composer
+// signature; designs read it via activeEmailRenderData() and fall back to
+// their defaults when a field is absent.
+
+export interface EmailRenderData {
+  /** Absolute https URL of the per-send custom hero image, or null → the
+   * design's default hero asset. */
+  heroImageUrl?: string | null;
+}
+
+const renderDataStorage = new AsyncLocalStorage<EmailRenderData>();
+
+/** Run `fn` with per-send render data active (null/empty → run unwrapped). */
+export function withEmailRenderData<T>(data: EmailRenderData | null, fn: () => T): T {
+  if (!data) return fn();
+  return renderDataStorage.run(data, fn);
+}
+
+/** The active per-send render data ({} outside any withEmailRenderData). */
+export function activeEmailRenderData(): EmailRenderData {
+  return renderDataStorage.getStore() ?? {};
 }

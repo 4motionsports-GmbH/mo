@@ -1,0 +1,57 @@
+// POST /api/admin/email-hero/generate — render the (operator-edited) prompt
+// with the image model, upload to Vercel Blob and store URL + prompt on the
+// draft row. Body: { kind, id, prompt }. Returns { url }. Preview and send
+// pick the image up automatically (withEmailRenderData on the send paths).
+
+import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
+import { isDbConfigured } from "@/lib/db";
+import { recordAdminAccess } from "@/lib/admin-access-log";
+import { generateHeroImage, MAX_HERO_PROMPT_CHARS } from "@/lib/email-hero";
+import { parseEmailHeroKind } from "@/lib/email-hero-store";
+import { reportError } from "@/lib/observability";
+
+// Image generation takes tens of seconds — the longest admin route we have.
+export const maxDuration = 120;
+
+export async function POST(req: Request) {
+  const blocked = await guardAdminPost(req);
+  if (blocked) return blocked;
+
+  let kind, id: number, prompt: string;
+  try {
+    const body = (await req.json()) as { kind?: unknown; id?: unknown; prompt?: unknown };
+    kind = parseEmailHeroKind(body.kind);
+    if (!kind || typeof body.id !== "number" || !Number.isInteger(body.id) || body.id <= 0) {
+      return adminJsonError("bad_request", "kind und id erforderlich.", 400);
+    }
+    id = body.id;
+    if (
+      typeof body.prompt !== "string" ||
+      !body.prompt.trim() ||
+      body.prompt.length > MAX_HERO_PROMPT_CHARS
+    ) {
+      return adminJsonError(
+        "bad_request",
+        `Bitte einen Prompt mit 1–${MAX_HERO_PROMPT_CHARS} Zeichen angeben.`,
+        400
+      );
+    }
+    prompt = body.prompt;
+  } catch {
+    return adminJsonError("bad_request", "Invalid JSON body", 400);
+  }
+
+  if (!isDbConfigured()) {
+    return adminJsonError("unavailable", "No database configured", 503);
+  }
+
+  try {
+    await recordAdminAccess({ action: "email_hero.generate", detail: { kind, id } }, req);
+    const result = await generateHeroImage(kind, id, prompt);
+    if (!result.ok) return adminJsonError("bad_request", result.message, 400);
+    return adminJson({ url: result.url });
+  } catch (err) {
+    reportError(err, { route: "api/admin/email-hero/generate" });
+    return adminJsonError("internal_error", "Bild-Generierung fehlgeschlagen.", 500);
+  }
+}

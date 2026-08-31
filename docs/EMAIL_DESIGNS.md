@@ -24,6 +24,14 @@ classic-Built-ins  ←  design.theme / design.renderers   (allgemeines Template)
 Was eine Ebene nicht definiert, fällt auf die Ebene darunter zurück — ein
 Design schreibt nur, was sich tatsächlich unterscheidet.
 
+## Die Designs
+
+| Key | Look | Besonderheiten |
+|---|---|---|
+| `classic` | Shopify-Newsletter-Klon (Standard) | Built-in, kein Modul |
+| `studio` | Editorial-minimal (Beispiel/Referenz) | Tokens + ein Renderer-Override |
+| `performance` | Bild-orientiertes Conversion-Design | Voll-Shell: Hero mit (KI-)Bild, Produkt-Karten, schwarze Bundle-Karte, Frag-Mo-Panel, Hero-Pipeline (s. u.) |
+
 ## Die zwei Gestaltungs-Ebenen
 
 1. **Theme-Tokens** (`theme: Partial<EmailTheme>`, siehe `email-theme.mjs`):
@@ -32,8 +40,14 @@ Design schreibt nur, was sich tatsächlich unterscheidet.
 2. **Renderer-Overrides** (`renderers: EmailDesignRenderers`, siehe
    `email-design-context.ts`): ganze Bausteine ersetzen —
    `sectionBand`, `sectionRow`, `ctaButton`, `productGrid`, `productRows`,
+   `bundleBlock` (nur HTML; Textteil + PAngV-Preisrechnung bleiben zentral),
    `textStyle`/`mutedTextStyle`/`linkStyle` bis hin zu `shell` (das komplette
    HTML-Dokument). Damit kann ein Design **grundsätzlich anders** aussehen.
+
+Zusätzlich gibt es **Per-Send-Renderdaten** (`activeEmailRenderData()`,
+gesetzt von den Sende-/Vorschau-Einstiegen via `withEmailRenderData`): Daten,
+die zu EINER E-Mail gehören statt zum Design — heute `heroImageUrl`, das
+individuell generierte Hero-Bild.
 
 Die Composer (`summary-email.ts`, `consent-copy.ts` (DOI),
 `marketing-email.ts`, `campaign-email.ts`) wissen nichts vom aktiven Design:
@@ -79,12 +93,46 @@ Override und fällt sonst auf die classic-Implementierung zurück.
 - **Fail-soft**: Renderer dürfen nicht werfen; lieber einen Baustein weglassen
   als einen Versand brechen.
 
+## Hero-Bilder (Design „Performance")
+
+Das Performance-Design öffnet mit einem großen Lifestyle-Bild. Zwei Quellen:
+
+1. **Standard-Bild** — `public/email-hero-default.jpg` (Hochformat ~1024×1536,
+   Override per `EMAIL_HERO_DEFAULT_URL`). Wird von summary/DOI immer und von
+   marketing/campaign ohne individuelles Bild verwendet.
+2. **Individuelles Bild je E-Mail** (nur marketing + campaign — die beiden
+   Typen mit menschlichem Review): Im Kunden- bzw. Kampagnen-Workspace schlägt
+   „Prompt vorschlagen" einen Bild-Prompt aus Produkten/Prosa/Persona vor
+   (`lib/email-hero.ts`), der Operator passt ihn an, „Bild generieren" rendert
+   ihn mit `gpt-image-1` (1024×1536), lädt das PNG in Vercel Blob und speichert
+   URL + Prompt am Entwurf (Migration 0050). Vorschau UND Versand lesen es über
+   `withEmailRenderData` — was geprüft wird, wird verschickt.
+
+Benötigt: `OPENAI_API_KEY` + `BLOB_READ_WRITE_TOKEN`. Alles fail-soft: ohne
+Konfiguration/Bild rendert immer das Standard-Bild, nie ein gebrochener
+Versand.
+
+**Prompt für das Standard-Bild** (einmalig extern generieren, als
+`public/email-hero-default.jpg` speichern):
+
+> Photorealistic premium e-commerce hero shot in a bright modern home gym: a
+> matte black steel water bottle, black resistance bands, a coiled black
+> battle rope and a heavy-duty lifting strap arranged on a light concrete
+> floor in front of a black power rack, soft natural daylight from a large
+> window on the right, clean white and light-grey tones with subtle red
+> accents, shallow depth of field, calm and motivating mood, portrait
+> orientation 2:3 (1024×1536). Strictly no text, no lettering, no logos, no
+> watermarks, no people.
+
 ## Dateien im Überblick
 
 | Datei | Rolle |
 |---|---|
 | `src/lib/email-designs/registry.ts` | Registry + `EmailDesignDefinition` + Auflösung (classic ← base ← variant) |
 | `src/lib/email-designs/studio.ts` | Beispiel-Design (Referenz zum Kopieren) |
+| `src/lib/email-designs/performance.ts` | Bild-orientiertes Conversion-Design (Voll-Shell + Hero) |
+| `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |
+| `src/app/admin/HeroImagePanel.tsx` | Hero-Panel in Kunden-/Kampagnen-Workspace |
 | `src/lib/email-design-context.ts` | `withEmailDesign` (AsyncLocalStorage) + `EmailDesignRenderers`-Interface |
 | `src/lib/email-theme-context.ts` / `email-theme.mjs` | Token-Ebene (Farben/Schrift/Buttons) + Vokabular der E-Mail-Typen |
 | `src/lib/email-design-store.ts` | Auswahl je Typ (DB, TTL-Cache, fail-soft) |

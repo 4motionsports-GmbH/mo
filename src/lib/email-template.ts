@@ -179,8 +179,9 @@ export interface BrandedEmailOptions {
 }
 
 // Social profiles — same icons (Shopify CDN, PNG-rendered) and destinations as
-// the shop's newsletter footer.
-const SOCIAL_LINKS: ReadonlyArray<{ alt: string; icon: string; url: string }> = [
+// the shop's newsletter footer. Exported so design modules
+// (src/lib/email-designs/) can build their own footers from the SAME profiles.
+export const EMAIL_SOCIAL_LINKS: ReadonlyArray<{ alt: string; icon: string; url: string }> = [
   {
     alt: "facebook",
     icon: "https://cdn.shopify.com/shopify-email/nrqu6w5pn43waa7da6r8ifkgkl9v.svg?width=60&height=60&format=png",
@@ -213,7 +214,7 @@ const SOCIAL_LINKS: ReadonlyArray<{ alt: string; icon: string; url: string }> = 
   },
 ];
 
-const IMPRINT_URL = "https://motionsports.de/pages/impressum";
+export const EMAIL_IMPRINT_URL = "https://motionsports.de/pages/impressum";
 
 /**
  * The signature newsletter element: a FULL-WIDTH black band with white 20px
@@ -275,7 +276,7 @@ export function renderCtaButton(cta: EmailCta): string {
 }
 
 function renderSocialRow(): string {
-  const cells = SOCIAL_LINKS.map(
+  const cells = EMAIL_SOCIAL_LINKS.map(
     (s) => `
                           <td align="center" valign="middle" style="mso-line-height-rule: exactly; padding: 0 6px;">
                             <a href="${escapeAttr(s.url)}" target="_blank" style="text-decoration: none;"><img src="${escapeAttr(s.icon)}" alt="${escapeAttr(s.alt)}" width="20" height="20" border="0" style="width: 20px; height: 20px; display: block; border: none; outline: none;"></a>
@@ -444,7 +445,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
                           </tr>${unsubscribeBlock}
                           <tr>
                             <td align="center" style="mso-line-height-rule: exactly; padding-top: 8px;" valign="top">
-                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${font}; font-size: 12px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center">&#169; ${year} motion sports &#183; <a href="${escapeAttr(IMPRINT_URL)}" target="_blank" style="color: #000000; text-decoration: underline;">${en ? "Imprint" : "Impressum"}</a></p>
+                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${font}; font-size: 12px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center">&#169; ${year} motion sports &#183; <a href="${escapeAttr(EMAIL_IMPRINT_URL)}" target="_blank" style="color: #000000; text-decoration: underline;">${en ? "Imprint" : "Impressum"}</a></p>
                             </td>
                           </tr>
                       </tbody>

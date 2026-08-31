@@ -45,6 +45,7 @@ import {
 } from "./ui";
 import { EmailPreviewFrame } from "./EmailPreviewFrame";
 import { EmailTextModeToggle, type EmailTextModeValue } from "./EmailTextModeToggle";
+import { HeroImagePanel } from "./HeroImagePanel";
 import {
   DISCOUNT_PERCENT_MAX,
   clampDiscountPercent,
@@ -1343,6 +1344,13 @@ export function KampagneWorkspace({
                   Abmelde-/Impressum-Footer werden beim Versand automatisch angehängt und
                   sind hier nicht editierbar.
                 </p>
+
+                <HeroImagePanel
+                  key={`hero-${current.contactId}`}
+                  kind="campaign"
+                  targetId={current.contactId}
+                  disabled={busy !== null}
+                />
 
                 {optInBlocked && (
                   <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
