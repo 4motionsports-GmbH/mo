@@ -34,8 +34,8 @@ import {
   emailTextStyle,
   emailLinkStyle,
 } from "./email-template";
-import { withEmailTheme } from "./email-theme-context";
-import { getCachedThemeForKind } from "./email-theme-store";
+import { withEmailDesign } from "./email-design-context";
+import { getCachedEmailDesignForKind } from "./email-design-store";
 import { partitionSummaryProducts } from "./summary-products.mjs";
 import { renderEmailProseHtml, productNameLookup } from "./email-prose.mjs";
 import { renderEmailProductGrid, productGridItem } from "./email-products";
@@ -412,10 +412,10 @@ export async function buildSummaryDocument(params: {
 
   const summary = await buildSummaryText(turns, usage, locale);
 
-  // Render inside the operator-assigned design template (admin Einstellungen);
-  // null → the built-in default design. Fail-soft: never blocks the summary.
-  const theme = await getCachedThemeForKind("summary");
-  const { text, html } = withEmailTheme(theme, () =>
+  // Render inside the design selected for this email type (admin
+  // Einstellungen); null → classic built-ins. Fail-soft: never blocks.
+  const design = await getCachedEmailDesignForKind("summary");
+  const { text, html } = withEmailDesign(design, () =>
     buildSummaryEmailContent({
       summary,
       chosenProducts,

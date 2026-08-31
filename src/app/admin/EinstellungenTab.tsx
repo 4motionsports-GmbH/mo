@@ -1,27 +1,25 @@
-// "Einstellungen" tab body (server component): everything email — the stored
-// design templates ("Vorlagen") with editor + live preview, the per-email-type
-// assignment, and the read-only send configuration (env-derived). Data is
-// fetched here on the server and handed to the client EmailSettingsWorkspace,
-// which owns the edit state and calls the /api/admin/email-templates routes.
+// "Einstellungen" tab body (server component): everything email — the
+// registered CODE designs (src/lib/email-designs/registry.ts) with per-type
+// live previews, the per-email-type design selection, and the read-only send
+// configuration (env-derived). Data is fetched here on the server and handed
+// to the client EmailSettingsWorkspace, which owns the selection state and
+// calls the /api/admin/email-designs routes.
 
-import {
-  listEmailTemplates,
-  listEmailTemplateAssignments,
-} from "@/lib/email-theme-store";
+import { listEmailDesignMeta } from "@/lib/email-designs/registry";
+import { listEmailDesignSelections } from "@/lib/email-design-store";
 import { isEmailConfigured, senderAddress } from "@/lib/email";
 import { inboundEmailAddress } from "@/lib/email-inbound";
 import { EmailSettingsWorkspace } from "./EmailSettingsWorkspace";
 
 export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
-  const [templates, assignments] = dbReady
-    ? await Promise.all([listEmailTemplates(), listEmailTemplateAssignments()])
-    : [[], {}];
+  const designs = listEmailDesignMeta();
+  const selections = dbReady ? await listEmailDesignSelections() : {};
 
   return (
     <EmailSettingsWorkspace
       dbReady={dbReady}
-      initialTemplates={templates}
-      initialAssignments={assignments}
+      designs={designs}
+      initialSelections={selections}
       sendConfig={{
         configured: isEmailConfigured(),
         senderAddress: senderAddress() ?? null,

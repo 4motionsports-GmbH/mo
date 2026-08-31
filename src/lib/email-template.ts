@@ -26,10 +26,13 @@
 //     (Gmail/Apple Mail play it; Outlook desktop shows the first frame).
 //     Everything else stays static.
 
-// THEMING: every design token below reads the ACTIVE email theme (the operator
-// "Vorlage" assigned to the email type being rendered — email-theme-context.ts,
-// set by the async send/preview entry points via withEmailTheme). Outside any
-// wrapper the getters return the built-in default, which is exactly the
+// DESIGNS: every public helper below is an extension point of the email-design
+// system (src/lib/email-designs/, docs/EMAIL_DESIGNS.md). The async send/
+// preview entry points resolve the design selected for the email type and run
+// the render inside withEmailDesign(...); each helper first honors a renderer
+// OVERRIDE from that design, then falls back to the CLASSIC implementation in
+// this file — which itself reads the design's THEME TOKENS
+// (email-theme-context.ts). Outside any wrapper everything renders the
 // original hard-coded design described above.
 
 /** Brand accent used for CTA buttons (matches the shop's newsletter emails). */
@@ -55,6 +58,8 @@ export function emailFontFamily(): string {
  * `bodyHtml` should use this so their content matches the shell.
  */
 export function emailTextStyle(): string {
+  const override = activeEmailDesignRenderers()?.textStyle;
+  if (override) return override();
   return (
     `mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; ` +
     `font-size: 13px; line-height: 1.5; font-weight: 400; text-transform: none; ` +
@@ -64,6 +69,8 @@ export function emailTextStyle(): string {
 
 /** Inline style for small print (12px, black like the newsletter footer). */
 export function emailMutedTextStyle(): string {
+  const override = activeEmailDesignRenderers()?.mutedTextStyle;
+  if (override) return override();
   return (
     `mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; ` +
     `font-size: 12px; line-height: 1.5; font-weight: 400; text-transform: none; ` +
@@ -73,6 +80,8 @@ export function emailMutedTextStyle(): string {
 
 /** Inline style for prose links (email-prose.mjs) — the theme's accent. */
 export function emailLinkStyle(): string {
+  const override = activeEmailDesignRenderers()?.linkStyle;
+  if (override) return override();
   return `color: ${emailAccentColor()}; text-decoration: underline; word-wrap: break-word;`;
 }
 
@@ -105,6 +114,7 @@ export function emailMoIconUrl(): string {
 import { escapeHtml, escapeAttr } from "./html-escape";
 import { getBaseUrl } from "./base-url";
 import { activeEmailTheme } from "./email-theme-context";
+import { activeEmailDesignRenderers } from "./email-design-context";
 import { buttonRadiusFor, fontNeedsWebFont, fontStackFor } from "./email-theme.mjs";
 import type { Locale } from "./locale";
 export { escapeHtml, escapeAttr };
@@ -212,6 +222,8 @@ const IMPRINT_URL = "https://motionsports.de/pages/impressum";
  * or rely on the shell's heading which renders through this too.
  */
 export function renderSectionBand(title: string): string {
+  const override = activeEmailDesignRenderers()?.sectionBand;
+  if (override) return override(title);
   const theme = activeEmailTheme();
   return `
                 <tr>
@@ -230,6 +242,8 @@ export function renderSectionRow(
   innerHtml: string,
   opts: { padding?: string; align?: "left" | "center"; bgcolor?: string } = {}
 ): string {
+  const override = activeEmailDesignRenderers()?.sectionRow;
+  if (override) return override(innerHtml, opts);
   const padding = opts.padding ?? "20px 60px";
   const align = opts.align ?? "left";
   const bgcolor = opts.bgcolor ?? "#ffffff";
@@ -246,6 +260,8 @@ export function renderSectionRow(
  * standalone table — the shell (or a section like the bundle card) places it.
  */
 export function renderCtaButton(cta: EmailCta): string {
+  const override = activeEmailDesignRenderers()?.ctaButton;
+  if (override) return override(cta);
   const accent = emailAccentColor();
   const radius = buttonRadiusFor(activeEmailTheme().buttonShape);
   return `
@@ -277,6 +293,8 @@ function renderSocialRow(): string {
  * matching plain-text part stays the caller's responsibility.
  */
 export function renderBrandedEmail(opts: BrandedEmailOptions): string {
+  const override = activeEmailDesignRenderers()?.shell;
+  if (override) return override(opts);
   const theme = activeEmailTheme();
   const logo = emailLogoUrl();
   const font = emailFontFamily();

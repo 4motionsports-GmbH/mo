@@ -40,8 +40,8 @@ import {
   emailMutedTextStyle,
   emailLinkStyle,
 } from "./email-template";
-import { withEmailTheme } from "./email-theme-context";
-import { getCachedThemeForKind } from "./email-theme-store";
+import { withEmailDesign } from "./email-design-context";
+import { getCachedEmailDesignForKind } from "./email-design-store";
 import {
   renderEmailProductRows,
   productRowItems,
@@ -283,10 +283,10 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       // send, so it degrades to "no block".
       const bundle = await buildBundleBlockForSend(sendId, claimed.productHighlights);
 
-      // Render inside the operator-assigned design template (admin
-      // Einstellungen); null → built-in default. Fail-soft, never blocks.
-      const emailTheme = await getCachedThemeForKind("marketing");
-      const { text, html } = await withEmailTheme(emailTheme, async () => renderMarketingEmail({
+      // Render inside the design selected for this email type (admin
+      // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
+      const emailDesign = await getCachedEmailDesignForKind("marketing");
+      const { text, html } = await withEmailDesign(emailDesign, async () => renderMarketingEmail({
         subject: claimed.subject ?? "motion sports",
         body,
         // The customer sees/clicks the tracked redirect URL, not the raw cart.
@@ -485,10 +485,10 @@ export async function renderMarketingEmailPreview(
 
   const bundle = await buildBundleBlockForSend(sendId, send.productHighlights);
 
-  // The preview renders inside the SAME assigned design template as the send
-  // path, so what the operator reviews is what ships.
-  const emailTheme = await getCachedThemeForKind("marketing");
-  const { html } = await withEmailTheme(emailTheme, async () => renderMarketingEmail({
+  // The preview renders inside the SAME selected design as the send path,
+  // so what the operator reviews is what ships.
+  const emailDesign = await getCachedEmailDesignForKind("marketing");
+  const { html } = await withEmailDesign(emailDesign, async () => renderMarketingEmail({
     subject,
     body,
     linkUrl: cart.url,

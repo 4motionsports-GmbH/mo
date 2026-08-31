@@ -19,6 +19,7 @@ import {
   emailFontFamily,
   EMAIL_SALE_STRIKE_COLOR,
 } from "./email-template";
+import { activeEmailDesignRenderers } from "./email-design-context";
 import type { Product } from "./types";
 
 export interface EmailProductGridItem {
@@ -145,6 +146,8 @@ function renderTile(item: EmailProductGridItem): string {
  */
 export function renderEmailProductGrid(items: EmailProductGridItem[]): string {
   if (items.length === 0) return "";
+  const override = activeEmailDesignRenderers()?.productGrid;
+  if (override) return override(items);
 
   const tiles = items
     .map((item, i) => {
@@ -291,6 +294,8 @@ function renderProductRow(item: EmailProductRowItem, isFirst: boolean): string {
  */
 export function renderEmailProductRows(items: EmailProductRowItem[]): string {
   if (items.length === 0) return "";
+  const override = activeEmailDesignRenderers()?.productRows;
+  if (override) return override(items);
   const rows = items.map((item, i) => renderProductRow(item, i === 0)).join("");
   return `
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="width: 100%; direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important; table-layout: fixed !important;">
