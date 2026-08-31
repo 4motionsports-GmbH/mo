@@ -35,8 +35,8 @@ import {
   doiEmailBody,
   signInMarketingConsentCopy,
 } from "@/lib/consent-copy";
-import { withEmailTheme } from "@/lib/email-theme-context";
-import { getCachedThemeForKind } from "@/lib/email-theme-store";
+import { withEmailDesign } from "@/lib/email-design-context";
+import { getCachedEmailDesignForKind } from "@/lib/email-design-store";
 import {
   KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
   KPI_EMAIL_CAPTURE_SUBMITTED,
@@ -165,11 +165,11 @@ export async function POST(req: Request) {
     let doiEmailSent = false;
     if (capture.doiEmailRequired && capture.doiToken) {
       const confirmUrl = `${getBaseUrl(req)}/api/confirm-marketing?token=${encodeURIComponent(capture.doiToken)}&locale=${locale}`;
-      // Render inside the operator-assigned design template (admin
-      // Einstellungen); null → built-in default. The lawyer-approved DOI copy
-      // itself is untouched — only the shell chrome is themed.
-      const emailTheme = await getCachedThemeForKind("doi");
-      const body = withEmailTheme(emailTheme, () => doiEmailBody(confirmUrl, locale));
+      // Render inside the design selected for this email type (admin
+      // Einstellungen); null → classic built-ins. The lawyer-approved DOI copy
+      // itself is untouched — only the design around it changes.
+      const emailDesign = await getCachedEmailDesignForKind("doi");
+      const body = withEmailDesign(emailDesign, () => doiEmailBody(confirmUrl, locale));
       const threading = outboundThreading();
       const doiResult = await sendEmail({
         to: email,

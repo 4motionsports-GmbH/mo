@@ -51,8 +51,8 @@ import {
 import { parseIntEnv } from "./env-num";
 import { sendEmail } from "./email";
 import { outboundThreading } from "./email-inbound";
-import { withEmailTheme } from "./email-theme-context";
-import { getCachedThemeForKind } from "./email-theme-store";
+import { withEmailDesign } from "./email-design-context";
+import { getCachedEmailDesignForKind } from "./email-design-store";
 import {
   renderBrandedEmail,
   renderSectionBand,
@@ -294,10 +294,10 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       const redirectToken = generateRedirectToken();
       const trackedCtaUrl = `${getBaseUrl()}/api/r/${redirectToken}`;
 
-      // Render inside the operator-assigned design template (admin
-      // Einstellungen); null → built-in default. Fail-soft, never blocks.
-      const emailTheme = await getCachedThemeForKind("campaign");
-      const { text, html } = await withEmailTheme(emailTheme, async () => renderCampaignEmail({
+      // Render inside the design selected for this email type (admin
+      // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
+      const emailDesign = await getCachedEmailDesignForKind("campaign");
+      const { text, html } = await withEmailDesign(emailDesign, async () => renderCampaignEmail({
         subject: draft.subject,
         body,
         language: contact.language,
@@ -516,10 +516,10 @@ export async function renderCampaignEmailPreview(
     draft.productHighlights
   );
 
-  // The preview renders inside the SAME assigned design template as the send
-  // path, so what the operator reviews is what ships.
-  const emailTheme = await getCachedThemeForKind("campaign");
-  const { html } = await withEmailTheme(emailTheme, async () => renderCampaignEmail({
+  // The preview renders inside the SAME selected design as the send path,
+  // so what the operator reviews is what ships.
+  const emailDesign = await getCachedEmailDesignForKind("campaign");
+  const { html } = await withEmailDesign(emailDesign, async () => renderCampaignEmail({
     subject,
     body,
     language: contact.language,

@@ -74,7 +74,7 @@ const TAB_SUBTITLE: Record<AdminTab, string> = {
   verbesserung:
     "Verbesserung · Mo analysiert die Komplettanalyse & schlägt Verbesserungen vor — für den Shop & für sich selbst",
   einstellungen:
-    "Einstellungen · E-Mail-Vorlagen gestalten, E-Mail-Typen zuordnen & Versand-Konfiguration prüfen",
+    "Einstellungen · E-Mail-Designs auswählen & je E-Mail-Typ aktivieren — neue Designs entstehen mit Claude Code",
 };
 
 // The Übersicht tab is the bare /admin (the default landing tab); every other
