@@ -24,6 +24,7 @@ export async function GET(req: Request) {
   return adminJson({
     url: state?.url ?? null,
     prompt: state?.prompt ?? null,
+    headline: state?.headline ?? null,
     defaultUrl: defaultHeroImageUrl(),
     generationConfigured: isHeroGenerationConfigured(),
   });

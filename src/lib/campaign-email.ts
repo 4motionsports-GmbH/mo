@@ -53,14 +53,13 @@ import { sendEmail } from "./email";
 import { outboundThreading } from "./email-inbound";
 import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
-import { getEmailHeroUrl } from "./email-hero-store";
+import { getEmailHeroRenderData } from "./email-hero-store";
 import {
   renderBrandedEmail,
+  renderMoPromoBlock,
   renderSectionBand,
   renderSectionRow,
-  emailMoIconUrl,
   escapeHtml,
-  escapeAttr,
   emailTextStyle,
   emailMutedTextStyle,
   emailLinkStyle,
@@ -299,10 +298,10 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
       // The per-contact hero image (email-hero.ts) rides along for hero designs.
       const emailDesign = await getCachedEmailDesignForKind("campaign");
-      const heroImageUrl = await getEmailHeroUrl("campaign", contactId);
+      const hero = await getEmailHeroRenderData("campaign", contactId);
       const { text, html } = await withEmailDesign(emailDesign, () =>
         withEmailRenderData(
-          { heroImageUrl, recipientFirstName: contact.firstName?.trim() || null },
+          { ...hero, recipientFirstName: contact.firstName?.trim() || null },
           async () => renderCampaignEmail({
         subject: draft.subject,
         body,
@@ -527,10 +526,10 @@ export async function renderCampaignEmailPreview(
   // including the per-contact hero image — so what the operator reviews is
   // what ships.
   const emailDesign = await getCachedEmailDesignForKind("campaign");
-  const heroImageUrl = await getEmailHeroUrl("campaign", contactId);
+  const hero = await getEmailHeroRenderData("campaign", contactId);
   const { html } = await withEmailDesign(emailDesign, () =>
     withEmailRenderData(
-      { heroImageUrl, recipientFirstName: contact.firstName?.trim() || null },
+      { ...hero, recipientFirstName: contact.firstName?.trim() || null },
       async () => renderCampaignEmail({
     subject,
     body,
@@ -630,22 +629,15 @@ export function renderCampaignEmail(opts: {
         en ? "Your personal code" : "Dein pers&#246;nlicher Code"
       }: <strong>${escapeHtml(discountCode)}</strong>${escapeHtml(validityNote)}.</p>`
     : "";
-  // The Mo promo renders as a chat-style media row — the animated brand orb
-  // (the widget's launcher mark) beside Mo's chat hint, mirroring the shop's
-  // product-page CTA (orb + text). Table-based + inline styles for Outlook.
-  const promoHtml = `
-                                  <table width="100%" cellspacing="0" cellpadding="0" border="0" role="presentation" style="min-width: 100%; direction: ltr; Margin-top: 16px;">
-                                    <tr>
-                                      <td valign="middle" width="68" style="mso-line-height-rule: exactly; padding-right: 12px;">
-                                        <img src="${escapeAttr(emailMoIconUrl())}" alt="Mo" width="56" height="56" border="0" style="width: 56px; height: 56px; display: block;">
-                                      </td>
-                                      <td valign="middle" style="mso-line-height-rule: exactly;">
-                                        <p style="${emailTextStyle()}" align="left">${escapeHtml(
-                                          moPromoIntroText(language)
-                                        )}</p>
-                                      </td>
-                                    </tr>
-                                  </table>`;
+  // The Mo promo goes through the shared renderer so a design can present it
+  // as its own advisor card (email-template renderMoPromoBlock); the classic
+  // chat-style media row is unchanged.
+  const promoRows = renderMoPromoBlock({
+    introText: moPromoIntroText(language),
+    ctaLabel: moPromoCtaLabel(language),
+    ctaUrl: deeplink,
+    language,
+  });
 
   // Personalised product section: black separator band + one ROW per product
   // (image, name link, price with red strikethrough compare-at in the first
@@ -674,9 +666,7 @@ export function renderCampaignEmail(opts: {
     // recommended-products picture grid, the bundle offer block (if any), and
     // last the Mo-promo media row — directly above its "Beratung starten" CTA.
     preCtaRowsHtml:
-      `${productsRows}${bundle ? bundle.html : ""}${renderSectionRow(promoHtml, {
-        padding: "10px 60px",
-      })}` || undefined,
+      `${productsRows}${bundle ? bundle.html : ""}${promoRows}` || undefined,
     ctas: [{ label: moPromoCtaLabel(language), url: deeplink }],
     footnoteHtml: discountNote || undefined,
     footer: {

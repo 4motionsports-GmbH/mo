@@ -26,6 +26,7 @@ import type { EmailDesignDefinition } from "./registry";
 import type {
   BundleBlockComputed,
   EmailSectionRowOptions,
+  MoPromoBlockInput,
 } from "../email-design-context";
 import { activeEmailRenderData } from "../email-design-context";
 import { getBaseUrl } from "../base-url";
@@ -310,6 +311,39 @@ function greetingHtml(bodyHtml: string, en: boolean): string {
                   } ${escapeHtml(firstName)},</div>`;
 }
 
+/**
+ * The campaign mail's Mo promo, rendered as the SAME advisor card the other
+ * types get — with the tracked CTA url the campaign funnel counts.
+ */
+function moPromoCard(input: MoPromoBlockInput): string {
+  const en = input.language === "en";
+  return `
+                <tr>
+                  <td class="content-pad" style="padding: 8px 38px 16px 38px;" bgcolor="#ffffff">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#fafafa; border:1px solid #e5e5e5; border-radius:7px;">
+                      <tr>
+                        <td width="22%" align="center" valign="middle" class="mobile-stack" style="padding:18px;">
+                          <img src="${escapeAttr(emailMoIconUrl())}" width="74" height="74" alt="Mo" style="width:74px; height:74px; border-radius:50%; display:block; Margin:0 auto;">
+                        </td>
+                        <td width="45%" valign="middle" class="mobile-stack mobile-center" style="padding:18px 8px;">
+                          <div style="font-family:${FONT}; font-size:18px; line-height:23px; font-weight:700; color:#111111;">${
+                            en ? "Not sure yet? Ask Mo." : "Noch unsicher? Frag Mo."
+                          }</div>
+                          <div style="margin-top:6px; font-family:${FONT}; font-size:11px; line-height:16px; color:#444444;">${escapeHtml(
+                            input.introText
+                          )}</div>
+                        </td>
+                        <td width="33%" align="center" valign="middle" class="mobile-stack" style="padding:18px;">
+                          <a href="${escapeAttr(input.ctaUrl)}" target="_blank" style="display:inline-block; border:1px solid #111111; color:#111111; padding:11px 15px; border-radius:3px; font-family:${FONT}; font-size:10px; font-weight:700; text-decoration:none;">${escapeHtml(
+                            input.ctaLabel.toUpperCase()
+                          )}&nbsp;&#8594;</a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+}
+
 /** The "Noch unsicher? Frag Mo." advisor panel (rendered when moAvatar set). */
 function moPanel(en: boolean): string {
   const url = campaignMoDeeplinkUrl();
@@ -370,8 +404,10 @@ function makeShell(kind: keyof typeof HERO_COPY) {
           label: primaryCta.label.length > 18 ? copy.shortCta(en) : primaryCta.label,
         }
       : null;
-    // Two-line claim: the copy carries "\n" so both lines are explicit.
-    const headlineHtml = escapeHtml(copy.headline(en)).replace(/\n/g, "<br>");
+    // Two-line claim: the per-send AI headline (operator-edited, hero panel)
+    // wins over the design's per-type default; both carry "\n" line breaks.
+    const claim = (activeEmailRenderData().heroHeadline ?? "").trim() || copy.headline(en);
+    const headlineHtml = escapeHtml(claim).replace(/\n/g, "<br>");
 
     const preheaderHtml = opts.preheader
       ? `
@@ -422,19 +458,21 @@ function makeShell(kind: keyof typeof HERO_COPY) {
            default content-box that adds up to more than the card width and
            pushes a horizontal scrollbar onto the whole email. */
         .email-container, .mobile-stack, .bundle-column, .content-pad,
-        .hero-text, .hero-image-cell { box-sizing: border-box !important; }
+        .hero-text, .hero-bg { box-sizing: border-box !important; }
         .email-container { width: 100% !important; min-width: 100% !important; }
         .content-pad { padding-left: 20px !important; padding-right: 20px !important; }
         .mobile-stack { display: block !important; width: 100% !important; }
         .mobile-center { text-align: center !important; }
         .logo-image { width: 170px !important; max-width: 70% !important; }
-        .hero-text { padding: 30px 22px 22px 22px !important; text-align: center !important; }
+        /* Phones: no background image behind the text (unreadable at 390px) —
+           the artwork moves into its own full-width row below the copy. */
+        .hero-bg { background-image: none !important; background-color: #f7f7f7 !important; height: auto !important; }
+        .hero-text { width: 100% !important; padding: 28px 22px 24px 22px !important; }
+        .hero-spacer { display: none !important; }
         .hero-title { font-size: 32px !important; line-height: 36px !important; letter-spacing: -1px !important; }
-        .hero-cta { display: block !important; width: 100% !important; box-sizing: border-box !important; }
-        /* The hero art is portrait (2:3) — full width it would eat the whole
-           first screen, so it stays a capped, centred band on phones. */
-        .hero-image-cell { padding: 0 22px 22px 22px !important; }
-        .hero-image { width: 100% !important; max-width: 100% !important; max-height: 240px !important; border-radius: 8px !important; margin: 0 auto !important; }
+        .hero-sub { max-width: 100% !important; }
+        .hero-cta { display: block !important; width: 100% !important; box-sizing: border-box !important; text-align: center !important; }
+        .hero-mobile-img { display: block !important; }
         .product-image { width: 100% !important; max-width: 190px !important; margin: 0 auto !important; }
         .product-content { padding: 6px 20px 12px 20px !important; text-align: center !important; }
         .product-action { padding: 0 20px 20px 20px !important; text-align: center !important; }
@@ -460,22 +498,40 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                   </a>
                 </td>
               </tr>
-              <!-- HERO -->
+              <!-- HERO — the image spans the FULL card width as a background;
+                   the headline sits on its deliberately faded left half (the
+                   fade is baked into the artwork, see HERO_PROMPT_STYLE_TAIL).
+                   Bulletproof pattern: background= attribute + inline
+                   background shorthand for Gmail/Apple Mail, VML rect for
+                   Outlook desktop, bgcolor fallback when images are blocked.
+                   On phones the background is dropped and the picture shows
+                   as a normal image UNDER the text (.hero-bg / .hero-mobile-img). -->
               <tr>
-                <td style="padding: 0 24px;" bgcolor="#ffffff">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f7f7f7; border-radius:8px;">
+                <td class="hero-bg" align="left" valign="middle" background="${escapeAttr(heroImage)}" bgcolor="#f2f2f2" height="300" style="padding:0; background-color:#f2f2f2; background-image:url('${escapeAttr(heroImage)}'); background-position:center right; background-size:cover; background-repeat:no-repeat;">
+                  <!--[if gte mso 9]>
+                  <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:640px;height:300px;">
+                    <v:fill type="frame" src="${escapeAttr(heroImage)}" color="#f2f2f2" />
+                    <v:textbox inset="0,0,0,0"><![endif]-->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
                     <tr>
-                      <td width="48%" valign="middle" class="mobile-stack mobile-center hero-text" style="width:48%; padding:40px 18px 40px 32px;">
-                        <div style="font-family:${FONT}; color:${RED}; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; margin-bottom:14px;">${escapeHtml(copy.kicker(en))}</div>
-                        <div class="hero-title" style="font-family:${FONT}; font-size:42px; line-height:46px; color:#111111; font-weight:800; letter-spacing:-1.5px; margin-bottom:16px;">${headlineHtml}</div>
-                        <div style="font-family:${FONT}; font-size:14px; line-height:21px; color:#444444; margin-bottom:24px;">${escapeHtml(copy.subline(en))}</div>
+                      <td class="hero-text" width="55%" valign="middle" style="width:55%; padding:36px 20px 36px 40px;">
+                        <div style="font-family:${FONT}; color:${RED}; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; margin-bottom:12px;">${escapeHtml(copy.kicker(en))}</div>
+                        <div class="hero-title" style="font-family:${FONT}; font-size:40px; line-height:44px; color:#111111; font-weight:800; letter-spacing:-1.5px; margin-bottom:14px;">${headlineHtml}</div>
+                        <div class="hero-sub" style="font-family:${FONT}; font-size:14px; line-height:21px; color:#333333; margin-bottom:22px; max-width:300px;">${escapeHtml(copy.subline(en))}</div>
                         ${heroCta ? redButton(heroCta, false, "hero-cta") : ""}
                       </td>
-                      <td width="52%" valign="bottom" class="mobile-stack hero-image-cell" align="center" style="width:52%; padding:0;">
-                        <img src="${escapeAttr(heroImage)}" width="300" alt="motion sports" class="hero-image" style="width:100%; max-width:300px; max-height:340px; height:auto; display:block; Margin:0 0 0 auto; border-radius:0 8px 8px 0; object-fit:cover;">
-                      </td>
+                      <td width="45%" class="hero-spacer" style="width:45%; font-size:0; line-height:0;">&nbsp;</td>
                     </tr>
                   </table>
+                  <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
+                </td>
+              </tr>
+              <!-- Mobile-only hero picture: the background is switched off on
+                   phones (a 640px-wide crop behind 20px-padded text is
+                   unreadable), so the artwork gets its own full-width row. -->
+              <tr class="hero-mobile-row">
+                <td class="hero-mobile-cell" style="padding:0; font-size:0; line-height:0;">
+                  <img src="${escapeAttr(heroImage)}" width="640" alt="motion sports" class="hero-mobile-img" style="width:100%; max-width:100%; height:auto; display:none;">
                 </td>
               </tr>
               <!-- BODY (personal greeting + prose from the composer) -->
@@ -536,6 +592,7 @@ export const performanceDesign: EmailDesignDefinition = {
     productRows,
     productGrid,
     bundleBlock,
+    moPromoBlock: moPromoCard,
     textStyle,
     mutedTextStyle,
     linkStyle,
