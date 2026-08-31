@@ -23,6 +23,7 @@ import {
 } from "./email-text-mode.mjs";
 import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
+import { formatStoreDate } from "./store-datetime.mjs";
 
 // Same model the transactional summary uses — one voice across the backend.
 const DRAFT_MODEL = "claude-sonnet-4-6";
@@ -397,7 +398,7 @@ function draftSessionBlock(s: CustomerDraftSession, index: number, total: number
     transcript.length > MAX_TRANSCRIPT_CHARS_PER_SESSION
       ? transcript.slice(0, MAX_TRANSCRIPT_CHARS_PER_SESSION) + "\n[… gekürzt]"
       : transcript;
-  const date = s.createdAt ? new Date(s.createdAt).toLocaleDateString("de-DE") : "Datum unbekannt";
+  const date = formatStoreDate(s.createdAt, "de-DE", "Datum unbekannt");
   return (
     `### Gespräch ${index + 1} von ${total} — ${date}` +
     `${s.personaLabel ? ` · Persona: ${s.personaLabel}` : ""}\n` +

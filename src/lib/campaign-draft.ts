@@ -37,6 +37,7 @@ import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
 import type { DraftDiscountInput, EmailTextMode, MarketingDraft } from "./marketing-draft";
 import type { CampaignPurchaseSummary } from "./campaign-store";
+import { formatStoreDate } from "./store-datetime.mjs";
 
 // Same model the existing marketing drafts use.
 const DRAFT_MODEL = "claude-sonnet-4-6";
@@ -144,9 +145,7 @@ function purchaseBlock(summary: CampaignPurchaseSummary | null, language: "de" |
   }
   return summary.orders
     .map((o) => {
-      const date = o.createdAt
-        ? new Date(o.createdAt).toLocaleDateString(language === "en" ? "en-GB" : "de-DE")
-        : "?";
+      const date = formatStoreDate(o.createdAt, language === "en" ? "en-GB" : "de-DE", "?");
       const items = o.items
         .map((i) => `${i.quantity}× ${i.title ?? "?"}`)
         .join(", ");

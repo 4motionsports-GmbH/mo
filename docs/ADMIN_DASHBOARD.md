@@ -944,10 +944,16 @@ scoped to `src/app/admin/**` fails the build on `toLocaleDateString`,
 was verified byte-identical between Node and Chromium (`1.234,56 €`, same
 U+00A0), so it is not a hydration hazard.
 
-**Out of scope of that rule (deliberately):** the server-only prompt builders in
-`src/lib/` (`marketing-draft.ts`, `campaign-draft.ts`, `customer-profile.ts`,
-`bundle-suggestion.ts`) also format order dates without a timezone. They never
-hydrate, so they cannot cause #418 — but they can state a date that is one day
-off for orders placed between 00:00 and 02:00 Berlin time, in prose the AI puts
-into customer-facing e-mail. Tracked separately; fixing it changes what
-customers are told, so it wants an explicit decision.
+The pinned zone itself lives in
+[`src/lib/store-datetime.mjs`](../src/lib/store-datetime.mjs) as
+`STORE_TIME_ZONE`, which `admin-datetime.mjs` re-exports — the back-office, the
+customer-facing discount expiry dates and the AI prompt builders all read the
+same constant, so they cannot drift onto different zones. That module also
+carries `formatStoreDate(value, locale, fallback)` for the **server-only** side
+(the prompt builders in `marketing-draft.ts`, `campaign-draft.ts`,
+`customer-profile.ts`, `bundle-suggestion.ts`). Those never hydrate, so they
+could not cause #418 — but they fed the model the UTC calendar day, which for
+an order placed between 00:00 and 02:00 Berlin time is the *previous* day, and
+the model then repeated that wrong date to the customer. Worst case observed:
+an order at 00:10 on 1 January 2026 was described as `31.12.2025` — wrong day
+and wrong year.

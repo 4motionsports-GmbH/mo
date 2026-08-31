@@ -29,6 +29,7 @@ import type { OrderHistory } from "./shopify-orders";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
 import { recordAiUsage } from "./ai-usage-store";
+import { formatStoreDate } from "./store-datetime.mjs";
 
 const PROFILE_MODEL = "claude-opus-4-8";
 
@@ -80,9 +81,7 @@ function personaDisplay(label: string | null): string {
 }
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "unbekanntes Datum";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "unbekanntes Datum" : d.toLocaleDateString("de-DE");
+  return formatStoreDate(iso, "de-DE", "unbekanntes Datum");
 }
 
 function sessionBlock(s: CustomerSession, index: number, total: number): string {

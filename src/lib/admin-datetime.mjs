@@ -27,8 +27,14 @@
 // Every admin component formats through here; a bare toLocale*String on a Date
 // in the admin tree is a bug.
 
-/** The store's timezone — every admin timestamp is rendered in it. */
-export const ADMIN_TIME_ZONE = "Europe/Berlin";
+import { STORE_TIME_ZONE } from "./store-datetime.mjs";
+
+/**
+ * The store's timezone — every admin timestamp is rendered in it. Re-exported
+ * from store-datetime.mjs so the back-office and the customer-facing dates can
+ * never drift onto different zones.
+ */
+export const ADMIN_TIME_ZONE = STORE_TIME_ZONE;
 
 /** What an absent or unparseable timestamp renders as. */
 export const ADMIN_EMPTY = "—";
