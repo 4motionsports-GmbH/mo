@@ -1,14 +1,16 @@
 // AI HERO IMAGES for the image-first email designs (docs/EMAIL_DESIGNS.md):
 // the killer feature of the 'performance' design. Two capabilities:
 //
-//   1. suggestHeroPrompt — draft a personalised IMAGE PROMPT from everything
-//      the system knows about this specific email (recommended products, the
-//      drafted prose, persona/admin context). The prompt is English (image
-//      models follow English best), one editable text: a personal scene
-//      description followed by the fixed brand-style + constraint sentences,
-//      so the operator sees and controls EXACTLY what the image model gets.
+//   1. suggestHeroPrompt — draft a personalised IMAGE PROMPT *and* the
+//      two-line hero claim from everything we know about this recipient
+//      (email-hero-context.mjs assembles it: what they already own, the
+//      condensed customer understanding, the recommended product categories,
+//      an attached set, persona/team notes, loyalty, season). The prompt is
+//      English (image models follow English best), one editable text: the
+//      personal scene followed by the fixed brand-style + constraint
+//      sentences, so the operator sees EXACTLY what the image model gets.
 //   2. generateHeroImage — render the (operator-edited) prompt with OpenAI
-//      gpt-image-1 (portrait 1024×1536, matching the hero slot), upload the
+//      gpt-image-1 (landscape 1536×1024 for the full-bleed hero), upload the
 //      PNG to Vercel Blob (public), and store URL + prompt on the draft row
 //      (email-hero-store) so preview and send show the same image and the
 //      audit trail keeps prompt + image together.
@@ -27,7 +29,23 @@ import { getBaseUrl } from "./base-url";
 import { getSendById } from "./marketing-store";
 import { getContactById, getDraftForContact } from "./campaign-store";
 import { getProductsByIds } from "./product-catalog";
+import { getCustomerById } from "./customer-store";
+import { getActiveBundleForSend, getActiveBundleForCampaignContact } from "./bundle-offers-store";
+import {
+  clip,
+  ensureHeroStyleTail,
+  HERO_PROMPT_STYLE_TAIL,
+  heroContextLines,
+  loyaltyHint,
+  ownedProductTitles,
+  productCategories,
+  seasonHint,
+  MAX_PROFILE_CHARS,
+} from "./email-hero-context.mjs";
 import { setEmailHero, type EmailHeroKind } from "./email-hero-store";
+
+// Re-exported so callers keep one import site for the hero vocabulary.
+export { HERO_PROMPT_STYLE_TAIL, ensureHeroStyleTail };
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
 
@@ -43,23 +61,6 @@ const IMAGE_SIZE = "1536x1024" as const;
 export const MAX_HERO_PROMPT_CHARS = 1500;
 export const MAX_HERO_HEADLINE_CHARS = 60;
 
-/**
- * The fixed style/constraint tail every hero prompt carries — the motion
- * sports look (matte black equipment, red accents, bright clean setting) plus
- * the hard rules image models need stated explicitly. Appended to the AI
- * scene suggestion and shown to the operator as part of the editable text.
- */
-export const HERO_PROMPT_STYLE_TAIL =
-  "Photorealistic premium e-commerce hero shot in a bright modern home gym: " +
-  "clean white and light-grey concrete surfaces, soft natural daylight from a " +
-  "large window, matte black fitness equipment with subtle red accents, shallow " +
-  "depth of field, calm and motivating mood. WIDE LANDSCAPE composition (3:2). " +
-  "IMPORTANT COMPOSITION RULE: the left 45% of the frame must stay very bright, " +
-  "soft and almost empty — an out-of-focus near-white wall or floor area that " +
-  "fades smoothly into the scene — because dark headline text is placed there; " +
-  "all products and visual interest belong in the right half. Strictly no text, " +
-  "no lettering, no logos, no watermarks, no human faces.";
-
 /** The default hero asset used when a send has no custom hero. */
 export function defaultHeroImageUrl(): string {
   return process.env.EMAIL_HERO_DEFAULT_URL || `${getBaseUrl()}/email-hero-default.jpg`;
@@ -71,12 +72,29 @@ export function isHeroGenerationConfigured(): boolean {
 }
 
 interface HeroContext {
+  /** Recommended product NAMES (for the headline's sense of what's offered). */
   productNames: string[];
+  /** Recommended product CATEGORIES — what the image model can actually draw. */
+  productCategories: string[];
   proseExcerpt: string;
+  /** Labelled "Was wir über diese Person wissen" lines (may be empty). */
   extraContext: string[];
 }
 
-/** Assemble the personalisation context for one draft. Null → unknown draft. */
+/**
+ * Assemble the personalisation context for one draft — everything we legitimately
+ * know about THIS recipient, condensed into labelled lines. The richer this is,
+ * the more the hero looks like the reader's own gym instead of stock imagery:
+ *
+ *   - what they already OWN (purchase history) → the scene completes their setup
+ *   - the condensed customer understanding (goals, space, noise, level)
+ *   - the recommended products' categories → objects the image model can draw
+ *   - an attached set offer → show those pieces together
+ *   - persona / team notes / loyalty / language / season
+ *
+ * Null → the draft doesn't exist. Every individual lookup is fail-soft: a
+ * missing piece just drops out of the context.
+ */
 async function loadHeroContext(
   kind: EmailHeroKind,
   id: number
@@ -85,31 +103,86 @@ async function loadHeroContext(
     const send = await getSendById(id);
     if (!send) return null;
     const products = send.productIds.length ? await getProductsByIds(send.productIds) : [];
-    const extra: string[] = [];
-    if (send.personaLabel) extra.push(`Persona: ${send.personaLabel}`);
-    if (send.adminInstructions) extra.push(`Team-Hinweise: ${send.adminInstructions}`);
+
+    // The chat customer's profile + purchases (both fail-soft).
+    let profileSummary = "";
+    let owned: string[] = [];
+    if (send.customerId) {
+      try {
+        const customer = await getCustomerById(send.customerId);
+        profileSummary = clip(customer?.profileSummary ?? "", MAX_PROFILE_CHARS);
+        owned = ownedProductTitles(customer?.purchaseSummary);
+      } catch (err) {
+        reportError(err, { route: "lib/email-hero", phase: "customerContext" });
+      }
+    }
+
+    let bundleTitles: string[] = [];
+    try {
+      const bundle = await getActiveBundleForSend(id);
+      bundleTitles = (bundle?.components ?? [])
+        .map((c) => (typeof c.title === "string" ? c.title : ""))
+        .filter(Boolean);
+    } catch (err) {
+      reportError(err, { route: "lib/email-hero", phase: "bundleContext" });
+    }
+
     return {
       productNames: products.map((p) => p.name),
-      proseExcerpt: (send.draftedText ?? "").slice(0, 800),
-      extraContext: extra,
+      productCategories: productCategories(products),
+      proseExcerpt: clip(send.draftedText ?? "", 800),
+      extraContext: heroContextLines({
+        "Kundenverständnis (verdichtet)": profileSummary,
+        "Bereits im Besitz (Kaufhistorie)": owned,
+        "Empfohlene Produktarten": productCategories(products),
+        "Angehängtes Set (zusammen zeigen)": bundleTitles,
+        Persona: send.personaLabel ?? "",
+        "Hinweise vom Team": send.adminInstructions ?? "",
+        Jahreszeit: seasonHint(),
+      }),
     };
   }
+
   const contact = await getContactById(id);
   const draft = await getDraftForContact(id);
   if (!contact || !draft) return null;
   const products = draft.recommendedProductIds.length
     ? await getProductsByIds(draft.recommendedProductIds)
     : [];
+
+  // This audience never chatted — their order record IS the personalisation.
+  const owned = ownedProductTitles(draft.purchaseSummary);
+  let bundleTitles: string[] = [];
+  try {
+    const bundle = await getActiveBundleForCampaignContact(id);
+    bundleTitles = (bundle?.components ?? [])
+      .map((c) => (typeof c.title === "string" ? c.title : ""))
+      .filter(Boolean);
+  } catch (err) {
+    reportError(err, { route: "lib/email-hero", phase: "bundleContext" });
+  }
+
   return {
     productNames: products.map((p) => p.name),
-    proseExcerpt: draft.body.slice(0, 800),
-    extraContext: contact.language === "en" ? ["Empfänger-Sprache: Englisch"] : [],
+    productCategories: productCategories(products),
+    proseExcerpt: clip(draft.body, 800),
+    extraContext: heroContextLines({
+      "Bereits im Besitz (Kaufhistorie)": owned,
+      "Empfohlene Produktarten": productCategories(products),
+      "Angehängtes Set (zusammen zeigen)": bundleTitles,
+      Kundenstatus: loyaltyHint(contact.ordersCount, contact.totalSpentCents),
+      Vorname: contact.firstName ?? "",
+      "Empfänger-Sprache": contact.language === "en" ? "Englisch" : "Deutsch",
+      Jahreszeit: seasonHint(),
+    }),
   };
 }
 
 /** Deterministic fallback scene when the prompt model is unavailable/fails. */
 function fallbackScene(ctx: HeroContext): string {
-  const items = ctx.productNames.slice(0, 3).join(", ");
+  const items = (ctx.productCategories.length ? ctx.productCategories : ctx.productNames)
+    .slice(0, 3)
+    .join(", ");
   return items
     ? `A styled arrangement of fitness equipment inspired by: ${items} — placed on a light concrete floor in front of a power rack, composed like a premium sports-brand campaign visual.`
     : "A styled arrangement of premium home-gym accessories — resistance bands, a black steel water bottle and a folded floor mat — on a light concrete floor in front of a power rack.";
@@ -163,17 +236,38 @@ export async function suggestHeroPrompt(
         schema: heroSuggestionSchema,
         system:
           "Du entwirfst den HERO einer personalisierten E-Mail eines " +
-          "Fitness-Shops — das Erste, was diese eine Person sieht: eine " +
-          "Bild-Szene (englisch, für ein Bildmodell) und eine deutsche " +
-          "Schlagzeile aus genau zwei kurzen Zeilen. Beides muss zu den " +
-          "empfohlenen Produkten und zur Geschichte dieser E-Mail passen.",
+          "Fitness-Shops (motion sports) — das Erste, was diese eine Person " +
+          "sieht, und der Hebel dafür, ob sie weiterliest.\n\n" +
+          "SZENE (englisch, für ein Bildmodell): Sie soll wie das Setup " +
+          "DIESER Person wirken, nicht wie ein Stockfoto. Nutze dafür in " +
+          "dieser Reihenfolge: (1) was die Person bereits besitzt — die neuen " +
+          "Teile ERGÄNZEN sichtbar ein bestehendes Setup, (2) die " +
+          "Rahmenbedingungen aus dem Kundenverständnis (Platz, Lautstärke, " +
+          "Wohnung vs. Keller vs. Garage, Niveau), (3) die empfohlenen " +
+          "PRODUKTARTEN als konkrete Objekte (Markennamen sagen dem Bildmodell " +
+          "nichts — beschreibe die Gegenstände), (4) ein angehängtes Set als " +
+          "zusammengehörige Gruppe, (5) die Jahreszeit für Licht und Stimmung.\n\n" +
+          "SCHLAGZEILE (deutsch, zwei kurze Zeilen): Sie benennt das ZIEL oder " +
+          "die konkrete Situation dieser Person („Dein Rack. Jetzt komplett.“, " +
+          "„Leise trainieren. Endlich.“) — nicht das Produkt und keine " +
+          "Allgemeinplätze. Bei englischsprachigen Empfänger:innen auf " +
+          "Englisch.\n\n" +
+          "VERBOTEN in der Schlagzeile: Rabatt-Prozente, Preise oder " +
+          "Verfügbarkeiten (die stehen deterministisch an anderer Stelle der " +
+          "E-Mail und würden hier veralten), Produktnamen, Anrede/Name.",
         prompt: [
           ctx.productNames.length
-            ? `Empfohlene Produkte:\n${ctx.productNames.map((n) => `- ${n}`).join("\n")}`
-            : "Empfohlene Produkte: (keine — allgemeines Home-Gym-Zubehör)",
-          ctx.proseExcerpt ? `\nE-Mail-Text (Auszug):\n${ctx.proseExcerpt}` : "",
-          ctx.extraContext.length ? `\n${ctx.extraContext.join("\n")}` : "",
-          "\nEntwirf Szene und Schlagzeile.",
+            ? `## Empfohlene Produkte (Inhalt dieser E-Mail)\n${ctx.productNames
+                .map((n) => `- ${n}`)
+                .join("\n")}`
+            : "## Empfohlene Produkte\n(keine — allgemeines Home-Gym-Zubehör)",
+          ctx.extraContext.length
+            ? `\n## Was wir über diese Person wissen\n${ctx.extraContext
+                .map((l) => `- ${l}`)
+                .join("\n")}`
+            : "",
+          ctx.proseExcerpt ? `\n## E-Mail-Text (Auszug)\n${ctx.proseExcerpt}` : "",
+          "\nEntwirf Szene und Schlagzeile für genau diese Person.",
         ].join("\n"),
       });
       await recordAiUsage({
@@ -222,7 +316,7 @@ export async function generateHeroImage(
     const client = new OpenAI();
     const res = await client.images.generate({
       model: IMAGE_MODEL,
-      prompt: trimmed,
+      prompt: ensureHeroStyleTail(trimmed),
       size: IMAGE_SIZE,
     });
     const b64 = res.data?.[0]?.b64_json;
@@ -243,7 +337,7 @@ export async function generateHeroImage(
       { access: "public", contentType: "image/png", addRandomSuffix: false }
     );
 
-    const saved = await setEmailHero(kind, id, blob.url, trimmed);
+    const saved = await setEmailHero(kind, id, blob.url, ensureHeroStyleTail(trimmed));
     if (!saved.ok) {
       return {
         ok: false,

@@ -134,6 +134,21 @@ Gmail/Apple Mail, VML-`v:rect` für Outlook, `bgcolor`-Fallback wenn Bilder
 blockiert sind; auf dem Handy wird der Hintergrund abgeschaltet und das Bild
 als eigene Zeile **unter** dem Text gezeigt.
 
+**Was die KI über die Person weiß** (`email-hero-context.mjs`, getestet): das
+verdichtete **Kundenverständnis** (Ziele, Platz, Lautstärke, Niveau), die
+**Kaufhistorie** (was schon da ist — die neue Ausrüstung ergänzt sichtbar das
+bestehende Setup), die **Produktarten** der Empfehlungen statt der Markennamen
+(die sagen einem Bildmodell nichts), ein **angehängtes Set** als Gruppe,
+Persona/Team-Hinweise, bei Kampagnen zusätzlich **Kundenstatus** (Erstkäufer:in
+bis Stammkund:in) und Sprache — plus die **Jahreszeit** für Licht und Stimmung.
+Die Schlagzeile benennt Ziel oder Situation der Person; Rabatte, Preise und
+Produktnamen sind darin bewusst verboten (sie stehen deterministisch an anderer
+Stelle und würden hier veralten).
+
+Alte gespeicherte Prompts werden beim Generieren automatisch auf die aktuellen
+Stil-Regeln gehoben (`ensureHeroStyleTail`) — ein vor der Querformat-Umstellung
+gespeicherter Prompt kann das Layout nicht mehr sabotieren.
+
 Benötigt: `OPENAI_API_KEY` + `BLOB_READ_WRITE_TOKEN`. Alles fail-soft: ohne
 Konfiguration/Bild rendert immer das Standard-Bild, nie ein gebrochener
 Versand.
@@ -162,6 +177,7 @@ würde es links und rechts beschnitten und der Text stünde auf dem Motiv.)
 | `src/lib/email-designs/registry.ts` | Registry + `EmailDesignDefinition` + Auflösung (classic ← base ← variant) |
 | `src/lib/email-designs/studio.ts` | Beispiel-Design (Referenz zum Kopieren) |
 | `src/lib/email-designs/performance.ts` | Bild-orientiertes Conversion-Design (Voll-Shell + Hero) |
+| `src/lib/email-hero-context.mjs` | Was die KI über die Person erfährt (Kaufhistorie, Profil, Kategorien, Saison) — pur & getestet |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |
 | `src/app/admin/HeroImagePanel.tsx` | Hero-Panel (Bild + Schlagzeile) in Kunden-/Kampagnen-Workspace |
 | `src/lib/email-rating.mjs` + `api/newsletter-rating` | Smiley-Bewertung (anonym, landet im Feedback-Tab) |
