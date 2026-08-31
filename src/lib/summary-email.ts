@@ -31,8 +31,11 @@ import {
   renderBrandedEmail,
   renderSectionBand,
   renderSectionRow,
-  EMAIL_TEXT_STYLE,
+  emailTextStyle,
+  emailLinkStyle,
 } from "./email-template";
+import { withEmailTheme } from "./email-theme-context";
+import { getCachedThemeForKind } from "./email-theme-store";
 import { partitionSummaryProducts } from "./summary-products.mjs";
 import { renderEmailProseHtml, productNameLookup } from "./email-prose.mjs";
 import { renderEmailProductGrid, productGridItem } from "./email-products";
@@ -222,6 +225,7 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
   // name when it's a known product URL) — never a raw pasted URL.
   const summaryHtml = renderEmailProseHtml(summary, {
     labelForUrl: productNameLookup([...chosenProducts, ...alternatives]),
+    linkStyle: emailLinkStyle(),
   });
 
   // --- text part — same top-to-bottom order as the HTML ---
@@ -261,22 +265,22 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
   // "Zur Kasse" pill; the sign-off closes the card before the footer.
   const bodyHtml = en
     ? `
-                    <p style="${EMAIL_TEXT_STYLE}" align="left">Hello,</p>
-                    <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="left">thank you for your consultation at <strong>motion sports</strong>. Here is your summary:</p>
+                    <p style="${emailTextStyle()}" align="left">Hello,</p>
+                    <p style="${emailTextStyle()} padding-top: 10px; padding-bottom: 10px;" align="left">thank you for your consultation at <strong>motion sports</strong>. Here is your summary:</p>
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
                       <tr>
                         <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#eeeeee" valign="top">
-                          <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${summaryHtml}</p>
+                          <p style="${emailTextStyle()} white-space: pre-wrap;" align="left">${summaryHtml}</p>
                         </th>
                       </tr>
                     </table>`
     : `
-                    <p style="${EMAIL_TEXT_STYLE}" align="left">Hallo,</p>
-                    <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="left">vielen Dank f&#252;r deine Beratung bei <strong>motion sports</strong>. Hier ist deine Zusammenfassung:</p>
+                    <p style="${emailTextStyle()}" align="left">Hallo,</p>
+                    <p style="${emailTextStyle()} padding-top: 10px; padding-bottom: 10px;" align="left">vielen Dank f&#252;r deine Beratung bei <strong>motion sports</strong>. Hier ist deine Zusammenfassung:</p>
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
                       <tr>
                         <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#eeeeee" valign="top">
-                          <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${summaryHtml}</p>
+                          <p style="${emailTextStyle()} white-space: pre-wrap;" align="left">${summaryHtml}</p>
                         </th>
                       </tr>
                     </table>`;
@@ -284,11 +288,11 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
   const signOffRow = renderSectionRow(
     en
       ? `
-                    <p style="${EMAIL_TEXT_STYLE}" align="center">If you have any questions, you can reply to this email at any time.</p>
-                    <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="center">Best regards<br>Your motion sports team</p>`
+                    <p style="${emailTextStyle()}" align="center">If you have any questions, you can reply to this email at any time.</p>
+                    <p style="${emailTextStyle()} padding-top: 10px;" align="center">Best regards<br>Your motion sports team</p>`
       : `
-                    <p style="${EMAIL_TEXT_STYLE}" align="center">Bei Fragen kannst du jederzeit auf diese E-Mail antworten.</p>
-                    <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
+                    <p style="${emailTextStyle()}" align="center">Bei Fragen kannst du jederzeit auf diese E-Mail antworten.</p>
+                    <p style="${emailTextStyle()} padding-top: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
     { padding: "20px 60px 10px", align: "center" }
   );
 
@@ -408,13 +412,18 @@ export async function buildSummaryDocument(params: {
 
   const summary = await buildSummaryText(turns, usage, locale);
 
-  const { text, html } = buildSummaryEmailContent({
-    summary,
-    chosenProducts,
-    alternatives,
-    cartUrl,
-    locale,
-  });
+  // Render inside the operator-assigned design template (admin Einstellungen);
+  // null → the built-in default design. Fail-soft: never blocks the summary.
+  const theme = await getCachedThemeForKind("summary");
+  const { text, html } = withEmailTheme(theme, () =>
+    buildSummaryEmailContent({
+      summary,
+      chosenProducts,
+      alternatives,
+      cartUrl,
+      locale,
+    })
+  );
 
   // Structured pieces for the PDF download — derived from the SAME chosen /
   // alternatives / summary the email rendered, so the two render targets can't

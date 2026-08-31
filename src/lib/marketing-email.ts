@@ -36,9 +36,12 @@ import {
   renderSectionBand,
   renderSectionRow,
   escapeHtml,
-  EMAIL_TEXT_STYLE,
-  EMAIL_MUTED_TEXT_STYLE,
+  emailTextStyle,
+  emailMutedTextStyle,
+  emailLinkStyle,
 } from "./email-template";
+import { withEmailTheme } from "./email-theme-context";
+import { getCachedThemeForKind } from "./email-theme-store";
 import {
   renderEmailProductRows,
   productRowItems,
@@ -280,7 +283,10 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       // send, so it degrades to "no block".
       const bundle = await buildBundleBlockForSend(sendId, claimed.productHighlights);
 
-      const { text, html } = renderMarketingEmail({
+      // Render inside the operator-assigned design template (admin
+      // Einstellungen); null → built-in default. Fail-soft, never blocks.
+      const emailTheme = await getCachedThemeForKind("marketing");
+      const { text, html } = await withEmailTheme(emailTheme, async () => renderMarketingEmail({
         subject: claimed.subject ?? "motion sports",
         body,
         // The customer sees/clicks the tracked redirect URL, not the raw cart.
@@ -296,7 +302,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         unsubscribe: unsubscribeFooter(unsubscribeUrl),
         bundle,
         labelForUrl: await catalogNameLookup(),
-      });
+      }));
 
       // Our own Message-ID + an inbound Reply-To so a reply threads back into
       // the unified mail log (mirror-write below).
@@ -479,7 +485,10 @@ export async function renderMarketingEmailPreview(
 
   const bundle = await buildBundleBlockForSend(sendId, send.productHighlights);
 
-  const { html } = renderMarketingEmail({
+  // The preview renders inside the SAME assigned design template as the send
+  // path, so what the operator reviews is what ships.
+  const emailTheme = await getCachedThemeForKind("marketing");
+  const { html } = await withEmailTheme(emailTheme, async () => renderMarketingEmail({
     subject,
     body,
     linkUrl: cart.url,
@@ -493,7 +502,7 @@ export async function renderMarketingEmailPreview(
     unsubscribe: unsubscribeFooter(unsubscribeUrl),
     bundle,
     labelForUrl: await catalogNameLookup(),
-  });
+  }));
   return { ok: true, subject, html };
 }
 
@@ -577,12 +586,12 @@ export function renderMarketingEmail(opts: {
   // which a content edit can never remove.
   const discountNote = linkUrl
     ? discountCode
-      ? `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 5px; padding-bottom: 10px;" align="center">Dein pers&#246;nlicher Code <strong>${escapeHtml(
+      ? `<p style="${emailMutedTextStyle()} padding-top: 5px; padding-bottom: 10px;" align="center">Dein pers&#246;nlicher Code <strong>${escapeHtml(
           discountCode
         )}</strong> ist im Warenkorb bereits hinterlegt${escapeHtml(validityNote)}.</p>`
       : ""
     : discountCode
-      ? `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 5px; padding-bottom: 10px;" align="center">Dein pers&#246;nlicher Code: <strong>${escapeHtml(
+      ? `<p style="${emailMutedTextStyle()} padding-top: 5px; padding-bottom: 10px;" align="center">Dein pers&#246;nlicher Code: <strong>${escapeHtml(
           discountCode
         )}</strong>${escapeHtml(validityNote)}.</p>`
       : "";
@@ -607,9 +616,9 @@ export function renderMarketingEmail(opts: {
     // Prose links (markdown + bare URLs) render as clickable text — never a
     // raw pasted URL.
     bodyHtml: `
-                    <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
+                    <p style="${emailTextStyle()} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
                       body.trim(),
-                      { labelForUrl: opts.labelForUrl }
+                      { labelForUrl: opts.labelForUrl, linkStyle: emailLinkStyle() }
                     )}</p>`,
     // Full-width newsletter sections between prose and the cart pill: the
     // product picture grid, then the bundle special-offer block (if any).
