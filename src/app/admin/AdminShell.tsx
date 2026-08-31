@@ -28,7 +28,8 @@ export type AdminTab =
   | "gespraeche"
   | "wissen"
   | "analyse"
-  | "verbesserung";
+  | "verbesserung"
+  | "einstellungen";
 
 const TAB_ORDER: AdminTab[] = [
   "overview",
@@ -40,6 +41,7 @@ const TAB_ORDER: AdminTab[] = [
   "wissen",
   "analyse",
   "verbesserung",
+  "einstellungen",
 ];
 
 const TAB_LABEL: Record<AdminTab, string> = {
@@ -52,6 +54,7 @@ const TAB_LABEL: Record<AdminTab, string> = {
   wissen: "Wissen",
   analyse: "Analyse",
   verbesserung: "Verbesserung",
+  einstellungen: "Einstellungen",
 };
 
 const TAB_SUBTITLE: Record<AdminTab, string> = {
@@ -70,6 +73,8 @@ const TAB_SUBTITLE: Record<AdminTab, string> = {
     "Analyse · Komplettanalysen je Zeitintervall — alle KI-Auswertungen verdichtet, gespeichert & als PDF",
   verbesserung:
     "Verbesserung · Mo analysiert die Komplettanalyse & schlägt Verbesserungen vor — für den Shop & für sich selbst",
+  einstellungen:
+    "Einstellungen · E-Mail-Vorlagen gestalten, E-Mail-Typen zuordnen & Versand-Konfiguration prüfen",
 };
 
 // The Übersicht tab is the bare /admin (the default landing tab); every other
@@ -91,6 +96,7 @@ export function AdminShell({
   wissen,
   analyse,
   verbesserung,
+  einstellungen,
 }: {
   initialTab: AdminTab;
   themeInitial: Theme | null;
@@ -104,6 +110,7 @@ export function AdminShell({
   wissen: React.ReactNode;
   analyse: React.ReactNode;
   verbesserung: React.ReactNode;
+  einstellungen: React.ReactNode;
 }) {
   const [tab, setTab] = React.useState<AdminTab>(initialTab);
 
@@ -125,6 +132,7 @@ export function AdminShell({
     wissen,
     analyse,
     verbesserung,
+    einstellungen,
   };
 
   // Graceful URL sync: keep the query param current so a refresh or a copied
@@ -169,7 +177,7 @@ export function AdminShell({
         return;
       }
 
-      if (e.key >= "1" && e.key <= String(TAB_ORDER.length)) {
+      if (/^[1-9]$/.test(e.key) && Number(e.key) <= TAB_ORDER.length) {
         const next = TAB_ORDER[Number(e.key) - 1];
         if (next) {
           e.preventDefault();

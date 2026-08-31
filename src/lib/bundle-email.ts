@@ -20,10 +20,10 @@ import {
   renderSectionBand,
   renderSectionRow,
   escapeHtml,
-  EMAIL_ACCENT_COLOR,
-  EMAIL_FONT_FAMILY,
+  emailAccentColor,
+  emailFontFamily,
+  emailTextStyle,
   EMAIL_SALE_STRIKE_COLOR,
-  EMAIL_TEXT_STYLE,
 } from "./email-template";
 import { renderEmailProductRows } from "./email-products";
 import { bundleStattPrice } from "./bundle-email-core.mjs";
@@ -147,7 +147,7 @@ export function renderBundleOfferBlock(input: BundleOfferBlockInput): { text: st
   // component sum struck through in red, the set price big and bold, and a
   // "Du sparst …" line in the accent color (only when the saving is genuine).
   const priceStyleBase =
-    `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
+    `mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; ` +
     `Margin: 0; padding: 0;`;
   const priceHtml =
     `<p style="${priceStyleBase} font-size: 11px; line-height: 1.5; letter-spacing: 1px; text-transform: uppercase; color: #757575;" align="center">${escapeHtml(labels.price)}</p>` +
@@ -156,14 +156,14 @@ export function renderBundleOfferBlock(input: BundleOfferBlockInput): { text: st
       : "") +
     `<p style="${priceStyleBase} font-size: 24px; line-height: 1.3; font-weight: 700; color: #000000; padding-top: 2px;" align="center"><strong>${escapeHtml(priceLabel)}</strong></p>` +
     (savingLabel && savingPct != null
-      ? `<p style="${priceStyleBase} font-size: 13px; line-height: 1.5; font-weight: 700; color: ${EMAIL_ACCENT_COLOR}; padding-top: 4px;" align="center"><strong>${escapeHtml(labels.save)} ${escapeHtml(savingLabel)} (${savingPct}&nbsp;%)</strong></p>`
+      ? `<p style="${priceStyleBase} font-size: 13px; line-height: 1.5; font-weight: 700; color: ${emailAccentColor()}; padding-top: 4px;" align="center"><strong>${escapeHtml(labels.save)} ${escapeHtml(savingLabel)} (${savingPct}&nbsp;%)</strong></p>`
       : "");
 
   const html =
     renderSectionBand(labels.kicker) +
     renderSectionRow(
       `
-                    <p style="${EMAIL_TEXT_STYLE} font-size: 15px; font-weight: 700;" align="center"><strong>${escapeHtml(input.title)}</strong></p>`,
+                    <p style="${emailTextStyle()} font-size: 15px; font-weight: 700;" align="center"><strong>${escapeHtml(input.title)}</strong></p>`,
       { padding: "25px 60px 0", align: "center" }
     ) +
     renderSectionRow(rowsHtml, { padding: "0 60px 10px", align: "center" }) +

@@ -26,43 +26,69 @@
 //     (Gmail/Apple Mail play it; Outlook desktop shows the first frame).
 //     Everything else stays static.
 
+// THEMING: every design token below reads the ACTIVE email theme (the operator
+// "Vorlage" assigned to the email type being rendered — email-theme-context.ts,
+// set by the async send/preview entry points via withEmailTheme). Outside any
+// wrapper the getters return the built-in default, which is exactly the
+// original hard-coded design described above.
+
 /** Brand accent used for CTA buttons (matches the shop's newsletter emails). */
-export const EMAIL_ACCENT_COLOR = "#008ccb";
+export function emailAccentColor(): string {
+  return activeEmailTheme().accentColor;
+}
 
 /** Red used for struck-through compare-at prices (newsletter product grid). */
 export const EMAIL_SALE_STRIKE_COLOR = "#c61724";
 
 /**
- * Font stack used on every inline style. Montserrat is the brand font (loaded
- * via the web-font <link>/@import in the shell's <head>); clients that don't
- * load web fonts (Gmail, Outlook, …) fall back to Verdana/Geneva — the shop's
- * previous newsletter type.
+ * Font stack used on every inline style. Montserrat is the default brand font
+ * (loaded via the web-font <link>/@import in the shell's <head>); clients that
+ * don't load web fonts (Gmail, Outlook, …) fall back to Verdana/Geneva — the
+ * shop's previous newsletter type. Themes may pick a different (system) stack.
  */
-export const EMAIL_FONT_FAMILY = "'Montserrat', Verdana, Geneva, sans-serif";
+export function emailFontFamily(): string {
+  return fontStackFor(activeEmailTheme().fontFamily);
+}
 
 /**
  * Inline style for a normal body paragraph/text cell. Callers building
  * `bodyHtml` should use this so their content matches the shell.
  */
-export const EMAIL_TEXT_STYLE =
-  `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
-  `font-size: 13px; line-height: 1.5; font-weight: 400; text-transform: none; ` +
-  `color: #000000; Margin: 0;`;
+export function emailTextStyle(): string {
+  return (
+    `mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; ` +
+    `font-size: 13px; line-height: 1.5; font-weight: 400; text-transform: none; ` +
+    `color: #000000; Margin: 0;`
+  );
+}
 
 /** Inline style for small print (12px, black like the newsletter footer). */
-export const EMAIL_MUTED_TEXT_STYLE =
-  `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
-  `font-size: 12px; line-height: 1.5; font-weight: 400; text-transform: none; ` +
-  `color: #000000; Margin: 0;`;
+export function emailMutedTextStyle(): string {
+  return (
+    `mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; ` +
+    `font-size: 12px; line-height: 1.5; font-weight: 400; text-transform: none; ` +
+    `color: #000000; Margin: 0;`
+  );
+}
+
+/** Inline style for prose links (email-prose.mjs) — the theme's accent. */
+export function emailLinkStyle(): string {
+  return `color: ${emailAccentColor()}; text-decoration: underline; word-wrap: break-word;`;
+}
+
+/** Border-radius of CTA/product buttons — the theme's button shape. */
+export function emailButtonRadius(): string {
+  return buttonRadiusFor(activeEmailTheme().buttonShape);
+}
 
 // Static brand logo — the SAME square asset the shop's Shopify newsletter
 // emails use (absolute https URL on a public CDN, NOT an animated file).
-// Override with EMAIL_LOGO_URL to host a different asset.
+// A theme's logo override wins; EMAIL_LOGO_URL overrides the built-in default.
 const DEFAULT_LOGO_URL =
   "https://cdn.shopify.com/shopify-email/5qyp9svuofng6eftj0lt3qeva83o.png?width=960&height=960";
 
 export function emailLogoUrl(): string {
-  return process.env.EMAIL_LOGO_URL || DEFAULT_LOGO_URL;
+  return activeEmailTheme().logoUrl || process.env.EMAIL_LOGO_URL || DEFAULT_LOGO_URL;
 }
 
 /**
@@ -78,6 +104,8 @@ export function emailMoIconUrl(): string {
 
 import { escapeHtml, escapeAttr } from "./html-escape";
 import { getBaseUrl } from "./base-url";
+import { activeEmailTheme } from "./email-theme-context";
+import { buttonRadiusFor, fontNeedsWebFont, fontStackFor } from "./email-theme.mjs";
 import type { Locale } from "./locale";
 export { escapeHtml, escapeAttr };
 
@@ -104,7 +132,7 @@ export interface BrandedEmailOptions {
   /**
    * Inner HTML of the content block (between heading band and CTA). Callers
    * MUST escape any user-derived data themselves and should style text with
-   * EMAIL_TEXT_STYLE / EMAIL_MUTED_TEXT_STYLE.
+   * emailTextStyle() / emailMutedTextStyle().
    */
   bodyHtml: string;
   /**
@@ -184,10 +212,11 @@ const IMPRINT_URL = "https://motionsports.de/pages/impressum";
  * or rely on the shell's heading which renders through this too.
  */
 export function renderSectionBand(title: string): string {
+  const theme = activeEmailTheme();
   return `
                 <tr>
-                  <td class="content-pad" align="center" bgcolor="#000000" style="mso-line-height-rule: exactly; padding: 25px 60px;">
-                    <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 20px; line-height: 1.4; font-weight: 400; color: #ffffff; Margin: 0;" align="center">${escapeHtml(title)}</p>
+                  <td class="content-pad" align="center" bgcolor="${theme.bandBackground}" style="mso-line-height-rule: exactly; padding: 25px 60px;">
+                    <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; font-size: 20px; line-height: 1.4; font-weight: 400; color: ${theme.bandTextColor}; Margin: 0;" align="center">${escapeHtml(title)}</p>
                   </td>
                 </tr>`;
 }
@@ -217,11 +246,13 @@ export function renderSectionRow(
  * standalone table — the shell (or a section like the bundle card) places it.
  */
 export function renderCtaButton(cta: EmailCta): string {
+  const accent = emailAccentColor();
+  const radius = buttonRadiusFor(activeEmailTheme().buttonShape);
   return `
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important;">
                       <tr>
-                        <td align="center" bgcolor="${EMAIL_ACCENT_COLOR}" style="mso-line-height-rule: exactly; border-radius: 200px;" valign="top">
-                          <a href="${escapeAttr(cta.url)}" target="_blank" style="font-size: 12px; color: #ffffff; text-decoration: none; border-radius: 200px; background-color: ${EMAIL_ACCENT_COLOR}; display: block; min-width: 80px; font-family: ${EMAIL_FONT_FAMILY}; font-weight: 400; font-style: normal; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; word-break: break-word; padding: 14px 28px; border: 3px solid ${EMAIL_ACCENT_COLOR};"><strong>${escapeHtml(cta.label)}</strong></a>
+                        <td align="center" bgcolor="${accent}" style="mso-line-height-rule: exactly; border-radius: ${radius};" valign="top">
+                          <a href="${escapeAttr(cta.url)}" target="_blank" style="font-size: 12px; color: #ffffff; text-decoration: none; border-radius: ${radius}; background-color: ${accent}; display: block; min-width: 80px; font-family: ${emailFontFamily()}; font-weight: 400; font-style: normal; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; word-break: break-word; padding: 14px 28px; border: 3px solid ${accent};"><strong>${escapeHtml(cta.label)}</strong></a>
                         </td>
                       </tr>
                     </table>`;
@@ -246,11 +277,31 @@ function renderSocialRow(): string {
  * matching plain-text part stays the caller's responsibility.
  */
 export function renderBrandedEmail(opts: BrandedEmailOptions): string {
+  const theme = activeEmailTheme();
   const logo = emailLogoUrl();
-  const showSocial = opts.footer?.showSocial !== false;
+  const font = emailFontFamily();
+  const outerBg = theme.outerBackground;
+  // The caller's per-email opt-out AND the theme's toggle both hide the row.
+  const showSocial = opts.footer?.showSocial !== false && theme.showSocial;
   const year = new Date().getFullYear();
   const locale: Locale = opts.locale ?? "de";
   const en = locale === "en";
+
+  // The Montserrat web-font <link>/@import is emitted only when the theme's
+  // stack actually uses it; system stacks (Arial, Georgia, …) need no request.
+  // The MSO fallback pins Outlook desktop to the stack's web-safe fonts.
+  const msoFallbackStack = fontNeedsWebFont(theme.fontFamily)
+    ? "Verdana, Geneva, sans-serif"
+    : fontStackFor(theme.fontFamily);
+  const webFontHead = fontNeedsWebFont(theme.fontFamily)
+    ? `
+    <!--[if !mso]><!-->
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&amp;display=swap" rel="stylesheet" type="text/css">
+    <style type="text/css">
+      @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');
+    </style>
+    <!--<![endif]-->`
+    : "";
 
   const preheaderHtml = opts.preheader
     ? `
@@ -302,15 +353,9 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
     <title>${escapeHtml(opts.subject)}</title>
     <!--[if mso]>
     <style>
-      * { font-family: Verdana, Geneva, sans-serif !important; }
+      * { font-family: ${msoFallbackStack} !important; }
     </style>
-    <![endif]-->
-    <!--[if !mso]><!-->
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&amp;display=swap" rel="stylesheet" type="text/css">
-    <style type="text/css">
-      @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');
-    </style>
-    <!--<![endif]-->
+    <![endif]-->${webFontHead}
     <style type="text/css">
       /* Progressive enhancement ONLY — every critical style is inline. */
       html, body { Margin: 0 auto !important; padding: 0 !important; width: 100% !important; }
@@ -330,9 +375,9 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
       }
     </style>
   </head>
-  <body id="body" bgcolor="#fafafa" style="-webkit-text-size-adjust: none; -ms-text-size-adjust: none; background-color: #fafafa; Margin: 0; padding: 0;">${preheaderHtml}
+  <body id="body" bgcolor="${outerBg}" style="-webkit-text-size-adjust: none; -ms-text-size-adjust: none; background-color: ${outerBg}; Margin: 0; padding: 0;">${preheaderHtml}
     <!-- BEGIN: CONTAINER -->
-    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse: collapse; min-width: 100%; direction: ltr;" role="presentation" bgcolor="#fafafa">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse: collapse; min-width: 100%; direction: ltr;" role="presentation" bgcolor="${outerBg}">
       <tbody>
         <tr>
           <td align="center" valign="top" style="mso-line-height-rule: exactly;">
@@ -375,13 +420,13 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
                       }
                           <tr>
                             <td align="center" style="mso-line-height-rule: exactly; padding-bottom: 8px;" valign="top">
-                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 11px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center">4motionsports GmbH<br>Am Weidegrund 1, 82194 Gr&#246;benzell, Deutschland<br>Gesch&#228;ftsf&#252;hrer: Sabine Brunner, Lucas Brunner</p>
-                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 11px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center"><a href="tel:+49(0)8142%20448666" style="color: #000000; text-decoration: underline;">+49(0)8142 448666</a> <strong>&#183;</strong> <a href="mailto:info@motionsports.de" style="color: #000000; text-decoration: underline;">info@motionsports.de</a></p>
+                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${font}; font-size: 11px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center">4motionsports GmbH<br>Am Weidegrund 1, 82194 Gr&#246;benzell, Deutschland<br>Gesch&#228;ftsf&#252;hrer: Sabine Brunner, Lucas Brunner</p>
+                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${font}; font-size: 11px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center"><a href="tel:+49(0)8142%20448666" style="color: #000000; text-decoration: underline;">+49(0)8142 448666</a> <strong>&#183;</strong> <a href="mailto:info@motionsports.de" style="color: #000000; text-decoration: underline;">info@motionsports.de</a></p>
                             </td>
                           </tr>${unsubscribeBlock}
                           <tr>
                             <td align="center" style="mso-line-height-rule: exactly; padding-top: 8px;" valign="top">
-                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; font-size: 12px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center">&#169; ${year} motion sports &#183; <a href="${escapeAttr(IMPRINT_URL)}" target="_blank" style="color: #000000; text-decoration: underline;">${en ? "Imprint" : "Impressum"}</a></p>
+                              <p style="mso-line-height-rule: exactly; direction: ltr; font-family: ${font}; font-size: 12px; line-height: 1.5; font-weight: 400; color: #000000; Margin: 0;" align="center">&#169; ${year} motion sports &#183; <a href="${escapeAttr(IMPRINT_URL)}" target="_blank" style="color: #000000; text-decoration: underline;">${en ? "Imprint" : "Impressum"}</a></p>
                             </td>
                           </tr>
                       </tbody>

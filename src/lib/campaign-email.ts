@@ -51,6 +51,8 @@ import {
 import { parseIntEnv } from "./env-num";
 import { sendEmail } from "./email";
 import { outboundThreading } from "./email-inbound";
+import { withEmailTheme } from "./email-theme-context";
+import { getCachedThemeForKind } from "./email-theme-store";
 import {
   renderBrandedEmail,
   renderSectionBand,
@@ -58,8 +60,9 @@ import {
   emailMoIconUrl,
   escapeHtml,
   escapeAttr,
-  EMAIL_TEXT_STYLE,
-  EMAIL_MUTED_TEXT_STYLE,
+  emailTextStyle,
+  emailMutedTextStyle,
+  emailLinkStyle,
 } from "./email-template";
 import {
   renderEmailProductRows,
@@ -291,7 +294,10 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       const redirectToken = generateRedirectToken();
       const trackedCtaUrl = `${getBaseUrl()}/api/r/${redirectToken}`;
 
-      const { text, html } = renderCampaignEmail({
+      // Render inside the operator-assigned design template (admin
+      // Einstellungen); null → built-in default. Fail-soft, never blocks.
+      const emailTheme = await getCachedThemeForKind("campaign");
+      const { text, html } = await withEmailTheme(emailTheme, async () => renderCampaignEmail({
         subject: draft.subject,
         body,
         language: contact.language,
@@ -305,7 +311,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         bundle,
         labelForUrl: await catalogNameLookup(),
         ctaUrl: trackedCtaUrl,
-      });
+      }));
 
       const threading = outboundThreading();
       const result = await sendEmail({
@@ -510,7 +516,10 @@ export async function renderCampaignEmailPreview(
     draft.productHighlights
   );
 
-  const { html } = renderCampaignEmail({
+  // The preview renders inside the SAME assigned design template as the send
+  // path, so what the operator reviews is what ships.
+  const emailTheme = await getCachedThemeForKind("campaign");
+  const { html } = await withEmailTheme(emailTheme, async () => renderCampaignEmail({
     subject,
     body,
     language: contact.language,
@@ -524,7 +533,7 @@ export async function renderCampaignEmailPreview(
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
     bundle,
     labelForUrl: await catalogNameLookup(),
-  });
+  }));
   return { ok: true, subject, html };
 }
 
@@ -604,7 +613,7 @@ export function renderCampaignEmail(opts: {
 
   // --- html part — the shared branded template ---
   const discountNote = discountCode
-    ? `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 5px; padding-bottom: 10px;" align="center">${
+    ? `<p style="${emailMutedTextStyle()} padding-top: 5px; padding-bottom: 10px;" align="center">${
         en ? "Your personal code" : "Dein pers&#246;nlicher Code"
       }: <strong>${escapeHtml(discountCode)}</strong>${escapeHtml(validityNote)}.</p>`
     : "";
@@ -618,7 +627,7 @@ export function renderCampaignEmail(opts: {
                                         <img src="${escapeAttr(emailMoIconUrl())}" alt="Mo" width="56" height="56" border="0" style="width: 56px; height: 56px; display: block;">
                                       </td>
                                       <td valign="middle" style="mso-line-height-rule: exactly;">
-                                        <p style="${EMAIL_TEXT_STYLE}" align="left">${escapeHtml(
+                                        <p style="${emailTextStyle()}" align="left">${escapeHtml(
                                           moPromoIntroText(language)
                                         )}</p>
                                       </td>
@@ -644,9 +653,9 @@ export function renderCampaignEmail(opts: {
     // Prose links (markdown + bare URLs) render as clickable text — never a
     // raw pasted URL (email-prose.mjs).
     bodyHtml: `
-                    <p style="${EMAIL_TEXT_STYLE} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
+                    <p style="${emailTextStyle()} white-space: pre-wrap;" align="left">${renderEmailProseHtml(
                       body.trim(),
-                      { labelForUrl: opts.labelForUrl }
+                      { labelForUrl: opts.labelForUrl, linkStyle: emailLinkStyle() }
                     )}</p>`,
     // Full-width newsletter sections between the body and the CTA pill: the
     // recommended-products picture grid, the bundle offer block (if any), and

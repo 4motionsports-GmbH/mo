@@ -36,8 +36,8 @@ import {
   renderBrandedEmail,
   escapeAttr,
   escapeHtml,
-  EMAIL_TEXT_STYLE,
-  EMAIL_MUTED_TEXT_STYLE,
+  emailTextStyle,
+  emailMutedTextStyle,
 } from "./email-template";
 import {
   CONSENT_COPY_VERSION,
@@ -273,15 +273,15 @@ export function doiEmailBody(
         "Please confirm your consent with a click — only then will we send you marketing emails.",
       heading: "Confirm sign-up",
       bodyHtml: `
-                                  <p style="${EMAIL_TEXT_STYLE}" align="left">Hello,</p>
-                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">you indicated that <strong>motion sports</strong> may contact you by email with
+                                  <p style="${emailTextStyle()}" align="left">Hello,</p>
+                                  <p style="${emailTextStyle()} padding-top: 10px;" align="left">you indicated that <strong>motion sports</strong> may contact you by email with
                                   personal recommendations and offers based on your consultation.</p>
-                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">Please confirm this consent with a click on the button:</p>`,
+                                  <p style="${emailTextStyle()} padding-top: 10px;" align="left">Please confirm this consent with a click on the button:</p>`,
       ctas: [{ label: "Confirm sign-up", url: confirmUrl }],
       footnoteHtml: `
-                  <p style="${EMAIL_MUTED_TEXT_STYLE}" align="center">If the button doesn't work, copy this link into your browser:<br><a href="${escapeAttr(confirmUrl)}" style="color: #000000; word-wrap: break-word;">${escapeHtml(confirmUrl)}</a></p>
-                  <p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px;" align="center">We will only send you marketing emails after your confirmation. If you did not request this, simply ignore this email &#8212; then nothing happens.</p>
-                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Best regards<br>Your motion sports team</p>`,
+                  <p style="${emailMutedTextStyle()}" align="center">If the button doesn't work, copy this link into your browser:<br><a href="${escapeAttr(confirmUrl)}" style="color: #000000; word-wrap: break-word;">${escapeHtml(confirmUrl)}</a></p>
+                  <p style="${emailMutedTextStyle()} padding-top: 10px;" align="center">We will only send you marketing emails after your confirmation. If you did not request this, simply ignore this email &#8212; then nothing happens.</p>
+                  <p style="${emailTextStyle()} padding-top: 10px; padding-bottom: 10px;" align="center">Best regards<br>Your motion sports team</p>`,
       locale,
     });
     return { text, html };
@@ -314,16 +314,16 @@ export function doiEmailBody(
       "Bitte bestätige deine Einwilligung mit einem Klick — erst danach senden wir dir Marketing-E-Mails.",
     heading: "Anmeldung bestätigen",
     bodyHtml: `
-                                  <p style="${EMAIL_TEXT_STYLE}" align="left">Hallo,</p>
-                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">du hast angegeben, dass dich <strong>motion sports</strong> per E-Mail mit
+                                  <p style="${emailTextStyle()}" align="left">Hallo,</p>
+                                  <p style="${emailTextStyle()} padding-top: 10px;" align="left">du hast angegeben, dass dich <strong>motion sports</strong> per E-Mail mit
                                   pers&#246;nlichen Empfehlungen und Angeboten kontaktieren darf, die auf deinem
                                   Beratungsgespr&#228;ch basieren.</p>
-                                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px;" align="left">Bitte best&#228;tige diese Einwilligung mit einem Klick auf den Button:</p>`,
+                                  <p style="${emailTextStyle()} padding-top: 10px;" align="left">Bitte best&#228;tige diese Einwilligung mit einem Klick auf den Button:</p>`,
     ctas: [{ label: "Anmeldung bestätigen", url: confirmUrl }],
     footnoteHtml: `
-                  <p style="${EMAIL_MUTED_TEXT_STYLE}" align="center">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:<br><a href="${escapeAttr(confirmUrl)}" style="color: #000000; word-wrap: break-word;">${escapeHtml(confirmUrl)}</a></p>
-                  <p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px;" align="center">Erst nach deiner Best&#228;tigung senden wir dir Marketing-E-Mails. Wenn du das nicht angefordert hast, ignoriere diese E-Mail einfach &#8212; dann passiert nichts.</p>
-                  <p style="${EMAIL_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
+                  <p style="${emailMutedTextStyle()}" align="center">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:<br><a href="${escapeAttr(confirmUrl)}" style="color: #000000; word-wrap: break-word;">${escapeHtml(confirmUrl)}</a></p>
+                  <p style="${emailMutedTextStyle()} padding-top: 10px;" align="center">Erst nach deiner Best&#228;tigung senden wir dir Marketing-E-Mails. Wenn du das nicht angefordert hast, ignoriere diese E-Mail einfach &#8212; dann passiert nichts.</p>
+                  <p style="${emailTextStyle()} padding-top: 10px; padding-bottom: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
     locale,
   });
 
@@ -368,7 +368,7 @@ export function unsubscribeFooter(
       `You're receiving this email because you consented to being contacted by ` +
       `motion sports. If you no longer wish to receive emails, you can unsubscribe ` +
       `here free of charge at any time: ${unsubscribeUrl}`;
-    const html = `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">
+    const html = `<p style="${emailMutedTextStyle()} padding-top: 10px; padding-bottom: 10px;" align="center">
   You&#39;re receiving this email because you consented to being contacted by motion
   sports. If you no longer wish to receive emails, you can unsubscribe here free of
   charge at any time:
@@ -382,7 +382,7 @@ export function unsubscribeFooter(
     `du dich hier jederzeit kostenlos abmelden: ${unsubscribeUrl}`;
   // Styled for the shared branded template (which renders this in its own
   // bordered footer section). The legal sentence itself is unchanged.
-  const html = `<p style="${EMAIL_MUTED_TEXT_STYLE} padding-top: 10px; padding-bottom: 10px;" align="center">
+  const html = `<p style="${emailMutedTextStyle()} padding-top: 10px; padding-bottom: 10px;" align="center">
   Du erh&#228;ltst diese E-Mail, weil du der Kontaktaufnahme durch motion sports
   zugestimmt hast. Wenn du keine weiteren E-Mails erhalten m&#246;chtest, kannst du
   dich hier jederzeit kostenlos abmelden:

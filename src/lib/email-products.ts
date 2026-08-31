@@ -14,8 +14,9 @@
 import {
   escapeAttr,
   escapeHtml,
-  EMAIL_ACCENT_COLOR,
-  EMAIL_FONT_FAMILY,
+  emailAccentColor,
+  emailButtonRadius,
+  emailFontFamily,
   EMAIL_SALE_STRIKE_COLOR,
 } from "./email-template";
 import type { Product } from "./types";
@@ -68,15 +69,19 @@ export function productGridItem(p: Product, locale: "de" | "en" = "de"): EmailPr
   };
 }
 
-const NAME_STYLE =
-  `font-size: 12px; line-height: 1.2; color: #000000; font-family: ${EMAIL_FONT_FAMILY}; ` +
+// Style builders (not constants): the font stack comes from the ACTIVE email
+// theme, which is only known at render time (email-theme-context.ts).
+const nameStyle = () =>
+  `font-size: 12px; line-height: 1.2; color: #000000; font-family: ${emailFontFamily()}; ` +
   `font-weight: 400; font-style: normal; display: block; Margin: 0 0 10px; padding: 0;`;
 
-const PRICE_STYLE =
-  `line-height: 1.2; font-size: 12px; color: #000000; font-family: ${EMAIL_FONT_FAMILY}; ` +
+const priceStyle = () =>
+  `line-height: 1.2; font-size: 12px; color: #000000; font-family: ${emailFontFamily()}; ` +
   `font-weight: 400; font-style: normal; Margin: 0; padding: 0;`;
 
 function renderTile(item: EmailProductGridItem): string {
+  const NAME_STYLE = nameStyle();
+  const PRICE_STYLE = priceStyle();
   const href = item.url ? escapeAttr(item.url) : null;
 
   const image = item.imageUrl
@@ -99,7 +104,7 @@ function renderTile(item: EmailProductGridItem): string {
     : "";
 
   const name = href
-    ? `<a href="${href}" target="_blank" style="text-decoration: none; font-size: 12px; line-height: 1.2; color: #000000; font-family: ${EMAIL_FONT_FAMILY}; font-weight: 400; font-style: normal;">${escapeHtml(item.name)}</a>`
+    ? `<a href="${href}" target="_blank" style="text-decoration: none; font-size: 12px; line-height: 1.2; color: #000000; font-family: ${emailFontFamily()}; font-weight: 400; font-style: normal;">${escapeHtml(item.name)}</a>`
     : escapeHtml(item.name);
 
   let priceHtml = "";
@@ -182,34 +187,39 @@ export interface EmailProductRowItem extends EmailProductGridItem {
   ctaLabel?: string | null;
 }
 
-const ROW_NAME_STYLE =
-  `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
+const rowNameStyle = () =>
+  `mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; ` +
   `font-size: 14px; line-height: 1.35; color: #000000; font-weight: 700; ` +
   `Margin: 0 0 4px; padding: 0;`;
 
-const ROW_PRICE_STYLE =
-  `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
+const rowPriceStyle = () =>
+  `mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; ` +
   `font-size: 13px; line-height: 1.4; color: #000000; font-weight: 400; Margin: 0 0 8px; padding: 0;`;
 
-const ROW_DESC_STYLE =
-  `mso-line-height-rule: exactly; direction: ltr; font-family: ${EMAIL_FONT_FAMILY}; ` +
+const rowDescStyle = () =>
+  `mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; ` +
   `font-size: 13px; line-height: 1.6; color: #000000; font-weight: 400; Margin: 0; padding: 0;`;
 
 /** Small accent pill linking to the product page (right column, under the
  * description). Same visual language as the shell's bulletproof CTA, scaled
  * down so the cart button below stays the email's primary action. */
 function rowCtaButton(url: string, label: string): string {
+  const accent = emailAccentColor();
+  const radius = emailButtonRadius();
   return `
                           <table cellspacing="0" cellpadding="0" border="0" role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important; Margin-top: 12px;">
                             <tr>
-                              <td align="center" bgcolor="${EMAIL_ACCENT_COLOR}" style="mso-line-height-rule: exactly; border-radius: 200px;" valign="top">
-                                <a href="${escapeAttr(url)}" target="_blank" style="font-size: 11px; color: #ffffff; text-decoration: none; border-radius: 200px; background-color: ${EMAIL_ACCENT_COLOR}; display: block; font-family: ${EMAIL_FONT_FAMILY}; font-weight: 700; font-style: normal; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 18px; border: 2px solid ${EMAIL_ACCENT_COLOR};">${escapeHtml(label)}</a>
+                              <td align="center" bgcolor="${accent}" style="mso-line-height-rule: exactly; border-radius: ${radius};" valign="top">
+                                <a href="${escapeAttr(url)}" target="_blank" style="font-size: 11px; color: #ffffff; text-decoration: none; border-radius: ${radius}; background-color: ${accent}; display: block; font-family: ${emailFontFamily()}; font-weight: 700; font-style: normal; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 18px; border: 2px solid ${accent};">${escapeHtml(label)}</a>
                               </td>
                             </tr>
                           </table>`;
 }
 
 function renderProductRow(item: EmailProductRowItem, isFirst: boolean): string {
+  const ROW_NAME_STYLE = rowNameStyle();
+  const ROW_PRICE_STYLE = rowPriceStyle();
+  const ROW_DESC_STYLE = rowDescStyle();
   const href = item.url ? escapeAttr(item.url) : null;
 
   const image = item.imageUrl
