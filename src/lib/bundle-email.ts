@@ -26,6 +26,7 @@ import {
   EMAIL_SALE_STRIKE_COLOR,
 } from "./email-template";
 import { renderEmailProductRows } from "./email-products";
+import { activeEmailDesignRenderers } from "./email-design-context";
 import { bundleStattPrice } from "./bundle-email-core.mjs";
 
 export interface BundleEmailComponent {
@@ -130,7 +131,20 @@ export function renderBundleOfferBlock(input: BundleOfferBlockInput): { text: st
   ];
   const text = textLines.join("\n");
 
-  // --- html part — band + title + component rows + price block + pill CTA ---
+  // --- html part ---
+  // A design may restyle the whole block (email-design-context bundleBlock).
+  // It receives the PAngV-checked computed labels so it can never invent a
+  // strike price or saving the classic path wouldn't show; the text part above
+  // stays shared across all designs.
+  const override = activeEmailDesignRenderers()?.bundleBlock;
+  if (override) {
+    return {
+      text,
+      html: override(input, { priceLabel, stattLabel, savingLabel, savingPct, labels }),
+    };
+  }
+
+  // Classic: band + title + component rows + price block + pill CTA.
   // Components render as the personalised ROWS layout (image/name in the first
   // third, description in the remaining two thirds) — no per-component prices
   // and no per-component buttons: the set's price block + "Zum Angebot" CTA

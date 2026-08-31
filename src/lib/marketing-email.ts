@@ -40,8 +40,9 @@ import {
   emailMutedTextStyle,
   emailLinkStyle,
 } from "./email-template";
-import { withEmailDesign } from "./email-design-context";
+import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
+import { getEmailHeroUrl } from "./email-hero-store";
 import {
   renderEmailProductRows,
   productRowItems,
@@ -285,8 +286,11 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
 
       // Render inside the design selected for this email type (admin
       // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
+      // The per-send hero image (email-hero.ts) rides along for hero designs.
       const emailDesign = await getCachedEmailDesignForKind("marketing");
-      const { text, html } = await withEmailDesign(emailDesign, async () => renderMarketingEmail({
+      const heroImageUrl = await getEmailHeroUrl("marketing", sendId);
+      const { text, html } = await withEmailDesign(emailDesign, () =>
+        withEmailRenderData({ heroImageUrl }, async () => renderMarketingEmail({
         subject: claimed.subject ?? "motion sports",
         body,
         // The customer sees/clicks the tracked redirect URL, not the raw cart.
@@ -302,7 +306,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         unsubscribe: unsubscribeFooter(unsubscribeUrl),
         bundle,
         labelForUrl: await catalogNameLookup(),
-      }));
+      })));
 
       // Our own Message-ID + an inbound Reply-To so a reply threads back into
       // the unified mail log (mirror-write below).
@@ -485,10 +489,13 @@ export async function renderMarketingEmailPreview(
 
   const bundle = await buildBundleBlockForSend(sendId, send.productHighlights);
 
-  // The preview renders inside the SAME selected design as the send path,
-  // so what the operator reviews is what ships.
+  // The preview renders inside the SAME selected design as the send path —
+  // including the per-send hero image — so what the operator reviews is what
+  // ships.
   const emailDesign = await getCachedEmailDesignForKind("marketing");
-  const { html } = await withEmailDesign(emailDesign, async () => renderMarketingEmail({
+  const heroImageUrl = await getEmailHeroUrl("marketing", sendId);
+  const { html } = await withEmailDesign(emailDesign, () =>
+    withEmailRenderData({ heroImageUrl }, async () => renderMarketingEmail({
     subject,
     body,
     linkUrl: cart.url,
@@ -502,7 +509,7 @@ export async function renderMarketingEmailPreview(
     unsubscribe: unsubscribeFooter(unsubscribeUrl),
     bundle,
     labelForUrl: await catalogNameLookup(),
-  }));
+  })));
   return { ok: true, subject, html };
 }
 

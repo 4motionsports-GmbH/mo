@@ -22,6 +22,7 @@ import type {
 import type { EmailTheme } from "../email-theme-context";
 import { DEFAULT_EMAIL_THEME, EMAIL_THEME_KINDS } from "../email-theme.mjs";
 import { studioDesign } from "./studio";
+import { performanceDesign } from "./performance";
 
 /** The email kinds a design can be tailored for ('summary' | 'doi' | …). */
 export type EmailDesignKind = (typeof EMAIL_THEME_KINDS)[number];
@@ -67,7 +68,7 @@ const CLASSIC_META = {
  * All NON-classic designs, oldest first. Add new designs at the END so the
  * settings page reads like a changelog.
  */
-const EMAIL_DESIGNS: EmailDesignDefinition[] = [studioDesign];
+const EMAIL_DESIGNS: EmailDesignDefinition[] = [studioDesign, performanceDesign];
 
 /** Serializable metadata for the admin UI (classic first, then the registry). */
 export interface EmailDesignMeta {

@@ -31,6 +31,10 @@ export type AiCallSite =
   // erasure, like chat usage.
   | "summary_download"
   | "marketing_draft"
+  // AI hero images for the image-first email designs (docs/EMAIL_DESIGNS.md):
+  // the prompt-suggestion pass (Anthropic) and the image render (gpt-image-1).
+  // Dashboard/admin-side spend (no conversation FK).
+  | "hero_image"
   // Campaign module (docs/CAMPAIGNS.md): the per-contact AI draft for the
   // Shopify-subscriber audience. Dashboard/admin-side spend (no conversation).
   | "campaign_draft"

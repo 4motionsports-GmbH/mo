@@ -69,6 +69,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 import { EmailPreviewButton } from "./EmailPreviewButton";
 import { EmailTextModeToggle, type EmailTextModeValue } from "./EmailTextModeToggle";
+import { HeroImagePanel } from "./HeroImagePanel";
 import { DEFAULT_EMAIL_TEXT_MODE, EMAIL_TEXT_MODE_HINTS } from "@/lib/email-text-mode.mjs";
 import {
   KorrespondenzPanel,
@@ -945,6 +946,15 @@ function MarketingEmailSection({ customer }: { customer: CustomerProps }) {
             {discountPercent > 0 ? " und der einmalige Rabattcode erzeugt" : ""}. Gesendet wird nur
             an bestätigte, nicht abgemeldete Adressen.
           </div>
+
+          {send && (
+            <HeroImagePanel
+              key={`hero-${send.id}`}
+              kind="marketing"
+              targetId={send.id}
+              disabled={busy !== null}
+            />
+          )}
 
           <div className="mt-3 flex flex-wrap gap-2">
             <Button variant="secondary" onClick={onSave} disabled={busy !== null}>
