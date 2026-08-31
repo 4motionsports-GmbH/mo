@@ -30,7 +30,7 @@ Design schreibt nur, was sich tatsächlich unterscheidet.
 |---|---|---|
 | `classic` | Shopify-Newsletter-Klon (Standard) | Built-in, kein Modul |
 | `studio` | Editorial-minimal (Beispiel/Referenz) | Tokens + ein Renderer-Override |
-| `performance` | Bild-orientiertes Conversion-Design | Voll-Shell: Hero mit (KI-)Bild, Produkt-Karten, schwarze Bundle-Karte, Frag-Mo-Panel, Hero-Pipeline (s. u.) |
+| `performance` | Bild-orientiertes Conversion-Design | Voll-Shell: Hero mit (KI-)Bild, persönliche Anrede, Produkt-Karten, schwarze Bundle-Karte, Frag-Mo-Panel, Smiley-Bewertung, Hero-Pipeline (s. u.) |
 
 ## Die zwei Gestaltungs-Ebenen
 
@@ -46,8 +46,17 @@ Design schreibt nur, was sich tatsächlich unterscheidet.
 
 Zusätzlich gibt es **Per-Send-Renderdaten** (`activeEmailRenderData()`,
 gesetzt von den Sende-/Vorschau-Einstiegen via `withEmailRenderData`): Daten,
-die zu EINER E-Mail gehören statt zum Design — heute `heroImageUrl`, das
-individuell generierte Hero-Bild.
+die zu EINER E-Mail gehören statt zum Design — heute `heroImageUrl` (das
+individuell generierte Hero-Bild) und `recipientFirstName` (die persönliche
+Anrede; das Design lässt sie weg, wenn die KI-Prosa bereits grüßt).
+
+### Newsletter-Bewertung
+
+Bild-orientierte Designs können die Smiley-Zeile „Wie hilfreich war diese
+Empfehlung?" rendern (`email-rating.mjs` + `GET /api/newsletter-rating`). Die
+Links sind bewusst **anonym** — nur Score + E-Mail-Typ, keine Empfänger-Kennung,
+damit eine weitergeleitete Mail nie verrät, wer sie bekommen hat. Ein Klick
+landet als normale Feedback-Zeile (Migration 0020) im Admin-Tab „Feedback".
 
 Die Composer (`summary-email.ts`, `consent-copy.ts` (DOI),
 `marketing-email.ts`, `campaign-email.ts`) wissen nichts vom aktiven Design:

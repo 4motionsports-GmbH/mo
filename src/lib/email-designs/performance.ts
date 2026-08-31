@@ -1,6 +1,6 @@
 // "Performance" — the image-first conversion design, built from the operator's
 // AI-drafted template: bold hero section (kicker, oversized headline, red CTA,
-// large lifestyle image), chip navigation under the logo, bordered product
+// large lifestyle image), bordered product
 // CARDS with price + outline button, the black BUNDLE-DEAL card with the
 // price trio, the "Frag Mo" advisor panel, and a clean minimal footer.
 //
@@ -8,8 +8,11 @@
 //   - HERO IMAGE: activeEmailRenderData().heroImageUrl (the operator-generated
 //     per-send image, lib/email-hero.ts) with the static brand asset as
 //     default (public/email-hero-default.jpg / EMAIL_HERO_DEFAULT_URL).
-//   - Headline = the email's heading; kicker/subline are tailored per email
-//     type via variants (bilingual for the campaign channel).
+//   - GREETING: activeEmailRenderData().recipientFirstName renders the bold
+//     "Hey <Name>," opener — skipped when the AI prose already greets, so the
+//     reader never gets two greetings.
+//   - Kicker, headline, subline and the fallback CTA label are tailored per
+//     email type via variants (bilingual for the campaign channel).
 //
 // Brand-critical pieces reuse the REAL assets: emailLogoUrl(), emailMoIconUrl,
 // EMAIL_SOCIAL_LINKS, EMAIL_IMPRINT_URL, the company block, and the shell's
@@ -25,6 +28,8 @@ import type {
   EmailSectionRowOptions,
 } from "../email-design-context";
 import { activeEmailRenderData } from "../email-design-context";
+import { getBaseUrl } from "../base-url";
+import { EMAIL_RATING_FACES, emailRatingUrl } from "../email-rating.mjs";
 import {
   escapeAttr,
   escapeHtml,
@@ -53,12 +58,24 @@ const linkStyle = () => `color: ${RED}; text-decoration: underline; word-wrap: b
 
 interface HeroCopy {
   kicker: (en: boolean) => string;
+  /**
+   * The hero HEADLINE. Deliberately NOT the composer's `heading` (which reads
+   * "Deine persönliche Empfehlung" and wraps to three cramped lines in the
+   * 48% hero column) but a short, punchy two-line claim — the visual anchor
+   * of the original design.
+   */
+  headline: (en: boolean) => string;
   subline: (en: boolean) => string;
+  /** Fallback CTA label when the composer's own label is too long for the
+   * hero button (it would wrap to two lines). */
+  shortCta: (en: boolean) => string;
 }
 
 const HERO_COPY: Record<"summary" | "doi" | "marketing" | "campaign", HeroCopy> = {
   summary: {
     kicker: (en) => (en ? "Your personal consultation" : "Deine persönliche Beratung"),
+    headline: (en) => (en ? "Your plan.\nAll set." : "Deine Beratung.\nAuf einen Blick."),
+    shortCta: (en) => (en ? "To checkout" : "Zur Kasse"),
     subline: (en) =>
       en
         ? "Your consultation, neatly summarised — with your selection ready to order."
@@ -66,17 +83,23 @@ const HERO_COPY: Record<"summary" | "doi" | "marketing" | "campaign", HeroCopy> 
   },
   doi: {
     kicker: (en) => (en ? "Almost there" : "Fast geschafft"),
+    headline: (en) => (en ? "One click.\nThen you're in." : "Ein Klick.\nDann geht's los."),
+    shortCta: (en) => (en ? "Confirm now" : "Jetzt bestätigen"),
     subline: (en) =>
       en
         ? "One click to confirm — then your personal recommendations are on their way."
         : "Nur noch ein Klick — dann sind deine persönlichen Empfehlungen unterwegs.",
   },
   marketing: {
-    kicker: () => "Persönlich für dich",
+    kicker: () => "Mehr aus deinem Setup",
+    headline: () => "Mehr Leistung.\nMehr Fokus.",
+    shortCta: () => "Warenkorb öffnen",
     subline: () => "Handverlesen auf Basis deiner Beratung — abgestimmt auf dein Training.",
   },
   campaign: {
-    kicker: (en) => (en ? "Picked for you" : "Für dich entdeckt"),
+    kicker: (en) => (en ? "More from your setup" : "Mehr aus deinem Setup"),
+    headline: (en) => (en ? "More power.\nMore focus." : "Mehr Leistung.\nMehr Fokus."),
+    shortCta: (en) => (en ? "Start with Mo" : "Beratung starten"),
     subline: (en) =>
       en
         ? "Hand-picked based on your recent purchases — matched to your training."
@@ -86,14 +109,14 @@ const HERO_COPY: Record<"summary" | "doi" | "marketing" | "campaign", HeroCopy> 
 
 // ── Building blocks ──────────────────────────────────────────────────────────
 
-function redButton(cta: EmailCta, block = false): string {
+function redButton(cta: EmailCta, block = false, className = ""): string {
   return `
-                    <a href="${escapeAttr(cta.url)}" target="_blank" style="display:${block ? "block" : "inline-block"}; background:${RED}; color:#ffffff; text-align:center; padding:14px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</a>`;
+                    <a href="${escapeAttr(cta.url)}"${className ? ` class="${className}"` : ""} target="_blank" style="display:${block ? "block" : "inline-block"}; background:${RED}; color:#ffffff; text-align:center; padding:14px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</a>`;
 }
 
 function outlineButton(url: string, label: string): string {
   return `
-                    <a href="${escapeAttr(url)}" target="_blank" style="display:inline-block; color:#111111; background:#ffffff; border:1px solid ${RED}; padding:10px 15px; border-radius:3px; font-family:${FONT}; font-size:11px; font-weight:700; text-decoration:none;">${escapeHtml(label.toUpperCase())}&nbsp;&#8594;</a>`;
+                    <a href="${escapeAttr(url)}" target="_blank" style="display:inline-block; color:#111111; background:#ffffff; border:1px solid ${RED}; padding:10px 15px; border-radius:3px; font-family:${FONT}; font-size:11px; font-weight:700; text-decoration:none; white-space:nowrap;">${escapeHtml(label.toUpperCase())}&nbsp;&#8594;</a>`;
 }
 
 /** The "— TITLE —" section divider (replaces the classic black band). */
@@ -123,11 +146,23 @@ function sectionRow(innerHtml: string, opts: EmailSectionRowOptions = {}): strin
                 </tr>`;
 }
 
+/** Longest description a card shows — the original design's cards stay two to
+ * three lines; catalog copy can run far longer and would tower over the image. */
+const MAX_CARD_DESCRIPTION_CHARS = 150;
+
+function clampDescription(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= MAX_CARD_DESCRIPTION_CHARS) return t;
+  const cut = t.slice(0, MAX_CARD_DESCRIPTION_CHARS);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > 60 ? cut.slice(0, lastSpace) : cut).replace(/[,;:.\-·]+$/, "")}…`;
+}
+
 /** One bordered product card: image | name + rule + description | price + button. */
 function productCard(item: EmailProductRowItem): string {
   const href = item.url ? escapeAttr(item.url) : null;
   const image = item.imageUrl
-    ? `<img src="${escapeAttr(item.imageUrl)}" width="150" alt="${escapeAttr(item.name)}" class="product-image" style="width:150px; max-width:100%; height:auto; display:block; Margin:0 auto; border:none;">`
+    ? `<img src="${escapeAttr(item.imageUrl)}" width="165" alt="${escapeAttr(item.name)}" class="product-image" style="width:165px; max-width:100%; height:auto; display:block; Margin:0 auto; border:none;">`
     : "";
   const price = item.priceLabel
     ? item.compareAtLabel
@@ -136,7 +171,7 @@ function productCard(item: EmailProductRowItem): string {
       : `<div style="font-family:${FONT}; font-size:20px; line-height:24px; font-weight:700; color:#111111; margin-bottom:14px;">${escapeHtml(item.priceLabel)}</div>`
     : "";
   const description = item.description?.trim()
-    ? `<div style="font-family:${FONT}; font-size:12px; line-height:18px; color:#444444;">${escapeHtml(item.description.trim())}</div>`
+    ? `<div style="font-family:${FONT}; font-size:12px; line-height:18px; color:#444444;">${escapeHtml(clampDescription(item.description))}</div>`
     : "";
   const button = href ? outlineButton(item.url as string, item.ctaLabel?.trim() || "Zum Produkt") : "";
   const name = href
@@ -145,14 +180,14 @@ function productCard(item: EmailProductRowItem): string {
   return `
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="product-card" style="width:100%; border:1px solid #e5e5e5; border-radius:7px;">
                       <tr>
-                        <td width="34%" valign="middle" class="mobile-stack" style="width:34%; padding:18px;">${image || "&nbsp;"}
+                        <td width="32%" valign="middle" class="mobile-stack" style="width:32%; padding:16px;">${image || "&nbsp;"}
                         </td>
-                        <td width="42%" valign="middle" class="mobile-stack product-content" style="width:42%; padding:18px 10px;">
+                        <td width="40%" valign="middle" class="mobile-stack product-content" style="width:40%; padding:16px 10px;">
                           <div style="font-family:${FONT}; font-size:16px; line-height:21px; font-weight:700; color:#111111;">${name}</div>
                           <div style="width:14px; height:2px; background:${RED}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
                           ${description}
                         </td>
-                        <td width="24%" valign="middle" align="center" class="mobile-stack product-action" style="width:24%; padding:18px;">
+                        <td width="28%" valign="middle" align="center" class="mobile-stack product-action" style="width:28%; padding:16px 12px;">
                           ${price}
                           ${button}
                         </td>
@@ -218,6 +253,63 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
                 </tr>`;
 }
 
+/**
+ * The smiley rating row ("Wie hilfreich war diese Empfehlung?"). Anonymous by
+ * design: each link carries only the score + email kind (email-rating.mjs), so
+ * a forwarded mail can never reveal the recipient. Rendered for the two
+ * recommendation mails, where the question actually makes sense.
+ */
+function ratingRow(kind: string, en: boolean): string {
+  const base = getBaseUrl();
+  const cells = EMAIL_RATING_FACES.map(
+    (face, i) => `
+                          <td align="center" style="padding: 0 6px;">
+                            <a href="${escapeAttr(emailRatingUrl(base, i + 1, kind))}" target="_blank" style="font-family:${FONT}; font-size:28px; line-height:34px; color:#111111; text-decoration:none;">${face}</a>
+                            <div style="font-family:${FONT}; font-size:11px; line-height:16px; color:#111111;">${i + 1}</div>
+                          </td>`
+  ).join("");
+  return `
+                <tr>
+                  <td class="content-pad" style="padding: 0 38px 16px 38px;" bgcolor="#ffffff">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e5e5e5; border-radius:7px;">
+                      <tr>
+                        <td align="center" style="padding: 22px 20px 18px 20px;">
+                          <div style="font-family:${FONT}; font-size:18px; line-height:23px; color:#111111; font-weight:700;">${
+                            en ? "How helpful was this recommendation?" : "Wie hilfreich war diese Empfehlung?"
+                          }</div>
+                          <div style="margin-top:4px; font-family:${FONT}; font-size:11px; line-height:16px; color:#555555;">${
+                            en ? "Rate this email with one click." : "Bewerte diese E-Mail mit einem Klick."
+                          }</div>
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="Margin: 16px auto 0;">
+                            <tr>${cells}
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+}
+
+/** Greeting words the AI prose may already open with (any language we send). */
+const GREETING_RE = /^\s*(hallo|hey|hi|guten|liebe|servus|moin|dear|hello)\b/i;
+
+/**
+ * The bold personal opener ("Hey Anna-Sophie,") — rendered only when we know
+ * the first name AND the prose does not already greet, so the reader never
+ * gets two greetings stacked on each other.
+ */
+function greetingHtml(bodyHtml: string, en: boolean): string {
+  const firstName = (activeEmailRenderData().recipientFirstName ?? "").trim();
+  if (!firstName) return "";
+  const proseText = bodyHtml.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").trim();
+  if (GREETING_RE.test(proseText)) return "";
+  return `
+                  <div style="font-family:${FONT}; font-size:18px; line-height:25px; font-weight:700; color:#111111; margin-bottom:13px;">${
+                    en ? "Hey" : "Hey"
+                  } ${escapeHtml(firstName)},</div>`;
+}
+
 /** The "Noch unsicher? Frag Mo." advisor panel (rendered when moAvatar set). */
 function moPanel(en: boolean): string {
   const url = campaignMoDeeplinkUrl();
@@ -268,7 +360,18 @@ function makeShell(kind: keyof typeof HERO_COPY) {
     const copy = HERO_COPY[kind];
     const year = new Date().getFullYear();
     const heroImage = activeEmailRenderData().heroImageUrl || defaultHeroImageUrl();
-    const heroCta = (opts.ctas ?? []).find((c) => c.url && c.label) ?? null;
+    // The hero button reuses the composer's primary CTA (its URL is the tracked
+    // one), but swaps an over-long label for the design's short one so the
+    // button stays a single line.
+    const primaryCta = (opts.ctas ?? []).find((c) => c.url && c.label) ?? null;
+    const heroCta = primaryCta
+      ? {
+          url: primaryCta.url,
+          label: primaryCta.label.length > 18 ? copy.shortCta(en) : primaryCta.label,
+        }
+      : null;
+    // Two-line claim: the copy carries "\n" so both lines are explicit.
+    const headlineHtml = escapeHtml(copy.headline(en)).replace(/\n/g, "<br>");
 
     const preheaderHtml = opts.preheader
       ? `
@@ -276,8 +379,12 @@ function makeShell(kind: keyof typeof HERO_COPY) {
   <div style="display:none; max-height:0; overflow:hidden; opacity:0;">&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;</div>`
       : "";
 
+    // The hero button already carries the FIRST CTA, so only any additional
+    // ones get their own row — otherwise the same call-to-action appeared
+    // twice (hero + body), which is exactly what the campaign mail did.
     const ctaRows = (opts.ctas ?? [])
       .filter((c) => c.url && c.label)
+      .slice(1)
       .map((c) => sectionRow(redButton(c), { padding: "6px 40px", align: "center" }))
       .join("");
 
@@ -311,15 +418,26 @@ function makeShell(kind: keyof typeof HERO_COPY) {
       table { border-collapse: collapse !important; border-spacing: 0 !important; }
       img { -ms-interpolation-mode: bicubic; border: none !important; }
       @media only screen and (max-width: 640px) {
+        /* border-box matters: these cells are width:100% AND padded — in the
+           default content-box that adds up to more than the card width and
+           pushes a horizontal scrollbar onto the whole email. */
+        .email-container, .mobile-stack, .bundle-column, .content-pad,
+        .hero-text, .hero-image-cell { box-sizing: border-box !important; }
         .email-container { width: 100% !important; min-width: 100% !important; }
         .content-pad { padding-left: 20px !important; padding-right: 20px !important; }
         .mobile-stack { display: block !important; width: 100% !important; }
         .mobile-center { text-align: center !important; }
-        .hero-title { font-size: 34px !important; line-height: 38px !important; }
-        .hero-image { width: 100% !important; max-width: 280px !important; margin: 0 auto !important; }
-        .product-image { width: 100% !important; max-width: 200px !important; margin: 0 auto !important; }
-        .product-content { padding: 10px 20px 14px 20px !important; text-align: center !important; }
-        .product-action { padding: 0 20px 22px 20px !important; text-align: center !important; }
+        .logo-image { width: 170px !important; max-width: 70% !important; }
+        .hero-text { padding: 30px 22px 22px 22px !important; text-align: center !important; }
+        .hero-title { font-size: 32px !important; line-height: 36px !important; letter-spacing: -1px !important; }
+        .hero-cta { display: block !important; width: 100% !important; box-sizing: border-box !important; }
+        /* The hero art is portrait (2:3) — full width it would eat the whole
+           first screen, so it stays a capped, centred band on phones. */
+        .hero-image-cell { padding: 0 22px 22px 22px !important; }
+        .hero-image { width: 100% !important; max-width: 100% !important; max-height: 240px !important; border-radius: 8px !important; margin: 0 auto !important; }
+        .product-image { width: 100% !important; max-width: 190px !important; margin: 0 auto !important; }
+        .product-content { padding: 6px 20px 12px 20px !important; text-align: center !important; }
+        .product-action { padding: 0 20px 20px 20px !important; text-align: center !important; }
         .bundle-column { display: block !important; width: 100% !important; text-align: center !important; padding: 22px !important; }
       }
     </style>
@@ -329,24 +447,17 @@ function makeShell(kind: keyof typeof HERO_COPY) {
       <tr>
         <td align="center" valign="top">
           <!-- BEGIN: CARD -->
-          <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" class="email-container" bgcolor="#ffffff" style="width:640px; max-width:640px; background:#ffffff;">
+          <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" class="email-container" bgcolor="#ffffff" style="width:640px; max-width:640px; background:#ffffff; table-layout:fixed;">
             <tbody>
-              <!-- HEADER: real brand logo + chip nav -->
+              <!-- HEADER: the real brand logo, given the room the original
+                   design gives it. No chip nav: the brand asset already carries
+                   the "Fitness | Equipment" bar, so a nav row underneath only
+                   duplicated it. -->
               <tr>
-                <td align="center" style="padding: 30px 30px 12px 30px;" bgcolor="#ffffff">
+                <td align="center" style="padding: 30px 30px 22px 30px;" bgcolor="#ffffff">
                   <a href="https://www.motionsports.de" target="_blank" style="text-decoration:none;">
-                    <img src="${escapeAttr(emailLogoUrl())}" width="140" alt="motion sports" style="width:140px; max-width:100%; height:auto; display:block; Margin:0 auto;">
+                    <img src="${escapeAttr(emailLogoUrl())}" width="200" alt="motion sports" class="logo-image" style="width:200px; max-width:70%; height:auto; display:block; Margin:0 auto;">
                   </a>
-                </td>
-              </tr>
-              <tr>
-                <td align="center" style="padding: 0 20px 20px 20px;" bgcolor="#ffffff">
-                  <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td style="font-family:${FONT}; font-size:13px; color:#111111; padding:0 14px;"><a href="https://www.motionsports.de" target="_blank" style="color:#111111; text-decoration:none;">Fitness</a></td>
-                      <td style="font-family:${FONT}; font-size:13px; color:#111111; font-weight:700; border-bottom:2px solid ${RED}; padding:0 14px 5px 14px;"><a href="https://www.motionsports.de" target="_blank" style="color:#111111; text-decoration:none;">Equipment</a></td>
-                    </tr>
-                  </table>
                 </td>
               </tr>
               <!-- HERO -->
@@ -354,27 +465,30 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                 <td style="padding: 0 24px;" bgcolor="#ffffff">
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f7f7f7; border-radius:8px;">
                     <tr>
-                      <td width="48%" valign="middle" class="mobile-stack mobile-center" style="width:48%; padding:40px 15px 40px 32px;">
+                      <td width="48%" valign="middle" class="mobile-stack mobile-center hero-text" style="width:48%; padding:40px 18px 40px 32px;">
                         <div style="font-family:${FONT}; color:${RED}; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; margin-bottom:14px;">${escapeHtml(copy.kicker(en))}</div>
-                        <div class="hero-title" style="font-family:${FONT}; font-size:40px; line-height:44px; color:#111111; font-weight:800; letter-spacing:-1.5px; margin-bottom:16px;">${escapeHtml(opts.heading)}</div>
+                        <div class="hero-title" style="font-family:${FONT}; font-size:42px; line-height:46px; color:#111111; font-weight:800; letter-spacing:-1.5px; margin-bottom:16px;">${headlineHtml}</div>
                         <div style="font-family:${FONT}; font-size:14px; line-height:21px; color:#444444; margin-bottom:24px;">${escapeHtml(copy.subline(en))}</div>
-                        ${heroCta ? redButton(heroCta) : ""}
+                        ${heroCta ? redButton(heroCta, false, "hero-cta") : ""}
                       </td>
-                      <td width="52%" valign="bottom" class="mobile-stack" align="center" style="width:52%;">
-                        <img src="${escapeAttr(heroImage)}" width="310" alt="motion sports" class="hero-image" style="width:100%; max-width:310px; height:auto; display:block; border-radius:0 8px 8px 0;">
+                      <td width="52%" valign="bottom" class="mobile-stack hero-image-cell" align="center" style="width:52%; padding:0;">
+                        <img src="${escapeAttr(heroImage)}" width="300" alt="motion sports" class="hero-image" style="width:100%; max-width:300px; max-height:340px; height:auto; display:block; Margin:0 0 0 auto; border-radius:0 8px 8px 0; object-fit:cover;">
                       </td>
                     </tr>
                   </table>
                 </td>
               </tr>
-              <!-- BODY (personal intro / prose from the composer) -->
+              <!-- BODY (personal greeting + prose from the composer) -->
               <tr>
-                <td class="content-pad" style="padding: 30px 44px 6px 44px;" bgcolor="#ffffff" valign="top">${opts.bodyHtml}
+                <td class="content-pad" style="padding: 30px 44px 6px 44px;" bgcolor="#ffffff" valign="top">${greetingHtml(
+                  opts.bodyHtml,
+                  en
+                )}${opts.bodyHtml}
                 </td>
               </tr>
               <!-- SECTIONS (products / bundle / promo rows from the composer) -->${opts.preCtaRowsHtml ?? ""}${ctaRows}${footnoteRow}${opts.postCtaRowsHtml ?? ""}${
                 opts.moAvatar ? moPanel(en) : ""
-              }
+              }${kind === "marketing" || kind === "campaign" ? ratingRow(kind, en) : ""}
               <!-- FOOTER -->
               <tr>
                 <td align="center" style="padding: 14px 30px 12px 30px; border-top: 1px solid #eeeeee;" bgcolor="#ffffff">

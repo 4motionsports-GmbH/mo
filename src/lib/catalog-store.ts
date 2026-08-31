@@ -12,6 +12,7 @@
 // products via /api/products — so they never need public access.
 
 import { get, put } from "@vercel/blob";
+import { normalizeProductText } from "./shopify-richtext.mjs";
 import { reconcileEmbeddingItems } from "./catalog-pair.mjs";
 import type { Product } from "./types";
 
@@ -89,9 +90,13 @@ export async function loadProductCatalog(): Promise<Product[]> {
     try {
       const data = await readPrivateJson<Product[]>(CATALOG_BLOB_KEY);
       if (Array.isArray(data) && data.length) {
-        cachedCatalog = data;
+        // Guard for catalogs synced BEFORE the rich-text fix in catalog-mapping:
+        // their shortDescription may still hold the raw Shopify rich-text JSON.
+        // Cheap (a startsWith check per product) and idempotent for clean data.
+        const normalized = data.map((p) => normalizeProductText(p) as Product);
+        cachedCatalog = normalized;
         cachedCatalogAt = Date.now();
-        return data;
+        return normalized;
       }
     } catch (err) {
       console.warn("[catalog-store] catalog blob load failed, falling back to bundled JSON", err);
