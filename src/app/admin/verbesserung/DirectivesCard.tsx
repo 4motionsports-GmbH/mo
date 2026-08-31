@@ -9,6 +9,10 @@
 import * as React from "react";
 import { Loader2, Plus, Pencil, History, Power, Check } from "lucide-react";
 import { Badge, Button, Card, CardContent, Textarea, toast } from "../ui";
+import {
+  ADMIN_DATE_TIME_MEDIUM,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 export interface DirectiveItem {
   id: number;
@@ -41,11 +45,7 @@ const ACTION_LABELS: Record<DirectiveVersion["action"], string> = {
 };
 
 function fmtTs(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_DATE_TIME_MEDIUM, iso);
 }
 
 export function DirectivesCard({

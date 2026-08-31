@@ -55,6 +55,11 @@ import {
   EMAIL_TEXT_MODE_LABELS,
 } from "@/lib/email-text-mode.mjs";
 import { emailProseToText } from "@/lib/email-prose.mjs";
+import {
+  ADMIN_DATE,
+  ADMIN_DATE_TIME_FULL,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 export interface CampaignQueueItemProps {
   contactId: number;
@@ -156,10 +161,7 @@ function formatEuro(cents: number): string {
 }
 
 function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("de-DE");
+  return formatAdmin(iso, ADMIN_DATE);
 }
 
 /** Send-confirmation only on the FIRST send of the day (localStorage-keyed). */
@@ -2171,7 +2173,7 @@ function SentHistory({
                 {h.discountCode === null ? "—" : h.redeemed === null ? "?" : h.redeemed ? "✓" : "✗"}
               </td>
               <td className="px-3 py-2 text-muted-foreground">
-                {h.sentAt ? new Date(h.sentAt).toLocaleString("de-DE") : "—"}
+                {formatAdmin(h.sentAt, ADMIN_DATE_TIME_FULL)}
               </td>
               <td className="px-3 py-2">
                 {h.hasContent ? (

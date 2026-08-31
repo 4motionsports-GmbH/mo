@@ -42,13 +42,13 @@ import type {
   InsightsReference,
   InsightsSection,
 } from "@/lib/admin-conversations";
+import {
+  ADMIN_DATE_TIME_MEDIUM,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 function fmtTs(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_DATE_TIME_MEDIUM, iso);
 }
 function eur(n: number): string {
   return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 4 });

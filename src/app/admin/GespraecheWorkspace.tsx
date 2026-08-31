@@ -56,6 +56,11 @@ import type {
   AdminTier,
 } from "@/lib/admin-conversations";
 import { GespraecheStatsPanel, GespraecheReportPanel } from "./GespraecheInsights";
+import {
+  ADMIN_DATE_TIME_SHORT,
+  ADMIN_TIME,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 interface FilterProps {
   preset: string;
@@ -83,19 +88,10 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 function fmtDateTime(iso: string): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_DATE_TIME_SHORT, iso || "—");
 }
 function fmtTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_TIME, iso);
 }
 function eur(n: number): string {
   return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 4 });

@@ -36,6 +36,10 @@ import {
 import { QA_STATUS_LABELS } from "@/lib/qa-core.mjs";
 import { qaAnswerHasLink, qaAnswerHtml } from "@/lib/qa-links.mjs";
 import type { QaCounts, QaEntry, QaStatus } from "@/lib/qa-store";
+import {
+  ADMIN_DATE_PADDED,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 type StatusFilter = QaStatus | "all";
 
@@ -361,11 +365,7 @@ function QaEntryCard({
     setBusy(null);
   };
 
-  const created = new Date(entry.createdAt).toLocaleDateString("de-DE", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  const created = formatAdmin(entry.createdAt, ADMIN_DATE_PADDED);
 
   return (
     <Card>

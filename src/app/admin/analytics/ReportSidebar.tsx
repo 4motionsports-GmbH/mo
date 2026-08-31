@@ -9,6 +9,10 @@ import * as React from "react";
 import { Loader2, Plus, FileText, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { cn } from "../ui/cn";
 import { Badge } from "../ui";
+import {
+  ADMIN_DATE_MEDIUM,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 export interface SidebarReport {
   id: number;
@@ -21,11 +25,7 @@ export interface SidebarReport {
 }
 
 function fmtDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("de-DE", { dateStyle: "medium" });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_DATE_MEDIUM, iso);
 }
 
 function StatusPill({ status }: { status: SidebarReport["status"] }) {

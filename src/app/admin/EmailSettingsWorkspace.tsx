@@ -34,6 +34,10 @@ import {
   EMAIL_THEME_KIND_HINTS,
   EMAIL_THEME_KIND_LABELS,
 } from "@/lib/email-theme.mjs";
+import {
+  ADMIN_DATE_MEDIUM,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 // Serialized registry metadata (email-designs/registry.ts listEmailDesignMeta).
 export interface EmailDesignMetaItem {
@@ -55,12 +59,7 @@ export interface SendConfigProps {
 const kindLabel = (kind: string): string =>
   EMAIL_THEME_KIND_LABELS[kind as keyof typeof EMAIL_THEME_KIND_LABELS] ?? kind;
 
-const addedAtLabel = (iso: string): string => {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? iso
-    : d.toLocaleDateString("de-DE", { dateStyle: "medium" });
-};
+const addedAtLabel = (iso: string): string => formatAdmin(iso, ADMIN_DATE_MEDIUM, iso);
 
 export function EmailSettingsWorkspace({
   dbReady,

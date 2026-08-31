@@ -20,6 +20,10 @@ import {
   recentConfirmedContacts,
 } from "@/lib/admin-overview.mjs";
 import { Card, CardContent, Section, Stat } from "./ui";
+import {
+  ADMIN_DATE,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 const RECENT_LIMIT = 5;
 const WINDOW_DAYS = 30;
@@ -39,9 +43,7 @@ function eur(n: number): string {
 }
 
 function dateLabel(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("de-DE");
+  return formatAdmin(iso, ADMIN_DATE);
 }
 
 export async function OverviewTab({

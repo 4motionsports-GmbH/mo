@@ -11,6 +11,10 @@
 import { useState } from "react";
 import { Sparkles } from "lucide-react";
 import { Button, Markdown, Skeleton } from "./ui";
+import {
+  ADMIN_DATE_TIME_MEDIUM,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 interface Summary {
   personaLabel: string;
@@ -22,14 +26,7 @@ interface Summary {
 }
 
 function formatTimestamp(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString("de-DE", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_DATE_TIME_MEDIUM, iso);
 }
 
 export function KpiTopQuestions({

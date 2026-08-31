@@ -13,6 +13,10 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Badge, Input, Label, Select } from "./ui";
+import {
+  ADMIN_DATE_TIME_MEDIUM,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 export interface FeedbackItem {
   id: number;
@@ -35,12 +39,7 @@ function createdTime(f: FeedbackItem): number {
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("de-DE", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  return formatAdmin(iso, ADMIN_DATE_TIME_MEDIUM);
 }
 
 export function FeedbackList({ feedback }: { feedback: FeedbackItem[] }) {

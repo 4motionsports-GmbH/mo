@@ -27,6 +27,11 @@ import { RUN_PHASE_LABELS } from "@/lib/improvement-core.mjs";
 import { SuggestionCard, type SuggestionItem } from "./SuggestionCard";
 import { DirectivesCard, type DirectiveItem, type DirectiveLimits } from "./DirectivesCard";
 import { SelfSnapshotCard, type SelfSnapshotInfo } from "./SelfSnapshotCard";
+import {
+  ADMIN_DATE_MEDIUM,
+  ADMIN_DATE_TIME_MEDIUM,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 export interface RunListItem {
   id: number;
@@ -66,19 +71,10 @@ function eur(n: number): string {
   return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
 }
 function fmtTs(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_DATE_TIME_MEDIUM, iso || "—");
 }
 function fmtDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("de-DE", { dateStyle: "medium" });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_DATE_MEDIUM, iso);
 }
 
 export function VerbesserungWorkspace({

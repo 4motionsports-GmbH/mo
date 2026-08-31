@@ -79,6 +79,10 @@ import {
   PhysicalLetterPanel,
   type PhysicalLetterProps,
 } from "./PhysicalLetterPanel";
+import {
+  ADMIN_DATE,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 interface TranscriptMessage {
   role: "user" | "assistant" | "system" | "tool";
@@ -196,9 +200,7 @@ interface ProfileUsage {
 }
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("de-DE");
+  return formatAdmin(iso, ADMIN_DATE);
 }
 
 function reportError(e: unknown) {

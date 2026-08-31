@@ -43,6 +43,10 @@ import {
   sendState,
   type CustomerFilterState,
 } from "./customer-filter";
+import {
+  ADMIN_DATE,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 // Cap concurrent bulk-draft calls so a big selection can't open dozens of model
 // runs at once (mirrors the old Marketing list).
@@ -68,7 +72,7 @@ function relativeDate(iso: string | null): string {
   if (days <= 0) return "heute";
   if (days === 1) return "gestern";
   if (days < 30) return `vor ${days} Tagen`;
-  return d.toLocaleDateString("de-DE");
+  return formatAdmin(d, ADMIN_DATE);
 }
 
 export function KundenWorkspace({

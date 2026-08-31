@@ -16,17 +16,16 @@ import { ReportProgressDriver } from "./ReportProgressDriver";
 import { ReportActions } from "./ReportActions";
 import { ReportView } from "./ReportView";
 import type { AnalyticsReportDetail } from "@/lib/analytics-report-store";
+import {
+  ADMIN_DATE_TIME_MEDIUM,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 function eur(n: number): string {
   return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
 }
 function fmtTs(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_DATE_TIME_MEDIUM, iso || "—");
 }
 
 function toSidebar(r: {

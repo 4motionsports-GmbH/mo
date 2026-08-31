@@ -891,3 +891,63 @@ like the Q&A knowledge block, full append-only history; the core prompt stays
 in git). The Gespräche boundary is unchanged: nothing is ever applied
 automatically — the engine only proposes. Full design, tables (migration
 0044), routes and honesty rules: see [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md).
+
+---
+
+## Rendering dates & times — hydration safety
+
+`/admin` is `force-dynamic`: every tab body is rendered on the **server** and
+the client components are then **hydrated** in the operator's browser. A
+timezone-naive `new Date(iso).toLocaleString("de-DE")` resolves the timezone
+from the host, and the two hosts do not agree:
+
+| | `2026-08-31T22:40:00Z` |
+| --- | --- |
+| server (Vercel/Node, `TZ=UTC`) | `31.8.2026, 22:40:00` |
+| browser (operator, `Europe/Berlin`) | `1.9.2026, 00:40:00` |
+
+React compares the two strings, finds them different and throws a hydration
+mismatch — the minified **“React error #418”** in the browser console — then
+discards the server HTML and re-renders the subtree on the client. Note the
+**date alone flips too**: any instant after 22:00 UTC already belongs to the
+next day in Berlin, so date-only columns are just as unsafe as ones printing a
+clock time.
+
+The fix is to **pin** the timezone instead of inheriting it, exactly as
+`shopify-discounts.ts` already does for customer-facing expiry dates. The shop
+is operated from Germany, so `Europe/Berlin` is both the deterministic and the
+correct answer — output in the operator's browser is unchanged, the server
+simply catches up.
+
+**Rule: no admin component formats a Date itself.** Everything goes through
+[`src/lib/admin-datetime.mjs`](../src/lib/admin-datetime.mjs):
+
+```ts
+import { ADMIN_DATE_TIME_PADDED, formatAdmin } from "@/lib/admin-datetime.mjs";
+
+formatAdmin(row.sentAt, ADMIN_DATE_TIME_PADDED); // "01.09.2026, 00:40"
+formatAdmin(null, ADMIN_DATE_TIME_PADDED);       // "—"
+```
+
+`formatAdmin(value, preset?, fallback?)` accepts an ISO string, a `Date` or
+epoch milliseconds, and renders `—` (or a caller-supplied fallback) for absent
+or unparseable values. One preset per shape in use — `ADMIN_DATE`,
+`ADMIN_DATE_PADDED`, `ADMIN_DATE_MEDIUM`, `ADMIN_DAY_MONTH`,
+`ADMIN_DATE_TIME_PADDED`, `ADMIN_DATE_TIME_MEDIUM`, `ADMIN_DATE_TIME_SHORT`,
+`ADMIN_TIME`, `ADMIN_DATE_TIME_FULL` — so two panels showing the same kind of
+timestamp cannot drift apart.
+
+This is enforced, not just documented: an ESLint `no-restricted-syntax` rule
+scoped to `src/app/admin/**` fails the build on `toLocaleDateString`,
+`toLocaleTimeString`, or `toLocaleString` called on a `new Date(...)`.
+`toLocaleString` on a **number** stays allowed — number and currency formatting
+was verified byte-identical between Node and Chromium (`1.234,56 €`, same
+U+00A0), so it is not a hydration hazard.
+
+**Out of scope of that rule (deliberately):** the server-only prompt builders in
+`src/lib/` (`marketing-draft.ts`, `campaign-draft.ts`, `customer-profile.ts`,
+`bundle-suggestion.ts`) also format order dates without a timezone. They never
+hydrate, so they cannot cause #418 — but they can state a date that is one day
+off for orders placed between 00:00 and 02:00 Berlin time, in prose the AI puts
+into customer-facing e-mail. Tracked separately; fixing it changes what
+customers are told, so it wants an explicit decision.

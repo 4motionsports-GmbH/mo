@@ -35,6 +35,10 @@ import {
   YAxis,
 } from "recharts";
 import { Skeleton } from "./ui";
+import {
+  ADMIN_DAY_MONTH,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 // Theme token references (resolve via CSS variables in theme.css).
 const ACCENT = "var(--accent)";
@@ -133,12 +137,7 @@ export function ChatsPerDayChart({
 }) {
   // Show ~7 evenly-spaced date ticks so a 30-day axis doesn't crowd.
   const tickInterval = Math.max(0, Math.floor(data.length / 7) - 1);
-  const dayTick = (iso: string): string => {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime())
-      ? iso
-      : d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
-  };
+  const dayTick = (iso: string): string => formatAdmin(iso, ADMIN_DAY_MONTH, iso);
 
   return (
     <ChartFrame height={220}>
