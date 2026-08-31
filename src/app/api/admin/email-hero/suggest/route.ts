@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     await recordAdminAccess({ action: "email_hero.suggest", detail: { kind, id } }, req);
     const result = await suggestHeroPrompt(kind, id);
     if (!result.ok) return adminJsonError("bad_request", result.message, 400);
-    return adminJson({ prompt: result.prompt });
+    return adminJson({ prompt: result.prompt, headline: result.headline });
   } catch (err) {
     reportError(err, { route: "api/admin/email-hero/suggest" });
     return adminJsonError("internal_error", "Prompt-Vorschlag fehlgeschlagen.", 500);

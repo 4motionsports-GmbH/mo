@@ -41,6 +41,8 @@ Design schreibt nur, was sich tatsächlich unterscheidet.
    `email-design-context.ts`): ganze Bausteine ersetzen —
    `sectionBand`, `sectionRow`, `ctaButton`, `productGrid`, `productRows`,
    `bundleBlock` (nur HTML; Textteil + PAngV-Preisrechnung bleiben zentral),
+   `moPromoBlock` (der Mo-Hinweis der Kampagnen-Mail — die getrackte CTA-URL
+   kommt als Input und muss klickbar bleiben),
    `textStyle`/`mutedTextStyle`/`linkStyle` bis hin zu `shell` (das komplette
    HTML-Dokument). Damit kann ein Design **grundsätzlich anders** aussehen.
 
@@ -106,16 +108,31 @@ Override und fällt sonst auf die classic-Implementierung zurück.
 
 Das Performance-Design öffnet mit einem großen Lifestyle-Bild. Zwei Quellen:
 
-1. **Standard-Bild** — `public/email-hero-default.jpg` (Hochformat ~1024×1536,
+1. **Standard-Bild** — `public/email-hero-default.jpg` (**Querformat ~1536×1024**,
    Override per `EMAIL_HERO_DEFAULT_URL`). Wird von summary/DOI immer und von
    marketing/campaign ohne individuelles Bild verwendet.
-2. **Individuelles Bild je E-Mail** (nur marketing + campaign — die beiden
-   Typen mit menschlichem Review): Im Kunden- bzw. Kampagnen-Workspace schlägt
-   „Prompt vorschlagen" einen Bild-Prompt aus Produkten/Prosa/Persona vor
-   (`lib/email-hero.ts`), der Operator passt ihn an, „Bild generieren" rendert
-   ihn mit `gpt-image-1` (1024×1536), lädt das PNG in Vercel Blob und speichert
-   URL + Prompt am Entwurf (Migration 0050). Vorschau UND Versand lesen es über
-   `withEmailRenderData` — was geprüft wird, wird verschickt.
+
+2. **Individuelles Bild + Schlagzeile je E-Mail** (nur marketing + campaign —
+   die beiden Typen mit menschlichem Review): Im Kunden- bzw.
+   Kampagnen-Workspace schlägt „Hero vorschlagen" in EINEM KI-Durchlauf sowohl
+   einen Bild-Prompt als auch die zweizeilige **Hero-Schlagzeile** aus
+   Produkten/Prosa/Persona vor (`lib/email-hero.ts`); der Operator passt beides
+   an. „Bild generieren" rendert das Bild mit `gpt-image-1` (**1536×1024**),
+   lädt das PNG in Vercel Blob und speichert URL + Prompt + Schlagzeile am
+   Entwurf (Migrationen 0050/0051); die Schlagzeile lässt sich auch allein
+   speichern (ohne neues Bild). Vorschau UND Versand lesen alles über
+   `withEmailRenderData` — was geprüft wird, wird verschickt. Leere Schlagzeile
+   = die Standard-Zeile des Designs je E-Mail-Typ.
+
+**Wichtig — der Hero ist ein VOLLFLÄCHIGES Hintergrundbild:** Text und Button
+liegen auf der **linken Hälfte** des Bildes. Damit die dunkle Schrift lesbar
+bleibt, muss die linke ~45 % des Motivs sehr hell und ruhig sein (der Verlauf
+ist im Bild selbst angelegt, nicht per CSS — E-Mail-Clients können keine
+Gradienten über Bilder legen). Genau das schreibt `HERO_PROMPT_STYLE_TAIL` dem
+Bildmodell vor. Technisch: `background`-Attribut + Inline-`background` für
+Gmail/Apple Mail, VML-`v:rect` für Outlook, `bgcolor`-Fallback wenn Bilder
+blockiert sind; auf dem Handy wird der Hintergrund abgeschaltet und das Bild
+als eigene Zeile **unter** dem Text gezeigt.
 
 Benötigt: `OPENAI_API_KEY` + `BLOB_READ_WRITE_TOKEN`. Alles fail-soft: ohne
 Konfiguration/Bild rendert immer das Standard-Bild, nie ein gebrochener
@@ -124,14 +141,19 @@ Versand.
 **Prompt für das Standard-Bild** (einmalig extern generieren, als
 `public/email-hero-default.jpg` speichern):
 
-> Photorealistic premium e-commerce hero shot in a bright modern home gym: a
-> matte black steel water bottle, black resistance bands, a coiled black
-> battle rope and a heavy-duty lifting strap arranged on a light concrete
-> floor in front of a black power rack, soft natural daylight from a large
-> window on the right, clean white and light-grey tones with subtle red
-> accents, shallow depth of field, calm and motivating mood, portrait
-> orientation 2:3 (1024×1536). Strictly no text, no lettering, no logos, no
-> watermarks, no people.
+> Photorealistic premium e-commerce hero shot in a bright modern home gym,
+> WIDE LANDSCAPE 3:2 (1536×1024): a matte black steel water bottle, black
+> resistance bands, a coiled black battle rope and a heavy-duty lifting strap
+> arranged on a light concrete floor in front of a black power rack — all of
+> it in the RIGHT HALF of the frame. The LEFT 45% of the frame must stay very
+> bright, soft and almost empty (an out-of-focus near-white wall/floor area
+> that fades smoothly into the scene), because dark headline text is placed
+> there. Soft natural daylight, clean white and light-grey tones with subtle
+> red accents, shallow depth of field, calm and motivating mood. Strictly no
+> text, no lettering, no logos, no watermarks, no people.
+
+(Das aktuelle Hochformat-Bild sollte damit ersetzt werden — im Vollflächen-Hero
+würde es links und rechts beschnitten und der Text stünde auf dem Motiv.)
 
 ## Dateien im Überblick
 
@@ -141,7 +163,8 @@ Versand.
 | `src/lib/email-designs/studio.ts` | Beispiel-Design (Referenz zum Kopieren) |
 | `src/lib/email-designs/performance.ts` | Bild-orientiertes Conversion-Design (Voll-Shell + Hero) |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |
-| `src/app/admin/HeroImagePanel.tsx` | Hero-Panel in Kunden-/Kampagnen-Workspace |
+| `src/app/admin/HeroImagePanel.tsx` | Hero-Panel (Bild + Schlagzeile) in Kunden-/Kampagnen-Workspace |
+| `src/lib/email-rating.mjs` + `api/newsletter-rating` | Smiley-Bewertung (anonym, landet im Feedback-Tab) |
 | `src/lib/email-design-context.ts` | `withEmailDesign` (AsyncLocalStorage) + `EmailDesignRenderers`-Interface |
 | `src/lib/email-theme-context.ts` / `email-theme.mjs` | Token-Ebene (Farben/Schrift/Buttons) + Vokabular der E-Mail-Typen |
 | `src/lib/email-design-store.ts` | Auswahl je Typ (DB, TTL-Cache, fail-soft) |

@@ -42,7 +42,7 @@ import {
 } from "./email-template";
 import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
-import { getEmailHeroUrl } from "./email-hero-store";
+import { getEmailHeroRenderData } from "./email-hero-store";
 import { getCustomerById } from "./customer-store";
 import {
   renderEmailProductRows,
@@ -307,10 +307,10 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
       // The per-send hero image (email-hero.ts) rides along for hero designs.
       const emailDesign = await getCachedEmailDesignForKind("marketing");
-      const heroImageUrl = await getEmailHeroUrl("marketing", sendId);
+      const hero = await getEmailHeroRenderData("marketing", sendId);
       const recipientFirstName = await recipientFirstNameForSend(claimed.customerId);
       const { text, html } = await withEmailDesign(emailDesign, () =>
-        withEmailRenderData({ heroImageUrl, recipientFirstName }, async () => renderMarketingEmail({
+        withEmailRenderData({ ...hero, recipientFirstName }, async () => renderMarketingEmail({
         subject: claimed.subject ?? "motion sports",
         body,
         // The customer sees/clicks the tracked redirect URL, not the raw cart.
@@ -513,10 +513,10 @@ export async function renderMarketingEmailPreview(
   // including the per-send hero image — so what the operator reviews is what
   // ships.
   const emailDesign = await getCachedEmailDesignForKind("marketing");
-  const heroImageUrl = await getEmailHeroUrl("marketing", sendId);
+  const hero = await getEmailHeroRenderData("marketing", sendId);
   const recipientFirstName = await recipientFirstNameForSend(send.customerId);
   const { html } = await withEmailDesign(emailDesign, () =>
-    withEmailRenderData({ heroImageUrl, recipientFirstName }, async () => renderMarketingEmail({
+    withEmailRenderData({ ...hero, recipientFirstName }, async () => renderMarketingEmail({
     subject,
     body,
     linkUrl: cart.url,

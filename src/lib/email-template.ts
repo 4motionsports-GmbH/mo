@@ -114,7 +114,10 @@ export function emailMoIconUrl(): string {
 import { escapeHtml, escapeAttr } from "./html-escape";
 import { getBaseUrl } from "./base-url";
 import { activeEmailTheme } from "./email-theme-context";
-import { activeEmailDesignRenderers } from "./email-design-context";
+import {
+  activeEmailDesignRenderers,
+  type MoPromoBlockInput,
+} from "./email-design-context";
 import { buttonRadiusFor, fontNeedsWebFont, fontStackFor } from "./email-theme.mjs";
 import type { Locale } from "./locale";
 export { escapeHtml, escapeAttr };
@@ -273,6 +276,34 @@ export function renderCtaButton(cta: EmailCta): string {
                         </td>
                       </tr>
                     </table>`;
+}
+
+/**
+ * The campaign mail's Mo-promo block: the animated brand orb beside Mo's chat
+ * hint, directly above its CTA. Classic markup lives here so every design that
+ * does NOT override it keeps the exact look it had before the design system;
+ * a design may replace it wholesale (email-design-context moPromoBlock) — the
+ * tracked CTA url is part of the input either way.
+ */
+export function renderMoPromoBlock(input: MoPromoBlockInput): string {
+  const override = activeEmailDesignRenderers()?.moPromoBlock;
+  if (override) return override(input);
+  return renderSectionRow(
+    `
+                                  <table width="100%" cellspacing="0" cellpadding="0" border="0" role="presentation" style="min-width: 100%; direction: ltr; Margin-top: 16px;">
+                                    <tr>
+                                      <td valign="middle" width="68" style="mso-line-height-rule: exactly; padding-right: 12px;">
+                                        <img src="${escapeAttr(emailMoIconUrl())}" alt="Mo" width="56" height="56" border="0" style="width: 56px; height: 56px; display: block;">
+                                      </td>
+                                      <td valign="middle" style="mso-line-height-rule: exactly;">
+                                        <p style="${emailTextStyle()}" align="left">${escapeHtml(
+                                          input.introText
+                                        )}</p>
+                                      </td>
+                                    </tr>
+                                  </table>`,
+    { padding: "10px 60px" }
+  );
 }
 
 function renderSocialRow(): string {

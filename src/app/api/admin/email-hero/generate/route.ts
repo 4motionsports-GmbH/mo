@@ -6,8 +6,8 @@
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { isDbConfigured } from "@/lib/db";
 import { recordAdminAccess } from "@/lib/admin-access-log";
-import { generateHeroImage, MAX_HERO_PROMPT_CHARS } from "@/lib/email-hero";
-import { parseEmailHeroKind } from "@/lib/email-hero-store";
+import { generateHeroImage, MAX_HERO_PROMPT_CHARS, MAX_HERO_HEADLINE_CHARS } from "@/lib/email-hero";
+import { parseEmailHeroKind, setEmailHeroHeadline } from "@/lib/email-hero-store";
 import { reportError } from "@/lib/observability";
 
 // Image generation takes tens of seconds — the longest admin route we have.
@@ -18,8 +18,14 @@ export async function POST(req: Request) {
   if (blocked) return blocked;
 
   let kind, id: number, prompt: string;
+  let headline: string | null = null;
   try {
-    const body = (await req.json()) as { kind?: unknown; id?: unknown; prompt?: unknown };
+    const body = (await req.json()) as {
+      kind?: unknown;
+      id?: unknown;
+      prompt?: unknown;
+      headline?: unknown;
+    };
     kind = parseEmailHeroKind(body.kind);
     if (!kind || typeof body.id !== "number" || !Number.isInteger(body.id) || body.id <= 0) {
       return adminJsonError("bad_request", "kind und id erforderlich.", 400);
@@ -37,6 +43,16 @@ export async function POST(req: Request) {
       );
     }
     prompt = body.prompt;
+    if (typeof body.headline === "string" && body.headline.trim()) {
+      if (body.headline.length > MAX_HERO_HEADLINE_CHARS) {
+        return adminJsonError(
+          "bad_request",
+          `Headline ist zu lang (max. ${MAX_HERO_HEADLINE_CHARS} Zeichen).`,
+          400
+        );
+      }
+      headline = body.headline.trim();
+    }
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
@@ -49,6 +65,8 @@ export async function POST(req: Request) {
     await recordAdminAccess({ action: "email_hero.generate", detail: { kind, id } }, req);
     const result = await generateHeroImage(kind, id, prompt);
     if (!result.ok) return adminJsonError("bad_request", result.message, 400);
+    // The headline rides along so one click saves the whole hero.
+    if (headline) await setEmailHeroHeadline(kind, id, headline);
     return adminJson({ url: result.url });
   } catch (err) {
     reportError(err, { route: "api/admin/email-hero/generate" });

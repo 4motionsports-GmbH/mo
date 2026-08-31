@@ -20,7 +20,8 @@
 
 import OpenAI from "openai";
 import { put } from "@vercel/blob";
-import { generateText } from "ai";
+import { generateObject } from "ai";
+import { z } from "zod";
 import { anthropic } from "@ai-sdk/anthropic";
 import { getBaseUrl } from "./base-url";
 import { getSendById } from "./marketing-store";
@@ -32,10 +33,15 @@ import { reportError } from "./observability";
 
 const PROMPT_MODEL = "claude-sonnet-4-6";
 const IMAGE_MODEL = "gpt-image-1";
-/** Portrait 2:3 — fills the hero slot (image right, ~310px wide, tall). */
-const IMAGE_SIZE = "1024x1536" as const;
+/**
+ * LANDSCAPE 3:2 — the hero is a FULL-BLEED background across the whole card
+ * (640px wide, ~300px tall), with the headline sitting on its faded left half.
+ * A portrait crop would tower over the text and get cut off on both sides.
+ */
+const IMAGE_SIZE = "1536x1024" as const;
 
 export const MAX_HERO_PROMPT_CHARS = 1500;
+export const MAX_HERO_HEADLINE_CHARS = 60;
 
 /**
  * The fixed style/constraint tail every hero prompt carries — the motion
@@ -47,8 +53,12 @@ export const HERO_PROMPT_STYLE_TAIL =
   "Photorealistic premium e-commerce hero shot in a bright modern home gym: " +
   "clean white and light-grey concrete surfaces, soft natural daylight from a " +
   "large window, matte black fitness equipment with subtle red accents, shallow " +
-  "depth of field, calm and motivating mood. Portrait orientation. Strictly no " +
-  "text, no lettering, no logos, no watermarks, no human faces.";
+  "depth of field, calm and motivating mood. WIDE LANDSCAPE composition (3:2). " +
+  "IMPORTANT COMPOSITION RULE: the left 45% of the frame must stay very bright, " +
+  "soft and almost empty — an out-of-focus near-white wall or floor area that " +
+  "fades smoothly into the scene — because dark headline text is placed there; " +
+  "all products and visual interest belong in the right half. Strictly no text, " +
+  "no lettering, no logos, no watermarks, no human faces.";
 
 /** The default hero asset used when a send has no custom hero. */
 export function defaultHeroImageUrl(): string {
@@ -106,8 +116,31 @@ function fallbackScene(ctx: HeroContext): string {
 }
 
 export type SuggestHeroPromptResult =
-  | { ok: true; prompt: string }
+  | { ok: true; prompt: string; headline: string }
   | { ok: false; message: string };
+
+/** Fallback claim when the model is unavailable — the design's own default
+ * wording, so the hero never renders empty. */
+const FALLBACK_HEADLINE = "Mehr Leistung.\nMehr Fokus.";
+
+const heroSuggestionSchema = z.object({
+  scene: z
+    .string()
+    .describe(
+      "ENGLISCHE Szenen-Beschreibung für das Bildmodell: EIN Absatz, max. 60 " +
+        "Wörter, konkrete hochwertige Produkt-/Lifestyle-Szene passend zu den " +
+        "empfohlenen Produkten. Keine Markennamen, kein Text im Bild, keine " +
+        "Gesichter, keine Stil-/Licht-Angaben (werden separat angehängt)."
+    ),
+  headline: z
+    .string()
+    .describe(
+      "DEUTSCHE Hero-Schlagzeile: GENAU ZWEI kurze Zeilen, getrennt durch " +
+        "einen Zeilenumbruch, je 2–3 Wörter, je mit Punkt (Beispiel: " +
+        "\"Mehr Leistung.\\nMehr Fokus.\"). Konkret auf diese E-Mail bezogen, " +
+        "werblich, ohne Produktnamen, ohne Anrede, max. 60 Zeichen gesamt."
+    ),
+});
 
 /**
  * Draft the personalised hero-image prompt for one marketing send / campaign
@@ -122,26 +155,25 @@ export async function suggestHeroPrompt(
   if (!ctx) return { ok: false, message: "Entwurf nicht gefunden." };
 
   let scene = fallbackScene(ctx);
+  let headline = FALLBACK_HEADLINE;
   if (process.env.ANTHROPIC_API_KEY) {
     try {
-      const { text, usage } = await generateText({
+      const { object, usage } = await generateObject({
         model: anthropic(PROMPT_MODEL),
+        schema: heroSuggestionSchema,
         system:
-          "Du schreibst die SZENEN-BESCHREIBUNG für ein Bildmodell (englisch). " +
-          "Sie wird der Hero der personalisierten E-Mail eines Fitness-Shops — " +
-          "das Erste, was diese eine Person sieht. Regeln: EIN Absatz, maximal " +
-          "60 Wörter, ENGLISCH. Beschreibe eine konkrete, hochwertige Produkt-/" +
-          "Lifestyle-Szene, die zu den empfohlenen Produkten und zur Geschichte " +
-          "der E-Mail passt — Objekte, Anordnung, Stimmung. KEINE Markennamen, " +
-          "KEIN Text im Bild, KEINE Gesichter, KEINE Stil-/Licht-Angaben (die " +
-          "werden separat angehängt). Antworte NUR mit der Szenen-Beschreibung.",
+          "Du entwirfst den HERO einer personalisierten E-Mail eines " +
+          "Fitness-Shops — das Erste, was diese eine Person sieht: eine " +
+          "Bild-Szene (englisch, für ein Bildmodell) und eine deutsche " +
+          "Schlagzeile aus genau zwei kurzen Zeilen. Beides muss zu den " +
+          "empfohlenen Produkten und zur Geschichte dieser E-Mail passen.",
         prompt: [
           ctx.productNames.length
             ? `Empfohlene Produkte:\n${ctx.productNames.map((n) => `- ${n}`).join("\n")}`
             : "Empfohlene Produkte: (keine — allgemeines Home-Gym-Zubehör)",
           ctx.proseExcerpt ? `\nE-Mail-Text (Auszug):\n${ctx.proseExcerpt}` : "",
           ctx.extraContext.length ? `\n${ctx.extraContext.join("\n")}` : "",
-          "\nSchreibe die Szenen-Beschreibung.",
+          "\nEntwirf Szene und Schlagzeile.",
         ].join("\n"),
       });
       await recordAiUsage({
@@ -150,14 +182,15 @@ export async function suggestHeroPrompt(
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,
       });
-      const trimmed = text?.trim();
-      if (trimmed) scene = trimmed;
+      if (object.scene?.trim()) scene = object.scene.trim();
+      const h = object.headline?.trim();
+      if (h && h.length <= MAX_HERO_HEADLINE_CHARS) headline = h;
     } catch (err) {
       reportError(err, { route: "lib/email-hero", phase: "suggest" });
     }
   }
 
-  return { ok: true, prompt: `${scene}\n\n${HERO_PROMPT_STYLE_TAIL}` };
+  return { ok: true, prompt: `${scene}\n\n${HERO_PROMPT_STYLE_TAIL}`, headline };
 }
 
 export type GenerateHeroImageResult =

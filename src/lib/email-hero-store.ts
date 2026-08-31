@@ -17,6 +17,9 @@ export type EmailHeroKind = "marketing" | "campaign";
 export interface EmailHeroState {
   url: string | null;
   prompt: string | null;
+  /** Operator/AI hero claim (two short lines, "\n"-separated), or null →
+   * the design's per-type default. */
+  headline: string | null;
 }
 
 export function parseEmailHeroKind(value: unknown): EmailHeroKind | null {
@@ -33,17 +36,22 @@ export async function getEmailHero(
   try {
     const rows = (kind === "marketing"
       ? await sql`
-          SELECT hero_image_url, hero_image_prompt
+          SELECT hero_image_url, hero_image_prompt, hero_headline
             FROM marketing_sends WHERE id = ${id}
         `
       : await sql`
-          SELECT hero_image_url, hero_image_prompt
+          SELECT hero_image_url, hero_image_prompt, hero_headline
             FROM campaign_drafts WHERE contact_id = ${id}
-        `) as Array<{ hero_image_url: string | null; hero_image_prompt: string | null }>;
+        `) as Array<{
+      hero_image_url: string | null;
+      hero_image_prompt: string | null;
+      hero_headline: string | null;
+    }>;
     if (rows.length === 0) return null;
     return {
       url: rows[0].hero_image_url ?? null,
       prompt: rows[0].hero_image_prompt ?? null,
+      headline: rows[0].hero_headline ?? null,
     };
   } catch (err) {
     reportError(err, { route: "lib/email-hero-store", phase: "get" });
@@ -51,13 +59,49 @@ export async function getEmailHero(
   }
 }
 
-/** The custom hero URL for the SEND PATH — never throws, null → default hero. */
-export async function getEmailHeroUrl(kind: EmailHeroKind, id: number): Promise<string | null> {
+/**
+ * The per-send hero bits for the SEND PATH (image + headline). Never throws;
+ * absent values mean "use the design's defaults".
+ */
+export async function getEmailHeroRenderData(
+  kind: EmailHeroKind,
+  id: number
+): Promise<{ heroImageUrl: string | null; heroHeadline: string | null }> {
   const state = await getEmailHero(kind, id);
-  return state?.url ?? null;
+  return {
+    heroImageUrl: state?.url ?? null,
+    heroHeadline: state?.headline ?? null,
+  };
 }
 
-/** Store (or with nulls: clear) the hero image + prompt on the draft row. */
+/** Store just the headline (no image render) — the panel's cheap save. */
+export async function setEmailHeroHeadline(
+  kind: EmailHeroKind,
+  id: number,
+  headline: string | null,
+  sql: Sql | null = getSql()
+): Promise<{ ok: boolean; notFound?: boolean }> {
+  if (!sql) return { ok: false };
+  try {
+    const rows = (kind === "marketing"
+      ? await sql`
+          UPDATE marketing_sends SET hero_headline = ${headline}
+           WHERE id = ${id} RETURNING id
+        `
+      : await sql`
+          UPDATE campaign_drafts SET hero_headline = ${headline}, updated_at = now()
+           WHERE contact_id = ${id} RETURNING id
+        `) as Array<{ id: number }>;
+    if (rows.length === 0) return { ok: false, notFound: true };
+    return { ok: true };
+  } catch (err) {
+    reportError(err, { route: "lib/email-hero-store", phase: "setHeadline" });
+    return { ok: false };
+  }
+}
+
+/** Store (or with nulls: clear) the hero image + prompt on the draft row.
+ * The headline has its own setter so a re-render never drops it. */
 export async function setEmailHero(
   kind: EmailHeroKind,
   id: number,

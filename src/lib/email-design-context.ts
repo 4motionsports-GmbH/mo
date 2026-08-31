@@ -86,6 +86,24 @@ export interface EmailDesignRenderers {
    * and MUST show strike/saving lines only when `computed` carries them.
    */
   bundleBlock?: (input: BundleOfferBlockInput, computed: BundleBlockComputed) => string;
+  /**
+   * The campaign mail's Mo-promo block (full-width card rows). The classic
+   * implementation is a chat-style media row above the CTA; a design may render
+   * it as its own advisor card instead. The TRACKED CTA url is handed in and
+   * MUST stay clickable — the campaign funnel counts those clicks.
+   */
+  moPromoBlock?: (input: MoPromoBlockInput) => string;
+}
+
+/** Everything a moPromoBlock override needs (campaign-email.ts builds it). */
+export interface MoPromoBlockInput {
+  /** Mo's chat hint, already locale-resolved (plain text — escape it). */
+  introText: string;
+  /** Label of the promo CTA. */
+  ctaLabel: string;
+  /** The TRACKED /api/r/<token> deep link (preview: the plain deep link). */
+  ctaUrl: string;
+  language: "de" | "en";
 }
 
 /** A design resolved for ONE email kind: merged tokens + merged renderers. */
@@ -126,6 +144,11 @@ export interface EmailRenderData {
    * design's default hero asset. */
   heroImageUrl?: string | null;
   /**
+   * Per-send hero claim (two short lines, "\n"-separated) — the AI-drafted,
+   * operator-edited headline. Null/absent → the design's per-type default.
+   */
+  heroHeadline?: string | null;
+  /**
    * The recipient's first name, when known — image-first designs open with a
    * personal greeting ("Hey Anna-Sophie,"). Null/absent → the design falls
    * back to whatever greeting the AI prose already carries.
@@ -135,10 +158,17 @@ export interface EmailRenderData {
 
 const renderDataStorage = new AsyncLocalStorage<EmailRenderData>();
 
-/** Run `fn` with per-send render data active (null/empty → run unwrapped). */
+/**
+ * Run `fn` with per-send render data active (null/empty → run unwrapped).
+ *
+ * Nested calls MERGE onto the data already active instead of replacing it, so
+ * an inner wrapper that only knows one field (e.g. a preview adding a sample
+ * recipient name) can never silently drop the fields an outer wrapper set.
+ */
 export function withEmailRenderData<T>(data: EmailRenderData | null, fn: () => T): T {
   if (!data) return fn();
-  return renderDataStorage.run(data, fn);
+  const merged = { ...activeEmailRenderData(), ...data };
+  return renderDataStorage.run(merged, fn);
 }
 
 /** The active per-send render data ({} outside any withEmailRenderData). */
