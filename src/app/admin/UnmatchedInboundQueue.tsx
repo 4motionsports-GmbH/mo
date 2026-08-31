@@ -12,6 +12,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Inbox, Paperclip } from "lucide-react";
 import { Badge, Button, Card, Select, toast } from "./ui";
+import {
+  ADMIN_DATE_TIME_PADDED,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 export interface UnmatchedMessageProps {
   id: number;
@@ -29,16 +33,7 @@ export interface AssignTargetProps {
 }
 
 function fmtDateTime(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("de-DE", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatAdmin(iso, ADMIN_DATE_TIME_PADDED);
 }
 
 function reportError(e: unknown) {

@@ -37,6 +37,7 @@
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { reportError } from "./observability";
 import { parseIntEnv } from "./env-num";
+import { STORE_TIME_ZONE } from "./store-datetime.mjs";
 
 // The admin chooses the discount depth as a whole-number percent (DEFAULT 0,
 // range 0–50). The bounds + validation live in lib/discount-validation.mjs,
@@ -133,7 +134,7 @@ function discountExpiryDays(): number {
  */
 export function formatGermanExpiryDate(d: string | Date): string {
   return new Date(d).toLocaleDateString("de-DE", {
-    timeZone: "Europe/Berlin",
+    timeZone: STORE_TIME_ZONE,
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -153,7 +154,7 @@ export function formatExpiryDateForLanguage(
 ): string {
   if (language !== "en") return formatGermanExpiryDate(d);
   return new Date(d).toLocaleDateString("en-GB", {
-    timeZone: "Europe/Berlin",
+    timeZone: STORE_TIME_ZONE,
     day: "numeric",
     month: "long",
     year: "numeric",

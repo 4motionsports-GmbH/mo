@@ -27,6 +27,7 @@ import {
   BUNDLE_MIN_PRODUCTS,
   BUNDLE_MAX_PRODUCTS,
 } from "./bundle-suggestion-core.mjs";
+import { formatStoreDate } from "./store-datetime.mjs";
 
 // Same model the marketing draft uses — one voice/quality bar across the
 // dashboard's AI features.
@@ -174,7 +175,7 @@ export async function suggestBundle(
   const sessionBlocks = sessions
     .map((s, i) => {
       const t = readableTranscript(s.transcript).slice(0, MAX_TRANSCRIPT_CHARS_PER_SESSION);
-      const date = s.createdAt ? new Date(s.createdAt).toLocaleDateString("de-DE") : "Datum unbekannt";
+      const date = formatStoreDate(s.createdAt, "de-DE", "Datum unbekannt");
       return `### Gespräch ${i + 1} — ${date}\n${t || "(kein lesbares Transkript)"}`;
     })
     .join("\n\n");

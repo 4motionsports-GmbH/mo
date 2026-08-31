@@ -14,6 +14,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, Mailbox, Save, Send, Sparkles } from "lucide-react";
 import { Badge, Button, Input, Label, Textarea, toast, type BadgeProps } from "./ui";
+import {
+  ADMIN_DATE,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 export interface PhysicalLetterProps {
   id: number;
@@ -69,9 +73,7 @@ function LetterTotals({ letters }: { letters: PhysicalLetterProps[] }) {
 }
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("de-DE");
+  return formatAdmin(iso, ADMIN_DATE);
 }
 
 function reportError(e: unknown) {

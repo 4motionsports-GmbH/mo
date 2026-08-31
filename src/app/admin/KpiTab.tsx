@@ -50,6 +50,10 @@ import {
   PersonaDistributionChart,
   StageFunnelChart,
 } from "./KpiCharts";
+import {
+  ADMIN_DATE,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 function pct(n: number): string {
   return `${(n * 100).toFixed(1)}%`;
@@ -83,9 +87,7 @@ function money(n: number, currency: string): string {
 }
 
 function dateLabel(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("de-DE");
+  return formatAdmin(iso, ADMIN_DATE);
 }
 
 const MARKETING_FUNNEL_DISPLAY_CAP = 100;

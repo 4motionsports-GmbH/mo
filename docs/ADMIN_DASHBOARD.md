@@ -891,3 +891,69 @@ like the Q&A knowledge block, full append-only history; the core prompt stays
 in git). The Gespräche boundary is unchanged: nothing is ever applied
 automatically — the engine only proposes. Full design, tables (migration
 0044), routes and honesty rules: see [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md).
+
+---
+
+## Rendering dates & times — hydration safety
+
+`/admin` is `force-dynamic`: every tab body is rendered on the **server** and
+the client components are then **hydrated** in the operator's browser. A
+timezone-naive `new Date(iso).toLocaleString("de-DE")` resolves the timezone
+from the host, and the two hosts do not agree:
+
+| | `2026-08-31T22:40:00Z` |
+| --- | --- |
+| server (Vercel/Node, `TZ=UTC`) | `31.8.2026, 22:40:00` |
+| browser (operator, `Europe/Berlin`) | `1.9.2026, 00:40:00` |
+
+React compares the two strings, finds them different and throws a hydration
+mismatch — the minified **“React error #418”** in the browser console — then
+discards the server HTML and re-renders the subtree on the client. Note the
+**date alone flips too**: any instant after 22:00 UTC already belongs to the
+next day in Berlin, so date-only columns are just as unsafe as ones printing a
+clock time.
+
+The fix is to **pin** the timezone instead of inheriting it, exactly as
+`shopify-discounts.ts` already does for customer-facing expiry dates. The shop
+is operated from Germany, so `Europe/Berlin` is both the deterministic and the
+correct answer — output in the operator's browser is unchanged, the server
+simply catches up.
+
+**Rule: no admin component formats a Date itself.** Everything goes through
+[`src/lib/admin-datetime.mjs`](../src/lib/admin-datetime.mjs):
+
+```ts
+import { ADMIN_DATE_TIME_PADDED, formatAdmin } from "@/lib/admin-datetime.mjs";
+
+formatAdmin(row.sentAt, ADMIN_DATE_TIME_PADDED); // "01.09.2026, 00:40"
+formatAdmin(null, ADMIN_DATE_TIME_PADDED);       // "—"
+```
+
+`formatAdmin(value, preset?, fallback?)` accepts an ISO string, a `Date` or
+epoch milliseconds, and renders `—` (or a caller-supplied fallback) for absent
+or unparseable values. One preset per shape in use — `ADMIN_DATE`,
+`ADMIN_DATE_PADDED`, `ADMIN_DATE_MEDIUM`, `ADMIN_DAY_MONTH`,
+`ADMIN_DATE_TIME_PADDED`, `ADMIN_DATE_TIME_MEDIUM`, `ADMIN_DATE_TIME_SHORT`,
+`ADMIN_TIME`, `ADMIN_DATE_TIME_FULL` — so two panels showing the same kind of
+timestamp cannot drift apart.
+
+This is enforced, not just documented: an ESLint `no-restricted-syntax` rule
+scoped to `src/app/admin/**` fails the build on `toLocaleDateString`,
+`toLocaleTimeString`, or `toLocaleString` called on a `new Date(...)`.
+`toLocaleString` on a **number** stays allowed — number and currency formatting
+was verified byte-identical between Node and Chromium (`1.234,56 €`, same
+U+00A0), so it is not a hydration hazard.
+
+The pinned zone itself lives in
+[`src/lib/store-datetime.mjs`](../src/lib/store-datetime.mjs) as
+`STORE_TIME_ZONE`, which `admin-datetime.mjs` re-exports — the back-office, the
+customer-facing discount expiry dates and the AI prompt builders all read the
+same constant, so they cannot drift onto different zones. That module also
+carries `formatStoreDate(value, locale, fallback)` for the **server-only** side
+(the prompt builders in `marketing-draft.ts`, `campaign-draft.ts`,
+`customer-profile.ts`, `bundle-suggestion.ts`). Those never hydrate, so they
+could not cause #418 — but they fed the model the UTC calendar day, which for
+an order placed between 00:00 and 02:00 Berlin time is the *previous* day, and
+the model then repeated that wrong date to the customer. Worst case observed:
+an order at 00:10 on 1 January 2026 was described as `31.12.2025` — wrong day
+and wrong year.

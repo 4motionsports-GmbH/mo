@@ -15,16 +15,16 @@ import type {
   ReportProfileSection,
   ReportAppendixItem,
 } from "@/lib/analytics-report-store";
+import {
+  ADMIN_DATE_MEDIUM,
+  formatAdmin,
+} from "@/lib/admin-datetime.mjs";
 
 function eur(n: number): string {
   return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
 }
 function fmtDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("de-DE", { dateStyle: "medium" });
-  } catch {
-    return iso;
-  }
+  return formatAdmin(iso, ADMIN_DATE_MEDIUM, iso);
 }
 
 function Distribution({ rows }: { rows: ReportDistributionRow[] }) {
