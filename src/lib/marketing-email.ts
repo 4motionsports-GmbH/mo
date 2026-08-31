@@ -43,6 +43,7 @@ import {
 import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
 import { getEmailHeroUrl } from "./email-hero-store";
+import { getCustomerById } from "./customer-store";
 import {
   renderEmailProductRows,
   productRowItems,
@@ -72,6 +73,24 @@ import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
 import { loadProductCatalog } from "./catalog-store";
 import { reportError } from "./observability";
 import type { Product } from "./types";
+
+/**
+ * The recipient's first name for the personal greeting of image-first designs
+ * (null when unknown — the design then leaves the AI prose's own greeting).
+ * Never throws: a lookup failure just means "no name".
+ */
+async function recipientFirstNameForSend(customerId: number | null): Promise<string | null> {
+  if (!customerId) return null;
+  try {
+    const customer = await getCustomerById(customerId);
+    const summary = customer?.shopifyAccountSummary;
+    const first = summary?.firstName?.trim() || summary?.displayName?.trim()?.split(/\s+/)[0];
+    return first || null;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-email", phase: "recipientFirstName" });
+    return null;
+  }
+}
 
 export type ApproveAndSendResult =
   | { ok: true; sentTo: string }
@@ -289,8 +308,9 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       // The per-send hero image (email-hero.ts) rides along for hero designs.
       const emailDesign = await getCachedEmailDesignForKind("marketing");
       const heroImageUrl = await getEmailHeroUrl("marketing", sendId);
+      const recipientFirstName = await recipientFirstNameForSend(claimed.customerId);
       const { text, html } = await withEmailDesign(emailDesign, () =>
-        withEmailRenderData({ heroImageUrl }, async () => renderMarketingEmail({
+        withEmailRenderData({ heroImageUrl, recipientFirstName }, async () => renderMarketingEmail({
         subject: claimed.subject ?? "motion sports",
         body,
         // The customer sees/clicks the tracked redirect URL, not the raw cart.
@@ -494,8 +514,9 @@ export async function renderMarketingEmailPreview(
   // ships.
   const emailDesign = await getCachedEmailDesignForKind("marketing");
   const heroImageUrl = await getEmailHeroUrl("marketing", sendId);
+  const recipientFirstName = await recipientFirstNameForSend(send.customerId);
   const { html } = await withEmailDesign(emailDesign, () =>
-    withEmailRenderData({ heroImageUrl }, async () => renderMarketingEmail({
+    withEmailRenderData({ heroImageUrl, recipientFirstName }, async () => renderMarketingEmail({
     subject,
     body,
     linkUrl: cart.url,

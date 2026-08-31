@@ -125,6 +125,12 @@ export interface EmailRenderData {
   /** Absolute https URL of the per-send custom hero image, or null → the
    * design's default hero asset. */
   heroImageUrl?: string | null;
+  /**
+   * The recipient's first name, when known — image-first designs open with a
+   * personal greeting ("Hey Anna-Sophie,"). Null/absent → the design falls
+   * back to whatever greeting the AI prose already carries.
+   */
+  recipientFirstName?: string | null;
 }
 
 const renderDataStorage = new AsyncLocalStorage<EmailRenderData>();

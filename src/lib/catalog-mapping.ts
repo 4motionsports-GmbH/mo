@@ -6,6 +6,7 @@
 
 import type { Product, ProductVariant } from "./types";
 import { getMetafield, type ShopifyProduct, type ShopifyProductVariant } from "./shopify";
+import { richTextToPlainText } from "./shopify-richtext.mjs";
 import { buildShopifyCartUrl, parseNumericVariantId } from "./shopify-cart-url.mjs";
 import { QA_METAFIELD_KEY, QA_METAFIELD_NAMESPACE, parseQaMetafield } from "./qa-core.mjs";
 import { parseKurztextSpecs, extractKurztextDimensions } from "./kurztext.mjs";
@@ -432,8 +433,14 @@ export function mapShopifyProducts(
     // the long description.
     const kurzinfo = getMetafield(p, "custom", "kurzinfo");
     const seoDescription = (p.seo?.description || "").trim();
+    // The kurzinfo metafield is a Shopify RICH-TEXT field: its raw value is a
+    // JSON document, not text (shopify-richtext.mjs). Convert before it becomes
+    // the product's short description — otherwise the JSON ships into emails,
+    // Mo's prompt, the embeddings and /api/products.
     const shortDescription =
-      (kurzinfo || "").trim() || seoDescription || trimToWords(detailedDescription, 240);
+      richTextToPlainText((kurzinfo || "").trim()).trim() ||
+      seoDescription ||
+      trimToWords(detailedDescription, 240);
     const category = deriveCategory(p.category?.fullName, p.productType);
     const brand = (p.vendor || "").trim() || "Motion Sports";
     const deliveryMinDays = parseNumber(getMetafield(p, "custom", "lieferzeit_min"));

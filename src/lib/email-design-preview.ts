@@ -10,7 +10,11 @@
 // would produce, so a new AI-authored design can be inspected for every type
 // before it is selected. Sample-data shapes mirror scripts/send-test-emails.mjs.
 
-import { withEmailDesign, type ResolvedEmailDesign } from "./email-design-context";
+import {
+  withEmailDesign,
+  withEmailRenderData,
+  type ResolvedEmailDesign,
+} from "./email-design-context";
 import { buildSummaryEmailContent } from "./summary-email";
 import { doiEmailBody, unsubscribeFooter } from "./consent-copy";
 import { renderMarketingEmail } from "./marketing-email";
@@ -122,5 +126,11 @@ export async function renderEmailDesignPreview(
   design: ResolvedEmailDesign | null
 ): Promise<string> {
   const products = await sampleProducts();
-  return withEmailDesign(design, () => renderSampleForKind(kind, products));
+  // Sample render data so hero-driven designs preview their personalisation
+  // (a real send passes the recipient's actual first name).
+  return withEmailDesign(design, () =>
+    withEmailRenderData({ recipientFirstName: "Anna-Sophie" }, () =>
+      renderSampleForKind(kind, products)
+    )
+  );
 }

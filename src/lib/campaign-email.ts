@@ -301,7 +301,9 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       const emailDesign = await getCachedEmailDesignForKind("campaign");
       const heroImageUrl = await getEmailHeroUrl("campaign", contactId);
       const { text, html } = await withEmailDesign(emailDesign, () =>
-        withEmailRenderData({ heroImageUrl }, async () => renderCampaignEmail({
+        withEmailRenderData(
+          { heroImageUrl, recipientFirstName: contact.firstName?.trim() || null },
+          async () => renderCampaignEmail({
         subject: draft.subject,
         body,
         language: contact.language,
@@ -315,7 +317,8 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         bundle,
         labelForUrl: await catalogNameLookup(),
         ctaUrl: trackedCtaUrl,
-      })));
+      }))
+        );
 
       const threading = outboundThreading();
       const result = await sendEmail({
@@ -526,7 +529,9 @@ export async function renderCampaignEmailPreview(
   const emailDesign = await getCachedEmailDesignForKind("campaign");
   const heroImageUrl = await getEmailHeroUrl("campaign", contactId);
   const { html } = await withEmailDesign(emailDesign, () =>
-    withEmailRenderData({ heroImageUrl }, async () => renderCampaignEmail({
+    withEmailRenderData(
+      { heroImageUrl, recipientFirstName: contact.firstName?.trim() || null },
+      async () => renderCampaignEmail({
     subject,
     body,
     language: contact.language,
@@ -540,7 +545,8 @@ export async function renderCampaignEmailPreview(
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
     bundle,
     labelForUrl: await catalogNameLookup(),
-  })));
+  }))
+    );
   return { ok: true, subject, html };
 }
 
