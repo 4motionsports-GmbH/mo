@@ -23,21 +23,29 @@ export const HERO_PROMPT_STYLE_TAIL =
   "IMPORTANT COMPOSITION RULE: the left 45% of the frame must stay very bright, " +
   "soft and almost empty — an out-of-focus near-white wall or floor area that " +
   "fades smoothly into the scene — because dark headline text is placed there; " +
-  "all products and visual interest belong in the right half. Strictly no text, " +
-  "no lettering, no logos, no watermarks, no human faces.";
+  "all products and visual interest belong in the right half. " +
+  "BRAND FIDELITY RULE: render the named equipment true to that brand's actual " +
+  "design language — proportions, frame profile, finish and colour — so it " +
+  "reads as the real product family the shop sells. Strictly no text, no " +
+  "lettering, no logos, no brand markings on the equipment, no watermarks, no " +
+  "human faces: an invented logo would be a WRONG logo, so shape and finish " +
+  "carry the brand, never a mark.";
 
 /**
  * Guarantee a prompt carries the CURRENT style rules. A prompt stored before
- * those rules existed (e.g. the earlier portrait tail) would fight the layout,
- * so a superseded tail is replaced — the operator's own scene text is never
- * touched.
+ * those rules existed (the earlier portrait tail, or the pre-brand-fidelity
+ * one) would fight the layout or miss the brand instruction, so a superseded
+ * tail is REPLACED — the operator's own scene text is never touched.
+ *
+ * The marker is the newest rule in the tail, so bumping the tail automatically
+ * supersedes every stored prompt written against an older version.
  *
  * @param {string} prompt
  * @returns {string}
  */
 export function ensureHeroStyleTail(prompt) {
   const text = String(prompt ?? "");
-  if (text.includes("IMPORTANT COMPOSITION RULE")) return text;
+  if (text.includes("BRAND FIDELITY RULE")) return text;
   const legacyStart = text.indexOf("Photorealistic premium e-commerce hero shot");
   const scene = (legacyStart >= 0 ? text.slice(0, legacyStart) : text).trim();
   return `${scene}\n\n${HERO_PROMPT_STYLE_TAIL}`;
@@ -124,9 +132,103 @@ export function ownedProductTitles(history, limit = 6) {
 }
 
 /**
- * Distinct product CATEGORIES of the recommended products. Image models render
- * "power rack, resistance bands" far more reliably than "ATX® Kabelzuggriff-Set"
- * — the brand names mean nothing to them, the object types mean everything.
+ * German colour/finish values as the catalogue stores them, mapped to English
+ * for the image prompt. The stored values carry a RAL-ish code suffix
+ * ("schwarz-150"), which is meaningless to an image model and is stripped.
+ * Anything unmapped survives as-is — a wrong colour word is worse than a
+ * German one the model can still often read.
+ */
+const COLOR_WORDS = new Map([
+  ["schwarz", "black"],
+  ["weiss", "white"],
+  ["weiß", "white"],
+  ["grau", "grey"],
+  ["anthrazit", "anthracite grey"],
+  ["silber", "silver"],
+  ["chrom", "chrome"],
+  ["rot", "red"],
+  ["blau", "blue"],
+  ["gruen", "green"],
+  ["grün", "green"],
+  ["gelb", "yellow"],
+  ["orange", "orange"],
+  ["holz", "wood"],
+  ["edelstahl", "stainless steel"],
+]);
+
+/**
+ * Turn a catalogue colour spec into a prompt-ready English colour word.
+ * "schwarz-150" → "black", "Schwarz / Rot" → "black / red".
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function colorWordForPrompt(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "";
+  return raw
+    .split(/\s*[\/,;]\s*/)
+    .map((part) => {
+      // Drop a trailing code ("-150", " RAL 9005") — pure noise for a model.
+      const word = part.replace(/[-\s]+(?:ral\s*)?\d+\s*$/i, "").trim().toLowerCase();
+      return COLOR_WORDS.get(word) ?? word;
+    })
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" / ");
+}
+
+/**
+ * The recommended products as CONCRETE, nameable objects for the image prompt:
+ * brand + exact product name + object type + colour, e.g.
+ *   "ATX® Functional Trainer - Dual Pulley (Weight Lifting Machines with
+ *    Pulleys, black)"
+ *
+ * Why brand AND type: the brand pins the design language of what the shop
+ * actually sells (ATX® is 53 % of this catalogue and has a recognisable matte
+ * black, heavy-steel look), while the object type is what the model can
+ * reliably render. Neither alone is enough — the type without the brand gives a
+ * generic stock gym, the brand without the type gives nothing at all.
+ *
+ * The colour comes from the catalogue's own spec (846 of 965 products carry
+ * one), which is the single cheapest lever on how close the render lands.
+ *
+ * @param {Array<{ name?: string|null, brand?: string|null, category?: string|null,
+ *   specifications?: Record<string, string|number>|null }>} products
+ * @param {number} [limit]
+ * @returns {string[]}
+ */
+export function productHeroDescriptors(products, limit = 3) {
+  const out = [];
+  for (const p of products ?? []) {
+    const name = typeof p?.name === "string" ? p.name.trim() : "";
+    if (!name) continue;
+    const brand = typeof p?.brand === "string" ? p.brand.trim() : "";
+    const category = typeof p?.category === "string" ? p.category.trim() : "";
+    const specs = p?.specifications ?? {};
+    const colorKey = Object.keys(specs).find((k) => /^(farbe|color|ausf)/i.test(k));
+    const color = colorKey ? colorWordForPrompt(specs[colorKey]) : "";
+
+    // "Uncategorized" is a catalogue placeholder, not an object type.
+    const type = category && !/^uncategori[sz]ed$/i.test(category) ? category : "";
+    const detail = [type, color].filter(Boolean).join(", ");
+    // Only prefix the brand when the name does not already carry it — some
+    // catalogue names lead with a size ("150 kg ATX® Gym Bumper Plates"), so a
+    // startsWith check would double it.
+    const head =
+      brand && !name.toLowerCase().includes(brand.toLowerCase())
+        ? `${brand} ${name}`
+        : name;
+    out.push(detail ? `${head} (${detail})` : head);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Distinct product CATEGORIES of the recommended products — the generic object
+ * types, kept alongside the full descriptors as the fallback for products with
+ * no brand or colour on file.
  *
  * @param {Array<{ category?: string | null }>} products
  * @param {number} [limit]

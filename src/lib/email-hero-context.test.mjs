@@ -4,10 +4,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   clip,
+  colorWordForPrompt,
   heroContextLines,
   loyaltyHint,
   ownedProductTitles,
   productCategories,
+  productHeroDescriptors,
   seasonHint,
 } from "./email-hero-context.mjs";
 
@@ -110,4 +112,107 @@ test("ensureHeroStyleTail appends to a bare scene", () => {
   const out = ensureHeroStyleTail("Just a scene.");
   assert.ok(out.startsWith("Just a scene."));
   assert.ok(out.includes("IMPORTANT COMPOSITION RULE"));
+});
+
+// ── Brand + product fidelity in the image prompt ──────────────────────────────
+// The hero should look like the product the shop actually sells, so the prompt
+// names brand, product, object type and colour instead of a generic category.
+
+test("a descriptor carries brand, product name, object type and colour", () => {
+  assert.deepEqual(
+    productHeroDescriptors([
+      {
+        name: "Functional Trainer - Dual Pulley",
+        brand: "ATX®",
+        category: "Weight Lifting Machines with Pulleys",
+        specifications: { Farbe: "schwarz-150", Serie: "700" },
+      },
+    ]),
+    ["ATX® Functional Trainer - Dual Pulley (Weight Lifting Machines with Pulleys, black)"]
+  );
+});
+
+test("the brand is not repeated when the product name already starts with it", () => {
+  const [d] = productHeroDescriptors([
+    { name: "ATX® Power Rack 620", brand: "ATX®", category: "Power Racks", specifications: {} },
+  ]);
+  assert.equal(d, "ATX® Power Rack 620 (Power Racks)");
+  assert.equal(d.match(/ATX/g).length, 1);
+});
+
+test("'Uncategorized' is a catalogue placeholder, not an object type", () => {
+  assert.deepEqual(
+    productHeroDescriptors([
+      { name: "Ab-/Adduktionstrainer", brand: "Stolzenberg", category: "Uncategorized" },
+    ]),
+    ["Stolzenberg Ab-/Adduktionstrainer"]
+  );
+});
+
+test("products without brand or colour still yield a usable descriptor", () => {
+  assert.deepEqual(
+    productHeroDescriptors([{ name: "Yoga Mat", category: "Yoga & Pilates Mats" }]),
+    ["Yoga Mat (Yoga & Pilates Mats)"]
+  );
+  assert.deepEqual(productHeroDescriptors([{ name: "Nur ein Name" }]), ["Nur ein Name"]);
+  assert.deepEqual(productHeroDescriptors([{ brand: "ATX®" }]), [], "kein Name = kein Eintrag");
+  assert.deepEqual(productHeroDescriptors(undefined), []);
+});
+
+test("descriptors respect the limit", () => {
+  const many = Array.from({ length: 6 }, (_, i) => ({ name: `P${i}`, category: "C" }));
+  assert.equal(productHeroDescriptors(many).length, 3);
+  assert.equal(productHeroDescriptors(many, 2).length, 2);
+});
+
+test("colour specs lose their RAL-ish code and become English", () => {
+  assert.equal(colorWordForPrompt("schwarz-150"), "black");
+  assert.equal(colorWordForPrompt("Schwarz"), "black");
+  assert.equal(colorWordForPrompt("weiß"), "white");
+  assert.equal(colorWordForPrompt("anthrazit RAL 7016"), "anthracite grey");
+  assert.equal(colorWordForPrompt("Schwarz / Rot"), "black / red");
+  // Unmapped words survive rather than being dropped or mistranslated.
+  assert.equal(colorWordForPrompt("bordeaux"), "bordeaux");
+  for (const bad of [null, undefined, "", "   ", 42]) {
+    assert.equal(colorWordForPrompt(bad), "");
+  }
+});
+
+test("an alternative colour spec key is picked up", () => {
+  const [d] = productHeroDescriptors([
+    { name: "Bench", category: "Exercise Benches", specifications: { Ausführung: "grau-7" } },
+  ]);
+  assert.equal(d, "Bench (Exercise Benches, grey)");
+});
+
+// The tail must SUPERSEDE a prompt written before the brand rule existed,
+// keeping the operator's own scene text.
+test("a pre-brand-fidelity prompt gets the current tail, scene preserved", () => {
+  const legacy =
+    "A power rack on light concrete.\n\nPhotorealistic premium e-commerce hero shot in a " +
+    "bright modern home gym: IMPORTANT COMPOSITION RULE: left 45% bright.";
+  const updated = ensureHeroStyleTail(legacy);
+  assert.ok(updated.startsWith("A power rack on light concrete."), "Szene bleibt erhalten");
+  assert.ok(updated.includes("BRAND FIDELITY RULE"), "neue Regel ist drin");
+  assert.ok(!updated.includes("left 45% bright."), "alter Schwanz ist ersetzt");
+  // Idempotent once current.
+  assert.equal(ensureHeroStyleTail(updated), updated);
+});
+
+// Both of these come from real catalogue rows — clean fixtures had missed them.
+test("colour values separated by semicolons are each stripped and mapped", () => {
+  assert.equal(colorWordForPrompt("schwarz-150; grau-17; chrom"), "black / grey");
+});
+
+test("a brand sitting mid-name is not prefixed a second time", () => {
+  const [d] = productHeroDescriptors([
+    {
+      name: "150 kg ATX® Gym Bumper Plates - Vorteilspaket",
+      brand: "ATX®",
+      category: "Weight Plates",
+      specifications: { Farbe: "schwarz-150; weiss" },
+    },
+  ]);
+  assert.equal(d, "150 kg ATX® Gym Bumper Plates - Vorteilspaket (Weight Plates, black / white)");
+  assert.equal(d.match(/ATX/g).length, 1);
 });

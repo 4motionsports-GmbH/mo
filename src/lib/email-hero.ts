@@ -41,6 +41,7 @@ import {
   loyaltyHint,
   ownedProductTitles,
   productCategories,
+  productHeroDescriptors,
   seasonHint,
   MAX_PROFILE_CHARS,
 } from "./email-hero-context.mjs";
@@ -81,6 +82,9 @@ export function isHeroGenerationConfigured(): boolean {
 interface HeroContext {
   /** Recommended product NAMES (for the headline's sense of what's offered). */
   productNames: string[];
+  /** Brand + name + object type + colour of the recommended products — what
+   *  the image prompt names verbatim so the render resembles the real thing. */
+  productDescriptors: string[];
   /** Recommended product CATEGORIES — what the image model can actually draw. */
   productCategories: string[];
   proseExcerpt: string;
@@ -136,6 +140,7 @@ async function loadHeroContext(
 
     return {
       productNames: products.map((p) => p.name),
+      productDescriptors: productHeroDescriptors(products),
       productCategories: productCategories(products),
       proseExcerpt: clip(send.draftedText ?? "", 800),
       extraContext: heroContextLines({
@@ -171,6 +176,7 @@ async function loadHeroContext(
 
   return {
     productNames: products.map((p) => p.name),
+    productDescriptors: productHeroDescriptors(products),
     productCategories: productCategories(products),
     proseExcerpt: clip(draft.body, 800),
     extraContext: heroContextLines({
@@ -185,9 +191,16 @@ async function loadHeroContext(
   };
 }
 
-/** Deterministic fallback scene when the prompt model is unavailable/fails. */
+/** Deterministic fallback scene when the prompt model is unavailable/fails.
+ *  Names brand + product too, so a fallback hero is no more generic than a
+ *  drafted one. */
 function fallbackScene(ctx: HeroContext): string {
-  const items = (ctx.productCategories.length ? ctx.productCategories : ctx.productNames)
+  const items = (ctx.productDescriptors.length
+    ? ctx.productDescriptors
+    : ctx.productCategories.length
+      ? ctx.productCategories
+      : ctx.productNames
+  )
     .slice(0, 3)
     .join(", ");
   return items
@@ -207,10 +220,13 @@ const heroSuggestionSchema = z.object({
   scene: z
     .string()
     .describe(
-      "ENGLISCHE Szenen-Beschreibung für das Bildmodell: EIN Absatz, max. 60 " +
-        "Wörter, konkrete hochwertige Produkt-/Lifestyle-Szene passend zu den " +
-        "empfohlenen Produkten. Keine Markennamen, kein Text im Bild, keine " +
-        "Gesichter, keine Stil-/Licht-Angaben (werden separat angehängt)."
+      "ENGLISCHE Szenen-Beschreibung für das Bildmodell: EIN Absatz, max. 70 " +
+        "Wörter. Benenne das WICHTIGSTE empfohlene Produkt AUSDRÜCKLICH mit " +
+        "Marke und Produktnamen genau so, wie es in den Vorgaben steht (z. B. " +
+        "„an ATX® Power Rack 620“), dazu seine Farbe/Bauform — das Bild soll " +
+        "wie genau dieses Produkt aussehen, nicht wie irgendein Fitnessgerät. " +
+        "Kein Text im Bild, keine Logos, keine Gesichter, keine Stil-/" +
+        "Licht-Angaben (werden separat angehängt)."
     ),
   headline: z
     .string()
@@ -263,8 +279,9 @@ export async function suggestHeroPrompt(
           "Verfügbarkeiten (die stehen deterministisch an anderer Stelle der " +
           "E-Mail und würden hier veralten), Produktnamen, Anrede/Name.",
         prompt: [
-          ctx.productNames.length
-            ? `## Empfohlene Produkte (Inhalt dieser E-Mail)\n${ctx.productNames
+          ctx.productDescriptors.length
+            ? `## Empfohlene Produkte — Marke, Name, Bauart, Farbe\n` +
+              `(wörtlich in die Szene übernehmen)\n${ctx.productDescriptors
                 .map((n) => `- ${n}`)
                 .join("\n")}`
             : "## Empfohlene Produkte\n(keine — allgemeines Home-Gym-Zubehör)",
