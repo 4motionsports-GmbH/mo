@@ -36,6 +36,11 @@
 //   --page-size <n>       orders per GraphQL page (default 15; lower it if the
 //                         shop's cost bucket is small)
 //   --json <path>         also write the aggregates as JSON
+//   --occasion-gap <days> orders from one customer closer together than this
+//                         count as ONE purchase occasion (default 7). One
+//                         checkout routinely lands as several Shopify order
+//                         records; without this the median "repurchase
+//                         interval" collapses to 0 days.
 //
 // The statistics live in src/lib/repurchase-analysis.mjs (pure + unit-tested);
 // this file only does I/O and formatting.
@@ -44,12 +49,14 @@ import process from "node:process";
 import { writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import {
+  DEFAULT_OCCASION_GAP_DAYS,
   VALUE_TIERS,
   accessoryFollowUpRate,
   accessoryRateByWindow,
   buildRepurchaseIntervals,
   repeatRateByTier,
   summarizeIntervals,
+  toPurchaseOccasions,
 } from "../src/lib/repurchase-analysis.mjs";
 import { planThrottleRetry } from "../src/lib/shopify-throttle.mjs";
 
@@ -64,6 +71,16 @@ const since = flag("since");
 const maxOrders = Number(flag("max-orders", "0")) || Infinity;
 const pageSize = Math.max(1, Math.min(50, Number(flag("page-size", "15")) || 15));
 const jsonPath = flag("json");
+const occasionGap = (() => {
+  const raw = flag("occasion-gap");
+  if (raw === null) return DEFAULT_OCCASION_GAP_DAYS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    console.error(`FEHLER: --occasion-gap erwartet eine Zahl >= 0 (bekommen: "${raw}").`);
+    process.exit(1);
+  }
+  return n;
+})();
 
 if (since && !/^\d{4}-\d{2}-\d{2}$/.test(since)) {
   console.error(`FEHLER: --since erwartet YYYY-MM-DD (bekommen: "${since}").`);
@@ -277,7 +294,14 @@ console.log(
     `${maxOrders !== Infinity ? ` · max. ${maxOrders} Bestellungen` : ""}`
 );
 
-const { customers, stats } = await fetchOrders(token);
+const { customers: rawCustomers, stats } = await fetchOrders(token);
+
+// One checkout routinely lands as several Shopify order records. Collapse those
+// into purchase occasions before ANY statistic is computed — otherwise a split
+// checkout inflates the repeat rate and floors the interval.
+const customers = toPurchaseOccasions(rawCustomers, occasionGap);
+const rawOrderCount = rawCustomers.reduce((n, c) => n + c.orders.length, 0);
+const occasionCount = customers.reduce((n, c) => n + c.orders.length, 0);
 
 // The accessory graph, straight from the synced catalogue.
 const catalogRaw = require("../src/data/product-catalog.json");
@@ -293,6 +317,13 @@ console.log(`  … verworfen (Status)              ${stats.skippedStatus}`);
 console.log(`  … verworfen (Gast-Checkout)       ${stats.skippedNoCustomer}`);
 console.log(`  Kunden mit ≥1 Bestellung          ${customers.length}`);
 console.log(`  Katalogprodukte / mit Zubehör     ${catalog.length} / ${accessoryMap.size}`);
+console.log(
+  `\n  Kaufgelegenheiten (Abstand < ${occasionGap} Tage = eine Gelegenheit)` +
+    `\n  ${rawOrderCount} Bestellungen → ${occasionCount} Gelegenheiten ` +
+    `(${rawOrderCount - occasionCount} zusammengefasst, ` +
+    `${rawOrderCount > 0 ? (((rawOrderCount - occasionCount) / rawOrderCount) * 100).toFixed(1) : "0.0"} %)` +
+    `\n  Gesplittete Checkouts zaehlen sonst als Wiederkauf. --occasion-gap 0 schaltet das ab.`
+);
 
 const repeat = repeatRateByTier(customers);
 heading("1 · Wiederkaufsrate nach Wert der ERSTEN Bestellung");
@@ -345,6 +376,22 @@ for (const r of byWindow) {
   );
 }
 
+// Per tier — this is what sets the "Ausbauen"-Fenster separately per Wertstufe.
+heading("4b · Dieselbe Rate je Wertstufe (setzt das Fenster je Stufe)");
+console.log(
+  `  ${pad("Fenster", 18)}` + VALUE_TIERS.map((t) => padL(t.label, 22)).join("")
+);
+for (const r of byWindow) {
+  const label = r.toDays === Infinity ? `> ${r.fromDays} Tage` : `${r.fromDays}–${r.toDays} Tage`;
+  const cells = VALUE_TIERS.map((t) => {
+    const cell = r.byTier.find((b) => b.key === t.key);
+    if (!cell || cell.transitions === 0) return padL("—", 22);
+    return padL(`${pct(cell.rate)} (n=${cell.transitions})`, 22);
+  });
+  console.log(`  ${pad(label, 18)}${cells.join("")}`);
+}
+console.log(`\n  Kleine n (< ~100) sind Rauschen — nicht ueberinterpretieren.`);
+
 heading("Wie das die Schnittpunkte setzt");
 console.log(
   `  • Wiederkaufsrate (1) ist die Obergrenze des ganzen Features.\n` +
@@ -360,8 +407,18 @@ if (jsonPath) {
     JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
-        params: { since: since ?? null, maxOrders: maxOrders === Infinity ? null : maxOrders },
-        dataset: { ...stats, customers: customers.length, catalog: catalog.length },
+        params: {
+          since: since ?? null,
+          maxOrders: maxOrders === Infinity ? null : maxOrders,
+          occasionGapDays: occasionGap,
+        },
+        dataset: {
+          ...stats,
+          customers: customers.length,
+          catalog: catalog.length,
+          rawOrders: rawOrderCount,
+          occasions: occasionCount,
+        },
         valueTiers: VALUE_TIERS.map((t) => ({ key: t.key, label: t.label, maxEur: t.maxEur })),
         repeatRate: repeat,
         intervals: summary,

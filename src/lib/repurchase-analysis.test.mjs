@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import {
+  DEFAULT_OCCASION_GAP_DAYS,
   VALUE_TIERS,
   accessoryFollowUpRate,
   accessoryRateByWindow,
@@ -10,7 +11,9 @@ import {
   percentile,
   repeatRateByTier,
   sortedOrders,
+  mergePurchaseOccasions,
   summarizeIntervals,
+  toPurchaseOccasions,
   valueTierKey,
 } from "./repurchase-analysis.mjs";
 
@@ -237,4 +240,129 @@ test("empty input never throws", () => {
   assert.equal(repeatRateByTier([]).find((r) => r.key === "alle").rate, null);
   const [alle] = accessoryFollowUpRate([], new Map(), { catalogSize: 1 }).slice(-1);
   assert.equal(alle.rate, null);
+});
+
+// ── Purchase occasions ────────────────────────────────────────────────────────
+// The real store returned a median "repurchase interval" of 0.0 days: over half
+// of all measured gaps were under an hour, because one checkout lands as
+// several Shopify order records. Everything below guards that fix.
+
+test("orders inside the gap collapse into ONE purchase occasion", () => {
+  const orders = [
+    order("1", 0, [["rack", 700]]),
+    order("2", 0.02, [["hooks", 60]]), // ~30 minutes later — same checkout episode
+    order("3", 200, [["bar", 199]]),
+  ];
+  const occasions = mergePurchaseOccasions(orders, DEFAULT_OCCASION_GAP_DAYS);
+  assert.equal(occasions.length, 2);
+  assert.equal(occasions[0].lineItems.length, 2, "line items are unioned");
+  assert.equal(occasions[0].createdAt, orders[0].createdAt, "earliest date wins");
+  assert.equal(occasions[1].lineItems.length, 1);
+});
+
+test("an occasion's anchor is the largest item across the whole merged episode", () => {
+  // Cheap order first, expensive one minutes later: the episode is a €2000 one.
+  const [occasion] = mergePurchaseOccasions([
+    order("1", 0, [["mat", 30]]),
+    order("2", 0.01, [["treadmill", 2000]]),
+  ]);
+  assert.equal(anchorValueEur(occasion), 2000);
+  assert.equal(valueTierKey(anchorValueEur(occasion)), "grossgeraet");
+});
+
+test("orders beyond the gap stay separate occasions", () => {
+  const occasions = mergePurchaseOccasions(
+    [order("1", 0, [["a", 10]]), order("2", 8, [["b", 10]])],
+    7
+  );
+  assert.equal(occasions.length, 2);
+});
+
+test("an occasion is bounded by the gap and cannot chain indefinitely", () => {
+  // 0 → 5 → 10 → 15 days. The gap is measured from the occasion's START, not
+  // from the previous order, so an occasion can never span more than gapDays.
+  // Chaining off the previous order would collapse a customer who orders every
+  // five days for a year into ONE occasion and hide every repurchase.
+  const occasions = mergePurchaseOccasions(
+    [0, 5, 10, 15].map((d, i) => order(`o${i}`, d, [["a", 10]])),
+    7
+  );
+  assert.equal(occasions.length, 2, "0+5 form one occasion, 10+15 the next");
+  assert.equal(occasions[0].lineItems.length, 2);
+  assert.equal(occasions[1].lineItems.length, 2);
+});
+
+test("a zero gap disables merging entirely", () => {
+  const orders = [order("1", 0, [["a", 10]]), order("2", 0, [["b", 10]])];
+  assert.equal(mergePurchaseOccasions(orders, 0).length, 2);
+});
+
+test("split checkouts no longer inflate the repeat rate", () => {
+  // One customer, one buying episode split across three order records.
+  const customers = [
+    {
+      key: "a",
+      orders: [
+        order("1", 0, [["rack", 700]]),
+        order("2", 0.01, [["hooks", 60]]),
+        order("3", 0.02, [["plates", 90]]),
+      ],
+    },
+  ];
+  assert.equal(repeatRateByTier(customers).find((r) => r.key === "alle").rate, 1);
+  const merged = toPurchaseOccasions(customers);
+  assert.equal(repeatRateByTier(merged).find((r) => r.key === "alle").rate, 0);
+  assert.equal(buildRepurchaseIntervals(merged).length, 0);
+});
+
+test("occasion merging preserves a genuine later return", () => {
+  const customers = [
+    {
+      key: "a",
+      orders: [
+        order("1", 0, [["rack", 700]]),
+        order("2", 0.01, [["hooks", 60]]), // same episode
+        order("3", 180, [["bar", 199]]), // genuine return
+      ],
+    },
+  ];
+  const merged = toPurchaseOccasions(customers);
+  const intervals = buildRepurchaseIntervals(merged);
+  assert.equal(intervals.length, 1);
+  assert.equal(intervals[0].days, 180);
+  // Anchor of the merged first occasion is the rack, not the hooks.
+  assert.equal(intervals[0].tierKey, "komponente");
+});
+
+test("an accessory bought in the SAME episode is not a follow-up purchase", () => {
+  // Rack and its hooks 30 minutes apart is one decision, not a return visit
+  // an e-mail could have prompted.
+  const customers = [
+    {
+      key: "a",
+      orders: [order("1", 0, [["rack", 700]]), order("2", 0.02, [["hooks", 60]])],
+    },
+  ];
+  const [rawAll] = accessoryFollowUpRate(customers, ACCESSORIES, { catalogSize: 965 }).slice(-1);
+  assert.equal(rawAll.hits, 1, "raw orders count it as a follow-up");
+  const [mergedAll] = accessoryFollowUpRate(toPurchaseOccasions(customers), ACCESSORIES, {
+    catalogSize: 965,
+  }).slice(-1);
+  assert.equal(mergedAll.transitions, 0, "merged into one occasion — no transition at all");
+});
+
+test("the window report carries per-tier rows for setting per-tier cut points", () => {
+  const customers = [
+    { key: "a", orders: [order("1", 0, [["rack", 700]]), order("2", 15, [["hooks", 60]])] },
+  ];
+  const rows = accessoryRateByWindow(customers, ACCESSORIES, { catalogSize: 965 });
+  const bucket = rows.find((r) => r.toDays === 30);
+  assert.ok(Array.isArray(bucket.byTier));
+  assert.deepEqual(bucket.byTier.map((t) => t.key), ["klein", "komponente", "grossgeraet"]);
+  assert.equal(bucket.byTier.find((t) => t.key === "komponente").hits, 1);
+});
+
+test("empty input still never throws after merging", () => {
+  assert.deepEqual(toPurchaseOccasions(undefined), []);
+  assert.deepEqual(mergePurchaseOccasions(undefined), []);
 });

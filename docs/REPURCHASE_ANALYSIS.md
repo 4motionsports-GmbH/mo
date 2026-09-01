@@ -16,6 +16,7 @@ npm run analyze:repurchase -- --since 2023-01-01 --json analyse.json
 | `--max-orders <n>` | nach ca. n Bestellungen abbrechen (Seitengrenze) — Schnelltest |
 | `--page-size <n>` | Bestellungen je GraphQL-Seite (Standard 15) |
 | `--json <pfad>` | Aggregate zusätzlich als JSON schreiben |
+| `--occasion-gap <tage>` | Bestellabstand, unter dem zwei Bestellungen als **eine** Kaufgelegenheit gelten (Standard 7; `0` schaltet ab) |
 
 **Nur lesend.** Es werden ausschließlich `orders`-Queries ausgeführt; nichts wird
 angelegt, geändert oder gelöscht. Voraussetzung ist `read_orders` **und** die
@@ -26,6 +27,32 @@ zuordenbar sein). Fehlt sie, bricht das Skript mit einem klaren Hinweis ab.
 Gruppieren der Bestellungen verwendet. E-Mail, Name und Adresse werden nie
 abgefragt, nie ausgegeben und nie geschrieben; die `--json`-Ausgabe enthält
 **nur Aggregate**, keine Zeile pro Kunde.
+
+## Kaufgelegenheiten statt Bestellungen
+
+**Ein Checkout landet in Shopify regelmäßig als mehrere Bestell-Datensätze** —
+gesplittete Checkouts, nachträglich bearbeitete oder neu angelegte Bestellungen,
+oder schlicht ein Kunde, der zwanzig Minuten später nochmal bestellt, weil er
+etwas vergessen hat. Zählt man die als Wiederkauf, bricht die ganze Analyse: im
+ersten Lauf gegen den echten Shop lag der *Median*-Abstand zwischen
+„aufeinanderfolgenden Bestellungen" bei **0,0 Tagen** — über die Hälfte aller
+gemessenen Abstände lag unter einer Stunde.
+
+Deshalb werden Bestellungen desselben Kunden, die enger als `--occasion-gap`
+(Standard **7 Tage**) beieinander liegen, vorab zu **einer Kaufgelegenheit**
+zusammengefasst: früheste Bestellung gibt das Datum, die Positionen werden
+vereinigt, und der Ankerwert ist der teuerste Einzelposten der ganzen Episode.
+Sieben Tage, weil die Analyse die Frage beantworten soll „wann hätte eine
+Lifecycle-Mail etwas bewirkt" — was innerhalb einer Woche nach der letzten
+Bestellung gekauft wird, hat keine Mail von uns ausgelöst.
+
+Der Abstand wird dabei ab dem **Beginn** der Gelegenheit gemessen, nicht ab der
+vorherigen Bestellung. Eine Gelegenheit kann so nie länger als `gapDays` dauern;
+andernfalls würde ein Kunde, der ein Jahr lang alle fünf Tage bestellt, zu einer
+einzigen Gelegenheit verschmelzen und jeder Wiederkauf verschwinden.
+
+Die Datengrundlage weist aus, wie viele Bestellungen zusammengefasst wurden —
+ist der Anteil hoch, war genau das der Grund für unplausible Rohzahlen.
 
 ## Was gemessen wird — und was die Zahl entscheidet
 
@@ -56,7 +83,9 @@ die Zubehör-Empfehlung das schlägt.
 
 **4 · Zubehör-Rate nach Abstand zum Vorkauf.** Wo die Rate abfällt, endet das
 Zubehör-Fenster. Genau dieser Abfall setzt die obere Grenze des
-„Ausbauen"-Segments je Wertstufe.
+„Ausbauen"-Segments. Tabelle **4b** schlüsselt dieselbe Rate nach Wertstufe auf
+— nur daraus lässt sich das Fenster je Stufe getrennt setzen. Zellen mit kleinem
+`n` (unter ~100) sind Rauschen und dürfen nicht überinterpretiert werden.
 
 ## Wertstufen
 

@@ -117,6 +117,76 @@ export function sortedOrders(orders) {
 }
 
 /**
+ * How far apart two orders must be to count as SEPARATE buying decisions.
+ *
+ * One checkout routinely lands as several Shopify order records (split
+ * checkouts, edited or re-placed orders, a customer who checks out again
+ * minutes later because they forgot something). Counting those as repurchases
+ * is what produced a median "repurchase interval" of 0.0 days on the real
+ * store — more than half of all measured gaps were under an hour.
+ *
+ * Seven days is the default because the question this analysis serves is
+ * "when would a lifecycle e-mail have mattered": nothing bought within a week
+ * of the previous order was influenced by a mail we might have sent, so it
+ * belongs to the same purchase occasion.
+ */
+export const DEFAULT_OCCASION_GAP_DAYS = 7;
+
+/**
+ * Collapse a customer's orders into PURCHASE OCCASIONS: consecutive orders
+ * closer together than `gapDays` merge into one, keeping the earliest date and
+ * the union of the line items (so the occasion's anchor value is the largest
+ * single item anyone bought across the whole episode).
+ *
+ * The gap is measured from the occasion's START, not from the previous order,
+ * which bounds an occasion at `gapDays`. Chaining off the previous order
+ * instead would collapse a customer who orders every five days for a year into
+ * a single occasion and hide every repurchase they made.
+ *
+ * Every downstream statistic runs on occasions, not raw orders — otherwise a
+ * split checkout inflates the repeat rate and floors the interval.
+ *
+ * @param {AnalysisOrder[]} orders
+ * @param {number} [gapDays]
+ * @returns {AnalysisOrder[]}
+ */
+export function mergePurchaseOccasions(orders, gapDays = DEFAULT_OCCASION_GAP_DAYS) {
+  const sorted = sortedOrders(orders);
+  /** @type {AnalysisOrder[]} */
+  const occasions = [];
+  for (const order of sorted) {
+    const last = occasions[occasions.length - 1];
+    const gap = last ? daysBetween(last.createdAt, order.createdAt) : null;
+    if (last && gap !== null && gap < gapDays) {
+      last.lineItems = [...last.lineItems, ...(order.lineItems ?? [])];
+      continue;
+    }
+    occasions.push({
+      id: order.id,
+      createdAt: order.createdAt,
+      lineItems: [...(order.lineItems ?? [])],
+    });
+  }
+  return occasions;
+}
+
+/**
+ * Apply mergePurchaseOccasions to every customer. The analysis entry points
+ * take the RESULT of this — they do not merge internally, so the caller can
+ * report how much collapsing happened.
+ *
+ * @param {AnalysisCustomer[]} customers
+ * @param {number} [gapDays]
+ * @returns {AnalysisCustomer[]}
+ */
+export function toPurchaseOccasions(customers, gapDays = DEFAULT_OCCASION_GAP_DAYS) {
+  return (customers ?? []).map((c) => ({
+    key: c.key,
+    orders: mergePurchaseOccasions(c?.orders, gapDays),
+  }));
+}
+
+/**
  * Every consecutive purchase gap, tagged with the tier of the order it
  * STARTED from — that is exactly the question the segmentation asks: "given
  * they just bought something in this tier, how long until they come back?"
@@ -354,6 +424,10 @@ export function accessoryRateByWindow(customers, accessoryMap, opts) {
       transitions: overall.transitions,
       rate: overall.rate,
       lift: overall.lift,
+      // Per-tier rows too: the accessory window is expected to close at a
+      // different point for a €40 accessory than for a €5.000 machine, and
+      // only this breakdown can set those boundaries separately.
+      byTier: all.slice(0, -1),
     });
     prev = upper;
   }
