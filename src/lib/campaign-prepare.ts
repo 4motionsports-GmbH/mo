@@ -89,10 +89,8 @@ export async function prepareDraftForContact(
   const textMode: EmailTextMode =
     opts.textMode ?? (existing ? storedTextMode(existing) : DEFAULT_EMAIL_TEXT_MODE);
 
-  const { history, purchaseSummary, recommendations } = await loadCampaignPersonalization(
-    contact.email,
-    purchaseSelection
-  );
+  const { history, purchaseSummary, recommendations, segment } =
+    await loadCampaignPersonalization(contact.email, purchaseSelection);
 
   // Which products the email recommends: preserve the draft's stored list
   // (auto-picked or manually curated, possibly variant-pinned refs) on a plain
@@ -192,6 +190,8 @@ export async function prepareDraftForContact(
     lowConfidence,
     attachedBundle,
     textMode,
+    segment,
+    recommendationStrategy: recommendations.strategy,
     discountCode: hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountPercent,
     // The expiry label the prose states, in the contact's language (English
@@ -213,6 +213,8 @@ export async function prepareDraftForContact(
     productHighlights: draft.productHighlights,
     purchaseSelectedIds: purchaseSelection,
     textMode,
+    segment: segment.key,
+    segmentDays: segment.days,
     lowConfidence,
   });
 }

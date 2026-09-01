@@ -71,6 +71,7 @@ export async function POST(req: Request) {
       discountCode: null,
       discountCodeGid: null,
       discountExpiresAt: null,
+      segment: draft.segment,
     });
     return adminJson({ ok: true });
   } catch (err) {

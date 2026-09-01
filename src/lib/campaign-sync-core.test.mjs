@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  isoOrNull,
   mapCustomerToContact,
   planContactStatus,
   moneyToCents,
@@ -134,4 +135,30 @@ test("planContactStatus: a re-subscribed contact returns to pending — but a LO
     planContactStatus("suppressed", { shopifyEligible: true, locallySuppressed: true }),
     "suppressed"
   );
+});
+
+// ── Lifecycle: last order date (migration 0052) ───────────────────────────────
+// The date drives which segment a contact lands in, so a wrong value is worse
+// than no value: it would pick the wrong recommendation strategy.
+
+test("the last order date is carried through as ISO", () => {
+  const c = mapCustomerToContact(node({ lastOrder: { createdAt: "2026-06-15T10:00:00Z" } }));
+  assert.equal(c.lastOrderAt, "2026-06-15T10:00:00.000Z");
+});
+
+test("a customer who never ordered has no last order date", () => {
+  assert.equal(mapCustomerToContact(node({ lastOrder: null })).lastOrderAt, null);
+  assert.equal(mapCustomerToContact(node({})).lastOrderAt, null);
+});
+
+test("an unparseable date becomes null rather than a bogus segment", () => {
+  const c = mapCustomerToContact(node({ lastOrder: { createdAt: "not-a-date" } }));
+  assert.equal(c.lastOrderAt, null);
+});
+
+test("isoOrNull normalises and rejects", () => {
+  assert.equal(isoOrNull("2026-01-02T03:04:05Z"), "2026-01-02T03:04:05.000Z");
+  for (const bad of [null, undefined, "", "   ", "nope", 42, {}]) {
+    assert.equal(isoOrNull(bad), null);
+  }
 });

@@ -330,3 +330,97 @@ vanished mid-review), the drafter sees "Produktname – Variante" + the
 price and link. Regenerates preserve refs; a ref whose variant disappeared
 is DROPPED from the email and reported — never silently downgraded to the
 default variant (PAngV).
+
+---
+
+## Lifecycle-Segmentierung (Migration `0052`)
+
+Welche Produkte eine Kampagnen-Mail empfiehlt — und ob sie überhaupt
+geschrieben wird — hängt davon ab, **wie lange der letzte Kauf zurückliegt und
+wie groß er war**. Alle Grenzen sind gemessen, nicht geschätzt: sie stammen aus
+`npm run analyze:repurchase` über die vollständige Bestellhistorie
+(28.541 Bestellungen, 18.355 Kunden — siehe
+[`REPURCHASE_ANALYSIS.md`](./REPURCHASE_ANALYSIS.md)).
+
+### Die drei Befunde, die das Design bestimmen
+
+1. **Der Zeitpunkt skaliert NICHT mit dem Kaufwert.** Median-Abstand 88 / 81 /
+   68 Tage über die drei Wertstufen — 20 Tage Spreizung, und in die
+   *umgekehrte* Richtung als ursprünglich vermutet. Deshalb gibt es **eine
+   Zeitschiene für alle**, keine Matrix.
+2. **Der Inhalt skaliert sehr wohl.** Käufer ab 150 € kaufen Zubehör zum Besitz
+   doppelt so oft wie darunter (25,5 % vs. 13,0 %), und die Relevanz hält ein
+   volles Jahr; unter 150 € halbiert sie sich bis Monat drei.
+3. **Das stärkste Fenster sind 7–30 Tage** (38,6 % ab 150 €) — der höchste Wert
+   im gesamten Datensatz.
+
+### Segmente
+
+| Segment | Tage seit Kauf | < 150 € | ab 150 € |
+| --- | --- | --- | --- |
+| `frisch` | 0–7 | **nicht senden** | **nicht senden** |
+| `ausbauen_frueh` | 7–30 | Zubehör | Zubehör |
+| `ausbauen` | 30–90 | Zubehör | Zubehör |
+| `weiterentwickeln` | 90–365 | Ähnlichkeit | Zubehör |
+| `zurueckholen` | 365–730 | Win-back | Zubehör |
+| `ruhen` | > 730 | **nicht senden** | **nicht senden** |
+| `unbekannt` | kein Kaufdatum | Ähnlichkeit | Ähnlichkeit |
+
+Die Wertstufen kommen aus `repurchase-analysis.mjs` (Grenzen 150 € / 1.500 €),
+damit Analyse und Produktion nie auseinanderlaufen. Die Segmentierung **legt die
+oberen beiden zusammen**: ihr gemessenes Verhalten ist gleich (Lift 4,6× in
+beiden) und Großgeräte allein ist zu dünn für eigene Regeln (n = 19–54 je
+Fenster).
+
+### Empfehlungs-Strategien
+
+`pickCampaignRecommendations(history, selection, strategy)`:
+
+- **`complement`** — Zubehör aus `Product.compatibleWith` („Ergänzende
+  Produkte", im Shop gepflegt: 87 % des Katalogs, Ø 6,9 Einträge). Zubehör des
+  **jüngsten** Kaufs führt das Ranking an, danach zählt, zu wie vielen besessenen
+  Produkten es passt. Bereits Besessenes ist ausgeschlossen.
+- **`similarity`** — der klassische Embedding-Pick. Er findet *Ersatz*, nicht
+  *Ergänzung* — wer ein Rack kaufte, bekommt ein weiteres Rack. Richtig erst,
+  wenn die Zubehör-Relevanz abgefallen ist.
+- **`winback`** — breite, repräsentative Auswahl ohne Bezug auf einen alten Kauf.
+
+Jede Strategie **degradiert, statt zu scheitern**: `complement` ohne gepflegtes
+Zubehör fällt auf `similarity` zurück, `similarity` ohne Embedding-Signal auf
+repräsentative Picks. `recommendations.strategy` sagt, was die Picks
+*tatsächlich* erzeugt hat — das zeigt die Review-Karte, nicht den Wunsch.
+
+### Wirkung auf den Text
+
+Das Segment steuert nicht nur die Produkte, sondern **den Job der Einleitung**
+(`segmentIntroRule` in `campaign-draft.ts`): frischer Kauf → daran anknüpfen;
+ein Jahr her → kurz erinnern und nach vorn schauen; zwei Jahre → ehrlich
+benennen, dass man lange nichts gehört hat. Gleiche Vorlage, gleiche Stimme,
+anderer Auftrag.
+
+### Warteschlange
+
+`listNextPendingContacts` überspringt Kontakte, die die Daten ausschließen
+(`frisch`, `ruhen`) — per SQL-Filter, **nicht** durch Statuswechsel: ein
+„frischer" Kontakt geht nicht verloren, er wird sendbar, sobald er ins nächste
+Fenster altert. Kontakte ohne bekanntes Kaufdatum sind nie ausgeschlossen.
+
+`listDraftedQueue` sortiert nach gemessenem Wert statt nach Eingang: das
+Frühfenster zuerst, dann nach Lebensumsatz. Ein Kontakt ab 150 € ist rund
+dreimal so wahrscheinlich ein wiederkehrender Zubehör-Käufer.
+
+### Messbarkeit
+
+`campaign_sends.segment` wird beim Versand gestempelt (beide Pfade: E-Mail und
+„kopiert"). Ohne diesen Stempel ließe sich **nie** beantworten, ob die
+Zubehör-Strategie die Ähnlichkeit tatsächlich geschlagen hat — und
+nachträglich ist die Historie weg.
+
+### Was NICHT automatisch passiert
+
+Die Grenzen stehen im Code (`campaign-segments.mjs`) und ändern sich nur durch
+ein Release. Eine automatische Nachjustierung aus wiederholten Analyse-Läufen
+wäre eine **Rückkopplung**: die Analyse misst Verhalten *ohne* unsere
+segmentierten Mails; sobald sie laufen, optimierte eine Automatik gegen die
+eigene Wirkung. Wenn die Zahlen nachgeführt werden sollen, dann nach dem Muster
+des Verbesserungs-Loops: die Auswertung *schlägt vor*, ein Mensch entscheidet.

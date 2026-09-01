@@ -358,6 +358,8 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         discountCodeGid,
         discountExpiresAt,
         redirectToken,
+        // Stamped from the draft so the funnel can be read per segment later.
+        segment: draft.segment,
       });
       await markContactSent(contactId);
       return { ok: true, sentTo: contact.email };

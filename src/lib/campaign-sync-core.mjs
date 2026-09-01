@@ -58,8 +58,23 @@ export function moneyToCents(amount) {
  *   consentUpdatedAt: string | null,
  *   ordersCount: number,
  *   totalSpentCents: number,
+ *   lastOrderAt: string|null,
  * } | null}
  */
+/**
+ * Normalise a Shopify timestamp to an ISO string, or null. Anything
+ * unparseable becomes null rather than a bogus date — a wrong purchase date
+ * would put the contact in the wrong lifecycle segment.
+ *
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+export function isoOrNull(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 export function mapCustomerToContact(node) {
   if (!node || typeof node.id !== "string" || !node.id) return null;
   const email = typeof node.email === "string" ? node.email.trim().toLowerCase() : "";
@@ -89,6 +104,10 @@ export function mapCustomerToContact(node) {
     consentUpdatedAt: consent.consentUpdatedAt ?? null,
     ordersCount: Number.isFinite(ordersCount) && ordersCount > 0 ? Math.floor(ordersCount) : 0,
     totalSpentCents: moneyToCents(node.amountSpent?.amount),
+    // Most recent order date — the lifecycle segment's time axis. Unparseable
+    // or absent (never ordered) stays null, which reads as "unknown segment"
+    // and leaves the contact's behaviour unchanged.
+    lastOrderAt: isoOrNull(node.lastOrder?.createdAt),
   };
 }
 

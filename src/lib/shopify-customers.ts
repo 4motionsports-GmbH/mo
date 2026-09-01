@@ -58,6 +58,9 @@ const SUBSCRIBED_CUSTOMERS_QUERY = /* GraphQL */ `
           amount
           currencyCode
         }
+        lastOrder {
+          createdAt
+        }
         defaultAddress {
           countryCodeV2
         }
@@ -81,6 +84,9 @@ export interface ShopifySubscribedCustomer {
   /** UnsignedInt64 — serialised by Shopify as a string. */
   numberOfOrders: string | null;
   amountSpent: { amount: string; currencyCode: string } | null;
+  /** Date of the customer's most recent order — drives the lifecycle segment
+   * filter/ordering of the review queue (migration 0052). */
+  lastOrder: { createdAt: string | null } | null;
   defaultAddress: { countryCodeV2: string | null } | null;
   emailMarketingConsent: {
     marketingState: string | null;
