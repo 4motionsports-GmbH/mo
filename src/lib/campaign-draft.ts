@@ -135,6 +135,16 @@ export interface GenerateCampaignDraftInput extends DraftDiscountInput {
   /** Prose length for the generated text (operator-selected in the admin UI).
    * Omitted = 'detailed' (the classic long-form behaviour). */
   textMode?: EmailTextMode;
+  /**
+   * The contact's lifecycle segment (campaign-segments.mjs). It decides the
+   * INTRO'S JOB — whether the mail continues a recent purchase, re-opens a
+   * dormant relationship, or simply shows what is new. Omitted = the classic,
+   * segment-less framing.
+   */
+  segment?: { key: string; label: string; days: number | null } | null;
+  /** Which kind of products the recommendations are, so the prose frames them
+   * correctly: accessories to what they own vs. a fresh suggestion. */
+  recommendationStrategy?: "complement" | "similarity" | "winback" | null;
 }
 
 function purchaseBlock(summary: CampaignPurchaseSummary | null, language: "de" | "en"): string {
@@ -335,6 +345,73 @@ function discountHint(input: DraftDiscountInput, language: "de" | "en"): string 
  * returns the templated fallback so the batch prepare continues (the admin
  * reviews and edits every draft before sending anyway).
  */
+/**
+ * What the mail's opening should DO, per lifecycle segment. This is the modular
+ * part of the campaign mail: the same template and the same voice, but a
+ * different job for the intro depending on how long ago the contact bought.
+ *
+ * The framings follow the measured behaviour (docs/REPURCHASE_ANALYSIS.md): in
+ * the first weeks a customer is still setting the purchase up, so the mail
+ * continues that thought; after a year the purchase is history and pretending
+ * otherwise reads as surveillance rather than service.
+ */
+function segmentIntroRule(
+  segmentKey: string | null | undefined,
+  days: number | null | undefined,
+  strategy: string | null | undefined
+): string {
+  const ago =
+    typeof days === "number" && Number.isFinite(days)
+      ? `Der letzte Kauf liegt etwa ${Math.round(days)} Tage zurück.`
+      : "Wie lange der letzte Kauf zurückliegt, ist unbekannt.";
+
+  const complementRule =
+    strategy === "complement"
+      ? " Die empfohlenen Produkte sind ERGÄNZUNGEN zu bereits gekauften " +
+        "Artikeln — führe sie genau so ein (etwas, das das Vorhandene besser " +
+        "macht), niemals als Ersatz oder Neuanschaffung."
+      : strategy === "winback"
+        ? " Die Empfehlungen knüpfen NICHT an einen konkreten alten Kauf an — " +
+          "stell sie als das vor, was es bei uns inzwischen gibt."
+        : "";
+
+  switch (segmentKey) {
+    case "ausbauen_frueh":
+      return (
+        `${ago} Der Kauf ist frisch: Die Einleitung knüpft direkt daran an — ` +
+        "freu dich mit, frag beiläufig, wie der Start läuft, und leite zu dem " +
+        "über, was das Setup jetzt vervollständigt. Kein Verkaufsdruck, das " +
+        "Geld ist gerade ausgegeben." + complementRule
+      );
+    case "ausbauen":
+      return (
+        `${ago} Das Setup ist eingerichtet und im Einsatz. Die Einleitung ` +
+        "nimmt Bezug darauf, dass inzwischen etwas Routine eingekehrt ist, " +
+        "und schlägt den nächsten sinnvollen Schritt vor." + complementRule
+      );
+    case "weiterentwickeln":
+      return (
+        `${ago} Der Kauf ist eine Weile her. Die Einleitung erinnert freundlich ` +
+        "und kurz daran, ohne den alten Kauf breit auszuwalzen, und richtet " +
+        "den Blick nach vorn: was seither dazugekommen ist oder das Training " +
+        "weiterbringt." + complementRule
+      );
+    case "zurueckholen":
+      return (
+        `${ago} Es ist lange her. Die Einleitung ist ehrlich darüber ` +
+        "(„wir haben uns länger nicht gemeldet“), ohne Schuldzuweisung und " +
+        "ohne aufdringliche Reaktivierungs-Rhetorik. Erwähne kurz, was sich " +
+        "seither getan hat, und mach das Zurückkommen leicht." + complementRule
+      );
+    default:
+      return (
+        `${ago} Halte die Einleitung allgemein-persönlich und stütze dich auf ` +
+        "die Kaufhistorie, ohne einen Zeitbezug zu behaupten, den du nicht " +
+        "kennst." + complementRule
+      );
+  }
+}
+
 export async function generateCampaignDraft(
   input: GenerateCampaignDraftInput
 ): Promise<MarketingDraft> {
@@ -388,6 +465,7 @@ export async function generateCampaignDraft(
         "Button) — nenne aber selbst KEINEN Preis und KEINEN Link dafür.\n" +
         "- Baue KEINEN Abmeldelink und KEINEN Hinweis auf den neuen Chat-" +
         "Berater ein — beides wird separat angehängt.\n" +
+        `- ZEITLICHER BEZUG: ${segmentIntroRule(input.segment?.key, input.segment?.days, input.recommendationStrategy)}\n` +
         "- Unterschreibe mit " +
         (en
           ? "'Mo, your personal advisor at motion sports'."

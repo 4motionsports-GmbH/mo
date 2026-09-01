@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { getSql, type Sql } from "./db";
 import { parseEmailTextMode } from "./email-text-mode.mjs";
 import { normalizeEmail } from "./email-capture-store";
+import { sendableDayRange } from "./campaign-segments.mjs";
 import { reportError } from "./observability";
 import { wasDiscountCodeRedeemed } from "./shopify-orders";
 import { isShopifyConfigured } from "./shopify";
@@ -47,6 +48,10 @@ export interface CampaignContactRow {
   consentUpdatedAt: string | null;
   ordersCount: number;
   totalSpentCents: number;
+  /** Most recent order date from Shopify (migration 0052). Null = never
+   * ordered, or not yet resynced — the contact then has no lifecycle segment
+   * and behaves exactly as before. */
+  lastOrderAt?: string | null;
   lastSyncedAt: string | null;
   status: CampaignContactStatus;
   sentAt: string | null;
@@ -94,6 +99,12 @@ export interface CampaignDraftRow {
   /** Text mode this draft was generated with (migration 0047). Null = legacy
    * row from before the mode existed — reads as 'detailed'. */
   textMode: "detailed" | "compact" | "minimal" | null;
+  /** Lifecycle segment the draft was written for (migration 0052). Null =
+   * legacy row, or a contact with no known purchase date. */
+  segment: string | null;
+  /** Age of the last purchase in days AT DRAFT TIME — lets the review card
+   * show "vor 24 Tagen" and makes a stale draft visible. */
+  segmentDays: number | null;
   lowConfidence: boolean;
   createdAt: string | null;
   updatedAt: string | null;
@@ -122,6 +133,7 @@ function mapContactRow(r: Record<string, unknown>): CampaignContactRow {
     consentUpdatedAt: toIso(r.consent_updated_at),
     ordersCount: Number(r.orders_count ?? 0),
     totalSpentCents: Number(r.total_spent_cents ?? 0),
+    lastOrderAt: r.last_order_at ? String(r.last_order_at) : null,
     lastSyncedAt: toIso(r.last_synced_at),
     status: r.status as CampaignContactStatus,
     sentAt: toIso(r.sent_at),
@@ -168,6 +180,8 @@ function mapDraftRow(r: Record<string, unknown>): CampaignDraftRow {
       ? (r.purchase_selected_ids as string[])
       : null,
     textMode: parseEmailTextMode(r.text_mode),
+    segment: typeof r.segment === "string" ? r.segment : null,
+    segmentDays: r.segment_days == null ? null : Number(r.segment_days),
     lowConfidence: r.low_confidence === true,
     createdAt: toIso(r.created_at),
     updatedAt: toIso(r.updated_at),
@@ -218,6 +232,10 @@ export interface CampaignContactUpsert {
   consentUpdatedAt: string | null;
   ordersCount: number;
   totalSpentCents: number;
+  /** Most recent order date from Shopify (migration 0052). Null = never
+   * ordered, or not yet resynced — the contact then has no lifecycle segment
+   * and behaves exactly as before. */
+  lastOrderAt?: string | null;
   /** Planned status (campaign-sync-core.planContactStatus). */
   status: CampaignContactStatus;
 }
@@ -252,12 +270,12 @@ export async function upsertCampaignContact(
     INSERT INTO campaign_contacts
       (shopify_customer_id, email, first_name, last_name, language,
        opt_in_level, consent_updated_at, orders_count, total_spent_cents,
-       last_synced_at, status, created_at)
+       last_order_at, last_synced_at, status, created_at)
     VALUES
       (${input.shopifyCustomerId}, ${input.email}, ${input.firstName},
        ${input.lastName}, ${input.language}, ${input.optInLevel},
        ${input.consentUpdatedAt}, ${input.ordersCount}, ${input.totalSpentCents},
-       now(), ${input.status}, now())
+       ${input.lastOrderAt ?? null}, now(), ${input.status}, now())
     ON CONFLICT (shopify_customer_id) DO UPDATE SET
       email              = EXCLUDED.email,
       first_name         = EXCLUDED.first_name,
@@ -267,6 +285,10 @@ export async function upsertCampaignContact(
       consent_updated_at = EXCLUDED.consent_updated_at,
       orders_count       = EXCLUDED.orders_count,
       total_spent_cents  = EXCLUDED.total_spent_cents,
+      -- COALESCE, not EXCLUDED: callers that are not the sync (e.g. the
+      -- suppression re-check at prepare time) do not know the order date and
+      -- must not wipe it.
+      last_order_at      = COALESCE(EXCLUDED.last_order_at, campaign_contacts.last_order_at),
       last_synced_at     = now(),
       status             = EXCLUDED.status
   `;
@@ -381,12 +403,20 @@ export async function listDraftedQueue(
              d.product_highlights AS d_product_highlights,
              d.purchase_selected_ids AS d_purchase_selected_ids,
              d.text_mode AS d_text_mode,
+             d.segment AS d_segment, d.segment_days AS d_segment_days,
              d.low_confidence AS d_low_confidence,
              d.created_at AS d_created_at, d.updated_at AS d_updated_at
         FROM campaign_contacts c
         JOIN campaign_drafts d ON d.contact_id = c.id
        WHERE c.status = 'drafted'
-       ORDER BY c.id ASC
+       -- Work the queue by measured value, not by arrival: the early window
+       -- (7–30 days, 38,6 % Zubehör-Quote) closes, and a contact at/above
+       -- 150 € is ~3x as likely to become a repeat accessory buyer
+       -- (docs/REPURCHASE_ANALYSIS.md). Contacts with no known purchase date
+       -- keep the old oldest-first behaviour at the end.
+       ORDER BY (d.segment = 'ausbauen_frueh') DESC NULLS LAST,
+                c.total_spent_cents DESC NULLS LAST,
+                c.id ASC
        LIMIT ${limit}
     `) as Array<Record<string, unknown>>;
     return rows.map((r) => ({
@@ -403,6 +433,8 @@ export async function listDraftedQueue(
         product_highlights: r.d_product_highlights,
         purchase_selected_ids: r.d_purchase_selected_ids,
         text_mode: r.d_text_mode,
+        segment: r.d_segment,
+        segment_days: r.d_segment_days,
         low_confidence: r.d_low_confidence,
         created_at: r.d_created_at,
         updated_at: r.d_updated_at,
@@ -424,9 +456,24 @@ export async function listNextPendingContacts(
   sql: Sql | null = getSql()
 ): Promise<CampaignContactRow[]> {
   if (!sql) return [];
+  // Lifecycle gate (docs/REPURCHASE_ANALYSIS.md): skip contacts the data says
+  // not to mail right now — a purchase inside the occasion window (goods
+  // usually not even delivered, and nothing measured there) or a contact
+  // dormant beyond two years (1,1 % of all returners). A "frisch" contact is
+  // NOT lost: it simply becomes eligible as it ages into the next window,
+  // which is why this filters instead of marking the contact skipped.
+  // last_order_at IS NULL means "unknown" and is never excluded.
+  const { minDays, maxDays } = sendableDayRange();
   const rows = (await sql`
     SELECT * FROM campaign_contacts
      WHERE status = 'pending'
+       AND (
+         last_order_at IS NULL
+         OR (
+           last_order_at <= now() - ${`${minDays} days`}::interval
+           AND last_order_at > now() - ${`${maxDays} days`}::interval
+         )
+       )
      ORDER BY id ASC
      LIMIT ${limit}
   `) as Array<Record<string, unknown>>;
@@ -598,6 +645,10 @@ export interface SaveCampaignDraftInput {
   productHighlights?: Array<{ name: string; description: string }> | null;
   /** Narrowed purchase basis to persist (null = all purchases). */
   purchaseSelectedIds: string[] | null;
+  /** Lifecycle segment key (campaign-segments.mjs). Null = unknown. */
+  segment?: string | null;
+  /** Days since the last purchase at draft time. Null = unknown. */
+  segmentDays?: number | null;
   /** Text mode the draft was generated with (migration 0047). */
   textMode?: "detailed" | "compact" | "minimal" | null;
   lowConfidence: boolean;
@@ -618,15 +669,18 @@ export async function saveCampaignDraft(
     INSERT INTO campaign_drafts
       (contact_id, subject, body, discount_percent, discount_expires_at,
        purchase_summary, recommended_product_ids, product_highlights,
-       purchase_selected_ids, text_mode, low_confidence, created_at, updated_at)
+       purchase_selected_ids, text_mode, segment, segment_days, low_confidence,
+       created_at, updated_at)
     VALUES
       (${input.contactId}, ${input.subject}, ${input.body},
        ${input.discountPercent}, ${input.discountExpiresAt},
        ${input.purchaseSummary ? JSON.stringify(input.purchaseSummary) : null}::jsonb,
        ${input.recommendedProductIds}::text[],
        ${input.productHighlights && input.productHighlights.length > 0 ? JSON.stringify(input.productHighlights) : null}::jsonb,
-       ${input.purchaseSelectedIds}::text[], ${input.textMode ?? null}, ${input.lowConfidence},
-       now(), now())
+       ${input.purchaseSelectedIds}::text[], ${input.textMode ?? null},
+       ${input.segment ?? null},
+       ${input.segmentDays == null ? null : Math.round(input.segmentDays)},
+       ${input.lowConfidence}, now(), now())
     ON CONFLICT (contact_id) DO UPDATE SET
       subject                 = EXCLUDED.subject,
       body                    = EXCLUDED.body,
@@ -637,6 +691,8 @@ export async function saveCampaignDraft(
       product_highlights      = EXCLUDED.product_highlights,
       purchase_selected_ids   = EXCLUDED.purchase_selected_ids,
       text_mode               = EXCLUDED.text_mode,
+      segment                 = EXCLUDED.segment,
+      segment_days            = EXCLUDED.segment_days,
       low_confidence          = EXCLUDED.low_confidence,
       updated_at              = now()
     RETURNING *
@@ -905,6 +961,13 @@ export interface RecordCampaignSendInput {
   /** Token behind the tracked CTA link (/api/r/<token>, migration 0041). NULL
    * on the copy path — nothing tracked left the system. */
   redirectToken?: string | null;
+  /**
+   * Lifecycle segment this mail was written for (migration 0052). Stamped at
+   * SEND time so the funnel can be read per segment — without it there is no
+   * way to ever check whether the accessory strategy beat similarity, and the
+   * history cannot be reconstructed after the fact.
+   */
+  segment?: string | null;
 }
 
 /** Append the immutable send record. Throws on failure (the send path treats a
@@ -918,13 +981,13 @@ export async function recordCampaignSend(
     INSERT INTO campaign_sends
       (contact_id, email, subject, body_hash, body_text, body_html, sent_via,
        discount_code, discount_code_gid, discount_expires_at, redirect_token,
-       sent_at, created_at)
+       segment, sent_at, created_at)
     VALUES
       (${input.contactId}, ${normalizeEmail(input.email)}, ${input.subject},
        ${input.bodyHash}, ${input.bodyText}, ${input.bodyHtml},
        ${input.sentVia}, ${input.discountCode},
        ${input.discountCodeGid}, ${input.discountExpiresAt},
-       ${input.redirectToken ?? null}, now(), now())
+       ${input.redirectToken ?? null}, ${input.segment ?? null}, now(), now())
   `;
 }
 

@@ -83,6 +83,8 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
     // Legacy drafts (pre-migration-0047, text_mode NULL) were generated
     // long-form — surface them as 'detailed'.
     textMode: q.draft.textMode ?? "detailed",
+    segment: q.draft.segment,
+    segmentDays: q.draft.segmentDays,
     lowConfidence: q.draft.lowConfidence,
     purchaseSummary: q.draft.purchaseSummary,
     purchaseSelectedIds: q.draft.purchaseSelectedIds,

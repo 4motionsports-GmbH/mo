@@ -55,6 +55,7 @@ import {
   EMAIL_TEXT_MODE_LABELS,
 } from "@/lib/email-text-mode.mjs";
 import { emailProseToText } from "@/lib/email-prose.mjs";
+import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
 import {
   ADMIN_DATE,
   ADMIN_DATE_TIME_FULL,
@@ -79,6 +80,11 @@ export interface CampaignQueueItemProps {
   discountExpiresAt: string | null;
   /** Text mode the draft was generated with (legacy drafts map to 'detailed'). */
   textMode: EmailTextModeValue;
+  /** Lifecycle segment the draft was written for (migration 0052). Null =
+   * legacy draft, or no known purchase date. */
+  segment: string | null;
+  /** Days since the last purchase at draft time. */
+  segmentDays: number | null;
   lowConfidence: boolean;
   purchaseSummary: {
     orders: Array<{
@@ -620,6 +626,8 @@ export function KampagneWorkspace({
           discountPercent: number;
           discountExpiresAt: string | null;
           textMode: EmailTextModeValue | null;
+          segment: string | null;
+          segmentDays: number | null;
           lowConfidence: boolean;
           purchaseSummary: CampaignQueueItemProps["purchaseSummary"];
           purchaseSelectedIds: string[] | null;
@@ -635,6 +643,8 @@ export function KampagneWorkspace({
           discountPercent: d.discountPercent,
           discountExpiresAt: d.discountExpiresAt,
           textMode: d.textMode ?? "detailed",
+          segment: d.segment ?? null,
+          segmentDays: d.segmentDays ?? null,
           lowConfidence: d.lowConfidence,
           purchaseSummary: d.purchaseSummary,
           purchaseSelectedIds: d.purchaseSelectedIds,
@@ -1278,6 +1288,7 @@ export function KampagneWorkspace({
                     onSelect={doSetTextMode}
                   />
                   <OptInBadge level={current.optInLevel} blocked={optInBlocked} />
+                  <SegmentBadge segment={current.segment} days={current.segmentDays} />
                   {current.lowConfidence && (
                     <Badge variant="warning">
                       <AlertTriangle className="h-3 w-3" />
@@ -2252,6 +2263,27 @@ function LanguageToggle({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * Which lifecycle segment this draft was written for, and how old the purchase
+ * was when it was written. The segment decides what the mail recommends
+ * (accessories to what they own vs. something new) — see
+ * docs/REPURCHASE_ANALYSIS.md. The title carries the measured reason, so the
+ * reviewer can see WHY this framing was chosen.
+ */
+function SegmentBadge({ segment, days }: { segment: string | null; days: number | null }) {
+  if (!segment) return null;
+  const def = campaignSegmentByKey(segment);
+  if (!def) return null;
+  const age =
+    typeof days === "number" && Number.isFinite(days) ? ` · vor ${Math.round(days)} T.` : "";
+  return (
+    <Badge variant={def.sendable ? "outline" : "warning"} title={def.reason}>
+      {def.label}
+      {age}
+    </Badge>
   );
 }
 

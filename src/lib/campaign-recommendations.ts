@@ -21,8 +21,28 @@ import { loadProductCatalog, loadEmbeddings } from "./catalog-store";
 import { cosine } from "./retrieval";
 import { filterAvailable } from "./availability.mjs";
 import { fetchOrderHistoryByEmail, type OrderHistory } from "./shopify-orders";
+import { buildAccessoryMap, pickComplementIds } from "./campaign-complement.mjs";
+import { anchorValueEur, mergePurchaseOccasions } from "./repurchase-analysis.mjs";
+import {
+  RECOMMENDATION_STRATEGIES,
+  resolveCampaignSegment,
+} from "./campaign-segments.mjs";
 import type { CampaignPurchaseSummary } from "./campaign-store";
 import type { Product } from "./types";
+
+/** Which kind of products to pick — see campaign-segments.mjs. */
+export type RecommendationStrategy = "complement" | "similarity" | "winback";
+
+/** The resolved lifecycle segment (campaign-segments.mjs, typed for the TS side). */
+export interface CampaignSegment {
+  key: string;
+  label: string;
+  sendable: boolean;
+  reason: string;
+  strategy: string | null;
+  contentTier: "klein" | "gross" | null;
+  days: number | null;
+}
 
 const MAX_RECOMMENDATIONS = 3;
 
@@ -40,6 +60,56 @@ export interface CampaignRecommendations {
   /** True when the picks are fallback/representative (no catalog match for any
    *  purchase, or no embedding signal) — surfaces as the draft's flag. */
   lowConfidence: boolean;
+  /** The strategy that actually produced these picks. Differs from the one
+   *  requested when a fallback kicked in (e.g. complement asked for, but the
+   *  owned products carry no curated accessories) — the review card shows this,
+   *  not the request. */
+  strategy: RecommendationStrategy;
+}
+
+/**
+ * The lifecycle inputs derived from a contact's order history: when they last
+ * bought and how big that purchase was. Feeds resolveCampaignSegment.
+ *
+ * The anchor is the largest single item of the most recent PURCHASE OCCASION
+ * (orders inside 7 days merged), so a €30 mat bought two days after a €2.500
+ * machine cannot demote the contact to the small-ticket tier.
+ *
+ * NOTE ON PRICES: Shopify's order-history read carries no per-line-item price,
+ * so the anchor uses the CURRENT CATALOG price of the purchased products. That
+ * is a proxy for what was actually paid — good enough for a 150 € tier
+ * boundary, and it degrades to null (unknown tier → today's behaviour) for
+ * items that are no longer in the catalogue.
+ */
+export interface CampaignLifecycleFacts {
+  lastOrderAt: string | null;
+  anchorEur: number | null;
+}
+
+/**
+ * Derive the lifecycle facts from an order history, pricing purchased items
+ * from the catalog. Returns nulls when nothing is derivable — callers then get
+ * the "unknown" segment and today's unchanged behaviour.
+ */
+export function lifecycleFactsFromHistory(
+  history: OrderHistory | null,
+  catalog: Product[]
+): CampaignLifecycleFacts {
+  if (!history || history.orders.length === 0) return { lastOrderAt: null, anchorEur: null };
+  const priceById = new Map(catalog.map((p) => [p.id, p.price]));
+  const orders = history.orders.map((o, i) => ({
+    id: o.name || String(i),
+    createdAt: o.createdAt,
+    lineItems: o.items.map((it) => ({
+      handle: it.handle,
+      quantity: it.quantity,
+      unitPriceEur: it.handle ? (priceById.get(it.handle) ?? null) : null,
+    })),
+  }));
+  const occasions = mergePurchaseOccasions(orders);
+  const last = occasions[occasions.length - 1];
+  if (!last) return { lastOrderAt: null, anchorEur: null };
+  return { lastOrderAt: last.createdAt, anchorEur: anchorValueEur(last) };
 }
 
 /** Compact the full Shopify order history into the review-card snapshot.
@@ -103,14 +173,30 @@ function representativePicks(candidates: Product[]): Product[] {
  * history. Pure over its inputs apart from the catalog/embeddings loads —
  * callers pass the history so the Shopify read happens exactly once per draft.
  *
- * `selectedProductIds` narrows the SIMILARITY BASIS to those owned products
- * (review-card purchase selection); null/undefined = all owned products. The
- * exclusion of already-owned products from the candidates always covers the
- * FULL owned set — deselecting a purchase never makes it recommendable.
+ * `strategy` selects WHAT KIND of product to recommend and comes from the
+ * contact's lifecycle segment (campaign-segments.mjs):
+ *
+ *   complement — accessories to what they own (Product.compatibleWith). The
+ *                measured winner right after a purchase: 3,0–4,6× the chance
+ *                rate, and up to 38,6 % in the 7–30 day window.
+ *   similarity — the classic embedding pick. Correct once accessory relevance
+ *                has decayed (below 150 € after ~3 months).
+ *   winback    — broad representative picks, not tied to an old purchase.
+ *
+ * Every strategy DEGRADES rather than fails: complement with no curated
+ * accessories falls back to similarity, similarity with no embedding signal
+ * falls back to representative picks. The returned `strategy` says what
+ * actually produced the picks.
+ *
+ * `selectedProductIds` narrows the basis to those owned products (review-card
+ * purchase selection); null/undefined = all owned products. The exclusion of
+ * already-owned products from the candidates always covers the FULL owned set —
+ * deselecting a purchase never makes it recommendable.
  */
 export async function pickCampaignRecommendations(
   history: OrderHistory | null,
-  selectedProductIds?: string[] | null
+  selectedProductIds?: string[] | null,
+  strategy: RecommendationStrategy = RECOMMENDATION_STRATEGIES.SIMILARITY as RecommendationStrategy
 ): Promise<CampaignRecommendations> {
   const [catalog, embeddings] = await Promise.all([loadProductCatalog(), loadEmbeddings()]);
   const byId = new Map(catalog.map((p) => [p.id, p]));
@@ -128,8 +214,9 @@ export async function pickCampaignRecommendations(
   const owned = new Set(ownedProductIds);
   const candidates = filterAvailable(catalog).filter((p) => !owned.has(p.id));
   if (candidates.length === 0) {
-    return { products: [], ownedProductIds, lowConfidence: true };
+    return { products: [], ownedProductIds, lowConfidence: true, strategy };
   }
+  const availableIds = new Set(candidates.map((p) => p.id));
 
   // The similarity basis: the operator's narrowed selection when given (only
   // ids that are actually owned count), else every owned product.
@@ -137,6 +224,45 @@ export async function pickCampaignRecommendations(
     ? ownedProductIds.filter((id) => selectedProductIds.includes(id))
     : ownedProductIds;
 
+  // ── winback ────────────────────────────────────────────────────────────────
+  // Deliberately NOT anchored on an old purchase: after a year or more the
+  // point is to show what the shop has now, not to continue a stale thought.
+  if (strategy === RECOMMENDATION_STRATEGIES.WINBACK) {
+    return {
+      products: representativePicks(candidates),
+      ownedProductIds,
+      lowConfidence: false,
+      strategy: "winback",
+    };
+  }
+
+  // ── complement ─────────────────────────────────────────────────────────────
+  if (strategy === RECOMMENDATION_STRATEGIES.COMPLEMENT && basisIds.length > 0) {
+    // Accessories of the most recent purchase lead the ranking — that is the
+    // product the mail's prose is about.
+    const recentOrder = [...(history?.orders ?? [])]
+      .filter((o) => !Number.isNaN(new Date(o.createdAt).getTime()))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    const recentOwnedIds = (recentOrder?.items ?? [])
+      .map((i) => i.handle)
+      .filter((h): h is string => Boolean(h && owned.has(h)));
+
+    const ids = pickComplementIds({
+      ownedIds: basisIds,
+      recentOwnedIds,
+      accessoryMap: buildAccessoryMap(catalog),
+      isAvailable: (id: string) => availableIds.has(id),
+      max: MAX_RECOMMENDATIONS,
+    });
+    const products = ids.map((id) => byId.get(id)).filter((p): p is Product => Boolean(p));
+    if (products.length > 0) {
+      return { products, ownedProductIds, lowConfidence: false, strategy: "complement" };
+    }
+    // No curated accessories for anything they own — fall through to similarity
+    // rather than sending a mail with nothing in it.
+  }
+
+  // ── similarity (the classic pick, and every strategy's floor) ──────────────
   const vectorIndex = new Map(embeddings.items.map((it) => [it.id, it.vector]));
   const ownedVectors = basisIds
     .map((id) => vectorIndex.get(id))
@@ -149,6 +275,7 @@ export async function pickCampaignRecommendations(
       products: representativePicks(candidates),
       ownedProductIds,
       lowConfidence: true,
+      strategy: "similarity",
     };
   }
 
@@ -166,12 +293,14 @@ export async function pickCampaignRecommendations(
       products: representativePicks(candidates),
       ownedProductIds,
       lowConfidence: true,
+      strategy: "similarity",
     };
   }
   return {
     products: withSignal.map((s) => s.product),
     ownedProductIds,
     lowConfidence: false,
+    strategy: "similarity",
   };
 }
 
@@ -184,14 +313,28 @@ export async function pickCampaignRecommendations(
  */
 export async function loadCampaignPersonalization(
   email: string,
-  selectedProductIds?: string[] | null
+  selectedProductIds?: string[] | null,
+  strategyOverride?: RecommendationStrategy | null
 ): Promise<{
   history: OrderHistory | null;
   purchaseSummary: CampaignPurchaseSummary | null;
   recommendations: CampaignRecommendations;
+  lifecycle: CampaignLifecycleFacts;
+  segment: CampaignSegment;
 }> {
   const history = await fetchOrderHistoryByEmail(email);
-  const recommendations = await pickCampaignRecommendations(history, selectedProductIds);
+  // The segment falls out of the SAME history read — resolving it here keeps
+  // the Shopify call at exactly one per draft.
+  const catalog = await loadProductCatalog();
+  const lifecycle = lifecycleFactsFromHistory(history, catalog);
+  const segment = resolveCampaignSegment(lifecycle) as CampaignSegment;
+  const recommendations = await pickCampaignRecommendations(
+    history,
+    selectedProductIds,
+    strategyOverride ??
+      (segment.strategy as RecommendationStrategy | null) ??
+      (RECOMMENDATION_STRATEGIES.SIMILARITY as RecommendationStrategy)
+  );
   // Catalog-matched purchases (= the selectable basis) are exactly the owned
   // ids the picker resolved — the summary marks them for the review card.
   return {
@@ -200,5 +343,7 @@ export async function loadCampaignPersonalization(
       ? compactPurchaseSummary(history, new Set(recommendations.ownedProductIds))
       : null,
     recommendations,
+    lifecycle,
+    segment,
   };
 }
