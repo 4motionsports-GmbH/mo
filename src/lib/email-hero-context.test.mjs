@@ -3,10 +3,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  HERO_PROMPT_STYLE_TAIL,
+  MAX_HERO_PROMPT_CHARS,
+  MAX_HERO_SCENE_CHARS,
   clip,
+  ensureHeroStyleTail,
   colorWordForPrompt,
   heroContextLines,
   loyaltyHint,
+  normalizeHeroPrompt,
   ownedProductTitles,
   productCategories,
   productHeroDescriptors,
@@ -89,7 +94,6 @@ test("heroContextLines drops empty values and joins arrays", () => {
 });
 
 // ── ensureHeroStyleTail: stored prompts must always carry the CURRENT rules ──
-import { ensureHeroStyleTail, HERO_PROMPT_STYLE_TAIL } from "./email-hero-context.mjs";
 
 test("ensureHeroStyleTail leaves a current prompt untouched", () => {
   const current = `A rack in a bright room.\n\n${HERO_PROMPT_STYLE_TAIL}`;
@@ -215,4 +219,68 @@ test("a brand sitting mid-name is not prefixed a second time", () => {
   ]);
   assert.equal(d, "150 kg ATX® Gym Bumper Plates - Vorteilspaket (Weight Plates, black / white)");
   assert.equal(d.match(/ATX/g).length, 1);
+});
+
+// ── Prompt length budget ─────────────────────────────────────────────────────
+// Regression: the cap was a hard-coded 1500. Adding the BRAND FIDELITY RULE
+// pushed the tail to 984 chars, leaving ~514 for a scene the drafter is asked
+// to write in ~70 words — every "Bild generieren" failed with a 400. The cap is
+// now DERIVED from the tail, and these guard that it stays livable.
+
+test("the cap leaves the full scene budget on top of the tail", () => {
+  assert.equal(
+    MAX_HERO_PROMPT_CHARS,
+    HERO_PROMPT_STYLE_TAIL.length + MAX_HERO_SCENE_CHARS + 8,
+    "die Obergrenze muss aus dem Tail abgeleitet sein, keine feste Zahl"
+  );
+  assert.ok(
+    MAX_HERO_PROMPT_CHARS - HERO_PROMPT_STYLE_TAIL.length >= MAX_HERO_SCENE_CHARS,
+    "der Tail darf das Szenen-Budget nie aufzehren"
+  );
+});
+
+test("a realistic scene with long catalogue product names fits", () => {
+  // ~70 words, naming two real ATX descriptors verbatim — the worst case the
+  // drafting instruction can produce.
+  const scene =
+    "A bright modern home gym corner where an ATX® Hardcore Power Rack & Pull " +
+    "Station FCR-780 (Power Racks, black / grey) stands against a pale concrete " +
+    "wall, its matte black uprights catching soft morning light, with a set of " +
+    "150 kg ATX® Gym Bumper Plates - Vorteilspaket (Weight Plates, black / white) " +
+    "stacked neatly on a low storage rack beside it, chalk dust settled on the " +
+    "floor, the whole arrangement calm, uncluttered and ready for the next session.";
+  const full = normalizeHeroPrompt(`${scene}\n\n${HERO_PROMPT_STYLE_TAIL}`);
+  assert.ok(
+    full.length <= MAX_HERO_PROMPT_CHARS,
+    `realistischer Prompt (${full.length}) muss unter ${MAX_HERO_PROMPT_CHARS} bleiben`
+  );
+});
+
+test("a scene at the exact budget still fits once the tail is appended", () => {
+  const scene = "x".repeat(MAX_HERO_SCENE_CHARS);
+  const full = normalizeHeroPrompt(`${scene}\n\n${HERO_PROMPT_STYLE_TAIL}`);
+  assert.ok(full.length <= MAX_HERO_PROMPT_CHARS, `${full.length} > ${MAX_HERO_PROMPT_CHARS}`);
+});
+
+test("normalizeHeroPrompt collapses whitespace so route and generator agree", () => {
+  assert.equal(normalizeHeroPrompt("  a\n\nb\t c  "), "a b c");
+  assert.equal(normalizeHeroPrompt("scene\n\ntail").length, "scene tail".length);
+  for (const bad of [null, undefined, 42, {}]) {
+    assert.equal(typeof normalizeHeroPrompt(bad), "string");
+  }
+  assert.equal(normalizeHeroPrompt(null), "");
+  assert.equal(normalizeHeroPrompt("   \n  "), "");
+});
+
+test("a runaway scene clipped to budget still yields a generatable prompt", () => {
+  // The drafting model is asked for ~70 words but is not bound by it. Whatever
+  // it returns, the suggestion must stay inside our own cap.
+  const runaway = "word ".repeat(400).trim();
+  const full = normalizeHeroPrompt(
+    `${clip(runaway, MAX_HERO_SCENE_CHARS)}\n\n${HERO_PROMPT_STYLE_TAIL}`
+  );
+  assert.ok(
+    full.length <= MAX_HERO_PROMPT_CHARS,
+    `geklippter Vorschlag (${full.length}) muss unter ${MAX_HERO_PROMPT_CHARS} bleiben`
+  );
 });
