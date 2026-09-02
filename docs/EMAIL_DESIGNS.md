@@ -137,17 +137,38 @@ als eigene Zeile **unter** dem Text gezeigt.
 **Was die KI über die Person weiß** (`email-hero-context.mjs`, getestet): das
 verdichtete **Kundenverständnis** (Ziele, Platz, Lautstärke, Niveau), die
 **Kaufhistorie** (was schon da ist — die neue Ausrüstung ergänzt sichtbar das
-bestehende Setup), die **Produktarten** der Empfehlungen statt der Markennamen
-(die sagen einem Bildmodell nichts), ein **angehängtes Set** als Gruppe,
+bestehende Setup), die **empfohlenen Produkte mit Marke, Produktnamen, Bauart
+und Farbe** (siehe unten), ein **angehängtes Set** als Gruppe,
 Persona/Team-Hinweise, bei Kampagnen zusätzlich **Kundenstatus** (Erstkäufer:in
 bis Stammkund:in) und Sprache — plus die **Jahreszeit** für Licht und Stimmung.
 Die Schlagzeile benennt Ziel oder Situation der Person; Rabatte, Preise und
 Produktnamen sind darin bewusst verboten (sie stehen deterministisch an anderer
 Stelle und würden hier veralten).
 
+**Marken- und Produkttreue.** Der Prompt benennt das wichtigste empfohlene
+Produkt **wörtlich mit Marke und Bezeichnung**, dazu Bauart und Farbe — etwa
+`ATX® Hardcore Power Rack & Pull Station FCR-780 (Power Racks, black / grey)`.
+Vorher bekam das Bildmodell nur die Kategorie („Power Racks"), was zu
+generischen Fitnessstudio-Motiven führte. Die Marke pinnt die Formensprache
+dessen, was der Shop tatsächlich verkauft (ATX® ist 53 % des Katalogs), die
+Bauart ist das, was ein Bildmodell zuverlässig rendern kann — beides zusammen,
+keins allein. Die Farbe stammt aus der Katalog-Spezifikation (827 von 965
+Produkten liefern eine auswertbare) und wird für den Prompt ins Englische
+gebracht und von ihrem RAL-Code befreit: `schwarz-150; grau-17` →
+`black / grey`.
+
+> **Kein Logo, nie.** Die `BRAND FIDELITY RULE` im Style-Tail verlangt
+> ausdrücklich Formensprache **ohne** Schriftzug oder Markenzeichen. Ein
+> generiertes Logo wäre ein *falsches* Logo — schlechter als keins, und in einer
+> kundenseitigen E-Mail ein Markenrechtsproblem. Proportionen, Rahmenprofil und
+> Finish tragen die Marke, nie eine Aufschrift.
+
 Alte gespeicherte Prompts werden beim Generieren automatisch auf die aktuellen
 Stil-Regeln gehoben (`ensureHeroStyleTail`) — ein vor der Querformat-Umstellung
-gespeicherter Prompt kann das Layout nicht mehr sabotieren.
+oder vor der Marken-Regel gespeicherter Prompt bekommt den aktuellen Tail,
+während der selbst geschriebene Szenentext des Operators erhalten bleibt. Der
+Marker ist die jeweils neueste Regel, damit ein Tail-Update jeden älteren
+gespeicherten Prompt automatisch ablöst.
 
 **Speicherung:** Der Blob-Store dieses Deployments ist PRIVAT (dort liegen auch
 Katalog und Embeddings) und lehnt `access: "public"` ab. Hero-Bilder werden
