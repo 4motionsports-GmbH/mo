@@ -316,7 +316,7 @@ export async function suggestHeroPrompt(
   }
 
   // Clip the scene to its budget so a SUGGESTED prompt can never be rejected by
-  // our own length check — the drafting model is asked for ~70 words but is not
+  // our own length check — the drafting model is asked for ≤55 words but is not
   // bound by that, and an overshoot used to make "Bild generieren" fail.
   const boundedScene = clip(scene, MAX_HERO_SCENE_CHARS);
   return { ok: true, prompt: `${boundedScene}\n\n${HERO_PROMPT_STYLE_TAIL}`, headline };

@@ -126,10 +126,10 @@ Das Performance-Design öffnet mit einem großen Lifestyle-Bild. Zwei Quellen:
 
 **Wichtig — der Hero ist ein VOLLFLÄCHIGES Hintergrundbild:** Text und Button
 liegen auf der **linken Hälfte** des Bildes. Damit die dunkle Schrift lesbar
-bleibt, muss die linke ~45 % des Motivs sehr hell und ruhig sein (der Verlauf
-ist im Bild selbst angelegt, nicht per CSS — E-Mail-Clients können keine
-Gradienten über Bilder legen). Genau das schreibt `HERO_PROMPT_STYLE_TAIL` dem
-Bildmodell vor. Technisch: `background`-Attribut + Inline-`background` für
+bleibt, müssen die linken 55 % des Motivs (die Breite der Textspalte) sehr
+hell und ruhig sein (der Verlauf ist im Bild selbst angelegt, nicht per CSS —
+E-Mail-Clients können keine Gradienten über Bilder legen). Genau das schreibt
+`HERO_PROMPT_STYLE_TAIL` dem Bildmodell vor. Technisch: `background`-Attribut + Inline-`background` für
 Gmail/Apple Mail, VML-`v:rect` für Outlook, `bgcolor`-Fallback wenn Bilder
 blockiert sind; auf dem Handy wird der Hintergrund abgeschaltet und das Bild
 als eigene Zeile **unter** dem Text gezeigt.
@@ -194,6 +194,24 @@ oder vor der Marken-Regel gespeicherter Prompt bekommt den aktuellen Tail,
 während der selbst geschriebene Szenentext des Operators erhalten bleibt. Der
 Marker ist die jeweils neueste Regel, damit ein Tail-Update jeden älteren
 gespeicherten Prompt automatisch ablöst.
+
+### Kennzeichnung „KI-generiertes Bild" (EU-KI-Verordnung)
+
+Jedes Hero-Bild trägt eine sichtbare Kennzeichnung: ein kleines Label
+**„KI-generiertes Bild"** (englische Mails: „AI-generated image") unten rechts
+im Bildbereich, auf dem Handy als eigene Zeile direkt unter dem Bild. Hintergrund
+ist die Transparenzpflicht der EU-KI-Verordnung (AI Act, Art. 50): künstlich
+erzeugte Bildinhalte müssen als solche erkennbar sein. Das Label ist reiner
+HTML-Text mit Inline-Styles (kein Bild, kein Overlay-Trick), damit es in jedem
+Mail-Client erscheint und für Screenreader lesbar ist; zusätzlich nennt der
+`alt`-Text des Mobil-Bildes die Kennzeichnung.
+
+Die Kennzeichnung gilt für **alle** Heroes des Performance-Designs — die per
+`gpt-image-1` generierten immer, das Standard-Bild über die Konstante
+`DEFAULT_HERO_IS_AI_GENERATED` in `performance.ts` (heute `true`, da das
+Standard-Bild ebenfalls KI-generiert ist; nur auf `false` stellen, wenn es je
+durch eine echte Fotografie ersetzt wird). Der Operator muss nichts tun, das
+Label lässt sich im Workspace nicht abschalten.
 
 **Speicherung:** Der Blob-Store dieses Deployments ist PRIVAT (dort liegen auch
 Katalog und Embeddings) und lehnt `access: "public"` ab. Hero-Bilder werden

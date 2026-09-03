@@ -47,6 +47,28 @@ import { defaultHeroImageUrl } from "../email-hero";
 import { campaignMoDeeplinkUrl } from "../campaign-flags.mjs";
 
 const RED = "#e30613";
+
+/**
+ * Whether the DEFAULT hero asset (public/email-hero-default.jpg) is itself
+ * AI-generated. It is — it was produced from the same kind of image prompt as
+ * the per-send heroes — so every hero this design renders carries the
+ * AI-generated disclosure. Flip this to false only if the default is ever
+ * replaced by a real photograph; per-send heroes (gpt-image-1) are always
+ * labelled regardless.
+ */
+const DEFAULT_HERO_IS_AI_GENERATED = true;
+
+/**
+ * The AI-generated-image disclosure on the hero (EU AI Act transparency
+ * obligations, Art. 50 — synthetic image content must be recognisable as
+ * such). A small, legible pill in the hero's picture region; plain HTML text
+ * so it survives every mail client and is readable by assistive technology.
+ * Rendered in the recipient's language.
+ */
+function aiImageLabel(en: boolean, extraClass = ""): string {
+  const text = en ? "AI-generated image" : "KI-generiertes Bild";
+  return `<div class="ai-label${extraClass ? ` ${extraClass}` : ""}" title="${escapeAttr(text)}" style="display:inline-block; font-family:${FONT}; font-size:10px; line-height:14px; color:#555555; background-color:#f2f2f2; border:1px solid #d9d9d9; border-radius:3px; padding:2px 7px; letter-spacing:0.2px; white-space:nowrap;">${escapeHtml(text)}</div>`;
+}
 const FONT = "Arial, Helvetica, sans-serif";
 
 const textStyle = () =>
@@ -394,6 +416,9 @@ function makeShell(kind: keyof typeof HERO_COPY) {
     const copy = HERO_COPY[kind];
     const year = new Date().getFullYear();
     const heroImage = activeEmailRenderData().heroImageUrl || defaultHeroImageUrl();
+    // Per-send heroes are always AI-generated; the default asset is too (see
+    // DEFAULT_HERO_IS_AI_GENERATED). The disclosure follows the picture.
+    const heroIsAi = Boolean(activeEmailRenderData().heroImageUrl) || DEFAULT_HERO_IS_AI_GENERATED;
     // The hero button reuses the composer's primary CTA (its URL is the tracked
     // one), but swaps an over-long label for the design's short one so the
     // button stays a single line.
@@ -473,6 +498,7 @@ function makeShell(kind: keyof typeof HERO_COPY) {
         .hero-sub { max-width: 100% !important; }
         .hero-cta { display: block !important; width: 100% !important; box-sizing: border-box !important; text-align: center !important; }
         .hero-mobile-img { display: block !important; }
+        .hero-mobile-label { display: block !important; }
         .product-image { width: 100% !important; max-width: 190px !important; margin: 0 auto !important; }
         .product-content { padding: 6px 20px 12px 20px !important; text-align: center !important; }
         .product-action { padding: 0 20px 20px 20px !important; text-align: center !important; }
@@ -520,7 +546,7 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                         <div class="hero-sub" style="font-family:${FONT}; font-size:14px; line-height:21px; color:#333333; margin-bottom:22px; max-width:300px;">${escapeHtml(copy.subline(en))}</div>
                         ${heroCta ? redButton(heroCta, false, "hero-cta") : ""}
                       </td>
-                      <td width="45%" class="hero-spacer" style="width:45%; font-size:0; line-height:0;">&nbsp;</td>
+                      <td width="45%" class="hero-spacer" valign="bottom" align="right" style="width:45%; font-size:0; line-height:0; padding:0 12px 10px 0;">${heroIsAi ? aiImageLabel(en) : "&nbsp;"}</td>
                     </tr>
                   </table>
                   <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
@@ -531,7 +557,11 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                    unreadable), so the artwork gets its own full-width row. -->
               <tr class="hero-mobile-row">
                 <td class="hero-mobile-cell" style="padding:0; font-size:0; line-height:0;">
-                  <img src="${escapeAttr(heroImage)}" width="640" alt="motion sports" class="hero-mobile-img" style="width:100%; max-width:100%; height:auto; display:none;">
+                  <img src="${escapeAttr(heroImage)}" width="640" alt="${heroIsAi ? (en ? "AI-generated image — motion sports" : "KI-generiertes Bild — motion sports") : "motion sports"}" class="hero-mobile-img" style="width:100%; max-width:100%; height:auto; display:none;">${
+                    heroIsAi
+                      ? `<div class="hero-mobile-label" style="display:none; padding:6px 20px 0 20px; text-align:right; font-size:0; line-height:0;">${aiImageLabel(en)}</div>`
+                      : ""
+                  }
                 </td>
               </tr>
               <!-- BODY (personal greeting + prose from the composer) -->

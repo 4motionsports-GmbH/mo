@@ -78,7 +78,7 @@ export function normalizeHeroPrompt(prompt) {
 
 /**
  * How much room the operator-editable SCENE gets, on top of the fixed tail.
- * Generous enough for the ~70-word scene the drafter is asked for INCLUDING
+ * Generous enough for the ≤55-word scene the drafter is asked for INCLUDING
  * long catalogue product names ("ATX® Hardcore Power Rack & Pull Station
  * FCR-780 (Power Racks, black / grey)") — with room for a model that
  * overshoots its word budget, which is what broke generation once already.
