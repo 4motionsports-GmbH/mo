@@ -127,9 +127,25 @@ Das Performance-Design öffnet mit einem großen Lifestyle-Bild. Zwei Quellen:
 **Wichtig — der Hero ist ein VOLLFLÄCHIGES Hintergrundbild:** Text und Button
 liegen auf der **linken Hälfte** des Bildes. Damit die dunkle Schrift lesbar
 bleibt, müssen die linken 55 % des Motivs (die Breite der Textspalte) sehr
-hell und ruhig sein (der Verlauf ist im Bild selbst angelegt, nicht per CSS —
-E-Mail-Clients können keine Gradienten über Bilder legen). Genau das schreibt
-`HERO_PROMPT_STYLE_TAIL` dem Bildmodell vor. Technisch: `background`-Attribut + Inline-`background` für
+hell und ruhig sein — der Verlauf muss im Bild selbst liegen, nicht per CSS,
+denn E-Mail-Clients können keine Gradienten über Bilder legen. Das wird auf
+zwei Wegen sichergestellt, die sich ergänzen:
+
+1. **Deterministisch (garantiert):** Direkt nach der Generierung legt
+   `applyHeroGradient` (`email-hero-gradient.mjs`, per `sharp`) einen hellen
+   Verlauf (`#f6f6f6`, 93 % Deckung) über den linken Bildteil, bevor das PNG
+   gespeichert wird: voll gedeckt bis 42 % der Breite, dann ein weicher
+   Smoothstep-Abfall bis 72 % — an der Kante der Textspalte (55 %) liegen
+   noch ~56 % Deckung, unter den Glyphen (bis ~52 %) mindestens 65 %. Die
+   Kurve ist getestet. Damit ist die Lesbarkeit der Schlagzeile unabhängig
+   davon, was das Bildmodell liefert.
+2. **Per Prompt (wahrscheinlich):** `HERO_PROMPT_STYLE_TAIL` verlangt die
+   linken 55 % leer und hell. Das bleibt nötig, denn der Verlauf kann Geräte
+   nur ausbleichen, nicht verschieben — ein geisterhaftes Rack unter der
+   Schlagzeile sieht immer noch schlechter aus als eine leere Wand.
+
+Denselben Verlauf auf ein beliebiges Bild anwenden (z. B. um ein neues
+Standard-Bild vorzubereiten): `npm run hero:gradient -- <input> <output.png>`. Technisch: `background`-Attribut + Inline-`background` für
 Gmail/Apple Mail, VML-`v:rect` für Outlook, `bgcolor`-Fallback wenn Bilder
 blockiert sind; auf dem Handy wird der Hintergrund abgeschaltet und das Bild
 als eigene Zeile **unter** dem Text gezeigt.
@@ -251,6 +267,7 @@ würde es links und rechts beschnitten und der Text stünde auf dem Motiv.)
 | `src/lib/email-designs/registry.ts` | Registry + `EmailDesignDefinition` + Auflösung (classic ← base ← variant) |
 | `src/lib/email-designs/studio.ts` | Beispiel-Design (Referenz zum Kopieren) |
 | `src/lib/email-designs/performance.ts` | Bild-orientiertes Conversion-Design (Voll-Shell + Hero) |
+| `src/lib/email-hero-gradient.mjs` | Deterministischer Lesbarkeits-Verlauf über den linken Bildteil (sharp), getestet |
 | `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Privater Blob-Write & öffentliche Auslieferung der Hero-Bilder (mit Pfad-Validierung) |
 | `src/lib/email-hero-context.mjs` | Was die KI über die Person erfährt (Kaufhistorie, Profil, Kategorien, Saison) — pur & getestet |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |

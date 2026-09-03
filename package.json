@@ -16,7 +16,8 @@
     "diagnose:address": "node --env-file=.env scripts/diagnose-address.mjs",
     "db:migrate": "node --env-file=.env scripts/migrate.mjs",
     "db:reset": "node --env-file=.env scripts/reset-test-data.mjs",
-    "analyze:repurchase": "node --env-file=.env scripts/analyze-repurchase.mjs"
+    "analyze:repurchase": "node --env-file=.env scripts/analyze-repurchase.mjs",
+    "hero:gradient": "node scripts/hero-gradient.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.48",
@@ -35,6 +36,7 @@
     "react-dom": "19.2.3",
     "recharts": "^3.8.1",
     "resend": "^6.12.4",
+    "sharp": "^0.34.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {

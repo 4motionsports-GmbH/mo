@@ -10,8 +10,9 @@
 //      personal scene followed by the fixed brand-style + constraint
 //      sentences, so the operator sees EXACTLY what the image model gets.
 //   2. generateHeroImage — render the (operator-edited) prompt with OpenAI
-//      gpt-image-1 (landscape 1536×1024 for the full-bleed hero), store the
-//      PNG in the PRIVATE Vercel Blob store and publish it through our own
+//      gpt-image-1 (landscape 1536×1024 for the full-bleed hero), composite
+//      the legibility gradient over its left part (email-hero-gradient.mjs),
+//      store the PNG in the PRIVATE Vercel Blob store and publish it through our own
 //      /api/email-hero-image route (email-hero-blob.mjs explains why), then
 //      save that URL + the prompt on the draft row (email-hero-store) so
 //      preview and send show the same image and the audit trail keeps prompt
@@ -54,6 +55,7 @@ import {
   heroBlobKey,
   heroImagePublicUrl,
 } from "./email-hero-blob.mjs";
+import { applyHeroGradient } from "./email-hero-gradient.mjs";
 import { setEmailHero, type EmailHeroKind } from "./email-hero-store";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
@@ -374,11 +376,18 @@ export async function generateHeroImage(
       outputTokens: res.usage?.output_tokens ?? 0,
     });
 
+    // Legibility is not left to the image model: the pale gradient over the
+    // left part (where the design prints the headline) is composited HERE,
+    // deterministically, before the picture is stored — see
+    // email-hero-gradient.mjs. The prompt's composition rule stays in place
+    // because an overlay can only fade equipment, not move it.
+    const png = await applyHeroGradient(Buffer.from(b64, "base64"));
+
     // The blob store is PRIVATE (it also holds the catalog + embeddings), so
     // the image is written privately and published through our own route —
     // see email-hero-blob.mjs for why, and for the validation that keeps that
     // route from reaching anything but hero images.
-    const blob = await put(heroBlobKey(kind, id), Buffer.from(b64, "base64"), {
+    const blob = await put(heroBlobKey(kind, id), png, {
       access: "private",
       contentType: "image/png",
       addRandomSuffix: true,
