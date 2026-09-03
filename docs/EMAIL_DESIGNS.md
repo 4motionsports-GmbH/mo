@@ -156,6 +156,15 @@ dem Text; dort wäre die ruhige linke Bildhälfte nur leere Wand. Beide als JPEG
 Heroes von vor Migration 0053 haben keinen Handy-Ausschnitt und zeigen auf dem
 Handy die Desktop-Datei.
 
+**Qualitätsvergleich für Kundengespräche:** `npm run hero:compare` rendert die
+zuletzt gespeicherten Hero-Prompts (oder eigene per `--prompts datei.txt`) in
+zwei Stufen (Standard `medium,high`) durch exakt diese Pipeline und schreibt
+`hero-compare/index.html` — eine Datei mit eingebetteten Bildern, je Prompt
+beide Varianten als Desktop-Hero mit Schlagzeile und als Handy-Ansicht, erst
+blind als A/B mit Favoriten-Wahl, auf Klick mit Qualität, Modell, echten Kosten
+und Renderzeit. Nichts davon berührt Entwürfe oder Blob-Store. `--dry-run`
+prüft nur das Layout ohne API-Aufrufe.
+
 **Kosten:** ca. 0,19 $ je Bild in `high` (1536×1024-Äquivalent; das native
 Format ist proportional günstiger), plus ~0,01 $ für den Prompt-Entwurf. Die
 Bildmodelle stehen in `ai-pricing.mjs`, das KPI-Dashboard zeigt den echten
