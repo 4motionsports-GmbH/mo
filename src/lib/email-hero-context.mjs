@@ -16,20 +16,50 @@
  * suggestion and shown to the operator as part of the editable prompt.
  */
 export const HERO_PROMPT_STYLE_TAIL =
-  "Photorealistic premium e-commerce hero shot in a bright modern home gym: " +
-  "clean white and light-grey concrete surfaces, soft natural daylight from a " +
-  "large window, matte black fitness equipment with subtle red accents, shallow " +
-  "depth of field, calm and motivating mood. WIDE LANDSCAPE composition (3:2). " +
-  "IMPORTANT COMPOSITION RULE: the left 45% of the frame must stay very bright, " +
-  "soft and almost empty — an out-of-focus near-white wall or floor area that " +
-  "fades smoothly into the scene — because dark headline text is placed there; " +
-  "all products and visual interest belong in the right half. " +
-  "BRAND FIDELITY RULE: render the named equipment true to that brand's actual " +
-  "design language — proportions, frame profile, finish and colour — so it " +
-  "reads as the real product family the shop sells. Strictly no text, no " +
-  "lettering, no logos, no brand markings on the equipment, no watermarks, no " +
-  "human faces: an invented logo would be a WRONG logo, so shape and finish " +
-  "carry the brand, never a mark.";
+  "COMPOSITION FIRST — this photo is a background and dark text is printed over " +
+  "its left side. THE LEFT 55% OF THE FRAME MUST STAY EMPTY: nothing there but a " +
+  "plain, evenly lit pale wall and floor — no equipment, no furniture, no window, " +
+  "no clutter, no strong shadows. ALL equipment stands in the RIGHT 40% of the " +
+  "frame, shot from the left so the room opens to the right. Brightness falls off " +
+  "gently from the empty left into the scene, with no hard edge. A photo whose " +
+  "equipment reaches into the left half is unusable. " +
+  "STYLE: photorealistic premium e-commerce photograph of a bright modern home " +
+  "gym — pale concrete and warm white surfaces, soft natural daylight, matte " +
+  "black equipment, shallow depth of field, calm and motivating mood. WIDE " +
+  "LANDSCAPE composition (3:2). " +
+  "BRAND FIDELITY: render the named equipment true to that brand's real design " +
+  "language — proportions, frame profile, finish and colour — including the " +
+  "small brand lettering as it actually appears on such equipment (discreet, on " +
+  "the frame or end caps), so it reads as the genuine product. That equipment " +
+  "marking is the ONLY lettering allowed: no headline text, no captions, no " +
+  "posters or signage on the wall, no watermarks, no human faces.";
+
+/**
+ * What the drafting model is told about the SCENE it writes for the image
+ * model. Lives here, not inline in email-hero.ts, because it is the product:
+ * this text decides whether the hero looks like the customer's own setup or
+ * like a stock photo — and because it MUST agree with HERO_PROMPT_STYLE_TAIL.
+ *
+ * They drifted apart once: an edit that was meant to allow brand names landed
+ * in the schema but silently missed this text, which went on telling the model
+ * that brand names mean nothing to an image model. The two then fought each
+ * other on every generation. The tests below assert they agree.
+ */
+export const HERO_SCENE_INSTRUCTION =
+  "SZENE (englisch, für ein Bildmodell): Sie soll wie das Setup " +
+  "DIESER Person wirken, nicht wie ein Stockfoto. Nutze dafür in " +
+  "dieser Reihenfolge: (1) was die Person bereits besitzt — die neuen " +
+  "Teile ERGÄNZEN sichtbar ein bestehendes Setup, (2) die " +
+  "Rahmenbedingungen aus dem Kundenverständnis (Platz, Lautstärke, " +
+  "Wohnung vs. Keller vs. Garage, Niveau), (3) die empfohlenen " +
+  "PRODUKTE beim Namen: Marke und Produktbezeichnung wörtlich " +
+  "übernehmen, dazu Bauart und Farbe, damit das Bild dem tatsächlich " +
+  "verkauften Gerät nahekommt — aber HÖCHSTENS ZWEI Objekte, " +
+  "ausdrücklich RECHTS im Bild aufgestellt, mit einer leeren hellen " +
+  "Wand links daneben (dort steht später die Schlagzeile; eine volle " +
+  "linke Bildhälfte macht das Bild unbrauchbar), (4) ein angehängtes " +
+  "Set nur, wenn dafür noch Platz ist, (5) die Jahreszeit für Licht " +
+  "und Stimmung.\n\n";
 
 /**
  * The single normalisation a hero prompt goes through before it is measured or
@@ -70,23 +100,45 @@ export const MAX_HERO_SCENE_CHARS = 900;
 export const MAX_HERO_PROMPT_CHARS =
   HERO_PROMPT_STYLE_TAIL.length + MAX_HERO_SCENE_CHARS + 8;
 
+/** The marker identifying the CURRENT tail — the newest rule it carries. */
+export const HERO_TAIL_MARKER = "COMPOSITION FIRST";
+
+/**
+ * The opening words of every tail version that has ever shipped, newest first.
+ * ensureHeroStyleTail cuts a stored prompt at the earliest of these to recover
+ * the operator's own scene text.
+ */
+export const SUPERSEDED_TAIL_STARTS = [
+  HERO_TAIL_MARKER,
+  // The #172 tail (brand fidelity, composition rule in the middle).
+  "Photorealistic premium e-commerce hero shot",
+];
+
 /**
  * Guarantee a prompt carries the CURRENT style rules. A prompt stored before
  * those rules existed (the earlier portrait tail, or the pre-brand-fidelity
- * one) would fight the layout or miss the brand instruction, so a superseded
+ * one, or the one that still banned brand markings) would fight the layout or
+ * carry the wrong instruction, so a superseded
  * tail is REPLACED — the operator's own scene text is never touched.
  *
  * The marker is the newest rule in the tail, so bumping the tail automatically
- * supersedes every stored prompt written against an older version.
+ * supersedes every stored prompt written against an older version. It is
+ * currently "COMPOSITION FIRST" (the layout rule moved to the front, and brand
+ * markings became allowed).
  *
  * @param {string} prompt
  * @returns {string}
  */
 export function ensureHeroStyleTail(prompt) {
   const text = String(prompt ?? "");
-  if (text.includes("BRAND FIDELITY RULE")) return text;
-  const legacyStart = text.indexOf("Photorealistic premium e-commerce hero shot");
-  const scene = (legacyStart >= 0 ? text.slice(0, legacyStart) : text).trim();
+  if (text.includes(HERO_TAIL_MARKER)) return text;
+  // Where a superseded tail begins. Every marker a tail has EVER started with
+  // belongs here — otherwise a prompt stored against an older tail keeps that
+  // tail glued to its scene and the new rules never reach the image model.
+  const start = SUPERSEDED_TAIL_STARTS.map((m) => text.indexOf(m))
+    .filter((i) => i >= 0)
+    .sort((a, b) => a - b)[0];
+  const scene = (start === undefined ? text : text.slice(0, start)).trim();
   return `${scene}\n\n${HERO_PROMPT_STYLE_TAIL}`;
 }
 

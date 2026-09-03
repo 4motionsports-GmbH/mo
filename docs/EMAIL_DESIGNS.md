@@ -157,11 +157,36 @@ Produkten liefern eine auswertbare) und wird für den Prompt ins Englische
 gebracht und von ihrem RAL-Code befreit: `schwarz-150; grau-17` →
 `black / grey`.
 
-> **Kein Logo, nie.** Die `BRAND FIDELITY RULE` im Style-Tail verlangt
-> ausdrücklich Formensprache **ohne** Schriftzug oder Markenzeichen. Ein
-> generiertes Logo wäre ein *falsches* Logo — schlechter als keins, und in einer
-> kundenseitigen E-Mail ein Markenrechtsproblem. Proportionen, Rahmenprofil und
-> Finish tragen die Marke, nie eine Aufschrift.
+**Markenkennzeichnung am Gerät ist erlaubt** — bewusst so entschieden, nachdem
+die logofreien Bilder generisch wirkten. Der Tail verlangt die kleine
+Aufschrift, wie sie an echten Geräten sitzt (dezent auf Rahmen oder Endkappen).
+Sie ist zugleich **die einzige erlaubte Schrift**: keine Schlagzeile, keine
+Bildunterschrift, keine Poster oder Schilder an der Wand, kein Wasserzeichen.
+Der Unterschied ist wichtig — Text *im Bild* würde mit der Schlagzeile
+kollidieren, die das Design selbst über die linke Bildhälfte legt.
+
+> **Restrisiko:** Bildmodelle rendern Schrift unzuverlässig. Eine verunglückte
+> Aufschrift ist möglich; deshalb bleibt sie klein und am Gerät. Wer ein Bild
+> mit schiefem Schriftzug bekommt, generiert neu oder streicht den Marken-Satz
+> aus dem Prompt-Feld.
+
+### Die Komposition muss die Szene mittragen
+
+Die Textspalte des Heros ist **55 %** breit (`performance.ts`, `hero-text`
+`width="55%"`), also verlangt der Tail exakt diese 55 % frei und stellt die
+Geräte in die rechten 40 %. Eine frühere Fassung schützte nur 45 % — die
+Schlagzeile lag damit über 10 % Bildbereich, der laut Prompt voll sein durfte.
+
+Entscheidend ist aber nicht der Tail allein: Das Bildmodell liest die **Szene
+zuerst** und gewichtet sie am stärksten. Eine Szene, die fünf Produkte aufzählt,
+füllt zwangsläufig die ganze Breite und überstimmt jede Kompositionsregel
+dahinter. Deshalb schreibt die Szenen-Anweisung
+(`HERO_SCENE_INSTRUCTION`) zwei Dinge vor: **höchstens zwei Objekte**, und die
+Szene benennt die Anordnung selbst („… on the RIGHT side …, the entire left
+half an empty softly lit wall"). Szenen-Anweisung und Style-Tail müssen sich
+decken — Unit-Tests prüfen genau das, seit die beiden einmal auseinanderliefen
+(eine Änderung landete im Schema, verfehlte aber die Szenen-Anweisung, die
+weiterhin behauptete, Markennamen sagten dem Bildmodell nichts).
 
 Alte gespeicherte Prompts werden beim Generieren automatisch auf die aktuellen
 Stil-Regeln gehoben (`ensureHeroStyleTail`) — ein vor der Querformat-Umstellung
