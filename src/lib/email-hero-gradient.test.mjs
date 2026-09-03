@@ -7,6 +7,7 @@ import {
   HERO_GRADIENT_FADE_START,
   HERO_GRADIENT_MAX_ALPHA,
   HERO_TEXT_COLUMN_FRACTION,
+  HERO_TEXT_REACH_FRACTION,
   heroGradientAlphaAt,
   heroGradientOverlaySvg,
   heroGradientStops,
@@ -16,9 +17,10 @@ test("the text column is 55% wide, matching performance.ts hero-text", () => {
   assert.equal(HERO_TEXT_COLUMN_FRACTION, 0.55);
 });
 
-test("the fade brackets the text column edge", () => {
-  assert.ok(HERO_GRADIENT_FADE_START < HERO_TEXT_COLUMN_FRACTION);
-  assert.ok(HERO_GRADIENT_FADE_END > HERO_TEXT_COLUMN_FRACTION);
+test("the text reach lies inside the column and the fade brackets it", () => {
+  assert.ok(HERO_TEXT_REACH_FRACTION < HERO_TEXT_COLUMN_FRACTION);
+  assert.ok(HERO_GRADIENT_FADE_START < HERO_TEXT_REACH_FRACTION);
+  assert.ok(HERO_GRADIENT_FADE_END > HERO_TEXT_REACH_FRACTION);
 });
 
 test("alpha is flat at max over the protected zone and zero past the fade", () => {
@@ -28,11 +30,20 @@ test("alpha is flat at max over the protected zone and zero past the fade", () =
   assert.equal(heroGradientAlphaAt(1), 0);
 });
 
-test("the headline area (up to ~52% of the width) keeps at least 65% overlay", () => {
-  // The hero-text cell is 55% wide with 40px/20px padding on a 640px card,
-  // so glyphs end around 52%; the subline's max-width lands at ~53%.
-  assert.ok(heroGradientAlphaAt(0.52) >= 0.65, String(heroGradientAlphaAt(0.52)));
-  assert.ok(heroGradientAlphaAt(HERO_TEXT_COLUMN_FRACTION) >= 0.5);
+test("the text sits on enough overlay, the column edge is nearly clear", () => {
+  // Measured on the rendered hero: subline to ~47%, headline to ~50%.
+  assert.ok(heroGradientAlphaAt(0.47) >= 0.6, String(heroGradientAlphaAt(0.47)));
+  assert.ok(
+    heroGradientAlphaAt(HERO_TEXT_REACH_FRACTION) >= 0.45,
+    String(heroGradientAlphaAt(HERO_TEXT_REACH_FRACTION))
+  );
+  // Past the column the scene must show: the whole point of shrinking the zone.
+  assert.ok(heroGradientAlphaAt(HERO_TEXT_COLUMN_FRACTION) <= 0.25);
+});
+
+test("the prompt's calm-left zone (45%) is already under strong overlay", () => {
+  // Whatever the model puts right at 45% is faded to at most a ghost.
+  assert.ok(heroGradientAlphaAt(0.45) >= 0.65);
 });
 
 test("alpha decreases monotonically with no hard edge", () => {
@@ -44,8 +55,8 @@ test("alpha decreases monotonically with no hard edge", () => {
     maxStep = Math.max(maxStep, prev === Infinity ? 0 : prev - a);
     prev = a;
   }
-  // Per 1% of width the overlay never drops more than 5 percentage points.
-  assert.ok(maxStep < 0.05, String(maxStep));
+  // Per 1% of width the overlay never drops more than 6 percentage points.
+  assert.ok(maxStep < 0.06, String(maxStep));
 });
 
 test("stops are ascending, start at 0 with max alpha and end at 1 with 0", () => {
@@ -88,8 +99,9 @@ test("applyHeroGradient whitens the left, leaves the right untouched, keeps size
   const red = (xFrac) => data[(Math.round(W * xFrac) + Math.floor(H / 2) * W) * info.channels];
   // #f6f6f6 at 93% over black ≈ 246 * 0.93 ≈ 229.
   assert.ok(red(0.05) >= 220, `left edge: ${red(0.05)}`);
-  assert.ok(red(0.4) >= 220, `protected zone: ${red(0.4)}`);
-  assert.ok(red(0.55) > 120 && red(0.55) < 200, `column edge: ${red(0.55)}`);
+  assert.ok(red(0.35) >= 220, `protected zone: ${red(0.35)}`);
+  assert.ok(red(0.5) > 80 && red(0.5) < 160, `text reach: ${red(0.5)}`);
+  assert.ok(red(0.6) < 40, `past the column: ${red(0.6)}`);
   assert.equal(red(0.9), 0, "right side untouched");
   assert.equal(red(0.99), 0);
 });

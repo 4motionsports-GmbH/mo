@@ -16,18 +16,20 @@
  * suggestion and shown to the operator as part of the editable prompt.
  */
 export const HERO_PROMPT_STYLE_TAIL =
-  "COMPOSITION FIRST — this photo is a background and dark text is printed over " +
-  "its left side. THE LEFT 55% OF THE FRAME MUST STAY EMPTY: nothing there but a " +
-  "plain, evenly lit pale wall and floor — no equipment, no furniture, no window, " +
-  "no clutter, no strong shadows. ALL equipment stands in the RIGHT 40% of the " +
-  "frame, shot from the left so the room opens to the right. Brightness falls off " +
-  "gently from the empty left into the scene, with no hard edge. A photo whose " +
-  "equipment reaches into the left half is unusable. " +
+  "TEXT LEFT, SCENE RIGHT — this photo is the background of an email and a dark " +
+  "headline is printed over its left part. Keep the LEFT 45% of the frame calm: " +
+  "a plain, evenly lit pale wall and floor — no equipment, no furniture, no " +
+  "window, no clutter, no strong shadows — with brightness easing gently from " +
+  "that bright left into the scene, no hard edge. The whole scene lives in the " +
+  "RIGHT 55%: show EVERY named product, arranged as one believable home-gym " +
+  "setup — the NEW pieces in front as the eye-catchers, the pieces the customer " +
+  "already owns behind or beside them, large equipment at the back, small items " +
+  "in front, nothing reaching into the left 45%. " +
   "STYLE: photorealistic premium e-commerce photograph of a bright modern home " +
   "gym — pale concrete and warm white surfaces, soft natural daylight, matte " +
   "black equipment, shallow depth of field, calm and motivating mood. WIDE " +
   "LANDSCAPE composition (3:2). " +
-  "BRAND FIDELITY: render the named equipment true to that brand's real design " +
+  "BRAND FIDELITY: render each named product true to its brand's real design " +
   "language — proportions, frame profile, finish and colour — including the " +
   "small brand lettering as it actually appears on such equipment (discreet, on " +
   "the frame or end caps), so it reads as the genuine product. That equipment " +
@@ -46,20 +48,21 @@ export const HERO_PROMPT_STYLE_TAIL =
  * other on every generation. The tests below assert they agree.
  */
 export const HERO_SCENE_INSTRUCTION =
-  "SZENE (englisch, für ein Bildmodell): Sie soll wie das Setup " +
-  "DIESER Person wirken, nicht wie ein Stockfoto. Nutze dafür in " +
-  "dieser Reihenfolge: (1) was die Person bereits besitzt — die neuen " +
-  "Teile ERGÄNZEN sichtbar ein bestehendes Setup, (2) die " +
-  "Rahmenbedingungen aus dem Kundenverständnis (Platz, Lautstärke, " +
-  "Wohnung vs. Keller vs. Garage, Niveau), (3) die empfohlenen " +
-  "PRODUKTE beim Namen: Marke und Produktbezeichnung wörtlich " +
-  "übernehmen, dazu Bauart und Farbe, damit das Bild dem tatsächlich " +
-  "verkauften Gerät nahekommt — aber HÖCHSTENS ZWEI Objekte, " +
-  "ausdrücklich RECHTS im Bild aufgestellt, mit einer leeren hellen " +
-  "Wand links daneben (dort steht später die Schlagzeile; eine volle " +
-  "linke Bildhälfte macht das Bild unbrauchbar), (4) ein angehängtes " +
-  "Set nur, wenn dafür noch Platz ist, (5) die Jahreszeit für Licht " +
-  "und Stimmung.\n\n";
+  "SZENE (englisch, für ein Bildmodell): Sie soll wie das Setup DIESER " +
+  "Person wirken, nicht wie ein Stockfoto — und sie soll verkaufen. Nutze " +
+  "dafür in dieser Reihenfolge: (1) die empfohlenen PRODUKTE — ALLE, die " +
+  "in den Vorgaben stehen: Marke und Produktbezeichnung wörtlich " +
+  "übernehmen, dazu Bauart und Farbe, damit jedes Gerät dem tatsächlich " +
+  "verkauften nahekommt; sie sind der Blickfang und stehen vorne, (2) ein " +
+  "bis zwei VERTRAUTE Geräte aus dem Besitz (Kaufhistorie) dahinter oder " +
+  "daneben — die neuen Teile ERGÄNZEN sichtbar ein bestehendes Setup, " +
+  "(3) die Rahmenbedingungen aus dem Kundenverständnis (Platz, Lautstärke, " +
+  "Wohnung vs. Keller vs. Garage, Niveau), (4) ein angehängtes Set als " +
+  "Gruppe, (5) die Jahreszeit für Licht und Stimmung. ANORDNUNG, " +
+  "ausdrücklich in die Szene schreiben: alles als EIN zusammenhängendes " +
+  "Setup RECHTS im Bild, große Geräte hinten, kleine vorne; links davon " +
+  "eine ruhige, helle, leere Wand- und Bodenfläche (dort steht später die " +
+  "Schlagzeile).\n\n";
 
 /**
  * The single normalisation a hero prompt goes through before it is measured or
@@ -78,12 +81,13 @@ export function normalizeHeroPrompt(prompt) {
 
 /**
  * How much room the operator-editable SCENE gets, on top of the fixed tail.
- * Generous enough for the ≤55-word scene the drafter is asked for INCLUDING
+ * Generous enough for the ≤90-word scene the drafter is asked for — it now
+ * names EVERY recommended product plus one or two owned ones — INCLUDING
  * long catalogue product names ("ATX® Hardcore Power Rack & Pull Station
- * FCR-780 (Power Racks, black / grey)") — with room for a model that
+ * FCR-780 (Power Racks, black / grey)"), with room for a model that
  * overshoots its word budget, which is what broke generation once already.
  */
-export const MAX_HERO_SCENE_CHARS = 900;
+export const MAX_HERO_SCENE_CHARS = 1400;
 
 /**
  * The cap on a complete hero prompt — DERIVED from the tail, never a magic
@@ -101,7 +105,7 @@ export const MAX_HERO_PROMPT_CHARS =
   HERO_PROMPT_STYLE_TAIL.length + MAX_HERO_SCENE_CHARS + 8;
 
 /** The marker identifying the CURRENT tail — the newest rule it carries. */
-export const HERO_TAIL_MARKER = "COMPOSITION FIRST";
+export const HERO_TAIL_MARKER = "TEXT LEFT, SCENE RIGHT";
 
 /**
  * The opening words of every tail version that has ever shipped, newest first.
@@ -110,6 +114,8 @@ export const HERO_TAIL_MARKER = "COMPOSITION FIRST";
  */
 export const SUPERSEDED_TAIL_STARTS = [
   HERO_TAIL_MARKER,
+  // The #174 tail (left 55% empty, at most two objects).
+  "COMPOSITION FIRST",
   // The #172 tail (brand fidelity, composition rule in the middle).
   "Photorealistic premium e-commerce hero shot",
 ];
@@ -123,8 +129,9 @@ export const SUPERSEDED_TAIL_STARTS = [
  *
  * The marker is the newest rule in the tail, so bumping the tail automatically
  * supersedes every stored prompt written against an older version. It is
- * currently "COMPOSITION FIRST" (the layout rule moved to the front, and brand
- * markings became allowed).
+ * currently "TEXT LEFT, SCENE RIGHT" (the calm zone shrank to the left 45%
+ * because the server-side gradient now guarantees legibility, and the scene
+ * may show every named product instead of two).
  *
  * @param {string} prompt
  * @returns {string}
@@ -289,7 +296,7 @@ export function colorWordForPrompt(value) {
  * @param {number} [limit]
  * @returns {string[]}
  */
-export function productHeroDescriptors(products, limit = 3) {
+export function productHeroDescriptors(products, limit = 6) {
   const out = [];
   for (const p of products ?? []) {
     const name = typeof p?.name === "string" ? p.name.trim() : "";

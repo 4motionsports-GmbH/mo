@@ -18,6 +18,7 @@ import {
   productHeroDescriptors,
   seasonHint,
 } from "./email-hero-context.mjs";
+import { heroGradientAlphaAt, HERO_TEXT_REACH_FRACTION } from "./email-hero-gradient.mjs";
 
 test("seasonHint covers every month with a distinct German hint", () => {
   const hints = new Set();
@@ -165,8 +166,8 @@ test("products without brand or colour still yield a usable descriptor", () => {
 });
 
 test("descriptors respect the limit", () => {
-  const many = Array.from({ length: 6 }, (_, i) => ({ name: `P${i}`, category: "C" }));
-  assert.equal(productHeroDescriptors(many).length, 3);
+  const many = Array.from({ length: 8 }, (_, i) => ({ name: `P${i}`, category: "C" }));
+  assert.equal(productHeroDescriptors(many).length, 6);
   assert.equal(productHeroDescriptors(many, 2).length, 2);
 });
 
@@ -301,25 +302,41 @@ test("the scene instruction asks for brand and product by name", () => {
   );
 });
 
-test("both texts put the equipment on the right and keep the left empty", () => {
+test("both texts put the scene on the right and keep the left calm", () => {
   assert.match(HERO_SCENE_INSTRUCTION, /RECHTS im Bild/);
-  assert.match(HERO_SCENE_INSTRUCTION, /leeren hellen\s+Wand links|Wand links daneben/);
-  assert.match(HERO_PROMPT_STYLE_TAIL, /LEFT 55% OF THE FRAME MUST STAY EMPTY/);
-  assert.match(HERO_PROMPT_STYLE_TAIL, /RIGHT 40% of the/);
+  assert.match(HERO_SCENE_INSTRUCTION, /links davon\s+eine ruhige, helle, leere Wand/);
+  assert.match(HERO_PROMPT_STYLE_TAIL, /Keep the LEFT 45% of the frame calm/);
+  assert.match(HERO_PROMPT_STYLE_TAIL, /RIGHT 55%/);
+  assert.match(HERO_PROMPT_STYLE_TAIL, /nothing reaching into the left 45%/);
 });
 
-// The protected width must match the hero's actual text column
-// (performance.ts: hero-text td is width="55%"). It was 45% once while the text
-// column was 55%, so the headline sat over 10% of busy image.
-test("the protected width matches the hero's text column", () => {
-  assert.match(HERO_PROMPT_STYLE_TAIL, /LEFT 55%/, "Textspalte im Design ist 55% breit");
-  assert.doesNotMatch(HERO_PROMPT_STYLE_TAIL, /left 45%/i);
+// The calm zone the prompt asks for sits INSIDE the text's measured reach
+// (~50%, HERO_TEXT_REACH_FRACTION): the last 5% under the headline is covered
+// by the server-side gradient (email-hero-gradient.mjs), which is what allows
+// the prompt to hand more of the frame to the products. The protected width
+// was 55% once (the column, not the text) and 45% before that, without any
+// gradient — this test pins the pairing so neither can drift alone.
+test("the prompt's calm-left zone is covered by the gradient up to the text reach", () => {
+  assert.match(HERO_PROMPT_STYLE_TAIL, /LEFT 45%/);
+  assert.ok(HERO_TEXT_REACH_FRACTION >= 0.45);
+  assert.ok(heroGradientAlphaAt(HERO_TEXT_REACH_FRACTION) >= 0.45);
+  assert.ok(heroGradientAlphaAt(0.45) >= 0.65);
 });
 
-test("the scene instruction caps the number of objects", () => {
-  // Five named products fill the whole frame and destroy the empty left half —
-  // that is what the live prompt did.
-  assert.match(HERO_SCENE_INSTRUCTION, /HÖCHSTENS ZWEI Objekte/);
+test("the scene shows every recommended product plus familiar owned ones", () => {
+  assert.match(HERO_SCENE_INSTRUCTION, /ALLE, die\s+in den Vorgaben stehen/);
+  assert.match(HERO_SCENE_INSTRUCTION, /VERTRAUTE Geräte aus dem Besitz/);
+  assert.match(HERO_SCENE_INSTRUCTION, /große Geräte hinten, kleine vorne/);
+  assert.match(HERO_PROMPT_STYLE_TAIL, /show EVERY named product/);
+  assert.match(HERO_PROMPT_STYLE_TAIL, /pieces the customer\s+already owns/);
+  // The old two-object cap must be gone from both texts.
+  assert.doesNotMatch(HERO_SCENE_INSTRUCTION, /HÖCHSTENS ZWEI/);
+  assert.doesNotMatch(HERO_PROMPT_STYLE_TAIL, /at most two|reaches into the left half is unusable/i);
+});
+
+test("descriptors default to room for a full marketing mail plus set", () => {
+  const products = Array.from({ length: 8 }, (_, i) => ({ name: `Produkt ${i}` }));
+  assert.equal(productHeroDescriptors(products).length, 6);
 });
 
 test("brand markings on the equipment are allowed, other lettering is not", () => {
@@ -333,14 +350,24 @@ test("brand markings on the equipment are allowed, other lettering is not", () =
 
 test("the composition rule leads the tail rather than being buried in it", () => {
   assert.ok(
-    HERO_PROMPT_STYLE_TAIL.startsWith("COMPOSITION FIRST"),
+    HERO_PROMPT_STYLE_TAIL.startsWith("TEXT LEFT, SCENE RIGHT"),
     "die Layout-Regel muss vorne stehen — mittendrin wird sie überlesen"
   );
 });
 
+test("a prompt stored against the #174 tail (COMPOSITION FIRST) is lifted", () => {
+  const stored =
+    "An ATX® Power Rack 620 on the right.\n\nCOMPOSITION FIRST — this photo is a " +
+    "background … THE LEFT 55% OF THE FRAME MUST STAY EMPTY … no human faces.";
+  const out = ensureHeroStyleTail(stored);
+  assert.ok(out.startsWith("An ATX® Power Rack 620 on the right."), "Szene bleibt erhalten");
+  assert.ok(out.endsWith(HERO_PROMPT_STYLE_TAIL), "aktueller Tail hängt dran");
+  assert.doesNotMatch(out, /LEFT 55%/);
+});
+
 test("a prompt stored against the #172 tail is lifted to the current one", () => {
   // That tail began with "Photorealistic premium e-commerce hero shot"; the
-  // current one begins with COMPOSITION FIRST, so the splitter must know both.
+  // current one begins with TEXT LEFT, SCENE RIGHT, so the splitter must know both.
   const stored =
     "A squat rack by the window.\n\nPhotorealistic premium e-commerce hero shot in a " +
     "bright modern home gym: IMPORTANT COMPOSITION RULE: the left 45% … " +
@@ -348,7 +375,7 @@ test("a prompt stored against the #172 tail is lifted to the current one", () =>
   const out = ensureHeroStyleTail(stored);
   assert.ok(out.startsWith("A squat rack by the window."), "Szene bleibt erhalten");
   assert.ok(out.endsWith(HERO_PROMPT_STYLE_TAIL), "aktueller Tail hängt dran");
-  assert.ok(!out.includes("left 45%"), "die falsche Breite ist weg");
+  assert.ok(!out.includes("IMPORTANT COMPOSITION RULE"), "die alte Regel ist weg");
   assert.ok(!out.includes("no brand markings"), "das Logo-Verbot ist weg");
   assert.equal(ensureHeroStyleTail(out), out, "idempotent");
 });
