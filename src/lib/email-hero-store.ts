@@ -16,6 +16,9 @@ export type EmailHeroKind = "marketing" | "campaign";
 
 export interface EmailHeroState {
   url: string | null;
+  /** Right-side crop of the same scene for phones (migration 0053), or null
+   * → phones show the desktop image. */
+  mobileUrl: string | null;
   prompt: string | null;
   /** Operator/AI hero claim (two short lines, "\n"-separated), or null →
    * the design's per-type default. */
@@ -36,20 +39,22 @@ export async function getEmailHero(
   try {
     const rows = (kind === "marketing"
       ? await sql`
-          SELECT hero_image_url, hero_image_prompt, hero_headline
+          SELECT hero_image_url, hero_image_mobile_url, hero_image_prompt, hero_headline
             FROM marketing_sends WHERE id = ${id}
         `
       : await sql`
-          SELECT hero_image_url, hero_image_prompt, hero_headline
+          SELECT hero_image_url, hero_image_mobile_url, hero_image_prompt, hero_headline
             FROM campaign_drafts WHERE contact_id = ${id}
         `) as Array<{
       hero_image_url: string | null;
+      hero_image_mobile_url: string | null;
       hero_image_prompt: string | null;
       hero_headline: string | null;
     }>;
     if (rows.length === 0) return null;
     return {
       url: rows[0].hero_image_url ?? null,
+      mobileUrl: rows[0].hero_image_mobile_url ?? null,
       prompt: rows[0].hero_image_prompt ?? null,
       headline: rows[0].hero_headline ?? null,
     };
@@ -66,10 +71,15 @@ export async function getEmailHero(
 export async function getEmailHeroRenderData(
   kind: EmailHeroKind,
   id: number
-): Promise<{ heroImageUrl: string | null; heroHeadline: string | null }> {
+): Promise<{
+  heroImageUrl: string | null;
+  heroImageMobileUrl: string | null;
+  heroHeadline: string | null;
+}> {
   const state = await getEmailHero(kind, id);
   return {
     heroImageUrl: state?.url ?? null,
+    heroImageMobileUrl: state?.mobileUrl ?? null,
     heroHeadline: state?.headline ?? null,
   };
 }
@@ -100,13 +110,15 @@ export async function setEmailHeroHeadline(
   }
 }
 
-/** Store (or with nulls: clear) the hero image + prompt on the draft row.
- * The headline has its own setter so a re-render never drops it. */
+/** Store (or with nulls: clear) the hero image (+ its mobile crop) and prompt
+ * on the draft row. The headline has its own setter so a re-render never
+ * drops it. */
 export async function setEmailHero(
   kind: EmailHeroKind,
   id: number,
   url: string | null,
   prompt: string | null,
+  mobileUrl: string | null = null,
   sql: Sql | null = getSql()
 ): Promise<{ ok: boolean; notFound?: boolean }> {
   if (!sql) return { ok: false };
@@ -114,13 +126,15 @@ export async function setEmailHero(
     const rows = (kind === "marketing"
       ? await sql`
           UPDATE marketing_sends
-             SET hero_image_url = ${url}, hero_image_prompt = ${prompt}
+             SET hero_image_url = ${url}, hero_image_mobile_url = ${mobileUrl},
+                 hero_image_prompt = ${prompt}
            WHERE id = ${id}
           RETURNING id
         `
       : await sql`
           UPDATE campaign_drafts
-             SET hero_image_url = ${url}, hero_image_prompt = ${prompt},
+             SET hero_image_url = ${url}, hero_image_mobile_url = ${mobileUrl},
+                 hero_image_prompt = ${prompt},
                  updated_at = now()
            WHERE contact_id = ${id}
           RETURNING id

@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  heroBlobContentType,
   HERO_BLOB_PREFIX,
   heroBlobFileFromPathname,
   heroBlobKey,
@@ -11,6 +12,24 @@ import {
   heroImagePublicUrl,
   parseHeroBlobFile,
 } from "./email-hero-blob.mjs";
+
+test("heroBlobKey carries variant and jpg extension when asked", () => {
+  assert.match(heroBlobKey("campaign", 42, { ext: "jpg" }), /^email-heroes\/campaign-42-\d+\.jpg$/);
+  assert.match(
+    heroBlobKey("marketing", 7, { variant: "mobile", ext: "jpg" }),
+    /^email-heroes\/marketing-7-\d+-mobile\.jpg$/
+  );
+  // Only the two known encodings — anything else falls back to png.
+  assert.match(heroBlobKey("campaign", 1, { ext: "svg" }), /\.png$/);
+});
+
+test("jpeg hero files pass validation and get the right content type", () => {
+  assert.equal(parseHeroBlobFile("campaign-42-123-mobile.jpg"), "campaign-42-123-mobile.jpg");
+  assert.equal(parseHeroBlobFile("a.jpeg"), "a.jpeg");
+  assert.equal(heroBlobContentType("campaign-42-123-mobile.jpg"), "image/jpeg");
+  assert.equal(heroBlobContentType("campaign-42-123.png"), "image/png");
+  assert.equal(parseHeroBlobFile("hero.jpg.json"), null);
+});
 
 test("heroBlobKey stays under the hero prefix and is a png", () => {
   const key = heroBlobKey("campaign", 42);

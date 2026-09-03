@@ -26,8 +26,23 @@ export const HERO_BLOB_PREFIX = "email-heroes/";
  * @param {number} id
  * @returns {string}
  */
-export function heroBlobKey(kind, id) {
-  return `${HERO_BLOB_PREFIX}${kind}-${id}-${Date.now()}.png`;
+/**
+ * Storage key for one hero file. `variant` distinguishes the files of one
+ * render (e.g. "mobile" for the phone crop), `ext` the encoding ("png" or
+ * "jpg" — heroes are stored as JPEG since the mobile variant shipped).
+ * @param {string} kind
+ * @param {number} id
+ * @param {{ variant?: string, ext?: "png" | "jpg" }} [opts]
+ */
+export function heroBlobKey(kind, id, opts = {}) {
+  const variant = opts.variant ? `-${opts.variant}` : "";
+  const ext = opts.ext === "jpg" ? "jpg" : "png";
+  return `${HERO_BLOB_PREFIX}${kind}-${id}-${Date.now()}${variant}.${ext}`;
+}
+
+/** The MIME type a hero file is served with, from its extension. */
+export function heroBlobContentType(file) {
+  return /\.jpe?g$/i.test(String(file ?? "")) ? "image/jpeg" : "image/png";
 }
 
 /**
@@ -51,7 +66,7 @@ export function parseHeroBlobFile(file) {
     return null;
   }
   if (decoded.includes("/") || decoded.includes("\\") || decoded.includes("..")) return null;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.png$/.test(decoded)) return null;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.(png|jpe?g)$/i.test(decoded)) return null;
   return decoded;
 }
 

@@ -143,6 +143,9 @@ export interface EmailRenderData {
   /** Absolute https URL of the per-send custom hero image, or null → the
    * design's default hero asset. */
   heroImageUrl?: string | null;
+  /** Right-side crop of the same hero for phones (shown under the text there),
+   * or null/absent → phones show heroImageUrl. */
+  heroImageMobileUrl?: string | null;
   /**
    * Per-send hero claim (two short lines, "\n"-separated) — the AI-drafted,
    * operator-edited headline. Null/absent → the design's per-type default.
