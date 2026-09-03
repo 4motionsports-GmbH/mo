@@ -6,7 +6,12 @@
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { isDbConfigured } from "@/lib/db";
 import { recordAdminAccess } from "@/lib/admin-access-log";
-import { generateHeroImage, MAX_HERO_PROMPT_CHARS, MAX_HERO_HEADLINE_CHARS } from "@/lib/email-hero";
+import {
+  generateHeroImage,
+  MAX_HERO_PROMPT_CHARS,
+  MAX_HERO_HEADLINE_CHARS,
+  normalizeHeroPrompt,
+} from "@/lib/email-hero";
 import { parseEmailHeroKind, setEmailHeroHeadline } from "@/lib/email-hero-store";
 import { reportError } from "@/lib/observability";
 
@@ -31,18 +36,22 @@ export async function POST(req: Request) {
       return adminJsonError("bad_request", "kind und id erforderlich.", 400);
     }
     id = body.id;
-    if (
-      typeof body.prompt !== "string" ||
-      !body.prompt.trim() ||
-      body.prompt.length > MAX_HERO_PROMPT_CHARS
-    ) {
+    // Measure exactly what the generator will measure (same normalisation), so
+    // the route and the generator can never disagree on the length.
+    const normalizedPrompt =
+      typeof body.prompt === "string" ? normalizeHeroPrompt(body.prompt) : "";
+    if (!normalizedPrompt) {
+      return adminJsonError("bad_request", "Bitte einen Prompt eingeben.", 400);
+    }
+    if (normalizedPrompt.length > MAX_HERO_PROMPT_CHARS) {
       return adminJsonError(
         "bad_request",
-        `Bitte einen Prompt mit 1–${MAX_HERO_PROMPT_CHARS} Zeichen angeben.`,
+        `Prompt zu lang: ${normalizedPrompt.length} von ${MAX_HERO_PROMPT_CHARS} Zeichen — ` +
+          `bitte die Szene um ${normalizedPrompt.length - MAX_HERO_PROMPT_CHARS} Zeichen kürzen.`,
         400
       );
     }
-    prompt = body.prompt;
+    prompt = normalizedPrompt;
     if (typeof body.headline === "string" && body.headline.trim()) {
       if (body.headline.length > MAX_HERO_HEADLINE_CHARS) {
         return adminJsonError(

@@ -39,6 +39,9 @@ import {
   HERO_PROMPT_STYLE_TAIL,
   heroContextLines,
   loyaltyHint,
+  MAX_HERO_PROMPT_CHARS,
+  MAX_HERO_SCENE_CHARS,
+  normalizeHeroPrompt,
   ownedProductTitles,
   productCategories,
   productHeroDescriptors,
@@ -54,8 +57,15 @@ import { setEmailHero, type EmailHeroKind } from "./email-hero-store";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
 
-// Re-exported so callers keep one import site for the hero vocabulary.
-export { HERO_PROMPT_STYLE_TAIL, ensureHeroStyleTail };
+// Re-exported so callers keep one import site for the hero vocabulary. The
+// prompt cap is DERIVED from the style tail (email-hero-context.mjs) so a
+// longer tail can never again leave too little room for the scene.
+export {
+  HERO_PROMPT_STYLE_TAIL,
+  ensureHeroStyleTail,
+  MAX_HERO_PROMPT_CHARS,
+  normalizeHeroPrompt,
+};
 
 const PROMPT_MODEL = "claude-sonnet-4-6";
 const IMAGE_MODEL = "gpt-image-1";
@@ -66,7 +76,6 @@ const IMAGE_MODEL = "gpt-image-1";
  */
 const IMAGE_SIZE = "1536x1024" as const;
 
-export const MAX_HERO_PROMPT_CHARS = 1500;
 export const MAX_HERO_HEADLINE_CHARS = 60;
 
 /** The default hero asset used when a send has no custom hero. */
@@ -308,7 +317,11 @@ export async function suggestHeroPrompt(
     }
   }
 
-  return { ok: true, prompt: `${scene}\n\n${HERO_PROMPT_STYLE_TAIL}`, headline };
+  // Clip the scene to its budget so a SUGGESTED prompt can never be rejected by
+  // our own length check — the drafting model is asked for ~70 words but is not
+  // bound by that, and an overshoot used to make "Bild generieren" fail.
+  const boundedScene = clip(scene, MAX_HERO_SCENE_CHARS);
+  return { ok: true, prompt: `${boundedScene}\n\n${HERO_PROMPT_STYLE_TAIL}`, headline };
 }
 
 export type GenerateHeroImageResult =
@@ -324,9 +337,17 @@ export async function generateHeroImage(
   id: number,
   prompt: string
 ): Promise<GenerateHeroImageResult> {
-  const trimmed = prompt.replace(/\s+/g, " ").trim();
-  if (!trimmed || trimmed.length > MAX_HERO_PROMPT_CHARS) {
-    return { ok: false, message: `Bitte einen Prompt mit 1–${MAX_HERO_PROMPT_CHARS} Zeichen angeben.` };
+  const trimmed = normalizeHeroPrompt(prompt);
+  if (!trimmed) {
+    return { ok: false, message: "Bitte einen Prompt eingeben." };
+  }
+  if (trimmed.length > MAX_HERO_PROMPT_CHARS) {
+    return {
+      ok: false,
+      message:
+        `Prompt zu lang: ${trimmed.length} von ${MAX_HERO_PROMPT_CHARS} Zeichen — ` +
+        `bitte die Szene um ${trimmed.length - MAX_HERO_PROMPT_CHARS} Zeichen kürzen.`,
+    };
   }
   if (!isHeroGenerationConfigured()) {
     return {

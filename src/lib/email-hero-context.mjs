@@ -32,6 +32,45 @@ export const HERO_PROMPT_STYLE_TAIL =
   "carry the brand, never a mark.";
 
 /**
+ * The single normalisation a hero prompt goes through before it is measured or
+ * sent. Shared so the API route and the generator can never disagree on how
+ * long a prompt is — the route used to measure the RAW text (counting the
+ * blank line between scene and tail) while the generator measured the
+ * collapsed one, so a prompt could be rejected by one and accepted by the
+ * other.
+ *
+ * @param {unknown} prompt
+ * @returns {string}
+ */
+export function normalizeHeroPrompt(prompt) {
+  return String(prompt ?? "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * How much room the operator-editable SCENE gets, on top of the fixed tail.
+ * Generous enough for the ~70-word scene the drafter is asked for INCLUDING
+ * long catalogue product names ("ATX® Hardcore Power Rack & Pull Station
+ * FCR-780 (Power Racks, black / grey)") — with room for a model that
+ * overshoots its word budget, which is what broke generation once already.
+ */
+export const MAX_HERO_SCENE_CHARS = 900;
+
+/**
+ * The cap on a complete hero prompt — DERIVED from the tail, never a magic
+ * number.
+ *
+ * This was a hard-coded 1500 once, and adding the BRAND FIDELITY RULE pushed
+ * the tail to a length that left too little room for a normal scene: every
+ * "Bild generieren" failed with a 400. Deriving the cap means growing the tail
+ * automatically grows the budget, so that class of bug cannot come back.
+ *
+ * The +8 covers the blank line between scene and tail, which the generator
+ * collapses to a single space before measuring.
+ */
+export const MAX_HERO_PROMPT_CHARS =
+  HERO_PROMPT_STYLE_TAIL.length + MAX_HERO_SCENE_CHARS + 8;
+
+/**
  * Guarantee a prompt carries the CURRENT style rules. A prompt stored before
  * those rules existed (the earlier portrait tail, or the pre-brand-fidelity
  * one) would fight the layout or miss the brand instruction, so a superseded
