@@ -126,10 +126,10 @@ Das Performance-Design öffnet mit einem großen Lifestyle-Bild. Zwei Quellen:
 
 **Wichtig — der Hero ist ein VOLLFLÄCHIGES Hintergrundbild:** Text und Button
 liegen auf der **linken Hälfte** des Bildes. Damit die dunkle Schrift lesbar
-bleibt, muss die linke ~45 % des Motivs sehr hell und ruhig sein (der Verlauf
-ist im Bild selbst angelegt, nicht per CSS — E-Mail-Clients können keine
-Gradienten über Bilder legen). Genau das schreibt `HERO_PROMPT_STYLE_TAIL` dem
-Bildmodell vor. Technisch: `background`-Attribut + Inline-`background` für
+bleibt, müssen die linken 55 % des Motivs (die Breite der Textspalte) sehr
+hell und ruhig sein (der Verlauf ist im Bild selbst angelegt, nicht per CSS —
+E-Mail-Clients können keine Gradienten über Bilder legen). Genau das schreibt
+`HERO_PROMPT_STYLE_TAIL` dem Bildmodell vor. Technisch: `background`-Attribut + Inline-`background` für
 Gmail/Apple Mail, VML-`v:rect` für Outlook, `bgcolor`-Fallback wenn Bilder
 blockiert sind; auf dem Handy wird der Hintergrund abgeschaltet und das Bild
 als eigene Zeile **unter** dem Text gezeigt.
@@ -157,11 +157,36 @@ Produkten liefern eine auswertbare) und wird für den Prompt ins Englische
 gebracht und von ihrem RAL-Code befreit: `schwarz-150; grau-17` →
 `black / grey`.
 
-> **Kein Logo, nie.** Die `BRAND FIDELITY RULE` im Style-Tail verlangt
-> ausdrücklich Formensprache **ohne** Schriftzug oder Markenzeichen. Ein
-> generiertes Logo wäre ein *falsches* Logo — schlechter als keins, und in einer
-> kundenseitigen E-Mail ein Markenrechtsproblem. Proportionen, Rahmenprofil und
-> Finish tragen die Marke, nie eine Aufschrift.
+**Markenkennzeichnung am Gerät ist erlaubt** — bewusst so entschieden, nachdem
+die logofreien Bilder generisch wirkten. Der Tail verlangt die kleine
+Aufschrift, wie sie an echten Geräten sitzt (dezent auf Rahmen oder Endkappen).
+Sie ist zugleich **die einzige erlaubte Schrift**: keine Schlagzeile, keine
+Bildunterschrift, keine Poster oder Schilder an der Wand, kein Wasserzeichen.
+Der Unterschied ist wichtig — Text *im Bild* würde mit der Schlagzeile
+kollidieren, die das Design selbst über die linke Bildhälfte legt.
+
+> **Restrisiko:** Bildmodelle rendern Schrift unzuverlässig. Eine verunglückte
+> Aufschrift ist möglich; deshalb bleibt sie klein und am Gerät. Wer ein Bild
+> mit schiefem Schriftzug bekommt, generiert neu oder streicht den Marken-Satz
+> aus dem Prompt-Feld.
+
+### Die Komposition muss die Szene mittragen
+
+Die Textspalte des Heros ist **55 %** breit (`performance.ts`, `hero-text`
+`width="55%"`), also verlangt der Tail exakt diese 55 % frei und stellt die
+Geräte in die rechten 40 %. Eine frühere Fassung schützte nur 45 % — die
+Schlagzeile lag damit über 10 % Bildbereich, der laut Prompt voll sein durfte.
+
+Entscheidend ist aber nicht der Tail allein: Das Bildmodell liest die **Szene
+zuerst** und gewichtet sie am stärksten. Eine Szene, die fünf Produkte aufzählt,
+füllt zwangsläufig die ganze Breite und überstimmt jede Kompositionsregel
+dahinter. Deshalb schreibt die Szenen-Anweisung
+(`HERO_SCENE_INSTRUCTION`) zwei Dinge vor: **höchstens zwei Objekte**, und die
+Szene benennt die Anordnung selbst („… on the RIGHT side …, the entire left
+half an empty softly lit wall"). Szenen-Anweisung und Style-Tail müssen sich
+decken — Unit-Tests prüfen genau das, seit die beiden einmal auseinanderliefen
+(eine Änderung landete im Schema, verfehlte aber die Szenen-Anweisung, die
+weiterhin behauptete, Markennamen sagten dem Bildmodell nichts).
 
 Alte gespeicherte Prompts werden beim Generieren automatisch auf die aktuellen
 Stil-Regeln gehoben (`ensureHeroStyleTail`) — ein vor der Querformat-Umstellung
@@ -169,6 +194,24 @@ oder vor der Marken-Regel gespeicherter Prompt bekommt den aktuellen Tail,
 während der selbst geschriebene Szenentext des Operators erhalten bleibt. Der
 Marker ist die jeweils neueste Regel, damit ein Tail-Update jeden älteren
 gespeicherten Prompt automatisch ablöst.
+
+### Kennzeichnung „KI-generiertes Bild" (EU-KI-Verordnung)
+
+Jedes Hero-Bild trägt eine sichtbare Kennzeichnung: ein kleines Label
+**„KI-generiertes Bild"** (englische Mails: „AI-generated image") unten rechts
+im Bildbereich, auf dem Handy als eigene Zeile direkt unter dem Bild. Hintergrund
+ist die Transparenzpflicht der EU-KI-Verordnung (AI Act, Art. 50): künstlich
+erzeugte Bildinhalte müssen als solche erkennbar sein. Das Label ist reiner
+HTML-Text mit Inline-Styles (kein Bild, kein Overlay-Trick), damit es in jedem
+Mail-Client erscheint und für Screenreader lesbar ist; zusätzlich nennt der
+`alt`-Text des Mobil-Bildes die Kennzeichnung.
+
+Die Kennzeichnung gilt für **alle** Heroes des Performance-Designs — die per
+`gpt-image-1` generierten immer, das Standard-Bild über die Konstante
+`DEFAULT_HERO_IS_AI_GENERATED` in `performance.ts` (heute `true`, da das
+Standard-Bild ebenfalls KI-generiert ist; nur auf `false` stellen, wenn es je
+durch eine echte Fotografie ersetzt wird). Der Operator muss nichts tun, das
+Label lässt sich im Workspace nicht abschalten.
 
 **Speicherung:** Der Blob-Store dieses Deployments ist PRIVAT (dort liegen auch
 Katalog und Embeddings) und lehnt `access: "public"` ab. Hero-Bilder werden

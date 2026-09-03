@@ -4,11 +4,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   HERO_PROMPT_STYLE_TAIL,
+  HERO_SCENE_INSTRUCTION,
   MAX_HERO_PROMPT_CHARS,
   MAX_HERO_SCENE_CHARS,
   clip,
-  ensureHeroStyleTail,
   colorWordForPrompt,
+  ensureHeroStyleTail,
   heroContextLines,
   loyaltyHint,
   normalizeHeroPrompt,
@@ -108,14 +109,14 @@ test("ensureHeroStyleTail replaces a superseded (portrait) tail", () => {
   const out = ensureHeroStyleTail(stored);
   assert.ok(out.startsWith("A rack next to a window."), "keeps the operator's scene");
   assert.ok(!out.includes("Portrait orientation"), "drops the superseded rule");
-  assert.ok(out.includes("IMPORTANT COMPOSITION RULE"), "adds the current rules");
+  assert.ok(out.endsWith(HERO_PROMPT_STYLE_TAIL), "adds the CURRENT tail verbatim");
   assert.ok(out.includes("WIDE LANDSCAPE"), "landscape rule present");
 });
 
 test("ensureHeroStyleTail appends to a bare scene", () => {
   const out = ensureHeroStyleTail("Just a scene.");
   assert.ok(out.startsWith("Just a scene."));
-  assert.ok(out.includes("IMPORTANT COMPOSITION RULE"));
+  assert.ok(out.endsWith(HERO_PROMPT_STYLE_TAIL));
 });
 
 // ── Brand + product fidelity in the image prompt ──────────────────────────────
@@ -197,7 +198,7 @@ test("a pre-brand-fidelity prompt gets the current tail, scene preserved", () =>
     "bright modern home gym: IMPORTANT COMPOSITION RULE: left 45% bright.";
   const updated = ensureHeroStyleTail(legacy);
   assert.ok(updated.startsWith("A power rack on light concrete."), "Szene bleibt erhalten");
-  assert.ok(updated.includes("BRAND FIDELITY RULE"), "neue Regel ist drin");
+  assert.ok(updated.endsWith(HERO_PROMPT_STYLE_TAIL), "aktueller Tail ist drin");
   assert.ok(!updated.includes("left 45% bright."), "alter Schwanz ist ersetzt");
   // Idempotent once current.
   assert.equal(ensureHeroStyleTail(updated), updated);
@@ -283,4 +284,71 @@ test("a runaway scene clipped to budget still yields a generatable prompt", () =
     full.length <= MAX_HERO_PROMPT_CHARS,
     `geklippter Vorschlag (${full.length}) muss unter ${MAX_HERO_PROMPT_CHARS} bleiben`
   );
+});
+
+// ── Scene instruction ⟷ style tail must agree ────────────────────────────────
+// These two texts reach the image model together. They drifted apart once: an
+// edit meant to allow brand names landed in the schema but silently missed the
+// scene instruction, which kept telling the drafter that brand names mean
+// nothing — so every prompt carried both messages at once.
+
+test("the scene instruction asks for brand and product by name", () => {
+  assert.match(HERO_SCENE_INSTRUCTION, /Marke und Produktbezeichnung wörtlich/);
+  assert.doesNotMatch(
+    HERO_SCENE_INSTRUCTION,
+    /Markennamen sagen dem Bildmodell/,
+    "die alte, widersprechende Anweisung darf nicht zurückkommen"
+  );
+});
+
+test("both texts put the equipment on the right and keep the left empty", () => {
+  assert.match(HERO_SCENE_INSTRUCTION, /RECHTS im Bild/);
+  assert.match(HERO_SCENE_INSTRUCTION, /leeren hellen\s+Wand links|Wand links daneben/);
+  assert.match(HERO_PROMPT_STYLE_TAIL, /LEFT 55% OF THE FRAME MUST STAY EMPTY/);
+  assert.match(HERO_PROMPT_STYLE_TAIL, /RIGHT 40% of the/);
+});
+
+// The protected width must match the hero's actual text column
+// (performance.ts: hero-text td is width="55%"). It was 45% once while the text
+// column was 55%, so the headline sat over 10% of busy image.
+test("the protected width matches the hero's text column", () => {
+  assert.match(HERO_PROMPT_STYLE_TAIL, /LEFT 55%/, "Textspalte im Design ist 55% breit");
+  assert.doesNotMatch(HERO_PROMPT_STYLE_TAIL, /left 45%/i);
+});
+
+test("the scene instruction caps the number of objects", () => {
+  // Five named products fill the whole frame and destroy the empty left half —
+  // that is what the live prompt did.
+  assert.match(HERO_SCENE_INSTRUCTION, /HÖCHSTENS ZWEI Objekte/);
+});
+
+test("brand markings on the equipment are allowed, other lettering is not", () => {
+  assert.match(HERO_PROMPT_STYLE_TAIL, /small brand lettering as it actually appears/);
+  assert.match(HERO_PROMPT_STYLE_TAIL, /ONLY lettering allowed/);
+  assert.match(HERO_PROMPT_STYLE_TAIL, /no headline text, no captions/);
+  // The blanket ban that contradicted the brand requirement must be gone.
+  assert.doesNotMatch(HERO_PROMPT_STYLE_TAIL, /no logos/);
+  assert.doesNotMatch(HERO_PROMPT_STYLE_TAIL, /no brand markings on the/);
+});
+
+test("the composition rule leads the tail rather than being buried in it", () => {
+  assert.ok(
+    HERO_PROMPT_STYLE_TAIL.startsWith("COMPOSITION FIRST"),
+    "die Layout-Regel muss vorne stehen — mittendrin wird sie überlesen"
+  );
+});
+
+test("a prompt stored against the #172 tail is lifted to the current one", () => {
+  // That tail began with "Photorealistic premium e-commerce hero shot"; the
+  // current one begins with COMPOSITION FIRST, so the splitter must know both.
+  const stored =
+    "A squat rack by the window.\n\nPhotorealistic premium e-commerce hero shot in a " +
+    "bright modern home gym: IMPORTANT COMPOSITION RULE: the left 45% … " +
+    "BRAND FIDELITY RULE: … no logos, no brand markings on the equipment.";
+  const out = ensureHeroStyleTail(stored);
+  assert.ok(out.startsWith("A squat rack by the window."), "Szene bleibt erhalten");
+  assert.ok(out.endsWith(HERO_PROMPT_STYLE_TAIL), "aktueller Tail hängt dran");
+  assert.ok(!out.includes("left 45%"), "die falsche Breite ist weg");
+  assert.ok(!out.includes("no brand markings"), "das Logo-Verbot ist weg");
+  assert.equal(ensureHeroStyleTail(out), out, "idempotent");
 });

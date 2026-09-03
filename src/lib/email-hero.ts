@@ -37,6 +37,7 @@ import {
   clip,
   ensureHeroStyleTail,
   HERO_PROMPT_STYLE_TAIL,
+  HERO_SCENE_INSTRUCTION,
   heroContextLines,
   loyaltyHint,
   MAX_HERO_PROMPT_CHARS,
@@ -210,11 +211,11 @@ function fallbackScene(ctx: HeroContext): string {
       ? ctx.productCategories
       : ctx.productNames
   )
-    .slice(0, 3)
-    .join(", ");
+    .slice(0, 2)
+    .join(" and ");
   return items
-    ? `A styled arrangement of fitness equipment inspired by: ${items} — placed on a light concrete floor in front of a power rack, composed like a premium sports-brand campaign visual.`
-    : "A styled arrangement of premium home-gym accessories — resistance bands, a black steel water bottle and a folded floor mat — on a light concrete floor in front of a power rack.";
+    ? `${items} standing on a light concrete floor on the RIGHT side of a bright home gym, the entire left half of the frame an empty, softly lit pale wall.`
+    : "A matte black power rack on a light concrete floor on the RIGHT side of a bright home gym, the entire left half of the frame an empty, softly lit pale wall.";
 }
 
 export type SuggestHeroPromptResult =
@@ -229,13 +230,17 @@ const heroSuggestionSchema = z.object({
   scene: z
     .string()
     .describe(
-      "ENGLISCHE Szenen-Beschreibung für das Bildmodell: EIN Absatz, max. 70 " +
-        "Wörter. Benenne das WICHTIGSTE empfohlene Produkt AUSDRÜCKLICH mit " +
+      "ENGLISCHE Szenen-Beschreibung für das Bildmodell: EIN Absatz, max. 55 " +
+        "Wörter.\n" +
+        "(1) Benenne HÖCHSTENS ZWEI Produkte — das wichtigste ausführlich mit " +
         "Marke und Produktnamen genau so, wie es in den Vorgaben steht (z. B. " +
-        "„an ATX® Power Rack 620“), dazu seine Farbe/Bauform — das Bild soll " +
-        "wie genau dieses Produkt aussehen, nicht wie irgendein Fitnessgerät. " +
-        "Kein Text im Bild, keine Logos, keine Gesichter, keine Stil-/" +
-        "Licht-Angaben (werden separat angehängt)."
+        "„an ATX® Power Rack 620“), dazu Farbe und Bauform. Mehr Objekte füllen " +
+        "das Bild und zerstören die freie linke Bildhälfte.\n" +
+        "(2) Die Szene MUSS die Anordnung selbst beschreiben: die Geräte stehen " +
+        "RECHTS im Bild, links davon nur eine leere, hell beleuchtete Wand- und " +
+        "Bodenfläche. Schreib das ausdrücklich in den Satz hinein.\n" +
+        "Keine Gesichter, keine Stil- oder Licht-Angaben (werden separat " +
+        "angehängt)."
     ),
   headline: z
     .string()
@@ -270,15 +275,8 @@ export async function suggestHeroPrompt(
           "Du entwirfst den HERO einer personalisierten E-Mail eines " +
           "Fitness-Shops (motion sports) — das Erste, was diese eine Person " +
           "sieht, und der Hebel dafür, ob sie weiterliest.\n\n" +
-          "SZENE (englisch, für ein Bildmodell): Sie soll wie das Setup " +
-          "DIESER Person wirken, nicht wie ein Stockfoto. Nutze dafür in " +
-          "dieser Reihenfolge: (1) was die Person bereits besitzt — die neuen " +
-          "Teile ERGÄNZEN sichtbar ein bestehendes Setup, (2) die " +
-          "Rahmenbedingungen aus dem Kundenverständnis (Platz, Lautstärke, " +
-          "Wohnung vs. Keller vs. Garage, Niveau), (3) die empfohlenen " +
-          "PRODUKTARTEN als konkrete Objekte (Markennamen sagen dem Bildmodell " +
-          "nichts — beschreibe die Gegenstände), (4) ein angehängtes Set als " +
-          "zusammengehörige Gruppe, (5) die Jahreszeit für Licht und Stimmung.\n\n" +
+          HERO_SCENE_INSTRUCTION +
+          "\n\n" +
           "SCHLAGZEILE (deutsch, zwei kurze Zeilen): Sie benennt das ZIEL oder " +
           "die konkrete Situation dieser Person („Dein Rack. Jetzt komplett.“, " +
           "„Leise trainieren. Endlich.“) — nicht das Produkt und keine " +
@@ -318,7 +316,7 @@ export async function suggestHeroPrompt(
   }
 
   // Clip the scene to its budget so a SUGGESTED prompt can never be rejected by
-  // our own length check — the drafting model is asked for ~70 words but is not
+  // our own length check — the drafting model is asked for ≤55 words but is not
   // bound by that, and an overshoot used to make "Bild generieren" fail.
   const boundedScene = clip(scene, MAX_HERO_SCENE_CHARS);
   return { ok: true, prompt: `${boundedScene}\n\n${HERO_PROMPT_STYLE_TAIL}`, headline };
