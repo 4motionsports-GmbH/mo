@@ -31,6 +31,16 @@ export const DEFAULT_MODEL_PRICES = {
   "claude-haiku-4-5": { input: 1, output: 5 },
   // OpenAI — query embedding model. Embeddings have no output tokens.
   "text-embedding-3-small": { input: 0.02, output: 0 },
+  // OpenAI — hero image generation (lib/email-hero.ts). UNIT NOTE: `input` is
+  // the TEXT-input token price, `output` the IMAGE-output token price — the
+  // usage store records exactly those two counts from the images API. A
+  // 1536×1024 image at quality "high" is ~6.2k output tokens (gpt-image-2:
+  // ≈ $0.19; gpt-image-1.5: ≈ $0.20; gpt-image-1: ≈ $0.25), the hero's native
+  // 1536×720 proportionally less. List pricing 2026-09; override via
+  // MODEL_PRICES_JSON when it moves.
+  "gpt-image-2": { input: 5, output: 30 },
+  "gpt-image-1.5": { input: 5, output: 32 },
+  "gpt-image-1": { input: 5, output: 40 },
   // OpenAI — text-to-speech (voice mode, /api/tts). UNIT NOTE: TTS is billed
   // per CHARACTER of input, so for these models `input` is USD per million
   // CHARACTERS and the usage store records characters synthesized in the

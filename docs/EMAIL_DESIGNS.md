@@ -117,12 +117,49 @@ Das Performance-Design öffnet mit einem großen Lifestyle-Bild. Zwei Quellen:
    Kampagnen-Workspace schlägt „Hero vorschlagen" in EINEM KI-Durchlauf sowohl
    einen Bild-Prompt als auch die zweizeilige **Hero-Schlagzeile** aus
    Produkten/Prosa/Persona vor (`lib/email-hero.ts`); der Operator passt beides
-   an. „Bild generieren" rendert das Bild mit `gpt-image-1` (**1536×1024**),
-   lädt das PNG in Vercel Blob und speichert URL + Prompt + Schlagzeile am
-   Entwurf (Migrationen 0050/0051); die Schlagzeile lässt sich auch allein
+   an. „Bild generieren" rendert das Bild (Modell und Format s. u.), leitet
+   daraus die Desktop-Datei und den Handy-Ausschnitt ab, lädt beide als JPEG
+   in Vercel Blob und speichert URLs + Prompt + Schlagzeile am Entwurf
+   (Migrationen 0050/0051/0053); die Schlagzeile lässt sich auch allein
    speichern (ohne neues Bild). Vorschau UND Versand lesen alles über
    `withEmailRenderData` — was geprüft wird, wird verschickt. Leere Schlagzeile
    = die Standard-Zeile des Designs je E-Mail-Typ.
+
+### Modell, Format, Varianten, Kosten
+
+**Modell:** `gpt-image-2` (OpenAI, April 2026) — führt die Text-to-Image-Arena
+(blinde Nutzer-Votes) an, natives „Thinking" vor dem Rendern, freie Auflösungen,
+und in der hohen Qualitätsstufe rund ein Drittel günstiger als `gpt-image-1`
+(das OpenAI am 23.10.2026 abschaltet). Qualität `high`.
+
+**Format:** Das Modell rendert direkt das **Hero-Format 1536×720** (2,13:1 =
+640×300 des Desktop-Heros; beide Maße durch 16 teilbar, wie `gpt-image-2` es
+verlangt). Es komponiert also für genau den Rahmen, den die Person sieht —
+nichts wird nachträglich weggeschnitten, und es werden keine Tokens für Zeilen
+bezahlt, die `background-size: cover` verwerfen würde.
+
+**Versuchskette** (`heroImageAttempts`, `email-hero-variants.mjs`, getestet):
+1. `gpt-image-2` in 1536×720, 2. `gpt-image-2` in 1536×1024 (falls die freie
+Größe abgelehnt wird), 3. `gpt-image-1.5` in 1536×1024 (falls das Modell
+ausfällt). Der erste erfolgreiche Versuch gewinnt; jeder Fehlversuch landet
+mit Modell und Größe in Sentry. Ein 3:2-Ergebnis wird per `heroAspectCrop` auf
+das Hero-Format beschnitten (mittiges Band). Overrides per Env:
+`EMAIL_HERO_IMAGE_MODEL` (primäres Modell), `EMAIL_HERO_IMAGE_QUALITY`
+(`low` | `medium` | `high`).
+
+**Zwei Dateien je Render** (`buildHeroVariants`, getestet): die
+**Desktop-Datei** mit dem Lesbarkeits-Verlauf (s. u.) als Hintergrund des
+Heros, und der **Handy-Ausschnitt** — die rechten 60 % derselben Szene ohne
+Verlauf (`HERO_MOBILE_CROP_START = 0.4`). Auf dem Handy steht das Bild unter
+dem Text; dort wäre die ruhige linke Bildhälfte nur leere Wand. Beide als JPEG
+(Qualität 88, mozjpeg): ein 1536-px-PNG wiegt 1–2 MB, das JPEG einen Bruchteil.
+Heroes von vor Migration 0053 haben keinen Handy-Ausschnitt und zeigen auf dem
+Handy die Desktop-Datei.
+
+**Kosten:** ca. 0,19 $ je Bild in `high` (1536×1024-Äquivalent; das native
+Format ist proportional günstiger), plus ~0,01 $ für den Prompt-Entwurf. Die
+Bildmodelle stehen in `ai-pricing.mjs`, das KPI-Dashboard zeigt den echten
+Betrag je Hero.
 
 **Wichtig — der Hero ist ein VOLLFLÄCHIGES Hintergrundbild:** Text und Button
 liegen auf dem **linken Teil** des Bildes. Die Textspalte ist 55 % breit, der
@@ -282,6 +319,7 @@ würde es links und rechts beschnitten und der Text stünde auf dem Motiv.)
 | `src/lib/email-designs/studio.ts` | Beispiel-Design (Referenz zum Kopieren) |
 | `src/lib/email-designs/performance.ts` | Bild-orientiertes Conversion-Design (Voll-Shell + Hero) |
 | `src/lib/email-hero-gradient.mjs` | Deterministischer Lesbarkeits-Verlauf über den linken Bildteil (sharp), getestet |
+| `src/lib/email-hero-variants.mjs` | Modell-Versuchskette, Hero-Format, Desktop-/Handy-Variante (sharp), getestet |
 | `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Privater Blob-Write & öffentliche Auslieferung der Hero-Bilder (mit Pfad-Validierung) |
 | `src/lib/email-hero-context.mjs` | Was die KI über die Person erfährt (Kaufhistorie, Profil, Kategorien, Saison) — pur & getestet |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |

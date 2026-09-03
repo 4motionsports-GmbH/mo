@@ -28,7 +28,7 @@ export const HERO_PROMPT_STYLE_TAIL =
   "STYLE: photorealistic premium e-commerce photograph of a bright modern home " +
   "gym — pale concrete and warm white surfaces, soft natural daylight, matte " +
   "black equipment, shallow depth of field, calm and motivating mood. WIDE " +
-  "LANDSCAPE composition (3:2). " +
+  "LANDSCAPE composition, about twice as wide as tall (the email hero format). " +
   "BRAND FIDELITY: render each named product true to its brand's real design " +
   "language — proportions, frame profile, finish and colour — including the " +
   "small brand lettering as it actually appears on such equipment (discreet, on " +

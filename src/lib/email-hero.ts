@@ -10,9 +10,10 @@
 //      personal scene followed by the fixed brand-style + constraint
 //      sentences, so the operator sees EXACTLY what the image model gets.
 //   2. generateHeroImage — render the (operator-edited) prompt with OpenAI
-//      gpt-image-1 (landscape 1536×1024 for the full-bleed hero), composite
-//      the legibility gradient over its left part (email-hero-gradient.mjs),
-//      store the PNG in the PRIVATE Vercel Blob store and publish it through our own
+//      gpt-image-2 in the hero's native 1536×720 format (with fallbacks, see
+//      email-hero-variants.mjs), derive the desktop file (legibility gradient
+//      over its left part) and the mobile crop, store both as JPEG in the
+//      PRIVATE Vercel Blob store and publish them through our own
 //      /api/email-hero-image route (email-hero-blob.mjs explains why), then
 //      save that URL + the prompt on the draft row (email-hero-store) so
 //      preview and send show the same image and the audit trail keeps prompt
@@ -55,7 +56,7 @@ import {
   heroBlobKey,
   heroImagePublicUrl,
 } from "./email-hero-blob.mjs";
-import { applyHeroGradient } from "./email-hero-gradient.mjs";
+import { buildHeroVariants, heroImageAttempts } from "./email-hero-variants.mjs";
 import { setEmailHero, type EmailHeroKind } from "./email-hero-store";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
@@ -71,13 +72,10 @@ export {
 };
 
 const PROMPT_MODEL = "claude-sonnet-4-6";
-const IMAGE_MODEL = "gpt-image-1";
-/**
- * LANDSCAPE 3:2 — the hero is a FULL-BLEED background across the whole card
- * (640px wide, ~300px tall), with the headline sitting on its faded left half.
- * A portrait crop would tower over the text and get cut off on both sides.
- */
-const IMAGE_SIZE = "1536x1024" as const;
+// The image model, size and quality live in email-hero-variants.mjs
+// (heroImageAttempts): gpt-image-2 in the hero's native 1536×720 first, then
+// the same model in 3:2, then gpt-image-1.5 — the first attempt that renders
+// wins, so one refused size or one model outage never blocks the operator.
 
 export const MAX_HERO_HEADLINE_CHARS = 60;
 
@@ -363,46 +361,84 @@ export async function generateHeroImage(
 
   try {
     const client = new OpenAI();
-    const res = await client.images.generate({
-      model: IMAGE_MODEL,
-      prompt: ensureHeroStyleTail(trimmed),
-      size: IMAGE_SIZE,
-    });
-    const b64 = res.data?.[0]?.b64_json;
-    if (!b64) return { ok: false, message: "Das Bildmodell hat kein Bild geliefert." };
+    const fullPrompt = ensureHeroStyleTail(trimmed);
 
-    // Image-model usage is token-based for gpt-image-1; unknown models price
-    // as 0 in the cost table — the row still documents the call.
+    // First attempt that renders wins (native format → 3:2 → previous model).
+    // Each failure is reported with its model so a refused size or a model
+    // outage is visible in Sentry, not silently absorbed.
+    let rendered: { b64: string; model: string; input: number; output: number } | null = null;
+    let lastError: unknown = null;
+    for (const attempt of heroImageAttempts()) {
+      try {
+        const res = await client.images.generate({
+          model: attempt.model,
+          prompt: fullPrompt,
+          // The installed SDK types only list the classic sizes; gpt-image-2
+          // accepts any WIDTHxHEIGHT (multiples of 16, ratio ≤ 3:1) — the
+          // fallback attempts use a classic size anyway.
+          size: attempt.size as "1536x1024",
+          quality: attempt.quality as "low" | "medium" | "high",
+        });
+        const b64 = res.data?.[0]?.b64_json;
+        if (!b64) throw new Error(`${attempt.model} returned no image`);
+        rendered = {
+          b64,
+          model: attempt.model,
+          input: res.usage?.input_tokens ?? 0,
+          output: res.usage?.output_tokens ?? 0,
+        };
+        break;
+      } catch (err) {
+        lastError = err;
+        reportError(err, {
+          route: "lib/email-hero",
+          phase: `generate:${attempt.model}:${attempt.size}`,
+        });
+      }
+    }
+    if (!rendered) {
+      throw lastError ?? new Error("no image model attempt succeeded");
+    }
+
+    // Token-based image billing; the price table (ai-pricing.mjs) knows the
+    // image models, so the KPI shows the real cost of every hero.
     await recordAiUsage({
       callSite: "hero_image",
-      model: IMAGE_MODEL,
-      inputTokens: res.usage?.input_tokens ?? 0,
-      outputTokens: res.usage?.output_tokens ?? 0,
+      model: rendered.model,
+      inputTokens: rendered.input,
+      outputTokens: rendered.output,
     });
 
-    // Legibility is not left to the image model: the pale gradient over the
-    // left part (where the design prints the headline) is composited HERE,
-    // deterministically, before the picture is stored — see
-    // email-hero-gradient.mjs. The prompt's composition rule stays in place
-    // because an overlay can only fade equipment, not move it.
-    const png = await applyHeroGradient(Buffer.from(b64, "base64"));
+    // One render → two files (email-hero-variants.mjs): the desktop picture
+    // with the legibility gradient over its left part (deterministic — the
+    // prompt's composition rule only makes the calm left LIKELY), and the
+    // right-side crop for phones, where the picture sits under the text.
+    const variants = await buildHeroVariants(Buffer.from(rendered.b64, "base64"));
 
     // The blob store is PRIVATE (it also holds the catalog + embeddings), so
-    // the image is written privately and published through our own route —
+    // the images are written privately and published through our own route —
     // see email-hero-blob.mjs for why, and for the validation that keeps that
     // route from reaching anything but hero images.
-    const blob = await put(heroBlobKey(kind, id), png, {
-      access: "private",
-      contentType: "image/png",
+    const blobOpts = {
+      access: "private" as const,
+      contentType: "image/jpeg",
       addRandomSuffix: true,
       token: process.env.BLOB_READ_WRITE_TOKEN,
-    });
+    };
+    const [desktopBlob, mobileBlob] = await Promise.all([
+      put(heroBlobKey(kind, id, { ext: "jpg" }), variants.desktop, blobOpts),
+      put(heroBlobKey(kind, id, { variant: "mobile", ext: "jpg" }), variants.mobile, blobOpts),
+    ]);
     const publicUrl = heroImagePublicUrl(
       getBaseUrl(),
-      heroBlobFileFromPathname(blob.pathname)
+      heroBlobFileFromPathname(desktopBlob.pathname)
+    );
+    const mobileUrl = heroImagePublicUrl(
+      getBaseUrl(),
+      heroBlobFileFromPathname(mobileBlob.pathname)
     );
 
-    const saved = await setEmailHero(kind, id, publicUrl, ensureHeroStyleTail(trimmed));
+    const saved = await setEmailHero(kind, id, publicUrl, fullPrompt, mobileUrl);
     if (!saved.ok) {
       return {
         ok: false,

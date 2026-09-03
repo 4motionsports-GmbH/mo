@@ -5,9 +5,11 @@
 //
 // Flow: "Prompt vorschlagen" → the system drafts an image prompt from the
 // draft's actual context (products, prose, persona) → the operator edits the
-// text → "Bild generieren" renders it (gpt-image-1), uploads it and stores it
-// on the draft row → the e-mail preview and the real send show it
-// automatically. "Entfernen" falls back to the default hero asset.
+// text → "Bild generieren" renders it (gpt-image-2 in the hero's native
+// 1536×720 format, with fallbacks), composites the legibility gradient, stores
+// a desktop file and a mobile crop on the draft row → the e-mail preview and
+// the real send show it automatically. "Entfernen" falls back to the default
+// hero asset.
 //
 // Self-contained: loads its state from GET /api/admin/email-hero on mount, so
 // the big workspaces (CustomerProfileCard / KampagneWorkspace) only mount it

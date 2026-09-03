@@ -416,6 +416,9 @@ function makeShell(kind: keyof typeof HERO_COPY) {
     const copy = HERO_COPY[kind];
     const year = new Date().getFullYear();
     const heroImage = activeEmailRenderData().heroImageUrl || defaultHeroImageUrl();
+    // Phones show the picture under the text, so they get the products-only
+    // crop when the render produced one (older heroes: the desktop image).
+    const heroImageMobile = activeEmailRenderData().heroImageMobileUrl || heroImage;
     // Per-send heroes are always AI-generated; the default asset is too (see
     // DEFAULT_HERO_IS_AI_GENERATED). The disclosure follows the picture.
     const heroIsAi = Boolean(activeEmailRenderData().heroImageUrl) || DEFAULT_HERO_IS_AI_GENERATED;
@@ -557,7 +560,7 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                    unreadable), so the artwork gets its own full-width row. -->
               <tr class="hero-mobile-row">
                 <td class="hero-mobile-cell" style="padding:0; font-size:0; line-height:0;">
-                  <img src="${escapeAttr(heroImage)}" width="640" alt="${heroIsAi ? (en ? "AI-generated image — motion sports" : "KI-generiertes Bild — motion sports") : "motion sports"}" class="hero-mobile-img" style="width:100%; max-width:100%; height:auto; display:none;">${
+                  <img src="${escapeAttr(heroImageMobile)}" width="640" alt="${heroIsAi ? (en ? "AI-generated image — motion sports" : "KI-generiertes Bild — motion sports") : "motion sports"}" class="hero-mobile-img" style="width:100%; max-width:100%; height:auto; display:none;">${
                     heroIsAi
                       ? `<div class="hero-mobile-label" style="display:none; padding:6px 20px 0 20px; text-align:right; font-size:0; line-height:0;">${aiImageLabel(en)}</div>`
                       : ""

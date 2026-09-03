@@ -4,7 +4,7 @@
 // recipient's inbox, so this route carries no session or widget guard. It is
 // safe because of what it CANNOT do:
 //   - it only ever reads `email-heroes/<file>` (HERO_BLOB_PREFIX), and
-//   - `parseHeroBlobFile` rejects separators, traversal and non-PNG names,
+//   - `parseHeroBlobFile` rejects separators, traversal and non-image names,
 // so the private catalog/embedding blobs in the same store stay unreachable.
 //
 // The image itself is written privately (the store is private — see
@@ -12,7 +12,11 @@
 // filenames carry a random suffix, so a stored image never changes.
 
 import { get } from "@vercel/blob";
-import { heroBlobPathname, parseHeroBlobFile } from "@/lib/email-hero-blob.mjs";
+import {
+  heroBlobContentType,
+  heroBlobPathname,
+  parseHeroBlobFile,
+} from "@/lib/email-hero-blob.mjs";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 15;
@@ -38,9 +42,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ file: string }>
     return new Response(res.stream as unknown as BodyInit, {
       status: 200,
       headers: {
-        // Everything under the hero prefix is written as image/png by
-        // generateHeroImage; the stored blob's own type is the fallback.
-        "Content-Type": res.blob?.contentType || "image/png",
+        // generateHeroImage writes JPEG (PNG before the mobile variant
+        // shipped); the stored blob's own type wins, the extension is the
+        // fallback.
+        "Content-Type": res.blob?.contentType || heroBlobContentType(safeFile),
         // Immutable: the filename carries a random suffix, so this byte stream
         // never changes — mail-client and CDN caches may keep it indefinitely.
         "Cache-Control": "public, max-age=31536000, immutable",
