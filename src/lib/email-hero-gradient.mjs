@@ -18,6 +18,16 @@
 /** Width of the hero's text column (performance.ts, `hero-text width="55%"`). */
 export const HERO_TEXT_COLUMN_FRACTION = 0.55;
 
+/**
+ * How far the TEXT actually reaches, measured on the rendered desktop hero
+ * with a long two-line headline ("Dein Rack. Komplett." at 40px): headline
+ * glyphs end at ~50% of the width, the subline at ~47%, the button at ~35%.
+ * The column is wider than its content, so the fade is anchored to the
+ * glyphs, not to the column — every percent of protection beyond the text
+ * is picture the scene cannot use.
+ */
+export const HERO_TEXT_REACH_FRACTION = 0.5;
+
 /** The overlay colour — the "warm white" of the design's pale walls, so the
  * faded region reads as part of the room rather than as a white box. */
 export const HERO_GRADIENT_COLOR = "#f6f6f6";
@@ -28,10 +38,14 @@ export const HERO_GRADIENT_COLOR = "#f6f6f6";
 export const HERO_GRADIENT_MAX_ALPHA = 0.93;
 
 /** Where the fade starts and where it has fully vanished (fractions of the
- * width). The fade brackets the text column edge (0.55) so text sits on a
- * still-bright surface while nothing hard-edged is visible in the picture. */
-export const HERO_GRADIENT_FADE_START = 0.42;
-export const HERO_GRADIENT_FADE_END = 0.72;
+ * width). The fade brackets the text's reach (0.5): the subline (to ~47%)
+ * still sits on ≥60% overlay, the headline's last glyphs (~50%) on ≥45% —
+ * bold 40px type over that stays far above the contrast threshold even on
+ * a black object — while past the column edge (55%) the scene is nearly
+ * untouched. The prompt asks for a calm left 45%, so the model's own scene
+ * normally starts where the fade is already well underway. */
+export const HERO_GRADIENT_FADE_START = 0.36;
+export const HERO_GRADIENT_FADE_END = 0.64;
 
 /** Number of gradient stops used to approximate the smooth fade. */
 const FADE_STOPS = 14;

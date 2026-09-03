@@ -207,17 +207,18 @@ async function loadHeroContext(
  *  Names brand + product too, so a fallback hero is no more generic than a
  *  drafted one. */
 function fallbackScene(ctx: HeroContext): string {
-  const items = (ctx.productDescriptors.length
+  const list = ctx.productDescriptors.length
     ? ctx.productDescriptors
     : ctx.productCategories.length
       ? ctx.productCategories
-      : ctx.productNames
-  )
-    .slice(0, 2)
-    .join(" and ");
-  return items
-    ? `${items} standing on a light concrete floor on the RIGHT side of a bright home gym, the entire left half of the frame an empty, softly lit pale wall.`
-    : "A matte black power rack on a light concrete floor on the RIGHT side of a bright home gym, the entire left half of the frame an empty, softly lit pale wall.";
+      : ctx.productNames;
+  const items = list.slice(0, 4);
+  const named = items.length > 1
+    ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
+    : items[0] ?? "";
+  return named
+    ? `${named}, arranged as one home-gym setup on the RIGHT side of a bright room, large equipment at the back and small items in front, the left part of the frame a calm, softly lit pale wall and floor.`
+    : "A matte black power rack with a bench in front of it on the RIGHT side of a bright home gym, the left part of the frame a calm, softly lit pale wall and floor.";
 }
 
 export type SuggestHeroPromptResult =
@@ -232,14 +233,17 @@ const heroSuggestionSchema = z.object({
   scene: z
     .string()
     .describe(
-      "ENGLISCHE Szenen-Beschreibung für das Bildmodell: EIN Absatz, max. 55 " +
+      "ENGLISCHE Szenen-Beschreibung für das Bildmodell: EIN Absatz, max. 90 " +
         "Wörter.\n" +
-        "(1) Benenne HÖCHSTENS ZWEI Produkte — das wichtigste ausführlich mit " +
-        "Marke und Produktnamen genau so, wie es in den Vorgaben steht (z. B. " +
-        "„an ATX® Power Rack 620“), dazu Farbe und Bauform. Mehr Objekte füllen " +
-        "das Bild und zerstören die freie linke Bildhälfte.\n" +
-        "(2) Die Szene MUSS die Anordnung selbst beschreiben: die Geräte stehen " +
-        "RECHTS im Bild, links davon nur eine leere, hell beleuchtete Wand- und " +
+        "(1) Benenne ALLE empfohlenen Produkte mit Marke und Produktnamen genau " +
+        "so, wie sie in den Vorgaben stehen (z. B. „an ATX® Power Rack 620“), " +
+        "dazu Farbe und Bauform — das wichtigste ausführlich, die weiteren " +
+        "knapp. Sie stehen vorne als Blickfang.\n" +
+        "(2) Dazu ein bis zwei vertraute Geräte aus dem Besitz (Kaufhistorie) " +
+        "dahinter oder daneben, damit es wie das eigene Setup wirkt.\n" +
+        "(3) Die Szene MUSS die Anordnung selbst beschreiben: alles als EIN " +
+        "zusammenhängendes Setup RECHTS im Bild, große Geräte hinten, kleine " +
+        "vorne; links davon nur eine ruhige, hell beleuchtete Wand- und " +
         "Bodenfläche. Schreib das ausdrücklich in den Satz hinein.\n" +
         "Keine Gesichter, keine Stil- oder Licht-Angaben (werden separat " +
         "angehängt)."
@@ -318,7 +322,7 @@ export async function suggestHeroPrompt(
   }
 
   // Clip the scene to its budget so a SUGGESTED prompt can never be rejected by
-  // our own length check — the drafting model is asked for ≤55 words but is not
+  // our own length check — the drafting model is asked for ≤90 words but is not
   // bound by that, and an overshoot used to make "Bild generieren" fail.
   const boundedScene = clip(scene, MAX_HERO_SCENE_CHARS);
   return { ok: true, prompt: `${boundedScene}\n\n${HERO_PROMPT_STYLE_TAIL}`, headline };

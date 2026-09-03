@@ -125,24 +125,32 @@ Das Performance-Design öffnet mit einem großen Lifestyle-Bild. Zwei Quellen:
    = die Standard-Zeile des Designs je E-Mail-Typ.
 
 **Wichtig — der Hero ist ein VOLLFLÄCHIGES Hintergrundbild:** Text und Button
-liegen auf der **linken Hälfte** des Bildes. Damit die dunkle Schrift lesbar
-bleibt, müssen die linken 55 % des Motivs (die Breite der Textspalte) sehr
-hell und ruhig sein — der Verlauf muss im Bild selbst liegen, nicht per CSS,
-denn E-Mail-Clients können keine Gradienten über Bilder legen. Das wird auf
-zwei Wegen sichergestellt, die sich ergänzen:
+liegen auf dem **linken Teil** des Bildes. Die Textspalte ist 55 % breit, der
+Text selbst reicht aber weniger weit — am gerenderten Desktop-Hero gemessen
+(lange zweizeilige Schlagzeile bei 40 px): Schlagzeile bis ~50 %, Subline bis
+~47 %, Button bis ~35 % (`HERO_TEXT_REACH_FRACTION`). Geschützt wird deshalb
+der **Text**, nicht die Spalte — jedes Prozent Schutz über den Text hinaus ist
+Bildfläche, die die Produkte nicht nutzen können. Der Verlauf muss im Bild
+selbst liegen, nicht per CSS, denn E-Mail-Clients können keine Gradienten
+über Bilder legen. Zwei Wege, die sich ergänzen:
 
 1. **Deterministisch (garantiert):** Direkt nach der Generierung legt
    `applyHeroGradient` (`email-hero-gradient.mjs`, per `sharp`) einen hellen
    Verlauf (`#f6f6f6`, 93 % Deckung) über den linken Bildteil, bevor das PNG
-   gespeichert wird: voll gedeckt bis 42 % der Breite, dann ein weicher
-   Smoothstep-Abfall bis 72 % — an der Kante der Textspalte (55 %) liegen
-   noch ~56 % Deckung, unter den Glyphen (bis ~52 %) mindestens 65 %. Die
-   Kurve ist getestet. Damit ist die Lesbarkeit der Schlagzeile unabhängig
-   davon, was das Bildmodell liefert.
+   gespeichert wird: voll gedeckt bis 36 % der Breite, dann ein weicher
+   Smoothstep-Abfall bis 64 % — unter der Subline (~47 %) noch ≥ 60 %
+   Deckung, unter den letzten Glyphen der Schlagzeile (~50 %) ≥ 45 % (fette
+   40-px-Schrift bleibt damit selbst über einem schwarzen Gerät weit über der
+   Kontrastschwelle), an der Spaltenkante (55 %) nur noch ~23 %. Die Kurve ist
+   getestet. Damit ist die Lesbarkeit der Schlagzeile unabhängig davon, was
+   das Bildmodell liefert.
 2. **Per Prompt (wahrscheinlich):** `HERO_PROMPT_STYLE_TAIL` verlangt die
-   linken 55 % leer und hell. Das bleibt nötig, denn der Verlauf kann Geräte
-   nur ausbleichen, nicht verschieben — ein geisterhaftes Rack unter der
-   Schlagzeile sieht immer noch schlechter aus als eine leere Wand.
+   linken **45 %** ruhig und hell und gibt der Szene die rechten 55 %. Die
+   letzten 5 % unter der Schlagzeile deckt der Verlauf ab — genau das erlaubt
+   dem Prompt, den Produkten mehr Fläche zu geben. Ein Unit-Test verzahnt
+   beide Zahlen (Prompt-Zone ≤ Textreichweite, Verlauf an der Textreichweite
+   ≥ 45 %), damit keine allein driften kann. Die Prompt-Regel bleibt nötig,
+   denn der Verlauf kann Geräte nur ausbleichen, nicht verschieben.
 
 Denselben Verlauf auf ein beliebiges Bild anwenden (z. B. um ein neues
 Standard-Bild vorzubereiten): `npm run hero:gradient -- <input> <output.png>`. Technisch: `background`-Attribut + Inline-`background` für
@@ -188,21 +196,27 @@ kollidieren, die das Design selbst über die linke Bildhälfte legt.
 
 ### Die Komposition muss die Szene mittragen
 
-Die Textspalte des Heros ist **55 %** breit (`performance.ts`, `hero-text`
-`width="55%"`), also verlangt der Tail exakt diese 55 % frei und stellt die
-Geräte in die rechten 40 %. Eine frühere Fassung schützte nur 45 % — die
-Schlagzeile lag damit über 10 % Bildbereich, der laut Prompt voll sein durfte.
+Der Tail (`HERO_PROMPT_STYLE_TAIL`) beginnt mit der Layout-Regel: linke 45 %
+ruhig, die Szene in den rechten 55 %. Die Geschichte dahinter: Zuerst schützte
+er 45 % ohne jeden Verlauf (die Schlagzeile lag über Bild, das voll sein
+durfte), dann die ganze 55-%-Spalte mit höchstens zwei Objekten (lesbar, aber
+Bildfläche verschenkt). Seit der serverseitige Verlauf die Lesbarkeit
+garantiert, darf die Szene wieder so breit sein, wie es das Verkaufen braucht.
 
 Entscheidend ist aber nicht der Tail allein: Das Bildmodell liest die **Szene
-zuerst** und gewichtet sie am stärksten. Eine Szene, die fünf Produkte aufzählt,
-füllt zwangsläufig die ganze Breite und überstimmt jede Kompositionsregel
-dahinter. Deshalb schreibt die Szenen-Anweisung
-(`HERO_SCENE_INSTRUCTION`) zwei Dinge vor: **höchstens zwei Objekte**, und die
-Szene benennt die Anordnung selbst („… on the RIGHT side …, the entire left
-half an empty softly lit wall"). Szenen-Anweisung und Style-Tail müssen sich
-decken — Unit-Tests prüfen genau das, seit die beiden einmal auseinanderliefen
-(eine Änderung landete im Schema, verfehlte aber die Szenen-Anweisung, die
-weiterhin behauptete, Markennamen sagten dem Bildmodell nichts).
+zuerst** und gewichtet sie am stärksten. Deshalb schreibt die Szenen-Anweisung
+(`HERO_SCENE_INSTRUCTION`) vor, was drin ist und wie es steht: **alle
+empfohlenen Produkte** (Marke und Name wörtlich, vorne als Blickfang — das ist
+die Ware, die die Mail verkaufen soll), dazu **ein bis zwei vertraute Geräte aus
+dem Besitz** dahinter (damit es wie das eigene Setup wirkt, nicht wie ein
+Katalogbild), und die Szene benennt die Anordnung selbst: ein zusammenhängendes
+Setup RECHTS im Bild, große Geräte hinten, kleine vorne, links davon eine
+ruhige helle Wand- und Bodenfläche. Das Szenen-Budget ist entsprechend
+gewachsen (≤ 90 Wörter, `MAX_HERO_SCENE_CHARS` 1400, bis zu sechs
+Produkt-Deskriptoren). Szenen-Anweisung und Style-Tail müssen sich decken —
+Unit-Tests prüfen genau das, seit die beiden einmal auseinanderliefen (eine
+Änderung landete im Schema, verfehlte aber die Szenen-Anweisung, die weiterhin
+behauptete, Markennamen sagten dem Bildmodell nichts).
 
 Alte gespeicherte Prompts werden beim Generieren automatisch auf die aktuellen
 Stil-Regeln gehoben (`ensureHeroStyleTail`) — ein vor der Querformat-Umstellung
