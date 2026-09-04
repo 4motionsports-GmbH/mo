@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { z } from "zod";
 import {
+  clampReview,
   HERO_QA_MIN_SCORE,
+  heroQaSchema,
   heroQaEnabled,
   heroQaPrompt,
   heroQaVerdict,
@@ -32,6 +35,16 @@ test("pickBestRender prefers a pass, then the higher score, then the first", () 
   assert.equal(pickBestRender([{ id: "only" }]).id, "only", "an unreviewed render still returns");
 });
 
+test("the schema carries no numeric bounds (Anthropic structured output rejects them) and answers are clamped", () => {
+  const json = JSON.stringify(z.toJSONSchema(heroQaSchema));
+  assert.doesNotMatch(json, /"minimum"|"maximum"|"maxItems"/);
+  const r = clampReview({ ...good, productFidelity: 9, overall: 12.4, issues: ["a", "b", "c", "d", "e", "f"] });
+  assert.equal(r.productFidelity, 5);
+  assert.equal(r.overall, 10);
+  assert.equal(r.issues.length, 5);
+  assert.equal(clampReview({ ...good, overall: -3 }).overall, 1);
+});
+
 test("the check is on with a key and off via EMAIL_HERO_QA=off", () => {
   assert.equal(heroQaEnabled({ ANTHROPIC_API_KEY: "k" }), true);
   assert.equal(heroQaEnabled({ ANTHROPIC_API_KEY: "k", EMAIL_HERO_QA: "off" }), false);
@@ -42,7 +55,7 @@ test("reviewHeroImage sends the picture + product names and returns verdict and 
   let seen = null;
   const generate = async (args) => {
     seen = args;
-    return { object: { ...good, overall: 7 }, usage: { inputTokens: 1200, outputTokens: 80 } };
+    return { object: { ...good, overall: 7.4 }, usage: { inputTokens: 1200, outputTokens: 80 } };
   };
   const out = await reviewHeroImage(Buffer.from("jpg"), {
     productNames: ["ATX® Power Rack 620"],

@@ -472,7 +472,9 @@ export async function generateHeroImage(
                   ...common,
                   image: referenceFiles,
                   prompt: withReferenceInstruction(fullPrompt, refs),
-                  input_fidelity: attempt.inputFidelity ?? "high",
+                  // Only the gpt-image-1 family takes input_fidelity;
+                  // gpt-image-2 rejects it (see inputFidelityFor).
+                  ...(attempt.inputFidelity ? { input_fidelity: attempt.inputFidelity } : {}),
                 })
               : await client.images.generate({ ...common, prompt: fullPrompt });
           const b64 = res.data?.[0]?.b64_json;

@@ -185,7 +185,7 @@ async function renderOnce(p, spec, refs) {
               ...common,
               image: files,
               prompt: withReferenceInstruction(fullPrompt, refs),
-              input_fidelity: attempt.inputFidelity ?? "high",
+              ...(attempt.inputFidelity ? { input_fidelity: attempt.inputFidelity } : {}),
             })
           : await client.images.generate({ ...common, prompt: fullPrompt });
       const b64 = res.data?.[0]?.b64_json;
