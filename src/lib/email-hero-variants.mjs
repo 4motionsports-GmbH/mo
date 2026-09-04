@@ -40,6 +40,16 @@ export const HERO_MOBILE_CROP_START = 0.4;
 
 export const HERO_JPEG_QUALITY = 88;
 
+/**
+ * `input_fidelity` is a gpt-image-1 / gpt-image-1.5 parameter; gpt-image-2
+ * rejects it with a 400 ("does not support the 'input_fidelity' parameter" —
+ * seen on the first live run, which turned every reference attempt into a
+ * plain generation). It only goes to the models that take it.
+ */
+export function inputFidelityFor(model) {
+  return /^gpt-image-1(\.|-|$)/.test(String(model)) ? "high" : undefined;
+}
+
 /** The image model the hero uses by default, and the order of fallbacks. */
 export const HERO_PRIMARY_IMAGE_MODEL = "gpt-image-2";
 export const HERO_FALLBACK_IMAGE_MODEL = "gpt-image-1.5";
@@ -58,7 +68,7 @@ export const HERO_DEFAULT_IMAGE_QUALITY = "high";
  *
  * @param {Record<string, string | undefined>} [env]
  * @param {{ withReferences?: boolean }} [opts]
- * @returns {{ mode: "generate" | "edit", model: string, size: string, quality: string, inputFidelity?: "high" | "low" }[]}
+ * @returns {{ mode: "generate" | "edit", model: string, size: string, quality: string, inputFidelity?: "high" }[]}
  */
 export function heroImageAttempts(env = process.env, opts = {}) {
   const primary = (env.EMAIL_HERO_IMAGE_MODEL ?? "").trim() || HERO_PRIMARY_IMAGE_MODEL;
@@ -66,10 +76,15 @@ export function heroImageAttempts(env = process.env, opts = {}) {
   const quality = HERO_IMAGE_QUALITIES.includes(q) ? q : HERO_DEFAULT_IMAGE_QUALITY;
   const attempts = [];
   if (opts.withReferences) {
-    attempts.push(
-      { mode: "edit", model: primary, size: HERO_IMAGE_SIZE, quality, inputFidelity: "high" },
-      { mode: "edit", model: primary, size: HERO_FALLBACK_SIZE, quality, inputFidelity: "high" }
-    );
+    const fidelity = inputFidelityFor(primary);
+    const edit = (size) => ({
+      mode: "edit",
+      model: primary,
+      size,
+      quality,
+      ...(fidelity ? { inputFidelity: fidelity } : {}),
+    });
+    attempts.push(edit(HERO_IMAGE_SIZE), edit(HERO_FALLBACK_SIZE));
   }
   attempts.push(
     { mode: "generate", model: primary, size: HERO_IMAGE_SIZE, quality },

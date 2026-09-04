@@ -163,8 +163,10 @@ die Szene zeigen soll (`email-hero-references.mjs`, getestet): alle empfohlenen
 Produkte der Mail zuerst, dann bis zu zwei aus dem Besitz (Kaufhistorie:
 `productId` bzw. `handle` = Katalog-ID), höchstens sechs, je das erste
 https-Bild, auf 768 px verkleinert. Mit diesen Referenzen ruft die
-Versuchskette zuerst `images.edit` mit `input_fidelity: "high"` auf — das
-Modell übernimmt Form, Proportionen, Farbe und Beschriftung des echten Geräts.
+Versuchskette zuerst `images.edit` auf — das Modell übernimmt Form,
+Proportionen, Farbe und Beschriftung des echten Geräts. (`input_fidelity:
+"high"` geht nur an die gpt-image-1-Familie; `gpt-image-2` lehnt den Parameter
+mit 400 ab — `inputFidelityFor`, getestet.)
 Der Prompt bekommt einen nummerierten Referenzblock („picture 1 = ATX® Power
 Rack 620 …") mit der Anweisung, die Produkte in der Szene zu **fotografieren**
 statt Katalog-Freisteller einzukleben. Ist kein Foto ladbar oder schlagen die

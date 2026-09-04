@@ -28,14 +28,28 @@ export const heroQaSchema = z.object({
   cutoutLook: z
     .boolean()
     .describe("Does any product look pasted in — flat catalogue cut-out, white box around it, wrong perspective or lighting?"),
+  // No .min()/.max() here: Anthropic's structured output rejects JSON-schema
+  // `minimum`/`maximum` on numbers ("properties maximum, minimum are not
+  // supported" — the first live run failed every check on that). The ranges
+  // live in the descriptions and are clamped in clampReview.
   productFidelity: z
     .number()
-    .min(1)
-    .max(5)
-    .describe("1–5: do the products look like real, specific fitness equipment of the named type and brand (5) or generic/deformed (1)?"),
-  overall: z.number().min(1).max(10).describe("1–10: overall quality as a premium e-commerce hero photo."),
-  issues: z.array(z.string()).max(5).describe("Short list of concrete problems, empty when none."),
+    .describe("Integer 1–5: do the products look like real, specific fitness equipment of the named type and brand (5) or generic/deformed (1)?"),
+  overall: z.number().describe("Integer 1–10: overall quality as a premium e-commerce hero photo."),
+  issues: z.array(z.string()).describe("Short list (at most 5) of concrete problems, empty when none."),
 });
+
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(n) ? Math.round(n) : lo));
+
+/** Bring a model answer into the documented ranges. */
+export function clampReview(review) {
+  return {
+    ...review,
+    productFidelity: clamp(review.productFidelity, 1, 5),
+    overall: clamp(review.overall, 1, 10),
+    issues: Array.isArray(review.issues) ? review.issues.slice(0, 5) : [],
+  };
+}
 
 /** Is the check switched on? Needs the Anthropic key; EMAIL_HERO_QA=off disables. */
 export function heroQaEnabled(env = process.env) {
@@ -105,9 +119,10 @@ export async function reviewHeroImage(imageBytes, opts = {}) {
       },
     ],
   });
+  const review = clampReview(object);
   return {
-    review: object,
-    verdict: heroQaVerdict(object),
+    review,
+    verdict: heroQaVerdict(review),
     model,
     usage: { inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0 },
   };

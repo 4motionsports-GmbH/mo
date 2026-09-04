@@ -13,6 +13,7 @@ import {
   heroAspectCrop,
   heroImageAttempts,
   heroMobileCrop,
+  inputFidelityFor,
 } from "./email-hero-variants.mjs";
 import { HERO_GRADIENT_FADE_START } from "./email-hero-gradient.mjs";
 
@@ -45,14 +46,26 @@ test("attempts go native → 3:2 → previous model, with env overrides", () => 
   assert.equal(heroImageAttempts({ EMAIL_HERO_IMAGE_MODEL: HERO_FALLBACK_IMAGE_MODEL }).length, 2);
 });
 
-test("with reference photos the edit attempts lead, high fidelity, then the generate chain", () => {
+test("with reference photos the edit attempts lead, then the generate chain", () => {
   const withRefs = heroImageAttempts({}, { withReferences: true });
   assert.equal(withRefs.length, 5);
+  // gpt-image-2 rejects input_fidelity (400 on the first live run) — the
+  // edit attempts for it must NOT carry the parameter.
   assert.deepEqual(withRefs.slice(0, 2), [
-    { mode: "edit", model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_IMAGE_SIZE, quality: "high", inputFidelity: "high" },
-    { mode: "edit", model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_FALLBACK_SIZE, quality: "high", inputFidelity: "high" },
+    { mode: "edit", model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_IMAGE_SIZE, quality: "high" },
+    { mode: "edit", model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_FALLBACK_SIZE, quality: "high" },
   ]);
   assert.deepEqual(withRefs.slice(2), heroImageAttempts({}));
+});
+
+test("input_fidelity goes only to the gpt-image-1 family", () => {
+  assert.equal(inputFidelityFor("gpt-image-2"), undefined);
+  assert.equal(inputFidelityFor("gpt-image-2-2026-04-21"), undefined);
+  assert.equal(inputFidelityFor("gpt-image-1"), "high");
+  assert.equal(inputFidelityFor("gpt-image-1.5"), "high");
+  assert.equal(inputFidelityFor("gpt-image-1-mini"), "high");
+  const legacy = heroImageAttempts({ EMAIL_HERO_IMAGE_MODEL: "gpt-image-1.5" }, { withReferences: true });
+  assert.equal(legacy[0].inputFidelity, "high");
 });
 
 test("aspect crop: 3:2 keeps the width and takes a centred band", () => {
