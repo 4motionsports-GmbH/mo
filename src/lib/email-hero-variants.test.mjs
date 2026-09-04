@@ -28,9 +28,9 @@ test("the native size is the desktop hero's ratio and gpt-image-2-legal", () => 
 test("attempts go native → 3:2 → previous model, with env overrides", () => {
   const def = heroImageAttempts({});
   assert.deepEqual(def, [
-    { model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_IMAGE_SIZE, quality: "high" },
-    { model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_FALLBACK_SIZE, quality: "high" },
-    { model: HERO_FALLBACK_IMAGE_MODEL, size: HERO_FALLBACK_SIZE, quality: "high" },
+    { mode: "generate", model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_IMAGE_SIZE, quality: "high" },
+    { mode: "generate", model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_FALLBACK_SIZE, quality: "high" },
+    { mode: "generate", model: HERO_FALLBACK_IMAGE_MODEL, size: HERO_FALLBACK_SIZE, quality: "high" },
   ]);
   const custom = heroImageAttempts({
     EMAIL_HERO_IMAGE_MODEL: "gpt-image-3",
@@ -43,6 +43,16 @@ test("attempts go native → 3:2 → previous model, with env overrides", () => 
   // not repeated.
   assert.equal(heroImageAttempts({ EMAIL_HERO_IMAGE_QUALITY: "ultra" })[0].quality, "high");
   assert.equal(heroImageAttempts({ EMAIL_HERO_IMAGE_MODEL: HERO_FALLBACK_IMAGE_MODEL }).length, 2);
+});
+
+test("with reference photos the edit attempts lead, high fidelity, then the generate chain", () => {
+  const withRefs = heroImageAttempts({}, { withReferences: true });
+  assert.equal(withRefs.length, 5);
+  assert.deepEqual(withRefs.slice(0, 2), [
+    { mode: "edit", model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_IMAGE_SIZE, quality: "high", inputFidelity: "high" },
+    { mode: "edit", model: HERO_PRIMARY_IMAGE_MODEL, size: HERO_FALLBACK_SIZE, quality: "high", inputFidelity: "high" },
+  ]);
+  assert.deepEqual(withRefs.slice(2), heroImageAttempts({}));
 });
 
 test("aspect crop: 3:2 keeps the width and takes a centred band", () => {
@@ -87,8 +97,13 @@ test("buildHeroVariants: gradient on desktop only, mobile is the right crop, bot
     .png()
     .toBuffer();
   const out = await buildHeroVariants(src);
-  // Aspect normalised to the hero ratio.
+  // Aspect normalised to the hero ratio; the master is the un-graded scene.
   assert.equal(out.width, W);
+  const masterMeta = await sharp(out.master).metadata();
+  assert.equal(masterMeta.format, "jpeg");
+  assert.equal(masterMeta.width, W);
+  const mRawMaster = await sharp(out.master).raw().toBuffer({ resolveWithObject: true });
+  assert.ok(mRawMaster.data[(Math.floor(out.height / 2) * W + 10) * mRawMaster.info.channels] < 40, "master left still black (no gradient)");
   assert.equal(out.height, Math.round(W / HERO_ASPECT));
   const d = await sharp(out.desktop).metadata();
   const m = await sharp(out.mobile).metadata();

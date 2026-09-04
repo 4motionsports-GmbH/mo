@@ -19,22 +19,35 @@ export const fmtUsd = (n) => `${Number(n ?? 0).toFixed(3)} $`;
 export const fmtEur = (n) => `${Number(n ?? 0).toFixed(2).replace(".", ",")} €`;
 
 /**
- * Deterministic A/B side assignment per row so the sheet is stable across
- * re-generations of the SAME prompts (seeded on the prompt text), yet the
- * better-quality render is not always on the same side.
+ * Deterministic order of the variants per row (seeded on the prompt text):
+ * stable across re-generations of the SAME prompts, yet the better variant
+ * is not always in the same position — the blind mode depends on that.
  * @param {string} prompt
- * @returns {boolean} true → the first variant goes on the left
+ * @param {number} n
+ * @returns {number[]} variant indexes in display order
  */
-export function firstVariantLeft(prompt) {
+export function variantOrder(prompt, n) {
   let h = 0;
   for (const ch of String(prompt)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return h % 2 === 0;
+  const order = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    h = (h * 1103515245 + 12345) >>> 0;
+    const j = h % (i + 1);
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return order;
 }
+
+const LETTERS = "ABCDEFGH";
 
 /**
  * @typedef {object} CompareVariant
+ * @property {string} label          what this variant is ("high + Referenzen")
  * @property {string} quality        "medium" | "high"
  * @property {string} model          the model that actually rendered
+ * @property {string} [mode]         "generate" | "edit"
+ * @property {number} [references]   reference photos handed to the model
+ * @property {{ score: number, pass: boolean, reasons: string[] } | null} [qa]
  * @property {string} size           the size that was accepted
  * @property {Buffer} desktop        JPEG with gradient
  * @property {Buffer} mobile         JPEG crop
@@ -51,7 +64,7 @@ export function firstVariantLeft(prompt) {
  * @property {string} source        where the prompt came from ("campaign #12", "datei")
  * @property {string} prompt        the full prompt sent to the model
  * @property {string} headline      two lines, "\n"-separated
- * @property {CompareVariant[]} variants  exactly two
+ * @property {CompareVariant[]} variants  two or more
  */
 
 function heroMock(v, headline, kicker, subline, cta) {
@@ -90,28 +103,33 @@ export function buildCompareReportHtml(rows, opts = {}) {
   const cta = opts.cta ?? "Beratung starten";
   const totalUsd = rows.reduce((s, r) => s + r.variants.reduce((t, v) => t + (v.usd ?? 0), 0), 0);
   const totalEur = rows.reduce((s, r) => s + r.variants.reduce((t, v) => t + (v.eur ?? 0), 0), 0);
-  const qualities = [...new Set(rows.flatMap((r) => r.variants.map((v) => v.quality)))];
+  const labels = [...new Set(rows.flatMap((r) => r.variants.map((v) => v.label ?? v.quality)))];
   const models = [...new Set(rows.flatMap((r) => r.variants.map((v) => v.model)))];
+  const columns = Math.max(2, ...rows.map((r) => r.variants.length));
 
   const rowHtml = rows
     .map((r) => {
-      const [first, second] = r.variants;
-      const leftFirst = firstVariantLeft(r.prompt);
-      const left = leftFirst ? first : second;
-      const right = leftFirst ? second : first;
-      const card = (v, side) => `
-    <div class="card" data-quality="${escapeHtml(v.quality)}">
+      const order = variantOrder(r.prompt, r.variants.length);
+      const card = (v, side) => {
+        const label = v.label ?? v.quality;
+        const qa = v.qa
+          ? ` · KI-Prüfung ${v.qa.score}/10 ${v.qa.pass ? "✓" : "✗"}${v.qa.reasons?.length ? ` (${escapeHtml(v.qa.reasons.join(", "))})` : ""}`
+          : "";
+        const refs = v.references ? ` · ${v.references} Referenzfotos` : "";
+        return `
+    <div class="card" data-variant="${escapeHtml(label)}">
       <div class="card-head">
         <span class="side">${side}</span>
-        <span class="secret">${escapeHtml(v.quality)} · ${escapeHtml(v.model)} · ${escapeHtml(v.size)} · ${fmtUsd(v.usd)} (${fmtEur(v.eur)}) · ${v.seconds.toFixed(0)} s</span>
-        <label class="pick"><input type="radio" name="pick-${r.index}" value="${escapeHtml(v.quality)}"> Favorit</label>
+        <span class="secret">${escapeHtml(label)} · ${escapeHtml(v.model)} · ${escapeHtml(v.size)}${refs} · ${fmtUsd(v.usd)} (${fmtEur(v.eur)}) · ${v.seconds.toFixed(0)} s${qa}</span>
+        <label class="pick"><input type="radio" name="pick-${r.index}" value="${escapeHtml(label)}"> Favorit</label>
       </div>${heroMock(v, r.headline, kicker, subline, cta)}
     </div>`;
+      };
       return `
   <section class="row" id="row-${r.index}">
     <h2>Prompt ${r.index} <small>${escapeHtml(r.source)}</small></h2>
     <details><summary>Prompt anzeigen</summary><pre>${escapeHtml(r.prompt)}</pre></details>
-    <div class="pair">${card(left, "A")}${card(right, "B")}</div>
+    <div class="pair">${order.map((vi, pos) => card(r.variants[vi], LETTERS[pos])).join("")}</div>
   </section>`;
     })
     .join("\n");
@@ -137,7 +155,8 @@ export function buildCompareReportHtml(rows, opts = {}) {
   h2 small { font-weight: normal; color: #777; font-size: 13px; margin-left: 8px; }
   details { margin: 0 0 10px; font-size: 12px; color: #555; }
   pre { white-space: pre-wrap; background: #fff; border: 1px solid #ddd; padding: 10px; border-radius: 6px; }
-  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .pair { display: grid; grid-template-columns: repeat(${columns}, minmax(0, 1fr)); gap: 20px; }
+  @media (max-width: ${columns * 690}px) { .pair { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 1360px) { .pair { grid-template-columns: 1fr; } }
   .card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
   .card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 13px; }
@@ -164,12 +183,12 @@ export function buildCompareReportHtml(rows, opts = {}) {
 <body>
 <header>
   <h1>${escapeHtml(title)}</h1>
-  <div class="meta">Erzeugt am ${escapeHtml(generatedAt.toLocaleString("de-DE", { timeZone: "Europe/Berlin" }))} · ${rows.length} Prompts × ${qualities.length} Qualitätsstufen (${escapeHtml(qualities.join(" / "))}) · Modell ${escapeHtml(models.join(", "))} · Gesamtkosten dieses Vergleichs ${fmtUsd(totalUsd)} (${fmtEur(totalEur)})${opts.note ? ` · ${escapeHtml(opts.note)}` : ""}</div>
+  <div class="meta">Erzeugt am ${escapeHtml(generatedAt.toLocaleString("de-DE", { timeZone: "Europe/Berlin" }))} · ${rows.length} Prompts × ${labels.length} Varianten (${escapeHtml(labels.join(" / "))}) · Modell ${escapeHtml(models.join(", "))} · Gesamtkosten dieses Vergleichs ${fmtUsd(totalUsd)} (${fmtEur(totalEur)})${opts.note ? ` · ${escapeHtml(opts.note)}` : ""}</div>
   <div class="controls">
     <button class="primary" id="reveal">Auflösen: Qualität, Modell und Kosten zeigen</button>
     <span class="tally" id="tally">Favoriten: noch keine gewählt</span>
   </div>
-  <div class="meta">Blind-Modus: Erst A/B vergleichen und je Prompt einen Favoriten wählen, dann auflösen. Jede Karte zeigt den Desktop-Hero mit Schlagzeile und darunter die Handy-Ansicht — genau so, wie die E-Mail beim Empfänger aussieht.</div>
+  <div class="meta">Blind-Modus: Erst die Varianten vergleichen und je Prompt einen Favoriten wählen, dann auflösen. Jede Karte zeigt den Desktop-Hero mit Schlagzeile und darunter die Handy-Ansicht — genau so, wie die E-Mail beim Empfänger aussieht.</div>
 </header>
 ${rowHtml}
 <script>

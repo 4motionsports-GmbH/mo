@@ -48,25 +48,35 @@ export const HERO_DEFAULT_IMAGE_QUALITY = "high";
 
 /**
  * The generation attempts, in order. The first that succeeds wins:
- *   1. the primary model in the hero's native format,
+ *   0. (with reference photos) the primary model EDITING the references
+ *      into the scene, native format, then 3:2 — the true-to-product path,
+ *   1. the primary model generating in the hero's native format,
  *   2. the primary model in 3:2 (in case the free-form size is refused),
  *   3. the previous-generation model in 3:2 (in case the primary is down).
  * EMAIL_HERO_IMAGE_MODEL overrides the primary model; EMAIL_HERO_IMAGE_QUALITY
  * the quality (low | medium | high, default high).
  *
  * @param {Record<string, string | undefined>} [env]
- * @returns {{ model: string, size: string, quality: string }[]}
+ * @param {{ withReferences?: boolean }} [opts]
+ * @returns {{ mode: "generate" | "edit", model: string, size: string, quality: string, inputFidelity?: "high" | "low" }[]}
  */
-export function heroImageAttempts(env = process.env) {
+export function heroImageAttempts(env = process.env, opts = {}) {
   const primary = (env.EMAIL_HERO_IMAGE_MODEL ?? "").trim() || HERO_PRIMARY_IMAGE_MODEL;
   const q = (env.EMAIL_HERO_IMAGE_QUALITY ?? "").trim().toLowerCase();
   const quality = HERO_IMAGE_QUALITIES.includes(q) ? q : HERO_DEFAULT_IMAGE_QUALITY;
-  const attempts = [
-    { model: primary, size: HERO_IMAGE_SIZE, quality },
-    { model: primary, size: HERO_FALLBACK_SIZE, quality },
-  ];
+  const attempts = [];
+  if (opts.withReferences) {
+    attempts.push(
+      { mode: "edit", model: primary, size: HERO_IMAGE_SIZE, quality, inputFidelity: "high" },
+      { mode: "edit", model: primary, size: HERO_FALLBACK_SIZE, quality, inputFidelity: "high" }
+    );
+  }
+  attempts.push(
+    { mode: "generate", model: primary, size: HERO_IMAGE_SIZE, quality },
+    { mode: "generate", model: primary, size: HERO_FALLBACK_SIZE, quality }
+  );
   if (primary !== HERO_FALLBACK_IMAGE_MODEL) {
-    attempts.push({ model: HERO_FALLBACK_IMAGE_MODEL, size: HERO_FALLBACK_SIZE, quality });
+    attempts.push({ mode: "generate", model: HERO_FALLBACK_IMAGE_MODEL, size: HERO_FALLBACK_SIZE, quality });
   }
   return attempts;
 }
@@ -105,9 +115,10 @@ export function heroMobileCrop(width, height) {
 }
 
 /**
- * Turn the model's output into the two stored files.
+ * Turn the model's output into the two stored files. `master` is the
+ * hero-aspect picture BEFORE the gradient — what the quality check looks at.
  * @param {Buffer | Uint8Array} image PNG/JPEG/WebP bytes from the image model
- * @returns {Promise<{ desktop: Buffer, mobile: Buffer, width: number, height: number }>}
+ * @returns {Promise<{ desktop: Buffer, mobile: Buffer, master: Buffer, width: number, height: number }>}
  */
 export async function buildHeroVariants(image) {
   const { default: sharp } = await import("sharp");
@@ -124,5 +135,6 @@ export async function buildHeroVariants(image) {
     .extract(heroMobileCrop(crop.width, crop.height))
     .jpeg({ quality: HERO_JPEG_QUALITY, mozjpeg: true })
     .toBuffer();
-  return { desktop, mobile, width: crop.width, height: crop.height };
+  const masterJpeg = await sharp(master).jpeg({ quality: HERO_JPEG_QUALITY, mozjpeg: true }).toBuffer();
+  return { desktop, mobile, master: masterJpeg, width: crop.width, height: crop.height };
 }

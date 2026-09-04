@@ -10,8 +10,11 @@
 //      personal scene followed by the fixed brand-style + constraint
 //      sentences, so the operator sees EXACTLY what the image model gets.
 //   2. generateHeroImage — render the (operator-edited) prompt with OpenAI
-//      gpt-image-2 in the hero's native 1536×720 format (with fallbacks, see
-//      email-hero-variants.mjs), derive the desktop file (legibility gradient
+//      gpt-image-2 in the hero's native 1536×720 format, giving the model
+//      the catalogue photos of the products as references
+//      (email-hero-references.mjs; fallbacks in email-hero-variants.mjs),
+//      let a vision model check the result and re-render once if it fails
+//      (email-hero-qa.mjs), derive the desktop file (legibility gradient
 //      over its left part) and the mobile crop, store both as JPEG in the
 //      PRIVATE Vercel Blob store and publish them through our own
 //      /api/email-hero-image route (email-hero-blob.mjs explains why), then
@@ -24,7 +27,7 @@
 // never break drafting or sending (the design falls back to the default hero
 // asset: public/email-hero-default.jpg / EMAIL_HERO_DEFAULT_URL).
 
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { put } from "@vercel/blob";
 import { generateObject } from "ai";
 import { z } from "zod";
@@ -57,6 +60,18 @@ import {
   heroImagePublicUrl,
 } from "./email-hero-blob.mjs";
 import { buildHeroVariants, heroImageAttempts } from "./email-hero-variants.mjs";
+import {
+  loadReferenceImages,
+  ownedProductIds,
+  pickReferenceCandidates,
+  withReferenceInstruction,
+} from "./email-hero-references.mjs";
+import {
+  HERO_QA_MAX_RENDERS,
+  heroQaEnabled,
+  pickBestRender,
+  reviewHeroImage,
+} from "./email-hero-qa.mjs";
 import { setEmailHero, type EmailHeroKind } from "./email-hero-store";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
@@ -326,9 +341,73 @@ export async function suggestHeroPrompt(
   return { ok: true, prompt: `${boundedScene}\n\n${HERO_PROMPT_STYLE_TAIL}`, headline };
 }
 
+export interface HeroRenderReview {
+  /** 1–10 from the automatic check (email-hero-qa.mjs). */
+  score: number;
+  pass: boolean;
+  reasons: string[];
+  /** True when the first render failed the check and a second one was made. */
+  rerendered: boolean;
+  /** How many reference photos the model was given. */
+  references: number;
+}
+
 export type GenerateHeroImageResult =
-  | { ok: true; url: string }
+  | { ok: true; url: string; review: HeroRenderReview | null }
   | { ok: false; message: string };
+
+interface LoadedReference {
+  label: string;
+  url: string;
+  role: "new" | "owned";
+  bytes: Buffer;
+}
+
+/**
+ * The catalogue photos of the products this hero should show (recommended
+ * ones first, then up to two owned), fetched and downscaled — or [] when the
+ * draft has none, a lookup fails, or EMAIL_HERO_REFERENCES=off. Fail-soft:
+ * a missing picture never blocks the render, it only makes it less specific.
+ */
+async function loadHeroReferences(
+  kind: EmailHeroKind,
+  id: number
+): Promise<{ refs: LoadedReference[]; productNames: string[] }> {
+  const none = { refs: [] as LoadedReference[], productNames: [] as string[] };
+  if ((process.env.EMAIL_HERO_REFERENCES ?? "").trim().toLowerCase() === "off") return none;
+  try {
+    let recommendedIds: string[] = [];
+    let history: unknown = null;
+    if (kind === "marketing") {
+      const send = await getSendById(id);
+      if (!send) return none;
+      recommendedIds = send.productIds;
+      if (send.customerId) {
+        try {
+          history = (await getCustomerById(send.customerId))?.purchaseSummary ?? null;
+        } catch (err) {
+          reportError(err, { route: "lib/email-hero", phase: "referenceHistory" });
+        }
+      }
+    } else {
+      const draft = await getDraftForContact(id);
+      if (!draft) return none;
+      recommendedIds = draft.recommendedProductIds;
+      history = draft.purchaseSummary;
+    }
+    const recommended = recommendedIds.length ? await getProductsByIds(recommendedIds) : [];
+    const ownedIds = ownedProductIds(history as Parameters<typeof ownedProductIds>[0]).filter(
+      (pid) => !recommendedIds.includes(pid)
+    );
+    const owned = ownedIds.length ? await getProductsByIds(ownedIds) : [];
+    const candidates = pickReferenceCandidates({ recommended, owned });
+    const refs = (await loadReferenceImages(candidates)) as LoadedReference[];
+    return { refs, productNames: recommended.map((p) => p.name) };
+  } catch (err) {
+    reportError(err, { route: "lib/email-hero", phase: "references" });
+    return none;
+  }
+}
 
 /**
  * Render the prompt with gpt-image-1, upload the PNG to Vercel Blob and store
@@ -363,57 +442,104 @@ export async function generateHeroImage(
     const client = new OpenAI();
     const fullPrompt = ensureHeroStyleTail(trimmed);
 
-    // First attempt that renders wins (native format → 3:2 → previous model).
-    // Each failure is reported with its model so a refused size or a model
-    // outage is visible in Sentry, not silently absorbed.
-    let rendered: { b64: string; model: string; input: number; output: number } | null = null;
-    let lastError: unknown = null;
-    for (const attempt of heroImageAttempts()) {
-      try {
-        const res = await client.images.generate({
-          model: attempt.model,
-          prompt: fullPrompt,
-          // The installed SDK types only list the classic sizes; gpt-image-2
-          // accepts any WIDTHxHEIGHT (multiples of 16, ratio ≤ 3:1) — the
-          // fallback attempts use a classic size anyway.
-          size: attempt.size as "1536x1024",
-          quality: attempt.quality as "low" | "medium" | "high",
-        });
-        const b64 = res.data?.[0]?.b64_json;
-        if (!b64) throw new Error(`${attempt.model} returned no image`);
-        rendered = {
-          b64,
-          model: attempt.model,
-          input: res.usage?.input_tokens ?? 0,
-          output: res.usage?.output_tokens ?? 0,
-        };
-        break;
-      } catch (err) {
-        lastError = err;
-        reportError(err, {
-          route: "lib/email-hero",
-          phase: `generate:${attempt.model}:${attempt.size}`,
-        });
+    // The catalogue photos of the products to show. With them the primary
+    // attempts EDIT the references into the scene (true-to-product); without
+    // them, or if those attempts fail, the plain generate chain runs.
+    const { refs, productNames } = await loadHeroReferences(kind, id);
+    const attempts = heroImageAttempts(process.env, { withReferences: refs.length > 0 });
+    const referenceFiles = await Promise.all(
+      refs.map((r, i) => toFile(r.bytes, `reference-${i + 1}.jpg`, { type: "image/jpeg" }))
+    );
+
+    // First attempt that renders wins. Each failure is reported with its
+    // model so a refused size or a model outage is visible in Sentry, not
+    // silently absorbed.
+    const renderOnce = async () => {
+      let lastError: unknown = null;
+      for (const attempt of attempts) {
+        try {
+          const common = {
+            model: attempt.model,
+            // The installed SDK types only list the classic sizes; gpt-image-2
+            // accepts any WIDTHxHEIGHT (multiples of 16, ratio ≤ 3:1) — the
+            // fallback attempts use a classic size anyway.
+            size: attempt.size as "1536x1024",
+            quality: attempt.quality as "low" | "medium" | "high",
+          };
+          const res =
+            attempt.mode === "edit"
+              ? await client.images.edit({
+                  ...common,
+                  image: referenceFiles,
+                  prompt: withReferenceInstruction(fullPrompt, refs),
+                  input_fidelity: attempt.inputFidelity ?? "high",
+                })
+              : await client.images.generate({ ...common, prompt: fullPrompt });
+          const b64 = res.data?.[0]?.b64_json;
+          if (!b64) throw new Error(`${attempt.model} returned no image`);
+          // Token-based image billing; the price table (ai-pricing.mjs) knows
+          // the image models, so the KPI shows the real cost of every hero.
+          await recordAiUsage({
+            callSite: "hero_image",
+            model: attempt.model,
+            inputTokens: res.usage?.input_tokens ?? 0,
+            outputTokens: res.usage?.output_tokens ?? 0,
+          });
+          return { b64, model: attempt.model, mode: attempt.mode };
+        } catch (err) {
+          lastError = err;
+          reportError(err, {
+            route: "lib/email-hero",
+            phase: `${attempt.mode}:${attempt.model}:${attempt.size}`,
+          });
+        }
       }
-    }
-    if (!rendered) {
       throw lastError ?? new Error("no image model attempt succeeded");
+    };
+
+    // Render, check, and re-render ONCE if the check fails; keep the better
+    // picture. The check looks at the un-graded scene (variants.master).
+    const qaOn = heroQaEnabled();
+    const renders: Array<{
+      variants: Awaited<ReturnType<typeof buildHeroVariants>>;
+      verdict: { pass: boolean; score: number; reasons: string[] } | null;
+    }> = [];
+    for (let n = 0; n < (qaOn ? HERO_QA_MAX_RENDERS : 1); n++) {
+      const rendered = await renderOnce();
+      // One render → two files (email-hero-variants.mjs): the desktop picture
+      // with the legibility gradient over its left part (deterministic — the
+      // prompt's composition rule only makes the calm left LIKELY), and the
+      // right-side crop for phones, where the picture sits under the text.
+      const variants = await buildHeroVariants(Buffer.from(rendered.b64, "base64"));
+      let verdict: { pass: boolean; score: number; reasons: string[] } | null = null;
+      if (qaOn) {
+        try {
+          const qa = await reviewHeroImage(variants.master, { productNames });
+          await recordAiUsage({
+            callSite: "hero_image",
+            model: qa.model,
+            inputTokens: qa.usage.inputTokens,
+            outputTokens: qa.usage.outputTokens,
+          });
+          verdict = qa.verdict;
+        } catch (err) {
+          reportError(err, { route: "lib/email-hero", phase: "qa" });
+        }
+      }
+      renders.push({ variants, verdict });
+      if (!verdict || verdict.pass) break;
     }
-
-    // Token-based image billing; the price table (ai-pricing.mjs) knows the
-    // image models, so the KPI shows the real cost of every hero.
-    await recordAiUsage({
-      callSite: "hero_image",
-      model: rendered.model,
-      inputTokens: rendered.input,
-      outputTokens: rendered.output,
-    });
-
-    // One render → two files (email-hero-variants.mjs): the desktop picture
-    // with the legibility gradient over its left part (deterministic — the
-    // prompt's composition rule only makes the calm left LIKELY), and the
-    // right-side crop for phones, where the picture sits under the text.
-    const variants = await buildHeroVariants(Buffer.from(rendered.b64, "base64"));
+    const best = pickBestRender(renders);
+    const variants = best.variants;
+    const review: HeroRenderReview | null = best.verdict
+      ? {
+          score: best.verdict.score,
+          pass: best.verdict.pass,
+          reasons: best.verdict.reasons,
+          rerendered: renders.length > 1,
+          references: refs.length,
+        }
+      : null;
 
     // The blob store is PRIVATE (it also holds the catalog + embeddings), so
     // the images are written privately and published through our own route —
@@ -447,7 +573,7 @@ export async function generateHeroImage(
           : "Bild erzeugt, aber Speichern am Entwurf fehlgeschlagen.",
       };
     }
-    return { ok: true, url: publicUrl };
+    return { ok: true, url: publicUrl, review };
   } catch (err) {
     reportError(err, { route: "lib/email-hero", phase: "generate" });
     return { ok: false, message: "Bild-Generierung fehlgeschlagen — bitte erneut versuchen." };

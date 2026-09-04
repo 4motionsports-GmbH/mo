@@ -15,8 +15,9 @@ import {
 import { parseEmailHeroKind, setEmailHeroHeadline } from "@/lib/email-hero-store";
 import { reportError } from "@/lib/observability";
 
-// Image generation takes tens of seconds — the longest admin route we have.
-export const maxDuration = 120;
+// Image generation takes tens of seconds per render, and a failed quality
+// check spends one more render + check — the longest admin route we have.
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
@@ -76,7 +77,7 @@ export async function POST(req: Request) {
     if (!result.ok) return adminJsonError("bad_request", result.message, 400);
     // The headline rides along so one click saves the whole hero.
     if (headline) await setEmailHeroHeadline(kind, id, headline);
-    return adminJson({ url: result.url });
+    return adminJson({ url: result.url, review: result.review });
   } catch (err) {
     reportError(err, { route: "api/admin/email-hero/generate" });
     return adminJsonError("internal_error", "Bild-Generierung fehlgeschlagen.", 500);
