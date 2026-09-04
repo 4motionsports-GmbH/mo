@@ -105,7 +105,6 @@ export function buildCompareReportHtml(rows, opts = {}) {
   const totalEur = rows.reduce((s, r) => s + r.variants.reduce((t, v) => t + (v.eur ?? 0), 0), 0);
   const labels = [...new Set(rows.flatMap((r) => r.variants.map((v) => v.label ?? v.quality)))];
   const models = [...new Set(rows.flatMap((r) => r.variants.map((v) => v.model)))];
-  const columns = Math.max(2, ...rows.map((r) => r.variants.length));
 
   const rowHtml = rows
     .map((r) => {
@@ -143,22 +142,22 @@ export function buildCompareReportHtml(rows, opts = {}) {
 <style>
   :root { color-scheme: light; }
   body { margin: 0; padding: 24px; background: #f2f2f2; color: #222; font-family: Arial, Helvetica, sans-serif; }
-  header { max-width: 1400px; margin: 0 auto 24px; }
+  header { max-width: 2040px; margin: 0 auto 24px; }
   h1 { font-size: 22px; margin: 0 0 6px; }
   .meta { color: #555; font-size: 13px; }
   .controls { margin: 14px 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   button { font: inherit; padding: 8px 14px; border: 1px solid #bbb; border-radius: 6px; background: #fff; cursor: pointer; }
   button.primary { background: #e30613; color: #fff; border-color: #e30613; }
   .tally { font-size: 14px; color: #333; }
-  .row { max-width: 1400px; margin: 0 auto 36px; }
+  .row { max-width: 2040px; margin: 0 auto 36px; }
   h2 { font-size: 16px; margin: 0 0 6px; }
   h2 small { font-weight: normal; color: #777; font-size: 13px; margin-left: 8px; }
   details { margin: 0 0 10px; font-size: 12px; color: #555; }
   pre { white-space: pre-wrap; background: #fff; border: 1px solid #ddd; padding: 10px; border-radius: 6px; }
-  .pair { display: grid; grid-template-columns: repeat(${columns}, minmax(0, 1fr)); gap: 20px; }
-  @media (max-width: ${columns * 690}px) { .pair { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  @media (max-width: 1360px) { .pair { grid-template-columns: 1fr; } }
-  .card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+  /* Every card keeps the hero's TRUE width (640px + padding) so the mock is
+     what the mail shows; cards wrap to as many per row as the screen fits. */
+  .pair { display: flex; flex-wrap: wrap; gap: 20px; }
+  .card { flex: 0 0 auto; width: 640px; box-sizing: content-box; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
   .card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 13px; }
   .side { font-weight: 700; font-size: 15px; background: #111; color: #fff; border-radius: 4px; padding: 2px 9px; }
   .secret { color: #555; visibility: hidden; }

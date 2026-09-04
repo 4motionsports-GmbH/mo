@@ -76,7 +76,7 @@ test("three variants get A/B/C, references and the QA verdict show on reveal", (
   assert.match(html, /<span class="side">C<\/span>/);
   assert.match(html, /high \+ Referenzen · gpt-image-2 · 1536x720 · 4 Referenzfotos/);
   assert.match(html, /KI-Prüfung 8\/10 ✓/);
-  assert.match(html, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(html, /\.card \{ flex: 0 0 auto; width: 640px;/, "cards keep the hero's true width");
   assert.match(html, /1 Prompts × 3 Varianten \(medium \/ high \/ high \+ Referenzen\)/);
 });
 
