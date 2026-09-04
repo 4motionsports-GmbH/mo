@@ -6,10 +6,11 @@
 // Flow: "Prompt vorschlagen" → the system drafts an image prompt from the
 // draft's actual context (products, prose, persona) → the operator edits the
 // text → "Bild generieren" renders it (gpt-image-2 in the hero's native
-// 1536×720 format, with fallbacks), composites the legibility gradient, stores
-// a desktop file and a mobile crop on the draft row → the e-mail preview and
-// the real send show it automatically. "Entfernen" falls back to the default
-// hero asset.
+// 1536×720 format, with the products' catalogue photos as references and
+// fallbacks), lets a vision model check the result (one re-render on a
+// fail), composites the legibility gradient, stores a desktop file and a
+// mobile crop on the draft row → the e-mail preview and the real send show
+// it automatically. "Entfernen" falls back to the default hero asset.
 //
 // Self-contained: loads its state from GET /api/admin/email-hero on mount, so
 // the big workspaces (CustomerProfileCard / KampagneWorkspace) only mount it
@@ -126,6 +127,13 @@ export function HeroImagePanel({
       });
       const data = (await res.json().catch(() => ({}))) as {
         url?: string;
+        review?: {
+          score: number;
+          pass: boolean;
+          reasons: string[];
+          rerendered: boolean;
+          references: number;
+        } | null;
         error?: { message?: string };
       };
       if (!res.ok || !data.url) {
@@ -139,10 +147,16 @@ export function HeroImagePanel({
       setState((prev) =>
         prev ? { ...prev, url: data.url ?? null, prompt, headline: headline.trim() || null } : prev
       );
+      const r = data.review;
+      const check = r
+        ? ` KI-Prüfung ${r.score}/10${r.rerendered ? " (einmal neu gerendert)" : ""}${
+            r.references ? `, ${r.references} Referenzfoto${r.references === 1 ? "" : "s"}` : ""
+          }${r.pass ? "" : ` — Hinweise: ${r.reasons.join(", ")}`}.`
+        : "";
       toast({
         variant: "success",
         title: "Hero-Bild eingesetzt",
-        description: "Vorschau & Versand verwenden ab sofort dieses Bild.",
+        description: `Vorschau & Versand verwenden ab sofort dieses Bild.${check}`,
       });
     } catch {
       toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
@@ -339,7 +353,7 @@ export function HeroImagePanel({
               ) : (
                 <Wand2 className="me-1 h-3.5 w-3.5" />
               )}
-              {busy === "generate" ? "Generiere Bild… (bis zu 1 Min.)" : "Bild generieren & einsetzen"}
+              {busy === "generate" ? "Generiere & prüfe Bild… (bis zu 3 Min.)" : "Bild generieren & einsetzen"}
             </Button>
             {state?.generationConfigured === false && (
               <span className="text-[11px] text-warning">

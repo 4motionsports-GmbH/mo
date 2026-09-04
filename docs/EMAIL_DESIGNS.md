@@ -156,14 +156,46 @@ dem Text; dort wäre die ruhige linke Bildhälfte nur leere Wand. Beide als JPEG
 Heroes von vor Migration 0053 haben keinen Handy-Ausschnitt und zeigen auf dem
 Handy die Desktop-Datei.
 
-**Qualitätsvergleich für Kundengespräche:** `npm run hero:compare` rendert die
+### Referenzfotos: das echte Produkt statt eines plausiblen
+
+Vor dem Rendern lädt `generateHeroImage` die **Katalogfotos der Produkte**, die
+die Szene zeigen soll (`email-hero-references.mjs`, getestet): alle empfohlenen
+Produkte der Mail zuerst, dann bis zu zwei aus dem Besitz (Kaufhistorie:
+`productId` bzw. `handle` = Katalog-ID), höchstens sechs, je das erste
+https-Bild, auf 768 px verkleinert. Mit diesen Referenzen ruft die
+Versuchskette zuerst `images.edit` mit `input_fidelity: "high"` auf — das
+Modell übernimmt Form, Proportionen, Farbe und Beschriftung des echten Geräts.
+Der Prompt bekommt einen nummerierten Referenzblock („picture 1 = ATX® Power
+Rack 620 …") mit der Anweisung, die Produkte in der Szene zu **fotografieren**
+statt Katalog-Freisteller einzukleben. Ist kein Foto ladbar oder schlagen die
+Edit-Versuche fehl, läuft die bisherige Generate-Kette; ein unerreichbares
+Bild blockiert nie. `EMAIL_HERO_REFERENCES=off` schaltet die Referenzen ab.
+Kosten: Bild-Eingabe 8 $/Mio. Tokens, also etwa 0,03–0,08 $ je Hero zusätzlich.
+
+### Automatische Prüfung vor dem Operator
+
+Jeder Render wird von einem Vision-Modell (`claude-sonnet-4-6`,
+`email-hero-qa.mjs`, getestet) auf das geprüft, was den Hero in der Mail
+funktionieren lässt: linke Bildhälfte ruhig, Geräte rechts, keine Fremdschrift,
+keine eingeklebten Freisteller, Produkttreue, Gesamtwertung 1–10. Geprüft wird
+das Bild **vor** dem Verlauf (`variants.master`), denn es geht um die Szene.
+Fällt die Prüfung durch (harter Verstoß oder Wertung < 6), wird **einmal** neu
+gerendert und das bessere Bild behalten (`pickBestRender`). Der Operator sieht
+im Toast „KI-Prüfung 8/10", ggf. „einmal neu gerendert" und die Hinweise; der
+Aufruf kostet ~0,01 $. `EMAIL_HERO_QA=off` schaltet die Prüfung ab (ohne
+`ANTHROPIC_API_KEY` ist sie ohnehin aus). Die Route erlaubt dafür 300 s.
+
+**Variantenvergleich für Kundengespräche:** `npm run hero:compare` rendert die
 zuletzt gespeicherten Hero-Prompts (oder eigene per `--prompts datei.txt`) in
-zwei Stufen (Standard `medium,high`) durch exakt diese Pipeline und schreibt
+mehreren Varianten (Standard `medium,high,high+refs`, per `--variants`) durch
+exakt diese Pipeline — die `+refs`-Varianten mit denselben Referenzfotos wie
+ein echter Render, jede Variante mit KI-Prüfung — und schreibt
 `hero-compare/index.html` — eine Datei mit eingebetteten Bildern, je Prompt
-beide Varianten als Desktop-Hero mit Schlagzeile und als Handy-Ansicht, erst
-blind als A/B mit Favoriten-Wahl, auf Klick mit Qualität, Modell, echten Kosten
-und Renderzeit. Nichts davon berührt Entwürfe oder Blob-Store. `--dry-run`
-prüft nur das Layout ohne API-Aufrufe.
+alle Varianten als Desktop-Hero mit Schlagzeile und als Handy-Ansicht, erst
+blind als A/B/C mit Favoriten-Wahl, auf Klick mit Variante, Modell,
+Referenzanzahl, echten Kosten, Renderzeit und Prüfergebnis. Nichts davon
+berührt Entwürfe oder Blob-Store. `--dry-run` prüft nur das Layout ohne
+API-Aufrufe.
 
 **Kosten:** ca. 0,19 $ je Bild in `high` (1536×1024-Äquivalent; das native
 Format ist proportional günstiger), plus ~0,01 $ für den Prompt-Entwurf. Die
@@ -329,6 +361,8 @@ würde es links und rechts beschnitten und der Text stünde auf dem Motiv.)
 | `src/lib/email-designs/performance.ts` | Bild-orientiertes Conversion-Design (Voll-Shell + Hero) |
 | `src/lib/email-hero-gradient.mjs` | Deterministischer Lesbarkeits-Verlauf über den linken Bildteil (sharp), getestet |
 | `src/lib/email-hero-variants.mjs` | Modell-Versuchskette, Hero-Format, Desktop-/Handy-Variante (sharp), getestet |
+| `src/lib/email-hero-references.mjs` | Referenzfotos der Produkte: Auswahl, Prompt-Block, Laden/Verkleinern, getestet |
+| `src/lib/email-hero-qa.mjs` | Automatische Bildprüfung (Vision-Modell), Verdict und Re-Render-Wahl, getestet |
 | `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Privater Blob-Write & öffentliche Auslieferung der Hero-Bilder (mit Pfad-Validierung) |
 | `src/lib/email-hero-context.mjs` | Was die KI über die Person erfährt (Kaufhistorie, Profil, Kategorien, Saison) — pur & getestet |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |
