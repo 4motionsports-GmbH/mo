@@ -93,6 +93,25 @@ export interface EmailDesignRenderers {
    * MUST stay clickable — the campaign funnel counts those clicks.
    */
   moPromoBlock?: (input: MoPromoBlockInput) => string;
+  /**
+   * The offer countdown ("Dein Angebot gilt noch 3 Tage …") rendered under
+   * the offer it belongs to. The numbers are a snapshot taken at render time
+   * (email-template renderOfferCountdown computes them); a design lays them
+   * out. The classic implementation is a muted centred line.
+   */
+  offerCountdown?: (input: OfferCountdownInput) => string;
+}
+
+/** Everything an offerCountdown override needs (email-template.ts builds it). */
+export interface OfferCountdownInput {
+  /** ISO deadline — the earliest of discount expiry and set-offer expiry. */
+  expiresAt: string;
+  language: "de" | "en";
+  days: number;
+  hours: number;
+  /** "Sa., 12.09.2026, 23:59 Uhr" — already localised. */
+  deadlineLabel: string;
+  copy: { heading: string; days: string; hours: string; until: string };
 }
 
 /** Everything a moPromoBlock override needs (campaign-email.ts builds it). */
