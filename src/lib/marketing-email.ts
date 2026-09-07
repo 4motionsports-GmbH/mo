@@ -39,6 +39,7 @@ import {
   emailTextStyle,
   emailMutedTextStyle,
   emailLinkStyle,
+  renderOfferCountdown,
 } from "./email-template";
 import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
@@ -69,6 +70,7 @@ import { withCartAttribution } from "./order-attribution.mjs";
 import { getActiveBundleForSend } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
 import { renderBundleOfferBlock } from "./bundle-email";
+import { countdownText, earliestDeadline } from "./offer-countdown.mjs";
 import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
 import { loadProductCatalog } from "./catalog-store";
 import { reportError } from "./observability";
@@ -315,6 +317,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         discountExpiresLabel: discountExpiresAt
           ? formatGermanExpiryDate(discountExpiresAt)
           : null,
+        discountExpiresAt,
         unsubscribe: unsubscribeFooter(unsubscribeUrl),
         // SPECIAL-OFFER block — ADDITIVE. When a created, still-active bundle
         // is attached to this send, its offer block rides in the body. This
@@ -407,7 +410,7 @@ function firstImageUrl(p: Product | undefined): string | null {
 async function buildBundleBlockForSend(
   sendId: number,
   highlights: Array<{ name: string; description: string }> | null = null
-): Promise<{ text: string; html: string; componentNames: string[] } | null> {
+): Promise<{ text: string; html: string; componentNames: string[]; expiresAt: string | null } | null> {
   try {
     const bundle = await getActiveBundleForSend(sendId);
     if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
@@ -439,7 +442,7 @@ async function buildBundleBlockForSend(
       currency: bundle.currency,
       offerUrl,
     });
-    return { ...block, componentNames: components.map((c) => c.name) };
+    return { ...block, componentNames: components.map((c) => c.name), expiresAt: bundle.expiresAt };
   } catch (err) {
     reportError(err, { route: "lib/marketing-email", phase: "buildBundleBlockForSend" });
     return null;
@@ -525,6 +528,7 @@ export async function renderMarketingEmailPreview(
       send.discountPercent > 0 && send.discountExpiresAt
         ? formatGermanExpiryDate(send.discountExpiresAt)
         : null,
+    discountExpiresAt: send.discountPercent > 0 ? send.discountExpiresAt : null,
     unsubscribe: unsubscribeFooter(unsubscribeUrl),
     bundle: await buildBundleBlockForSend(sendId, send.productHighlights),
     labelForUrl: await catalogNameLookup(),
@@ -551,10 +555,13 @@ export function renderMarketingEmail(opts: {
   /** German-formatted expiry date of the minted code ("TT.MM.JJJJ"); stated
    *  deterministically next to the code so the deadline always ships. */
   discountExpiresLabel: string | null;
+  /** ISO/Date expiry of the discount — feeds the offer countdown together
+   * with the set's expiry (the earlier one counts). */
+  discountExpiresAt?: string | Date | null;
   unsubscribe: { text: string; html: string };
   /** Optional special-offer block for an attached bundle (text + HTML parts +
    *  component names, so those products aren't shown twice). */
-  bundle: { text: string; html: string; componentNames?: string[] } | null;
+  bundle: { text: string; html: string; componentNames?: string[]; expiresAt?: string | null } | null;
   /** Names a bare product URL in the prose (catalog lookup); null → compact
    * host/path label. Markdown links carry their own label. */
   labelForUrl?: (url: string) => string | null;
@@ -588,6 +595,14 @@ export function renderMarketingEmail(opts: {
   // The special-offer block (when a bundle is attached) sits right after the
   // prose, before the cart link + unsubscribe footer.
   if (bundle) textLines.push(bundle.text);
+  // The offer countdown: the earlier of discount expiry and set expiry, only
+  // while something with a deadline is actually in the mail.
+  const offerExpiresAt =
+    discountCode || bundle
+      ? earliestDeadline(discountCode ? opts.discountExpiresAt : null, bundle?.expiresAt)
+      : null;
+  const countdownLine = offerExpiresAt ? countdownText(offerExpiresAt, "de") : "";
+  if (countdownLine) textLines.push("", countdownLine);
   if (linkUrl) {
     textLines.push(
       "",
@@ -648,7 +663,9 @@ export function renderMarketingEmail(opts: {
                     )}</p>`,
     // Full-width newsletter sections between prose and the cart pill: the
     // product picture grid, then the bundle special-offer block (if any).
-    preCtaRowsHtml: `${productsRows}${bundle ? bundle.html : ""}`,
+    preCtaRowsHtml: `${productsRows}${bundle ? bundle.html : ""}${
+      offerExpiresAt ? renderOfferCountdown({ expiresAt: offerExpiresAt, language: "de" }) : ""
+    }`,
     ctas: linkUrl ? [{ label: "Warenkorb öffnen", url: linkUrl }] : [],
     footnoteHtml: discountNote || undefined,
     footer: {

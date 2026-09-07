@@ -46,7 +46,8 @@ export interface BundleOfferBlockInput {
   /** TRUE snapshotted component sum (the "statt" reference). */
   componentsSum: string | number;
   currency?: string;
-  /** The tracked redirect link (/api/r/<token>) the "Zum Angebot" button uses. */
+  /** The tracked redirect link (/api/r/<token>) the "Zur Kasse" button uses —
+   * it lands on the prefilled checkout. */
   offerUrl: string;
   /** Label language. The campaign channel is bilingual (contact.language);
    * the marketing channel stays German — hence the "de" default. */
@@ -70,14 +71,14 @@ const BUNDLE_LABELS = {
     price: "Set-Preis",
     instead: "statt",
     save: "Du sparst",
-    cta: "Zum Angebot",
+    cta: "Zur Kasse",
   },
   en: {
     kicker: "Your personal offer",
     price: "Set price",
     instead: "instead of",
     save: "You save",
-    cta: "View offer",
+    cta: "Checkout",
   },
 } as const;
 

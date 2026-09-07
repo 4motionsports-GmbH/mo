@@ -39,3 +39,25 @@ export function shouldRenderBundleBlock(bundle) {
 export function bundleStattPrice(bundlePrice, componentsSum) {
   return computeCompareAtPrice(bundlePrice, componentsSum);
 }
+
+/** Titles longer than this are the auto-generated "Set: A + B + C" kind. */
+export const BUNDLE_HEADLINE_MAX_CHARS = 40;
+
+/**
+ * The short headline a design shows over the component list. Operators can
+ * name a set ("Dein Rack-Upgrade"); the generated default is the component
+ * names joined ("Set: Bodenschutzmatte … + ATX® Jammer Arms X1-600 + …"),
+ * which as a 20px white headline overwhelms the card. Long or "Set:"-style
+ * titles therefore give way to the per-language default — the components
+ * are listed underneath anyway.
+ * @param {string | null | undefined} title
+ * @param {"de" | "en"} [language]
+ * @returns {string}
+ */
+export function bundleHeadline(title, language = "de") {
+  const fallback = language === "en" ? "Your personal set" : "Dein persönliches Set";
+  const t = typeof title === "string" ? title.trim() : "";
+  if (!t) return fallback;
+  if (/^set\s*:/i.test(t) || t.length > BUNDLE_HEADLINE_MAX_CHARS) return fallback;
+  return t;
+}

@@ -117,7 +117,9 @@ import { activeEmailTheme } from "./email-theme-context";
 import {
   activeEmailDesignRenderers,
   type MoPromoBlockInput,
+  type OfferCountdownInput,
 } from "./email-design-context";
+import { countdownCopy, deadlineLabel, remainingParts } from "./offer-countdown.mjs";
 import { buttonRadiusFor, fontNeedsWebFont, fontStackFor } from "./email-theme.mjs";
 import type { Locale } from "./locale";
 export { escapeHtml, escapeAttr };
@@ -303,6 +305,40 @@ export function renderMoPromoBlock(input: MoPromoBlockInput): string {
                                     </tr>
                                   </table>`,
     { padding: "10px 60px" }
+  );
+}
+
+/**
+ * The offer countdown row (campaign + marketing mails, under the offer). Days
+ * and hours are a snapshot at render time (offer-countdown.mjs); returns ""
+ * once the deadline has passed so an expired offer never shows a counter.
+ */
+export function renderOfferCountdown(input: {
+  expiresAt: string;
+  language: "de" | "en";
+  now?: Date;
+}): string {
+  const r = remainingParts(input.expiresAt, input.now);
+  if (r.expired) return "";
+  const c = countdownCopy(input.language);
+  const built: OfferCountdownInput = {
+    expiresAt: input.expiresAt,
+    language: input.language,
+    days: r.days,
+    hours: r.hours,
+    deadlineLabel: deadlineLabel(input.expiresAt, input.language),
+    copy: { heading: c.heading, days: c.days(r.days), hours: c.hours(r.hours), until: c.until },
+  };
+  const override = activeEmailDesignRenderers()?.offerCountdown;
+  if (override) return override(built);
+  return renderSectionRow(
+    `
+                    <p style="${emailMutedTextStyle()} font-size: 13px;" align="center"><strong>${escapeHtml(
+                      built.copy.heading
+                    )} ${built.days} ${escapeHtml(built.copy.days)}${
+                      built.hours > 0 || built.days === 0 ? ` ${built.hours} ${escapeHtml(built.copy.hours)}` : ""
+                    }</strong> — ${escapeHtml(built.copy.until)} ${escapeHtml(built.deadlineLabel)}</p>`,
+    { padding: "4px 60px 14px", align: "center" }
   );
 }
 

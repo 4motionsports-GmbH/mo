@@ -104,6 +104,28 @@ Override und fällt sonst auf die classic-Implementierung zurück.
 - **Fail-soft**: Renderer dürfen nicht werfen; lieber einen Baustein weglassen
   als einen Versand brechen.
 
+## Angebots-Countdown und Set-Karte
+
+**Countdown.** Kampagnen- und Marketing-Mails zeigen unter dem Angebot, wie
+lange es noch gilt: die **frühere** der beiden Fristen — Ablauf des
+Rabattcodes und Ablauf des Set-Angebots (`earliestDeadline`,
+`offer-countdown.mjs`, getestet). E-Mails können keine Skripte ausführen, der
+Zähler ist deshalb ein **Schnappschuss zum Renderzeitpunkt** (Versand; die
+Vorschau zeigt dieselben Zahlen): Tage und Stunden, abgerundet, nie Minuten —
+so bleibt die Aussage in den Stunden wahr, in denen eine Mail typischerweise
+geöffnet wird; die exakte Frist steht immer daneben. Abgelaufen = kein Zähler.
+Renderer-Hook `offerCountdown` (`renderOfferCountdown` in `email-template.ts`):
+klassisch eine gedämpfte Zeile, im Performance-Design eine schwarze Karte im
+Stil der Set-Karte mit zwei Kacheln (Tage, Stunden) und der Frist darunter.
+Auch der Text-Teil trägt die Zeile.
+
+**Set-Karte.** Die weiße Überschrift ist kurz: Operator-Titel, wenn er kurz ist,
+sonst „Dein persönliches Set" (`bundleHeadline`, getestet — generierte Titel
+der Form „Set: A + B + C" oder über 40 Zeichen weichen dem Standard); die
+vollständigen Produktnamen stehen wie bisher in der grauen Unterzeile. Der
+Button heißt **„Zur Kasse"** („Checkout"), weil der Link im vorbefüllten
+Checkout landet.
+
 ## Hero-Bilder (Design „Performance")
 
 Das Performance-Design öffnet mit einem großen Lifestyle-Bild. Zwei Quellen:
@@ -321,25 +343,27 @@ gilt. Stand der Umsetzung:
 | Klartext statt nur Symbol | Text ist Pflichtbestandteil; die Nutzer-Tests der Kommission ergaben Icon + kurzer Text als klarste Form |
 | Sprache des Empfängers | DE/EN nach Empfänger-Sprache |
 | Barrierefrei | Reiner HTML-Text (Screenreader), `alt`-Text des Bildes nennt die Kennzeichnung; bei blockierten Bildern bleibt der Text sichtbar |
-| Offizielles EU-Icon | Unterstützt: `EMAIL_AI_LABEL_ICON_URL` auf das PNG des Icons „Fully AI-generated" zeigen lassen (nur von der Kommissions-Seite laden, unter `public/` ablegen). Ohne Icon bleibt der Text — die Kommission stellt klar, dass das Icon allein keine Konformität herstellt und die Nutzung freiwillig ist |
+| Offizielles EU-Icon | Im Einsatz: das Label „AI GENERATED" der Kommission (`public/eu-ai-icon-email.png`) ist die sichtbare Kennzeichnung; der Klartext steckt in der Grafik und im `alt`-Text |
 | Maschinenlesbare Markierung | Jede gespeicherte Datei (Desktop, Handy, Master) trägt XMP `Iptc4xmpExt:DigitalSourceType = trainedAlgorithmicMedia`, `dc:description`, `xmp:CreatorTool` (Modell) und EXIF `ImageDescription`/`Software` (`email-hero-marking.mjs`, getestet) — die Provenienzdaten des Bildmodells überleben die Neukodierung nicht, deshalb schreiben wir die branchenübliche IPTC-Markierung selbst |
 | Standard-Bild | Ebenfalls KI-generiert und gleich gekennzeichnet (`DEFAULT_HERO_IS_AI_GENERATED`) |
 
-Offen bleibt nur, was Code nicht leisten kann: das Icon-PNG von der
-Kommissions-Seite holen und die Env-Variable setzen, und die Prüfung durch
-den Kunden bzw. dessen Rechtsberatung, ob weitere KI-Bilder außerhalb der
-Hero-Pipeline (z. B. manuell eingefügte) ebenso gekennzeichnet sind.
+Offen bleibt nur, was Code nicht leisten kann: die Prüfung durch den Kunden
+bzw. dessen Rechtsberatung, ob weitere KI-Bilder außerhalb der Hero-Pipeline
+(z. B. manuell eingefügte) ebenso gekennzeichnet sind.
 
 ### Kennzeichnung „KI-generiertes Bild" (EU-KI-Verordnung)
 
-Jedes Hero-Bild trägt eine sichtbare Kennzeichnung: ein kleines Label
-**„KI-generiertes Bild"** (englische Mails: „AI-generated image") unten rechts
-im Bildbereich, auf dem Handy als eigene Zeile direkt unter dem Bild. Hintergrund
-ist die Transparenzpflicht der EU-KI-Verordnung (AI Act, Art. 50): künstlich
-erzeugte Bildinhalte müssen als solche erkennbar sein. Das Label ist reiner
-HTML-Text mit Inline-Styles (kein Bild, kein Overlay-Trick), damit es in jedem
-Mail-Client erscheint und für Screenreader lesbar ist; zusätzlich nennt der
-`alt`-Text des Mobil-Bildes die Kennzeichnung.
+Jedes Hero-Bild trägt eine sichtbare Kennzeichnung: das **offizielle
+EU-Label „AI GENERATED"** (`public/eu-ai-icon-email.png` — das Icon der
+Kommission, beschnitten und für Mail auf 2× 146×28 px verkleinert) unten rechts
+im Bildbereich, auf dem Handy als eigene Zeile direkt unter dem Bild.
+Hintergrund ist die Transparenzpflicht der EU-KI-Verordnung (AI Act, Art. 50):
+künstlich erzeugte Bildinhalte müssen als solche erkennbar sein. Das Label ist
+ein `<img>` mit `alt`/`title` „KI-generiertes Bild" / „AI-generated image", so
+dass Screenreader und Clients mit blockierten Bildern die Aussage als Text
+erhalten; zusätzlich nennt der `alt`-Text des Mobil-Bildes die Kennzeichnung.
+`EMAIL_AI_LABEL_ICON_URL` tauscht die Grafik gegen eine andere gehostete PNG
+(Höhe 28 px, Breite aus der Datei).
 
 Die Kennzeichnung gilt für **alle** Heroes des Performance-Designs — die per
 `gpt-image-1` generierten immer, das Standard-Bild über die Konstante

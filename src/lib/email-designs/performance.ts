@@ -27,9 +27,11 @@ import type {
   BundleBlockComputed,
   EmailSectionRowOptions,
   MoPromoBlockInput,
+  OfferCountdownInput,
 } from "../email-design-context";
 import { activeEmailRenderData } from "../email-design-context";
 import { getBaseUrl } from "../base-url";
+import { bundleHeadline } from "../bundle-email-core.mjs";
 import { EMAIL_RATING_FACES, emailRatingUrl } from "../email-rating.mjs";
 import {
   escapeAttr,
@@ -65,18 +67,24 @@ const DEFAULT_HERO_IS_AI_GENERATED = true;
  * so it survives every mail client and is readable by assistive technology.
  * Rendered in the recipient's language.
  */
+/** The official EU "AI GENERATED" label lockup (public/eu-ai-icon-email.png:
+ * the Commission's icon, trimmed and downsized for mail, 2× for retina). */
+const AI_LABEL_WIDTH = 146;
+const AI_LABEL_HEIGHT = 28;
+
 function aiImageLabel(en: boolean, extraClass = ""): string {
   const text = en ? "AI-generated image" : "KI-generiertes Bild";
-  // The official EU icon for AI-generated content, when the deployment
-  // hosts it (EMAIL_AI_LABEL_ICON_URL — an absolute URL to the PNG downloaded
-  // from the Commission's site, e.g. ${baseUrl}/eu-ai-icon.png). The text
-  // stays either way: it is the disclosure that survives blocked images,
-  // and the Commission's own testing found icon + short text clearest.
-  const iconUrl = (process.env.EMAIL_AI_LABEL_ICON_URL ?? "").trim();
-  const icon = /^https?:\/\//.test(iconUrl)
-    ? `<img src="${escapeAttr(iconUrl)}" width="14" height="14" alt="" style="width:14px; height:14px; vertical-align:-3px; margin-right:5px; border:0; display:inline-block;">`
-    : "";
-  return `<div class="ai-label${extraClass ? ` ${extraClass}` : ""}" title="${escapeAttr(text)}" style="display:inline-block; font-family:${FONT}; font-size:10px; line-height:14px; color:#555555; background-color:#f2f2f2; border:1px solid #d9d9d9; border-radius:3px; padding:2px 7px; letter-spacing:0.2px; white-space:nowrap;">${icon}${escapeHtml(text)}</div>`;
+  // The label IS the official EU lockup — its artwork already reads
+  // "AI GENERATED", so no separate text pill. The alt text carries the
+  // disclosure for screen readers and for clients that block images.
+  // EMAIL_AI_LABEL_ICON_URL swaps in another hosted PNG (height 28px,
+  // width from the file).
+  const custom = (process.env.EMAIL_AI_LABEL_ICON_URL ?? "").trim();
+  const src = /^https?:\/\//.test(custom) ? custom : `${getBaseUrl()}/eu-ai-icon-email.png`;
+  const size = custom
+    ? `height="${AI_LABEL_HEIGHT}" style="height:${AI_LABEL_HEIGHT}px; width:auto; display:inline-block; border:0;"`
+    : `width="${AI_LABEL_WIDTH}" height="${AI_LABEL_HEIGHT}" style="width:${AI_LABEL_WIDTH}px; height:${AI_LABEL_HEIGHT}px; display:inline-block; border:0;"`;
+  return `<img class="ai-label${extraClass ? ` ${extraClass}` : ""}" src="${escapeAttr(src)}" ${size} alt="${escapeAttr(text)}" title="${escapeAttr(text)}">`;
 }
 const FONT = "Arial, Helvetica, sans-serif";
 
@@ -272,12 +280,49 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
                           <div>${images || "&nbsp;"}</div>
                         </td>
                         <td width="58%" valign="middle" class="bundle-column" style="width:58%; padding:24px 24px 24px 0;">
-                          <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#ffffff; font-weight:700; margin-bottom:8px;">${escapeHtml(input.title)}</div>
+                          <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#ffffff; font-weight:700; margin-bottom:8px;">${escapeHtml(bundleHeadline(input.title, en ? "en" : "de"))}</div>
                           <div style="font-family:${FONT}; font-size:11px; line-height:16px; color:#bbbbbb; margin-bottom:16px;">${componentNames}</div>
                           <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${priceCells}
                           </tr></table>
                           <div style="height:18px; font-size:0; line-height:0;">&nbsp;</div>
                           ${redButton({ label: c.labels.cta, url: input.offerUrl }, true)}
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+}
+
+/**
+ * The offer countdown — the same black card language as the set deal, so the
+ * two read as one offer: a small red-on-black kicker, two big tiles (days,
+ * hours) and the exact deadline underneath. Numbers are the render-time
+ * snapshot email-template computes; nothing here counts live.
+ */
+function offerCountdownCard(input: OfferCountdownInput): string {
+  const tile = (value: number, unit: string) => `
+                          <td align="center" style="padding: 0 6px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="background:#1f1f1f; border-radius:6px;">
+                              <tr>
+                                <td align="center" style="padding: 10px 18px 8px 18px; font-family:${FONT}; color:${RED}; font-size:34px; line-height:38px; font-weight:800; letter-spacing:-1px;">${String(value).padStart(2, "0")}</td>
+                              </tr>
+                              <tr>
+                                <td align="center" style="padding: 0 12px 10px 12px; font-family:${FONT}; color:#bbbbbb; font-size:10px; line-height:14px; letter-spacing:1px; text-transform:uppercase;">${escapeHtml(unit)}</td>
+                              </tr>
+                            </table>
+                          </td>`;
+  return `
+                <tr>
+                  <td class="content-pad" style="padding: 0 38px 16px 38px;" bgcolor="#ffffff">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#111111; border-radius:7px;">
+                      <tr>
+                        <td align="center" style="padding: 20px 22px 18px 22px;">
+                          <div style="font-family:${FONT}; color:#ffffff; font-size:11px; line-height:16px; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom:12px;">${escapeHtml(input.copy.heading)}</div>
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="Margin: 0 auto;">
+                            <tr>${tile(input.days, input.copy.days)}${tile(input.hours, input.copy.hours)}
+                            </tr>
+                          </table>
+                          <div style="font-family:${FONT}; color:#bbbbbb; font-size:11px; line-height:16px; margin-top:12px;">${escapeHtml(input.copy.until)} ${escapeHtml(input.deadlineLabel)}</div>
                         </td>
                       </tr>
                     </table>
@@ -635,6 +680,7 @@ export const performanceDesign: EmailDesignDefinition = {
     productGrid,
     bundleBlock,
     moPromoBlock: moPromoCard,
+    offerCountdown: offerCountdownCard,
     textStyle,
     mutedTextStyle,
     linkStyle,

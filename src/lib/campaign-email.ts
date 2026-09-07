@@ -63,6 +63,7 @@ import {
   emailTextStyle,
   emailMutedTextStyle,
   emailLinkStyle,
+  renderOfferCountdown,
 } from "./email-template";
 import {
   renderEmailProductRows,
@@ -88,6 +89,7 @@ import { generateRedirectToken } from "./marketing-store";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
 import { renderBundleOfferBlock } from "./bundle-email";
+import { countdownText, earliestDeadline } from "./offer-countdown.mjs";
 import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
 import { loadProductCatalog } from "./catalog-store";
 import { resolveProductSelections } from "./product-catalog";
@@ -302,6 +304,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         discountExpiresLabel: discountExpiresAt
           ? formatExpiryDateForLanguage(discountExpiresAt, contact.language)
           : null,
+        discountExpiresAt,
         unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
         // SPECIAL-OFFER block — ADDITIVE, exactly like the marketing path:
         // when a created, still-active bundle is attached to this contact,
@@ -441,7 +444,7 @@ async function buildBundleBlockForContact(
   contactId: number,
   language: "de" | "en",
   highlights: Array<{ name: string; description: string }> | null = null
-): Promise<{ text: string; html: string; componentNames: string[] } | null> {
+): Promise<{ text: string; html: string; componentNames: string[]; expiresAt: string | null } | null> {
   try {
     const bundle = await getActiveBundleForCampaignContact(contactId);
     if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
@@ -474,7 +477,7 @@ async function buildBundleBlockForContact(
       offerUrl,
       language,
     });
-    return { ...block, componentNames: components.map((c) => c.name) };
+    return { ...block, componentNames: components.map((c) => c.name), expiresAt: bundle.expiresAt };
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "buildBundleBlockForContact" });
     return null;
@@ -540,6 +543,7 @@ export async function renderCampaignEmailPreview(
       draft.discountPercent > 0 && draft.discountExpiresAt
         ? formatExpiryDateForLanguage(draft.discountExpiresAt, contact.language)
         : null,
+    discountExpiresAt: draft.discountPercent > 0 ? draft.discountExpiresAt : null,
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
     bundle: await buildBundleBlockForContact(contactId, contact.language, draft.productHighlights),
     labelForUrl: await catalogNameLookup(),
@@ -573,10 +577,13 @@ export function renderCampaignEmail(opts: {
   productHighlights?: Array<{ name: string; description: string }> | null;
   discountCode: string | null;
   discountExpiresLabel: string | null;
+  /** ISO/Date expiry of the discount — feeds the offer countdown together
+   * with the set's expiry (the earlier one counts). */
+  discountExpiresAt?: string | Date | null;
   unsubscribe: { text: string; html: string };
   /** Optional special-offer block for an attached bundle (text + HTML parts +
    *  component names, so those products aren't shown twice). */
-  bundle: { text: string; html: string; componentNames?: string[] } | null;
+  bundle: { text: string; html: string; componentNames?: string[]; expiresAt?: string | null } | null;
   /** Names a bare product URL in the prose (catalog lookup); null → compact
    * host/path label. Markdown links carry their own label. */
   labelForUrl?: (url: string) => string | null;
@@ -618,6 +625,14 @@ export function renderCampaignEmail(opts: {
         : `Dein persönlicher Code: ${discountCode}${validityNote}.`
     );
   }
+  // The offer countdown: the earlier of discount expiry and set expiry, only
+  // while something with a deadline is actually in the mail.
+  const offerExpiresAt =
+    discountCode || bundle
+      ? earliestDeadline(discountCode ? opts.discountExpiresAt : null, bundle?.expiresAt)
+      : null;
+  const countdownLine = offerExpiresAt ? countdownText(offerExpiresAt, language) : "";
+  if (countdownLine) textLines.push("", countdownLine);
   textLines.push("", moPromoBlockText(language, deeplink));
   textLines.push("", "—", unsubscribe.text);
   const text = textLines.join("\n");
@@ -665,7 +680,9 @@ export function renderCampaignEmail(opts: {
     // recommended-products picture grid, the bundle offer block (if any), and
     // last the Mo-promo media row — directly above its "Beratung starten" CTA.
     preCtaRowsHtml:
-      `${productsRows}${bundle ? bundle.html : ""}${promoRows}` || undefined,
+      `${productsRows}${bundle ? bundle.html : ""}${
+        offerExpiresAt ? renderOfferCountdown({ expiresAt: offerExpiresAt, language }) : ""
+      }${promoRows}` || undefined,
     ctas: [{ label: moPromoCtaLabel(language), url: deeplink }],
     footnoteHtml: discountNote || undefined,
     footer: {

@@ -92,6 +92,7 @@ function renderSampleForKind(kind: EmailDesignKind, products: Product[]): string
         products: products.slice(0, 4),
         discountCode: "MS5-BEISPIEL",
         discountExpiresLabel: "31.12.2026",
+        discountExpiresAt: new Date(Date.now() + (3 * 24 + 14) * 3_600_000).toISOString(),
         unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
         bundle,
       });
@@ -109,6 +110,7 @@ function renderSampleForKind(kind: EmailDesignKind, products: Product[]): string
         products: products.slice(2, 5),
         discountCode: "MK-BEISPIEL",
         discountExpiresLabel: "31.12.2026",
+        discountExpiresAt: new Date(Date.now() + (3 * 24 + 14) * 3_600_000).toISOString(),
         unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
         bundle: null,
       });
