@@ -512,7 +512,9 @@ export async function generateHeroImage(
       // with the legibility gradient over its left part (deterministic — the
       // prompt's composition rule only makes the calm left LIKELY), and the
       // right-side crop for phones, where the picture sits under the text.
-      const variants = await buildHeroVariants(Buffer.from(rendered.b64, "base64"));
+      const variants = await buildHeroVariants(Buffer.from(rendered.b64, "base64"), {
+        tool: rendered.model,
+      });
       let verdict: { pass: boolean; score: number; reasons: string[] } | null = null;
       if (qaOn) {
         try {

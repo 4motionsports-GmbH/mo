@@ -15,6 +15,7 @@
 // not the sharp compositing is pure and unit-tested.
 
 import { applyHeroGradient } from "./email-hero-gradient.mjs";
+import { markAsAiGenerated } from "./email-hero-marking.mjs";
 
 /**
  * The hero's native picture format. The desktop hero is 640×300 (2.133:1);
@@ -132,24 +133,25 @@ export function heroMobileCrop(width, height) {
 /**
  * Turn the model's output into the two stored files. `master` is the
  * hero-aspect picture BEFORE the gradient — what the quality check looks at.
+ * Every file is written with the machine-readable AI marking
+ * (email-hero-marking.mjs) naming `tool`, the model that rendered it.
  * @param {Buffer | Uint8Array} image PNG/JPEG/WebP bytes from the image model
+ * @param {{ tool?: string }} [opts]
  * @returns {Promise<{ desktop: Buffer, mobile: Buffer, master: Buffer, width: number, height: number }>}
  */
-export async function buildHeroVariants(image) {
+export async function buildHeroVariants(image, opts = {}) {
   const { default: sharp } = await import("sharp");
   const meta = await sharp(image).metadata();
   if (!meta.width || !meta.height) throw new Error("hero image has no dimensions");
   const crop = heroAspectCrop(meta.width, meta.height);
+  const marking = { tool: opts.tool ?? "generative AI" };
+  const encode = (pipeline) =>
+    markAsAiGenerated(pipeline, marking).jpeg({ quality: HERO_JPEG_QUALITY, mozjpeg: true }).toBuffer();
   // The hero-aspect master, lossless — both variants derive from it.
   const master = await sharp(image).extract(crop).png().toBuffer();
   const desktopPng = await applyHeroGradient(master);
-  const desktop = await sharp(desktopPng)
-    .jpeg({ quality: HERO_JPEG_QUALITY, mozjpeg: true })
-    .toBuffer();
-  const mobile = await sharp(master)
-    .extract(heroMobileCrop(crop.width, crop.height))
-    .jpeg({ quality: HERO_JPEG_QUALITY, mozjpeg: true })
-    .toBuffer();
-  const masterJpeg = await sharp(master).jpeg({ quality: HERO_JPEG_QUALITY, mozjpeg: true }).toBuffer();
+  const desktop = await encode(sharp(desktopPng));
+  const mobile = await encode(sharp(master).extract(heroMobileCrop(crop.width, crop.height)));
+  const masterJpeg = await encode(sharp(master));
   return { desktop, mobile, master: masterJpeg, width: crop.width, height: crop.height };
 }

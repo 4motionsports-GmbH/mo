@@ -67,7 +67,16 @@ const DEFAULT_HERO_IS_AI_GENERATED = true;
  */
 function aiImageLabel(en: boolean, extraClass = ""): string {
   const text = en ? "AI-generated image" : "KI-generiertes Bild";
-  return `<div class="ai-label${extraClass ? ` ${extraClass}` : ""}" title="${escapeAttr(text)}" style="display:inline-block; font-family:${FONT}; font-size:10px; line-height:14px; color:#555555; background-color:#f2f2f2; border:1px solid #d9d9d9; border-radius:3px; padding:2px 7px; letter-spacing:0.2px; white-space:nowrap;">${escapeHtml(text)}</div>`;
+  // The official EU icon for AI-generated content, when the deployment
+  // hosts it (EMAIL_AI_LABEL_ICON_URL — an absolute URL to the PNG downloaded
+  // from the Commission's site, e.g. ${baseUrl}/eu-ai-icon.png). The text
+  // stays either way: it is the disclosure that survives blocked images,
+  // and the Commission's own testing found icon + short text clearest.
+  const iconUrl = (process.env.EMAIL_AI_LABEL_ICON_URL ?? "").trim();
+  const icon = /^https?:\/\//.test(iconUrl)
+    ? `<img src="${escapeAttr(iconUrl)}" width="14" height="14" alt="" style="width:14px; height:14px; vertical-align:-3px; margin-right:5px; border:0; display:inline-block;">`
+    : "";
+  return `<div class="ai-label${extraClass ? ` ${extraClass}` : ""}" title="${escapeAttr(text)}" style="display:inline-block; font-family:${FONT}; font-size:10px; line-height:14px; color:#555555; background-color:#f2f2f2; border:1px solid #d9d9d9; border-radius:3px; padding:2px 7px; letter-spacing:0.2px; white-space:nowrap;">${icon}${escapeHtml(text)}</div>`;
 }
 const FONT = "Arial, Helvetica, sans-serif";
 
