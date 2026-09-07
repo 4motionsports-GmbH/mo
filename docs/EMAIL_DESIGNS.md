@@ -305,6 +305,31 @@ während der selbst geschriebene Szenentext des Operators erhalten bleibt. Der
 Marker ist die jeweils neueste Regel, damit ein Tail-Update jeden älteren
 gespeicherten Prompt automatisch ablöst.
 
+### EU-Kennzeichnungspflicht: was erfüllt ist, was offen bleibt
+
+Die Heroes sind fotorealistische Szenen, die echte Produkte in plausiblen
+Räumen zeigen — nach Art. 50 Abs. 4 der KI-Verordnung ein „Deepfake" (KI-Bild,
+das bestehenden Objekten ähnelt und authentisch wirkt), und der Shop ist als
+Versender der **Deployer**, den die Offenlegungspflicht trifft (seit
+2. August 2026). Die Kommission hat dazu am 10. Juni 2026 offizielle Icons
+veröffentlicht und einen (freiwilligen) Verhaltenskodex, der als Maßstab
+gilt. Stand der Umsetzung:
+
+| Anforderung | Umsetzung |
+|---|---|
+| Sichtbare, klare Kennzeichnung beim ersten Kontakt | Label „KI-generiertes Bild" / „AI-generated image" im Hero, Desktop unten rechts im Bild, Handy direkt unter dem Bild — im ersten Sichtbereich, nicht von Overlays verdeckt |
+| Klartext statt nur Symbol | Text ist Pflichtbestandteil; die Nutzer-Tests der Kommission ergaben Icon + kurzer Text als klarste Form |
+| Sprache des Empfängers | DE/EN nach Empfänger-Sprache |
+| Barrierefrei | Reiner HTML-Text (Screenreader), `alt`-Text des Bildes nennt die Kennzeichnung; bei blockierten Bildern bleibt der Text sichtbar |
+| Offizielles EU-Icon | Unterstützt: `EMAIL_AI_LABEL_ICON_URL` auf das PNG des Icons „Fully AI-generated" zeigen lassen (nur von der Kommissions-Seite laden, unter `public/` ablegen). Ohne Icon bleibt der Text — die Kommission stellt klar, dass das Icon allein keine Konformität herstellt und die Nutzung freiwillig ist |
+| Maschinenlesbare Markierung | Jede gespeicherte Datei (Desktop, Handy, Master) trägt XMP `Iptc4xmpExt:DigitalSourceType = trainedAlgorithmicMedia`, `dc:description`, `xmp:CreatorTool` (Modell) und EXIF `ImageDescription`/`Software` (`email-hero-marking.mjs`, getestet) — die Provenienzdaten des Bildmodells überleben die Neukodierung nicht, deshalb schreiben wir die branchenübliche IPTC-Markierung selbst |
+| Standard-Bild | Ebenfalls KI-generiert und gleich gekennzeichnet (`DEFAULT_HERO_IS_AI_GENERATED`) |
+
+Offen bleibt nur, was Code nicht leisten kann: das Icon-PNG von der
+Kommissions-Seite holen und die Env-Variable setzen, und die Prüfung durch
+den Kunden bzw. dessen Rechtsberatung, ob weitere KI-Bilder außerhalb der
+Hero-Pipeline (z. B. manuell eingefügte) ebenso gekennzeichnet sind.
+
 ### Kennzeichnung „KI-generiertes Bild" (EU-KI-Verordnung)
 
 Jedes Hero-Bild trägt eine sichtbare Kennzeichnung: ein kleines Label
@@ -365,6 +390,7 @@ würde es links und rechts beschnitten und der Text stünde auf dem Motiv.)
 | `src/lib/email-hero-variants.mjs` | Modell-Versuchskette, Hero-Format, Desktop-/Handy-Variante (sharp), getestet |
 | `src/lib/email-hero-references.mjs` | Referenzfotos der Produkte: Auswahl, Prompt-Block, Laden/Verkleinern, getestet |
 | `src/lib/email-hero-qa.mjs` | Automatische Bildprüfung (Vision-Modell), Verdict und Re-Render-Wahl, getestet |
+| `src/lib/email-hero-marking.mjs` | Maschinenlesbare KI-Markierung (IPTC/XMP + EXIF) in jeder Hero-Datei, getestet |
 | `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Privater Blob-Write & öffentliche Auslieferung der Hero-Bilder (mit Pfad-Validierung) |
 | `src/lib/email-hero-context.mjs` | Was die KI über die Person erfährt (Kaufhistorie, Profil, Kategorien, Saison) — pur & getestet |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |

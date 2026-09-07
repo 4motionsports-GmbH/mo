@@ -193,7 +193,7 @@ async function renderOnce(p, spec, refs) {
       const inputTokens = res.usage?.input_tokens ?? 0;
       const outputTokens = res.usage?.output_tokens ?? 0;
       let usd = usdCostForUsage({ model: attempt.model, inputTokens, outputTokens }, prices);
-      const v = await buildHeroVariants(Buffer.from(b64, "base64"));
+      const v = await buildHeroVariants(Buffer.from(b64, "base64"), { tool: attempt.model });
       let qa = null;
       if (qaOn) {
         try {

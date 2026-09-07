@@ -16,6 +16,7 @@ import {
   inputFidelityFor,
 } from "./email-hero-variants.mjs";
 import { HERO_GRADIENT_FADE_START } from "./email-hero-gradient.mjs";
+import { readAiMarking } from "./email-hero-marking.mjs";
 
 test("the native size is the desktop hero's ratio and gpt-image-2-legal", () => {
   // performance.ts: the hero cell is 640 wide and 300 tall.
@@ -109,7 +110,13 @@ test("buildHeroVariants: gradient on desktop only, mobile is the right crop, bot
     .composite([{ input: left, left: 0, top: 0 }])
     .png()
     .toBuffer();
-  const out = await buildHeroVariants(src);
+  const out = await buildHeroVariants(src, { tool: "gpt-image-2" });
+  // Every stored file carries the machine-readable AI marking.
+  for (const file of [out.desktop, out.mobile, out.master]) {
+    assert.deepEqual(await readAiMarking(file), { digitalSourceType: true, xmpDescription: true, exifDescription: true });
+  }
+  const xmp = Buffer.from((await sharp(out.desktop).metadata()).xmp).toString("utf8");
+  assert.match(xmp, /xmp:CreatorTool="gpt-image-2"/);
   // Aspect normalised to the hero ratio; the master is the un-graded scene.
   assert.equal(out.width, W);
   const masterMeta = await sharp(out.master).metadata();
