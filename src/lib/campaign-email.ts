@@ -276,16 +276,6 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         });
       }
 
-      // SPECIAL-OFFER block — ADDITIVE, exactly like the marketing path: when
-      // a created, still-active bundle is attached to this contact, its offer
-      // block rides below the prose. Touches NONE of the send safeguards; a
-      // bundle resolution failure degrades to "no block", never blocks a send.
-      const bundle = await buildBundleBlockForContact(
-        contactId,
-        contact.language,
-        draft.productHighlights
-      );
-
       // Tracked CTA (migration 0041): the Mo-promo deep link — the email's main
       // CTA — routes through /api/r/<token> so the Kampagnen-Funnel can count
       // clicks, exactly like the marketing channel's cart link. The redirect
@@ -313,7 +303,19 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           ? formatExpiryDateForLanguage(discountExpiresAt, contact.language)
           : null,
         unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
-        bundle,
+        // SPECIAL-OFFER block — ADDITIVE, exactly like the marketing path:
+        // when a created, still-active bundle is attached to this contact,
+        // its offer block rides below the prose. Touches NONE of the send
+        // safeguards; a bundle resolution failure degrades to "no block",
+        // never blocks a send. Built HERE, inside withEmailDesign: the block
+        // is HTML rendered through the design's renderers, and building it
+        // before the design was active shipped the classic block inside a
+        // Performance mail.
+        bundle: await buildBundleBlockForContact(
+          contactId,
+          contact.language,
+          draft.productHighlights
+        ),
         labelForUrl: await catalogNameLookup(),
         ctaUrl: trackedCtaUrl,
       }))
@@ -518,14 +520,9 @@ export async function renderCampaignEmailPreview(
       (contact.language === "en" ? "&locale=en" : "")
     : "#";
 
-  const bundle = await buildBundleBlockForContact(
-    contactId,
-    contact.language,
-    draft.productHighlights
-  );
-
   // The preview renders inside the SAME selected design as the send path —
-  // including the per-contact hero image — so what the operator reviews is
+  // including the per-contact hero image and the bundle block, which is
+  // built inside the design context below — so what the operator reviews is
   // what ships.
   const emailDesign = await getCachedEmailDesignForKind("campaign");
   const hero = await getEmailHeroRenderData("campaign", contactId);
@@ -544,7 +541,7 @@ export async function renderCampaignEmailPreview(
         ? formatExpiryDateForLanguage(draft.discountExpiresAt, contact.language)
         : null,
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
-    bundle,
+    bundle: await buildBundleBlockForContact(contactId, contact.language, draft.productHighlights),
     labelForUrl: await catalogNameLookup(),
   }))
     );

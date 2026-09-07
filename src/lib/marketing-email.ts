@@ -295,14 +295,6 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         linkUrl = `${getBaseUrl()}/api/r/${redirectToken}`;
       }
 
-      // SPECIAL-OFFER block — ADDITIVE. When a created, still-active bundle is
-      // attached to this send, render it as a special-offer block in the body.
-      // This touches NONE of the send safeguards above (eligibility, unsubscribe,
-      // discount minting, click-tracking) — a send may carry a discount, a
-      // bundle, both, or neither. A bundle resolution failure must never block a
-      // send, so it degrades to "no block".
-      const bundle = await buildBundleBlockForSend(sendId, claimed.productHighlights);
-
       // Render inside the design selected for this email type (admin
       // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
       // The per-send hero image (email-hero.ts) rides along for hero designs.
@@ -324,7 +316,15 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
           ? formatGermanExpiryDate(discountExpiresAt)
           : null,
         unsubscribe: unsubscribeFooter(unsubscribeUrl),
-        bundle,
+        // SPECIAL-OFFER block — ADDITIVE. When a created, still-active bundle
+        // is attached to this send, its offer block rides in the body. This
+        // touches NONE of the send safeguards above (eligibility, unsubscribe,
+        // discount minting, click-tracking) — a send may carry a discount, a
+        // bundle, both, or neither; a resolution failure degrades to "no
+        // block". Built HERE, inside withEmailDesign: the block is HTML
+        // rendered through the design's renderers, and building it before the
+        // design was active shipped the classic block inside a Performance mail.
+        bundle: await buildBundleBlockForSend(sendId, claimed.productHighlights),
         labelForUrl: await catalogNameLookup(),
       })));
 
@@ -507,11 +507,9 @@ export async function renderMarketingEmailPreview(
     .map((l) => l.product)
     .filter((p): p is Product => p != null);
 
-  const bundle = await buildBundleBlockForSend(sendId, send.productHighlights);
-
   // The preview renders inside the SAME selected design as the send path —
-  // including the per-send hero image — so what the operator reviews is what
-  // ships.
+  // including the per-send hero image and the bundle block, built inside the
+  // design context below — so what the operator reviews is what ships.
   const emailDesign = await getCachedEmailDesignForKind("marketing");
   const hero = await getEmailHeroRenderData("marketing", sendId);
   const recipientFirstName = await recipientFirstNameForSend(send.customerId);
@@ -528,7 +526,7 @@ export async function renderMarketingEmailPreview(
         ? formatGermanExpiryDate(send.discountExpiresAt)
         : null,
     unsubscribe: unsubscribeFooter(unsubscribeUrl),
-    bundle,
+    bundle: await buildBundleBlockForSend(sendId, send.productHighlights),
     labelForUrl: await catalogNameLookup(),
   })));
   return { ok: true, subject, html };
