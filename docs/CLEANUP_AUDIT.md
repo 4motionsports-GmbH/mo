@@ -144,6 +144,7 @@ in §2.6.
 | TECH-C5 | P3 | `src/lib/campaign-store.ts:1027-1075` | `stampCampaignDelivery` falls back from the provider e-mail id to "any send to this address in the last 7 days" — a bounce can stamp a different send to the same recipient. Rare (frequency cap) but possible. | Prefer the newest send, stamp at most one row in the fallback. |
 | TECH-C6 | P3 | `src/lib/admin-conversations.ts:353-470` | The 50-line WHERE clause of the Gespräche list is duplicated verbatim in the page and count queries (Neon templates are not composable); a filter fix applied to one query only would silently desynchronise list and total. | One query with `count(*) OVER ()`, or a shared CTE; add a unit test on the filter-to-SQL parameters. |
 | TECH-C7 | P3 | `src/app/api/kpi/route.ts` | The telemetry ingest writes with a raw `getSql()` in the route instead of a store function — the only route doing so. | Move the insert into `kpi-events.ts`. |
+| TECH-C8 | P2 | `src/lib/admin-overview.mjs:47`, `src/lib/marketing-store.ts:206` | The Übersicht list "Zuletzt bestätigt (DOI)" is always empty: the Neon driver returns `doi_confirmed_at` as a JS `Date`, but `recentConfirmedContacts` only accepts strings, so every target is filtered out (verified against the seeded local DB: 32 confirmed captures, list empty). | Fix in the Übersicht slice — read the list from the DB with an ISO string (D-1) and make the helper accept `Date` too. |
 
 ### 2.2 Efficiency
 
