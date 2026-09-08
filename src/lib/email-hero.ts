@@ -322,6 +322,7 @@ export async function suggestHeroPrompt(
       });
       await recordAiUsage({
         callSite: "hero_image",
+        campaignContactId: kind === "campaign" ? id : null,
         model: PROMPT_MODEL,
         inputTokens: usage?.inputTokens ?? 0,
         outputTokens: usage?.outputTokens ?? 0,
@@ -483,6 +484,7 @@ export async function generateHeroImage(
           // the image models, so the KPI shows the real cost of every hero.
           await recordAiUsage({
             callSite: "hero_image",
+        campaignContactId: kind === "campaign" ? id : null,
             model: attempt.model,
             inputTokens: res.usage?.input_tokens ?? 0,
             outputTokens: res.usage?.output_tokens ?? 0,
@@ -521,6 +523,7 @@ export async function generateHeroImage(
           const qa = await reviewHeroImage(variants.master, { productNames });
           await recordAiUsage({
             callSite: "hero_image",
+        campaignContactId: kind === "campaign" ? id : null,
             model: qa.model,
             inputTokens: qa.usage.inputTokens,
             outputTokens: qa.usage.outputTokens,

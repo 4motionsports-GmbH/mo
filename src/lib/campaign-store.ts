@@ -17,7 +17,8 @@ import { parseEmailTextMode } from "./email-text-mode.mjs";
 import { normalizeEmail } from "./email-capture-store";
 import { sendableDayRange } from "./campaign-segments.mjs";
 import { reportError } from "./observability";
-import { wasDiscountCodeRedeemed } from "./shopify-orders";
+import { loadModelPrices, usdCostForUsage, usdEurRate, usdToEur } from "./ai-pricing.mjs";
+import { fetchCodeRedemption } from "./shopify-orders";
 import { isShopifyConfigured } from "./shopify";
 import { KPI_CAMPAIGN_EMAIL_CLICKED } from "./kpi-events";
 import type { KpiRange } from "./kpi-range";
@@ -968,6 +969,21 @@ export interface RecordCampaignSendInput {
    * history cannot be reconstructed after the fact.
    */
   segment?: string | null;
+  /**
+   * Send-time snapshot of what the mail looked like (migration 0054) — the
+   * design that rendered it, whether it carried a per-contact AI hero
+   * ('ai'), a hero design's default asset ('default') or no hero ('none'),
+   * the hero image/headline, text mode, language, discount and the attached
+   * set. Stamped here because the draft row is overwritten on regenerate.
+   */
+  designKey?: string | null;
+  heroVariant?: "ai" | "default" | "none" | null;
+  heroImageUrl?: string | null;
+  heroHeadline?: string | null;
+  textMode?: string | null;
+  language?: string | null;
+  discountPercent?: number | null;
+  bundleOfferId?: number | null;
 }
 
 /** Append the immutable send record. Throws on failure (the send path treats a
@@ -981,14 +997,42 @@ export async function recordCampaignSend(
     INSERT INTO campaign_sends
       (contact_id, email, subject, body_hash, body_text, body_html, sent_via,
        discount_code, discount_code_gid, discount_expires_at, redirect_token,
-       segment, sent_at, created_at)
+       segment, design_key, hero_variant, hero_image_url, hero_headline,
+       text_mode, language, discount_percent, bundle_offer_id, sent_at, created_at)
     VALUES
       (${input.contactId}, ${normalizeEmail(input.email)}, ${input.subject},
        ${input.bodyHash}, ${input.bodyText}, ${input.bodyHtml},
        ${input.sentVia}, ${input.discountCode},
        ${input.discountCodeGid}, ${input.discountExpiresAt},
-       ${input.redirectToken ?? null}, ${input.segment ?? null}, now(), now())
+       ${input.redirectToken ?? null}, ${input.segment ?? null},
+       ${input.designKey ?? null}, ${input.heroVariant ?? null},
+       ${input.heroImageUrl ?? null}, ${input.heroHeadline ?? null},
+       ${input.textMode ?? null}, ${input.language ?? null},
+       ${input.discountPercent ?? null}, ${input.bundleOfferId ?? null},
+       now(), now())
   `;
+}
+
+/**
+ * Attribute an unsubscribe to the campaign mails that reached this address
+ * in the last 30 days (migration 0054; first event only). Fail-soft: the
+ * unsubscribe itself is already done when this runs.
+ */
+export async function markCampaignUnsubscribed(
+  email: string,
+  sql: Sql | null = getSql()
+): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`
+      UPDATE campaign_sends SET unsubscribed_at = now()
+       WHERE email = ${normalizeEmail(email)}
+         AND unsubscribed_at IS NULL
+         AND sent_at >= now() - interval '30 days'
+    `;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "markCampaignUnsubscribed" });
+  }
 }
 
 /**
@@ -1044,6 +1088,30 @@ export async function recordCampaignClick(
 // funnel's cap discipline (newest coded sends first).
 export const CAMPAIGN_KPI_MAX_CODES = 100;
 
+/** One row of a campaign breakdown (by hero variant or by segment). */
+export interface CampaignBreakdownRow {
+  /** 'ai' | 'default' | 'none' | 'unknown' for hero variants; the segment
+   * key ('ausbauen', …) or 'unbekannt' for segments. */
+  key: string;
+  sent: number;
+  trackedSends: number;
+  clicked: number;
+  clickRate: number | null;
+  /** Sends that carried a set offer, and how many of those set links were clicked. */
+  bundleSends: number;
+  bundleClicked: number;
+  /** Coded sends in the checked sample, redeemed ones, and the rate. */
+  codesChecked: number;
+  converted: number;
+  conversionRate: number | null;
+  /** Realised order revenue behind the redeemed codes, EUR (paid orders). */
+  revenueEur: number;
+  unsubscribed: number;
+  /** Hero-generation cost attributed to these sends, EUR (ai_usage rows of the
+   * contact's hero pipeline before the send). Null for segment rows. */
+  heroCostEur: number | null;
+}
+
 export interface CampaignKpis {
   /** Send records inside the window (both delivery paths). */
   sent: number;
@@ -1071,14 +1139,46 @@ export interface CampaignKpis {
   redemptionUnknown: number;
   /** True when the checked set was truncated to CAMPAIGN_KPI_MAX_CODES. */
   sampled: boolean;
+  /** Realised order revenue behind the redeemed codes in the checked sample, EUR. */
+  revenueEur: number;
+  /** Sends with a set offer / whose set link was clicked (migration 0054). */
+  bundleSends: number;
+  bundleClicked: number;
+  /** Sends whose recipient unsubscribed within 30 days (migration 0054). */
+  unsubscribed: number;
+  /** One-click ratings of campaign mails in the window (anonymous, so not
+   * attributable to a variant). */
+  ratings: { count: number; average: number | null };
+  /** The hero A/B view: the same funnel per hero variant ('ai' vs 'default'). */
+  byHeroVariant: CampaignBreakdownRow[];
+  /** The same funnel per lifecycle segment (migration 0052). */
+  bySegment: CampaignBreakdownRow[];
 }
+
+const emptyRow = (key: string, withCost: boolean): CampaignBreakdownRow => ({
+  key,
+  sent: 0,
+  trackedSends: 0,
+  clicked: 0,
+  clickRate: null,
+  bundleSends: 0,
+  bundleClicked: 0,
+  codesChecked: 0,
+  converted: 0,
+  conversionRate: null,
+  revenueEur: 0,
+  unsubscribed: 0,
+  heroCostEur: withCost ? 0 : null,
+});
 
 /**
  * Aggregate the campaign channel for the KPI tab, scoped to the picker window
- * via sent_at. Cheap DB aggregates plus the capped per-code Shopify redemption
- * check the revenue KPI already does for MK- codes — here per send so the
- * funnel (gesendet → geklickt → eingelöst) lines up. Returns null when no DB is
- * configured or on a hard failure.
+ * via sent_at: the overall funnel (gesendet → geklickt → Set geklickt →
+ * eingelöst) plus the same funnel broken down by HERO VARIANT (the A/B view
+ * that decides whether generating a hero per contact pays off) and by
+ * lifecycle SEGMENT. Cheap DB aggregates plus the capped per-code Shopify
+ * redemption check (with order totals, so revenue per variant is real money).
+ * Returns null when no DB is configured or on a hard failure.
  */
 export async function getCampaignKpis(
   range: KpiRange,
@@ -1087,21 +1187,61 @@ export async function getCampaignKpis(
   if (!sql) return null;
   const shopifyConfigured = isShopifyConfigured();
   try {
-    const [totalRows, langRows, codeRows] = await Promise.all([
-      sql`
-        SELECT
+    // The same funnel aggregate three times (overall, per hero variant, per
+    // segment) — spelled out rather than composed, because the neon tagged
+    // template is not composable and a dynamic GROUP BY must never be a
+    // string concatenation.
+    const [totalRows, variantRows, segmentRows, langRows, codeRows, costRows, ratingRows] =
+      await Promise.all([
+        sql`
+        SELECT 'all' AS key,
           count(*)::int AS sent,
           count(*) FILTER (WHERE sent_via = 'email')::int AS via_email,
           count(*) FILTER (WHERE sent_via = 'copy')::int  AS via_copy,
           count(*) FILTER (WHERE redirect_token IS NOT NULL)::int AS tracked,
           count(*) FILTER (WHERE redirect_token IS NOT NULL
-                             AND clicked_at IS NOT NULL)::int AS clicked
+                             AND clicked_at IS NOT NULL)::int AS clicked,
+          count(*) FILTER (WHERE bundle_offer_id IS NOT NULL)::int AS bundle_sends,
+          count(*) FILTER (WHERE bundle_clicked_at IS NOT NULL)::int AS bundle_clicked,
+          count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribed
           FROM campaign_sends
          WHERE sent_at >= ${range.from}::date
            AND sent_at < (${range.to}::date + 1)
       `,
-      sql`
-        SELECT COALESCE(c.language_override, c.language, 'unknown') AS lang,
+        sql`
+        SELECT COALESCE(hero_variant, 'unknown') AS key,
+          count(*)::int AS sent,
+          count(*) FILTER (WHERE sent_via = 'email')::int AS via_email,
+          count(*) FILTER (WHERE sent_via = 'copy')::int  AS via_copy,
+          count(*) FILTER (WHERE redirect_token IS NOT NULL)::int AS tracked,
+          count(*) FILTER (WHERE redirect_token IS NOT NULL
+                             AND clicked_at IS NOT NULL)::int AS clicked,
+          count(*) FILTER (WHERE bundle_offer_id IS NOT NULL)::int AS bundle_sends,
+          count(*) FILTER (WHERE bundle_clicked_at IS NOT NULL)::int AS bundle_clicked,
+          count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribed
+          FROM campaign_sends
+         WHERE sent_at >= ${range.from}::date
+           AND sent_at < (${range.to}::date + 1)
+         GROUP BY 1
+      `,
+        sql`
+        SELECT COALESCE(segment, 'unbekannt') AS key,
+          count(*)::int AS sent,
+          count(*) FILTER (WHERE sent_via = 'email')::int AS via_email,
+          count(*) FILTER (WHERE sent_via = 'copy')::int  AS via_copy,
+          count(*) FILTER (WHERE redirect_token IS NOT NULL)::int AS tracked,
+          count(*) FILTER (WHERE redirect_token IS NOT NULL
+                             AND clicked_at IS NOT NULL)::int AS clicked,
+          count(*) FILTER (WHERE bundle_offer_id IS NOT NULL)::int AS bundle_sends,
+          count(*) FILTER (WHERE bundle_clicked_at IS NOT NULL)::int AS bundle_clicked,
+          count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribed
+          FROM campaign_sends
+         WHERE sent_at >= ${range.from}::date
+           AND sent_at < (${range.to}::date + 1)
+         GROUP BY 1
+      `,
+        sql`
+        SELECT COALESCE(c.language_override, c.language, s.language, 'unknown') AS lang,
                count(*)::int AS n
           FROM campaign_sends s
           LEFT JOIN campaign_contacts c ON c.id = s.contact_id
@@ -1109,8 +1249,9 @@ export async function getCampaignKpis(
            AND s.sent_at < (${range.to}::date + 1)
          GROUP BY 1
       `,
-      sql`
-        SELECT discount_code
+        sql`
+        SELECT discount_code, COALESCE(hero_variant, 'unknown') AS variant,
+               COALESCE(segment, 'unbekannt') AS segment
           FROM campaign_sends
          WHERE discount_code IS NOT NULL
            AND sent_at >= ${range.from}::date
@@ -1118,41 +1259,128 @@ export async function getCampaignKpis(
          ORDER BY sent_at DESC, id DESC
          LIMIT ${CAMPAIGN_KPI_MAX_CODES + 1}
       `,
-    ]);
+        // Hero-generation cost per variant: every hero_image usage row of the
+        // contact written before the send (prompt draft, renders, QA passes).
+        sql`
+        SELECT COALESCE(s.hero_variant, 'unknown') AS variant, u.model,
+               sum(u.input_tokens)::bigint AS input_tokens,
+               sum(u.output_tokens)::bigint AS output_tokens
+          FROM campaign_sends s
+          JOIN ai_usage u
+            ON u.campaign_contact_id = s.contact_id
+           AND u.call_site = 'hero_image'
+           AND u.created_at <= s.sent_at
+         WHERE s.sent_at >= ${range.from}::date
+           AND s.sent_at < (${range.to}::date + 1)
+         GROUP BY 1, 2
+      `,
+        sql`
+        SELECT count(*)::int AS n, avg(rating)::float AS avg
+          FROM feedback
+         WHERE email_kind = 'campaign' AND rating IS NOT NULL
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+      `,
+      ]);
 
-    const t = (totalRows as Array<Record<string, unknown>>)[0] ?? {};
+    type Agg = {
+      key: string;
+      sent: number;
+      via_email: number;
+      via_copy: number;
+      tracked: number;
+      clicked: number;
+      bundle_sends: number;
+      bundle_clicked: number;
+      unsubscribed: number;
+    };
+    const rowFrom = (a: Agg, withCost: boolean): CampaignBreakdownRow => ({
+      ...emptyRow(a.key, withCost),
+      sent: Number(a.sent),
+      trackedSends: Number(a.tracked),
+      clicked: Number(a.clicked),
+      clickRate: Number(a.tracked) > 0 ? Number(a.clicked) / Number(a.tracked) : null,
+      bundleSends: Number(a.bundle_sends),
+      bundleClicked: Number(a.bundle_clicked),
+      unsubscribed: Number(a.unsubscribed),
+    });
+    const t = (totalRows as Agg[])[0];
+    const byVariant = new Map<string, CampaignBreakdownRow>();
+    for (const a of variantRows as Agg[]) byVariant.set(a.key, rowFrom(a, true));
+    const bySeg = new Map<string, CampaignBreakdownRow>();
+    for (const a of segmentRows as Agg[]) bySeg.set(a.key, rowFrom(a, false));
+
     const byLanguage = { de: 0, en: 0, unknown: 0 };
     for (const r of langRows as Array<{ lang: string; n: number }>) {
       const key = r.lang === "de" || r.lang === "en" ? r.lang : "unknown";
       byLanguage[key] += Number(r.n);
     }
 
-    const codeList = (codeRows as Array<{ discount_code: string }>).map((r) =>
-      String(r.discount_code)
-    );
+    // Hero cost per variant, priced with the same table as the cost KPI.
+    const prices = loadModelPrices();
+    const rate = usdEurRate();
+    for (const c of costRows as Array<{ variant: string; model: string; input_tokens: string; output_tokens: string }>) {
+      const row = byVariant.get(c.variant);
+      if (!row) continue;
+      const usd = usdCostForUsage(
+        { model: c.model, inputTokens: Number(c.input_tokens), outputTokens: Number(c.output_tokens) },
+        prices
+      );
+      row.heroCostEur = (row.heroCostEur ?? 0) + usdToEur(usd, rate);
+    }
+
+    const codeList = codeRows as Array<{ discount_code: string; variant: string; segment: string }>;
     const sampled = codeList.length > CAMPAIGN_KPI_MAX_CODES;
     const codes = codeList.slice(0, CAMPAIGN_KPI_MAX_CODES);
 
     let converted = 0;
     let redemptionUnknown = 0;
-    if (shopifyConfigured && codes.length) {
-      const results = await Promise.all(codes.map((c) => wasDiscountCodeRedeemed(c)));
-      for (const r of results) {
-        if (r === null) redemptionUnknown++;
-        else if (r) converted++;
+    let revenueEur = 0;
+    const bump = (row: CampaignBreakdownRow | undefined, redeemed: boolean, amount: number) => {
+      if (!row) return;
+      row.codesChecked++;
+      if (redeemed) {
+        row.converted++;
+        row.revenueEur += amount;
       }
+    };
+    if (shopifyConfigured && codes.length) {
+      const results = await Promise.all(codes.map((c) => fetchCodeRedemption(c.discount_code)));
+      results.forEach((r, i) => {
+        const c = codes[i];
+        if (r.status === "unknown") {
+          redemptionUnknown++;
+          return;
+        }
+        const redeemed = r.status === "redeemed";
+        const amount = redeemed && typeof r.amount === "number" ? r.amount : 0;
+        if (redeemed) {
+          converted++;
+          revenueEur += amount;
+        }
+        bump(byVariant.get(c.variant), redeemed, amount);
+        bump(bySeg.get(c.segment), redeemed, amount);
+      });
     } else {
       // Can't check — every coded send is "unknown" rather than "not converted".
       redemptionUnknown = codes.length;
     }
     const checkedKnown = codes.length - redemptionUnknown;
+    const finish = (rows: Map<string, CampaignBreakdownRow>) =>
+      [...rows.values()]
+        .map((r) => ({
+          ...r,
+          conversionRate: r.codesChecked > 0 ? r.converted / r.codesChecked : null,
+        }))
+        .sort((a, b) => b.sent - a.sent);
 
-    const trackedSends = Number(t.tracked ?? 0);
-    const clicked = Number(t.clicked ?? 0);
+    const ratingRow = (ratingRows as Array<{ n: number; avg: number | null }>)[0];
+    const trackedSends = Number(t?.tracked ?? 0);
+    const clicked = Number(t?.clicked ?? 0);
     return {
-      sent: Number(t.sent ?? 0),
-      sentViaEmail: Number(t.via_email ?? 0),
-      sentViaCopy: Number(t.via_copy ?? 0),
+      sent: Number(t?.sent ?? 0),
+      sentViaEmail: Number(t?.via_email ?? 0),
+      sentViaCopy: Number(t?.via_copy ?? 0),
       trackedSends,
       clicked,
       clickRate: trackedSends > 0 ? clicked / trackedSends : null,
@@ -1163,6 +1391,16 @@ export async function getCampaignKpis(
       codesChecked: codes.length,
       redemptionUnknown,
       sampled,
+      revenueEur,
+      bundleSends: Number(t?.bundle_sends ?? 0),
+      bundleClicked: Number(t?.bundle_clicked ?? 0),
+      unsubscribed: Number(t?.unsubscribed ?? 0),
+      ratings: {
+        count: Number(ratingRow?.n ?? 0),
+        average: ratingRow?.avg != null ? Number(ratingRow.avg) : null,
+      },
+      byHeroVariant: finish(byVariant),
+      bySegment: finish(bySeg),
     } satisfies CampaignKpis;
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "getCampaignKpis" });

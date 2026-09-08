@@ -18,6 +18,11 @@ export interface FeedbackInput {
   tier: string | null;
   email: string | null;
   page: string | null;
+  /** One-click e-mail rating 1–5 (migration 0054) — queryable, unlike the
+   * German sentence in `message`. */
+  rating?: number | null;
+  /** Which e-mail kind was rated ('campaign', 'marketing'). */
+  emailKind?: string | null;
 }
 
 export interface FeedbackRow {
@@ -44,10 +49,11 @@ export async function insertFeedback(
   if (!sql) return null;
   const rows = await sql`
     INSERT INTO feedback
-      (message, session_id, conversation_id, tier, email, page, created_at)
+      (message, session_id, conversation_id, tier, email, page, rating, email_kind, created_at)
     VALUES
       (${input.message}, ${input.sessionId}, ${input.conversationId},
-       ${input.tier}, ${input.email}, ${input.page}, now())
+       ${input.tier}, ${input.email}, ${input.page},
+       ${input.rating ?? null}, ${input.emailKind ?? null}, now())
     RETURNING id
   `;
   const id = rows[0]?.id as number | undefined;
