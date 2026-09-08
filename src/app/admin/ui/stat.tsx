@@ -3,7 +3,8 @@
 // (headline KPI card with optional delta) and Caveat (honesty note).
 
 import * as React from "react";
-import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
+import Link from "next/link";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Minus } from "lucide-react";
 import { pct } from "@/lib/admin-format.mjs";
 import { Card, CardContent } from "./card";
 import { cn } from "./cn";
@@ -52,8 +53,9 @@ export interface StatDelta {
   label?: string;
 }
 
-// Stat — a single headline KPI card: label (+ InfoTip), value, optional hint and
-// optional delta badge. `tooltip` is the legacy name for `info`.
+// Stat — a single headline KPI card: label (+ InfoTip), value, optional hint,
+// optional delta badge, optional icon. With `href` the whole card is a link
+// (arrow on hover). `tooltip` is the legacy name for `info`.
 export function Stat({
   label,
   value,
@@ -61,6 +63,8 @@ export function Stat({
   tooltip,
   info,
   delta,
+  icon,
+  href,
   size = "md",
   className,
 }: {
@@ -70,14 +74,27 @@ export function Stat({
   tooltip?: React.ReactNode;
   info?: React.ReactNode;
   delta?: StatDelta | null;
+  icon?: React.ReactNode;
+  href?: string;
   size?: "sm" | "md";
   className?: string;
 }) {
   const explanation = info ?? tooltip;
-  return (
-    <Card className={className}>
-      <CardContent className={size === "sm" ? "p-3" : "p-4"}>
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+  const card = (
+    <Card
+      className={cn(
+        "h-full",
+        href && "transition-colors group-hover:border-accent/50 group-hover:bg-accent-soft/60",
+        className
+      )}
+    >
+      <CardContent className={cn("relative", size === "sm" ? "p-3" : "p-4")}>
+        <div className={cn("flex items-center gap-1 text-xs text-muted-foreground", href && "pr-5")}>
+          {icon && (
+            <span className="mr-0.5 inline-flex shrink-0 [&_svg]:size-3.5" aria-hidden>
+              {icon}
+            </span>
+          )}
           <span className="truncate">{label}</span>
           {explanation && <InfoTip>{explanation}</InfoTip>}
         </div>
@@ -93,8 +110,23 @@ export function Stat({
           {delta && <DeltaBadge delta={delta} />}
         </div>
         {hint && <div className="mt-0.5 text-2xs text-muted-foreground/80">{hint}</div>}
+        {href && (
+          <ArrowRight
+            className="absolute right-3 top-3 size-4 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-accent"
+            aria-hidden
+          />
+        )}
       </CardContent>
     </Card>
+  );
+  if (!href) return card;
+  return (
+    <Link
+      href={href}
+      className="group block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+    >
+      {card}
+    </Link>
   );
 }
 

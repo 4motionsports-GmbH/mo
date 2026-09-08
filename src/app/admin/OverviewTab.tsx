@@ -1,154 +1,170 @@
-// OVERVIEW (Übersicht) — the default landing tab of the admin dashboard.
-// Read-only at-a-glance: headline KPI cards + a small recent-activity feed +
-// quick links that deep-link into the other tabs (pre-applying the Marketing
-// status filter where it helps). Re-skinned onto the Session-A design system and
-// reuses the KPI tab's Stat/Section cards (./ui/stat).
-//
-// EVERY number is aggregated from the EXISTING stores: the marketing targets the
-// Marketing tab already fetched (passed in, so the eligible / "not purchased"
-// numbers agree with that list and Shopify isn't re-queried), plus the same
-// kpi-store / marketing-store / ai-usage-store getters the KPI tab uses. No new
-// business logic, no new endpoints — nothing here sends or mutates.
+// ÜBERSICHT — the landing screen. Read-only: "Heute" (what needs attention,
+// each card a deep link), the headline numbers of the last 30 days and two
+// activity feeds. Every number is a database aggregate (admin-overview-store;
+// decision D-1) — opening this screen never calls Shopify.
 
-import { ArrowRight, Mail, UserCheck } from "lucide-react";
-import { getCoreMetrics } from "@/lib/kpi-store";
-import { getAiCostMetrics } from "@/lib/ai-usage-store";
-import { getMarketingActivity, type MarketingTarget } from "@/lib/marketing-store";
-import { resolveKpiRange } from "@/lib/kpi-range";
-import {
-  summarizeMarketingTargets,
-  recentConfirmedContacts,
-} from "@/lib/admin-overview.mjs";
-import { Card, CardContent, Section, Stat, Callout } from "./ui";
-import {
-  ADMIN_DATE,
-  formatAdmin,
-} from "@/lib/admin-datetime.mjs";
-import { eur, num } from "@/lib/admin-format.mjs";
+import Link from "next/link";
+import { BookOpen, Inbox, Mail, Send, Sparkles, UserCheck } from "lucide-react";
+import { getOverviewSnapshot } from "@/lib/admin-overview-store";
+import { mergeRecentSends, todayItems } from "@/lib/admin-overview.mjs";
+import { adminTabHref } from "@/lib/admin-tabs.mjs";
+import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { eur, num, plural } from "@/lib/admin-format.mjs";
+import { Callout, Card, CardContent, EmptyState, Section, Stat, StatusBadge } from "./ui";
 
 const RECENT_LIMIT = 5;
 const WINDOW_DAYS = 30;
 
-function dateLabel(iso: string | null): string {
-  return formatAdmin(iso, ADMIN_DATE);
-}
+const TODAY_ICONS: Record<string, React.ReactNode> = {
+  kampagne: <Send />,
+  posteingang: <Inbox />,
+  wissen: <BookOpen />,
+  analysen: <Sparkles />,
+};
 
-export async function OverviewTab({
-  dbReady,
-  targets,
-}: {
-  dbReady: boolean;
-  targets: MarketingTarget[];
-}) {
-  if (!dbReady) {
+export async function OverviewTab({ dbReady }: { dbReady: boolean }) {
+  const snapshot = dbReady
+    ? await getOverviewSnapshot({ windowDays: WINDOW_DAYS, limit: RECENT_LIMIT })
+    : null;
+
+  if (!snapshot) {
     return (
-      <Callout tone="warning" className="mb-4">
-        Keine Datenbank konfiguriert (DATABASE_URL) — die Übersicht kann nicht
-        berechnet werden.
+      <Callout tone="warning">
+        Keine Datenbank konfiguriert (DATABASE_URL) — die Übersicht kann nicht berechnet werden.
       </Callout>
     );
   }
 
-  // Aggregation only — the heavy marketing/Shopify fetch (listMarketingTargets)
-  // already ran once at the page level and is handed in via `targets`. The
-  // overview is a fixed trailing-30d snapshot (the date picker lives on the KPI
-  // tab); AI cost stays all-time here.
-  const [core, aiCost, activity] = await Promise.all([
-    getCoreMetrics(resolveKpiRange({ kpiRange: `${WINDOW_DAYS}d` })),
-    getAiCostMetrics(),
-    getMarketingActivity({ windowDays: WINDOW_DAYS, limit: RECENT_LIMIT }),
-  ]);
-
-  const marketing = summarizeMarketingTargets(targets);
-  const recentContacts = recentConfirmedContacts(targets, RECENT_LIMIT);
-  const recentSends = activity?.recentSends ?? [];
+  const { core, aiCost, marketing, campaignActivity, marketingActivity } = snapshot;
+  const today = todayItems({
+    campaign: snapshot.campaignCounts,
+    unmatchedInbound: snapshot.unmatchedInbound,
+    qaOpen: snapshot.qaCounts.open,
+    runningReports: snapshot.running.reports,
+    runningImprovementRuns: snapshot.running.improvementRuns,
+  });
+  const chatsInWindow = core ? core.chatsByDay.reduce((sum, d) => sum + d.count, 0) : null;
+  const marketingSent = marketingActivity?.sentInWindow ?? 0;
+  const sentInWindow = campaignActivity.sentInWindow + marketingSent;
+  const recentSends = mergeRecentSends(
+    campaignActivity.recentSends,
+    (marketingActivity?.recentSends ?? []).map((s) => ({ ...s, source: "marketing" as const })),
+    RECENT_LIMIT
+  );
   const consultationCount = aiCost?.consultationCount ?? 0;
-  const hasCost = consultationCount > 0;
 
   return (
-    <div className="flex flex-col gap-10">
+    <div className="flex flex-col gap-8">
       <Section
-        title="Überblick"
-        subtitle="Aggregierte Kennzahlen aus den bestehenden Datenquellen — schreibgeschützt, nur Lesen."
+        title="Heute"
+        info="Was jetzt Aufmerksamkeit braucht. Jede Karte führt direkt in den Bereich, in dem die Arbeit passiert."
       >
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <Stat label="Chats gesamt" value={core ? num(core.totalChats) : "—"} />
-          <Stat
-            label="Marketing-Kontakte"
-            value={num(marketing.eligible)}
-            hint="bestätigt (DOI), aktiv"
-          />
-          <Stat
-            label="Beraten, nicht gekauft"
-            value={num(marketing.notPurchased)}
-            hint="wichtigste Zielgruppe"
-          />
-          <Stat
-            label={`Gesendet (${WINDOW_DAYS} T.)`}
-            value={activity ? num(activity.sentInWindow) : "—"}
-            hint="Marketing-E-Mails"
-          />
-          <Stat
-            label="Ø Kosten / Beratung"
-            value={hasCost ? eur(aiCost?.avgCostPerConsultationEur ?? 0, 4) : "—"}
-            hint={hasCost ? `${num(consultationCount)} Beratungen` : "noch keine Daten"}
-          />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {today.map((item) => (
+            <Stat
+              key={item.key}
+              href={item.href}
+              icon={TODAY_ICONS[item.key]}
+              label={item.label}
+              value={
+                <span className={item.attention ? "text-foreground" : "text-muted-foreground"}>
+                  {num(item.value)}
+                </span>
+              }
+              hint={item.hint}
+            />
+          ))}
         </div>
       </Section>
 
       <Section
-        title="Schnellzugriff"
-        subtitle="Direkt in die anderen Tabs springen — die Kunden-Links öffnen die Liste bereits gefiltert."
+        title={`Letzte ${WINDOW_DAYS} Tage`}
+        info={`Feste ${WINDOW_DAYS}-Tage-Sicht ab heute (Europe/Berlin). Einen anderen Zeitraum und alle Details gibt es unter KPIs. Die Kosten pro Beratung sind ein Durchschnitt über den gesamten Aufzeichnungszeitraum.`}
+        actions={
+          <Link
+            href={adminTabHref("kpi")}
+            className="text-xs font-medium text-accent underline-offset-4 hover:underline"
+          >
+            KPIs öffnen
+          </Link>
+        }
       >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <QuickLink
-            href="/admin?tab=kunden&filter=no_purchase"
-            title={`${num(marketing.notPurchased)} beraten, nicht gekauft`}
-            desc="Öffnet die Kundenliste, gefiltert auf „bestätigt + nicht gekauft“."
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <Stat
+            label="Beratungen"
+            value={chatsInWindow === null ? "—" : num(chatsInWindow)}
+            hint={core ? `gesamt ${num(core.totalChats)}` : undefined}
+            info="Neue Chats mit mindestens einer Nachricht im Zeitraum; „gesamt“ zählt seit Beginn der Aufzeichnung."
           />
-          <QuickLink
-            href="/admin?tab=kunden&filter=marketing"
-            title={`${num(marketing.eligible)} Marketing-Kontakte`}
-            desc="Alle bestätigten (DOI) Kontakte in der Kundenliste."
+          <Stat
+            label="E-Mails gesendet"
+            value={num(sentInWindow)}
+            hint={`Kampagne ${num(campaignActivity.sentInWindow)} · Marketing ${num(marketingSent)}`}
+            info="Kampagnen-E-Mails an Shopify-Abonnent:innen plus persönliche Marketing-E-Mails aus dem Kundenbereich."
           />
-          <QuickLink
-            href="/admin?tab=kunden"
-            title="Alle Kunden ansehen"
-            desc="Profile, Sessions, Käufe & Marketing — gruppiert nach Person."
+          <Stat
+            label="Marketing-Kontakte"
+            value={num(marketing.eligible)}
+            hint="bestätigt (DOI) · Liste öffnen"
+            href={adminTabHref("kunden", { filter: "marketing" })}
+            info="Kunden mit bestätigter Marketing-Einwilligung (Double-Opt-in). Der Link öffnet die Kundenliste mit diesem Filter."
           />
-          <QuickLink
-            href="/admin?tab=kpi"
-            title="KPIs ansehen"
-            desc="Analytics, Marketing-Funnel & KI-Kosten."
+          <Stat
+            label="Beraten, nicht gekauft"
+            value={num(marketing.notPurchased)}
+            hint="wichtigste Zielgruppe · Liste öffnen"
+            href={adminTabHref("kunden", { filter: "no_purchase" })}
+            info={
+              <>
+                Marketing-Kontakte, deren zwischengespeicherte Shopify-Kaufhistorie (täglich
+                aktualisiert) keine Bestellung enthält.{" "}
+                {marketing.unknown > 0
+                  ? `${plural(marketing.unknown, "Kontakt", "Kontakte")} ohne geladene Kaufhistorie ${
+                      marketing.unknown === 1 ? "ist" : "sind"
+                    } nicht mitgezählt.`
+                  : "Alle Kontakte haben eine geladene Kaufhistorie."}
+              </>
+            }
+          />
+          <Stat
+            label="Ø Kosten / Beratung"
+            value={consultationCount > 0 ? eur(aiCost?.avgCostPerConsultationEur ?? 0, 4) : "—"}
+            hint={
+              consultationCount > 0
+                ? `${plural(consultationCount, "Beratung", "Beratungen")} · gesamt`
+                : "noch keine Daten"
+            }
+            info="Mittlere KI-Kosten eines Chats (alle Modellaufrufe der Beratung), über den gesamten Aufzeichnungszeitraum."
           />
         </div>
       </Section>
 
       <Section
         title="Letzte Aktivität"
-        subtitle="Die jüngsten Versände und bestätigten Kontakte aus den bestehenden Daten."
+        info="Die jüngsten Versände (Kampagne und Marketing) und die zuletzt bestätigten Marketing-Einwilligungen."
       >
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <ActivityCard
             icon={<Mail className="size-4 text-muted-foreground" />}
             title="Zuletzt gesendet"
-            empty="Noch keine Marketing-E-Mails versendet."
+            empty="Noch keine E-Mails versendet."
             items={recentSends.map((s) => ({
-              key: `send-${s.id}`,
+              key: `${s.source}-${s.id}`,
               primary: s.email,
               secondary: s.subject ?? "(ohne Betreff)",
-              meta: dateLabel(s.sentAt),
+              badge: s.source === "campaign" ? "Kampagne" : "Marketing",
+              meta: formatAdmin(s.sentAt, ADMIN_DATE),
             }))}
           />
           <ActivityCard
             icon={<UserCheck className="size-4 text-muted-foreground" />}
             title="Zuletzt bestätigt (DOI)"
             empty="Noch keine bestätigten Kontakte."
-            items={recentContacts.map((c) => ({
+            items={snapshot.recentConfirmed.map((c) => ({
               key: `contact-${c.email}`,
               primary: c.email,
               secondary: "Marketing-Einwilligung bestätigt",
-              meta: dateLabel(c.confirmedAt),
+              meta: formatAdmin(c.confirmedAt, ADMIN_DATE),
             }))}
           />
         </div>
@@ -157,30 +173,12 @@ export async function OverviewTab({
   );
 }
 
-// A quick link is a deep link (full navigation) into another tab — re-running the
-// server re-seeds the active tab from ?tab= and the Marketing filter from
-// ?status=, so the operator lands exactly where the card promised. App Router has
-// no pages/ dir, so a plain <a> is the right primitive here.
-function QuickLink({ href, title, desc }: { href: string; title: string; desc: string }) {
-  return (
-    <a
-      href={href}
-      className="group flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-sm transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-    >
-      <span>
-        <span className="block text-sm font-semibold text-foreground">{title}</span>
-        <span className="mt-0.5 block text-xs text-muted-foreground">{desc}</span>
-      </span>
-      <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-    </a>
-  );
-}
-
 interface ActivityItem {
   key: string;
   primary: string;
   secondary: string;
   meta: string;
+  badge?: string;
 }
 
 function ActivityCard({
@@ -202,18 +200,25 @@ function ActivityCard({
           <h3 className="text-sm font-semibold text-foreground">{title}</h3>
         </div>
         {items.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{empty}</p>
+          <EmptyState compact plain title={empty} />
         ) : (
           <ul className="divide-y divide-border/60">
             {items.map((it) => (
-              <li key={it.key} className="flex items-baseline justify-between gap-3 py-2">
+              <li key={it.key} className="flex items-center justify-between gap-3 py-2">
                 <span className="min-w-0">
                   <span className="block truncate text-sm text-foreground">{it.primary}</span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {it.secondary}
                   </span>
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">{it.meta}</span>
+                <span className="flex shrink-0 items-center gap-2">
+                  {it.badge && (
+                    <StatusBadge tone={it.badge === "Kampagne" ? "accent" : "neutral"} dot={false}>
+                      {it.badge}
+                    </StatusBadge>
+                  )}
+                  <span className="text-xs tabular-nums text-muted-foreground">{it.meta}</span>
+                </span>
               </li>
             ))}
           </ul>
@@ -222,4 +227,3 @@ function ActivityCard({
     </Card>
   );
 }
-

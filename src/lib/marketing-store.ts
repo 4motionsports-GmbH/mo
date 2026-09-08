@@ -13,17 +13,11 @@
 import { getSql, type Sql } from "./db";
 import { parseEmailTextMode } from "./email-text-mode.mjs";
 import { normalizeEmail } from "./email-capture-store";
-import { loadConversationForSummary, type TranscriptMessage } from "./conversation-store";
-import { getProductsByIds } from "./product-catalog";
-import { chooseCartProductIds } from "./cart";
+import { ADMIN_TIME_ZONE } from "./admin-datetime.mjs";
 import {
-  checkRecentPurchase,
   wasDiscountCodeRedeemed,
-  type PurchaseCheck,
 } from "./shopify-orders";
 import { isShopifyConfigured } from "./shopify";
-import { ARCHETYPE_META } from "./persona";
-import type { PersonaArchetype } from "./types";
 import { reportError } from "./observability";
 
 export type MarketingSendStatus = "draft" | "approved" | "sent";
@@ -67,34 +61,10 @@ export interface MarketingSendRow {
   updatedAt: string | null;
 }
 
-export interface MarketingTarget {
-  captureId: number;
-  email: string;
-  sessionId: string | null;
-  confirmedAt: string | null;
-  personaLabel: string | null;
-  /** Human-readable persona label (German), derived from the archetype id. */
-  personaDisplay: string | null;
-  productIds: string[];
-  products: Array<{ id: string; name: string }>;
-  /** Readable conversation turns (tool bookkeeping rows dropped). */
-  transcript: TranscriptMessage[];
-  /** "Chatted but not purchased" signal — see shopify-orders.checkRecentPurchase. */
-  purchase: PurchaseCheck;
-  /** The latest marketing_sends row for this capture, if any. */
-  latestSend: MarketingSendRow | null;
-}
-
 export interface EligibleCapture {
   id: number;
   email: string;
   sessionId: string | null;
-}
-
-function personaDisplayLabel(label: string | null): string | null {
-  if (!label) return null;
-  const meta = ARCHETYPE_META[label as PersonaArchetype];
-  return meta ? meta.label : label;
 }
 
 /** Defensive jsonb → highlights mapping (accepts parsed arrays or JSON text;
@@ -141,100 +111,6 @@ function mapSendRow(r: Record<string, unknown>): MarketingSendRow {
     createdAt: (r.created_at as string | null) ?? null,
     updatedAt: (r.updated_at as string | null) ?? null,
   };
-}
-
-/**
- * List every marketing-eligible contact for the dashboard, enriched with their
- * conversation transcript/persona/products, the "chatted but not purchased"
- * flag, and any existing draft/sent row. Returns [] when no DB is configured.
- */
-export async function listMarketingTargets(
-  sql: Sql | null = getSql()
-): Promise<MarketingTarget[]> {
-  if (!sql) return [];
-
-  let captureRows: Array<Record<string, unknown>>;
-  try {
-    captureRows = (await sql`
-      SELECT ec.id, ec.email, ec.session_id, ec.doi_confirmed_at
-        FROM email_captures ec
-       WHERE ec.marketing_doi_status = 'confirmed'
-         AND ec.unsubscribed_at IS NULL
-         AND NOT EXISTS (
-               SELECT 1 FROM suppression_list s WHERE s.email = ec.email
-             )
-       ORDER BY ec.doi_confirmed_at DESC NULLS LAST, ec.id DESC
-       LIMIT 200
-    `) as Array<Record<string, unknown>>;
-  } catch (err) {
-    reportError(err, { route: "lib/marketing-store", phase: "listCaptures" });
-    return [];
-  }
-
-  // Build each target concurrently. Conversation load + latest send are DB
-  // reads; the purchase check hits Shopify. All degrade gracefully.
-  return Promise.all(
-    captureRows.map(async (row) => {
-      const captureId = Number(row.id);
-      const email = String(row.email);
-      const sessionId = (row.session_id as string | null) ?? null;
-
-      const [conversation, latestSend, purchase] = await Promise.all([
-        sessionId ? loadConversationForSummary(sessionId) : Promise.resolve(null),
-        getLatestSendForCapture(captureId, sql),
-        checkRecentPurchase(email),
-      ]);
-
-      // Same chooser the draft/send path uses, so the dashboard previews the
-      // exact product set a marketing email for this contact would carry.
-      const productIds = chooseCartProductIds(conversation);
-      const products = productIds.length
-        ? (await getProductsByIds(productIds)).map((p) => ({ id: p.id, name: p.name }))
-        : [];
-      const transcript = (conversation?.messages ?? []).filter(
-        (m) =>
-          m.toolName === null &&
-          (m.role === "user" || m.role === "assistant") &&
-          m.content.trim()
-      );
-      const personaLabel = conversation?.personaLabel ?? null;
-
-      return {
-        captureId,
-        email,
-        sessionId,
-        confirmedAt: (row.doi_confirmed_at as string | null) ?? null,
-        personaLabel,
-        personaDisplay: personaDisplayLabel(personaLabel),
-        productIds,
-        products,
-        transcript,
-        purchase,
-        latestSend,
-      } satisfies MarketingTarget;
-    })
-  );
-}
-
-/** The most recent marketing_sends row for a capture, or null. */
-export async function getLatestSendForCapture(
-  captureId: number,
-  sql: Sql | null = getSql()
-): Promise<MarketingSendRow | null> {
-  if (!sql) return null;
-  try {
-    const rows = (await sql`
-      SELECT *
-        FROM marketing_sends
-       WHERE email_capture_id = ${captureId}
-       ORDER BY (status = 'sent') ASC, created_at DESC, id DESC
-       LIMIT 1
-    `) as Array<Record<string, unknown>>;
-    return rows[0] ? mapSendRow(rows[0]) : null;
-  } catch (err) {
-    reportError(err, { route: "lib/marketing-store", phase: "getLatestSendForCapture" });
-    return null;
-  }
 }
 
 /** Load a marketing_sends row by id. */
@@ -434,11 +310,13 @@ export async function getMarketingActivity(
          ORDER BY ms.sent_at DESC NULLS LAST, ms.id DESC
          LIMIT ${cap}
       `,
+      // Window starts at local (store timezone) midnight, `days` days ago.
       sql`
         SELECT count(*)::int AS n
           FROM marketing_sends
          WHERE status = 'sent'
-           AND sent_at >= (current_date - ${days - 1}::int)::date
+           AND sent_at >= (((now() AT TIME ZONE ${ADMIN_TIME_ZONE})::date - ${days - 1}::int)::timestamp
+                           AT TIME ZONE ${ADMIN_TIME_ZONE})
       `,
     ])) as [Array<Record<string, unknown>>, Array<{ n: number }>];
 

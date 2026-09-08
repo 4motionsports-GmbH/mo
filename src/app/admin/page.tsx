@@ -13,7 +13,6 @@ import { redirect } from "next/navigation";
 import { ADMIN_COOKIE_NAME } from "@/lib/admin-auth";
 import { parseAdminTab, type AdminTabKey } from "@/lib/admin-tabs.mjs";
 import { isDbConfigured } from "@/lib/db";
-import { listMarketingTargets, type MarketingTarget } from "@/lib/marketing-store";
 import { getCampaignCounts } from "@/lib/campaign-store";
 import { getQaCounts } from "@/lib/qa-store";
 import { countUnmatchedInbound } from "@/lib/email-messages-store";
@@ -66,12 +65,8 @@ async function loadBadges(dbReady: boolean): Promise<AdminBadges> {
 
 async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean) {
   switch (tab) {
-    case "overview": {
-      // The marketing targets back the Overview headline KPIs / "not purchased"
-      // count — a Shopify-touching list, fetched only for this screen.
-      const targets: MarketingTarget[] = dbReady ? await listMarketingTargets() : [];
-      return <OverviewTab dbReady={dbReady} targets={targets} />;
-    }
+    case "overview":
+      return <OverviewTab dbReady={dbReady} />;
     case "kunden": {
       // Overview deep-links seed a Kunden filter preset via ?filter= (e.g.
       // "no_purchase", "marketing"); accept the legacy ?status= as a fallback.

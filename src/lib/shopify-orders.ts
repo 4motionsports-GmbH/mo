@@ -34,71 +34,8 @@ function isCompletedPurchaseStatus(financialStatus: string | null | undefined): 
   return COMPLETED_PURCHASE_STATUSES.has(financialStatus.trim().toUpperCase());
 }
 
-const ORDERS_BY_EMAIL = /* GraphQL */ `
-  query MarketingOrdersByEmail($query: String!) {
-    orders(first: 5, query: $query, sortKey: CREATED_AT, reverse: true) {
-      nodes {
-        id
-        name
-        createdAt
-        displayFinancialStatus
-      }
-    }
-  }
-`;
-
-interface OrdersResponse {
-  orders: {
-    nodes: Array<{
-      id: string;
-      name: string;
-      createdAt: string;
-      displayFinancialStatus: string | null;
-    }>;
-  };
-}
-
 function orderLookbackDays(): number {
   return parseIntEnv("MARKETING_ORDER_LOOKBACK_DAYS", 180);
-}
-
-export type PurchaseCheck =
-  | { status: "purchased"; orderCount: number; latestOrderName: string | null }
-  | { status: "no_purchase" }
-  // Shopify not configured or the query failed — we don't know, so we DON'T
-  // flag (the flag is a positive marketing signal; "unknown" must not masquerade
-  // as "not purchased").
-  | { status: "unknown" };
-
-/**
- * Look for an order placed by `email` within the lookback window. Returns
- * `no_purchase` (→ the "chatted but not purchased" marketing flag) only when the
- * query succeeds and finds nothing; any error/misconfiguration is `unknown`.
- * Never throws.
- */
-export async function checkRecentPurchase(email: string): Promise<PurchaseCheck> {
-  if (!isShopifyConfigured()) return { status: "unknown" };
-  const e = normalizeEmail(email);
-  if (!e) return { status: "unknown" };
-
-  const since = new Date(Date.now() - orderLookbackDays() * 86_400_000)
-    .toISOString();
-  // Quote the email (tokenized field → exact phrase match); AND the date range.
-  const query = `email:"${e}" created_at:>=${since}`;
-
-  try {
-    const data = await adminGraphql<OrdersResponse>(ORDERS_BY_EMAIL, { query });
-    const nodes = data.orders?.nodes ?? [];
-    if (nodes.length === 0) return { status: "no_purchase" };
-    return {
-      status: "purchased",
-      orderCount: nodes.length,
-      latestOrderName: nodes[0]?.name ?? null,
-    };
-  } catch (err) {
-    reportError(err, { route: "lib/shopify-orders", phase: "checkRecentPurchase" });
-    return { status: "unknown" };
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +115,7 @@ export async function fetchAdminCustomerById(
 // Purchased line items — backs the "recommendation → purchase" KPI loop.
 // ---------------------------------------------------------------------------
 //
-// Same query shape and protected-customer-data caveats as checkRecentPurchase,
+// Orders-by-email query (protected customer data — see the Shopify scope notes),
 // but pulls the line items so we can compare what was BOUGHT to what was
 // RECOMMENDED in the chat. We read only the handle/title needed to match against
 // the catalog and never persist the order email.
