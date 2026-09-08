@@ -11,14 +11,15 @@ import { listDirectives } from "@/lib/directives-store";
 import { buildMoSelfSnapshot } from "@/lib/mo-self-snapshot";
 import { MAX_ACTIVE_DIRECTIVES, MAX_DIRECTIVE_CHARS } from "@/lib/improvement-core.mjs";
 import { VerbesserungWorkspace } from "./verbesserung/VerbesserungWorkspace";
+import { Callout } from "./ui";
 
 export async function VerbesserungTab({ dbReady }: { dbReady: boolean }) {
   if (!dbReady) {
     return (
-      <div className="mb-4 rounded-lg border border-warning/30 bg-warning/10 px-3.5 py-3 text-sm text-warning">
+      <Callout tone="warning" className="mb-4">
         Keine Datenbank konfiguriert (DATABASE_URL) — der Verbesserungs-Loop benötigt die
         gespeicherten Analysen und Anweisungen.
-      </div>
+      </Callout>
     );
   }
 

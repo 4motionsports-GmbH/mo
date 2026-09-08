@@ -431,6 +431,23 @@ export interface UnmatchedInboundMessage {
   occurredAt: string | null;
 }
 
+/** Number of unassigned received messages — the Kunden "Posteingang" badge. */
+export async function countUnmatchedInbound(sql: Sql | null = getSql()): Promise<number> {
+  if (!sql) return 0;
+  try {
+    const rows = (await sql`
+      SELECT count(*)::int AS n
+        FROM email_messages
+       WHERE customer_id IS NULL
+         AND direction = 'received'
+    `) as Array<{ n: number }>;
+    return Number(rows[0]?.n ?? 0);
+  } catch (err) {
+    reportError(err, { route: "lib/email-messages-store", phase: "countUnmatchedInbound" });
+    return 0;
+  }
+}
+
 /**
  * The ONLY global view (§5): received messages from an unknown address
  * (customer_id IS NULL), newest first, so an admin can triage and assign them.

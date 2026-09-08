@@ -12,14 +12,15 @@ import {
   countScanCandidates,
 } from "@/lib/qa-store";
 import { WissenWorkspace } from "./WissenWorkspace";
+import { Callout } from "./ui";
 
 export async function WissenTab({ dbReady }: { dbReady: boolean }) {
   if (!dbReady) {
     return (
-      <div className="mb-4 rounded-lg border border-warning/30 bg-warning/10 px-3.5 py-3 text-sm text-warning">
+      <Callout tone="warning" className="mb-4">
         Keine Datenbank konfiguriert (DATABASE_URL) — die Wissens-Warteschlange
         kann nicht geladen werden.
-      </div>
+      </Callout>
     );
   }
 

@@ -7,14 +7,15 @@
 import { listAnalyticsReports } from "@/lib/analytics-report-store";
 import { AnalyseWorkspace } from "./analytics/AnalyseWorkspace";
 import type { SidebarReport } from "./analytics/ReportSidebar";
+import { Callout } from "./ui";
 
 export async function AnalyseTab({ dbReady }: { dbReady: boolean }) {
   if (!dbReady) {
     return (
-      <div className="mb-4 rounded-lg border border-warning/30 bg-warning/10 px-3.5 py-3 text-sm text-warning">
+      <Callout tone="warning" className="mb-4">
         Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Analysen erstellt oder
         gespeichert werden.
-      </div>
+      </Callout>
     );
   }
 

@@ -1,46 +1,25 @@
 // /admin — the back-office dashboard. Auth is enforced by the proxy; this page
 // is only ever reached with a valid admin session.
 //
-// Structure: data for each tab is fetched + rendered on the SERVER (the
-// KundenTab / KpiTab / … bodies below) and handed to the client AdminShell, which
-// owns the active-tab state, the theme toggle and the Toaster. The initial tab is
-// seeded from ?tab= so deep links / refresh land on the right tab, and the shell
-// keeps the query param in sync as you switch.
-//
-//   - ÜBERSICHT (default): aggregate KPIs + quick links (OverviewTab).
-//   - KUNDEN: the merged customer + marketing workspace — a compact, searchable,
-//     filterable customer list with a per-customer sub-tabbed detail (profile,
-//     sessions, purchases, MARKETING e-mail, correspondence, letter) and a
-//     bulk-draft action (KundenWorkspace + CustomerProfileCard). The old separate
-//     "Marketing" tab is folded in here as a filter preset + per-customer section.
-//   - KPIs: aggregate analytics + recommendation→purchase loop (KpiTab).
+// Rendering model: exactly ONE screen is fetched + rendered on the SERVER per
+// request — the one selected by ?tab= (see src/lib/admin-tabs.mjs for the
+// registry and the URL contract). Switching screens is a soft navigation via
+// the sidebar (AdminShell), so a screen never pays for another screen's data.
+// Screen-specific URL state (Kunden filter preset, KPI range, Gespräche filter)
+// is parsed here and handed to the screen.
 
 import { cookies } from "next/headers";
-import { after } from "next/server";
 import { redirect } from "next/navigation";
-import { autoCaptureMissingAddresses } from "@/lib/address-capture";
 import { ADMIN_COOKIE_NAME } from "@/lib/admin-auth";
+import { parseAdminTab, type AdminTabKey } from "@/lib/admin-tabs.mjs";
 import { isDbConfigured } from "@/lib/db";
-import {
-  listMarketingTargets,
-  getLatestSendForEmail,
-  type MarketingTarget,
-} from "@/lib/marketing-store";
-import { listCustomersWithSessions } from "@/lib/customer-store";
-import {
-  listCustomerMessages,
-  listUnmatchedInbound,
-} from "@/lib/email-messages-store";
-import { listCustomerLetters } from "@/lib/physical-letters-store";
-import { physicalEligibilityForCustomer } from "@/lib/physical-mail";
-import { listBundleOffersWithSignalsForCustomer } from "@/lib/bundle-offers-store";
-import { buildBundleRedirectUrl } from "@/lib/bundle-offers";
-import { ARCHETYPE_META } from "@/lib/persona";
+import { listMarketingTargets, type MarketingTarget } from "@/lib/marketing-store";
+import { getCampaignCounts } from "@/lib/campaign-store";
+import { getQaCounts } from "@/lib/qa-store";
+import { countUnmatchedInbound } from "@/lib/email-messages-store";
 import { resolveKpiRange } from "@/lib/kpi-range";
 import { parseAdminConversationFilter } from "@/lib/admin-conversations";
-import type { PersonaArchetype } from "@/lib/types";
-import type { CustomerProps } from "./CustomerProfileCard";
-import { KundenWorkspace } from "./KundenWorkspace";
+import { KundenTab } from "./KundenTab";
 import { KpiTab } from "./KpiTab";
 import { FeedbackTab } from "./FeedbackTab";
 import { GespraecheTab } from "./GespraecheTab";
@@ -50,9 +29,8 @@ import { AnalyseTab } from "./AnalyseTab";
 import { VerbesserungTab } from "./VerbesserungTab";
 import { KampagneTab } from "./KampagneTab";
 import { EinstellungenTab } from "./EinstellungenTab";
-import { AdminShell, type AdminTab } from "./AdminShell";
+import { AdminShell, type AdminBadges } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
-import { Callout } from "./ui";
 
 export const dynamic = "force-dynamic";
 
@@ -63,245 +41,106 @@ async function logoutAction(): Promise<void> {
   redirect("/admin/login");
 }
 
+type SearchParams = { [key: string]: string | string[] | undefined };
+
+const firstParam = (v: string | string[] | undefined): string | undefined =>
+  Array.isArray(v) ? v[0] : v;
+
+/**
+ * Navigation counts (queue sizes) shown next to the screen names. Three cheap
+ * COUNT queries, all fail-soft — a missing count never breaks the page.
+ */
+async function loadBadges(dbReady: boolean): Promise<AdminBadges> {
+  if (!dbReady) return {};
+  const [campaign, qa, unmatched] = await Promise.all([
+    getCampaignCounts(),
+    getQaCounts(),
+    countUnmatchedInbound(),
+  ]);
+  return {
+    kampagne: campaign?.drafted ?? 0,
+    wissen: qa.open,
+    kunden: unmatched,
+  };
+}
+
+async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean) {
+  switch (tab) {
+    case "overview": {
+      // The marketing targets back the Overview headline KPIs / "not purchased"
+      // count — a Shopify-touching list, fetched only for this screen.
+      const targets: MarketingTarget[] = dbReady ? await listMarketingTargets() : [];
+      return <OverviewTab dbReady={dbReady} targets={targets} />;
+    }
+    case "kunden": {
+      // Overview deep-links seed a Kunden filter preset via ?filter= (e.g.
+      // "no_purchase", "marketing"); accept the legacy ?status= as a fallback.
+      const initialFilter = firstParam(sp.filter) ?? firstParam(sp.status);
+      return <KundenTab dbReady={dbReady} initialFilter={initialFilter} />;
+    }
+    case "kampagne":
+      return <KampagneTab dbReady={dbReady} />;
+    case "kpi": {
+      // KPI date-range picker state lives in the URL so a refresh / copied link
+      // keeps the window; resolveKpiRange validates + clamps it.
+      const range = resolveKpiRange({
+        kpiRange: firstParam(sp.kpiRange),
+        kpiFrom: firstParam(sp.kpiFrom),
+        kpiTo: firstParam(sp.kpiTo),
+      });
+      return <KpiTab dbReady={dbReady} range={range} />;
+    }
+    case "feedback":
+      return <FeedbackTab dbReady={dbReady} />;
+    case "gespraeche": {
+      // Conversation inspector filter — date range / tier / has-error / page all
+      // live in the URL (g*) so a refresh / copied link keeps the view.
+      const filter = parseAdminConversationFilter({
+        grange: firstParam(sp.grange),
+        gfrom: firstParam(sp.gfrom),
+        gto: firstParam(sp.gto),
+        gtier: firstParam(sp.gtier),
+        gerr: firstParam(sp.gerr),
+        gcat: firstParam(sp.gcat),
+        gqual: firstParam(sp.gqual),
+        gq: firstParam(sp.gq),
+        gpage: firstParam(sp.gpage),
+      });
+      return <GespraecheTab dbReady={dbReady} filter={filter} />;
+    }
+    case "wissen":
+      return <WissenTab dbReady={dbReady} />;
+    case "analyse":
+      return <AnalyseTab dbReady={dbReady} />;
+    case "verbesserung":
+      return <VerbesserungTab dbReady={dbReady} />;
+    case "einstellungen":
+      return <EinstellungenTab dbReady={dbReady} />;
+  }
+}
+
 export default async function AdminDashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+  searchParams: Promise<SearchParams>;
 }) {
   const sp = await searchParams;
-  // Übersicht is the default landing tab; the others stay reachable via ?tab=.
-  // The old "customers" (Marketing) tab is merged into "kunden" — keep its links
-  // working by folding it in.
-  const initialTab: AdminTab =
-    sp?.tab === "kpi"
-      ? "kpi"
-      : sp?.tab === "feedback"
-        ? "feedback"
-        : sp?.tab === "gespraeche"
-          ? "gespraeche"
-          : sp?.tab === "wissen"
-            ? "wissen"
-            : sp?.tab === "analyse"
-              ? "analyse"
-            : sp?.tab === "verbesserung"
-              ? "verbesserung"
-            : sp?.tab === "einstellungen"
-              ? "einstellungen"
-            : sp?.tab === "kampagne"
-              ? "kampagne"
-              : sp?.tab === "kunden" || sp?.tab === "customers"
-                ? "kunden"
-                : "overview";
-  // Overview deep-links seed a Kunden filter preset via ?filter= (e.g.
-  // "no_purchase", "marketing"); accept the legacy ?status= as a fallback.
-  const initialFilter =
-    (typeof sp?.filter === "string" ? sp.filter : undefined) ??
-    (typeof sp?.status === "string" ? sp.status : undefined);
-  // KPI date-range picker state lives in the URL so a refresh / copied link keeps
-  // the window; resolveKpiRange validates + clamps it to a safe [from, to].
-  const firstParam = (v: string | string[] | undefined): string | undefined =>
-    Array.isArray(v) ? v[0] : v;
-  const kpiRange = resolveKpiRange({
-    kpiRange: firstParam(sp?.kpiRange),
-    kpiFrom: firstParam(sp?.kpiFrom),
-    kpiTo: firstParam(sp?.kpiTo),
-  });
-  // Conversation inspector ("Gespräche") filter — date range / tier / has-error /
-  // page all live in the URL (g*) so a refresh / copied link keeps the view.
-  const convFilter = parseAdminConversationFilter({
-    grange: firstParam(sp?.grange),
-    gfrom: firstParam(sp?.gfrom),
-    gto: firstParam(sp?.gto),
-    gtier: firstParam(sp?.gtier),
-    gerr: firstParam(sp?.gerr),
-    gcat: firstParam(sp?.gcat),
-    gqual: firstParam(sp?.gqual),
-    gq: firstParam(sp?.gq),
-    gpage: firstParam(sp?.gpage),
-  });
+  const tab = parseAdminTab(sp.tab);
   const dbReady = isDbConfigured();
-
-  // PERF: the Übersicht and KPI bodies are the two Shopify-heavy pipelines
-  // (marketing-target list resp. up to ~400 Admin-API calls for the
-  // revenue/funnel/loop checks). They are rendered ONLY when their tab is the
-  // one being opened — the shell gets `null` for the other one and turns a
-  // client tab switch into a real navigation to the deep link (AdminShell).
-  // Every other body stays force-mounted for instant switching + preserved
-  // edit state.
-  const renderOverview = initialTab === "overview";
-  const renderKpi = initialTab === "kpi";
-
-  // The marketing targets back the Overview headline KPIs / "not purchased"
-  // count — a Shopify-touching list, fetched only when the overview renders.
-  const targets: MarketingTarget[] =
-    dbReady && renderOverview ? await listMarketingTargets() : [];
 
   const store = await cookies();
   const themeCookie = store.get(THEME_COOKIE)?.value;
   const themeInitial: Theme | null =
     themeCookie === "dark" ? "dark" : themeCookie === "light" ? "light" : null;
 
-  return (
-    <AdminShell
-      initialTab={initialTab}
-      themeInitial={themeInitial}
-      logoutAction={logoutAction}
-      overview={renderOverview ? <OverviewTab dbReady={dbReady} targets={targets} /> : null}
-      kunden={
-        <KundenTab
-          dbReady={dbReady}
-          initialFilter={initialFilter}
-        />
-      }
-      kampagne={<KampagneTab dbReady={dbReady} />}
-      kpi={renderKpi ? <KpiTab dbReady={dbReady} range={kpiRange} /> : null}
-      feedback={<FeedbackTab dbReady={dbReady} />}
-      gespraeche={<GespraecheTab dbReady={dbReady} filter={convFilter} />}
-      wissen={<WissenTab dbReady={dbReady} />}
-      analyse={<AnalyseTab dbReady={dbReady} />}
-      verbesserung={<VerbesserungTab dbReady={dbReady} />}
-      einstellungen={<EinstellungenTab dbReady={dbReady} />}
-    />
-  );
-}
-
-// The merged customer + marketing workspace: grouped by PERSON (email), not by
-// session. A customer exists only because an email was captured with consent;
-// anonymous sessions never appear here. Renders the master–detail KundenWorkspace
-// (compact searchable list + per-customer sub-tabbed detail incl. marketing).
-async function KundenTab({
-  dbReady,
-  initialFilter,
-}: {
-  dbReady: boolean;
-  initialFilter?: string;
-}) {
-  // Auto-capture missing postal addresses from Shopify in the BACKGROUND (after
-  // the response), so the operator never has to press "Käufe aktualisieren" per
-  // customer. Bounded + throttled (lib/address-capture); captured addresses show
-  // on the next load. Best-effort — never blocks or breaks the render.
-  if (dbReady) {
-    after(() => autoCaptureMissingAddresses({ limit: 12 }));
-  }
-
-  const customers = dbReady ? await listCustomersWithSessions() : [];
-
-  const personaDisplay = (label: string | null): string | null => {
-    if (!label) return null;
-    const meta = ARCHETYPE_META[label as PersonaArchetype];
-    return meta ? meta.label : label;
-  };
-
-  // Strip to the serialisable shape the client card needs (no session ids —
-  // the browser doesn't need the pseudonymous keys). The latest marketing send
-  // (open draft preferred) backs the personalised-email workflow on the card.
-  const cards: CustomerProps[] = await Promise.all(
-    customers.map(async (c) => {
-    const physical = physicalEligibilityForCustomer(c);
-    return {
-      id: c.id,
-      email: c.email,
-      // Best display name for the list (Shopify account), else null → show email.
-      name:
-        c.shopifyAccountSummary?.displayName?.trim() ||
-        c.shopifyAccountSummary?.firstName?.trim() ||
-        null,
-      identityTier: c.identityTier,
-      firstSeenAt: c.firstSeenAt,
-      lastSeenAt: c.lastSeenAt,
-      transactionalConsent: c.transactionalConsent,
-      marketingStatus: c.marketingStatus,
-      adminInstructions: c.adminInstructions,
-      marketingSend: await getLatestSendForEmail(c.email).then((s) =>
-        s
-          ? {
-              id: s.id,
-              status: s.status,
-              subject: s.subject,
-              draftedText: s.draftedText,
-              discountPercent: s.discountPercent,
-              discountCode: s.discountCode,
-              discountExpiresAt: s.discountExpiresAt,
-              adminInstructions: s.adminInstructions,
-              textMode: s.textMode,
-              sentAt: s.sentAt,
-            }
-          : null
-      ),
-      profileSummary: c.profileSummary,
-      profileSummaryUpdatedAt: c.profileSummaryUpdatedAt,
-      purchaseSummary: c.purchaseSummary,
-      purchaseSummaryUpdatedAt: c.purchaseSummaryUpdatedAt,
-      sessions: c.sessions.map((s) => ({
-        conversationId: s.conversationId,
-        createdAt: s.createdAt,
-        personaDisplay: personaDisplay(s.personaLabel),
-        messageCount: s.messageCount,
-        transcript: s.transcript,
-      })),
-      bundles: (await listBundleOffersWithSignalsForCustomer(c.id)).map((b) => ({
-        id: b.id,
-        title: b.title,
-        status: b.status,
-        components: b.components.map((x) => ({
-          productId: x.productId,
-          title: x.title,
-          quantity: x.quantity,
-        })),
-        componentsSum: b.componentsSum,
-        bundlePrice: b.bundlePrice,
-        currency: b.currency,
-        cartUrl: b.cartUrl,
-        redirectUrl: buildBundleRedirectUrl(b.redirectToken),
-        createdAt: b.createdAt,
-        expiresAt: b.expiresAt,
-        error: b.error,
-        emailSentAt: b.emailSentAt,
-        clicked: b.clicked,
-      })),
-      // Per-customer email correspondence (§5) — a cheap metadata query; bodies
-      // are fetched lazily on expand. Shape matches CorrespondenceMessageProps.
-      correspondence: await listCustomerMessages(c.id),
-      // Physical mail (§4): the "Brief senden" eligibility (lawful address + flag
-      // + Pingen config — never part-filled) and this customer's letters.
-      physicalEligible: physical.eligible,
-      physicalReason: physical.reason,
-      physicalLetters: await listCustomerLetters(c.id),
-      letterDraftSubject: c.letterDraftSubject,
-      letterDraftBody: c.letterDraftBody,
-    };
-    })
-  );
-
-  // The ONE global view: received mail from an unknown address (customer_id
-  // NULL), plus the slim customer list backing the "assign to customer" action.
-  const unmatched = dbReady ? await listUnmatchedInbound() : [];
-  const assignTargets = cards.map((c) => ({ id: c.id, email: c.email }));
-
-  if (!dbReady) {
-    return (
-      <Callout tone="warning" className="mb-4">
-        Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Kunden geladen werden.
-      </Callout>
-    );
-  }
-
-  if (cards.length === 0) {
-    return (
-      <Callout tone="info" className="mb-4">
-        Noch keine Kunden. Ein Kunde entsteht, sobald jemand im Chat seine E-Mail-Adresse (mit
-        Einwilligung) hinterlässt — anonyme Sessions bleiben unverknüpft.
-      </Callout>
-    );
-  }
+  const [badges, screen] = await Promise.all([
+    loadBadges(dbReady),
+    renderScreen(tab, sp, dbReady),
+  ]);
 
   return (
-    <KundenWorkspace
-      customers={cards}
-      unmatched={unmatched}
-      assignTargets={assignTargets}
-      initialFilter={initialFilter}
-    />
+    <AdminShell tab={tab} themeInitial={themeInitial} logoutAction={logoutAction} badges={badges}>
+      {screen}
+    </AdminShell>
   );
 }
-
