@@ -128,7 +128,72 @@ Severity scale used below: **P1** must fix (bug, security, data or money at risk
 
 _(filled from the code audit — see below; ranked P1 → P3)_
 
-TECHNICAL_FINDINGS_PLACEHOLDER
+Method: first-hand review of the admin tree, the campaign send path, the chat route, retention, auth, webhooks and
+token links, plus mechanical scans (route callers, env usage, schema/index dump, bundle analysis). The module map
+of `src/lib` (dead exports, duplicated helpers, dependency check) is being completed and its results are appended
+in §2.6.
+
+### 2.1 Correctness and data safety
+
+| ID | Sev | File | Problem | Proposed fix |
+| --- | --- | --- | --- | --- |
+| TECH-C1 | **P1** | `src/lib/retention.ts:96-108,151-190` | Five retention windows (`RETENTION_DAYS`, `KPI_RETENTION_DAYS`, `SUPPRESSED_CAPTURE_PURGE_DAYS`, `CORRESPONDENCE_RETENTION_DAYS`, `PHYSICAL_LETTER_RETENTION_DAYS`) are parsed with a minimum of **0** and used directly as `daysAgo(n)` cutoffs. Setting any of them to `0` deletes **every row** of that table on the next nightly cron run. The other six windows treat `0` as "disabled" — the semantics are inconsistent and the dangerous half is undocumented. | One rule for all windows (`0` = disabled) plus a hard minimum of 1 day for hard-delete windows; options parsing moves into a tested `.mjs` core (`retention-options.mjs`); `.env.example` and DATA_RETENTION.md updated. |
+| TECH-C2 | P2 | `src/lib/customer-store.ts:540,691` | `CUSTOMER_LIST_LIMIT = 100`: the Kunden tab silently shows only the 100 most recently seen customers; older ones are unreachable from the UI (no pagination, no hint). | Slim list query without the cap (server-side search/paging), detail loaded on demand (UX-K1). |
+| TECH-C3 | P2 | `src/lib/campaign-store.ts:1537` + `KampagneWorkspace` "Gesendet" | `listCampaignSendHistory(limit = 100)`: the sent view truncates after ~half a day at the planned 200 sends/day, without saying so. | Server-side pagination + search + date filter (UX-C5). |
+| TECH-C4 | P2 | `src/app/admin/login/page.tsx` | No rate limiting on password attempts against the single shared admin password (all other public POST routes are limited). | `checkRateLimit(req, "admin-login")` bucket (e.g. 10 / 10 min per IP) in the login action. |
+| TECH-C5 | P3 | `src/lib/campaign-store.ts:1027-1075` | `stampCampaignDelivery` falls back from the provider e-mail id to "any send to this address in the last 7 days" — a bounce can stamp a different send to the same recipient. Rare (frequency cap) but possible. | Prefer the newest send, stamp at most one row in the fallback. |
+| TECH-C6 | P3 | `src/lib/admin-conversations.ts:353-470` | The 50-line WHERE clause of the Gespräche list is duplicated verbatim in the page and count queries (Neon templates are not composable); a filter fix applied to one query only would silently desynchronise list and total. | One query with `count(*) OVER ()`, or a shared CTE; add a unit test on the filter-to-SQL parameters. |
+| TECH-C7 | P3 | `src/app/api/kpi/route.ts` | The telemetry ingest writes with a raw `getSql()` in the route instead of a store function — the only route doing so. | Move the insert into `kpi-events.ts`. |
+
+### 2.2 Efficiency
+
+| ID | Sev | Where | Problem | Proposed fix |
+| --- | --- | --- | --- | --- |
+| TECH-E1 | **P1 (perf)** | `src/app/admin/page.tsx`, `AdminShell.tsx` | Every `/admin` request server-renders **eight** tab bodies (all but the inactive one of Übersicht/KPIs) and ships them force-mounted: Kunden (all customers with every session transcript + 4 queries per customer), Kampagne (queue, history incl. up to 30 Shopify redemption calls), Gespräche, Wissen, Analyse, Verbesserung (full rendered system prompt), Einstellungen. Every campaign mutation that reloads the page repeats all of it. | Render only the active tab (D-2). |
+| TECH-E2 | P1 (perf) | `src/app/admin/page.tsx:187-268` | Per-customer awaits inside `Promise.all(customers.map(…))`: `getLatestSendForEmail`, `listBundleOffersWithSignalsForCustomer`, `listCustomerMessages`, `listCustomerLetters` → 4 × N queries (N ≤ 100) on every render; `batchLoadCustomerSessions` additionally loads **all messages of all conversations** of those customers. | Slim list; detail on demand; batch queries keyed by customer id. |
+| TECH-E3 | P2 | `src/app/admin/page.tsx:183` | `after(() => autoCaptureMissingAddresses({ limit: 12 }))` runs on **every** `/admin` render because `KundenTab` is always rendered — viewing any tab triggers Shopify calls and DB writes. | Move into the daily `refresh-customers` cron (which already refreshes addresses) and an explicit action on the Kunden screen. |
+| TECH-E4 | P2 | `src/lib/marketing-store.ts:listMarketingTargets` (used by Übersicht) | Up to 200 captures × (conversation load + latest send + **Shopify order lookup**) on every overview load, to display two numbers. | Database-only aggregate (D-1). |
+| TECH-E5 | P2 | `src/app/admin/KpiTab.tsx` | 18 parallel aggregations per view including up to ~330 Shopify calls (`getMoRevenue` ≤ 100 codes, `getCampaignKpis` ≤ 100, `getRecommendationLoop` ≤ 100, `getMarketingFunnel` ≤ 100 minus overlap); no caching; repeated on every range change. | Per-range server cache (10 min) for the Shopify-dependent sections with a visible timestamp (D-4). |
+| TECH-E6 | P2 | `src/app/admin/KampagneTab.tsx:112-125` | Up to 30 `wasDiscountCodeRedeemed` Shopify calls per render of the Kampagne tab, only for the "Eingelöst" column of the history table. | Load redemption status on demand in the paginated history (or reuse the KPI cache). |
+| TECH-E7 | P2 | client bundle | `/admin` ships 1 188 KB (344 KB gzip) of JS on every tab; the 647 KB admin chunk contains Recharts, needed only on KPIs. | Per-screen rendering + `next/dynamic` for the charts; target ≤ 150 KB gzip for non-KPI screens. |
+| TECH-E8 | P3 | `src/lib/admin-conversations.ts` | Free-text search is `ILIKE` over `messages.content` via `EXISTS` per term (sequential scan while searching). Fine at today's scale. | `pg_trgm` GIN index on `messages.content` when the table grows (future migration). |
+| TECH-E9 | P3 | schema | No index on `email_messages(occurred_at)` and `physical_letters(created_at)`, both used by nightly retention deletes (small tables today). | Add in the next migration together with any other index work. |
+
+### 2.3 Duplication and structure
+
+| ID | Sev | Where | Problem | Proposed fix |
+| --- | --- | --- | --- | --- |
+| TECH-D1 | P2 | `KampagneWorkspace.tsx` 2 338, `KpiTab.tsx` 1 758, `CustomerProfileCard.tsx` 1 521, `campaign-store.ts` 1 607, `system-prompt-core.mjs` 1 231, `GespraecheWorkspace.tsx` 841, `VerbesserungWorkspace.tsx` 804 | Files far above the ~600-line guideline mixing several responsibilities. | Split by responsibility (Part 4.3); stores split by concern (`campaign-store` → contacts / drafts / sends / kpis). |
+| TECH-D2 | P2 | `src/app/admin/**` | ~12 copies of the fetch→JSON→throw helper, ~14 local money/date/percent formatters, 9 `Banner` copies, 3 segmented toggles, 2 stepping-loop drivers, 2 transcript viewers. | Primitives + `adminFetch` + `admin-format.mjs` (Part 3.6). |
+| TECH-D3 | P2 | `src/lib/campaign-email.ts` ↔ `src/lib/marketing-email.ts` | `approveAndSendCampaign` and `approveAndSend` are ~260-line near-twins (gates → unsubscribe token → claim → discount mint/swap → render in design → send → record), each with private copies of `firstImageUrl` and `catalogNameLookup`. | Extract the shared, pure steps (discount swap already is; `firstImageUrl`, `catalogNameLookup`, the design/hero render wrapper) into one module **with characterisation tests first**; the two orchestrators stay separate because their gates and records differ. Send behaviour unchanged. |
+| TECH-D4 | P3 | `src/app/admin/page.tsx:62-80` | Nine-level nested ternary to resolve `?tab=`. | Tab registry (`tabs.ts`). |
+| TECH-D5 | P3 | `src/app/api/contact/route.ts` | Sends via the Resend SDK directly instead of `lib/email` (the choke point every other mail uses). Intentional for lead mail, but the inconsistency should be a comment or a shared helper. | Route through `sendEmail` with `kind: "contact"` (no mirror row) or document why not. |
+
+### 2.4 Security
+
+| ID | Sev | Finding |
+| --- | --- | --- |
+| TECH-S1 | ✓ | Every `/api/admin/*` handler re-asserts the session cookie (`guardAdminPost`/`guardAdminGet`); POST routes require `application/json` as CSRF defence; the Edge proxy gates pages and APIs. No admin route relies on the proxy alone. |
+| TECH-S2 | ✓ | Webhooks verify signatures over the raw body before parsing (Resend via the SDK's standard-webhooks verifier, Shopify HMAC, Pingen standard-webhooks with multi-secret) and fail closed (503) without a secret. |
+| TECH-S3 | ✓ | Token links: unsubscribe = HMAC over the normalised e-mail with constant-time compare (no expiry, correct for opt-out); redirects = 24 random bytes per send; countdown = signed deadline; DOI token expires. Public asset routes validate paths and cache correctly. |
+| TECH-S4 | ✓ | User-provided content: the admin Markdown renderer emits React nodes only with an href whitelist; Q&A HTML is escaped and only http(s) anchors are emitted; e-mail prose is escaped before rendering. |
+| TECH-S5 | P2 | Admin login has no attempt limit (TECH-C4). |
+| TECH-S6 | P3 | `.env.example` ships the three legal send gates ON (D-8); Sentry is documented as uploading source maps but is not wired (docs fix). |
+
+### 2.5 Configuration and documentation drift
+
+| ID | Sev | Finding | Fix |
+| --- | --- | --- | --- |
+| TECH-X1 | P2 | `ANALYTICS_REPORT_RETENTION_DAYS` (GDPR-relevant), `CONVERSION_SWEEP_MAX_CODES`, `EMAIL_LOGO_URL`, `EMAIL_MO_ICON_URL`, `SHOPIFY_APP_PROXY_SECRET`, `NEON_FETCH_ENDPOINT` are read by code but missing from `.env.example`. | Document them. |
+| TECH-X2 | P3 | `SHOPIFY_CUSTOMER_ACCOUNT_API_VERSION` is documented but never read. | Remove. |
+| TECH-X3 | P3 | `.env.example` `CRON_SECRET` comment lists four of five crons; README env table lists 21 of 79 variables and claims completeness; README architecture tree lists 4 routes / 12 libs (2026-Q1); `base-url.ts` falls back to `chat.motionsports.de` while `.env.example` shows `mo.motionsports.de` as example host. | Rewrite README (deploy checklist stays), fix comments. |
+| TECH-X4 | P3 | Five scripts have neither an npm entry nor a doc reference; two need `tsx`, which is not a dependency; `probe-bundle.mjs` is a throwaway probe that creates live Shopify products. | Part 6.2 (decision D-9); add `tsx` as devDependency + npm scripts for the kept ones. |
+| TECH-X5 | P3 | ADMIN_DASHBOARD.md claims server-side tab switching and omits the Einstellungen tab; 14 historical docs sit next to living ones. | Docs slice: rewrite ADMIN_DASHBOARD.md, archive historical docs with an index, add `CLAUDE.md`. |
+| TECH-X6 | P3 | Lint warning: unused `firstImageUrl` in `summary-email.ts:143`. | Remove. |
+
+### 2.6 Module map results (dead exports, unused dependencies, duplicated lib helpers)
+
+MODULE_MAP_RESULTS_PLACEHOLDER
 
 ---
 
@@ -234,13 +299,14 @@ Today `page.tsx` renders eight tab bodies on every request and force-mounts them
 | D-5 | Add a read-only Systemstatus card to Einstellungen. | Yes — additive, no secrets shown. | New UI surface. |
 | D-6 | Local development against a plain Postgres via `NEON_FETCH_ENDPOINT` + `scripts/seed-dev.mjs` (dev-only, refuses non-local hosts). | Yes — used for this project's screenshots and verification; documented in DATABASE.md. | New dev tooling in the repo. |
 | D-7 | Admin login rate limiting (Upstash bucket) — currently unlimited attempts against one shared password. | Yes. | Touches auth. |
+| D-8 | `.env.example` ships the three legal send gates (`CAMPAIGN_SENDS_APPROVED`, `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `PHYSICAL_MAIL_SENDS_APPROVED`) as `true`; the code defaults are `false`. Flip the example values to `false` (production is set in Vercel, unaffected). | Yes — a fresh `.env.local` copy should not enable live sends. | Changes documented defaults. |
+| D-9 | Remove the five dead admin routes and the throwaway probe script listed in Part 6.2. | Yes. | Removes capability (unused, but yours to confirm). |
 
 ---
 
 ## Part 6 — Proposed removals and merges (each with a one-line justification)
 
-_(final list follows the code audit; candidates so far)_
-
+### 6.1 Code that is provably unreachable or duplicated (I will remove/merge without asking)
 | Item | Justification |
 | --- | --- |
 | Nine local `Banner` components | identical markup; replaced by `Callout` |
@@ -249,3 +315,23 @@ _(final list follows the code audit; candidates so far)_
 | `LanguageToggle`, `EmailTextModeToggle`, preview width toggle | three implementations of one segmented control |
 | Nested ternary `initialTab` resolution in `page.tsx` | replaced by a tab registry |
 | `Th`/`Td` in KpiTab, hand-rolled tables in Kampagne/Verbesserung | replaced by `ui/table` |
+| Two client stepping loops (`ReportProgressDriver`, `RunDriver`) | one `useStepLoop` hook with the more robust reconnect semantics of the Verbesserung driver |
+| `.env.example`: `SHOPIFY_CUSTOMER_ACCOUNT_API_VERSION` | never read by code (the version comes from discovery) |
+| `.env.example` / README: Sentry source-map upload vars | described as wired, but `next.config.ts` has no `withSentryConfig` and there is no instrumentation file — the docs describe something that does not exist; removed from the docs (not adding the plugin) |
+| Unused exports and never-imported lib modules | listed in the module map (in progress); each removal is verified by grep + build |
+
+### 6.2 Removals that need your confirmation (capability with no caller I can find)
+| Item | Evidence | Recommendation |
+| --- | --- | --- |
+| `POST /api/admin/bundles/list` | no UI/script caller; one mention in BUNDLES.md | remove route + doc line |
+| `POST /api/admin/marketing/draft` (per-capture draft) | no UI caller since the Marketing tab was folded into Kunden (drafts go through `customers/marketing-draft`) | remove |
+| `POST /api/admin/qa/draft` (single-conversation Q&A draft) | no UI caller; Wissen uses `qa/scan` | remove, or add the "Frage entwerfen" button in the Gespräche detail that its header describes — your call |
+| `GET /api/admin/directives`, `GET /api/admin/email-designs` | no callers; the data is server-rendered | remove |
+| `scripts/probe-bundle.mjs` (868 lines, "THROWAWAY verification probe", creates live Shopify products) | referenced only by the historical bundle spike | delete (the spike doc keeps the results) |
+| `scripts/list-test-discounts.mjs --delete`, `scripts/send-test-emails.mjs`, `scripts/preview-summary-email.mjs` | undocumented; two need `tsx`, which is not a dependency; one sends real mail with a hard-coded default recipient | keep but document + add npm scripts (`tsx` as devDependency) — or delete the two that need tsx if you never use them |
+
+### 6.3 Merges (no capability lost)
+- Übersicht quick links → "Heute" tasks; Kampagne header controls → stat strip + toolbar (rare/destructive actions in an overflow menu).
+- `after(() => autoCaptureMissingAddresses())` on every `/admin` render → moved into the daily `refresh-customers` cron (which already refreshes addresses) plus an explicit "Adressen prüfen" action; viewing a dashboard tab no longer triggers Shopify calls and writes.
+- `docs/frontend-handoff/API_CONTRACT.md` (1 664 lines) duplicates `docs/API_CONTRACT.md` (1 765) → the handoff copy becomes a pointer to the single source (file path kept).
+- Historical docs → `docs/archive/` with an index (see the docs plan in Part 2).
