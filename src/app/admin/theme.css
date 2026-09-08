@@ -70,6 +70,20 @@
   --border: #e5e7eb;
   --input: #d6dbe0;
   --ring: #008ccb;
+
+  /* Inset surfaces (table heads, code, nested panels) */
+  --surface-2: #f4f5f7;
+  /* Selected rows, active navigation item */
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, var(--card));
+  /* Navigation rail */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #111111;
+  /* Chart series — always through tokens so charts follow the theme */
+  --chart-1: var(--accent);
+  --chart-2: var(--success);
+  --chart-3: var(--warning);
+  --chart-4: var(--info);
+  --chart-5: var(--muted-foreground);
 }
 
 .dark {
@@ -105,6 +119,11 @@
   --border: #2a2f35;
   --input: #3a4047;
   --ring: #2aa5db;
+
+  --surface-2: #1a1e22;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, var(--card));
+  --sidebar: #101316;
+  --sidebar-foreground: #f3f4f6;
 }
 
 @theme inline {
@@ -133,18 +152,52 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-surface-2: var(--surface-2);
+  --color-accent-soft: var(--accent-soft);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
 
   --color-brand-black: var(--brand-black);
   --color-brand-blue: var(--brand-blue);
   --color-brand-red: var(--brand-red);
 
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /* Radius scale: 6 small controls + badges · 8 inputs + buttons · 12 cards ·
+   * 16 dialogs. Fixed values (not derived from --radius) so a component can
+   * never land between two steps. */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
 
   --font-sans: var(--font-montserrat), ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", Roboto, sans-serif;
+}
+
+/* Type scale — one scale for the whole back-office (Montserrat is wide, so the
+ * steps sit half a point under Tailwind's defaults). Numbers use tabular-nums.
+ *   2xs 11/16 fine print · xs 12/16 labels, badges · sm 13.5/20 tables + forms ·
+ *   base 14.5/22 prose · lg 17/24 section titles · xl 20/28 page title ·
+ *   2xl 26/32 KPI values */
+@theme {
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.84375rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.90625rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.625rem;
+  --text-2xl--line-height: 2rem;
 }
 
 /* The admin shell root: paints the themed surface and applies Montserrat. */
@@ -155,6 +208,16 @@
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Indeterminate progress bar (ui/progress-bar.tsx). */
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
 }
 
 /* Default border + outline colors so utilities like `border` look right under

@@ -20,10 +20,8 @@ import {
   ADMIN_DATE_TIME_MEDIUM,
   formatAdmin,
 } from "@/lib/admin-datetime.mjs";
+import { eur } from "@/lib/admin-format.mjs";
 
-function eur(n: number): string {
-  return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
-}
 function fmtTs(iso: string | null): string {
   return formatAdmin(iso, ADMIN_DATE_TIME_MEDIUM, iso || "—");
 }

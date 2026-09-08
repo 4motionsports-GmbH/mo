@@ -5,14 +5,15 @@
 
 import { listFeedback } from "@/lib/feedback-store";
 import { FeedbackList, type FeedbackItem } from "./FeedbackList";
+import { Callout } from "./ui";
 
 export async function FeedbackTab({ dbReady }: { dbReady: boolean }) {
   if (!dbReady) {
     return (
-      <Banner tone="warn">
+      <Callout tone="warning" className="mb-4">
         Keine Datenbank konfiguriert (DATABASE_URL) — es kann kein Feedback geladen
         werden.
-      </Banner>
+      </Callout>
     );
   }
 
@@ -30,24 +31,13 @@ export async function FeedbackTab({ dbReady }: { dbReady: boolean }) {
 
   if (items.length === 0) {
     return (
-      <Banner tone="info">
+      <Callout tone="info" className="mb-4">
         Noch kein Feedback. Sobald Nutzer:innen über das Widget eine Rückmeldung
         senden, erscheint sie hier — neueste zuerst.
-      </Banner>
+      </Callout>
     );
   }
 
   return <FeedbackList feedback={items} />;
 }
 
-// Page-level banner (empty / not-configured states), matching the other tabs'
-// token-themed banner.
-function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
-  const cls =
-    tone === "warn"
-      ? "border-warning/30 bg-warning/10 text-warning"
-      : "border-info/30 bg-info/10 text-info";
-  return (
-    <div className={`mb-4 rounded-lg border px-3.5 py-3 text-sm ${cls}`}>{children}</div>
-  );
-}

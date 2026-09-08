@@ -44,7 +44,7 @@ import { getMoAttributionKpis, type MoAttributionKpis } from "@/lib/mo-orders-st
 import type { KpiRange } from "@/lib/kpi-range";
 import { KpiTopQuestions } from "./KpiTopQuestions";
 import { KpiDateRangePicker } from "./KpiDateRangePicker";
-import { Card, CardContent, CardHeader, CardTitle, Section, Stat, Caveat } from "./ui";
+import { Card, CardContent, CardHeader, CardTitle, Section, Stat, Caveat, Callout } from "./ui";
 import {
   ChatsPerDayChart,
   StatusSplitChart,
@@ -96,10 +96,10 @@ const MARKETING_FUNNEL_DISPLAY_CAP = 100;
 export async function KpiTab({ dbReady, range }: { dbReady: boolean; range: KpiRange }) {
   if (!dbReady) {
     return (
-      <Banner tone="warn">
+      <Callout tone="warning">
         Keine Datenbank konfiguriert (DATABASE_URL) — es können keine KPIs
         berechnet werden.
-      </Banner>
+      </Callout>
     );
   }
 
@@ -197,7 +197,7 @@ function CoreSection({ core, range }: { core: CoreMetrics | null; range: KpiRang
   if (!core) {
     return (
       <Section title="Kern-Metriken" subtitle={`Zeitraum: ${range.label}.`}>
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       </Section>
     );
   }
@@ -344,9 +344,9 @@ function ConsentGateSection({
       subtitle={`Das Einwilligungs-Gate im Chat und die Opt-in-Karte bei der Anmeldung: angezeigt → akzeptiert („Ja, Angebote aktivieren") — Zeitraum: ${range.label}.`}
     >
       {!funnel ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : funnel.total.shown === 0 ? (
-        <Banner tone="info">Noch keine Consent-Gate-Events im Zeitraum.</Banner>
+        <Callout tone="info">Noch keine Consent-Gate-Events im Zeitraum.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -423,11 +423,11 @@ function RevenueSection({ revenue, range }: { revenue: MoRevenue | null; range: 
       subtitle={`Bestellungen, die einen einmaligen, von Mo verschickten Rabattcode eingelöst haben — Zeitraum: ${range.label}.`}
     >
       {!revenue ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : !revenue.shopifyConfigured ? (
-        <Banner tone="warn">
+        <Callout tone="warning">
           Shopify ist nicht konfiguriert — der Umsatz kann nicht berechnet werden.
-        </Banner>
+        </Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -492,15 +492,15 @@ function AttributionSection({
       subtitle={`Bestellungen mit Mo-Markierung (Warenkorb-Attribut oder Mo-Rabattcode), per Shopify-Webhook erfasst — Zeitraum: ${range.label}.`}
     >
       {!attribution ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : !attribution.ingestionSeen ? (
-        <Banner tone="info">
+        <Callout tone="info">
           Noch keine Bestellung über den Webhook erfasst. Voraussetzung: die
           Shopify-Webhooks <code>orders/create</code> + <code>orders/paid</code>{" "}
           sind auf <code>/api/webhooks/shopify</code> registriert (siehe
           docs/ORDER_ATTRIBUTION.md) — erfasst wird ab Registrierung, rückwirkend
           nicht.
-        </Banner>
+        </Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -555,10 +555,10 @@ function AiCostSection({ cost, range }: { cost: AiCostMetrics | null; range: Kpi
       subtitle={`Geschätzte KI-Kosten (EUR) aus erfassten Token-Verbräuchen pro Modell — Zeitraum: ${range.label}.`}
     >
       {!cost || cost.capturedSince == null ? (
-        <Banner tone="info">
+        <Callout tone="info">
           Noch keine KI-Verbrauchsdaten erfasst. Die Erfassung beginnt mit dem
           Deploy dieser Version — danach erscheinen hier die Kosten.
-        </Banner>
+        </Callout>
       ) : (
         <>
           <p className="mb-3 text-xs text-muted-foreground">
@@ -690,7 +690,7 @@ function PhysicalMailCostSection({ stats }: { stats: PhysicalLetterStats }) {
       subtitle="Versendete Briefe (Pingen → Deutsche Post) und die angefallenen Portokosten."
     >
       {stats.totalSent === 0 ? (
-        <Banner tone="info">Noch keine Briefe versendet.</Banner>
+        <Callout tone="info">Noch keine Briefe versendet.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -732,9 +732,9 @@ function MarketingFunnelSection({ funnel }: { funnel: MarketingFunnel | null }) 
       subtitle="Versendete Marketing-E-Mails: gesendet → geklickt → eingelöst (persönlicher Code verwendet)."
     >
       {!funnel ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : funnel.sent === 0 ? (
-        <Banner tone="info">Noch keine Marketing-E-Mails versendet.</Banner>
+        <Callout tone="info">Noch keine Marketing-E-Mails versendet.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -802,7 +802,7 @@ function PersonaSection({
       subtitle="Gruppiert nach abgeleitetem Persona-Archetyp."
     >
       {!personas || personas.length === 0 ? (
-        <Banner tone="info">Noch keine klassifizierten Konversationen.</Banner>
+        <Callout tone="info">Noch keine klassifizierten Konversationen.</Callout>
       ) : (
         <div className="flex flex-col gap-4">
           <Card>
@@ -897,19 +897,19 @@ function LoopSection({ loop }: { loop: RecommendationLoopResult | null }) {
       subtitle="ROI-Kennwert für die Teilmenge der Kund:innen, die ihre E-Mail angegeben haben — KEINE site-weite Conversion-Rate."
     >
       {!loop ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : !loop.shopifyConfigured ? (
-        <Banner tone="warn">
+        <Callout tone="warning">
           Shopify ist nicht konfiguriert — die Kauf-Zuordnung kann nicht berechnet
           werden.
-        </Banner>
+        </Callout>
       ) : (
         <>
-          <Banner tone="warn">
+          <Callout tone="warning">
             Nur Kund:innen, die ihre E-Mail angegeben haben — also eine Minderheit
             aller Chat-Nutzer:innen. Diese Zahl ist <strong>keine</strong>{" "}
             site-weite Conversion-Rate.
-          </Banner>
+          </Callout>
 
           <div className="mt-3 flex flex-wrap items-baseline gap-3">
             <span className="text-3xl font-bold text-foreground">
@@ -970,7 +970,7 @@ function LocaleSection({ locales, range }: { locales: LocaleSplit | null; range:
       subtitle={`Beratungen nach gewählter Chat-Sprache und E-Mail-Angaben nach Capture-Sprache — Zeitraum: ${range.label}.`}
     >
       {!locales || (locales.chats.length === 0 && locales.captures.length === 0) ? (
-        <Banner tone="info">Noch keine Daten im Zeitraum.</Banner>
+        <Callout tone="info">Noch keine Daten im Zeitraum.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1034,7 +1034,7 @@ function QualitySection({ stats, range }: { stats: ConversationStats | null; ran
       subtitle={`Analyse-Abdeckung und Qualitäts-/Themenverteilung der analysierten Beratungen — Zeitraum: ${range.label}.`}
     >
       {!stats || stats.total === 0 ? (
-        <Banner tone="info">Noch keine Beratungen im Zeitraum.</Banner>
+        <Callout tone="info">Noch keine Beratungen im Zeitraum.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -1145,9 +1145,9 @@ function EmailCaptureSection({
       subtitle={`Mo bietet die Chat-Zusammenfassung per E-Mail an: angeboten → Formular gesendet → Marketing-Haken gesetzt → Double-Opt-in bestätigt — Zeitraum: ${range.label}.`}
     >
       {!funnel ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : funnel.askShown === 0 && funnel.submitted === 0 ? (
-        <Banner tone="info">Noch keine Capture-Events im Zeitraum.</Banner>
+        <Callout tone="info">Noch keine Capture-Events im Zeitraum.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1220,9 +1220,9 @@ function CampaignSection({ kpis, range }: { kpis: CampaignKpis | null; range: Kp
       subtitle={`Kampagnen-E-Mails (MK-Codes): gesendet → CTA geklickt → Code eingelöst — Zeitraum: ${range.label}.`}
     >
       {!kpis ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : kpis.sent === 0 ? (
-        <Banner tone="info">Noch keine Kampagnen-E-Mails im Zeitraum.</Banner>
+        <Callout tone="info">Noch keine Kampagnen-E-Mails im Zeitraum.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1455,9 +1455,9 @@ function BundleSection({ kpis, range }: { kpis: BundleKpis | null; range: KpiRan
       subtitle={`Persönliche Set-Angebote (unlisted Shopify-Produkte): erstellt, Lebenszyklus und Klicks auf den Angebots-Link — Zeitraum: ${range.label}.`}
     >
       {!kpis ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : kpis.created.total === 0 && kpis.clicks === 0 && kpis.activeNow === 0 ? (
-        <Banner tone="info">Noch keine Bundle-Angebote im Zeitraum.</Banner>
+        <Callout tone="info">Noch keine Bundle-Angebote im Zeitraum.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1512,9 +1512,9 @@ function QaSection({ kpis, range }: { kpis: QaKpis | null; range: KpiRange }) {
       subtitle={`Wissenslücken aus Beratungen: gefunden → beantwortet → veröffentlicht — Durchsatz im Zeitraum: ${range.label}.`}
     >
       {!kpis ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : totalQueue === 0 && kpis.scanBacklog === 0 ? (
-        <Banner tone="info">Noch keine Q&A-Einträge.</Banner>
+        <Callout tone="info">Noch keine Q&A-Einträge.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1565,9 +1565,9 @@ function FeedbackSection({ kpis, range }: { kpis: FeedbackKpis | null; range: Kp
       subtitle={`Freitext-Feedback aus dem Widget — Volumen im Zeitraum: ${range.label}.`}
     >
       {!kpis ? (
-        <Banner tone="info">Noch keine Daten.</Banner>
+        <Callout tone="info">Noch keine Daten.</Callout>
       ) : kpis.total === 0 ? (
-        <Banner tone="info">Kein Feedback im Zeitraum.</Banner>
+        <Callout tone="info">Kein Feedback im Zeitraum.</Callout>
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -1627,10 +1627,10 @@ function AccountSection({
       subtitle={`Shopify-Anmeldungen, DSGVO-Self-Service und Zusammenfassungen — Zeitraum: ${range.label}.`}
     >
       {empty ? (
-        <Banner tone="info">
+        <Callout tone="info">
           Noch keine Konto-Aktivität im Zeitraum. Sign-in-, Export- und
           Lösch-Ereignisse werden ab dem Deploy dieser Version erfasst.
-        </Banner>
+        </Callout>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -1747,12 +1747,3 @@ function Td({ children, align = "left" }: { children: React.ReactNode; align?: "
   );
 }
 
-function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
-  const cls =
-    tone === "warn"
-      ? "border-warning/30 bg-warning/10 text-warning"
-      : "border-info/30 bg-info/10 text-info";
-  return (
-    <div className={`rounded-lg border px-3.5 py-3 text-sm ${cls}`}>{children}</div>
-  );
-}

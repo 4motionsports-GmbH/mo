@@ -40,6 +40,7 @@ import {
   ADMIN_DATE_PADDED,
   formatAdmin,
 } from "@/lib/admin-datetime.mjs";
+import { adminFetch } from "./lib/admin-fetch";
 
 type StatusFilter = QaStatus | "all";
 
@@ -64,20 +65,6 @@ function fail(e: unknown) {
     title: "Fehler",
     description: e instanceof Error ? e.message : "Unbekannter Fehler",
   });
-}
-
-async function call(path: string, body: unknown): Promise<Record<string, unknown>> {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) {
-    const err = json as { error?: { message?: string } };
-    throw new Error(err?.error?.message ?? `Fehler (${res.status})`);
-  }
-  return json;
 }
 
 export function WissenWorkspace({
@@ -116,7 +103,7 @@ export function WissenWorkspace({
   const onScan = async () => {
     setScanning(true);
     try {
-      const res = (await call("/api/admin/qa/scan", { limit: 10 })) as {
+      const res = (await adminFetch<Record<string, unknown>>("/api/admin/qa/scan", { body: { limit: 10 } })) as {
         scanned?: number;
         created?: number;
         noGap?: number;
@@ -259,14 +246,14 @@ function QaEntryCard({
 
   const save = async (): Promise<boolean> => {
     try {
-      await call("/api/admin/qa/answer", {
+      await adminFetch<Record<string, unknown>>("/api/admin/qa/answer", { body: {
         id: entry.id,
         question,
         answer,
         productId: productId.trim() || null,
         questionEn,
         answerEn,
-      });
+      } });
       return true;
     } catch (e) {
       fail(e);
@@ -292,7 +279,7 @@ function QaEntryCard({
     // Save first so exactly what is on screen gets published.
     if (await save()) {
       try {
-        const res = (await call("/api/admin/qa/publish", { id: entry.id })) as {
+        const res = (await adminFetch<Record<string, unknown>>("/api/admin/qa/publish", { body: { id: entry.id } })) as {
           catalogRefreshed?: boolean;
           hasEnglish?: boolean;
         };
@@ -318,7 +305,7 @@ function QaEntryCard({
   const onUnpublish = async () => {
     setBusy("unpublish");
     try {
-      await call("/api/admin/qa/unpublish", { id: entry.id });
+      await adminFetch<Record<string, unknown>>("/api/admin/qa/unpublish", { body: { id: entry.id } });
       toast({
         variant: "success",
         title: "Zurückgezogen",
@@ -336,7 +323,7 @@ function QaEntryCard({
   const onRestore = async () => {
     setBusy("restore");
     try {
-      const res = (await call("/api/admin/qa/restore", { id: entry.id })) as {
+      const res = (await adminFetch<Record<string, unknown>>("/api/admin/qa/restore", { body: { id: entry.id } })) as {
         entry?: { status?: string };
       };
       toast({
@@ -357,7 +344,7 @@ function QaEntryCard({
   const onDismiss = async () => {
     setBusy("dismiss");
     try {
-      await call("/api/admin/qa/dismiss", { id: entry.id });
+      await adminFetch<Record<string, unknown>>("/api/admin/qa/dismiss", { body: { id: entry.id } });
       await onChanged();
     } catch (e) {
       fail(e);

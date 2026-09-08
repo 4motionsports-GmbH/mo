@@ -15,6 +15,7 @@ import {
   isAdminPasswordValid,
   sessionCookieOptions,
 } from "@/lib/admin-auth";
+import { safeAdminNext } from "@/lib/admin-login-redirect.mjs";
 import {
   Card,
   CardHeader,
@@ -31,25 +32,30 @@ export const dynamic = "force-dynamic";
 async function loginAction(formData: FormData): Promise<void> {
   "use server";
   const password = formData.get("password");
+  // Where to land after login — only ever a path inside /admin (sanitised), so
+  // an expired session returns the operator to the screen they were on.
+  const next = safeAdminNext(formData.get("next"));
+  const nextQuery = next === "/admin" ? "" : `&next=${encodeURIComponent(next)}`;
   if (!(await isAdminPasswordValid(password))) {
-    redirect("/admin/login?error=invalid");
+    redirect(`/admin/login?error=invalid${nextQuery}`);
   }
   const token = await createAdminSessionToken();
   if (!token) {
     // Password was right but we can't sign a cookie (no secret configured).
-    redirect("/admin/login?error=config");
+    redirect(`/admin/login?error=config${nextQuery}`);
   }
   const store = await cookies();
   store.set(ADMIN_COOKIE_NAME, token, sessionCookieOptions());
-  redirect("/admin");
+  redirect(next);
 }
 
 export default async function AdminLoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, next: rawNext } = await searchParams;
+  const next = safeAdminNext(rawNext);
   const configured = isAdminAuthConfigured();
 
   const message =
@@ -81,6 +87,7 @@ export default async function AdminLoginPage({
           )}
 
           <form action={loginAction} className="flex flex-col gap-4">
+            {next !== "/admin" && <input type="hidden" name="next" value={next} />}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="password">Passwort</Label>
               <Input

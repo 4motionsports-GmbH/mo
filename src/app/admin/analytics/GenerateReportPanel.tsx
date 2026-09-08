@@ -18,6 +18,7 @@ import {
   Checkbox,
   toast,
 } from "../ui";
+import { eur } from "@/lib/admin-format.mjs";
 
 const PRESETS: Array<{ key: "7d" | "30d" | "90d"; label: string }> = [
   { key: "7d", label: "7 Tage" },
@@ -28,10 +29,6 @@ const PRESETS: Array<{ key: "7d" | "30d" | "90d"; label: string }> = [
 function todayYmd(): string {
   return new Date().toISOString().slice(0, 10);
 }
-function eur(n: number): string {
-  return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
-}
-
 interface Estimate {
   range: { from: string; to: string; label: string };
   conversations: number;

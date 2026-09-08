@@ -46,14 +46,11 @@ import {
   ADMIN_DATE_TIME_MEDIUM,
   formatAdmin,
 } from "@/lib/admin-datetime.mjs";
+import { eur } from "@/lib/admin-format.mjs";
 
 function fmtTs(iso: string): string {
   return formatAdmin(iso, ADMIN_DATE_TIME_MEDIUM, iso);
 }
-function eur(n: number): string {
-  return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 4 });
-}
-
 // ── Distribution bars (clickable list filters) ────────────────────────────────
 
 function Distribution({
@@ -195,7 +192,7 @@ export function GespraecheStatsPanel({
         description:
           `${data.processed ?? 0} analysiert` +
           (data.failed ? `, ${data.failed} fehlgeschlagen` : "") +
-          ` · ${eur(data.costEur ?? 0)}` +
+          ` · ${eur(data.costEur ?? 0, 4)}` +
           (remaining > 0 ? ` · noch ${remaining} offen (erneut ausführen)` : ""),
         duration: 7000,
       });
@@ -274,8 +271,8 @@ export function GespraecheStatsPanel({
             <DialogTitle>Alle nicht analysierten Gespräche auswerten?</DialogTitle>
             <DialogDescription>
               {unanalyzed} Gespräch(e) im Zeitraum {from} – {to} werden mit dem günstigen
-              Modell analysiert. Geschätzte Kosten: ca. {eur(bulkEstimateEur)} (≈{" "}
-              {eur(bulkEstimateEur / Math.max(1, unanalyzed))} pro Gespräch). Pro Durchlauf
+              Modell analysiert. Geschätzte Kosten: ca. {eur(bulkEstimateEur, 4)} (≈{" "}
+              {eur(bulkEstimateEur / Math.max(1, unanalyzed), 4)} pro Gespräch). Pro Durchlauf
               wird eine Charge verarbeitet — sind danach noch welche offen, einfach erneut
               ausführen.
             </DialogDescription>
@@ -432,7 +429,7 @@ export function GespraecheReportPanel({
                 {insights.analyzedCount} Zusammenfassung(en) ·{" "}
                 {insights.cached ? "zwischengespeichert" : "frisch generiert"} ·{" "}
                 {fmtTs(insights.generatedAt)}
-                {insights.costEur > 0 ? ` · ~${eur(insights.costEur)}` : ""}
+                {insights.costEur > 0 ? ` · ~${eur(insights.costEur, 4)}` : ""}
               </span>
             )}
           </div>

@@ -2,17 +2,21 @@
 
 // Dialog — minimal modal (no Radix). Controlled via `open`/`onOpenChange`.
 // Renders an overlay + centered panel in a portal, closes on Esc / overlay
-// click, and locks body scroll while open.
+// click, locks body scroll while open, traps Tab focus inside the panel and
+// returns focus to the opener on close. Sizes: sm · md (default) · lg · xl · full.
 
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "./cn";
+import { useFocusTrap } from "./focus";
 import { getPortalContainer } from "./portal";
 
 interface DialogContextValue {
   open: boolean;
   setOpen: (v: boolean) => void;
+  titleId: string;
+  descriptionId: string;
 }
 const DialogContext = React.createContext<DialogContextValue | null>(null);
 
@@ -33,8 +37,12 @@ export function Dialog({ open: controlled, defaultOpen, onOpenChange, children }
     },
     [controlled, onOpenChange]
   );
+  const titleId = React.useId();
+  const descriptionId = React.useId();
   return (
-    <DialogContext.Provider value={{ open, setOpen }}>{children}</DialogContext.Provider>
+    <DialogContext.Provider value={{ open, setOpen, titleId, descriptionId }}>
+      {children}
+    </DialogContext.Provider>
   );
 }
 
@@ -76,15 +84,28 @@ export function DialogClose({
   });
 }
 
+export type DialogSize = "sm" | "md" | "lg" | "xl" | "full";
+
+const sizes: Record<DialogSize, string> = {
+  sm: "max-w-sm",
+  md: "max-w-lg",
+  lg: "max-w-2xl",
+  xl: "max-w-4xl",
+  full: "max-w-[min(96vw,1200px)]",
+};
+
 export function DialogContent({
   className,
   children,
   showClose = true,
+  size = "md",
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { showClose?: boolean }) {
-  const { open, setOpen } = useDialog();
+}: React.HTMLAttributes<HTMLDivElement> & { showClose?: boolean; size?: DialogSize }) {
+  const { open, setOpen, titleId, descriptionId } = useDialog();
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
+  useFocusTrap(panelRef, open && mounted);
 
   React.useEffect(() => {
     if (!open) return;
@@ -111,10 +132,15 @@ export function DialogContent({
         aria-hidden
       />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
         className={cn(
-          "relative z-10 w-full max-w-lg rounded-xl border border-border bg-popover text-popover-foreground p-6 shadow-lg",
+          "relative z-10 max-h-[calc(100vh-2rem)] w-full overflow-y-auto rounded-xl border border-border bg-popover p-6 text-popover-foreground shadow-lg outline-none",
+          sizes[size],
           className
         )}
         {...props}
@@ -141,14 +167,22 @@ export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLD
 }
 
 export function DialogTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h2 className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />;
+  const { titleId } = useDialog();
+  return (
+    <h2
+      id={titleId}
+      className={cn("text-lg font-semibold leading-none tracking-tight", className)}
+      {...props}
+    />
+  );
 }
 
 export function DialogDescription({
   className,
   ...props
 }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn("text-sm text-muted-foreground", className)} {...props} />;
+  const { descriptionId } = useDialog();
+  return <p id={descriptionId} className={cn("text-sm text-muted-foreground", className)} {...props} />;
 }
 
 export function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {

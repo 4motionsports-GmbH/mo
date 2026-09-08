@@ -26,6 +26,7 @@ import {
   type CampaignQueueItemProps,
   type CampaignHistoryItemProps,
 } from "./KampagneWorkspace";
+import { Callout } from "./ui";
 
 // Bound the per-load Shopify redemption fan-out (same cap discipline as the
 // marketing funnel / revenue KPI).
@@ -34,10 +35,10 @@ const HISTORY_REDEMPTION_MAX_CODES = 30;
 export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
   if (!dbReady) {
     return (
-      <Banner tone="warn">
+      <Callout tone="warning" className="mb-4">
         Keine Datenbank konfiguriert (DATABASE_URL) — das Kampagnen-Modul kann keine
         Kontakte laden.
-      </Banner>
+      </Callout>
     );
   }
 
@@ -168,13 +169,3 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
   );
 }
 
-// Page-level banner (not-configured state), matching the other tabs.
-function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
-  const cls =
-    tone === "warn"
-      ? "border-warning/30 bg-warning/10 text-warning"
-      : "border-info/30 bg-info/10 text-info";
-  return (
-    <div className={`mb-4 rounded-lg border px-3.5 py-3 text-sm ${cls}`}>{children}</div>
-  );
-}

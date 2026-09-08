@@ -15,6 +15,7 @@ import {
 import { estimateAnalysisCostUsd } from "@/lib/conversation-analysis-core.mjs";
 import { loadModelPrices, usdEurRate, usdToEur } from "@/lib/ai-pricing.mjs";
 import { GespraecheWorkspace } from "./GespraecheWorkspace";
+import { Callout } from "./ui";
 
 export async function GespraecheTab({
   dbReady,
@@ -25,10 +26,10 @@ export async function GespraecheTab({
 }) {
   if (!dbReady) {
     return (
-      <Banner tone="warn">
+      <Callout tone="warning" className="mb-4">
         Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Gespräche geladen
         werden.
-      </Banner>
+      </Callout>
     );
   }
 
@@ -74,13 +75,3 @@ export async function GespraecheTab({
   );
 }
 
-// Page-level banner (not-configured state), matching the other tabs.
-function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
-  const cls =
-    tone === "warn"
-      ? "border-warning/30 bg-warning/10 text-warning"
-      : "border-info/30 bg-info/10 text-info";
-  return (
-    <div className={`mb-4 rounded-lg border px-3.5 py-3 text-sm ${cls}`}>{children}</div>
-  );
-}

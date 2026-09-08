@@ -10,6 +10,7 @@ import { Loader2, Check, Circle, Pause, Play, AlertTriangle } from "lucide-react
 import { Button, Card, CardContent } from "../ui";
 import { cn } from "../ui/cn";
 import { PHASE_LABELS, phasesFor, phaseIndex } from "@/lib/analytics-report-core.mjs";
+import { eur } from "@/lib/admin-format.mjs";
 
 interface DriverProgress {
   analyzed: number;
@@ -29,10 +30,6 @@ interface StepResponse {
   costEur?: number;
   done?: boolean;
   error?: string | { message?: string };
-}
-
-function eur(n: number): string {
-  return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 2 });
 }
 
 export function ReportProgressDriver({

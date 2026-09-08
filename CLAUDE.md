@@ -29,6 +29,11 @@ compatible.
   `requireCronAuth`; webhooks verify the signature over the raw body before parsing.
 - **Dates in the admin go through `src/lib/admin-datetime.mjs`** (`formatAdmin(value, ADMIN_*)`,
   Europe/Berlin). A bare `toLocale*String` on a `Date` in `src/app/admin` is a lint error (hydration).
+- **Numbers in the admin go through `src/lib/admin-format.mjs`** (`num`, `eur`, `eurFromCents`, `pct`,
+  `ratio`, `hours`, `plural`, `relativeTime`, `truncate`) — no per-file `toLocaleString` helpers.
+- **Client calls to `/api/admin/*` go through `adminFetch()`** (`src/app/admin/lib/admin-fetch.ts`):
+  JSON in/out, `AdminApiError` with status + code + German message, 401 → login and back. Button
+  pending/error state comes from `useAsyncAction()` next to it; confirmations from `useConfirm()`.
 - **Env vars are documented in `.env.example`** the moment code reads them, with default and purpose.
   Legal send gates default to `false` in code (`CAMPAIGN_SENDS_APPROVED`, `CAMPAIGN_ALLOW_SINGLE_OPT_IN`,
   `PHYSICAL_MAIL_SENDS_APPROVED`).

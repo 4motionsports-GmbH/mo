@@ -39,6 +39,7 @@ import {
   ADMIN_DAY_MONTH,
   formatAdmin,
 } from "@/lib/admin-datetime.mjs";
+import { num } from "@/lib/admin-format.mjs";
 
 // Theme token references (resolve via CSS variables in theme.css).
 const ACCENT = "var(--accent)";
@@ -80,10 +81,6 @@ function ChartFrame({
   );
 }
 
-function deNumber(n: number): string {
-  return n.toLocaleString("de-DE", { maximumFractionDigits: 0 });
-}
-
 // ---------------------------------------------------------------------------
 // Themed tooltip — an HTML popover styled with the design tokens.
 // ---------------------------------------------------------------------------
@@ -118,7 +115,7 @@ function ChartTooltip({
           />
           <span>
             {p.name != null ? `${p.name}: ` : ""}
-            <strong>{typeof p.value === "number" ? deNumber(p.value) : p.value}</strong>
+            <strong>{typeof p.value === "number" ? num(p.value) : p.value}</strong>
           </span>
         </div>
       ))}

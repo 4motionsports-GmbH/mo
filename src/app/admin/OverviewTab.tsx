@@ -19,28 +19,15 @@ import {
   summarizeMarketingTargets,
   recentConfirmedContacts,
 } from "@/lib/admin-overview.mjs";
-import { Card, CardContent, Section, Stat } from "./ui";
+import { Card, CardContent, Section, Stat, Callout } from "./ui";
 import {
   ADMIN_DATE,
   formatAdmin,
 } from "@/lib/admin-datetime.mjs";
+import { eur, num } from "@/lib/admin-format.mjs";
 
 const RECENT_LIMIT = 5;
 const WINDOW_DAYS = 30;
-
-function num(n: number): string {
-  return n.toLocaleString("de-DE", { maximumFractionDigits: 0 });
-}
-
-// EUR with up to 4 decimals — per-consultation costs are fractions of a cent
-// (same formatting the KPI tab uses).
-function eur(n: number): string {
-  return n.toLocaleString("de-DE", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 4,
-  });
-}
 
 function dateLabel(iso: string | null): string {
   return formatAdmin(iso, ADMIN_DATE);
@@ -55,10 +42,10 @@ export async function OverviewTab({
 }) {
   if (!dbReady) {
     return (
-      <Banner tone="warn">
+      <Callout tone="warning" className="mb-4">
         Keine Datenbank konfiguriert (DATABASE_URL) — die Übersicht kann nicht
         berechnet werden.
-      </Banner>
+      </Callout>
     );
   }
 
@@ -103,7 +90,7 @@ export async function OverviewTab({
           />
           <Stat
             label="Ø Kosten / Beratung"
-            value={hasCost ? eur(aiCost?.avgCostPerConsultationEur ?? 0) : "—"}
+            value={hasCost ? eur(aiCost?.avgCostPerConsultationEur ?? 0, 4) : "—"}
             hint={hasCost ? `${num(consultationCount)} Beratungen` : "noch keine Daten"}
           />
         </div>
@@ -236,12 +223,3 @@ function ActivityCard({
   );
 }
 
-// Page-level banner (not-configured state), themed via tokens — mirrors the
-// Banner used by the other tab bodies.
-function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
-  const cls =
-    tone === "warn"
-      ? "border-warning/30 bg-warning/10 text-warning"
-      : "border-info/30 bg-info/10 text-info";
-  return <div className={`mb-4 rounded-lg border px-3.5 py-3 text-sm ${cls}`}>{children}</div>;
-}

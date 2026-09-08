@@ -61,6 +61,8 @@ import {
   ADMIN_TIME,
   formatAdmin,
 } from "@/lib/admin-datetime.mjs";
+import { eur } from "@/lib/admin-format.mjs";
+import { adminFetch } from "./lib/admin-fetch";
 
 interface FilterProps {
   preset: string;
@@ -93,9 +95,6 @@ function fmtDateTime(iso: string): string {
 function fmtTime(iso: string): string {
   return formatAdmin(iso, ADMIN_TIME, iso);
 }
-function eur(n: number): string {
-  return n.toLocaleString("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 4 });
-}
 function personaLabel(label: string | null): string | null {
   if (!label) return null;
   const meta = ARCHETYPE_META[label as PersonaArchetype];
@@ -121,20 +120,6 @@ function reportError(e: unknown) {
     title: "Fehler",
     description: e instanceof Error ? e.message : "Unbekannter Fehler",
   });
-}
-
-async function call(path: string, body: unknown): Promise<Record<string, unknown>> {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) {
-    const err = json as { error?: { message?: string } };
-    throw new Error(err?.error?.message ?? `Fehler (${res.status})`);
-  }
-  return json;
 }
 
 export function GespraecheWorkspace({
@@ -685,10 +670,10 @@ function ConversationDetail({ conversationId }: { conversationId: number | null 
     if (!detail) return;
     setAnalyzing(true);
     try {
-      const json = (await call("/api/admin/conversations/analyze", {
+      const json = (await adminFetch<Record<string, unknown>>("/api/admin/conversations/analyze", { body: {
         conversationId: detail.id,
         force,
-      })) as {
+      } })) as {
         analysis?: AdminConversationDetail["analysis"];
         usage?: AnalysisUsage | null;
         warning?: string;
@@ -793,7 +778,7 @@ function ConversationDetail({ conversationId }: { conversationId: number | null 
               <p className="text-[11px] text-muted-foreground">
                 Stand: {fmtDateTime(a.updatedAt)}
                 {a.model ? ` · ${a.model}` : ""}
-                {a.costEur > 0 ? ` · ~${eur(a.costEur)}` : ""}
+                {a.costEur > 0 ? ` · ~${eur(a.costEur, 4)}` : ""}
                 {lastUsage
                   ? ` · letzter Lauf: ${lastUsage.inputTokens.toLocaleString("de-DE")} / ${lastUsage.outputTokens.toLocaleString("de-DE")} Tokens`
                   : ""}

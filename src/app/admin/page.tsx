@@ -52,6 +52,7 @@ import { KampagneTab } from "./KampagneTab";
 import { EinstellungenTab } from "./EinstellungenTab";
 import { AdminShell, type AdminTab } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
+import { Callout } from "./ui";
 
 export const dynamic = "force-dynamic";
 
@@ -279,18 +280,18 @@ async function KundenTab({
 
   if (!dbReady) {
     return (
-      <Banner tone="warn">
+      <Callout tone="warning" className="mb-4">
         Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Kunden geladen werden.
-      </Banner>
+      </Callout>
     );
   }
 
   if (cards.length === 0) {
     return (
-      <Banner tone="info">
+      <Callout tone="info" className="mb-4">
         Noch keine Kunden. Ein Kunde entsteht, sobald jemand im Chat seine E-Mail-Adresse (mit
         Einwilligung) hinterlässt — anonyme Sessions bleiben unverknüpft.
-      </Banner>
+      </Callout>
     );
   }
 
@@ -304,15 +305,3 @@ async function KundenTab({
   );
 }
 
-// Page-level banner (empty / not-configured states). Themed via tokens so it
-// stays readable in both light and dark. The richer tab-body cards keep their
-// own styling for now — full per-tab redesigns land in sessions B/C/D.
-function Banner({ tone, children }: { tone: "warn" | "info"; children: React.ReactNode }) {
-  const cls =
-    tone === "warn"
-      ? "border-warning/30 bg-warning/10 text-warning"
-      : "border-info/30 bg-info/10 text-info";
-  return (
-    <div className={`mb-4 rounded-lg border px-3.5 py-3 text-sm ${cls}`}>{children}</div>
-  );
-}
