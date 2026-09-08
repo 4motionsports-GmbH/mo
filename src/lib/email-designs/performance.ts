@@ -295,11 +295,30 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
 
 /**
  * The offer countdown — the same black card language as the set deal, so the
- * two read as one offer: a small red-on-black kicker, two big tiles (days,
- * hours) and the exact deadline underneath. Numbers are the render-time
- * snapshot email-template computes; nothing here counts live.
+ * two read as one offer. With a signing secret the card IS the live image
+ * (api/email-countdown: days / hours / minutes at the moment of opening,
+ * "Angebot abgelaufen" after the deadline) with the exact deadline printed
+ * underneath in HTML; without one it falls back to render-time tiles.
  */
 function offerCountdownCard(input: OfferCountdownInput): string {
+  if (input.imageUrl) {
+    return `
+                <tr>
+                  <td class="content-pad" style="padding: 0 38px 16px 38px;" bgcolor="#ffffff">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#111111; border-radius:7px;">
+                      <tr>
+                        <td align="center" style="padding: 0; font-size:0; line-height:0;">
+                          <img src="${escapeAttr(input.imageUrl)}" width="${input.imageWidth}" alt="${escapeAttr(input.imageAlt)}" class="countdown-desktop" style="width:100%; max-width:${input.imageWidth}px; height:auto; display:block; border-radius:7px 7px 0 0;">
+                          <img src="${escapeAttr(input.imageUrlMobile ?? input.imageUrl)}" width="${input.imageWidthMobile}" alt="${escapeAttr(input.imageAlt)}" class="countdown-mobile" style="width:100%; max-width:${input.imageWidthMobile}px; height:auto; display:none; border-radius:7px 7px 0 0;">
+                        </td>
+                      </tr>
+                      <tr>
+                        <td align="center" style="padding: 0 22px 16px 22px; font-family:${FONT}; color:#bbbbbb; font-size:11px; line-height:16px;">${escapeHtml(input.copy.until)} ${escapeHtml(input.deadlineLabel)}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+  }
   const tile = (value: number, unit: string) => `
                           <td align="center" style="padding: 0 6px;">
                             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="background:#1f1f1f; border-radius:6px;">
@@ -556,6 +575,8 @@ function makeShell(kind: keyof typeof HERO_COPY) {
         .hero-cta { display: block !important; width: 100% !important; box-sizing: border-box !important; text-align: center !important; }
         .hero-mobile-img { display: block !important; }
         .hero-mobile-label { display: block !important; }
+        .countdown-desktop { display: none !important; }
+        .countdown-mobile { display: block !important; }
         .product-image { width: 100% !important; max-width: 190px !important; margin: 0 auto !important; }
         .product-content { padding: 6px 20px 12px 20px !important; text-align: center !important; }
         .product-action { padding: 0 20px 20px 20px !important; text-align: center !important; }
