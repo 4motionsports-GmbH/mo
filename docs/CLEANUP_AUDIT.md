@@ -193,7 +193,19 @@ in §2.6.
 
 ### 2.6 Module map results (dead exports, unused dependencies, duplicated lib helpers)
 
-MODULE_MAP_RESULTS_PLACEHOLDER
+Source: the module map of all 285 files in `src/lib` (scratch artefact of this audit; the per-domain tables are
+summarised here) plus mechanical scans (export importers, dependency references, SQL-in-loop heuristics).
+
+| ID | Sev | Finding | Proposed fix |
+| --- | --- | --- | --- |
+| TECH-M1 | P2 | **Unused dependencies:** `@ai-sdk/react` and `framer-motion` are in `package.json` but referenced nowhere in `src/` or `scripts/`. | Remove both (build verifies). |
+| TECH-M2 | P3 | **91 exported functions/constants have no reference outside their own file** (e.g. `bundle-offers.ts: bundleCreationMode/bundleExpiryDays`, `campaign-recommendations.ts: compactPurchaseSummary/pickCampaignRecommendations/lifecycleFactsFromHistory`, `catalog-store.ts: readCatalogBlobDirect/writeEmbeddingsToBlob`, `marketing-store.ts: getLatestSendForCapture`, `pingen.ts: sendLetter/getLetter`, `shopify.ts: getAdminToken`, `security.ts: isOriginAllowed/isSecretValid`, 30 `MAX_*`/`*_LIMIT` constants), plus 205 exported types/interfaces used only locally. Some are internal helpers that merely do not need `export`; some are genuinely dead. | In the technical slice: drop `export` where the symbol is used internally, delete what has no caller at all, one commit per module group; `tsc` + tests + build guard each step. |
+| TECH-M3 | ✓ | No never-imported module in `src/lib` (every non-test file has at least one importer). | — |
+| TECH-M4 | P2 | **Per-row queries in loops** (heuristic, verified by reading): `campaign-sync.ts:89` upserts campaign contacts one by one for the whole Shopify audience on every nightly sync (thousands of round trips over HTTP); `page.tsx:198` (TECH-E2); `marketing-store.ts:177` and `kpi-recommendation-loop.ts:96` fan out per contact incl. Shopify; `conversion-sweep.ts:105` per candidate (bounded by `CONVERSION_SWEEP_MAX_CODES`); `improvement-store.ts:402` per suggestion (small); `account-export.ts:66` per conversation (GDPR export, small). | Batch the campaign upsert (`unnest` arrays) and the Kunden list; cache the Shopify fan-outs (D-1/D-4); leave the small ones. |
+| TECH-M5 | ✓ | No composed/nested `sql` fragments and no string-built SQL anywhere; `sql.transaction` used correctly in three places. | — |
+| TECH-M6 | P3 | **Duplicated helpers across `src/lib` and `src/app/admin`:** EUR/number/percent formatting (≥ 14 sites), `firstImageUrl`/`firstProductImageUrl` (campaign-email, marketing-email, email-products, summary-email), `catalogNameLookup` (campaign-email, marketing-email), `Banner` (9), fetch→JSON helpers (≈ 12), Europe/Berlin date formatting outside `admin-datetime.mjs` (`germanDate` in kpi-range.mjs vs `formatGermanExpiryDate` in shopify-discounts vs `formatAdmin`). | One `admin-format.mjs`; one product-image helper in `email-products.ts`; shared `catalogNameLookup`; one date module (`store-datetime.mjs` already anchors the zone). |
+| TECH-M7 | P3 | **Largest functions:** `buildSystemPrompt` 288 lines, `getCampaignKpis` 239, `renderRetrievedProducts` 194, `listAdminConversations` 194, `getPersonaAddendum` 145, `renderCustomerMemory` 112, `graphql` (shopify.ts) 112, `bindShopifyIdentityOnce` 105. | Split where a split clarifies (KPI aggregation into three query helpers + a combiner; system prompt sections into one function per block); no behaviour change, golden test on the German prompt already guards `buildSystemPrompt`. |
+| TECH-M8 | P3 | `.mjs` cores without a test: `campaign-flags.mjs`, `email-rating.mjs`, `kpi-event-patterns.mjs`, `openai-error.mjs`. TS modules whose pure logic would benefit from a tested core: retention option parsing (TECH-C1), `customer-filter.ts` (admin list filter), the `?tab=` registry, campaign KPI row assembly, `stampCampaignDelivery` matching. | Add the tests as part of the slices that touch them. |
 
 ---
 
@@ -318,7 +330,8 @@ Today `page.tsx` renders eight tab bodies on every request and force-mounts them
 | Two client stepping loops (`ReportProgressDriver`, `RunDriver`) | one `useStepLoop` hook with the more robust reconnect semantics of the Verbesserung driver |
 | `.env.example`: `SHOPIFY_CUSTOMER_ACCOUNT_API_VERSION` | never read by code (the version comes from discovery) |
 | `.env.example` / README: Sentry source-map upload vars | described as wired, but `next.config.ts` has no `withSentryConfig` and there is no instrumentation file — the docs describe something that does not exist; removed from the docs (not adding the plugin) |
-| Unused exports and never-imported lib modules | listed in the module map (in progress); each removal is verified by grep + build |
+| `@ai-sdk/react`, `framer-motion` dependencies | referenced nowhere (TECH-M1) |
+| Exports without any external reference (TECH-M2) | drop `export` or delete, verified by `tsc` + tests + build per module group |
 
 ### 6.2 Removals that need your confirmation (capability with no caller I can find)
 | Item | Evidence | Recommendation |
