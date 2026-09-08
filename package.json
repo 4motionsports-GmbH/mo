@@ -18,7 +18,9 @@
     "db:reset": "node --env-file=.env scripts/reset-test-data.mjs",
     "analyze:repurchase": "node --env-file=.env scripts/analyze-repurchase.mjs",
     "hero:gradient": "node scripts/hero-gradient.mjs",
-    "hero:compare": "node --env-file=.env scripts/hero-quality-compare.mjs"
+    "hero:compare": "node --env-file=.env scripts/hero-quality-compare.mjs",
+    "db:proxy": "node scripts/dev-neon-proxy.mjs",
+    "db:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/seed-dev.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.48",
@@ -47,6 +49,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "pg": "^8.23.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

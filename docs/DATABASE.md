@@ -163,3 +163,31 @@ This separation is a GDPR design decision, not just tidiness:
 
 See [`DATA_RETENTION.md`](./DATA_RETENTION.md) for lawful basis and retention
 windows in detail.
+
+## Local database (development)
+
+The runtime uses the Neon driver's **HTTP** mode, which a plain local Postgres does not speak.
+For local development the repo ships a tiny protocol proxy so you can run the whole app —
+migrations, admin, crons — against a Postgres on your machine:
+
+```bash
+# 1. a local Postgres with an empty database, e.g.
+createdb mo            # or: docker run -e POSTGRES_PASSWORD=mo -p 5432:5432 postgres:16
+
+# 2. the proxy (keeps running; speaks the Neon SQL-over-HTTP protocol on :4444)
+npm run db:proxy
+
+# 3. point the app at both (in .env.local)
+DATABASE_URL=postgres://mo:mo@127.0.0.1:5432/mo
+NEON_FETCH_ENDPOINT=http://127.0.0.1:4444/sql
+
+# 4. schema + demo data
+npm run db:migrate
+npm run db:seed         # scripts/seed-dev.mjs — refuses non-local hosts; --reset truncates first
+npm run dev
+```
+
+`NEON_FETCH_ENDPOINT` is read once in `src/lib/db.ts`; leave it unset everywhere except local
+development. The seed script fills every table the admin reads with deterministic German demo data
+(conversations, customers, campaign queue and sends, KPIs, feedback, Q&A, reports); re-running it with
+`--reset` recreates the same data.
