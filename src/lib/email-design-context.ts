@@ -112,6 +112,21 @@ export interface OfferCountdownInput {
   /** "Sa., 12.09.2026, 23:59 Uhr" — already localised. */
   deadlineLabel: string;
   copy: { heading: string; days: string; hours: string; until: string };
+  /**
+   * The LIVE countdown image (api/email-countdown/<token>): rendered by our
+   * server at every open with the numbers of that moment. Null when no
+   * signing secret is configured — designs then show the render-time
+   * snapshot (days/hours above).
+   */
+  imageUrl: string | null;
+  /** Plain-text alternative for the image (alt text). */
+  imageAlt: string;
+  /** Displayed width of the image in the 640px mail (1×). */
+  imageWidth: number;
+  /** The phone-width variant of the same image (?w=m), for designs whose
+   * mobile media query swaps it in; null when imageUrl is null. */
+  imageUrlMobile: string | null;
+  imageWidthMobile: number;
 }
 
 /** Everything a moPromoBlock override needs (campaign-email.ts builds it). */

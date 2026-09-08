@@ -109,15 +109,28 @@ Override und fällt sonst auf die classic-Implementierung zurück.
 **Countdown.** Kampagnen- und Marketing-Mails zeigen unter dem Angebot, wie
 lange es noch gilt: die **frühere** der beiden Fristen — Ablauf des
 Rabattcodes und Ablauf des Set-Angebots (`earliestDeadline`,
-`offer-countdown.mjs`, getestet). E-Mails können keine Skripte ausführen, der
-Zähler ist deshalb ein **Schnappschuss zum Renderzeitpunkt** (Versand; die
-Vorschau zeigt dieselben Zahlen): Tage und Stunden, abgerundet, nie Minuten —
-so bleibt die Aussage in den Stunden wahr, in denen eine Mail typischerweise
-geöffnet wird; die exakte Frist steht immer daneben. Abgelaufen = kein Zähler.
-Renderer-Hook `offerCountdown` (`renderOfferCountdown` in `email-template.ts`):
-klassisch eine gedämpfte Zeile, im Performance-Design eine schwarze Karte im
-Stil der Set-Karte mit zwei Kacheln (Tage, Stunden) und der Frist darunter.
-Auch der Text-Teil trägt die Zeile.
+`offer-countdown.mjs`, getestet). Der Zähler ist **live**: Die Mail bettet
+`GET /api/email-countdown/<token>` als Bild ein, und bei jedem Öffnen rendert
+der Server Tage / Stunden / Minuten bis zur Frist zu genau diesem Zeitpunkt —
+nach der Frist „Angebot abgelaufen". Der Token trägt nur Frist und Sprache,
+signiert mit dem Abmelde-Secret (`email-countdown-token.mjs`, getestet):
+nichts über den Empfänger, kein freier Bilddienst. Das Bild kommt mit
+`no-store`, damit die Bild-Proxys von Gmail und Apple Mail bei jedem Öffnen
+neu laden; pro Abruf wird nichts gespeichert oder gezählt.
+
+Ohne Systemschriften (Vercel) wird kein Text gerastert: Ziffern und Wörter sind
+**vorgerendert** (`scripts/build-countdown-sprite.mjs` →
+`src/lib/generated/countdown-sprite.mjs`, Liberation Sans Bold, 2×), der
+Server komponiert sie nur noch auf SVG-Formen (`email-countdown-image.mjs`,
+Layout getestet, 564×132 px bei 1×). Nach Änderungen an Wortlaut oder Farben
+das Skript erneut laufen lassen und das generierte Modul committen.
+
+Fallbacks: `alt`-Text „Dein Angebot gilt noch …" bei blockierten Bildern, die
+exakte Frist immer als HTML-Zeile unter dem Bild, im Text-Teil dieselbe Zeile
+als Schnappschuss; ohne Signier-Secret (nur lokal denkbar) zeigen die Designs
+die Render-Zeit-Kacheln in Tagen und Stunden. Renderer-Hook `offerCountdown`
+(`renderOfferCountdown` in `email-template.ts`): klassisch Bild + gedämpfte
+Zeile, im Performance-Design eine schwarze Karte im Stil der Set-Karte.
 
 **Set-Karte.** Die weiße Überschrift ist kurz: Operator-Titel, wenn er kurz ist,
 sonst „Dein persönliches Set" (`bundleHeadline`, getestet — generierte Titel
@@ -415,6 +428,7 @@ würde es links und rechts beschnitten und der Text stünde auf dem Motiv.)
 | `src/lib/email-hero-references.mjs` | Referenzfotos der Produkte: Auswahl, Prompt-Block, Laden/Verkleinern, getestet |
 | `src/lib/email-hero-qa.mjs` | Automatische Bildprüfung (Vision-Modell), Verdict und Re-Render-Wahl, getestet |
 | `src/lib/email-hero-marking.mjs` | Maschinenlesbare KI-Markierung (IPTC/XMP + EXIF) in jeder Hero-Datei, getestet |
+| `src/lib/email-countdown-image.mjs` + `api/email-countdown` | Live-Countdown-Bild aus vorgerenderten Glyphen, signierter Token (`email-countdown-token.mjs`), getestet |
 | `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Privater Blob-Write & öffentliche Auslieferung der Hero-Bilder (mit Pfad-Validierung) |
 | `src/lib/email-hero-context.mjs` | Was die KI über die Person erfährt (Kaufhistorie, Profil, Kategorien, Saison) — pur & getestet |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |

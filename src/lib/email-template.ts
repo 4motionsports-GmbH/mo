@@ -119,7 +119,9 @@ import {
   type MoPromoBlockInput,
   type OfferCountdownInput,
 } from "./email-design-context";
-import { countdownCopy, deadlineLabel, remainingParts } from "./offer-countdown.mjs";
+import { countdownCopy, countdownText, deadlineLabel, remainingParts } from "./offer-countdown.mjs";
+import { countdownSecret, signCountdownToken } from "./email-countdown-token.mjs";
+import { COUNTDOWN_MOBILE_WIDTH, COUNTDOWN_WIDTH } from "./email-countdown-image.mjs";
 import { buttonRadiusFor, fontNeedsWebFont, fontStackFor } from "./email-theme.mjs";
 import type { Locale } from "./locale";
 export { escapeHtml, escapeAttr };
@@ -328,11 +330,21 @@ export function renderOfferCountdown(input: {
     hours: r.hours,
     deadlineLabel: deadlineLabel(input.expiresAt, input.language),
     copy: { heading: c.heading, days: c.days(r.days), hours: c.hours(r.hours), until: c.until },
+    imageUrl: countdownImageUrl(input.expiresAt, input.language),
+    imageAlt: countdownText(input.expiresAt, input.language, input.now),
+    imageWidth: COUNTDOWN_WIDTH,
+    imageUrlMobile: countdownImageUrl(input.expiresAt, input.language, "m"),
+    imageWidthMobile: COUNTDOWN_MOBILE_WIDTH,
   };
   const override = activeEmailDesignRenderers()?.offerCountdown;
   if (override) return override(built);
+  const image = built.imageUrl
+    ? `
+                    <img src="${escapeAttr(built.imageUrl)}" width="${built.imageWidth}" alt="${escapeAttr(built.imageAlt)}" style="width: 100%; max-width: ${built.imageWidth}px; height: auto; display: block; border-radius: 7px; margin: 0 auto 8px;">`
+    : "";
   return renderSectionRow(
-    `
+    image +
+      `
                     <p style="${emailMutedTextStyle()} font-size: 13px;" align="center"><strong>${escapeHtml(
                       built.copy.heading
                     )} ${built.days} ${escapeHtml(built.copy.days)}${
@@ -340,6 +352,21 @@ export function renderOfferCountdown(input: {
                     }</strong> — ${escapeHtml(built.copy.until)} ${escapeHtml(built.deadlineLabel)}</p>`,
     { padding: "4px 60px 14px", align: "center" }
   );
+}
+
+/**
+ * The live countdown image URL for a deadline, or null without a signing
+ * secret (UNSUBSCRIBE_SECRET / CHAT_SHARED_SECRET — the unsubscribe links
+ * need the same one, so a production deployment always has it).
+ */
+export function countdownImageUrl(
+  expiresAt: string,
+  language: "de" | "en",
+  variant?: "m"
+): string | null {
+  const token = signCountdownToken({ expiresAt, language }, countdownSecret());
+  if (!token) return null;
+  return `${getBaseUrl()}/api/email-countdown/${encodeURIComponent(token)}${variant ? `?w=${variant}` : ""}`;
 }
 
 function renderSocialRow(): string {
