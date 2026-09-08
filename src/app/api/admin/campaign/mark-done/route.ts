@@ -72,6 +72,12 @@ export async function POST(req: Request) {
       discountCodeGid: null,
       discountExpiresAt: null,
       segment: draft.segment,
+      // Copy path: plain prose left the system — no design, no hero (0054).
+      designKey: null,
+      heroVariant: "none",
+      textMode: draft.textMode ?? null,
+      language: contact.language,
+      discountPercent: draft.discountPercent,
     });
     return adminJson({ ok: true });
   } catch (err) {

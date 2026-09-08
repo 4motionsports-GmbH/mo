@@ -424,3 +424,52 @@ wäre eine **Rückkopplung**: die Analyse misst Verhalten *ohne* unsere
 segmentierten Mails; sobald sie laufen, optimierte eine Automatik gegen die
 eigene Wirkung. Wenn die Zahlen nachgeführt werden sollen, dann nach dem Muster
 des Verbesserungs-Loops: die Auswertung *schlägt vor*, ein Mensch entscheidet.
+
+## KPIs und Hero-A/B-Test (Migration `0054`)
+
+**Was je Send festgehalten wird.** Neben Segment (0052) stempelt der Versand
+jetzt einen Schnappschuss der Mail auf `campaign_sends`: `design_key`,
+`hero_variant` (`ai` = individuell generierter KI-Hero, `default` = Hero-Design
+mit Standard-Bild, `none` = ohne Hero / Kopier-Pfad), `hero_image_url`,
+`hero_headline`, `text_mode`, `language`, `discount_percent`,
+`bundle_offer_id`. Der Entwurf wird bei jedem Regenerieren überschrieben —
+ohne den Stempel wäre nach dem Versand nicht mehr rekonstruierbar, was
+verschickt wurde.
+
+**Welche Ergebnisse zugeordnet werden.**
+- **CTA-Klick** — `clicked_at` (seit 0041), erster Klick auf `/api/r/<token>`.
+- **Set-Klick** — `bundle_clicked_at`: der erste Klick auf „Zur Kasse" des
+  mitgeschickten Sets (Redirect-Route stempelt über `bundle_offer_id`).
+- **Einlösung + Umsatz** — Shopify-Abfrage je MK-Code (`fetchCodeRedemption`),
+  jetzt mit Bestellwert, je Variante und Segment summiert.
+- **Abmeldung** — `unsubscribed_at`: eine Abmeldung wird den Kampagnen-Mails
+  der letzten 30 Tage an diese Adresse zugeordnet.
+- **Hero-Kosten** — `ai_usage.campaign_contact_id` verknüpft jede
+  Hero-Generierung (Prompt, Renders, Prüfung) mit dem Kontakt; der KPI-Tab
+  summiert die Kosten je Hero-Variante.
+- **Bewertung** — `feedback.rating` / `email_kind`: die Klick-Bewertung als
+  Zahl (Ø je Zeitraum). Absichtlich anonym, daher keiner Variante zuordenbar.
+- **Chat-Start** — der Redirect hängt den Send-Token als `mo_c` an den
+  Mo-Deeplink. Die Zuordnung Chat → Send braucht noch die Widget-Seite
+  (Parameter beim Sitzungsstart mitschicken); bis dahin bleibt der Funnel beim
+  Klick stehen.
+
+**Der Hero-Vergleich im KPI-Tab.** Tabelle „Hero-Vergleich: lohnt sich das
+KI-Bild?": je Variante Gesendet, Klickrate, Set geklickt, Eingelöst, Umsatz,
+Umsatz je Send, Hero-Kosten, Kosten je Send, Abgemeldet — dazu dieselbe
+Tabelle je Lebenszyklus-Segment. Damit beide Gruppen Sends bekommen, zeigt der
+Kampagnen-Workspace je Kontakt die **A/B-Gruppe** (gerade Kontakt-ID: mit
+KI-Hero senden, ungerade: Hero-Panel leer lassen). Der Stempel hält fest, was
+tatsächlich verschickt wurde, nicht die Empfehlung. Faustregel: erst ab etwa
+100 Sends je Gruppe sind Klickraten-Unterschiede von wenigen Prozentpunkten
+belastbar; Umsatz je Send braucht noch mehr.
+
+**Was der Funnel nicht kann (bewusst / offen).**
+- Keine Öffnungsraten — kein Tracking-Pixel (Datenschutz-Entscheidung seit
+  0041). Klickrate bezieht sich auf gesendete, nicht auf geöffnete Mails.
+- Keine Bounce-/Beschwerde-Signale — dafür fehlt ein Resend-Webhook
+  (`email.bounced`, `email.complained`) und eine gespeicherte Provider-ID am
+  Send. Vor größeren Wellen einrichten; die Suppression-Liste sieht die
+  Gründe `bounce`/`complaint` bereits vor.
+- Einlösung wird für die 100 neuesten Codes je Zeitraum geprüft; darüber
+  hinaus ist die Stichprobe gekappt (im Tab markiert).

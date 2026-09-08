@@ -29,6 +29,7 @@ import { getMarketingFunnel, type MarketingFunnel } from "@/lib/marketing-store"
 import {
   getCampaignKpis,
   CAMPAIGN_KPI_MAX_CODES,
+  type CampaignBreakdownRow,
   type CampaignKpis,
 } from "@/lib/campaign-store";
 import { getBundleKpis, type BundleKpis } from "@/lib/bundle-offers-store";
@@ -1263,8 +1264,53 @@ function CampaignSection({ kpis, range }: { kpis: CampaignKpis | null; range: Kp
                     : undefined
                 }
               />
+              <Stat
+                label="Set geklickt"
+                value={kpis.bundleSends > 0 ? num(kpis.bundleClicked, 0) : "—"}
+                hint={
+                  kpis.bundleSends > 0
+                    ? `${pct(kpis.bundleClicked / kpis.bundleSends)} der ${num(kpis.bundleSends, 0)} Sends mit Set`
+                    : "kein Set-Angebot im Zeitraum"
+                }
+              />
+              <Stat
+                label="Umsatz (MK-Codes)"
+                value={kpis.shopifyConfigured ? eur(kpis.revenueEur, 2) : "—"}
+                hint={
+                  kpis.shopifyConfigured && kpis.sent > 0
+                    ? `${eur(kpis.revenueEur / kpis.sent, 2)} je Send · geprüfte Codes`
+                    : undefined
+                }
+              />
+              <Stat
+                label="Abgemeldet"
+                value={num(kpis.unsubscribed, 0)}
+                hint={kpis.sent > 0 ? `${pct(kpis.unsubscribed / kpis.sent)} der Sends (30 Tage)` : undefined}
+              />
+              <Stat
+                label="Bewertung"
+                value={kpis.ratings.average != null ? `${num(kpis.ratings.average, 1)} / 5` : "—"}
+                hint={`${num(kpis.ratings.count, 0)} Klick-Bewertung${kpis.ratings.count === 1 ? "" : "en"} (anonym)`}
+              />
             </div>
           </div>
+
+          <CampaignBreakdownTable
+            title="Hero-Vergleich: lohnt sich das KI-Bild?"
+            subtitle="Derselbe Funnel je Hero-Variante der versendeten Mail — mit den Hero-Kosten der jeweiligen Kontakte (Prompt, Renders, Prüfung)."
+            rows={kpis.byHeroVariant}
+            labelFor={heroVariantLabel}
+            withCost
+            shopifyConfigured={kpis.shopifyConfigured}
+          />
+          <CampaignBreakdownTable
+            title="Nach Lebenszyklus-Segment"
+            subtitle="Derselbe Funnel je Segment (Zeit seit dem letzten Kauf)."
+            rows={kpis.bySegment}
+            labelFor={segmentLabel}
+            withCost={false}
+            shopifyConfigured={kpis.shopifyConfigured}
+          />
           <Caveat>
             „Geklickt“ zählt Sends, deren getrackter Promo-CTA
             (<code>/api/r/&lt;token&gt;</code>) mindestens einmal angeklickt wurde
@@ -1280,10 +1326,111 @@ function CampaignSection({ kpis, range }: { kpis: CampaignKpis | null; range: Kp
               ` Bei ${num(kpis.redemptionUnknown, 0)} Code(s) lieferte Shopify keine Antwort (nicht gezählt).`}
             {kpis.sampled &&
               ` Einlösungsprüfung auf die ${CAMPAIGN_KPI_MAX_CODES} neuesten Codes begrenzt.`}
+            {" "}„Set geklickt“ und „Abgemeldet“ gelten für Sends ab Migration 0054;
+            die Abmeldung wird den Kampagnen-Mails der letzten 30 Tage an diese
+            Adresse zugeordnet. Bewertungen sind absichtlich anonym und lassen
+            sich keiner Variante zuordnen. Für einen fairen Hero-Vergleich
+            brauchen beide Gruppen Sends — der Kampagnen-Workspace zeigt je
+            Kontakt die A/B-Gruppe an (gerade Kontakt-ID: mit Hero, ungerade:
+            ohne).
           </Caveat>
         </>
       )}
     </Section>
+  );
+}
+
+function heroVariantLabel(key: string): string {
+  switch (key) {
+    case "ai":
+      return "Mit KI-Hero (individuell)";
+    case "default":
+      return "Standard-Hero";
+    case "none":
+      return "Ohne Hero (klassisch / kopiert)";
+    default:
+      return "Unbekannt (vor Migration 0054)";
+  }
+}
+
+function segmentLabel(key: string): string {
+  return key === "unbekannt" ? "Unbekannt" : key;
+}
+
+/** The per-variant / per-segment funnel table shared by the campaign section. */
+function CampaignBreakdownTable({
+  title,
+  subtitle,
+  rows,
+  labelFor,
+  withCost,
+  shopifyConfigured,
+}: {
+  title: string;
+  subtitle: string;
+  rows: CampaignBreakdownRow[];
+  labelFor: (key: string) => string;
+  withCost: boolean;
+  shopifyConfigured: boolean;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold">{title}</CardTitle>
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
+      </CardHeader>
+      <CardContent className="overflow-x-auto p-0 pb-2">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b">
+              <Th>Variante</Th>
+              <Th align="right">Gesendet</Th>
+              <Th align="right">Klickrate</Th>
+              <Th align="right">Set geklickt</Th>
+              <Th align="right">Eingelöst</Th>
+              <Th align="right">Umsatz</Th>
+              <Th align="right">Umsatz / Send</Th>
+              {withCost && <Th align="right">Hero-Kosten</Th>}
+              {withCost && <Th align="right">Kosten / Send</Th>}
+              <Th align="right">Abgemeldet</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key} className="border-b last:border-0">
+                <Td>{labelFor(r.key)}</Td>
+                <Td align="right">{num(r.sent, 0)}</Td>
+                <Td align="right">
+                  {r.clickRate == null ? "—" : `${pct(r.clickRate)} (${num(r.clicked, 0)}/${num(r.trackedSends, 0)})`}
+                </Td>
+                <Td align="right">
+                  {r.bundleSends > 0 ? `${num(r.bundleClicked, 0)}/${num(r.bundleSends, 0)}` : "—"}
+                </Td>
+                <Td align="right">
+                  {!shopifyConfigured
+                    ? "—"
+                    : r.conversionRate == null
+                      ? "—"
+                      : `${pct(r.conversionRate)} (${num(r.converted, 0)}/${num(r.codesChecked, 0)})`}
+                </Td>
+                <Td align="right">{shopifyConfigured ? eur(r.revenueEur, 2) : "—"}</Td>
+                <Td align="right">
+                  {shopifyConfigured && r.sent > 0 ? eur(r.revenueEur / r.sent, 2) : "—"}
+                </Td>
+                {withCost && <Td align="right">{r.heroCostEur != null ? eur(r.heroCostEur, 2) : "—"}</Td>}
+                {withCost && (
+                  <Td align="right">
+                    {r.heroCostEur != null && r.sent > 0 ? eur(r.heroCostEur / r.sent, 2) : "—"}
+                  </Td>
+                )}
+                <Td align="right">{num(r.unsubscribed, 0)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
   );
 }
 

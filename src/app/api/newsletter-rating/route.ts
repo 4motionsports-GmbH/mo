@@ -65,6 +65,8 @@ export async function GET(req: Request) {
       tier: null,
       email: null,
       page: `email:${kind}`,
+      rating,
+      emailKind: kind,
     }).catch((err) => {
       reportError(err, { route: "api/newsletter-rating", phase: "insert" });
       return null;

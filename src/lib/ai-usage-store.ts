@@ -77,6 +77,9 @@ export type AiCallSite =
 const CHAT_SIDE_CALL_SITES = new Set<AiCallSite>(["chat", "embeddings", "tts"]);
 
 export interface RecordAiUsageInput {
+  /** The campaign contact this call served (hero generation, draft) — links
+   * the cost to the eventual send (migration 0054). No FK; survives purges. */
+  campaignContactId?: number | null;
   callSite: AiCallSite;
   model: string;
   /** TOTAL input tokens (ai@6 convention — includes any cached tokens). */
@@ -120,11 +123,12 @@ export async function recordAiUsage(
     await sql`
       INSERT INTO ai_usage
         (conversation_id, call_site, model, input_tokens, output_tokens,
-         cache_read_tokens, cache_write_tokens, estimated)
+         cache_read_tokens, cache_write_tokens, estimated, campaign_contact_id)
       VALUES
         (${input.conversationId ?? null}, ${input.callSite}, ${input.model},
          ${inputTokens}, ${outputTokens},
-         ${cacheReadTokens}, ${cacheWriteTokens}, ${input.estimated ?? false})
+         ${cacheReadTokens}, ${cacheWriteTokens}, ${input.estimated ?? false},
+         ${input.campaignContactId ?? null})
     `;
   } catch (err) {
     reportError(err, { route: "lib/ai-usage-store", phase: "recordAiUsage" });

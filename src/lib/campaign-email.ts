@@ -291,6 +291,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       // The per-contact hero image (email-hero.ts) rides along for hero designs.
       const emailDesign = await getCachedEmailDesignForKind("campaign");
       const hero = await getEmailHeroRenderData("campaign", contactId);
+      let bundleOfferId: number | null = null;
       const { text, html } = await withEmailDesign(emailDesign, () =>
         withEmailRenderData(
           { ...hero, recipientFirstName: contact.firstName?.trim() || null },
@@ -314,11 +315,11 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         // is HTML rendered through the design's renderers, and building it
         // before the design was active shipped the classic block inside a
         // Performance mail.
-        bundle: await buildBundleBlockForContact(
-          contactId,
-          contact.language,
-          draft.productHighlights
-        ),
+        bundle: await (async () => {
+          const b = await buildBundleBlockForContact(contactId, contact.language, draft.productHighlights);
+          bundleOfferId = b?.offerId ?? null;
+          return b;
+        })(),
         labelForUrl: await catalogNameLookup(),
         ctaUrl: trackedCtaUrl,
       }))
@@ -365,6 +366,16 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         redirectToken,
         // Stamped from the draft so the funnel can be read per segment later.
         segment: draft.segment,
+        // Send-time snapshot (migration 0054): what this mail looked like, so
+        // the KPI tab can compare hero variants and designs after the fact.
+        designKey: emailDesign?.key ?? "classic",
+        heroVariant: hero.heroImageUrl ? "ai" : emailDesign ? "default" : "none",
+        heroImageUrl: hero.heroImageUrl,
+        heroHeadline: hero.heroHeadline,
+        textMode: draft.textMode ?? null,
+        language: contact.language,
+        discountPercent: draft.discountPercent,
+        bundleOfferId,
       });
       await markContactSent(contactId);
       return { ok: true, sentTo: contact.email };
@@ -444,7 +455,7 @@ async function buildBundleBlockForContact(
   contactId: number,
   language: "de" | "en",
   highlights: Array<{ name: string; description: string }> | null = null
-): Promise<{ text: string; html: string; componentNames: string[]; expiresAt: string | null } | null> {
+): Promise<{ text: string; html: string; componentNames: string[]; expiresAt: string | null; offerId: number } | null> {
   try {
     const bundle = await getActiveBundleForCampaignContact(contactId);
     if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
@@ -477,7 +488,7 @@ async function buildBundleBlockForContact(
       offerUrl,
       language,
     });
-    return { ...block, componentNames: components.map((c) => c.name), expiresAt: bundle.expiresAt };
+    return { ...block, componentNames: components.map((c) => c.name), expiresAt: bundle.expiresAt, offerId: bundle.id };
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "buildBundleBlockForContact" });
     return null;

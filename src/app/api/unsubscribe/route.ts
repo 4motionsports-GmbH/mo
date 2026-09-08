@@ -8,6 +8,7 @@
 // top-level navigation from a mail client → no CORS/secret guard.
 
 import { unsubscribeByEmail, verifyUnsubscribeToken } from "@/lib/email-capture-store";
+import { markCampaignUnsubscribed } from "@/lib/campaign-store";
 import { syncCustomerConsent } from "@/lib/customer-store";
 import { reportError } from "@/lib/observability";
 import { unsubscribePageCopy } from "@/lib/consent-copy";
@@ -37,6 +38,9 @@ export async function GET(req: Request) {
     }
 
     const ok = await unsubscribeByEmail(email, "unsubscribe");
+    // Attribute the unsubscribe to the campaign mails of the last 30 days
+    // (migration 0054) — fail-soft, the unsubscribe itself is done.
+    if (ok) await markCampaignUnsubscribed(email);
     if (!ok) {
       // The signature was valid but we couldn't persist (e.g. no DB). Don't
       // claim success we can't back up.

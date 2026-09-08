@@ -1289,6 +1289,7 @@ export function KampagneWorkspace({
                   />
                   <OptInBadge level={current.optInLevel} blocked={optInBlocked} />
                   <SegmentBadge segment={current.segment} days={current.segmentDays} />
+                  <AbGroupBadge contactId={current.contactId} />
                   {current.lowConfidence && (
                     <Badge variant="warning">
                       <AlertTriangle className="h-3 w-3" />
@@ -2273,6 +2274,24 @@ function LanguageToggle({
  * docs/REPURCHASE_ANALYSIS.md. The title carries the measured reason, so the
  * reviewer can see WHY this framing was chosen.
  */
+/**
+ * The hero A/B group — a deterministic split by contact id so the KPI tab's
+ * hero comparison gets both arms: even ids are meant to ship WITH a generated
+ * hero, odd ids WITHOUT (leave the hero panel empty). Purely advisory; the
+ * operator decides, and the send record stamps what actually shipped.
+ */
+function AbGroupBadge({ contactId }: { contactId: number }) {
+  const withHero = contactId % 2 === 0;
+  return (
+    <Badge
+      variant="outline"
+      title="A/B-Test für den KI-Hero: gerade Kontakt-IDs mit Hero senden, ungerade ohne — der KPI-Tab vergleicht beide Gruppen."
+    >
+      {withHero ? "A/B: mit KI-Hero" : "A/B: ohne Hero"}
+    </Badge>
+  );
+}
+
 function SegmentBadge({ segment, days }: { segment: string | null; days: number | null }) {
   if (!segment) return null;
   const def = campaignSegmentByKey(segment);

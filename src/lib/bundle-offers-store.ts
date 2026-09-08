@@ -538,6 +538,12 @@ export async function resolveBundleRedirect(
         ${JSON.stringify({ offerId, status, expired: status !== "active" })}::jsonb
       )
     `;
+    // First click on the set link of a campaign mail (migration 0054) — the
+    // campaign funnel's "Set geklickt" stage, per send.
+    await sql`
+      UPDATE campaign_sends SET bundle_clicked_at = now()
+       WHERE bundle_offer_id = ${offerId} AND bundle_clicked_at IS NULL
+    `;
     return { destination, status, offerId };
   } catch (err) {
     reportError(err, { route: "lib/bundle-offers-store", phase: "resolveBundleRedirect" });

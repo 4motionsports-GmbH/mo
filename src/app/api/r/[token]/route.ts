@@ -105,7 +105,12 @@ export async function GET(
     // change (CAMPAIGN_MO_DEEPLINK_URL) applies to already-sent emails too.
     const campaign = await recordCampaignClick(token);
     if (campaign) {
-      return Response.redirect(campaignMoDeeplinkUrl(), 302);
+      // The redirect token rides along as `mo_c` so the storefront widget can
+      // attribute the chat it opens back to this send (the widget-side capture
+      // is a separate change; the parameter is harmless until then).
+      const url = new URL(campaignMoDeeplinkUrl());
+      url.searchParams.set("mo_c", token);
+      return Response.redirect(url.toString(), 302);
     }
 
     // 3. Bundle offer token.
