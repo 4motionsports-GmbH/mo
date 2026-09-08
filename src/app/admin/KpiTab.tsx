@@ -1283,6 +1283,15 @@ function CampaignSection({ kpis, range }: { kpis: CampaignKpis | null; range: Kp
                 }
               />
               <Stat
+                label="Zugestellt / Bounces"
+                value={`${num(kpis.delivered, 0)} / ${num(kpis.bounced, 0)}`}
+                hint={
+                  kpis.delivered + kpis.bounced === 0
+                    ? "keine Zustellmeldungen (Resend-Webhook?)"
+                    : `${num(kpis.bouncedHard, 0)} hart · ${num(kpis.complained, 0)} Beschwerde${kpis.complained === 1 ? "" : "n"}`
+                }
+              />
+              <Stat
                 label="Abgemeldet"
                 value={num(kpis.unsubscribed, 0)}
                 hint={kpis.sent > 0 ? `${pct(kpis.unsubscribed / kpis.sent)} der Sends (30 Tage)` : undefined}
@@ -1326,7 +1335,8 @@ function CampaignSection({ kpis, range }: { kpis: CampaignKpis | null; range: Kp
               ` Bei ${num(kpis.redemptionUnknown, 0)} Code(s) lieferte Shopify keine Antwort (nicht gezählt).`}
             {kpis.sampled &&
               ` Einlösungsprüfung auf die ${CAMPAIGN_KPI_MAX_CODES} neuesten Codes begrenzt.`}
-            {" "}„Set geklickt“ und „Abgemeldet“ gelten für Sends ab Migration 0054;
+            {" "}„Zugestellt / Bounces“ kommt aus dem Resend-Webhook (harte Bounces
+            und Beschwerden sperren die Adresse dauerhaft). „Set geklickt“ und „Abgemeldet“ gelten für Sends ab Migration 0054;
             die Abmeldung wird den Kampagnen-Mails der letzten 30 Tage an diese
             Adresse zugeordnet. Bewertungen sind absichtlich anonym und lassen
             sich keiner Variante zuordnen. Für einen fairen Hero-Vergleich
