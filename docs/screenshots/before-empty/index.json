@@ -1,0 +1,194 @@
+[
+  {
+    "tab": "overview",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "overview-light.png",
+    "ms": 1179,
+    "height": 900
+  },
+  {
+    "tab": "kunden",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "kunden-light.png",
+    "ms": 1008,
+    "height": 900
+  },
+  {
+    "tab": "kampagne",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "kampagne-light.png",
+    "ms": 1000,
+    "height": 900
+  },
+  {
+    "tab": "kpi",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "kpi-light.png",
+    "ms": 1004,
+    "height": 900
+  },
+  {
+    "tab": "feedback",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "feedback-light.png",
+    "ms": 999,
+    "height": 900
+  },
+  {
+    "tab": "gespraeche",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "gespraeche-light.png",
+    "ms": 997,
+    "height": 900
+  },
+  {
+    "tab": "wissen",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "wissen-light.png",
+    "ms": 1002,
+    "height": 900
+  },
+  {
+    "tab": "analyse",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "analyse-light.png",
+    "ms": 999,
+    "height": 900
+  },
+  {
+    "tab": "verbesserung",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "verbesserung-light.png",
+    "ms": 1002,
+    "height": 900
+  },
+  {
+    "tab": "einstellungen",
+    "theme": "light",
+    "vp": "laptop",
+    "file": "einstellungen-light.png",
+    "ms": 1111,
+    "height": 1847
+  },
+  {
+    "tab": "overview",
+    "theme": "light",
+    "vp": "tablet",
+    "file": "overview-light-tablet.png",
+    "ms": 1084,
+    "height": 768
+  },
+  {
+    "tab": "kunden",
+    "theme": "light",
+    "vp": "tablet",
+    "file": "kunden-light-tablet.png",
+    "ms": 1000,
+    "height": 768
+  },
+  {
+    "tab": "kampagne",
+    "theme": "light",
+    "vp": "tablet",
+    "file": "kampagne-light-tablet.png",
+    "ms": 999,
+    "height": 768
+  },
+  {
+    "tab": "kpi",
+    "theme": "light",
+    "vp": "tablet",
+    "file": "kpi-light-tablet.png",
+    "ms": 999,
+    "height": 768
+  },
+  {
+    "tab": "overview",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "overview-dark.png",
+    "ms": 1090,
+    "height": 900
+  },
+  {
+    "tab": "kunden",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "kunden-dark.png",
+    "ms": 1001,
+    "height": 900
+  },
+  {
+    "tab": "kampagne",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "kampagne-dark.png",
+    "ms": 999,
+    "height": 900
+  },
+  {
+    "tab": "kpi",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "kpi-dark.png",
+    "ms": 1000,
+    "height": 900
+  },
+  {
+    "tab": "feedback",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "feedback-dark.png",
+    "ms": 1000,
+    "height": 900
+  },
+  {
+    "tab": "gespraeche",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "gespraeche-dark.png",
+    "ms": 1000,
+    "height": 900
+  },
+  {
+    "tab": "wissen",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "wissen-dark.png",
+    "ms": 999,
+    "height": 900
+  },
+  {
+    "tab": "analyse",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "analyse-dark.png",
+    "ms": 1001,
+    "height": 900
+  },
+  {
+    "tab": "verbesserung",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "verbesserung-dark.png",
+    "ms": 999,
+    "height": 900
+  },
+  {
+    "tab": "einstellungen",
+    "theme": "dark",
+    "vp": "laptop",
+    "file": "einstellungen-dark.png",
+    "ms": 1113,
+    "height": 1847
+  }
+]

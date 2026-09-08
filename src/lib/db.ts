@@ -16,7 +16,14 @@
 // (e.g. local dev without a DB) `getSql()` returns null and callers no-op.
 // A database write must NEVER break a chat response.
 
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import { neon, neonConfig, type NeonQueryFunction } from "@neondatabase/serverless";
+
+// LOCAL DEV ONLY: point the Neon HTTP driver at a Neon-protocol-compatible proxy
+// in front of a plain Postgres (see docs/DATABASE.md, "Local database"). Unset
+// in every deployed environment, so production always talks to Neon directly.
+if (process.env.NEON_FETCH_ENDPOINT) {
+  neonConfig.fetchEndpoint = process.env.NEON_FETCH_ENDPOINT;
+}
 
 export type Sql = NeonQueryFunction<false, false>;
 
