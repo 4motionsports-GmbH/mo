@@ -21,6 +21,7 @@ import { getCustomerByEmail } from "@/lib/customer-store";
 import { insertReceivedMessage } from "@/lib/email-messages-store";
 import { inboundWebhookSecret } from "@/lib/email-inbound";
 import { verifyResendWebhook } from "@/lib/email-webhook.mjs";
+import { applyResendDeliveryEvent } from "@/lib/email-delivery-events";
 import { normalizeInboundMessage } from "@/lib/email-inbound-core.mjs";
 import { reportError } from "@/lib/observability";
 
@@ -58,9 +59,15 @@ export async function POST(req: Request) {
 
   const evt = event as { type?: string; data?: Record<string, unknown> };
 
-  // We only ingest received mail; ack everything else so Resend stops retrying.
+  // Delivery events (bounced / complained / delivered) may arrive on this
+  // webhook too, depending on how it is configured in Resend — apply them
+  // (email-delivery-events.ts). Everything else is acked so Resend stops retrying.
   if (evt.type !== "email.received") {
-    return NextResponse.json({ ok: true, ignored: evt.type ?? "unknown" });
+    const outcome = await applyResendDeliveryEvent(evt).catch((err) => {
+      reportError(err, { route: "api/inbound/resend", phase: "delivery-event" });
+      return null;
+    });
+    return NextResponse.json(outcome ? { ok: true, ...outcome } : { ok: true, ignored: evt.type ?? "unknown" });
   }
 
   try {

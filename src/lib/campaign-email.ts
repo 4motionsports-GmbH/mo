@@ -376,6 +376,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         language: contact.language,
         discountPercent: draft.discountPercent,
         bundleOfferId,
+        providerEmailId: result.id ?? null,
       });
       await markContactSent(contactId);
       return { ok: true, sentTo: contact.email };

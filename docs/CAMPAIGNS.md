@@ -467,9 +467,37 @@ belastbar; Umsatz je Send braucht noch mehr.
 **Was der Funnel nicht kann (bewusst / offen).**
 - Keine Öffnungsraten — kein Tracking-Pixel (Datenschutz-Entscheidung seit
   0041). Klickrate bezieht sich auf gesendete, nicht auf geöffnete Mails.
-- Keine Bounce-/Beschwerde-Signale — dafür fehlt ein Resend-Webhook
-  (`email.bounced`, `email.complained`) und eine gespeicherte Provider-ID am
-  Send. Vor größeren Wellen einrichten; die Suppression-Liste sieht die
-  Gründe `bounce`/`complaint` bereits vor.
+- Bounces und Beschwerden kommen über den Resend-Webhook (s. u.); ohne
+  eingerichteten Webhook bleiben „Zugestellt / Bounces" leer.
 - Einlösung wird für die 100 neuesten Codes je Zeitraum geprüft; darüber
   hinaus ist die Stichprobe gekappt (im Tab markiert).
+
+## Zustellung: Bounces und Beschwerden (Migration `0055`)
+
+**Was passiert.** Resend meldet per Webhook, was mit einer Mail nach der
+Übergabe geschah. `POST /api/webhooks/resend` (und die Inbound-Route, falls die
+Events dort ankommen) prüft die Svix-Signatur über den Roh-Body und wendet das
+Event an (`email-delivery-events.ts`, Parser getestet):
+
+| Event | Wirkung |
+|---|---|
+| `email.bounced`, Typ *Permanent* (hart) | Adresse auf `suppression_list` (Grund `bounce`) — das Kampagnen-Gate verweigert jeden weiteren Send; `campaign_sends.bounced_at`, `bounce_type = 'hard'` |
+| `email.bounced`, Typ *Transient/Undetermined* (weich) | nur Stempel `bounced_at`, `bounce_type = 'soft'` (voller Posteingang, Greylisting) |
+| `email.complained` (Spam-Taste) | `suppression_list` (Grund `complaint`) + `complained_at` |
+| `email.delivered` | `delivered_at` |
+| `email.delivery_delayed` | ignoriert (acked) |
+
+Die Zuordnung zum Send läuft über `provider_email_id` (Resends Message-ID,
+seit 0055 beim Versand gespeichert); Events ohne bekannte ID treffen den
+neuesten Send an diese Adresse der letzten 7 Tage. Erster Stempel je Art.
+Der KPI-Tab zeigt „Zugestellt / Bounces" mit harten Bounces und Beschwerden.
+
+**Einrichtung in Resend** (Dashboard → Webhooks):
+1. Endpoint `https://mo.motionsports.de/api/webhooks/resend`, Events
+   `email.bounced`, `email.complained`, `email.delivered`.
+2. Signing Secret in Vercel als `RESEND_EVENTS_WEBHOOK_SECRET` setzen.
+   Alternativ die drei Events beim bestehenden Inbound-Webhook ergänzen — dann
+   reicht `RESEND_WEBHOOK_SECRET`, beide Routen akzeptieren beide Secrets.
+3. Test: in Resend „Send test event" für `email.bounced` → Antwort
+   `{ ok: true, kind: "bounced", … }`; ohne gültige Signatur antwortet die
+   Route mit 400, ohne Secret mit 503.

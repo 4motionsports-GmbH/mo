@@ -984,6 +984,9 @@ export interface RecordCampaignSendInput {
   language?: string | null;
   discountPercent?: number | null;
   bundleOfferId?: number | null;
+  /** Resend's message id for the shipped mail (migration 0055) — the key the
+   * delivery webhook uses to attach bounces / complaints / delivery. */
+  providerEmailId?: string | null;
 }
 
 /** Append the immutable send record. Throws on failure (the send path treats a
@@ -998,7 +1001,8 @@ export async function recordCampaignSend(
       (contact_id, email, subject, body_hash, body_text, body_html, sent_via,
        discount_code, discount_code_gid, discount_expires_at, redirect_token,
        segment, design_key, hero_variant, hero_image_url, hero_headline,
-       text_mode, language, discount_percent, bundle_offer_id, sent_at, created_at)
+       text_mode, language, discount_percent, bundle_offer_id, provider_email_id,
+       sent_at, created_at)
     VALUES
       (${input.contactId}, ${normalizeEmail(input.email)}, ${input.subject},
        ${input.bodyHash}, ${input.bodyText}, ${input.bodyHtml},
@@ -1009,8 +1013,63 @@ export async function recordCampaignSend(
        ${input.heroImageUrl ?? null}, ${input.heroHeadline ?? null},
        ${input.textMode ?? null}, ${input.language ?? null},
        ${input.discountPercent ?? null}, ${input.bundleOfferId ?? null},
+       ${input.providerEmailId ?? null},
        now(), now())
   `;
+}
+
+/**
+ * Stamp a Resend delivery event on the campaign send it belongs to
+ * (migration 0055): by provider id when the event carries one we know,
+ * otherwise the newest send to that address within 7 days. First event of
+ * each kind only. Returns the number of send rows stamped.
+ */
+export async function stampCampaignDelivery(
+  input: {
+    kind: "delivered" | "bounced" | "complained" | "delayed";
+    emailId: string | null;
+    recipients: string[];
+    bounceType: "hard" | "soft" | null;
+  },
+  sql: Sql | null = getSql()
+): Promise<number> {
+  if (!sql || input.kind === "delayed") return 0;
+  const emails = input.recipients.map(normalizeEmail);
+  let rows: Array<{ id: number }> = [];
+  if (input.kind === "delivered") {
+    rows = (await sql`
+      UPDATE campaign_sends SET delivered_at = now()
+       WHERE delivered_at IS NULL
+         AND (provider_email_id = ${input.emailId ?? ""}
+              OR (${input.emailId ?? null}::text IS NULL AND email = ANY(${emails}::text[])
+                  AND sent_at >= now() - interval '7 days'))
+       RETURNING id
+    `) as Array<{ id: number }>;
+  } else if (input.kind === "bounced") {
+    rows = (await sql`
+      UPDATE campaign_sends SET bounced_at = now(), bounce_type = ${input.bounceType ?? "soft"}
+       WHERE bounced_at IS NULL
+         AND (provider_email_id = ${input.emailId ?? ""}
+              OR (${input.emailId ?? null}::text IS NULL AND email = ANY(${emails}::text[])
+                  AND sent_at >= now() - interval '7 days'))
+       RETURNING id
+    `) as Array<{ id: number }>;
+  } else {
+    rows = (await sql`
+      UPDATE campaign_sends SET complained_at = now()
+       WHERE complained_at IS NULL
+         AND (provider_email_id = ${input.emailId ?? ""}
+              OR (${input.emailId ?? null}::text IS NULL AND email = ANY(${emails}::text[])
+                  AND sent_at >= now() - interval '7 days'))
+       RETURNING id
+    `) as Array<{ id: number }>;
+  }
+  if (rows.length === 0 && input.emailId && emails.length) {
+    // Known id but no matching row (older send without provider id): fall
+    // back to the address within the window.
+    return stampCampaignDelivery({ ...input, emailId: null }, sql);
+  }
+  return rows.length;
 }
 
 /**
@@ -1146,6 +1205,11 @@ export interface CampaignKpis {
   bundleClicked: number;
   /** Sends whose recipient unsubscribed within 30 days (migration 0054). */
   unsubscribed: number;
+  /** Delivery outcomes reported by Resend (migration 0055 + webhook). */
+  delivered: number;
+  bounced: number;
+  bouncedHard: number;
+  complained: number;
   /** One-click ratings of campaign mails in the window (anonymous, so not
    * attributable to a variant). */
   ratings: { count: number; average: number | null };
@@ -1203,7 +1267,11 @@ export async function getCampaignKpis(
                              AND clicked_at IS NOT NULL)::int AS clicked,
           count(*) FILTER (WHERE bundle_offer_id IS NOT NULL)::int AS bundle_sends,
           count(*) FILTER (WHERE bundle_clicked_at IS NOT NULL)::int AS bundle_clicked,
-          count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribed
+          count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribed,
+          count(*) FILTER (WHERE delivered_at IS NOT NULL)::int AS delivered,
+          count(*) FILTER (WHERE bounced_at IS NOT NULL)::int AS bounced,
+          count(*) FILTER (WHERE bounced_at IS NOT NULL AND bounce_type = 'hard')::int AS bounced_hard,
+          count(*) FILTER (WHERE complained_at IS NOT NULL)::int AS complained
           FROM campaign_sends
          WHERE sent_at >= ${range.from}::date
            AND sent_at < (${range.to}::date + 1)
@@ -1293,6 +1361,10 @@ export async function getCampaignKpis(
       bundle_sends: number;
       bundle_clicked: number;
       unsubscribed: number;
+      delivered?: number;
+      bounced?: number;
+      bounced_hard?: number;
+      complained?: number;
     };
     const rowFrom = (a: Agg, withCost: boolean): CampaignBreakdownRow => ({
       ...emptyRow(a.key, withCost),
@@ -1395,6 +1467,10 @@ export async function getCampaignKpis(
       bundleSends: Number(t?.bundle_sends ?? 0),
       bundleClicked: Number(t?.bundle_clicked ?? 0),
       unsubscribed: Number(t?.unsubscribed ?? 0),
+      delivered: Number(t?.delivered ?? 0),
+      bounced: Number(t?.bounced ?? 0),
+      bouncedHard: Number(t?.bounced_hard ?? 0),
+      complained: Number(t?.complained ?? 0),
       ratings: {
         count: Number(ratingRow?.n ?? 0),
         average: ratingRow?.avg != null ? Number(ratingRow.avg) : null,
