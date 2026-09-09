@@ -532,12 +532,7 @@ export interface CustomerSession {
   transcript: TranscriptMessage[];
 }
 
-export interface CustomerWithSessions extends Customer {
-  sessions: CustomerSession[];
-}
-
 // Bound the dashboard load: customers per page, conversations per customer.
-const CUSTOMER_LIST_LIMIT = 100;
 const SESSIONS_PER_CUSTOMER = 25;
 
 /**
@@ -597,120 +592,88 @@ export async function loadCustomerSessions(
   }
 }
 
-/**
- * Batch-load sessions for a set of customers (by id) in two bulk queries:
- * one for conversations, one for messages. Reproduces the exact output shape,
- * field names, derivations, and per-customer ordering of loadCustomerSessions.
- */
-async function batchLoadCustomerSessions(
-  customerIds: number[],
-  sql: Sql
-): Promise<Map<number, CustomerSession[]>> {
-  // Result map: every customer id gets an (initially empty) entry.
-  const result = new Map<number, CustomerSession[]>(customerIds.map((id) => [id, []]));
+// ---------------------------------------------------------------------------
+// Slim list rows for the Kunden screen (detail is loaded on demand)
+// ---------------------------------------------------------------------------
 
-  // -- 1. Conversations ---------------------------------------------------------
-  // Fetch ALL conversations for the customer set in the same ORDER as
-  // loadCustomerSessions (created_at ASC, id ASC within each customer).
-  // We request the full set and apply the per-customer SESSIONS_PER_CUSTOMER cap
-  // in JS — a single LIMIT here would silently drop rows for some customers.
-  const convRows = (await sql`
-    SELECT id, customer_id, session_id, created_at, last_activity_at, persona_label, message_count
-      FROM conversations
-     WHERE customer_id = ANY(${customerIds})
-     ORDER BY customer_id ASC, created_at ASC, id ASC
-  `) as Array<Record<string, unknown>>;
+export type CustomerPurchaseState = "purchased" | "no_purchase" | "unknown";
 
-  if (convRows.length === 0) return result;
-
-  // Group conversations by customer, honouring the per-customer cap.
-  const convsByCustomer = new Map<number, Array<Record<string, unknown>>>();
-  for (const r of convRows) {
-    const cid = Number(r.customer_id);
-    const list = convsByCustomer.get(cid) ?? [];
-    if (list.length < SESSIONS_PER_CUSTOMER) {
-      list.push(r);
-      convsByCustomer.set(cid, list);
-    }
-  }
-
-  // Collect the accepted conversation ids for the messages query.
-  const acceptedConvIds: number[] = [];
-  for (const convs of convsByCustomer.values()) {
-    for (const c of convs) acceptedConvIds.push(Number(c.id));
-  }
-
-  // -- 2. Messages --------------------------------------------------------------
-  // Fetch messages for all accepted conversations in one query.
-  // No global LIMIT — conversations are naturally bounded; replicate
-  // loadCustomerSessions behaviour (no per-conversation message cap there).
-  const msgRows = (await sql`
-    SELECT conversation_id, role, content, tool_name
-      FROM messages
-     WHERE conversation_id = ANY(${acceptedConvIds})
-     ORDER BY created_at ASC, id ASC
-  `) as Array<Record<string, unknown>>;
-
-  // Group readable transcript messages by conversation id.
-  const byConversation = new Map<number, TranscriptMessage[]>();
-  for (const m of msgRows) {
-    const convId = Number(m.conversation_id);
-    const role = m.role as TranscriptMessage["role"];
-    const content = typeof m.content === "string" ? m.content : "";
-    const toolName = (m.tool_name as string | null) ?? null;
-    // Same filter as loadCustomerSessions.
-    if (toolName !== null || (role !== "user" && role !== "assistant") || !content.trim()) {
-      continue;
-    }
-    const list = byConversation.get(convId) ?? [];
-    list.push({ role, content, toolName: null });
-    byConversation.set(convId, list);
-  }
-
-  // -- 3. Assemble CustomerSession[] per customer --------------------------------
-  for (const [customerId, convs] of convsByCustomer.entries()) {
-    const sessions: CustomerSession[] = convs.map((r) => ({
-      conversationId: Number(r.id),
-      sessionId: String(r.session_id),
-      createdAt: (r.created_at as string | null) ?? null,
-      lastActivityAt: (r.last_activity_at as string | null) ?? null,
-      personaLabel: (r.persona_label as string | null) ?? null,
-      messageCount: r.message_count != null ? Number(r.message_count) : 0,
-      transcript: byConversation.get(Number(r.id)) ?? [],
-    }));
-    result.set(customerId, sessions);
-  }
-
-  return result;
+export interface CustomerListRow {
+  id: number;
+  email: string;
+  /** Best display name (Shopify account summary), else null → show the email. */
+  name: string | null;
+  identityTier: 1 | 2 | 3;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  marketingStatus: CustomerMarketingStatus;
+  /** From the cached purchase history: unknown = not loaded yet. */
+  purchaseState: CustomerPurchaseState;
+  /** Status of the latest marketing_sends row for this email (open draft preferred). */
+  sendStatus: "draft" | "approved" | "sent" | null;
+  sessionCount: number;
 }
 
+/** Hard ceiling so a runaway table can never produce a multi-megabyte page. */
+const CUSTOMER_LIST_MAX = 5000;
+
 /**
- * Customers for the admin dashboard (most recently seen first), each with
- * their session timeline. Returns [] when no DB is configured.
+ * Every customer as ONE slim row (no transcripts, no summaries) — what the
+ * Kunden list needs to search / filter / sort client-side. One query with
+ * the purchase state derived in SQL (same buckets as customer-filter) and the
+ * latest marketing send joined per email. Newest activity first.
  */
-export async function listCustomersWithSessions(
+export async function listCustomerListRows(
   sql: Sql | null = getSql()
-): Promise<CustomerWithSessions[]> {
+): Promise<CustomerListRow[]> {
   if (!sql) return [];
   try {
     const rows = (await sql`
-      SELECT * FROM customers
-       ORDER BY last_seen_at DESC, id DESC
-       LIMIT ${CUSTOMER_LIST_LIMIT}
+      SELECT c.id, c.email, c.identity_tier, c.first_seen_at, c.last_seen_at, c.marketing_status,
+             c.shopify_account_summary->>'displayName' AS display_name,
+             c.shopify_account_summary->>'firstName' AS first_name,
+             CASE
+               WHEN c.purchase_summary IS NULL THEN 'unknown'
+               WHEN jsonb_typeof(c.purchase_summary->'orders') = 'array'
+                    AND jsonb_array_length(c.purchase_summary->'orders') > 0 THEN 'purchased'
+               ELSE 'no_purchase'
+             END AS purchase_state,
+             (SELECT count(*) FROM conversations v WHERE v.customer_id = c.id)::int AS session_count,
+             ms.status AS send_status
+        FROM customers c
+        LEFT JOIN LATERAL (
+          SELECT m.status
+            FROM marketing_sends m
+            JOIN email_captures ec ON ec.id = m.email_capture_id
+           WHERE ec.email = c.email
+           ORDER BY (m.status = 'sent') ASC, m.created_at DESC, m.id DESC
+           LIMIT 1
+        ) ms ON true
+       ORDER BY c.last_seen_at DESC NULLS LAST, c.id DESC
+       LIMIT ${CUSTOMER_LIST_MAX}
     `) as Array<Record<string, unknown>>;
-
-    if (rows.length === 0) return [];
-
-    const customers = rows.map(mapCustomer);
-    const customerIds = customers.map((c) => c.id);
-    const sessionsByCustomer = await batchLoadCustomerSessions(customerIds, sql);
-
-    return customers.map((customer) => ({
-      ...customer,
-      sessions: sessionsByCustomer.get(customer.id) ?? [],
-    }));
+    return rows.map((r) => {
+      const name =
+        (typeof r.display_name === "string" && r.display_name.trim()) ||
+        (typeof r.first_name === "string" && r.first_name.trim()) ||
+        null;
+      const send = r.send_status as string | null;
+      return {
+        id: Number(r.id),
+        email: String(r.email),
+        name,
+        identityTier: (Number(r.identity_tier ?? 1) as 1 | 2 | 3) ?? 1,
+        firstSeenAt: (r.first_seen_at as string | null) ?? null,
+        lastSeenAt: (r.last_seen_at as string | null) ?? null,
+        marketingStatus: (r.marketing_status as CustomerMarketingStatus) ?? "none",
+        purchaseState: (r.purchase_state as CustomerPurchaseState) ?? "unknown",
+        sendStatus:
+          send === "draft" || send === "approved" || send === "sent" ? send : null,
+        sessionCount: Number(r.session_count ?? 0),
+      };
+    });
   } catch (err) {
-    reportError(err, { route: "lib/customer-store", phase: "listCustomersWithSessions" });
+    reportError(err, { route: "lib/customer-store", phase: "listCustomerListRows" });
     return [];
   }
 }

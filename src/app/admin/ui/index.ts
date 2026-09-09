@@ -74,6 +74,7 @@ export { PageHeader, type PageHeaderProps } from "./page-header";
 export { FilterBar, FilterChip, FilterGroup, type FilterBarProps } from "./filter-bar";
 export { SplitPane, type SplitPaneProps } from "./split-pane";
 export { DescriptionList, DescriptionItem } from "./description-list";
+export { TranscriptView, type TranscriptTurn, type TranscriptViewProps } from "./transcript-view";
 export { Kbd } from "./kbd";
 export { Markdown } from "./markdown";
 export {

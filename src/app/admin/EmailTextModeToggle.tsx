@@ -4,47 +4,42 @@
 // Ausführlich (long-form) / Kompakt (short, image-first — default for new
 // drafts) / Minimal (greeting + one sentence). Used by the per-customer email
 // composer, the bulk-draft bar and the campaign review card — one widget, one
-// vocabulary. Patterned after the Kampagne LanguageToggle.
+// vocabulary, built on the shared SegmentedControl primitive.
 
 import {
   EMAIL_TEXT_MODES,
   EMAIL_TEXT_MODE_LABELS,
   EMAIL_TEXT_MODE_HINTS,
 } from "@/lib/email-text-mode.mjs";
+import { SegmentedControl } from "./ui/segmented-control";
 
 export type EmailTextModeValue = "detailed" | "compact" | "minimal";
+
+const OPTIONS = EMAIL_TEXT_MODES.map((mode) => ({
+  value: mode as EmailTextModeValue,
+  label: EMAIL_TEXT_MODE_LABELS[mode],
+  title: EMAIL_TEXT_MODE_HINTS[mode],
+}));
 
 export function EmailTextModeToggle({
   value,
   disabled,
   onSelect,
+  size = "sm",
 }: {
   value: EmailTextModeValue;
   disabled?: boolean;
   onSelect: (mode: EmailTextModeValue) => void;
+  size?: "sm" | "md";
 }) {
   return (
-    <div
-      className="inline-flex overflow-hidden rounded-md border border-border text-xs"
-      role="group"
-      aria-label="Textmodus der E-Mail"
-    >
-      {EMAIL_TEXT_MODES.map((mode) => (
-        <button
-          key={mode}
-          type="button"
-          disabled={disabled || value === mode}
-          onClick={() => onSelect(mode as EmailTextModeValue)}
-          title={EMAIL_TEXT_MODE_HINTS[mode]}
-          className={
-            value === mode
-              ? "bg-primary px-2 py-0.5 font-semibold text-primary-foreground"
-              : "px-2 py-0.5 text-muted-foreground hover:bg-muted disabled:opacity-50"
-          }
-        >
-          {EMAIL_TEXT_MODE_LABELS[mode]}
-        </button>
-      ))}
-    </div>
+    <SegmentedControl
+      label="Textmodus der E-Mail"
+      value={value}
+      onChange={onSelect}
+      options={OPTIONS}
+      disabled={disabled}
+      size={size}
+    />
   );
 }

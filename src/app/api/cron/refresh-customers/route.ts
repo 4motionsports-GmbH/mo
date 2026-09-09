@@ -17,6 +17,7 @@
 import { NextResponse } from "next/server";
 import { listCustomersForDataRefresh } from "@/lib/customer-store";
 import { refreshCustomerData } from "@/lib/customer-refresh";
+import { autoCaptureMissingAddresses } from "@/lib/address-capture";
 import { reportError } from "@/lib/observability";
 import { requireCronAuth } from "@/lib/cron-auth";
 
@@ -45,7 +46,18 @@ async function handle(req: Request): Promise<Response> {
       if (result.ok) refreshed++;
       else failed++;
     }
-    const summary = { considered: candidates.length, refreshed, failed, batch, staleHours };
+    // Missing lawful postal addresses (physical mail, §4): a small bounded pass
+    // per run — this used to run in the background of every Kunden page view.
+    const addresses = await autoCaptureMissingAddresses({ limit: 12 });
+    const summary = {
+      considered: candidates.length,
+      refreshed,
+      failed,
+      batch,
+      staleHours,
+      addressesChecked: addresses.checked,
+      addressesCaptured: addresses.captured,
+    };
     console.log("[cron/refresh-customers] done", summary);
     return NextResponse.json({ ok: true, ...summary });
   } catch (err) {

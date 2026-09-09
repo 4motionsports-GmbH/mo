@@ -71,7 +71,16 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
       // Overview deep-links seed a Kunden filter preset via ?filter= (e.g.
       // "no_purchase", "marketing"); accept the legacy ?status= as a fallback.
       const initialFilter = firstParam(sp.filter) ?? firstParam(sp.status);
-      return <KundenTab dbReady={dbReady} initialFilter={initialFilter} />;
+      const customerParam = Number(firstParam(sp.customer));
+      const initialCustomerId =
+        Number.isInteger(customerParam) && customerParam > 0 ? customerParam : null;
+      return (
+        <KundenTab
+          dbReady={dbReady}
+          initialFilter={initialFilter}
+          initialCustomerId={initialCustomerId}
+        />
+      );
     }
     case "kampagne":
       return <KampagneTab dbReady={dbReady} />;

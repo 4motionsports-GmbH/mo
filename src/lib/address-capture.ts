@@ -1,11 +1,11 @@
 // Background auto-capture of lawful postal addresses (physical mail, §4).
 //
 // So the operator never has to press "Käufe aktualisieren" per customer just to
-// get an address: on each Kunden-tab load we pull missing addresses from Shopify
-// in the BACKGROUND (Next `after()`), bounded + throttled. Each pass handles a
-// small batch of customers that have no stored address and haven't been checked
-// recently; over a few visits everyone with a usable address is filled in, and
-// customers with genuinely no address aren't re-queried every load.
+// get an address: the daily refresh-customers cron pulls missing addresses from
+// Shopify, bounded + throttled. Each pass handles a small batch of customers
+// that have no stored address and haven't been checked recently; over a few
+// runs everyone with a usable address is filled in, and customers with
+// genuinely no address aren't re-queried every time.
 //
 // ⚠️ GDPR — DATA MINIMISATION + LAWFUL ACQUISITION (LEGAL_READINESS_REPORT §8
 // OQ-01). A full postal address is collected here ONLY when BOTH hold:
