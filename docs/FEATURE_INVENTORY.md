@@ -6,6 +6,11 @@ the clean-up to verify that no capability was lost silently. Every item carries 
 path; Phase 3 marks each one as **verified** (by test / screenshot / manual run) or **intentionally removed / merged**
 (with your approval), in `FEATURE_INVENTORY_STATUS.md`.
 
+> **Status (2026-09-09):** Phase 3 is complete — every item is marked in
+> [`FEATURE_INVENTORY_STATUS.md`](./FEATURE_INVENTORY_STATUS.md); the after-screenshots are in
+> [`screenshots/after/`](./screenshots/after/). File names and line numbers in this inventory describe the
+> baseline and no longer match the redesigned tree (see `ADMIN_DASHBOARD.md` §2.3 for the new one).
+
 Language: the admin sections quote the German UI labels and are written in German (they mirror the screens the team
 uses); the API, cron, script and environment sections are in English like the rest of `docs/`.
 
