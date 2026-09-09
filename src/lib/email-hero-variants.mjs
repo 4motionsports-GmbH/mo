@@ -39,7 +39,7 @@ export const HERO_FALLBACK_SIZE = "1536x1024";
  */
 export const HERO_MOBILE_CROP_START = 0.4;
 
-export const HERO_JPEG_QUALITY = 88;
+const HERO_JPEG_QUALITY = 88;
 
 /**
  * `input_fidelity` is a gpt-image-1 / gpt-image-1.5 parameter; gpt-image-2
@@ -54,8 +54,8 @@ export function inputFidelityFor(model) {
 /** The image model the hero uses by default, and the order of fallbacks. */
 export const HERO_PRIMARY_IMAGE_MODEL = "gpt-image-2";
 export const HERO_FALLBACK_IMAGE_MODEL = "gpt-image-1.5";
-export const HERO_IMAGE_QUALITIES = ["low", "medium", "high"];
-export const HERO_DEFAULT_IMAGE_QUALITY = "high";
+const HERO_IMAGE_QUALITIES = ["low", "medium", "high"];
+const HERO_DEFAULT_IMAGE_QUALITY = "high";
 
 /**
  * The generation attempts, in order. The first that succeeds wins:

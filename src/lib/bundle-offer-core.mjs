@@ -25,7 +25,7 @@ export const NATIVE_FIXED_BUNDLE = "native_fixed_bundle";
 /** FALLBACK: a plain UNLISTED product priced at the bundle total (spike §6a). */
 export const PLAIN_UNLISTED_PRODUCT = "plain_unlisted_product";
 
-export const BUNDLE_CREATION_MODES = [NATIVE_FIXED_BUNDLE, PLAIN_UNLISTED_PRODUCT];
+const BUNDLE_CREATION_MODES = [NATIVE_FIXED_BUNDLE, PLAIN_UNLISTED_PRODUCT];
 
 /**
  * Resolve the configured creation mode from a raw env value. Defaults to the

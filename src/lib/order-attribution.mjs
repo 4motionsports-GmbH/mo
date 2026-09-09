@@ -43,7 +43,7 @@ export const MO_CART_ATTRIBUTE = "_mo";
 
 /** `ref` shows up as the referral code in the Shopify order's conversion
  * summary — a human-visible secondary signal, independent of our DB. */
-export const MO_CART_REF = "mo";
+const MO_CART_REF = "mo";
 
 /**
  * Append the Mo attribution marker to a Shopify cart URL (permalink or /cart

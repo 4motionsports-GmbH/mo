@@ -297,6 +297,60 @@ export async function upsertCampaignContact(
   `;
 }
 
+/** Rows per batched INSERT (the nightly sync handles thousands of contacts). */
+const CONTACT_UPSERT_CHUNK = 500;
+
+/**
+ * Batched form of upsertCampaignContact for the audience sync: one INSERT …
+ * SELECT FROM unnest(…) per chunk instead of one round trip per contact
+ * (TECH-M4). Same columns, same ON CONFLICT rules. Throws on failure.
+ */
+export async function upsertCampaignContacts(
+  inputs: CampaignContactUpsert[],
+  sql: Sql | null = getSql()
+): Promise<void> {
+  if (!sql || inputs.length === 0) return;
+  for (let i = 0; i < inputs.length; i += CONTACT_UPSERT_CHUNK) {
+    const chunk = inputs.slice(i, i + CONTACT_UPSERT_CHUNK);
+    await sql`
+      INSERT INTO campaign_contacts
+        (shopify_customer_id, email, first_name, last_name, language,
+         opt_in_level, consent_updated_at, orders_count, total_spent_cents,
+         last_order_at, last_synced_at, status, created_at)
+      SELECT t.shopify_customer_id, t.email, t.first_name, t.last_name, t.language,
+             t.opt_in_level, t.consent_updated_at, t.orders_count, t.total_spent_cents,
+             t.last_order_at, now(), t.status, now()
+        FROM unnest(
+               ${chunk.map((c) => c.shopifyCustomerId)}::text[],
+               ${chunk.map((c) => c.email)}::text[],
+               ${chunk.map((c) => c.firstName)}::text[],
+               ${chunk.map((c) => c.lastName)}::text[],
+               ${chunk.map((c) => c.language)}::text[],
+               ${chunk.map((c) => c.optInLevel)}::text[],
+               ${chunk.map((c) => c.consentUpdatedAt)}::timestamptz[],
+               ${chunk.map((c) => c.ordersCount)}::int[],
+               ${chunk.map((c) => c.totalSpentCents)}::bigint[],
+               ${chunk.map((c) => c.lastOrderAt ?? null)}::timestamptz[],
+               ${chunk.map((c) => c.status)}::text[]
+             ) AS t(shopify_customer_id, email, first_name, last_name, language,
+                    opt_in_level, consent_updated_at, orders_count, total_spent_cents,
+                    last_order_at, status)
+      ON CONFLICT (shopify_customer_id) DO UPDATE SET
+        email              = EXCLUDED.email,
+        first_name         = EXCLUDED.first_name,
+        last_name          = EXCLUDED.last_name,
+        language           = EXCLUDED.language,
+        opt_in_level       = EXCLUDED.opt_in_level,
+        consent_updated_at = EXCLUDED.consent_updated_at,
+        orders_count       = EXCLUDED.orders_count,
+        total_spent_cents  = EXCLUDED.total_spent_cents,
+        last_order_at      = COALESCE(EXCLUDED.last_order_at, campaign_contacts.last_order_at),
+        last_synced_at     = now(),
+        status             = EXCLUDED.status
+    `;
+  }
+}
+
 /**
  * Mark every contact that did NOT appear in this sync pass as suppressed: they
  * dropped out of Shopify's SUBSCRIBED filter (unsubscribed / redacted on the
@@ -1043,8 +1097,12 @@ export async function stampCampaignDelivery(
       UPDATE campaign_sends SET delivered_at = now()
        WHERE delivered_at IS NULL
          AND (provider_email_id = ${input.emailId ?? ""}
-              OR (${input.emailId ?? null}::text IS NULL AND email = ANY(${emails}::text[])
-                  AND sent_at >= now() - interval '7 days'))
+              OR (${input.emailId ?? null}::text IS NULL AND id IN (
+                    SELECT DISTINCT ON (email) id FROM campaign_sends
+                     WHERE email = ANY(${emails}::text[])
+                       AND delivered_at IS NULL
+                       AND sent_at >= now() - interval '7 days'
+                     ORDER BY email, sent_at DESC, id DESC)))
        RETURNING id
     `) as Array<{ id: number }>;
   } else if (input.kind === "bounced") {
@@ -1052,8 +1110,12 @@ export async function stampCampaignDelivery(
       UPDATE campaign_sends SET bounced_at = now(), bounce_type = ${input.bounceType ?? "soft"}
        WHERE bounced_at IS NULL
          AND (provider_email_id = ${input.emailId ?? ""}
-              OR (${input.emailId ?? null}::text IS NULL AND email = ANY(${emails}::text[])
-                  AND sent_at >= now() - interval '7 days'))
+              OR (${input.emailId ?? null}::text IS NULL AND id IN (
+                    SELECT DISTINCT ON (email) id FROM campaign_sends
+                     WHERE email = ANY(${emails}::text[])
+                       AND bounced_at IS NULL
+                       AND sent_at >= now() - interval '7 days'
+                     ORDER BY email, sent_at DESC, id DESC)))
        RETURNING id
     `) as Array<{ id: number }>;
   } else {
@@ -1061,14 +1123,19 @@ export async function stampCampaignDelivery(
       UPDATE campaign_sends SET complained_at = now()
        WHERE complained_at IS NULL
          AND (provider_email_id = ${input.emailId ?? ""}
-              OR (${input.emailId ?? null}::text IS NULL AND email = ANY(${emails}::text[])
-                  AND sent_at >= now() - interval '7 days'))
+              OR (${input.emailId ?? null}::text IS NULL AND id IN (
+                    SELECT DISTINCT ON (email) id FROM campaign_sends
+                     WHERE email = ANY(${emails}::text[])
+                       AND complained_at IS NULL
+                       AND sent_at >= now() - interval '7 days'
+                     ORDER BY email, sent_at DESC, id DESC)))
        RETURNING id
     `) as Array<{ id: number }>;
   }
   if (rows.length === 0 && input.emailId && emails.length) {
     // Known id but no matching row (older send without provider id): fall
-    // back to the address within the window.
+    // back to the address within the window — the NEWEST unstamped send per
+    // recipient only (TECH-C5), never every send to that address.
     return stampCampaignDelivery({ ...input, emailId: null }, sql);
   }
   return rows.length;
@@ -1561,7 +1628,7 @@ export interface CampaignSendHistoryPage {
   pageSize: number;
 }
 
-export const CAMPAIGN_HISTORY_PAGE_SIZES = [25, 50, 100] as const;
+const CAMPAIGN_HISTORY_PAGE_SIZES = [25, 50, 100] as const;
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 /**

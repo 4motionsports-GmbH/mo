@@ -39,7 +39,7 @@ import { reportError } from "./observability";
 import { parseIntEnv } from "./env-num";
 
 /** Codes checked per run (env CONVERSION_SWEEP_MAX_CODES, 0 disables). */
-export function conversionSweepMaxCodes(): number {
+function conversionSweepMaxCodes(): number {
   return parseIntEnv("CONVERSION_SWEEP_MAX_CODES", 25, 0);
 }
 

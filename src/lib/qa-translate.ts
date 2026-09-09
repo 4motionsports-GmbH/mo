@@ -10,7 +10,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { recordAiUsage } from "./ai-usage-store";
 
 /** Cheap Haiku-class model — a short translation, not the consultation model. */
-export const QA_TRANSLATE_MODEL = "claude-haiku-4-5";
+const QA_TRANSLATE_MODEL = "claude-haiku-4-5";
 
 export type QaTranslationResult =
   | { ok: true; questionEn: string; answerEn: string }

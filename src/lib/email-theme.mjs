@@ -118,13 +118,6 @@ export const EMAIL_BUTTON_SHAPES = /** @type {EmailButtonShape[]} */ ([
   "square",
 ]);
 
-export const EMAIL_BUTTON_SHAPE_LABELS =
-  /** @type {Record<EmailButtonShape, string>} */ ({
-    pill: "Pille (rund)",
-    rounded: "Abgerundet",
-    square: "Eckig",
-  });
-
 const BUTTON_SHAPE_RADIUS = /** @type {Record<EmailButtonShape, string>} */ ({
   pill: "200px",
   rounded: "8px",
@@ -157,10 +150,9 @@ export const DEFAULT_EMAIL_THEME = /** @type {EmailThemeTokens} */ ({
 
 // ── Limits ───────────────────────────────────────────────────────────────────
 
-export const MAX_TEMPLATE_NAME_CHARS = 80;
-export const MAX_TEMPLATE_DESCRIPTION_CHARS = 200;
-export const MAX_TEMPLATE_LOGO_URL_CHARS = 500;
-export const MAX_EMAIL_TEMPLATES = 20;
+const MAX_TEMPLATE_NAME_CHARS = 80;
+const MAX_TEMPLATE_DESCRIPTION_CHARS = 200;
+const MAX_TEMPLATE_LOGO_URL_CHARS = 500;
 
 // ── Parsing (untrusted input → vocabulary value or null) ─────────────────────
 

@@ -12,7 +12,8 @@
 //   3. POST /organisations/{org}/letters      → create the letter referencing
 //        the uploaded file (address_position, product/colour/duplex, auto_send),
 //        with an Idempotency-Key so a retry never prints twice
-//   4. (optional) POST /letters/{id}/send     → dispatch, when auto_send=false
+//   (Pingen also offers POST /letters/{id}/send for auto_send=false drafts; we
+//   always create with auto_send=true, so no client method exists for it.)
 //
 // DEFENSIVE: every method returns a discriminated result and never throws past
 // the client boundary — the orchestration (lib/physical-mail) decides how to
@@ -23,10 +24,7 @@ import {
   tokenUrl,
   fileUploadUrl,
   lettersUrl,
-  letterUrl,
-  sendLetterUrl,
   buildCreateLetterBody,
-  buildSendLetterBody,
   normalizePingenStatus,
   tokenIsFresh,
   tokenExpiryMs,
@@ -233,60 +231,6 @@ async function createLetter(
   } catch (err) {
     reportError(err, { route: "lib/pingen", phase: "createLetter" });
     return { ok: false, reason: "network", message: "create letter failed" };
-  }
-}
-
-/** (4) Dispatch a letter created with auto_send=false. */
-export async function sendLetter(
-  letterId: string,
-  opts: CreateLetterOptions = {}
-): Promise<{ ok: true; letter: LetterResult } | ClientError> {
-  const org = organisationId();
-  if (!org) return { ok: false, reason: "unconfigured", message: "PINGEN_ORGANISATION_ID not set" };
-  const headers = await authedHeaders({ "Content-Type": "application/vnd.api+json" });
-  if (!headers) return { ok: false, reason: "auth", message: "Pingen auth failed" };
-  try {
-    const res = await fetch(sendLetterUrl(staging(), org, letterId), {
-      method: "POST",
-      headers,
-      body: JSON.stringify(
-        buildSendLetterBody({
-          letterId,
-          deliveryProduct: opts.deliveryProduct,
-          printMode: opts.printMode,
-          printSpectrum: opts.printSpectrum,
-        })
-      ),
-    });
-    if (!res.ok) return { ok: false, reason: "api", message: `send letter ${res.status}` };
-    // Some send responses echo the letter; fall back to a status fetch.
-    const letter = parseLetter(await res.json().catch(() => ({})));
-    if (letter) return { ok: true, letter };
-    return { ok: true, letter: { id: letterId, status: "queued", costCents: null } };
-  } catch (err) {
-    reportError(err, { route: "lib/pingen", phase: "sendLetter" });
-    return { ok: false, reason: "network", message: "send letter failed" };
-  }
-}
-
-/** Fetch one letter's current status (status webhooks are primary; this is the
- *  poll fallback for reconciliation). */
-export async function getLetter(
-  letterId: string
-): Promise<{ ok: true; letter: LetterResult } | ClientError> {
-  const org = organisationId();
-  if (!org) return { ok: false, reason: "unconfigured", message: "PINGEN_ORGANISATION_ID not set" };
-  const headers = await authedHeaders();
-  if (!headers) return { ok: false, reason: "auth", message: "Pingen auth failed" };
-  try {
-    const res = await fetch(letterUrl(staging(), org, letterId), { method: "GET", headers });
-    if (!res.ok) return { ok: false, reason: "api", message: `get letter ${res.status}` };
-    const letter = parseLetter(await res.json());
-    if (!letter) return { ok: false, reason: "api", message: "get letter: no id" };
-    return { ok: true, letter };
-  } catch (err) {
-    reportError(err, { route: "lib/pingen", phase: "getLetter" });
-    return { ok: false, reason: "network", message: "get letter failed" };
   }
 }
 

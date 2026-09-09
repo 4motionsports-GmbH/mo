@@ -48,8 +48,8 @@ const MM = 72 / 25.4;
 // (top of the area + a small inset so ascenders don't clip), flowing DOWN. The
 // area is only 25.5mm tall (~5 comfortable lines), so the leading tightens for a
 // rare 6-line address to keep the whole block inside [60, 85.5]mm.
-export const ADDRESS_LEFT_X = Math.round(23 * MM); // ≈ 65pt, inside the 22mm boundary
-export const ADDRESS_TOP_Y = PAGE_H - Math.round(63.5 * MM); // first baseline ≈ 63.5mm from top
+const ADDRESS_LEFT_X = Math.round(23 * MM); // ≈ 65pt, inside the 22mm boundary
+const ADDRESS_TOP_Y = PAGE_H - Math.round(63.5 * MM); // first baseline ≈ 63.5mm from top
 const ADDRESS_FONT = 11;
 
 // Date + subject + body frame — all BELOW the postage area (≥ 87.5mm from top).

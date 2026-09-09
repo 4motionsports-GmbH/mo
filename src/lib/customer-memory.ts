@@ -178,7 +178,7 @@ export async function resolveCustomerMemory(
  * as tier 2 (CONSENT_COPY_LAWYER_APPROVED + marketing consent — see
  * canPersonaliseSignedIn). Non-consented → name only. Best-effort; never throws.
  */
-export async function resolveSignedInMemory(
+async function resolveSignedInMemory(
   sessionId: string | null
 ): Promise<CustomerMemoryContext | null> {
   const sid = sessionId?.trim() || null;

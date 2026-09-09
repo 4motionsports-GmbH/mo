@@ -18,7 +18,7 @@ export function getAllowedOrigins(): string[] {
   return parsed.length > 0 ? parsed : [...DEFAULT_ALLOWED_ORIGINS];
 }
 
-export function isOriginAllowed(origin: string | null): boolean {
+function isOriginAllowed(origin: string | null): boolean {
   if (!origin) return false;
   return getAllowedOrigins().includes(origin);
 }
@@ -70,7 +70,7 @@ function constantTimeEquals(a: string, b: string): boolean {
   return timingSafeEqual(ha, hb);
 }
 
-export function isSecretValid(req: Request): boolean {
+function isSecretValid(req: Request): boolean {
   const expected = process.env.CHAT_SHARED_SECRET;
   if (!expected) return false;
   const provided = req.headers.get(SECRET_HEADER) ?? "";

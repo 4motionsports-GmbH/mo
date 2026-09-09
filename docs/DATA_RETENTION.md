@@ -278,6 +278,11 @@ profile by deleting the `customers` row.
 
 ## How retention is enforced
 
+> **One rule for every window:** a value of `0` **disables** that step (nothing
+> is deleted); an invalid or negative value falls back to the default. No
+> window deletes everything — `RETENTION_DAYS=0` keeps every conversation
+> (parsing: `src/lib/retention-options.mjs`, tested).
+
 A daily cron — `GET /api/cron/retention`, scheduled in `vercel.json`, protected
 by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
 

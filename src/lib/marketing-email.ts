@@ -45,11 +45,7 @@ import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
 import { getEmailHeroRenderData } from "./email-hero-store";
 import { getCustomerById } from "./customer-store";
-import {
-  renderEmailProductRows,
-  productRowItems,
-  highlightDescriptionFor,
-} from "./email-products";
+import { renderEmailProductRows, productRowItems, highlightDescriptionFor, firstProductImageUrl, catalogNameLookup } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -62,7 +58,6 @@ import { applyMintedDiscountToBody } from "./discount-swap.mjs";
 import {
   renderEmailProseHtml,
   emailProseToText,
-  productNameLookup,
 } from "./email-prose.mjs";
 import { buildPrefilledCartUrlForIds } from "./cart";
 import { mintAttributionToken } from "./mo-orders-store";
@@ -328,7 +323,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         // rendered through the design's renderers, and building it before the
         // design was active shipped the classic block inside a Performance mail.
         bundle: await buildBundleBlockForSend(sendId, claimed.productHighlights),
-        labelForUrl: await catalogNameLookup(),
+        labelForUrl: await catalogNameLookup("lib/marketing-email"),
       })));
 
       // Our own Message-ID + an inbound Reply-To so a reply threads back into
@@ -393,11 +388,6 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
   }
 }
 
-/** First usable absolute-https catalog image, or null (mail clients won't load a
- * relative/http image). */
-function firstImageUrl(p: Product | undefined): string | null {
-  return p?.images?.find((u) => typeof u === "string" && u.startsWith("https://")) ?? null;
-}
 
 /**
  * Resolve the bundle attached to this send (if any) and render its special-offer
@@ -426,7 +416,7 @@ async function buildBundleBlockForSend(
       const product = byId.get(c.productId);
       return {
         name: c.title,
-        imageUrl: firstImageUrl(product),
+        imageUrl: firstProductImageUrl(product),
         description:
           highlightDescriptionFor(c.title, highlights) ||
           product?.shortDescription?.trim() ||
@@ -449,17 +439,6 @@ async function buildBundleBlockForSend(
   }
 }
 
-/** URL → product-name lookup over the synced catalog, so bare product URLs in
- * the prose render as the product name (email-prose.mjs). Never throws — a
- * catalog failure degrades to compact URL labels, never blocks a send. */
-async function catalogNameLookup(): Promise<(url: string) => string | null> {
-  try {
-    return productNameLookup(await loadProductCatalog());
-  } catch (err) {
-    reportError(err, { route: "lib/marketing-email", phase: "catalogNameLookup" });
-    return () => null;
-  }
-}
 
 export type MarketingPreviewResult =
   | { ok: true; subject: string; html: string }
@@ -531,7 +510,7 @@ export async function renderMarketingEmailPreview(
     discountExpiresAt: send.discountPercent > 0 ? send.discountExpiresAt : null,
     unsubscribe: unsubscribeFooter(unsubscribeUrl),
     bundle: await buildBundleBlockForSend(sendId, send.productHighlights),
-    labelForUrl: await catalogNameLookup(),
+    labelForUrl: await catalogNameLookup("lib/marketing-email"),
   })));
   return { ok: true, subject, html };
 }

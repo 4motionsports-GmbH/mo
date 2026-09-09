@@ -132,7 +132,7 @@ export async function loadEmbeddings(): Promise<EmbeddingsFile> {
  * (carry-forward base) and the webhook single-product update, which must operate
  * on the authoritative current blob, not a possibly-stale warm-Lambda snapshot.
  */
-export async function readCatalogBlobDirect(): Promise<Product[] | null> {
+async function readCatalogBlobDirect(): Promise<Product[] | null> {
   if (!blobConfigured()) return null;
   try {
     const data = await readPrivateJson<Product[]>(CATALOG_BLOB_KEY);
@@ -209,7 +209,7 @@ export async function writeCatalogToBlob(products: Product[]): Promise<string> {
   return res.url;
 }
 
-export async function writeEmbeddingsToBlob(file: EmbeddingsFile): Promise<string> {
+async function writeEmbeddingsToBlob(file: EmbeddingsFile): Promise<string> {
   const res = await put(EMBEDDINGS_BLOB_KEY, JSON.stringify(file), {
     // PRIVATE store — see writeCatalogToBlob. Read back server-side via get().
     access: "private",

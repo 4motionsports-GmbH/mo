@@ -10,7 +10,7 @@
 
 import { z } from "zod";
 
-export const HERO_QA_MODEL = "claude-sonnet-4-6";
+const HERO_QA_MODEL = "claude-sonnet-4-6";
 /** How many renders a single "Bild generieren" may spend: the first, plus
  * one retry when the check fails. */
 export const HERO_QA_MAX_RENDERS = 2;

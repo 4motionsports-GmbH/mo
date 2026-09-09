@@ -63,7 +63,7 @@ export function toProductGid(id) {
   return null;
 }
 
-export function toInventoryItemGid(id) {
+function toInventoryItemGid(id) {
   if (id == null) return null;
   const s = String(id).trim();
   if (!s) return null;

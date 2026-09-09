@@ -20,10 +20,10 @@ export const MARGIN_X = 57; // ≈ 20mm left/right margin
 // footer. PDF colours are 0–1 "r g b" operands.
 export const ACCENT_RGB = "0 0.549 0.796";
 export const MUTED_RGB = "0.45 0.45 0.45";
-export const BLACK_RGB = "0 0 0";
+const BLACK_RGB = "0 0 0";
 
 // Letterhead position (the "motion sports" wordmark + accent rule).
-export const BRAND_Y = PAGE_H - 64;
+const BRAND_Y = PAGE_H - 64;
 const RULE_Y = BRAND_Y - 10;
 
 // Footer line (every page), echoing the email's Shop/Über/Kontakt/Impressum bar.

@@ -13,7 +13,7 @@ import { reportError } from "./observability";
 export const SYNTHETIC_EMAIL_PREFIX = "shopify:";
 
 /** True when `email` is a real, mailable address (not the synthetic placeholder). */
-export function hasRealEmail(email: string | null | undefined): boolean {
+function hasRealEmail(email: string | null | undefined): boolean {
   return !!email && email.includes("@") && !email.startsWith(SYNTHETIC_EMAIL_PREFIX);
 }
 

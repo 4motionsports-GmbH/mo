@@ -41,7 +41,7 @@ export const VALUE_TIERS = [
 ];
 
 /** Tier keys in ascending order — the stable iteration order for reports. */
-export const VALUE_TIER_KEYS = VALUE_TIERS.map((t) => t.key);
+const VALUE_TIER_KEYS = VALUE_TIERS.map((t) => t.key);
 
 /**
  * The tier an anchor value falls into. Null/negative/NaN → null (unknown), so

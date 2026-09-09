@@ -674,7 +674,7 @@ const ARCHETYPE_PROMPT_LABEL = {
   },
 };
 
-export function archetypePromptLabel(archetype, locale) {
+function archetypePromptLabel(archetype, locale) {
   const map = locale === "en" ? ARCHETYPE_PROMPT_LABEL.en : ARCHETYPE_PROMPT_LABEL.de;
   return map[archetype] ?? map.unknown;
 }

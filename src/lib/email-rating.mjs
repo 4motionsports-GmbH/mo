@@ -8,8 +8,8 @@
 // as a normal feedback row (migration 0020) and shows up in the admin Feedback
 // tab next to the widget comments.
 
-export const EMAIL_RATING_MIN = 1;
-export const EMAIL_RATING_MAX = 5;
+const EMAIL_RATING_MIN = 1;
+const EMAIL_RATING_MAX = 5;
 
 /** The smiley + caption shown per score (German admin/customer copy). */
 export const EMAIL_RATING_FACES = ["☹", "🙁", "😐", "🙂", "😊"];

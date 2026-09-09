@@ -24,7 +24,7 @@ function constantTimeEquals(a: string, b: string): boolean {
  * True when the request carries the correct `Authorization: Bearer <CRON_SECRET>`.
  * Returns false (fail closed) when CRON_SECRET is not configured.
  */
-export function isCronAuthorized(req: Request): boolean {
+function isCronAuthorized(req: Request): boolean {
   const expected = process.env.CRON_SECRET;
   if (!expected) return false;
   const header = req.headers.get("authorization") ?? "";

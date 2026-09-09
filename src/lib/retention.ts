@@ -21,7 +21,7 @@
 
 import { getSql } from "./db";
 import { purgeExpiredPendingAuth } from "./customer-oauth-store";
-import { parseIntEnv } from "./env-num";
+import { parseRetentionOptions } from "./retention-options.mjs";
 
 export interface RetentionOptions {
   /** Conversations + messages older than this (by last_activity_at) are deleted. */
@@ -103,33 +103,15 @@ export interface RetentionResult {
   ranAt: string;
 }
 
+/**
+ * Retention windows from the environment — ONE rule for every window:
+ * `0` disables the step, invalid values fall back to the documented default
+ * (lib/retention-options.mjs, tested). Before, five windows were parsed with a
+ * minimum of 0 and used directly as cutoffs, so `RETENTION_DAYS=0` would have
+ * deleted every conversation on the next nightly run (TECH-C1).
+ */
 export function retentionOptionsFromEnv(): RetentionOptions {
-  return {
-    retentionDays: parseIntEnv("RETENTION_DAYS", 180, 0),
-    kpiRetentionDays: parseIntEnv("KPI_RETENTION_DAYS", 180, 0),
-    abandonAfterMinutes: parseIntEnv("ABANDON_AFTER_MINUTES", 30, 0),
-    suppressedPurgeDays: parseIntEnv("SUPPRESSED_CAPTURE_PURGE_DAYS", 30, 0),
-    // Correspondence (Art. 6(1)(b)/(f)) is kept longer than analytics — a reply
-    // thread stays useful well beyond a chat session. 12 months by default.
-    correspondenceRetentionDays: parseIntEnv("CORRESPONDENCE_RETENTION_DAYS", 365, 0),
-    physicalLetterRetentionDays: parseIntEnv("PHYSICAL_LETTER_RETENTION_DAYS", 365, 0),
-    // Free-text feedback can carry user-supplied PII; keep it 12 months by default.
-    feedbackRetentionDays: parseIntEnv("FEEDBACK_RETENTION_DAYS", 365, 0),
-    // Storage-limitation backstop for dormant identified customers. Conservative
-    // 3-year default; set 0 to disable. Confirmed/pending-consent customers are
-    // always excluded (their consent is a live basis to retain).
-    customerInactivityRetentionDays: parseIntEnv("CUSTOMER_INACTIVITY_RETENTION_DAYS", 1095, 0),
-    // Admin PII-access audit (security record); kept 2 years by default.
-    adminAccessLogRetentionDays: parseIntEnv("ADMIN_ACCESS_LOG_RETENTION_DAYS", 730, 0),
-    // Campaign audience (Shopify marketing subscribers) + campaign send records
-    // — PII under the shop's marketing consent; 12 months by default.
-    campaignContactRetentionDays: parseIntEnv("CAMPAIGN_CONTACT_RETENTION_DAYS", 365, 0),
-    // Stored Komplettanalyse reports — may contain customer display names when
-    // generated with per-customer profiles; 12 months by default, 0 disables.
-    analyticsReportRetentionDays: parseIntEnv("ANALYTICS_REPORT_RETENTION_DAYS", 365, 0),
-    // Same env the ingest reads (lib/mo-orders-store.attributionWindowDays).
-    attributionWindowDays: parseIntEnv("MO_ATTRIBUTION_WINDOW_DAYS", 30, 1),
-  };
+  return parseRetentionOptions(process.env);
 }
 
 function daysAgo(days: number): string {
@@ -163,7 +145,9 @@ export async function runRetention(
   const adminAccessLogCutoff = daysAgo(opts.adminAccessLogRetentionDays);
 
   // 1. Mark stale active conversations abandoned.
-  const abandoned = await sql`
+  let abandoned: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.abandonAfterMinutes > 0) {
+    abandoned = (await sql`
     WITH upd AS (
       UPDATE conversations
          SET status = 'abandoned', updated_at = now()
@@ -172,31 +156,40 @@ export async function runRetention(
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM upd
-  `;
+  `) as Array<{ n: number }>;
+  }
 
   // 2. Delete expired conversations (messages cascade via FK ON DELETE CASCADE).
-  const deletedConvos = await sql`
+  let deletedConvos: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.retentionDays > 0) {
+    deletedConvos = (await sql`
     WITH del AS (
       DELETE FROM conversations
        WHERE last_activity_at < ${conversationCutoff}
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM del
-  `;
+  `) as Array<{ n: number }>;
+  }
 
   // 3. Delete expired telemetry.
-  const deletedKpi = await sql`
+  let deletedKpi: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.kpiRetentionDays > 0) {
+    deletedKpi = (await sql`
     WITH del AS (
       DELETE FROM kpi_events
        WHERE created_at < ${kpiCutoff}
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM del
-  `;
+  `) as Array<{ n: number }>;
+  }
 
   // 3b. Delete expired dashboard/admin AI-usage rows (conversation_id IS NULL).
   //     Chat rows (conversation_id set) are already gone via the step-2 cascade.
-  const deletedAiUsage = await sql`
+  let deletedAiUsage: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.kpiRetentionDays > 0) {
+    deletedAiUsage = (await sql`
     WITH del AS (
       DELETE FROM ai_usage
        WHERE conversation_id IS NULL
@@ -204,11 +197,14 @@ export async function runRetention(
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM del
-  `;
+  `) as Array<{ n: number }>;
+  }
 
   // 4. Purge PII for opted-out captures past the grace period. The
   //    suppression_list row stays so future sends keep respecting the opt-out.
-  const purgedCaptures = await sql`
+  let purgedCaptures: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.suppressedPurgeDays > 0) {
+    purgedCaptures = (await sql`
     WITH del AS (
       DELETE FROM email_captures ec
        WHERE (
@@ -222,14 +218,17 @@ export async function runRetention(
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM del
-  `;
+  `) as Array<{ n: number }>;
+  }
 
   // 5. Purge the customer entity for the same opted-out addresses. Runs AFTER
   //    the capture purge so a freshly purged capture's customer goes in the
   //    same run. Customers carry email + cached profile/purchase summaries —
   //    all PII under the same consent. ON DELETE SET NULL detaches their
   //    conversations back to anonymous, pseudonymous rows.
-  const purgedCustomers = await sql`
+  let purgedCustomers: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.suppressedPurgeDays > 0) {
+    purgedCustomers = (await sql`
     WITH del AS (
       DELETE FROM customers c
        WHERE EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = c.email)
@@ -238,34 +237,41 @@ export async function runRetention(
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM del
-  `;
+  `) as Array<{ n: number }>;
+  }
 
   // 5b. Purge correspondence (email_messages) past its OWN window. It is its
   //     own data category (Korrespondenz), so it purges on its own schedule —
   //     NOT with the consent-capture grace. The customer FK is ON DELETE SET
   //     NULL, so a customer erasure detaches (but does not cascade-delete) these
   //     rows; they leave here, by occurred_at, on the correspondence window.
-  const deletedEmailMessages = await sql`
+  let deletedEmailMessages: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.correspondenceRetentionDays > 0) {
+    deletedEmailMessages = (await sql`
     WITH del AS (
       DELETE FROM email_messages
        WHERE occurred_at < ${correspondenceCutoff}
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM del
-  `;
+  `) as Array<{ n: number }>;
+  }
 
   // 5c. Purge physical_letters past their OWN window. A letter is its own data
   //     category (NOT email); like email_messages the customer FK is ON DELETE
   //     SET NULL, so a customer erasure detaches (never cascade-deletes) the
   //     audit row, and letters leave here, by created_at, on their own window.
-  const deletedPhysicalLetters = await sql`
+  let deletedPhysicalLetters: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.physicalLetterRetentionDays > 0) {
+    deletedPhysicalLetters = (await sql`
     WITH del AS (
       DELETE FROM physical_letters
        WHERE created_at < ${physicalLetterCutoff}
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM del
-  `;
+  `) as Array<{ n: number }>;
+  }
 
   // 5d. Purge free-text feedback past its own window (storage limitation): a
   //     comment can carry user-supplied PII (an optional email, or PII typed into
@@ -359,34 +365,41 @@ export async function runRetention(
       SELECT count(*)::int AS n FROM del
     `) as Array<{ n: number }>;
   }
-  const deletedConversationInsights = await sql`
-    WITH del AS (
-      DELETE FROM conversation_insights WHERE generated_at < ${kpiCutoff} RETURNING 1
-    )
-    SELECT count(*)::int AS n FROM del
-  `;
-  const deletedPersonaSummaries = await sql`
-    WITH del AS (
-      DELETE FROM kpi_persona_question_summaries
-       WHERE generated_at < ${kpiCutoff}
-      RETURNING 1
-    )
-    SELECT count(*)::int AS n FROM del
-  `;
+  let deletedConversationInsights: Array<{ n: number }> = [{ n: 0 }];
+  let deletedPersonaSummaries: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.kpiRetentionDays > 0) {
+    deletedConversationInsights = (await sql`
+      WITH del AS (
+        DELETE FROM conversation_insights WHERE generated_at < ${kpiCutoff} RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+    deletedPersonaSummaries = (await sql`
+      WITH del AS (
+        DELETE FROM kpi_persona_question_summaries
+         WHERE generated_at < ${kpiCutoff}
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+  }
 
   // 5i. Order-attribution rows (migration 0042). mo_orders are Cluster-A
   //     analytics like kpi_events, so they leave on the SAME analytics window
   //     (by the order's processed_at; NULL-dated rows leave by created_at).
   //     Tokens can only ever attribute within the attribution window, so any
   //     token older than window + 7 days grace is inert and purged.
-  const deletedMoOrders = await sql`
-    WITH del AS (
-      DELETE FROM mo_orders
-       WHERE COALESCE(processed_at, created_at) < ${kpiCutoff}
-      RETURNING 1
-    )
-    SELECT count(*)::int AS n FROM del
-  `;
+  let deletedMoOrders: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.kpiRetentionDays > 0) {
+    deletedMoOrders = (await sql`
+      WITH del AS (
+        DELETE FROM mo_orders
+         WHERE COALESCE(processed_at, created_at) < ${kpiCutoff}
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+  }
   const attributionTokenCutoff = daysAgo(opts.attributionWindowDays + 7);
   const deletedAttributionTokens = await sql`
     WITH del AS (

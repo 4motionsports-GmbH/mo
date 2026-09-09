@@ -11,7 +11,7 @@
 // bounce?: { type: 'Permanent'|'Transient'|'Undetermined', subType, message },
 // ... } }. Tested; the DB side lives in email-delivery-events.ts.
 
-export const DELIVERY_EVENT_TYPES = {
+const DELIVERY_EVENT_TYPES = {
   "email.delivered": "delivered",
   "email.bounced": "bounced",
   "email.complained": "complained",

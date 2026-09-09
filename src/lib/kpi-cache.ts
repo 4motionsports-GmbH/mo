@@ -23,7 +23,7 @@ import {
 } from "./kpi-recommendation-loop";
 import { getMarketingFunnel, type MarketingFunnel } from "./marketing-store";
 
-export const KPI_SHOPIFY_CACHE_TTL_MS = 10 * 60 * 1000;
+const KPI_SHOPIFY_CACHE_TTL_MS = 10 * 60 * 1000;
 
 /** A cached value with the moment it was actually computed. */
 export interface Cached<T> {
@@ -66,7 +66,7 @@ function store(): Store {
  * within the TTL and at/after `minFetchedAt`), otherwise run it once — sharing
  * the promise with concurrent callers — and cache a non-null result.
  */
-export async function cachedKpi<T>(
+async function cachedKpi<T>(
   key: string,
   loader: () => Promise<T>,
   { minFetchedAt = 0, now = Date.now() }: { minFetchedAt?: number; now?: number } = {}
@@ -96,7 +96,7 @@ export async function cachedKpi<T>(
 }
 
 /** Cache key for a range-bound getter. */
-export function rangeKey(prefix: string, range: KpiRange): string {
+function rangeKey(prefix: string, range: KpiRange): string {
   return `${prefix}:${range.from}:${range.to}`;
 }
 
@@ -130,11 +130,4 @@ export async function loadKpiShopifyBlock(
     fetchedAt: oldest,
     fromCache: parts.some((p) => p.fromCache),
   };
-}
-
-/** Drop every cached KPI entry (tests, or an explicit admin reset). */
-export function clearKpiShopifyCache(): void {
-  const s = store();
-  s.cache.entries.clear();
-  s.inflight.clear();
 }

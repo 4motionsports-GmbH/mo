@@ -25,7 +25,7 @@ import {
 // Tool inputs that reference catalog product ids — the DISCUSSED universe
 // (everything that came up, including compared-and-rejected alternatives).
 // Mirrors the set persisted as conversations.recommended_product_ids.
-export const PRODUCT_CARD_TOOLS = new Set([
+const PRODUCT_CARD_TOOLS = new Set([
   "show_product",
   "compare_products",
   "add_to_cart",

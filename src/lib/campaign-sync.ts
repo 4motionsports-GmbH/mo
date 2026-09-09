@@ -25,7 +25,7 @@ import {
   getContactStatusesByShopifyIds,
   listSuppressedEmails,
   suppressContactsMissingFromSync,
-  upsertCampaignContact,
+  upsertCampaignContacts,
   type CampaignContactStatus,
 } from "./campaign-store";
 import { isDbConfigured } from "./db";
@@ -86,18 +86,14 @@ export async function syncCampaignAudience(): Promise<CampaignSyncResult> {
   let suppressed = 0;
   const byOptInLevel: Record<string, number> = {};
 
-  for (const contact of mapped) {
+  // Plan every row first, then write them in batches (one statement per 500
+  // contacts instead of one round trip per contact — TECH-M4).
+  const rows = mapped.map((contact) => {
     const current = existingStatuses.get(contact.shopifyCustomerId) ?? null;
     const status = planContactStatus(current, {
       shopifyEligible: true, // mapped ⇒ SUBSCRIBED
       locallySuppressed: suppressedSet.has(contact.email),
     }) as CampaignContactStatus;
-    try {
-      await upsertCampaignContact({ ...contact, status });
-    } catch (err) {
-      reportError(err, { route: "lib/campaign-sync", phase: "upsert" });
-      throw err;
-    }
     if (current === null) created++;
     else updated++;
     if (status === "suppressed") {
@@ -105,6 +101,13 @@ export async function syncCampaignAudience(): Promise<CampaignSyncResult> {
     } else {
       byOptInLevel[contact.optInLevel] = (byOptInLevel[contact.optInLevel] ?? 0) + 1;
     }
+    return { ...contact, status };
+  });
+  try {
+    await upsertCampaignContacts(rows);
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-sync", phase: "upsert" });
+    throw err;
   }
 
   // Contacts that dropped out of Shopify's SUBSCRIBED set.

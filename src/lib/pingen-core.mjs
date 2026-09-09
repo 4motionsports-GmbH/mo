@@ -40,16 +40,6 @@ export function lettersUrl(staging, organisationId) {
   return `${pingenHosts(staging).api}/organisations/${organisationId}/letters`;
 }
 
-/** A single letter (GET status). */
-export function letterUrl(staging, organisationId, letterId) {
-  return `${lettersUrl(staging, organisationId)}/${letterId}`;
-}
-
-/** POST this (no auto_send) to actually dispatch a created letter. */
-export function sendLetterUrl(staging, organisationId, letterId) {
-  return `${letterUrl(staging, organisationId, letterId)}/send`;
-}
-
 /**
  * Build the JSON:API create-letter request body. The address is READ FROM THE
  * PDF by Pingen at `address_position` (we render the recipient block there), so
@@ -70,21 +60,6 @@ export function buildCreateLetterBody(input) {
         file_url_signature: input.fileSignature,
         address_position: input.addressPosition ?? "left",
         auto_send: input.autoSend ?? false,
-        delivery_product: input.deliveryProduct ?? "fast",
-        print_mode: input.printMode ?? "simplex",
-        print_spectrum: input.printSpectrum ?? "grayscale",
-      },
-    },
-  };
-}
-
-/** The send-letter body (used only when a letter was created with auto_send=false). */
-export function buildSendLetterBody(input) {
-  return {
-    data: {
-      id: input.letterId,
-      type: "letters",
-      attributes: {
         delivery_product: input.deliveryProduct ?? "fast",
         print_mode: input.printMode ?? "simplex",
         print_spectrum: input.printSpectrum ?? "grayscale",

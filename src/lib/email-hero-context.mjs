@@ -105,14 +105,14 @@ export const MAX_HERO_PROMPT_CHARS =
   HERO_PROMPT_STYLE_TAIL.length + MAX_HERO_SCENE_CHARS + 8;
 
 /** The marker identifying the CURRENT tail — the newest rule it carries. */
-export const HERO_TAIL_MARKER = "TEXT LEFT, SCENE RIGHT";
+const HERO_TAIL_MARKER = "TEXT LEFT, SCENE RIGHT";
 
 /**
  * The opening words of every tail version that has ever shipped, newest first.
  * ensureHeroStyleTail cuts a stored prompt at the earliest of these to recover
  * the operator's own scene text.
  */
-export const SUPERSEDED_TAIL_STARTS = [
+const SUPERSEDED_TAIL_STARTS = [
   HERO_TAIL_MARKER,
   // The #174 tail (left 55% empty, at most two objects).
   "COMPOSITION FIRST",

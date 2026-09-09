@@ -16,7 +16,7 @@ import {
 } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
-import { getSql } from "@/lib/db";
+import { recordKpiEvent } from "@/lib/kpi-events";
 
 export const maxDuration = 10;
 
@@ -76,19 +76,10 @@ export async function POST(req: Request) {
       data.clientTimestamp = body.timestamp;
     }
 
-    // Best-effort persistence. Missing DB or write failure is non-fatal for
+    // Best-effort persistence through the store (the same insert every
+    // server-side emitter uses). Missing DB or write failure is non-fatal for
     // telemetry — acknowledge regardless so track() stays fire-and-forget.
-    const sql = getSql();
-    if (sql) {
-      try {
-        await sql`
-          INSERT INTO kpi_events (session_id, event, data)
-          VALUES (${sessionId}, ${event}, ${JSON.stringify(data)}::jsonb)
-        `;
-      } catch (err) {
-        reportError(err, { route: "api/kpi", phase: "insert", event });
-      }
-    }
+    await recordKpiEvent({ sessionId, event, data });
 
     return new Response(JSON.stringify({ ok: true }), {
       status: 202,

@@ -31,6 +31,10 @@ compatible.
   Europe/Berlin). A bare `toLocale*String` on a `Date` in `src/app/admin` is a lint error (hydration).
 - **Numbers in the admin go through `src/lib/admin-format.mjs`** (`num`, `eur`, `eurFromCents`, `pct`,
   `ratio`, `hours`, `plural`, `relativeTime`, `truncate`) — no per-file `toLocaleString` helpers.
+- **Retention windows: `0` disables, never "delete everything"** — all windows are parsed by
+  `src/lib/retention-options.mjs` (tested) and `runRetention` skips a step whose window is 0.
+- **Admin login is rate-limited** (10 / 10 min per IP, bucket `admin-login`) and fails OPEN without
+  KV so a limiter outage never locks the operator out.
 - **KPI Shopify fan-outs are cached** (`src/lib/kpi-cache.ts` over the pure `ttl-cache.mjs`): revenue,
   campaign KPIs, marketing funnel and recommendation loop are served per range for 10 minutes;
   `?kpiFresh=<unix s>` (the "Aktualisieren" button) is a freshness floor, not a cache wipe, so it works

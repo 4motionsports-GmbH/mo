@@ -88,7 +88,7 @@ export async function getCachedEmailDesignForKind(
 }
 
 /** Drop the send-path cache (called after every admin mutation). */
-export function invalidateEmailDesignCache(): void {
+function invalidateEmailDesignCache(): void {
   selectionCache = null;
 }
 

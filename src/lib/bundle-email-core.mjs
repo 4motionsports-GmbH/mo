@@ -41,7 +41,7 @@ export function bundleStattPrice(bundlePrice, componentsSum) {
 }
 
 /** Titles longer than this are the auto-generated "Set: A + B + C" kind. */
-export const BUNDLE_HEADLINE_MAX_CHARS = 40;
+const BUNDLE_HEADLINE_MAX_CHARS = 40;
 
 /**
  * The short headline a design shows over the component list. Operators can

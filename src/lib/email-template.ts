@@ -359,7 +359,7 @@ export function renderOfferCountdown(input: {
  * secret (UNSUBSCRIBE_SECRET / CHAT_SHARED_SECRET — the unsubscribe links
  * need the same one, so a production deployment always has it).
  */
-export function countdownImageUrl(
+function countdownImageUrl(
   expiresAt: string,
   language: "de" | "en",
   variant?: "m"

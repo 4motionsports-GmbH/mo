@@ -135,17 +135,6 @@ function formatPrice(p: Product, locale: Locale): string {
 }
 
 
-/**
- * First usable catalog image (absolute https only — mail clients won't load a
- * relative or http image). Returns null so the row can render without an image
- * cell rather than emit a broken <img>.
- */
-function firstImageUrl(p: Product): string | null {
-  const img = p.images?.find(
-    (u) => typeof u === "string" && u.startsWith("https://")
-  );
-  return img ?? null;
-}
 
 /**
  * A newsletter-style product section: the signature black separator band with

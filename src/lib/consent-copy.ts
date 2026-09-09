@@ -67,9 +67,9 @@ export const CONSENT_COPY_LAWYER_APPROVED = true as const;
  * branded email footer. ⚠️ Verify the privacy URL resolves on the live shop
  * before launch (Shopify's standard policy path is assumed). Locale-agnostic.
  */
-export const CAPTURE_FORM_IMPRINT_URL =
+const CAPTURE_FORM_IMPRINT_URL =
   "https://motionsports.de/pages/impressum";
-export const CAPTURE_FORM_PRIVACY_URL =
+const CAPTURE_FORM_PRIVACY_URL =
   "https://motionsports.de/policies/privacy-policy";
 
 /**

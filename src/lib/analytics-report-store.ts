@@ -36,7 +36,7 @@ import { getProductsByIds } from "./product-catalog";
 import { CART_PATTERNS } from "./kpi-event-patterns.mjs";
 import type { PersonaArchetype } from "./types";
 
-export const REPORT_LIST_LIMIT = 100;
+const REPORT_LIST_LIMIT = 100;
 
 export type ReportStatus = "running" | "complete" | "failed";
 

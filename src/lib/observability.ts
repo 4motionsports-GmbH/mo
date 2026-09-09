@@ -37,7 +37,7 @@ const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const EMAIL_QUERY_RE = /email:"[^"]*"/gi;
 
 /** Redact email-shaped PII from a free-text string. */
-export function scrubPiiString(input: unknown): string {
+function scrubPiiString(input: unknown): string {
   if (typeof input !== "string" || !input) return typeof input === "string" ? input : "";
   return input.replace(EMAIL_QUERY_RE, 'email:"[redacted]"').replace(EMAIL_RE, "[redacted-email]");
 }
@@ -55,7 +55,7 @@ type ScrubbableEvent = {
  * any failure leaves the event unchanged rather than dropping observability.
  * Generic so it returns the caller's concrete event type unchanged.
  */
-export function scrubSentryEvent<T extends ScrubbableEvent>(event: T): T {
+function scrubSentryEvent<T extends ScrubbableEvent>(event: T): T {
   const e: ScrubbableEvent = event;
   try {
     if (typeof e.message === "string") e.message = scrubPiiString(e.message);

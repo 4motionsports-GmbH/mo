@@ -126,7 +126,7 @@ export const CAMPAIGN_SEGMENTS = [
 ];
 
 /** Contacts we have no purchase date for — behave exactly as today. */
-export const UNKNOWN_SEGMENT = {
+const UNKNOWN_SEGMENT = {
   key: "unbekannt",
   label: "Unbekannt",
   sendable: true,

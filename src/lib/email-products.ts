@@ -21,6 +21,9 @@ import {
 } from "./email-template";
 import { activeEmailDesignRenderers } from "./email-design-context";
 import type { Product } from "./types";
+import { loadProductCatalog } from "./catalog-store";
+import { productNameLookup } from "./email-prose.mjs";
+import { reportError } from "./observability";
 
 export interface EmailProductGridItem {
   /** Absolute https image URL, or null to render the tile without an image. */
@@ -45,10 +48,25 @@ const GRID_PRICE_FORMATS: Record<"de" | "en", Intl.NumberFormat> = {
 
 /** First usable absolute-https catalog image, or null (mail clients won't load
  * a relative or http image; null renders the tile without an image). */
-export function firstProductImageUrl(p: Product): string | null {
+export function firstProductImageUrl(p: Product | null | undefined): string | null {
   return (
-    p.images?.find((u) => typeof u === "string" && u.startsWith("https://")) ?? null
+    p?.images?.find((u) => typeof u === "string" && u.startsWith("https://")) ?? null
   );
+}
+
+/**
+ * URL → product-name lookup over the synced catalog, so bare product URLs in
+ * e-mail prose render as the product name (email-prose.mjs). Never throws — a
+ * catalog failure degrades to compact URL labels, never blocks a send. Shared
+ * by the marketing and the campaign composer; `route` tags the error report.
+ */
+export async function catalogNameLookup(route: string): Promise<(url: string) => string | null> {
+  try {
+    return productNameLookup(await loadProductCatalog());
+  } catch (err) {
+    reportError(err, { route, phase: "catalogNameLookup" });
+    return () => null;
+  }
 }
 
 /**

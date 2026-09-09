@@ -36,7 +36,7 @@ import type { OrderHistory } from "./shopify-orders";
 import { chooseLawfulAddress } from "./postal-address.mjs";
 import { createPublicKey, verify as cryptoVerify, type JsonWebKey } from "node:crypto";
 
-export const CUSTOMER_ACCOUNT_SCOPES = "openid email customer-account-api:full";
+const CUSTOMER_ACCOUNT_SCOPES = "openid email customer-account-api:full";
 const DISCOVERY_TTL_MS = 60 * 60 * 1000; // 1h — discovery is stable
 const JWKS_TTL_MS = 60 * 60 * 1000;
 const CLOCK_SKEW_SEC = 60;
@@ -50,12 +50,12 @@ function envTrim(name: string): string | undefined {
   return v && v.trim() ? v.trim() : undefined;
 }
 
-export function customerAccountClientId(): string | undefined {
+function customerAccountClientId(): string | undefined {
   return envTrim("SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_ID");
 }
 
 /** Optional — present only when the client was switched to confidential. */
-export function customerAccountClientSecret(): string | undefined {
+function customerAccountClientSecret(): string | undefined {
   return envTrim("SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_SECRET");
 }
 
@@ -135,7 +135,7 @@ async function fetchJson(url: string): Promise<Record<string, unknown>> {
  * Resolve the OIDC + Customer-Account discovery documents from the storefront
  * domain. Cached for an hour; pass `force` to bypass the cache.
  */
-export async function getDiscovery(force = false): Promise<CustomerAccountDiscovery> {
+async function getDiscovery(force = false): Promise<CustomerAccountDiscovery> {
   if (!force && discoveryCache && Date.now() - discoveryCache.fetchedAt < DISCOVERY_TTL_MS) {
     return discoveryCache;
   }

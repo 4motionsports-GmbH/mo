@@ -91,7 +91,7 @@ export interface CampaignLifecycleFacts {
  * from the catalog. Returns nulls when nothing is derivable — callers then get
  * the "unknown" segment and today's unchanged behaviour.
  */
-export function lifecycleFactsFromHistory(
+function lifecycleFactsFromHistory(
   history: OrderHistory | null,
   catalog: Product[]
 ): CampaignLifecycleFacts {
@@ -116,7 +116,7 @@ export function lifecycleFactsFromHistory(
  * `catalogIds` marks which purchased handles map to a CURRENT catalog product
  * (item.productId) — those items are selectable as the recommendation basis in
  * the review card; unmatched items stay informational. */
-export function compactPurchaseSummary(
+function compactPurchaseSummary(
   history: OrderHistory,
   catalogIds?: Set<string>
 ): CampaignPurchaseSummary {
@@ -193,7 +193,7 @@ function representativePicks(candidates: Product[]): Product[] {
  * already-owned products from the candidates always covers the FULL owned set —
  * deselecting a purchase never makes it recommendable.
  */
-export async function pickCampaignRecommendations(
+async function pickCampaignRecommendations(
   history: OrderHistory | null,
   selectedProductIds?: string[] | null,
   strategy: RecommendationStrategy = RECOMMENDATION_STRATEGIES.SIMILARITY as RecommendationStrategy

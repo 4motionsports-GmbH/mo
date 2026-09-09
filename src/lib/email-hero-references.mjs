@@ -15,10 +15,10 @@ export const MAX_OWNED_REFERENCES = 2;
 /** Longest edge of a reference picture. Enough for shape, colour and
  * markings; image-input tokens scale with pixels, so no larger. */
 export const REFERENCE_MAX_PX = 768;
-export const REFERENCE_JPEG_QUALITY = 85;
+const REFERENCE_JPEG_QUALITY = 85;
 
 /** First https picture of a catalogue product, or null. */
-export function firstProductImage(product) {
+function firstProductImage(product) {
   const images = Array.isArray(product?.images) ? product.images : [];
   return images.find((u) => typeof u === "string" && u.startsWith("https://")) ?? null;
 }

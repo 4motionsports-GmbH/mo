@@ -79,7 +79,7 @@ export function phaseIndex(phase, options) {
 /** Hard ceilings so a single report can never run unbounded. Surfaced in the UI. */
 export const MAX_ANALYZE_CAP = 5000;
 export const DEFAULT_MAX_ANALYZE = 2000;
-export const MAX_PROFILES_CAP = 100;
+const MAX_PROFILES_CAP = 100;
 export const DEFAULT_MAX_PROFILES = 40;
 
 function clampInt(v, min, max, fallback) {

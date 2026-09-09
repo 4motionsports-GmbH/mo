@@ -49,7 +49,7 @@ export const product = (over = {}) => ({
   ...over,
 });
 
-export const memorySignedIn = () => ({
+const memorySignedIn = () => ({
   signedIn: true,
   personalised: true,
   displayName: "Max Mustermann",

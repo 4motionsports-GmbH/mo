@@ -179,7 +179,7 @@ export async function getCachedActiveDirectives(): Promise<Array<{ content: stri
 }
 
 /** Drop the chat-path cache (called after every admin mutation). */
-export function invalidateDirectivesCache(): void {
+function invalidateDirectivesCache(): void {
   directivesCache = null;
 }
 

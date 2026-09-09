@@ -72,7 +72,7 @@ export async function createPhysicalLetter(
 
 /** Per-letter postage in cents when Pingen hasn't reported a price (staging, or
  *  not-yet-known). Configurable; defaults to 106 (≈ €1.06). */
-export function defaultLetterCostCents(): number {
+function defaultLetterCostCents(): number {
   return parseIntEnv("PINGEN_LETTER_COST_CENTS", 106, 0);
 }
 

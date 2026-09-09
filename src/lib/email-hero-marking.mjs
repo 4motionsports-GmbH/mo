@@ -16,8 +16,8 @@
 export const AI_DIGITAL_SOURCE_TYPE =
   "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia";
 
-export const AI_IMAGE_DESCRIPTION_EN = "AI-generated image";
-export const AI_IMAGE_DESCRIPTION_DE = "KI-generiertes Bild";
+const AI_IMAGE_DESCRIPTION_EN = "AI-generated image";
+const AI_IMAGE_DESCRIPTION_DE = "KI-generiertes Bild";
 
 const escapeXml = (s) =>
   String(s ?? "")

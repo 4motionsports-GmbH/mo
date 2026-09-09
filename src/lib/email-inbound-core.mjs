@@ -23,7 +23,7 @@ import { randomBytes } from "node:crypto";
  * SAME rule as normalizeEmail in email-capture-store.ts, kept here so the pure
  * core has no TS/DB import. Returns "" for empty input.
  */
-export function normalizeAddress(address) {
+function normalizeAddress(address) {
   return typeof address === "string" ? address.trim().toLowerCase() : "";
 }
 

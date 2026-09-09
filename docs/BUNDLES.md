@@ -195,7 +195,6 @@ Admin endpoints (behind the existing admin auth + CSRF via `guardAdminPost`):
 
 | Endpoint                        | Body                                                            |
 | ------------------------------- | -------------------------------------------------------------- |
-| `POST /api/admin/bundles/list`    | `{ customerId }` → `{ offers }`                                |
 | `POST /api/admin/bundles/create`  | `{ customerId?, components:[{productId,quantity?}], bundlePriceOverride?, title?, expiryDays?, marketingSendId? }` |
 | `POST /api/admin/bundles/archive` | `{ id }` → `{ offer }`                                         |
 | `POST /api/admin/bundles/suggest` | `{ customerId }` → `{ title, components, componentsSum }` (AI) |

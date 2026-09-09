@@ -65,11 +65,7 @@ import {
   emailLinkStyle,
   renderOfferCountdown,
 } from "./email-template";
-import {
-  renderEmailProductRows,
-  productRowItems,
-  highlightDescriptionFor,
-} from "./email-products";
+import { renderEmailProductRows, productRowItems, highlightDescriptionFor, firstProductImageUrl, catalogNameLookup } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -83,7 +79,6 @@ import { applyMintedDiscountToBody } from "./discount-swap.mjs";
 import {
   renderEmailProseHtml,
   emailProseToText,
-  productNameLookup,
 } from "./email-prose.mjs";
 import { generateRedirectToken } from "./marketing-store";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
@@ -98,7 +93,7 @@ import type { Product } from "./types";
 
 /** Code prefix for campaign codes — distinct from the marketing "MS5" so
  * campaign revenue stays separable in the KPI dashboard. */
-export const CAMPAIGN_DISCOUNT_CODE_PREFIX = "MK";
+const CAMPAIGN_DISCOUNT_CODE_PREFIX = "MK";
 
 export type CampaignSendResult =
   | { ok: true; sentTo: string }
@@ -320,7 +315,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           bundleOfferId = b?.offerId ?? null;
           return b;
         })(),
-        labelForUrl: await catalogNameLookup(),
+        labelForUrl: await catalogNameLookup("lib/campaign-email"),
         ctaUrl: trackedCtaUrl,
       }))
         );
@@ -390,23 +385,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
   }
 }
 
-/** First usable absolute-https catalog image, or null (mail clients won't load
- * a relative/http image). Mirrors the marketing path's helper. */
-function firstImageUrl(p: Product | undefined): string | null {
-  return p?.images?.find((u) => typeof u === "string" && u.startsWith("https://")) ?? null;
-}
 
-/** URL → product-name lookup over the synced catalog, so bare product URLs in
- * the prose render as the product name (email-prose.mjs). Never throws — a
- * catalog failure degrades to compact URL labels, never blocks a send. */
-async function catalogNameLookup(): Promise<(url: string) => string | null> {
-  try {
-    return productNameLookup(await loadProductCatalog());
-  } catch (err) {
-    reportError(err, { route: "lib/campaign-email", phase: "catalogNameLookup" });
-    return () => null;
-  }
-}
 
 /**
  * Resolve the draft's recommended product ids (including review-time curation;
@@ -471,7 +450,7 @@ async function buildBundleBlockForContact(
       const product = byId.get(c.productId);
       return {
         name: c.title,
-        imageUrl: firstImageUrl(product),
+        imageUrl: firstProductImageUrl(product),
         description:
           highlightDescriptionFor(c.title, highlights) ||
           product?.shortDescription?.trim() ||
@@ -558,7 +537,7 @@ export async function renderCampaignEmailPreview(
     discountExpiresAt: draft.discountPercent > 0 ? draft.discountExpiresAt : null,
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
     bundle: await buildBundleBlockForContact(contactId, contact.language, draft.productHighlights),
-    labelForUrl: await catalogNameLookup(),
+    labelForUrl: await catalogNameLookup("lib/campaign-email"),
   }))
     );
   return { ok: true, subject, html };

@@ -14,7 +14,7 @@ import { storedTextMode } from "./email-text-mode.mjs";
 
 /**
  * Whether an existing open draft may be reused as-is (same offer, no explicit
- * regenerate). Mirrors /api/admin/marketing/draft.
+ * regenerate). Mirrors /api/admin/customers/marketing-draft.
  *
  * `requestedTextMode` is the explicitly requested text mode, or null/undefined
  * when the request did not name one — an unnamed mode keeps the draft's stored

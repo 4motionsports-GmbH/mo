@@ -55,17 +55,10 @@ export const KPI_CONSENT_GATE_DISMISSED = "consent_gate_dismissed";
 // Outbound-email click events (server-emitted from the tracked redirect)
 // ---------------------------------------------------------------------------
 
-/** A tracked marketing-email link (/api/r/<token>) was clicked. Emitted by
- * marketing-store.recordEmailClick with `data: {sendId, captureId, firstClick}`
- * and a NULL session (email clicks have no widget session). */
-export const KPI_MARKETING_EMAIL_CLICKED = "marketing_email_clicked";
 /** A tracked CAMPAIGN-email CTA (/api/r/<token>, MK- channel) was clicked.
  * Emitted by campaign-store.recordCampaignClick with
  * `data: {sendId, firstClick}` and a NULL session. */
 export const KPI_CAMPAIGN_EMAIL_CLICKED = "campaign_email_clicked";
-/** A bundle-offer link was clicked (bundle-offers-store.resolveBundleRedirect,
- * `data: {offerId, status, expired}`, NULL session). */
-export const KPI_BUNDLE_OFFER_CLICKED = "bundle_offer_clicked";
 
 // ---------------------------------------------------------------------------
 // Contact-form hand-over + customer-account lifecycle (server-emitted)

@@ -6,7 +6,7 @@
 // Styling uses the admin design system (themed via ../theme.css, loaded by the
 // admin layout). The auth flow itself is unchanged.
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import {
   ADMIN_COOKIE_NAME,
@@ -16,6 +16,8 @@ import {
   sessionCookieOptions,
 } from "@/lib/admin-auth";
 import { safeAdminNext } from "@/lib/admin-login-redirect.mjs";
+import { checkRateLimitKeyed } from "@/lib/rate-limit";
+import { reportError } from "@/lib/observability";
 import {
   Card,
   CardHeader,
@@ -29,6 +31,24 @@ import { Button } from "../ui/button";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Attempt limit per client IP (decision D-7): 10 / 10 min. Fails OPEN when the
+ * limiter itself is unavailable (no KV configured, Upstash down) — a broken
+ * limiter must never lock the operator out; the failure is reported.
+ */
+async function loginRateLimited(): Promise<boolean> {
+  try {
+    const h = await headers();
+    const ip =
+      h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
+    const rl = await checkRateLimitKeyed("admin-login", `ip:${ip}`);
+    return !rl.ok;
+  } catch (err) {
+    reportError(err, { route: "admin/login", phase: "rate-limit" });
+    return false;
+  }
+}
+
 async function loginAction(formData: FormData): Promise<void> {
   "use server";
   const password = formData.get("password");
@@ -36,6 +56,9 @@ async function loginAction(formData: FormData): Promise<void> {
   // an expired session returns the operator to the screen they were on.
   const next = safeAdminNext(formData.get("next"));
   const nextQuery = next === "/admin" ? "" : `&next=${encodeURIComponent(next)}`;
+  if (await loginRateLimited()) {
+    redirect(`/admin/login?error=ratelimited${nextQuery}`);
+  }
   if (!(await isAdminPasswordValid(password))) {
     redirect(`/admin/login?error=invalid${nextQuery}`);
   }
@@ -61,16 +84,28 @@ export default async function AdminLoginPage({
   const message =
     error === "invalid"
       ? "Falsches Passwort."
-      : error === "config"
-        ? "Server nicht konfiguriert (ADMIN_SESSION_SECRET fehlt)."
-        : null;
+      : error === "ratelimited"
+        ? "Zu viele Anmeldeversuche — bitte in zehn Minuten erneut versuchen."
+        : error === "config"
+          ? "Server nicht konfiguriert (ADMIN_SESSION_SECRET fehlt)."
+          : null;
 
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-[360px] max-w-[90vw] shadow-md">
         <CardHeader>
-          <CardTitle className="text-lg">motion sports — Admin</CardTitle>
-          <CardDescription>Marketing-Dashboard. Bitte anmelden.</CardDescription>
+          <div className="mb-2 flex items-center gap-3">
+            <span
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground"
+              aria-hidden
+            >
+              M
+            </span>
+            <div>
+              <CardTitle className="text-lg">motion sports</CardTitle>
+              <CardDescription>Admin · Mo — bitte anmelden.</CardDescription>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {!configured && (

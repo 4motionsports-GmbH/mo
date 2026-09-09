@@ -126,7 +126,7 @@ export const ADMIN_TAB_KEYS = Object.freeze(ADMIN_TABS.map((t) => t.key));
 /** Legacy `?tab=` values that still resolve to a screen. */
 const TAB_ALIASES = Object.freeze({ customers: "kunden", marketing: "kunden" });
 
-export const DEFAULT_ADMIN_TAB = "overview";
+const DEFAULT_ADMIN_TAB = "overview";
 
 /**
  * Resolve a raw `?tab=` value (string, array or nothing) to a screen key.

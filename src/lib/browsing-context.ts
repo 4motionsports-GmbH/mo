@@ -36,8 +36,8 @@ export interface BrowsingContext {
 
 // Keep the context small and the greeting tasteful: at most the few most
 // recent items, regardless of how long a trail the client sends.
-export const MAX_BROWSING_PRODUCTS = 3;
-export const MAX_BROWSING_CATEGORIES = 2;
+const MAX_BROWSING_PRODUCTS = 3;
+const MAX_BROWSING_CATEGORIES = 2;
 // Hard bound on how much of an oversized/abusive trail we even look at.
 const MAX_TRAIL_ITEMS_SCANNED = 20;
 const MAX_CATEGORY_LABEL_LENGTH = 80;

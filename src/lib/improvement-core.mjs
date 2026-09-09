@@ -29,7 +29,7 @@ export const SUGGEST_MODEL = "claude-sonnet-4-6";
 // model call — a single monolithic pass proved to outlive the serverless
 // function budget in production (killed mid-call → "Netzwerkfehler" in the UI).
 
-export const RUN_PHASES = ["wirkung", "vorschlaege_shop", "vorschlaege_mo", "done"];
+const RUN_PHASES = ["wirkung", "vorschlaege_shop", "vorschlaege_mo", "done"];
 
 export const RUN_PHASE_LABELS = {
   wirkung: "Wirkungs-Check der bisherigen Maßnahmen",
@@ -47,12 +47,7 @@ export function nextRunPhase(current) {
 
 // ── Vocabularies ──────────────────────────────────────────────────────────────
 
-export const LANES = ["shop", "mo"];
-
-export const LANE_LABELS = {
-  shop: "Online-Shop",
-  mo: "Mo selbst",
-};
+const LANES = ["shop", "mo"];
 
 /** Validated per-lane category keys + German display labels. */
 export const SHOP_CATEGORIES = {
@@ -73,7 +68,7 @@ export const MO_CATEGORIES = {
   faehigkeit: "Neue Fähigkeit",
 };
 
-export function categoriesForLane(lane) {
+function categoriesForLane(lane) {
   return lane === "mo" ? MO_CATEGORIES : SHOP_CATEGORIES;
 }
 
@@ -89,19 +84,19 @@ export const SUGGESTION_STATUS_LABELS = {
   dismissed: "Verworfen",
 };
 
-export const IMPACT_LEVELS = ["hoch", "mittel", "niedrig"];
+const IMPACT_LEVELS = ["hoch", "mittel", "niedrig"];
 
 // ── Bounds ────────────────────────────────────────────────────────────────────
 
 export const MAX_SUGGESTIONS_PER_RUN = 12;
 // Per lane-pass cap (the run total stays MAX_SUGGESTIONS_PER_RUN across both).
 export const MAX_SUGGESTIONS_PER_LANE = 6;
-export const MAX_TITLE_CHARS = 140;
-export const MAX_RATIONALE_CHARS = 1200;
-export const MAX_PROPOSAL_CHARS = 1600;
-export const MAX_EVIDENCE_ITEMS = 6;
-export const MAX_EVIDENCE_CHARS = 200;
-export const MAX_EXPECTED_EFFECT_CHARS = 240;
+const MAX_TITLE_CHARS = 140;
+const MAX_RATIONALE_CHARS = 1200;
+const MAX_PROPOSAL_CHARS = 1600;
+const MAX_EVIDENCE_ITEMS = 6;
+const MAX_EVIDENCE_CHARS = 200;
+const MAX_EXPECTED_EFFECT_CHARS = 240;
 
 // The live directive layer must stay a bounded prompt section: at most this
 // many ACTIVE directives, each at most this long. Enforced in the store,

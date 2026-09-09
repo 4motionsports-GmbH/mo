@@ -34,7 +34,7 @@ export function normalizeEmail(email: string): string {
 }
 
 /** Cryptographically-random, URL-safe DOI token. */
-export function generateDoiToken(): string {
+function generateDoiToken(): string {
   return randomBytes(32).toString("hex");
 }
 
@@ -260,27 +260,6 @@ export async function upsertEmailCapture(
     doiEmailRequired,
     locale,
   };
-}
-
-/**
- * Best-effort lookup of the storefront language stored for an address, used by
- * later marketing sends so the unsubscribe footer matches the recipient's
- * language. Defaults to German (no DB / no row / any error / legacy NULL).
- */
-export async function getCaptureLocale(
-  email: string,
-  sql: Sql | null = getSql()
-): Promise<Locale> {
-  if (!sql) return "de";
-  const e = normalizeEmail(email);
-  try {
-    const rows = await sql`
-      SELECT locale FROM email_captures WHERE email = ${e} LIMIT 1
-    `;
-    return normalizeLocale(rows[0]?.locale);
-  } catch {
-    return "de";
-  }
 }
 
 // ---------------------------------------------------------------------------

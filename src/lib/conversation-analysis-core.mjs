@@ -185,8 +185,8 @@ export function shouldRegenerate({ hasCached, force }) {
 // rough per-conversation token figures power the bulk-action "ca. €X" estimate
 // shown BEFORE the operator confirms (the real cost is recorded per run).
 
-export const PER_ANALYSIS_INPUT_TOKENS_EST = 3000;
-export const PER_ANALYSIS_OUTPUT_TOKENS_EST = 250;
+const PER_ANALYSIS_INPUT_TOKENS_EST = 3000;
+const PER_ANALYSIS_OUTPUT_TOKENS_EST = 250;
 
 /** Estimated USD cost of analysing `count` conversations with `model`. */
 export function estimateAnalysisCostUsd(count, prices, model = "claude-haiku-4-5") {
@@ -281,7 +281,7 @@ export const INSIGHTS_SECTIONS = [
 export const MAX_REFS_PER_SECTION = 8;
 
 /** Max length of a reference's reason sentence. */
-export const MAX_REF_REASON_CHARS = 200;
+const MAX_REF_REASON_CHARS = 200;
 
 // Matches a whole ```json:refs … ``` fence (closed).
 const REFS_BLOCK_RE = /```json:refs\s*([\s\S]*?)```/i;

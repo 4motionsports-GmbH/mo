@@ -52,12 +52,12 @@ export type {
 export { listBundleOffersForCustomer } from "./bundle-offers-store";
 
 /** The configured creation mode (the seam selector). Default native_fixed_bundle. */
-export function bundleCreationMode(): string {
+function bundleCreationMode(): string {
   return resolveBundleCreationMode(process.env.BUNDLE_CREATION_MODE);
 }
 
 /** Days an offer stays live before the cron archives it (env-overridable, 7). */
-export function bundleExpiryDays(): number {
+function bundleExpiryDays(): number {
   return parseIntEnv("BUNDLE_OFFER_EXPIRY_DAYS", 7);
 }
 

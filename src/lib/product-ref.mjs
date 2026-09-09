@@ -24,7 +24,7 @@
 //           silently downgrade this to the default variant — the admin
 //           approved a concrete price (PAngV). Skip + surface instead.
 
-export const PRODUCT_REF_SEPARATOR = "~";
+const PRODUCT_REF_SEPARATOR = "~";
 
 /**
  * Build a ref string. A nullish/empty variantId yields the bare product id.

@@ -114,7 +114,7 @@ function throwOnUserErrors(label: string, errors: UserError[] | null | undefined
  * leaving a half-built, unbuyable product behind (the spike's "STOP and report"
  * instruction). Applies to the §6a fallback too (same publishablePublish call).
  */
-export async function assertPublicationScopes(): Promise<void> {
+async function assertPublicationScopes(): Promise<void> {
   const data = await adminGraphql<{
     currentAppInstallation: { accessScopes: Array<{ handle: string }> } | null;
   }>(`{ currentAppInstallation { accessScopes { handle } } }`);

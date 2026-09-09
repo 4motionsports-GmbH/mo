@@ -109,7 +109,7 @@ async function exchangeToken(): Promise<CachedToken> {
   };
 }
 
-export async function getAdminToken(): Promise<string> {
+async function getAdminToken(): Promise<string> {
   if (cached && cached.expiresAt - REFRESH_BUFFER_MS > Date.now()) {
     return cached.accessToken;
   }

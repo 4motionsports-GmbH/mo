@@ -19,9 +19,9 @@ import {
 } from "./improvement-core.mjs";
 import type { ReportUsage } from "./analytics-report-store";
 
-export const RUN_LIST_LIMIT = 50;
+const RUN_LIST_LIMIT = 50;
 // How many prior suggestions each new run sees (prompt input + dedup base).
-export const PRIOR_SUGGESTIONS_LIMIT = 60;
+const PRIOR_SUGGESTIONS_LIMIT = 60;
 
 export type ImprovementRunStatus = "running" | "complete" | "failed";
 export type SuggestionLane = "shop" | "mo";
@@ -308,7 +308,7 @@ export async function updateImprovementRun(
 // How long a step claim shields against concurrent stepping before it is
 // considered stale (a crashed function never cleared it). Comfortably above
 // the step route's maxDuration.
-export const STEP_CLAIM_TTL_MINUTES = 6;
+const STEP_CLAIM_TTL_MINUTES = 6;
 
 /**
  * Atomically claim the run for ONE step (migration 0045). Returns

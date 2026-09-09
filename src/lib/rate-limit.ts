@@ -13,7 +13,10 @@ export type RateLimitBucket =
   // sends a single address can receive, see /api/capture-email.
   | "capture-recipient"
   // Keyed by the client IP — caps contact-form inbox spam, see /api/contact.
-  | "contact-ip";
+  | "contact-ip"
+  // Keyed by the client IP — caps password attempts against the single shared
+  // admin password, see app/admin/login (decision D-7).
+  | "admin-login";
 
 // Per-bucket sliding-window config: max requests over the given Upstash
 // duration string. Each bucket gets its own window so we can mix short (chat,
@@ -59,6 +62,9 @@ const BUCKET_CONFIG: Record<RateLimitBucket, { max: number; window: `${number} $
   // is inbox spam; the form is a deliberate, low-frequency human action, so a
   // tight per-source-IP bucket complements the session bucket it already uses.
   "contact-ip": { max: 8, window: "60 m" },
+  // Admin login: 10 attempts per 10 minutes per IP. A legitimate operator
+  // never needs more; a password guesser gets ~1 440 tries a day at most.
+  "admin-login": { max: 10, window: "10 m" },
 };
 
 const cached: Partial<Record<RateLimitBucket, Ratelimit>> = {};

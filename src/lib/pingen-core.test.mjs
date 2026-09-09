@@ -5,10 +5,7 @@ import {
   tokenUrl,
   fileUploadUrl,
   lettersUrl,
-  letterUrl,
-  sendLetterUrl,
   buildCreateLetterBody,
-  buildSendLetterBody,
   normalizePingenStatus,
   tokenIsFresh,
   tokenExpiryMs,
@@ -23,11 +20,6 @@ test("hosts + endpoints: production", () => {
   assert.equal(tokenUrl(false), "https://identity.pingen.com/auth/access-tokens");
   assert.equal(fileUploadUrl(false), "https://api.pingen.com/file-upload");
   assert.equal(lettersUrl(false, "ORG"), "https://api.pingen.com/organisations/ORG/letters");
-  assert.equal(letterUrl(false, "ORG", "L1"), "https://api.pingen.com/organisations/ORG/letters/L1");
-  assert.equal(
-    sendLetterUrl(false, "ORG", "L1"),
-    "https://api.pingen.com/organisations/ORG/letters/L1/send"
-  );
 });
 
 test("hosts + endpoints: staging", () => {
@@ -68,13 +60,6 @@ test("buildCreateLetterBody: JSON:API shape + verified attribute names", () => {
   assert.equal(a.delivery_product, "fast");
   assert.equal(a.print_mode, "simplex");
   assert.equal(a.print_spectrum, "grayscale");
-});
-
-test("buildSendLetterBody: carries the letter id + print options", () => {
-  const body = buildSendLetterBody({ letterId: "L1", printSpectrum: "color" });
-  assert.equal(body.data.id, "L1");
-  assert.equal(body.data.type, "letters");
-  assert.equal(body.data.attributes.print_spectrum, "color");
 });
 
 test("normalizePingenStatus: maps the lifecycle, unknown → submitted", () => {
