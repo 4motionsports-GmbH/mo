@@ -13,6 +13,8 @@
 
 import { createHash } from "node:crypto";
 import { getSql, type Sql } from "./db";
+import { ADMIN_TIME_ZONE } from "./admin-datetime.mjs";
+import { clampPage, pageCount } from "./admin-table.mjs";
 import { parseEmailTextMode } from "./email-text-mode.mjs";
 import { normalizeEmail } from "./email-capture-store";
 import { sendableDayRange } from "./campaign-segments.mjs";
@@ -1531,37 +1533,104 @@ export interface CampaignSendHistoryRow {
   /** True when the shipped content was retained (body_text/body_html — sends
    * recorded before migration 0038 have neither). */
   hasContent: boolean;
+  // Delivery signals stamped by the Resend webhook (migration 0055).
+  deliveredAt: string | null;
+  bouncedAt: string | null;
+  bounceType: string | null;
+  complainedAt: string | null;
+  /** First click on the tracked link. */
+  clickedAt: string | null;
+  /** Hero A/B arm the send shipped with ('ai' | 'default' | 'none'). */
+  heroVariant: string | null;
 }
 
-/** Recent campaign sends (newest first) for the history sub-view. */
-export async function listCampaignSendHistory(
-  limit = 100,
+export interface CampaignSendHistoryQuery {
+  /** Case-insensitive substring over recipient email and subject. */
+  query?: string;
+  /** Inclusive local (store timezone) day bounds, YYYY-MM-DD. */
+  from?: string | null;
+  to?: string | null;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface CampaignSendHistoryPage {
+  rows: CampaignSendHistoryRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export const CAMPAIGN_HISTORY_PAGE_SIZES = [25, 50, 100] as const;
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Paged, searchable campaign send history (newest first) for the "Gesendet"
+ * view. Day bounds are interpreted in the store timezone. Returns an empty
+ * page on error / without a database.
+ */
+export async function searchCampaignSendHistory(
+  { query = "", from = null, to = null, page = 1, pageSize = 25 }: CampaignSendHistoryQuery = {},
   sql: Sql | null = getSql()
-): Promise<CampaignSendHistoryRow[]> {
-  if (!sql) return [];
+): Promise<CampaignSendHistoryPage> {
+  const size = (CAMPAIGN_HISTORY_PAGE_SIZES as readonly number[]).includes(pageSize) ? pageSize : 25;
+  const empty = { rows: [], total: 0, page: 1, pageSize: size };
+  if (!sql) return empty;
+  const q = query.trim();
+  const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const fromDay = from && YMD.test(from) ? from : null;
+  const toDay = to && YMD.test(to) ? to : null;
   try {
-    const rows = (await sql`
-      SELECT id, contact_id, email, subject, sent_via, discount_code,
-             discount_expires_at, sent_at,
-             (body_text IS NOT NULL OR body_html IS NOT NULL) AS has_content
+    const countRows = (await sql`
+      SELECT count(*)::int AS n
         FROM campaign_sends
+       WHERE (${q} = '' OR email ILIKE ${like} OR coalesce(subject, '') ILIKE ${like})
+         AND (${fromDay}::text IS NULL
+              OR sent_at >= ((${fromDay}::date)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
+         AND (${toDay}::text IS NULL
+              OR sent_at < (((${toDay}::date) + 1)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
+    `) as Array<{ n: number }>;
+    const total = Number(countRows[0]?.n ?? 0);
+    const current = clampPage(page, pageCount(total, size));
+    const offset = (current - 1) * size;
+    const rows = (await sql`
+      SELECT id, contact_id, email, subject, sent_via, discount_code, discount_expires_at, sent_at,
+             (body_text IS NOT NULL OR body_html IS NOT NULL) AS has_content,
+             delivered_at, bounced_at, bounce_type, complained_at, clicked_at, hero_variant
+        FROM campaign_sends
+       WHERE (${q} = '' OR email ILIKE ${like} OR coalesce(subject, '') ILIKE ${like})
+         AND (${fromDay}::text IS NULL
+              OR sent_at >= ((${fromDay}::date)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
+         AND (${toDay}::text IS NULL
+              OR sent_at < (((${toDay}::date) + 1)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
        ORDER BY sent_at DESC, id DESC
-       LIMIT ${limit}
+       LIMIT ${size} OFFSET ${offset}
     `) as Array<Record<string, unknown>>;
-    return rows.map((r) => ({
-      id: Number(r.id),
-      contactId: r.contact_id != null ? Number(r.contact_id) : null,
-      email: String(r.email),
-      subject: (r.subject as string | null) ?? null,
-      sentVia: r.sent_via === "copy" ? "copy" : "email",
-      discountCode: (r.discount_code as string | null) ?? null,
-      discountExpiresAt: toIso(r.discount_expires_at),
-      sentAt: toIso(r.sent_at),
-      hasContent: r.has_content === true,
-    }));
+    return {
+      total,
+      page: current,
+      pageSize: size,
+      rows: rows.map((r) => ({
+        id: Number(r.id),
+        contactId: r.contact_id != null ? Number(r.contact_id) : null,
+        email: String(r.email),
+        subject: (r.subject as string | null) ?? null,
+        sentVia: r.sent_via === "copy" ? "copy" : "email",
+        discountCode: (r.discount_code as string | null) ?? null,
+        discountExpiresAt: toIso(r.discount_expires_at),
+        sentAt: toIso(r.sent_at),
+        hasContent: r.has_content === true,
+        deliveredAt: toIso(r.delivered_at),
+        bouncedAt: toIso(r.bounced_at),
+        bounceType: (r.bounce_type as string | null) ?? null,
+        complainedAt: toIso(r.complained_at),
+        clickedAt: toIso(r.clicked_at),
+        heroVariant: (r.hero_variant as string | null) ?? null,
+      })),
+    };
   } catch (err) {
-    reportError(err, { route: "lib/campaign-store", phase: "listCampaignSendHistory" });
-    return [];
+    reportError(err, { route: "lib/campaign-store", phase: "searchCampaignSendHistory" });
+    return empty;
   }
 }
 
