@@ -7,12 +7,12 @@
 // edits ONLY the bounded directive section.
 
 import * as React from "react";
-import { Loader2, Plus, Pencil, History, Power, Check } from "lucide-react";
-import { Badge, Button, Card, CardContent, Textarea, toast } from "../ui";
-import {
-  ADMIN_DATE_TIME_MEDIUM,
-  formatAdmin,
-} from "@/lib/admin-datetime.mjs";
+import { Plus, Pencil, History, Power, Check } from "lucide-react";
+import { ADMIN_DATE_TIME_MEDIUM, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { num } from "@/lib/admin-format.mjs";
+import { Button, Field, IconButton, InfoTip, StatusBadge, Textarea, toast } from "../ui";
+import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
+import { useAsyncAction } from "../lib/use-async-action";
 
 export interface DirectiveItem {
   id: number;
@@ -51,109 +51,108 @@ function fmtTs(iso: string): string {
 export function DirectivesCard({
   initialDirectives,
   limits,
+  onActiveCountChange,
 }: {
   initialDirectives: DirectiveItem[];
   limits: DirectiveLimits;
+  onActiveCountChange?: (n: number) => void;
 }) {
   const [directives, setDirectives] = React.useState<DirectiveItem[]>(initialDirectives);
   const [newContent, setNewContent] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
-
   const activeCount = directives.filter((d) => d.active).length;
 
-  const replaceDirective = React.useCallback((d: DirectiveItem) => {
-    setDirectives((list) => {
-      const exists = list.some((x) => x.id === d.id);
-      return exists ? list.map((x) => (x.id === d.id ? d : x)) : [...list, d];
-    });
-  }, []);
-
-  const create = React.useCallback(async () => {
-    const content = newContent.trim();
-    if (!content || busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch("/api/admin/directives/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
+  const replaceDirective = React.useCallback(
+    (d: DirectiveItem) => {
+      setDirectives((list) => {
+        const exists = list.some((x) => x.id === d.id);
+        const next = exists ? list.map((x) => (x.id === d.id ? d : x)) : [...list, d];
+        onActiveCountChange?.(next.filter((x) => x.active).length);
+        return next;
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        directive?: DirectiveItem;
-        error?: { message?: string };
-      };
-      if (!res.ok || !data.directive) {
+    },
+    [onActiveCountChange]
+  );
+
+  const create = useAsyncAction(
+    async () => {
+      const content = newContent.trim();
+      if (!content) return null;
+      try {
+        const data = await adminFetch<{ directive?: DirectiveItem }>("/api/admin/directives/save", {
+          body: { content },
+        });
+        if (!data.directive) throw new Error("Unbekannter Fehler");
+        return data.directive;
+      } catch (err) {
         toast({
           variant: "error",
           title: "Anweisung konnte nicht angelegt werden",
-          description: data.error?.message,
+          description: friendlyErrorMessage(err),
         });
-        return;
+        throw err;
       }
-      replaceDirective(data.directive);
-      setNewContent("");
-      toast({
-        variant: "success",
-        title: "Anweisung aktiv",
-        description: "Sie fließt innerhalb weniger Minuten in Mos System-Prompt ein.",
-      });
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
-    } finally {
-      setBusy(false);
+    },
+    {
+      errorToast: false,
+      onSuccess: (directive) => {
+        if (!directive) return;
+        replaceDirective(directive);
+        setNewContent("");
+        toast({
+          variant: "success",
+          title: "Anweisung aktiv",
+          description: "Sie fließt innerhalb weniger Minuten in Mos System-Prompt ein.",
+        });
+      },
     }
-  }, [newContent, busy, replaceDirective]);
+  );
 
   return (
-    <Card>
-      <CardContent className="space-y-4 p-5">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Anweisungen an Mo</h3>
-          <p className="mt-1 text-[13px] text-muted-foreground">
-            Kurze Verhaltensregeln, die live in Mos System-Prompt eingefügt werden (Abschnitt
-            „Aktuelle Anweisungen vom motion sports Team“). Änderungen wirken innerhalb von ~5
-            Minuten im Chat; jede Änderung wird versioniert. Max. {limits.maxActive} aktive
-            Anweisungen à {limits.maxChars} Zeichen — Mos Kern-Prompt bleibt unverändert im Code
-            (Git).
-          </p>
-        </div>
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        {num(activeCount)}/{num(limits.maxActive)} aktiv · max. {num(limits.maxChars)} Zeichen je Anweisung
+        <InfoTip panelClassName="max-w-md">
+          Kurze Verhaltensregeln, die live in Mos System-Prompt eingefügt werden (Abschnitt
+          „Aktuelle Anweisungen vom motion sports Team“). Änderungen wirken innerhalb von ~5 Minuten
+          im Chat; jede Änderung wird versioniert. Max. {limits.maxActive} aktive Anweisungen à{" "}
+          {limits.maxChars} Zeichen — Mos Kern-Prompt bleibt unverändert im Code (Git).
+        </InfoTip>
+      </div>
 
-        {directives.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">
-            Noch keine Anweisungen. Lege unten die erste an — oder übernimm eine aus einem
-            Verbesserungsvorschlag.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {directives.map((d) => (
-              <DirectiveRow key={d.id} directive={d} limits={limits} onChanged={replaceDirective} />
-            ))}
-          </ul>
-        )}
+      {directives.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Noch keine Anweisungen. Lege unten die erste an — oder übernimm eine aus einem
+          Verbesserungsvorschlag.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {directives.map((d) => (
+            <DirectiveRow key={d.id} directive={d} limits={limits} onChanged={replaceDirective} />
+          ))}
+        </ul>
+      )}
 
-        <div className="space-y-2 border-t border-border pt-3">
-          <p className="text-[12px] font-medium text-foreground">
-            Neue Anweisung ({activeCount}/{limits.maxActive} aktiv)
-          </p>
+      <div className="flex flex-col gap-2 border-t border-border pt-3">
+        <Field
+          label="Neue Anweisung"
+          hint={`${num(newContent.trim().length)}/${num(limits.maxChars)} Zeichen`}
+        >
           <Textarea
             value={newContent}
             onChange={(e) => setNewContent(e.target.value)}
             maxLength={limits.maxChars}
             placeholder='z. B. „Wenn ein Kunde nach Lieferzeiten für Speditionsware fragt, weise proaktiv auf die Lieferung frei Bordsteinkante hin.“'
-            className="min-h-[64px] text-[13px]"
+            className="min-h-[64px] text-sm"
           />
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[11px] text-muted-foreground">
-              {newContent.trim().length}/{limits.maxChars} Zeichen
-            </span>
-            <Button size="sm" onClick={create} disabled={busy || !newContent.trim()}>
-              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-              Anweisung aktivieren
-            </Button>
-          </div>
+        </Field>
+        <div className="flex justify-end">
+          <Button size="sm" onClick={() => void create.run()} disabled={!newContent.trim()} loading={create.pending}>
+            {!create.pending && <Plus />}
+            Anweisung aktivieren
+          </Button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -168,73 +167,48 @@ function DirectiveRow({
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(directive.content);
-  const [busy, setBusy] = React.useState(false);
   const [versions, setVersions] = React.useState<DirectiveVersion[] | null>(null);
   const [showHistory, setShowHistory] = React.useState(false);
 
-  const save = React.useCallback(async () => {
-    const content = draft.trim();
-    if (!content || busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch("/api/admin/directives/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: directive.id, content }),
+  const save = useAsyncAction(
+    async () => {
+      const content = draft.trim();
+      if (!content) return null;
+      const data = await adminFetch<{ directive?: DirectiveItem }>("/api/admin/directives/save", {
+        body: { id: directive.id, content },
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        directive?: DirectiveItem;
-        error?: { message?: string };
-      };
-      if (!res.ok || !data.directive) {
-        toast({
-          variant: "error",
-          title: "Speichern fehlgeschlagen",
-          description: data.error?.message,
-        });
-        return;
-      }
-      onChanged(data.directive);
-      setEditing(false);
-      setVersions(null);
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
-    } finally {
-      setBusy(false);
+      if (!data.directive) throw new Error("Speichern fehlgeschlagen");
+      return data.directive;
+    },
+    {
+      errorToast: "Speichern fehlgeschlagen",
+      onSuccess: (d) => {
+        if (!d) return;
+        onChanged(d);
+        setEditing(false);
+        setVersions(null);
+      },
     }
-  }, [draft, busy, directive.id, onChanged]);
+  );
 
-  const toggle = React.useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const res = await fetch("/api/admin/directives/toggle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: directive.id, active: !directive.active }),
+  const toggle = useAsyncAction(
+    async () => {
+      const data = await adminFetch<{ directive?: DirectiveItem }>("/api/admin/directives/toggle", {
+        body: { id: directive.id, active: !directive.active },
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        directive?: DirectiveItem;
-        error?: { message?: string };
-      };
-      if (!res.ok || !data.directive) {
-        toast({
-          variant: "error",
-          title: "Umschalten fehlgeschlagen",
-          description: data.error?.message,
-        });
-        return;
-      }
-      onChanged(data.directive);
-      setVersions(null);
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
-    } finally {
-      setBusy(false);
+      if (!data.directive) throw new Error("Umschalten fehlgeschlagen");
+      return data.directive;
+    },
+    {
+      errorToast: "Umschalten fehlgeschlagen",
+      onSuccess: (d) => {
+        onChanged(d);
+        setVersions(null);
+      },
     }
-  }, [busy, directive.id, directive.active, onChanged]);
+  );
 
-  const loadHistory = React.useCallback(async () => {
+  const loadHistory = async () => {
     if (showHistory) {
       setShowHistory(false);
       return;
@@ -242,66 +216,69 @@ function DirectiveRow({
     setShowHistory(true);
     if (versions) return;
     try {
-      const res = await fetch(`/api/admin/directives/versions?id=${directive.id}`);
-      const data = (await res.json().catch(() => ({}))) as { versions?: DirectiveVersion[] };
+      const data = await adminFetch<{ versions?: DirectiveVersion[] }>(
+        `/api/admin/directives/versions?id=${directive.id}`
+      );
       setVersions(Array.isArray(data.versions) ? data.versions : []);
     } catch {
       setVersions([]);
     }
-  }, [showHistory, versions, directive.id]);
+  };
+
+  const busy = save.pending || toggle.pending;
 
   return (
     <li className="rounded-lg border border-border bg-card p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {directive.active ? (
-            <Badge variant="success">aktiv</Badge>
-          ) : (
-            <Badge variant="secondary">inaktiv</Badge>
+          <StatusBadge tone={directive.active ? "success" : "neutral"}>
+            {directive.active ? "aktiv" : "inaktiv"}
+          </StatusBadge>
+          {directive.source === "suggestion" && (
+            <StatusBadge tone="info" dot={false}>
+              aus Vorschlag
+            </StatusBadge>
           )}
-          {directive.source === "suggestion" && <Badge variant="info">aus Vorschlag</Badge>}
-          <span className="text-[11px] text-muted-foreground">
-            zuletzt geändert {fmtTs(directive.updatedAt)}
-          </span>
+          <span className="text-2xs text-muted-foreground">zuletzt geändert {fmtTs(directive.updatedAt)}</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <Button size="sm" variant="ghost" onClick={loadHistory} title="Verlauf anzeigen">
-            <History className="size-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
+        <div className="flex items-center gap-1">
+          <IconButton label="Verlauf anzeigen" size="icon-sm" onClick={() => void loadHistory()}>
+            <History />
+          </IconButton>
+          <IconButton
+            label="Bearbeiten"
+            size="icon-sm"
             onClick={() => {
               setDraft(directive.content);
               setEditing((v) => !v);
             }}
-            title="Bearbeiten"
           >
-            <Pencil className="size-3.5" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={toggle}
+            <Pencil />
+          </IconButton>
+          <IconButton
+            label={directive.active ? "Deaktivieren" : "Aktivieren"}
+            size="icon-sm"
+            onClick={() => void toggle.run()}
             disabled={busy}
-            title={directive.active ? "Deaktivieren" : "Aktivieren"}
+            loading={toggle.pending}
           >
-            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Power className="size-3.5" />}
-          </Button>
+            <Power />
+          </IconButton>
         </div>
       </div>
 
       {editing ? (
-        <div className="mt-2 space-y-2">
+        <div className="mt-2 flex flex-col gap-2">
           <Textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             maxLength={limits.maxChars}
-            className="min-h-[64px] text-[13px]"
+            className="min-h-[64px] text-sm"
+            aria-label="Anweisung bearbeiten"
           />
           <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} disabled={busy || !draft.trim()}>
-              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+            <Button size="sm" onClick={() => void save.run()} disabled={!draft.trim()} loading={save.pending}>
+              {!save.pending && <Check />}
               Speichern
             </Button>
             <Button size="sm" variant="outline" onClick={() => setEditing(false)} disabled={busy}>
@@ -310,24 +287,21 @@ function DirectiveRow({
           </div>
         </div>
       ) : (
-        <p className="mt-1.5 text-[13px] text-foreground">{directive.content}</p>
+        <p className="mt-1.5 text-sm text-foreground">{directive.content}</p>
       )}
 
       {showHistory && (
-        <div className="mt-2 space-y-1.5 border-t border-border/60 pt-2">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Verlauf
-          </p>
+        <div className="mt-2 flex flex-col gap-1.5 border-t border-border/60 pt-2">
+          <p className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">Verlauf</p>
           {versions === null ? (
-            <p className="text-[12px] text-muted-foreground">Wird geladen…</p>
+            <p className="text-xs text-muted-foreground">Wird geladen…</p>
           ) : versions.length === 0 ? (
-            <p className="text-[12px] text-muted-foreground">Kein Verlauf vorhanden.</p>
+            <p className="text-xs text-muted-foreground">Kein Verlauf vorhanden.</p>
           ) : (
-            <ul className="space-y-1">
+            <ul className="flex flex-col gap-1">
               {versions.map((v) => (
-                <li key={v.id} className="text-[12px] text-muted-foreground">
-                  <span className="font-medium text-foreground">{ACTION_LABELS[v.action]}</span>{" "}
-                  · {fmtTs(v.createdAt)}
+                <li key={v.id} className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{ACTION_LABELS[v.action]}</span> · {fmtTs(v.createdAt)}
                   {(v.action === "created" || v.action === "updated") && (
                     <span className="mt-0.5 block text-muted-foreground">„{v.content}“</span>
                   )}

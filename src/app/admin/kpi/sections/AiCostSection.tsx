@@ -4,8 +4,8 @@
 import type { AiCostMetrics } from "@/lib/ai-usage-store";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { eur, num, ratio } from "@/lib/admin-format.mjs";
-import { Stat } from "../../ui";
-import { BarList } from "../BarList";
+import { BarList, Stat } from "../../ui";
+
 import { ChartCard, Explain, KpiSection, StatGrid, SubHeading } from "../KpiSection";
 
 /** German labels for the ai_usage call sites (lib/ai-usage-store AiCallSite). */

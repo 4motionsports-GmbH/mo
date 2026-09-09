@@ -121,3 +121,17 @@ export function errorMessage(err: unknown, fallback = "Unbekannter Fehler"): str
   if (typeof err === "string" && err) return err;
   return fallback;
 }
+
+/** True for a failed transport (offline, DNS, aborted) — not an API error. */
+export function isNetworkError(err: unknown): boolean {
+  return !(err instanceof AdminApiError) && err instanceof TypeError;
+}
+
+/**
+ * errorMessage() with the transport failures translated for the operator:
+ * "Netzwerkfehler — bitte erneut versuchen." instead of "Failed to fetch".
+ */
+export function friendlyErrorMessage(err: unknown, fallback = "Unbekannter Fehler"): string {
+  if (isNetworkError(err)) return "Netzwerkfehler — bitte erneut versuchen.";
+  return errorMessage(err, fallback);
+}

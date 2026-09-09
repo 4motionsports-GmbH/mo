@@ -6,10 +6,17 @@
 
 import { listAnalyticsReports } from "@/lib/analytics-report-store";
 import { AnalyseWorkspace } from "./lazy";
-import type { SidebarReport } from "./analytics/ReportSidebar";
+import type { SidebarReport } from "./analytics/types";
 import { Callout } from "./ui";
 
-export async function AnalyseTab({ dbReady }: { dbReady: boolean }) {
+export async function AnalyseTab({
+  dbReady,
+  initialReportId,
+}: {
+  dbReady: boolean;
+  /** ?report= deep link to a stored report. */
+  initialReportId: number | null;
+}) {
   if (!dbReady) {
     return (
       <Callout tone="warning" className="mb-4">
@@ -30,5 +37,5 @@ export async function AnalyseTab({ dbReady }: { dbReady: boolean }) {
     createdAt: r.createdAt,
   }));
 
-  return <AnalyseWorkspace initialReports={initialReports} />;
+  return <AnalyseWorkspace initialReports={initialReports} initialReportId={initialReportId} />;
 }

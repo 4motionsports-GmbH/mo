@@ -2,8 +2,8 @@
 
 import type { FeedbackKpis } from "@/lib/feedback-store";
 import { num, ratio } from "@/lib/admin-format.mjs";
-import { Stat } from "../../ui";
-import { BarList } from "../BarList";
+import { BarList, Stat } from "../../ui";
+
 import { Explain, KpiSection, StatGrid, SubHeading } from "../KpiSection";
 
 const INFO = (

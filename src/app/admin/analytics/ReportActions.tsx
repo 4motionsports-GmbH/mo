@@ -1,23 +1,14 @@
 "use client";
 
-// Per-report actions: download the whole report as a PDF (a plain GET link to the
-// pdf route) and delete the report (with a confirm). Delete routes back to the
-// generator and refreshes so the sidebar drops the row.
+// Per-report actions: download the whole report as a PDF (a plain GET link to
+// the pdf route) and delete the report (ConfirmDialog). Delete routes back to
+// the generator and refreshes so the sidebar drops the row.
 
 import * as React from "react";
-import { Download, Trash2, Loader2 } from "lucide-react";
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  toast,
-} from "../ui";
-import { buttonVariants } from "../ui/button";
-import { cn } from "../ui/cn";
+import { Download, Trash2 } from "lucide-react";
+import { Button, buttonVariants, toast, useConfirm } from "../ui";
+import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
+import { useAsyncAction } from "../lib/use-async-action";
 
 export function ReportActions({
   id,
@@ -28,72 +19,46 @@ export function ReportActions({
   canDownload: boolean;
   onDeleted: () => void;
 }) {
-  const [open, setOpen] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-
-  async function del() {
-    setBusy(true);
-    try {
-      const res = await fetch("/api/admin/analytics/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+  const { confirm, confirmDialog } = useConfirm();
+  const del = useAsyncAction(
+    async () => {
+      const ok = await confirm({
+        title: "Analyse löschen?",
+        description:
+          "Dieser gespeicherte Bericht wird dauerhaft entfernt. Die zugrunde liegenden Gespräche und ihre einzelnen Analysen bleiben erhalten.",
+        confirmLabel: "Löschen",
+        tone: "destructive",
       });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      if (!ok) return false;
+      try {
+        await adminFetch("/api/admin/analytics/delete", { body: { id } });
+      } catch (err) {
         toast({
           variant: "error",
           title: "Löschen fehlgeschlagen",
-          description: data.error?.message ?? "Unbekannter Fehler",
+          description: friendlyErrorMessage(err),
           duration: 6000,
         });
-        return;
+        throw err;
       }
-      setOpen(false);
-      onDeleted();
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen.", duration: 6000 });
-    } finally {
-      setBusy(false);
-    }
-  }
+      return true;
+    },
+    { errorToast: false, onSuccess: (deleted) => deleted && onDeleted() }
+  );
 
   return (
     <div className="flex items-center gap-2">
       {canDownload && (
-        <a
-          href={`/api/admin/analytics/${id}/pdf`}
-          className={cn(buttonVariants({ variant: "default", size: "sm" }))}
-        >
+        <a href={`/api/admin/analytics/${id}/pdf`} className={buttonVariants({ variant: "default", size: "sm" })}>
           <Download />
           PDF herunterladen
         </a>
       )}
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-        <Trash2 />
+      <Button size="sm" variant="outline" onClick={() => void del.run()} loading={del.pending}>
+        {!del.pending && <Trash2 />}
         Löschen
       </Button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Analyse löschen?</DialogTitle>
-            <DialogDescription>
-              Dieser gespeicherte Bericht wird dauerhaft entfernt. Die zugrunde liegenden Gespräche
-              und ihre einzelnen Analysen bleiben erhalten.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => setOpen(false)}>
-              Abbrechen
-            </Button>
-            <Button variant="destructive" size="sm" disabled={busy} onClick={del}>
-              {busy ? <Loader2 className="animate-spin" /> : <Trash2 />}
-              Löschen
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {confirmDialog}
     </div>
   );
 }

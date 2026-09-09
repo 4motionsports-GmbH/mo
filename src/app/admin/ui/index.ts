@@ -76,6 +76,8 @@ export { SplitPane, type SplitPaneProps } from "./split-pane";
 export { DescriptionList, DescriptionItem } from "./description-list";
 export { TranscriptView, type TranscriptTurn, type TranscriptViewProps } from "./transcript-view";
 export { Kbd } from "./kbd";
+export { BarList, type BarListRow } from "./bar-list";
+export { SidebarList, type SidebarListItem, type SidebarListProps } from "./sidebar-list";
 export { Markdown } from "./markdown";
 export {
   CatalogProductPicker,

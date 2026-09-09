@@ -12,7 +12,7 @@ import { ADMIN_DATE_TIME_MEDIUM, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { num } from "@/lib/admin-format.mjs";
 import type { TopQuestionsSummary } from "@/lib/kpi-top-questions";
 import { Button, InfoTip, Markdown, Skeleton } from "../ui";
-import { adminFetch } from "../lib/admin-fetch";
+import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
 import { useAsyncAction } from "../lib/use-async-action";
 
 export function KpiTopQuestions({
@@ -25,15 +25,19 @@ export function KpiTopQuestions({
   const [summary, setSummary] = React.useState<TopQuestionsSummary | null>(initial);
   const generate = useAsyncAction(
     async (force: boolean) => {
-      const data = await adminFetch<{ summary?: TopQuestionsSummary }>("/api/admin/kpi/top-questions", {
-        body: { personaLabel, force },
-      });
+      let data: { summary?: TopQuestionsSummary };
+      try {
+        data = await adminFetch<{ summary?: TopQuestionsSummary }>("/api/admin/kpi/top-questions", {
+          body: { personaLabel, force },
+        });
+      } catch (err) {
+        throw new Error(friendlyErrorMessage(err, "Fehler beim Erstellen der Zusammenfassung."));
+      }
       if (!data.summary) throw new Error("Fehler beim Erstellen der Zusammenfassung.");
       return data.summary;
     },
     { errorToast: false, onSuccess: setSummary }
   );
-  const error = generate.error;
 
   return (
     <div className="mt-3 border-t border-dashed border-border pt-3">
@@ -56,9 +60,9 @@ export function KpiTopQuestions({
         </Button>
       </div>
 
-      {error && (
+      {generate.error && (
         <p className="mt-2 text-xs text-destructive" role="alert">
-          {friendlyError(error)}
+          {generate.error}
         </p>
       )}
 
@@ -83,12 +87,4 @@ export function KpiTopQuestions({
       )}
     </div>
   );
-}
-
-/** Network failures read as a retry hint; server messages pass through. */
-function friendlyError(message: string): string {
-  if (/failed to fetch|networkerror|load failed/i.test(message)) {
-    return "Netzwerkfehler — bitte erneut versuchen.";
-  }
-  return message || "Fehler beim Erstellen der Zusammenfassung.";
 }

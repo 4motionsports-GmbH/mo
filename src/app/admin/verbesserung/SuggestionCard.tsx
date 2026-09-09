@@ -14,15 +14,28 @@
 // run's Wirkungs-Check); the positive actions apply instantly.
 
 import * as React from "react";
-import { Loader2, Check, Wand2, X, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
-import { Badge, Button, Card, CardContent, Input, Markdown, Textarea, toast } from "../ui";
+import { Check, Wand2, X, RotateCcw } from "lucide-react";
 import {
   SHOP_CATEGORIES,
   MO_CATEGORIES,
   SUGGESTION_STATUS_LABELS,
   MAX_DIRECTIVE_CHARS,
 } from "@/lib/improvement-core.mjs";
-import { cn } from "../ui/cn";
+import { num } from "@/lib/admin-format.mjs";
+import {
+  Button,
+  Card,
+  CardContent,
+  Disclosure,
+  Input,
+  Markdown,
+  StatusBadge,
+  Textarea,
+  cn,
+  toast,
+  type StatusTone,
+} from "../ui";
+import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
 
 export interface SuggestionItem {
   id: number;
@@ -45,18 +58,12 @@ function categoryLabel(s: SuggestionItem): string {
   return map[s.category] ?? s.category;
 }
 
-function statusBadge(status: SuggestionItem["status"]) {
-  const label = (SUGGESTION_STATUS_LABELS as Record<string, string>)[status] ?? status;
-  const variant =
-    status === "implemented"
-      ? "success"
-      : status === "accepted"
-        ? "info"
-        : status === "dismissed"
-          ? "secondary"
-          : "outline";
-  return <Badge variant={variant}>{label}</Badge>;
-}
+const STATUS_TONE: Record<SuggestionItem["status"], StatusTone> = {
+  open: "neutral",
+  accepted: "info",
+  implemented: "success",
+  dismissed: "neutral",
+};
 
 // Impact + effort condensed into ONE plain-language priority line with a
 // traffic-light dot, instead of two separate jargon chips.
@@ -66,11 +73,7 @@ function priority(impact: string, effort: string): { text: string; dot: string }
   const effortTxt =
     effort === "niedrig" ? "wenig Aufwand" : effort === "hoch" ? "viel Aufwand" : "mittlerer Aufwand";
   const dot =
-    impact === "hoch" && effort !== "hoch"
-      ? "bg-success"
-      : impact === "niedrig"
-        ? "bg-muted-foreground"
-        : "bg-info";
+    impact === "hoch" && effort !== "hoch" ? "bg-success" : impact === "niedrig" ? "bg-muted-foreground" : "bg-info";
   return { text: `${impactTxt} · ${effortTxt}`, dot };
 }
 
@@ -81,7 +84,6 @@ export function SuggestionCard({
   suggestion: SuggestionItem;
   onChanged: (s: SuggestionItem) => void;
 }) {
-  const [showDetails, setShowDetails] = React.useState(false);
   const [dismissing, setDismissing] = React.useState(false);
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -89,69 +91,33 @@ export function SuggestionCard({
   // in the box is exactly what goes live into Mo's system prompt.
   const [directiveDraft, setDirectiveDraft] = React.useState(suggestion.directiveText ?? "");
 
-  const applyStatus = React.useCallback(
-    async (status: SuggestionItem["status"], statusNote?: string) => {
-      if (busy) return;
-      setBusy(true);
-      try {
-        const res = await fetch("/api/admin/improve/suggestion", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            suggestionId: suggestion.id,
-            status,
-            note: statusNote?.trim() || undefined,
-          }),
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          suggestion?: SuggestionItem;
-          error?: { message?: string };
-        };
-        if (!res.ok || !data.suggestion) {
-          toast({
-            variant: "error",
-            title: "Änderung fehlgeschlagen",
-            description: data.error?.message,
-          });
-          return;
-        }
-        onChanged(data.suggestion);
-        setDismissing(false);
-        setNote("");
-      } catch {
-        toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
-      } finally {
-        setBusy(false);
-      }
-    },
-    [busy, suggestion.id, onChanged]
-  );
+  const applyStatus = async (status: SuggestionItem["status"], statusNote?: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const data = await adminFetch<{ suggestion?: SuggestionItem }>("/api/admin/improve/suggestion", {
+        body: { suggestionId: suggestion.id, status, note: statusNote?.trim() || undefined },
+      });
+      if (!data.suggestion) throw new Error("Unbekannter Fehler");
+      onChanged(data.suggestion);
+      setDismissing(false);
+      setNote("");
+    } catch (err) {
+      toast({ variant: "error", title: "Änderung fehlgeschlagen", description: friendlyErrorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  const adopt = React.useCallback(async () => {
+  const adopt = async () => {
     if (busy || !directiveDraft.trim()) return;
     setBusy(true);
     try {
-      const res = await fetch("/api/admin/improve/adopt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          suggestionId: suggestion.id,
-          // Send the (possibly edited) text — the server stores exactly this.
-          content: directiveDraft,
-        }),
+      const data = await adminFetch<{ suggestion?: SuggestionItem }>("/api/admin/improve/adopt", {
+        // Send the (possibly edited) text — the server stores exactly this.
+        body: { suggestionId: suggestion.id, content: directiveDraft },
       });
-      const data = (await res.json().catch(() => ({}))) as {
-        suggestion?: SuggestionItem;
-        error?: { message?: string };
-      };
-      if (!res.ok || !data.suggestion) {
-        toast({
-          variant: "error",
-          title: "Übernahme fehlgeschlagen",
-          description: data.error?.message,
-        });
-        return;
-      }
+      if (!data.suggestion) throw new Error("Unbekannter Fehler");
       onChanged(data.suggestion);
       toast({
         variant: "success",
@@ -159,12 +125,12 @@ export function SuggestionCard({
         description:
           "Die Regel steht jetzt in „Anweisungen an Mo“ (unten) und kann dort jederzeit angepasst oder abgeschaltet werden.",
       });
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
+    } catch (err) {
+      toast({ variant: "error", title: "Übernahme fehlgeschlagen", description: friendlyErrorMessage(err) });
     } finally {
       setBusy(false);
     }
-  }, [busy, directiveDraft, suggestion.id, onChanged]);
+  };
 
   const prio = priority(suggestion.impact, suggestion.effort);
   const hasDirective = Boolean(suggestion.directiveText);
@@ -172,112 +138,99 @@ export function SuggestionCard({
 
   return (
     <Card>
-      <CardContent className="space-y-3 p-5">
-        {/* Priority + status, then the title. */}
+      <CardContent className="flex flex-col gap-3 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className={cn("size-2 rounded-full", prio.dot)} aria-hidden />
             {prio.text}
           </span>
-          {statusBadge(status)}
+          <StatusBadge tone={STATUS_TONE[status]} dot={status !== "open"}>
+            {(SUGGESTION_STATUS_LABELS as Record<string, string>)[status] ?? status}
+          </StatusBadge>
         </div>
         <h4 className="text-sm font-semibold text-foreground">{suggestion.title}</h4>
 
-        {/* THE action — for directive cards the exact rule Mo would follow,
-            otherwise the concrete change to make. */}
         {hasDirective ? (
-          <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="rounded-lg border border-accent/30 bg-accent-soft/60 p-3">
+            <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
               So würde Mo künftig beraten
             </p>
             {status === "implemented" || status === "dismissed" ? (
-              <p className="mt-1 text-[13px] text-foreground">{suggestion.directiveText}</p>
+              <p className="mt-1 text-sm text-foreground">{suggestion.directiveText}</p>
             ) : (
               <>
                 <Textarea
                   value={directiveDraft}
                   onChange={(e) => setDirectiveDraft(e.target.value)}
                   maxLength={MAX_DIRECTIVE_CHARS}
-                  className="mt-1 min-h-[80px] bg-card text-[13px]"
+                  className="mt-1 min-h-[80px] bg-card text-sm"
+                  aria-label="Anweisungstext"
                 />
-                <p className="mt-1 text-[11px] text-muted-foreground">
+                <p className="mt-1 text-2xs text-muted-foreground">
                   Direkt anpassbar — genau dieser Text gilt nach dem Übernehmen ·{" "}
-                  {directiveDraft.trim().length}/{MAX_DIRECTIVE_CHARS} Zeichen
+                  {num(directiveDraft.trim().length)}/{num(MAX_DIRECTIVE_CHARS)} Zeichen
                 </p>
               </>
             )}
           </div>
         ) : (
           <div>
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Was zu tun ist
-            </p>
-            <Markdown content={suggestion.proposalMd} className="mt-1 text-[13px]" />
+            <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Was zu tun ist</p>
+            <Markdown content={suggestion.proposalMd} className="mt-1 text-sm" />
           </div>
         )}
 
-        {/* Everything explanatory folds away. */}
-        <button
-          type="button"
-          onClick={() => setShowDetails((v) => !v)}
-          className="flex items-center gap-1 text-[13px] font-medium text-accent hover:underline"
-        >
-          {showDetails ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-          Warum? Details & Belege
-        </button>
-        {showDetails && (
-          <div className="space-y-3 rounded-lg border border-border bg-secondary/40 p-3">
-            <p className="text-[12px] text-muted-foreground">
+        <Disclosure title={<span className="text-xs">Warum? Details &amp; Belege</span>} framed={false}>
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-2 p-3">
+            <p className="text-xs text-muted-foreground">
               Kategorie: <span className="text-foreground">{categoryLabel(suggestion)}</span>
             </p>
             <div>
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Begründung
-              </p>
-              <Markdown content={suggestion.rationaleMd} className="mt-1 text-[13px]" />
+              <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Begründung</p>
+              <Markdown content={suggestion.rationaleMd} className="mt-1 text-sm" />
             </div>
             {hasDirective && (
               <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
                   Ausführlicher Vorschlag
                 </p>
-                <Markdown content={suggestion.proposalMd} className="mt-1 text-[13px]" />
+                <Markdown content={suggestion.proposalMd} className="mt-1 text-sm" />
               </div>
             )}
             {suggestion.evidence.length > 0 && (
-              <ul className="space-y-0.5 text-[12px] text-muted-foreground">
+              <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
                 {suggestion.evidence.map((e, i) => (
                   <li key={i}>· {e}</li>
                 ))}
               </ul>
             )}
             {suggestion.expectedEffect && (
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 <span className="font-medium text-foreground">Daran messen wir den Erfolg:</span>{" "}
                 {suggestion.expectedEffect}
               </p>
             )}
           </div>
-        )}
+        </Disclosure>
 
         {suggestion.statusNote && (
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Notiz:</span> {suggestion.statusNote}
           </p>
         )}
 
-        {/* Decision row — one clear set of actions per state. */}
         {dismissing ? (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[12px] text-muted-foreground">Warum nicht? (optional)</span>
+            <span className="text-xs text-muted-foreground">Warum nicht? (optional)</span>
             <Input
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="z. B. zu teuer, Evidenz zu dünn"
-              className="h-8 w-64 text-[13px]"
+              className="h-8 w-64 text-sm"
+              aria-label="Grund für das Verwerfen"
             />
-            <Button size="sm" variant="outline" onClick={() => applyStatus("dismissed", note)} disabled={busy}>
-              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
+            <Button size="sm" variant="outline" onClick={() => void applyStatus("dismissed", note)} loading={busy}>
+              {!busy && <X />}
               Endgültig verwerfen
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setDismissing(false)} disabled={busy}>
@@ -286,29 +239,26 @@ export function SuggestionCard({
           </div>
         ) : status === "dismissed" ? (
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => applyStatus("open")} disabled={busy}>
-              <RotateCcw className="size-3.5" />
+            <Button size="sm" variant="outline" onClick={() => void applyStatus("open")} loading={busy}>
+              {!busy && <RotateCcw />}
               Wieder öffnen
             </Button>
           </div>
         ) : status === "implemented" ? null : (
           <div className="flex flex-wrap items-center gap-2">
             {hasDirective ? (
-              // One-click path: adopt = live in Mo's prompt + card is Erledigt.
-              <Button size="sm" onClick={adopt} disabled={busy || !directiveDraft.trim()}>
-                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Wand2 className="size-3.5" />}
+              <Button size="sm" onClick={() => void adopt()} disabled={!directiveDraft.trim()} loading={busy}>
+                {!busy && <Wand2 />}
                 Übernehmen — gilt ab sofort
               </Button>
             ) : (
-              // Non-directive cards: mark done once the change is really live
-              // (the next run's Wirkungs-Check measures it), else dismiss.
-              <Button size="sm" onClick={() => applyStatus("implemented")} disabled={busy}>
-                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+              <Button size="sm" onClick={() => void applyStatus("implemented")} loading={busy}>
+                {!busy && <Check />}
                 Erledigt — ist umgesetzt
               </Button>
             )}
             <Button size="sm" variant="ghost" onClick={() => setDismissing(true)} disabled={busy}>
-              <X className="size-3.5" />
+              <X />
               Verwerfen
             </Button>
           </div>

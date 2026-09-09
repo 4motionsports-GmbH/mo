@@ -46,6 +46,12 @@ type SearchParams = { [key: string]: string | string[] | undefined };
 const firstParam = (v: string | string[] | undefined): string | undefined =>
   Array.isArray(v) ? v[0] : v;
 
+/** A positive integer id from a search param (deep links), else null. */
+const idParam = (v: string | string[] | undefined): number | null => {
+  const n = Number(firstParam(v));
+  return Number.isInteger(n) && n > 0 ? n : null;
+};
+
 /**
  * Navigation counts (queue sizes) shown next to the screen names. Three cheap
  * COUNT queries, all fail-soft — a missing count never breaks the page.
@@ -74,9 +80,7 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
       // Overview deep-links seed a Kunden filter preset via ?filter= (e.g.
       // "no_purchase", "marketing"); accept the legacy ?status= as a fallback.
       const initialFilter = firstParam(sp.filter) ?? firstParam(sp.status);
-      const customerParam = Number(firstParam(sp.customer));
-      const initialCustomerId =
-        Number.isInteger(customerParam) && customerParam > 0 ? customerParam : null;
+      const initialCustomerId = idParam(sp.customer);
       return (
         <KundenTab
           dbReady={dbReady}
@@ -124,9 +128,9 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
     case "wissen":
       return <WissenTab dbReady={dbReady} />;
     case "analyse":
-      return <AnalyseTab dbReady={dbReady} />;
+      return <AnalyseTab dbReady={dbReady} initialReportId={idParam(sp.report)} />;
     case "verbesserung":
-      return <VerbesserungTab dbReady={dbReady} />;
+      return <VerbesserungTab dbReady={dbReady} initialRunId={idParam(sp.run)} />;
     case "einstellungen":
       return <EinstellungenTab dbReady={dbReady} />;
   }

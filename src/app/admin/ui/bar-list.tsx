@@ -1,6 +1,6 @@
-// BarList — compact CSS bar list (label · bar · count) for the distribution
-// splits of the KPI screen (languages, qualities, categories, call sites,
-// triggers, favourite products). Server-renderable, no chart library.
+// BarList — compact CSS bar list (label · bar · count) for distribution
+// splits (KPI languages / qualities / categories / call sites / triggers /
+// favourite products, report distributions). Server-renderable, no charts.
 
 import { num } from "@/lib/admin-format.mjs";
 

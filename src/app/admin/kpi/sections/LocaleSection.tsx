@@ -2,8 +2,9 @@
 
 import type { LocaleCount, LocaleSplit } from "@/lib/kpi-store";
 import { ratio } from "@/lib/admin-format.mjs";
-import { BarList } from "../BarList";
+
 import { ChartCard, Explain, KpiSection } from "../KpiSection";
+import { BarList } from "../../ui";
 
 const LOCALE_LABELS: Record<string, string> = {
   de: "Deutsch",

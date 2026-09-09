@@ -24,7 +24,7 @@ import {
   TranscriptView,
   toast,
 } from "../ui";
-import { adminFetch, errorMessage } from "../lib/admin-fetch";
+import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
 import { useAsyncAction } from "../lib/use-async-action";
 import { AnalysisBadges, OutcomeChips, TierBadge, personaLabel } from "./badges";
 
@@ -45,13 +45,6 @@ interface Loaded {
   detail: AdminConversationDetail | null;
   error: string | null;
   usage: AnalysisUsage | null;
-}
-
-function friendly(err: unknown): string {
-  const message = errorMessage(err, "Gespräch konnte nicht geladen werden.");
-  return /failed to fetch|networkerror|load failed/i.test(message)
-    ? "Netzwerkfehler — bitte erneut versuchen."
-    : message;
 }
 
 export function ConversationDetail({ conversationId }: { conversationId: number | null }) {
@@ -77,7 +70,12 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
-        setLoaded({ id: conversationId, detail: null, error: friendly(err), usage: null });
+        setLoaded({
+          id: conversationId,
+          detail: null,
+          error: friendlyErrorMessage(err, "Gespräch konnte nicht geladen werden."),
+          usage: null,
+        });
       });
     return () => controller.abort();
   }, [conversationId, reloadKey]);

@@ -3,32 +3,38 @@
 // The generator for a new Komplettanalyse. Pick an interval (presets or a custom
 // from/to), choose what to include, see a live ZERO-token cost estimate, then
 // generate. Generation itself is created server-side as a 'running' report and
-// the client is navigated to its page, where the progress driver finishes it.
+// the workspace selects it, where the progress driver finishes it.
 
 import * as React from "react";
-import { Sparkles, Loader2, CalendarRange, Users, ListTree } from "lucide-react";
+import { Sparkles, Loader2 } from "lucide-react";
+import { eur, num, plural } from "@/lib/admin-format.mjs";
 import {
   Button,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
-  CardDescription,
-  Input,
   Checkbox,
+  InfoTip,
+  Input,
+  SegmentedControl,
   toast,
 } from "../ui";
-import { eur } from "@/lib/admin-format.mjs";
+import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
+import { useAsyncAction } from "../lib/use-async-action";
 
-const PRESETS: Array<{ key: "7d" | "30d" | "90d"; label: string }> = [
-  { key: "7d", label: "7 Tage" },
-  { key: "30d", label: "30 Tage" },
-  { key: "90d", label: "90 Tage" },
+type PresetKey = "7d" | "30d" | "90d" | "custom";
+const PRESETS: ReadonlyArray<{ value: PresetKey; label: string }> = [
+  { value: "7d", label: "7 Tage" },
+  { value: "30d", label: "30 Tage" },
+  { value: "90d", label: "90 Tage" },
+  { value: "custom", label: "Zeitraum…" },
 ];
 
 function todayYmd(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
 interface Estimate {
   range: { from: string; to: string; label: string };
   conversations: number;
@@ -39,15 +45,13 @@ interface Estimate {
 }
 
 export function GenerateReportPanel({ onCreated }: { onCreated: (id: number) => void }) {
-  const [preset, setPreset] = React.useState<"7d" | "30d" | "90d" | "custom">("30d");
+  const [preset, setPreset] = React.useState<PresetKey>("30d");
   const [customFrom, setCustomFrom] = React.useState(todayYmd());
   const [customTo, setCustomTo] = React.useState(todayYmd());
   const [includePerCustomer, setIncludePerCustomer] = React.useState(false);
   const [includeAppendix, setIncludeAppendix] = React.useState(true);
-
   const [estimate, setEstimate] = React.useState<Estimate | null>(null);
   const [estimating, setEstimating] = React.useState(false);
-  const [creating, setCreating] = React.useState(false);
 
   const customValid = Boolean(customFrom && customTo && customFrom <= customTo);
   const inputsValid = preset !== "custom" || customValid;
@@ -68,111 +72,85 @@ export function GenerateReportPanel({ onCreated }: { onCreated: (id: number) => 
       setEstimate(null);
       return;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     setEstimating(true);
     const t = setTimeout(async () => {
       try {
-        const res = await fetch("/api/admin/analytics/estimate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(requestBody()),
+        const data = await adminFetch<Estimate>("/api/admin/analytics/estimate", {
+          body: requestBody(),
+          signal: controller.signal,
         });
-        const data = (await res.json().catch(() => null)) as Estimate | null;
-        if (!cancelled && res.ok && data) setEstimate(data);
-        else if (!cancelled) setEstimate(null);
+        if (!controller.signal.aborted) setEstimate(data);
       } catch {
-        if (!cancelled) setEstimate(null);
+        if (!controller.signal.aborted) setEstimate(null);
       } finally {
-        if (!cancelled) setEstimating(false);
+        if (!controller.signal.aborted) setEstimating(false);
       }
     }, 350);
     return () => {
-      cancelled = true;
+      controller.abort();
       clearTimeout(t);
     };
   }, [inputsValid, requestBody]);
 
-  async function generate() {
-    setCreating(true);
-    try {
-      const res = await fetch("/api/admin/analytics/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...requestBody(), includeAppendix }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { id?: number; error?: { message?: string } };
-      if (!res.ok || !data.id) {
+  const generate = useAsyncAction(
+    async () => {
+      try {
+        const data = await adminFetch<{ id?: number }>("/api/admin/analytics/create", {
+          body: { ...requestBody(), includeAppendix },
+        });
+        if (!data.id) throw new Error("Unbekannter Fehler");
+        return data.id;
+      } catch (err) {
         toast({
           variant: "error",
           title: "Konnte nicht starten",
-          description: data.error?.message ?? "Unbekannter Fehler",
+          description: friendlyErrorMessage(err),
           duration: 6000,
         });
-        return;
+        throw err;
       }
-      // The report row is created 'running'; the workspace selects it and its
-      // progress driver finishes generation in place.
-      onCreated(data.id);
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen.", duration: 6000 });
-    } finally {
-      setCreating(false);
-    }
-  }
+    },
+    { errorToast: false, onSuccess: (id) => onCreated(id) }
+  );
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Sparkles className="size-5 text-accent" />
+          <Sparkles className="size-5 text-accent" aria-hidden />
           Neue Komplettanalyse
+          <InfoTip panelClassName="max-w-md">
+            Verdichtet ALLE KI-Analysen für ein Zeitintervall an einem Ort: Gesprächsanalyse,
+            Insights, Personas &amp; Top-Fragen, Kundenwissen — gespeichert und als PDF exportierbar.
+            Bewusst gründlich (und damit teurer); die Erstellung läuft schrittweise mit
+            Fortschrittsanzeige. Der neue Bericht erscheint sofort links im Seitenpanel und läuft
+            dort weiter.
+          </InfoTip>
         </CardTitle>
-        <CardDescription>
-          Verdichtet ALLE KI-Analysen für ein Zeitintervall an einem Ort: Gesprächsanalyse, Insights,
-          Personas &amp; Top-Fragen, Kundenwissen — gespeichert und als PDF exportierbar. Bewusst
-          gründlich (und damit teurer); die Erstellung läuft schrittweise mit Fortschrittsanzeige.
-        </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
-        {/* Interval */}
-        <div>
-          <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-foreground">
-            <CalendarRange className="size-3.5 text-muted-foreground" />
-            Zeitraum
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {PRESETS.map((p) => (
-              <Button
-                key={p.key}
-                size="sm"
-                variant={preset === p.key ? "default" : "outline"}
-                onClick={() => setPreset(p.key)}
-              >
-                {p.label}
-              </Button>
-            ))}
-            <Button
-              size="sm"
-              variant={preset === "custom" ? "default" : "outline"}
-              onClick={() => setPreset("custom")}
-              aria-expanded={preset === "custom"}
-            >
-              Benutzerdefiniert
-            </Button>
-          </div>
+      <CardContent className="flex flex-col gap-5">
+        <div className="flex flex-col gap-2">
+          <div className="text-xs font-semibold text-foreground">Zeitraum</div>
+          <SegmentedControl
+            label="Zeitraum"
+            value={preset}
+            options={PRESETS}
+            onChange={(value) => setPreset(value)}
+          />
           {preset === "custom" && (
-            <div className="mt-2 flex flex-wrap items-end gap-2 border-t border-border/60 pt-2">
-              <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex flex-col gap-1 text-2xs text-muted-foreground">
                 Von
                 <Input
                   type="date"
                   value={customFrom}
                   max={customTo || todayYmd()}
                   onChange={(e) => setCustomFrom(e.target.value)}
-                  className="h-8 w-auto"
+                  className="h-8 w-auto text-xs"
                 />
               </label>
-              <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+              <label className="flex flex-col gap-1 text-2xs text-muted-foreground">
                 Bis
                 <Input
                   type="date"
@@ -180,71 +158,53 @@ export function GenerateReportPanel({ onCreated }: { onCreated: (id: number) => 
                   min={customFrom}
                   max={todayYmd()}
                   onChange={(e) => setCustomTo(e.target.value)}
-                  className="h-8 w-auto"
+                  className="h-8 w-auto text-xs"
                 />
               </label>
             </div>
           )}
         </div>
 
-        {/* Options */}
-        <div className="space-y-2">
-          <label className="flex items-start gap-2 text-[13px] text-foreground">
+        <div className="flex flex-col gap-2">
+          <div className="text-xs font-semibold text-foreground">Umfang</div>
+          <label className="flex items-center gap-2 text-sm text-foreground">
             <Checkbox
               checked={includePerCustomer}
               onChange={(e) => setIncludePerCustomer(e.target.checked)}
-              className="mt-0.5"
             />
-            <span>
-              <span className="inline-flex items-center gap-1 font-semibold">
-                <Users className="size-3.5 text-muted-foreground" />
-                Einzelne Kundenprofile (identitätsbezogen)
-              </span>
-              <span className="block text-[11px] text-muted-foreground">
-                Regeneriert pro aktivem Kunden das „aktuelle Verständnis“ (Opus) — am teuersten und
-                enthält Namen. Sonst bleibt der Bericht pseudonym.
-              </span>
-            </span>
+            Einzelne Kundenprofile (identitätsbezogen)
+            <InfoTip>
+              Regeneriert pro aktivem Kunden das „aktuelle Verständnis“ (Opus) — am teuersten und
+              enthält Namen. Sonst bleibt der Bericht pseudonym.
+            </InfoTip>
           </label>
-          <label className="flex items-start gap-2 text-[13px] text-foreground">
-            <Checkbox
-              checked={includeAppendix}
-              onChange={(e) => setIncludeAppendix(e.target.checked)}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="inline-flex items-center gap-1 font-semibold">
-                <ListTree className="size-3.5 text-muted-foreground" />
-                Anhang: jedes Gespräch auflisten
-              </span>
-              <span className="block text-[11px] text-muted-foreground">
-                Hängt jede Gesprächs-Zusammenfassung (Kategorie, Qualität) an — „alles an einem Ort“,
-                aber ein längeres PDF.
-              </span>
-            </span>
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <Checkbox checked={includeAppendix} onChange={(e) => setIncludeAppendix(e.target.checked)} />
+            Anhang: jedes Gespräch auflisten
+            <InfoTip>
+              Hängt jede Gesprächs-Zusammenfassung (Kategorie, Qualität) an — „alles an einem Ort“,
+              aber ein längeres PDF.
+            </InfoTip>
           </label>
         </div>
 
-        {/* Estimate */}
-        <div className="rounded-lg border border-dashed border-border bg-muted/30 p-3 text-[12px]">
+        <div className="rounded-lg border border-dashed border-border bg-surface-2 p-3 text-xs" aria-live="polite">
           {estimating ? (
             <span className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" />
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
               Schätze Umfang &amp; Kosten…
             </span>
           ) : estimate ? (
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               <div className="font-semibold text-foreground">{estimate.range.label}</div>
               <div className="text-muted-foreground">
-                {estimate.conversations} Gespräch(e) · {estimate.unanalyzed} noch zu analysieren ·{" "}
-                {estimate.personaCount} Persona-Gruppe(n)
-                {includePerCustomer ? ` · ${estimate.customerCount} Kundenprofil(e)` : ""}
+                {plural(estimate.conversations, "Gespräch", "Gespräche")} · {num(estimate.unanalyzed)}{" "}
+                noch zu analysieren · {plural(estimate.personaCount, "Persona-Gruppe", "Persona-Gruppen")}
+                {includePerCustomer ? ` · ${plural(estimate.customerCount, "Kundenprofil", "Kundenprofile")}` : ""}
               </div>
-              <div className="text-foreground">
-                Geschätzte KI-Kosten: <strong>ca. {eur(estimate.estimateEur)}</strong>{" "}
-                <span className="text-muted-foreground">
-                  (bereits analysierte Gespräche werden kostenlos wiederverwendet)
-                </span>
+              <div className="flex items-center gap-1.5 text-foreground">
+                Geschätzte KI-Kosten: <strong>ca. {eur(estimate.estimateEur)}</strong>
+                <InfoTip>Bereits analysierte Gespräche werden kostenlos wiederverwendet.</InfoTip>
               </div>
             </div>
           ) : (
@@ -254,14 +214,11 @@ export function GenerateReportPanel({ onCreated }: { onCreated: (id: number) => 
           )}
         </div>
 
-        <div className="flex items-center gap-3">
-          <Button onClick={generate} disabled={!inputsValid || creating}>
-            {creating ? <Loader2 className="animate-spin" /> : <Sparkles />}
-            {creating ? "Wird gestartet…" : "Komplettanalyse generieren"}
+        <div>
+          <Button onClick={() => void generate.run()} disabled={!inputsValid} loading={generate.pending}>
+            {!generate.pending && <Sparkles />}
+            {generate.pending ? "Wird gestartet…" : "Komplettanalyse generieren"}
           </Button>
-          <span className="text-[11px] text-muted-foreground">
-            Erscheint sofort links im Seitenpanel und läuft dort weiter.
-          </span>
         </div>
       </CardContent>
     </Card>

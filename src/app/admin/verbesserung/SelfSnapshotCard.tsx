@@ -6,8 +6,9 @@
 // the code prompt (git), the published knowledge or the directive layer changes.
 
 import * as React from "react";
-import { ChevronDown, ChevronRight, Fingerprint } from "lucide-react";
-import { Badge, Card, CardContent } from "../ui";
+import { Fingerprint } from "lucide-react";
+import { num, plural } from "@/lib/admin-format.mjs";
+import { Disclosure, InfoTip, StatusBadge } from "../ui";
 
 export interface SelfSnapshotInfo {
   shortHash: string;
@@ -17,42 +18,28 @@ export interface SelfSnapshotInfo {
 }
 
 export function SelfSnapshotCard({ info }: { info: SelfSnapshotInfo }) {
-  const [open, setOpen] = React.useState(false);
-
   return (
-    <Card>
-      <CardContent className="space-y-3 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">Mos Selbstbild (System-Prompt)</h3>
-            <p className="mt-1 text-[13px] text-muted-foreground">
-              Der aktuell wirksame System-Prompt, kanonisch gerendert — genau der Stand, den der
-              Verbesserungslauf analysiert. Enthält {info.publishedQaCount} veröffentlichte
-              Q&A-Einträge und {info.activeDirectiveCount} aktive Anweisung(en). Der Kern-Prompt
-              wird über Code-Änderungen (Git) angepasst; hier ist er nur lesbar.
-            </p>
-          </div>
-          <Badge variant="secondary" className="gap-1">
-            <Fingerprint className="size-3" />
-            Version {info.shortHash}
-          </Badge>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-1.5 text-[13px] font-medium text-accent hover:underline"
-        >
-          {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-          {open ? "System-Prompt ausblenden" : "System-Prompt anzeigen"}
-        </button>
-
-        {open && (
-          <pre className="max-h-[480px] overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-secondary/50 p-3 text-[12px] leading-relaxed text-foreground">
-            {info.promptText}
-          </pre>
-        )}
-      </CardContent>
-    </Card>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <StatusBadge tone="neutral" dot={false} icon={<Fingerprint />} size="md">
+          Version {info.shortHash}
+        </StatusBadge>
+        <span>
+          {num(info.publishedQaCount)} veröffentlichte Q&A-Einträge ·{" "}
+          {plural(info.activeDirectiveCount, "aktive Anweisung", "aktive Anweisungen")}
+        </span>
+        <InfoTip>
+          Der aktuell wirksame System-Prompt, kanonisch gerendert — genau der Stand, den der
+          Verbesserungslauf analysiert. Enthält die veröffentlichten Q&A-Einträge und die aktiven
+          Anweisungen. Der Kern-Prompt wird über Code-Änderungen (Git) angepasst; hier ist er nur
+          lesbar.
+        </InfoTip>
+      </div>
+      <Disclosure title={<span className="text-xs">System-Prompt anzeigen</span>} framed={false}>
+        <pre className="max-h-[480px] overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-2 p-3 text-xs leading-relaxed text-foreground">
+          {info.promptText}
+        </pre>
+      </Disclosure>
+    </div>
   );
 }

@@ -3,8 +3,8 @@
 
 import type { ConversationStats } from "@/lib/admin-conversations";
 import { num, ratio } from "@/lib/admin-format.mjs";
-import { Stat } from "../../ui";
-import { BarList } from "../BarList";
+import { BarList, Stat } from "../../ui";
+
 import { ChartCard, Explain, KpiSection, StatGrid } from "../KpiSection";
 
 const INFO = (

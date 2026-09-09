@@ -2,8 +2,8 @@
 
 import type { EmailCaptureFunnel } from "@/lib/kpi-store";
 import { num, ratio } from "@/lib/admin-format.mjs";
-import { Stat } from "../../ui";
-import { BarList } from "../BarList";
+import { BarList, Stat } from "../../ui";
+
 import { StageFunnelChart } from "../charts";
 import { Explain, FunnelLayout, KpiSection, SubHeading } from "../KpiSection";
 

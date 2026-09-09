@@ -4,8 +4,8 @@
 import type { PersonaInsight } from "@/lib/kpi-persona";
 import type { TopQuestionsSummary } from "@/lib/kpi-top-questions";
 import { num } from "@/lib/admin-format.mjs";
-import { Card, CardContent } from "../../ui";
-import { BarList } from "../BarList";
+import { BarList, Card, CardContent } from "../../ui";
+
 import { PersonaDistributionChart } from "../charts";
 import { KpiTopQuestions } from "../KpiTopQuestions";
 import { ChartCard, KpiSection, LifetimeBadge } from "../KpiSection";

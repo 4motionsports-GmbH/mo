@@ -13,7 +13,14 @@ import { MAX_ACTIVE_DIRECTIVES, MAX_DIRECTIVE_CHARS } from "@/lib/improvement-co
 import { VerbesserungWorkspace } from "./lazy";
 import { Callout } from "./ui";
 
-export async function VerbesserungTab({ dbReady }: { dbReady: boolean }) {
+export async function VerbesserungTab({
+  dbReady,
+  initialRunId,
+}: {
+  dbReady: boolean;
+  /** ?run= deep link to a stored run. */
+  initialRunId: number | null;
+}) {
   if (!dbReady) {
     return (
       <Callout tone="warning" className="mb-4">
@@ -44,6 +51,7 @@ export async function VerbesserungTab({ dbReady }: { dbReady: boolean }) {
         activeDirectiveCount: snapshot.activeDirectiveCount,
         publishedQaCount: snapshot.publishedQaCount,
       }}
+      initialRunId={initialRunId}
     />
   );
 }
