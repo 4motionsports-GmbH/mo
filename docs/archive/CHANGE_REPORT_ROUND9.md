@@ -93,7 +93,7 @@ feature/flag/doc.
 - `docs/DISCOUNTS.md` — welcome-codes section → "feature retired."
 - `docs/CONSENT_FLOW.md` — welcome-discount lawyer checklist item → "N/A, retired."
 - `docs/ADMIN_DASHBOARD.md` — welcome-code paragraph → read-only historical view.
-- `docs/AUDIT_BACKEND.md` — welcome-discount audit bullet → "feature retired."
+- `docs/archive/AUDIT_BACKEND.md` — welcome-discount audit bullet → "feature retired."
 - `docs/API_CONTRACT.md` and `docs/frontend-handoff/API_CONTRACT.md` — removed the
   `WELCOME_DISCOUNT_ENABLED` env-table row.
 - `src/lib/consent-copy.ts` — two copy-ceiling comments de-referenced the welcome

@@ -14,7 +14,7 @@
 > download** (the S5 summary email reused as a downloadable HTML document) is in
 > [§11](#11-conversation-summary-download-signed-in-s5-structure-reused).
 > The authoritative feasibility report is
-> [`CUSTOMER_ACCOUNT_SPIKE.md`](./CUSTOMER_ACCOUNT_SPIKE.md); this document
+> [`archive/CUSTOMER_ACCOUNT_SPIKE.md`](./archive/CUSTOMER_ACCOUNT_SPIKE.md); this document
 > describes what was built.
 
 This adds a **third identity tier** to the chat: a *signed-in Shopify customer*.
@@ -160,7 +160,7 @@ widget `session_id`. Response:
 `prompt=none`. When a storefront session exists Shopify returns a `code` with **no
 UI**; when logged out it returns `error=login_required` → a
 `return_url?ms_auth=login_required` bounce. It is authoritative but a full-page
-redirect (the theme deferred it, see `CUSTOMER_ACCOUNT_THEME_NOTES.md`); it remains
+redirect (the theme deferred it, see `archive/CUSTOMER_ACCOUNT_THEME_NOTES.md`); it remains
 available where the App Proxy isn't configured.
 
 ## 3. Token handling, rotation, encryption

@@ -1,6 +1,6 @@
 // Send-through-system for PHYSICAL letters — the Pingen analogue of
 // lib/marketing-email.approveAndSend. ONE auditable path that concentrates every
-// gate so no caller can bypass them (docs/EMAIL_SUBSYSTEM_SPIKE.md §4):
+// gate so no caller can bypass them (docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §4):
 //
 //   1. FLAG — PHYSICAL_MAIL_SENDS_APPROVED must be on (Pingen is a NEW processor
 //      → CH → Deutsche Post; needs its own DPA). OFF ⇒ nothing is posted.

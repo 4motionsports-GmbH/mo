@@ -5,7 +5,7 @@
 //
 // ── VERIFIED AT BUILD TIME (2026-06-14) against the official SDKs (the vendor
 //    docs 403 automated fetch, so these were confirmed against the fetchable
-//    SDK sources, per docs/EMAIL_SUBSYSTEM_SPIKE.md §4 [VERIFY]):
+//    SDK sources, per docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §4 [VERIFY]):
 //      * api.pingen.com (prod) / api-staging.pingen.com (staging);
 //        OAuth at identity.pingen.com (identity-staging.pingen.com on staging).
 //        — confirmed: pingencom/pingen2-sdk-php, pingencom/pingen2-sdk-python,

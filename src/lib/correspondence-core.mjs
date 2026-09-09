@@ -1,5 +1,5 @@
 // Pure, dependency-free core for folding email correspondence into the
-// per-customer knowledge base (S10D item 7, docs/EMAIL_SUBSYSTEM_SPIKE.md §3).
+// per-customer knowledge base (S10D item 7, docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §3).
 //
 // Renders a customer's email thread into ONE readable block the KB passes
 // (generateCustomerProfile, generateCustomerMarketingDraft) drop in beside the

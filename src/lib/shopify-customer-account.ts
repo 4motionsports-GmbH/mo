@@ -2,7 +2,7 @@
 // (S256) sign-in for tier-3 identity. SEPARATE from the Admin client
 // (lib/shopify.ts): different client, different credentials, different host.
 //
-// Confirmed setup (see the task brief + docs/CUSTOMER_ACCOUNT_SPIKE.md):
+// Confirmed setup (see the task brief + docs/archive/CUSTOMER_ACCOUNT_SPIKE.md):
 //   * PUBLIC client (web app), no secret — the browser NEVER holds tokens. The
 //     widget gets the `code`; this BACKEND does the PKCE exchange and holds both
 //     tokens server-side (encrypted: lib/token-crypto.ts).

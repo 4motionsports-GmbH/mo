@@ -2,7 +2,7 @@
 
 **Zweck:** Vollständige, aktuelle Beschreibung des Systems für die externe anwaltliche Prüfung (Datenschutz, Wettbewerbs-/Lauterkeitsrecht, KI-Regulierung, Verbraucherrecht) — als Grundlage für Ihr Feedback und Ihre Handlungsempfehlungen.
 **Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren).
-**Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`LEGAL_READINESS_REPORT.md`](./LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
+**Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`archive/LEGAL_READINESS_REPORT.md`](./archive/LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
 **Verantwortlicher:** motion sports [genaue Firmierung, Anschrift, Geschäftsführung, ggf. DSB — vom Mandanten zu ergänzen]. Betrieben wird der Onlineshop motionsports.de (Shopify) für Sport- und Fitnessgeräte (B2C, Studios/Physiotherapie, öffentliche Auftraggeber).
 
 **Wichtige Lesehinweise**

@@ -1,6 +1,6 @@
 > **⚠️ SUPERSEDED (2026-08-05):** This report reflects the June 2026 state. The
 > current, complete document for legal counsel is
-> [`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) (German) — it incorporates the
+> [`ANWALTSDOSSIER.md`](../ANWALTSDOSSIER.md) (German) — it incorporates the
 > remediation shipped since June and all features added afterwards (campaign
 > channel, consent v4, conversation analysis, Q&A knowledge, i18n, TTS, …).
 > Keep this file for the historical OQ-xx references only.
@@ -204,7 +204,7 @@ Nine external processors. **Two facts dominate this section and apply to almost 
 |---|---|---|---|---|---|---|
 | P-01 | **Anthropic (Claude)** `@ai-sdk/anthropic` | LLM: chat (`claude-sonnet-4-6`), profiling (`claude-opus-4-8`), summaries, drafts, KPI | Chat transcripts (verbatim user text), persona/profile, **minimised** memory (city/country, owned-item titles, profile summary), letter recipient **name**. **Email + full street address withheld** | **Yes — US** (default `api.anthropic.com`; no EU/Bedrock/Vertex region in code) | Not evidenced. **No-training / Zero-Data-Retention terms not visible** → OQ-03 | None (works if key set) |
 | P-02 | **OpenAI** `openai` | Query **embeddings** (`text-embedding-3-small`) + **TTS** (`gpt-4o-mini-tts`) | Embeddings: the user's search-query free-text. TTS: the assistant reply text. **No name/email/address** | **Yes — US** | Not evidenced; no-training terms not visible → OQ-03 | None (no-ops without key) |
-| P-03 | **Resend** `resend` | **Outbound** all email (summary, DOI, marketing, §7(3), contact relay) + **inbound** reply ingestion | Outbound: recipient email + email contents (summary/marketing prose, discount codes, contact-form name/email/phone/org/message). **Inbound: full reply body text+HTML stored in Neon** | **Yes — US** (no EU region configured) | Not evidenced. **EU residency is an unverified, self-flagged "legal-blocking" item** (`docs/EMAIL_SUBSYSTEM_SPIKE.md:118-122`) → OQ-02/OQ-13 | Inbound fails closed without `RESEND_WEBHOOK_SECRET` (Svix-verified) |
+| P-03 | **Resend** `resend` | **Outbound** all email (summary, DOI, marketing, §7(3), contact relay) + **inbound** reply ingestion | Outbound: recipient email + email contents (summary/marketing prose, discount codes, contact-form name/email/phone/org/message). **Inbound: full reply body text+HTML stored in Neon** | **Yes — US** (no EU region configured) | Not evidenced. **EU residency is an unverified, self-flagged "legal-blocking" item** (`docs/archive/EMAIL_SUBSYSTEM_SPIKE.md:118-122`) → OQ-02/OQ-13 | Inbound fails closed without `RESEND_WEBHOOK_SECRET` (Svix-verified) |
 | P-04 | **Shopify** (Admin API + Customer Account API) | Catalog, discounts, **order lookups by email**, customer profile/orders/address; tier-3 OAuth sign-in | Out: customer **email** as a search term. In: name, email, order history, addresses (full address read on a separate path for letters) | Shopify = US-HQ processor; region not in code | Not evidenced. **Protected Customer Data access approval needed per code comments** → OQ-14 | Degrades to null if unconfigured |
 | P-05 | **Vercel** (host + Blob + Cron) | Compute, catalog Blob, scheduled jobs | Compute processes all of the above in memory. **Blob holds NO PII** (product catalog/embeddings only, confirmed). Crons process PII (refresh, retention) | US-HQ; function region not in code | Not evidenced (Vercel DPA typically via ToS) → OQ-02 | Crons gated by `CRON_SECRET` (fail-closed) |
 | P-06 | **Neon Postgres** `@neondatabase/serverless` | **Primary datastore — holds essentially ALL persistent PII** | Email, profiles, purchase history, **full postal addresses**, **correspondence bodies**, encrypted OAuth tokens | **Region not pinned in code — highest-stakes residency unknown** | Not evidenced → OQ-02 | n/a (degrades to no-persistence if unset) |
@@ -372,7 +372,7 @@ The system builds a durable AI profile from past chats + purchases and personali
 ☐ No DPIA required (document rationale) ☐ DPIA required — to be produced
 
 **OQ-13 — Resend inbound EU data residency.**
-The team's own spike flags this as a **"legal-blocking"** check: confirm Resend inbound storage/processing can be pinned to the EU (mail bodies are personal data) — else use an EU inbound route (`docs/EMAIL_SUBSYSTEM_SPIKE.md:118-122`). No region is set in code.
+The team's own spike flags this as a **"legal-blocking"** check: confirm Resend inbound storage/processing can be pinned to the EU (mail bodies are personal data) — else use an EU inbound route (`docs/archive/EMAIL_SUBSYSTEM_SPIKE.md:118-122`). No region is set in code.
 ☐ EU residency confirmed ☐ Switch inbound to EU provider ☐ Accept US + DPF/SCC (document)
 
 **OQ-06 — §7(3) "own similar products" boundary + copy (before flipping the flag).**

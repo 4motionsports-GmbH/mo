@@ -353,7 +353,7 @@ force a full re-embed.
 
 ## Reliability — resilient + atomic sync
 
-Two structural fixes (see `docs/CATALOG_SYNC_DIAGNOSIS.md`):
+Two structural fixes (see `docs/archive/CATALOG_SYNC_DIAGNOSIS.md`):
 
 - **Resilient embeddings (`embed-resilience.mjs`).** The old `embedAll` was
   all-or-nothing — one failed chunk threw and 503'd the whole run, writing zero
@@ -430,7 +430,7 @@ If the auth flow itself cannot be made to work at all, see
 
 ## Product variants (variant-aware catalog)
 
-Since the variant rollout (`docs/PRODUCT_VARIANTS_PLAN.md`) the sync maps
+Since the variant rollout (`docs/archive/PRODUCT_VARIANTS_PLAN.md`) the sync maps
 ALL variants, not only `variants[0]`:
 
 * The GraphQL fragment additionally fetches `title` + `selectedOptions`.

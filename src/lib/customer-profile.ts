@@ -18,7 +18,7 @@
 //
 // Data minimisation: the email ADDRESS is never sent to the model. The customer's
 // email CORRESPONDENCE (body text only — never headers/address lines) is folded
-// in as one more source (docs/EMAIL_SUBSYSTEM_SPIKE.md §3): the loader caps it
+// in as one more source (docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §3): the loader caps it
 // (last N messages / last 12 months) and it rides the SAME explicit, admin-
 // triggered regeneration as everything else here — no automatic processing.
 

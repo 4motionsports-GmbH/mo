@@ -12,7 +12,7 @@
 //
 // ⚠️ Mutation shapes are taken from the LIVE-VERIFIED probe sequence
 // (scripts/probe-bundle.mjs; "Probe results (S9b, 2026-06-13)" in
-// docs/BUNDLES_SPIKE.md), NOT from memory. The verified, version-pinned (2026-04)
+// docs/archive/BUNDLES_SPIKE.md), NOT from memory. The verified, version-pinned (2026-04)
 // facts this relies on:
 //   - productBundleCreate(input: ProductBundleCreateInput!) returns a
 //     ProductBundleOperation; the product populates only at lifecycle COMPLETE

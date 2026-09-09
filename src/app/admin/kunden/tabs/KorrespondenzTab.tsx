@@ -1,6 +1,6 @@
 "use client";
 
-// Korrespondenz — the per-customer email client (docs/EMAIL_SUBSYSTEM_SPIKE.md
+// Korrespondenz — the per-customer email client (docs/archive/EMAIL_SUBSYSTEM_SPIKE.md
 // §5): sent + received mail grouped by thread, bodies loaded lazily on expand,
 // compose / reply through the central sendEmail() choke-point.
 

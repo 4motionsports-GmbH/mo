@@ -7,7 +7,7 @@ link, hidden from storefront browsing), linked from a marketing email, and
 **archived on expiry**.
 
 This is the S10 build of the feasibility spike in
-[`BUNDLES_SPIKE.md`](./BUNDLES_SPIKE.md). The spike's **"Probe results (S9b,
+[`archive/BUNDLES_SPIKE.md`](./archive/BUNDLES_SPIKE.md). The spike's **"Probe results (S9b,
 2026-06-13)"** section is the source of truth — every step below was verified
 live against the store, including the click-through-to-checkout.
 

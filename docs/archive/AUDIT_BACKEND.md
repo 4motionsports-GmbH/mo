@@ -180,7 +180,7 @@ list (which is scoped to the capture funnel, fine) and not in
 
 ### A11 (INFO) — `REPO_AUDIT.md` is historical
 
-`docs/REPO_AUDIT.md` describes the conversion to "a headless backend that exposes
+`docs/archive/REPO_AUDIT.md` describes the conversion to "a headless backend that exposes
 only two HTTP endpoints" — the backend now has 9 public + 6 admin + 2 cron routes.
 Harmless as history, but it should carry a "superseded" banner so nobody treats it
 as current.

@@ -158,7 +158,7 @@ embeddings `text-embedding-3-small`, dim 1536, 965 items
   The function therefore inherits the **Vercel project default region, `iad1`
   (Washington DC, US)** — matching the log.
 - **Data-residency flag (EU business):** the store is German (`motionsports.de`),
-  Neon is EU, and the GDPR posture (`docs/LEGAL_READINESS_REPORT.md`) lists
+  Neon is EU, and the GDPR posture (`docs/archive/LEGAL_READINESS_REPORT.md`) lists
   processors with `[confirm regions]`. `sync-catalog` itself handles **product
   catalog** data (not personal data, so lower sensitivity) — but the **same
   default `iad1`** applies to `refresh-customers` / `retention`, which **do**

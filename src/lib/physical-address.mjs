@@ -1,5 +1,5 @@
 // PHYSICAL-MAIL address eligibility — the spike's PRODUCT BLOCKER, made into a
-// pure, testable decision (docs/EMAIL_SUBSYSTEM_SPIKE.md §4).
+// pure, testable decision (docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §4).
 //
 // We do NOT reliably hold full postal addresses. Only a future consented-capture
 // / purchase-derived flow writes customers.postal_address; the tier-3 account

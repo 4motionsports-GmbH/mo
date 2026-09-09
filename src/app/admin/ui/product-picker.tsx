@@ -14,7 +14,7 @@
 //     than one variant expand an inline variant chooser (mirroring the
 //     storefront PDP), so a specific variant can be selected wherever products
 //     can — the admin side of the product-ref rail
-//     (docs/PRODUCT_VARIANTS_PLAN.md).
+//     (docs/archive/PRODUCT_VARIANTS_PLAN.md).
 //
 // onSelect receives (hit, variant|null): null means "the product" (default
 // variant); a variant means the operator pinned that concrete variant.

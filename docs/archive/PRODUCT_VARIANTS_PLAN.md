@@ -197,7 +197,7 @@ Each phase is independently shippable and leaves the system fully working.
    distinguish *which* strength/weight was bought. Title fallback stays as
    the product-level safety net.
 2. **Wissen „Produkt verlinken"** — shared picker; a chosen variant
-   produces `[Name – Variante](url?variant=<id>)`.
+   produces `[Name – Variante](../url?variant=<id>)`.
 3. Docs: update `CATALOG_SYNC.md`, `BUNDLES.md`, `CAMPAIGNS.md`,
    `ORDER_ATTRIBUTION.md`, `ADMIN_DASHBOARD.md`; add a variants section to
    `API_CONTRACT.md`.

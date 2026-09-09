@@ -1,6 +1,6 @@
 // Resilient embedding orchestrator — the fix for the catalog-sync 503.
 //
-// ROOT CAUSE (see docs/CATALOG_SYNC_DIAGNOSIS.md): the old embedAll was
+// ROOT CAUSE (see docs/archive/CATALOG_SYNC_DIAGNOSIS.md): the old embedAll was
 // all-or-nothing. A single failed chunk (rate-limit / quota / transient 5xx)
 // threw out of the whole function, 503'd the run, and wrote ZERO embeddings.
 //

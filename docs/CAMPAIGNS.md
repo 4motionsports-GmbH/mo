@@ -322,7 +322,7 @@ ungated send.
 
 The review card's recommendations editor uses the shared catalog picker with
 a variant chooser. A pinned variant is stored as a ref (`handle~variantId`,
-see `docs/PRODUCT_VARIANTS_PLAN.md`) in the existing
+see `docs/archive/PRODUCT_VARIANTS_PLAN.md`) in the existing
 `campaign_drafts.recommended_product_ids` TEXT[] — no migration. The
 recommendations route validates per variant (`variant_not_found` 409 when it
 vanished mid-review), the drafter sees "Produktname – Variante" + the

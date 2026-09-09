@@ -4,7 +4,7 @@
 // directly — a thin OAuth2 (client_credentials) + multipart-ish flow. All the
 // endpoint paths, hosts and JSON:API field names are VERIFIED + documented in
 // lib/pingen-core.mjs (against the official SDKs; the vendor docs 403 automated
-// fetch, per docs/EMAIL_SUBSYSTEM_SPIKE.md §4 [VERIFY]).
+// fetch, per docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §4 [VERIFY]).
 //
 // uploadAndCreate flow (one logical "send a letter"):
 //   1. GET  /file-upload                      → a signed PUT url + url_signature

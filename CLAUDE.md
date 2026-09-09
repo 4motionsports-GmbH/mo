@@ -3,7 +3,8 @@
 Read this before changing anything. It is short on purpose; the living design docs are in `docs/`
 (start with `docs/README`-level files: `ADMIN_DASHBOARD.md`, `CAMPAIGNS.md`, `API_CONTRACT.md`,
 `DATABASE.md`, `DATA_RETENTION.md`, `EMAIL_DESIGNS.md`). `docs/FEATURE_INVENTORY.md` lists every
-capability; do not remove one without an explicit decision by the maintainer.
+capability; do not remove one without an explicit decision by the maintainer. `docs/archive/` holds
+historical audits, spikes and change reports — context only, never the current state.
 
 ## What this is
 Next.js 16 App Router on Vercel (`fra1`), Neon Postgres, TypeScript + a set of pure `.mjs` cores.
@@ -50,6 +51,9 @@ compatible.
 - **Admin styling uses the design tokens** in `src/app/admin/theme.css` and the primitives in
   `src/app/admin/ui`. No hard-coded colours, no ad-hoc pixel font sizes; everything must work in light
   and dark mode.
+- **One screen per request.** `src/app/admin/page.tsx` renders only the screen selected by `?tab=`;
+  every client workspace is exported through `src/app/admin/lazy.tsx` (`next/dynamic`) so it stays its own
+  chunk. Never import a screen's workspace directly from a server file.
 - **Fail-soft is the house style** for background and best-effort work (log + continue); the legal
   gates in the send paths fail **closed**.
 
@@ -67,6 +71,37 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
 - `src/lib/*-store.ts` — database access per table group; `src/lib/*.mjs` — pure cores + tests.
 - `src/lib/campaign-*.ts`, `marketing-*.ts`, `email-*.ts`, `email-designs/` — the e-mail subsystem;
   `approveAndSendCampaign` / `approveAndSend` are the only paths that deliver marketing mail.
-- `src/app/admin/` — the dashboard: `page.tsx` (server data), `AdminShell.tsx` (navigation),
-  one workspace per screen, `ui/` primitives.
+- `src/app/admin/` — the dashboard: `page.tsx` (one screen per request), `AdminShell.tsx` (sidebar,
+  shortcuts, theme), the screen registry `src/lib/admin-tabs.mjs` + `tabs.tsx` (icons), `lazy.tsx`
+  (per-screen chunks), `<Screen>Tab.tsx` (server queries → props) with its client workspace in
+  `<screen>/`, `ui/` primitives, `lib/` client helpers. Reference: `docs/ADMIN_DASHBOARD.md` §2.
 - `scripts/` — operational scripts (see `package.json` for the npm aliases).
+
+## Admin design system — how to build or change a screen
+- **Primitives first.** Everything in `src/app/admin/ui` (see `ui/index.ts`): `Button`/`IconButton` (label
+  required), `Field`, `Select`, `SegmentedControl` for single-choice toggles, `DataTable` + `Pagination`
+  for lists, `SplitPane` for master/detail, `FilterBar` for toolbars, `Callout`/`EmptyState`/`StatusBadge`
+  for states, `Dialog`/`useConfirm()` for confirmations (sends, deletes, paid bulk runs — nothing else),
+  `Disclosure` for rarely needed detail, `TranscriptView` for chat transcripts.
+- **Explanations behind `InfoTip`.** Section and control explanations are the original texts, verbatim, in
+  an `InfoTip` next to the title/label — never a helper paragraph. Icon-only buttons get a `Tooltip`;
+  no `title` attributes.
+- **Toolbars never disappear.** An empty or not-configured state is an `EmptyState`/`Callout` inside the
+  list area; search, filters and actions stay usable.
+- **Tokens only.** Colours, radii and type come from `theme.css` (`bg-card`, `text-muted-foreground`,
+  `text-2xs` … `text-2xl`, `border-border`, `bg-surface-2`, `bg-accent-soft`, `--chart-1…5`). Check every
+  change in light **and** dark (`.dark` on `#admin-root`, toggled via the cookie in `theme-config.ts`).
+- **Data flow.** Server file `<Screen>Tab.tsx` fetches once and passes plain props; the client workspace
+  mutates through `adminFetch()` + `useAsyncAction()`, updates its own state (or calls `router.refresh()`),
+  never `window.location.reload()`. Long-running generation uses `useStepLoop()`.
+- **State that a colleague should be able to link to lives in the URL**: `?tab=`, `?customer=`, `?gid=`,
+  `?report=`, `?run=`, `?kpiRange=…`, `?filter=` (see `docs/ADMIN_DASHBOARD.md` §2.2). Use
+  `history.replaceState` for selection, `router.push` for filters that change the server render.
+- **Adding a screen**: entry in `src/lib/admin-tabs.mjs` (+ its test), icon in `tabs.tsx`, `<Screen>Tab.tsx`,
+  a `<screen>/` folder whose workspace is exported from `lazy.tsx`, routes under `src/app/api/admin/<screen>/`
+  with `guardAdminPost/Get`, a section in `docs/ADMIN_DASHBOARD.md` §3 and §11.
+- **Verify visually.** Run the production build, take Playwright/Chromium screenshots of the changed
+  screen at 1440 px and 1024 px in light and dark, and exercise the interactions you touched (the
+  before/after sets of the 2026-09 redesign are under `docs/screenshots/`).
+- **Keep the German terminology** and the keyboard shortcuts (`1…9`/`0` screens, `/` search; Kampagne
+  `N P V C S X`; Wissen `j k Esc`).

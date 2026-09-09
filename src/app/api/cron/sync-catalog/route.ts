@@ -5,7 +5,7 @@
 // both files to Vercel Blob under stable keys so /api/chat can pick up the
 // new data on the next warm invocation without a redeploy.
 //
-// RELIABILITY (see docs/CATALOG_SYNC_DIAGNOSIS.md). Two structural fixes here:
+// RELIABILITY (see docs/archive/CATALOG_SYNC_DIAGNOSIS.md). Two structural fixes here:
 //   A) RESILIENT embeddings — embedDocsResilient wraps every chunk, retries a
 //      failed chunk as smaller sub-batches / per item, and carries forward an
 //      item's previous vector (or skips it) instead of throwing. One bad item or

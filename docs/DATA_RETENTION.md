@@ -157,7 +157,7 @@ DELETE, so the Shopify side stays reversible too).
 
 **Lawful basis: performance of a contract / legitimate interest (Art. 6(1)(b) /
 6(1)(f)) — NOT marketing consent.** `email_messages` (migration `0021`, see
-[`EMAIL_SUBSYSTEM_SPIKE.md`](./EMAIL_SUBSYSTEM_SPIKE.md)) is the **unified mail
+[`archive/EMAIL_SUBSYSTEM_SPIKE.md`](./archive/EMAIL_SUBSYSTEM_SPIKE.md)) is the **unified mail
 log**: every email we send (a mirror-write at each send site) and every reply we
 receive (the Resend Inbound webhook `/api/inbound/resend`). Answering a customer
 who wrote to us rests on contract / legitimate interest, **independent** of

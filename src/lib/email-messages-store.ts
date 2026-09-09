@@ -182,7 +182,7 @@ const MAX_CORRESPONDENCE_MONTHS = 12;
 /**
  * Load a customer's email correspondence rendered as ONE readable block for the
  * KB passes (generateCustomerProfile / generateCustomerMarketingDraft), oldest-
- * first, both directions — see docs/EMAIL_SUBSYSTEM_SPIKE.md §3. Returns "" when
+ * first, both directions — see docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §3. Returns "" when
  * there is nothing (or no DB) so the caller can show a placeholder.
  *
  * DATA-MINIMISATION (required):

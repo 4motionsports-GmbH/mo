@@ -173,6 +173,10 @@ export async function POST(req: Request) {
     const { text, html } = renderBody(payload);
 
     try {
+      // Deliberately the Resend SDK directly, not lib/email's sendEmail(): this
+      // is a lead notification to the team's own inbox — no customer recipient,
+      // no consent gate, no email_messages mirror row, reply-to = the submitter —
+      // so none of sendEmail's transactional/marketing bookkeeping applies.
       const resend = new Resend(apiKey);
       const result = await resend.emails.send({
         from,

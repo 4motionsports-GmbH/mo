@@ -1,5 +1,5 @@
 // Unit tests for the REPLY-side threading helpers (the in-admin email client,
-// docs/EMAIL_SUBSYSTEM_SPIKE.md §5): grouping a conversation, angle-bracketing
+// docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §5): grouping a conversation, angle-bracketing
 // ids for the wire, building a reply's References chain, and the reply subject.
 // Pure — no DB, no SDK, no live webhook.
 

@@ -1,6 +1,6 @@
 # GDPR Remediation — Handoff & Action Items
 
-**Companion to:** [`docs/LEGAL_READINESS_REPORT.md`](./LEGAL_READINESS_REPORT.md) (full findings).
+**Companion to:** [`docs/archive/LEGAL_READINESS_REPORT.md`](./LEGAL_READINESS_REPORT.md) (full findings).
 **Status:** the privacy/security hardening (WS1) is merged and the build is green. **No feature flags were flipped.**
 
 > **Note:** the §7(3) UWG "Bestandskunden" (existing-customer marketing) feature

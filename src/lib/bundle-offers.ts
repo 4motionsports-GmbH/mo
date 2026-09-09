@@ -8,7 +8,7 @@
 //   - expireBundleOffers  — the daily cron sweep (idempotent)
 //
 // See docs/BUNDLES.md for the model, the two creation modes + seam, and the
-// lifecycle; docs/BUNDLES_SPIKE.md for the live verification this builds on.
+// lifecycle; docs/archive/BUNDLES_SPIKE.md for the live verification this builds on.
 
 import { loadProductCatalog } from "./catalog-store";
 import { buildShopifyCartUrl } from "./shopify-cart-url.mjs";

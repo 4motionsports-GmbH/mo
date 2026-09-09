@@ -1,69 +1,58 @@
-# motion sports — KI-Berater Backend
+# Mo — motion sports KI-Berater (backend + admin)
 
-Headless backend for the motion sports KI sales assistant. This repo
-exposes the chat, contact, and product hydration endpoints used by the
-Shopify storefront widget; the chat UI itself lives in the Shopify theme
-and is not part of this repo.
+Next.js 16 (App Router) on Vercel (`fra1`) with Neon Postgres, TypeScript plus a
+set of pure `.mjs` cores with `node --test` suites. Three products live in this
+repository:
+
+1. **The chat API for the Shopify storefront widget** — `/api/chat` and the
+   routes around it (products, consent, account, telemetry). The widget itself
+   lives in the Shopify theme and is **not** in this repo;
+   [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) is the contract it targets and
+   must stay backward compatible.
+2. **The admin dashboard** at `/admin` (German) — customers, the campaign review
+   queue, KPIs, the conversation inspector, the knowledge queue, analyses, the
+   improvement loop and e-mail settings. [`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md).
+3. **The e-mail subsystem** — transactional mail (summary, double opt-in),
+   personalised marketing mail (`MS5-` codes), the campaign channel to Shopify
+   marketing subscribers (`MK-` codes), inbound mail, physical letters via
+   Pingen, code-based designs with AI hero images.
+   [`docs/CAMPAIGNS.md`](docs/CAMPAIGNS.md), [`docs/EMAIL_DESIGNS.md`](docs/EMAIL_DESIGNS.md),
+   [`docs/CONSENT_FLOW.md`](docs/CONSENT_FLOW.md).
+
+Conventions for working in the repo are in [`CLAUDE.md`](CLAUDE.md); every
+capability is listed in [`docs/FEATURE_INVENTORY.md`](docs/FEATURE_INVENTORY.md).
 
 ## Endpoints
 
-### `POST /api/chat`
-
-Streaming chat endpoint built on Next.js + the Vercel AI SDK + Anthropic
-Claude. The request body is a `UIMessage[]` (the AI SDK message shape).
-On each turn the route:
-
-1. Replays all `update_customer_profile` tool calls to derive the current
-   customer profile (the profile is a pure function of message history).
-2. Picks an archetype from the profile (`deriveArchetype`).
-3. Retrieves relevant products from the catalog via embedding similarity
-   (with a keyword fallback when no embeddings are available).
-4. Streams a Claude response with the persona-aware system prompt and
-   the chat tools wired up (`update_customer_profile`, `search_products`,
-   `show_product`, `compare_products`, `add_to_cart`, `suggest_showroom`,
-   `show_contact_form`).
-
-Response: a UI-message stream (`toUIMessageStreamResponse`) consumable
-by the AI SDK client on the widget side. See
-[`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) for the exact streamed
-parts the widget must handle.
-
-### `POST /api/contact`
-
-JSON contact-form submission for studio / rehab / public-procurement
-leads. Validates the payload and forwards it as email via Resend
-(falls back to a stdout log when Resend env vars are unset).
-
-### `GET /api/products`
-
-Public product hydration: `?ids=a,b,c` (or repeated `?id=`). Returns
-`{ products: PublicProduct[] }` in request order, with `null` entries
-for unknown ids. Capped at 10 ids per request, origin-allowlisted, no
-shared-secret required.
-
-### `GET /`
-
-Returns the plain string `motion sports backend — OK` as a trivial
-health check.
-
-Full request / response shapes for all three endpoints are documented
-in [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) — that is the
-contract the widget code targets.
+| Route | Purpose | Guard |
+| --- | --- | --- |
+| `POST /api/chat` | Streaming chat (AI SDK `UIMessage[]` in, UI-message stream out): profile from tool history → persona → retrieval → Claude with the chat tools. | shared secret + origin, rate limit |
+| `GET /api/products?ids=` | Product hydration for the widget (≤ 10 ids, request order, `null` for unknown). | origin allowlist |
+| `POST /api/contact` | Contact-form leads → e-mail to the team inbox via Resend (stdout fallback without a key). | secret + origin, rate limit |
+| `POST /api/kpi`, `/api/feedback`, `/api/newsletter-rating`, `/api/tts` | Widget telemetry, feedback, newsletter ratings, text-to-speech. | secret/origin, rate limit |
+| `/api/capture-email`, `/api/chat-marketing-opt-in`, `/api/confirm-marketing`, `/api/unsubscribe`, `/api/consent-copy` | Consent + double-opt-in flow ([`docs/CONSENT_FLOW.md`](docs/CONSENT_FLOW.md)). | per route |
+| `/api/auth/*`, `/api/account/*` | Shopify Customer Account sign-in (tier 3), conversation history, export, erasure ([`docs/CUSTOMER_ACCOUNT.md`](docs/CUSTOMER_ACCOUNT.md)). | session / signed |
+| `/api/attribution/token`, `/api/r/<token>`, `/api/email-countdown/<token>`, `/api/email-hero-image/<file>` | Order-attribution token, tracked e-mail redirect, live countdown image, hero-image assets. | tokens |
+| `/api/webhooks/shopify`, `/api/webhooks/resend`, `/api/inbound/resend`, `/api/webhooks/pingen` | Orders → `mo_orders`, catalog changes; Resend delivery events and inbound mail; letter status. | signature over the raw body |
+| `/api/cron/*` | `refresh-customers` 02:00 · `sync-campaign-audience` 02:30 · `sync-catalog` 03:00 · `retention` 03:30 · `expire-bundles` 03:45 UTC ([`vercel.json`](vercel.json)). | `Authorization: Bearer CRON_SECRET` |
+| `/api/admin/*` (72 routes) | The dashboard's API ([`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md) §11). | Edge proxy + `guardAdmin*` |
+| `GET /` | Plain health string. | — |
 
 ## Run locally
 
 ```bash
 npm install
-cp .env.example .env.local
-# fill in ANTHROPIC_API_KEY, OPENAI_API_KEY, CHAT_SHARED_SECRET at minimum
-npm run dev
+cp .env.example .env.local     # fill in ANTHROPIC_API_KEY, OPENAI_API_KEY, CHAT_SHARED_SECRET, ADMIN_PASSWORD
+npm run dev                     # http://localhost:3000 — admin at /admin
 ```
 
-The backend listens on `http://localhost:3000`. There is no chat UI to
-visit; hit the endpoints directly:
+Without `DATABASE_URL` the admin renders empty states. For a full local setup
+(plain Postgres behind the Neon-protocol proxy, `npm run db:proxy`, schema +
+demo data with `npm run db:seed`) see
+[`docs/DATABASE.md`](docs/DATABASE.md) → „Local database“.
 
 ```bash
-curl -X POST http://localhost:3000/api/chat \
+curl -N -X POST http://localhost:3000/api/chat \
   -H 'content-type: application/json' \
   -H 'x-ms-chat-key: <your CHAT_SHARED_SECRET>' \
   -H 'x-ms-session: dev-session-1' \
@@ -71,169 +60,128 @@ curl -X POST http://localhost:3000/api/chat \
   -d '{"messages":[{"role":"user","parts":[{"type":"text","text":"Hallo"}]}]}'
 ```
 
-## Catalog + embeddings
+## Configuration
 
-The catalog used to be a committed JSON file. It is now refreshed by a
-daily Vercel cron (`/api/cron/sync-catalog`) that pulls live products
-from Shopify, regenerates embeddings, and writes both files to Vercel
-Blob. The runtime reads from Blob first, falls back to the bundled JSON
-in `src/data/` if Blob is unconfigured. See
-[`docs/CATALOG_SYNC.md`](docs/CATALOG_SYNC.md) for the full design.
+[`.env.example`](.env.example) is the **canonical, complete** list — every
+variable the code reads, with its purpose and default (81 variables). Two rules
+hold everywhere: the legal send gates (`CAMPAIGN_SENDS_APPROVED`,
+`CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `PHYSICAL_MAIL_SENDS_APPROVED`) default to
+`false` and are enabled only in production; every retention window treats `0`
+as „disabled“, never as „delete everything“.
 
-## Deploy to Vercel
+| Group | Variables |
+| --- | --- |
+| Chat / AI | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `TTS_SPEED`, `TTS_INSTRUCTIONS`, `MODEL_PRICES_JSON`, `USD_EUR_RATE` |
+| Security, rate limiting, admin | `ALLOWED_ORIGINS`, `CHAT_SHARED_SECRET`, `KV_REST_API_URL`, `KV_REST_API_TOKEN`, `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`, `RETURNING_HINT_ENABLED` |
+| Database | `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `NEON_FETCH_ENDPOINT` (local dev only) |
+| E-mail (Resend, designs, hero images) | `RESEND_API_KEY`, `CONTACT_TO_EMAIL`, `CONTACT_FROM_EMAIL`, `PUBLIC_BASE_URL`, `UNSUBSCRIBE_SECRET`, `MARKETING_DOI_EXPIRY_DAYS`, `INBOUND_EMAIL_ADDRESS`, `RESEND_WEBHOOK_SECRET`, `RESEND_EVENTS_WEBHOOK_SECRET`, `EMAIL_LOGO_URL`, `EMAIL_MO_ICON_URL`, `EMAIL_HERO_DEFAULT_URL`, `EMAIL_HERO_IMAGE_MODEL`, `EMAIL_HERO_IMAGE_QUALITY`, `EMAIL_HERO_REFERENCES`, `EMAIL_HERO_QA`, `EMAIL_AI_LABEL_ICON_URL` |
+| Marketing + campaign | `MARKETING_DISCOUNT_EXPIRY_DAYS`, `MARKETING_ORDER_LOOKBACK_DAYS`, `MARKETING_MIN_SEND_INTERVAL_DAYS`, `CONVERSION_SWEEP_MAX_CODES`, `CAMPAIGN_SENDS_APPROVED`, `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `CAMPAIGN_MO_DEEPLINK_URL` |
+| Physical mail (Pingen) | `PINGEN_CLIENT_ID`, `PINGEN_CLIENT_SECRET`, `PINGEN_ORGANISATION_ID`, `PINGEN_STAGING`, `PINGEN_WEBHOOK_SECRET`, `PHYSICAL_MAIL_SENDS_APPROVED`, `PINGEN_LETTER_COST_CENTS` |
+| Shopify (Admin API, webhooks, Customer Account) | `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_API_VERSION`, `SHOPIFY_APP_PROXY_SECRET`, `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_ID`, `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_SECRET`, `SHOPIFY_STOREFRONT_DOMAIN`, `TOKEN_ENC_KEY`, `SHOPIFY_CUSTOMER_ACCOUNT_STATE_SECRET`, `CUSTOMER_AUTH_PENDING_TTL_MINUTES`, `CUSTOMER_REFRESH_BATCH`, `CUSTOMER_REFRESH_STALE_HOURS` |
+| Bundles | `BUNDLE_CREATION_MODE`, `BUNDLE_OFFER_EXPIRY_DAYS`, `BUNDLE_EXPIRED_REDIRECT_URL` |
+| Storage, crons, observability | `BLOB_READ_WRITE_TOKEN`, `CRON_SECRET`, `NEXT_PUBLIC_SENTRY_DSN` (errors only, no tracing, no source-map upload) |
+| Retention ([`docs/DATA_RETENTION.md`](docs/DATA_RETENTION.md)) | `RETENTION_DAYS`, `KPI_RETENTION_DAYS`, `ABANDON_AFTER_MINUTES`, `MO_ATTRIBUTION_WINDOW_DAYS`, `SUPPRESSED_CAPTURE_PURGE_DAYS`, `CORRESPONDENCE_RETENTION_DAYS`, `FEEDBACK_RETENTION_DAYS`, `CUSTOMER_INACTIVITY_RETENTION_DAYS`, `ADMIN_ACCESS_LOG_RETENTION_DAYS`, `CAMPAIGN_CONTACT_RETENTION_DAYS`, `ANALYTICS_REPORT_RETENTION_DAYS`, `PHYSICAL_LETTER_RETENTION_DAYS` |
 
-### Environment variables
+## Scripts
 
-Every env var the production deploy needs, grouped by purpose. All are
-single-line strings. See `.env.example` for the canonical list.
-
-**Chat / AI**
-
-| Variable            | Description                                          |
-| ------------------- | ---------------------------------------------------- |
-| `ANTHROPIC_API_KEY` | Anthropic API key — powers `/api/chat`.              |
-| `OPENAI_API_KEY`    | OpenAI key — embeds user queries + (re-)index runs.  |
-
-**Security**
-
-| Variable             | Description                                                                       |
-| -------------------- | --------------------------------------------------------------------------------- |
-| `ALLOWED_ORIGINS`    | Comma-separated CORS allowlist. Default: `https://www.motionsports.de,https://motionsports.de`. |
-| `CHAT_SHARED_SECRET` | Long random string the widget sends in `x-ms-chat-key`. Required for chat + contact. |
-
-**Rate limiting**
-
-| Variable            | Description                                                                                          |
-| ------------------- | --------------------------------------------------------------------------------------------------- |
-| `KV_REST_API_URL`   | Upstash Redis REST URL — injected by Vercel's Upstash Marketplace integration. **Required**: the rate limiter fails fast (loud error, no silent no-op) if it or the token is missing. |
-| `KV_REST_API_TOKEN` | Paired REST token for the URL above (same Vercel integration).                                       |
-
-**Contact form**
-
-| Variable             | Description                                                                |
-| -------------------- | -------------------------------------------------------------------------- |
-| `RESEND_API_KEY`     | Resend API key. If unset, contact submissions only log to stdout.          |
-| `CONTACT_TO_EMAIL`   | Inbox that receives leads (e.g. `vertrieb@motionsports.de`).               |
-| `CONTACT_FROM_EMAIL` | Verified Resend sender (e.g. `Motion Sports <kontakt@motionsports.de>`).   |
-
-**Shopify catalog sync**
-
-| Variable                 | Description                                              |
-| ------------------------ | -------------------------------------------------------- |
-| `SHOPIFY_STORE_DOMAIN`   | `*.myshopify.com` domain (NOT the public domain).        |
-| `SHOPIFY_CLIENT_ID`      | App Client ID from the Shopify Developer Dashboard.      |
-| `SHOPIFY_CLIENT_SECRET`  | App Client Secret (`shpss_…`).                           |
-| `SHOPIFY_API_VERSION`    | Admin API version, e.g. `2026-04`.                       |
-
-**Catalog storage + scheduling**
-
-| Variable                 | Description                                                                  |
-| ------------------------ | ---------------------------------------------------------------------------- |
-| `BLOB_READ_WRITE_TOKEN`  | Vercel Blob token (auto-injected on Vercel; fill in for local).              |
-| `CRON_SECRET`            | Long random string. Cron sends it as `Authorization: Bearer <secret>`.       |
-
-**Observability (optional)**
-
-| Variable                  | Description                                                                                                                                              |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_SENTRY_DSN`  | Server-side error capture (**errors only** — `tracesSampleRate` is 0, no tracing). Injected by the Vercel Sentry integration. Unset ⇒ Sentry skipped cleanly, errors logged to stdout, one-time warning emitted. |
-| `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` | **Build-time only** — source-map upload via the Sentry Next.js plugin during `next build`. Vercel injects these in CI/deploys; not needed for local dev or runtime. |
-
-**AI cost tracking (optional — KPI tab)**
-
-| Variable            | Description                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| `MODEL_PRICES_JSON` | JSON `{ "<model>": { "input": N, "output": N } }` in USD per million tokens. Overrides/extends the built-in defaults. Unset ⇒ defaults. |
-| `USD_EUR_RATE`      | USD→EUR rate applied to computed AI costs. Default `0.92`.                                     |
-
-**Order attribution (optional — KPI tab, see `docs/ORDER_ATTRIBUTION.md`)**
-
-| Variable                     | Description                                                                                     |
-| ---------------------------- | ----------------------------------------------------------------------------------------------- |
-| `MO_ATTRIBUTION_WINDOW_DAYS` | Max days between a consultation's attribution token and an order for the order to count as Mo-attributed. Default `30`. Requires the `orders/create` + `orders/paid` webhooks to be registered on `/api/webhooks/shopify`. |
-
-### Deploy checklist
-
-Run these in order. Don't skip the manual cron trigger or the
-spend-cap step.
-
-1. **Push the branch and import the repo into a new Vercel project.**
-   Framework preset: Next.js. Root directory: repo root.
-2. **Set every env var above** in Vercel → Settings → Environment
-   Variables. Apply them to *Production* and *Preview*.
-3. **Deploy.** First deploy will build cleanly even with Blob empty
-   because the runtime falls back to the bundled JSON in `src/data/`.
-4. **Add the custom domain `chat.motionsports.de`** under Settings →
-   Domains. Configure the DNS CNAME at the registrar. Wait for the
-   certificate to issue.
-5. **Trigger the catalog sync manually once** so Blob has fresh data
-   before the first scheduled run:
-   ```bash
-   curl -X POST \
-     -H "Authorization: Bearer $CRON_SECRET" \
-     https://chat.motionsports.de/api/cron/sync-catalog
-   ```
-   Response should be a JSON summary with `mode: "shopify"` and a
-   non-zero product count. If it returns `mode: "fallback-bundle"`,
-   the Shopify creds are wrong — run `npm run verify:shopify` against
-   them locally and fix before continuing.
-6. **Set hard monthly spend caps**:
-   - Anthropic Console → Plans & billing → set a monthly spend limit.
-   - OpenAI Platform → Settings → Limits → set a hard monthly cap.
-   Without these a runaway loop or scraper can drain the account.
-7. **Smoke test the deployed chat endpoint** (replace the secret):
-   ```bash
-   curl -N -X POST https://chat.motionsports.de/api/chat \
-     -H 'content-type: application/json' \
-     -H "x-ms-chat-key: $CHAT_SHARED_SECRET" \
-     -H 'x-ms-session: smoke-test-1' \
-     -H 'origin: https://www.motionsports.de' \
-     -d '{"messages":[{"role":"user","parts":[{"type":"text","text":"Hallo"}]}]}'
-   ```
-   Expect an SSE stream that starts within ~2s. A `401` means the
-   shared secret didn't match; a `403` means the origin isn't in
-   `ALLOWED_ORIGINS`.
-8. **On day 2, verify the scheduled cron ran successfully.**
-   In Vercel → Logs, filter to `/api/cron/sync-catalog`. There should
-   be one invocation at 03:00 UTC with a 200 response and a JSON body
-   reporting `mode: "shopify"` and the product/embedding counts. If
-   the schedule didn't fire, confirm `vercel.json` is committed and
-   the Vercel Cron page lists the job.
+| Command | What it does |
+| --- | --- |
+| `npm run dev` / `build` / `start` | Next.js dev server, production build, production server. |
+| `npm run lint`, `npx tsc --noEmit`, `npm test` | ESLint, type check, the `node --test` suite (`src/**/*.test.mjs`). |
+| `npm run db:migrate` | Apply pending SQL migrations from `migrations/` (forward-only, run manually). |
+| `npm run db:proxy`, `npm run db:seed`, `npm run db:reset` | Local Neon-protocol proxy, demo data, test-data reset (see `docs/DATABASE.md`). |
+| `npm run verify:shopify` / `verify:pingen` / `verify:customer-account` | Check the respective credentials. |
+| `npm run diagnose:address` | Inspect the address capture for one customer. |
+| `npm run analyze:repurchase` | Repurchase analysis behind the lifecycle segments ([`docs/REPURCHASE_ANALYSIS.md`](docs/REPURCHASE_ANALYSIS.md)). |
+| `npm run convert-catalog`, `npm run index` | One-off catalog conversion and embedding build (the daily cron does this in production). |
+| `npm run hero:gradient`, `npm run hero:compare` | Hero-image tooling. |
+| `node scripts/preview-summary-email.mjs`, `node scripts/send-test-emails.mjs`, `node scripts/list-test-discounts.mjs` | Manual helpers: render the summary e-mail to a file, send test versions of the e-mails via Resend (**sends real mail** — read the header first), list/delete test discount codes. They import TypeScript directly; Node ≥ 22.18 runs them as is. |
 
 ## Architecture
 
 ```
 src/
 ├── app/
-│   ├── api/chat/route.ts             # Chat endpoint: extract profile → retrieve → stream
-│   ├── api/contact/route.ts          # Contact-form submission via Resend
-│   ├── api/products/route.ts         # Public product hydration for the widget
-│   ├── api/cron/sync-catalog/route.ts # Daily catalog refresh from Shopify
-│   ├── layout.tsx                    # Minimal root layout
-│   └── page.tsx                      # Plain health response
-├── data/
-│   ├── product-catalog.json          # Fallback when Blob is empty/unconfigured
-│   └── product-embeddings.json
-└── lib/
-    ├── catalog-mapping.ts            # Shopify product → internal Product type
-    ├── catalog-store.ts              # Blob-first loader + writer
-    ├── observability.ts              # Sentry init + reportError + error envelopes
-    ├── persona.ts                    # deriveArchetype, addendums, profile rendering
-    ├── product-catalog.ts            # Thin re-export
-    ├── rate-limit.ts                 # Upstash sliding-window limiter (chat + products buckets)
-    ├── retrieval.ts                  # Cosine retrieval + keyword fallback
-    ├── security.ts                   # CORS + shared-secret guard
-    ├── shopify.ts                    # Admin API client + token cache
-    ├── system-prompt.ts              # Per-turn system prompt
-    ├── tools.ts                      # Chat tool definitions
-    └── types.ts                      # Profile, Archetype, Product, tool args
+│   ├── api/                  # HTTP routes (thin: validate → lib → JSON envelope)
+│   │   ├── chat, products, contact, tts, kpi, feedback, newsletter-rating
+│   │   ├── capture-email, confirm-marketing, chat-marketing-opt-in, unsubscribe, consent-copy
+│   │   ├── auth/, account/, attribution/, r/[token], email-countdown/, email-hero-image/
+│   │   ├── webhooks/{shopify,resend,pingen}, inbound/resend, cron/*
+│   │   └── admin/**          # 72 guarded dashboard routes
+│   ├── admin/                # the dashboard: page.tsx (one screen per request), AdminShell,
+│   │                         # <Screen>Tab.tsx + <screen>/ workspaces, ui/ primitives, lib/ helpers
+│   ├── icon.svg, layout.tsx, page.tsx
+├── data/                     # bundled catalog + embeddings (fallback when Blob is empty)
+├── lib/                      # ~280 modules
+│   ├── *-store.ts            # database access per table group (Neon, null-safe, fail-soft)
+│   ├── *.mjs + *.test.mjs    # pure cores with unit tests (no I/O)
+│   ├── campaign-*, marketing-*, email-*, email-designs/   # the e-mail subsystem
+│   ├── shopify*, catalog-*, retrieval, system-prompt*, persona, tools   # the chat
+│   └── kpi-*, admin-*, retention*, rate-limit, security, observability
+└── proxy.ts                  # Edge gate for /admin and /api/admin
+migrations/                   # forward-only SQL, 0001 … 0056
+scripts/                      # operational scripts (npm aliases above)
+docs/                         # living documentation; docs/archive/ = historical reports and spikes
 ```
 
-## Persona architecture
+**A chat turn** (`/api/chat`): replay the `update_customer_profile` tool calls of
+the history into the current customer profile (the profile is a pure function
+of the message history), derive the persona, retrieve products by embedding
+similarity (keyword fallback), then stream a Claude response with the persona-
+aware system prompt and the chat tools (`update_customer_profile`,
+`search_products`, `show_product`, `compare_products`, `add_to_cart`,
+`suggest_showroom`, `show_contact_form`). Live directives from the admin's
+Verbesserung screen and published Q&A knowledge are injected into the prompt
+(cached ~5 minutes). Prompt caching: [`docs/PROMPT_CACHING.md`](docs/PROMPT_CACHING.md).
 
-The customer profile is **a pure function of the message history**. On
-each turn, every `update_customer_profile` tool call from the assistant
-stream is merged into an empty profile — no separate session storage.
-The archetype is derived from the profile (`deriveArchetype`). System
-prompt and retrieval are both parameterized by the current profile, so
-every recommendation is persona-aware.
+**Catalog**: refreshed daily by `/api/cron/sync-catalog` from Shopify
+(products + embeddings written to Vercel Blob; Shopify product webhooks apply
+changes in between); the runtime reads Blob first and falls back to
+`src/data/`. [`docs/CATALOG_SYNC.md`](docs/CATALOG_SYNC.md).
+
+**Data model**: two clusters — pseudonymous conversations/analytics and
+consent-bound e-mail data — joined only through a pseudonymous session key, plus
+the customer entity above both. [`docs/DATABASE.md`](docs/DATABASE.md),
+[`docs/DATA_RETENTION.md`](docs/DATA_RETENTION.md).
+
+## Deploy to Vercel
+
+1. **Import the repo** into a Vercel project (framework preset Next.js, root
+   directory = repo root, region `fra1` via `vercel.json`).
+2. **Set the environment variables** from `.env.example` that apply, for
+   *Production* and *Preview*. Keep the three legal send gates `false` until the
+   legal sign-off; set `CRON_SECRET`, `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`,
+   `UNSUBSCRIBE_SECRET` and the webhook secrets to long random strings.
+3. **Run the migrations** against the production database
+   (`npm run db:migrate` with the production `DATABASE_URL` in `.env`) — before
+   the first deploy and again whenever a PR says it needs a migration.
+4. **Deploy.** The first build works with an empty Blob because the runtime
+   falls back to the bundled catalog.
+5. **Add the domain** `chat.motionsports.de` (Settings → Domains, DNS CNAME) and
+   set `PUBLIC_BASE_URL` to it.
+6. **Trigger the catalog sync once** so Blob has data before the first
+   scheduled run:
+   ```bash
+   curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
+     https://chat.motionsports.de/api/cron/sync-catalog
+   ```
+   Expect `mode: "shopify"` and a non-zero product count; `mode:
+   "fallback-bundle"` means the Shopify credentials are wrong
+   (`npm run verify:shopify`).
+7. **Register the webhooks** (Shopify orders/products → `/api/webhooks/shopify`,
+   Resend → `/api/webhooks/resend` and `/api/inbound/resend`, Pingen →
+   `/api/webhooks/pingen`) with the secrets from step 2.
+8. **Set hard monthly spend caps** in the Anthropic and OpenAI consoles.
+9. **Smoke-test** the deployed chat endpoint (the `curl` above against the
+   domain; `401` = wrong shared secret, `403` = origin not allow-listed) and log
+   in at `/admin` — Einstellungen → Systemstatus shows which integrations are
+   configured.
+10. **Next day:** check Vercel → Logs for the five cron invocations (200 each).
+
+## Quality gates
+
+`npm run lint`, `npx tsc --noEmit`, `npm run build`, `npm test` must be clean
+before every push; UI changes ship with light/dark screenshots. Details and the
+hard rules (non-composable `sql` templates, null-safe stores, forward-only
+migrations, pure `.mjs` cores, admin date/number helpers, `InfoTip` for
+explanations) are in [`CLAUDE.md`](CLAUDE.md).

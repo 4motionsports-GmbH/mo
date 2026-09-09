@@ -1,6 +1,6 @@
 # Cleanup audit — UX and technical findings
 
-Status: **draft for review** (Phase 1 of the project clean-up). Companion documents:
+Status: **implemented** — Phase 1 findings of the project clean-up; the per-finding outcome is in §0 below. Companion documents:
 [`FEATURE_INVENTORY.md`](./FEATURE_INVENTORY.md) (the checklist we verify against at the end)
 and the screenshots under [`screenshots/`](./screenshots/).
 
@@ -10,6 +10,67 @@ Baseline measured on `main` @ `9c6b551`: lint 0 errors / 1 warning, `tsc` clean,
 Severity scale used below: **P1** must fix (bug, security, data or money at risk),
 **P2** should fix (efficiency, correctness edge, maintainability that blocks the redesign),
 **P3** nice to have.
+
+---
+
+## 0. Implementation status (2026-09-09)
+
+Worked through in twelve slices (design system → shell → Übersicht → Kunden → Kampagne → KPIs →
+Gespräche → Wissen → Analyse/Verbesserung → Feedback/Einstellungen → technical → docs), each merged
+to `main` with lint, `tsc`, `next build` and the test suite green and, for UI slices, Playwright
+interaction tests plus light/dark screenshots. After the technical slice (`a8fec5b`): lint 0
+warnings, 867 tests, build green, Übersicht JavaScript 344 → 159 KB gzip. Legend: ✅ done ·
+◑ partial (what remains and why) · ⏸ deferred.
+
+### UX findings
+| IDs | Status | Where / how |
+| --- | --- | --- |
+| UX-G1 … G11 | ✅ | `InfoTip` everywhere (texts verbatim), grouped sidebar with badges and icon rail/drawer, one fluid shell, `PageHeader`, `Callout`/`EmptyState`, `useConfirm()`, tokens + type scale, labelled icon buttons + roving-focus `Tabs` + focus-trapping `Dialog`, no page reloads in Kampagne, chart tokens, Tastenkürzel sheet in the top bar |
+| UX-U1 … U3 | ✅ | „Heute“ cards, database-only numbers (D-1), window in the title |
+| UX-K1 … K6 | ✅ | slim list + on-demand detail, tier InfoTips, Marketing sub-tab layout, shared `TranscriptView` + „Im Gespräche-Tab öffnen“, confirm with recipient/subject/discount, inbox badge |
+| UX-C1 … C7 | ✅ | stat strip + toolbar (overflow menu for reset), inline Text/Vorschau, collapsible groups with summaries, inline progress without reload, paged searchable „Gesendet“ with delivery state, A/B InfoTip + counts, `kampagne/` split |
+| UX-P1 … P3 | ✅ | sticky group navigation, 10-minute Shopify cache with „Stand hh:mm · Aktualisieren“, `kpi/sections/*` |
+| UX-S1 … S3 | ✅ | `FilterBar`, InfoTips, structure kept; selection in the URL (`?gid=`) |
+| UX-W1 … W4 | ✅ | compact rows with expand-in-place editor and `j`/`k`, product picker, search, labelled reload |
+| UX-F1 | ✅ | `EmptyState` inside the list, newsletter badge |
+| UX-A1 … A2 | ✅ | InfoTips, shared `SidebarList` |
+| UX-V1 … V3 | ✅ | InfoTip instead of the three-step intro, labelled icon buttons |
+| UX-E1 … E3 | ✅ | one preview per design with type selector, Systemstatus card (D-5), InfoTips |
+| UX-L1 | ✅ | brand mark, spacing, rate limit (TECH-C4) |
+
+### Technical findings
+| ID | Status | Outcome |
+| --- | --- | --- |
+| TECH-C1 | ✅ | `retention-options.mjs` (tested): `0` disables every window; all sweeps guarded; `.env.example` + `DATA_RETENTION.md` updated |
+| TECH-C2 | ✅ | no list cap; slim list + `GET customers/detail` |
+| TECH-C3 | ✅ | `GET campaign/history` — paged, search, date range, delivery state |
+| TECH-C4 / S5 | ✅ | login limited to 10 / 10 min per IP (`admin-login`); fails open without KV |
+| TECH-C5 | ✅ | fallback stamps only the newest send per address (`DISTINCT ON`) |
+| TECH-C6 | ✅ | one query with `count(*) OVER ()`; filter parsing in a tested `.mjs` core |
+| TECH-C7 | ✅ | `/api/kpi` writes through `recordKpiEvent()` |
+| TECH-C8 | ✅ | Übersicht reads the DOI list from the database; the helper accepts `Date` |
+| TECH-E1 … E7 | ✅ | one screen per request; detail on demand; address auto-capture only in the cron; DB aggregates (D-1); KPI cache (D-4); redemption per visible page; per-screen chunks (Recharts only on KPIs) |
+| TECH-E8 | ⏸ | `pg_trgm` index not needed at today's volume; add with a future migration when search slows |
+| TECH-E9 | ✅ | migration `0056_retention_indexes.sql` |
+| TECH-D1 | ◑ | every admin file split (largest now `kampagne/useCampaignActions.ts`, 859 lines); `campaign-store.ts` (1 743) and `system-prompt-core.mjs` (1 231) kept whole — the store is the campaign send path (only changed with tests, and only where a finding required it), the prompt core is one cohesive unit under golden tests |
+| TECH-D2 | ✅ | primitives, `adminFetch`, `useAsyncAction`, `admin-format.mjs`, `useStepLoop`, `TranscriptView` |
+| TECH-D3 | ◑ | pure steps shared (`firstProductImageUrl`, `catalogNameLookup`, discount swap, design/hero render); the two orchestrators stay separate by design (different gates and records) |
+| TECH-D4 | ✅ | `src/lib/admin-tabs.mjs` registry (tested) |
+| TECH-D5 | ✅ | documented in the route: lead mail to the team inbox, no consent gate or mirror row, so `sendEmail` bookkeeping does not apply |
+| TECH-S1 … S4 | ✓ | unchanged |
+| TECH-S6 | ✅ | gates `false` in `.env.example`; Sentry source-map upload removed from the docs |
+| TECH-X1 … X6 | ✅ | `.env.example` complete (81 variables, `NEON_FETCH_ENDPOINT` included); README and ADMIN_DASHBOARD rewritten; 14 historical docs in `docs/archive/` with index; `probe-bundle.mjs` deleted; the three kept scripts documented (Node ≥ 22.18 runs them, no `tsx`); lint warning gone |
+| TECH-M1 | ✅ | `@ai-sdk/react`, `framer-motion` removed |
+| TECH-M2 | ◑ | 88 symbols un-exported; dead functions, constants and five routes deleted; the ~200 type-only exports left in place (harmless) |
+| TECH-M4 | ✅ | batched campaign upsert (`unnest`, 500 per chunk); Kunden list without per-customer queries; Shopify fan-outs cached; the small bounded loops left |
+| TECH-M6 | ◑ | formatters, product-image helper and `catalogNameLookup` unified; `germanDate` (`kpi-range`, formats a `YYYY-MM-DD` label) and `formatGermanExpiryDate` (customer-facing expiry, Europe/Berlin) kept — different inputs and audiences |
+| TECH-M7 | ⏸ | the large functions were not split: no behaviour change in the send and prompt paths during this project |
+| TECH-M8 | ◑ | new cores are tested (`retention-options`, `admin-tabs`, `admin-conversation-filter`, `ttl-cache`, `admin-format`); the four small untested cores (`campaign-flags`, `email-rating`, `kpi-event-patterns`, `openai-error`) remain — trivial and exercised through their callers |
+
+### Decisions and removals
+D-1 … D-9 were approved on 2026-09-08 and are implemented (D-6 is documented in `DATABASE.md` →
+„Local database“). Every item in Part 6 was carried out; the three manual scripts of §6.2 were kept
+and documented in `README.md`. Feature-by-feature verification: `FEATURE_INVENTORY_STATUS.md`.
 
 ---
 

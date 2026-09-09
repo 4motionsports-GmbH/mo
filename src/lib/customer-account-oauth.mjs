@@ -5,7 +5,7 @@
 // capture-validation.mjs / email-offer-trigger.mjs convention.
 //
 // See docs/CUSTOMER_ACCOUNT.md (PKCE flow) and the authoritative spike
-// docs/CUSTOMER_ACCOUNT_SPIKE.md §3.
+// docs/archive/CUSTOMER_ACCOUNT_SPIKE.md §3.
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 

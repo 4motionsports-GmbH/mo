@@ -571,7 +571,7 @@ export async function generateCustomerMarketingDraft(
 
 // ---------------------------------------------------------------------------
 // Per-CUSTOMER PHYSICAL LETTER draft — a SEPARATE generation from the email
-// (docs/EMAIL_SUBSYSTEM_SPIKE.md §4). A printed letter has NO clickable cart
+// (docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §4). A printed letter has NO clickable cart
 // button, NO tracked link and NO email-unsubscribe footer, so the prose is
 // written for paper: a proper salutation (by name when we have it), warm
 // advisory body grounded in the conversations/correspondence, a gentle pointer

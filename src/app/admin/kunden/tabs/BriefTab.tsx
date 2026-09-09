@@ -1,6 +1,6 @@
 "use client";
 
-// Brief — physical mail (docs/EMAIL_SUBSYSTEM_SPIKE.md §4), a SEPARATE flow
+// Brief — physical mail (docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §4), a SEPARATE flow
 // from the email: generate a letter-optimised draft, edit, preview the PDF,
 // send via Pingen. Sending is disabled (with the reason) until a complete,
 // lawfully held postal address, the feature flag and the Pingen config exist.
