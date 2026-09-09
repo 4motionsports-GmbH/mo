@@ -22,7 +22,7 @@ export const GespraecheWorkspace = dynamic(() =>
 );
 
 export const WissenWorkspace = dynamic(() =>
-  import("./WissenWorkspace").then((m) => m.WissenWorkspace)
+  import("./wissen/WissenWorkspace").then((m) => m.WissenWorkspace)
 );
 
 export const FeedbackList = dynamic(() => import("./FeedbackList").then((m) => m.FeedbackList));
