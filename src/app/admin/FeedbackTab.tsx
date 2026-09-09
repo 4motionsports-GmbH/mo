@@ -1,10 +1,10 @@
 // Feedback tab (server-rendered). A thin read: it fetches the customer-feedback
 // rows once on the SERVER (listFeedback) and hands them to the client toolbar
-// (FeedbackList) for search/filter/sort. No mutation, no new admin logic —
-// presentation + a read query only.
+// (feedback/FeedbackList) for search/filter/sort. No mutation, no new admin
+// logic — presentation + a read query only.
 
 import { listFeedback } from "@/lib/feedback-store";
-import type { FeedbackItem } from "./FeedbackList";
+import type { FeedbackItem } from "./feedback/FeedbackList";
 import { FeedbackList } from "./lazy";
 import { Callout } from "./ui";
 
@@ -30,15 +30,8 @@ export async function FeedbackTab({ dbReady }: { dbReady: boolean }) {
     createdAt: r.createdAt,
   }));
 
-  if (items.length === 0) {
-    return (
-      <Callout tone="info" className="mb-4">
-        Noch kein Feedback. Sobald Nutzer:innen über das Widget eine Rückmeldung
-        senden, erscheint sie hier — neueste zuerst.
-      </Callout>
-    );
-  }
-
+  // The toolbar stays visible even without rows — the list shows its own
+  // empty state (UX-F1).
   return <FeedbackList feedback={items} />;
 }
 

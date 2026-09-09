@@ -25,7 +25,9 @@ export const WissenWorkspace = dynamic(() =>
   import("./wissen/WissenWorkspace").then((m) => m.WissenWorkspace)
 );
 
-export const FeedbackList = dynamic(() => import("./FeedbackList").then((m) => m.FeedbackList));
+export const FeedbackList = dynamic(() =>
+  import("./feedback/FeedbackList").then((m) => m.FeedbackList)
+);
 
 export const AnalyseWorkspace = dynamic(() =>
   import("./analytics/AnalyseWorkspace").then((m) => m.AnalyseWorkspace)
@@ -36,5 +38,5 @@ export const VerbesserungWorkspace = dynamic(() =>
 );
 
 export const EmailSettingsWorkspace = dynamic(() =>
-  import("./EmailSettingsWorkspace").then((m) => m.EmailSettingsWorkspace)
+  import("./einstellungen/EmailSettingsWorkspace").then((m) => m.EmailSettingsWorkspace)
 );

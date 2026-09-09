@@ -96,7 +96,6 @@ export function EmailPreviewButton({
         size={size}
         onClick={() => void open()}
         disabled={disabled || busy}
-        title="Gerenderte E-Mail-Vorschau — so erscheint die E-Mail im Postfach"
       >
         <Eye className="me-1.5 h-4 w-4" />
         {busy ? "Lädt…" : label}

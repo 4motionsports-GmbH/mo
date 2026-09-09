@@ -9,14 +9,14 @@
 //   SORT    — newest- / oldest-first by created_at
 //
 // Read-only by design: feedback is presentation here, nothing is mutated.
+// Newsletter ratings (page = "email:<kind>") carry their own badge.
 
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
-import { Badge, Input, Label, Select } from "./ui";
-import {
-  ADMIN_DATE_TIME_MEDIUM,
-  formatAdmin,
-} from "@/lib/admin-datetime.mjs";
+import { MessageSquareText, Star } from "lucide-react";
+import { ADMIN_DATE_TIME_MEDIUM, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { num, plural } from "@/lib/admin-format.mjs";
+import { EMAIL_THEME_KIND_LABELS } from "@/lib/email-theme.mjs";
+import { EmptyState, FilterBar, FilterGroup, SearchInput, Select, StatusBadge } from "../ui";
 
 export interface FeedbackItem {
   id: number;
@@ -38,8 +38,11 @@ function createdTime(f: FeedbackItem): number {
   return Number.isNaN(ms) ? Number.NaN : ms;
 }
 
-function formatDate(iso: string): string {
-  return formatAdmin(iso, ADMIN_DATE_TIME_MEDIUM);
+/** "email:<kind>" pages are one-click newsletter ratings, not widget feedback. */
+function newsletterKind(page: string | null): string | null {
+  if (!page || !page.startsWith("email:")) return null;
+  const kind = page.slice("email:".length);
+  return (EMAIL_THEME_KIND_LABELS as Record<string, string>)[kind] ?? kind;
 }
 
 export function FeedbackList({ feedback }: { feedback: FeedbackItem[] }) {
@@ -66,7 +69,6 @@ export function FeedbackList({ feedback }: { feedback: FeedbackItem[] }) {
         (f.page ?? "").toLowerCase().includes(q)
       );
     });
-
     const sorted = [...filtered];
     sorted.sort((a, b) => {
       const ta = createdTime(a);
@@ -81,30 +83,33 @@ export function FeedbackList({ feedback }: { feedback: FeedbackItem[] }) {
     return sorted;
   }, [feedback, query, tier, sort]);
 
-  return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="min-w-[12rem] flex-1">
-          <Label htmlFor="fb-search" className="mb-1.5 block text-muted-foreground">
-            Suche (Text, E-Mail, Seite)
-          </Label>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="fb-search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Stichwort…"
-              className="pl-9"
-            />
-          </div>
-        </div>
+  const activeCount = (query.trim() ? 1 : 0) + (tier !== TIER_ALL ? 1 : 0);
+  const summary =
+    visible.length === feedback.length
+      ? plural(feedback.length, "Rückmeldung", "Rückmeldungen")
+      : `${num(visible.length)} von ${plural(feedback.length, "Rückmeldung", "Rückmeldungen")}`;
 
-        <div className="w-44">
-          <Label htmlFor="fb-tier" className="mb-1.5 block text-muted-foreground">
-            Tier
-          </Label>
-          <Select id="fb-tier" value={tier} onChange={(e) => setTier(e.target.value)}>
+  return (
+    <div className="flex flex-col gap-4">
+      <FilterBar
+        activeCount={activeCount}
+        onReset={() => {
+          setQuery("");
+          setTier(TIER_ALL);
+        }}
+        end={<span className="text-xs text-muted-foreground">{summary}</span>}
+      >
+        <SearchInput
+          id="feedback-search"
+          value={query}
+          onValueChange={setQuery}
+          placeholder="Text, E-Mail, Seite …"
+          aria-label="Feedback durchsuchen"
+          size="sm"
+          containerClassName="w-full sm:w-72"
+        />
+        <FilterGroup label="Tier" htmlFor="fb-tier">
+          <Select id="fb-tier" value={tier} onChange={(e) => setTier(e.target.value)} className="h-8 w-auto min-w-[8rem] py-0 pr-8 text-xs">
             <option value={TIER_ALL}>Alle</option>
             {tiers.map((t) => (
               <option key={t} value={t}>
@@ -112,29 +117,28 @@ export function FeedbackList({ feedback }: { feedback: FeedbackItem[] }) {
               </option>
             ))}
           </Select>
-        </div>
-
-        <div className="w-44">
-          <Label htmlFor="fb-sort" className="mb-1.5 block text-muted-foreground">
-            Sortierung
-          </Label>
-          <Select id="fb-sort" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+        </FilterGroup>
+        <FilterGroup label="Sortierung" htmlFor="fb-sort">
+          <Select
+            id="fb-sort"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            className="h-8 w-auto min-w-[9rem] py-0 pr-8 text-xs"
+          >
             <option value="created_desc">Neueste zuerst</option>
             <option value="created_asc">Älteste zuerst</option>
           </Select>
-        </div>
-      </div>
+        </FilterGroup>
+      </FilterBar>
 
-      <p className="mb-4 text-sm text-muted-foreground">
-        {visible.length === feedback.length
-          ? `${feedback.length} Rückmeldung(en)`
-          : `${visible.length} von ${feedback.length} Rückmeldung(en)`}
-      </p>
-
-      {visible.length === 0 ? (
-        <div className="rounded-lg border border-border bg-card px-3.5 py-3 text-sm text-muted-foreground">
-          Keine Rückmeldungen für diese Suche/Filter.
-        </div>
+      {feedback.length === 0 ? (
+        <EmptyState
+          icon={<MessageSquareText />}
+          title="Noch kein Feedback."
+          description="Sobald Nutzer:innen über das Widget eine Rückmeldung senden, erscheint sie hier — neueste zuerst."
+        />
+      ) : visible.length === 0 ? (
+        <EmptyState compact icon={<MessageSquareText />} title="Keine Rückmeldungen für diese Suche/Filter." />
       ) : (
         <div className="flex flex-col gap-3">
           {visible.map((f) => (
@@ -147,23 +151,35 @@ export function FeedbackList({ feedback }: { feedback: FeedbackItem[] }) {
 }
 
 function FeedbackCard({ item }: { item: FeedbackItem }) {
+  const newsletter = newsletterKind(item.page);
   return (
     <article className="rounded-lg border border-border bg-card p-4 shadow-sm">
       <header className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <time dateTime={item.createdAt} className="font-medium text-foreground">
-          {formatDate(item.createdAt)}
+          {formatAdmin(item.createdAt, ADMIN_DATE_TIME_MEDIUM)}
         </time>
-        {item.tier && <Badge variant="secondary">{item.tier}</Badge>}
-        {item.email && <Badge variant="info">{item.email}</Badge>}
+        {newsletter && (
+          <StatusBadge tone="accent" dot={false} icon={<Star />}>
+            Newsletter-Bewertung · {newsletter}
+          </StatusBadge>
+        )}
+        {item.tier && (
+          <StatusBadge tone="neutral" dot={false}>
+            {item.tier}
+          </StatusBadge>
+        )}
+        {item.email && (
+          <StatusBadge tone="info" dot={false}>
+            {item.email}
+          </StatusBadge>
+        )}
       </header>
 
-      <p className="whitespace-pre-wrap break-words text-sm text-foreground">
-        {item.message}
-      </p>
+      <p className="whitespace-pre-wrap break-words text-sm text-foreground">{item.message}</p>
 
       {(item.page || item.sessionId || item.conversationId) && (
-        <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t border-border pt-2 text-xs text-muted-foreground">
-          {item.page && (
+        <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t border-border pt-2 text-2xs text-muted-foreground">
+          {item.page && !newsletter && (
             <div className="flex gap-1.5">
               <dt className="font-medium">Seite:</dt>
               <dd className="break-all">{item.page}</dd>
