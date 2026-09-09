@@ -14,7 +14,7 @@ import {
 } from "@/lib/admin-conversations";
 import { estimateAnalysisCostUsd } from "@/lib/conversation-analysis-core.mjs";
 import { loadModelPrices, usdEurRate, usdToEur } from "@/lib/ai-pricing.mjs";
-import { GespraecheWorkspace } from "./GespraecheWorkspace";
+import { GespraecheWorkspace } from "./lazy";
 import { Callout } from "./ui";
 
 export async function GespraecheTab({

@@ -9,7 +9,7 @@ import { listEmailDesignMeta } from "@/lib/email-designs/registry";
 import { listEmailDesignSelections } from "@/lib/email-design-store";
 import { isEmailConfigured, senderAddress } from "@/lib/email";
 import { inboundEmailAddress } from "@/lib/email-inbound";
-import { EmailSettingsWorkspace } from "./EmailSettingsWorkspace";
+import { EmailSettingsWorkspace } from "./lazy";
 
 export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
   const designs = listEmailDesignMeta();

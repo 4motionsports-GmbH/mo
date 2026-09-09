@@ -4,7 +4,8 @@
 // presentation + a read query only.
 
 import { listFeedback } from "@/lib/feedback-store";
-import { FeedbackList, type FeedbackItem } from "./FeedbackList";
+import type { FeedbackItem } from "./FeedbackList";
+import { FeedbackList } from "./lazy";
 import { Callout } from "./ui";
 
 export async function FeedbackTab({ dbReady }: { dbReady: boolean }) {

@@ -21,7 +21,7 @@ import {
   isSingleOptInAllowed,
 } from "@/lib/campaign-flags.mjs";
 import { isShopifyConfigured } from "@/lib/shopify";
-import { KampagneWorkspace } from "./kampagne/KampagneWorkspace";
+import { KampagneWorkspace } from "./lazy";
 import type { CampaignQueueItemProps } from "./kampagne/types";
 import { Callout } from "./ui";
 

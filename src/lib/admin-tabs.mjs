@@ -71,7 +71,7 @@ export const ADMIN_TABS = Object.freeze([
     label: "KPIs",
     group: "Einblicke",
     description: "Pseudonyme Analytics (Cluster A) + Shopify-Käufe.",
-    wide: false,
+    wide: true,
     shortcut: "5",
   },
   {

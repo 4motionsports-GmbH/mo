@@ -63,6 +63,8 @@ async function loadBadges(dbReady: boolean): Promise<AdminBadges> {
   };
 }
 
+// The client workspaces of the screens are chunked per screen (see ./lazy.tsx),
+// so rendering one screen ships that screen's JavaScript only (TECH-E7).
 async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean) {
   switch (tab) {
     case "overview":
@@ -92,7 +94,7 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
         kpiFrom: firstParam(sp.kpiFrom),
         kpiTo: firstParam(sp.kpiTo),
       });
-      return <KpiTab dbReady={dbReady} range={range} />;
+      return <KpiTab dbReady={dbReady} range={range} fresh={firstParam(sp.kpiFresh)} />;
     }
     case "feedback":
       return <FeedbackTab dbReady={dbReady} />;

@@ -11,7 +11,7 @@ import {
   getQaCounts,
   countScanCandidates,
 } from "@/lib/qa-store";
-import { WissenWorkspace } from "./WissenWorkspace";
+import { WissenWorkspace } from "./lazy";
 import { Callout } from "./ui";
 
 export async function WissenTab({ dbReady }: { dbReady: boolean }) {

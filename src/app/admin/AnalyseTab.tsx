@@ -5,7 +5,7 @@
 // heavy /admin re-render).
 
 import { listAnalyticsReports } from "@/lib/analytics-report-store";
-import { AnalyseWorkspace } from "./analytics/AnalyseWorkspace";
+import { AnalyseWorkspace } from "./lazy";
 import type { SidebarReport } from "./analytics/ReportSidebar";
 import { Callout } from "./ui";
 

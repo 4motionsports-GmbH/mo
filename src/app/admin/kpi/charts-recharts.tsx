@@ -1,22 +1,20 @@
 "use client";
 
-// Recharts client islands for the KPI tab. The KPI tab itself stays a SERVER
-// component (it owns all the DB aggregation); these components receive the
-// already-computed, fully-serializable data as props and only render it. No data
-// is fetched or recomputed here — pure presentation.
+// Recharts implementation of the KPI charts. Loaded ONLY through ./charts
+// (next/dynamic, ssr:false), so the Recharts bundle is a separate chunk that the
+// browser fetches on the KPI screen alone (TECH-E7). The KPI tab itself stays a
+// SERVER component (it owns all the DB aggregation); these components receive
+// the already-computed, fully-serializable data as props and only render it.
 //
 // Theming: Recharts writes colors as SVG presentation attributes, which ARE CSS,
 // so `fill="var(--accent)"` / `stroke="var(--border)"` resolve through the admin
 // design tokens (theme.css) and flip automatically with the `.dark` class on the
 // admin shell root. No hard-coded hex, no theme prop threading.
 //
-// Loading: Recharts' ResponsiveContainer measures its parent after mount, so it
-// can't render meaningfully on the server. Every chart is wrapped in
-// <ChartFrame>, which shows a Skeleton placeholder of the right height until the
-// component has mounted on the client — that doubles as the required loading
-// state for client-rendered chart data.
+// Sizing: ResponsiveContainer measures its parent, so every chart sits in a
+// <ChartFrame> of a fixed height taken from ./chart-geometry — the same numbers
+// the dynamic wrapper uses for its loading skeleton.
 
-import { useSyncExternalStore } from "react";
 import {
   Area,
   AreaChart,
@@ -34,12 +32,14 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Skeleton } from "./ui";
-import {
-  ADMIN_DAY_MONTH,
-  formatAdmin,
-} from "@/lib/admin-datetime.mjs";
+import { ADMIN_DAY_MONTH, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { num } from "@/lib/admin-format.mjs";
+import {
+  CHATS_PER_DAY_HEIGHT,
+  STATUS_SPLIT_HEIGHT,
+  funnelChartHeight,
+  personaChartHeight,
+} from "./chart-geometry";
 
 // Theme token references (resolve via CSS variables in theme.css).
 const ACCENT = "var(--accent)";
@@ -49,18 +49,7 @@ const MUTED = "var(--muted-foreground)";
 const BORDER = "var(--border)";
 const FOREGROUND = "var(--foreground)";
 
-// Mount detection without setState-in-effect: false during SSR / first paint,
-// true once hydrated on the client (so ResponsiveContainer can measure).
-const noopSubscribe = () => () => {};
-function useMounted(): boolean {
-  return useSyncExternalStore(
-    noopSubscribe,
-    () => true,
-    () => false
-  );
-}
-
-// Gates a chart on client mount: Skeleton until ResponsiveContainer can measure.
+// Fixed-height frame so ResponsiveContainer has something to measure.
 function ChartFrame({
   height,
   children,
@@ -68,10 +57,6 @@ function ChartFrame({
   height: number;
   children: React.ReactElement;
 }) {
-  const mounted = useMounted();
-  if (!mounted) {
-    return <Skeleton className="w-full rounded-lg" style={{ height }} />;
-  }
   return (
     <div className="w-full" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -137,7 +122,7 @@ export function ChatsPerDayChart({
   const dayTick = (iso: string): string => formatAdmin(iso, ADMIN_DAY_MONTH, iso);
 
   return (
-    <ChartFrame height={220}>
+    <ChartFrame height={CHATS_PER_DAY_HEIGHT}>
       <AreaChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
         <defs>
           <linearGradient id="chatsArea" x1="0" y1="0" x2="0" y2="1">
@@ -204,7 +189,7 @@ export function StatusSplitChart({
   if (data.length === 0) return null;
 
   return (
-    <ChartFrame height={220}>
+    <ChartFrame height={STATUS_SPLIT_HEIGHT}>
       <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
         <Pie
           data={data}
@@ -237,10 +222,9 @@ export function PersonaDistributionChart({
   data: Array<{ name: string; value: number }>;
 }) {
   if (data.length === 0) return null;
-  const height = Math.max(120, data.length * 38 + 24);
 
   return (
-    <ChartFrame height={height}>
+    <ChartFrame height={personaChartHeight(data.length)}>
       <BarChart
         layout="vertical"
         data={data}
@@ -296,7 +280,7 @@ export function StageFunnelChart({ stages }: { stages: FunnelStage[] }) {
   }));
 
   return (
-    <ChartFrame height={Math.max(180, stages.length * 56)}>
+    <ChartFrame height={funnelChartHeight(stages.length)}>
       <FunnelChart margin={{ top: 8, right: 96, bottom: 8, left: 8 }}>
         <Tooltip content={<ChartTooltip />} />
         <Funnel dataKey="value" data={data} isAnimationActive={false} stroke="var(--card)">

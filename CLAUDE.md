@@ -31,6 +31,10 @@ compatible.
   Europe/Berlin). A bare `toLocale*String` on a `Date` in `src/app/admin` is a lint error (hydration).
 - **Numbers in the admin go through `src/lib/admin-format.mjs`** (`num`, `eur`, `eurFromCents`, `pct`,
   `ratio`, `hours`, `plural`, `relativeTime`, `truncate`) — no per-file `toLocaleString` helpers.
+- **KPI Shopify fan-outs are cached** (`src/lib/kpi-cache.ts` over the pure `ttl-cache.mjs`): revenue,
+  campaign KPIs, marketing funnel and recommendation loop are served per range for 10 minutes;
+  `?kpiFresh=<unix s>` (the "Aktualisieren" button) is a freshness floor, not a cache wipe, so it works
+  across serverless instances. Pure-DB KPI sections are never cached.
 - **Client calls to `/api/admin/*` go through `adminFetch()`** (`src/app/admin/lib/admin-fetch.ts`):
   JSON in/out, `AdminApiError` with status + code + German message, 401 → login and back. Button
   pending/error state comes from `useAsyncAction()` next to it; confirmations from `useConfirm()`.

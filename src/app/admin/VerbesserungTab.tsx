@@ -10,7 +10,7 @@ import { listAnalyticsReports } from "@/lib/analytics-report-store";
 import { listDirectives } from "@/lib/directives-store";
 import { buildMoSelfSnapshot } from "@/lib/mo-self-snapshot";
 import { MAX_ACTIVE_DIRECTIVES, MAX_DIRECTIVE_CHARS } from "@/lib/improvement-core.mjs";
-import { VerbesserungWorkspace } from "./verbesserung/VerbesserungWorkspace";
+import { VerbesserungWorkspace } from "./lazy";
 import { Callout } from "./ui";
 
 export async function VerbesserungTab({ dbReady }: { dbReady: boolean }) {

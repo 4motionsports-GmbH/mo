@@ -6,7 +6,7 @@
 
 import { listCustomerListRows } from "@/lib/customer-store";
 import { listUnmatchedInbound } from "@/lib/email-messages-store";
-import { KundenWorkspace } from "./kunden/KundenWorkspace";
+import { KundenWorkspace } from "./lazy";
 import { Callout } from "./ui";
 
 export async function KundenTab({
