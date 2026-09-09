@@ -18,6 +18,7 @@ import { getQaCounts } from "@/lib/qa-store";
 import { countUnmatchedInbound } from "@/lib/email-messages-store";
 import { resolveKpiRange } from "@/lib/kpi-range";
 import { parseAdminConversationFilter } from "@/lib/admin-conversations";
+import { parseConversationId } from "@/lib/admin-conversation-filter.mjs";
 import { KundenTab } from "./KundenTab";
 import { KpiTab } from "./KpiTab";
 import { FeedbackTab } from "./FeedbackTab";
@@ -112,7 +113,13 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
         gq: firstParam(sp.gq),
         gpage: firstParam(sp.gpage),
       });
-      return <GespraecheTab dbReady={dbReady} filter={filter} />;
+      return (
+        <GespraecheTab
+          dbReady={dbReady}
+          filter={filter}
+          initialConversationId={parseConversationId(firstParam(sp.gid))}
+        />
+      );
     }
     case "wissen":
       return <WissenTab dbReady={dbReady} />;

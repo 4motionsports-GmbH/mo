@@ -4,7 +4,8 @@
 // dialog rendered by the shared TranscriptView.
 
 import * as React from "react";
-import { MessageSquare } from "lucide-react";
+import Link from "next/link";
+import { ExternalLink, MessageSquare } from "lucide-react";
 import type { CustomerDetail } from "@/lib/customer-detail";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { plural } from "@/lib/admin-format.mjs";
@@ -18,6 +19,7 @@ import {
   EmptyState,
   StatusBadge,
   TranscriptView,
+  buttonVariants,
 } from "../../ui";
 
 export function BeratungenTab({ customer }: { customer: CustomerDetail }) {
@@ -83,6 +85,16 @@ export function BeratungenTab({ customer }: { customer: CustomerDetail }) {
           <div className="mt-3 max-h-[65vh] overflow-y-auto rounded-lg bg-surface-2 p-3">
             <TranscriptView turns={open?.transcript ?? []} showTimes={false} />
           </div>
+          {open && (
+            <div className="mt-3 flex justify-end">
+              <Link
+                href={`/admin?tab=gespraeche&gid=${open.conversationId}`}
+                className={buttonVariants({ variant: "outline", size: "xs" })}
+              >
+                <ExternalLink /> Im Gespräche-Tab öffnen
+              </Link>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

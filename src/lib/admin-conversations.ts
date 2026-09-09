@@ -18,21 +18,15 @@
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
-import { resolveKpiRange, type KpiRange } from "./kpi-range";
+import type { KpiRange } from "./kpi-range";
+import { parseConversationFilter, SEARCH_MAX_LENGTH } from "./admin-conversation-filter.mjs";
 import {
   loadModelPrices,
   usdEurRate,
   usdCostForUsage,
   usdToEur,
 } from "./ai-pricing.mjs";
-import {
-  classifyTier,
-  TIERS,
-  CATEGORY_LABELS,
-  QUALITY_LABELS,
-  ANALYSIS_CATEGORIES,
-  ANALYSIS_QUALITIES,
-} from "./conversation-analysis-core.mjs";
+import { classifyTier, CATEGORY_LABELS, QUALITY_LABELS } from "./conversation-analysis-core.mjs";
 import { CART_PATTERNS } from "./kpi-event-patterns.mjs";
 
 /** Conversations per list page. */
@@ -201,8 +195,6 @@ function analysisCostEur(
   return usdToEur(usd, usdEurRate());
 }
 
-/** Longest accepted search input (defensive cap; URLs stay shareable). */
-const SEARCH_MAX_LENGTH = 200;
 /** At most this many whitespace-separated search terms are evaluated. */
 const SEARCH_MAX_TERMS = 8;
 
@@ -222,9 +214,9 @@ function searchPatterns(q: string | null): string[] {
 }
 
 /**
- * Parse the inspector's URL params into a validated filter. The date window
- * reuses the KPI range resolver (same presets/clamping as the KPI tab), so an
- * invalid/partial input falls back safely. Unknown tier → no tier filter.
+ * Parse the inspector's URL params into a validated filter (the URL contract
+ * lives in ./admin-conversation-filter.mjs, shared with the client's link
+ * builder and covered by node:test).
  */
 export function parseAdminConversationFilter(params: {
   grange?: string | null;
@@ -237,29 +229,7 @@ export function parseAdminConversationFilter(params: {
   gq?: string | null;
   gpage?: string | null;
 }): AdminConversationFilter {
-  const range = resolveKpiRange({
-    kpiRange: params.grange,
-    kpiFrom: params.gfrom,
-    kpiTo: params.gto,
-  });
-  const tier =
-    params.gtier && (TIERS as string[]).includes(params.gtier)
-      ? (params.gtier as AdminTier)
-      : null;
-  const hasError = params.gerr === "1" || params.gerr === "true";
-  const category =
-    params.gcat && (ANALYSIS_CATEGORIES as string[]).includes(params.gcat)
-      ? params.gcat
-      : null;
-  const quality =
-    params.gqual && (ANALYSIS_QUALITIES as string[]).includes(params.gqual)
-      ? params.gqual
-      : null;
-  const qRaw = (params.gq ?? "").trim().slice(0, SEARCH_MAX_LENGTH);
-  const q = qRaw.length > 0 ? qRaw : null;
-  const pageNum = Number.parseInt(params.gpage ?? "1", 10);
-  const page = Number.isFinite(pageNum) && pageNum > 0 ? pageNum : 1;
-  return { range, tier, hasError, category, quality, q, page };
+  return parseConversationFilter(params) as AdminConversationFilter;
 }
 
 interface ListRow {
@@ -283,6 +253,8 @@ interface ListRow {
   analysis_input_tokens: number | null;
   analysis_output_tokens: number | null;
   analysis_updated_at: unknown;
+  /** count(*) OVER () of the filtered set — the same row carries the total. */
+  total_count?: number;
 }
 
 function rowToAnalysis(r: {
@@ -340,6 +312,10 @@ async function loadSessionSignals(
  * derived fields are computed by LATERALs bounded to the page (the CTE LIMITs
  * first), and the two session-keyed signals are batch-probed for the page.
  *
+ * The total of the filtered set rides along as `count(*) OVER ()` in the same
+ * query — ONE statement of filter predicates, so list and total can never
+ * disagree (the former separate COUNT query duplicated the whole WHERE).
+ *
  * Search: when filter.q is set, every term must ILIKE-match somewhere in the
  * conversation (see AdminConversationFilter.q) and the date window is BYPASSED —
  * "find that chat" must work across the whole history, not just the KPI window.
@@ -349,18 +325,16 @@ async function loadSessionSignals(
 export async function listAdminConversations(
   filter: AdminConversationFilter,
   sql: Sql | null = getSql()
-): Promise<{ items: AdminConversationListItem[]; total: number }> {
-  if (!sql) return { items: [], total: 0 };
-  const { tier, hasError, category, quality, page } = filter;
+): Promise<{ items: AdminConversationListItem[]; total: number; page: number }> {
+  if (!sql) return { items: [], total: 0, page: 1 };
+  const { tier, hasError, category, quality } = filter;
   const from = filter.range.from;
   const to = filter.range.to;
-  const offset = (page - 1) * PAGE_SIZE;
   const patterns = searchPatterns(filter.q);
   const searching = patterns.length > 0;
 
-  try {
-    const [pageRows, countRows] = await Promise.all([
-      sql`
+  const fetchPage = (page: number) =>
+    sql`
         WITH page AS (
           SELECT c.id, c.conversation_key, c.session_id, c.created_at, c.updated_at,
                  c.persona_label, c.selected_product_ids,
@@ -368,7 +342,8 @@ export async function listAdminConversations(
                  c.analysis_model, c.analysis_input_tokens, c.analysis_output_tokens,
                  c.analysis_updated_at,
                  (cu.shopify_customer_id IS NOT NULL OR cul.shopify_customer_id IS NOT NULL) AS signed_in,
-                 (c.customer_id IS NOT NULL OR csl.customer_id IS NOT NULL) AS identified
+                 (c.customer_id IS NOT NULL OR csl.customer_id IS NOT NULL) AS identified,
+                 count(*) OVER ()::int AS total_count
             FROM conversations c
             LEFT JOIN customers cu ON cu.id = c.customer_id
             LEFT JOIN customer_session_links csl ON csl.session_id = c.session_id
@@ -424,10 +399,10 @@ export async function listAdminConversations(
              AND (${category}::text IS NULL OR c.analysis_category = ${category})
              AND (${quality}::text IS NULL OR c.analysis_quality = ${quality})
            ORDER BY c.created_at DESC, c.id DESC
-           LIMIT ${PAGE_SIZE} OFFSET ${offset}
+           LIMIT ${PAGE_SIZE} OFFSET ${(page - 1) * PAGE_SIZE}
         )
         SELECT p.id, p.conversation_key, p.session_id, p.created_at, p.updated_at,
-               p.persona_label, p.signed_in, p.identified,
+               p.persona_label, p.signed_in, p.identified, p.total_count,
                p.analysis_summary, p.analysis_category, p.analysis_tags, p.analysis_quality,
                p.analysis_model, p.analysis_input_tokens, p.analysis_output_tokens,
                p.analysis_updated_at,
@@ -450,68 +425,18 @@ export async function listAdminConversations(
              WHERE m.conversation_id = p.id AND m.tool_name IS NOT NULL
           ) tf ON true
          ORDER BY p.created_at DESC, p.id DESC
-      `,
-      sql`
-        SELECT count(*)::int AS n
-          FROM conversations c
-          LEFT JOIN customers cu ON cu.id = c.customer_id
-          LEFT JOIN customer_session_links csl ON csl.session_id = c.session_id
-          LEFT JOIN customers cul ON cul.id = csl.customer_id
-         WHERE (${searching} = true
-                OR (c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)))
-           AND (
-             ${searching} = false OR (
-               SELECT bool_and(
-                        c.id::text ILIKE t.pat
-                        OR c.conversation_key ILIKE t.pat
-                        OR c.session_id ILIKE t.pat
-                        OR COALESCE(c.persona_label, '') ILIKE t.pat
-                        OR COALESCE(c.analysis_summary, '') ILIKE t.pat
-                        OR COALESCE(c.analysis_category, '') ILIKE t.pat
-                        OR COALESCE(c.analysis_quality, '') ILIKE t.pat
-                        OR COALESCE(array_to_string(c.analysis_tags, ' '), '') ILIKE t.pat
-                        OR COALESCE(cu.email, '') ILIKE t.pat
-                        OR COALESCE(cul.email, '') ILIKE t.pat
-                        OR COALESCE(cu.shopify_customer_id, '') ILIKE t.pat
-                        OR COALESCE(cul.shopify_customer_id, '') ILIKE t.pat
-                        OR EXISTS (
-                             SELECT 1 FROM messages ms
-                              WHERE ms.conversation_id = c.id
-                                AND (COALESCE(ms.content, '') ILIKE t.pat
-                                     OR COALESCE(ms.tool_name, '') ILIKE t.pat)
-                           )
-                      )
-                 FROM unnest(${patterns}::text[]) AS t(pat)
-             )
-           )
-           AND (
-             ${tier}::text IS NULL
-             OR (${tier} = 'signed-in'
-                   AND (cu.shopify_customer_id IS NOT NULL OR cul.shopify_customer_id IS NOT NULL))
-             OR (${tier} = 'email-only'
-                   AND cu.shopify_customer_id IS NULL AND cul.shopify_customer_id IS NULL
-                   AND (c.customer_id IS NOT NULL OR csl.customer_id IS NOT NULL))
-             OR (${tier} = 'anonymous'
-                   AND cu.shopify_customer_id IS NULL AND cul.shopify_customer_id IS NULL
-                   AND c.customer_id IS NULL AND csl.customer_id IS NULL)
-           )
-           AND (
-             ${hasError} = false OR (
-               EXISTS (SELECT 1 FROM messages mu
-                        WHERE mu.conversation_id = c.id AND mu.role = 'user'
-                          AND mu.tool_name IS NULL AND length(btrim(mu.content)) > 0)
-               AND NOT EXISTS (SELECT 1 FROM messages ma
-                        WHERE ma.conversation_id = c.id AND ma.role = 'assistant'
-                          AND ma.tool_name IS NULL AND length(btrim(ma.content)) > 0)
-             )
-           )
-           AND (${category}::text IS NULL OR c.analysis_category = ${category})
-           AND (${quality}::text IS NULL OR c.analysis_quality = ${quality})
-      `,
-    ]);
+      ` as unknown as Promise<ListRow[]>;
 
-    const rows = pageRows as unknown as ListRow[];
-    const total = Number((countRows[0] as { n?: number })?.n ?? 0);
+  try {
+    let page = filter.page;
+    let rows = await fetchPage(page);
+    // A stale ?gpage= beyond the last page yields no rows (and no window count):
+    // serve the first page instead of an empty list for a non-empty filter.
+    if (rows.length === 0 && page > 1) {
+      page = 1;
+      rows = await fetchPage(1);
+    }
+    const total = Number(rows[0]?.total_count ?? 0);
 
     const sessionIds = [
       ...new Set(rows.map((r) => r.session_id).filter((s): s is string => Boolean(s))),
@@ -534,10 +459,10 @@ export async function listAdminConversations(
       analysis: rowToAnalysis(r),
     }));
 
-    return { items, total };
+    return { items, total, page };
   } catch (err) {
     reportError(err, { route: "lib/admin-conversations", phase: "list" });
-    return { items: [], total: 0 };
+    return { items: [], total: 0, page: 1 };
   }
 }
 
