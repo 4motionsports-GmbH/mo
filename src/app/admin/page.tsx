@@ -90,7 +90,16 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
       );
     }
     case "kampagne":
-      return <KampagneTab dbReady={dbReady} />;
+      // The review desk keeps its position in the URL (?contact=, ?view=,
+      // ?filter=) so a refresh or a shared link lands on the same card.
+      return (
+        <KampagneTab
+          dbReady={dbReady}
+          initialContactId={idParam(sp.contact)}
+          initialView={firstParam(sp.view)}
+          initialFilter={firstParam(sp.filter)}
+        />
+      );
     case "kpi": {
       // KPI date-range picker state lives in the URL so a refresh / copied link
       // keeps the window; resolveKpiRange validates + clamps it.

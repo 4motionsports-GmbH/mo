@@ -1,10 +1,11 @@
 "use client";
 
-// Status vocabulary of the Kampagne review card: language switch, opt-in,
-// lifecycle segment and the hero A/B group — one table each, explained via
-// tooltips instead of native title attributes.
+// Status vocabulary of the Kampagne desk: language switch, opt-in and
+// lifecycle segment — one table each, explained via tooltips instead of
+// native title attributes. (A/B group and low confidence are Prüfpunkte /
+// Kontakt facts on the desk.)
 
-import { AlertTriangle, PenLine } from "lucide-react";
+import { PenLine } from "lucide-react";
 import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
 import { num } from "@/lib/admin-format.mjs";
 import { SegmentedControl, StatusBadge, Tooltip } from "../ui";
@@ -74,30 +75,6 @@ export function SegmentBadge({ segment, days }: { segment: string | null; days: 
       <StatusBadge tone={def.sendable ? "neutral" : "warning"} dot={false} tabIndex={0} className="cursor-help">
         {def.label}
         {age}
-      </StatusBadge>
-    </Tooltip>
-  );
-}
-
-/** The hero A/B group — a deterministic split by contact id so the KPI screen's
- * hero comparison gets both arms: even ids ship WITH a generated hero, odd ids
- * WITHOUT. Advisory; the send record stamps what actually shipped. */
-export function AbGroupBadge({ contactId }: { contactId: number }) {
-  const withHero = contactId % 2 === 0;
-  return (
-    <Tooltip content="A/B-Test für den KI-Hero: gerade Kontakt-IDs mit Hero senden, ungerade ohne — der KPI-Bereich vergleicht beide Gruppen.">
-      <StatusBadge tone={withHero ? "info" : "neutral"} dot={false} tabIndex={0} className="cursor-help">
-        {withHero ? "A/B: mit KI-Hero" : "A/B: ohne Hero"}
-      </StatusBadge>
-    </Tooltip>
-  );
-}
-
-export function LowConfidenceBadge() {
-  return (
-    <Tooltip content="Die Empfehlungen basieren auf wenig Kaufkontext — bitte prüfen oder die Empfehlungsbasis anpassen.">
-      <StatusBadge tone="warning" icon={<AlertTriangle />} tabIndex={0} className="cursor-help">
-        Empfehlungen unsicher
       </StatusBadge>
     </Tooltip>
   );
