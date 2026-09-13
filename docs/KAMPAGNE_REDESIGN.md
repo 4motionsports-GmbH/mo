@@ -1,11 +1,12 @@
 # Kampagne — the review desk (redesign proposal)
 
-Status: **proposal, 2026-09-13**. Nothing in here is implemented. It analyses the
-Kampagne screen as it stands after the September redesign and proposes a new
-layout for the daily job: one person reviewing and sending 100–200 personalised
-e-mails a day. Every capability of the current screen (`FEATURE_INVENTORY.md`
-§4, KAM-01…69) keeps a place; the send path, the gates and the audit record are
-untouched. Phase one needs no migration and no new route.
+Status: **implemented, 2026-09-13** (proposal written the same day; §13 records
+what was built and the decisions taken). It analyses the Kampagne screen as it
+stood after the September redesign and describes the desk that replaced it for
+the daily job: one person reviewing and sending 100–200 personalised e-mails a
+day. Every capability of the previous screen (`FEATURE_INVENTORY.md` §4,
+KAM-01…69) kept a place (§8); the send path, the gates and the audit record are
+untouched. No migration was needed; the new capabilities are KAM-70…91.
 
 Contents
 
@@ -21,6 +22,7 @@ Contents
 10. Phasing
 11. Decisions to make
 12. Success criteria
+13. Implementation notes and decisions taken
 
 ---
 
@@ -397,3 +399,30 @@ link chips; per-contact history drawer.
 - 0 scrolls per card at 1440 × 900 with the desk at rest.
 - < 1 min from opening `/admin` in the morning to the first send.
 - 100 % of refused sends visible in the session with their reason.
+
+## 13. Implementation notes and decisions taken
+
+Built in one pass (phases 1 and 2 of §10, plus the per-contact history drawer
+from phase 3). Files: `src/app/admin/kampagne/` (desk), `src/lib/campaign-review-checks.mjs`
+and `src/lib/campaign-desk-core.mjs` (rules, tested), `src/app/admin/ui/{popover,menu}.tsx`,
+`src/app/admin/useEmailHero.ts` (the hero routes as a shared hook),
+`src/app/api/cron/prepare-campaign-drafts/route.ts`. Screenshots (light and
+dark, 1440 and 1024 px, Liste, Gesendet, Fokus, Bearbeiten at 1600 px,
+Vorbereiten, Postausgang) under `docs/screenshots/kampagne-desk/`.
+
+| Decision (§11) | Taken |
+| --- | --- |
+| Regenerate policy | Every offer/text change still regenerates the prose, but changes within 1,5 s collapse into one call and it runs in the background; sending that card waits for the fresh prose, moving on does not. |
+| Nightly Vorbereiten | Built as `/api/cron/prepare-campaign-drafts` behind `CAMPAIGN_AUTO_PREPARE_COUNT` — **off by default**; depth and text mode via `CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `_TEXT_MODE`. |
+| Heroes for the A group | An opt-in checkbox in the Vorbereiten popover (off by default, only offered when the campaign design has a hero and generation is configured); the client runs suggest + generate per prepared even id after the drafts, with the recorded per-image cost in the estimate. |
+| Batch or scheduled sending | **Not built.** Direct sends during review spread the volume over the day; „Freigeben“ stays a separate decision (would need a migration). |
+| Daily target | The progress bar ends at the day's queue (sent today + to review); no setting. |
+| Copy path | Kept in full (`C`, ⋯ menu → „Als erledigt markieren“ in the bar). |
+| Link chips in the editor | **Not built** (custom editor; the rendered-first view already hides the URLs while reading). |
+
+Deviations from §5–6 worth knowing: below 1536 px the header is two rows
+(progress · view switch · actions, then the status pills) and the secondary
+action-bar buttons show icon + key only (labels from 1536 px); the Prüfpunkte
+also carry the server's refusal reason after a failed send (`send_refused`);
+the Liste's bulk runs and the hero batch run sequentially in the client with a
+progress indicator rather than via a new step route.
