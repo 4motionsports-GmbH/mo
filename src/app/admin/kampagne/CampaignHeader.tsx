@@ -65,14 +65,22 @@ export function CampaignHeader({
   onShortcuts: () => void;
 }) {
   const running = prepareJob !== null && prepareJob.phase !== "done";
-  const syncLabel = counts.lastSyncedAt ? `Sync ${relativeTime(counts.lastSyncedAt)}` : "Sync: nie";
+  // A sync stamped ahead of the browser clock (skew) reads as "gerade eben".
+  const syncRelative = counts.lastSyncedAt ? relativeTime(counts.lastSyncedAt) : null;
+  const syncLabel =
+    syncRelative === null
+      ? "Sync: nie"
+      : syncRelative === "gleich" || syncRelative.startsWith("in ")
+        ? "Sync gerade eben"
+        : `Sync ${syncRelative}`;
   const optIn = Object.entries(counts.byOptInLevel);
 
+  // Two rows below 2xl (progress · switch · actions / pills), one row at 2xl.
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-card px-3 py-2">
       {/* Today's progress */}
-      <div className="flex items-center gap-2 text-sm">
-        <span className="tabular-nums">
+      <div className="order-1 flex items-center gap-2 text-sm">
+        <span className="whitespace-nowrap tabular-nums">
           <strong>{num(progress.done)}</strong> <span className="text-muted-foreground">gesendet</span>
           <span className="text-muted-foreground"> · </span>
           <strong>{num(queueSize)}</strong> <span className="text-muted-foreground">zu prüfen</span>
@@ -106,6 +114,7 @@ export function CampaignHeader({
 
       {/* View switch */}
       <SegmentedControl
+        className="order-2"
         label="Ansicht"
         value={view}
         onChange={onView}
@@ -120,7 +129,7 @@ export function CampaignHeader({
       />
 
       {/* Status pills */}
-      <div className="flex flex-wrap items-center gap-1.5 lg:ml-auto">
+      <div className="order-4 flex basis-full flex-wrap items-center gap-1.5 2xl:order-3 2xl:ml-auto 2xl:basis-auto">
         <span className="inline-flex items-center gap-0.5">
           <StatusBadge tone={sendsApproved ? "success" : "destructive"}>
             {sendsApproved ? "Versand freigegeben" : "Versand gesperrt"}
@@ -173,7 +182,8 @@ export function CampaignHeader({
         )}
       </div>
 
-      {/* Vorbereiten */}
+      {/* Vorbereiten + ⋯ */}
+      <div className="order-3 ml-auto flex items-center gap-2 2xl:order-4 2xl:ml-0">
       {running && prepareJob ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <ProgressBar
@@ -252,6 +262,7 @@ export function CampaignHeader({
           },
         ]}
       />
+      </div>
     </div>
   );
 }

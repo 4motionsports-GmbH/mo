@@ -269,25 +269,34 @@ export function MailPane({
           </Button>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void actions.skip(item.contactId)} disabled={busy !== null}>
-            <SkipForward /> Überspringen <Kbd>X</Kbd>
+          <Button
+            variant="outline"
+            size="sm"
+            aria-label="Überspringen (X)"
+            onClick={() => void actions.skip(item.contactId)}
+            disabled={busy !== null}
+          >
+            <SkipForward /> <span className="hidden 2xl:inline">Überspringen</span> <Kbd>X</Kbd>
           </Button>
           <Button
             variant="outline"
             size="sm"
+            aria-label="Neu generieren (R)"
             onClick={() => actions.regenerate(item.contactId)}
             disabled={busy !== null && busy !== "regen"}
             loading={busy === "regen"}
           >
-            <RefreshCw /> Neu generieren <Kbd>R</Kbd>
+            <RefreshCw /> <span className="hidden 2xl:inline">Neu generieren</span> <Kbd>R</Kbd>
           </Button>
           <Button
             variant={editMode ? "secondary" : "outline"}
             size="sm"
+            aria-label={editMode ? "Bearbeiten beenden (Esc)" : "Bearbeiten (E)"}
             aria-pressed={editMode}
             onClick={() => actions.setEditMode(!editMode)}
           >
-            <PenLine /> {editMode ? "Fertig" : "Bearbeiten"} <Kbd>{editMode ? "Esc" : "E"}</Kbd>
+            <PenLine /> <span className="hidden 2xl:inline">{editMode ? "Fertig" : "Bearbeiten"}</span>{" "}
+            <Kbd>{editMode ? "Esc" : "E"}</Kbd>
           </Button>
           {copiedId === item.contactId && (
             <Button

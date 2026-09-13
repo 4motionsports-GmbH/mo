@@ -212,9 +212,9 @@ export function ListView({
                 </TableHead>
                 <SortHead label="Kontakt" sortKey="contact" sort={sort} onToggle={toggleSort} />
                 <SortHead label="Segment" sortKey="segment" sort={sort} onToggle={toggleSort} className="hidden md:table-cell" />
-                <TableHead className="hidden lg:table-cell">Sprache</TableHead>
+                <TableHead className="hidden xl:table-cell">Sprache</TableHead>
                 <SortHead label="Rabatt" sortKey="discount" sort={sort} onToggle={toggleSort} />
-                <TableHead className="hidden lg:table-cell">Set</TableHead>
+                <TableHead className="hidden xl:table-cell">Set</TableHead>
                 {heroDesignActive && <TableHead className="hidden xl:table-cell">Hero</TableHead>}
                 <SortHead label="Prüfung" sortKey="checks" sort={sort} onToggle={toggleSort} />
                 <SortHead label="Entwurf" sortKey="draft" sort={sort} onToggle={toggleSort} className="hidden md:table-cell" />
@@ -260,9 +260,9 @@ export function ListView({
                         <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell">{it.language.toUpperCase()}</TableCell>
+                    <TableCell className="hidden xl:table-cell">{it.language.toUpperCase()}</TableCell>
                     <TableCell className="tabular-nums">{it.discountPercent > 0 ? `${it.discountPercent} %` : "—"}</TableCell>
-                    <TableCell className="hidden lg:table-cell">
+                    <TableCell className="hidden xl:table-cell">
                       {it.bundle ? <span className="truncate">{it.bundle.title}</span> : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     {heroDesignActive && (
@@ -288,7 +288,7 @@ export function ListView({
                           </StatusBadge>
                         )}
                         {checks.length > 0 && (
-                          <span className="hidden max-w-[16rem] truncate text-muted-foreground xl:inline">
+                          <span className="hidden max-w-[12rem] truncate text-muted-foreground 2xl:inline">
                             {checks.map((c) => c.title).join(" · ")}
                           </span>
                         )}

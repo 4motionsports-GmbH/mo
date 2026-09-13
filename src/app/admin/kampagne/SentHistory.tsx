@@ -247,19 +247,6 @@ export function SentHistory({
           containerClassName="w-64"
           aria-label="Gesendete E-Mails durchsuchen"
         />
-        <FilterGroup label="Von" htmlFor="campaign-history-from">
-          <Input
-            id="campaign-history-from"
-            type="date"
-            value={from}
-            max={to || undefined}
-            onChange={(e) => {
-              setFrom(e.target.value);
-              setPage(1);
-            }}
-            className="h-8 w-auto text-xs"
-          />
-        </FilterGroup>
         <div role="radiogroup" aria-label="Zustellung filtern" className="flex flex-wrap items-center gap-1">
           {HISTORY_DELIVERY_FILTERS.map((f) => {
             const active = delivery === f.key;
@@ -285,6 +272,19 @@ export function SentHistory({
             );
           })}
         </div>
+        <FilterGroup label="Von" htmlFor="campaign-history-from">
+          <Input
+            id="campaign-history-from"
+            type="date"
+            value={from}
+            max={to || undefined}
+            onChange={(e) => {
+              setFrom(e.target.value);
+              setPage(1);
+            }}
+            className="h-8 w-auto text-xs"
+          />
+        </FilterGroup>
         <FilterGroup label="Bis" htmlFor="campaign-history-to">
           <Input
             id="campaign-history-to"

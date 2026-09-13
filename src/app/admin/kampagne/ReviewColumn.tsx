@@ -54,9 +54,11 @@ function BlockHeader({
 }) {
   return (
     <div className="mb-1.5 flex items-center gap-1.5">
-      <span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</span>
+      <span className="whitespace-nowrap text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {title}
+      </span>
       {meta !== undefined && meta !== null && (
-        <span className="text-2xs text-muted-foreground tabular-nums">· {meta}</span>
+        <span className="min-w-0 truncate text-2xs text-muted-foreground tabular-nums">· {meta}</span>
       )}
       {info && <InfoTip>{info}</InfoTip>}
       {actions && <span className="ml-auto flex items-center gap-1">{actions}</span>}
@@ -242,6 +244,9 @@ export function ReviewColumn({
                     src={r.imageUrl}
                     alt=""
                     className="size-8 shrink-0 rounded-md border border-border bg-white object-contain"
+                    onError={(e) => {
+                      e.currentTarget.style.visibility = "hidden";
+                    }}
                   />
                 ) : (
                   <span className="size-8 shrink-0 rounded-md border border-dashed border-border bg-surface-2" aria-hidden />

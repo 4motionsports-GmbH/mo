@@ -231,7 +231,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
       ) : (
         <div
           className={cn(
-            "flex flex-col gap-3 lg:grid lg:h-[calc(100vh-11.5rem)] lg:min-h-[34rem]",
+            "flex flex-col gap-3 lg:grid lg:h-[calc(100vh-11.75rem)] lg:min-h-[34rem] 2xl:h-[calc(100vh-9.5rem)]",
             focusMode
               ? "lg:grid-cols-[minmax(0,1fr)]"
               : "lg:grid-cols-[200px_minmax(0,1fr)_260px] xl:grid-cols-[236px_minmax(0,1fr)_296px]"
