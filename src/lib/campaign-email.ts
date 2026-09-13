@@ -42,13 +42,13 @@ import {
   campaignMoDeeplinkUrl,
   isCampaignSendsApproved,
   isSingleOptInAllowed,
+  marketingMinSendIntervalDays,
 } from "./campaign-flags.mjs";
 import {
   moPromoBlockText,
   moPromoIntroText,
   moPromoCtaLabel,
 } from "./campaign-draft-core.mjs";
-import { parseIntEnv } from "./env-num";
 import { sendEmail } from "./email";
 import { outboundThreading } from "./email-inbound";
 import { withEmailDesign, withEmailRenderData } from "./email-design-context";
@@ -116,8 +116,10 @@ export type CampaignSendResult =
       message: string;
     };
 
+// One parser for the cadence cap (campaign-flags.mjs) — the review desk shows
+// the same number, so a blocked contact is visible before the gate refuses it.
 function minSendIntervalDays(): number {
-  return parseIntEnv("MARKETING_MIN_SEND_INTERVAL_DAYS", 0, 0);
+  return marketingMinSendIntervalDays();
 }
 
 /**

@@ -47,6 +47,9 @@ export interface EmailDesignDefinition extends EmailDesignLayer {
   addedAt: string;
   /** Kinds this design is offered for (default: all four). */
   supportedKinds?: EmailDesignKind[];
+  /** True when the design opens with a hero image section — the Kampagne desk
+   * shows the per-contact hero controls only for such designs. */
+  hasHero?: boolean;
   /** Per-email-type tailored adjustments layered over the general look. */
   variants?: Partial<Record<EmailDesignKind, EmailDesignLayer>>;
 }
@@ -96,6 +99,12 @@ export function listEmailDesignMeta(): EmailDesignMeta[] {
 
 export function isKnownEmailDesign(key: string): boolean {
   return key === CLASSIC_EMAIL_DESIGN_KEY || EMAIL_DESIGNS.some((d) => d.key === key);
+}
+
+/** Whether the design with this key renders a hero image section. */
+export function emailDesignHasHero(key: string | null | undefined): boolean {
+  if (!key || key === CLASSIC_EMAIL_DESIGN_KEY) return false;
+  return EMAIL_DESIGNS.find((d) => d.key === key)?.hasHero === true;
 }
 
 export function designSupportsKind(key: string, kind: EmailDesignKind): boolean {

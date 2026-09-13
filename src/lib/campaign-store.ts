@@ -108,6 +108,11 @@ export interface CampaignDraftRow {
   /** Age of the last purchase in days AT DRAFT TIME — lets the review card
    * show "vor 24 Tagen" and makes a stale draft visible. */
   segmentDays: number | null;
+  /** Operator-generated hero image + headline (migrations 0050/0051); null =
+   * the design's default hero. Carried on the queue so the review desk shows
+   * the hero state per card without one request per contact. */
+  heroImageUrl: string | null;
+  heroHeadline: string | null;
   lowConfidence: boolean;
   createdAt: string | null;
   updatedAt: string | null;
@@ -185,6 +190,8 @@ function mapDraftRow(r: Record<string, unknown>): CampaignDraftRow {
     textMode: parseEmailTextMode(r.text_mode),
     segment: typeof r.segment === "string" ? r.segment : null,
     segmentDays: r.segment_days == null ? null : Number(r.segment_days),
+    heroImageUrl: (r.hero_image_url as string | null) ?? null,
+    heroHeadline: (r.hero_headline as string | null) ?? null,
     lowConfidence: r.low_confidence === true,
     createdAt: toIso(r.created_at),
     updatedAt: toIso(r.updated_at),
@@ -380,6 +387,9 @@ export async function suppressContactsMissingFromSync(
 
 export interface CampaignCounts {
   pending: number;
+  /** Pending contacts inside the lifecycle send window — what „Vorbereiten“
+   * can actually draft right now (campaign-segments.sendableDayRange). */
+  pendingSendable: number;
   drafted: number;
   sentTotal: number;
   sentToday: number;
@@ -387,6 +397,8 @@ export interface CampaignCounts {
   suppressed: number;
   draftFailed: number;
   byOptInLevel: Record<string, number>;
+  /** When the audience was last synced from Shopify (any contact), or null. */
+  lastSyncedAt: string | null;
 }
 
 /** Header counts for the Kampagne tab. Returns null when no DB is configured. */
@@ -394,18 +406,28 @@ export async function getCampaignCounts(
   sql: Sql | null = getSql()
 ): Promise<CampaignCounts | null> {
   if (!sql) return null;
+  // The same lifecycle window listNextPendingContacts applies (frisch / ruhen
+  // are skipped; an unknown purchase date is never excluded).
+  const { minDays, maxDays } = sendableDayRange();
+  const maxInterval = `${Number.isFinite(maxDays) ? maxDays : 36_500} days`;
   try {
     const [statusRows, levelRows] = (await Promise.all([
       sql`
         SELECT
           count(*) FILTER (WHERE status = 'pending')::int AS pending,
+          count(*) FILTER (WHERE status = 'pending'
+                             AND (last_order_at IS NULL
+                                  OR (last_order_at <= now() - ${`${minDays} days`}::interval
+                                      AND last_order_at > now() - ${maxInterval}::interval)))::int
+            AS pending_sendable,
           count(*) FILTER (WHERE status IN ('drafted','sending'))::int AS drafted,
           count(*) FILTER (WHERE status = 'sent')::int AS sent_total,
           count(*) FILTER (WHERE status = 'sent'
                              AND sent_at >= current_date)::int AS sent_today,
           count(*) FILTER (WHERE status = 'skipped')::int AS skipped,
           count(*) FILTER (WHERE status = 'suppressed')::int AS suppressed,
-          count(*) FILTER (WHERE status = 'draft_failed')::int AS draft_failed
+          count(*) FILTER (WHERE status = 'draft_failed')::int AS draft_failed,
+          max(last_synced_at) AS last_synced_at
           FROM campaign_contacts
       `,
       sql`
@@ -420,6 +442,7 @@ export async function getCampaignCounts(
     for (const r of levelRows) byOptInLevel[String(r.level)] = Number(r.n);
     return {
       pending: Number(s.pending ?? 0),
+      pendingSendable: Number(s.pending_sendable ?? 0),
       drafted: Number(s.drafted ?? 0),
       sentTotal: Number(s.sent_total ?? 0),
       sentToday: Number(s.sent_today ?? 0),
@@ -427,6 +450,7 @@ export async function getCampaignCounts(
       suppressed: Number(s.suppressed ?? 0),
       draftFailed: Number(s.draft_failed ?? 0),
       byOptInLevel,
+      lastSyncedAt: toIso(s.last_synced_at),
     };
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "getCampaignCounts" });
@@ -438,6 +462,9 @@ export async function getCampaignCounts(
 export interface CampaignQueueEntry {
   contact: CampaignContactRow;
   draft: CampaignDraftRow;
+  /** Newest send to this address across BOTH channels (the same fact the
+   * frequency-cap gate reads at send time), or null when never mailed. */
+  lastSendAt: string | null;
 }
 
 /**
@@ -461,8 +488,20 @@ export async function listDraftedQueue(
              d.purchase_selected_ids AS d_purchase_selected_ids,
              d.text_mode AS d_text_mode,
              d.segment AS d_segment, d.segment_days AS d_segment_days,
+             d.hero_image_url AS d_hero_image_url, d.hero_headline AS d_hero_headline,
              d.low_confidence AS d_low_confidence,
-             d.created_at AS d_created_at, d.updated_at AS d_updated_at
+             d.created_at AS d_created_at, d.updated_at AS d_updated_at,
+             -- The cross-channel frequency-cap fact per contact (same union as
+             -- lastCrossChannelSendAt), so the desk can flag a blocked send
+             -- before the operator presses Senden.
+             (SELECT max(t.sent_at) FROM (
+                SELECT cs.sent_at FROM campaign_sends cs WHERE cs.email = c.email
+                UNION ALL
+                SELECT ms.sent_at
+                  FROM marketing_sends ms
+                  JOIN email_captures ec ON ec.id = ms.email_capture_id
+                 WHERE ec.email = c.email AND ms.status = 'sent'
+              ) t) AS last_send_at
         FROM campaign_contacts c
         JOIN campaign_drafts d ON d.contact_id = c.id
        WHERE c.status = 'drafted'
@@ -492,10 +531,13 @@ export async function listDraftedQueue(
         text_mode: r.d_text_mode,
         segment: r.d_segment,
         segment_days: r.d_segment_days,
+        hero_image_url: r.d_hero_image_url,
+        hero_headline: r.d_hero_headline,
         low_confidence: r.d_low_confidence,
         created_at: r.d_created_at,
         updated_at: r.d_updated_at,
       }),
+      lastSendAt: toIso(r.last_send_at),
     }));
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "listDraftedQueue" });
@@ -1611,12 +1653,23 @@ export interface CampaignSendHistoryRow {
   heroVariant: string | null;
 }
 
+/** Delivery-state filter of the „Gesendet“ view (campaign-desk-core.mjs). */
+export type CampaignDeliveryFilter =
+  | "all"
+  | "delivered"
+  | "clicked"
+  | "bounced"
+  | "complained"
+  | "copy";
+
 export interface CampaignSendHistoryQuery {
   /** Case-insensitive substring over recipient email and subject. */
   query?: string;
   /** Inclusive local (store timezone) day bounds, YYYY-MM-DD. */
   from?: string | null;
   to?: string | null;
+  /** Narrow to one delivery state (default all). */
+  delivery?: CampaignDeliveryFilter;
   page?: number;
   pageSize?: number;
 }
@@ -1637,7 +1690,14 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
  * page on error / without a database.
  */
 export async function searchCampaignSendHistory(
-  { query = "", from = null, to = null, page = 1, pageSize = 25 }: CampaignSendHistoryQuery = {},
+  {
+    query = "",
+    from = null,
+    to = null,
+    delivery = "all",
+    page = 1,
+    pageSize = 25,
+  }: CampaignSendHistoryQuery = {},
   sql: Sql | null = getSql()
 ): Promise<CampaignSendHistoryPage> {
   const size = (CAMPAIGN_HISTORY_PAGE_SIZES as readonly number[]).includes(pageSize) ? pageSize : 25;
@@ -1647,6 +1707,8 @@ export async function searchCampaignSendHistory(
   const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   const fromDay = from && YMD.test(from) ? from : null;
   const toDay = to && YMD.test(to) ? to : null;
+  // The delivery predicate is spelled out twice (count + page) — the neon
+  // tagged template is not composable.
   try {
     const countRows = (await sql`
       SELECT count(*)::int AS n
@@ -1656,6 +1718,12 @@ export async function searchCampaignSendHistory(
               OR sent_at >= ((${fromDay}::date)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
          AND (${toDay}::text IS NULL
               OR sent_at < (((${toDay}::date) + 1)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
+         AND (${delivery} = 'all'
+              OR (${delivery} = 'delivered' AND delivered_at IS NOT NULL)
+              OR (${delivery} = 'clicked' AND clicked_at IS NOT NULL)
+              OR (${delivery} = 'bounced' AND bounced_at IS NOT NULL)
+              OR (${delivery} = 'complained' AND complained_at IS NOT NULL)
+              OR (${delivery} = 'copy' AND sent_via = 'copy'))
     `) as Array<{ n: number }>;
     const total = Number(countRows[0]?.n ?? 0);
     const current = clampPage(page, pageCount(total, size));
@@ -1670,6 +1738,12 @@ export async function searchCampaignSendHistory(
               OR sent_at >= ((${fromDay}::date)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
          AND (${toDay}::text IS NULL
               OR sent_at < (((${toDay}::date) + 1)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
+         AND (${delivery} = 'all'
+              OR (${delivery} = 'delivered' AND delivered_at IS NOT NULL)
+              OR (${delivery} = 'clicked' AND clicked_at IS NOT NULL)
+              OR (${delivery} = 'bounced' AND bounced_at IS NOT NULL)
+              OR (${delivery} = 'complained' AND complained_at IS NOT NULL)
+              OR (${delivery} = 'copy' AND sent_via = 'copy'))
        ORDER BY sent_at DESC, id DESC
        LIMIT ${size} OFFSET ${offset}
     `) as Array<Record<string, unknown>>;
@@ -1739,5 +1813,146 @@ export async function getCampaignSendContent(
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "getCampaignSendContent" });
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Review-desk facts: the delivery strip and the cost estimates
+// ---------------------------------------------------------------------------
+
+/** Pure-DB delivery outcomes of the last `days` days for the „Gesendet“ strip
+ * (redemption and revenue stay on the KPI screen with its Shopify cache). */
+export interface CampaignDeliverySummary {
+  days: number;
+  sent: number;
+  /** Sends that carry a tracked CTA (the honest click-rate base). */
+  tracked: number;
+  clicked: number;
+  delivered: number;
+  bouncedHard: number;
+  complained: number;
+  unsubscribed: number;
+}
+
+export async function getCampaignDeliverySummary(
+  days = 30,
+  sql: Sql | null = getSql()
+): Promise<CampaignDeliverySummary | null> {
+  if (!sql) return null;
+  const window = Math.max(1, Math.floor(days));
+  try {
+    const rows = (await sql`
+      SELECT count(*)::int AS sent,
+             count(*) FILTER (WHERE redirect_token IS NOT NULL)::int AS tracked,
+             count(*) FILTER (WHERE redirect_token IS NOT NULL
+                                AND clicked_at IS NOT NULL)::int AS clicked,
+             count(*) FILTER (WHERE delivered_at IS NOT NULL)::int AS delivered,
+             count(*) FILTER (WHERE bounced_at IS NOT NULL AND bounce_type = 'hard')::int AS bounced_hard,
+             count(*) FILTER (WHERE complained_at IS NOT NULL)::int AS complained,
+             count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribed
+        FROM campaign_sends
+       WHERE sent_at >= now() - ${`${window} days`}::interval
+    `) as Array<Record<string, unknown>>;
+    const r = rows[0] ?? {};
+    return {
+      days: window,
+      sent: Number(r.sent ?? 0),
+      tracked: Number(r.tracked ?? 0),
+      clicked: Number(r.clicked ?? 0),
+      delivered: Number(r.delivered ?? 0),
+      bouncedHard: Number(r.bounced_hard ?? 0),
+      complained: Number(r.complained ?? 0),
+      unsubscribed: Number(r.unsubscribed ?? 0),
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "getCampaignDeliverySummary" });
+    return null;
+  }
+}
+
+/** Average recorded cost of a draft and of a per-contact hero pipeline, EUR —
+ * what the „Vorbereiten“ popover and the bulk actions state before spending.
+ * null when nothing of that kind was recorded yet. */
+export interface CampaignCostEstimate {
+  draftEur: number | null;
+  heroEur: number | null;
+}
+
+// Sample sizes for the averages: the newest draft calls / hero pipelines.
+const COST_SAMPLE_DRAFTS = 100;
+const COST_SAMPLE_HERO_CONTACTS = 50;
+
+export async function estimateCampaignCosts(
+  sql: Sql | null = getSql()
+): Promise<CampaignCostEstimate> {
+  const empty = { draftEur: null, heroEur: null };
+  if (!sql) return empty;
+  try {
+    const [draftRows, heroRows] = (await Promise.all([
+      sql`
+        SELECT model, input_tokens, output_tokens
+          FROM ai_usage
+         WHERE call_site = 'campaign_draft'
+         ORDER BY id DESC
+         LIMIT ${COST_SAMPLE_DRAFTS}
+      `,
+      // Every hero_image row of the newest contacts that ran the pipeline
+      // (prompt draft, renders, quality checks), summed per contact + model.
+      sql`
+        SELECT campaign_contact_id, model,
+               sum(input_tokens)::bigint AS input_tokens,
+               sum(output_tokens)::bigint AS output_tokens
+          FROM ai_usage
+         WHERE call_site = 'hero_image'
+           AND campaign_contact_id IN (
+                 SELECT campaign_contact_id
+                   FROM ai_usage
+                  WHERE call_site = 'hero_image' AND campaign_contact_id IS NOT NULL
+                  GROUP BY campaign_contact_id
+                  ORDER BY max(created_at) DESC
+                  LIMIT ${COST_SAMPLE_HERO_CONTACTS})
+         GROUP BY campaign_contact_id, model
+      `,
+    ])) as [
+      Array<{ model: string; input_tokens: string | number; output_tokens: string | number }>,
+      Array<{
+        campaign_contact_id: string | number;
+        model: string;
+        input_tokens: string | number;
+        output_tokens: string | number;
+      }>,
+    ];
+    const prices = loadModelPrices();
+    const rate = usdEurRate();
+    const eurOf = (model: string, inputTokens: number, outputTokens: number) =>
+      usdToEur(usdCostForUsage({ model, inputTokens, outputTokens }, prices), rate);
+
+    let draftEur: number | null = null;
+    if (draftRows.length > 0) {
+      const total = draftRows.reduce(
+        (sum, r) => sum + eurOf(r.model, Number(r.input_tokens), Number(r.output_tokens)),
+        0
+      );
+      draftEur = total / draftRows.length;
+    }
+
+    let heroEur: number | null = null;
+    if (heroRows.length > 0) {
+      const perContact = new Map<string, number>();
+      for (const r of heroRows) {
+        const key = String(r.campaign_contact_id);
+        perContact.set(
+          key,
+          (perContact.get(key) ?? 0) +
+            eurOf(r.model, Number(r.input_tokens), Number(r.output_tokens))
+        );
+      }
+      const costs = [...perContact.values()];
+      heroEur = costs.reduce((a, b) => a + b, 0) / costs.length;
+    }
+    return { draftEur, heroEur };
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "estimateCampaignCosts" });
+    return empty;
   }
 }

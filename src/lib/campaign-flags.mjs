@@ -23,6 +23,9 @@
 // Both default to FALSE (fail-closed) for any absent, empty, or unrecognised
 // value.
 
+import { DEFAULT_EMAIL_TEXT_MODE, parseEmailTextMode } from "./email-text-mode.mjs";
+import { parseDiscountPercent } from "./discount-validation.mjs";
+
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 
 /** @param {string | undefined} raw */
@@ -48,6 +51,49 @@ export function isCampaignSendsApproved(env = process.env) {
  */
 export function isSingleOptInAllowed(env = process.env) {
   return parseFlag(env.CAMPAIGN_ALLOW_SINGLE_OPT_IN);
+}
+
+/**
+ * A non-negative integer env value, else the fallback (absent, empty,
+ * non-numeric and negative values all fall back).
+ * @param {string | undefined} raw
+ * @param {number} fallback
+ */
+function parseNonNegativeInt(raw, fallback) {
+  if (typeof raw !== "string" || raw.trim() === "") return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * The cross-channel send-frequency cap in days (MARKETING_MIN_SEND_INTERVAL_DAYS,
+ * 0 = off) — consumed by the send gate AND shown on the review desk, so the
+ * operator sees a blocked contact before the server refuses it.
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {number}
+ */
+export function marketingMinSendIntervalDays(env = process.env) {
+  return parseNonNegativeInt(env.MARKETING_MIN_SEND_INTERVAL_DAYS, 0);
+}
+
+/**
+ * Nightly „Vorbereiten“ (/api/cron/prepare-campaign-drafts): how many pending
+ * contacts to draft per night (CAMPAIGN_AUTO_PREPARE_COUNT, 0 = the cron does
+ * nothing — the default, because generation costs API money), at which
+ * discount depth and in which text mode. Invalid values fall back to 0 % and
+ * the modern default text mode.
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {{ count: number, discountPercent: number, textMode: "detailed" | "compact" | "minimal" }}
+ */
+export function campaignAutoPrepareConfig(env = process.env) {
+  const count = parseNonNegativeInt(env.CAMPAIGN_AUTO_PREPARE_COUNT, 0);
+  const rawDiscount = env.CAMPAIGN_AUTO_PREPARE_DISCOUNT;
+  const discountPercent =
+    typeof rawDiscount === "string" && rawDiscount.trim() !== ""
+      ? (parseDiscountPercent(Number(rawDiscount)) ?? 0)
+      : 0;
+  const textMode = parseEmailTextMode(env.CAMPAIGN_AUTO_PREPARE_TEXT_MODE) ?? DEFAULT_EMAIL_TEXT_MODE;
+  return { count, discountPercent, textMode };
 }
 
 /**

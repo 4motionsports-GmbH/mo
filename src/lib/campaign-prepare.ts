@@ -227,6 +227,9 @@ export interface PrepareBatchResult {
   suppressed: number;
   /** Fewer pending contacts existed than requested. */
   exhausted: boolean;
+  /** The contacts that got a draft in this run — the desk uses the ids to
+   * generate heroes for the A group right after preparing. */
+  preparedContactIds: number[];
 }
 
 /**
@@ -247,6 +250,7 @@ export async function prepareNextDrafts(
     failed: 0,
     suppressed: 0,
     exhausted: contacts.length < count,
+    preparedContactIds: [],
   };
 
   let cursor = 0;
@@ -273,8 +277,12 @@ export async function prepareNextDrafts(
           continue;
         }
         const draft = await prepareDraftForContact(contact, discountPercent, { textMode });
-        if (draft) result.prepared++;
-        else result.failed++;
+        if (draft) {
+          result.prepared++;
+          result.preparedContactIds.push(contact.id);
+        } else {
+          result.failed++;
+        }
       } catch (err) {
         reportError(err, {
           route: "lib/campaign-prepare",

@@ -704,6 +704,7 @@ export const performanceDesign: EmailDesignDefinition = {
   description:
     "Bild-orientiertes Conversion-Design: großer Hero mit (KI-generierbarem) Lifestyle-Bild, Produkt-Karten mit Preis & Button, Bundle-Deal-Karte und Angebots-Countdown im selben hellen Karten-Stil, Frag-Mo-Panel.",
   addedAt: "2026-08-31",
+  hasHero: true,
 
   renderers: {
     shell: makeShell("marketing"),
