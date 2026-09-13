@@ -67,7 +67,16 @@ export { Sheet, type SheetProps } from "./sheet";
 export { Disclosure, type DisclosureProps } from "./disclosure";
 export { toast, Toaster, type ToastOptions, type ToastVariant } from "./toast";
 export { Section, Stat, Caveat, type StatDelta } from "./stat";
-export { InfoTip, Tooltip, type InfoTipProps, type TooltipProps, type FloatingSide } from "./info-tip";
+export {
+  InfoTip,
+  Tooltip,
+  type InfoTipProps,
+  type TooltipProps,
+  type FloatingSide,
+  type FloatingAlign,
+} from "./info-tip";
+export { Popover, type PopoverProps } from "./popover";
+export { Menu, type MenuItem, type MenuProps } from "./menu";
 export { Callout, type CalloutProps, type CalloutTone } from "./callout";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { PageHeader, type PageHeaderProps } from "./page-header";
