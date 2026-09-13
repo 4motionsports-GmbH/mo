@@ -58,13 +58,16 @@ test("renderCountdownImage yields a 2× PNG of the card size, for live and expir
   assert.equal(m.format, "png");
   assert.equal(m.width, COUNTDOWN_WIDTH * 2);
   assert.equal(m.height, COUNTDOWN_HEIGHT * 2);
-  // A red digit pixel exists inside the first tile; the background is dark.
+  // The light card look: white background (sampled inside the rounded rect,
+  // above the heading), a dark heading, red digits inside the tiles.
   const raw = await sharp(live).raw().toBuffer({ resolveWithObject: true });
   const px = (x, y) => { const i = (y * raw.info.width + x) * raw.info.channels; return [raw.data[i], raw.data[i + 1], raw.data[i + 2]]; };
-  assert.deepEqual(px(4, 4).map((v) => v < 30), [true, true, true], "dark background");
+  assert.deepEqual(px(30, 30).map((v) => v > 245), [true, true, true], "white background");
   let red = 0;
-  for (let y = 0; y < raw.info.height; y += 3) for (let x = 0; x < raw.info.width; x += 3) { const [r, g, b] = px(x, y); if (r > 180 && g < 60 && b < 60) red++; }
+  let dark = 0;
+  for (let y = 0; y < raw.info.height; y += 3) for (let x = 0; x < raw.info.width; x += 3) { const [r, g, b] = px(x, y); if (r > 180 && g < 60 && b < 60) red++; if (r < 60 && g < 60 && b < 60) dark++; }
   assert.ok(red > 200, `red digits present (${red})`);
+  assert.ok(dark > 30, `dark heading present (${dark})`);
   const expired = await renderCountdownImage({ expiresAt: "2026-09-01T00:00:00Z", language: "en", now });
   assert.equal((await sharp(expired).metadata()).width, COUNTDOWN_WIDTH * 2);
   assert.ok(expired.length < live.length + 20000);

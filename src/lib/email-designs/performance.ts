@@ -1,8 +1,10 @@
 // "Performance" — the image-first conversion design, built from the operator's
 // AI-drafted template: bold hero section (kicker, oversized headline, red CTA,
 // large lifestyle image), bordered product
-// CARDS with price + outline button, the black BUNDLE-DEAL card with the
-// price trio, the "Frag Mo" advisor panel, and a clean minimal footer.
+// CARDS with price + outline button, the BUNDLE-DEAL card and the offer
+// COUNTDOWN in the same white bordered card frame (red badge, price trio,
+// red digits on light-grey tiles), the "Frag Mo" advisor panel, and a clean
+// minimal footer. Everything sits on white — no dark blocks.
 //
 // Personalisation hooks:
 //   - HERO IMAGE: activeEmailRenderData().heroImageUrl (the operator-generated
@@ -246,7 +248,11 @@ function productGrid(items: EmailProductGridItem[]): string {
   return items.map((item) => productCard(item)).join("");
 }
 
-/** The black BUNDLE-DEAL card with badge, component images and price trio. */
+/**
+ * The BUNDLE-DEAL card: the product cards' white bordered frame with the red
+ * badge, the component images and the price trio — the set price in red, the
+ * component sum struck through in the cards' muted grey — and the red CTA.
+ */
 function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): string {
   const en = (input.language ?? "de") === "en";
   const images = input.components
@@ -258,31 +264,33 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
         `<img src="${escapeAttr(u)}" width="104" alt="" style="width:104px; height:104px; object-fit:cover; display:inline-block; border-radius:4px; background:#ffffff; margin:2px;">`
     )
     .join("");
+  const priceLabel = `font-family:${FONT}; color:#555555; font-size:10px; line-height:14px;`;
   const priceCells =
     (c.stattLabel
       ? `
-                          <td style="font-family:${FONT}; color:#ffffff; font-size:10px; line-height:14px; padding-right:12px;">${en ? "Separately" : "Einzelkauf"}<br><strong style="font-size:16px; text-decoration:line-through;">${escapeHtml(c.stattLabel)}</strong></td>`
+                          <td style="${priceLabel} padding-right:14px;">${en ? "Separately" : "Einzelkauf"}<br><span style="font-size:16px; line-height:22px; color:#777777; text-decoration:line-through;">${escapeHtml(c.stattLabel)}</span></td>`
       : "") +
     `
-                          <td style="font-family:${FONT}; color:#ffffff; font-size:10px; line-height:14px; padding-right:12px;">${escapeHtml(c.labels.price)}<br><strong style="font-size:22px; color:${RED};">${escapeHtml(c.priceLabel)}</strong></td>` +
+                          <td style="${priceLabel} padding-right:14px;">${escapeHtml(c.labels.price)}<br><strong style="font-size:22px; line-height:26px; color:${RED};">${escapeHtml(c.priceLabel)}</strong></td>` +
     (c.savingLabel && c.savingPct != null
       ? `
-                          <td style="font-family:${FONT}; color:#ffffff; font-size:10px; line-height:14px;">${escapeHtml(c.labels.save)}<br><strong style="font-size:16px; color:${RED};">${escapeHtml(c.savingLabel)}</strong></td>`
+                          <td style="${priceLabel}">${escapeHtml(c.labels.save)}<br><strong style="font-size:16px; line-height:22px; color:${RED};">${escapeHtml(c.savingLabel)}</strong></td>`
       : "");
   const componentNames = input.components.map((comp) => escapeHtml(comp.name)).join(" · ");
   return `
                 <tr>
                   <td class="content-pad" style="padding: 8px 38px 16px 38px;" bgcolor="#ffffff">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#111111; border-radius:7px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#ffffff; border:1px solid #e5e5e5; border-radius:7px;">
                       <tr>
                         <td width="42%" valign="middle" align="center" class="bundle-column" style="width:42%; padding:22px;">
-                          <div style="display:inline-block; background:${RED}; color:#ffffff; font-family:${FONT}; font-size:11px; line-height:14px; font-weight:700; padding:9px 12px; border-radius:30px; margin-bottom:12px;">BUNDLE DEAL</div>
+                          <div style="display:inline-block; background:${RED}; color:#ffffff; font-family:${FONT}; font-size:11px; line-height:14px; font-weight:700; letter-spacing:0.4px; padding:9px 12px; border-radius:30px; margin-bottom:12px;">BUNDLE DEAL</div>
                           <div>${images || "&nbsp;"}</div>
                         </td>
                         <td width="58%" valign="middle" class="bundle-column" style="width:58%; padding:24px 24px 24px 0;">
-                          <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#ffffff; font-weight:700; margin-bottom:8px;">${escapeHtml(bundleHeadline(input.title, en ? "en" : "de"))}</div>
-                          <div style="font-family:${FONT}; font-size:11px; line-height:16px; color:#bbbbbb; margin-bottom:16px;">${componentNames}</div>
-                          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${priceCells}
+                          <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#111111; font-weight:700;">${escapeHtml(bundleHeadline(input.title, en ? "en" : "de"))}</div>
+                          <div class="bundle-rule" style="width:14px; height:2px; background:${RED}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
+                          <div style="font-family:${FONT}; font-size:11px; line-height:16px; color:#555555; margin-bottom:16px;">${componentNames}</div>
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="bundle-prices"><tr>${priceCells}
                           </tr></table>
                           <div style="height:18px; font-size:0; line-height:0;">&nbsp;</div>
                           ${redButton({ label: c.labels.cta, url: input.offerUrl }, true)}
@@ -294,18 +302,22 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
 }
 
 /**
- * The offer countdown — the same black card language as the set deal, so the
- * two read as one offer. With a signing secret the card IS the live image
- * (api/email-countdown: days / hours / minutes at the moment of opening,
- * "Angebot abgelaufen" after the deadline) with the exact deadline printed
- * underneath in HTML; without one it falls back to render-time tiles.
+ * The offer countdown — the same white bordered card as the set deal and the
+ * product cards, so the offer reads as one piece with the rest of the mail.
+ * With a signing secret the card IS the live image (api/email-countdown:
+ * days / hours / minutes at the moment of opening, "Angebot abgelaufen" after
+ * the deadline — drawn in the same light look: dark heading, red digits on
+ * light-grey tiles) with the exact deadline printed underneath in HTML;
+ * without one it falls back to render-time tiles in that look.
  */
 function offerCountdownCard(input: OfferCountdownInput): string {
+  const card = `width:100%; background:#ffffff; border:1px solid #e5e5e5; border-radius:7px;`;
+  const deadline = `font-family:${FONT}; color:#555555; font-size:11px; line-height:16px;`;
   if (input.imageUrl) {
     return `
                 <tr>
                   <td class="content-pad" style="padding: 0 38px 16px 38px;" bgcolor="#ffffff">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#111111; border-radius:7px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="${card}">
                       <tr>
                         <td align="center" style="padding: 0; font-size:0; line-height:0;">
                           <img src="${escapeAttr(input.imageUrl)}" width="${input.imageWidth}" alt="${escapeAttr(input.imageAlt)}" class="countdown-desktop" style="width:100%; max-width:${input.imageWidth}px; height:auto; display:block; border-radius:7px 7px 0 0;">
@@ -313,7 +325,7 @@ function offerCountdownCard(input: OfferCountdownInput): string {
                         </td>
                       </tr>
                       <tr>
-                        <td align="center" style="padding: 0 22px 16px 22px; font-family:${FONT}; color:#bbbbbb; font-size:11px; line-height:16px;">${escapeHtml(input.copy.until)} ${escapeHtml(input.deadlineLabel)}</td>
+                        <td align="center" style="padding: 4px 22px 16px 22px; ${deadline}">${escapeHtml(input.copy.until)} ${escapeHtml(input.deadlineLabel)}</td>
                       </tr>
                     </table>
                   </td>
@@ -321,27 +333,27 @@ function offerCountdownCard(input: OfferCountdownInput): string {
   }
   const tile = (value: number, unit: string) => `
                           <td align="center" style="padding: 0 6px;">
-                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="background:#1f1f1f; border-radius:6px;">
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f5; border:1px solid #e5e5e5; border-radius:6px;">
                               <tr>
                                 <td align="center" style="padding: 10px 18px 8px 18px; font-family:${FONT}; color:${RED}; font-size:34px; line-height:38px; font-weight:800; letter-spacing:-1px;">${String(value).padStart(2, "0")}</td>
                               </tr>
                               <tr>
-                                <td align="center" style="padding: 0 12px 10px 12px; font-family:${FONT}; color:#bbbbbb; font-size:10px; line-height:14px; letter-spacing:1px; text-transform:uppercase;">${escapeHtml(unit)}</td>
+                                <td align="center" style="padding: 0 12px 10px 12px; font-family:${FONT}; color:#555555; font-size:10px; line-height:14px; letter-spacing:1px; text-transform:uppercase;">${escapeHtml(unit)}</td>
                               </tr>
                             </table>
                           </td>`;
   return `
                 <tr>
                   <td class="content-pad" style="padding: 0 38px 16px 38px;" bgcolor="#ffffff">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#111111; border-radius:7px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="${card}">
                       <tr>
                         <td align="center" style="padding: 20px 22px 18px 22px;">
-                          <div style="font-family:${FONT}; color:#ffffff; font-size:11px; line-height:16px; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom:12px;">${escapeHtml(input.copy.heading)}</div>
+                          <div style="font-family:${FONT}; color:#111111; font-size:11px; line-height:16px; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom:12px;">${escapeHtml(input.copy.heading)}</div>
                           <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="Margin: 0 auto;">
                             <tr>${tile(input.days, input.copy.days)}${tile(input.hours, input.copy.hours)}
                             </tr>
                           </table>
-                          <div style="font-family:${FONT}; color:#bbbbbb; font-size:11px; line-height:16px; margin-top:12px;">${escapeHtml(input.copy.until)} ${escapeHtml(input.deadlineLabel)}</div>
+                          <div style="${deadline} margin-top:12px;">${escapeHtml(input.copy.until)} ${escapeHtml(input.deadlineLabel)}</div>
                         </td>
                       </tr>
                     </table>
@@ -581,6 +593,7 @@ function makeShell(kind: keyof typeof HERO_COPY) {
         .product-content { padding: 6px 20px 12px 20px !important; text-align: center !important; }
         .product-action { padding: 0 20px 20px 20px !important; text-align: center !important; }
         .bundle-column { display: block !important; width: 100% !important; text-align: center !important; padding: 22px !important; }
+        .bundle-rule, .bundle-prices { margin-left: auto !important; margin-right: auto !important; }
       }
     </style>
   </head>
@@ -689,7 +702,7 @@ export const performanceDesign: EmailDesignDefinition = {
   key: "performance",
   name: "Performance",
   description:
-    "Bild-orientiertes Conversion-Design: großer Hero mit (KI-generierbarem) Lifestyle-Bild, Produkt-Karten mit Preis & Button, schwarze Bundle-Deal-Karte, Frag-Mo-Panel.",
+    "Bild-orientiertes Conversion-Design: großer Hero mit (KI-generierbarem) Lifestyle-Bild, Produkt-Karten mit Preis & Button, Bundle-Deal-Karte und Angebots-Countdown im selben hellen Karten-Stil, Frag-Mo-Panel.",
   addedAt: "2026-08-31",
 
   renderers: {

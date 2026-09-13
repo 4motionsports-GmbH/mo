@@ -1,8 +1,10 @@
 // The LIVE countdown image: composed on the server at every e-mail open
 // (api/email-countdown/<token>) from pre-rendered glyphs
 // (generated/countdown-sprite.mjs) on SVG-drawn shapes — no fonts needed at
-// runtime. Same visual language as the Performance design's black cards:
-// dark background, red numbers in dark tiles, small grey unit labels.
+// runtime. Same visual language as the Performance design's white product
+// cards: white background, dark heading, red numbers on light-grey tiles with
+// a hairline edge, small grey unit labels — so the image sits inside the
+// design's bordered card (and on the classic white card) without a seam.
 //
 // Layout maths is pure and tested; the compositing needs sharp.
 
@@ -10,15 +12,17 @@ import { DIGIT_CELL, GLYPHS, SPRITE_SCALE } from "./generated/countdown-sprite.m
 
 /** Image width at 1× (the card's inner width in the 640px mail); height follows. */
 export const COUNTDOWN_WIDTH = 564;
-export const COUNTDOWN_HEIGHT = 132;
+export const COUNTDOWN_HEIGHT = 116;
 /** The phone variant: the card's inner width on a 390px screen. Same glyph
  * sizes, narrower canvas — scaling the desktop image down would shrink the
  * digits to 11px. */
 export const COUNTDOWN_MOBILE_WIDTH = 350;
 
 const S = SPRITE_SCALE;
-const BG = "#111111";
-const TILE = "#1f1f1f";
+const BG = "#ffffff";
+const TILE = "#f5f5f5";
+/** 1px (at 1×) hairline around each tile — the product cards' border colour. */
+const TILE_EDGE = "#e5e5e5";
 
 /**
  * Days / hours / minutes until the deadline, rounded down; `expired` once it
@@ -79,7 +83,8 @@ export function countdownLayout(r, language, width = COUNTDOWN_WIDTH) {
   return { width: W, height: H, heading, headingX: Math.round((W - heading.width) / 2), headingY, tiles };
 }
 
-const rect = (x, y, w, h, fill, r) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" ry="${r}" fill="${fill}"/>`;
+const rect = (x, y, w, h, fill, r, stroke = null) =>
+  `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" ry="${r}" fill="${fill}"${stroke ? ` stroke="${stroke}" stroke-width="${S}"` : ""}/>`;
 
 /**
  * Render the image for a deadline as a PNG buffer (2×).
@@ -102,7 +107,8 @@ export async function renderCountdownImage(input) {
     const L = countdownLayout(r, lang, width);
     composites.push({ input: Buffer.from(L.heading.png, "base64"), left: L.headingX, top: L.headingY });
     for (const t of L.tiles) {
-      shapes += rect(t.x, t.y, t.width, t.height, TILE, 12);
+      // Stroke inset by half its width so the hairline stays inside the tile.
+      shapes += rect(t.x + S / 2, t.y + S / 2, t.width - S, t.height - S, TILE, 12, TILE_EDGE);
       [...t.value].forEach((ch, i) => {
         const g = GLYPHS[`d${ch}`];
         composites.push({

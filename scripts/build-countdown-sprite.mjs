@@ -18,23 +18,25 @@ import sharp from "sharp";
 
 const SCALE = 2; // the image is delivered at 2× for retina mail clients
 const FONT = "Liberation Sans, Arial, Helvetica, sans-serif";
+// The Performance design's light card palette (email-designs/performance.ts):
+// red numbers, near-black heading, the muted grey of the small print.
 const RED = "#e30613";
-const WHITE = "#ffffff";
-const GREY = "#bbbbbb";
+const INK = "#111111";
+const GREY = "#555555";
 
 /** [key, text, px (1×), weight, colour, letterSpacing (1×)] */
 const GLYPHS = [
   ...Array.from({ length: 10 }, (_, d) => [`d${d}`, String(d), 34, 800, RED, -1]),
-  ["de_heading", "DEIN ANGEBOT GILT NOCH", 11, 700, WHITE, 1],
-  ["en_heading", "YOUR OFFER ENDS IN", 11, 700, WHITE, 1],
+  ["de_heading", "DEIN ANGEBOT GILT NOCH", 11, 700, INK, 1],
+  ["en_heading", "YOUR OFFER ENDS IN", 11, 700, INK, 1],
   ["de_days", "TAGE", 10, 400, GREY, 1],
   ["de_hours", "STUNDEN", 10, 400, GREY, 1],
   ["de_minutes", "MINUTEN", 10, 400, GREY, 1],
   ["en_days", "DAYS", 10, 400, GREY, 1],
   ["en_hours", "HOURS", 10, 400, GREY, 1],
   ["en_minutes", "MINUTES", 10, 400, GREY, 1],
-  ["de_expired", "ANGEBOT ABGELAUFEN", 16, 700, WHITE, 1],
-  ["en_expired", "OFFER EXPIRED", 16, 700, WHITE, 1],
+  ["de_expired", "ANGEBOT ABGELAUFEN", 16, 700, INK, 1],
+  ["en_expired", "OFFER EXPIRED", 16, 700, INK, 1],
 ];
 
 const escapeXml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");

@@ -30,7 +30,7 @@ Design schreibt nur, was sich tatsächlich unterscheidet.
 |---|---|---|
 | `classic` | Shopify-Newsletter-Klon (Standard) | Built-in, kein Modul |
 | `studio` | Editorial-minimal (Beispiel/Referenz) | Tokens + ein Renderer-Override |
-| `performance` | Bild-orientiertes Conversion-Design | Voll-Shell: Hero mit (KI-)Bild, persönliche Anrede, Produkt-Karten, schwarze Bundle-Karte, Frag-Mo-Panel, Smiley-Bewertung, Hero-Pipeline (s. u.) |
+| `performance` | Bild-orientiertes Conversion-Design | Voll-Shell: Hero mit (KI-)Bild, persönliche Anrede, Produkt-Karten, Bundle-Karte + Angebots-Countdown im selben hellen Karten-Stil, Frag-Mo-Panel, Smiley-Bewertung, Hero-Pipeline (s. u.) |
 
 ## Die zwei Gestaltungs-Ebenen
 
@@ -122,17 +122,27 @@ Ohne Systemschriften (Vercel) wird kein Text gerastert: Ziffern und Wörter sind
 **vorgerendert** (`scripts/build-countdown-sprite.mjs` →
 `src/lib/generated/countdown-sprite.mjs`, Liberation Sans Bold, 2×), der
 Server komponiert sie nur noch auf SVG-Formen (`email-countdown-image.mjs`,
-Layout getestet, 564×132 px bei 1×). Nach Änderungen an Wortlaut oder Farben
-das Skript erneut laufen lassen und das generierte Modul committen.
+Layout getestet, 564×116 px bei 1×). Das Bild ist **hell** gehalten — weißer
+Grund, dunkle Überschrift, rote Ziffern auf hellgrauen Kacheln mit feiner
+Kante, graue Einheiten —, damit es ohne Bruch in der weißen Karte des
+Performance-Designs und auf der weißen Karte des klassischen Designs sitzt.
+Nach Änderungen an Wortlaut oder Farben das Skript erneut laufen lassen und
+das generierte Modul committen.
 
 Fallbacks: `alt`-Text „Dein Angebot gilt noch …" bei blockierten Bildern, die
 exakte Frist immer als HTML-Zeile unter dem Bild, im Text-Teil dieselbe Zeile
 als Schnappschuss; ohne Signier-Secret (nur lokal denkbar) zeigen die Designs
 die Render-Zeit-Kacheln in Tagen und Stunden. Renderer-Hook `offerCountdown`
 (`renderOfferCountdown` in `email-template.ts`): klassisch Bild + gedämpfte
-Zeile, im Performance-Design eine schwarze Karte im Stil der Set-Karte.
+Zeile, im Performance-Design eine weiße Karte mit dem `#e5e5e5`-Rahmen der
+Produkt-Karten (Bild bzw. Kacheln oben, die exakte Frist als graue Zeile
+darunter).
 
-**Set-Karte.** Die weiße Überschrift ist kurz: Operator-Titel, wenn er kurz ist,
+**Set-Karte.** Im Performance-Design derselbe weiße Karten-Rahmen wie bei den
+Produkt-Karten — rotes „BUNDLE DEAL"-Badge, die Komponenten-Bilder, Überschrift
+mit dem roten Strich der Produkt-Karten, Preis-Trio (Einzelkauf grau
+durchgestrichen, Set-Preis und Ersparnis in Rot) und der rote „Zur Kasse"-Button;
+keine dunklen Flächen mehr. Die Überschrift ist kurz: Operator-Titel, wenn er kurz ist,
 sonst „Dein persönliches Set" (`bundleHeadline`, getestet — generierte Titel
 der Form „Set: A + B + C" oder über 40 Zeichen weichen dem Standard); die
 vollständigen Produktnamen stehen wie bisher in der grauen Unterzeile. Der
