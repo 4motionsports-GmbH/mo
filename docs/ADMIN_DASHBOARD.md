@@ -121,6 +121,9 @@ Everything an operator can point a colleague at is in the URL:
 | all | `?tab=<key>` | screen (§ table above); legacy `customers`/`marketing` → Kunden |
 | Kunden | `?filter=<preset>` | list preset, e.g. `no_purchase` (used by the Übersicht cards) |
 | Kunden | `?customer=<id>` | open this customer (kept in sync while browsing) |
+| Kampagne | `?contact=<id>` | the card on the desk (kept in sync while reviewing; a sent/skipped id falls back to the first card) |
+| Kampagne | `?view=liste\|gesendet` | the Liste or Gesendet view (absent = Prüfen) |
+| Kampagne | `?filter=<chip>` | queue filter chip: `doi`, `soi`, `en`, `discount`, `set`, `hints`, `blocked` (absent = Alle) |
 | KPIs | `?kpiRange=7d\|30d\|90d\|custom`, `?kpiFrom=`, `?kpiTo=` | period (validated + clamped by [`kpi-range.mjs`](../src/lib/kpi-range.mjs)) |
 | KPIs | `?kpiFresh=<unix seconds>` | freshness floor for the Shopify cache — set by „Aktualisieren“ (§5.0) |
 | Gespräche | `?gid=<conversationId>` | selected conversation (opened by id, also off the current page) |
@@ -294,33 +297,65 @@ never calls Shopify. The window is fixed; the period picker lives on KPIs.
 
 ### 3.2 Kampagne
 
-The review queue of the campaign module — personalised e-mails to the shop's
+The **review desk** of the campaign module — personalised e-mails to the shop's
 **Shopify marketing subscribers**, a separate audience with its own consent
 basis, tables, send path and legal gates (`CAMPAIGN_SENDS_APPROVED` master flag,
 per-contact opt-in-level gate, send-time suppression re-check, cross-channel
 frequency cap, `MK-` discount codes). The module is documented in
-[`CAMPAIGNS.md`](./CAMPAIGNS.md); the screen:
+[`CAMPAIGNS.md`](./CAMPAIGNS.md), the design decisions in
+[`KAMPAGNE_REDESIGN.md`](./KAMPAGNE_REDESIGN.md); the screen is built for one
+person clearing 100–200 e-mails a day:
 
-- **Stat strip + toolbar.** Counts as chips (queue, drafted, sent today, skipped,
-  hero A/B split), then Sync, Rabatt, Textmodus, „Nächste 50 vorbereiten“ (inline
-  progress bar with cancel; results applied without a page reload) and an
-  overflow menu holding the rare, destructive „Warteschlange neu aufbauen“.
-- **Warteschlange.** One contact at a time: the review card shows contact, an
-  inline „Text · Vorschau“ switch (rendered preview in place, full-size dialog
-  still available), the hero-image panel and collapsible groups with summaries
-  in their headers (Kaufhistorie, Empfehlungen, Rabatt, Set-Angebot). Keyboard:
-  `N`/`P` next/previous, `V` preview, `C` copy, `S` send (only when allowed),
-  `X` skip.
-- **Gesendet.** Paged, searchable history (e-mail/subject, date range) with the
-  delivery state from the Resend webhook (delivered / bounced / complained),
-  redemption looked up in Shopify **for the visible page only**, and a viewer for
-  the retained content of a send.
-- **Übersprungen** with „Wieder aufnehmen“.
+- **Header strip (one line).** Today's progress („n gesendet · m zu prüfen“
+  with a bar that ends at the day's queue), the view switch Prüfen · Liste ·
+  Gesendet, status pills (Versand freigegeben/gesperrt, Shopify, last sync,
+  failed drafts — the original texts sit in InfoTips), „Vorbereiten…“ (a
+  popover with Anzahl, Rabatt, Textmodus, optional KI-Hero for the A group and
+  a cost/time estimate from the recorded `ai_usage` averages; runs as a
+  background job with a progress pill and cancel) and a ⋯ menu (Jetzt
+  synchronisieren, Tastenkürzel, Warteschlange neu aufbauen behind the
+  ConfirmDialog).
+- **Prüfen — three columns.** The *rail* (global contact search on `/`, filter
+  chips with counts, rows with segment/discount/set/language chips, an edit
+  mark and a verdict dot, the Postausgang strip, Übersprungen with
+  Wiederherstellen). The *mail column* (identity line, subject inline, the
+  rendered e-mail as the default view — the next card is prefetched — the
+  in-place editor on `E`, side by side with the render at ≥ 1600 px, and the
+  action bar: `P`/`N`, Überspringen `X`, Neu generieren `R`, Bearbeiten `E`,
+  ⋯ (Vorschau `V`, Kopieren `C` → „Als erledigt markieren“, Verlauf,
+  Fokus-Modus `F`, Tastenkürzel `?`), Senden `S`). The *review column*:
+  Prüfpunkte (the verdict — bereit / Hinweise / blockiert — with one fix per
+  check, computed by [`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs)),
+  Empfehlungen (thumbnails, prices, availability, „+ Produkt“ with the catalog
+  picker), Angebot (Rabatt 0/5/10/15/20/custom, Set line with the composer in a
+  sheet), Text (Sprache, Modus), Hero (only when the campaign design has a
+  hero: Erzeugen, Anpassen… sheet, Entfernen), Kaufhistorie (collapsed, with
+  the recommendation basis), Kontakt (opt-in, segment, last mail + Sperrfrist,
+  A/B group, Umsatz, Verlauf sheet).
+- **Nothing blocks the next card.** `S` takes the card out of the queue at
+  once and the server answers in the Postausgang; a refused send comes back to
+  the top with the server's reason as a blocked Prüfpunkt and a retry. Offer
+  and text changes (Rabatt, Sprache, Modus, Empfehlungen, Set) persist at once
+  and batch into ONE background regenerate („Text wird angepasst…“); every
+  card has its own busy state. Vorbereiten runs while the review continues.
+- **Liste.** The queue as a sortable table with multi-select and bulk
+  Überspringen (free, undoable), Neu generieren… and Rabatt setzen… (confirmed
+  with count and cost estimate).
+- **Gesendet.** The pure-DB 30-day delivery strip (gesendet, zugestellt %,
+  geklickt %, Bounces, Beschwerden, Abmeldungen; link to the Kampagnen-Funnel
+  on the KPI screen), then the paged, searchable history (e-mail/subject,
+  delivery-state chips, date range) with the delivery state from the Resend
+  webhook, redemption looked up in Shopify **for the visible page only**, and
+  the viewer for the retained content of a send.
+- **Fokus-Modus** (`F`) hides rail and review column, centres the mail and
+  shows the Prüfpunkte as a one-line strip.
 
-State and the twelve mutations live in
-[`kampagne/useCampaignActions.ts`](../src/app/admin/kampagne/useCampaignActions.ts);
-the send itself is `POST /api/admin/campaign/send` → `approveAndSendCampaign`,
-unchanged by the redesign and covered by its tests.
+State and every mutation live in
+[`kampagne/useCampaignActions.ts`](../src/app/admin/kampagne/useCampaignActions.ts)
+(id-keyed selection, per-card busy map, Postausgang, background jobs; the
+rules in [`campaign-desk-core.mjs`](../src/lib/campaign-desk-core.mjs)); the
+send itself is `POST /api/admin/campaign/send` → `approveAndSendCampaign`,
+unchanged and covered by its tests. Screenshots: `docs/screenshots/kampagne-desk/`.
 
 ### 3.3 Kunden
 
@@ -1168,7 +1203,7 @@ on failure. Grouped by the screen that calls them.
 | | `POST campaign/skip / unskip / mark-done` | review decisions; `mark-done` closes the copy workflow |
 | | `POST campaign/reset-queue` | rebuild the review queue (destructive, behind confirm) |
 | | `POST campaign/contacts { query }` | global contact search |
-| | `GET campaign/history?q=&from=&to=&page=&pageSize=` | paged „Gesendet“ view with delivery + redemption state |
+| | `GET campaign/history?q=&from=&to=&delivery=&page=&pageSize=` | paged „Gesendet“ view with delivery + redemption state; `delivery` = delivered \| clicked \| bounced \| complained \| copy |
 | | `POST campaign/sent-email { sendId }` | retained content of one send |
 | Kunden | `GET customers/detail?id=` | one customer's full detail (on open) |
 | | `POST customers/profile / purchases` | regenerate „Kundenverständnis“ / refresh cached Shopify data |

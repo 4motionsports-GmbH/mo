@@ -1,31 +1,51 @@
-// Kampagne screen (server-rendered) — the review queue for personalized emails
-// to the shop's Shopify marketing subscribers (docs/CAMPAIGNS.md).
+// Kampagne screen (server-rendered) — the review desk for personalized emails
+// to the shop's Shopify marketing subscribers (docs/CAMPAIGNS.md §5).
 //
 // Data is fetched once on the SERVER (counts, the drafted queue with resolved
-// recommendation products and attached bundles, the skipped contacts, the
-// legal-gate flags) and handed to the client KampagneWorkspace, which owns the
-// one-card-at-a-time review flow, the keyboard shortcuts and the mutations
-// (guarded /api/admin/campaign/* routes). The send history is paged and
-// searched on demand (GET /api/admin/campaign/history) — it is no longer
-// loaded, nor its redemption status checked in Shopify, on every render.
+// recommendation products, attached bundles, hero state and the cross-channel
+// last-send fact, the skipped contacts, the legal-gate flags, whether the
+// campaign design has a hero, the recorded AI costs for the Vorbereiten
+// estimate and the 30-day delivery strip) and handed to the client
+// KampagneWorkspace, which owns the desk: selection, filters, the review
+// checks, the keyboard shortcuts and every mutation (guarded
+// /api/admin/campaign/* routes). The send history is paged and searched on
+// demand (GET /api/admin/campaign/history).
 
 import {
+  estimateCampaignCosts,
   getCampaignCounts,
+  getCampaignDeliverySummary,
   listDraftedQueue,
   listSkippedContacts,
 } from "@/lib/campaign-store";
 import { listActiveBundlesForCampaignContacts } from "@/lib/bundle-offers-store";
 import { resolveProductSelections } from "@/lib/product-catalog";
+import { recommendationView } from "@/lib/campaign-recommendation-view";
 import {
   isCampaignSendsApproved,
   isSingleOptInAllowed,
+  marketingMinSendIntervalDays,
 } from "@/lib/campaign-flags.mjs";
+import { parseDeskView, parseQueueFilter } from "@/lib/campaign-desk-core.mjs";
+import { getCachedEmailDesignForKind } from "@/lib/email-design-store";
+import { emailDesignHasHero, listEmailDesignMeta } from "@/lib/email-designs/registry";
+import { isHeroGenerationConfigured } from "@/lib/email-hero";
 import { isShopifyConfigured } from "@/lib/shopify";
 import { KampagneWorkspace } from "./lazy";
 import type { CampaignQueueItemProps } from "./kampagne/types";
 import { Callout } from "./ui";
 
-export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
+export async function KampagneTab({
+  dbReady,
+  initialContactId,
+  initialView,
+  initialFilter,
+}: {
+  dbReady: boolean;
+  initialContactId: number | null;
+  initialView: string | undefined;
+  initialFilter: string | undefined;
+}) {
   if (!dbReady) {
     return (
       <Callout tone="warning">
@@ -36,15 +56,19 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
   }
 
   const shopifyConfigured = isShopifyConfigured();
-  const [counts, queue, skipped] = await Promise.all([
+  const [counts, queue, skipped, design, costs, sentSummary] = await Promise.all([
     getCampaignCounts(),
     listDraftedQueue(),
     listSkippedContacts(),
+    getCachedEmailDesignForKind("campaign"),
+    estimateCampaignCosts(),
+    getCampaignDeliverySummary(30),
   ]);
 
-  // Resolve the recommended products once for the whole queue (names + URLs
-  // for the review card). Ids may be variant-pinned refs — resolve keyed by the
-  // full ref so the card shows the chosen variant's name and deep link.
+  // Resolve the recommended products once for the whole queue (name, link,
+  // image, price, stock for the review column and the checks). Ids may be
+  // variant-pinned refs — resolve keyed by the full ref so the desk shows the
+  // chosen variant's name and deep link.
   const allRecommendedIds = [...new Set(queue.flatMap((q) => q.draft.recommendedProductIds))];
   const recommendedSelections = allRecommendedIds.length
     ? await resolveProductSelections(allRecommendedIds)
@@ -80,14 +104,9 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
       lowConfidence: q.draft.lowConfidence,
       purchaseSummary: q.draft.purchaseSummary,
       purchaseSelectedIds: q.draft.purchaseSelectedIds,
-      recommendations: q.draft.recommendedProductIds.map((id) => {
-        const s = productByRef.get(id);
-        return {
-          id,
-          name: s?.display?.name ?? s?.product.name ?? id,
-          url: s?.display?.shopifyUrl ?? s?.product.shopifyUrl ?? null,
-        };
-      }),
+      recommendations: q.draft.recommendedProductIds.map((id) =>
+        recommendationView(id, productByRef.get(id))
+      ),
       bundle: b
         ? {
             id: b.id,
@@ -99,11 +118,16 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
             expiresAt: b.expiresAt,
           }
         : null,
+      heroUrl: q.draft.heroImageUrl,
+      heroHeadline: q.draft.heroHeadline,
+      lastSendAt: q.lastSendAt,
+      draftUpdatedAt: q.draft.updatedAt ?? q.draft.createdAt,
     };
   });
 
   const countsProps = counts ?? {
     pending: 0,
+    pendingSendable: 0,
     drafted: 0,
     sentTotal: 0,
     sentToday: 0,
@@ -111,13 +135,13 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
     suppressed: 0,
     draftFailed: 0,
     byOptInLevel: {},
+    lastSyncedAt: null,
   };
 
-  // The workspace keeps a local working copy of the queue. When a bulk action
-  // (Sync / Prepare / Reset / Unskip / Draft) changes the server-side queue it
-  // calls router.refresh(); the workspace re-syncs its working copy from the
-  // fresh props (see useCampaignActions) — the old full-page reload without
-  // the reload.
+  // The desk keeps a local working copy of the queue. When a bulk action
+  // (Sync / Vorbereiten / Neu aufbauen / Wiederherstellen / Entwurf erstellen)
+  // changes the server-side queue it calls router.refresh(); the desk re-syncs
+  // its working copy from the fresh props and keeps its position.
   return (
     <KampagneWorkspace
       counts={countsProps}
@@ -132,6 +156,17 @@ export async function KampagneTab({ dbReady }: { dbReady: boolean }) {
       sendsApproved={isCampaignSendsApproved()}
       allowSingleOptIn={isSingleOptInAllowed()}
       shopifyConfigured={shopifyConfigured}
+      heroDesignActive={emailDesignHasHero(design?.key)}
+      heroDesignName={
+        design ? (listEmailDesignMeta().find((m) => m.key === design.key)?.name ?? design.key) : null
+      }
+      heroGenerationConfigured={isHeroGenerationConfigured()}
+      minSendIntervalDays={marketingMinSendIntervalDays()}
+      costs={costs}
+      sentSummary={sentSummary}
+      initialContactId={initialContactId}
+      initialView={parseDeskView(initialView)}
+      initialFilter={parseQueueFilter(initialFilter)}
     />
   );
 }

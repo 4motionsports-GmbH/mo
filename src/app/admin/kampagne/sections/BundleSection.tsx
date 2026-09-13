@@ -114,10 +114,6 @@ export function BundleSection({
           Set aus Empfehlungen erstellen
         </Button>
       </div>
-      <p className="text-muted-foreground">
-        Erstellt ein echtes (unlisted) Shopify-Set; der Text wird automatisch neu generiert und
-        der Angebots-Block beim Versand angehängt.
-      </p>
     </div>
   );
 }

@@ -23,6 +23,7 @@ import {
 } from "@/lib/bundle-offers-store";
 import { archiveBundleOffer, createBundleOffer } from "@/lib/bundle-offers";
 import { resolveProductSelections } from "@/lib/product-catalog";
+import { recommendationView } from "@/lib/campaign-recommendation-view";
 import { parseProductRef } from "@/lib/product-ref.mjs";
 import { reportError } from "@/lib/observability";
 
@@ -133,11 +134,7 @@ export async function POST(req: Request) {
       ok: true,
       // id = the full ref, so the review card round-trips variants intact;
       // name/url are the variant-projected display values.
-      recommendations: selections.map((s) => ({
-        id: s.ref,
-        name: s.display?.name ?? s.product.name,
-        url: s.display?.shopifyUrl ?? s.product.shopifyUrl ?? null,
-      })),
+      recommendations: selections.map((s) => recommendationView(s.ref, s)),
       bundle: bundle
         ? {
             id: bundle.id,

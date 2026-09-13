@@ -195,14 +195,70 @@ fallback discipline as `marketing-draft.ts`):
 
 ## 5. Review workflow (Kampagne tab)
 
-One contact at a time, keyboard-driven (`N`/`P` next/previous, `V` preview,
-`C` copy, `S` send, `X` skip; legend shown — shortcuts pause while a dialog
-is open). The queue can be **filtered by opt-in
-level** (Alle / Nur DOI / Nur Single-Opt-in+Unbekannt) and searched by
-email/name — mutations are keyed by contact id, so filtering never
-mis-targets a card. Left: name, email, language + opt-in badges, compact
-purchase history, the manual controls below. Right: editable subject + body
-(edits persist via `POST /api/admin/campaign/update`).
+The screen is a **review desk** (layout and rationale in
+[`KAMPAGNE_REDESIGN.md`](./KAMPAGNE_REDESIGN.md); screen description in
+[`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2): a rail with the queue, the
+rendered e-mail in the middle, the review column on the right. Keyboard-driven
+(`N`/`P` next/previous, `S` send, `X` skip, `E`/`Esc` edit, `R` regenerate,
+`V` full-size preview, `C` copy, `F` Fokus-Modus, `/` contact search, `?`
+the key list — shortcuts pause while a dialog is open). The queue can be
+**filtered by chips** (Alle / DOI / Single+Unbekannt / EN / Rabatt / Set /
+Hinweise / Blockiert) and searched by email/name — mutations are keyed by
+contact id, so filtering never mis-targets a card. Position, view and filter
+live in the URL (`?contact=`, `?view=`, `?filter=`).
+
+**Prüfpunkte.** Every card opens with a precomputed verdict from the pure
+[`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs) (tested):
+*blocked* when the send route would refuse (master flag off, no provable DOI
+while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off, address inside the cross-channel
+frequency cap, prose naming a different percentage than the set discount —
+the same `detectDiscountTextMismatch` the send path enforces — or the
+`MO-XXXX` placeholder without a discount, or a refusal the server returned for
+the last attempt), *hint* when worth a look (low-confidence recommendations, a
+recommended product gone or sold out, an attached set expired or expiring
+within two days, A-group contact without a KI-Hero while the campaign design
+has a hero, draft older than 14 days, non-sendable segment, subject over 70
+characters), *info* (edited by hand). Each check carries one fix action
+(Überspringen, Neu generieren, Basis anpassen, Produkt tauschen, Set neu
+erstellen, Hero erzeugen, Betreff kürzen). The rail dot, the „Hinweise“ /
+„Blockiert“ chips and the Liste column show the same verdict.
+
+**Nothing blocks the next card.** `S` takes the card out of the queue at once
+and the request runs in the **Postausgang** (rail strip): ok → „gesendet ✓“
+and the day counter ticks up; refused by any gate → the card returns to the
+top of the queue with the server's reason as a blocked Prüfpunkt and a retry;
+network failure → the same, with „erneut senden“. The server is unchanged —
+the atomic claim in `claimContactForSend` already prevents double sends.
+Offer and text changes (Rabatt, Sprache, Textmodus, Empfehlungen, Set) persist
+at once and **batch into one regenerate** that runs in the background („Text
+wird angepasst…“ on the card; sending that card waits until the prose is
+fresh, the operator may move on). Every card has its own busy state;
+„Vorbereiten…“ runs as a background job (progress pill in the header, cancel)
+while the review continues.
+
+**Vorbereiten…** is a popover: Anzahl (25/50/100, next to „n offen · m im
+Sendefenster“), Rabatt and Textmodus for the NEW drafts (remembered per
+browser; they also apply to „Entwurf erstellen“ and „Wiederherstellen“), the
+optional **KI-Hero for the A group** (after the drafts, `suggest` + `generate`
+per prepared contact with an even id — see „Hero-A/B-Test“ below; off by
+default, only offered when the campaign design has a hero and generation is
+configured) and an estimate — drafts, ≈ € from the recorded `ai_usage`
+averages (`estimateCampaignCosts`), ≈ minutes — before any money is spent.
+
+**Nightly Vorbereiten** (`GET/POST /api/cron/prepare-campaign-drafts`, 04:15
+UTC after the audience and catalog syncs) drafts the next
+`CAMPAIGN_AUTO_PREPARE_COUNT` pending contacts with
+`CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `CAMPAIGN_AUTO_PREPARE_TEXT_MODE`, so the
+queue is full when the day starts. **Off by default** (`0`): generation costs
+API money, so the cap is the deployment's explicit decision (`.env.example`).
+It never sends — every draft still needs a human on the desk.
+
+**Liste** shows the queue as a sortable table with multi-select and bulk
+Überspringen (free, undoable), Neu generieren… and Rabatt setzen… (paid runs,
+confirmed with count and cost estimate). **Gesendet** adds delivery-state chips
+(Zugestellt / Geklickt / Bounce / Beschwerde / Kopiert, `?delivery=` on the
+history route) and a pure-DB 30-day strip (`getCampaignDeliverySummary`);
+redemption and revenue stay on the KPI screen with its Shopify cache.
 
 The workflow is generated-first but everything stays adjustable per card
 WITHOUT regenerating (the deterministic send-time blocks make that safe):
@@ -255,8 +311,11 @@ Actions:
   dialog iframe — the campaign sibling of the Kunden letter-preview route.
   READ-ONLY and gate-free: nothing is claimed, minted, sent or recorded; the
   discount line shows the `MO-XXXX` placeholder with the projected expiry.
-- **Regenerate** (`POST /api/admin/campaign/draft`, with a per-card depth
-  input) and **Skip** (`POST /api/admin/campaign/skip`).
+- **Regenerate** (`POST /api/admin/campaign/draft`, `R`, with whatever offer
+  changes are pending) and **Skip** (`POST /api/admin/campaign/skip`, `X`,
+  optimistic — undo via „Übersprungen“).
+- **Verlauf** — every campaign send to the card's address (the history route
+  narrowed by e-mail) in a sheet, with „Ansehen“ for retained content.
 
 The "Gesendet" sub-view lists sent campaign emails with redemption status
 (existing `wasDiscountCodeRedeemed`, bounded fan-out). `MK-` codes also feed
@@ -299,7 +358,8 @@ out of the sync ages out; drafts cascade with their contact). The
 | --- | --- |
 | Sync (admin) | `POST /api/admin/campaign/sync` |
 | Sync (cron, daily) | `GET/POST /api/cron/sync-campaign-audience` (`CRON_SECRET`) |
-| Batch prepare | `POST /api/admin/campaign/prepare` |
+| Batch prepare | `POST /api/admin/campaign/prepare` (returns `preparedContactIds`) |
+| Nightly prepare (cron, off by default) | `GET/POST /api/cron/prepare-campaign-drafts` (`CRON_SECRET`, `CAMPAIGN_AUTO_PREPARE_*`) |
 | Single draft / regenerate / purchase-basis selection | `POST /api/admin/campaign/draft` |
 | Save edits | `POST /api/admin/campaign/update` |
 | Curate recommendations (+ bundle rebuild) | `POST /api/admin/campaign/recommendations` |
@@ -310,8 +370,9 @@ out of the sync ages out; drafts cascade with their contact). The
 | Pin/clear the contact's email language | `POST /api/admin/campaign/language` |
 | Rendered draft preview (read-only, `text/html`) | `POST /api/admin/campaign/email-preview` |
 | Retained sent content (read-only, `text/html`) | `POST /api/admin/campaign/sent-email` |
-| UI | `src/app/admin/KampagneTab.tsx` + `KampagneWorkspace.tsx` |
-| Libs | `campaign-{sync,store,prepare,draft,recommendations,email}.ts`, `campaign-{language,flags,gates,sync-core,draft-core}.mjs`, `discount-swap.mjs`, `shopify-customers.ts` |
+| Send history (paged, filtered) | `GET /api/admin/campaign/history?q=&from=&to=&delivery=&page=&pageSize=` |
+| UI | `src/app/admin/KampagneTab.tsx` + `src/app/admin/kampagne/` (desk: `KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `SentHistory`, `ContactHistorySheet`, `useCampaignActions`, `useRenderedPreview`) |
+| Libs | `campaign-{sync,store,prepare,draft,recommendations,email,recommendation-view}.ts`, `campaign-{language,flags,gates,sync-core,draft-core,review-checks,desk-core}.mjs`, `discount-swap.mjs`, `shopify-customers.ts` |
 
 All admin routes sit behind the existing proxy gate + `guardAdminPost`
 (auth + JSON-content-type CSRF defense). Everything fails closed: missing

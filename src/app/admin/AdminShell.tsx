@@ -221,6 +221,9 @@ export function AdminShell({
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // A screen that owns a key (the Kampagne desk's `/`) claims it in the
+      // capture phase via preventDefault — never double-handle it here.
+      if (e.defaultPrevented) return;
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) {

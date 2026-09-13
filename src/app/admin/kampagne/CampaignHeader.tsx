@@ -1,172 +1,267 @@
 "use client";
 
-// Header of the Kampagne screen: a stat strip (queue counts, opt-in mix, hero
-// A/B split of the current queue) and the toolbar (Sync, defaults for new
-// drafts, Prepare with inline progress, Rebuild).
+// Header strip of the Kampagne desk — ONE line: today's progress, the view
+// switch (Prüfen · Liste · Gesendet), the status pills (Versand, Shopify,
+// last sync, failed drafts — the original texts sit in InfoTips), the
+// „Vorbereiten…“ popover (or its progress pill while the background job runs)
+// and the ⋯ menu with the rare batch actions (Sync, Neu aufbauen).
 
 import * as React from "react";
-import { RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
-import { EMAIL_TEXT_MODE_LABELS } from "@/lib/email-text-mode.mjs";
-import { clampDiscountPercent } from "@/lib/discount-validation.mjs";
-import { num } from "@/lib/admin-format.mjs";
-import { Button, FilterGroup, InfoTip, ProgressBar, Select, Tooltip } from "../ui";
-import type { EmailTextModeValue } from "../EmailTextModeToggle";
-import { PREPARE_TOTAL, optInShort, type CampaignBusy, type CampaignCountsProps } from "./types";
-import type { PrepareProgress } from "./useCampaignActions";
-
-function HeaderStat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
-  return (
-    <span className={`inline-flex items-baseline gap-1 ${warn ? "text-warning" : ""}`}>
-      <strong className="text-base tabular-nums">{num(value)}</strong>
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </span>
-  );
-}
+import { Keyboard, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
+import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { num, relativeTime } from "@/lib/admin-format.mjs";
+import { Button, InfoTip, Menu, ProgressBar, SegmentedControl, StatusBadge } from "../ui";
+import { PreparePopover } from "./PreparePopover";
+import type { CampaignCostsProps, CampaignCountsProps, DeskView } from "./types";
+import type { PrepareJob, PrepareSettings } from "./useCampaignActions";
 
 export function CampaignHeader({
   counts,
-  abSplit,
-  busy,
+  progress,
+  queueSize,
+  visibleSize,
+  view,
+  onView,
+  sendsApproved,
+  allowSingleOptIn,
   shopifyConfigured,
-  queueEmpty,
-  prepareDepth,
-  prepareTextMode,
-  prepareProgress,
-  onPrepareDepth,
-  onPrepareTextMode,
-  onSync,
+  heroDesignActive,
+  heroGenerationConfigured,
+  costs,
+  jobBusy,
+  prepareJob,
+  prepareSettings,
+  prepareOpen,
+  onPrepareOpen,
+  onPrepareSettings,
   onPrepare,
   onCancelPrepare,
+  onSync,
   onReset,
+  onShortcuts,
 }: {
   counts: CampaignCountsProps;
-  abSplit: { withHero: number; without: number };
-  busy: CampaignBusy;
+  progress: { done: number; total: number; ratio: number };
+  queueSize: number;
+  visibleSize: number;
+  view: DeskView;
+  onView: (view: DeskView) => void;
+  sendsApproved: boolean;
+  allowSingleOptIn: boolean;
   shopifyConfigured: boolean;
-  queueEmpty: boolean;
-  prepareDepth: number;
-  prepareTextMode: EmailTextModeValue;
-  prepareProgress: PrepareProgress | null;
-  onPrepareDepth: (depth: number) => void;
-  onPrepareTextMode: (mode: EmailTextModeValue) => void;
-  onSync: () => void;
-  onPrepare: () => void;
+  heroDesignActive: boolean;
+  heroGenerationConfigured: boolean;
+  costs: CampaignCostsProps;
+  jobBusy: null | "sync" | "reset";
+  prepareJob: PrepareJob | null;
+  prepareSettings: PrepareSettings;
+  prepareOpen: boolean;
+  onPrepareOpen: (open: boolean) => void;
+  onPrepareSettings: (patch: Partial<PrepareSettings>) => void;
+  onPrepare: (settings: PrepareSettings) => void;
   onCancelPrepare: () => void;
+  onSync: () => void;
   onReset: () => void;
+  onShortcuts: () => void;
 }) {
+  const running = prepareJob !== null && prepareJob.phase !== "done";
+  // A sync stamped ahead of the browser clock (skew) reads as "gerade eben".
+  const syncRelative = counts.lastSyncedAt ? relativeTime(counts.lastSyncedAt) : null;
+  const syncLabel =
+    syncRelative === null
+      ? "Sync: nie"
+      : syncRelative === "gleich" || syncRelative.startsWith("in ")
+        ? "Sync gerade eben"
+        : `Sync ${syncRelative}`;
   const optIn = Object.entries(counts.byOptInLevel);
+
+  // Two rows below 2xl (progress · switch · actions / pills), one row at 2xl.
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
-        <HeaderStat label="Offen" value={counts.pending} />
-        <HeaderStat label="Entwürfe" value={counts.drafted} />
-        <HeaderStat label="Heute gesendet" value={counts.sentToday} />
-        <HeaderStat label="Übersprungen" value={counts.skipped} />
-        <HeaderStat label="Unterdrückt" value={counts.suppressed} />
-        {counts.draftFailed > 0 && (
-          <HeaderStat label="Entwurf fehlgeschlagen" value={counts.draftFailed} warn />
-        )}
-        <span className="flex items-center gap-1 text-xs text-muted-foreground">
-          Opt-in: {optIn.length ? optIn.map(([level, n]) => `${optInShort(level)} ${num(n)}`).join(" · ") : "—"}
-          <InfoTip>
-            Verteilung der Kontakte nach Einwilligungsnachweis. Nur Double-Opt-in (DOI) ist ohne
-            weitere Freigabe versendbar; Single-Opt-in und Unbekannt werden blockiert, solange
-            CAMPAIGN_ALLOW_SINGLE_OPT_IN nicht gesetzt ist.
-          </InfoTip>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-card px-3 py-2">
+      {/* Today's progress */}
+      <div className="order-1 flex items-center gap-2 text-sm">
+        <span className="whitespace-nowrap tabular-nums">
+          <strong>{num(progress.done)}</strong> <span className="text-muted-foreground">gesendet</span>
+          <span className="text-muted-foreground"> · </span>
+          <strong>{num(queueSize)}</strong> <span className="text-muted-foreground">zu prüfen</span>
         </span>
-        <span className="flex items-center gap-1 text-xs text-muted-foreground">
-          A/B Hero: {num(abSplit.withHero)} mit · {num(abSplit.without)} ohne
-          <InfoTip>
-            Warteschlange nach Hero-A/B-Gruppe: gerade Kontakt-IDs sollen mit generiertem KI-Hero
-            gesendet werden, ungerade ohne. Der KPI-Bereich vergleicht beide Gruppen.
-          </InfoTip>
-        </span>
+        <ProgressBar
+          value={progress.ratio * 100}
+          label="Fortschritt des Tages"
+          tone={progress.total > 0 && progress.done === progress.total ? "success" : "accent"}
+          className="w-24"
+        />
+        <InfoTip>
+          Heute gesendete Kampagnen-E-Mails gegenüber den Entwürfen, die noch in der
+          Warteschlange liegen. Der Balken endet bei der Tagesmenge — kein festes Ziel.
+          {counts.pending > 0 && (
+            <>
+              {" "}
+              Dazu {num(counts.pending)} offene Kontakte ohne Entwurf ({num(counts.pendingSendable)} im
+              Sendefenster), {num(counts.skipped)} übersprungen, {num(counts.suppressed)} unterdrückt.
+            </>
+          )}
+          {optIn.length > 0 && (
+            <>
+              {" "}
+              Opt-in: {optIn.map(([level, n]) => `${level === "CONFIRMED_OPT_IN" ? "DOI" : level === "SINGLE_OPT_IN" ? "Single-Opt-in" : "Unbekannt"} ${num(n)}`).join(" · ")}.
+              Nur Double-Opt-in (DOI) ist ohne weitere Freigabe versendbar; Single-Opt-in und
+              Unbekannt werden blockiert, solange CAMPAIGN_ALLOW_SINGLE_OPT_IN nicht gesetzt ist.
+            </>
+          )}
+        </InfoTip>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-        <Tooltip content="Shopify nicht konfiguriert" disabled={shopifyConfigured}>
-          <span className="inline-flex">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onSync}
-              loading={busy === "sync"}
-              disabled={busy !== null || !shopifyConfigured}
-            >
-              <RefreshCw /> Sync
-            </Button>
-          </span>
-        </Tooltip>
-        <FilterGroup label="Neue Entwürfe" htmlFor="campaign-prepare-depth">
-          <Select
-            id="campaign-prepare-depth"
-            value={String(prepareDepth)}
-            onChange={(e) => onPrepareDepth(clampDiscountPercent(e.target.value))}
-            className="h-8 w-auto min-w-[7.5rem] py-0 pr-8 text-xs"
-            aria-label="Rabatt-Tiefe für neue Entwürfe"
-            disabled={busy !== null}
-          >
-            <option value="0">0 % Rabatt</option>
-            <option value="5">5 % Rabatt</option>
-            <option value="10">10 % Rabatt</option>
-            <option value="15">15 % Rabatt</option>
-            <option value="20">20 % Rabatt</option>
-          </Select>
-          <Select
-            id="campaign-prepare-textmode"
-            value={prepareTextMode}
-            onChange={(e) => onPrepareTextMode(e.target.value as EmailTextModeValue)}
-            className="h-8 w-auto min-w-[8rem] py-0 pr-8 text-xs"
-            aria-label="Textmodus für neue Entwürfe"
-            disabled={busy !== null}
-          >
-            <option value="detailed">{EMAIL_TEXT_MODE_LABELS.detailed}</option>
-            <option value="compact">{EMAIL_TEXT_MODE_LABELS.compact}</option>
-            <option value="minimal">{EMAIL_TEXT_MODE_LABELS.minimal}</option>
-          </Select>
+      {/* View switch */}
+      <SegmentedControl
+        className="order-2"
+        label="Ansicht"
+        value={view}
+        onChange={onView}
+        options={[
+          {
+            value: "pruefen",
+            label: `Prüfen${visibleSize !== queueSize ? ` ${num(visibleSize)}/${num(queueSize)}` : ""}`,
+          },
+          { value: "liste", label: "Liste" },
+          { value: "gesendet", label: `Gesendet ${num(counts.sentTotal)}` },
+        ]}
+      />
+
+      {/* Status pills */}
+      <div className="order-4 flex basis-full flex-wrap items-center gap-1.5 2xl:order-3 2xl:ml-auto 2xl:basis-auto">
+        <span className="inline-flex items-center gap-0.5">
+          <StatusBadge tone={sendsApproved ? "success" : "destructive"}>
+            {sendsApproved ? "Versand freigegeben" : "Versand gesperrt"}
+          </StatusBadge>
           <InfoTip>
-            Rabatt-Tiefe und Textmodus (wie viel Fließtext die KI über den Produktkacheln
-            schreibt) für alle Entwürfe, die „Vorbereiten“, „Entwurf erstellen“ und
-            „Wiederherstellen“ neu erzeugen.
+            {sendsApproved ? (
+              <>
+                CAMPAIGN_SENDS_APPROVED ist gesetzt — der Server nimmt Sendungen an. Jede
+                Sendung durchläuft trotzdem die Gates: Opt-in-Stufe
+                {allowSingleOptIn ? " (Single-Opt-in freigegeben)" : " (nur Double-Opt-in)"},
+                Unterdrückungsliste, Sperrfrist, Rabatt-Prüfung.
+              </>
+            ) : (
+              <>
+                Die anwaltliche Freigabe für diesen Kanal steht aus (CAMPAIGN_SENDS_APPROVED=false).
+                Entwürfe, Vorschau und Kopieren funktionieren; der Senden-Button bleibt deaktiviert
+                und der Server lehnt jeden Versand ab.
+              </>
+            )}
           </InfoTip>
-        </FilterGroup>
-        {prepareProgress ? (
-          <span className="flex min-w-[16rem] flex-1 items-center gap-2 text-xs text-muted-foreground">
-            <ProgressBar
-              value={(prepareProgress.done / prepareProgress.total) * 100}
-              label="Fortschritt der Vorbereitung"
-              className="max-w-[12rem]"
-            />
-            <span className="tabular-nums">
-              {num(Math.min(prepareProgress.done, prepareProgress.total))}/{num(prepareProgress.total)} ·{" "}
-              {num(prepareProgress.prepared)} erstellt
-              {prepareProgress.failed > 0 ? `, ${num(prepareProgress.failed)} fehlgeschlagen` : ""}
-            </span>
-            <Button variant="ghost" size="xs" onClick={onCancelPrepare}>
-              <X /> Abbrechen
-            </Button>
-          </span>
-        ) : (
-          <Button size="sm" onClick={onPrepare} disabled={busy !== null}>
-            <Sparkles /> Nächste {PREPARE_TOTAL} vorbereiten
-          </Button>
-        )}
-        <span className="ml-auto">
-          <Tooltip content="Verwirft alle offenen Entwürfe — die Kontakte werden wieder „Offen“.">
-            <span className="inline-flex">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-                onClick={onReset}
-                loading={busy === "reset"}
-                disabled={busy !== null || queueEmpty}
-              >
-                <RotateCcw /> Warteschlange neu aufbauen
-              </Button>
-            </span>
-          </Tooltip>
         </span>
+        <span className="inline-flex items-center gap-0.5">
+          <StatusBadge tone={shopifyConfigured ? "success" : "warning"}>
+            {shopifyConfigured ? "Shopify" : "Shopify fehlt"}
+          </StatusBadge>
+          <InfoTip>
+            {shopifyConfigured
+              ? "Shopify ist verbunden — Sync, Kaufhistorie, Set-Angebote und Rabattcodes stehen zur Verfügung."
+              : "Shopify ist nicht konfiguriert — Sync, Kaufhistorie und Rabattcodes sind deaktiviert."}
+          </InfoTip>
+        </span>
+        <span className="inline-flex items-center gap-0.5">
+          <StatusBadge tone="neutral" dot={false}>
+            {syncLabel}
+          </StatusBadge>
+          <InfoTip>
+            Letzter Abgleich der Shopify-Abonnent:innen:{" "}
+            {counts.lastSyncedAt ? formatAdmin(counts.lastSyncedAt, ADMIN_DATE_TIME_SHORT) : "noch nie"}.
+            Der Sync läuft nächtlich automatisch (Cron) und über „Jetzt synchronisieren“ im Menü.
+          </InfoTip>
+        </span>
+        {counts.draftFailed > 0 && (
+          <span className="inline-flex items-center gap-0.5">
+            <StatusBadge tone="warning">{num(counts.draftFailed)} fehlgeschlagen</StatusBadge>
+            <InfoTip>
+              Bei {num(counts.draftFailed)} Kontakten ist die Entwurfs-Generierung fehlgeschlagen. Sie
+              werden nicht automatisch wiederholt — über die Kontaktsuche „Entwurf erstellen“ wählen.
+            </InfoTip>
+          </span>
+        )}
+      </div>
+
+      {/* Vorbereiten + ⋯ */}
+      <div className="order-3 ml-auto flex items-center gap-2 2xl:order-4 2xl:ml-0">
+      {running && prepareJob ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <ProgressBar
+            value={
+              prepareJob.phase === "heroes"
+                ? prepareJob.heroTotal > 0
+                  ? (prepareJob.heroDone / prepareJob.heroTotal) * 100
+                  : 100
+                : prepareJob.total > 0
+                  ? (prepareJob.done / prepareJob.total) * 100
+                  : 0
+            }
+            label="Fortschritt der Vorbereitung"
+            className="w-20"
+          />
+          <span className="tabular-nums">
+            {prepareJob.phase === "heroes"
+              ? `Hero ${num(prepareJob.heroDone)}/${num(prepareJob.heroTotal)}`
+              : `${num(Math.min(prepareJob.done, prepareJob.total))}/${num(prepareJob.total)} · ${num(prepareJob.prepared)} erstellt`}
+            {prepareJob.failed > 0 ? `, ${num(prepareJob.failed)} fehlgeschlagen` : ""}
+          </span>
+          <Button variant="ghost" size="xs" onClick={onCancelPrepare}>
+            <X /> Abbrechen
+          </Button>
+        </div>
+      ) : (
+        <PreparePopover
+          open={prepareOpen}
+          onOpenChange={onPrepareOpen}
+          counts={counts}
+          costs={costs}
+          settings={prepareSettings}
+          onSettings={onPrepareSettings}
+          heroOffered={heroDesignActive && heroGenerationConfigured}
+          disabled={jobBusy !== null}
+          onStart={(settings) => {
+            onPrepareOpen(false);
+            onPrepare(settings);
+          }}
+          trigger={
+            <Button size="sm" disabled={jobBusy !== null}>
+              <Sparkles /> Vorbereiten…
+            </Button>
+          }
+        />
+      )}
+
+      <Menu
+        label="Weitere Aktionen"
+        size="sm"
+        items={[
+          {
+            key: "sync",
+            label: jobBusy === "sync" ? "Synchronisiert…" : "Jetzt synchronisieren",
+            icon: <RefreshCw />,
+            onSelect: onSync,
+            disabled: !shopifyConfigured || jobBusy !== null,
+            disabledReason: !shopifyConfigured ? "Shopify nicht konfiguriert" : undefined,
+          },
+          {
+            key: "shortcuts",
+            label: "Tastenkürzel",
+            icon: <Keyboard />,
+            shortcut: "?",
+            onSelect: onShortcuts,
+          },
+          {
+            key: "reset",
+            label: "Warteschlange neu aufbauen",
+            icon: <RotateCcw />,
+            tone: "destructive",
+            separatorBefore: true,
+            onSelect: onReset,
+            disabled: queueSize === 0 || jobBusy !== null || running,
+            disabledReason: queueSize === 0 ? "Keine offenen Entwürfe" : undefined,
+          },
+        ]}
+      />
       </div>
     </div>
   );

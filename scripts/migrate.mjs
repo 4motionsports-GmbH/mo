@@ -16,7 +16,13 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { neon } from "@neondatabase/serverless";
+import { neon, neonConfig } from "@neondatabase/serverless";
+
+// LOCAL DEV ONLY: run against a plain Postgres behind scripts/dev-neon-proxy.mjs
+// (same switch as src/lib/db.ts and scripts/seed-dev.mjs).
+if (process.env.NEON_FETCH_ENDPOINT) {
+  neonConfig.fetchEndpoint = process.env.NEON_FETCH_ENDPOINT;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, "..", "migrations");

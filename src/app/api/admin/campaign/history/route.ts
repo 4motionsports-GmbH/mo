@@ -1,10 +1,12 @@
-// GET /api/admin/campaign/history?q=&from=&to=&page=&pageSize= — the paged,
-// searchable "Gesendet" view of the Kampagne screen. Redemption status is
+// GET /api/admin/campaign/history?q=&from=&to=&delivery=&page=&pageSize= — the
+// paged, searchable "Gesendet" view of the Kampagne screen. `delivery` narrows
+// to a delivery state (delivered | clicked | bounced | complained | copy). Redemption status is
 // looked up in Shopify for THIS page's codes only (bounded by the page size;
 // null = unknown — never silently "not redeemed").
 
 import { guardAdminGet, adminJson } from "@/lib/admin-api";
 import { searchCampaignSendHistory } from "@/lib/campaign-store";
+import { parseDeliveryFilter } from "@/lib/campaign-desk-core.mjs";
 import { isShopifyConfigured } from "@/lib/shopify";
 import { wasDiscountCodeRedeemed } from "@/lib/shopify-orders";
 
@@ -19,6 +21,7 @@ export async function GET(req: Request) {
     query: sp.get("q") ?? "",
     from: sp.get("from"),
     to: sp.get("to"),
+    delivery: parseDeliveryFilter(sp.get("delivery")),
     page: Number(sp.get("page") ?? 1),
     pageSize: Number(sp.get("pageSize") ?? 25),
   });

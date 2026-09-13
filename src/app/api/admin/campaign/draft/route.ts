@@ -33,6 +33,7 @@ import { prepareDraftForContact } from "@/lib/campaign-prepare";
 import { shouldReuseCampaignDraft } from "@/lib/campaign-draft-core.mjs";
 import { getActiveBundleForCampaignContact } from "@/lib/bundle-offers-store";
 import { resolveProductSelections } from "@/lib/product-catalog";
+import { recommendationView } from "@/lib/campaign-recommendation-view";
 import { isSuppressed } from "@/lib/email-capture-store";
 import {
   parseDiscountPercent,
@@ -57,14 +58,7 @@ async function draftResponsePayload(contactId: number, draft: CampaignDraftRow) 
   const bundle = await getActiveBundleForCampaignContact(contactId);
   return {
     draft,
-    recommendations: draft.recommendedProductIds.map((id) => {
-      const s = byRef.get(id);
-      return {
-        id,
-        name: s?.display?.name ?? s?.product.name ?? id,
-        url: s?.display?.shopifyUrl ?? s?.product.shopifyUrl ?? null,
-      };
-    }),
+    recommendations: draft.recommendedProductIds.map((id) => recommendationView(id, byRef.get(id))),
     bundle: bundle
       ? {
           id: bundle.id,

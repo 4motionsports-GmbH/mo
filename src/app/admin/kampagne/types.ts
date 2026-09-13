@@ -1,15 +1,20 @@
 // Shared types + small pure helpers of the Kampagne screen (server tab → client
-// workspace props, and the client-side state machine).
+// desk props, and the client-side state). The rules the desk applies (checks,
+// filters, selection, estimates) live in src/lib/campaign-review-checks.mjs
+// and src/lib/campaign-desk-core.mjs — pure and unit-tested.
 
 import type { EmailTextModeValue } from "../EmailTextModeToggle";
+import type { CampaignRecommendationView } from "@/lib/campaign-recommendation-view";
 
-export type OptInFilter = "all" | "doi" | "soi";
+/** The three views of the screen (`?view=`, campaign-desk-core.mjs). */
+export type DeskView = "pruefen" | "liste" | "gesendet";
 
-export interface CampaignRecommendation {
-  id: string;
-  name: string;
-  url: string | null;
-}
+/** Queue filter chip key (`?filter=`, campaign-desk-core.mjs QUEUE_FILTERS). */
+export type QueueFilter = string;
+
+export type DeliveryFilter = "all" | "delivered" | "clicked" | "bounced" | "complained" | "copy";
+
+export type CampaignRecommendation = CampaignRecommendationView;
 
 /** Attached ACTIVE bundle offer (docs/CAMPAIGNS.md §4). */
 export interface CampaignBundle {
@@ -70,6 +75,17 @@ export interface CampaignQueueItemProps {
   purchaseSelectedIds: string[] | null;
   recommendations: CampaignRecommendation[];
   bundle: CampaignBundle | null;
+  /** Generated KI-Hero on the draft (null = the design's default image). */
+  heroUrl: string | null;
+  heroHeadline: string | null;
+  /** Newest send to this address on either channel (frequency-cap fact). */
+  lastSendAt: string | null;
+  /** When the draft was last written (stale-draft check). */
+  draftUpdatedAt: string | null;
+  /** Client-only: subject or text edited by hand in this session. */
+  edited?: boolean;
+  /** Client-only: the server's reason for refusing the last send attempt. */
+  sendError?: string | null;
 }
 
 export interface CampaignHistoryItemProps {
@@ -93,6 +109,8 @@ export interface CampaignHistoryItemProps {
 
 export interface CampaignCountsProps {
   pending: number;
+  /** Pending contacts inside the lifecycle send window. */
+  pendingSendable: number;
   drafted: number;
   sentTotal: number;
   sentToday: number;
@@ -100,6 +118,7 @@ export interface CampaignCountsProps {
   suppressed: number;
   draftFailed: number;
   byOptInLevel: Record<string, number>;
+  lastSyncedAt: string | null;
 }
 
 export interface CampaignSkippedItemProps {
@@ -121,22 +140,72 @@ export interface CampaignContactHit {
   hasDraft: boolean;
 }
 
+/** Recorded average costs (EUR) for the Vorbereiten estimate; null = no data. */
+export interface CampaignCostsProps {
+  draftEur: number | null;
+  heroEur: number | null;
+}
+
+/** Pure-DB delivery outcomes of the last `days` days („Gesendet“ strip). */
+export interface CampaignSentSummaryProps {
+  days: number;
+  sent: number;
+  tracked: number;
+  clicked: number;
+  delivered: number;
+  bouncedHard: number;
+  complained: number;
+  unsubscribed: number;
+}
+
+/** Everything the server hands to the desk (KampagneTab → KampagneWorkspace). */
+export interface CampaignDeskProps {
+  counts: CampaignCountsProps;
+  queue: CampaignQueueItemProps[];
+  skipped: CampaignSkippedItemProps[];
+  sendsApproved: boolean;
+  allowSingleOptIn: boolean;
+  shopifyConfigured: boolean;
+  /** The campaign e-mail design has a hero slot (the „Hero“ block applies). */
+  heroDesignActive: boolean;
+  /** Human name of the campaign design, for the Hero block's label. */
+  heroDesignName: string | null;
+  heroGenerationConfigured: boolean;
+  /** MARKETING_MIN_SEND_INTERVAL_DAYS (0 = no cap). */
+  minSendIntervalDays: number;
+  costs: CampaignCostsProps;
+  sentSummary: CampaignSentSummaryProps | null;
+  initialContactId: number | null;
+  initialView: DeskView;
+  initialFilter: QueueFilter;
+}
+
+/** Sizes offered by the Vorbereiten popover; the middle one is the default. */
+export const PREPARE_OPTIONS = [25, 50, 100] as const;
 export const PREPARE_TOTAL = 50;
 export const PREPARE_CHUNK = 5;
 
-export type CampaignBusy =
-  | null
+/** What a card can be busy with. `regen` covers every chained regenerate. */
+export type CardBusy =
   | "send"
   | "skip"
   | "regen"
-  | "sync"
-  | "prepare"
   | "markdone"
   | "bundle"
   | "recs"
   | "selection"
   | "discount"
-  | "reset";
+  | "language"
+  | "hero";
+
+/** One row of the Postausgang strip (sends in flight or just finished). */
+export interface OutboxEntry {
+  contactId: number;
+  email: string;
+  name: string;
+  state: "sending" | "sent" | "failed";
+  error?: string | null;
+}
 
 export function optInShort(level: string): string {
   switch (level) {

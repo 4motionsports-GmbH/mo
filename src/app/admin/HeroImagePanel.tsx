@@ -12,22 +12,14 @@
 // mobile crop on the draft row → the e-mail preview and the real send show
 // it automatically. "Entfernen" falls back to the default hero asset.
 //
-// Self-contained: loads its state from GET /api/admin/email-hero on mount, so
-// the big workspaces (CustomerProfileCard / KampagneWorkspace) only mount it
-// with { kind, targetId }. Mounted only where a human reviews before sending
-// (marketing + campaign) — summary/DOI send instantly and use the default.
+// Self-contained: loads its state from GET /api/admin/email-hero on mount
+// (useEmailHero), so the Kunden workspace only mounts it with { kind,
+// targetId }. The Kampagne desk uses the same hook in its own Hero block.
 
 import * as React from "react";
 import { Image as ImageIcon, Loader2, Sparkles, Trash2, Wand2 } from "lucide-react";
-import { Badge, Button, Label, Textarea, toast } from "./ui";
-
-interface HeroState {
-  url: string | null;
-  prompt: string | null;
-  headline: string | null;
-  defaultUrl: string;
-  generationConfigured: boolean;
-}
+import { Badge, Button, Label, Textarea } from "./ui";
+import { useEmailHero } from "./useEmailHero";
 
 export function HeroImagePanel({
   kind,
@@ -39,201 +31,10 @@ export function HeroImagePanel({
   targetId: number;
   disabled?: boolean;
 }) {
-  const [state, setState] = React.useState<HeroState | null>(null);
-  const [prompt, setPrompt] = React.useState("");
-  const [headline, setHeadline] = React.useState("");
-  const [busy, setBusy] = React.useState<
-    null | "suggest" | "generate" | "remove" | "headline"
-  >(null);
+  const hero = useEmailHero({ kind, targetId });
+  const { state, prompt, setPrompt, headline, setHeadline, busy } = hero;
   const [open, setOpen] = React.useState(false);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    setState(null);
-    setPrompt("");
-    setHeadline("");
-    setOpen(false);
-    void (async () => {
-      try {
-        const res = await fetch(
-          `/api/admin/email-hero?kind=${kind}&id=${targetId}`,
-          { headers: { Accept: "application/json" } }
-        );
-        const data = (await res.json().catch(() => ({}))) as Partial<HeroState>;
-        if (cancelled || !res.ok) return;
-        setState({
-          url: data.url ?? null,
-          prompt: data.prompt ?? null,
-          headline: data.headline ?? null,
-          defaultUrl: data.defaultUrl ?? "",
-          generationConfigured: Boolean(data.generationConfigured),
-        });
-        setPrompt(data.prompt ?? "");
-        setHeadline(data.headline ?? "");
-      } catch {
-        /* panel stays in loading-lite state; actions still guarded below */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [kind, targetId]);
-
-  const suggest = React.useCallback(async () => {
-    if (busy !== null) return;
-    setBusy("suggest");
-    try {
-      const res = await fetch("/api/admin/email-hero/suggest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, id: targetId }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        prompt?: string;
-        headline?: string;
-        error?: { message?: string };
-      };
-      if (!res.ok || !data.prompt) {
-        toast({
-          variant: "error",
-          title: "Prompt-Vorschlag fehlgeschlagen",
-          description: data.error?.message,
-        });
-        return;
-      }
-      setPrompt(data.prompt);
-      if (data.headline) setHeadline(data.headline);
-      setOpen(true);
-      toast({
-        variant: "success",
-        title: "Hero vorgeschlagen",
-        description: "Bild-Prompt & Schlagzeile aus Produkten und E-Mail-Inhalt — beides anpassbar.",
-      });
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
-    } finally {
-      setBusy(null);
-    }
-  }, [busy, kind, targetId]);
-
-  const generate = React.useCallback(async () => {
-    if (busy !== null || !prompt.trim()) return;
-    setBusy("generate");
-    try {
-      const res = await fetch("/api/admin/email-hero/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, id: targetId, prompt, headline: headline.trim() || null }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        url?: string;
-        review?: {
-          score: number;
-          pass: boolean;
-          reasons: string[];
-          rerendered: boolean;
-          references: number;
-        } | null;
-        error?: { message?: string };
-      };
-      if (!res.ok || !data.url) {
-        toast({
-          variant: "error",
-          title: "Bild-Generierung fehlgeschlagen",
-          description: data.error?.message,
-        });
-        return;
-      }
-      setState((prev) =>
-        prev ? { ...prev, url: data.url ?? null, prompt, headline: headline.trim() || null } : prev
-      );
-      const r = data.review;
-      const check = r
-        ? ` KI-Prüfung ${r.score}/10${r.rerendered ? " (einmal neu gerendert)" : ""}${
-            r.references ? `, ${r.references} Referenzfoto${r.references === 1 ? "" : "s"}` : ""
-          }${r.pass ? "" : ` — Hinweise: ${r.reasons.join(", ")}`}.`
-        : "";
-      toast({
-        variant: "success",
-        title: "Hero-Bild eingesetzt",
-        description: `Vorschau & Versand verwenden ab sofort dieses Bild.${check}`,
-      });
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
-    } finally {
-      setBusy(null);
-    }
-  }, [busy, kind, targetId, prompt, headline]);
-
-  const saveHeadline = React.useCallback(async () => {
-    if (busy !== null) return;
-    setBusy("headline");
-    try {
-      const res = await fetch("/api/admin/email-hero/headline", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, id: targetId, headline: headline.trim() || null }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: { message?: string };
-      };
-      if (!res.ok || !data.ok) {
-        toast({
-          variant: "error",
-          title: "Schlagzeile konnte nicht gespeichert werden",
-          description: data.error?.message,
-        });
-        return;
-      }
-      setState((prev) => (prev ? { ...prev, headline: headline.trim() || null } : prev));
-      toast({
-        variant: "success",
-        title: "Schlagzeile gespeichert",
-        description: headline.trim()
-          ? "Vorschau & Versand verwenden ab sofort diese Schlagzeile."
-          : "Die E-Mail verwendet wieder die Standard-Schlagzeile des Designs.",
-      });
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
-    } finally {
-      setBusy(null);
-    }
-  }, [busy, kind, targetId, headline]);
-
-  const remove = React.useCallback(async () => {
-    if (busy !== null) return;
-    setBusy("remove");
-    try {
-      const res = await fetch("/api/admin/email-hero/remove", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, id: targetId }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        error?: { message?: string };
-      };
-      if (!res.ok || !data.ok) {
-        toast({
-          variant: "error",
-          title: "Entfernen fehlgeschlagen",
-          description: data.error?.message,
-        });
-        return;
-      }
-      setState((prev) => (prev ? { ...prev, url: null } : prev));
-      toast({
-        variant: "success",
-        title: "Hero-Bild entfernt",
-        description: "Die E-Mail verwendet wieder das Standard-Hero-Bild.",
-      });
-    } catch {
-      toast({ variant: "error", title: "Netzwerkfehler", description: "Bitte erneut versuchen." });
-    } finally {
-      setBusy(null);
-    }
-  }, [busy, kind, targetId]);
+  React.useEffect(() => setOpen(false), [kind, targetId]);
 
   const anyBusy = disabled || busy !== null;
 
@@ -254,7 +55,7 @@ export function HeroImagePanel({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => void suggest()}
+            onClick={() => void hero.suggest().then((s) => s && setOpen(true))}
             disabled={anyBusy}
             title="Die KI schlägt einen Bild-Prompt aus Produkten & E-Mail-Inhalt vor"
           >
@@ -266,13 +67,7 @@ export function HeroImagePanel({
             Hero vorschlagen
           </Button>
           {state?.url && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => void remove()}
-              disabled={anyBusy}
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={() => void hero.remove()} disabled={anyBusy}>
               {busy === "remove" ? (
                 <Loader2 className="me-1 h-3.5 w-3.5 animate-spin" />
               ) : (
@@ -314,13 +109,11 @@ export function HeroImagePanel({
                 type="button"
                 variant="secondary"
                 size="sm"
-                onClick={() => void saveHeadline()}
+                onClick={() => void hero.saveHeadline()}
                 disabled={anyBusy}
                 title="Speichert nur die Schlagzeile — ohne neues Bild zu generieren"
               >
-                {busy === "headline" ? (
-                  <Loader2 className="me-1 h-3.5 w-3.5 animate-spin" />
-                ) : null}
+                {busy === "headline" ? <Loader2 className="me-1 h-3.5 w-3.5 animate-spin" /> : null}
                 Speichern
               </Button>
             </div>
@@ -340,7 +133,7 @@ export function HeroImagePanel({
             <Button
               type="button"
               size="sm"
-              onClick={() => void generate()}
+              onClick={() => void hero.generate()}
               disabled={anyBusy || !prompt.trim() || state?.generationConfigured === false}
               title={
                 state?.generationConfigured === false

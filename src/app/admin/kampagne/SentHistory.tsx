@@ -1,14 +1,18 @@
 "use client";
 
-// "Gesendet": paged, searchable campaign send history with delivery state
-// (Resend webhook signals), redemption status (looked up for the visible page
-// only) and the retained content viewer. Data comes from
-// GET /api/admin/campaign/history.
+// "Gesendet": the 30-day delivery strip (pure DB — redemption and revenue stay
+// on the KPI screen with its Shopify cache), then the paged, searchable
+// campaign send history with delivery-state chips, delivery state (Resend
+// webhook signals), redemption status (looked up for the visible page only)
+// and the retained content viewer. Data comes from GET /api/admin/campaign/history.
 
 import * as React from "react";
-import { Eye, Mail } from "lucide-react";
+import { ArrowRight, Eye, Mail } from "lucide-react";
+import Link from "next/link";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { num, ratio } from "@/lib/admin-format.mjs";
 import { pageCount } from "@/lib/admin-table.mjs";
+import { HISTORY_DELIVERY_FILTERS } from "@/lib/campaign-desk-core.mjs";
 import {
   Button,
   Callout,
@@ -19,13 +23,15 @@ import {
   Input,
   Pagination,
   SearchInput,
+  Stat,
   StatusBadge,
   Tooltip,
+  cn,
   type DataTableColumn,
   type StatusTone,
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
-import type { CampaignHistoryItemProps } from "./types";
+import type { CampaignHistoryItemProps, CampaignSentSummaryProps, DeliveryFilter } from "./types";
 
 interface HistoryPage {
   rows: CampaignHistoryItemProps[];
@@ -34,7 +40,7 @@ interface HistoryPage {
   pageSize: number;
 }
 
-function deliveryState(h: CampaignHistoryItemProps): { label: string; tone: StatusTone; detail?: string } {
+export function deliveryState(h: CampaignHistoryItemProps): { label: string; tone: StatusTone; detail?: string } {
   if (h.sentVia === "copy") return { label: "Kopiert", tone: "neutral", detail: "Manuell kopiert — keine Zustelldaten." };
   if (h.bouncedAt) {
     return {
@@ -49,12 +55,41 @@ function deliveryState(h: CampaignHistoryItemProps): { label: string; tone: Stat
   return { label: "Gesendet", tone: "neutral", detail: "Noch keine Zustellbestätigung." };
 }
 
+/** The pure-DB 30-day strip above the table. */
+function DeliveryStrip({ summary }: { summary: CampaignSentSummaryProps }) {
+  const pctOf = (n: number, base: number) => (base > 0 ? ratio(n / base, 0) : "—");
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+      <Stat size="sm" label={`Gesendet · ${num(summary.days)} Tage`} value={num(summary.sent)} />
+      <Stat
+        size="sm"
+        label="Zugestellt"
+        value={pctOf(summary.delivered, summary.sent)}
+        hint={`${num(summary.delivered)} von ${num(summary.sent)}`}
+        info="Anteil der Sendungen mit Zustellbestätigung (Resend-Webhook) an allen Sendungen der letzten 30 Tage."
+      />
+      <Stat
+        size="sm"
+        label="Geklickt"
+        value={pctOf(summary.clicked, summary.tracked)}
+        hint={`${num(summary.clicked)} von ${num(summary.tracked)} mit Link`}
+        info="Erster Klick auf den getrackten Mo-Link, bezogen auf Sendungen, die einen solchen Link enthielten."
+      />
+      <Stat size="sm" label="Bounces (hart)" value={num(summary.bouncedHard)} />
+      <Stat size="sm" label="Beschwerden" value={num(summary.complained)} />
+      <Stat size="sm" label="Abmeldungen" value={num(summary.unsubscribed)} />
+    </div>
+  );
+}
+
 export function SentHistory({
   initialTotal,
+  summary,
   viewBusy,
   onView,
 }: {
   initialTotal: number;
+  summary: CampaignSentSummaryProps | null;
   viewBusy: boolean;
   onView: (h: CampaignHistoryItemProps) => void;
 }) {
@@ -62,6 +97,7 @@ export function SentHistory({
   const [debounced, setDebounced] = React.useState("");
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
+  const [delivery, setDelivery] = React.useState<DeliveryFilter>("all");
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(25);
   const [data, setData] = React.useState<HistoryPage | null>(null);
@@ -80,6 +116,7 @@ export function SentHistory({
     if (debounced) sp.set("q", debounced);
     if (from) sp.set("from", from);
     if (to) sp.set("to", to);
+    if (delivery !== "all") sp.set("delivery", delivery);
     adminFetch<HistoryPage>(`/api/admin/campaign/history?${sp.toString()}`, { signal: controller.signal })
       .then((json) => {
         if (controller.signal.aborted) return;
@@ -93,9 +130,9 @@ export function SentHistory({
         setLoading(false);
       });
     return () => controller.abort();
-  }, [debounced, from, to, page, pageSize]);
+  }, [debounced, from, to, delivery, page, pageSize]);
 
-  const activeFilters = (debounced ? 1 : 0) + (from ? 1 : 0) + (to ? 1 : 0);
+  const activeFilters = (debounced ? 1 : 0) + (from ? 1 : 0) + (to ? 1 : 0) + (delivery !== "all" ? 1 : 0);
   const total = data?.total ?? initialTotal;
   const rows = data?.rows ?? [];
 
@@ -178,12 +215,24 @@ export function SentHistory({
 
   return (
     <div className="flex flex-col gap-3">
+      {summary && (
+        <div className="flex flex-col gap-2">
+          <DeliveryStrip summary={summary} />
+          <Link
+            href="/admin?tab=kpi#kpi-marketing"
+            className="inline-flex w-fit items-center gap-1 text-xs text-accent underline-offset-2 hover:underline"
+          >
+            Kampagnen-Funnel mit Einlösungen und Umsatz im KPI-Bereich <ArrowRight className="size-3" aria-hidden />
+          </Link>
+        </div>
+      )}
       <FilterBar
         activeCount={activeFilters}
         onReset={() => {
           setQuery("");
           setFrom("");
           setTo("");
+          setDelivery("all");
           setPage(1);
         }}
       >
@@ -198,6 +247,31 @@ export function SentHistory({
           containerClassName="w-64"
           aria-label="Gesendete E-Mails durchsuchen"
         />
+        <div role="radiogroup" aria-label="Zustellung filtern" className="flex flex-wrap items-center gap-1">
+          {HISTORY_DELIVERY_FILTERS.map((f) => {
+            const active = delivery === f.key;
+            return (
+              <button
+                key={f.key}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => {
+                  setDelivery(f.key as DeliveryFilter);
+                  setPage(1);
+                }}
+                className={cn(
+                  "inline-flex h-7 items-center rounded-md border px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active
+                    ? "border-accent/40 bg-accent-soft text-accent"
+                    : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground"
+                )}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
         <FilterGroup label="Von" htmlFor="campaign-history-from">
           <Input
             id="campaign-history-from"

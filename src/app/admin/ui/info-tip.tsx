@@ -19,6 +19,8 @@ import { cn } from "./cn";
 import { getPortalContainer } from "./portal";
 
 export type FloatingSide = "top" | "bottom";
+/** Horizontal anchoring of a floating panel relative to its trigger. */
+export type FloatingAlign = "center" | "start" | "end";
 
 interface FloatingPosition {
   top: number;
@@ -33,7 +35,8 @@ const MARGIN = 8;
 function computePosition(
   trigger: DOMRect,
   panel: { width: number; height: number },
-  preferred: FloatingSide
+  preferred: FloatingSide,
+  align: FloatingAlign = "center"
 ): FloatingPosition {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
@@ -46,12 +49,27 @@ function computePosition(
   const top = side === "bottom" ? trigger.bottom + GAP : trigger.top - panel.height - GAP;
   const centre = trigger.left + trigger.width / 2;
   const maxLeft = Math.max(MARGIN, vw - panel.width - MARGIN);
-  const left = Math.min(Math.max(MARGIN, centre - panel.width / 2), maxLeft);
+  const wanted =
+    align === "start"
+      ? trigger.left
+      : align === "end"
+        ? trigger.right - panel.width
+        : centre - panel.width / 2;
+  const left = Math.min(Math.max(MARGIN, wanted), maxLeft);
   const arrowLeft = Math.min(Math.max(12, centre - left), Math.max(12, panel.width - 12));
   return { top, left, side, arrowLeft };
 }
 
-function useFloatingPanel(open: boolean, preferred: FloatingSide) {
+/**
+ * The shared positioning engine: measures the trigger + panel, flips
+ * top/bottom, clamps to the viewport and follows scroll/resize while open.
+ * Used by InfoTip, Tooltip, Popover and Menu.
+ */
+export function useFloatingPanel(
+  open: boolean,
+  preferred: FloatingSide,
+  align: FloatingAlign = "center"
+) {
   const triggerRef = React.useRef<HTMLElement | null>(null);
   const panelRef = React.useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = React.useState<FloatingPosition | null>(null);
@@ -66,7 +84,8 @@ function useFloatingPanel(open: boolean, preferred: FloatingSide) {
         computePosition(
           t.getBoundingClientRect(),
           { width: p.offsetWidth, height: p.offsetHeight },
-          preferred
+          preferred,
+          align
         )
       );
     };
@@ -78,12 +97,13 @@ function useFloatingPanel(open: boolean, preferred: FloatingSide) {
       window.removeEventListener("scroll", update, true);
       setPos(null);
     };
-  }, [open, preferred]);
+  }, [open, preferred, align]);
 
   return { triggerRef, panelRef, pos };
 }
 
-function FloatingPanel({
+/** The portaled, fixed-position panel (into #admin-root so the theme applies). */
+export function FloatingPanel({
   id,
   role,
   pos,
@@ -92,15 +112,21 @@ function FloatingPanel({
   children,
   onMouseEnter,
   onMouseLeave,
+  onKeyDown,
+  ariaLabel,
+  ariaLabelledBy,
 }: {
   id: string;
-  role: "tooltip" | "dialog";
+  role: "tooltip" | "dialog" | "menu";
   pos: FloatingPosition | null;
   panelRef: React.RefObject<HTMLDivElement | null>;
   className?: string;
   children: React.ReactNode;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLDivElement>) => void;
+  ariaLabel?: string;
+  ariaLabelledBy?: string;
 }) {
   const container = getPortalContainer();
   if (!container) return null;
@@ -109,8 +135,12 @@ function FloatingPanel({
       id={id}
       role={role}
       ref={panelRef}
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
+      tabIndex={role === "tooltip" ? undefined : -1}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onKeyDown={onKeyDown}
       style={
         pos
           ? { position: "fixed", top: pos.top, left: pos.left }
