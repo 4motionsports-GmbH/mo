@@ -30,7 +30,13 @@ export const HeroBlock = React.forwardRef<
   }
 >(function HeroBlock({ item, designName, generationConfigured, locked, onChange, onBusy }, ref) {
   const [sheetOpen, setSheetOpen] = React.useState(false);
-  const hero = useEmailHero({ kind: "campaign", targetId: item.contactId, lazy: true, onChange });
+  const hero = useEmailHero({
+    kind: "campaign",
+    targetId: item.contactId,
+    lazy: true,
+    initial: { url: item.heroUrl, headline: item.heroHeadline },
+    onChange,
+  });
   const { busy } = hero;
   const group = abGroupOf(item.contactId);
   const hasHero = Boolean(item.heroUrl);

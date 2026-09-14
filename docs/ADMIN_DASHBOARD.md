@@ -319,8 +319,9 @@ person clearing 100–200 e-mails a day:
   chips with counts, rows with segment/discount/set/language chips, an edit
   mark and a verdict dot, the Postausgang strip, Übersprungen with
   Wiederherstellen). The *mail column* (identity line, subject inline, the
-  rendered e-mail as the default view — the next card is prefetched — the
-  in-place editor on `E`, side by side with the render at ≥ 1600 px, and the
+  rendered e-mail as the default view — re-rendered on every change of the
+  draft (Hero, Set, Empfehlungen, Rabatt, Sprache, Neu generieren; typing is
+  debounced) and prefetched for the next card — the in-place editor on `E`, side by side with the render at ≥ 1600 px, and the
   action bar: `P`/`N`, Überspringen `X`, Neu generieren `R`, Bearbeiten `E`,
   ⋯ (Vorschau `V`, Kopieren `C` → „Als erledigt markieren“, Verlauf,
   Fokus-Modus `F`, Tastenkürzel `?`), Senden `S`). The *review column*:

@@ -92,6 +92,10 @@ export interface CampaignQueueItemProps {
   edited?: boolean;
   /** Client-only: the server's reason for refusing the last send attempt. */
   sendError?: string | null;
+  /** Client-only: bumped when the stored draft changed beyond what the card's
+   * fields express (a regenerate, a replaced hero) — the rendered preview
+   * re-renders on every change of its signature (campaign-desk-core.mjs). */
+  previewVersion?: number;
 }
 
 export interface CampaignHistoryItemProps {
