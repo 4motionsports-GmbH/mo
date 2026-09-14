@@ -60,6 +60,12 @@ export interface CampaignContactRow {
   sentAt: string | null;
   skippedAt: string | null;
   createdAt: string | null;
+  /** Testkontakt (migration 0057): created from the desk, never synced or
+   * suppressed, exempt from the cadence cap, returns to 'drafted' after every
+   * send; its sends are stamped is_test and left out of the KPIs. */
+  isTest: boolean;
+  /** Real customer's e-mail whose purchase history the test draft borrows. */
+  testSourceEmail: string | null;
 }
 
 /** Compact per-order snapshot stored on the draft to render the review card. */
@@ -147,6 +153,8 @@ function mapContactRow(r: Record<string, unknown>): CampaignContactRow {
     sentAt: toIso(r.sent_at),
     skippedAt: toIso(r.skipped_at),
     createdAt: toIso(r.created_at),
+    isTest: r.is_test === true,
+    testSourceEmail: (r.test_source_email as string | null) ?? null,
   };
 }
 
@@ -373,6 +381,7 @@ export async function suppressContactsMissingFromSync(
       UPDATE campaign_contacts
          SET status = 'suppressed'
        WHERE status <> 'suppressed'
+         AND is_test = false
          AND NOT (shopify_customer_id = ANY(${syncedShopifyIds}::text[]))
       RETURNING 1
     )
@@ -429,11 +438,12 @@ export async function getCampaignCounts(
           count(*) FILTER (WHERE status = 'draft_failed')::int AS draft_failed,
           max(last_synced_at) AS last_synced_at
           FROM campaign_contacts
+         WHERE is_test = false
       `,
       sql`
         SELECT COALESCE(opt_in_level, 'UNKNOWN') AS level, count(*)::int AS n
           FROM campaign_contacts
-         WHERE status <> 'suppressed'
+         WHERE status <> 'suppressed' AND is_test = false
          GROUP BY 1
       `,
     ])) as [Array<Record<string, unknown>>, Array<{ level: string; n: number }>];
@@ -495,7 +505,8 @@ export async function listDraftedQueue(
              -- lastCrossChannelSendAt), so the desk can flag a blocked send
              -- before the operator presses Senden.
              (SELECT max(t.sent_at) FROM (
-                SELECT cs.sent_at FROM campaign_sends cs WHERE cs.email = c.email
+                SELECT cs.sent_at FROM campaign_sends cs
+                 WHERE cs.email = c.email AND cs.is_test = false
                 UNION ALL
                 SELECT ms.sent_at
                   FROM marketing_sends ms
@@ -566,6 +577,7 @@ export async function listNextPendingContacts(
   const rows = (await sql`
     SELECT * FROM campaign_contacts
      WHERE status = 'pending'
+       AND is_test = false
        AND (
          last_order_at IS NULL
          OR (
@@ -915,13 +927,13 @@ export async function resetDraftedContacts(
   await sql`
     DELETE FROM campaign_drafts d
      USING campaign_contacts c
-     WHERE c.id = d.contact_id AND c.status = 'drafted'
+     WHERE c.id = d.contact_id AND c.status = 'drafted' AND c.is_test = false
   `;
   const rows = (await sql`
     WITH upd AS (
       UPDATE campaign_contacts
          SET status = 'pending'
-       WHERE status = 'drafted'
+       WHERE status = 'drafted' AND is_test = false
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM upd
@@ -967,6 +979,130 @@ export async function markContactDraftFailed(
     `;
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "markContactDraftFailed" });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Testkontakte (migration 0057)
+// ---------------------------------------------------------------------------
+
+/** The sync key of a test contact — never a Shopify gid, so the audience sync
+ * can neither overwrite nor suppress it. */
+export function testContactSyncId(email: string): string {
+  return `test:${normalizeEmail(email)}`;
+}
+
+export interface CreateTestContactInput {
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  language: "de" | "en";
+  /** Real customer whose purchase history the draft borrows (optional). */
+  sourceEmail: string | null;
+}
+
+/**
+ * Create (or refresh) a Testkontakt: a pending row with a provable opt-in so
+ * the gate passes, keyed 'test:<email>'. Re-creating an existing one updates
+ * name, language and source and puts it back to 'pending' unless it is in
+ * review already. Returns the row, or null without a database / on error.
+ */
+export async function createTestContact(
+  input: CreateTestContactInput,
+  sql: Sql | null = getSql()
+): Promise<CampaignContactRow | null> {
+  if (!sql) return null;
+  const email = normalizeEmail(input.email);
+  if (!email) return null;
+  const source = input.sourceEmail ? normalizeEmail(input.sourceEmail) || null : null;
+  try {
+    const rows = (await sql`
+      INSERT INTO campaign_contacts
+        (shopify_customer_id, email, first_name, last_name, language,
+         opt_in_level, consent_updated_at, orders_count, total_spent_cents,
+         last_synced_at, status, is_test, test_source_email, created_at)
+      VALUES
+        (${testContactSyncId(email)}, ${email}, ${input.firstName}, ${input.lastName},
+         ${input.language}, 'CONFIRMED_OPT_IN', now(), 0, 0, now(), 'pending', true,
+         ${source}, now())
+      ON CONFLICT (shopify_customer_id) DO UPDATE SET
+        first_name        = EXCLUDED.first_name,
+        last_name         = EXCLUDED.last_name,
+        language          = EXCLUDED.language,
+        test_source_email = EXCLUDED.test_source_email,
+        status            = CASE WHEN campaign_contacts.status IN ('drafted', 'sending')
+                                 THEN campaign_contacts.status ELSE 'pending' END,
+        skipped_at        = NULL,
+        is_test           = true
+      RETURNING *
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? mapContactRow(rows[0]) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "createTestContact" });
+    return null;
+  }
+}
+
+/** Every Testkontakt with whether a draft exists (newest first). */
+export async function listTestContacts(
+  sql: Sql | null = getSql()
+): Promise<CampaignContactSearchHit[]> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT c.*,
+             EXISTS (SELECT 1 FROM campaign_drafts d WHERE d.contact_id = c.id) AS has_draft
+        FROM campaign_contacts c
+       WHERE c.is_test = true
+       ORDER BY c.id DESC
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({ contact: mapContactRow(r), hasDraft: r.has_draft === true }));
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "listTestContacts" });
+    return [];
+  }
+}
+
+/** Delete a Testkontakt (its draft cascades; its send records stay, flagged).
+ * Only test rows are ever deleted here. */
+export async function deleteTestContact(
+  contactId: number,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      DELETE FROM campaign_contacts
+       WHERE id = ${contactId} AND is_test = true
+      RETURNING id
+    `) as Array<{ id: number }>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "deleteTestContact" });
+    return false;
+  }
+}
+
+/**
+ * After a send to a Testkontakt: back to 'drafted' with the draft intact
+ * (a real contact flips to 'sent'), so the next variation can go out at once.
+ */
+export async function resetTestContactAfterSend(
+  contactId: number,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      UPDATE campaign_contacts
+         SET status = 'drafted'
+       WHERE id = ${contactId} AND is_test = true AND status IN ('sending', 'drafted')
+      RETURNING id
+    `) as Array<{ id: number }>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "resetTestContactAfterSend" });
+    return false;
   }
 }
 
@@ -1085,6 +1221,8 @@ export interface RecordCampaignSendInput {
   /** Resend's message id for the shipped mail (migration 0055) — the key the
    * delivery webhook uses to attach bounces / complaints / delivery. */
   providerEmailId?: string | null;
+  /** Send to a Testkontakt (migration 0057) — kept out of every KPI. */
+  isTest?: boolean;
 }
 
 /** Append the immutable send record. Throws on failure (the send path treats a
@@ -1100,7 +1238,7 @@ export async function recordCampaignSend(
        discount_code, discount_code_gid, discount_expires_at, redirect_token,
        segment, design_key, hero_variant, hero_image_url, hero_headline,
        text_mode, language, discount_percent, bundle_offer_id, provider_email_id,
-       sent_at, created_at)
+       is_test, sent_at, created_at)
     VALUES
       (${input.contactId}, ${normalizeEmail(input.email)}, ${input.subject},
        ${input.bodyHash}, ${input.bodyText}, ${input.bodyHtml},
@@ -1112,7 +1250,7 @@ export async function recordCampaignSend(
        ${input.textMode ?? null}, ${input.language ?? null},
        ${input.discountPercent ?? null}, ${input.bundleOfferId ?? null},
        ${input.providerEmailId ?? null},
-       now(), now())
+       ${input.isTest === true}, now(), now())
   `;
 }
 
@@ -1384,7 +1522,8 @@ export async function getCampaignKpis(
           count(*) FILTER (WHERE bounced_at IS NOT NULL AND bounce_type = 'hard')::int AS bounced_hard,
           count(*) FILTER (WHERE complained_at IS NOT NULL)::int AS complained
           FROM campaign_sends
-         WHERE sent_at >= ${range.from}::date
+         WHERE is_test = false
+           AND sent_at >= ${range.from}::date
            AND sent_at < (${range.to}::date + 1)
       `,
         sql`
@@ -1399,7 +1538,8 @@ export async function getCampaignKpis(
           count(*) FILTER (WHERE bundle_clicked_at IS NOT NULL)::int AS bundle_clicked,
           count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribed
           FROM campaign_sends
-         WHERE sent_at >= ${range.from}::date
+         WHERE is_test = false
+           AND sent_at >= ${range.from}::date
            AND sent_at < (${range.to}::date + 1)
          GROUP BY 1
       `,
@@ -1415,7 +1555,8 @@ export async function getCampaignKpis(
           count(*) FILTER (WHERE bundle_clicked_at IS NOT NULL)::int AS bundle_clicked,
           count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribed
           FROM campaign_sends
-         WHERE sent_at >= ${range.from}::date
+         WHERE is_test = false
+           AND sent_at >= ${range.from}::date
            AND sent_at < (${range.to}::date + 1)
          GROUP BY 1
       `,
@@ -1424,7 +1565,8 @@ export async function getCampaignKpis(
                count(*)::int AS n
           FROM campaign_sends s
           LEFT JOIN campaign_contacts c ON c.id = s.contact_id
-         WHERE s.sent_at >= ${range.from}::date
+         WHERE s.is_test = false
+           AND s.sent_at >= ${range.from}::date
            AND s.sent_at < (${range.to}::date + 1)
          GROUP BY 1
       `,
@@ -1433,6 +1575,7 @@ export async function getCampaignKpis(
                COALESCE(segment, 'unbekannt') AS segment
           FROM campaign_sends
          WHERE discount_code IS NOT NULL
+           AND is_test = false
            AND sent_at >= ${range.from}::date
            AND sent_at < (${range.to}::date + 1)
          ORDER BY sent_at DESC, id DESC
@@ -1449,7 +1592,8 @@ export async function getCampaignKpis(
             ON u.campaign_contact_id = s.contact_id
            AND u.call_site = 'hero_image'
            AND u.created_at <= s.sent_at
-         WHERE s.sent_at >= ${range.from}::date
+         WHERE s.is_test = false
+           AND s.sent_at >= ${range.from}::date
            AND s.sent_at < (${range.to}::date + 1)
          GROUP BY 1, 2
       `,
@@ -1615,7 +1759,7 @@ export async function lastCrossChannelSendAt(
       SELECT max(t.sent_at) AS last_sent FROM (
         SELECT cs.sent_at
           FROM campaign_sends cs
-         WHERE cs.email = ${e}
+         WHERE cs.email = ${e} AND cs.is_test = false
         UNION ALL
         SELECT ms.sent_at
           FROM marketing_sends ms
@@ -1651,6 +1795,8 @@ export interface CampaignSendHistoryRow {
   clickedAt: string | null;
   /** Hero A/B arm the send shipped with ('ai' | 'default' | 'none'). */
   heroVariant: string | null;
+  /** Send to a Testkontakt (badged in „Gesendet“, excluded from KPIs). */
+  isTest: boolean;
 }
 
 /** Delivery-state filter of the „Gesendet“ view (campaign-desk-core.mjs). */
@@ -1731,7 +1877,8 @@ export async function searchCampaignSendHistory(
     const rows = (await sql`
       SELECT id, contact_id, email, subject, sent_via, discount_code, discount_expires_at, sent_at,
              (body_text IS NOT NULL OR body_html IS NOT NULL) AS has_content,
-             delivered_at, bounced_at, bounce_type, complained_at, clicked_at, hero_variant
+             delivered_at, bounced_at, bounce_type, complained_at, clicked_at, hero_variant,
+             is_test
         FROM campaign_sends
        WHERE (${q} = '' OR email ILIKE ${like} OR coalesce(subject, '') ILIKE ${like})
          AND (${fromDay}::text IS NULL
@@ -1767,6 +1914,7 @@ export async function searchCampaignSendHistory(
         complainedAt: toIso(r.complained_at),
         clickedAt: toIso(r.clicked_at),
         heroVariant: (r.hero_variant as string | null) ?? null,
+        isTest: r.is_test === true,
       })),
     };
   } catch (err) {
@@ -1851,7 +1999,8 @@ export async function getCampaignDeliverySummary(
              count(*) FILTER (WHERE complained_at IS NOT NULL)::int AS complained,
              count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribed
         FROM campaign_sends
-       WHERE sent_at >= now() - ${`${window} days`}::interval
+       WHERE is_test = false
+         AND sent_at >= now() - ${`${window} days`}::interval
     `) as Array<Record<string, unknown>>;
     const r = rows[0] ?? {};
     return {

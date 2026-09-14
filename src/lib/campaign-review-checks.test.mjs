@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  CONFIRMED_OPT_IN,
   abGroupOf,
   reviewChecks,
   reviewVerdict,
@@ -185,4 +186,23 @@ test("edits are an info; blocked checks always sort before hints and infos", () 
   assert.deepEqual(keys(checks), ["opt_in", "low_confidence", "hero_present", "edited"]);
   assert.equal(reviewVerdict(checks), "blocked");
   assert.equal(reviewVerdict([]), "ready");
+});
+
+test("test contacts skip the cadence cap and carry the Testkontakt info", () => {
+  const now = new Date("2026-09-14T10:00:00Z");
+  const item = {
+    contactId: 2,
+    optInLevel: CONFIRMED_OPT_IN,
+    subject: "Test",
+    body: "Hallo",
+    lastSendAt: "2026-09-14T09:00:00Z",
+    isTest: true,
+  };
+  const checks = reviewChecks(item, { sendsApproved: true, minSendIntervalDays: 14, now });
+  assert.equal(checks.find((c) => c.key === "frequency_cap"), undefined);
+  assert.equal(checks.find((c) => c.key === "test_contact")?.level, "info");
+  assert.equal(reviewVerdict(checks), "ready");
+  // The same facts on a real contact are blocked.
+  const real = reviewChecks({ ...item, isTest: false }, { sendsApproved: true, minSendIntervalDays: 14, now });
+  assert.equal(real.find((c) => c.key === "frequency_cap")?.level, "blocked");
 });

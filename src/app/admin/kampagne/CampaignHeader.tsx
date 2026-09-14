@@ -7,7 +7,7 @@
 // and the ⋯ menu with the rare batch actions (Sync, Neu aufbauen).
 
 import * as React from "react";
-import { Keyboard, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
+import { FlaskConical, Keyboard, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { num, relativeTime } from "@/lib/admin-format.mjs";
 import { Button, InfoTip, Menu, ProgressBar, SegmentedControl, StatusBadge } from "../ui";
@@ -39,6 +39,7 @@ export function CampaignHeader({
   onSync,
   onReset,
   onShortcuts,
+  onTestContacts,
 }: {
   counts: CampaignCountsProps;
   progress: { done: number; total: number; ratio: number };
@@ -63,6 +64,7 @@ export function CampaignHeader({
   onSync: () => void;
   onReset: () => void;
   onShortcuts: () => void;
+  onTestContacts: () => void;
 }) {
   const running = prepareJob !== null && prepareJob.phase !== "done";
   // A sync stamped ahead of the browser clock (skew) reads as "gerade eben".
@@ -242,6 +244,12 @@ export function CampaignHeader({
             onSelect: onSync,
             disabled: !shopifyConfigured || jobBusy !== null,
             disabledReason: !shopifyConfigured ? "Shopify nicht konfiguriert" : undefined,
+          },
+          {
+            key: "test",
+            label: "Testkontakte…",
+            icon: <FlaskConical />,
+            onSelect: onTestContacts,
           },
           {
             key: "shortcuts",

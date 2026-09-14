@@ -106,7 +106,7 @@ marketing drafts, enforced in the prompt and in the deterministic promo copy.
 
 | Table | Purpose | Key columns |
 | --- | --- | --- |
-| `campaign_contacts` | The synced audience + review-queue lifecycle | `shopify_customer_id` (unique), normalized `email`, `first_name`/`last_name`, `language` (de/en), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `draft_failed`), `sent_at`, `skipped_at` |
+| `campaign_contacts` | The synced audience + review-queue lifecycle | `shopify_customer_id` (unique), normalized `email`, `first_name`/`last_name`, `language` (de/en), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `draft_failed`), `sent_at`, `skipped_at`; `is_test` + `test_source_email` (migration `0057`, Testkontakte — §5) |
 | `campaign_drafts` | ONE editable draft per contact (unique `contact_id`) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
 | `campaign_sends` | Immutable send record (audit + KPI) | `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — migration `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `redirect_token`/`clicked_at` (migration `0041` — the tracked Mo-promo CTA, see below; NULL for copy sends and pre-0041 rows), `sent_at` |
 
@@ -253,6 +253,22 @@ queue is full when the day starts. **Off by default** (`0`): generation costs
 API money, so the cap is the deployment's explicit decision (`.env.example`).
 It never sends — every draft still needs a human on the desk.
 
+**Testkontakte** (migration `0057`, ⋯ → „Testkontakte…“). The operator's own
+inboxes as campaign contacts, for testing every variation before going live:
+created from the desk (sync key `test:<email>`, so the audience sync never
+overwrites or suppresses them), `opt_in_level = CONFIRMED_OPT_IN` so the gate
+passes, exempt from the cross-channel frequency cap, and put back to
+`drafted` with their draft intact after every send (a real contact flips to
+`sent`) — the card returns to the top of the queue. Optionally a test contact
+borrows a real customer's purchase history (`test_source_email` →
+`loadCampaignPersonalization`) so the generated mail is realistic. Everything
+else about a test send is real: MK- code, set block, tracked link,
+unsubscribe link, Resend delivery events. Test sends are stamped
+`campaign_sends.is_test` and left out of the Kampagnen-Funnel, the delivery
+strip, the overview and the revenue KPI; the „Gesendet“ view lists them with a
+„Test“ badge. „Vorbereiten“, the nightly cron and „Warteschlange neu aufbauen“
+never touch test contacts; counts in the header exclude them.
+
 **Liste** shows the queue as a sortable table with multi-select and bulk
 Überspringen (free, undoable), Neu generieren… and Rabatt setzen… (paid runs,
 confirmed with count and cost estimate). **Gesendet** adds delivery-state chips
@@ -367,6 +383,7 @@ out of the sync ages out; drafts cascade with their contact). The
 | Rebuild queue (discard all open drafts → pending) | `POST /api/admin/campaign/reset-queue` |
 | Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` |
 | Global contact search (all statuses) | `POST /api/admin/campaign/contacts` |
+| Testkontakte (list / create + draft / delete) | `GET` + `POST /api/admin/campaign/test-contacts` |
 | Pin/clear the contact's email language | `POST /api/admin/campaign/language` |
 | Rendered draft preview (read-only, `text/html`) | `POST /api/admin/campaign/email-preview` |
 | Retained sent content (read-only, `text/html`) | `POST /api/admin/campaign/sent-email` |

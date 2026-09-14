@@ -82,6 +82,9 @@ export interface CampaignQueueItemProps {
   lastSendAt: string | null;
   /** When the draft was last written (stale-draft check). */
   draftUpdatedAt: string | null;
+  /** Testkontakt (migration 0057): stays in the queue after every send, is
+   * exempt from the cadence cap and never counts in the KPIs. */
+  isTest: boolean;
   /** Client-only: subject or text edited by hand in this session. */
   edited?: boolean;
   /** Client-only: the server's reason for refusing the last send attempt. */
@@ -105,6 +108,20 @@ export interface CampaignHistoryItemProps {
   complainedAt: string | null;
   clickedAt: string | null;
   heroVariant: string | null;
+  /** Send to a Testkontakt (badged, excluded from the KPIs). */
+  isTest: boolean;
+}
+
+/** One Testkontakt as the sheet lists it (GET /api/admin/campaign/test-contacts). */
+export interface CampaignTestContactProps {
+  id: number;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  language: "de" | "en";
+  status: string;
+  sourceEmail: string | null;
+  hasDraft: boolean;
 }
 
 export interface CampaignCountsProps {

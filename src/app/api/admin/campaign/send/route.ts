@@ -52,7 +52,8 @@ export async function POST(req: Request) {
   try {
     const result = await approveAndSendCampaign(contactId);
     if (result.ok) {
-      return adminJson({ ok: true, sentTo: result.sentTo });
+      // `test`: a Testkontakt stays in the queue — the desk keeps its card.
+      return adminJson({ ok: true, sentTo: result.sentTo, test: result.test });
     }
     const status = STATUS_BY_REASON[result.reason] ?? 400;
     return adminJsonError(result.reason, result.message, status);

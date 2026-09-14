@@ -89,6 +89,7 @@ function parseTime(value) {
  *   lastSendAt?: string | null,
  *   edited?: boolean,
  *   sendError?: string | null,
+ *   isTest?: boolean,
  * }} ReviewItem
  *
  * @typedef {{
@@ -160,7 +161,9 @@ export function reviewChecks(item, ctx = {}) {
       fix: "skip",
     });
   }
-  const lastSend = parseTime(item.lastSendAt);
+  // Test contacts are exempt from the cadence cap (they are sent repeatedly
+  // on purpose) — the send path skips it for them as well.
+  const lastSend = item.isTest === true ? null : parseTime(item.lastSendAt);
   if (Number.isFinite(minDays) && minDays > 0 && lastSend !== null) {
     const until = lastSend + minDays * DAY_MS;
     if (now < until) {
@@ -298,6 +301,16 @@ export function reviewChecks(item, ctx = {}) {
   }
 
   // ── info ────────────────────────────────────────────────────────────────
+  if (item.isTest === true) {
+    infos.push({
+      key: "test_contact",
+      level: "info",
+      title: "Testkontakt",
+      detail:
+        "Der Versand geht an diese Adresse wie an eine:n echte:n Kund:in (echter Rabattcode, Set, Abmeldelink). Der Kontakt bleibt danach in der Warteschlange und zählt nicht in den KPIs.",
+      fix: null,
+    });
+  }
   if (item.edited === true) {
     infos.push({
       key: "edited",

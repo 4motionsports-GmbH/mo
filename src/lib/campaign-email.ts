@@ -32,6 +32,7 @@ import {
   lastCrossChannelSendAt,
   markContactSent,
   recordCampaignSend,
+  resetTestContactAfterSend,
   revertContactClaim,
 } from "./campaign-store";
 import {
@@ -96,7 +97,7 @@ import type { Product } from "./types";
 const CAMPAIGN_DISCOUNT_CODE_PREFIX = "MK";
 
 export type CampaignSendResult =
-  | { ok: true; sentTo: string }
+  | { ok: true; sentTo: string; test: boolean }
   | {
       ok: false;
       reason:
@@ -147,7 +148,8 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       optInLevel: contact.optInLevel,
       suppressed: await isSuppressed(contact.email),
       lastSendAt: await lastCrossChannelSendAt(contact.email),
-      minIntervalDays: minSendIntervalDays(),
+      // Testkontakte are sent repeatedly on purpose — no cadence cap for them.
+      minIntervalDays: contact.isTest ? 0 : minSendIntervalDays(),
     });
     if (!gate.allowed) {
       switch (gate.reason) {
@@ -374,9 +376,12 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         discountPercent: draft.discountPercent,
         bundleOfferId,
         providerEmailId: result.id ?? null,
+        isTest: contact.isTest,
       });
-      await markContactSent(contactId);
-      return { ok: true, sentTo: contact.email };
+      // A Testkontakt keeps its draft and returns to the queue (0057).
+      if (contact.isTest) await resetTestContactAfterSend(contactId);
+      else await markContactSent(contactId);
+      return { ok: true, sentTo: contact.email, test: contact.isTest };
     } catch (err) {
       await revertContactClaim(contactId);
       throw err;

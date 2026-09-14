@@ -79,6 +79,7 @@ export async function getMoRevenue(
         SELECT discount_code, sent_at
           FROM campaign_sends
          WHERE discount_code IS NOT NULL
+           AND is_test = false
            AND sent_at < (${range.to}::date + 1)
       ) t
        ORDER BY t.sent_at DESC NULLS LAST
