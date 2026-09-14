@@ -89,8 +89,10 @@ export async function prepareDraftForContact(
   const textMode: EmailTextMode =
     opts.textMode ?? (existing ? storedTextMode(existing) : DEFAULT_EMAIL_TEXT_MODE);
 
+  // A Testkontakt may borrow a real customer's purchase history so the mail
+  // is realistic (0057); everything else about the draft is the test address.
   const { history, purchaseSummary, recommendations, segment } =
-    await loadCampaignPersonalization(contact.email, purchaseSelection);
+    await loadCampaignPersonalization(contact.testSourceEmail ?? contact.email, purchaseSelection);
 
   // Which products the email recommends: preserve the draft's stored list
   // (auto-picked or manually curated, possibly variant-pinned refs) on a plain

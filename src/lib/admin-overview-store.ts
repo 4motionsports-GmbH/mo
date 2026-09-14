@@ -133,6 +133,7 @@ async function campaignActivity(
       sql`
         SELECT id, email, subject, sent_at
           FROM campaign_sends
+         WHERE is_test = false
          ORDER BY sent_at DESC NULLS LAST, id DESC
          LIMIT ${limit}
       `,
@@ -140,7 +141,8 @@ async function campaignActivity(
       sql`
         SELECT count(*)::int AS n
           FROM campaign_sends
-         WHERE sent_at >= (((now() AT TIME ZONE ${ADMIN_TIME_ZONE})::date - ${windowDays - 1}::int)::timestamp
+         WHERE is_test = false
+           AND sent_at >= (((now() AT TIME ZONE ${ADMIN_TIME_ZONE})::date - ${windowDays - 1}::int)::timestamp
                            AT TIME ZONE ${ADMIN_TIME_ZONE})
       `,
     ])) as [Array<Record<string, unknown>>, Array<{ n: number }>];

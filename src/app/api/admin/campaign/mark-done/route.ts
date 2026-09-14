@@ -18,6 +18,7 @@ import {
   hashCampaignBody,
   markContactSent,
   recordCampaignSend,
+  resetTestContactAfterSend,
 } from "@/lib/campaign-store";
 import { emailProseToText } from "@/lib/email-prose.mjs";
 import { reportError } from "@/lib/observability";
@@ -51,8 +52,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // Flip FIRST (double-send-proof guard), then append the audit record.
-    const marked = await markContactSent(contactId);
+    // Flip FIRST (double-send-proof guard), then append the audit record. A
+    // Testkontakt is not flipped: it keeps its draft and stays in the queue.
+    const marked = contact.isTest ? true : await markContactSent(contactId);
     if (!marked) {
       return adminJsonError("not_markable", "Contact is no longer markable.", 409);
     }
@@ -78,8 +80,10 @@ export async function POST(req: Request) {
       textMode: draft.textMode ?? null,
       language: contact.language,
       discountPercent: draft.discountPercent,
+      isTest: contact.isTest,
     });
-    return adminJson({ ok: true });
+    if (contact.isTest) await resetTestContactAfterSend(contactId);
+    return adminJson({ ok: true, test: contact.isTest });
   } catch (err) {
     reportError(err, { route: "api/admin/campaign/mark-done" });
     return adminJsonError("internal_error", "Could not mark the contact done.", 500);
