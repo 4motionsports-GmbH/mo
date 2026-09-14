@@ -556,15 +556,29 @@ export function useCampaignActions({
       removeItem(contactId);
       setOutbox((o) => upsertOutbox(o, { ...entry, state: "sending" }));
       try {
-        await adminFetch("/api/admin/campaign/send", { body: { contactId } });
+        const json = await adminFetch<{ test?: boolean }>("/api/admin/campaign/send", {
+          body: { contactId },
+        });
         setOutbox((o) => upsertOutbox(o, { ...entry, state: "sent" }));
-        setCountsLocal((c) => ({
-          ...c,
-          sentToday: c.sentToday + 1,
-          sentTotal: c.sentTotal + 1,
-          drafted: Math.max(0, c.drafted - 1),
-        }));
-        toast({ variant: "success", title: `Gesendet an ${item.email}`, duration: 2500 });
+        if (json.test) {
+          // A Testkontakt keeps its draft and comes straight back to the top
+          // of the queue for the next variation; it never counts as sent.
+          restoreItem({ ...item, sendError: null });
+          toast({
+            variant: "success",
+            title: `Testmail gesendet an ${item.email}`,
+            description: "Der Testkontakt bleibt in der Warteschlange.",
+            duration: 3500,
+          });
+        } else {
+          setCountsLocal((c) => ({
+            ...c,
+            sentToday: c.sentToday + 1,
+            sentTotal: c.sentTotal + 1,
+            drafted: Math.max(0, c.drafted - 1),
+          }));
+          toast({ variant: "success", title: `Gesendet an ${item.email}`, duration: 2500 });
+        }
         setTimeout(() => {
           setOutbox((o) => o.filter((e) => !(e.contactId === contactId && e.state === "sent")));
         }, OUTBOX_FADE_MS);
@@ -741,16 +755,22 @@ export function useCampaignActions({
       if (!item || busyById[contactId]) return;
       setBusy(contactId, "markdone");
       try {
-        await adminFetch("/api/admin/campaign/mark-done", { body: { contactId } });
-        toast({ variant: "success", title: "Als erledigt (kopiert) markiert" });
+        const json = await adminFetch<{ test?: boolean }>("/api/admin/campaign/mark-done", {
+          body: { contactId },
+        });
         setCopiedId(null);
-        setCountsLocal((c) => ({
-          ...c,
-          sentToday: c.sentToday + 1,
-          sentTotal: c.sentTotal + 1,
-          drafted: Math.max(0, c.drafted - 1),
-        }));
-        removeItem(contactId);
+        if (json.test) {
+          toast({ variant: "success", title: "Als erledigt markiert — Testkontakt bleibt in der Warteschlange" });
+        } else {
+          toast({ variant: "success", title: "Als erledigt (kopiert) markiert" });
+          setCountsLocal((c) => ({
+            ...c,
+            sentToday: c.sentToday + 1,
+            sentTotal: c.sentTotal + 1,
+            drafted: Math.max(0, c.drafted - 1),
+          }));
+          removeItem(contactId);
+        }
       } catch (err) {
         fail("Markieren fehlgeschlagen", err);
       } finally {

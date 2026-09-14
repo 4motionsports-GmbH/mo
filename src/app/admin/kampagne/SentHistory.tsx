@@ -137,7 +137,20 @@ export function SentHistory({
   const rows = data?.rows ?? [];
 
   const columns: DataTableColumn<CampaignHistoryItemProps>[] = [
-    { key: "email", header: "Empfänger", cell: (h) => <span className="font-medium">{h.email}</span> },
+    {
+      key: "email",
+      header: "Empfänger",
+      cell: (h) => (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="font-medium">{h.email}</span>
+          {h.isTest && (
+            <StatusBadge tone="accent" dot={false}>
+              Test
+            </StatusBadge>
+          )}
+        </span>
+      ),
+    },
     {
       key: "subject",
       header: "Betreff",

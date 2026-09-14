@@ -248,7 +248,14 @@ export function ListView({
                       />
                     </TableCell>
                     <TableCell>
-                      <span className="block truncate font-medium">{contactName(it)}</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate font-medium">{contactName(it)}</span>
+                        {it.isTest && (
+                          <StatusBadge tone="accent" dot={false}>
+                            Test
+                          </StatusBadge>
+                        )}
+                      </span>
                       <span className="block truncate text-2xs text-muted-foreground">{it.email}</span>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">

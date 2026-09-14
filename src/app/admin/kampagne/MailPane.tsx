@@ -99,6 +99,11 @@ function IdentityLine({ item, optInBlocked }: { item: CampaignQueueItemProps; op
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
       <span className="text-sm font-semibold">{name === item.email ? "(kein Name)" : name}</span>
       <span className="truncate text-muted-foreground">{item.email}</span>
+      {item.isTest && (
+        <StatusBadge tone="accent" dot={false}>
+          Testkontakt
+        </StatusBadge>
+      )}
       <StatusBadge tone={item.language === "en" ? "info" : "neutral"} dot={false}>
         {item.language.toUpperCase()}
         {item.languageOverride && (

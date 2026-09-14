@@ -76,6 +76,7 @@ export function ContactHistorySheet({
                         {state.label}
                       </StatusBadge>
                     </Tooltip>
+                    {h.isTest && <StatusBadge tone="accent" dot={false}>Test</StatusBadge>}
                     {h.discountCode && <code className="text-xs">{h.discountCode}</code>}
                     {h.redeemed === true && <StatusBadge tone="success" dot={false}>eingelöst</StatusBadge>}
                     {h.heroVariant && <span>Hero: {h.heroVariant}</span>}

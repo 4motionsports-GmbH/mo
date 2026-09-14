@@ -122,6 +122,7 @@ export async function KampagneTab({
       heroHeadline: q.draft.heroHeadline,
       lastSendAt: q.lastSendAt,
       draftUpdatedAt: q.draft.updatedAt ?? q.draft.createdAt,
+      isTest: q.contact.isTest,
     };
   });
 

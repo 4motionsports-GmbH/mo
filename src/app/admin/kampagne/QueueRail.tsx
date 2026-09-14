@@ -43,6 +43,7 @@ const DOT: Record<ReviewVerdict, { className: string; label: string }> = {
 /** The kind chips of a row — only what deviates from the default. */
 function rowChips(it: CampaignQueueItemProps): string[] {
   const chips: string[] = [];
+  if (it.isTest) chips.push("Test");
   if (it.language === "en") chips.push("EN");
   const seg = it.segment ? campaignSegmentByKey(it.segment) : null;
   if (seg && seg.key !== "unbekannt") chips.push(seg.label);

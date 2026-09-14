@@ -25,6 +25,7 @@ import { MailPane } from "./MailPane";
 import { QueueRail, RAIL_SEARCH_ID } from "./QueueRail";
 import { ReviewColumn } from "./ReviewColumn";
 import { SentHistory } from "./SentHistory";
+import { TestContactsSheet } from "./TestContactsSheet";
 import type { CampaignDeskProps } from "./types";
 import { useCampaignActions } from "./useCampaignActions";
 import { usePrefetchPreview } from "./useRenderedPreview";
@@ -67,6 +68,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
   const [prepareOpen, setPrepareOpen] = React.useState(false);
   const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
   const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [testOpen, setTestOpen] = React.useState(false);
   const subjectRef = React.useRef<HTMLInputElement>(null);
 
   // Warm the renderer for the card the operator opens next.
@@ -211,6 +213,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
         onSync={a.sync}
         onReset={() => a.setResetOpen(true)}
         onShortcuts={() => setShortcutsOpen(true)}
+        onTestContacts={() => setTestOpen(true)}
       />
 
       {view === "gesendet" ? (
@@ -327,6 +330,20 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
           onView={a.viewSent}
         />
       )}
+
+      <TestContactsSheet
+        open={testOpen}
+        onOpenChange={setTestOpen}
+        queueIds={items.map((it) => it.contactId)}
+        prepareSettings={a.prepareSettings}
+        restoring={a.restoring}
+        onOpenContact={(id) => {
+          setTestOpen(false);
+          a.jumpToContact(id);
+        }}
+        onDraft={(id) => void a.draftContact(id)}
+        onChanged={a.reloadFromServer}
+      />
 
       <Sheet open={shortcutsOpen} onOpenChange={setShortcutsOpen} title="Tastenkürzel" size="sm">
         <dl className="flex flex-col gap-2 text-sm">

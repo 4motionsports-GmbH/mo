@@ -349,6 +349,10 @@ person clearing 100–200 e-mails a day:
   the viewer for the retained content of a send.
 - **Fokus-Modus** (`F`) hides rail and review column, centres the mail and
   shows the Prüfpunkte as a one-line strip.
+- **Testkontakte** (⋯ menu): the operator's own inboxes as contacts that stay
+  in the queue after every send, exempt from the cadence cap and excluded from
+  the KPIs; optionally with a real customer's purchase history
+  (`CAMPAIGNS.md` §5, migration 0057).
 
 State and every mutation live in
 [`kampagne/useCampaignActions.ts`](../src/app/admin/kampagne/useCampaignActions.ts)
@@ -1203,6 +1207,7 @@ on failure. Grouped by the screen that calls them.
 | | `POST campaign/skip / unskip / mark-done` | review decisions; `mark-done` closes the copy workflow |
 | | `POST campaign/reset-queue` | rebuild the review queue (destructive, behind confirm) |
 | | `POST campaign/contacts { query }` | global contact search |
+| | `GET campaign/test-contacts`, `POST campaign/test-contacts { action: create \| delete, … }` | Testkontakte: list, create (+ draft right away), delete |
 | | `GET campaign/history?q=&from=&to=&delivery=&page=&pageSize=` | paged „Gesendet“ view with delivery + redemption state; `delivery` = delivered \| clicked \| bounced \| complained \| copy |
 | | `POST campaign/sent-email { sendId }` | retained content of one send |
 | Kunden | `GET customers/detail?id=` | one customer's full detail (on open) |
