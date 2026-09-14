@@ -310,11 +310,11 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
       <ConfirmDialog
         open={a.confirmSendId !== null}
         options={{
-          title: "Ersten Versand heute bestätigen",
-          description: `Du startest den heutigen Kampagnen-Versand: Die E-Mail geht an ${
+          title: "Erste E-Mail heute senden?",
+          description: `Nur diese eine E-Mail geht raus — an ${
             items.find((it) => it.contactId === a.confirmSendId)?.email ?? "—"
-          }. Weitere Sendungen heute werden nicht mehr einzeln bestätigt.`,
-          confirmLabel: "Jetzt senden",
+          }. Alle weiteren sendest du wie gewohnt einzeln mit „Senden“ (S); diese Rückfrage erscheint heute nur einmal. Die Warteschlange wird nie automatisch komplett versendet.`,
+          confirmLabel: "Nur diese E-Mail senden",
         }}
         onClose={(ok) => (ok ? a.confirmAndSend() : a.setConfirmSendId(null))}
       />

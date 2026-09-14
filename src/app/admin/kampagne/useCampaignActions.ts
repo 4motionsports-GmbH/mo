@@ -76,7 +76,9 @@ export type ReviewVerdict = "blocked" | "hints" | "ready";
 
 // ─── local helpers ──────────────────────────────────────────────────────────
 
-/** Send-confirmation only on the FIRST send of the day (localStorage-keyed). */
+/** Send-confirmation only on the FIRST send of the day (localStorage-keyed).
+ * It confirms that ONE e-mail — every send is a single card; the desk never
+ * sends the whole queue. */
 function needsFirstSendConfirm(): boolean {
   try {
     const key = "ms-campaign-first-send";
@@ -607,7 +609,10 @@ export function useCampaignActions({
       const checks = checksById.get(contactId) ?? [];
       if (reviewVerdict(checks) === "blocked") return;
       if (busyById[contactId]) return;
-      if (needsFirstSendConfirm()) {
+      // The once-a-day confirmation guards the first REAL send; a Testmail to
+      // the operator's own inbox neither asks nor counts as the day's start.
+      const isTest = itemsRef.current.find((it) => it.contactId === contactId)?.isTest === true;
+      if (!isTest && needsFirstSendConfirm()) {
         setConfirmSendId(contactId);
         return;
       }
