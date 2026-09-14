@@ -313,6 +313,7 @@ export function useCampaignActions({
             ...q,
             ...(local.edited ? { subject: local.subject, body: local.body, edited: true } : {}),
             sendError: local.sendError ?? null,
+            previewVersion: local.previewVersion,
           };
         });
     });
@@ -411,9 +412,16 @@ export function useCampaignActions({
 
   // ── per-card patching ────────────────────────────────────────────────────
   const patchItem = React.useCallback(
-    (contactId: number, patch: Partial<CampaignQueueItemProps>) => {
+    (
+      contactId: number,
+      patch:
+        | Partial<CampaignQueueItemProps>
+        | ((it: CampaignQueueItemProps) => Partial<CampaignQueueItemProps>)
+    ) => {
       setItems((prevItems) =>
-        prevItems.map((it) => (it.contactId === contactId ? { ...it, ...patch } : it))
+        prevItems.map((it) =>
+          it.contactId === contactId ? { ...it, ...(typeof patch === "function" ? patch(it) : patch) } : it
+        )
       );
     },
     []
@@ -563,7 +571,7 @@ export function useCampaignActions({
         if (json.test) {
           // A Testkontakt keeps its draft and comes straight back to the top
           // of the queue for the next variation; it never counts as sent.
-          restoreItem({ ...item, sendError: null });
+          restoreItem({ ...item, sendError: null, lastSendAt: new Date().toISOString() });
           toast({
             variant: "success",
             title: `Testmail gesendet an ${item.email}`,
@@ -760,6 +768,7 @@ export function useCampaignActions({
         });
         setCopiedId(null);
         if (json.test) {
+          patchItem(contactId, { lastSendAt: new Date().toISOString() });
           toast({ variant: "success", title: "Als erledigt markiert — Testkontakt bleibt in der Warteschlange" });
         } else {
           toast({ variant: "success", title: "Als erledigt (kopiert) markiert" });
@@ -777,7 +786,7 @@ export function useCampaignActions({
         setBusy(contactId, null);
       }
     },
-    [busyById, setBusy, removeItem]
+    [busyById, setBusy, patchItem, removeItem]
   );
 
   // ── regenerate: batched, in the background ───────────────────────────────
@@ -801,7 +810,7 @@ export function useCampaignActions({
       if (json.draft) {
         const d = json.draft;
         forgetPreviews(contactId);
-        patchItem(contactId, {
+        patchItem(contactId, (it) => ({
           subject: d.subject,
           body: d.body,
           discountPercent: d.discountPercent,
@@ -818,7 +827,8 @@ export function useCampaignActions({
           ...(d.heroHeadline !== undefined ? { heroHeadline: d.heroHeadline } : {}),
           draftUpdatedAt: d.updatedAt ?? new Date().toISOString(),
           edited: false,
-        });
+          previewVersion: (it.previewVersion ?? 0) + 1,
+        }));
       }
     },
     [patchItem]
@@ -1064,11 +1074,16 @@ export function useCampaignActions({
     [busyById, setBusy, patchItem, scheduleRegenerate]
   );
 
-  /** The Hero block reports a changed hero (generate / remove / headline). */
+  /** The Hero block reports a changed hero (generate / remove / headline):
+   * the card and its rendered preview follow at once. */
   const setHero = React.useCallback(
     (contactId: number, hero: { url: string | null; headline: string | null }) => {
       forgetPreviews(contactId);
-      patchItem(contactId, { heroUrl: hero.url, heroHeadline: hero.headline });
+      patchItem(contactId, (it) => ({
+        heroUrl: hero.url,
+        heroHeadline: hero.headline,
+        previewVersion: (it.previewVersion ?? 0) + 1,
+      }));
     },
     [patchItem]
   );

@@ -40,18 +40,24 @@ export interface UseEmailHeroOptions {
   onGenerated?: (review: EmailHeroReview | null) => void;
   /** Skip the initial GET (the caller already knows the stored state). */
   lazy?: boolean;
+  /** The stored hero as a lazy caller already knows it: the fallback for the
+   * field an action does not touch, so „Entfernen“ keeps the headline and a
+   * saved headline keeps the image on the caller's card. */
+  initial?: { url: string | null; headline: string | null };
 }
 
-export function useEmailHero({ kind, targetId, onChange, onGenerated, lazy = false }: UseEmailHeroOptions) {
+export function useEmailHero({ kind, targetId, onChange, onGenerated, lazy = false, initial }: UseEmailHeroOptions) {
   const [state, setState] = React.useState<EmailHeroState | null>(null);
   const [prompt, setPrompt] = React.useState("");
   const [headline, setHeadline] = React.useState("");
   const [busy, setBusy] = React.useState<EmailHeroBusy>(null);
   const onChangeRef = React.useRef(onChange);
   const onGeneratedRef = React.useRef(onGenerated);
+  const initialRef = React.useRef(initial);
   React.useEffect(() => {
     onChangeRef.current = onChange;
     onGeneratedRef.current = onGenerated;
+    initialRef.current = initial;
   });
 
   const load = React.useCallback(async (signal?: AbortSignal) => {
@@ -190,7 +196,7 @@ export function useEmailHero({ kind, targetId, onChange, onGenerated, lazy = fal
         return false;
       }
       setState((prev) => (prev ? { ...prev, headline: value } : prev));
-      onChangeRef.current?.({ url: state?.url ?? null, headline: value });
+      onChangeRef.current?.({ url: state?.url ?? initialRef.current?.url ?? null, headline: value });
       toast({
         variant: "success",
         title: "Schlagzeile gespeichert",
@@ -222,7 +228,7 @@ export function useEmailHero({ kind, targetId, onChange, onGenerated, lazy = fal
         return false;
       }
       setState((prev) => (prev ? { ...prev, url: null } : prev));
-      onChangeRef.current?.({ url: null, headline: state?.headline ?? null });
+      onChangeRef.current?.({ url: null, headline: state?.headline ?? initialRef.current?.headline ?? null });
       toast({
         variant: "success",
         title: "Hero-Bild entfernt",

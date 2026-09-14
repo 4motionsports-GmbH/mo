@@ -215,3 +215,36 @@ export function parseDeliveryFilter(value) {
     ? /** @type {"all" | "delivered" | "clicked" | "bounced" | "complained" | "copy"} */ (value)
     : "all";
 }
+
+/**
+ * Fingerprint of everything the rendered e-mail depends on beyond the prose.
+ * The mail column re-renders its preview whenever it changes, so a new
+ * KI-Hero, a swapped product, an attached Set, a changed Rabatt or a switched
+ * language shows up at once — without a browser reload. `previewVersion` is
+ * the desk's client-only nudge for changes the fields cannot express (a
+ * regenerate that produced the same text, a hero replaced under the same URL).
+ * @param {{
+ *   subject: string, body: string, language?: string | null,
+ *   discountPercent?: number, discountExpiresAt?: string | null,
+ *   recommendations?: Array<{ id: string }>,
+ *   bundle?: { id: number, bundlePrice?: string, expiresAt?: string | null } | null,
+ *   heroUrl?: string | null, heroHeadline?: string | null,
+ *   draftUpdatedAt?: string | null, previewVersion?: number
+ * }} item
+ * @returns {string}
+ */
+export function previewSignature(item) {
+  return JSON.stringify([
+    item.subject,
+    item.body,
+    item.language ?? null,
+    item.discountPercent ?? 0,
+    item.discountExpiresAt ?? null,
+    (item.recommendations ?? []).map((r) => r.id),
+    item.bundle ? [item.bundle.id, item.bundle.bundlePrice ?? null, item.bundle.expiresAt ?? null] : null,
+    item.heroUrl ?? null,
+    item.heroHeadline ?? null,
+    item.draftUpdatedAt ?? null,
+    item.previewVersion ?? 0,
+  ]);
+}

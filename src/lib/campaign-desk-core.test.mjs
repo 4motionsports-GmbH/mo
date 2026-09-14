@@ -8,6 +8,7 @@ import {
   parseDeskView,
   parseQueueFilter,
   prepareEstimate,
+  previewSignature,
   queueFilterCounts,
   selectionAfterListChange,
   stepSelection,
@@ -132,4 +133,43 @@ test("the outbox keeps one entry per contact, newest first, capped", () => {
     box.map((e) => e.contactId),
     [3, 1]
   );
+});
+
+test("the preview signature moves with everything the render depends on", () => {
+  const base = {
+    subject: "Hi",
+    body: "Text",
+    language: "de",
+    discountPercent: 10,
+    discountExpiresAt: "2026-10-01T00:00:00.000Z",
+    recommendations: [{ id: "p1" }, { id: "p2" }],
+    bundle: null,
+    heroUrl: null,
+    heroHeadline: null,
+    draftUpdatedAt: "2026-09-14T10:00:00.000Z",
+  };
+  const sig = previewSignature(base);
+  assert.equal(previewSignature({ ...base }), sig);
+  // Only the ids (and their order — the grid order) of the recommendations count.
+  assert.equal(previewSignature({ ...base, recommendations: [{ id: "p1", name: "x" }, { id: "p2" }] }), sig);
+  // Client-only facts that do not touch the render leave it alone.
+  assert.equal(previewSignature({ ...base, edited: true, sendError: "x", textMode: "compact" }), sig);
+  for (const patch of [
+    { subject: "Hallo" },
+    { body: "Anders" },
+    { language: "en" },
+    { discountPercent: 0 },
+    { discountExpiresAt: null },
+    { recommendations: [{ id: "p2" }, { id: "p1" }] },
+    { bundle: { id: 7, bundlePrice: "99.00", expiresAt: null } },
+    { heroUrl: "https://blob/hero.jpg" },
+    { heroHeadline: "Mehr\nFokus" },
+    { draftUpdatedAt: "2026-09-14T11:00:00.000Z" },
+    { previewVersion: 1 },
+  ]) {
+    assert.notEqual(previewSignature({ ...base, ...patch }), sig, JSON.stringify(patch));
+  }
+  // A bundle's price or expiry change re-renders too (the offer block shows both).
+  const withSet = { ...base, bundle: { id: 7, bundlePrice: "99.00", expiresAt: null } };
+  assert.notEqual(previewSignature({ ...withSet, bundle: { ...withSet.bundle, bundlePrice: "89.00" } }), previewSignature(withSet));
 });
