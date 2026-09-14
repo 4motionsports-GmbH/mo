@@ -315,7 +315,9 @@ Actions:
   (extracted from the marketing send path — one logic, two channels), sends
   via Resend with unsubscribe link + `List-Unsubscribe` header, records the
   `campaign_sends` row, flips the contact to `sent`, auto-advances. Confirm
-  dialog on the first send of the day only.
+  dialog on the first send of the day only — it confirms that ONE e-mail
+  (every send is a single card; the desk never sends the whole queue) and
+  is skipped for test contacts.
 - **Copy** — subject + body to the clipboard. Copying alone **never** mutates
   state; the explicit "Als erledigt markieren" (`POST
   /api/admin/campaign/mark-done`) marks the contact `sent` with
