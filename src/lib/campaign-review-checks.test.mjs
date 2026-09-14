@@ -206,3 +206,14 @@ test("test contacts skip the cadence cap and carry the Testkontakt info", () => 
   const real = reviewChecks({ ...item, isTest: false }, { sendsApproved: true, minSendIntervalDays: 14, now });
   assert.equal(real.find((c) => c.key === "frequency_cap")?.level, "blocked");
 });
+
+test("a suppressed address blocks a real contact and only informs a test contact", () => {
+  const base = { contactId: 3, optInLevel: CONFIRMED_OPT_IN, subject: "S", body: "B", suppressed: true };
+  const real = reviewChecks(base, { sendsApproved: true, now: NOW });
+  assert.equal(real.find((c) => c.key === "suppressed")?.level, "blocked");
+  assert.equal(reviewVerdict(real), "blocked");
+  const test = reviewChecks({ ...base, isTest: true }, { sendsApproved: true, now: NOW });
+  assert.equal(test.find((c) => c.key === "suppressed"), undefined);
+  assert.equal(test.find((c) => c.key === "test_suppressed")?.level, "info");
+  assert.equal(reviewVerdict(test), "ready");
+});

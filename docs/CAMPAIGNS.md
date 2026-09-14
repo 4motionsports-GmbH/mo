@@ -257,7 +257,9 @@ It never sends — every draft still needs a human on the desk.
 inboxes as campaign contacts, for testing every variation before going live:
 created from the desk (sync key `test:<email>`, so the audience sync never
 overwrites or suppresses them), `opt_in_level = CONFIRMED_OPT_IN` so the gate
-passes, exempt from the cross-channel frequency cap, and put back to
+passes, exempt from the cross-channel frequency cap AND from the suppression
+check (an old unsubscribe or bounce on the operator's own address must not stop
+testing; the desk shows it as an info), and put back to
 `drafted` with their draft intact after every send (a real contact flips to
 `sent`) — the card returns to the top of the queue. Optionally a test contact
 borrows a real customer's purchase history (`test_source_email` →

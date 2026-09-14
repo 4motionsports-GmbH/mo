@@ -90,6 +90,7 @@ function parseTime(value) {
  *   edited?: boolean,
  *   sendError?: string | null,
  *   isTest?: boolean,
+ *   suppressed?: boolean,
  * }} ReviewItem
  *
  * @typedef {{
@@ -158,6 +159,19 @@ export function reviewChecks(item, ctx = {}) {
       title: "Kein nachweisbares Double-Opt-in",
       detail:
         "Für diesen Kontakt liegt kein nachweisbares Double-Opt-in vor. Senden ist blockiert, solange CAMPAIGN_ALLOW_SINGLE_OPT_IN nicht gesetzt ist; Kopieren ist möglich.",
+      fix: "skip",
+    });
+  }
+  // The address is on the suppression list / unsubscribed: the send gate
+  // refuses a real contact; a Testkontakt (the operator's own inbox) sends
+  // anyway, so the fact is an info there.
+  if (item.suppressed === true && item.isTest !== true) {
+    blocked.push({
+      key: "suppressed",
+      level: "blocked",
+      title: "Adresse abgemeldet oder gesperrt",
+      detail:
+        "Die Adresse steht auf der Unterdrückungsliste (Abmeldung, Bounce oder Beschwerde) — der Versand würde abgelehnt.",
       fix: "skip",
     });
   }
@@ -301,6 +315,16 @@ export function reviewChecks(item, ctx = {}) {
   }
 
   // ── info ────────────────────────────────────────────────────────────────
+  if (item.isTest === true && item.suppressed === true) {
+    infos.push({
+      key: "test_suppressed",
+      level: "info",
+      title: "Adresse auf der Unterdrückungsliste",
+      detail:
+        "Diese Testadresse hat sich früher abgemeldet oder ist gebounct. Ein Testkontakt sendet trotzdem — eine echte Adresse würde abgelehnt.",
+      fix: null,
+    });
+  }
   if (item.isTest === true) {
     infos.push({
       key: "test_contact",

@@ -17,6 +17,7 @@ import {
   getCampaignDeliverySummary,
   listDraftedQueue,
   listSkippedContacts,
+  listSuppressedEmails,
 } from "@/lib/campaign-store";
 import { listActiveBundlesForCampaignContacts } from "@/lib/bundle-offers-store";
 import { resolveProductSelections } from "@/lib/product-catalog";
@@ -75,10 +76,13 @@ export async function KampagneTab({
     : [];
   const productByRef = new Map(recommendedSelections.map((s) => [s.ref, s]));
 
-  // Attached (active) bundle offers for the whole queue in one query.
-  const bundleByContact = await listActiveBundlesForCampaignContacts(
-    queue.map((q) => q.contact.id)
-  );
+  // Attached (active) bundle offers for the whole queue in one query, and the
+  // suppression state of every queued address (the send gate's fact, so the
+  // desk can flag a refusal before the operator presses Senden).
+  const [bundleByContact, suppressedEmails] = await Promise.all([
+    listActiveBundlesForCampaignContacts(queue.map((q) => q.contact.id)),
+    listSuppressedEmails(queue.map((q) => q.contact.email)),
+  ]);
 
   const queueItems: CampaignQueueItemProps[] = queue.map((q) => {
     const b = bundleByContact.get(q.contact.id);
@@ -123,6 +127,7 @@ export async function KampagneTab({
       lastSendAt: q.lastSendAt,
       draftUpdatedAt: q.draft.updatedAt ?? q.draft.createdAt,
       isTest: q.contact.isTest,
+      suppressed: suppressedEmails.has(q.contact.email),
     };
   });
 
@@ -153,6 +158,7 @@ export async function KampagneTab({
         firstName: s.contact.firstName,
         lastName: s.contact.lastName,
         hasDraft: s.hasDraft,
+        isTest: s.contact.isTest,
       }))}
       sendsApproved={isCampaignSendsApproved()}
       allowSingleOptIn={isSingleOptInAllowed()}

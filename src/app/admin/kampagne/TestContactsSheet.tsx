@@ -33,6 +33,7 @@ export function TestContactsSheet({
   restoring,
   onOpenContact,
   onDraft,
+  onUnskip,
   onChanged,
 }: {
   open: boolean;
@@ -43,6 +44,8 @@ export function TestContactsSheet({
   restoring: Set<number>;
   onOpenContact: (contactId: number) => void;
   onDraft: (contactId: number) => void;
+  /** A skipped test contact goes back to the queue via unskip (keeps its draft). */
+  onUnskip: (contactId: number) => void;
   /** The server-side queue changed (created / deleted) — refresh the desk. */
   onChanged: () => void;
 }) {
@@ -142,8 +145,8 @@ export function TestContactsSheet({
               (Rabatt {prepareSettings.depth} %, Textmodus {prepareSettings.textMode}). Mit der
               E-Mail eines echten Kunden übernimmt der Entwurf dessen Kaufhistorie und
               Empfehlungen — die Mail geht trotzdem nur an die Testadresse. Sync und
-              „Warteschlange neu aufbauen“ lassen Testkontakte unberührt; die Sperrfrist gilt
-              für sie nicht.
+              „Warteschlange neu aufbauen“ lassen Testkontakte unberührt; Sperrfrist und
+              Unterdrückungsliste gelten für sie nicht.
             </InfoTip>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -247,7 +250,16 @@ export function TestContactsSheet({
                       <Button variant="outline" size="xs" onClick={() => onOpenContact(c.id)}>
                         Öffnen
                       </Button>
-                    ) : c.status === "pending" || c.status === "draft_failed" || c.status === "skipped" ? (
+                    ) : c.status === "skipped" ? (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        loading={restoring.has(c.id)}
+                        onClick={() => onUnskip(c.id)}
+                      >
+                        Wiederherstellen
+                      </Button>
+                    ) : c.status === "pending" || c.status === "draft_failed" ? (
                       <Button
                         variant="outline"
                         size="xs"

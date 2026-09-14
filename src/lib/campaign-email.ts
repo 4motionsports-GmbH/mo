@@ -146,9 +146,11 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       sendsApproved: isCampaignSendsApproved(),
       allowSingleOptIn: isSingleOptInAllowed(),
       optInLevel: contact.optInLevel,
-      suppressed: await isSuppressed(contact.email),
+      // A Testkontakt is the operator's own inbox (0057): neither an old
+      // unsubscribe/bounce on that address nor the cadence cap may stop a test
+      // send. Every other gate (master flag, opt-in, discount check) applies.
+      suppressed: contact.isTest ? false : await isSuppressed(contact.email),
       lastSendAt: await lastCrossChannelSendAt(contact.email),
-      // Testkontakte are sent repeatedly on purpose — no cadence cap for them.
       minIntervalDays: contact.isTest ? 0 : minSendIntervalDays(),
     });
     if (!gate.allowed) {
