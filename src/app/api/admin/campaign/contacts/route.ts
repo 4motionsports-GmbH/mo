@@ -38,6 +38,7 @@ export async function POST(req: Request) {
         status: h.contact.status,
         optInLevel: h.contact.optInLevel ?? "UNKNOWN",
         language: h.contact.language,
+        isTest: h.contact.isTest,
         hasDraft: h.hasDraft,
       })),
     });

@@ -350,9 +350,11 @@ person clearing 100–200 e-mails a day:
 - **Fokus-Modus** (`F`) hides rail and review column, centres the mail and
   shows the Prüfpunkte as a one-line strip.
 - **Testkontakte** (⋯ menu): the operator's own inboxes as contacts that stay
-  in the queue after every send, exempt from the cadence cap and excluded from
-  the KPIs; optionally with a real customer's purchase history
-  (`CAMPAIGNS.md` §5, migration 0057).
+  in the queue after every send, exempt from the cadence cap and the
+  suppression check, excluded from the KPIs; optionally with a real customer's
+  purchase history (`CAMPAIGNS.md` §5, migration 0057). The queue props carry
+  the suppression state of every address, so a real contact on the
+  suppression list is a blocked Prüfpunkt before the send is attempted.
 
 State and every mutation live in
 [`kampagne/useCampaignActions.ts`](../src/app/admin/kampagne/useCampaignActions.ts)

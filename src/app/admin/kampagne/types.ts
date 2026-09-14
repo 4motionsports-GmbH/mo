@@ -85,6 +85,9 @@ export interface CampaignQueueItemProps {
   /** Testkontakt (migration 0057): stays in the queue after every send, is
    * exempt from the cadence cap and never counts in the KPIs. */
   isTest: boolean;
+  /** The address is on the suppression list / unsubscribed: a real contact is
+   * refused at send time (blocked Prüfpunkt), a test contact sends anyway. */
+  suppressed: boolean;
   /** Client-only: subject or text edited by hand in this session. */
   edited?: boolean;
   /** Client-only: the server's reason for refusing the last send attempt. */
@@ -144,6 +147,7 @@ export interface CampaignSkippedItemProps {
   firstName: string | null;
   lastName: string | null;
   hasDraft: boolean;
+  isTest?: boolean;
 }
 
 /** A hit of the global contact search (any status). */
@@ -155,6 +159,7 @@ export interface CampaignContactHit {
   status: string;
   optInLevel: string;
   hasDraft: boolean;
+  isTest?: boolean;
 }
 
 /** Recorded average costs (EUR) for the Vorbereiten estimate; null = no data. */

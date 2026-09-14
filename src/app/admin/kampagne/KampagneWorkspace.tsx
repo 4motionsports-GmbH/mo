@@ -342,6 +342,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
           a.jumpToContact(id);
         }}
         onDraft={(id) => void a.draftContact(id)}
+        onUnskip={(id) => void a.unskip(id)}
         onChanged={a.reloadFromServer}
       />
 

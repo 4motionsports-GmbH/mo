@@ -156,7 +156,10 @@ export async function POST(req: Request) {
     if (contact.status === "sent" || contact.status === "sending") {
       return adminJsonError("already_sent", "Contact has already been sent.", 409);
     }
-    if (contact.status === "suppressed" || (await isSuppressed(contact.email))) {
+    // A Testkontakt is the operator's own inbox: an old unsubscribe or bounce
+    // on that address must not stop testing (0057) — the send path skips the
+    // suppression gate for it as well.
+    if (contact.status === "suppressed" || (!contact.isTest && (await isSuppressed(contact.email)))) {
       return adminJsonError(
         "not_eligible",
         "Contact is suppressed/unsubscribed — no draft is generated.",

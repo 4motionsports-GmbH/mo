@@ -340,6 +340,7 @@ export async function runRetention(
       WITH del AS (
         DELETE FROM campaign_contacts
          WHERE COALESCE(last_synced_at, created_at) < ${campaignCutoff}
+           AND is_test = false
         RETURNING 1
       )
       SELECT count(*)::int AS n FROM del

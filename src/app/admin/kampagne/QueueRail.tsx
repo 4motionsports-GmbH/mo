@@ -198,7 +198,14 @@ export function QueueRail({
                     className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5"
                   >
                     <span className="min-w-0">
-                      <span className="block truncate text-xs font-medium">{contactName(c)}</span>
+                      <span className="flex items-center gap-1 text-xs font-medium">
+                        <span className="truncate">{contactName(c)}</span>
+                        {c.isTest && (
+                          <StatusBadge tone="accent" dot={false}>
+                            Test
+                          </StatusBadge>
+                        )}
+                      </span>
                       <span className="block truncate text-2xs text-muted-foreground">{c.email}</span>
                     </span>
                     {statusAction(c)}
@@ -373,7 +380,14 @@ export function QueueRail({
                   key={s.contactId}
                   className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1"
                 >
-                  <span className="min-w-0 truncate text-xs">{contactName(s)}</span>
+                  <span className="flex min-w-0 items-center gap-1 text-xs">
+                    <span className="truncate">{contactName(s)}</span>
+                    {s.isTest && (
+                      <StatusBadge tone="accent" dot={false}>
+                        Test
+                      </StatusBadge>
+                    )}
+                  </span>
                   <Button
                     variant="outline"
                     size="xs"
