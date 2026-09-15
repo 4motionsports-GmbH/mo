@@ -1,9 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  COUNTDOWN_FRAMES,
+  COUNTDOWN_FRAME_MS,
   COUNTDOWN_HEIGHT,
   COUNTDOWN_MOBILE_WIDTH,
   COUNTDOWN_WIDTH,
+  countdownFrameTimes,
   countdownLayout,
   countdownRemaining,
   renderCountdownImage,
@@ -23,6 +26,23 @@ test("countdownRemaining splits into days/hours/minutes and flags expiry", () =>
   assert.deepEqual(countdownRemaining("2026-09-11T23:59:00Z", now), { expired: false, days: 3, hours: 13, minutes: 59 });
   assert.deepEqual(countdownRemaining("2026-09-08T10:00:30Z", now), { expired: false, days: 0, hours: 0, minutes: 0 });
   assert.equal(countdownRemaining("2026-09-08T09:59:59Z", now).expired, true);
+});
+
+test("frame times: one per minute for an hour, stopping right after the deadline", () => {
+  const hour = countdownFrameTimes("2026-09-11T23:59:00Z", now);
+  assert.equal(hour.length, COUNTDOWN_FRAMES);
+  assert.equal(hour[0].getTime(), now.getTime());
+  assert.equal(hour[1].getTime() - hour[0].getTime(), COUNTDOWN_FRAME_MS);
+  assert.equal(hour[59].getTime(), now.getTime() + 59 * COUNTDOWN_FRAME_MS);
+  // Ends in 2½ minutes: 10:00, 10:01, 10:02 still live, 10:03 expired — and stop.
+  const soon = countdownFrameTimes("2026-09-08T10:02:30Z", now);
+  assert.equal(soon.length, 4);
+  assert.equal(countdownRemaining("2026-09-08T10:02:30Z", soon[2]).expired, false);
+  assert.equal(countdownRemaining("2026-09-08T10:02:30Z", soon[3]).expired, true);
+  // Already expired: a single frame. Fewer frames on request, never more than an hour.
+  assert.equal(countdownFrameTimes("2026-09-01T00:00:00Z", now).length, 1);
+  assert.equal(countdownFrameTimes("2026-09-11T23:59:00Z", now, 5).length, 5);
+  assert.equal(countdownFrameTimes("2026-09-11T23:59:00Z", now, 500).length, COUNTDOWN_FRAMES);
 });
 
 test("layout centres three equal tiles inside the image", () => {
@@ -45,17 +65,35 @@ test("layout centres three equal tiles inside the image", () => {
 
 test("the phone variant renders at its own width", async () => {
   const { default: sharp } = await import("sharp");
-  const m = await renderCountdownImage({ expiresAt: "2026-09-11T23:59:00Z", language: "de", now, width: COUNTDOWN_MOBILE_WIDTH });
+  const m = await renderCountdownImage({ expiresAt: "2026-09-11T23:59:00Z", language: "de", now, width: COUNTDOWN_MOBILE_WIDTH, frames: 1 });
   assert.equal((await sharp(m).metadata()).width, COUNTDOWN_MOBILE_WIDTH * 2);
-  const other = await renderCountdownImage({ expiresAt: "2026-09-11T23:59:00Z", language: "de", now, width: 123 });
+  const other = await renderCountdownImage({ expiresAt: "2026-09-11T23:59:00Z", language: "de", now, width: 123, frames: 1 });
   assert.equal((await sharp(other).metadata()).width, COUNTDOWN_WIDTH * 2, "unknown widths fall back to desktop");
 });
 
-test("renderCountdownImage yields a 2× PNG of the card size, for live and expired", async () => {
+test("the full image is an hour-long GIF that ticks once a minute and plays once", async () => {
   const { default: sharp } = await import("sharp");
-  const live = await renderCountdownImage({ expiresAt: "2026-09-11T23:59:00Z", language: "de", now });
+  const gif = await renderCountdownImage({ expiresAt: "2026-09-08T11:30:00Z", language: "de", now });
+  const m = await sharp(gif, { animated: true }).metadata();
+  assert.equal(m.format, "gif");
+  assert.equal(m.pages, COUNTDOWN_FRAMES);
+  assert.equal(m.loop, 1, "plays once, then holds the last frame");
+  assert.ok(m.delay.every((d) => d === COUNTDOWN_FRAME_MS), "one frame per minute");
+  assert.ok(gif.length < 120_000, `stays small (${gif.length} bytes)`);
+  // Frame 0 shows 01:30, frame 59 shows 00:31 — the digits differ.
+  const first = await sharp(gif, { page: 0 }).raw().toBuffer();
+  const last = await sharp(gif, { page: 59 }).raw().toBuffer();
+  assert.notDeepEqual(first, last);
+  // An offer ending within the hour counts down to "expired" and stops there.
+  const short = await renderCountdownImage({ expiresAt: "2026-09-08T10:02:30Z", language: "en", now });
+  assert.equal((await sharp(short, { animated: true }).metadata()).pages, 4);
+});
+
+test("renderCountdownImage yields a 2× frame of the card size, for live and expired", async () => {
+  const { default: sharp } = await import("sharp");
+  const live = await renderCountdownImage({ expiresAt: "2026-09-11T23:59:00Z", language: "de", now, frames: 1 });
   const m = await sharp(live).metadata();
-  assert.equal(m.format, "png");
+  assert.equal(m.format, "gif");
   assert.equal(m.width, COUNTDOWN_WIDTH * 2);
   assert.equal(m.height, COUNTDOWN_HEIGHT * 2);
   // The light card look: white background (sampled inside the rounded rect,
@@ -68,7 +106,7 @@ test("renderCountdownImage yields a 2× PNG of the card size, for live and expir
   for (let y = 0; y < raw.info.height; y += 3) for (let x = 0; x < raw.info.width; x += 3) { const [r, g, b] = px(x, y); if (r > 180 && g < 60 && b < 60) red++; if (r < 60 && g < 60 && b < 60) dark++; }
   assert.ok(red > 200, `red digits present (${red})`);
   assert.ok(dark > 30, `dark heading present (${dark})`);
-  const expired = await renderCountdownImage({ expiresAt: "2026-09-01T00:00:00Z", language: "en", now });
+  const expired = await renderCountdownImage({ expiresAt: "2026-09-01T00:00:00Z", language: "en", now, frames: 1 });
   assert.equal((await sharp(expired).metadata()).width, COUNTDOWN_WIDTH * 2);
   assert.ok(expired.length < live.length + 20000);
 });
