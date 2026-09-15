@@ -346,8 +346,13 @@ person clearing 100–200 e-mails a day:
   geklickt %, Bounces, Beschwerden, Abmeldungen; link to the Kampagnen-Funnel
   on the KPI screen), then the paged, searchable history (e-mail/subject,
   delivery-state chips, date range) with the delivery state from the Resend
-  webhook, redemption looked up in Shopify **for the visible page only**, and
-  the viewer for the retained content of a send.
+  webhook, redemption looked up in Shopify **for the visible page only**, the
+  **validity** of what the send carried (the earlier of code and set expiry,
+  `offerValidity` in `campaign-desk-core.mjs`: a warning badge while it ends
+  within 48 hours, „noch 6 Tage" beyond, „Abgelaufen" after; the chip
+  **„Läuft bald ab"** filters to exactly those reminder candidates), and the
+  viewer for the retained content of a send. The Verlauf sheet of a contact
+  shows the same validity badge.
 - **Fokus-Modus** (`F`) hides rail and review column, centres the mail and
   shows the Prüfpunkte as a one-line strip.
 - **Testkontakte** (⋯ menu): the operator's own inboxes as contacts that stay
@@ -1211,7 +1216,7 @@ on failure. Grouped by the screen that calls them.
 | | `POST campaign/reset-queue` | rebuild the review queue (destructive, behind confirm) |
 | | `POST campaign/contacts { query }` | global contact search |
 | | `GET campaign/test-contacts`, `POST campaign/test-contacts { action: create \| delete, … }` | Testkontakte: list, create (+ draft right away), delete |
-| | `GET campaign/history?q=&from=&to=&delivery=&page=&pageSize=` | paged „Gesendet“ view with delivery + redemption state; `delivery` = delivered \| clicked \| bounced \| complained \| copy |
+| | `GET campaign/history?q=&from=&to=&delivery=&page=&pageSize=` | paged „Gesendet“ view with delivery + redemption state and code/set expiry; `delivery` = delivered \| clicked \| bounced \| complained \| copy \| expiring (offer ends within 48 h) |
 | | `POST campaign/sent-email { sendId }` | retained content of one send |
 | Kunden | `GET customers/detail?id=` | one customer's full detail (on open) |
 | | `POST customers/profile / purchases` | regenerate „Kundenverständnis“ / refresh cached Shopify data |

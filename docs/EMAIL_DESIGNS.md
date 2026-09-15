@@ -30,7 +30,7 @@ Design schreibt nur, was sich tatsächlich unterscheidet.
 |---|---|---|
 | `classic` | Shopify-Newsletter-Klon (Standard) | Built-in, kein Modul |
 | `studio` | Editorial-minimal (Beispiel/Referenz) | Tokens + ein Renderer-Override |
-| `performance` | Bild-orientiertes Conversion-Design | Voll-Shell: Hero mit (KI-)Bild, persönliche Anrede, Produkt-Karten, Bundle-Karte + Angebots-Countdown im selben hellen Karten-Stil, Frag-Mo-Panel, Smiley-Bewertung, Hero-Pipeline (s. u.) |
+| `performance` | Bild-orientiertes Conversion-Design | Voll-Shell: Hero mit (KI-)Bild, persönliche Anrede, Produkt-Karten, Bundle-Karte + Rabatt-Coupon + Angebots-Countdown im selben hellen Karten-Stil, Frag-Mo-Panel, Smiley-Bewertung, Hero-Pipeline (s. u.) |
 
 ## Die zwei Gestaltungs-Ebenen
 
@@ -118,11 +118,27 @@ nichts über den Empfänger, kein freier Bilddienst. Das Bild kommt mit
 `no-store`, damit die Bild-Proxys von Gmail und Apple Mail bei jedem Öffnen
 neu laden; pro Abruf wird nichts gespeichert oder gezählt.
 
+Das Bild ist ein **animiertes GIF, das nach dem Abruf weiterzählt**: ein
+Frame pro Minute für die nächste Stunde (`COUNTDOWN_FRAMES` ×
+`COUNTDOWN_FRAME_MS`), einmal abgespielt, der letzte Frame bleibt stehen.
+Mail-Clients laden ein Bild **einmal pro Öffnen** — Apple Mail mit
+Mail-Datenschutz sogar nur einmal bei Zustellung über Apples Proxy — und
+zeigen danach diese Kopie; ein Standbild wirkte deshalb „eingefroren". Mit der
+Animation tickt der Zähler nach jedem Abruf eine Stunde lang, und kein Frame
+verspricht mehr Zeit als vorhanden: Er hält bei der letzten Minute der Stunde,
+eine veraltete Kopie **untertreibt** also nur. Endet das Angebot innerhalb der
+Stunde, zählt die Animation bis „Angebot abgelaufen" und stoppt dort. Grenze
+des Mediums: Bei Clients, die das Bild bei Zustellung vorab laden (Apple Mail
+Privacy Protection), beginnt die Stunde beim Vorabladen — die exakte Frist
+steht deshalb immer als HTML-Zeile unter dem Bild.
+
 Ohne Systemschriften (Vercel) wird kein Text gerastert: Ziffern und Wörter sind
 **vorgerendert** (`scripts/build-countdown-sprite.mjs` →
 `src/lib/generated/countdown-sprite.mjs`, Liberation Sans Bold, 2×), der
 Server komponiert sie nur noch auf SVG-Formen (`email-countdown-image.mjs`,
-Layout getestet, 564×116 px bei 1×). Das Bild ist **hell** gehalten — weißer
+Layout und Frame-Zeiten getestet, 564×116 px bei 1×; die Frames werden in
+reinem JS auf einen Roh-Puffer geblendet, nur der GIF-Encode braucht sharp —
+rund 0,7 s und 32 KB für eine volle Stunde). Das Bild ist **hell** gehalten — weißer
 Grund, dunkle Überschrift, rote Ziffern auf hellgrauen Kacheln mit feiner
 Kante, graue Einheiten —, damit es ohne Bruch in der weißen Karte des
 Performance-Designs und auf der weißen Karte des klassischen Designs sitzt.
@@ -139,15 +155,37 @@ Produkt-Karten (Bild bzw. Kacheln oben, die exakte Frist als graue Zeile
 darunter).
 
 **Set-Karte.** Im Performance-Design derselbe weiße Karten-Rahmen wie bei den
-Produkt-Karten — rotes „BUNDLE DEAL"-Badge, die Komponenten-Bilder, Überschrift
-mit dem roten Strich der Produkt-Karten, Preis-Trio (Einzelkauf grau
-durchgestrichen, Set-Preis und Ersparnis in Rot) und der rote „Zur Kasse"-Button;
+Produkt-Karten — **blaues** „BUNDLE DEAL"-Badge (`#008ccb`, weiße Schrift), die
+Komponenten-Bilder, Überschrift mit dem roten Strich der Produkt-Karten,
+Preis-Trio (Einzelkauf grau durchgestrichen, **Set-Preis schwarz und fett**,
+Ersparnis „Du sparst …" als blaue Pille) und der rote „Zur Kasse"-Button;
 keine dunklen Flächen mehr. Die Überschrift ist kurz: Operator-Titel, wenn er kurz ist,
 sonst „Dein persönliches Set" (`bundleHeadline`, getestet — generierte Titel
 der Form „Set: A + B + C" oder über 40 Zeichen weichen dem Standard); die
 vollständigen Produktnamen stehen wie bisher in der grauen Unterzeile. Der
 Button heißt **„Zur Kasse"** („Checkout"), weil der Link im vorbefüllten
 Checkout landet.
+
+**Rabattcode-Coupon.** Kampagnen-Mails mit Code zeigen ihn nicht mehr als
+fette Zeile im Kleingedruckten, sondern als eigene Karte zwischen Set-Karte und
+Countdown (`renderDiscountCoupon` in `email-template.ts`, Renderer-Hook
+`discountCoupon`; Wortlaut und Link in `discount-coupon.mjs`, getestet): der
+Code groß und fett auf einem gestrichelten blauen „Ticket", daneben der Wert
+(„5 % auf deine gesamte Bestellung"), die Bedingungen („Einmalig einlösbar ·
+gültig bis …") und der rote Button **„Code einlösen"**. Der Button führt auf
+Shopifys Rabatt-Link `https://motionsports.de/discount/<code>`, der den Code
+im Shop hinterlegt und an der Kasse anwendet — E-Mail kann nichts in die
+Zwischenablage kopieren (kein JavaScript), ein Tipp ist auf dem Handy ohnehin
+einfacher. Klassisch: ein zentrierter gestrichelter Kasten mit Code, Wert,
+Bedingungen und dem Link. Der Text-Teil trägt dieselben Zeilen.
+
+**Hero der Kampagnen-Mail.** Kicker („Mehr aus deinem Setup") in Blau. Die
+Kampagnen-Variante zeigt **keinen Button im Hero** — ihr primärer CTA ist der
+Mo-Deeplink, den die Frag-Mo-Karte darunter (getrackt) ohnehin trägt.
+Stattdessen sind Bild und Schlagzeile mit `https://motionsports.de` verlinkt
+(Desktop: Block-Link über der rechten Bildhälfte mit gestrecktem transparentem
+`public/email-spacer.png`, Handy: das Bild selbst). Summary-, DOI- und
+Marketing-Variante behalten ihren Hero-Button (`heroCta` je Variante).
 
 ## Hero-Bilder (Design „Performance")
 
@@ -438,7 +476,7 @@ würde es links und rechts beschnitten und der Text stünde auf dem Motiv.)
 | `src/lib/email-hero-references.mjs` | Referenzfotos der Produkte: Auswahl, Prompt-Block, Laden/Verkleinern, getestet |
 | `src/lib/email-hero-qa.mjs` | Automatische Bildprüfung (Vision-Modell), Verdict und Re-Render-Wahl, getestet |
 | `src/lib/email-hero-marking.mjs` | Maschinenlesbare KI-Markierung (IPTC/XMP + EXIF) in jeder Hero-Datei, getestet |
-| `src/lib/email-countdown-image.mjs` + `api/email-countdown` | Live-Countdown-Bild aus vorgerenderten Glyphen, signierter Token (`email-countdown-token.mjs`), getestet |
+| `src/lib/email-countdown-image.mjs` + `api/email-countdown` | Live-Countdown-GIF (tickt eine Stunde lang minütlich) aus vorgerenderten Glyphen, signierter Token (`email-countdown-token.mjs`), getestet |
 | `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Privater Blob-Write & öffentliche Auslieferung der Hero-Bilder (mit Pfad-Validierung) |
 | `src/lib/email-hero-context.mjs` | Was die KI über die Person erfährt (Kaufhistorie, Profil, Kategorien, Saison) — pur & getestet |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero-Prompt-Vorschlag, Bild-Generierung (gpt-image-1 + Blob), Speicherung am Entwurf |

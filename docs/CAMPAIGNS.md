@@ -187,8 +187,9 @@ fallback discipline as `marketing-draft.ts`):
    background; `public/moorb2x.png` is the transparent static variant;
    override via `EMAIL_MO_ICON_URL`) makes Mo recognizable: on campaign
    emails it renders **beside the Mo promo text** as a chat-style media row
-   (orb left, "Übrigens: … im Chat" right — mirroring the shop's
-   product-page CTA), directly above the deep-link button. Marketing and
+   (orb left, the two-sentence "Mo berät dich direkt im Shop-Chat …" hint
+   right — plain, no sales-letter phrasing; `moPromoIntroText`, tested),
+   directly above the deep-link button. Marketing and
    summary emails (no chat-hint line) keep the centered orb between heading
    and prose (`moAvatar` in `email-template.ts`). Clients without GIF
    playback (Outlook desktop) show the first frame.
