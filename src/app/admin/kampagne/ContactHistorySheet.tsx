@@ -10,6 +10,7 @@ import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { Button, Callout, EmptyState, Sheet, Spinner, StatusBadge, Tooltip } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { deliveryState } from "./SentHistory";
+import { OfferValidityBadge } from "./badges";
 import type { CampaignHistoryItemProps } from "./types";
 
 export function ContactHistorySheet({
@@ -79,6 +80,7 @@ export function ContactHistorySheet({
                     {h.isTest && <StatusBadge tone="accent" dot={false}>Test</StatusBadge>}
                     {h.discountCode && <code className="text-xs">{h.discountCode}</code>}
                     {h.redeemed === true && <StatusBadge tone="success" dot={false}>eingelöst</StatusBadge>}
+                    {(h.discountCode || h.bundleExpiresAt) && <OfferValidityBadge send={h} />}
                     {h.heroVariant && <span>Hero: {h.heroVariant}</span>}
                   </div>
                 </div>

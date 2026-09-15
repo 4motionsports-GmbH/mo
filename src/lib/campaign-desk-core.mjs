@@ -204,16 +204,79 @@ export const HISTORY_DELIVERY_FILTERS = Object.freeze([
   { key: "bounced", label: "Bounce" },
   { key: "complained", label: "Beschwerde" },
   { key: "copy", label: "Kopiert" },
+  { key: "expiring", label: "Läuft bald ab" },
 ]);
 
 /**
  * @param {unknown} value
- * @returns {"all" | "delivered" | "clicked" | "bounced" | "complained" | "copy"}
+ * @returns {"all" | "delivered" | "clicked" | "bounced" | "complained" | "copy" | "expiring"}
  */
 export function parseDeliveryFilter(value) {
   return typeof value === "string" && HISTORY_DELIVERY_FILTERS.some((f) => f.key === value)
-    ? /** @type {"all" | "delivered" | "clicked" | "bounced" | "complained" | "copy"} */ (value)
+    ? /** @type {"all" | "delivered" | "clicked" | "bounced" | "complained" | "copy" | "expiring"} */ (value)
     : "all";
+}
+
+/**
+ * A sent offer (discount code, set) counts as „läuft bald ab" within this
+ * window — the moment to send a reminder. The „Gesendet" filter of the same
+ * name and the badge use it; the store's SQL gets the same number.
+ */
+export const OFFER_EXPIRING_SOON_HOURS = 48;
+
+/**
+ * How long what a send carried is still valid: the EARLIER of the discount
+ * code's expiry (only with a code) and the attached set's expiry. `none`
+ * when the send carried nothing that expires.
+ *
+ * @param {{ discountCode?: string | null, discountExpiresAt?: string | null, bundleExpiresAt?: string | null }} send
+ * @param {number | Date} [now]
+ * @returns {{
+ *   state: "none" | "expired" | "soon" | "valid",
+ *   expiresAt: string | null,
+ *   hoursLeft: number | null,
+ *   kinds: Array<"discount" | "bundle">,
+ * }}
+ */
+export function offerValidity(send, now = Date.now()) {
+  const ref = now instanceof Date ? now.getTime() : now;
+  /** @type {Array<{ kind: "discount" | "bundle", at: number }>} */
+  const deadlines = [];
+  const push = (kind, value) => {
+    if (!value) return;
+    const t = new Date(value).getTime();
+    if (Number.isFinite(t)) deadlines.push({ kind, at: t });
+  };
+  if (send.discountCode) push("discount", send.discountExpiresAt);
+  push("bundle", send.bundleExpiresAt);
+  if (deadlines.length === 0) return { state: "none", expiresAt: null, hoursLeft: null, kinds: [] };
+  const earliest = Math.min(...deadlines.map((d) => d.at));
+  const hoursLeft = (earliest - ref) / 3_600_000;
+  const state = hoursLeft <= 0 ? "expired" : hoursLeft <= OFFER_EXPIRING_SOON_HOURS ? "soon" : "valid";
+  return {
+    state,
+    expiresAt: new Date(earliest).toISOString(),
+    hoursLeft,
+    kinds: deadlines.map((d) => d.kind),
+  };
+}
+
+/**
+ * The short German label of an offer's validity for the „Gesendet" list:
+ * „Abgelaufen", „noch 5 Std." within the reminder window, „noch 6 Tage" beyond
+ * it (whole days, rounded down — never promises more than there is).
+ * @param {ReturnType<typeof offerValidity>} validity
+ * @returns {string}
+ */
+export function offerValidityLabel(validity) {
+  if (validity.state === "none" || validity.hoursLeft === null) return "—";
+  if (validity.state === "expired") return "Abgelaufen";
+  if (validity.state === "soon") {
+    const h = Math.floor(validity.hoursLeft);
+    return h < 1 ? "unter 1 Std." : `noch ${h} Std.`;
+  }
+  const days = Math.floor(validity.hoursLeft / 24);
+  return `noch ${days} ${days === 1 ? "Tag" : "Tage"}`;
 }
 
 /**

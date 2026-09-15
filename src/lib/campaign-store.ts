@@ -18,6 +18,7 @@ import { clampPage, pageCount } from "./admin-table.mjs";
 import { parseEmailTextMode } from "./email-text-mode.mjs";
 import { normalizeEmail } from "./email-capture-store";
 import { sendableDayRange } from "./campaign-segments.mjs";
+import { OFFER_EXPIRING_SOON_HOURS } from "./campaign-desk-core.mjs";
 import { reportError } from "./observability";
 import { loadModelPrices, usdCostForUsage, usdEurRate, usdToEur } from "./ai-pricing.mjs";
 import { fetchCodeRedemption } from "./shopify-orders";
@@ -1782,6 +1783,9 @@ export interface CampaignSendHistoryRow {
   sentVia: "email" | "copy";
   discountCode: string | null;
   discountExpiresAt: string | null;
+  /** Expiry of the set offer the send carried (bundle_offers.expires_at via
+   * bundle_offer_id, migration 0054); null without a set. */
+  bundleExpiresAt: string | null;
   sentAt: string | null;
   /** True when the shipped content was retained (body_text/body_html — sends
    * recorded before migration 0038 have neither). */
@@ -1799,14 +1803,17 @@ export interface CampaignSendHistoryRow {
   isTest: boolean;
 }
 
-/** Delivery-state filter of the „Gesendet“ view (campaign-desk-core.mjs). */
+/** Delivery-state filter of the „Gesendet“ view (campaign-desk-core.mjs);
+ * `expiring` = the offer (code or set) is still valid and ends within
+ * OFFER_EXPIRING_SOON_HOURS — the reminder candidates. */
 export type CampaignDeliveryFilter =
   | "all"
   | "delivered"
   | "clicked"
   | "bounced"
   | "complained"
-  | "copy";
+  | "copy"
+  | "expiring";
 
 export interface CampaignSendHistoryQuery {
   /** Case-insensitive substring over recipient email and subject. */
@@ -1854,44 +1861,57 @@ export async function searchCampaignSendHistory(
   const fromDay = from && YMD.test(from) ? from : null;
   const toDay = to && YMD.test(to) ? to : null;
   // The delivery predicate is spelled out twice (count + page) — the neon
-  // tagged template is not composable.
+  // tagged template is not composable. `expiring`: the earlier of code expiry
+  // (only with a code) and set expiry lies within the next
+  // OFFER_EXPIRING_SOON_HOURS — LEAST() skips NULLs in Postgres.
   try {
     const countRows = (await sql`
       SELECT count(*)::int AS n
-        FROM campaign_sends
-       WHERE (${q} = '' OR email ILIKE ${like} OR coalesce(subject, '') ILIKE ${like})
+        FROM campaign_sends s
+        LEFT JOIN bundle_offers b ON b.id = s.bundle_offer_id
+       WHERE (${q} = '' OR s.email ILIKE ${like} OR coalesce(s.subject, '') ILIKE ${like})
          AND (${fromDay}::text IS NULL
-              OR sent_at >= ((${fromDay}::date)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
+              OR s.sent_at >= ((${fromDay}::date)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
          AND (${toDay}::text IS NULL
-              OR sent_at < (((${toDay}::date) + 1)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
+              OR s.sent_at < (((${toDay}::date) + 1)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
          AND (${delivery} = 'all'
-              OR (${delivery} = 'delivered' AND delivered_at IS NOT NULL)
-              OR (${delivery} = 'clicked' AND clicked_at IS NOT NULL)
-              OR (${delivery} = 'bounced' AND bounced_at IS NOT NULL)
-              OR (${delivery} = 'complained' AND complained_at IS NOT NULL)
-              OR (${delivery} = 'copy' AND sent_via = 'copy'))
+              OR (${delivery} = 'delivered' AND s.delivered_at IS NOT NULL)
+              OR (${delivery} = 'clicked' AND s.clicked_at IS NOT NULL)
+              OR (${delivery} = 'bounced' AND s.bounced_at IS NOT NULL)
+              OR (${delivery} = 'complained' AND s.complained_at IS NOT NULL)
+              OR (${delivery} = 'copy' AND s.sent_via = 'copy')
+              OR (${delivery} = 'expiring'
+                  AND LEAST(CASE WHEN s.discount_code IS NOT NULL THEN s.discount_expires_at END, b.expires_at) > now()
+                  AND LEAST(CASE WHEN s.discount_code IS NOT NULL THEN s.discount_expires_at END, b.expires_at)
+                      <= now() + make_interval(hours => ${OFFER_EXPIRING_SOON_HOURS}::int)))
     `) as Array<{ n: number }>;
     const total = Number(countRows[0]?.n ?? 0);
     const current = clampPage(page, pageCount(total, size));
     const offset = (current - 1) * size;
     const rows = (await sql`
-      SELECT id, contact_id, email, subject, sent_via, discount_code, discount_expires_at, sent_at,
-             (body_text IS NOT NULL OR body_html IS NOT NULL) AS has_content,
-             delivered_at, bounced_at, bounce_type, complained_at, clicked_at, hero_variant,
-             is_test
-        FROM campaign_sends
-       WHERE (${q} = '' OR email ILIKE ${like} OR coalesce(subject, '') ILIKE ${like})
+      SELECT s.id, s.contact_id, s.email, s.subject, s.sent_via, s.discount_code, s.discount_expires_at,
+             b.expires_at AS bundle_expires_at, s.sent_at,
+             (s.body_text IS NOT NULL OR s.body_html IS NOT NULL) AS has_content,
+             s.delivered_at, s.bounced_at, s.bounce_type, s.complained_at, s.clicked_at, s.hero_variant,
+             s.is_test
+        FROM campaign_sends s
+        LEFT JOIN bundle_offers b ON b.id = s.bundle_offer_id
+       WHERE (${q} = '' OR s.email ILIKE ${like} OR coalesce(s.subject, '') ILIKE ${like})
          AND (${fromDay}::text IS NULL
-              OR sent_at >= ((${fromDay}::date)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
+              OR s.sent_at >= ((${fromDay}::date)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
          AND (${toDay}::text IS NULL
-              OR sent_at < (((${toDay}::date) + 1)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
+              OR s.sent_at < (((${toDay}::date) + 1)::timestamp AT TIME ZONE ${ADMIN_TIME_ZONE}))
          AND (${delivery} = 'all'
-              OR (${delivery} = 'delivered' AND delivered_at IS NOT NULL)
-              OR (${delivery} = 'clicked' AND clicked_at IS NOT NULL)
-              OR (${delivery} = 'bounced' AND bounced_at IS NOT NULL)
-              OR (${delivery} = 'complained' AND complained_at IS NOT NULL)
-              OR (${delivery} = 'copy' AND sent_via = 'copy'))
-       ORDER BY sent_at DESC, id DESC
+              OR (${delivery} = 'delivered' AND s.delivered_at IS NOT NULL)
+              OR (${delivery} = 'clicked' AND s.clicked_at IS NOT NULL)
+              OR (${delivery} = 'bounced' AND s.bounced_at IS NOT NULL)
+              OR (${delivery} = 'complained' AND s.complained_at IS NOT NULL)
+              OR (${delivery} = 'copy' AND s.sent_via = 'copy')
+              OR (${delivery} = 'expiring'
+                  AND LEAST(CASE WHEN s.discount_code IS NOT NULL THEN s.discount_expires_at END, b.expires_at) > now()
+                  AND LEAST(CASE WHEN s.discount_code IS NOT NULL THEN s.discount_expires_at END, b.expires_at)
+                      <= now() + make_interval(hours => ${OFFER_EXPIRING_SOON_HOURS}::int)))
+       ORDER BY s.sent_at DESC, s.id DESC
        LIMIT ${size} OFFSET ${offset}
     `) as Array<Record<string, unknown>>;
     return {
@@ -1906,6 +1926,7 @@ export async function searchCampaignSendHistory(
         sentVia: r.sent_via === "copy" ? "copy" : "email",
         discountCode: (r.discount_code as string | null) ?? null,
         discountExpiresAt: toIso(r.discount_expires_at),
+        bundleExpiresAt: toIso(r.bundle_expires_at),
         sentAt: toIso(r.sent_at),
         hasContent: r.has_content === true,
         deliveredAt: toIso(r.delivered_at),

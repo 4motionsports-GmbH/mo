@@ -12,7 +12,7 @@ export type DeskView = "pruefen" | "liste" | "gesendet";
 /** Queue filter chip key (`?filter=`, campaign-desk-core.mjs QUEUE_FILTERS). */
 export type QueueFilter = string;
 
-export type DeliveryFilter = "all" | "delivered" | "clicked" | "bounced" | "complained" | "copy";
+export type DeliveryFilter = "all" | "delivered" | "clicked" | "bounced" | "complained" | "copy" | "expiring";
 
 export type CampaignRecommendation = CampaignRecommendationView;
 
@@ -104,6 +104,10 @@ export interface CampaignHistoryItemProps {
   subject: string | null;
   sentVia: "email" | "copy";
   discountCode: string | null;
+  /** Expiry of the minted code; null without a code. */
+  discountExpiresAt: string | null;
+  /** Expiry of the attached set offer; null without a set. */
+  bundleExpiresAt: string | null;
   sentAt: string | null;
   /** true/false when Shopify answered; null = unknown/unchecked. */
   redeemed: boolean | null;

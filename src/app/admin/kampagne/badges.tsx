@@ -7,9 +7,44 @@
 
 import { PenLine } from "lucide-react";
 import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
+import { OFFER_EXPIRING_SOON_HOURS, offerValidity, offerValidityLabel } from "@/lib/campaign-desk-core.mjs";
 import { num } from "@/lib/admin-format.mjs";
+import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { SegmentedControl, StatusBadge, Tooltip } from "../ui";
-import { optInShort } from "./types";
+import { optInShort, type CampaignHistoryItemProps } from "./types";
+
+/**
+ * How long a sent offer (code, set — the earlier deadline) is still valid:
+ * warning badge within the reminder window (OFFER_EXPIRING_SOON_HOURS), a
+ * muted „noch 6 Tage" beyond it, „Abgelaufen" after, „—" without an offer.
+ * The tooltip names what expires and the exact moment.
+ */
+export function OfferValidityBadge({ send }: { send: Pick<CampaignHistoryItemProps, "discountCode" | "discountExpiresAt" | "bundleExpiresAt"> }) {
+  const v = offerValidity(send);
+  if (v.state === "none") return <span className="text-muted-foreground">—</span>;
+  const what = v.kinds.map((k) => (k === "discount" ? "Code" : "Set")).join(" + ");
+  const detail = `${what} · bis ${formatAdmin(v.expiresAt, ADMIN_DATE_TIME_SHORT)}${
+    v.state === "soon" ? ` · endet innerhalb von ${num(OFFER_EXPIRING_SOON_HOURS)} Std. — Zeit für eine Erinnerung` : ""
+  }`;
+  const label = offerValidityLabel(v);
+  return (
+    <Tooltip content={detail}>
+      {v.state === "soon" ? (
+        <StatusBadge tone="warning" tabIndex={0}>
+          {label}
+        </StatusBadge>
+      ) : v.state === "expired" ? (
+        <StatusBadge tone="neutral" dot={false} tabIndex={0}>
+          {label}
+        </StatusBadge>
+      ) : (
+        <span tabIndex={0} className="text-muted-foreground tabular-nums">
+          {label}
+        </span>
+      )}
+    </Tooltip>
+  );
+}
 
 /** DE/EN switch for the card's email language. Shows the EFFECTIVE language
  * (normally derived from the Shopify profile — see campaign-language.mjs);

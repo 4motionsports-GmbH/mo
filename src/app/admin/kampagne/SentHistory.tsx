@@ -20,6 +20,7 @@ import {
   EmptyState,
   FilterBar,
   FilterGroup,
+  InfoTip,
   Input,
   Pagination,
   SearchInput,
@@ -31,6 +32,7 @@ import {
   type StatusTone,
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
+import { OfferValidityBadge } from "./badges";
 import type { CampaignHistoryItemProps, CampaignSentSummaryProps, DeliveryFilter } from "./types";
 
 interface HistoryPage {
@@ -194,6 +196,21 @@ export function SentHistory({
         ) : (
           <span className="text-muted-foreground">nein</span>
         ),
+    },
+    {
+      key: "validity",
+      header: (
+        <span className="inline-flex items-center gap-1">
+          Gültig
+          <InfoTip label="Gültigkeit erklären">
+            Wie lange das Angebot dieser Sendung noch gilt: die frühere Frist von Rabattcode und Set. Warnung, wenn es
+            innerhalb von 48 Stunden endet — der Filter „Läuft bald ab“ zeigt genau diese Sendungen, etwa für eine
+            Erinnerungs-E-Mail.
+          </InfoTip>
+        </span>
+      ),
+      width: "8rem",
+      cell: (h) => <OfferValidityBadge send={h} />,
     },
     {
       key: "hero",

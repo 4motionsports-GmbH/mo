@@ -15,6 +15,10 @@ import {
   upsertOutbox,
   SECONDS_PER_DRAFT,
   SECONDS_PER_HERO,
+  HISTORY_DELIVERY_FILTERS,
+  OFFER_EXPIRING_SOON_HOURS,
+  offerValidity,
+  offerValidityLabel,
 } from "./campaign-desk-core.mjs";
 
 test("views and filters parse defensively", () => {
@@ -172,4 +176,44 @@ test("the preview signature moves with everything the render depends on", () => 
   // A bundle's price or expiry change re-renders too (the offer block shows both).
   const withSet = { ...base, bundle: { id: 7, bundlePrice: "99.00", expiresAt: null } };
   assert.notEqual(previewSignature({ ...withSet, bundle: { ...withSet.bundle, bundlePrice: "89.00" } }), previewSignature(withSet));
+});
+
+test("offerValidity: the earlier of code and set expiry, in three states", () => {
+  const now = new Date("2026-09-15T10:00:00Z");
+  const none = offerValidity({ discountCode: null, discountExpiresAt: "2026-09-20T00:00:00Z", bundleExpiresAt: null }, now);
+  assert.equal(none.state, "none", "an expiry without a code does not count");
+  assert.deepEqual(none.kinds, []);
+  assert.equal(offerValidityLabel(none), "—");
+
+  const valid = offerValidity({ discountCode: "MK-A", discountExpiresAt: "2026-09-21T10:00:00Z" }, now);
+  assert.equal(valid.state, "valid");
+  assert.equal(valid.hoursLeft, 144);
+  assert.deepEqual(valid.kinds, ["discount"]);
+  assert.equal(offerValidityLabel(valid), "noch 6 Tage");
+  assert.equal(offerValidityLabel(offerValidity({ bundleExpiresAt: "2026-09-17T23:00:00Z" }, now)), "noch 2 Tage");
+  assert.equal(offerValidityLabel({ state: "valid", hoursLeft: 47.9 + 24, expiresAt: "x", kinds: [] }), "noch 2 Tage");
+
+  // The set ends first → its deadline wins, both kinds listed.
+  const soon = offerValidity(
+    { discountCode: "MK-A", discountExpiresAt: "2026-09-21T10:00:00Z", bundleExpiresAt: "2026-09-16T15:30:00Z" },
+    now
+  );
+  assert.equal(soon.state, "soon");
+  assert.equal(soon.expiresAt, "2026-09-16T15:30:00.000Z");
+  assert.deepEqual(soon.kinds, ["discount", "bundle"]);
+  assert.equal(offerValidityLabel(soon), "noch 29 Std.");
+  assert.equal(offerValidityLabel(offerValidity({ bundleExpiresAt: "2026-09-15T10:20:00Z" }, now)), "unter 1 Std.");
+  // Exactly the window edge still counts as soon.
+  assert.equal(offerValidity({ bundleExpiresAt: new Date(now.getTime() + OFFER_EXPIRING_SOON_HOURS * 3_600_000) }, now).state, "soon");
+
+  const expired = offerValidity({ discountCode: "MK-A", discountExpiresAt: "2026-09-15T09:59:00Z" }, now);
+  assert.equal(expired.state, "expired");
+  assert.equal(offerValidityLabel(expired), "Abgelaufen");
+  // Garbage dates are ignored.
+  assert.equal(offerValidity({ discountCode: "MK-A", discountExpiresAt: "nope" }, now).state, "none");
+});
+
+test("the Läuft-bald-ab filter is a known delivery filter", () => {
+  assert.equal(parseDeliveryFilter("expiring"), "expiring");
+  assert.ok(HISTORY_DELIVERY_FILTERS.some((f) => f.key === "expiring"));
 });
