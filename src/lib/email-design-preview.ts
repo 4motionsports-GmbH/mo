@@ -111,6 +111,7 @@ function renderSampleForKind(kind: EmailDesignKind, products: Product[]): string
         discountCode: "MK-BEISPIEL",
         discountExpiresLabel: "31.12.2026",
         discountExpiresAt: new Date(Date.now() + (3 * 24 + 14) * 3_600_000).toISOString(),
+        discountPercent: 5,
         unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
         bundle: null,
       });

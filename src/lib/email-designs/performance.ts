@@ -1,9 +1,10 @@
 // "Performance" — the image-first conversion design, built from the operator's
-// AI-drafted template: bold hero section (kicker, oversized headline, red CTA,
-// large lifestyle image), bordered product
-// CARDS with price + outline button, the BUNDLE-DEAL card and the offer
-// COUNTDOWN in the same white bordered card frame (red badge, price trio,
-// red digits on light-grey tiles), the "Frag Mo" advisor panel, and a clean
+// AI-drafted template: bold hero section (blue kicker, oversized headline, red
+// CTA — or, in the campaign mail, no button and the picture linking to the
+// shop —, large lifestyle image), bordered product CARDS with price + outline
+// button, the BUNDLE-DEAL card, the COUPON card and the offer COUNTDOWN in
+// the same white bordered card frame (blue badges, black set price, red
+// digits on light-grey tiles), the "Frag Mo" advisor panel, and a clean
 // minimal footer. Everything sits on white — no dark blocks.
 //
 // Personalisation hooks:
@@ -27,6 +28,7 @@
 import type { EmailDesignDefinition } from "./registry";
 import type {
   BundleBlockComputed,
+  DiscountCouponInput,
   EmailSectionRowOptions,
   MoPromoBlockInput,
   OfferCountdownInput,
@@ -49,8 +51,15 @@ import type { EmailProductGridItem, EmailProductRowItem } from "../email-product
 import type { BundleOfferBlockInput } from "../bundle-email";
 import { defaultHeroImageUrl } from "../email-hero";
 import { campaignMoDeeplinkUrl } from "../campaign-flags.mjs";
+import { SHOP_URL } from "../discount-coupon.mjs";
 
 const RED = "#e30613";
+/** The brand's second colour: kicker, offer badges ("Bundle Deal", "Du
+ * sparst"), the coupon's ticket. White text on it stays legible. */
+const BLUE = "#008ccb";
+/** 1×1 transparent PNG (public/) — stretched, it makes an area of the hero
+ * background clickable in clients that ignore a block anchor's height. */
+const spacerUrl = () => `${getBaseUrl()}/email-spacer.png`;
 
 /**
  * Whether the DEFAULT hero asset (public/email-hero-default.jpg) is itself
@@ -111,10 +120,18 @@ interface HeroCopy {
   /** Fallback CTA label when the composer's own label is too long for the
    * hero button (it would wrap to two lines). */
   shortCta: (en: boolean) => string;
+  /**
+   * Whether the hero carries the composer's primary CTA as its red button.
+   * The campaign mail does NOT: its primary CTA is the Mo deep link, which
+   * the advisor card below already renders (tracked), so the hero stays a
+   * clean picture-and-claim that links to the shop instead.
+   */
+  heroCta: boolean;
 }
 
 const HERO_COPY: Record<"summary" | "doi" | "marketing" | "campaign", HeroCopy> = {
   summary: {
+    heroCta: true,
     kicker: (en) => (en ? "Your personal consultation" : "Deine persönliche Beratung"),
     headline: (en) => (en ? "Your plan.\nAll set." : "Deine Beratung.\nAuf einen Blick."),
     shortCta: (en) => (en ? "To checkout" : "Zur Kasse"),
@@ -124,6 +141,7 @@ const HERO_COPY: Record<"summary" | "doi" | "marketing" | "campaign", HeroCopy> 
         : "Deine Beratung, übersichtlich zusammengefasst — mit deiner Auswahl zum direkten Bestellen.",
   },
   doi: {
+    heroCta: true,
     kicker: (en) => (en ? "Almost there" : "Fast geschafft"),
     headline: (en) => (en ? "One click.\nThen you're in." : "Ein Klick.\nDann geht's los."),
     shortCta: (en) => (en ? "Confirm now" : "Jetzt bestätigen"),
@@ -133,12 +151,14 @@ const HERO_COPY: Record<"summary" | "doi" | "marketing" | "campaign", HeroCopy> 
         : "Nur noch ein Klick — dann sind deine persönlichen Empfehlungen unterwegs.",
   },
   marketing: {
+    heroCta: true,
     kicker: () => "Mehr aus deinem Setup",
     headline: () => "Mehr Leistung.\nMehr Fokus.",
     shortCta: () => "Warenkorb öffnen",
     subline: () => "Handverlesen auf Basis deiner Beratung — abgestimmt auf dein Training.",
   },
   campaign: {
+    heroCta: false,
     kicker: (en) => (en ? "More from your setup" : "Mehr aus deinem Setup"),
     headline: (en) => (en ? "More power.\nMore focus." : "Mehr Leistung.\nMehr Fokus."),
     shortCta: (en) => (en ? "Start with Mo" : "Beratung starten"),
@@ -159,6 +179,11 @@ function redButton(cta: EmailCta, block = false, className = ""): string {
 function outlineButton(url: string, label: string): string {
   return `
                     <a href="${escapeAttr(url)}" target="_blank" style="display:inline-block; color:#111111; background:#ffffff; border:1px solid ${RED}; padding:10px 15px; border-radius:3px; font-family:${FONT}; font-size:11px; font-weight:700; text-decoration:none; white-space:nowrap;">${escapeHtml(label.toUpperCase())}&nbsp;&#8594;</a>`;
+}
+
+/** The blue offer pill ("BUNDLE DEAL", "Du sparst 37,90 €"): white on BLUE. */
+function bluePill(label: string): string {
+  return `<span style="display:inline-block; background:${BLUE}; color:#ffffff; font-family:${FONT}; font-size:11px; line-height:14px; font-weight:700; letter-spacing:0.4px; padding:9px 12px; border-radius:30px; white-space:nowrap;">${escapeHtml(label)}</span>`;
 }
 
 /** The "— TITLE —" section divider (replaces the classic black band). */
@@ -249,9 +274,10 @@ function productGrid(items: EmailProductGridItem[]): string {
 }
 
 /**
- * The BUNDLE-DEAL card: the product cards' white bordered frame with the red
- * badge, the component images and the price trio — the set price in red, the
- * component sum struck through in the cards' muted grey — and the red CTA.
+ * The BUNDLE-DEAL card: the product cards' white bordered frame with the blue
+ * badge, the component images and the price trio — the set price bold in
+ * black, the component sum struck through in the cards' muted grey, the
+ * saving as a blue pill — and the red CTA.
  */
 function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): string {
   const en = (input.language ?? "de") === "en";
@@ -268,13 +294,13 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
   const priceCells =
     (c.stattLabel
       ? `
-                          <td style="${priceLabel} padding-right:14px;">${en ? "Separately" : "Einzelkauf"}<br><span style="font-size:16px; line-height:22px; color:#777777; text-decoration:line-through;">${escapeHtml(c.stattLabel)}</span></td>`
+                          <td valign="bottom" style="${priceLabel} padding-right:14px;">${en ? "Separately" : "Einzelkauf"}<br><span style="font-size:16px; line-height:22px; color:#777777; text-decoration:line-through;">${escapeHtml(c.stattLabel)}</span></td>`
       : "") +
     `
-                          <td style="${priceLabel} padding-right:14px;">${escapeHtml(c.labels.price)}<br><strong style="font-size:22px; line-height:26px; color:${RED};">${escapeHtml(c.priceLabel)}</strong></td>` +
+                          <td valign="bottom" style="${priceLabel} padding-right:14px;">${escapeHtml(c.labels.price)}<br><strong style="font-size:22px; line-height:26px; color:#111111; font-weight:800;">${escapeHtml(c.priceLabel)}</strong></td>` +
     (c.savingLabel && c.savingPct != null
       ? `
-                          <td style="${priceLabel}">${escapeHtml(c.labels.save)}<br><strong style="font-size:16px; line-height:22px; color:${RED};">${escapeHtml(c.savingLabel)}</strong></td>`
+                          <td valign="bottom" style="${priceLabel} padding-bottom:2px;">${bluePill(`${c.labels.save} ${c.savingLabel}`)}</td>`
       : "");
   const componentNames = input.components.map((comp) => escapeHtml(comp.name)).join(" · ");
   return `
@@ -283,7 +309,7 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#ffffff; border:1px solid #e5e5e5; border-radius:7px;">
                       <tr>
                         <td width="42%" valign="middle" align="center" class="bundle-column" style="width:42%; padding:22px;">
-                          <div style="display:inline-block; background:${RED}; color:#ffffff; font-family:${FONT}; font-size:11px; line-height:14px; font-weight:700; letter-spacing:0.4px; padding:9px 12px; border-radius:30px; margin-bottom:12px;">BUNDLE DEAL</div>
+                          <div style="margin-bottom:12px;">${bluePill("BUNDLE DEAL")}</div>
                           <div>${images || "&nbsp;"}</div>
                         </td>
                         <td width="58%" valign="middle" class="bundle-column" style="width:58%; padding:24px 24px 24px 0;">
@@ -294,6 +320,43 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
                           </tr></table>
                           <div style="height:18px; font-size:0; line-height:0;">&nbsp;</div>
                           ${redButton({ label: c.labels.cta, url: input.offerUrl }, true)}
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+}
+
+/**
+ * The COUPON card: the same white bordered frame as the set deal; on the left
+ * the "ticket" — a dashed blue tile with the code in big bold letters — on
+ * the right what it is worth, its terms, the red redeem button (Shopify's
+ * /discount/<code> link stores the code for the checkout — mail cannot copy
+ * to the clipboard, one tap is better) and a one-line hint.
+ */
+function couponCard(input: DiscountCouponInput): string {
+  const label = `font-family:${FONT}; color:#555555; font-size:11px; line-height:16px;`;
+  return `
+                <tr>
+                  <td class="content-pad" style="padding: 8px 38px 16px 38px;" bgcolor="#ffffff">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#ffffff; border:1px solid #e5e5e5; border-radius:7px;">
+                      <tr>
+                        <td width="42%" valign="middle" align="center" class="bundle-column" style="width:42%; padding:22px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border:2px dashed ${BLUE}; border-radius:8px; background:#f5fafd;">
+                            <tr>
+                              <td align="center" style="padding:16px 12px 14px 12px;">
+                                <div style="font-family:${FONT}; color:${BLUE}; font-size:10px; line-height:14px; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom:6px;">${escapeHtml(input.copy.kicker)}</div>
+                                <a href="${escapeAttr(input.redeemUrl)}" target="_blank" style="display:block; font-family:${FONT}; color:#111111; font-size:24px; line-height:30px; font-weight:800; letter-spacing:2px; text-decoration:none; word-break:break-all;">${escapeHtml(input.code)}</a>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                        <td width="58%" valign="middle" class="bundle-column" style="width:58%; padding:24px 24px 24px 0;">
+                          <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#111111; font-weight:700;">${escapeHtml(input.copy.benefit)}</div>
+                          <div class="bundle-rule" style="width:14px; height:2px; background:${BLUE}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
+                          <div style="${label} margin-bottom:16px;">${escapeHtml(input.copy.terms)}</div>
+                          ${redButton({ label: input.copy.cta, url: input.redeemUrl }, true)}
+                          <div style="${label} font-size:10px; line-height:14px; margin-top:10px;">${escapeHtml(input.copy.hint)}</div>
                         </td>
                       </tr>
                     </table>
@@ -466,8 +529,8 @@ function moPanel(en: boolean): string {
                           <div style="font-family:${FONT}; font-size:18px; line-height:23px; font-weight:700; color:#111111;">${en ? "Not sure yet? Ask Mo." : "Noch unsicher? Frag Mo."}</div>
                           <div style="margin-top:6px; font-family:${FONT}; font-size:11px; line-height:16px; color:#444444;">${
                             en
-                              ? "Our personal AI advisor helps you find the right gear for your training and your existing equipment."
-                              : "Unser persönlicher KI-Berater hilft dir dabei, passendes Zubehör für dein Training und dein vorhandenes Equipment zu finden."
+                              ? "Mo advises you right in the shop chat: which machine suits you, what completes your setup. One click and you're talking."
+                              : "Mo berät dich direkt im Shop-Chat: welches Gerät zu dir passt, was dein Setup ergänzt. Ein Klick, und ihr sprecht."
                           }</div>
                         </td>
                         <td width="35%" align="center" valign="middle" class="mobile-stack" style="padding:18px;">
@@ -509,18 +572,33 @@ function makeShell(kind: keyof typeof HERO_COPY) {
     const heroIsAi = Boolean(activeEmailRenderData().heroImageUrl) || DEFAULT_HERO_IS_AI_GENERATED;
     // The hero button reuses the composer's primary CTA (its URL is the tracked
     // one), but swaps an over-long label for the design's short one so the
-    // button stays a single line.
+    // button stays a single line. Kinds without a hero button (campaign) link
+    // the hero picture and claim to the shop instead.
     const primaryCta = (opts.ctas ?? []).find((c) => c.url && c.label) ?? null;
-    const heroCta = primaryCta
-      ? {
-          url: primaryCta.url,
-          label: primaryCta.label.length > 18 ? copy.shortCta(en) : primaryCta.label,
-        }
-      : null;
+    const heroCta =
+      copy.heroCta && primaryCta
+        ? {
+            url: primaryCta.url,
+            label: primaryCta.label.length > 18 ? copy.shortCta(en) : primaryCta.label,
+          }
+        : null;
+    const heroLink = copy.heroCta ? null : SHOP_URL;
     // Two-line claim: the per-send AI headline (operator-edited, hero panel)
     // wins over the design's per-type default; both carry "\n" line breaks.
     const claim = (activeEmailRenderData().heroHeadline ?? "").trim() || copy.headline(en);
-    const headlineHtml = escapeHtml(claim).replace(/\n/g, "<br>");
+    const claimHtml = escapeHtml(claim).replace(/\n/g, "<br>");
+    const headlineHtml = heroLink
+      ? `<a href="${escapeAttr(heroLink)}" target="_blank" style="color:#111111; text-decoration:none;">${claimHtml}</a>`
+      : claimHtml;
+    // The picture half of the hero: a block link over the background (a
+    // stretched transparent spacer keeps it clickable everywhere), the
+    // AI-generated label underneath it in the corner.
+    const heroPictureHtml = heroLink
+      ? `<a href="${escapeAttr(heroLink)}" target="_blank" style="display:block; text-decoration:none; font-size:0; line-height:0;"><img src="${escapeAttr(spacerUrl())}" width="276" height="250" alt="" style="display:block; width:276px; max-width:100%; height:250px; border:0;"></a>${heroIsAi ? aiImageLabel(en) : ""}`
+      : heroIsAi
+        ? aiImageLabel(en)
+        : "&nbsp;";
+    const heroMobileImg = `<img src="${escapeAttr(heroImageMobile)}" width="640" alt="${heroIsAi ? (en ? "AI-generated image — motion sports" : "KI-generiertes Bild — motion sports") : "motion sports"}" class="hero-mobile-img" style="width:100%; max-width:100%; height:auto; display:none;">`;
 
     const preheaderHtml = opts.preheader
       ? `
@@ -632,12 +710,12 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
                     <tr>
                       <td class="hero-text" width="55%" valign="middle" style="width:55%; padding:36px 20px 36px 40px;">
-                        <div style="font-family:${FONT}; color:${RED}; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; margin-bottom:12px;">${escapeHtml(copy.kicker(en))}</div>
+                        <div style="font-family:${FONT}; color:${BLUE}; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; margin-bottom:12px;">${escapeHtml(copy.kicker(en))}</div>
                         <div class="hero-title" style="font-family:${FONT}; font-size:40px; line-height:44px; color:#111111; font-weight:800; letter-spacing:-1.5px; margin-bottom:14px;">${headlineHtml}</div>
-                        <div class="hero-sub" style="font-family:${FONT}; font-size:14px; line-height:21px; color:#333333; margin-bottom:22px; max-width:300px;">${escapeHtml(copy.subline(en))}</div>
+                        <div class="hero-sub" style="font-family:${FONT}; font-size:14px; line-height:21px; color:#333333; margin-bottom:${heroCta ? 22 : 0}px; max-width:300px;">${escapeHtml(copy.subline(en))}</div>
                         ${heroCta ? redButton(heroCta, false, "hero-cta") : ""}
                       </td>
-                      <td width="45%" class="hero-spacer" valign="bottom" align="right" style="width:45%; font-size:0; line-height:0; padding:0 12px 10px 0;">${heroIsAi ? aiImageLabel(en) : "&nbsp;"}</td>
+                      <td width="45%" class="hero-spacer" valign="bottom" align="right" style="width:45%; font-size:0; line-height:0; padding:0 12px 10px 0;">${heroPictureHtml}</td>
                     </tr>
                   </table>
                   <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
@@ -648,7 +726,11 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                    unreadable), so the artwork gets its own full-width row. -->
               <tr class="hero-mobile-row">
                 <td class="hero-mobile-cell" style="padding:0; font-size:0; line-height:0;">
-                  <img src="${escapeAttr(heroImageMobile)}" width="640" alt="${heroIsAi ? (en ? "AI-generated image — motion sports" : "KI-generiertes Bild — motion sports") : "motion sports"}" class="hero-mobile-img" style="width:100%; max-width:100%; height:auto; display:none;">${
+                  ${
+                    heroLink
+                      ? `<a href="${escapeAttr(heroLink)}" target="_blank" style="text-decoration:none; font-size:0; line-height:0;">${heroMobileImg}</a>`
+                      : heroMobileImg
+                  }${
                     heroIsAi
                       ? `<div class="hero-mobile-label" style="display:none; padding:6px 20px 0 20px; text-align:right; font-size:0; line-height:0;">${aiImageLabel(en)}</div>`
                       : ""
@@ -702,7 +784,7 @@ export const performanceDesign: EmailDesignDefinition = {
   key: "performance",
   name: "Performance",
   description:
-    "Bild-orientiertes Conversion-Design: großer Hero mit (KI-generierbarem) Lifestyle-Bild, Produkt-Karten mit Preis & Button, Bundle-Deal-Karte und Angebots-Countdown im selben hellen Karten-Stil, Frag-Mo-Panel.",
+    "Bild-orientiertes Conversion-Design: großer Hero mit (KI-generierbarem) Lifestyle-Bild, Produkt-Karten mit Preis & Button, Bundle-Deal-Karte, Rabattcode-Coupon und Angebots-Countdown im selben hellen Karten-Stil, Frag-Mo-Panel.",
   addedAt: "2026-08-31",
   hasHero: true,
 
@@ -716,6 +798,7 @@ export const performanceDesign: EmailDesignDefinition = {
     bundleBlock,
     moPromoBlock: moPromoCard,
     offerCountdown: offerCountdownCard,
+    discountCoupon: couponCard,
     textStyle,
     mutedTextStyle,
     linkStyle,

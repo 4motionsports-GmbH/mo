@@ -100,6 +100,27 @@ export interface EmailDesignRenderers {
    * out. The classic implementation is a muted centred line.
    */
   offerCountdown?: (input: OfferCountdownInput) => string;
+  /**
+   * The discount-code coupon (full-width card rows): the code, its value,
+   * its terms and the one-click redeem link (email-template
+   * renderDiscountCoupon builds the input; discount-coupon.mjs the copy).
+   * The classic implementation is a centred dashed box with the code.
+   */
+  discountCoupon?: (input: DiscountCouponInput) => string;
+}
+
+/** Everything a discountCoupon override needs (email-template.ts builds it). */
+export interface DiscountCouponInput {
+  /** The minted code as the reader should see it. */
+  code: string;
+  /** Discount depth in percent; null when unknown (the benefit line stays generic). */
+  percent: number | null;
+  /** "21.09.2026" — already localised; null without a deadline. */
+  expiresLabel: string | null;
+  /** Shopify's /discount/<code> link that stores the code for the checkout. */
+  redeemUrl: string;
+  language: "de" | "en";
+  copy: { kicker: string; benefit: string; terms: string; cta: string; hint: string };
 }
 
 /** Everything an offerCountdown override needs (email-template.ts builds it). */

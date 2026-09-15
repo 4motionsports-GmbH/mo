@@ -60,11 +60,10 @@ import {
   renderMoPromoBlock,
   renderSectionBand,
   renderSectionRow,
-  escapeHtml,
   emailTextStyle,
-  emailMutedTextStyle,
   emailLinkStyle,
   renderOfferCountdown,
+  renderDiscountCoupon,
 } from "./email-template";
 import { renderEmailProductRows, productRowItems, highlightDescriptionFor, firstProductImageUrl, catalogNameLookup } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
@@ -86,6 +85,7 @@ import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
 import { renderBundleOfferBlock } from "./bundle-email";
 import { countdownText, earliestDeadline } from "./offer-countdown.mjs";
+import { couponText } from "./discount-coupon.mjs";
 import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
 import { loadProductCatalog } from "./catalog-store";
 import { resolveProductSelections } from "./product-catalog";
@@ -307,6 +307,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           ? formatExpiryDateForLanguage(discountExpiresAt, contact.language)
           : null,
         discountExpiresAt,
+        discountPercent: draft.discountPercent,
         unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
         // SPECIAL-OFFER block — ADDITIVE, exactly like the marketing path:
         // when a created, still-active bundle is attached to this contact,
@@ -544,6 +545,7 @@ export async function renderCampaignEmailPreview(
         ? formatExpiryDateForLanguage(draft.discountExpiresAt, contact.language)
         : null,
     discountExpiresAt: draft.discountPercent > 0 ? draft.discountExpiresAt : null,
+    discountPercent: draft.discountPercent,
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
     bundle: await buildBundleBlockForContact(contactId, contact.language, draft.productHighlights),
     labelForUrl: await catalogNameLookup("lib/campaign-email"),
@@ -580,6 +582,9 @@ export function renderCampaignEmail(opts: {
   /** ISO/Date expiry of the discount — feeds the offer countdown together
    * with the set's expiry (the earlier one counts). */
   discountExpiresAt?: string | Date | null;
+  /** Discount depth in percent — the coupon's benefit line ("5 % auf deine
+   * gesamte Bestellung"); omitted → generic wording. */
+  discountPercent?: number | null;
   unsubscribe: { text: string; html: string };
   /** Optional special-offer block for an attached bundle (text + HTML parts +
    *  component names, so those products aren't shown twice). */
@@ -605,24 +610,23 @@ export function renderCampaignEmail(opts: {
     excludeNames: bundle?.componentNames ?? null,
   });
 
-  const validityNote = discountExpiresLabel
-    ? en
-      ? `, valid until ${discountExpiresLabel}`
-      : `, gültig bis ${discountExpiresLabel}`
-    : "";
-
   // --- text part — markdown links flatten to "Label (URL)" ---
   const textBody = emailProseToText(body.trim());
   const textLines = [textBody];
   // The special-offer block (when a bundle is attached) sits right after the
   // prose, before the discount line / promo / unsubscribe footer.
   if (bundle) textLines.push(bundle.text);
+  // The coupon: code, value, terms and the one-click redeem link
+  // (discount-coupon.mjs) — outside the editable prose, so code and deadline
+  // are always stated exactly once, deterministically.
   if (discountCode) {
     textLines.push(
       "",
-      en
-        ? `Your personal code: ${discountCode}${validityNote}.`
-        : `Dein persönlicher Code: ${discountCode}${validityNote}.`
+      couponText(language, {
+        code: discountCode,
+        percent: opts.discountPercent ?? null,
+        expiresLabel: discountExpiresLabel,
+      })
     );
   }
   // The offer countdown: the earlier of discount expiry and set expiry, only
@@ -638,10 +642,16 @@ export function renderCampaignEmail(opts: {
   const text = textLines.join("\n");
 
   // --- html part — the shared branded template ---
-  const discountNote = discountCode
-    ? `<p style="${emailMutedTextStyle()} padding-top: 5px; padding-bottom: 10px;" align="center">${
-        en ? "Your personal code" : "Dein pers&#246;nlicher Code"
-      }: <strong>${escapeHtml(discountCode)}</strong>${escapeHtml(validityNote)}.</p>`
+  // The coupon card (renderDiscountCoupon; a design lays it out) sits under
+  // the set offer and above the countdown, so both offers precede the one
+  // deadline that counts for them.
+  const couponRows = discountCode
+    ? renderDiscountCoupon({
+        code: discountCode,
+        percent: opts.discountPercent ?? null,
+        expiresLabel: discountExpiresLabel,
+        language,
+      })
     : "";
   // The Mo promo goes through the shared renderer so a design can present it
   // as its own advisor card (email-template renderMoPromoBlock); the classic
@@ -680,11 +690,10 @@ export function renderCampaignEmail(opts: {
     // recommended-products picture grid, the bundle offer block (if any), and
     // last the Mo-promo media row — directly above its "Beratung starten" CTA.
     preCtaRowsHtml:
-      `${productsRows}${bundle ? bundle.html : ""}${
+      `${productsRows}${bundle ? bundle.html : ""}${couponRows}${
         offerExpiresAt ? renderOfferCountdown({ expiresAt: offerExpiresAt, language }) : ""
       }${promoRows}` || undefined,
     ctas: [{ label: moPromoCtaLabel(language), url: deeplink }],
-    footnoteHtml: discountNote || undefined,
     footer: {
       // GATE 2 guarantees `unsubscribe` is always present.
       unsubscribeHtml: unsubscribe.html,

@@ -152,6 +152,7 @@ async function sendTest(label, { subject, text, html }) {
     products: withImages.slice(2, 5),
     discountCode: "MK-TEST123",
     discountExpiresLabel: "31.12.2026",
+    discountPercent: 5,
     unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
     bundle,
   });

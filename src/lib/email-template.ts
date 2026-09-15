@@ -118,8 +118,10 @@ import {
   activeEmailDesignRenderers,
   type MoPromoBlockInput,
   type OfferCountdownInput,
+  type DiscountCouponInput,
 } from "./email-design-context";
 import { countdownCopy, countdownText, deadlineLabel, remainingParts } from "./offer-countdown.mjs";
+import { couponCopy, discountRedeemUrl } from "./discount-coupon.mjs";
 import { countdownSecret, signCountdownToken } from "./email-countdown-token.mjs";
 import { COUNTDOWN_MOBILE_WIDTH, COUNTDOWN_WIDTH } from "./email-countdown-image.mjs";
 import { buttonRadiusFor, fontNeedsWebFont, fontStackFor } from "./email-theme.mjs";
@@ -351,6 +353,48 @@ export function renderOfferCountdown(input: {
                       built.hours > 0 || built.days === 0 ? ` ${built.hours} ${escapeHtml(built.copy.hours)}` : ""
                     }</strong> — ${escapeHtml(built.copy.until)} ${escapeHtml(built.deadlineLabel)}</p>`,
     { padding: "4px 60px 14px", align: "center" }
+  );
+}
+
+/**
+ * The discount-code coupon (campaign mails, under the offer): code, value,
+ * terms and the one-click redeem link (discount-coupon.mjs). Returns "" for
+ * an empty code. Classic: a centred dashed box; a design may render its own
+ * coupon card (design hook discountCoupon).
+ */
+export function renderDiscountCoupon(input: {
+  code: string;
+  percent?: number | null;
+  expiresLabel?: string | null;
+  language: "de" | "en";
+}): string {
+  const redeemUrl = discountRedeemUrl(input.code);
+  if (!redeemUrl) return "";
+  const built: DiscountCouponInput = {
+    code: input.code.trim(),
+    percent: input.percent != null && input.percent > 0 ? input.percent : null,
+    expiresLabel: input.expiresLabel?.trim() || null,
+    redeemUrl,
+    language: input.language,
+    copy: couponCopy(input.language, { percent: input.percent, expiresLabel: input.expiresLabel }),
+  };
+  const override = activeEmailDesignRenderers()?.discountCoupon;
+  if (override) return override(built);
+  const accent = emailAccentColor();
+  return renderSectionRow(
+    `
+                    <table cellspacing="0" cellpadding="0" border="0" align="center" role="presentation" style="direction: ltr; Margin: 0 auto; border: 2px dashed ${accent}; border-radius: 8px;">
+                      <tr>
+                        <td align="center" style="mso-line-height-rule: exactly; padding: 16px 24px;">
+                          <p style="${emailMutedTextStyle()} text-transform: uppercase; letter-spacing: 1px;" align="center">${escapeHtml(built.copy.kicker)}</p>
+                          <p style="font-family: ${emailFontFamily()}; font-size: 24px; line-height: 30px; font-weight: 700; letter-spacing: 2px; color: #111111; Margin: 4px 0 6px;" align="center">${escapeHtml(built.code)}</p>
+                          <p style="${emailTextStyle()} font-weight: 700;" align="center">${escapeHtml(built.copy.benefit)}</p>
+                          <p style="${emailMutedTextStyle()}" align="center">${escapeHtml(built.copy.terms)}</p>
+                          <p style="${emailTextStyle()} padding-top: 8px;" align="center"><a href="${escapeAttr(built.redeemUrl)}" target="_blank" style="${emailLinkStyle()} font-weight: 700;">${escapeHtml(built.copy.cta)} &#8594;</a></p>
+                        </td>
+                      </tr>
+                    </table>`,
+    { padding: "10px 60px 14px", align: "center" }
   );
 }
 

@@ -37,10 +37,11 @@ export function shouldReuseCampaignDraft(existing, requestedPercent, regenerate,
 }
 
 /**
- * The Mo-promo intro (2–3 sentences introducing the AI advisor), per language.
- * Deliberately calm copy: no urgency, no countdown (same ceiling as the
- * drafts). The deep link itself is appended by moPromoBlockText (text part) /
- * rendered as the CTA button (HTML part).
+ * The Mo-promo intro (two short sentences introducing the advisor), per
+ * language. Deliberately calm and plain: no urgency, no countdown (same
+ * ceiling as the drafts), no sales-letter phrasing. The deep link itself is
+ * appended by moPromoBlockText (text part) / rendered as the CTA button
+ * (HTML part).
  *
  * @param {"de" | "en"} language
  * @returns {string}
@@ -48,18 +49,13 @@ export function shouldReuseCampaignDraft(existing, requestedPercent, regenerate,
 export function moPromoIntroText(language) {
   if (language === "en") {
     return (
-      "By the way: our shop now has a personal advisor — Mo. Ask him anything " +
-      "about training and equipment in the chat: which machine fits you, how to " +
-      "plan your home gym, what pairs well with what you already own. One click " +
-      "and your personal consultation starts right away, in full screen:"
+      "Mo advises you right in the shop chat: which machine suits you, what " +
+      "completes your setup, how to plan your home gym. One click and you're talking."
     );
   }
   return (
-    "Übrigens: In unserem Shop berät dich jetzt Mo — dein persönlicher " +
-    "KI-Berater. Stell ihm im Chat alle Fragen rund um Training und Ausstattung: " +
-    "welches Gerät zu dir passt, wie du dein Home-Gym planst, was gut zu deiner " +
-    "vorhandenen Ausstattung passt. Ein Klick genügt und deine persönliche " +
-    "Beratung startet direkt im Vollbild:"
+    "Mo berät dich direkt im Shop-Chat: welches Gerät zu dir passt, was dein " +
+    "Setup ergänzt, wie du dein Home-Gym planst. Ein Klick, und ihr sprecht."
   );
 }
 
