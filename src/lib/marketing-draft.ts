@@ -123,6 +123,11 @@ export interface DraftDiscountInput {
   /** Selected discount depth as a whole-number percent. 0 = no offer. */
   discountPercent: number;
   /**
+   * What the code applies to (discount-scope.mjs; campaign channel only —
+   * marketing codes always apply to the whole order). Omitted = "all".
+   */
+  discountScope?: "all" | "recommendations" | "set" | null;
+  /**
    * Human-readable German expiry date (e.g. "05.07.2026") the model should name
    * in the offer. Null when no discount was selected.
    */

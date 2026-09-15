@@ -13,6 +13,7 @@ import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { num, ratio } from "@/lib/admin-format.mjs";
 import { pageCount } from "@/lib/admin-table.mjs";
 import { HISTORY_DELIVERY_FILTERS } from "@/lib/campaign-desk-core.mjs";
+import { discountScopeLabel } from "@/lib/discount-scope.mjs";
 import {
   Button,
   Callout,
@@ -177,7 +178,16 @@ export function SentHistory({
       key: "code",
       header: "Code",
       width: "9rem",
-      cell: (h) => (h.discountCode ? <code className="text-xs">{h.discountCode}</code> : "—"),
+      cell: (h) =>
+        h.discountCode ? (
+          <Tooltip content={`Gilt für: ${discountScopeLabel(h.discountScope)}`} disabled={!h.discountScope}>
+            <code tabIndex={h.discountScope ? 0 : undefined} className="text-xs">
+              {h.discountCode}
+            </code>
+          </Tooltip>
+        ) : (
+          "—"
+        ),
     },
     {
       key: "redeemed",

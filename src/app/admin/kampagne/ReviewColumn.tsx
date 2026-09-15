@@ -14,6 +14,7 @@ import { ADMIN_DATE, ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-date
 import { eur, eurFromCents, money, num, plural } from "@/lib/admin-format.mjs";
 import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
 import { DISCOUNT_PERCENT_MAX, clampDiscountPercent } from "@/lib/discount-validation.mjs";
+import { DISCOUNT_SCOPE_OPTIONS, type DiscountScope } from "@/lib/discount-scope.mjs";
 import { abGroupOf } from "@/lib/campaign-review-checks.mjs";
 import {
   Button,
@@ -330,7 +331,7 @@ export function ReviewColumn({
                   item.discountExpiresAt
                     ? ` (voraussichtlich gültig bis ${formatAdmin(item.discountExpiresAt, ADMIN_DATE)})`
                     : ""
-                }. Eine Änderung generiert den Text automatisch neu.`
+                }. „Gilt für“ legt fest, worauf Shopify den Code anwendet: die gesamte Bestellung, nur die empfohlenen Produkte dieser Mail oder nur das angehängte Set — Coupon-Text und Fließtext folgen dem. Eine Änderung generiert den Text automatisch neu.`
               : "Kein Rabatt. Eine Änderung generiert den Text automatisch neu; Code und Rabattzeile werden beim Versand angehängt."
           }
         />
@@ -380,6 +381,24 @@ export function ReviewColumn({
               </form>
             )}
           </div>
+          {item.discountPercent > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="w-12 shrink-0 font-medium text-muted-foreground">Gilt für</span>
+              <SegmentedControl
+                label="Rabatt gilt für"
+                value={item.discountScope}
+                disabled={locked}
+                onChange={(v) => void actions.setDiscountScope(id, v as DiscountScope)}
+                options={DISCOUNT_SCOPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+              />
+              {item.discountScope === "set" && !item.bundle && (
+                <span className="text-warning">Kein Set angehängt</span>
+              )}
+              {item.discountScope === "recommendations" && item.recommendations.length === 0 && (
+                <span className="text-warning">Keine Empfehlungen</span>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <span className="w-12 shrink-0 font-medium text-muted-foreground">Set</span>
             {item.bundle ? (

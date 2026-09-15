@@ -107,7 +107,7 @@ marketing drafts, enforced in the prompt and in the deterministic promo copy.
 | Table | Purpose | Key columns |
 | --- | --- | --- |
 | `campaign_contacts` | The synced audience + review-queue lifecycle | `shopify_customer_id` (unique), normalized `email`, `first_name`/`last_name`, `language` (de/en), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `draft_failed`), `sent_at`, `skipped_at`; `is_test` + `test_source_email` (migration `0057`, Testkontakte — §5) |
-| `campaign_drafts` | ONE editable draft per contact (unique `contact_id`) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
+| `campaign_drafts` | ONE editable draft per contact (unique `contact_id`) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, `discount_scope` (`all` \| `recommendations` \| `set`, migration `0058`), compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
 | `campaign_sends` | Immutable send record (audit + KPI) | `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — migration `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `redirect_token`/`clicked_at` (migration `0041` — the tracked Mo-promo CTA, see below; NULL for copy sends and pre-0041 rows), `sent_at` |
 
 Deliberately **not** stored: full order history (read from Shopify at draft
@@ -118,7 +118,7 @@ received; rows purge on the same retention window (§6).
 
 ## 4. Draft generation
 
-`POST /api/admin/campaign/prepare { count, discountPercent }` drafts the next
+`POST /api/admin/campaign/prepare { count, discountPercent, textMode?, discountScope? }` drafts the next
 N `pending` contacts ([`campaign-prepare.ts`](../src/lib/campaign-prepare.ts)),
 sequentially with modest concurrency; a per-contact failure marks that row
 `draft_failed` and continues. The dashboard chunks the batch so it can show
@@ -159,6 +159,21 @@ fallback discipline as `marketing-draft.ts`):
    is minted **only at send**. Changed depth or explicit regenerate overwrites
    the open draft (`shouldReuseCampaignDraft`) so text and eventual code never
    disagree.
+   **Scope** (`discount_scope`, migration `0058`, `discount-scope.mjs`): the
+   code applies to the whole order (`all`, the default), only to the products
+   recommended in this mail (`recommendations`) or only to the attached set
+   (`set`). The prompt states the scope (`discountHint`: "gilt NICHT für den
+   Rest der Bestellung"), the coupon's benefit line and the text part use the
+   same phrase (`discountScopePhrase`), and at send time the code is minted
+   with `customerGets.items.products.productsToAdd` = the Shopify product gids
+   of that scope (recommended handles resolved via
+   `fetchProductGidsByHandles`, the set's `shopify_product_id`). A scope that
+   cannot be honoured (no available recommendation, unresolvable handle, no
+   active set) **refuses the send** (`discount_scope_unresolved`) — the desk
+   shows the same rule as a blocked Prüfpunkt beforehand
+   (`discount_scope_no_set` / `discount_scope_no_recommendations`). A changed
+   scope regenerates the prose. Recommendation: with a set attached, scope the
+   code to the recommendations so each offer has one clear price.
    **Bundle offers** (alternative or addition to a percentage code): the card's
    "Set-Angebot" section creates a real UNLISTED Shopify set from the card's
    recommendations via the **existing** bundle mechanism
@@ -302,10 +317,12 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   (`purchase_selected_ids`, migration `0043`), so later regenerates /
   discount changes / language switches keep the same basis.
 - **Discount** can be set/changed/cleared AFTER generation
-  (`POST /api/admin/campaign/discount`): the depth lives on the draft, the
-  real MK- code + deadline ship deterministically outside the prose, and the
-  route warns when the current prose clearly states a different percentage
-  (which the send route would refuse — regenerate then).
+  (`POST /api/admin/campaign/discount { contactId, discountPercent, discountScope? }`):
+  depth and scope („Gilt für“: Alles / Empfehlungen / Set) live on the draft,
+  the real MK- code + deadline ship deterministically outside the prose, and
+  the route warns when the current prose clearly states a different
+  percentage (which the send route would refuse — regenerate then). A scope
+  change regenerates automatically, because the prose states the scope.
 - **Bundle** can be attached/removed after generation (see §4).
 
 Actions:
@@ -515,7 +532,7 @@ jetzt einen Schnappschuss der Mail auf `campaign_sends`: `design_key`,
 `hero_variant` (`ai` = individuell generierter KI-Hero, `default` = Hero-Design
 mit Standard-Bild, `none` = ohne Hero / Kopier-Pfad), `hero_image_url`,
 `hero_headline`, `text_mode`, `language`, `discount_percent`,
-`bundle_offer_id`. Der Entwurf wird bei jedem Regenerieren überschrieben —
+`discount_scope` (0058), `bundle_offer_id`. Der Entwurf wird bei jedem Regenerieren überschrieben —
 ohne den Stempel wäre nach dem Versand nicht mehr rekonstruierbar, was
 verschickt wurde.
 

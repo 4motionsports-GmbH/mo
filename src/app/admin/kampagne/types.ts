@@ -4,6 +4,7 @@
 // and src/lib/campaign-desk-core.mjs — pure and unit-tested.
 
 import type { EmailTextModeValue } from "../EmailTextModeToggle";
+import type { DiscountScope } from "@/lib/discount-scope.mjs";
 import type { CampaignRecommendationView } from "@/lib/campaign-recommendation-view";
 
 /** The three views of the screen (`?view=`, campaign-desk-core.mjs). */
@@ -61,6 +62,8 @@ export interface CampaignQueueItemProps {
   body: string;
   discountPercent: number;
   discountExpiresAt: string | null;
+  /** What the code applies to (migration 0058): all | recommendations | set. */
+  discountScope: DiscountScope;
   /** Text mode the draft was generated with (legacy drafts map to 'detailed'). */
   textMode: EmailTextModeValue;
   /** Lifecycle segment the draft was written for (migration 0052). Null =
@@ -106,6 +109,8 @@ export interface CampaignHistoryItemProps {
   discountCode: string | null;
   /** Expiry of the minted code; null without a code. */
   discountExpiresAt: string | null;
+  /** What the minted code applied to; null without a code or for pre-0058 sends. */
+  discountScope: DiscountScope | null;
   /** Expiry of the attached set offer; null without a set. */
   bundleExpiresAt: string | null;
   sentAt: string | null;

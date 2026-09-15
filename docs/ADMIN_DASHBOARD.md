@@ -328,8 +328,9 @@ person clearing 100–200 e-mails a day:
   Prüfpunkte (the verdict — bereit / Hinweise / blockiert — with one fix per
   check, computed by [`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs)),
   Empfehlungen (thumbnails, prices, availability, „+ Produkt“ with the catalog
-  picker), Angebot (Rabatt 0/5/10/15/20/custom, Set line with the composer in a
-  sheet), Text (Sprache, Modus), Hero (only when the campaign design has a
+  picker), Angebot (Rabatt 0/5/10/15/20/custom, „Gilt für“ Alles / Empfehlungen /
+  Set — what Shopify applies the code to, coupon and prose follow; Set line with
+  the composer in a sheet), Text (Sprache, Modus), Hero (only when the campaign design has a
   hero: Erzeugen, Anpassen… sheet, Entfernen), Kaufhistorie (collapsed, with
   the recommendation basis), Kontakt (opt-in, segment, last mail + Sperrfrist,
   A/B group, Umsatz, Verlauf sheet).
@@ -1207,7 +1208,7 @@ on failure. Grouped by the screen that calls them.
 | Screen | Route | Purpose |
 | --- | --- | --- |
 | Kampagne | `POST campaign/sync` | pull Shopify marketing subscribers into `campaign_contacts` (batched upsert) |
-| | `POST campaign/prepare { count, discountPercent, textMode? }` | draft the next *n* pending contacts |
+| | `POST campaign/prepare { count, discountPercent, textMode?, discountScope? }` | draft the next *n* pending contacts |
 | | `POST campaign/draft { contactId, … }` | (re)generate one draft |
 | | `POST campaign/update / discount / recommendations / language` | edit text, discount depth, recommended products, language pin of a draft |
 | | `POST campaign/email-preview` | render the on-screen draft as text/html |

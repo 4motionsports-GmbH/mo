@@ -29,6 +29,7 @@ const STATUS_BY_REASON: Record<string, number> = {
   no_unsubscribe: 503,
   claim_failed: 409,
   discount_mismatch: 409,
+  discount_scope_unresolved: 409,
   discount_failed: 502,
   email_not_configured: 503,
   send_failed: 502,

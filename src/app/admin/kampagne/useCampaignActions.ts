@@ -20,6 +20,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { EMAIL_TEXT_MODE_LABELS, DEFAULT_EMAIL_TEXT_MODE } from "@/lib/email-text-mode.mjs";
+import { DEFAULT_DISCOUNT_SCOPE, parseDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
 import { emailProseToText } from "@/lib/email-prose.mjs";
 import { abGroupOf, reviewChecks, reviewVerdict } from "@/lib/campaign-review-checks.mjs";
 import {
@@ -101,6 +102,8 @@ const PREPARE_SETTINGS_KEY = "ms-campaign-prepare";
 export interface PrepareSettings {
   count: number;
   depth: number;
+  /** What the new drafts' discount code applies to (discount-scope.mjs). */
+  scope: DiscountScope;
   textMode: EmailTextModeValue;
   withHero: boolean;
 }
@@ -108,6 +111,7 @@ export interface PrepareSettings {
 const DEFAULT_PREPARE_SETTINGS: PrepareSettings = {
   count: PREPARE_TOTAL,
   depth: 0,
+  scope: DEFAULT_DISCOUNT_SCOPE,
   textMode: DEFAULT_EMAIL_TEXT_MODE as EmailTextModeValue,
   withHero: false,
 };
@@ -120,6 +124,7 @@ function loadPrepareSettings(): PrepareSettings {
     return {
       count: [25, 50, 100].includes(Number(parsed.count)) ? Number(parsed.count) : PREPARE_TOTAL,
       depth: Number.isInteger(parsed.depth) ? Number(parsed.depth) : 0,
+      scope: parseDiscountScope(parsed.scope),
       textMode: (["detailed", "compact", "minimal"] as const).includes(
         parsed.textMode as EmailTextModeValue
       )
@@ -180,6 +185,8 @@ export interface BulkProgress {
 
 interface RegenerateOptions {
   depth?: number;
+  /** Explicit new discount scope; omitted = the draft keeps its stored scope. */
+  scope?: DiscountScope;
   refreshRecommendations?: boolean;
   purchaseSelection?: string[] | null;
   /** Explicit new text mode; omitted = the draft keeps its stored mode. */
@@ -192,6 +199,7 @@ interface DraftResponse {
     body: string;
     discountPercent: number;
     discountExpiresAt: string | null;
+    discountScope?: DiscountScope;
     textMode: EmailTextModeValue | null;
     segment: string | null;
     segmentDays: number | null;
@@ -810,6 +818,7 @@ export function useCampaignActions({
           ...(opts.refreshRecommendations ? { refreshRecommendations: true } : {}),
           ...("purchaseSelection" in opts ? { purchaseSelection: opts.purchaseSelection } : {}),
           ...(opts.textMode ? { textMode: opts.textMode } : {}),
+          ...(opts.scope ? { discountScope: opts.scope } : {}),
         },
       });
       if (json.draft) {
@@ -820,6 +829,7 @@ export function useCampaignActions({
           body: d.body,
           discountPercent: d.discountPercent,
           discountExpiresAt: d.discountExpiresAt,
+          discountScope: parseDiscountScope(d.discountScope ?? it.discountScope),
           textMode: d.textMode ?? "detailed",
           segment: d.segment ?? null,
           segmentDays: d.segmentDays ?? null,
@@ -917,6 +927,30 @@ export function useCampaignActions({
       } catch (err) {
         setBusy(contactId, null);
         fail("Rabatt nicht gespeichert", err);
+      }
+    },
+    [busyById, setBusy, patchItem, scheduleRegenerate]
+  );
+
+  /** What the code applies to (Alles / Empfehlungen / Set): persists on the
+   * draft, then regenerates — the prose states the scope, so it must follow. */
+  const setDiscountScope = React.useCallback(
+    async (contactId: number, scope: DiscountScope) => {
+      const item = itemsRef.current.find((it) => it.contactId === contactId);
+      if (!item || scope === item.discountScope) return;
+      const busyKind = busyById[contactId];
+      if (busyKind && busyKind !== "regen") return;
+      setBusy(contactId, "discount");
+      try {
+        const json = await adminFetch<{ discountPercent: number; discountExpiresAt: string | null; discountScope: DiscountScope }>(
+          "/api/admin/campaign/discount",
+          { body: { contactId, discountPercent: item.discountPercent, discountScope: scope } }
+        );
+        patchItem(contactId, { discountScope: parseDiscountScope(json.discountScope) });
+        scheduleRegenerate(contactId, { depth: json.discountPercent, scope: parseDiscountScope(json.discountScope) });
+      } catch (err) {
+        setBusy(contactId, null);
+        fail("Rabatt-Bereich nicht gespeichert", err);
       }
     },
     [busyById, setBusy, patchItem, scheduleRegenerate]
@@ -1182,7 +1216,7 @@ export function useCampaignActions({
             exhausted: boolean;
             preparedContactIds?: number[];
           }>("/api/admin/campaign/prepare", {
-            body: { count, discountPercent: settings.depth, textMode: settings.textMode },
+            body: { count, discountPercent: settings.depth, textMode: settings.textMode, discountScope: settings.scope },
           });
           preparedIds.push(...(json.preparedContactIds ?? []));
           job = {
@@ -1376,6 +1410,7 @@ export function useCampaignActions({
     markDone,
     regenerate,
     setDiscount,
+    setDiscountScope,
     setLanguage,
     setTextMode,
     updateRecommendations,

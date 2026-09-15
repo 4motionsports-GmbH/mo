@@ -44,7 +44,7 @@ async function handle(req: Request): Promise<Response> {
     for (let done = 0; done < config.count; done += CHUNK) {
       if (Date.now() - startedAt > TIME_BUDGET_MS) break;
       const count = Math.min(CHUNK, config.count - done);
-      const result = await prepareNextDrafts(count, config.discountPercent, config.textMode);
+      const result = await prepareNextDrafts(count, config.discountPercent, config.textMode, config.discountScope);
       totals.prepared += result.prepared;
       totals.failed += result.failed;
       totals.suppressed += result.suppressed;
@@ -54,7 +54,7 @@ async function handle(req: Request): Promise<Response> {
       }
     }
     console.log("[cron/prepare-campaign-drafts] done", totals);
-    return NextResponse.json({ ok: true, ...totals, textMode: config.textMode, discountPercent: config.discountPercent });
+    return NextResponse.json({ ok: true, ...totals, textMode: config.textMode, discountPercent: config.discountPercent, discountScope: config.discountScope });
   } catch (err) {
     reportError(err, { route: "api/cron/prepare-campaign-drafts" });
     return NextResponse.json({ ok: false, error: (err as Error).message, ...totals }, { status: 503 });

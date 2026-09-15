@@ -122,6 +122,7 @@ import {
 } from "./email-design-context";
 import { countdownCopy, countdownText, deadlineLabel, remainingParts } from "./offer-countdown.mjs";
 import { couponCopy, discountRedeemUrl } from "./discount-coupon.mjs";
+import { parseDiscountScope } from "./discount-scope.mjs";
 import { countdownSecret, signCountdownToken } from "./email-countdown-token.mjs";
 import { COUNTDOWN_MOBILE_WIDTH, COUNTDOWN_WIDTH } from "./email-countdown-image.mjs";
 import { buttonRadiusFor, fontNeedsWebFont, fontStackFor } from "./email-theme.mjs";
@@ -366,17 +367,21 @@ export function renderDiscountCoupon(input: {
   code: string;
   percent?: number | null;
   expiresLabel?: string | null;
+  /** What the code applies to (discount-scope.mjs); omitted = the whole order. */
+  scope?: string | null;
   language: "de" | "en";
 }): string {
   const redeemUrl = discountRedeemUrl(input.code);
   if (!redeemUrl) return "";
+  const scope = parseDiscountScope(input.scope);
   const built: DiscountCouponInput = {
     code: input.code.trim(),
     percent: input.percent != null && input.percent > 0 ? input.percent : null,
+    scope,
     expiresLabel: input.expiresLabel?.trim() || null,
     redeemUrl,
     language: input.language,
-    copy: couponCopy(input.language, { percent: input.percent, expiresLabel: input.expiresLabel }),
+    copy: couponCopy(input.language, { percent: input.percent, expiresLabel: input.expiresLabel, scope }),
   };
   const override = activeEmailDesignRenderers()?.discountCoupon;
   if (override) return override(built);

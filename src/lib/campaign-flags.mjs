@@ -25,6 +25,7 @@
 
 import { DEFAULT_EMAIL_TEXT_MODE, parseEmailTextMode } from "./email-text-mode.mjs";
 import { parseDiscountPercent } from "./discount-validation.mjs";
+import { parseDiscountScope } from "./discount-scope.mjs";
 
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 
@@ -80,10 +81,11 @@ export function marketingMinSendIntervalDays(env = process.env) {
  * Nightly „Vorbereiten“ (/api/cron/prepare-campaign-drafts): how many pending
  * contacts to draft per night (CAMPAIGN_AUTO_PREPARE_COUNT, 0 = the cron does
  * nothing — the default, because generation costs API money), at which
- * discount depth and in which text mode. Invalid values fall back to 0 % and
- * the modern default text mode.
+ * discount depth, what that code applies to (CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE,
+ * discount-scope.mjs) and in which text mode. Invalid values fall back to 0 %,
+ * "all" and the modern default text mode.
  * @param {Record<string, string | undefined>} [env]
- * @returns {{ count: number, discountPercent: number, textMode: "detailed" | "compact" | "minimal" }}
+ * @returns {{ count: number, discountPercent: number, discountScope: "all" | "recommendations" | "set", textMode: "detailed" | "compact" | "minimal" }}
  */
 export function campaignAutoPrepareConfig(env = process.env) {
   const count = parseNonNegativeInt(env.CAMPAIGN_AUTO_PREPARE_COUNT, 0);
@@ -93,7 +95,8 @@ export function campaignAutoPrepareConfig(env = process.env) {
       ? (parseDiscountPercent(Number(rawDiscount)) ?? 0)
       : 0;
   const textMode = parseEmailTextMode(env.CAMPAIGN_AUTO_PREPARE_TEXT_MODE) ?? DEFAULT_EMAIL_TEXT_MODE;
-  return { count, discountPercent, textMode };
+  const discountScope = parseDiscountScope(env.CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE);
+  return { count, discountPercent, discountScope, textMode };
 }
 
 /**

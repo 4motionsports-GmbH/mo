@@ -100,6 +100,7 @@ export async function KampagneTab({
       body: q.draft.body,
       discountPercent: q.draft.discountPercent,
       discountExpiresAt: q.draft.discountExpiresAt,
+      discountScope: q.draft.discountScope,
       // Legacy drafts (pre-migration-0047, text_mode NULL) were generated
       // long-form — surface them as 'detailed'.
       textMode: q.draft.textMode ?? "detailed",

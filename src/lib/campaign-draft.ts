@@ -38,6 +38,7 @@ import { recordAiUsage } from "./ai-usage-store";
 import type { DraftDiscountInput, EmailTextMode, MarketingDraft } from "./marketing-draft";
 import type { CampaignPurchaseSummary } from "./campaign-store";
 import { formatStoreDate } from "./store-datetime.mjs";
+import { discountScopePhrase, parseDiscountScope } from "./discount-scope.mjs";
 
 // Same model the existing marketing drafts use.
 const DRAFT_MODEL = "claude-sonnet-4-6";
@@ -178,14 +179,15 @@ function fallbackDiscountParagraph(
   language: "de" | "en"
 ): string | null {
   if (!input.discountCode || input.discountPercent <= 0) return null;
+  const phrase = discountScopePhrase(input.discountScope, language);
   if (language === "en") {
     const validity = input.discountExpiresLabel
       ? ` It is valid until ${input.discountExpiresLabel}.`
       : "";
     return (
       `As a small thank-you I've set up a personal discount code just for you: ` +
-      `with ${input.discountCode} you get ${input.discountPercent}% off your ` +
-      `order. The code is yours alone and can be used once.${validity}`
+      `with ${input.discountCode} you get ${input.discountPercent}% ${phrase}. ` +
+      `The code is yours alone and can be used once.${validity}`
     );
   }
   const validity = input.discountExpiresLabel
@@ -194,7 +196,7 @@ function fallbackDiscountParagraph(
   return (
     `Als kleines Dankeschön habe ich einen persönlichen Rabattcode für dich ` +
     `angelegt: Mit ${input.discountCode} bekommst du ${input.discountPercent}% ` +
-    `auf deine Bestellung. Der Code gehört nur dir und ist einmalig einlösbar.${validity}`
+    `${phrase}. Der Code gehört nur dir und ist einmalig einlösbar.${validity}`
   );
 }
 
@@ -307,11 +309,17 @@ function discountHint(input: DraftDiscountInput, language: "de" | "en"): string 
     : language === "en"
       ? "a short time"
       : "kurze Zeit";
+  const scope = parseDiscountScope(input.discountScope);
+  const phrase = discountScopePhrase(scope, language);
   if (language === "en") {
     return (
       `IMPORTANT — this customer receives a personal offer you MUST weave into ` +
       `the text clearly and warmly (no hype, no artificial pressure):\n` +
-      `- ${input.discountPercent}% off their order.\n` +
+      `- ${input.discountPercent}% ${phrase}.` +
+      (scope === "all"
+        ? ""
+        : ` It does NOT apply to the rest of the order — say plainly what it applies to, never "on your order".`) +
+      `\n` +
       `- The code was created ONCE, for THIS customer only — make clear it is ` +
       `their personal code, not a mass promotion.\n` +
       `- The code is exactly ${input.discountCode}. Use EXACTLY this string, unchanged.\n` +
@@ -326,7 +334,11 @@ function discountHint(input: DraftDiscountInput, language: "de" | "en"): string 
     `WICHTIG — dieser Kunde bekommt ein persönliches Angebot, das du klar, warm ` +
     `und einladend in den Text einweben MUSST (kein Marktschreier, kein ` +
     `künstlicher Druck):\n` +
-    `- ${input.discountPercent}% Rabatt auf die Bestellung.\n` +
+    `- ${input.discountPercent}% Rabatt ${phrase}.` +
+    (scope === "all"
+      ? ""
+      : ` Er gilt NICHT für den Rest der Bestellung — sage klar, worauf er gilt, nie „auf deine Bestellung".`) +
+    `\n` +
     `- Der Code ist EINMALIG und EXTRA für DIESEN Kunden erstellt — kein ` +
     `allgemeiner Gutschein, keine Massenaktion.\n` +
     `- Der Code lautet exakt ${input.discountCode}. Verwende GENAU diese ` +

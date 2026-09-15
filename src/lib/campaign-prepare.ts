@@ -21,6 +21,7 @@ import {
 import { generateCampaignDraft } from "./campaign-draft";
 import type { EmailTextMode } from "./marketing-draft";
 import { DEFAULT_EMAIL_TEXT_MODE, storedTextMode } from "./email-text-mode.mjs";
+import { DEFAULT_DISCOUNT_SCOPE, parseDiscountScope, type DiscountScope } from "./discount-scope.mjs";
 import { loadCampaignPersonalization } from "./campaign-recommendations";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
 import { archiveBundleOffer, createBundleOffer } from "./bundle-offers";
@@ -65,6 +66,11 @@ export interface PrepareDraftOptions {
    * without an explicit mode uses the modern default ('compact').
    */
   textMode?: EmailTextMode | null;
+  /**
+   * What the discount code applies to (discount-scope.mjs). Omit to keep the
+   * existing draft's stored scope; a first draft defaults to "all".
+   */
+  discountScope?: DiscountScope | null;
 }
 
 /**
@@ -88,6 +94,11 @@ export async function prepareDraftForContact(
   // for a brand-new draft.
   const textMode: EmailTextMode =
     opts.textMode ?? (existing ? storedTextMode(existing) : DEFAULT_EMAIL_TEXT_MODE);
+  // The effective discount scope: an explicit request wins, else the existing
+  // draft's stored scope, else "all" (the classic behaviour).
+  const discountScope: DiscountScope = parseDiscountScope(
+    opts.discountScope ?? existing?.discountScope ?? DEFAULT_DISCOUNT_SCOPE
+  );
 
   // A Testkontakt may borrow a real customer's purchase history so the mail
   // is realistic (0057); everything else about the draft is the test address.
@@ -196,6 +207,7 @@ export async function prepareDraftForContact(
     recommendationStrategy: recommendations.strategy,
     discountCode: hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountPercent,
+    discountScope,
     // The expiry label the prose states, in the contact's language (English
     // drafts get "31 July 2026" instead of the German 31.07.2026).
     discountExpiresLabel: expiry
@@ -210,6 +222,7 @@ export async function prepareDraftForContact(
     body: draft.body,
     discountPercent,
     discountExpiresAt: expiry ? expiry.toISOString() : null,
+    discountScope,
     purchaseSummary,
     recommendedProductIds: recommendedRefs,
     productHighlights: draft.productHighlights,
@@ -243,6 +256,7 @@ export async function prepareNextDrafts(
   count: number,
   discountPercent: number,
   textMode: EmailTextMode = DEFAULT_EMAIL_TEXT_MODE,
+  discountScope: DiscountScope = DEFAULT_DISCOUNT_SCOPE,
   concurrency = 3
 ): Promise<PrepareBatchResult> {
   const contacts = await listNextPendingContacts(count);
@@ -278,7 +292,7 @@ export async function prepareNextDrafts(
           result.suppressed++;
           continue;
         }
-        const draft = await prepareDraftForContact(contact, discountPercent, { textMode });
+        const draft = await prepareDraftForContact(contact, discountPercent, { textMode, discountScope });
         if (draft) {
           result.prepared++;
           result.preparedContactIds.push(contact.id);

@@ -75,6 +75,8 @@ import {
   PLACEHOLDER_DISCOUNT_CODE,
 } from "./shopify-discounts";
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
+import type { DiscountScope } from "./discount-scope.mjs";
+import { fetchProductGidsByHandles } from "./shopify";
 import { applyMintedDiscountToBody } from "./discount-swap.mjs";
 import {
   renderEmailProseHtml,
@@ -111,6 +113,7 @@ export type CampaignSendResult =
         | "no_unsubscribe"
         | "claim_failed"
         | "discount_mismatch"
+        | "discount_scope_unresolved"
         | "discount_failed"
         | "email_not_configured"
         | "send_failed";
@@ -236,10 +239,21 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       let discountExpiresAt: string | null = null;
 
       if (draft.discountPercent > 0) {
+        // Scope (migration 0058): a code for "Empfehlungen" or "Set" is minted
+        // against exactly those Shopify products. A scope that cannot be
+        // resolved refuses the send — never a silently wider code.
+        const scoped = await resolveDiscountScopeProducts(draft.discountScope, draft.recommendedProductIds, contactId);
+        if (!scoped.ok) {
+          await revertContactClaim(contactId);
+          return { ok: false, reason: "discount_scope_unresolved", message: scoped.message };
+        }
         const minted = await createUniqueDiscountCode({
           percentage: draft.discountPercent / 100,
           codePrefix: CAMPAIGN_DISCOUNT_CODE_PREFIX,
-          title: `Kampagnen-Rabatt (${draft.discountPercent}%)`,
+          title: `Kampagnen-Rabatt (${draft.discountPercent}%${
+            draft.discountScope === "recommendations" ? ", Empfehlungen" : draft.discountScope === "set" ? ", Set" : ""
+          })`,
+          productIds: scoped.productIds,
         });
         if (!minted) {
           await revertContactClaim(contactId);
@@ -308,6 +322,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           : null,
         discountExpiresAt,
         discountPercent: draft.discountPercent,
+        discountScope: draft.discountScope,
         unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
         // SPECIAL-OFFER block — ADDITIVE, exactly like the marketing path:
         // when a created, still-active bundle is attached to this contact,
@@ -377,6 +392,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         textMode: draft.textMode ?? null,
         language: contact.language,
         discountPercent: draft.discountPercent,
+        discountScope: discountCode ? draft.discountScope : null,
         bundleOfferId,
         providerEmailId: result.id ?? null,
         isTest: contact.isTest,
@@ -410,6 +426,61 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
  * reported), never silently downgraded to the default variant — a marketing
  * mail must not show a price the admin didn't approve (PAngV).
  */
+/**
+ * The Shopify product gids a scoped discount code is minted against
+ * (discount-scope.mjs): the recommended products (their handles resolved in
+ * Shopify) or the attached set's product. "all" → no restriction. Fails
+ * (ok: false, German message for the desk) when the scope cannot be
+ * honoured — no recommendations, an unresolvable handle, no active set — so
+ * the send path refuses instead of minting a code wider than promised.
+ */
+async function resolveDiscountScopeProducts(
+  scope: DiscountScope,
+  recommendedProductIds: string[],
+  contactId: number
+): Promise<{ ok: true; productIds: string[] } | { ok: false; message: string }> {
+  if (scope === "all") return { ok: true, productIds: [] };
+  try {
+    if (scope === "set") {
+      const bundle = await getActiveBundleForCampaignContact(contactId);
+      if (!bundle?.shopifyProductId) {
+        return {
+          ok: false,
+          message:
+            "Der Rabatt soll nur für das Set gelten, aber es ist kein aktives Set-Angebot angehängt. " +
+            "Set anlegen oder den Rabatt-Bereich ändern.",
+        };
+      }
+      return { ok: true, productIds: [bundle.shopifyProductId] };
+    }
+    const products = await resolveRecommendedProducts(recommendedProductIds);
+    const handles = [...new Set(products.map((p) => p.slug || p.id).filter(Boolean))];
+    if (handles.length === 0) {
+      return {
+        ok: false,
+        message:
+          "Der Rabatt soll nur für die Empfehlungen gelten, aber der Entwurf enthält keine verfügbaren Empfehlungen. " +
+          "Produkte hinzufügen oder den Rabatt-Bereich ändern.",
+      };
+    }
+    const gids = await fetchProductGidsByHandles(handles);
+    const missing = handles.filter((h) => !gids.has(h));
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        message: `Für ${missing.length === 1 ? "ein empfohlenes Produkt" : `${missing.length} empfohlene Produkte`} konnte Shopify keine Produkt-ID liefern (${missing.join(", ")}) — der Rabatt lässt sich nicht auf die Empfehlungen begrenzen.`,
+      };
+    }
+    return { ok: true, productIds: handles.map((h) => gids.get(h) as string) };
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-email", phase: "resolveDiscountScopeProducts" });
+    return {
+      ok: false,
+      message: "Shopify konnte die Produkte für den begrenzten Rabatt nicht auflösen — bitte erneut versuchen.",
+    };
+  }
+}
+
 async function resolveRecommendedProducts(productIds: string[]): Promise<Product[]> {
   if (productIds.length === 0) return [];
   try {
@@ -546,6 +617,7 @@ export async function renderCampaignEmailPreview(
         : null,
     discountExpiresAt: draft.discountPercent > 0 ? draft.discountExpiresAt : null,
     discountPercent: draft.discountPercent,
+    discountScope: draft.discountScope,
     unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
     bundle: await buildBundleBlockForContact(contactId, contact.language, draft.productHighlights),
     labelForUrl: await catalogNameLookup("lib/campaign-email"),
@@ -585,6 +657,9 @@ export function renderCampaignEmail(opts: {
   /** Discount depth in percent — the coupon's benefit line ("5 % auf deine
    * gesamte Bestellung"); omitted → generic wording. */
   discountPercent?: number | null;
+  /** What the code applies to (discount-scope.mjs): the benefit line and the
+   * text part follow it. Omitted → the whole order. */
+  discountScope?: string | null;
   unsubscribe: { text: string; html: string };
   /** Optional special-offer block for an attached bundle (text + HTML parts +
    *  component names, so those products aren't shown twice). */
@@ -626,6 +701,7 @@ export function renderCampaignEmail(opts: {
         code: discountCode,
         percent: opts.discountPercent ?? null,
         expiresLabel: discountExpiresLabel,
+        scope: opts.discountScope ?? null,
       })
     );
   }
@@ -650,6 +726,7 @@ export function renderCampaignEmail(opts: {
         code: discountCode,
         percent: opts.discountPercent ?? null,
         expiresLabel: discountExpiresLabel,
+        scope: opts.discountScope ?? null,
         language,
       })
     : "";

@@ -1,4 +1,4 @@
-// POST /api/admin/campaign/prepare  { count, discountPercent, textMode? }
+// POST /api/admin/campaign/prepare  { count, discountPercent, textMode?, discountScope? }
 //
 // Batch pre-generation (Task C): draft the next `count` PENDING campaign
 // contacts so the review queue is instant. Sequential with modest concurrency;
@@ -23,6 +23,7 @@ import {
   parseEmailTextMode,
 } from "@/lib/email-text-mode.mjs";
 import type { EmailTextMode } from "@/lib/marketing-draft";
+import { parseDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 300;
@@ -37,11 +38,13 @@ export async function POST(req: Request) {
   let count: number;
   let discountPercent: number;
   let textMode: EmailTextMode;
+  let discountScope: DiscountScope;
   try {
     const body = (await req.json()) as {
       count?: unknown;
       discountPercent?: unknown;
       textMode?: unknown;
+      discountScope?: unknown;
     };
     count = Number(body.count);
     if (!Number.isInteger(count) || count <= 0 || count > MAX_COUNT_PER_REQUEST) {
@@ -70,12 +73,14 @@ export async function POST(req: Request) {
       );
     }
     textMode = parsedMode;
+    // Unknown values fall back to "all" — the classic whole-order code.
+    discountScope = parseDiscountScope(body.discountScope);
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
 
   try {
-    const result = await prepareNextDrafts(count, discountPercent, textMode);
+    const result = await prepareNextDrafts(count, discountPercent, textMode, discountScope);
     return adminJson(result);
   } catch (err) {
     reportError(err, { route: "api/admin/campaign/prepare" });

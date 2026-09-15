@@ -115,6 +115,8 @@ export interface DiscountCouponInput {
   code: string;
   /** Discount depth in percent; null when unknown (the benefit line stays generic). */
   percent: number | null;
+  /** What the code applies to (discount-scope.mjs) — steers the benefit line. */
+  scope: "all" | "recommendations" | "set";
   /** "21.09.2026" — already localised; null without a deadline. */
   expiresLabel: string | null;
   /** Shopify's /discount/<code> link that stores the code for the checkout. */

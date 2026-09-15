@@ -6,6 +6,8 @@
 // tested; the designs only lay these values out (email-template
 // renderDiscountCoupon → design hook discountCoupon).
 
+import { discountScopePhrase } from "./discount-scope.mjs";
+
 export const SHOP_URL = "https://motionsports.de";
 
 /**
@@ -22,27 +24,22 @@ export function discountRedeemUrl(code, shopUrl = SHOP_URL) {
 }
 
 /**
- * Fixed wording per language.
+ * Fixed wording per language. `scope` (discount-scope.mjs) decides what the
+ * benefit line says the code applies to — the same phrase the prose uses.
  * @param {"de" | "en"} language
- * @param {{ percent?: number | null, expiresLabel?: string | null }} [input]
+ * @param {{ percent?: number | null, expiresLabel?: string | null, scope?: string | null }} [input]
  */
-export function couponCopy(language, { percent = null, expiresLabel = null } = {}) {
+export function couponCopy(language, { percent = null, expiresLabel = null, scope = null } = {}) {
   const en = language === "en";
   const pct = Number.isFinite(Number(percent)) && Number(percent) > 0 ? Number(percent) : null;
+  const phrase = discountScopePhrase(scope, language);
   const terms = [
     en ? "Redeemable once" : "Einmalig einlösbar",
     expiresLabel ? (en ? `valid until ${expiresLabel}` : `gültig bis ${expiresLabel}`) : null,
   ].filter(Boolean);
   return {
     kicker: en ? "Your personal code" : "Dein persönlicher Code",
-    benefit:
-      pct != null
-        ? en
-          ? `${pct} % off your entire order`
-          : `${pct} % auf deine gesamte Bestellung`
-        : en
-          ? "Your discount on your entire order"
-          : "Dein Rabatt auf deine gesamte Bestellung",
+    benefit: pct != null ? `${pct} % ${phrase}` : en ? `Your discount ${phrase}` : `Dein Rabatt ${phrase}`,
     terms: terms.join(" · "),
     cta: en ? "Redeem code" : "Code einlösen",
     hint: en ? "One click stores the code for your checkout." : "Ein Klick hinterlegt den Code für deine Kasse.",
@@ -52,10 +49,10 @@ export function couponCopy(language, { percent = null, expiresLabel = null } = {
 /**
  * The plain-text coupon (text part of the mail).
  * @param {"de" | "en"} language
- * @param {{ code: string, percent?: number | null, expiresLabel?: string | null }} input
+ * @param {{ code: string, percent?: number | null, expiresLabel?: string | null, scope?: string | null }} input
  * @returns {string}
  */
-export function couponText(language, { code, percent = null, expiresLabel = null }) {
-  const c = couponCopy(language, { percent, expiresLabel });
+export function couponText(language, { code, percent = null, expiresLabel = null, scope = null }) {
+  const c = couponCopy(language, { percent, expiresLabel, scope });
   return `${c.kicker}: ${code} — ${c.benefit}. ${c.terms}.\n${c.cta}: ${discountRedeemUrl(code)}`;
 }

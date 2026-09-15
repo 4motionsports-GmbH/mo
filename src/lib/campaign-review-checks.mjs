@@ -80,6 +80,7 @@ function parseTime(value) {
  *   subject?: string | null,
  *   body?: string | null,
  *   discountPercent?: number | null,
+ *   discountScope?: "all" | "recommendations" | "set" | string | null,
  *   lowConfidence?: boolean,
  *   recommendations?: Array<{ id?: string, name?: string, url?: string | null, available?: boolean | null }>,
  *   bundle?: { expiresAt?: string | null } | null,
@@ -202,7 +203,32 @@ export function reviewChecks(item, ctx = {}) {
         fix: "regenerate",
       });
     }
-  } else if (body.includes(REVIEW_PLACEHOLDER_CODE)) {
+  }
+  // A scoped code (0058) needs something to be scoped to — the send route
+  // refuses otherwise (never mints a wider code than promised).
+  if (discount > 0 && item.discountScope === "set" && !item.bundle) {
+    blocked.push({
+      key: "discount_scope_no_set",
+      level: "blocked",
+      title: "Rabatt nur für das Set — aber kein Set angehängt",
+      detail: "Der Code soll nur für das Set gelten; ohne aktives Set-Angebot würde der Versand abgelehnt. Set anlegen oder „Gilt für“ ändern.",
+      fix: "rebuild_bundle",
+    });
+  }
+  if (
+    discount > 0 &&
+    item.discountScope === "recommendations" &&
+    !(Array.isArray(item.recommendations) ? item.recommendations : []).some((r) => r && r.available !== false && r.url != null)
+  ) {
+    blocked.push({
+      key: "discount_scope_no_recommendations",
+      level: "blocked",
+      title: "Rabatt nur für Empfehlungen — aber keine verfügbar",
+      detail: "Der Code soll nur für die empfohlenen Produkte gelten; ohne verfügbare Empfehlung würde der Versand abgelehnt. Produkte hinzufügen oder „Gilt für“ ändern.",
+      fix: "swap_products",
+    });
+  }
+  if (discount <= 0 && body.includes(REVIEW_PLACEHOLDER_CODE)) {
     blocked.push({
       key: "placeholder_without_discount",
       level: "blocked",

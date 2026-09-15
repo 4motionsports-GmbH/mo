@@ -115,6 +115,30 @@ test("prose stating a different percentage than the set discount blocks (send-pa
   assert.match(c.detail, /10 %/);
 });
 
+test("a scoped discount without its target blocks (send-path rule)", () => {
+  const noSet = reviewChecks(readyItem({ discountScope: "set", bundle: null }), ctx());
+  assert.ok(keys(noSet).includes("discount_scope_no_set"));
+  assert.equal(reviewVerdict(noSet), "blocked");
+  const withSet = reviewChecks(readyItem({ discountScope: "set" }), ctx());
+  assert.ok(!keys(withSet).includes("discount_scope_no_set"));
+
+  const noRecs = reviewChecks(readyItem({ discountScope: "recommendations", recommendations: [] }), ctx());
+  assert.ok(keys(noRecs).includes("discount_scope_no_recommendations"));
+  const soldOut = reviewChecks(
+    readyItem({ discountScope: "recommendations", recommendations: [{ id: "a", name: "A", url: "https://shop/a", available: false }] }),
+    ctx()
+  );
+  assert.ok(keys(soldOut).includes("discount_scope_no_recommendations"));
+  const fine = reviewChecks(readyItem({ discountScope: "recommendations" }), ctx());
+  assert.ok(!keys(fine).includes("discount_scope_no_recommendations"));
+  // Without a discount the scope is irrelevant.
+  const noDiscount = reviewChecks(
+    readyItem({ discountPercent: 0, discountScope: "set", bundle: null, body: "Hallo Lea, ohne Code." }),
+    ctx()
+  );
+  assert.ok(!keys(noDiscount).some((k) => k.startsWith("discount_scope")));
+});
+
 test("placeholder in the text while no discount is set blocks", () => {
   const checks = reviewChecks(
     readyItem({ discountPercent: 0, body: `Dein Code ${REVIEW_PLACEHOLDER_CODE} gilt 7 Tage.` }),

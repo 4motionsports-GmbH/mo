@@ -303,6 +303,7 @@ export function previewSignature(item) {
     item.language ?? null,
     item.discountPercent ?? 0,
     item.discountExpiresAt ?? null,
+    item.discountScope ?? "all",
     (item.recommendations ?? []).map((r) => r.id),
     item.bundle ? [item.bundle.id, item.bundle.bundlePrice ?? null, item.bundle.expiresAt ?? null] : null,
     item.heroUrl ?? null,

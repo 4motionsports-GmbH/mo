@@ -171,7 +171,9 @@ fette Zeile im Kleingedruckten, sondern als eigene Karte zwischen Set-Karte und
 Countdown (`renderDiscountCoupon` in `email-template.ts`, Renderer-Hook
 `discountCoupon`; Wortlaut und Link in `discount-coupon.mjs`, getestet): der
 Code groß und fett auf einem gestrichelten blauen „Ticket", daneben der Wert
-(„5 % auf deine gesamte Bestellung"), die Bedingungen („Einmalig einlösbar ·
+(„5 % auf deine gesamte Bestellung" — bzw. „… auf die empfohlenen Produkte aus
+dieser E-Mail" / „… auf dein persönliches Set", je nach Rabatt-Bereich des
+Entwurfs, `discount-scope.mjs`), die Bedingungen („Einmalig einlösbar ·
 gültig bis …") und der rote Button **„Code einlösen"**. Der Button führt auf
 Shopifys Rabatt-Link `https://motionsports.de/discount/<code>`, der den Code
 im Shop hinterlegt und an der Kasse anwendet — E-Mail kann nichts in die

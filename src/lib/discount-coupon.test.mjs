@@ -23,10 +23,15 @@ test("couponCopy states value and terms per language", () => {
   assert.equal(couponCopy("de").benefit, "Dein Rabatt auf deine gesamte Bestellung");
   assert.equal(couponCopy("de", { percent: 0 }).benefit, "Dein Rabatt auf deine gesamte Bestellung");
   assert.equal(couponCopy("de").terms, "Einmalig einlösbar");
+  // The scope steers what the code applies to.
+  assert.equal(couponCopy("de", { percent: 5, scope: "recommendations" }).benefit, "5 % auf die empfohlenen Produkte aus dieser E-Mail");
+  assert.equal(couponCopy("en", { percent: 5, scope: "set" }).benefit, "5 % off your personal set");
+  assert.equal(couponCopy("de", { scope: "set" }).benefit, "Dein Rabatt auf dein persönliches Set");
+  assert.equal(couponCopy("de", { percent: 5, scope: "bogus" }).benefit, "5 % auf deine gesamte Bestellung");
 });
 
 test("couponText carries code, value, terms and the redeem link", () => {
-  const t = couponText("de", { code: "MK-ABC123", percent: 5, expiresLabel: "21.09.2026" });
+  const t = couponText("de", { code: "MK-ABC123", percent: 5, expiresLabel: "21.09.2026", scope: "all" });
   assert.equal(
     t,
     "Dein persönlicher Code: MK-ABC123 — 5 % auf deine gesamte Bestellung. Einmalig einlösbar · gültig bis 21.09.2026.\nCode einlösen: https://motionsports.de/discount/MK-ABC123"

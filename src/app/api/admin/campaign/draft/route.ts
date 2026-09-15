@@ -1,6 +1,6 @@
 // POST /api/admin/campaign/draft
 //   { contactId, discountPercent, regenerate?, refreshRecommendations?,
-//     purchaseSelection?, textMode? }
+//     purchaseSelection?, textMode?, discountScope? }
 //
 // Generate (or re-generate) the draft for ONE campaign contact — the single-
 // contact sibling of /prepare, used by the queue's "Regenerate" action, by
@@ -40,6 +40,7 @@ import {
   DISCOUNT_PERCENT_MAX,
 } from "@/lib/discount-validation.mjs";
 import { EMAIL_TEXT_MODES, parseEmailTextMode } from "@/lib/email-text-mode.mjs";
+import { parseDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
 import type { EmailTextMode } from "@/lib/marketing-draft";
 import { reportError } from "@/lib/observability";
 
@@ -83,6 +84,7 @@ export async function POST(req: Request) {
   let refreshRecommendations: boolean;
   let purchaseSelection: string[] | null | undefined;
   let textMode: EmailTextMode | null;
+  let discountScope: DiscountScope | null;
   try {
     const body = (await req.json()) as {
       contactId?: unknown;
@@ -91,6 +93,7 @@ export async function POST(req: Request) {
       refreshRecommendations?: unknown;
       purchaseSelection?: unknown;
       textMode?: unknown;
+      discountScope?: unknown;
     };
     contactId = Number(body.contactId);
     if (!Number.isInteger(contactId) || contactId <= 0) {
@@ -132,6 +135,9 @@ export async function POST(req: Request) {
         400
       );
     }
+    // Optional discount scope (0058). Omitted/null = keep the draft's stored
+    // scope; a changed scope always regenerates (the prose states it).
+    discountScope = body.discountScope == null ? null : parseDiscountScope(body.discountScope);
     // Optional prose length. Omitted/null = keep the existing draft's stored
     // mode (campaign-prepare resolves the effective value).
     if (body.textMode == null) {
@@ -169,8 +175,12 @@ export async function POST(req: Request) {
 
     // A selection/refresh request always regenerates — reuse would return a
     // draft that ignores the new basis.
-    const wantsFresh = regenerate || refreshRecommendations || purchaseSelection !== undefined;
     const existing = await getDraftForContact(contactId);
+    const wantsFresh =
+      regenerate ||
+      refreshRecommendations ||
+      purchaseSelection !== undefined ||
+      (discountScope !== null && discountScope !== existing?.discountScope);
     if (shouldReuseCampaignDraft(existing, discountPercent, wantsFresh, textMode) && existing) {
       return adminJson({ ...(await draftResponsePayload(contactId, existing)), reused: true });
     }
@@ -179,6 +189,7 @@ export async function POST(req: Request) {
       refreshRecommendations,
       purchaseSelection,
       textMode,
+      discountScope,
     });
     if (!draft) {
       return adminJsonError("internal_error", "Could not persist the draft.", 500);

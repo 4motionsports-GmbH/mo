@@ -19,6 +19,7 @@ import { parseEmailTextMode } from "./email-text-mode.mjs";
 import { normalizeEmail } from "./email-capture-store";
 import { sendableDayRange } from "./campaign-segments.mjs";
 import { OFFER_EXPIRING_SOON_HOURS } from "./campaign-desk-core.mjs";
+import { parseDiscountScope, type DiscountScope } from "./discount-scope.mjs";
 import { reportError } from "./observability";
 import { loadModelPrices, usdCostForUsage, usdEurRate, usdToEur } from "./ai-pricing.mjs";
 import { fetchCodeRedemption } from "./shopify-orders";
@@ -97,6 +98,8 @@ export interface CampaignDraftRow {
   body: string;
   discountPercent: number;
   discountExpiresAt: string | null;
+  /** What the code applies to (migration 0058): all | recommendations | set. */
+  discountScope: DiscountScope;
   purchaseSummary: CampaignPurchaseSummary | null;
   recommendedProductIds: string[];
   /** Per-product personalised descriptions from the draft model (migration
@@ -188,6 +191,7 @@ function mapDraftRow(r: Record<string, unknown>): CampaignDraftRow {
     body: String(r.body ?? ""),
     discountPercent: Number(r.discount_percent ?? 0),
     discountExpiresAt: toIso(r.discount_expires_at),
+    discountScope: parseDiscountScope(r.discount_scope),
     purchaseSummary: (r.purchase_summary as CampaignPurchaseSummary | null) ?? null,
     recommendedProductIds: Array.isArray(r.recommended_product_ids)
       ? (r.recommended_product_ids as string[])
@@ -493,6 +497,7 @@ export async function listDraftedQueue(
              d.id AS d_id, d.subject AS d_subject, d.body AS d_body,
              d.discount_percent AS d_discount_percent,
              d.discount_expires_at AS d_discount_expires_at,
+             d.discount_scope AS d_discount_scope,
              d.purchase_summary AS d_purchase_summary,
              d.recommended_product_ids AS d_recommended_product_ids,
              d.product_highlights AS d_product_highlights,
@@ -536,6 +541,7 @@ export async function listDraftedQueue(
         body: r.d_body,
         discount_percent: r.d_discount_percent,
         discount_expires_at: r.d_discount_expires_at,
+        discount_scope: r.d_discount_scope,
         purchase_summary: r.d_purchase_summary,
         recommended_product_ids: r.d_recommended_product_ids,
         product_highlights: r.d_product_highlights,
@@ -750,6 +756,8 @@ export interface SaveCampaignDraftInput {
   discountPercent: number;
   /** Projected expiry for the preview; the real code gets its own at send. */
   discountExpiresAt: string | null;
+  /** What the code applies to (discount-scope.mjs). Omitted = "all". */
+  discountScope?: DiscountScope | null;
   purchaseSummary: CampaignPurchaseSummary | null;
   recommendedProductIds: string[];
   /** Per-product personalised descriptions from the draft model (may be empty —
@@ -779,13 +787,14 @@ export async function saveCampaignDraft(
   if (!sql) return null;
   const rows = (await sql`
     INSERT INTO campaign_drafts
-      (contact_id, subject, body, discount_percent, discount_expires_at,
+      (contact_id, subject, body, discount_percent, discount_expires_at, discount_scope,
        purchase_summary, recommended_product_ids, product_highlights,
        purchase_selected_ids, text_mode, segment, segment_days, low_confidence,
        created_at, updated_at)
     VALUES
       (${input.contactId}, ${input.subject}, ${input.body},
        ${input.discountPercent}, ${input.discountExpiresAt},
+       ${parseDiscountScope(input.discountScope)},
        ${input.purchaseSummary ? JSON.stringify(input.purchaseSummary) : null}::jsonb,
        ${input.recommendedProductIds}::text[],
        ${input.productHighlights && input.productHighlights.length > 0 ? JSON.stringify(input.productHighlights) : null}::jsonb,
@@ -798,6 +807,7 @@ export async function saveCampaignDraft(
       body                    = EXCLUDED.body,
       discount_percent        = EXCLUDED.discount_percent,
       discount_expires_at     = EXCLUDED.discount_expires_at,
+      discount_scope          = EXCLUDED.discount_scope,
       purchase_summary        = EXCLUDED.purchase_summary,
       recommended_product_ids = EXCLUDED.recommended_product_ids,
       product_highlights      = EXCLUDED.product_highlights,
@@ -891,6 +901,7 @@ export async function updateCampaignDraftDiscount(
   contactId: number,
   discountPercent: number,
   discountExpiresAt: string | null,
+  discountScope: DiscountScope,
   sql: Sql | null = getSql()
 ): Promise<CampaignDraftRow | null> {
   if (!sql) return null;
@@ -899,6 +910,7 @@ export async function updateCampaignDraftDiscount(
       UPDATE campaign_drafts d
          SET discount_percent = ${discountPercent},
              discount_expires_at = ${discountExpiresAt},
+             discount_scope = ${parseDiscountScope(discountScope)},
              updated_at = now()
         FROM campaign_contacts c
        WHERE d.contact_id = ${contactId}
@@ -1218,6 +1230,8 @@ export interface RecordCampaignSendInput {
   textMode?: string | null;
   language?: string | null;
   discountPercent?: number | null;
+  /** What the minted code applied to (migration 0058); null without a code. */
+  discountScope?: DiscountScope | null;
   bundleOfferId?: number | null;
   /** Resend's message id for the shipped mail (migration 0055) — the key the
    * delivery webhook uses to attach bounces / complaints / delivery. */
@@ -1238,7 +1252,7 @@ export async function recordCampaignSend(
       (contact_id, email, subject, body_hash, body_text, body_html, sent_via,
        discount_code, discount_code_gid, discount_expires_at, redirect_token,
        segment, design_key, hero_variant, hero_image_url, hero_headline,
-       text_mode, language, discount_percent, bundle_offer_id, provider_email_id,
+       text_mode, language, discount_percent, discount_scope, bundle_offer_id, provider_email_id,
        is_test, sent_at, created_at)
     VALUES
       (${input.contactId}, ${normalizeEmail(input.email)}, ${input.subject},
@@ -1249,7 +1263,7 @@ export async function recordCampaignSend(
        ${input.designKey ?? null}, ${input.heroVariant ?? null},
        ${input.heroImageUrl ?? null}, ${input.heroHeadline ?? null},
        ${input.textMode ?? null}, ${input.language ?? null},
-       ${input.discountPercent ?? null}, ${input.bundleOfferId ?? null},
+       ${input.discountPercent ?? null}, ${input.discountScope ?? null}, ${input.bundleOfferId ?? null},
        ${input.providerEmailId ?? null},
        ${input.isTest === true}, now(), now())
   `;
@@ -1783,6 +1797,8 @@ export interface CampaignSendHistoryRow {
   sentVia: "email" | "copy";
   discountCode: string | null;
   discountExpiresAt: string | null;
+  /** What the code applied to (migration 0058); null without a code / pre-0058. */
+  discountScope: DiscountScope | null;
   /** Expiry of the set offer the send carried (bundle_offers.expires_at via
    * bundle_offer_id, migration 0054); null without a set. */
   bundleExpiresAt: string | null;
@@ -1890,7 +1906,7 @@ export async function searchCampaignSendHistory(
     const offset = (current - 1) * size;
     const rows = (await sql`
       SELECT s.id, s.contact_id, s.email, s.subject, s.sent_via, s.discount_code, s.discount_expires_at,
-             b.expires_at AS bundle_expires_at, s.sent_at,
+             s.discount_scope, b.expires_at AS bundle_expires_at, s.sent_at,
              (s.body_text IS NOT NULL OR s.body_html IS NOT NULL) AS has_content,
              s.delivered_at, s.bounced_at, s.bounce_type, s.complained_at, s.clicked_at, s.hero_variant,
              s.is_test
@@ -1926,6 +1942,7 @@ export async function searchCampaignSendHistory(
         sentVia: r.sent_via === "copy" ? "copy" : "email",
         discountCode: (r.discount_code as string | null) ?? null,
         discountExpiresAt: toIso(r.discount_expires_at),
+        discountScope: r.discount_code && r.discount_scope ? parseDiscountScope(r.discount_scope) : null,
         bundleExpiresAt: toIso(r.bundle_expires_at),
         sentAt: toIso(r.sent_at),
         hasContent: r.has_content === true,

@@ -33,6 +33,10 @@
 //   }
 // `percentage` is a fraction (0.05 = 5%). `usageLimit: 1` makes the code truly
 // single-use; `appliesOncePerCustomer: true` additionally pins it to one buyer.
+// With `productIds` (campaign scope "Empfehlungen" / "Set", migration 0058)
+// `items` becomes `{ products: { productsToAdd: [gid…] } }` — a
+// DiscountItemsInput / DiscountProductsInput per the same 2026-04 docs — so
+// the code applies to those products only.
 
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { reportError } from "./observability";
@@ -184,6 +188,12 @@ export interface CreateDiscountOptions {
   codePrefix?: string;
   /** Days until the code expires. Defaults to the marketing expiry (7d). */
   expiryDays?: number;
+  /**
+   * Restrict the code to these products (gid://shopify/Product/…). Omitted or
+   * empty = the whole order. The caller decides whether an unresolvable scope
+   * is an error — this function never widens a scope on its own.
+   */
+  productIds?: string[];
 }
 
 /**
@@ -206,6 +216,7 @@ export async function createUniqueDiscountCode(
       : discountExpiryDays();
   const endsAt = new Date(startsAt.getTime() + expiryDays * 86_400_000);
 
+  const productIds = [...new Set((options.productIds ?? []).filter((g) => /^gid:\/\/shopify\/Product\/\d+$/.test(g)))];
   const basicCodeDiscount = {
     title: options.title ?? `Persönlicher Rabatt (${Math.round(percentage * 100)}%) — ${code}`,
     code,
@@ -214,7 +225,7 @@ export async function createUniqueDiscountCode(
     customerSelection: { all: true },
     customerGets: {
       value: { percentage },
-      items: { all: true },
+      items: productIds.length > 0 ? { products: { productsToAdd: productIds } } : { all: true },
     },
     appliesOncePerCustomer: true,
     usageLimit: 1,

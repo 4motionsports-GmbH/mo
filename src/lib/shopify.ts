@@ -808,6 +808,37 @@ export async function fetchProductsByIds(gids: string[]): Promise<ShopifyProduct
   return nodes.map((n) => mapProductNode(n, cache));
 }
 
+const PRODUCT_IDS_BY_HANDLES_QUERY = /* GraphQL */ `
+  query ProductIdsByHandles($query: String!, $first: Int!) {
+    products(first: $first, query: $query) {
+      nodes { id handle }
+    }
+  }
+`;
+
+/**
+ * Resolve product handles (the catalog's product ids) to their Shopify product
+ * gids in ONE search query ("handle:a OR handle:b"). Handles that do not
+ * resolve are simply absent from the map — the caller decides what a missing
+ * one means. Used to scope a campaign discount code to the recommended
+ * products (shopify-discounts createUniqueDiscountCode → productIds).
+ */
+export async function fetchProductGidsByHandles(handles: string[]): Promise<Map<string, string>> {
+  const wanted = [...new Set(handles.map((h) => String(h ?? "").trim()).filter(Boolean))];
+  const out = new Map<string, string>();
+  if (wanted.length === 0) return out;
+  // Shopify search syntax: quote the value, escape quotes/backslashes inside.
+  const query = wanted.map((h) => `handle:"${h.replace(/["\\]/g, "\\$&")}"`).join(" OR ");
+  const data = await graphql<{ products: { nodes: Array<{ id: string; handle: string }> } }>(
+    PRODUCT_IDS_BY_HANDLES_QUERY,
+    { query, first: Math.min(250, wanted.length + 5) }
+  );
+  for (const n of data.products?.nodes ?? []) {
+    if (n?.id && n?.handle && wanted.includes(n.handle)) out.set(n.handle, n.id);
+  }
+  return out;
+}
+
 /**
  * Resolve the product GID that an inventory item belongs to (inventory_levels/*
  * webhooks carry an inventory_item_id, not a product). Returns null when it can't
