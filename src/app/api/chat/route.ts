@@ -17,6 +17,7 @@ import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-con
 import { resolveChatMemory } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
+import { anthropicOptionsFor, modelFor } from "@/lib/ai-models.mjs";
 import { sanitizeToolParts } from "@/lib/chat-message-sanitize.mjs";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
@@ -54,8 +55,30 @@ export const maxDuration = 300;
 const MAX_MESSAGES_PER_CONVERSATION = 40;
 
 // The chat model id — referenced both in the streamText call and when recording
-// token usage for the cost KPI, so the two can never drift apart.
-const CHAT_MODEL = "claude-sonnet-4-6";
+// token usage for the cost KPI, so the two can never drift apart. The chat tier
+// (lib/ai-models.mjs) runs Sonnet 5.5 with `between_tools` thinking: no
+// up-front reasoning pass, so the first token arrives as fast as before.
+const CHAT_MODEL = modelFor("chat");
+
+// Operator note appended for the email-offer step (see prepareStep below). The
+// chat model rejects a forced tool_choice, so the step narrows the tools to
+// offer_email_summary and says so in a mid-conversation system message — the
+// offer text itself stays AI-written, in the conversation's language.
+const EMAIL_OFFER_STEP_NOTE =
+  "The customer has just added a product to the cart. Now call offer_email_summary exactly once, " +
+  "with a short, friendly invitation in the language of the conversation. Do not answer with plain text.";
+
+// Thinking blocks are bound to the request prefix they were produced under;
+// the email-offer step changes the tool list, so it and the steps after it
+// replay the turn without them (with `between_tools` they are only the model's
+// progress notes between tool calls — no answer text is lost).
+function withoutReasoning(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((m) =>
+    m.role === "assistant" && Array.isArray(m.content)
+      ? { ...m, content: m.content.filter((part) => part.type !== "reasoning") }
+      : m
+  );
+}
 
 // Step budget of the agentic loop (was `stopWhen: stepCountIs(6)`). The
 // custom stop condition below grants ONE extra step beyond this only when the
@@ -430,8 +453,15 @@ export async function POST(req: Request) {
     const lastModelMessage = modelMessages[modelMessages.length - 1];
     if (lastModelMessage) lastModelMessage.providerOptions = cacheEphemeral;
 
+    // Set once the email-offer step (prepareStep below) has run in this turn.
+    let emailOfferStepRan = false;
+
     const result = streamText({
       model: anthropic(CHAT_MODEL),
+      providerOptions: anthropicOptionsFor("chat"),
+      // Our system messages are server-authored (the prompt + the email-offer
+      // step note), never user input.
+      allowSystemInMessages: true,
       // The system prompt travels as a leading system MESSAGE (not the
       // `system` option) solely so it can carry breakpoint 1 (system tier,
       // covers tools+system): the AI SDK's `system` string cannot hold
@@ -460,22 +490,28 @@ export async function POST(req: Request) {
       ],
       tools,
       activeTools: defaultActiveTools,
-      // DETERMINISTIC EMAIL-OFFER TRIGGER (highest-intent moment): when this
-      // turn has produced an add_to_cart (direct-checkout) call and the model
-      // did not offer the email summary on its own, force the next step's
-      // toolChoice to offer_email_summary — exactly one extra model step, so
-      // the invitation text stays AI-written (the tool's `message` input) and
-      // in-context. Prompt wording alone proved unreliable here: the
-      // persona's anti-pushiness rules made the model consistently skip the
-      // soft ask at checkout. shouldForceEmailOfferStep keeps every existing
-      // rule intact: never once the email is captured, never past the two-ask
-      // cap (the forced ask COUNTS as one of the two — it streams as a normal
+      // EMAIL-OFFER TRIGGER (highest-intent moment): when this turn has
+      // produced an add_to_cart (direct-checkout) call and the model did not
+      // offer the email summary on its own, the next step offers ONLY
+      // offer_email_summary and an operator note tells the model to call it —
+      // exactly one extra model step, so the invitation text stays AI-written
+      // (the tool's `message` input) and in-context. (The chat model rejects a
+      // forced tool_choice; with a single available tool and the note it calls
+      // it just the same. If it answers in text instead, the loop ends there —
+      // no ask is recorded and nothing repeats.) The system-prompt wording
+      // alone proved unreliable here: the persona's anti-pushiness rules made
+      // the model consistently skip the soft ask at checkout.
+      // shouldForceEmailOfferStep keeps every existing rule intact: never once
+      // the email is captured, never past the two-ask cap (the forced ask COUNTS as one of the two — it streams as a normal
       // tool call, so countEmailSummaryOffers and the ask-shown KPI below
       // pick it up like any other offer), and never after the user declined a
       // capture card (widget-reported KPI event). When it fires, the tool is
       // guaranteed present in the tool set: the trigger's gates are a strict
       // subset of allowEmailSummaryOffer.
-      prepareStep: ({ steps }) => {
+      prepareStep: ({ steps, messages: stepMessages }) => {
+        // After the email-offer step the tool list is back to normal — again a
+        // different prefix than the offer step's, so replay without thinking.
+        if (emailOfferStepRan) return { messages: withoutReasoning(stepMessages) };
         const force = shouldForceEmailOfferStep({
           emailCaptured,
           offersMade: emailOffersMade,
@@ -483,9 +519,13 @@ export async function POST(req: Request) {
           toolNamesCalled: turnToolNames(steps),
         });
         if (!force) return undefined;
+        emailOfferStepRan = true;
         return {
-          toolChoice: { type: "tool", toolName: "offer_email_summary" },
           activeTools: ["offer_email_summary"],
+          messages: [
+            ...withoutReasoning(stepMessages),
+            { role: "system", content: EMAIL_OFFER_STEP_NOTE },
+          ],
         };
       },
       stopWhen: ({ steps }) => {
@@ -643,6 +683,11 @@ export async function POST(req: Request) {
     // by the model's own token rate and the current Vercel hosting tier — we
     // can stop holding tokens back, but we cannot make the model emit faster.
     return result.toUIMessageStreamResponse({
+      // The widget contract carries text + tool parts only. Keeping reasoning
+      // parts out of the stream also keeps them out of the history the widget
+      // sends back, so no thinking block is ever replayed across turns (the
+      // system prompt changes per turn, which would invalidate them).
+      sendReasoning: false,
       headers: {
         ...cors,
         "Cache-Control": "no-cache, no-transform",
