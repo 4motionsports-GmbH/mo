@@ -9,8 +9,9 @@
 // the soft prompt trigger at exactly the highest-intent moment. The backend
 // therefore guarantees the ask at checkout intent: when a turn has called
 // add_to_cart and the model has not offered the email summary itself, the
-// chat route forces ONE extra step with toolChoice pinned to
-// offer_email_summary (see api/chat/route.ts → prepareStep). The forced call
+// chat route runs ONE extra step whose only available tool is
+// offer_email_summary, with an operator note to call it (see
+// api/chat/route.ts → prepareStep; the chat model rejects a forced tool_choice). The forced call
 // streams like any other tool call, so it counts toward the two-ask cap and
 // the ask-shown KPI exactly like a model-initiated offer.
 

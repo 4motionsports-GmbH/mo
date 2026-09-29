@@ -32,6 +32,7 @@ import { put } from "@vercel/blob";
 import { generateObject } from "ai";
 import { z } from "zod";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, modelFor } from "./ai-models.mjs";
 import { getBaseUrl } from "./base-url";
 import { getSendById } from "./marketing-store";
 import { getContactById, getDraftForContact } from "./campaign-store";
@@ -86,7 +87,7 @@ export {
   normalizeHeroPrompt,
 };
 
-const PROMPT_MODEL = "claude-sonnet-4-6";
+const PROMPT_MODEL = modelFor("writer");
 // The image model, size and quality live in email-hero-variants.mjs
 // (heroImageAttempts): gpt-image-2 in the hero's native 1536×720 first, then
 // the same model in 3:2, then gpt-image-1.5 — the first attempt that renders
@@ -289,6 +290,7 @@ export async function suggestHeroPrompt(
     try {
       const { object, usage } = await generateObject({
         model: anthropic(PROMPT_MODEL),
+        providerOptions: anthropicOptionsFor("writer"),
         schema: heroSuggestionSchema,
         system:
           "Du entwirfst den HERO einer personalisierten E-Mail eines " +

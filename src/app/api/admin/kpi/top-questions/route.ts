@@ -18,7 +18,8 @@ import { ARCHETYPE_META } from "@/lib/persona";
 import { isDbConfigured } from "@/lib/db";
 import { reportError } from "@/lib/observability";
 
-export const maxDuration = 30;
+// One Sonnet pass per persona (adaptive thinking) — room beyond a bare reply.
+export const maxDuration = 60;
 
 // Valid persona keys: every archetype id plus the 'unknown' bucket.
 const VALID_PERSONAS = new Set<string>([...Object.keys(ARCHETYPE_META), "unknown"]);

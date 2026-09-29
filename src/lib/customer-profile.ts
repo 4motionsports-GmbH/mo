@@ -24,6 +24,8 @@
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
+import { usdCostForUsage } from "./ai-pricing.mjs";
 import type { CustomerSession } from "./customer-store";
 import type { OrderHistory } from "./shopify-orders";
 import { ARCHETYPE_META } from "./persona";
@@ -31,13 +33,8 @@ import type { PersonaArchetype } from "./types";
 import { recordAiUsage } from "./ai-usage-store";
 import { formatStoreDate } from "./store-datetime.mjs";
 
-const PROFILE_MODEL = "claude-opus-4-8";
-
-// USD per million tokens for PROFILE_MODEL (Anthropic pricing, checked
-// 2026-06-11). Surfaced in the dashboard so the operator sees what each
-// regeneration costs. Update alongside PROFILE_MODEL.
-const INPUT_USD_PER_MTOK = 5;
-const OUTPUT_USD_PER_MTOK = 25;
+// Deep tier (lib/ai-models.mjs): few calls, identity-level judgement.
+const PROFILE_MODEL = modelFor("deep");
 
 // Keep the prompt bounded: a customer with many long sessions must not turn
 // into an unbounded mega-prompt. Newest sessions matter most, so when
@@ -160,7 +157,8 @@ export async function generateCustomerProfile(
   try {
     const result = await generateText({
       model: anthropic(PROFILE_MODEL),
-      maxOutputTokens: 1500,
+      providerOptions: anthropicOptionsFor("deep"),
+      maxOutputTokens: maxOutputTokensFor("deep", 1500),
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
         "verdichtest die Chat-Sessions, die E-Mail-Korrespondenz und die " +
@@ -208,8 +206,8 @@ export async function generateCustomerProfile(
       usage: {
         inputTokens,
         outputTokens,
-        approxCostUsd:
-          (inputTokens * INPUT_USD_PER_MTOK + outputTokens * OUTPUT_USD_PER_MTOK) / 1_000_000,
+        // Priced from the same table as the cost KPI (lib/ai-pricing.mjs).
+        approxCostUsd: usdCostForUsage({ model: PROFILE_MODEL, inputTokens, outputTokens }),
       },
     };
   } catch (err) {

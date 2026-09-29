@@ -14,8 +14,9 @@ import { stepReport } from "@/lib/analytics-report-generate";
 import { reportError } from "@/lib/observability";
 
 // One step may run a handful of model calls (e.g. a batch of Haiku analyses, or a
-// single Opus customer profile) — give it the headroom the profile route has.
-export const maxDuration = 60;
+// single Opus customer profile, which thinks before it writes) — give it the
+// headroom the profile route has.
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);

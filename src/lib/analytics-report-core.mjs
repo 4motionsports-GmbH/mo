@@ -11,18 +11,20 @@
 
 import { usdCostForUsage, usdToEur } from "./ai-pricing.mjs";
 import { germanDate } from "./kpi-range.mjs";
+import { modelFor } from "./ai-models.mjs";
 
 // ── Models ────────────────────────────────────────────────────────────────────
-// The models each generation phase calls. These MUST match the model ids the
-// underlying libs use (conversation-analysis / conversation-insights = Haiku;
-// kpi-top-questions = Sonnet; customer-profile = Opus) so the up-front estimate
-// and the recorded spend price against the same table (lib/ai-pricing.mjs).
+// The models each generation phase calls, by tier (lib/ai-models.mjs). These
+// MUST match the tiers the underlying libs use (conversation-analysis = bulk;
+// conversation-insights = analyst; customer-profile = deep) so the up-front
+// estimate and the recorded spend price against the same table
+// (lib/ai-pricing.mjs).
 
-export const ANALYZE_MODEL = "claude-haiku-4-5";
-export const INSIGHTS_MODEL = "claude-haiku-4-5";
-export const PERSONA_MODEL = "claude-sonnet-4-6";
-export const SYNTHESIS_MODEL = "claude-sonnet-4-6";
-export const PROFILE_MODEL = "claude-opus-4-8";
+export const ANALYZE_MODEL = modelFor("bulk");
+export const INSIGHTS_MODEL = modelFor("analyst");
+export const PERSONA_MODEL = modelFor("writer");
+export const SYNTHESIS_MODEL = modelFor("analyst");
+export const PROFILE_MODEL = modelFor("deep");
 
 // ── Phase state-machine ───────────────────────────────────────────────────────
 // The generation runs as an ordered set of phases, advanced one bounded chunk per
@@ -163,16 +165,17 @@ export function reportCostEur(usage, prices, rate) {
 // ── Up-front cost estimate ────────────────────────────────────────────────────
 // Rough per-unit token figures for the parts of a run, used to show "ca. €X"
 // BEFORE the operator confirms. The analyze figures mirror conversation-analysis-
-// core's bulk estimate; the rest are conservative single-pass estimates.
+// core's bulk estimate; the rest are conservative single-pass estimates whose
+// output side includes the thinking tokens of the analyst/deep tiers.
 
 const EST = {
   analyze: { in: 3000, out: 250, model: ANALYZE_MODEL },
-  // Two Haiku passes (narrative report + curated references) — see
+  // Two passes (narrative report + curated references) — see
   // conversation-insights.ts, which the report's insights phase delegates to.
-  insights: { in: 13000, out: 3000, model: INSIGHTS_MODEL },
+  insights: { in: 13000, out: 5000, model: INSIGHTS_MODEL },
   persona: { in: 5000, out: 450, model: PERSONA_MODEL },
-  synthesis: { in: 6000, out: 1100, model: SYNTHESIS_MODEL },
-  profile: { in: 9000, out: 1300, model: PROFILE_MODEL },
+  synthesis: { in: 6000, out: 2500, model: SYNTHESIS_MODEL },
+  profile: { in: 9000, out: 3300, model: PROFILE_MODEL },
 };
 
 function n(v) {

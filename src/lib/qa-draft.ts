@@ -11,6 +11,7 @@
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { modelFor } from "./ai-models.mjs";
 import { recordAiUsage } from "./ai-usage-store";
 import {
   QA_DRAFT_SYSTEM_PROMPT,
@@ -19,8 +20,8 @@ import {
 } from "./qa-core.mjs";
 import type { AdminTranscriptTurn } from "./admin-conversations";
 
-/** Cheap Haiku-class model — back-office drafting, not the consultation model. */
-export const QA_DRAFT_MODEL = "claude-haiku-4-5";
+/** Bulk tier (lib/ai-models.mjs) — one pass per scanned conversation, reviewed before publishing. */
+export const QA_DRAFT_MODEL = modelFor("bulk");
 
 // Same bounds as the analysis pass: a very long chat must not become an
 // unbounded prompt.

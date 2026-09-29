@@ -15,14 +15,15 @@
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, modelFor } from "./ai-models.mjs";
 import { getSql, type Sql } from "./db";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
 import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
 
-// Same model family as the other backend LLM calls — one voice across the app.
-const SUMMARY_MODEL = "claude-sonnet-4-6";
+// Writer tier (lib/ai-models.mjs) — a short bullet summary of real user messages.
+const SUMMARY_MODEL = modelFor("writer");
 
 // How many recent user messages to feed the model. Bounded so a single run stays
 // cheap (a few cents) and well under the context limit.
@@ -188,6 +189,7 @@ export async function generateTopQuestions(
     const numbered = sample.map((m, i) => `${i + 1}. ${m}`).join("\n");
     const { text, usage } = await generateText({
       model: anthropic(SUMMARY_MODEL),
+      providerOptions: anthropicOptionsFor("writer"),
       system:
         "Du bist Analyst für motion sports (Fitness- und Kraftsportgeräte). Du " +
         "erhältst echte Nutzernachrichten aus dem Beratungs-Chat einer bestimmten " +

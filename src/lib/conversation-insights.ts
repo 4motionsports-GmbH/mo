@@ -20,6 +20,7 @@
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
 import {
@@ -34,8 +35,8 @@ import {
   parseInsightsRefsPayload,
 } from "./conversation-analysis-core.mjs";
 
-/** Cheap Haiku-class model — summarising summaries, not consultation. */
-export const INSIGHTS_MODEL = "claude-haiku-4-5";
+/** Analyst tier (lib/ai-models.mjs): one synthesis over hundreds of summaries. */
+export const INSIGHTS_MODEL = modelFor("analyst");
 
 // Bound the rollup input so a huge analysed set stays a cheap single pass.
 const MAX_ANALYSES = 400;
@@ -114,10 +115,11 @@ export async function generateConversationInsights(
 
     const { text, usage, finishReason } = await generateText({
       model: anthropic(INSIGHTS_MODEL),
+      providerOptions: anthropicOptionsFor("analyst"),
       // Well above the instructed ~700-word length so the report always ends
       // cleanly even when the model overshoots (observed: 400 summaries pushed
       // it past 3000 and it was cut mid-sentence — reported via finishReason).
-      maxOutputTokens: 4500,
+      maxOutputTokens: maxOutputTokensFor("analyst", 4500),
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
         "erhältst KURZ-ZUSAMMENFASSUNGEN vieler Beratungsgespräche (bereits " +
@@ -165,9 +167,10 @@ export async function generateConversationInsights(
     try {
       const refsRes = await generateText({
         model: anthropic(INSIGHTS_MODEL),
+        providerOptions: anthropicOptionsFor("analyst"),
         // Curated examples (≤8 per section × 4 sections at ~30 tokens each) —
         // complete listings are the list filters' job, not the model's.
-        maxOutputTokens: 2500,
+        maxOutputTokens: maxOutputTokensFor("analyst", 2500),
         system:
           "Du bist Analyst bei motion sports. Du erhältst (a) KURZ-" +
           "ZUSAMMENFASSUNGEN von Beratungsgesprächen, jede mit ihrer Gesprächs-ID " +

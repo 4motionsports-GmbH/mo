@@ -16,6 +16,7 @@
 
 import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, modelFor } from "./ai-models.mjs";
 import { z } from "zod";
 import type { TranscriptMessage } from "./conversation-store";
 import type { Product } from "./types";
@@ -31,7 +32,7 @@ import { formatStoreDate } from "./store-datetime.mjs";
 
 // Same model the marketing draft uses — one voice/quality bar across the
 // dashboard's AI features.
-const SUGGEST_MODEL = "claude-sonnet-4-6";
+const SUGGEST_MODEL = modelFor("writer");
 
 // Bound the prompt: enough candidates for a good pick without an unwieldy list.
 const MAX_CANDIDATES_IN_PROMPT = 60;
@@ -183,6 +184,7 @@ export async function suggestBundle(
   try {
     const { object, usage } = await generateObject({
       model: anthropic(SUGGEST_MODEL),
+      providerOptions: anthropicOptionsFor("writer"),
       schema: suggestionSchema,
       system:
         "Du bist Mo, ein erfahrener Berater bei motion sports (Fitness- und " +
