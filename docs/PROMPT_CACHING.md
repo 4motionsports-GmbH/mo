@@ -51,7 +51,7 @@ The back-office call sites (conversation analysis/insights, campaign +
 marketing drafts, Q&A drafts/translation, top questions, bundle suggestions,
 summary email, customer profile) have short instruction prompts dominated by
 per-item dynamic data. They sit below Anthropic's minimum cacheable prefix
-(1024 tokens on Sonnet 4.6, 4096 on Haiku 4.5) and/or share no reusable
+(512 tokens on Sonnet 5.5, 4096 on Haiku 4.5) and/or share no reusable
 prefix — a marker there would be a silent no-op or pay the 1.25× write premium
 with no reads. Leave them uncached.
 
@@ -107,6 +107,8 @@ requests byte-by-byte.
 - Cache TTL is 5 minutes, refreshed on read. Chat steps (seconds apart) and
   consecutive turns comfortably fit; the 1-hour TTL would double the write
   premium for no benefit here.
-- Caches are per-model: changing `CHAT_MODEL` starts cold (first requests pay
-  the write premium again). The same applies after any deploy that changes
+- Caches are per-model: changing the chat tier's model (`lib/ai-models.mjs`)
+  starts cold (first requests pay the write premium again). On Sonnet 5.5 a
+  cache read is $0.20 and a 5-minute write $2.50 per MTok — the 0.1× / 1.25×
+  multipliers in `lib/ai-pricing.mjs` still hold. The same applies after any deploy that changes
   prompt/tool bytes.

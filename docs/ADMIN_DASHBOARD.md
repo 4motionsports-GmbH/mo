@@ -547,9 +547,12 @@ generation — so the long narrative never pushes the work area off screen.
 
 #### Model + cost + retention
 
-Both AI passes use **Claude Haiku 4.5** (`claude-haiku-4-5`, $1/$5 per MTok in/out
-— priced in [`lib/ai-pricing.mjs`](../src/lib/ai-pricing.mjs)), not the
-consultation model. Usage is recorded in `ai_usage` (`conversation_analysis`
+The per-conversation analysis uses **Claude Haiku 4.5** (`claude-haiku-4-5`,
+$1/$5 per MTok in/out); the insights rollup — one synthesis over up to hundreds of
+summaries — uses **Claude Sonnet 5.5** (`claude-sonnet-5-5`, $2/$10, adaptive
+thinking at `medium`). Both are priced in
+[`lib/ai-pricing.mjs`](../src/lib/ai-pricing.mjs); tiers in
+[`lib/ai-models.mjs`](../src/lib/ai-models.mjs) (see `docs/AI_MODELS.md`). Usage is recorded in `ai_usage` (`conversation_analysis`
 carries the conversation FK → cascade-deletes with it; `conversation_insights` is
 dashboard-side, no FK). The approximate EUR cost is shown per analysis, per rollup
 and per bulk run. The per-conversation analysis lives on the conversation row, so

@@ -131,7 +131,8 @@ connection in the admin). The step route runs with `maxDuration = 300` for
 headroom; a legacy `vorschlaege` phase value (pre-split runs) resumes as the
 shop pass. Orchestrator:
 [`lib/improvement-generate.ts`](../src/lib/improvement-generate.ts). All
-passes use **Sonnet** (`claude-sonnet-4-6`) and record into `ai_usage` under
+passes use **Sonnet** (`claude-sonnet-5-5`, analyst tier — adaptive thinking at
+`medium`, see `docs/AI_MODELS.md`) and record into `ai_usage` under
 the new call site `improvement`.
 
 **Structured output.** The suggestion passes use `generateObject` with a zod

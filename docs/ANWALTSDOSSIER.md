@@ -190,10 +190,10 @@ KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (S
 
 | Einsatz | Anbieter/Modell | Personenbezogene Daten im Prompt |
 |---|---|---|
-| Live-Chat | Anthropic `claude-sonnet-4-6` | Gesprächsverlauf verbatim; abgeleitetes Bedarfsprofil; bei berechtigtem „Wiedererkennen“ (s. u.): Profiltext, gekaufte Artikel (nur Titel/Menge), Vorname, Stadt/Land |
+| Live-Chat | Anthropic `claude-sonnet-5-5` | Gesprächsverlauf verbatim; abgeleitetes Bedarfsprofil; bei berechtigtem „Wiedererkennen“ (s. u.): Profiltext, gekaufte Artikel (nur Titel/Menge), Vorname, Stadt/Land |
 | Zusammenfassungs-Mail | dito | Transkript des Gesprächs |
-| Kundenprofil | Anthropic `claude-opus-4-8` | Alle verknüpften Transkripte, Kaufhistorie, Korrespondenz-Texte, Name, Stadt/Land |
-| Gesprächsanalyse/Insights/Q&A | Anthropic `claude-haiku-4-5` | Einzeltranskripte bzw. deren Zusammenfassungen — **ohne** E-Mail/Identität |
+| Kundenprofil | Anthropic `claude-opus-5-5` | Alle verknüpften Transkripte, Kaufhistorie, Korrespondenz-Texte, Name, Stadt/Land |
+| Gesprächsanalyse/Q&A | Anthropic `claude-haiku-4-5`; Insights-Rollup `claude-sonnet-5-5` | Einzeltranskripte bzw. deren Zusammenfassungen — **ohne** E-Mail/Identität |
 | Marketing-/Kampagnen-/Brief-Entwürfe | Anthropic Sonnet | Profil, Kaufhistorie, Name (Brief), Operator-Anweisungen |
 | Produktsuche | OpenAI `text-embedding-3-small` | **Jede Nutzernachricht** wird zur Suche eingebettet (keine Identifikatoren) |
 | Sprachausgabe | OpenAI `gpt-4o-mini-tts` | Mo-Antworttext |
