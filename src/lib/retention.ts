@@ -294,14 +294,21 @@ export async function runRetention(
   //     return their conversations/correspondence to pseudonymous rows and the
   //     ON DELETE CASCADE drops their OAuth tokens; the suppression_list (keyed by
   //     email, not customer_id) is untouched, so opt-outs are still honoured.
+  //     A customer whose linked Kampagne contact is still a live Shopify
+  //     subscriber (migration 0059) holds that consent too and is kept; once
+  //     the contact is suppressed the normal inactivity window applies.
   //     Disabled when the window is 0.
   let deletedInactiveCustomers = [{ n: 0 }] as Array<{ n: number }>;
   if (opts.customerInactivityRetentionDays > 0) {
     deletedInactiveCustomers = (await sql`
       WITH del AS (
-        DELETE FROM customers
-         WHERE last_seen_at < ${inactiveCustomerCutoff}
-           AND marketing_status NOT IN ('confirmed', 'pending')
+        DELETE FROM customers c
+         WHERE c.last_seen_at < ${inactiveCustomerCutoff}
+           AND c.marketing_status NOT IN ('confirmed', 'pending')
+           AND NOT EXISTS (
+                 SELECT 1 FROM campaign_contacts cc
+                  WHERE cc.customer_id = c.id AND cc.status <> 'suppressed'
+               )
         RETURNING 1
       )
       SELECT count(*)::int AS n FROM del

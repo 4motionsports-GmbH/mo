@@ -10,6 +10,10 @@
 //      queued, re-checked again at send time).
 //   3. A contact that vanished from Shopify's SUBSCRIBED set (unsubscribed on
 //      the shop side) is marked suppressed on re-sync — never deleted.
+//   4. A person whose data was ERASED (lib/customer-erasure.ts) is never
+//      stored again — not even as a suppressed row.
+//   5. After the upsert every live contact is linked to (or gets) its customer
+//      record, so the profile is one record per person (migration 0059).
 //
 // Idempotent (upsert on shopify_customer_id); triggered by the admin ("Sync"
 // button) and by the daily cron (/api/cron/sync-campaign-audience) to catch
@@ -23,6 +27,8 @@ import {
 } from "./campaign-sync-core.mjs";
 import {
   getContactStatusesByShopifyIds,
+  linkCampaignContactsToCustomers,
+  listErasedEmails,
   listSuppressedEmails,
   suppressContactsMissingFromSync,
   upsertCampaignContacts,
@@ -46,6 +52,9 @@ export type CampaignSyncResult =
       suppressed: number;
       /** Non-suppressed audience by opt-in level. */
       byOptInLevel: Record<string, number>;
+      /** Customer records created / contacts linked to one (migration 0059). */
+      customersCreated: number;
+      customersLinked: number;
     };
 
 /**
@@ -71,10 +80,13 @@ export async function syncCampaignAudience(): Promise<CampaignSyncResult> {
     };
   }
 
-  // Map + drop everyone who must never be stored (not SUBSCRIBED / no email).
-  const mapped = nodes
+  // Map + drop everyone who must never be stored (not SUBSCRIBED / no email /
+  // erased on request).
+  const subscribed = nodes
     .map((n) => mapCustomerToContact(n))
     .filter((c): c is NonNullable<typeof c> => c !== null);
+  const erased = await listErasedEmails(subscribed.map((c) => c.email));
+  const mapped = subscribed.filter((c) => !erased.has(c.email));
 
   const [suppressedSet, existingStatuses] = await Promise.all([
     listSuppressedEmails(mapped.map((c) => c.email)),
@@ -115,5 +127,18 @@ export async function syncCampaignAudience(): Promise<CampaignSyncResult> {
     mapped.map((c) => c.shopifyCustomerId)
   );
 
-  return { ok: true, total: mapped.length, created, updated, suppressed, byOptInLevel };
+  // One customer record per person — the profile, the chat memory and the
+  // Kampagne drafts all read it.
+  const link = await linkCampaignContactsToCustomers();
+
+  return {
+    ok: true,
+    total: mapped.length,
+    created,
+    updated,
+    suppressed,
+    byOptInLevel,
+    customersCreated: link.created,
+    customersLinked: link.linked,
+  };
 }
