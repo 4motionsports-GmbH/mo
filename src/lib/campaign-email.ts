@@ -23,7 +23,7 @@
 //   5. RECORD — the immutable campaign_sends row (body hash, code, gid, expiry)
 //      is written so redemption/KPI reads can include MK- codes.
 
-import { isSuppressed, buildUnsubscribeToken } from "./email-capture-store";
+import { isSuppressed, buildUnsubscribeToken, buildErasureUrl } from "./email-capture-store";
 import {
   claimContactForSend,
   getContactById,
@@ -323,7 +323,11 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         discountExpiresAt,
         discountPercent: draft.discountPercent,
         discountScope: draft.discountScope,
-        unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
+        unsubscribe: unsubscribeFooter(
+          unsubscribeUrl,
+          contact.language,
+          buildErasureUrl(contact.email, contact.language)
+        ),
         // SPECIAL-OFFER block — ADDITIVE, exactly like the marketing path:
         // when a created, still-active bundle is attached to this contact,
         // its offer block rides below the prose. Touches NONE of the send
@@ -618,7 +622,11 @@ export async function renderCampaignEmailPreview(
     discountExpiresAt: draft.discountPercent > 0 ? draft.discountExpiresAt : null,
     discountPercent: draft.discountPercent,
     discountScope: draft.discountScope,
-    unsubscribe: unsubscribeFooter(unsubscribeUrl, contact.language),
+    unsubscribe: unsubscribeFooter(
+          unsubscribeUrl,
+          contact.language,
+          buildErasureUrl(contact.email, contact.language)
+        ),
     bundle: await buildBundleBlockForContact(contactId, contact.language, draft.productHighlights),
     labelForUrl: await catalogNameLookup("lib/campaign-email"),
   }))

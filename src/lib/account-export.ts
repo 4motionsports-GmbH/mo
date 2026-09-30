@@ -28,6 +28,9 @@ export interface CustomerDataExport {
   marketingSends: Array<Record<string, unknown>>;
   bundleOffers: Array<Record<string, unknown>>;
   feedback: Array<Record<string, unknown>>;
+  /** The Kampagne relationship: the synced newsletter contact and the
+   *  campaign mails sent to it (migration 0059 links them to the customer). */
+  campaign: { contacts: Array<Record<string, unknown>>; sends: Array<Record<string, unknown>> };
   suppression: { marketing: Array<Record<string, unknown>> };
 }
 
@@ -112,6 +115,21 @@ export async function buildCustomerDataExport(
        ORDER BY created_at DESC LIMIT ${MAX_ROWS}
     `) as Array<Record<string, unknown>>;
 
+    const campaignContacts = (await sql`
+      SELECT email, first_name, last_name, language, opt_in_level, orders_count,
+             total_spent_cents, last_order_at, status, sent_at, created_at
+        FROM campaign_contacts
+       WHERE customer_id = ${customerId} OR email = ${email}
+       LIMIT ${MAX_ROWS}
+    `) as Array<Record<string, unknown>>;
+    const campaignSends = (await sql`
+      SELECT s.subject, s.body_text, s.discount_code, s.sent_at
+        FROM campaign_sends s
+       WHERE s.email = ${email}
+          OR s.contact_id IN (SELECT id FROM campaign_contacts WHERE customer_id = ${customerId})
+       ORDER BY s.sent_at DESC LIMIT ${MAX_ROWS}
+    `) as Array<Record<string, unknown>>;
+
     const suppMarketing = (await sql`
       SELECT email, reason, added_at FROM suppression_list WHERE email = ${email}
     `) as Array<Record<string, unknown>>;
@@ -128,6 +146,7 @@ export async function buildCustomerDataExport(
       marketingSends,
       bundleOffers,
       feedback,
+      campaign: { contacts: campaignContacts, sends: campaignSends },
       suppression: { marketing: suppMarketing },
     };
   } catch (err) {

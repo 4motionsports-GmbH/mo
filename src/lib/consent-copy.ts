@@ -361,7 +361,33 @@ export function doiPageCopy(locale: Locale = "de"): {
  */
 export function unsubscribeFooter(
   unsubscribeUrl: string,
-  locale: Locale = "de"
+  locale: Locale = "de",
+  /** The signed "delete all my data" link (/api/erase-data). Appended as its
+   *  own sentence AFTER the approved unsubscribe sentence; omitted when null. */
+  erasureUrl: string | null = null
+): { text: string; html: string } {
+  const base = unsubscribeFooterBase(unsubscribeUrl, locale);
+  if (!erasureUrl) return base;
+  const en = locale === "en";
+  const text =
+    `${base.text}\n` +
+    (en
+      ? `You can also have all your data deleted from our systems at any time: ${erasureUrl}`
+      : `Du kannst außerdem jederzeit alle deine Daten bei uns löschen lassen: ${erasureUrl}`);
+  const html =
+    `${base.html}\n<p style="${emailMutedTextStyle()} padding-bottom: 10px;" align="center">` +
+    (en
+      ? `You can also have all your data deleted from our systems at any time: `
+      : `Du kannst au&#223;erdem jederzeit alle deine Daten bei uns l&#246;schen lassen: `) +
+    `<a href="${escapeAttr(erasureUrl)}" style="color: #000000; text-decoration: underline !important; word-wrap: break-word;">` +
+    (en ? "Delete my data" : "Daten l&#246;schen") +
+    `</a>.</p>`;
+  return { text, html };
+}
+
+function unsubscribeFooterBase(
+  unsubscribeUrl: string,
+  locale: Locale
 ): { text: string; html: string } {
   if (locale === "en") {
     const text =
@@ -388,6 +414,47 @@ export function unsubscribeFooter(
   dich hier jederzeit kostenlos abmelden:
   <a href="${escapeAttr(unsubscribeUrl)}" style="color: #000000; text-decoration: underline !important; word-wrap: break-word;">Abmelden</a>.</p>`;
   return { text, html };
+}
+
+/** Copy for the "Daten löschen" page (/api/erase-data): the confirmation
+ *  step (a button — mail scanners open links, so the GET never deletes), the
+ *  result and the invalid-link state. */
+export function erasurePageCopy(locale: Locale = "de"): {
+  confirmHeading: string;
+  confirmBody: string;
+  confirmButton: string;
+  doneHeading: string;
+  doneBody: string;
+  invalidHeading: string;
+  invalidBody: string;
+  failedBody: string;
+} {
+  if (locale === "en") {
+    return {
+      confirmHeading: "Delete all your data?",
+      confirmBody:
+        "This deletes everything motion sports holds about you: your chats with Mo, your customer profile, our emails and letters to you and your newsletter subscription. It cannot be undone. Your orders in the shop are not affected.",
+      confirmButton: "Delete my data permanently",
+      doneHeading: "Your data has been deleted",
+      doneBody:
+        "We have deleted all data we held about you and will not contact you again.",
+      invalidHeading: "This link is not valid",
+      invalidBody: "The link is incomplete or has been changed. Please use the link from the email.",
+      failedBody: "Nothing has been deleted — please try again in a moment.",
+    };
+  }
+  return {
+    confirmHeading: "Alle deine Daten löschen?",
+    confirmBody:
+      "Damit löschen wir alles, was motion sports über dich gespeichert hat: deine Gespräche mit Mo, dein Kundenprofil, unsere E-Mails und Briefe an dich und dein Newsletter-Abo. Das lässt sich nicht rückgängig machen. Deine Bestellungen im Shop sind davon nicht betroffen.",
+    confirmButton: "Meine Daten endgültig löschen",
+    doneHeading: "Deine Daten wurden gelöscht",
+    doneBody:
+      "Wir haben alle Daten gelöscht, die wir über dich gespeichert hatten, und melden uns nicht mehr bei dir.",
+    invalidHeading: "Dieser Link ist ungültig",
+    invalidBody: "Der Link ist unvollständig oder wurde verändert. Bitte nutze den Link aus der E-Mail.",
+    failedBody: "Es wurde nichts gelöscht — bitte versuch es gleich noch einmal.",
+  };
 }
 
 /** Heading + body for the unsubscribe confirmation page (success + invalid). */

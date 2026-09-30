@@ -20,6 +20,7 @@ import { isValidEmail } from "./capture-validation.mjs";
 import { normalizeLocale } from "./locale.mjs";
 import type { Locale } from "./locale";
 import { parseIntEnv } from "./env-num";
+import { getBaseUrl } from "./base-url";
 
 export type MarketingDoiStatus = "none" | "pending" | "confirmed";
 
@@ -331,23 +332,21 @@ function base64url(buf: Buffer): string {
 }
 
 /**
- * Build a signed unsubscribe token for an address: `b64url(email).b64url(hmac)`.
- * Stateless — verifiable without a DB lookup. Returns null when no signing
- * secret is configured.
+ * Sign an address for a purpose: `b64url(email).b64url(hmac)`. The unsubscribe
+ * token signs the bare email (unchanged, so every link already sent keeps
+ * working); other purposes sign `purpose:email`, so a token for one action
+ * never verifies for another. Stateless; null without a signing secret.
  */
-export function buildUnsubscribeToken(email: string): string | null {
+function signEmailToken(email: string, purpose: "" | "erase"): string | null {
   const secret = unsubscribeSecret();
   if (!secret) return null;
   const e = normalizeEmail(email);
-  const sig = createHmac("sha256", secret).update(e).digest();
+  const payload = purpose ? `${purpose}:${e}` : e;
+  const sig = createHmac("sha256", secret).update(payload).digest();
   return `${base64url(Buffer.from(e, "utf8"))}.${base64url(sig)}`;
 }
 
-/**
- * Verify an unsubscribe token and return the normalised email it signs, or null
- * if the token is malformed / the signature doesn't match.
- */
-export function verifyUnsubscribeToken(token: string): string | null {
+function verifyEmailToken(token: string, purpose: "" | "erase"): string | null {
   const secret = unsubscribeSecret();
   if (!secret) return null;
   const parts = token.split(".");
@@ -359,7 +358,8 @@ export function verifyUnsubscribeToken(token: string): string | null {
     return null;
   }
   if (!email) return null;
-  const expected = createHmac("sha256", secret).update(email).digest();
+  const payload = purpose ? `${purpose}:${email}` : email;
+  const expected = createHmac("sha256", secret).update(payload).digest();
   let provided: Buffer;
   try {
     provided = Buffer.from(parts[1].replace(/-/g, "+").replace(/_/g, "/"), "base64");
@@ -368,6 +368,45 @@ export function verifyUnsubscribeToken(token: string): string | null {
   }
   if (provided.length !== expected.length) return null;
   return timingSafeEqual(provided, expected) ? email : null;
+}
+
+/**
+ * Build a signed unsubscribe token for an address: `b64url(email).b64url(hmac)`.
+ * Stateless — verifiable without a DB lookup. Returns null when no signing
+ * secret is configured.
+ */
+export function buildUnsubscribeToken(email: string): string | null {
+  return signEmailToken(email, "");
+}
+
+/**
+ * Verify an unsubscribe token and return the normalised email it signs, or null
+ * if the token is malformed / the signature doesn't match.
+ */
+export function verifyUnsubscribeToken(token: string): string | null {
+  return verifyEmailToken(token, "");
+}
+
+/** The signed token behind a mail's "Daten löschen" link (/api/erase-data).
+ *  Purpose-bound: an unsubscribe token never verifies as an erasure token. */
+export function buildErasureToken(email: string): string | null {
+  return signEmailToken(email, "erase");
+}
+
+/** The email an erasure token signs, or null when it is invalid. */
+export function verifyErasureToken(token: string): string | null {
+  return verifyEmailToken(token, "erase");
+}
+
+/** The "Daten löschen" URL for a mail footer, or null without a signing
+ *  secret (the footer then simply omits the sentence). */
+export function buildErasureUrl(email: string, locale: Locale = "de"): string | null {
+  const token = buildErasureToken(email);
+  if (!token) return null;
+  return (
+    `${getBaseUrl()}/api/erase-data?token=${encodeURIComponent(token)}` +
+    (locale === "en" ? "&locale=en" : "")
+  );
 }
 
 /**

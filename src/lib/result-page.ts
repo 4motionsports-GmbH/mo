@@ -15,6 +15,12 @@ export interface ResultPageOptions {
   tone: "success" | "error";
   /** Language of the page chrome (<html lang>). Default German. */
   locale?: Locale;
+  /**
+   * An optional confirmation button: a POST form to the same URL carrying the
+   * given hidden fields. Used where the link itself must not act (mail
+   * scanners open links), e.g. the "Daten löschen" confirmation.
+   */
+  action?: { label: string; fields: Record<string, string> };
 }
 
 export function renderResultPage(opts: ResultPageOptions): Response {
@@ -38,13 +44,23 @@ export function renderResultPage(opts: ResultPageOptions): Response {
   h1 { font-size:20px; margin:0 0 12px; }
   p { font-size:15px; line-height:1.6; color:#444; margin:0; }
   .brand { margin-top:28px; font-size:13px; color:#999; }
+  form { margin-top:24px; }
+  button { font:inherit; font-size:15px; font-weight:600; color:#fff; background:${accent};
+           border:0; border-radius:10px; padding:12px 20px; cursor:pointer; }
 </style>
 </head>
 <body>
   <main class="card">
     <div class="badge">${opts.tone === "success" ? "✓" : "!"}</div>
     <h1>${escapeHtml(opts.heading)}</h1>
-    <p>${escapeHtml(opts.body)}</p>
+    <p>${escapeHtml(opts.body)}</p>${
+      opts.action
+        ? `
+    <form method="post">${Object.entries(opts.action.fields)
+      .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`)
+      .join("")}<button type="submit">${escapeHtml(opts.action.label)}</button></form>`
+        : ""
+    }
     <div class="brand">motion sports</div>
   </main>
 </body>

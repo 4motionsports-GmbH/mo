@@ -17,7 +17,7 @@
 // The admin NEVER copies text into a personal mail client — sending always runs
 // here. approveAndSend() claims the row, sends, and marks it sent (or reverts).
 
-import { canSendMarketing, buildUnsubscribeToken } from "./email-capture-store";
+import { canSendMarketing, buildUnsubscribeToken, buildErasureUrl } from "./email-capture-store";
 import {
   getSendById,
   loadEligibleCapture,
@@ -313,7 +313,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
           ? formatGermanExpiryDate(discountExpiresAt)
           : null,
         discountExpiresAt,
-        unsubscribe: unsubscribeFooter(unsubscribeUrl),
+        unsubscribe: unsubscribeFooter(unsubscribeUrl, "de", buildErasureUrl(email)),
         // SPECIAL-OFFER block — ADDITIVE. When a created, still-active bundle
         // is attached to this send, its offer block rides in the body. This
         // touches NONE of the send safeguards above (eligibility, unsubscribe,
@@ -508,7 +508,11 @@ export async function renderMarketingEmailPreview(
         ? formatGermanExpiryDate(send.discountExpiresAt)
         : null,
     discountExpiresAt: send.discountPercent > 0 ? send.discountExpiresAt : null,
-    unsubscribe: unsubscribeFooter(unsubscribeUrl),
+    unsubscribe: unsubscribeFooter(
+      unsubscribeUrl,
+      "de",
+      capture ? buildErasureUrl(capture.email) : null
+    ),
     bundle: await buildBundleBlockForSend(sendId, send.productHighlights),
     labelForUrl: await catalogNameLookup("lib/marketing-email"),
   })));

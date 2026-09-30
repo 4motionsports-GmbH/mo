@@ -86,3 +86,13 @@ test("public URL points at the serving route and round-trips", () => {
   const file = url.slice(url.lastIndexOf("/") + 1);
   assert.equal(parseHeroBlobFile(file), "campaign-1-2.png");
 });
+
+test("heroBlobPathnameFromUrl inverts the public URL and rejects everything else", async () => {
+  const { heroBlobPathnameFromUrl, heroImagePublicUrl } = await import("./email-hero-blob.mjs");
+  const url = heroImagePublicUrl("https://mo.example", "marketing-12-abc.jpg");
+  assert.equal(heroBlobPathnameFromUrl(url), "email-heroes/marketing-12-abc.jpg");
+  assert.equal(heroBlobPathnameFromUrl(url + "?v=2"), "email-heroes/marketing-12-abc.jpg");
+  assert.equal(heroBlobPathnameFromUrl("https://mo.example/email-hero-default.jpg"), null);
+  assert.equal(heroBlobPathnameFromUrl("https://mo.example/api/email-hero-image/..%2Fcatalog.json"), null);
+  assert.equal(heroBlobPathnameFromUrl(null), null);
+});

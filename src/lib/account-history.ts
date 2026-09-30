@@ -23,6 +23,7 @@
 //     summaries, revokes the OAuth tokens, and suppresses the email — a true
 //     GDPR erasure, stronger than the single-chat delete.
 
+import { erasePerson } from "./customer-erasure";
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import type { TranscriptMessage, ConversationSummaryData } from "./conversation-store";
@@ -322,22 +323,13 @@ export interface EraseCustomerResult {
 }
 
 /**
- * The DISTINCT full "delete my data" path for a signed-in customer — a true
- * GDPR erasure, separate from the single-chat delete. In one transaction:
- *   1. PURGE every linked conversation (transcripts + messages + chat ai_usage
- *      cascade) — not merely unlink them. The customer's own transcripts are
- *      gone, the strongest reading of "erase my data".
- *   2. Suppress + purge the consent record: add the (real) email to
- *      suppression_list (reason 'erasure', so a future re-identification can't
- *      silently re-attach) and delete its email_captures (marketing_sends
- *      cascade) — exactly the documented manual erasure-of-an-email procedure.
- *   3. DELETE the customers row. This CLEARS the profile + all cached summaries
- *      (they live on the row), REVOKES the OAuth tokens (customer_oauth_tokens
- *      ON DELETE CASCADE), and de-identifies any remaining FK references
- *      (bundle_offers ON DELETE SET NULL — kept for accounting, no PII).
- *
- * The synthetic `shopify:<id>` placeholder email (a tier-3 row created with no
- * verified Shopify email) is NOT a real address, so step 2 is skipped for it.
+ * The widget's "Meine Daten löschen" for a signed-in customer — a true GDPR
+ * erasure, separate from the single-chat delete. Delegates to THE erasure
+ * path (lib/customer-erasure.ts), so the widget button, the mail-footer link
+ * and the operator's "Kunde vollständig löschen" remove exactly the same
+ * data: every chat on every device, consent records, marketing and Kampagne
+ * mails, the Kampagne contact, correspondence, letters, feedback, sign-in
+ * tokens and stored images; the address stays suppressed (reason 'erasure').
  *
  * Returns null only when no DB is configured or the transaction hard-failed
  * (the caller surfaces that as a 503/500). On success the customer no longer
@@ -347,69 +339,6 @@ export async function eraseSignedInCustomer(
   customerId: number,
   sql: Sql | null = getSql()
 ): Promise<EraseCustomerResult | null> {
-  if (!sql) return null;
-  try {
-    // The email decides whether there's a consent record to suppress + purge.
-    const custRows = (await sql`
-      SELECT email FROM customers WHERE id = ${customerId}
-    `) as Array<Record<string, unknown>>;
-    if (custRows.length === 0) {
-      // Already gone — idempotent success with nothing to purge.
-      return { deletedConversations: 0 };
-    }
-    const email = (custRows[0].email as string | null) ?? "";
-    const realEmail = email.includes("@") && !email.startsWith("shopify:") ? email : null;
-
-    // All steps run in ONE transaction so an erasure is all-or-nothing:
-    //   0) SEVER the order-attribution rows (migration 0042) for this
-    //      customer's sessions: mo_orders keeps only de-identified aggregate
-    //      order facts (session_id + token NULLed), the attribution tokens are
-    //      deleted. MUST run before step 1, which removes the conversations
-    //      rows the session ids are read from;
-    //   1) PURGE the transcripts (messages + chat ai_usage cascade);
-    //   2) suppress + purge the consent record (marketing_sends cascade) for a
-    //      real email — skipped for the synthetic shopify:<id> placeholder;
-    //   3) DELETE the customer row — clears profile + cached summaries, cascades
-    //      (revokes) the OAuth tokens, SET NULLs the de-identifiable FK refs.
-    const queries = [
-      sql`
-        UPDATE mo_orders
-           SET session_id = NULL, attribution_token = NULL, updated_at = now()
-         WHERE session_id IN (
-                 SELECT session_id FROM conversations WHERE customer_id = ${customerId}
-               )
-      `,
-      sql`
-        DELETE FROM mo_attribution_tokens
-         WHERE session_id IN (
-                 SELECT session_id FROM conversations WHERE customer_id = ${customerId}
-               )
-      `,
-      sql`
-        WITH del AS (
-          DELETE FROM conversations WHERE customer_id = ${customerId} RETURNING 1
-        )
-        SELECT count(*)::int AS n FROM del
-      `,
-    ];
-    if (realEmail) {
-      queries.push(sql`
-        INSERT INTO suppression_list (email, reason)
-        VALUES (${realEmail}, 'erasure')
-        ON CONFLICT (email) DO NOTHING
-      `);
-      queries.push(sql`DELETE FROM email_captures WHERE email = ${realEmail}`);
-    }
-    queries.push(sql`DELETE FROM customers WHERE id = ${customerId}`);
-
-    const results = (await sql.transaction(queries)) as Array<Array<Record<string, unknown>>>;
-    // Index 2 = the conversations delete (after the two attribution severs).
-    const deletedConversations =
-      results[2]?.[0]?.n != null ? Number(results[2][0].n) : 0;
-
-    return { deletedConversations };
-  } catch (err) {
-    reportError(err, { route: "lib/account-history", phase: "eraseSignedInCustomer" });
-    return null;
-  }
+  const result = await erasePerson({ customerId }, sql);
+  return result ? { deletedConversations: result.deletedConversations } : null;
 }

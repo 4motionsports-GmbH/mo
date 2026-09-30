@@ -99,3 +99,20 @@ export function heroBlobFileFromPathname(pathname) {
 export function heroImagePublicUrl(baseUrl, file) {
   return `${baseUrl}/api/email-hero-image/${encodeURIComponent(file)}`;
 }
+
+/**
+ * The blob pathname behind a stored hero URL (the inverse of
+ * heroImagePublicUrl) — what erasure hands to Blob `del`. Null for anything
+ * that is not one of our hero URLs (the default image, a foreign URL, junk),
+ * so erasure can never delete an unrelated blob.
+ * @param {unknown} url
+ * @returns {string | null}
+ */
+export function heroBlobPathnameFromUrl(url) {
+  if (typeof url !== "string" || !url) return null;
+  const marker = "/api/email-hero-image/";
+  const idx = url.indexOf(marker);
+  if (idx < 0) return null;
+  const file = parseHeroBlobFile(url.slice(idx + marker.length).split(/[?#]/)[0]);
+  return file ? heroBlobPathname(file) : null;
+}

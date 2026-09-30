@@ -28,6 +28,7 @@ import type { Product } from "./types";
 // Inert links: the unsubscribe/confirm pages show their "invalid link" screens
 // if clicked — nothing can be (un)subscribed from a preview.
 const FAKE_UNSUBSCRIBE_URL = "https://motionsports.de/api/unsubscribe?token=PREVIEW";
+const FAKE_ERASURE_URL = "https://motionsports.de/api/erase-data?token=PREVIEW";
 const FAKE_CONFIRM_URL = "https://motionsports.de/api/confirm-marketing?token=PREVIEW";
 const SHOP_URL = "https://motionsports.de";
 
@@ -93,7 +94,7 @@ function renderSampleForKind(kind: EmailDesignKind, products: Product[]): string
         discountCode: "MS5-BEISPIEL",
         discountExpiresLabel: "31.12.2026",
         discountExpiresAt: new Date(Date.now() + (3 * 24 + 14) * 3_600_000).toISOString(),
-        unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
+        unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL, "de", FAKE_ERASURE_URL),
         bundle,
       });
       return html;
@@ -112,7 +113,7 @@ function renderSampleForKind(kind: EmailDesignKind, products: Product[]): string
         discountExpiresLabel: "31.12.2026",
         discountExpiresAt: new Date(Date.now() + (3 * 24 + 14) * 3_600_000).toISOString(),
         discountPercent: 5,
-        unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
+        unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL, "de", FAKE_ERASURE_URL),
         bundle: null,
       });
       return html;
