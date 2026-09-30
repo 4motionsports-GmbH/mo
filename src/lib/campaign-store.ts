@@ -26,6 +26,7 @@ import { fetchCodeRedemption } from "./shopify-orders";
 import { isShopifyConfigured } from "./shopify";
 import { KPI_CAMPAIGN_EMAIL_CLICKED } from "./kpi-events";
 import type { KpiRange } from "./kpi-range";
+import { stripMarkdown } from "./tts-text.mjs";
 
 export type CampaignContactStatus =
   | "pending"
@@ -663,7 +664,9 @@ export interface CampaignQueueProfile {
 }
 
 function mapQueueProfile(r: Record<string, unknown>): CampaignQueueProfile | null {
-  const excerpt = typeof r.p_excerpt === "string" && r.p_excerpt.trim() ? r.p_excerpt.trim() : null;
+  // The profile is Markdown; the card shows a plain-text excerpt.
+  const plain = typeof r.p_excerpt === "string" ? stripMarkdown(r.p_excerpt).trim() : "";
+  const excerpt = plain || null;
   const persona = typeof r.p_persona === "string" && r.p_persona ? r.p_persona : null;
   if (!excerpt && !persona) return null;
   return { personaLabel: persona, excerpt, updatedAt: toIso(r.p_updated_at) };

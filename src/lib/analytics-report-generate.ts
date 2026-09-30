@@ -49,8 +49,7 @@ import {
 import { generateConversationAnalysis, ANALYSIS_MODEL } from "./conversation-analysis";
 import { generateConversationInsights } from "./conversation-insights";
 import { regenerateCustomerProfile } from "./customer-profile";
-import { getCustomerById, loadCustomerSessions } from "./customer-store";
-import { loadCustomerCorrespondence } from "./email-messages-store";
+import { getCustomerById } from "./customer-store";
 import { CATEGORY_LABELS } from "./conversation-analysis-core.mjs";
 import {
   mergeUsage,

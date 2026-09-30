@@ -46,7 +46,15 @@ import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { EmailTextModeToggle, type EmailTextModeValue } from "../EmailTextModeToggle";
 import { CustomerDetail } from "./CustomerDetail";
 import { UnmatchedInboundQueue } from "./UnmatchedInboundQueue";
-import { MarketingStatusBadge, PurchaseBadge, SendBadge, TierBadge } from "./badges";
+import {
+  MarketingStatusBadge,
+  PersonaBadge,
+  PurchaseBadge,
+  SendBadge,
+  SourceBadge,
+  TierBadge,
+} from "./badges";
+import { ARCHETYPE_META } from "@/lib/persona";
 import { useCustomerDetail } from "./useCustomerDetail";
 
 // Cap concurrent bulk-draft calls so a big selection can't open dozens of model
@@ -73,6 +81,12 @@ function syncCustomerParam(id: number | null) {
 }
 
 const SELECT_CLASS = "h-8 w-auto min-w-[9rem] py-0 pr-8 text-xs";
+
+/** Persona filter options — every archetype, "unknown" as "Ohne Persona". */
+const PERSONA_OPTIONS = Object.values(ARCHETYPE_META).map((m) => ({
+  id: m.id,
+  label: m.id === "unknown" ? "Ohne Persona" : m.label,
+}));
 
 export function KundenWorkspace({
   customers,
@@ -305,6 +319,34 @@ export function KundenWorkspace({
             <option value="none">Kein Entwurf</option>
           </Select>
         </FilterGroup>
+        <FilterGroup label="Herkunft" htmlFor="ms-filter-source">
+          <Select
+            id="ms-filter-source"
+            value={filter.source}
+            onChange={(e) => set("source", e.target.value as CustomerFilterState["source"])}
+            className={SELECT_CLASS}
+          >
+            <option value="all">Alle</option>
+            <option value="chat">Chat</option>
+            <option value="kampagne">Newsletter</option>
+            <option value="shopify_account">Shopify-Konto</option>
+          </Select>
+        </FilterGroup>
+        <FilterGroup label="Persona" htmlFor="ms-filter-persona">
+          <Select
+            id="ms-filter-persona"
+            value={filter.persona}
+            onChange={(e) => set("persona", e.target.value)}
+            className={SELECT_CLASS}
+          >
+            <option value="all">Alle</option>
+            {PERSONA_OPTIONS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </Select>
+        </FilterGroup>
         <FilterGroup label="Sortierung" htmlFor="ms-filter-sort">
           <Select
             id="ms-filter-sort"
@@ -406,6 +448,14 @@ export function KundenWorkspace({
               key={detail.id}
               customer={detail}
               onRefresh={refresh}
+              onErased={() => {
+                setSelectedId(null);
+                // One navigation drops ?customer= and re-renders the list —
+                // replaceState + refresh() would restore the stale param.
+                const url = new URL(window.location.href);
+                url.searchParams.delete("customer");
+                router.replace(url.pathname + url.search, { scroll: false });
+              }}
               reloading={loading}
             />
           ) : (
@@ -546,6 +596,8 @@ function CustomerRow({
           )}
           <div className="mt-1 flex flex-wrap items-center gap-1">
             <TierBadge tier={customer.identityTier} />
+            <SourceBadge source={customer.source} />
+            <PersonaBadge persona={customer.personaLabel} />
             <MarketingStatusBadge status={customer.marketingStatus} />
             <PurchaseBadge state={customer.purchaseState} marketingStatus={customer.marketingStatus} />
             <SendBadge state={sendState(customer)} />

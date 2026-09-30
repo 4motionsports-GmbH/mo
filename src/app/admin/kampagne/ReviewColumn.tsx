@@ -4,12 +4,14 @@
 // Prüfpunkte (the precomputed verdict with one fix action per check),
 // Empfehlungen (thumbnails, prices, remove, „+ Produkt“), Angebot (Rabatt
 // depth + Set line), Text (Sprache, Modus — the two settings that
-// regenerate), Hero (only when the campaign design has a hero), Kaufhistorie
-// (collapsed, with the recommendation basis) and Kontakt (facts + Verlauf).
+// regenerate), Hero (only when the campaign design has a hero), Kundenprofil
+// (persona + excerpt of the central profile), Kaufhistorie (collapsed, with
+// the recommendation basis) and Kontakt (facts + Verlauf + Löschen).
 // Explanations sit in InfoTips; every mutation goes through the desk hook.
 
 import * as React from "react";
-import { AlertTriangle, CircleCheck, ExternalLink, History, Info, Plus, X } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, CircleCheck, ExternalLink, History, Info, Plus, Trash2, X } from "lucide-react";
 import { ADMIN_DATE, ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { eur, eurFromCents, money, num, plural } from "@/lib/admin-format.mjs";
 import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
@@ -19,6 +21,7 @@ import { abGroupOf } from "@/lib/campaign-review-checks.mjs";
 import { purchaseHistoryCoverage } from "@/lib/campaign-desk-core.mjs";
 import {
   Button,
+  buttonVariants,
   CatalogProductPicker,
   DescriptionItem,
   DescriptionList,
@@ -32,7 +35,9 @@ import {
   Tooltip,
   cn,
   toast,
+  useConfirm,
 } from "../ui";
+import { PersonaBadge } from "../kunden/badges";
 import { EmailTextModeToggle } from "../EmailTextModeToggle";
 import { LanguageToggle, OptInBadge, SegmentBadge } from "./badges";
 import { HeroBlock } from "./sections/HeroBlock";
@@ -118,6 +123,17 @@ export function ReviewColumn({
   const [purchaseOpen, setPurchaseOpen] = React.useState(item.purchaseSelectedIds !== null);
   const purchaseCoverage = purchaseHistoryCoverage(item.purchaseSummary, item.ordersCount);
   const heroRef = React.useRef<{ generate: () => void } | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
+  const onErase = async () => {
+    const ok = await confirm({
+      title: "Kontakt vollständig löschen?",
+      description:
+        "Löscht alles über diese Person: Newsletter-Kontakt, Entwurf, gesendete Kampagnen-Mails, Kundenprofil, Gespräche und Korrespondenz. Die Adresse wird gesperrt und nie wieder aus Shopify importiert. Das lässt sich nicht rückgängig machen.",
+      confirmLabel: "Endgültig löschen",
+      tone: "destructive",
+    });
+    if (ok) void actions.erase(id);
+  };
 
   // A new card resets the transient editors.
   React.useEffect(() => {
@@ -500,6 +516,36 @@ export function ReviewColumn({
         </section>
       )}
 
+      {/* Kundenprofil */}
+      <section className="px-3 py-2.5">
+        <BlockHeader
+          title="Kundenprofil"
+          info="Das zentrale Kundenprofil aus Käufen, Gesprächen, Korrespondenz und Newsletter. Es steuert Text und Produktauswahl dieses Entwurfs und wird jede Nacht aktualisiert."
+          actions={
+            item.customerId != null ? (
+              <Link
+                href={`/admin?tab=kunden&customer=${item.customerId}`}
+                className={`${buttonVariants({ variant: "ghost", size: "xs" })} -my-1 h-6 px-1.5`}
+              >
+                <ExternalLink /> Öffnen
+              </Link>
+            ) : undefined
+          }
+        />
+        {item.profile ? (
+          <div className="flex flex-col gap-1.5">
+            <PersonaBadge persona={item.profile.personaLabel} />
+            {item.profile.excerpt && (
+              <p className="line-clamp-4 whitespace-pre-line text-xs text-muted-foreground">
+                {item.profile.excerpt}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">Noch kein Profil — wird in der nächsten Nacht erstellt.</p>
+        )}
+      </section>
+
       {/* Kaufhistorie */}
       <section className="px-3 py-1">
         <Disclosure
@@ -535,9 +581,22 @@ export function ReviewColumn({
         <BlockHeader
           title="Kontakt"
           actions={
-            <Button variant="ghost" size="xs" className="-my-1 h-6 px-1.5" onClick={onHistory}>
-              <History /> Verlauf
-            </Button>
+            <>
+              <Button variant="ghost" size="xs" className="-my-1 h-6 px-1.5" onClick={onHistory}>
+                <History /> Verlauf
+              </Button>
+              {!item.isTest && (
+                <IconButton
+                  label="Kontakt und alle Daten dieser Person löschen (DSGVO)"
+                  size="icon-sm"
+                  className="-my-1 shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => void onErase()}
+                  disabled={locked}
+                >
+                  <Trash2 />
+                </IconButton>
+              )}
+            </>
           }
         />
         <DescriptionList columns={1} className="gap-y-2">
@@ -607,6 +666,7 @@ export function ReviewColumn({
           onArchive={() => void actions.archiveBundle(id)}
         />
       </Sheet>
+      {confirmDialog}
     </div>
   );
 }

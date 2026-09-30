@@ -4,7 +4,9 @@
 // the detail header and filters never drift apart.
 
 import { Check, Star } from "lucide-react";
-import type { CustomerMarketingStatus, CustomerPurchaseState } from "@/lib/customer-store";
+import type { CustomerMarketingStatus, CustomerPurchaseState, CustomerSource } from "@/lib/customer-store";
+import { ARCHETYPE_META } from "@/lib/persona";
+import type { PersonaArchetype } from "@/lib/types";
 import { StatusBadge, Tooltip, type StatusTone } from "../ui";
 
 export const TIER_INFO: Record<1 | 2 | 3, string> = {
@@ -86,4 +88,36 @@ export function SendBadge({ state }: { state: "draft" | "sent" | "none" }) {
   if (state === "draft") return <StatusBadge tone="info">Entwurf</StatusBadge>;
   if (state === "sent") return <StatusBadge tone="success">Gesendet</StatusBadge>;
   return null;
+}
+
+export const SOURCE_META: Record<CustomerSource, { label: string; info: string }> = {
+  chat: { label: "Chat", info: "Hat im Chat mit Mo die E-Mail hinterlassen." },
+  shopify_account: { label: "Shopify-Konto", info: "Über die Anmeldung mit dem Shopify-Kundenkonto bekannt." },
+  kampagne: { label: "Newsletter", info: "Newsletter-Abonnent aus Shopify (Kampagne) — noch nicht mit Mo gesprochen." },
+};
+
+/** Where the customer came from — shown for everyone who did not start in the chat. */
+export function SourceBadge({ source }: { source: CustomerSource }) {
+  if (source === "chat") return null;
+  const meta = SOURCE_META[source];
+  return (
+    <Tooltip content={meta.info}>
+      <StatusBadge tone="neutral" dot={false} tabIndex={0} className="cursor-help">
+        {meta.label}
+      </StatusBadge>
+    </Tooltip>
+  );
+}
+
+/** The profile's persona (short label), or nothing without one. */
+export function PersonaBadge({ persona, size = "sm" }: { persona: string | null; size?: "sm" | "md" }) {
+  const meta = persona ? ARCHETYPE_META[persona as PersonaArchetype] : null;
+  if (!meta || meta.id === "unknown") return null;
+  return (
+    <Tooltip content={`Persona laut Kundenprofil: ${meta.label}`}>
+      <StatusBadge tone="accent" dot={false} size={size} tabIndex={0} className="cursor-help">
+        {meta.shortLabel}
+      </StatusBadge>
+    </Tooltip>
+  );
 }

@@ -4,7 +4,12 @@
 // bundle offers, correspondence metadata, physical letters and the letter
 // draft. Read-only; every source is fail-soft.
 
-import { getCustomerById, loadCustomerSessions } from "./customer-store";
+import {
+  getCustomerById,
+  loadCustomerSessions,
+  type CustomerProfileData,
+  type CustomerSource,
+} from "./customer-store";
 import { getLatestSendForEmail } from "./marketing-store";
 import { listCustomerMessages, type CorrespondenceMessage } from "./email-messages-store";
 import { listCustomerLetters, type PhysicalLetterRow } from "./physical-letters-store";
@@ -78,6 +83,11 @@ export interface CustomerDetail {
   marketingSend: CustomerDetailMarketingSend | null;
   profileSummary: string | null;
   profileSummaryUpdatedAt: string | null;
+  /** Structured profile fields (migration 0059), or null before the first profile. */
+  profileData: CustomerProfileData | null;
+  personaLabel: string | null;
+  /** Where the record came from (chat / Shopify sign-in / Kampagne). */
+  source: CustomerSource;
   purchaseSummary: OrderHistory | null;
   purchaseSummaryUpdatedAt: string | null;
   sessions: CustomerDetailSession[];
@@ -139,6 +149,9 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
       : null,
     profileSummary: c.profileSummary,
     profileSummaryUpdatedAt: c.profileSummaryUpdatedAt,
+    profileData: c.profileData,
+    personaLabel: c.personaLabel,
+    source: c.source,
     purchaseSummary: c.purchaseSummary,
     purchaseSummaryUpdatedAt: c.purchaseSummaryUpdatedAt,
     // No session ids leave the server — the browser doesn't need the

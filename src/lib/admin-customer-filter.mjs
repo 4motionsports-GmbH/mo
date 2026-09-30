@@ -7,6 +7,7 @@
  * @typedef {"all" | "confirmed" | "pending" | "none" | "unsubscribed"} MarketingFilter
  * @typedef {"all" | "purchased" | "no_purchase"} KaufFilter
  * @typedef {"all" | "draft" | "sent" | "none"} SendFilter
+ * @typedef {"all" | "chat" | "shopify_account" | "kampagne"} SourceFilter
  * @typedef {"recent" | "name" | "first_seen" | "sessions"} CustomerSortKey
  * @typedef {{
  *   query: string,
@@ -14,6 +15,8 @@
  *   marketing: MarketingFilter,
  *   kauf: KaufFilter,
  *   send: SendFilter,
+ *   source: SourceFilter,
+ *   persona: string,
  *   sort: CustomerSortKey,
  * }} CustomerFilterState
  * @typedef {{
@@ -27,6 +30,8 @@
  *   purchaseState: "purchased" | "no_purchase" | "unknown",
  *   sendStatus: "draft" | "approved" | "sent" | null,
  *   sessionCount: number,
+ *   source?: "chat" | "shopify_account" | "kampagne",
+ *   personaLabel?: string | null,
  * }} CustomerListRowLike
  */
 
@@ -37,6 +42,8 @@ export const DEFAULT_FILTER = Object.freeze({
   marketing: "all",
   kauf: "all",
   send: "all",
+  source: "all",
+  persona: "all",
   sort: "recent",
 });
 
@@ -93,6 +100,8 @@ function matches(c, f) {
   if (f.marketing !== "all" && c.marketingStatus !== f.marketing) return false;
   if (f.kauf !== "all" && c.purchaseState !== f.kauf) return false;
   if (f.send !== "all" && sendState(c) !== f.send) return false;
+  if (f.source && f.source !== "all" && (c.source ?? "chat") !== f.source) return false;
+  if (f.persona && f.persona !== "all" && (c.personaLabel ?? "unknown") !== f.persona) return false;
   return true;
 }
 
@@ -153,6 +162,8 @@ export function activeFilterCount(f) {
   if (f.marketing !== "all") n++;
   if (f.kauf !== "all") n++;
   if (f.send !== "all") n++;
+  if (f.source && f.source !== "all") n++;
+  if (f.persona && f.persona !== "all") n++;
   return n;
 }
 

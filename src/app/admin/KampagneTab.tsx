@@ -126,6 +126,8 @@ export async function KampagneTab({
       heroUrl: q.draft.heroImageUrl,
       heroHeadline: q.draft.heroHeadline,
       lastSendAt: q.lastSendAt,
+      customerId: q.contact.customerId,
+      profile: q.profile,
       draftUpdatedAt: q.draft.updatedAt ?? q.draft.createdAt,
       isTest: q.contact.isTest,
       suppressed: suppressedEmails.has(q.contact.email),

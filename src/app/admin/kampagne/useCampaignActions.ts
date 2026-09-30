@@ -679,6 +679,26 @@ export function useCampaignActions({
     [removeItem, restoreItem]
   );
 
+  /** Delete the contact AND everything else about this person (the one
+   * erasure path, lib/customer-erasure.ts). The caller confirms first. */
+  const erase = React.useCallback(
+    async (contactId: number) => {
+      const item = itemsRef.current.find((it) => it.contactId === contactId);
+      if (!item || removedRef.current.has(contactId)) return;
+      removeItem(contactId);
+      setCountsLocal((c) => ({ ...c, drafted: Math.max(0, c.drafted - 1) }));
+      try {
+        await adminFetch("/api/admin/customers/erase", { body: { contactId, confirm: true } });
+        toast({ variant: "success", title: "Kontakt vollständig gelöscht", description: item.email });
+      } catch (err) {
+        restoreItem(item);
+        setCountsLocal((c) => ({ ...c, drafted: c.drafted + 1 }));
+        fail("Löschen fehlgeschlagen", err);
+      }
+    },
+    [removeItem, restoreItem]
+  );
+
   /** Undo a skip. If the contact still has its draft it lands straight back in
    * the queue; otherwise a fresh draft is generated first. */
   const unskip = React.useCallback(
@@ -1402,6 +1422,7 @@ export function useCampaignActions({
     retrySend,
     dismissOutbox,
     skip,
+    erase,
     unskip,
     draftContact,
     previewItem,

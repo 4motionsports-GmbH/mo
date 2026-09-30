@@ -640,6 +640,12 @@ export interface CustomerListRow {
   /** Status of the latest marketing_sends row for this email (open draft preferred). */
   sendStatus: "draft" | "approved" | "sent" | null;
   sessionCount: number;
+  /** Where the record came from (chat / Shopify sign-in / Kampagne sync). */
+  source: CustomerSource;
+  /** Persona key of the current profile, or null. */
+  personaLabel: string | null;
+  /** True when a profile has been generated. */
+  hasProfile: boolean;
 }
 
 /** Hard ceiling so a runaway table can never produce a multi-megabyte page. */
@@ -658,8 +664,12 @@ export async function listCustomerListRows(
   try {
     const rows = (await sql`
       SELECT c.id, c.email, c.identity_tier, c.first_seen_at, c.last_seen_at, c.marketing_status,
+             c.source, c.persona_label, (c.profile_summary IS NOT NULL) AS has_profile,
              c.shopify_account_summary->>'displayName' AS display_name,
              c.shopify_account_summary->>'firstName' AS first_name,
+             (SELECT NULLIF(btrim(concat_ws(' ', cc.first_name, cc.last_name)), '')
+                FROM campaign_contacts cc WHERE cc.customer_id = c.id
+               ORDER BY cc.id LIMIT 1) AS contact_name,
              CASE
                WHEN c.purchase_summary IS NULL THEN 'unknown'
                WHEN jsonb_typeof(c.purchase_summary->'orders') = 'array'
@@ -684,6 +694,7 @@ export async function listCustomerListRows(
       const name =
         (typeof r.display_name === "string" && r.display_name.trim()) ||
         (typeof r.first_name === "string" && r.first_name.trim()) ||
+        (typeof r.contact_name === "string" && r.contact_name.trim()) ||
         null;
       const send = r.send_status as string | null;
       return {
@@ -698,6 +709,9 @@ export async function listCustomerListRows(
         sendStatus:
           send === "draft" || send === "approved" || send === "sent" ? send : null,
         sessionCount: Number(r.session_count ?? 0),
+        source: (r.source as CustomerSource | undefined) ?? "chat",
+        personaLabel: (r.persona_label as string | null) ?? null,
+        hasProfile: r.has_profile === true,
       };
     });
   } catch (err) {

@@ -78,3 +78,14 @@ test("activeFilterCount / isFilterActive count non-default filters", () => {
   assert.equal(activeFilterCount({ ...DEFAULT_FILTER, query: " x ", tier: "2", sort: "name" }), 2);
   assert.equal(isFilterActive({ ...DEFAULT_FILTER, send: "sent" }), true);
 });
+
+test("source and persona filters narrow the list and count as active filters", () => {
+  const rows = [
+    { id: 1, email: "a@x.de", name: null, identityTier: 2, firstSeenAt: null, lastSeenAt: null, marketingStatus: "none", purchaseState: "unknown", sendStatus: null, sessionCount: 1, source: "chat", personaLabel: "strength_focused" },
+    { id: 2, email: "b@x.de", name: null, identityTier: 2, firstSeenAt: null, lastSeenAt: null, marketingStatus: "none", purchaseState: "unknown", sendStatus: null, sessionCount: 0, source: "kampagne", personaLabel: null },
+  ];
+  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, source: "kampagne" }).map((c) => c.id), [2]);
+  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, persona: "strength_focused" }).map((c) => c.id), [1]);
+  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, persona: "unknown" }).map((c) => c.id), [2]);
+  assert.equal(activeFilterCount({ ...DEFAULT_FILTER, source: "chat", persona: "physio" }), 2);
+});

@@ -89,6 +89,10 @@ export interface CampaignQueueItemProps {
   heroHeadline: string | null;
   /** Newest send to this address on either channel (frequency-cap fact). */
   lastSendAt: string | null;
+  /** The linked customer record (migration 0059), or null. */
+  customerId: number | null;
+  /** The customer's profile at a glance, or null when none exists yet. */
+  profile: { personaLabel: string | null; excerpt: string | null; updatedAt: string | null } | null;
   /** When the draft was last written (stale-draft check). */
   draftUpdatedAt: string | null;
   /** Testkontakt (migration 0057): stays in the queue after every send, is

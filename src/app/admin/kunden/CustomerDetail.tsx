@@ -7,12 +7,26 @@
 // detail and the list.
 
 import * as React from "react";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Trash2 } from "lucide-react";
 import type { CustomerDetail as CustomerDetailData } from "@/lib/customer-detail";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { num } from "@/lib/admin-format.mjs";
-import { Card, Spinner, StatusBadge, Tabs, TabsContent, TabsList, TabsTrigger, Tooltip } from "../ui";
-import { MarketingStatusBadge, TierBadge } from "./badges";
+import {
+  Button,
+  Card,
+  Spinner,
+  StatusBadge,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Tooltip,
+  toast,
+  useConfirm,
+} from "../ui";
+import { adminFetch } from "../lib/admin-fetch";
+import { useAsyncAction } from "../lib/use-async-action";
+import { MarketingStatusBadge, PersonaBadge, SourceBadge, TierBadge } from "./badges";
 import { ProfilTab } from "./tabs/ProfilTab";
 import { BeratungenTab } from "./tabs/BeratungenTab";
 import { KaeufeTab } from "./tabs/KaeufeTab";
@@ -34,14 +48,41 @@ export function useCustomerActions(): CustomerActions {
 export function CustomerDetail({
   customer,
   onRefresh,
+  onErased,
   reloading = false,
 }: {
   customer: CustomerDetailData;
   onRefresh: () => void;
+  /** Called after the customer was erased — the workspace drops the selection. */
+  onErased: () => void;
   reloading?: boolean;
 }) {
   const actions = React.useMemo(() => ({ refresh: onRefresh }), [onRefresh]);
   const returning = customer.sessions.length > 1;
+  const { confirm, confirmDialog } = useConfirm();
+  const erase = useAsyncAction(
+    () =>
+      adminFetch<{ deletedConversations: number }>("/api/admin/customers/erase", {
+        body: { customerId: customer.id, confirm: true },
+      }),
+    {
+      errorToast: "Löschen fehlgeschlagen",
+      onSuccess: () => {
+        toast({ variant: "success", title: "Kunde vollständig gelöscht", description: customer.email });
+        onErased();
+      },
+    }
+  );
+  async function onErase() {
+    const ok = await confirm({
+      title: "Kunde vollständig löschen?",
+      description:
+        "Löscht alles über diese Person: Profil, alle Gespräche, Einwilligungen, Marketing- und Kampagnen-Mails, Newsletter-Kontakt, Korrespondenz und Briefe. Die Adresse wird gesperrt und nie wieder angeschrieben oder aus Shopify importiert. Das lässt sich nicht rückgängig machen.",
+      confirmLabel: "Endgültig löschen",
+      tone: "destructive",
+    });
+    if (ok) void erase.run();
+  }
 
   return (
     <CustomerActionsContext.Provider value={actions}>
@@ -62,6 +103,8 @@ export function CustomerDetail({
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             <TierBadge tier={customer.identityTier} size="md" />
+            <SourceBadge source={customer.source} />
+            <PersonaBadge persona={customer.personaLabel} size="md" />
             {returning && (
               <Tooltip content="Mehrere Beratungen unter derselben E-Mail (wiederkehrender Kunde)">
                 <StatusBadge tone="accent" icon={<RotateCcw />} size="md" tabIndex={0} className="cursor-help">
@@ -70,6 +113,17 @@ export function CustomerDetail({
               </Tooltip>
             )}
             <MarketingStatusBadge status={customer.marketingStatus} full size="md" />
+            <Tooltip content="Kunde vollständig löschen (DSGVO)">
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => void onErase()}
+                loading={erase.pending}
+                className="text-destructive"
+              >
+                <Trash2 /> Löschen
+              </Button>
+            </Tooltip>
           </div>
         </div>
 
@@ -112,6 +166,7 @@ export function CustomerDetail({
           </div>
         </Tabs>
       </Card>
+      {confirmDialog}
     </CustomerActionsContext.Provider>
   );
 }
