@@ -11,7 +11,7 @@ Beratung (Mo scheitert / übergibt ans Kontaktformular)
    │  analysis_quality ∈ {unmet_need, dropped_off}  ODER  show_contact_form fired
    ▼
 "Gespräche scannen" (admin Wissen tab, explicit click)
-   │  1 Haiku pass per conversation (lib/qa-scan → lib/qa-draft)
+   │  1 Sonnet 5.5 pass per conversation (lib/qa-scan → lib/qa-draft)
    │  → { Wissenslücke, präzise Frage, Produkt-Handle? }  → qa_entries (status: open)
    ▼
 Operator beantwortet im Wissen-Tab (Frage/Produkt anpassbar)  → status: answered
@@ -45,7 +45,7 @@ analysis).
 | `migrations/0036_qa_entries.sql` | `qa_entries` table + `conversations.qa_scanned_at`. |
 | `src/lib/qa-core.mjs` | Pure core: eligibility, draft prompt+parser, fingerprint de-dup, `custom.qa` format (parse/merge/serialize). |
 | `src/lib/qa-store.ts` | CRUD + scan candidates + cached general-QA loader for the chat hot path. |
-| `src/lib/qa-draft.ts` | The Haiku draft pass (call site `qa_draft`, linked to the conversation FK). |
+| `src/lib/qa-draft.ts` | The draft pass — Sonnet 5.5, writer tier in `lib/ai-models.mjs` (call site `qa_draft`, linked to the conversation FK). |
 | `src/lib/qa-scan.ts` | Orchestration: transcript → draft → entry → scanned stamp. |
 | `src/lib/shopify-qa.ts` | Publish: handle → GID, `metafieldsSet` on `custom.qa`, targeted catalog refresh. |
 | `src/app/api/admin/qa/*` | list / scan / draft / answer / publish / dismiss routes. |
@@ -149,7 +149,7 @@ actively in the queue — two active copies would fight the de-dup rule.
 ## Cost & safety
 
 - Only the explicit "Gespräche scannen" / "Entwurf" clicks spend tokens
-  (Haiku, ~like the bulk conversation analysis; usage recorded under
+  (one Sonnet 5.5 pass per conversation; usage recorded under
   `qa_draft`, conversation-linked so it cascade-deletes).
 - Drafted questions must be free of personal details (prompt rule); the
   operator reviews EVERYTHING before it becomes public — nothing auto-publishes.

@@ -1,5 +1,5 @@
 // Orchestration for the knowledge-gap scan: draft a Q&A candidate from ONE
-// conversation (transcript → Haiku draft → qa_entries row → scanned stamp).
+// conversation (transcript → Sonnet draft → qa_entries row → scanned stamp).
 // Shared by the single-conversation "Entwurf" action and the bulk scan route
 // so both produce identical entries. See docs/QA_KNOWLEDGE.md.
 
