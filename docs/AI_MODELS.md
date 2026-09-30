@@ -9,11 +9,11 @@ Single source of truth in code: [`src/lib/ai-models.mjs`](../src/lib/ai-models.m
 
 | Tier | Model | Thinking / effort | Call sites |
 |---|---|---|---|
-| `chat` | `claude-sonnet-5-5` | `between_tools` (no up-front thinking), effort `medium` | `/api/chat` |
-| `writer` | `claude-sonnet-5-5` | adaptive, effort `low` | marketing + campaign drafts, bundle suggestion, hero prompt, summary e-mail, persona top-questions (KPI + report) |
+| `chat` | `claude-sonnet-5-5` | `between_tools` (no up-front thinking), effort `high` | `/api/chat` |
+| `writer` | `claude-sonnet-5-5` | adaptive, effort `low` | marketing + campaign drafts, bundle suggestion, hero prompt, summary e-mail, persona top-questions (KPI + report), Q&A answer drafts |
 | `analyst` | `claude-sonnet-5-5` | adaptive, effort `medium` | Verbesserung (Wirkungs-Check + Vorschläge), insights rollup, report customer synthesis, hero image check (vision) |
 | `deep` | `claude-opus-5-5` | adaptive (always on), effort `medium` | customer profile (dashboard + report) |
-| `bulk` | `claude-haiku-4-5` | none | per-conversation analysis, Q&A draft scan, Q&A translation |
+| `bulk` | `claude-haiku-4-5` | none | per-conversation analysis, Q&A translation |
 
 Every tier on a 5.x model sends `fallbacks: "default"` (Anthropic server-side
 refusal fallback): a false-positive safety decline is re-run on the fallback
@@ -27,14 +27,18 @@ model inside the same call instead of failing the request.
   call is roughly 0–33 % — with a better model.
 - **Chat stays thinking-free** (`between_tools`): the storefront chat is
   latency-sensitive and streams; `between_tools` is Sonnet 5.5's lowest thinking
-  setting and keeps time-to-first-token where it was. Effort `medium` is
-  Anthropic's starting point for multistep tool use.
+  setting and keeps time-to-first-token where it was. Effort `high` (the highest
+  level `between_tools` accepts) buys more thorough tool use and answers for
+  somewhat more output tokens.
 - **Opus 5.5 replaces Opus 4.8** for the customer profile: better and cheaper
   ($4 / $20 vs $5 / $25). It always thinks; the output caps carry thinking
   headroom (`maxOutputTokensFor`) so answers are not truncated.
 - **Haiku 4.5 stays** for high-volume, per-item work — still the current Haiku
   and the cheapest model that does these tasks well. The one-off insights rollup
-  moved up to Sonnet 5.5 (one synthesis over hundreds of summaries, low volume).
+  moved up to Sonnet 5.5 (one synthesis over hundreds of summaries, low volume),
+  and so did the Q&A drafts: they become published, customer-facing answers, so
+  draft quality saves operator editing. A scan request is capped at 15
+  conversations so the sequential Sonnet passes fit the route's 300 s.
 
 ### Things the 5.5 models change (handled in code)
 

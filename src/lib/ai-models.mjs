@@ -7,8 +7,8 @@
 // Tiers (2026-09 evaluation, docs/AI_MODELS.md):
 //   chat    — the storefront chat (latency-sensitive, agentic tool loop):
 //             Sonnet 5.5 with `between_tools` — no up-front thinking, so the
-//             first token is as fast as before; effort `medium` is Anthropic's
-//             starting point for multistep tool use.
+//             first token is as fast as before; effort `high` (the highest
+//             `between_tools` accepts) for more thorough tool use and answers.
 //   writer  — operator-reviewed text: marketing / campaign drafts, hero prompt,
 //             bundle suggestion, summary e-mail, Q&A answer drafts. Sonnet 5.5,
 //             adaptive thinking at `low` (thinks only when the task needs it).
@@ -17,7 +17,7 @@
 //             check (vision). Sonnet 5.5, adaptive thinking at `medium`.
 //   deep    — the per-customer "current understanding" (identity-level, few
 //             calls, highest stakes). Opus 5.5 (always thinks) at `medium`.
-//   bulk    — high-volume, per-item extraction and translation: Haiku 4.5
+//   bulk    — high-volume, per-item analysis and translation: Haiku 4.5
 //             without thinking — the cheapest model that does these well.
 //
 // Every tier on a 5.x model opts into Anthropic's server-side refusal fallback
@@ -34,7 +34,7 @@ export const HAIKU_MODEL = "claude-haiku-4-5";
  * @type {Record<AiTier, { model: string, thinking?: "adaptive" | "between_tools", effort?: "low" | "medium" | "high", thinkingHeadroom: number }>}
  */
 export const AI_TIERS = {
-  chat: { model: SONNET_MODEL, thinking: "between_tools", effort: "medium", thinkingHeadroom: 0 },
+  chat: { model: SONNET_MODEL, thinking: "between_tools", effort: "high", thinkingHeadroom: 0 },
   writer: { model: SONNET_MODEL, thinking: "adaptive", effort: "low", thinkingHeadroom: 4000 },
   analyst: { model: SONNET_MODEL, thinking: "adaptive", effort: "medium", thinkingHeadroom: 8000 },
   deep: { model: OPUS_MODEL, thinking: "adaptive", effort: "medium", thinkingHeadroom: 8000 },

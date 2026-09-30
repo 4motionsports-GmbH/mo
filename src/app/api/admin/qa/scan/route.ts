@@ -1,9 +1,9 @@
 // POST /api/admin/qa/scan  { limit? }
 //
 // Bulk knowledge-gap scan: run the Q&A draft pass over up to `limit` (default
-// 10, max 25) eligible, not-yet-scanned conversations — analysis flagged
+// 10, max 15) eligible, not-yet-scanned conversations — analysis flagged
 // unmet_need/dropped_off OR the contact form was shown. NEVER auto-runs: only
-// this explicit POST spends tokens (cheap Haiku, ~like the bulk analysis).
+// this explicit POST spends tokens (one Sonnet pass per conversation).
 // Conclusive outcomes stamp qa_scanned_at, so re-clicking never re-pays for
 // the same conversation.
 
@@ -17,7 +17,8 @@ import { reportError } from "@/lib/observability";
 export const maxDuration = 300;
 
 const DEFAULT_LIMIT = 10;
-const MAX_LIMIT = 25;
+// Drafts run one after another; 15 Sonnet passes stay well inside maxDuration.
+const MAX_LIMIT = 15;
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);

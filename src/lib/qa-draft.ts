@@ -11,7 +11,7 @@
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { modelFor } from "./ai-models.mjs";
+import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
 import { recordAiUsage } from "./ai-usage-store";
 import {
   QA_DRAFT_SYSTEM_PROMPT,
@@ -20,8 +20,8 @@ import {
 } from "./qa-core.mjs";
 import type { AdminTranscriptTurn } from "./admin-conversations";
 
-/** Bulk tier (lib/ai-models.mjs) — one pass per scanned conversation, reviewed before publishing. */
-export const QA_DRAFT_MODEL = modelFor("bulk");
+/** Writer tier (lib/ai-models.mjs) — the draft becomes a published, customer-facing answer after review. */
+export const QA_DRAFT_MODEL = modelFor("writer");
 
 // Same bounds as the analysis pass: a very long chat must not become an
 // unbounded prompt.
@@ -84,7 +84,8 @@ export async function generateQaDraft(input: {
   try {
     const result = await generateText({
       model: anthropic(QA_DRAFT_MODEL),
-      maxOutputTokens: 700,
+      providerOptions: anthropicOptionsFor("writer"),
+      maxOutputTokens: maxOutputTokensFor("writer", 700),
       system: QA_DRAFT_SYSTEM_PROMPT,
       prompt: buildQaDraftPrompt({
         transcript: renderTranscript(turns),
