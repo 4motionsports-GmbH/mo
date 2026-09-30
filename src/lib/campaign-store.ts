@@ -68,6 +68,10 @@ export interface CampaignContactRow {
   isTest: boolean;
   /** Real customer's e-mail whose purchase history the test draft borrows. */
   testSourceEmail: string | null;
+  /** The customer record of this person (migration 0059) — the profile the
+   *  draft, the picks and the review card read. Null for test contacts and
+   *  contacts not linked yet. */
+  customerId: number | null;
 }
 
 /** Compact per-order snapshot stored on the draft to render the review card. */
@@ -165,6 +169,7 @@ function mapContactRow(r: Record<string, unknown>): CampaignContactRow {
     createdAt: toIso(r.created_at),
     isTest: r.is_test === true,
     testSourceEmail: (r.test_source_email as string | null) ?? null,
+    customerId: r.customer_id != null ? Number(r.customer_id) : null,
   };
 }
 
@@ -244,6 +249,165 @@ export async function listSuppressedEmails(
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "listSuppressedEmails" });
     return new Set(normalized); // fail-closed
+  }
+}
+
+/**
+ * Which of `emails` belong to a person who had their data ERASED (suppression
+ * reason 'erasure', lib/customer-erasure.ts). The audience sync drops these
+ * before storing anything — an erased person must never be re-imported from
+ * Shopify, not even as a suppressed audit row. Fail-closed: on a DB error every
+ * address counts as erased (nothing is stored this run).
+ */
+export async function listErasedEmails(
+  emails: string[],
+  sql: Sql | null = getSql()
+): Promise<Set<string>> {
+  const normalized = emails.map(normalizeEmail).filter(Boolean);
+  if (!sql || normalized.length === 0) return new Set();
+  try {
+    const rows = (await sql`
+      SELECT email FROM suppression_list
+       WHERE email = ANY(${normalized}::text[]) AND reason = 'erasure'
+    `) as Array<{ email: string }>;
+    return new Set(rows.map((r) => String(r.email)));
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "listErasedEmails" });
+    return new Set(normalized);
+  }
+}
+
+/**
+ * Give every live Kampagne contact its customer record (migration 0059): a
+ * contact whose email already belongs to a customer is linked to it; the rest
+ * get a new customer row (source 'kampagne'). Test contacts, suppressed
+ * contacts and erased addresses never become customers. Idempotent — runs
+ * after every audience sync. Returns { created, linked }.
+ */
+export async function linkCampaignContactsToCustomers(
+  sql: Sql | null = getSql()
+): Promise<{ created: number; linked: number }> {
+  if (!sql) return { created: 0, linked: 0 };
+  try {
+    const created = (await sql`
+      WITH ins AS (
+        INSERT INTO customers (email, source, first_seen_at, last_seen_at)
+        SELECT DISTINCT ON (cc.email)
+               cc.email, 'kampagne', cc.created_at,
+               GREATEST(cc.created_at, COALESCE(cc.last_order_at, cc.created_at))
+          FROM campaign_contacts cc
+         WHERE cc.customer_id IS NULL
+           AND cc.is_test = false
+           AND cc.status <> 'suppressed'
+           AND NOT EXISTS (SELECT 1 FROM customers c WHERE c.email = cc.email)
+           AND NOT EXISTS (
+                 SELECT 1 FROM suppression_list s
+                  WHERE s.email = cc.email AND s.reason = 'erasure'
+               )
+         ORDER BY cc.email, cc.id
+        ON CONFLICT (email) DO NOTHING
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM ins
+    `) as Array<{ n: number }>;
+    const linked = (await sql`
+      WITH upd AS (
+        UPDATE campaign_contacts cc
+           SET customer_id = c.id
+          FROM customers c
+         WHERE cc.customer_id IS NULL
+           AND cc.is_test = false
+           AND c.email = cc.email
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM upd
+    `) as Array<{ n: number }>;
+    return { created: Number(created[0]?.n ?? 0), linked: Number(linked[0]?.n ?? 0) };
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "linkCampaignContactsToCustomers" });
+    return { created: 0, linked: 0 };
+  }
+}
+
+/** True when the customer has a linked Kampagne contact that is still a live
+ *  Shopify newsletter subscriber (not suppressed) — counts as personalisation
+ *  consent for the signed-in chat (customer-account-data.canPersonaliseSignedIn).
+ *  Fail-closed: false on any error. */
+export async function hasActiveCampaignSubscription(
+  customerId: number,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      SELECT 1 FROM campaign_contacts
+       WHERE customer_id = ${customerId} AND is_test = false AND status <> 'suppressed'
+       LIMIT 1
+    `) as Array<unknown>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "hasActiveCampaignSubscription" });
+    return false;
+  }
+}
+
+/** YYYY-MM-DD of a timestamp the driver may hand back as Date or string. */
+function isoDay(v: unknown): string {
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? "?" : d.toISOString().slice(0, 10);
+}
+
+/** Most recent Kampagne mails folded into the profile (the newest say most). */
+const PROFILE_CAMPAIGN_SENDS = 6;
+
+/**
+ * The customer's Kampagne relationship as ONE readable block for the profile
+ * generator: Shopify order count/spend from the synced contact plus the last
+ * few campaign mails (date, subject, set clicked, unsubscribed). Empty string
+ * when the customer has no linked contact. Data-minimised: no email address,
+ * no body text.
+ */
+export async function loadCampaignHistoryForCustomer(
+  customerId: number,
+  sql: Sql | null = getSql()
+): Promise<string> {
+  if (!sql) return "";
+  try {
+    const contacts = (await sql`
+      SELECT id, orders_count, total_spent_cents, last_order_at, status, language
+        FROM campaign_contacts
+       WHERE customer_id = ${customerId} AND is_test = false
+    `) as Array<Record<string, unknown>>;
+    if (contacts.length === 0) return "";
+    const sends = (await sql`
+      SELECT s.sent_at, s.subject, s.bundle_clicked_at, s.unsubscribed_at
+        FROM campaign_sends s
+        JOIN campaign_contacts cc ON cc.id = s.contact_id
+       WHERE cc.customer_id = ${customerId}
+       ORDER BY s.sent_at DESC
+       LIMIT ${PROFILE_CAMPAIGN_SENDS}
+    `) as Array<Record<string, unknown>>;
+    const c = contacts[0];
+    const spent = Number(c.total_spent_cents ?? 0) / 100;
+    const lines = [
+      `Newsletter-Abonnent (Shopify), Status: ${String(c.status)}; ` +
+        `${Number(c.orders_count ?? 0)} Bestellungen, Gesamtumsatz ca. ${spent.toFixed(0)} €` +
+        (c.last_order_at ? `, letzte Bestellung ${isoDay(c.last_order_at)}` : ""),
+    ];
+    for (const s of sends) {
+      const flags = [
+        s.bundle_clicked_at ? "Set angeklickt" : null,
+        s.unsubscribed_at ? "danach abgemeldet" : null,
+      ].filter(Boolean);
+      lines.push(
+        `- ${isoDay(s.sent_at)}: Kampagnen-Mail „${String(s.subject ?? "")}“` +
+          (flags.length ? ` (${flags.join(", ")})` : "")
+      );
+    }
+    return lines.join("\n");
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "loadCampaignHistoryForCustomer" });
+    return "";
   }
 }
 
@@ -486,6 +650,23 @@ export interface CampaignQueueEntry {
   /** Newest send to this address across BOTH channels (the same fact the
    * frequency-cap gate reads at send time), or null when never mailed. */
   lastSendAt: string | null;
+  /** The linked customer's profile at a glance for the review card, or null
+   *  when there is none yet. */
+  profile: CampaignQueueProfile | null;
+}
+
+export interface CampaignQueueProfile {
+  personaLabel: string | null;
+  /** First ~400 characters of the readable profile. */
+  excerpt: string | null;
+  updatedAt: string | null;
+}
+
+function mapQueueProfile(r: Record<string, unknown>): CampaignQueueProfile | null {
+  const excerpt = typeof r.p_excerpt === "string" && r.p_excerpt.trim() ? r.p_excerpt.trim() : null;
+  const persona = typeof r.p_persona === "string" && r.p_persona ? r.p_persona : null;
+  if (!excerpt && !persona) return null;
+  return { personaLabel: persona, excerpt, updatedAt: toIso(r.p_updated_at) };
 }
 
 /**
@@ -513,6 +694,8 @@ export async function listDraftedQueue(
              d.hero_image_url AS d_hero_image_url, d.hero_headline AS d_hero_headline,
              d.low_confidence AS d_low_confidence,
              d.created_at AS d_created_at, d.updated_at AS d_updated_at,
+             cu.persona_label AS p_persona, left(cu.profile_summary, 400) AS p_excerpt,
+             cu.profile_summary_updated_at AS p_updated_at,
              -- The cross-channel frequency-cap fact per contact (same union as
              -- lastCrossChannelSendAt), so the desk can flag a blocked send
              -- before the operator presses Senden.
@@ -527,6 +710,7 @@ export async function listDraftedQueue(
               ) t) AS last_send_at
         FROM campaign_contacts c
         JOIN campaign_drafts d ON d.contact_id = c.id
+        LEFT JOIN customers cu ON cu.id = c.customer_id
        WHERE c.status = 'drafted'
        -- Work the queue by measured value, not by arrival: the early window
        -- (7–30 days, 38,6 % Zubehör-Quote) closes, and a contact at/above
@@ -562,6 +746,7 @@ export async function listDraftedQueue(
         updated_at: r.d_updated_at,
       }),
       lastSendAt: toIso(r.last_send_at),
+      profile: mapQueueProfile(r),
     }));
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "listDraftedQueue" });

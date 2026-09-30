@@ -1,22 +1,15 @@
 // POST /api/admin/customers/profile  { customerId }
 //
-// Regenerate the customer's "current understanding" summary on demand: one
-// Anthropic pass over all linked conversation transcripts + the cached
-// purchase history (see lib/customer-profile). The fresh summary replaces the
-// cached one (with timestamp); the response carries the token usage so the
-// dashboard can show what the regeneration cost. The dashboard's
-// "Kundenverständnis generieren" button calls this.
+// Regenerate the customer's profile NOW (the "Kundenverständnis generieren"
+// button): the same regenerateCustomerProfile the nightly upkeep runs — every
+// linked chat, the purchase history, correspondence and the Kampagne
+// relationship → readable summary + structured fields, stored on the customer.
+// The response carries the token usage so the dashboard can show the cost.
 //
 // Auth + CSRF: guardAdminPost (the proxy already gates /api/admin/*).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
-import {
-  getCustomerById,
-  loadCustomerSessions,
-  saveCustomerProfileSummary,
-} from "@/lib/customer-store";
-import { loadCustomerCorrespondence } from "@/lib/email-messages-store";
-import { generateCustomerProfile } from "@/lib/customer-profile";
+import { regenerateCustomerProfile } from "@/lib/customer-profile";
 import { recordAdminAccess } from "@/lib/admin-access-log";
 import { reportError } from "@/lib/observability";
 
@@ -40,42 +33,29 @@ export async function POST(req: Request) {
   }
 
   try {
-    const customer = await getCustomerById(customerId);
-    if (!customer) {
-      return adminJsonError("not_found", "Customer not found.", 404);
-    }
-
     // Audit: this pass reads all of the customer's transcripts + correspondence.
     await recordAdminAccess({ action: "customer.profile.generate", targetCustomerId: customerId }, req);
 
-    const [sessions, correspondence] = await Promise.all([
-      loadCustomerSessions(customerId),
-      // Body-text-only, recency-capped email correspondence (§3). Same explicit,
-      // admin-triggered regeneration — no automatic processing.
-      loadCustomerCorrespondence(customerId),
-    ]);
-
-    const result = await generateCustomerProfile({
-      sessions,
-      purchases: customer.purchaseSummary,
-      // Tier-3 only: the cached, data-minimised location context.
-      accountContext: customer.shopifyAccountSummary?.addressContext ?? null,
-      correspondence,
-    });
-
+    const result = await regenerateCustomerProfile(customerId);
     if (!result.ok) {
       const status =
-        result.reason === "unconfigured" ? 503 : result.reason === "no_data" ? 409 : 502;
+        result.reason === "not_found"
+          ? 404
+          : result.reason === "unconfigured"
+            ? 503
+            : result.reason === "no_data"
+              ? 409
+              : 502;
       return adminJsonError(`profile_${result.reason}`, result.message, status);
     }
 
-    const saved = await saveCustomerProfileSummary(customerId, result.summary);
-    if (!saved) {
+    if (!result.saved) {
       // The summary was expensive — surface the cache failure but still return
       // the text so the operator's tokens weren't spent for nothing.
       return adminJson(
         {
           profileSummary: result.summary,
+          profileData: result.data,
           usage: result.usage,
           cached: false,
           warning: "Profil generiert, konnte aber nicht gespeichert werden.",
@@ -84,7 +64,12 @@ export async function POST(req: Request) {
       );
     }
 
-    return adminJson({ profileSummary: result.summary, usage: result.usage, cached: true });
+    return adminJson({
+      profileSummary: result.summary,
+      profileData: result.data,
+      usage: result.usage,
+      cached: true,
+    });
   } catch (err) {
     reportError(err, { route: "api/admin/customers/profile" });
     return adminJsonError("internal_error", "Profile generation failed.", 500);

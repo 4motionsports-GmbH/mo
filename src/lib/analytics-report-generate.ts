@@ -48,8 +48,8 @@ import {
 } from "./admin-conversations";
 import { generateConversationAnalysis, ANALYSIS_MODEL } from "./conversation-analysis";
 import { generateConversationInsights } from "./conversation-insights";
-import { generateCustomerProfile } from "./customer-profile";
-import { getCustomerById, loadCustomerSessions, saveCustomerProfileSummary } from "./customer-store";
+import { regenerateCustomerProfile } from "./customer-profile";
+import { getCustomerById, loadCustomerSessions } from "./customer-store";
 import { loadCustomerCorrespondence } from "./email-messages-store";
 import { CATEGORY_LABELS } from "./conversation-analysis-core.mjs";
 import {
@@ -473,32 +473,18 @@ async function stepProfiles(report: AnalyticsReportDetail): Promise<void> {
 
   for (const cid of batch) {
     try {
-      const customer = await getCustomerById(cid);
-      if (!customer) {
-        failed += 1;
-        continue;
-      }
-      const [sessions, correspondence] = await Promise.all([
-        loadCustomerSessions(cid),
-        loadCustomerCorrespondence(cid),
-      ]);
-      const res = await generateCustomerProfile({
-        sessions,
-        purchases: customer.purchaseSummary,
-        accountContext: customer.shopifyAccountSummary?.addressContext ?? null,
-        correspondence,
-      });
+      // The shared regeneration path: stores text + structured fields on the
+      // customer too, so the (expensive) pass also refreshes the live profile.
+      const res = await regenerateCustomerProfile(cid);
       if (res.ok) {
-        // Persist back onto the customer row too, so the (expensive) regeneration
-        // also refreshes the live "current understanding" — not just this report.
-        await saveCustomerProfileSummary(cid, res.summary);
+        const customer = await getCustomerById(cid);
         usage = mergeUsage(usage, PROFILE_MODEL, res.usage.inputTokens, res.usage.outputTokens);
         profiles.push({
           customerId: cid,
-          name: customerDisplayName(customer),
+          name: customer ? customerDisplayName(customer) : `Kunde #${cid}`,
           profileSummary: res.summary,
-          sessionCount: sessions.length,
-          lastSeenAt: customer.lastSeenAt ?? null,
+          sessionCount: res.sessionCount,
+          lastSeenAt: customer?.lastSeenAt ?? null,
         });
         done += 1;
       } else {

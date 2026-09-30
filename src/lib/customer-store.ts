@@ -25,9 +25,24 @@ import type { OrderHistory } from "./shopify-orders";
 import type { SignedInAccountSummary } from "./shopify-customer-account";
 import { reportError } from "./observability";
 import { decideMerge } from "./customer-merge.mjs";
+import { normalizeProfileData } from "./customer-profile-core.mjs";
 import { linkSessionToCustomer, resolveSignedInCustomerRow } from "./customer-session-link.mjs";
 
 export type CustomerMarketingStatus = "none" | "pending" | "confirmed" | "unsubscribed";
+
+/** Where a customer row came from (migration 0059). */
+export type CustomerSource = "chat" | "shopify_account" | "kampagne";
+
+/** The structured profile fields (customer-profile-core.normalizeProfileData). */
+export interface CustomerProfileData {
+  persona: string;
+  goals: string[];
+  owned: string[];
+  interests: string[];
+  level: string;
+  budget: string;
+  nextSteps: string[];
+}
 
 export interface Customer {
   id: number;
@@ -37,9 +52,18 @@ export interface Customer {
   lastSeenAt: string | null;
   transactionalConsent: boolean;
   marketingStatus: CustomerMarketingStatus;
-  /** Cached "current understanding" profile (regenerated on demand). */
+  /** Cached "current understanding" profile (kept current by the nightly
+   *  customer-refresh cron, regenerable on demand). */
   profileSummary: string | null;
   profileSummaryUpdatedAt: string | null;
+  /** Structured profile fields next to the text (migration 0059). */
+  profileData: CustomerProfileData | null;
+  /** Persona archetype key of the latest profile. */
+  personaLabel: string | null;
+  /** When the profile upkeep last looked at this customer. */
+  profileCheckedAt: string | null;
+  /** Where the row came from — chat capture, Shopify sign-in or Kampagne sync. */
+  source: CustomerSource;
   /** Cached Shopify order-history summary (refreshed on demand). */
   purchaseSummary: OrderHistory | null;
   purchaseSummaryUpdatedAt: string | null;
@@ -114,6 +138,10 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     marketingStatus: (r.marketing_status as CustomerMarketingStatus) ?? "none",
     profileSummary: (r.profile_summary as string | null) ?? null,
     profileSummaryUpdatedAt: (r.profile_summary_updated_at as string | null) ?? null,
+    profileData: r.profile_data ? normalizeProfileData(r.profile_data) : null,
+    personaLabel: (r.persona_label as string | null) ?? null,
+    profileCheckedAt: (r.profile_checked_at as string | null) ?? null,
+    source: (r.source as CustomerSource | undefined) ?? "chat",
     purchaseSummary: (r.purchase_summary as OrderHistory | null) ?? null,
     purchaseSummaryUpdatedAt: (r.purchase_summary_updated_at as string | null) ?? null,
     shopifyAccountSummary: (r.shopify_account_summary as SignedInAccountSummary | null) ?? null,
@@ -921,23 +949,101 @@ export async function loadCustomerProductSelections(
   }
 }
 
-export async function saveCustomerProfileSummary(
+/** Store a freshly generated profile: the readable text, the structured
+ *  fields and the persona column. Also stamps profile_checked_at, so the
+ *  nightly upkeep only picks the customer again after new activity. */
+export async function saveCustomerProfile(
   customerId: number,
-  summary: string,
+  profile: { summary: string; data: CustomerProfileData },
   sql: Sql | null = getSql()
 ): Promise<boolean> {
   if (!sql) return false;
+  const persona = profile.data.persona !== "unknown" ? profile.data.persona : null;
   try {
     const rows = await sql`
       UPDATE customers
-         SET profile_summary = ${summary},
-             profile_summary_updated_at = now()
+         SET profile_summary = ${profile.summary},
+             profile_summary_updated_at = now(),
+             profile_data = ${JSON.stringify(profile.data)}::jsonb,
+             persona_label = ${persona},
+             profile_checked_at = now()
        WHERE id = ${customerId}
       RETURNING id
     `;
     return rows.length > 0;
   } catch (err) {
-    reportError(err, { route: "lib/customer-store", phase: "saveCustomerProfileSummary" });
+    reportError(err, { route: "lib/customer-store", phase: "saveCustomerProfile" });
     return false;
+  }
+}
+
+/** The upkeep looked at this customer but found nothing to summarise (or the
+ *  model failed) — stamp it so it waits for new activity instead of being
+ *  retried every night. */
+export async function markCustomerProfileChecked(
+  customerId: number,
+  sql: Sql | null = getSql()
+): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`UPDATE customers SET profile_checked_at = now() WHERE id = ${customerId}`;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "markCustomerProfileChecked" });
+  }
+}
+
+/**
+ * Customers whose profile needs (re)generation: never checked, or with
+ * activity since the last check — a chat, a correspondence message, a
+ * Kampagne send, or an order newer than the check (read from the cached
+ * purchase history, so the nightly purchase refresh alone doesn't retrigger
+ * it). Same rule as customer-profile-core.profileNeedsUpkeep. Never-checked
+ * customers first, then the most recently active. Returns ids plus the total
+ * count still waiting (for the backfill script's progress).
+ */
+export async function listCustomersForProfileUpkeep(
+  limit: number,
+  sql: Sql | null = getSql()
+): Promise<{ ids: number[]; remaining: number }> {
+  if (!sql) return { ids: [], remaining: 0 };
+  try {
+    const rows = (await sql`
+      WITH activity AS (
+        SELECT c.id, c.profile_checked_at, c.last_seen_at,
+               GREATEST(
+                 (SELECT max(v.last_activity_at) FROM conversations v WHERE v.customer_id = c.id),
+                 (SELECT max(m.occurred_at) FROM email_messages m WHERE m.customer_id = c.id),
+                 (SELECT max(s.sent_at)
+                    FROM campaign_sends s
+                    JOIN campaign_contacts cc ON cc.id = s.contact_id
+                   WHERE cc.customer_id = c.id),
+                 (SELECT max(cc.last_order_at) FROM campaign_contacts cc WHERE cc.customer_id = c.id),
+                 (SELECT max((o->>'createdAt')::timestamptz)
+                    FROM jsonb_array_elements(
+                           CASE WHEN jsonb_typeof(c.purchase_summary->'orders') = 'array'
+                                THEN c.purchase_summary->'orders' ELSE '[]'::jsonb END
+                         ) o
+                   WHERE o->>'createdAt' ~ '^\d{4}-')
+               ) AS last_activity_at
+          FROM customers c
+      ),
+      due AS (
+        SELECT id, profile_checked_at, last_seen_at
+          FROM activity
+         WHERE profile_checked_at IS NULL
+            OR (last_activity_at IS NOT NULL AND last_activity_at > profile_checked_at)
+      )
+      SELECT id, (SELECT count(*)::int FROM due) AS remaining
+        FROM due
+       ORDER BY (profile_checked_at IS NULL) DESC, last_seen_at DESC NULLS LAST, id DESC
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return {
+      ids: rows.map((r) => Number(r.id)),
+      remaining: rows.length > 0 ? Number(rows[0].remaining ?? 0) : 0,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "listCustomersForProfileUpkeep" });
+    return { ids: [], remaining: 0 };
   }
 }

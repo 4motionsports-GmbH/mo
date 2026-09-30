@@ -20,7 +20,8 @@
     "hero:gradient": "node scripts/hero-gradient.mjs",
     "hero:compare": "node --env-file=.env scripts/hero-quality-compare.mjs",
     "db:proxy": "node scripts/dev-neon-proxy.mjs",
-    "db:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/seed-dev.mjs"
+    "db:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/seed-dev.mjs",
+    "profiles:backfill": "node --env-file-if-exists=.env scripts/backfill-customer-profiles.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.125",

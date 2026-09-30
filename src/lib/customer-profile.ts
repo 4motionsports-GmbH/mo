@@ -1,39 +1,64 @@
-// "Current understanding" customer profile — an on-demand Anthropic pass.
+// "Current understanding" customer profile — the central, per-person record
+// every AI component reads (chat memory, Kampagne + marketing drafts, letters,
+// bundle suggestion, hero prompt, summary mail, Komplettanalyse).
 //
 // Takes EVERYTHING we know about one customer (all linked conversation
-// transcripts, their persona labels, the cached Shopify purchase history) and
-// regenerates ONE concise, coherent German summary: needs, preferences, level,
-// what they already own. Deliberately a fresh regeneration each time —
-// per-session profiles can contradict each other (people change their minds
-// between visits), so we never merge them mechanically; the model resolves
-// contradictions in favour of the newer session.
+// transcripts with their persona labels, the Shopify purchase history, email
+// correspondence and the Kampagne relationship) and regenerates ONE coherent
+// profile: a readable German summary PLUS structured fields (persona, goals,
+// owned equipment, interests, level, budget signal, next steps — see
+// customer-profile-core.mjs). Deliberately a fresh regeneration each time —
+// sources contradict each other (people change their minds between visits), so
+// we never merge them mechanically; the model resolves contradictions in favour
+// of the newer statement.
 //
-// Provider: Anthropic via @ai-sdk/anthropic + the Vercel AI SDK — the same
-// wiring as the chat route and the marketing draft. Model: Claude Opus 4.8,
-// Anthropic's current most capable Opus-tier model — this runs rarely (an
-// explicit admin button) on dense, contradiction-laden input, so quality
-// beats cost here. NO silent fallback: this is an explicit admin action, so
-// a missing key / model error surfaces to the dashboard instead of caching a
-// fabricated profile.
+// Who triggers it: the nightly customer-refresh cron keeps profiles current for
+// every customer with new activity (lib/customer-refresh.ts runProfileUpkeep),
+// the Kunden "Kundenverständnis generieren" button forces one, and the
+// Komplettanalyse regenerates the profiles of its active customers. All three
+// go through regenerateCustomerProfile below — one path, one stored result.
 //
-// Data minimisation: the email ADDRESS is never sent to the model. The customer's
-// email CORRESPONDENCE (body text only — never headers/address lines) is folded
-// in as one more source (docs/archive/EMAIL_SUBSYSTEM_SPIKE.md §3): the loader caps it
-// (last N messages / last 12 months) and it rides the SAME explicit, admin-
-// triggered regeneration as everything else here — no automatic processing.
+// Provider: Anthropic via @ai-sdk/anthropic, deep tier (lib/ai-models.mjs). NO
+// silent fallback: a missing key / model error returns a reason instead of
+// caching a fabricated profile.
+//
+// Data minimisation: the email ADDRESS is never sent to the model; the
+// correspondence is folded in as body text only (last N messages / 12 months,
+// email-messages-store); the Kampagne block carries dates, subjects and flags,
+// no mail bodies.
 
-import { generateText } from "ai";
+import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { z } from "zod";
 import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
 import { usdCostForUsage } from "./ai-pricing.mjs";
-import type { CustomerSession } from "./customer-store";
+import {
+  getCustomerById,
+  listCustomersForProfileUpkeep,
+  loadCustomerSessions,
+  markCustomerProfileChecked,
+  saveCustomerProfile,
+  type CustomerProfileData,
+  type CustomerSession,
+} from "./customer-store";
+import { loadCustomerCorrespondence } from "./email-messages-store";
+import { loadCampaignHistoryForCustomer } from "./campaign-store";
+import { refreshCustomerData } from "./customer-refresh";
 import type { OrderHistory } from "./shopify-orders";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
 import { recordAiUsage } from "./ai-usage-store";
 import { formatStoreDate } from "./store-datetime.mjs";
+import {
+  normalizeProfileData,
+  profileForPrompt,
+  PROFILE_BUDGETS,
+  PROFILE_LEVELS,
+  PROFILE_PERSONAS,
+} from "./customer-profile-core.mjs";
+import { reportError } from "./observability";
 
-// Deep tier (lib/ai-models.mjs): few calls, identity-level judgement.
+// Deep tier (lib/ai-models.mjs): identity-level judgement over dense input.
 const PROFILE_MODEL = modelFor("deep");
 
 // Keep the prompt bounded: a customer with many long sessions must not turn
@@ -61,14 +86,15 @@ export interface GenerateProfileInput {
   /**
    * The customer's email correspondence, pre-rendered as ONE readable block
    * (oldest-first, both directions) by loadCustomerCorrespondence — body TEXT
-   * ONLY, already capped (last N messages / last 12 months). Empty string /
-   * absent = no correspondence to fold in.
+   * ONLY, already capped. Empty string / absent = none.
    */
   correspondence?: string | null;
+  /** The Kampagne relationship (loadCampaignHistoryForCustomer). Empty = none. */
+  campaignHistory?: string | null;
 }
 
 export type GenerateProfileResult =
-  | { ok: true; summary: string; usage: ProfileUsage }
+  | { ok: true; summary: string; data: CustomerProfileData; usage: ProfileUsage }
   | { ok: false; reason: "unconfigured" | "no_data" | "model_error"; message: string };
 
 function personaDisplay(label: string | null): string {
@@ -124,10 +150,34 @@ function accountContextBlock(
     : "Angemeldeter Kunde (keine Adressangaben).";
 }
 
+const PERSONA_GUIDE = PROFILE_PERSONAS.filter((p) => p !== "unknown")
+  .map((p) => `${p} = ${ARCHETYPE_META[p as PersonaArchetype]?.label ?? p}`)
+  .join("; ");
+
+// No .min()/.max() on anything: Anthropic structured output rejects those
+// keywords (see email-hero-qa.mjs); normalizeProfileData enforces the bounds.
+const profileSchema = z.object({
+  summary: z
+    .string()
+    .describe(
+      "Das Kundenverständnis als kurzer deutscher Text (max. ~250 Wörter), gegliedert in: " +
+        "Bedarf & Ziele · Niveau & Kontext · Vorlieben & Budget-Signale · Besitzt bereits (Käufe) · " +
+        "Offene Punkte / nächste sinnvolle Schritte."
+    ),
+  persona: z
+    .enum(PROFILE_PERSONAS as [string, ...string[]])
+    .describe(`Die am besten passende Persona: ${PERSONA_GUIDE}; unknown, wenn unklar.`),
+  goals: z.array(z.string()).describe("Trainingsziele und Bedarfe, je ein kurzer Stichpunkt (höchstens 8)."),
+  owned: z.array(z.string()).describe("Geräte/Produkte, die die Person BESITZT (aus Käufen oder eigener Aussage), je ein Stichpunkt."),
+  interests: z.array(z.string()).describe("Produkte, Kategorien oder Themen, für die sich die Person interessiert, aber noch nicht besitzt."),
+  level: z.enum(PROFILE_LEVELS as [string, ...string[]]).describe("Trainingsniveau; unbekannt, wenn nicht erkennbar."),
+  budget: z.enum(PROFILE_BUDGETS as [string, ...string[]]).describe("Budget-Signal aus Käufen/Aussagen; unbekannt, wenn nicht erkennbar."),
+  nextSteps: z.array(z.string()).describe("Sinnvolle nächste Schritte bzw. Ergänzungen, je ein Stichpunkt."),
+});
+
 /**
- * Regenerate the customer's "current understanding" summary. Never throws —
- * returns a discriminated result so the admin route can answer with the real
- * reason (no key, nothing to summarise, model failure).
+ * Generate the profile from its inputs. Never throws — returns a discriminated
+ * result with the real reason (no key, nothing to summarise, model failure).
  */
 export async function generateCustomerProfile(
   input: GenerateProfileInput
@@ -142,11 +192,17 @@ export async function generateCustomerProfile(
 
   const sessions = input.sessions.filter((s) => s.transcript.length > 0);
   const correspondence = input.correspondence?.trim() || "";
-  if (sessions.length === 0 && !input.purchases?.orders?.length && !correspondence) {
+  const campaignHistory = input.campaignHistory?.trim() || "";
+  if (
+    sessions.length === 0 &&
+    !input.purchases?.orders?.length &&
+    !correspondence &&
+    !campaignHistory
+  ) {
     return {
       ok: false,
       reason: "no_data",
-      message: "Keine verknüpften Gespräche, Käufe oder Korrespondenz — nichts zu verdichten.",
+      message: "Keine Gespräche, Käufe, Korrespondenz oder Kampagnen-Historie — nichts zu verdichten.",
     };
   }
 
@@ -155,45 +211,45 @@ export async function generateCustomerProfile(
   const blocks = kept.map((s, i) => sessionBlock(s, i, kept.length)).join("\n\n");
 
   try {
-    const result = await generateText({
+    const { object, usage } = await generateObject({
       model: anthropic(PROFILE_MODEL),
       providerOptions: anthropicOptionsFor("deep"),
-      maxOutputTokens: maxOutputTokensFor("deep", 1500),
+      maxOutputTokens: maxOutputTokensFor("deep", 2000),
+      schema: profileSchema,
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
-        "verdichtest die Chat-Sessions, die E-Mail-Korrespondenz und die " +
-        "Kaufhistorie EINES Kunden zu einem aktuellen Kundenverständnis für das " +
-        "Beratungs-/Marketing-Team.\n\n" +
+        "verdichtest alles, was wir über EINEN Kunden wissen — Chat-Sessions, " +
+        "E-Mail-Korrespondenz, Kaufhistorie und Newsletter-Beziehung — zu einem " +
+        "aktuellen Kundenverständnis. Es ist die zentrale Grundlage für den " +
+        "Chat-Berater, Marketing-Mails, Produktempfehlungen und das Team.\n\n" +
         "Regeln:\n" +
-        "- Schreibe auf Deutsch, prägnant, faktenbasiert — keine Floskeln, nichts erfinden.\n" +
-        "- Erstelle EIN kohärentes Gesamtbild, KEINE Aneinanderreihung der Quellen. " +
-        "Bei Widersprüchen zwischen Quellen (Sessions wie Korrespondenz) gilt die " +
-        "neuere Aussage; erwähne den Sinneswandel nur, wenn er beratungsrelevant ist.\n" +
-        "- Unterscheide klar zwischen GEKAUFT (Kaufhistorie), GEWÜNSCHT (im Chat " +
-        "geäußert) und UNBEKANNT.\n" +
-        "- Gliedere in kurze Abschnitte: Bedarf & Ziele · Niveau & Kontext · " +
-        "Vorlieben & Budget-Signale · Besitzt bereits (Käufe) · Offene Punkte / " +
-        "nächste sinnvolle Schritte.\n" +
-        "- Maximal ~250 Wörter.",
+        "- Deutsch, prägnant, faktenbasiert — keine Floskeln, nichts erfinden.\n" +
+        "- EIN kohärentes Gesamtbild, KEINE Aneinanderreihung der Quellen. Bei " +
+        "Widersprüchen gilt die neuere Aussage; erwähne den Sinneswandel nur, wenn " +
+        "er beratungsrelevant ist.\n" +
+        "- Unterscheide klar zwischen GEKAUFT (Kaufhistorie), GEWÜNSCHT (geäußert) " +
+        "und UNBEKANNT. Gibt es nur Käufe und keine Gespräche, leite Ziele und " +
+        "Interessen vorsichtig aus den Käufen ab und kennzeichne sie als abgeleitet.\n" +
+        "- Die strukturierten Felder spiegeln den Text; lieber leer lassen als raten.",
       prompt:
         `## Chat-Sessions (chronologisch, älteste zuerst)\n\n` +
         `${blocks || "(keine Gespräche verknüpft)"}\n\n` +
         `## Korrespondenz (E-Mail)\n\n` +
         `${correspondence || "(keine E-Mail-Korrespondenz)"}\n\n` +
         `## Kaufhistorie (Shopify)\n\n${purchasesBlock(input.purchases)}\n\n` +
+        `## Newsletter / Kampagnen\n\n${campaignHistory || "(kein Newsletter-Kontakt)"}\n\n` +
         `## Konto-Kontext (Shopify)\n\n${accountContextBlock(input.accountContext)}\n\n` +
         `Erstelle jetzt das aktuelle Kundenverständnis.`,
     });
 
-    const summary = result.text?.trim();
+    const summary = object.summary?.trim();
     if (!summary) {
       return { ok: false, reason: "model_error", message: "Das Modell lieferte keinen Text." };
     }
+    const data = normalizeProfileData(object) as CustomerProfileData;
 
-    const inputTokens = result.usage?.inputTokens ?? 0;
-    const outputTokens = result.usage?.outputTokens ?? 0;
-    // Cost KPI (dashboard/admin side). The per-run cost shown in the dashboard
-    // is computed separately below; this feeds the aggregate spend tracking.
+    const inputTokens = usage?.inputTokens ?? 0;
+    const outputTokens = usage?.outputTokens ?? 0;
     await recordAiUsage({
       callSite: "customer_profile",
       model: PROFILE_MODEL,
@@ -203,6 +259,7 @@ export async function generateCustomerProfile(
     return {
       ok: true,
       summary,
+      data,
       usage: {
         inputTokens,
         outputTokens,
@@ -214,4 +271,118 @@ export async function generateCustomerProfile(
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, reason: "model_error", message };
   }
+}
+
+export type RegenerateProfileResult =
+  | (Extract<GenerateProfileResult, { ok: true }> & { saved: boolean; sessionCount: number })
+  | Extract<GenerateProfileResult, { ok: false }>
+  | { ok: false; reason: "not_found"; message: string };
+
+/**
+ * THE one path that (re)builds and stores a customer's profile — used by the
+ * Kunden button, the Komplettanalyse and the nightly upkeep. Loads every
+ * source, fetches the Shopify purchase history first when it was never loaded
+ * (Kampagne customers start without one), generates, and stores text +
+ * structured fields. A run with nothing to summarise or a model failure still
+ * stamps profile_checked_at, so the upkeep waits for new activity instead of
+ * retrying every night. Never throws.
+ */
+export async function regenerateCustomerProfile(
+  customerId: number
+): Promise<RegenerateProfileResult> {
+  try {
+    let customer = await getCustomerById(customerId);
+    if (!customer) return { ok: false, reason: "not_found", message: "Kunde nicht gefunden." };
+
+    if (!customer.purchaseSummary) {
+      const refreshed = await refreshCustomerData(customer);
+      if (refreshed.ok) customer = (await getCustomerById(customerId)) ?? customer;
+    }
+
+    const [sessions, correspondence, campaignHistory] = await Promise.all([
+      loadCustomerSessions(customerId),
+      loadCustomerCorrespondence(customerId),
+      loadCampaignHistoryForCustomer(customerId),
+    ]);
+
+    const result = await generateCustomerProfile({
+      sessions,
+      purchases: customer.purchaseSummary,
+      accountContext: customer.shopifyAccountSummary?.addressContext ?? null,
+      correspondence,
+      campaignHistory,
+    });
+    if (!result.ok) {
+      // "unconfigured" is an environment problem, not a verdict on the
+      // customer — leave them due so the next run with a key picks them up.
+      if (result.reason !== "unconfigured") await markCustomerProfileChecked(customerId);
+      return result;
+    }
+    const saved = await saveCustomerProfile(customerId, { summary: result.summary, data: result.data });
+    return { ...result, saved, sessionCount: sessions.length };
+  } catch (err) {
+    reportError(err, { route: "lib/customer-profile", phase: "regenerate" });
+    return {
+      ok: false,
+      reason: "model_error",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export interface ProfileUpkeepResult {
+  considered: number;
+  generated: number;
+  noData: number;
+  failed: number;
+  /** Customers still waiting after this run (for the backfill's progress). */
+  remaining: number;
+  stoppedByDeadline: boolean;
+}
+
+/**
+ * The nightly profile upkeep (called by /api/cron/refresh-customers): pick up
+ * to `batch` customers whose profile is missing or older than their latest
+ * activity and regenerate them, `concurrency` at a time, starting no new one
+ * after `deadlineMs` (epoch ms) so the cron stays inside maxDuration. A batch
+ * of 0 disables the upkeep. Never throws.
+ */
+export async function runProfileUpkeep(opts: {
+  batch: number;
+  deadlineMs: number;
+  concurrency?: number;
+}): Promise<ProfileUpkeepResult> {
+  const empty = { considered: 0, generated: 0, noData: 0, failed: 0, remaining: 0, stoppedByDeadline: false };
+  if (opts.batch <= 0 || !process.env.ANTHROPIC_API_KEY) return empty;
+  const { ids, remaining } = await listCustomersForProfileUpkeep(opts.batch);
+  const queue = [...ids];
+  const out = { ...empty, considered: ids.length };
+  const worker = async () => {
+    while (queue.length > 0) {
+      if (Date.now() >= opts.deadlineMs) {
+        out.stoppedByDeadline = true;
+        return;
+      }
+      const id = queue.shift() as number;
+      const res = await regenerateCustomerProfile(id);
+      if (res.ok) out.generated++;
+      else if (res.reason === "no_data") out.noData++;
+      else out.failed++;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 3) }, worker));
+  const done = out.generated + out.noData + out.failed;
+  return { ...out, remaining: Math.max(0, remaining - done) };
+}
+
+/** The customer's profile as ONE prompt block (summary + structured fields +
+ *  persona label) for every generator with a "Kundenverständnis" slot —
+ *  marketing/letter drafts, bundle suggestion, hero prompt. */
+export function customerProfileForPrompt(
+  customer: { profileSummary: string | null; profileData: CustomerProfileData | null; personaLabel: string | null } | null | undefined
+): string | null {
+  if (!customer) return null;
+  const persona = customer.personaLabel as PersonaArchetype | null;
+  const label = persona && ARCHETYPE_META[persona] ? ARCHETYPE_META[persona].label : null;
+  return profileForPrompt(customer.profileSummary, customer.profileData, label);
 }
