@@ -38,6 +38,7 @@ import { getSendById } from "./marketing-store";
 import { getContactById, getDraftForContact } from "./campaign-store";
 import { getProductsByIds } from "./product-catalog";
 import { getCustomerById } from "./customer-store";
+import { customerProfileForPrompt } from "./customer-profile";
 import { getActiveBundleForSend, getActiveBundleForCampaignContact } from "./bundle-offers-store";
 import {
   clip,
@@ -147,7 +148,7 @@ async function loadHeroContext(
     if (send.customerId) {
       try {
         const customer = await getCustomerById(send.customerId);
-        profileSummary = clip(customer?.profileSummary ?? "", MAX_PROFILE_CHARS);
+        profileSummary = clip(customerProfileForPrompt(customer) ?? "", MAX_PROFILE_CHARS);
         owned = ownedProductTitles(customer?.purchaseSummary);
       } catch (err) {
         reportError(err, { route: "lib/email-hero", phase: "customerContext" });
@@ -188,8 +189,19 @@ async function loadHeroContext(
     ? await getProductsByIds(draft.recommendedProductIds)
     : [];
 
-  // This audience never chatted — their order record IS the personalisation.
+  // Their order record plus the central customer profile (migration 0059).
   const owned = ownedProductTitles(draft.purchaseSummary);
+  let campaignProfile = "";
+  if (contact.customerId != null) {
+    try {
+      campaignProfile = clip(
+        customerProfileForPrompt(await getCustomerById(contact.customerId)) ?? "",
+        MAX_PROFILE_CHARS
+      );
+    } catch (err) {
+      reportError(err, { route: "lib/email-hero", phase: "campaignProfile" });
+    }
+  }
   let bundleTitles: string[] = [];
   try {
     const bundle = await getActiveBundleForCampaignContact(id);
@@ -206,6 +218,7 @@ async function loadHeroContext(
     productCategories: productCategories(products),
     proseExcerpt: clip(draft.body, 800),
     extraContext: heroContextLines({
+      "Kundenverständnis (verdichtet)": campaignProfile,
       "Bereits im Besitz (Kaufhistorie)": owned,
       "Empfohlene Produktarten": productCategories(products),
       "Angehängtes Set (zusammen zeigen)": bundleTitles,

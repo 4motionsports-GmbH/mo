@@ -11,6 +11,7 @@
 //
 // Auth + CSRF: guardAdminPost (the proxy already gates /api/admin/*).
 
+import { customerProfileForPrompt } from "@/lib/customer-profile";
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import {
   getCustomerById,
@@ -113,7 +114,7 @@ export async function POST(req: Request) {
     const draft = await generateCustomerLetterDraft({
       recipientName,
       sessions,
-      profileSummary: customer.profileSummary,
+      profileSummary: customerProfileForPrompt(customer),
       correspondence,
       ownedItems,
       purchasesKnown: purchases != null,

@@ -366,3 +366,31 @@ test("single-variant products keep the flat price and render the SKU line", () =
   assert.match(prompt, /Artikelnummer \(SKU\): MS-123/);
   assert.doesNotMatch(prompt, /Varianten \(gezielt/);
 });
+
+test("customer memory shows the structured profile 'at a glance' when present", () => {
+  const memory = {
+    signedIn: true,
+    personalised: true,
+    displayName: "Max",
+    firstSeenAt: null,
+    priorConversationCount: 1,
+    ownedItems: [],
+    lastPurchaseAt: null,
+    addressContext: null,
+    profileSummary: "Kraftfokus.",
+    welcomeAlreadyIssued: false,
+    profileData: { persona: "strength_focused", goals: ["Muskelaufbau"], owned: ["Power Rack"] },
+    personaDisplay: "Kraftsportler",
+  };
+  const base = { profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], emailOffer: { offersMade: 0, emailCaptured: false } };
+  const de = buildSystemPrompt({ ...base, customerMemory: memory });
+  assert.match(de, /### Profil auf einen Blick/);
+  assert.match(de, /Persona: Kraftsportler/);
+  assert.match(de, /Ziele: Muskelaufbau/);
+  const en = buildSystemPrompt({ ...base, customerMemory: memory, locale: "en" });
+  assert.match(en, /### Profile at a glance/);
+  assert.match(en, /Goals: Muskelaufbau/);
+  // No structured profile → no block (the golden cases stay byte-identical).
+  const none = buildSystemPrompt({ ...base, customerMemory: { ...memory, profileData: null } });
+  assert.doesNotMatch(none, /Profil auf einen Blick/);
+});

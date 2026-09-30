@@ -36,10 +36,14 @@ import {
   getCustomerById,
   resolveSignedInCustomer,
   type Customer,
+  type CustomerProfileData,
 } from "./customer-store";
 import { getValidAccessToken } from "./customer-oauth-store";
 import { CONSENT_COPY_LAWYER_APPROVED } from "./consent-copy";
 import { canPersonaliseSignedIn } from "./customer-account-data.mjs";
+import { hasActiveCampaignSubscription } from "./campaign-store";
+import { ARCHETYPE_META } from "./persona";
+import type { PersonaArchetype } from "./types";
 import { reportError } from "./observability";
 
 /** Compact memory injected into the system prompt for a re-identified customer. */
@@ -48,8 +52,13 @@ export interface CustomerMemoryContext {
   firstSeenAt: string | null;
   /** Linked consultations BEFORE this session. */
   priorConversationCount: number;
-  /** Cached "current understanding" summary (generated on demand, CUST-A). */
+  /** Cached "current understanding" summary (kept current by the nightly upkeep). */
   profileSummary: string | null;
+  /** Structured profile fields (migration 0059) — rendered as "profile at a
+   *  glance" next to the summary. Null/absent = none. */
+  profileData?: CustomerProfileData | null;
+  /** German display label of the profile persona, when known. */
+  personaDisplay?: string | null;
   /** What they already own — "2× ATX Power Rack" — from the cached order history. */
   ownedItems: string[];
   /** ISO date of the most recent order in the cached history. */
@@ -78,6 +87,15 @@ export interface CustomerMemoryContext {
    * account — populated only when personalisation is allowed.
    */
   addressContext?: { city: string | null; countryCode: string | null } | null;
+}
+
+/** The structured profile + persona label for the memory block. */
+function profileExtras(customer: Customer): Pick<CustomerMemoryContext, "profileData" | "personaDisplay"> {
+  const persona = customer.personaLabel as PersonaArchetype | null;
+  return {
+    profileData: customer.profileData,
+    personaDisplay: persona && ARCHETYPE_META[persona] ? ARCHETYPE_META[persona].label : null,
+  };
 }
 
 // Keep the prompt block bounded even for heavy buyers.
@@ -155,6 +173,7 @@ export async function resolveCustomerMemory(
       firstSeenAt: customer.firstSeenAt,
       priorConversationCount,
       profileSummary,
+      ...profileExtras(customer),
       ownedItems,
       lastPurchaseAt,
       welcomeAlreadyIssued: customer.welcomeIssuedAt != null,
@@ -200,6 +219,7 @@ async function resolveSignedInMemory(
     const personalise = canPersonaliseSignedIn({
       lawyerApproved: CONSENT_COPY_LAWYER_APPROVED,
       marketingStatus: customer.marketingStatus,
+      shopifySubscribed: await hasActiveCampaignSubscription(customer.id),
     });
 
     if (!personalise) {
@@ -229,6 +249,7 @@ async function resolveSignedInMemory(
       firstSeenAt: customer.firstSeenAt,
       priorConversationCount,
       profileSummary,
+      ...profileExtras(customer),
       ownedItems,
       lastPurchaseAt,
       welcomeAlreadyIssued: customer.welcomeIssuedAt != null,

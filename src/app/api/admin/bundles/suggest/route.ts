@@ -13,6 +13,7 @@
 //
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 
+import { customerProfileForPrompt } from "@/lib/customer-profile";
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { getCustomerById, loadCustomerSessions } from "@/lib/customer-store";
 import { loadProductCatalog } from "@/lib/catalog-store";
@@ -67,7 +68,7 @@ export async function POST(req: Request) {
     const result = await suggestBundle({
       catalog,
       ownedHandles,
-      profileSummary: customer.profileSummary,
+      profileSummary: customerProfileForPrompt(customer),
       ownedItems,
       purchasesKnown: purchases != null,
       sessions: sessions.map((s) => ({

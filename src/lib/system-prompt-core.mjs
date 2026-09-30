@@ -13,6 +13,7 @@
 // the German output they produce is covered by the same snapshot.
 
 import { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./email-offer-trigger.mjs";
+import { profileFactsBlock } from "./customer-profile-core.mjs";
 
 // ---------------------------------------------------------------------------
 // Product / browsing context (chat opened "about" a product or after browsing)
@@ -215,6 +216,8 @@ function renderCustomerMemory(memory, locale) {
     const summaryBlock = memory.profileSummary
       ? `\n### Current understanding of the customer (condensed from earlier sessions)\n\n${memory.profileSummary}\n`
       : "";
+    const atAGlance = profileFactsBlock(memory.profileData, memory.personaDisplay, "en");
+    const glanceBlock = atAGlance ? `\n### Profile at a glance\n\n${atAGlance}\n` : "";
 
     const header = signedIn
       ? `## Customer memory (signed-in regular${name ? ` — ${name}` : ""})`
@@ -229,7 +232,7 @@ function renderCustomerMemory(memory, locale) {
 ${intro}
 
 ${facts.join("\n") || "- (no individual facts — see the customer understanding below)"}
-${summaryBlock}
+${summaryBlock}${glanceBlock}
 ### How to use the memory (CRITICAL)
 
 - **Warm, not creepy.** Acknowledge the return ONCE, briefly and naturally ("Good to see you again!") — like an advisor in a specialist store recognising a regular. Do NOT list the history, don't quote old conversations and don't mention purchase details unless the customer asks. Only refer to what is relevant to their CURRENT request.
@@ -266,6 +269,8 @@ ${summaryBlock}
   const summaryBlock = memory.profileSummary
     ? `\n### Aktuelles Kundenverständnis (verdichtet aus früheren Sessions)\n\n${memory.profileSummary}\n`
     : "";
+  const atAGlance = profileFactsBlock(memory.profileData, memory.personaDisplay, "de");
+  const glanceBlock = atAGlance ? `\n### Profil auf einen Blick\n\n${atAGlance}\n` : "";
 
   const header = signedIn
     ? `## Kundengedächtnis (angemeldeter Stammkunde${name ? ` — ${name}` : ""})`
@@ -280,7 +285,7 @@ ${summaryBlock}
 ${intro}
 
 ${facts.join("\n") || "- (keine Einzelfakten — siehe Kundenverständnis unten)"}
-${summaryBlock}
+${summaryBlock}${glanceBlock}
 ### So nutzt du das Gedächtnis (KRITISCH)
 
 - **Warm, nicht gruselig.** Erkenne die Rückkehr EINMAL kurz und natürlich an ("Schön, dass du wieder da bist!") — wie ein Berater im Fachgeschäft, der einen Stammkunden wiedererkennt. Zähle die Historie NICHT auf, zitiere keine alten Gespräche und nenne keine Kaufdetails, solange der Kunde nicht selbst danach fragt. Beziehe dich nur auf das, was für sein AKTUELLES Anliegen relevant ist.

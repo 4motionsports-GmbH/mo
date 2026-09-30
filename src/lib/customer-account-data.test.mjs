@@ -168,3 +168,19 @@ test("canPersonaliseSignedIn requires BOTH lawyer approval AND confirmed marketi
     assert.equal(canPersonaliseSignedIn({ lawyerApproved: true, marketingStatus: status }), false);
   }
 });
+
+test("canPersonaliseSignedIn also opens for a live Shopify newsletter subscription", () => {
+  assert.equal(
+    canPersonaliseSignedIn({ lawyerApproved: true, marketingStatus: "none", shopifySubscribed: true }),
+    true
+  );
+  // Still closed without the lawyer gate, and a truthy non-boolean is not consent.
+  assert.equal(
+    canPersonaliseSignedIn({ lawyerApproved: false, marketingStatus: "none", shopifySubscribed: true }),
+    false
+  );
+  assert.equal(
+    canPersonaliseSignedIn({ lawyerApproved: true, marketingStatus: "none", shopifySubscribed: "yes" }),
+    false
+  );
+});

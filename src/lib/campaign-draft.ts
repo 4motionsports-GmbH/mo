@@ -40,6 +40,8 @@ import type { DraftDiscountInput, EmailTextMode, MarketingDraft } from "./market
 import type { CampaignPurchaseSummary } from "./campaign-store";
 import { formatStoreDate } from "./store-datetime.mjs";
 import { discountScopePhrase, parseDiscountScope } from "./discount-scope.mjs";
+import { profileFactsBlock } from "./customer-profile-core.mjs";
+import type { CustomerProfileData } from "./customer-store";
 
 // Writer tier (lib/ai-models.mjs), like the marketing drafts.
 const DRAFT_MODEL = modelFor("writer");
@@ -147,6 +149,29 @@ export interface GenerateCampaignDraftInput extends DraftDiscountInput {
   /** Which kind of products the recommendations are, so the prose frames them
    * correctly: accessories to what they own vs. a fresh suggestion. */
   recommendationStrategy?: "complement" | "similarity" | "winback" | null;
+  /**
+   * The central customer profile (migration 0059): the readable summary plus
+   * the structured fields. Null/absent = no profile yet — the draft then
+   * personalises from the purchase history alone, as before.
+   */
+  customerProfile?: {
+    summary: string;
+    data: CustomerProfileData | null;
+    personaDisplay: string | null;
+  } | null;
+}
+
+/** The profile section of the prompt, or "" without a profile. */
+function profileSection(profile: GenerateCampaignDraftInput["customerProfile"]): string {
+  const summary = profile?.summary?.trim();
+  if (!summary) return "";
+  const facts = profileFactsBlock(profile?.data ?? null, profile?.personaDisplay ?? null, "de");
+  return (
+    `## Kundenverständnis (aus Käufen, Gesprächen und Korrespondenz — nur als Kontext)\n` +
+    `${summary}\n` +
+    (facts ? `\n${facts}\n` : "") +
+    `\n`
+  );
 }
 
 function purchaseBlock(summary: CampaignPurchaseSummary | null, language: "de" | "en"): string {
@@ -445,10 +470,16 @@ export async function generateCampaignDraft(
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
         "(Fitness- und Kraftsportgeräte). Du schreibst eine warme, " +
         "persönliche Marketing-E-Mail an eine:n Bestandskund:in des Shops. " +
-        "Diese Person kennt dich NOCH NICHT aus einem Chat — es gibt KEIN " +
-        "Gespräch, auf das du dich beziehen kannst. Personalisiere " +
-        "ausschließlich über die Kaufhistorie und die vorgegebenen " +
-        "Produktempfehlungen.\n\n" +
+        (input.customerProfile?.summary
+          ? "Personalisiere über das vorgegebene Kundenverständnis, die " +
+            "Kaufhistorie und die Produktempfehlungen: greif die konkreten " +
+            "Ziele, das Niveau und den Bedarf dieser Person auf, damit die Mail " +
+            "nur zu IHR passt. Zitiere keine Gespräche und sag nie, woher du " +
+            "etwas weißt (kein „laut unseren Daten“, kein „du hast uns erzählt“).\n\n"
+          : "Diese Person kennt dich NOCH NICHT aus einem Chat — es gibt KEIN " +
+            "Gespräch, auf das du dich beziehen kannst. Personalisiere " +
+            "ausschließlich über die Kaufhistorie und die vorgegebenen " +
+            "Produktempfehlungen.\n\n") +
         "Regeln:\n" +
         `- ${languageRule}\n` +
         "- Beginne mit einer persönlichen Anrede mit Vornamen, wenn einer " +
@@ -488,6 +519,7 @@ export async function generateCampaignDraft(
         `## Kund:in\n` +
         `Vorname: ${input.firstName?.trim() || "(unbekannt)"}\n` +
         `Sprache der E-Mail: ${en ? "Englisch" : "Deutsch"}\n\n` +
+        profileSection(input.customerProfile) +
         `## Kaufhistorie (nur als Kontext — NICHT aufzählen)\n` +
         `${purchaseBlock(input.purchaseSummary, input.language)}\n\n` +
         (input.focusPurchaseTitles && input.focusPurchaseTitles.length > 0
@@ -501,8 +533,10 @@ export async function generateCampaignDraft(
           : "") +
         (input.lowConfidence
           ? `Hinweis: Die Käufe konnten keinem aktuellen Katalogprodukt zugeordnet ` +
-            `werden — bleibe bei der Kaufhistorie deshalb ALLGEMEIN (kein konkretes ` +
-            `Produkt nennen) und führe die Empfehlungen als Inspiration ein.\n\n`
+            `werden — nenne bei der Kaufhistorie deshalb kein konkretes Produkt` +
+            (input.customerProfile?.summary
+              ? ` und stütze die Mail stattdessen auf das Kundenverständnis.\n\n`
+              : ` und führe die Empfehlungen als Inspiration ein.\n\n`)
           : "") +
         `## Produkte, die diese E-Mail empfehlen soll (mit exakter URL)\n` +
         `${recommendationsBlock(input.recommendations)}\n\n` +

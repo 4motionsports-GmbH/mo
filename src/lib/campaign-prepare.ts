@@ -38,6 +38,17 @@ import {
   type CampaignDraftRow,
 } from "./campaign-store";
 import { reportError } from "./observability";
+import { getCustomerByEmail, getCustomerById, type Customer } from "./customer-store";
+import { ARCHETYPE_META } from "./persona";
+import type { PersonaArchetype } from "./types";
+
+/** The customer record whose profile this draft reads: the linked customer,
+ *  or — for a Testkontakt borrowing a real customer's history — that
+ *  customer's. Null when there is none (the draft then works as before). */
+async function profileCustomerFor(contact: CampaignContactRow): Promise<Customer | null> {
+  if (contact.testSourceEmail) return getCustomerByEmail(contact.testSourceEmail);
+  return contact.customerId != null ? getCustomerById(contact.customerId) : null;
+}
 
 /** Projected expiry the real MK- code will get, for the preview (same rule as
  * the marketing draft route: the send step swaps in the real date if they
@@ -102,8 +113,16 @@ export async function prepareDraftForContact(
 
   // A Testkontakt may borrow a real customer's purchase history so the mail
   // is realistic (0057); everything else about the draft is the test address.
+  // The central customer profile (migration 0059) steers both the product
+  // picks and the prose.
+  const profileCustomer = await profileCustomerFor(contact);
   const { history, purchaseSummary, recommendations, segment } =
-    await loadCampaignPersonalization(contact.testSourceEmail ?? contact.email, purchaseSelection);
+    await loadCampaignPersonalization(
+      contact.testSourceEmail ?? contact.email,
+      purchaseSelection,
+      null,
+      profileCustomer?.profileData ?? null
+    );
 
   // Which products the email recommends: preserve the draft's stored list
   // (auto-picked or manually curated, possibly variant-pinned refs) on a plain
@@ -204,6 +223,16 @@ export async function prepareDraftForContact(
     attachedBundle,
     textMode,
     segment,
+    customerProfile: profileCustomer?.profileSummary
+      ? {
+          summary: profileCustomer.profileSummary,
+          data: profileCustomer.profileData,
+          personaDisplay:
+            (profileCustomer.personaLabel &&
+              ARCHETYPE_META[profileCustomer.personaLabel as PersonaArchetype]?.label) ||
+            null,
+        }
+      : null,
     recommendationStrategy: recommendations.strategy,
     discountCode: hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null,
     discountPercent,

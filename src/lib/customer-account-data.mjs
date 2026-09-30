@@ -130,13 +130,15 @@ export function buildAccountSummary(customerNode) {
  *   2. The customer has given the affirmative, unbundled, double-opt-in
  *      MARKETING consent (marketing_status = 'confirmed') — the same consent
  *      vehicle the GDPR TODO (docs/CUSTOMERS.md) extends to cover
- *      personalisation from past conversations + purchases. Signing in
+ *      personalisation from past conversations + purchases — OR a live
+ *      Shopify newsletter subscription (`shopifySubscribed`: the linked
+ *      Kampagne contact is not suppressed, migration 0059). Signing in
  *      establishes IDENTITY, never this consent.
  *
  * Fails closed: a non-consented or anonymous user resolves to `false`, so only
  * the authenticated greeting-by-name (which uses the session's own identity, not
  * its history) is ever shown to them.
  */
-export function canPersonaliseSignedIn({ lawyerApproved, marketingStatus }) {
-  return Boolean(lawyerApproved) && marketingStatus === "confirmed";
+export function canPersonaliseSignedIn({ lawyerApproved, marketingStatus, shopifySubscribed = false }) {
+  return Boolean(lawyerApproved) && (marketingStatus === "confirmed" || shopifySubscribed === true);
 }

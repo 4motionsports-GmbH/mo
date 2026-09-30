@@ -41,6 +41,8 @@ import { partitionSummaryProducts } from "./summary-products.mjs";
 import { renderEmailProseHtml, productNameLookup } from "./email-prose.mjs";
 import { renderEmailProductGrid, productGridItem } from "./email-products";
 import { reportError } from "./observability";
+import { getCustomerByEmail } from "./customer-store";
+import { profileFactsBlock } from "./customer-profile-core.mjs";
 import { recordAiUsage, type AiCallSite } from "./ai-usage-store";
 import type { Product } from "./types";
 
@@ -75,7 +77,8 @@ function formatTranscript(turns: TranscriptMessage[], locale: Locale): string {
 async function buildSummaryText(
   turns: TranscriptMessage[],
   usage: { callSite: AiCallSite; conversationId?: number | null },
-  locale: Locale
+  locale: Locale,
+  profileContext: string | null = null
 ): Promise<string> {
   const transcript = formatTranscript(turns, locale);
   if (!transcript) {
@@ -95,10 +98,18 @@ async function buildSummaryText(
         "freundlich, klar und auf Deutsch zusammen. Schreibe in der Du-Form, 3–6 " +
         "kurze Sätze. Nenne den ermittelten Bedarf und die wichtigsten Empfehlungen. " +
         "Keine erfundenen Produkte, keine Preise erfinden, kein Marketing, keine Rabatte.";
+  // A returning customer's profile (goals, what they own) lets the summary
+  // place today's advice in context — "fits the rack you already have". Only
+  // as background: the summary stays about THIS conversation.
+  const profileNote = profileContext
+    ? locale === "en"
+      ? `Background on this returning customer (use only to place the recommendations in context, never quote it):\n${profileContext}\n\n`
+      : `Hintergrund zu diesem wiederkehrenden Kunden (nur nutzen, um die Empfehlungen einzuordnen, nie zitieren):\n${profileContext}\n\n`
+    : "";
   const prompt =
     locale === "en"
-      ? `Here is the conversation transcript:\n\n${transcript}\n\nWrite the summary.`
-      : `Hier ist das Gesprächsprotokoll:\n\n${transcript}\n\nSchreibe die Zusammenfassung.`;
+      ? `${profileNote}Here is the conversation transcript:\n\n${transcript}\n\nWrite the summary.`
+      : `${profileNote}Hier ist das Gesprächsprotokoll:\n\n${transcript}\n\nSchreibe die Zusammenfassung.`;
 
   try {
     const { text, usage: modelUsage } = await generateText({
@@ -357,8 +368,11 @@ export async function buildSummaryDocument(params: {
    * `attributes[_mo]` (docs/ORDER_ATTRIBUTION.md). The mailed summary passes
    * one; the signed-in PDF/download path passes none (unstamped link). */
   attributionToken?: string | null;
+  /** The customer's structured profile as prompt lines (returning customers
+   *  only — customer-profile-core.profileFactsBlock), or null. */
+  profileContext?: string | null;
 }): Promise<SummaryDocument> {
-  const { conversation, usage, locale = "de", attributionToken = null } = params;
+  const { conversation, usage, locale = "de", attributionToken = null, profileContext = null } = params;
   const turns = conversation ? readableTurns(conversation.messages) : [];
 
   // Prefilled cart for the CHOSEN products — NO discount (transactional).
@@ -401,7 +415,7 @@ export async function buildSummaryDocument(params: {
     discussedProducts
   );
 
-  const summary = await buildSummaryText(turns, usage, locale);
+  const summary = await buildSummaryText(turns, usage, locale, profileContext);
 
   // Render inside the design selected for this email type (admin
   // Einstellungen); null → classic built-ins. Fail-soft: never blocks.
@@ -465,11 +479,18 @@ export async function sendSummaryEmail(params: {
 
   // The transactional email is fire-on-request — no conversation link on the
   // usage row (cost stays on the dashboard/admin side, like before).
+  // Returning customer? Their central profile gives the summary context.
+  const customer = await getCustomerByEmail(email);
+  const profileContext = customer?.profileData
+    ? profileFactsBlock(customer.profileData, null, locale === "en" ? "en" : "de") || null
+    : null;
+
   const { text, html, cartUrl } = await buildSummaryDocument({
     conversation,
     usage: { callSite: "summary_email" },
     locale,
     attributionToken,
+    profileContext,
   });
 
   const subject = summaryEmailSubject(locale);

@@ -18,7 +18,9 @@
 // `low_confidence` so the reviewer knows to look closer.
 
 import { loadProductCatalog, loadEmbeddings } from "./catalog-store";
-import { cosine } from "./retrieval";
+import { cosine, embedQuery } from "./retrieval";
+import { blendRecommendationScore, profileSteeringQuery } from "./customer-profile-core.mjs";
+import type { CustomerProfileData } from "./customer-store";
 import { filterAvailable } from "./availability.mjs";
 import { fetchOrderHistoryByEmail, type OrderHistory } from "./shopify-orders";
 import { buildAccessoryMap, pickComplementIds } from "./campaign-complement.mjs";
@@ -150,6 +152,26 @@ function compactPurchaseSummary(
  * largest categories (deterministic — category size desc, then catalog order),
  * so a contact with unmatchable history still gets a sensible, varied set.
  */
+/** The candidates closest to the customer profile's goals/interests (cosine
+ *  against the embedded profile query), best first. Empty when no candidate
+ *  has a vector. */
+function rankByProfile(
+  candidates: Product[],
+  items: Array<{ id: string; vector: number[] }>,
+  profileVector: number[]
+): Product[] {
+  const vectorIndex = new Map(items.map((it) => [it.id, it.vector]));
+  return candidates
+    .map((product) => {
+      const v = vectorIndex.get(product.id);
+      return { product, score: v ? cosine(profileVector, v) : 0 };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_RECOMMENDATIONS)
+    .map((s) => s.product);
+}
+
 function representativePicks(candidates: Product[]): Product[] {
   const byCategory = new Map<string, Product[]>();
   for (const p of candidates) {
@@ -198,11 +220,17 @@ function representativePicks(candidates: Product[]): Product[] {
  * purchase selection); null/undefined = all owned products. The exclusion of
  * already-owned products from the candidates always covers the FULL owned set —
  * deselecting a purchase never makes it recommendable.
+ *
+ * `profileVector` (the embedded goals/interests of the customer profile,
+ * migration 0059) steers the similarity and winback picks toward what the
+ * person actually wants; it also turns the "no purchase signal" fallback into
+ * real picks instead of representative ones. Null = the classic behaviour.
  */
 async function pickCampaignRecommendations(
   history: OrderHistory | null,
   selectedProductIds?: string[] | null,
-  strategy: RecommendationStrategy = RECOMMENDATION_STRATEGIES.SIMILARITY as RecommendationStrategy
+  strategy: RecommendationStrategy = RECOMMENDATION_STRATEGIES.SIMILARITY as RecommendationStrategy,
+  profileVector: number[] | null = null
 ): Promise<CampaignRecommendations> {
   const [catalog, embeddings] = await Promise.all([loadProductCatalog(), loadEmbeddings()]);
   const byId = new Map(catalog.map((p) => [p.id, p]));
@@ -234,8 +262,9 @@ async function pickCampaignRecommendations(
   // Deliberately NOT anchored on an old purchase: after a year or more the
   // point is to show what the shop has now, not to continue a stale thought.
   if (strategy === RECOMMENDATION_STRATEGIES.WINBACK) {
+    const steered = profileVector ? rankByProfile(candidates, embeddings.items, profileVector) : [];
     return {
-      products: representativePicks(candidates),
+      products: steered.length > 0 ? steered : representativePicks(candidates),
       ownedProductIds,
       lowConfidence: false,
       strategy: "winback",
@@ -274,9 +303,13 @@ async function pickCampaignRecommendations(
     .map((id) => vectorIndex.get(id))
     .filter((v): v is number[] => Array.isArray(v) && v.length > 0);
 
-  // No catalog-matched purchase or no embedding signal → representative picks,
-  // flagged low-confidence.
+  // No catalog-matched purchase or no embedding signal → the profile decides
+  // when there is one; otherwise representative picks, flagged low-confidence.
   if (ownedVectors.length === 0) {
+    const steered = profileVector ? rankByProfile(candidates, embeddings.items, profileVector) : [];
+    if (steered.length > 0) {
+      return { products: steered, ownedProductIds, lowConfidence: false, strategy: "similarity" };
+    }
     return {
       products: representativePicks(candidates),
       ownedProductIds,
@@ -288,8 +321,9 @@ async function pickCampaignRecommendations(
   const scored = candidates
     .map((product) => {
       const v = vectorIndex.get(product.id);
-      const score = v ? Math.max(...ownedVectors.map((ov) => cosine(ov, v))) : 0;
-      return { product, score };
+      const purchaseScore = v ? Math.max(...ownedVectors.map((ov) => cosine(ov, v))) : 0;
+      const profileScore = v && profileVector ? cosine(profileVector, v) : null;
+      return { product, score: blendRecommendationScore(purchaseScore, profileScore) };
     })
     .sort((a, b) => b.score - a.score);
 
@@ -320,7 +354,8 @@ async function pickCampaignRecommendations(
 export async function loadCampaignPersonalization(
   email: string,
   selectedProductIds?: string[] | null,
-  strategyOverride?: RecommendationStrategy | null
+  strategyOverride?: RecommendationStrategy | null,
+  profileData?: CustomerProfileData | null
 ): Promise<{
   history: OrderHistory | null;
   purchaseSummary: CampaignPurchaseSummary | null;
@@ -334,12 +369,17 @@ export async function loadCampaignPersonalization(
   const catalog = await loadProductCatalog();
   const lifecycle = lifecycleFactsFromHistory(history, catalog);
   const segment = resolveCampaignSegment(lifecycle) as CampaignSegment;
+  // The profile's goals/interests as one embedded query (one cheap embedding
+  // call per draft); null when there is no profile or no embedding signal.
+  const steeringQuery = profileSteeringQuery(profileData ?? null);
+  const profileVector = steeringQuery ? await embedQuery(steeringQuery) : null;
   const recommendations = await pickCampaignRecommendations(
     history,
     selectedProductIds,
     strategyOverride ??
       (segment.strategy as RecommendationStrategy | null) ??
-      (RECOMMENDATION_STRATEGIES.SIMILARITY as RecommendationStrategy)
+      (RECOMMENDATION_STRATEGIES.SIMILARITY as RecommendationStrategy),
+    profileVector
   );
   // Catalog-matched purchases (= the selectable basis) are exactly the owned
   // ids the picker resolved — the summary marks them for the review card.
