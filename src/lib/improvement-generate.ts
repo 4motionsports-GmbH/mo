@@ -19,6 +19,7 @@
 import { generateText, generateObject, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, maxOutputTokensFor } from "./ai-models.mjs";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
 import { getAnalyticsReport } from "./analytics-report-store";
@@ -178,7 +179,8 @@ async function stepEffectCheck(run: ImprovementRunDetail): Promise<void> {
 
   const { text, usage } = await generateText({
     model: anthropic(EFFECT_MODEL),
-    maxOutputTokens: 900,
+    providerOptions: anthropicOptionsFor("analyst"),
+    maxOutputTokens: maxOutputTokensFor("analyst", 900),
     system:
       "Du bist der Verbesserungs-Analyst von motion sports (Fitness- und Kraftsportgeräte, " +
       "Online-Shop mit KI-Berater 'Mo'). Deine Aufgabe: ehrlich prüfen, ob die zuletzt " +
@@ -331,8 +333,9 @@ async function stepSuggestLane(run: ImprovementRunDetail, lane: "shop" | "mo"): 
   try {
     ({ object, usage } = await generateObject({
       model: anthropic(SUGGEST_MODEL),
+      providerOptions: anthropicOptionsFor("analyst"),
       schema: laneOutputSchema,
-      maxOutputTokens: 4000,
+      maxOutputTokens: maxOutputTokensFor("analyst", 4000),
       system: isMoLane ? moSystemPrompt() : shopSystemPrompt(),
       prompt,
     }));

@@ -19,6 +19,7 @@
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, maxOutputTokensFor } from "./ai-models.mjs";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
 import {
@@ -327,7 +328,8 @@ async function stepPersonas(report: AnalyticsReportDetail): Promise<void> {
       const numbered = samples.map((m, i) => `${i + 1}. ${m}`).join("\n");
       const { text, usage: u } = await generateText({
         model: anthropic(PERSONA_MODEL),
-        maxOutputTokens: 500,
+        providerOptions: anthropicOptionsFor("writer"),
+        maxOutputTokens: maxOutputTokensFor("writer", 500),
         system:
           "Du bist Analyst für motion sports (Fitness- und Kraftsportgeräte). Du erhältst echte " +
           "Nutzernachrichten aus dem Beratungs-Chat einer bestimmten Kundengruppe (Persona). Fasse " +
@@ -404,7 +406,8 @@ async function stepSynthesis(report: AnalyticsReportDetail): Promise<void> {
 
     const { text, usage: u } = await generateText({
       model: anthropic(SYNTHESIS_MODEL),
-      maxOutputTokens: 1200,
+      providerOptions: anthropicOptionsFor("analyst"),
+      maxOutputTokens: maxOutputTokensFor("analyst", 1200),
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Aus den verdichteten " +
         "Beratungsdaten EINES Zeitraums (Persona-Verteilung, Kategorien, Gesprächs-Zusammenfassungen) " +

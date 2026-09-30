@@ -23,13 +23,13 @@
     "db:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/seed-dev.mjs"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.48",
+    "@ai-sdk/anthropic": "^3.0.125",
     "@neondatabase/serverless": "^1.1.0",
     "@sentry/nextjs": "^10.55.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0",
     "@vercel/blob": "^2.4.0",
-    "ai": "^6.0.103",
+    "ai": "^6.0.296",
     "lucide-react": "^0.575.0",
     "next": "16.1.6",
     "openai": "^6.35.0",

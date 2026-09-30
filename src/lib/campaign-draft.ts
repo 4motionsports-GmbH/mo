@@ -27,6 +27,7 @@
 
 import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, modelFor } from "./ai-models.mjs";
 import { z } from "zod";
 import {
   LEGACY_EMAIL_TEXT_MODE,
@@ -40,8 +41,8 @@ import type { CampaignPurchaseSummary } from "./campaign-store";
 import { formatStoreDate } from "./store-datetime.mjs";
 import { discountScopePhrase, parseDiscountScope } from "./discount-scope.mjs";
 
-// Same model the existing marketing drafts use.
-const DRAFT_MODEL = "claude-sonnet-4-6";
+// Writer tier (lib/ai-models.mjs), like the marketing drafts.
+const DRAFT_MODEL = modelFor("writer");
 
 /** The draft schema, parameterised by the selected text mode — the per-product
  * description length follows the mode (detailed: 1–3 sentences … minimal:
@@ -438,6 +439,7 @@ export async function generateCampaignDraft(
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
+      providerOptions: anthropicOptionsFor("writer"),
       schema: draftSchema(textMode),
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +

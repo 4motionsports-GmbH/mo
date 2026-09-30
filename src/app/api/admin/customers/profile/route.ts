@@ -20,8 +20,9 @@ import { generateCustomerProfile } from "@/lib/customer-profile";
 import { recordAdminAccess } from "@/lib/admin-access-log";
 import { reportError } from "@/lib/observability";
 
-// The Anthropic pass over several transcripts can take a while.
-export const maxDuration = 60;
+// The Opus pass over several transcripts (it thinks before it writes) can
+// take a while.
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);

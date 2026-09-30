@@ -261,7 +261,7 @@ Kosten: Bild-Eingabe 8 $/Mio. Tokens, also etwa 0,03–0,08 $ je Hero zusätzlic
 
 ### Automatische Prüfung vor dem Operator
 
-Jeder Render wird von einem Vision-Modell (`claude-sonnet-4-6`,
+Jeder Render wird von einem Vision-Modell (`claude-sonnet-5-5`,
 `email-hero-qa.mjs`, getestet) auf das geprüft, was den Hero in der Mail
 funktionieren lässt: linke Bildhälfte ruhig, Geräte rechts, keine Fremdschrift,
 keine eingeklebten Freisteller, Produkttreue, Gesamtwertung 1–10. Geprüft wird

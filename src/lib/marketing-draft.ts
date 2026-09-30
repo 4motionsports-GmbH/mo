@@ -14,6 +14,7 @@
 
 import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, modelFor } from "./ai-models.mjs";
 import { z } from "zod";
 import type { TranscriptMessage } from "./conversation-store";
 import {
@@ -25,8 +26,8 @@ import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
 import { formatStoreDate } from "./store-datetime.mjs";
 
-// Same model the transactional summary uses — one voice across the backend.
-const DRAFT_MODEL = "claude-sonnet-4-6";
+// Writer tier (lib/ai-models.mjs) — one voice across the backend.
+const DRAFT_MODEL = modelFor("writer");
 
 /** Operator-selected prose length for the generated email — see
  * email-text-mode.mjs for the semantics of each mode. */
@@ -272,6 +273,7 @@ export async function generateMarketingDraft(input: GenerateDraftInput): Promise
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
+      providerOptions: anthropicOptionsFor("writer"),
       schema: draftWithHighlightsSchema(textMode),
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
@@ -509,6 +511,7 @@ export async function generateCustomerMarketingDraft(
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
+      providerOptions: anthropicOptionsFor("writer"),
       schema: draftWithHighlightsSchema(textMode),
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
@@ -675,6 +678,7 @@ export async function generateCustomerLetterDraft(
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
+      providerOptions: anthropicOptionsFor("writer"),
       schema: draftSchema,
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +

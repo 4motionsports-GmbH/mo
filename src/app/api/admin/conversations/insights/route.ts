@@ -18,7 +18,7 @@ import { isDbConfigured } from "@/lib/db";
 import { reportError } from "@/lib/observability";
 
 // The rollup runs TWO model passes (report, then an exhaustive references list —
-// combined up to ~12k output tokens on a large window). At Haiku generation
+// combined up to ~12k output tokens on a large window). At model generation
 // speed that far exceeds the old 30s ceiling, and the platform 504s the request
 // when maxDuration is hit. 300s matches the chat route; this endpoint only ever
 // runs on an explicit admin click.

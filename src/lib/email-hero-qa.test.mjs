@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
+import { anthropicOptionsFor, modelFor } from "./ai-models.mjs";
 import {
   clampReview,
   HERO_QA_MIN_SCORE,
@@ -62,7 +63,8 @@ test("reviewHeroImage sends the picture + product names and returns verdict and 
     generate,
     modelFactory: (m) => ({ id: m }),
   });
-  assert.equal(seen.model.id, "claude-sonnet-4-6");
+  assert.equal(seen.model.id, modelFor("analyst"));
+  assert.deepEqual(seen.providerOptions, anthropicOptionsFor("analyst"));
   assert.equal(seen.messages[0].content[0].type, "image");
   assert.match(seen.messages[0].content[1].text, /ATX® Power Rack 620/);
   assert.equal(out.verdict.pass, true);

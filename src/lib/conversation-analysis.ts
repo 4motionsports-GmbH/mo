@@ -17,6 +17,7 @@
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { modelFor } from "./ai-models.mjs";
 import { recordAiUsage } from "./ai-usage-store";
 import {
   parseAnalysisResponse,
@@ -26,7 +27,7 @@ import {
 import type { AdminTranscriptTurn } from "./admin-conversations";
 
 /** Cheap Haiku-class model — back-office analysis, not the consultation model. */
-export const ANALYSIS_MODEL = "claude-haiku-4-5";
+export const ANALYSIS_MODEL = modelFor("bulk");
 
 // USD per million tokens for ANALYSIS_MODEL (Anthropic pricing, checked
 // 2026-06). Surfaced in the dashboard so the operator sees what each run costs.

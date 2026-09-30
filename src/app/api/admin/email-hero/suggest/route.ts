@@ -9,7 +9,8 @@ import { suggestHeroPrompt } from "@/lib/email-hero";
 import { parseEmailHeroKind } from "@/lib/email-hero-store";
 import { reportError } from "@/lib/observability";
 
-export const maxDuration = 30;
+// One Sonnet pass (adaptive thinking) — room beyond a bare reply.
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);

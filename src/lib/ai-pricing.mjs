@@ -5,7 +5,7 @@
 // node:test runner can import it directly.
 //
 // Prices are USD per MILLION tokens. The DEFAULTS below cover the models we
-// actually call (checked against Anthropic + OpenAI list pricing, 2026-06).
+// actually call (checked against Anthropic + OpenAI list pricing, 2026-09).
 // Prices change, so config beats code: override any/all of them at runtime via
 // the MODEL_PRICES_JSON env var — a JSON object keyed by model id, e.g.
 //   MODEL_PRICES_JSON={"claude-sonnet-4-5-20250929":{"input":3,"output":15}}
@@ -20,10 +20,15 @@ export const DEFAULT_USD_EUR_RATE = 0.92;
  * MODEL_PRICES_JSON — see the header.
  */
 export const DEFAULT_MODEL_PRICES = {
-  // Anthropic — chat, transactional summary, marketing drafts, top-questions.
+  // Anthropic — Sonnet tier (chat, drafts, analysis passes; lib/ai-models.mjs).
+  // Sonnet 5 is the server-side refusal fallback of Sonnet 5.5.
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-sonnet-5": { input: 2, output: 10 },
+  // Previous Sonnet generations — historical ai_usage rows keep their price.
   "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
-  // Anthropic — Opus tier (customer-profile regeneration).
+  // Anthropic — Opus tier (customer-profile regeneration). 4.x for history.
+  "claude-opus-5-5": { input: 4, output: 20 },
   "claude-opus-4-8": { input: 5, output: 25 },
   "claude-opus-4-7": { input: 5, output: 25 },
   // Anthropic — Haiku tier (back-office conversation analysis + insights rollup):

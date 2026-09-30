@@ -10,14 +10,16 @@
 // (cross-run dedup), the directive bounds, and the prompt builders for both
 // engine passes.
 
+import { modelFor } from "./ai-models.mjs";
+
 // ── Models ────────────────────────────────────────────────────────────────────
 // Both engine passes read a lot (report narrative + Mo's full self-snapshot)
-// and write structured, high-judgement output — Sonnet, like the customer
-// synthesis; Haiku is too weak for "criticize the system prompt", Opus too
-// expensive for a repeatable loop.
+// and write structured, high-judgement output — the analyst tier
+// (lib/ai-models.mjs), like the customer synthesis; Haiku is too weak for
+// "criticize the system prompt", Opus too expensive for a repeatable loop.
 
-export const EFFECT_MODEL = "claude-sonnet-4-6";
-export const SUGGEST_MODEL = "claude-sonnet-4-6";
+export const EFFECT_MODEL = modelFor("analyst");
+export const SUGGEST_MODEL = modelFor("analyst");
 
 // ── Phase state-machine ───────────────────────────────────────────────────────
 // Stepped like the Komplettanalyse: ONE bounded model call per /step request.

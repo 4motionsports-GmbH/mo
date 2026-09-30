@@ -9,8 +9,10 @@
 // generateObject implementation as a parameter so it is testable too.
 
 import { z } from "zod";
+import { anthropicOptionsFor, modelFor } from "./ai-models.mjs";
 
-const HERO_QA_MODEL = "claude-sonnet-4-6";
+// Analyst tier (lib/ai-models.mjs): a vision judgement that gates a ~$0.19 render.
+const HERO_QA_MODEL = modelFor("analyst");
 /** How many renders a single "Bild generieren" may spend: the first, plus
  * one retry when the check fails. */
 export const HERO_QA_MAX_RENDERS = 2;
@@ -108,6 +110,7 @@ export async function reviewHeroImage(imageBytes, opts = {}) {
   const modelFactory = opts.modelFactory ?? (await import("@ai-sdk/anthropic")).anthropic;
   const { object, usage } = await generate({
     model: modelFactory(model),
+    providerOptions: anthropicOptionsFor("analyst"),
     schema: heroQaSchema,
     messages: [
       {

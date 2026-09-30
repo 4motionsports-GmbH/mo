@@ -13,6 +13,7 @@
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { anthropicOptionsFor, modelFor } from "./ai-models.mjs";
 import {
   loadConversationForSummary,
   type TranscriptMessage,
@@ -43,7 +44,7 @@ import { reportError } from "./observability";
 import { recordAiUsage, type AiCallSite } from "./ai-usage-store";
 import type { Product } from "./types";
 
-const SUMMARY_MODEL = "claude-sonnet-4-6";
+const SUMMARY_MODEL = modelFor("writer");
 
 /** Keep only the human-readable turns (drop tool-call bookkeeping rows). */
 function readableTurns(messages: TranscriptMessage[]): TranscriptMessage[] {
@@ -102,6 +103,7 @@ async function buildSummaryText(
   try {
     const { text, usage: modelUsage } = await generateText({
       model: anthropic(SUMMARY_MODEL),
+      providerOptions: anthropicOptionsFor("writer"),
       system,
       prompt,
     });
