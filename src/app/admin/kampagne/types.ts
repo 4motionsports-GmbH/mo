@@ -35,6 +35,9 @@ export interface CampaignPurchaseSummary {
     createdAt: string | null;
     totalAmount: string | null;
     currencyCode: string | null;
+    /** Items in the order before the snapshot cut them to
+     * PURCHASE_SUMMARY_MAX_ITEMS_PER_ORDER (absent on older drafts). */
+    itemCount?: number;
     items: Array<{
       title: string | null;
       quantity: number;
@@ -43,6 +46,9 @@ export interface CampaignPurchaseSummary {
       productId?: string | null;
     }>;
   }>;
+  /** Orders read from Shopify at draft time (before the snapshot kept the
+   * newest PURCHASE_SUMMARY_MAX_ORDERS; absent on older drafts). */
+  orderCount?: number;
   truncated: boolean;
 }
 

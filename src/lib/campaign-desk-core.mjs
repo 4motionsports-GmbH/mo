@@ -312,3 +312,46 @@ export function previewSignature(item) {
     item.previewVersion ?? 0,
   ]);
 }
+
+/**
+ * Bounds of the compact purchase snapshot stored on a campaign draft
+ * (campaign-recommendations.ts compactPurchaseSummary): the review card shows
+ * a glanceable history, not the full order log.
+ */
+export const PURCHASE_SUMMARY_MAX_ORDERS = 5;
+export const PURCHASE_SUMMARY_MAX_ITEMS_PER_ORDER = 6;
+
+/**
+ * How much of the customer's order history the draft's Kaufhistorie shows.
+ * The snapshot holds at most PURCHASE_SUMMARY_MAX_ORDERS orders (each with at
+ * most PURCHASE_SUMMARY_MAX_ITEMS_PER_ORDER items), while the contact's
+ * Umsatz (ordersCount / totalSpentCents) is Shopify's lifetime figure — so the
+ * card has to say when it is showing only part of the history.
+ *
+ * `total` is the best known order count (the lifetime ordersCount from the
+ * contact sync, or the number of orders read at draft time — whichever is
+ * larger), set only when it exceeds what is shown. `partial` is also true for
+ * snapshots without counts (drafts saved before the counts existed) whose
+ * `truncated` flag says the order list was cut.
+ *
+ * @param {{
+ *   orders?: Array<{ items?: unknown[], itemCount?: number | null }>,
+ *   truncated?: boolean,
+ *   orderCount?: number | null,
+ * } | null | undefined} summary
+ * @param {number | null | undefined} ordersCount lifetime order count (contact sync)
+ * @returns {{ shown: number, total: number | null, partial: boolean, hiddenItems: number[] }}
+ *   hiddenItems[i] = items of order i not in the snapshot (0 when unknown)
+ */
+export function purchaseHistoryCoverage(summary, ordersCount) {
+  const orders = summary?.orders ?? [];
+  const shown = orders.length;
+  const count = (value) =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  const known = Math.max(count(ordersCount), count(summary?.orderCount));
+  const total = known > shown ? known : null;
+  const partial =
+    total !== null || (Boolean(summary?.truncated) && shown >= PURCHASE_SUMMARY_MAX_ORDERS);
+  const hiddenItems = orders.map((o) => Math.max(0, count(o.itemCount) - (o.items?.length ?? 0)));
+  return { shown, total, partial, hiddenItems };
+}

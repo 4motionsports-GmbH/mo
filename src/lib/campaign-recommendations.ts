@@ -27,6 +27,10 @@ import {
   RECOMMENDATION_STRATEGIES,
   resolveCampaignSegment,
 } from "./campaign-segments.mjs";
+import {
+  PURCHASE_SUMMARY_MAX_ITEMS_PER_ORDER,
+  PURCHASE_SUMMARY_MAX_ORDERS,
+} from "./campaign-desk-core.mjs";
 import type { CampaignPurchaseSummary } from "./campaign-store";
 import type { Product } from "./types";
 
@@ -47,9 +51,9 @@ export interface CampaignSegment {
 const MAX_RECOMMENDATIONS = 3;
 
 // Compact review-card snapshot bounds — the card needs a glanceable history,
-// not the full order log.
-const SUMMARY_MAX_ORDERS = 5;
-const SUMMARY_MAX_ITEMS_PER_ORDER = 6;
+// not the full order log (shared with the card's coverage hint).
+const SUMMARY_MAX_ORDERS = PURCHASE_SUMMARY_MAX_ORDERS;
+const SUMMARY_MAX_ITEMS_PER_ORDER = PURCHASE_SUMMARY_MAX_ITEMS_PER_ORDER;
 
 export interface CampaignRecommendations {
   /** 2–3 recommendable products (available, not owned). May be empty when the
@@ -126,12 +130,14 @@ function compactPurchaseSummary(
       createdAt: o.createdAt ?? null,
       totalAmount: o.totalAmount,
       currencyCode: o.currencyCode,
+      itemCount: o.items.length,
       items: o.items.slice(0, SUMMARY_MAX_ITEMS_PER_ORDER).map((i) => ({
         title: i.title,
         quantity: i.quantity,
         productId: i.handle && catalogIds?.has(i.handle) ? i.handle : null,
       })),
     })),
+    orderCount: history.orders.length,
     truncated:
       history.truncated ||
       history.orders.length > SUMMARY_MAX_ORDERS ||

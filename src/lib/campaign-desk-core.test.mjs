@@ -19,6 +19,8 @@ import {
   OFFER_EXPIRING_SOON_HOURS,
   offerValidity,
   offerValidityLabel,
+  purchaseHistoryCoverage,
+  PURCHASE_SUMMARY_MAX_ORDERS,
 } from "./campaign-desk-core.mjs";
 
 test("views and filters parse defensively", () => {
@@ -216,4 +218,41 @@ test("offerValidity: the earlier of code and set expiry, in three states", () =>
 test("the Läuft-bald-ab filter is a known delivery filter", () => {
   assert.equal(parseDeliveryFilter("expiring"), "expiring");
   assert.ok(HISTORY_DELIVERY_FILTERS.some((f) => f.key === "expiring"));
+});
+
+test("purchase history coverage says when the Kaufhistorie shows only part of it", () => {
+  const order = (items, itemCount) => ({ items: Array(items).fill({}), ...(itemCount === undefined ? {} : { itemCount }) });
+  const five = Array.from({ length: PURCHASE_SUMMARY_MAX_ORDERS }, () => order(1, 1));
+
+  // Everything shown: lifetime count equals the snapshot.
+  assert.deepEqual(purchaseHistoryCoverage({ orders: [order(2, 2), order(1, 1)], truncated: false, orderCount: 2 }, 2), {
+    shown: 2,
+    total: null,
+    partial: false,
+    hiddenItems: [0, 0],
+  });
+
+  // More orders than the snapshot holds — the lifetime count names the total.
+  const cut = purchaseHistoryCoverage({ orders: five, truncated: true, orderCount: 8 }, 12);
+  assert.equal(cut.shown, 5);
+  assert.equal(cut.total, 12);
+  assert.equal(cut.partial, true);
+
+  // The draft-time read can know more than a stale sync (or a Testkontakt with 0).
+  assert.equal(purchaseHistoryCoverage({ orders: five, truncated: true, orderCount: 9 }, 0).total, 9);
+
+  // Legacy snapshot without counts: the truncated flag alone marks a cut list…
+  const legacy = purchaseHistoryCoverage({ orders: five, truncated: true }, 0);
+  assert.equal(legacy.total, null);
+  assert.equal(legacy.partial, true);
+  // …but not when fewer orders than the cap are shown (then only items were cut).
+  assert.equal(purchaseHistoryCoverage({ orders: [order(6)], truncated: true }, 0).partial, false);
+
+  // Items cut per order are counted; unknown counts read as 0.
+  assert.deepEqual(purchaseHistoryCoverage({ orders: [order(6, 9), order(2), order(2, 2)], truncated: true }, 3).hiddenItems, [3, 0, 0]);
+
+  // Null / garbage input is safe.
+  assert.deepEqual(purchaseHistoryCoverage(null, undefined), { shown: 0, total: null, partial: false, hiddenItems: [] });
+  assert.equal(purchaseHistoryCoverage({ orders: [] }, 4).total, 4);
+  assert.equal(purchaseHistoryCoverage({ orders: [order(1)] }, Number.NaN).total, null);
 });
