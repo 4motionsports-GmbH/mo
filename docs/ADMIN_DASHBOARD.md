@@ -332,8 +332,9 @@ person clearing 100–200 e-mails a day:
   Set — what Shopify applies the code to, coupon and prose follow; Set line with
   the composer in a sheet), Text (Sprache, Modus), Hero (only when the campaign design has a
   hero: Erzeugen, Anpassen… sheet, Entfernen), Kaufhistorie (collapsed, with
-  the recommendation basis), Kontakt (opt-in, segment, last mail + Sperrfrist,
-  A/B group, Umsatz, Verlauf sheet).
+  the recommendation basis; "Letzte 5 von N Bestellungen" when the snapshot
+  is cut), Kontakt (opt-in, segment, last mail + Sperrfrist, A/B group,
+  Umsatz = Shopify lifetime value at the last sync, Verlauf sheet).
 - **Nothing blocks the next card.** `S` takes the card out of the queue at
   once and the server answers in the Postausgang; a refused send comes back to
   the top with the server's reason as a blocked Prüfpunkt and a retry. Offer

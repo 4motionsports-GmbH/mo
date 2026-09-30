@@ -16,6 +16,7 @@ import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
 import { DISCOUNT_PERCENT_MAX, clampDiscountPercent } from "@/lib/discount-validation.mjs";
 import { DISCOUNT_SCOPE_OPTIONS, type DiscountScope } from "@/lib/discount-scope.mjs";
 import { abGroupOf } from "@/lib/campaign-review-checks.mjs";
+import { purchaseHistoryCoverage } from "@/lib/campaign-desk-core.mjs";
 import {
   Button,
   CatalogProductPicker,
@@ -115,6 +116,7 @@ export function ReviewColumn({
   const [customDiscount, setCustomDiscount] = React.useState<string | null>(null);
   const [bundleOpen, setBundleOpen] = React.useState(false);
   const [purchaseOpen, setPurchaseOpen] = React.useState(item.purchaseSelectedIds !== null);
+  const purchaseCoverage = purchaseHistoryCoverage(item.purchaseSummary, item.ordersCount);
   const heroRef = React.useRef<{ generate: () => void } | null>(null);
 
   // A new card resets the transient editors.
@@ -506,15 +508,20 @@ export function ReviewColumn({
           onOpenChange={setPurchaseOpen}
           title={<span className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Kaufhistorie</span>}
           meta={
-            (item.purchaseSummary?.orders.length ?? 0) > 0
-              ? `${plural(item.purchaseSummary?.orders.length ?? 0, "Bestellung", "Bestellungen")} · Basis: ${
-                  item.purchaseSelectedIds === null ? "alle" : `${num(item.purchaseSelectedIds.length)} Käufe`
-                }`
+            // Shown orders (of the lifetime total when the snapshot is cut);
+            // the basis only when narrowed — "alle" is the checkbox default.
+            purchaseCoverage.shown > 0
+              ? `${
+                  purchaseCoverage.total !== null
+                    ? `${num(purchaseCoverage.shown)} von ${plural(purchaseCoverage.total, "Bestellung", "Bestellungen")}`
+                    : plural(purchaseCoverage.shown, "Bestellung", "Bestellungen")
+                }${item.purchaseSelectedIds === null ? "" : ` · Basis: ${num(item.purchaseSelectedIds.length)} Käufe`}`
               : "keine"
           }
         >
           <PurchaseHistorySection
             summary={item.purchaseSummary}
+            ordersCount={item.ordersCount}
             appliedSelection={item.purchaseSelectedIds}
             busy={locked}
             applying={busy === "selection" || busy === "regen"}
@@ -570,7 +577,10 @@ export function ReviewColumn({
               {abGroupOf(id) === "A" ? "A — mit KI-Hero" : "B — ohne Hero"}
             </span>
           </DescriptionItem>
-          <DescriptionItem label="Umsatz">
+          <DescriptionItem
+            label="Umsatz"
+            info="Anzahl und Gesamtwert aller Bestellungen dieses Kunden laut Shopify-Kundenkonto, Stand letzter Kontakt-Sync. Die Kaufhistorie oben zeigt nur die neuesten Bestellungen zur E-Mail-Adresse, Stand Entwurf — die Summen müssen daher nicht übereinstimmen."
+          >
             <span className="text-xs tabular-nums">
               {plural(item.ordersCount, "Bestellung", "Bestellungen")} · {eurFromCents(item.totalSpentCents)}
             </span>

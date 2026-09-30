@@ -316,6 +316,15 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   `purchaseSelection`). The selection persists on the draft
   (`purchase_selected_ids`, migration `0043`), so later regenerates /
   discount changes / language switches keep the same basis.
+  Unmatched items (removed/unpublished products, gift cards, manual line
+  items) stay visible greyed out with an InfoTip ("Grau = nicht als Basis
+  wählbar"). The snapshot keeps only the newest 5 orders (≤ 6 items each) and
+  records `orderCount` / per-order `itemCount`; the card then says
+  "Letzte 5 von N Bestellungen" (N = the larger of the contact's lifetime
+  `ordersCount` and the orders read at draft time) and "+ N weitere Artikel",
+  because the Kontakt block's Umsatz is Shopify's lifetime figure from the
+  last sync and will not equal the sum of the shown orders
+  (`purchaseHistoryCoverage` in `campaign-desk-core.mjs`).
 - **Discount** can be set/changed/cleared AFTER generation
   (`POST /api/admin/campaign/discount { contactId, discountPercent, discountScope? }`):
   depth and scope („Gilt für“: Alles / Empfehlungen / Set) live on the draft,
