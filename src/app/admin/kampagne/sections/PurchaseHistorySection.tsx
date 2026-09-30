@@ -5,23 +5,32 @@
 // default = the whole history is the basis). Changing the selection shows an
 // apply button that recomputes the recommendations from the selected purchases
 // and regenerates the text in one round-trip; the selection is persisted on
-// the draft so later regenerates keep it.
+// the draft so later regenerates keep it. The snapshot holds only the newest
+// orders — a coverage line says so, since the contact's Umsatz is lifetime.
 
 import * as React from "react";
 import { RefreshCw } from "lucide-react";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { money, num } from "@/lib/admin-format.mjs";
+import { money, num, plural } from "@/lib/admin-format.mjs";
+import {
+  PURCHASE_SUMMARY_MAX_ITEMS_PER_ORDER,
+  PURCHASE_SUMMARY_MAX_ORDERS,
+  purchaseHistoryCoverage,
+} from "@/lib/campaign-desk-core.mjs";
 import { Button, Checkbox, InfoTip } from "../../ui";
 import type { CampaignPurchaseSummary } from "../types";
 
 export function PurchaseHistorySection({
   summary,
+  ordersCount,
   appliedSelection,
   busy,
   applying,
   onApply,
 }: {
   summary: CampaignPurchaseSummary | null;
+  /** Lifetime order count of the contact (Shopify, last sync). */
+  ordersCount: number;
   appliedSelection: string[] | null;
   busy: boolean;
   applying: boolean;
@@ -63,6 +72,14 @@ export function PurchaseHistorySection({
   const legacySummary =
     selectableIds.length === 0 &&
     (summary?.orders ?? []).some((o) => o.items.some((i) => !("productId" in i)));
+  // Items that don't map to a current catalog product (greyed, no checkbox).
+  const hasUnmatched =
+    !legacySummary && (summary?.orders ?? []).some((o) => o.items.some((i) => !i.productId));
+
+  const coverage = React.useMemo(
+    () => purchaseHistoryCoverage(summary, ordersCount),
+    [summary, ordersCount]
+  );
 
   const toggle = (productId: string, checked: boolean) => {
     setSelected((prevSelected) => {
@@ -91,9 +108,22 @@ export function PurchaseHistorySection({
           </InfoTip>
         </label>
       )}
+      {coverage.partial && coverage.shown > 0 && (
+        <p className="mb-1.5 flex items-center gap-1 text-xs text-muted-foreground">
+          {coverage.total !== null
+            ? `Letzte ${num(coverage.shown)} von ${plural(coverage.total, "Bestellung", "Bestellungen")}`
+            : `Nur die letzten ${plural(coverage.shown, "Bestellung", "Bestellungen")}`}
+          <InfoTip>
+            Der Entwurf speichert nur die neuesten {num(PURCHASE_SUMMARY_MAX_ORDERS)} Bestellungen
+            (je bis zu {num(PURCHASE_SUMMARY_MAX_ITEMS_PER_ORDER)} Artikel) als Überblick. „Umsatz“
+            im Kontakt-Block ist der Gesamtwert aller Bestellungen laut Shopify (Stand letzter
+            Sync) — die Summe der Bestellungen hier weicht deshalb davon ab.
+          </InfoTip>
+        </p>
+      )}
       {summary && summary.orders.length > 0 ? (
         <ul className="space-y-1.5">
-          {summary.orders.map((o) => (
+          {summary.orders.map((o, orderIdx) => (
             <li key={o.name} className="rounded-md border border-border px-2.5 py-1.5">
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>
@@ -123,6 +153,12 @@ export function PurchaseHistorySection({
                     </div>
                   )
                 )}
+                {coverage.hiddenItems[orderIdx] > 0 && (
+                  <div className="ps-5 text-xs text-muted-foreground">
+                    +{" "}
+                    {plural(coverage.hiddenItems[orderIdx], "weiterer Artikel", "weitere Artikel")}
+                  </div>
+                )}
               </div>
             </li>
           ))}
@@ -133,6 +169,18 @@ export function PurchaseHistorySection({
       {selectableIds.length > 0 && appliedSelection !== null && !dirty && (
         <p className="mt-1 text-xs text-muted-foreground">
           Empfehlungsbasis: {num(appliedIds.length)} von {num(selectableIds.length)} Käufen ausgewählt.
+        </p>
+      )}
+      {hasUnmatched && (
+        <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+          Grau = nicht als Basis wählbar
+          <InfoTip>
+            Diese Artikel haben keinen Treffer im aktuellen Produktkatalog — das Produkt wurde
+            entfernt, archiviert oder nicht veröffentlicht, oder es ist kein Shop-Produkt
+            (z. B. Gutschein, manuelle Position). Sie bleiben als Kaufhistorie sichtbar;
+            Empfehlungen werden aber aus dem Katalog berechnet, deshalb können sie nicht als
+            Basis dienen.
+          </InfoTip>
         </p>
       )}
       {legacySummary && (
