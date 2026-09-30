@@ -92,7 +92,7 @@ Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Ch
 | D-04 | **Einwilligungs-Nachweis** (`email_captures`) | E-Mail, beide Consent-Flags, DOI-Status/-Token, **wortlautgetreuer Einwilligungstext + Versionsstempel**, Abmeldezeitpunkt | Aktive Einwilligung: unbefristet (Art.-7-Nachweis); nach Abmeldung: PII-Löschung nach 30 T Karenz |
 | D-05 | **Sperrliste** (`suppression_list`) | E-Mail, Grund, Zeitpunkt | **Unbefristet** (damit Opt-outs dauerhaft greifen) |
 | D-06 | Marketing-Sendehistorie | Entwurfstext, Betreff, Rabattcode, Klick-Zeitpunkt | Fällt mit dem Einwilligungs-Datensatz weg; keine eigene Frist (→ F-10) |
-| D-07 | **Kundenakte** (`customers`) | E-Mail, Consent-Spiegel, **KI-Profiltext**, Bestellhistorien-Cache, Shopify-Identität, ggf. Postadresse (nur kaufbasiert, nur bei aktivem Briefkanal), Admin-Notizen, Briefentwurf | Solange Einwilligung aktiv; **inaktive Kunden ohne aktive Einwilligung: 1095 T (3 J.)**; Löschung auf Antrag/Self-Service |
+| D-07 | **Kundenakte** (`customers`) — seit Migration 0059 für **jede** Person (Chat, Shopify-Login **und** Kampagnen-Kontakt), mit Herkunft | E-Mail, Consent-Spiegel, **KI-Profil (Text + strukturierte Merkmale: Persona, Niveau, Budget-Signal, Ziele, Besitz, Interessen, nächste Schritte)**, Bestellhistorien-Cache, Shopify-Identität, ggf. Postadresse (nur kaufbasiert, nur bei aktivem Briefkanal), Admin-Notizen, Briefentwurf | Solange Einwilligung aktiv (Chat-DOI oder aktives Shopify-Newsletter-Abo); **inaktive Kunden ohne aktive Einwilligung: 1095 T (3 J.)**; Löschung auf Antrag/Self-Service |
 | D-08 | OAuth-Tokens (Stufe 3) | Access-/Refresh-Token, **AES-256-GCM-verschlüsselt** | Mit Kundenakte; Login-Zwischenzustände ~10 min |
 | D-09 | **E-Mail-Korrespondenz** | Vollständige Texte ein- und ausgehender Mails (inkl. unbekannter Absender), Anhänge nur als Metadaten | **365 T** |
 | D-10 | **Physische Briefe** | Empfängeradresse (Snapshot), Briefinhalt, Pingen-Status, Kosten | **365 T** |
@@ -110,7 +110,9 @@ Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Ch
 
 ### 3.2 Durchsetzung
 
-Ein täglicher, abgesicherter Lösch-Lauf setzt alle Fristen automatisch durch. Bei Löschung einer Kundenakte werden Transkripte/Korrespondenz/Briefe **entpersonalisiert** (Verknüpfung wird getrennt, Inhalte laufen über ihre eigene Frist aus); OAuth-Tokens werden mitgelöscht; die Sperrliste bleibt.
+Ein täglicher, abgesicherter Lösch-Lauf setzt alle Fristen automatisch durch. Beim fristbedingten Lösch-Lauf einer Kundenakte werden Transkripte/Korrespondenz/Briefe **entpersonalisiert** (Verknüpfung wird getrennt, Inhalte laufen über ihre eigene Frist aus); OAuth-Tokens werden mitgelöscht; die Sperrliste bleibt.
+
+**Vollständige Löschung auf Wunsch** (seit 09/2026, ein zentraler Löschpfad `erasePerson`): löscht in einer Transaktion Kundenakte + Profil, **alle** Gespräche (alle Geräte), Einwilligungsdatensätze, Marketing- und Kampagnen-Entwürfe/-Sendungen, Kampagnen-Kontakt, Korrespondenz, Briefe, Feedback, Telemetrie der Sessions, Login-Zwischenstände, Merge-Konflikte und den Personenabschnitt in gespeicherten Analyse-Berichten; Hero-Bilder im Blob-Speicher werden entfernt. Bestelldatensätze bleiben **ohne** Session-Bezug für Umsatzkennzahlen. Die Adresse kommt mit Grund `erasure` auf die Sperrliste (kein erneutes Anschreiben, kein Re-Import aus Shopify). Ein automatischer Test prüft, dass jede Tabelle mit Personenbezug im Löschplan steht.
 
 ---
 
@@ -172,7 +174,8 @@ Empfänger: Shopify-Kunden mit `marketingState = SUBSCRIBED` (Einwilligung stamm
 - Zwei getrennte Freigabe-Schalter, beide fail-closed: **Master-Gate** `CAMPAIGN_SENDS_APPROVED` und **Opt-in-Level-Gate** `CAMPAIGN_ALLOW_SINGLE_OPT_IN`. Laut Code-Vermerk wurden **beide am 21.07.2026 anwaltlich freigegeben** und sind in den dokumentierten Defaults aktiv — d. h. derzeit dürfen auch Kontakte **ohne nachweisbares Double-Opt-in** angeschrieben werden (→ F-06, bitte ausdrücklich bestätigen).
 - Lokale Abmeldungen überschreiben Shopify („ein lokales Opt-out kann kein Sync rückgängig machen“); Shopify-seitige Abmeldungen werden beim täglichen Sync übernommen.
 - **Frequenz-Deckel** (`MARKETING_MIN_SEND_INTERVAL_DAYS`) wirkt kanalübergreifend in beide Richtungen, steht aber standardmäßig auf **0 = aus** (→ F-13).
-- Inhalt pro Mail: persönliche Anrede, Bezug auf Kaufhistorie, 2–3 Empfehlungen, optional Rabatt (`MK-`) oder Set-Angebot, Mo-Werbeblock mit Deep-Link, Abmelde-Footer.
+- Inhalt pro Mail: persönliche Anrede, Bezug auf Kaufhistorie, 2–3 Empfehlungen, optional Rabatt (`MK-`) oder Set-Angebot, Mo-Werbeblock mit Deep-Link, Abmelde-Footer und — getrennt davon — ein Link „Daten löschen“ (Bestätigungsseite, dann vollständige Löschung).
+- **Neu (09/2026): Kundenprofil auch für Kampagnen-Kontakte.** Jeder Kontakt erhält eine Kundenakte (D-07) und ein KI-Profil aus Käufen und Kampagnen-Historie (auch ohne je gechattet zu haben); das Profil steuert Text und Produktauswahl der Kampagnen-Mail und — kommt die Person später in den Chat — die Beratung (→ F-20).
 
 ### 6.3 Set-Angebote (Bundles)
 
@@ -192,9 +195,9 @@ KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (S
 |---|---|---|
 | Live-Chat | Anthropic `claude-sonnet-5-5` | Gesprächsverlauf verbatim; abgeleitetes Bedarfsprofil; bei berechtigtem „Wiedererkennen“ (s. u.): Profiltext, gekaufte Artikel (nur Titel/Menge), Vorname, Stadt/Land |
 | Zusammenfassungs-Mail | dito | Transkript des Gesprächs |
-| Kundenprofil | Anthropic `claude-opus-5-5` | Alle verknüpften Transkripte, Kaufhistorie, Korrespondenz-Texte, Name, Stadt/Land |
+| Kundenprofil (jede Nacht für Kunden mit neuer Aktivität) | Anthropic `claude-opus-5-5` | Alle verknüpften Transkripte, Kaufhistorie, Korrespondenz-Texte, Kampagnen-Historie (Abo-Status, gesendete Mails, Klicks), Name, Stadt/Land |
 | Gesprächsanalyse/Q&A-Übersetzung | Anthropic `claude-haiku-4-5`; Insights-Rollup und Q&A-Entwürfe `claude-sonnet-5-5` | Einzeltranskripte bzw. deren Zusammenfassungen — **ohne** E-Mail/Identität |
-| Marketing-/Kampagnen-/Brief-Entwürfe | Anthropic Sonnet | Profil, Kaufhistorie, Name (Brief), Operator-Anweisungen |
+| Marketing-/Kampagnen-/Brief-Entwürfe, Zusammenfassungs-Mail (wiederkehrende Kunden), Hero-Bilder, Set-Vorschläge | Anthropic Sonnet (Hero-Bild: OpenAI, nur verdichteter Kontext) | Profil, Kaufhistorie, Name (Brief), Operator-Anweisungen |
 | Produktsuche | OpenAI `text-embedding-3-small` | **Jede Nutzernachricht** wird zur Suche eingebettet (keine Identifikatoren) |
 | Sprachausgabe | OpenAI `gpt-4o-mini-tts` | Mo-Antworttext |
 
@@ -202,11 +205,11 @@ KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (S
 
 ### 7.2 Personalisierungs-Gate („Wiedererkennen“)
 
-Fail-closed, zwei Wege: Stufe 2 nur, wenn die E-Mail **in derselben Session** eingegeben wurde und der Server die Capture-Zuordnung bestätigt (Schutz geteilter Geräte); Stufe 3 nur mit gültigem Login-Token **und** bestätigtem Marketing-DOI — ohne DOI nur Begrüßung mit Namen, kein Verlauf.
+Fail-closed, zwei Wege: Stufe 2 nur, wenn die E-Mail **in derselben Session** eingegeben wurde und der Server die Capture-Zuordnung bestätigt (Schutz geteilter Geräte); Stufe 3 nur mit gültigem Login-Token **und** entweder bestätigtem Marketing-DOI **oder** aktivem Shopify-Newsletter-Abo des verknüpften Kampagnen-Kontakts (neu 09/2026, → F-20) — ohne eines von beiden nur Begrüßung mit Namen, kein Verlauf.
 
 ### 7.3 Regulatorische Einordnung (zur Prüfung)
 
-- **Profiling/Art. 22 DSGVO:** Das System erstellt dauerhafte KI-Profile und personalisiert Beratung und Werbung; es trifft keine automatisierte Entscheidung mit Rechtswirkung (Einschätzung). **Eine dokumentierte DSFA existiert weiterhin nicht** (→ F-04).
+- **Profiling/Art. 22 DSGVO:** Das System erstellt dauerhafte KI-Profile (seit 09/2026 automatisch nachts und auch für Newsletter-Kontakte ohne Chat) und personalisiert Beratung und Werbung; es trifft keine automatisierte Entscheidung mit Rechtswirkung (Einschätzung). **Eine dokumentierte DSFA existiert weiterhin nicht** (→ F-04).
 - **EU AI Act:** Die Transparenzpflichten des Art. 50 (Chatbot-Kennzeichnung) gelten seit 02.08.2026. Mo bezeichnet sich im Gespräch selbst als KI; ob die Widget-Oberfläche (Theme-Repo) eine ausreichende Kennzeichnung trägt, kann dieses Backend nicht sicherstellen (→ F-07).
 - **HWG/MDR:** Medizinische Wirkaussagen sind promptseitig verboten; Geräte werden aktiv als Nicht-Medizinprodukte klargestellt.
 - **Q&A-Veröffentlichung:** Aus realen Gesprächen abgeleitete Fragen werden vor Veröffentlichung menschlich beantwortet/geprüft und enthalten keine Identität; Einträge überleben die Löschung des Ursprungsgesprächs (redaktioneller Inhalt — Einschätzung).
@@ -217,12 +220,12 @@ Fail-closed, zwei Wege: Stufe 2 nur, wenn die E-Mail **in derselben Session** ei
 
 | Recht | Stufe 1 (anonym) | Stufe 2 (E-Mail) | Stufe 3 (eingeloggt) |
 |---|---|---|---|
-| Auskunft/Export | kein Personenbezug herstellbar | **manuell** (Abfrage per E-Mail) | **Self-Service:** JSON-Export (Profil, Consents, Transkripte, Korrespondenz, Briefe, Sends, Feedback, Sperrstatus) |
-| Löschung | über Session-ID, falls beibringbar | manuell (dokumentierter Prozess) | **Self-Service:** vollständige Löschung inkl. Profil, Tokens, Consent-Purge + Sperrlisteneintrag |
+| Auskunft/Export | kein Personenbezug herstellbar | **manuell** (Abfrage per E-Mail) | **Self-Service:** JSON-Export (Profil, Consents, Transkripte, Korrespondenz, Briefe, Sends, Kampagnen-Kontakt + -Sendungen, Feedback, Sperrstatus) |
+| Löschung | über Session-ID, falls beibringbar | **Self-Service** über den Link „Daten löschen“ in jeder Marketing-/Kampagnen-Mail; sonst Admin-Button „Löschen“ (auf Anfrage) — jeweils vollständige Löschung (§ 3.2) | **Self-Service:** Widget-Button, vollständige Löschung (§ 3.2) |
 | Einzelgespräch löschen | — | — | Self-Service; bereits abgeleiteter Profiltext bleibt bis Regeneration/Volllöschung (bewusstes Design, im Juni-Bericht als zu bestätigen markiert) |
 | Widerspruch Werbung | — | 1-Klick-Abmeldung, dauerhaft | dito |
 
-**Bekannte Lücken (→ F-10):** Der Export enthält nicht: Telemetrie (`kpi_events`), Kampagnen-Tabellen, Login-Verknüpfungen, Admin-Zugriffsprotokoll, Analyse-Berichte. Die Selbst-Löschung erfasst nicht: bereits erzeugte Analyse-Berichte mit Klarnamen (laut Migrations-Kommentar manuell zu löschen), Merge-Konflikt-Tabelle (keine Frist), Kampagnen-Zeilen (laufen über die 365-T-Frist aus). Für Stufe 1/2 gibt es keinen Self-Service.
+**Bekannte Lücken (→ F-10):** Der Export enthält nicht: Telemetrie (`kpi_events`), Login-Verknüpfungen, Admin-Zugriffsprotokoll, Analyse-Berichte. Die Löschung erfasst seit 09/2026 auch Analyse-Berichte, Merge-Konflikte und Kampagnen-Zeilen; bewusst erhalten bleiben nur Sperrlisteneintrag und Admin-Zugriffsprotokoll (nur numerische ID).
 
 ---
 
@@ -265,7 +268,8 @@ Fail-closed, zwei Wege: Stufe 2 nur, wenn die E-Mail **in derselben Session** ei
 | OQ-15 kein Admin-Audit-Log | **Teilweise behoben:** Zugriffsprotokoll existiert (730 T); weiterhin nur Shared-Passwort |
 | OQ-16 kein Frequenz-Deckel | **Gebaut,** aber Default 0 = aus (→ F-13) |
 | Vercel-Region | Compute jetzt **fra1** gepinnt |
-| **Neu hinzugekommen** | Kampagnen-Kanal (freigegeben 21.07.), Consent v4 + Chat-Consent-Gate (freigegeben Juli), Gesprächs-/Komplettanalyse, Q&A-Wissen, Klick-Tracking, Umsatz-Attribution, EN-Sprachversion, TTS, Prompt-Caching |
+| OQ-11/F-10 Löschung unvollständig | **Behoben (09/2026):** ein zentraler, vollständiger Löschpfad für Widget-Button, Mail-Link „Daten löschen“ und Admin; Export um Kampagnen-Daten ergänzt |
+| **Neu hinzugekommen** | Kundenprofil für alle Kunden inkl. Kampagnen-Kontakte, nächtlich aktualisiert (→ F-20), Kampagnen-Kanal (freigegeben 21.07.), Consent v4 + Chat-Consent-Gate (freigegeben Juli), Gesprächs-/Komplettanalyse, Q&A-Wissen, Klick-Tracking, Umsatz-Attribution, EN-Sprachversion, TTS, Prompt-Caching |
 
 **Unverändert offen:** AVV-Register, Datenresidenz, KI-Anbieter-Bedingungen, DSFA, Abgleich Datenschutzerklärung.
 
@@ -287,7 +291,8 @@ Fail-closed, zwei Wege: Stufe 2 nur, wenn die E-Mail **in derselben Session** ei
 
 - **F-08 — Chat-Datenfluss ohne Einwilligung:** Transkript-Speicherung (180 T) und Übermittlung an Anthropic (Chat) und OpenAI (Suche/Embedding jeder Nachricht) erfolgen auf Basis von Art. 6 (1) b/f ohne vorgeschaltetes Consent-Gate. Bitte Basis und Transparenzanforderungen bestätigen.
 - **F-09 — KI-Auswertung im Admin:** Rechtsgrundlage (Art. 6 (1) f) für Gesprächsanalyse, Insights und Q&A-Extraktion bestätigen; für die identitätsbehaftete „Komplettanalyse“ (Klarnamen, 365 T, manuelle Löschung bei Konto-Löschung) Vorgaben machen.
-- **F-10 — Restlücken Betroffenenrechte/Fristen:** (a) Export ohne Kampagnen-/Telemetrie-Daten; (b) Selbst-Löschung erfasst Analyse-Berichte nicht automatisch; (c) `marketing_sends` und Merge-Konflikt-Tabelle ohne eigene Frist; (d) kein Self-Service für Stufe 1/2 (manueller Prozess dokumentiert). Bitte bewerten, was davon nachzurüsten ist.
+- **F-10 — Restlücken Betroffenenrechte/Fristen:** (a) Export ohne Telemetrie-Daten; (b) `marketing_sends` und Merge-Konflikt-Tabelle ohne eigene Frist (werden aber bei Löschung auf Wunsch vollständig entfernt); (c) Auskunft für Stufe 2 weiterhin manuell. Bitte bewerten, was davon nachzurüsten ist.
+- **F-20 — Profilbildung für Newsletter-Kontakte (neu 09/2026):** Für Shopify-Newsletter-Abonnenten wird ohne Chat-Kontakt ein KI-Profil aus Käufen und Kampagnen-Historie gebildet und zur Personalisierung der Kampagnen-Mails genutzt; ein aktives Shopify-Abo genügt zudem als Personalisierungs-Voraussetzung für eingeloggte Kunden im Chat. Grundlage ist die Shopify-Newsletter-Einwilligung. Bitte prüfen, ob diese Einwilligung und die Datenschutzerklärung Profilbildung aus Kaufhistorie für personalisierte Werbung abdecken (ggf. Ergänzung der Datenschutzerklärung). Jede Person kann über den Link „Daten löschen“ in jeder Mail alles löschen.
 - **F-11 — Verbraucherrechtliche Aussagen im Prompt:** Mo teilt „14 Tage Widerruf, kostenlose Rücksendung (DE), Ware unbenutzt und originalverpackt“ als Fakt mit. Bitte prüfen, ob die Formulierung „unbenutzt und originalverpackt“ als unzulässige Bedingung des Widerrufsrechts missverstanden werden kann, und eine rechtssichere Kurzformulierung vorgeben (ebenso Versand-/Zahlarten-Aussagen).
 - **F-12 — Englische Rechtstexte:** Die EN-Consent-Texte sind unprüft im Einsatz (`/en`-Storefront). Bitte freigeben oder EN-Erfassung bis dahin sperren.
 - **F-13 — Frequenz-Deckel:** `MARKETING_MIN_SEND_INTERVAL_DAYS` steht auf 0 (aus). Bitte Wert vorgeben (z. B. 14 Tage), gilt kanalübergreifend.

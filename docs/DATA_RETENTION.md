@@ -110,6 +110,12 @@ immutable send record (`campaign_sends` — email, subject, **body hash**, the
 opt-in, the whole channel is send-gated (`CAMPAIGN_SENDS_APPROVED`,
 `CAMPAIGN_ALLOW_SINGLE_OPT_IN` — see the legal model in `CAMPAIGNS.md`).
 
+Since migration `0059` every contact is linked to a `customers` row (source
+`kampagne`) and gets the central **customer profile** from its purchases and
+Kampagne history ([`CUSTOMERS.md`](./CUSTOMERS.md)). The profile lives on the
+customer row and goes with it: retention step 5 or a complete erasure removes
+it. An erased address is on `suppression_list` and is skipped by the sync.
+
 ### Retention windows (campaign)
 
 | Data                | Default window | Env var                           | Action on expiry |
@@ -250,29 +256,40 @@ the split implies:
 | --- | --- | --- | --- |
 | `conversations.title` (tier-3 custom label) | follows the conversation | `RETENTION_DAYS` | Removed with the conversation (single-chat delete or window expiry). |
 
-### Self-service "delete my data" (tier-3) — `POST /api/account/erase`
+### Complete erasure — one path for every way to delete
 
-A signed-in customer can erase **all** their data themselves — a GDPR erasure of
-the *person*, **distinct** from the single-chat delete. In one transaction
-(`lib/account-history.ts :: eraseSignedInCustomer`):
+Every "delete everything about this person" runs through **one function**,
+`erasePerson()` in [`lib/customer-erasure.ts`](../src/lib/customer-erasure.ts):
 
-1. **Purges every linked conversation** (all transcripts + messages + chat
-   `ai_usage` cascade) — not merely unlinked.
-2. **Suppresses + purges the consent record** — adds the (real) email to
-   `suppression_list` (reason `erasure`) so a future sign-in can't silently
-   re-attach, and deletes its `email_captures` (`marketing_sends` cascade).
-   Skipped for the synthetic `shopify:<id>` placeholder email.
-3. **Deletes the `customers` row** — clearing the **profile + all cached
-   summaries** (they live on the row) and **revoking the OAuth tokens**
-   (`customer_oauth_tokens` `ON DELETE CASCADE`); `bundle_offers`
-   `ON DELETE SET NULL` keeps the de-identified offer row for accounting.
+| Entry point | Who | Route |
+| --- | --- | --- |
+| Widget button "Meine Daten löschen" | signed-in customer (tier 3) | `POST /api/account/erase` (`eraseSignedInCustomer` delegates) |
+| Mail footer "Daten löschen" | any recipient of a marketing or Kampagne mail | `GET /api/erase-data?token=…` shows a confirmation page, `POST` erases (link scanners never delete; the signed token is purpose-bound and differs from the unsubscribe token) |
+| Admin "Löschen" | operator, Kunden detail or Kampagne card | `POST /api/admin/customers/erase` (confirmed, audit-logged with the numeric id only) |
+
+In **one transaction** it removes the customer row (profile, cached purchases,
+address, drafts; OAuth tokens and session links cascade), **every** conversation
+of the person on any device (messages cascade), consent records, marketing
+drafts and sends, the Kampagne contact (drafts cascade) and its sends,
+correspondence, physical letters, feedback, KPI events and attribution tokens
+of the person's sessions, pending sign-in and merge-conflict rows, usage rows,
+and the person's section in stored Analyse reports. **Kept de-identified:**
+`mo_orders` (session id + token removed, for revenue KPIs), `bundle_offers`
+(person link removed), `qa_entries` (chat link removed). **Retained on
+purpose:** `suppression_list` (reason `erasure` — the address is never mailed
+again and the Shopify audience sync never re-imports it) and
+`admin_access_log` (numeric id only, own window). Hero images in Blob storage
+are deleted after the commit.
+
+The per-table decisions are `ERASURE_PLAN` in
+`lib/customer-erasure-core.mjs`; its test parses all migrations and **fails
+when a table with personal data has no decision**, so a new table cannot
+silently escape erasure.
 
 This is the stronger sibling of the retention cron's step 5: the cron erases
 *opted-out* customers and uses `ON DELETE SET NULL` to return their conversations
-to pseudonymous rows; the self-service erase **purges** the customer's
-conversations outright, because they are the customer's own transcripts and a
-"delete my data" should remove them. Both paths revoke tokens and clear the
-profile by deleting the `customers` row.
+to pseudonymous rows (and never touches a customer whose Kampagne contact is
+still subscribed); `erasePerson` **purges** everything.
 
 ---
 
@@ -358,18 +375,15 @@ The endpoint returns a JSON summary with the counts affected, e.g.:
 
 The consent flow has shipped (see [`CONSENT_FLOW.md`](./CONSENT_FLOW.md)).
 
-**Signed-in (tier-3) customers now have a self-service path** (see the section
-above): `DELETE /api/account/conversations/{id}` erases a single transcript, and
-`POST /api/account/erase` erases the whole person (conversations purged + profile
-cleared + tokens revoked + email suppressed). No manual step is needed for them.
+**Self-service erasure exists for everyone we can reach by mail or sign-in**
+(section above): the widget button (signed in), the "Daten löschen" link in
+every marketing and Kampagne mail, and — for requests by phone or letter —
+the operator's "Löschen" button in Kunden or Kampagne. All three run the same
+complete erasure. `DELETE /api/account/conversations/{id}` still erases a
+single transcript for a signed-in customer.
 
-For **anonymous / email-only** subjects, a subject-access or erasure request is
-still handled manually:
+The only manual case left:
 
-- **Erasure of an email:** add it to `suppression_list` (reason `erasure`) and
-  delete its `email_captures` / `marketing_sends` rows. The next retention run
-  also enforces this. (This is exactly what the tier-3 erase path does
-  automatically for the signed-in customer's email.)
 - **Erasure of a conversation:** delete the `conversations` row by `session_id`
   (messages cascade). This is only possible if the user can supply their
   `session_id`, since Cluster A holds no identifier that maps to a person —

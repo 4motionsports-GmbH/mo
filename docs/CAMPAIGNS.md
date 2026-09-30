@@ -46,6 +46,15 @@ Rules:
   mid-campaign (audit trail). A contact who re-subscribed on the Shopify side
   returns to `pending` — unless our local suppression list says otherwise
   (a local opt-out can never be undone by a sync).
+- **Erased people stay out** — an address on `suppression_list` with reason
+  `erasure` (complete deletion, see [`CUSTOMERS.md`](./CUSTOMERS.md)) is
+  dropped before the upsert; it is never stored again.
+- **Every contact is a customer** (migration `0059`) — after each sync
+  `linkCampaignContactsToCustomers` links contacts to their `customers` row
+  (Shopify id first, then e-mail) and creates the missing ones with
+  `source = 'kampagne'`. The result reports `customersCreated` /
+  `customersLinked`. From then on the contact has the central customer
+  profile, and a later chat attaches to the same person.
 - **Language derivation** ([`campaign-language.mjs`](../src/lib/campaign-language.mjs)):
   customer `locale` if present (`de*` → de, otherwise en); fallback
   `defaultAddress` country DE/AT/CH → de, else en; final fallback de.
@@ -128,6 +137,14 @@ the admin clicks "Nächste 50 vorbereiten" explicitly.
 Per contact ([`campaign-draft.ts`](../src/lib/campaign-draft.ts), same model +
 fallback discipline as `marketing-draft.ts`):
 
+0. **The customer profile is the brief.** When the contact's customer has a
+   profile (goals, level, owned gear, interests, next steps — see
+   [`CUSTOMERS.md`](./CUSTOMERS.md)), the prompt carries it as
+   "Kundenverständnis" and the text speaks to *this* person's goals instead of
+   a generic purchase recap; it also steers the product picks (below). Test
+   contacts use the profile of their `test_source_email` customer. Without a
+   profile the draft works exactly as before.
+
 1. Personal greeting by first name (graceful fallback).
 2. A natural, warm reference to the purchase history — one category or one
    item, never an itemized dump.
@@ -196,7 +213,9 @@ fallback discipline as `marketing-draft.ts`):
    consultation, no old thread resumed) and `mo_view=fullscreen` (open the
    panel full-screen) shape how it opens.
 6. Footer: signed unsubscribe + Impressum/privacy via the existing
-   composition (`unsubscribeFooter` + branded template).
+   composition (`unsubscribeFooter` + branded template), plus a separate
+   "Daten löschen" link (`buildErasureUrl` → `/api/erase-data`, confirmation
+   page first) that runs the complete erasure.
 7. The **Mo brand orb** (the chat widget's actual animated mark, exported
    from the frontend repo — `public/moorb.gif`, animated with a white
    background; `public/moorb2x.png` is the transparent static variant;
@@ -399,6 +418,13 @@ out of the sync ages out; drafts cascade with their contact). The
 `suppression_list` is never touched — opt-outs are honoured forever. See
 [`DATA_RETENTION.md`](./DATA_RETENTION.md).
 
+**Complete deletion** of a contact — the "Löschen" icon in the card's Kontakt
+block (`POST /api/admin/customers/erase { contactId }`), the "Daten löschen"
+link in the mail, or the customer's own widget button — runs the one erasure
+path (`erasePerson`): contact, drafts, sends, customer + profile, chats and
+correspondence go in one transaction, and the address is suppressed with
+reason `erasure` so the next sync does not re-import it.
+
 ## 7. Endpoints & files
 
 | Piece | Path |
@@ -416,6 +442,7 @@ out of the sync ages out; drafts cascade with their contact). The
 | Global contact search (all statuses) | `POST /api/admin/campaign/contacts` |
 | Testkontakte (list / create + draft / delete) | `GET` + `POST /api/admin/campaign/test-contacts` |
 | Pin/clear the contact's email language | `POST /api/admin/campaign/language` |
+| Delete the person completely | `POST /api/admin/customers/erase` (`{ contactId, confirm: true }`) |
 | Rendered draft preview (read-only, `text/html`) | `POST /api/admin/campaign/email-preview` |
 | Retained sent content (read-only, `text/html`) | `POST /api/admin/campaign/sent-email` |
 | Send history (paged, filtered) | `GET /api/admin/campaign/history?q=&from=&to=&delivery=&page=&pageSize=` |
@@ -493,6 +520,14 @@ Fenster).
   *Ergänzung* — wer ein Rack kaufte, bekommt ein weiteres Rack. Richtig erst,
   wenn die Zubehör-Relevanz abgefallen ist.
 - **`winback`** — breite, repräsentative Auswahl ohne Bezug auf einen alten Kauf.
+
+**Kundenprofil als Steuerung** (Migration `0059`): Hat der Kontakt ein Profil,
+wird aus Zielen, Interessen und nächsten Schritten ein Suchvektor
+(`profileSteeringQuery` → `embedQuery`). `similarity` gewichtet dann 60 %
+Kaufähnlichkeit + 40 % Profilähnlichkeit (`blendRecommendationScore`),
+`winback` rankt nach dem Profil statt repräsentativ, und Kontakte ohne
+Kaufsignal bekommen echte Picks aus dem Profil statt `low_confidence`-Picks.
+`complement` bleibt unverändert (Zubehör des Besessenen).
 
 Jede Strategie **degradiert, statt zu scheitern**: `complement` ohne gepflegtes
 Zubehör fällt auf `similarity` zurück, `similarity` ohne Embedding-Signal auf

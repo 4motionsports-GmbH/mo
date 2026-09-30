@@ -331,10 +331,13 @@ person clearing 100–200 e-mails a day:
   picker), Angebot (Rabatt 0/5/10/15/20/custom, „Gilt für“ Alles / Empfehlungen /
   Set — what Shopify applies the code to, coupon and prose follow; Set line with
   the composer in a sheet), Text (Sprache, Modus), Hero (only when the campaign design has a
-  hero: Erzeugen, Anpassen… sheet, Entfernen), Kaufhistorie (collapsed, with
-  the recommendation basis; "Letzte 5 von N Bestellungen" when the snapshot
-  is cut), Kontakt (opt-in, segment, last mail + Sperrfrist, A/B group,
-  Umsatz = Shopify lifetime value at the last sync, Verlauf sheet).
+  hero: Erzeugen, Anpassen… sheet, Entfernen), Kundenprofil (persona badge,
+  plain-text excerpt of the central profile, „Öffnen“ → the customer in
+  Kunden), Kaufhistorie (collapsed, with the recommendation basis; "Letzte 5
+  von N Bestellungen" when the snapshot is cut), Kontakt (opt-in, segment,
+  last mail + Sperrfrist, A/B group, Umsatz = Shopify lifetime value at the
+  last sync, Verlauf sheet, and a trash icon that deletes the person
+  completely after a confirm — not shown for Testkontakte).
 - **Nothing blocks the next card.** `S` takes the card out of the queue at
   once and the server answers in the Postausgang; a refused send comes back to
   the top with the server's reason as a blocked Prüfpunkt and a retry. Offer
@@ -374,15 +377,22 @@ unchanged and covered by its tests. Screenshots: `docs/screenshots/kampagne-desk
 ### 3.3 Kunden
 
 Groups everything by **customer** (e-mail), not by session
-([`CUSTOMERS.md`](./CUSTOMERS.md)). The left rail is a **slim list** of every
-customer (name, e-mail, tier badge with InfoTip, flags, last seen) that is
-searched, filtered and sorted client-side — no cap, no hidden rows. A person's
-full detail is loaded **on demand** (`GET /api/admin/customers/detail?id=`) into
-six sub-tabs:
+([`CUSTOMERS.md`](./CUSTOMERS.md)) — every person, whether they chatted, signed
+in or are only a Kampagne (newsletter) contact. The left rail is a **slim list**
+of every customer (name — for Kampagne contacts from Shopify —, e-mail, tier
+badge with InfoTip, Herkunft badge (Newsletter / Shopify-Konto; Chat is the
+default and has none), persona badge, flags, last seen) that is searched,
+filtered (Tier, Marketing, Kauf, Versand, **Herkunft**, **Persona** incl.
+„Ohne Persona“) and sorted client-side — no cap, no hidden rows. A person's
+full detail is loaded **on demand** (`GET /api/admin/customers/detail?id=`).
+The header shows tier, Herkunft, persona and marketing state, and
+**„Löschen“** (after a destructive confirm) runs the complete erasure
+(`customers/erase`) — the same deletion as the widget button and the mail
+link. Six sub-tabs:
 
 | Sub-tab | Content | Routes |
 | --- | --- | --- |
-| Profil | identity, tiers, consent state, the cached „Kundenverständnis“ (regenerate on demand, cost shown) | `customers/profile` |
+| Profil | the central customer profile: structured facts (Persona, Niveau, Budget-Signal, Ziele, Besitzt, Interessen, Nächste Schritte) above the readable „Kundenverständnis“; kept current nightly, „Neu generieren“ on demand (cost shown) | `customers/profile` |
 | Beratungen | the customer's conversations with the shared `TranscriptView` and „Im Gespräche-Tab öffnen“ | — |
 | Käufe | cached Shopify purchase history, „Käufe aktualisieren“ | `customers/purchases` |
 | Marketing | the personalised marketing e-mail: settings row (Hinweise, Rabatt, Textmodus), editor, preview, approve & send with a confirm that shows recipient, subject and discount; the **Set-Angebot** composer as a side panel | §4, `customers/marketing-draft`, `marketing/*`, `bundles/*`, `catalog/search`, `email-hero/*` |
@@ -1224,7 +1234,8 @@ on failure. Grouped by the screen that calls them.
 | | `GET campaign/history?q=&from=&to=&delivery=&page=&pageSize=` | paged „Gesendet“ view with delivery + redemption state and code/set expiry; `delivery` = delivered \| clicked \| bounced \| complained \| copy \| expiring (offer ends within 48 h) |
 | | `POST campaign/sent-email { sendId }` | retained content of one send |
 | Kunden | `GET customers/detail?id=` | one customer's full detail (on open) |
-| | `POST customers/profile / purchases` | regenerate „Kundenverständnis“ / refresh cached Shopify data |
+| | `POST customers/profile / purchases` | regenerate the customer profile / refresh cached Shopify data |
+| Kunden, Kampagne | `POST customers/erase { customerId \| contactId, confirm: true }` | delete the person completely (`erasePerson`, audit-logged) |
 | | `POST customers/marketing-draft` | per-customer marketing draft (§4.2) |
 | | `POST marketing/update / email-preview / send / delete` | edit, preview, approve & send (`approveAndSend`), delete an unsent draft |
 | | `POST bundles/suggest / create / archive / delete` | Set-Angebot composer |

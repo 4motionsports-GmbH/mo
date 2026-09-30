@@ -1,19 +1,37 @@
 # Customers — the email-keyed entity above sessions
 
 Since migration `0008_customers.sql` the backend has a **customer** entity so
-returning users are recognised and their history consolidated. This documents
-the identity model, the linking rule, the cached summaries, and the open GDPR
-question.
+returning users are recognised and their history consolidated; since `0059`
+every person — chat, Shopify sign-in or Kampagne contact — has one. This
+documents the identity model, the linking rule, the central customer profile,
+erasure, and the GDPR sign-off.
 
 ## Identity model
 
-- The **only reliable cross-session identifier is the email address**, given
-  actively and with consent via `/api/capture-email`.
+- The **only reliable cross-session identifier is the email address** — given
+  actively in the chat (`/api/capture-email`), through a Shopify sign-in, or
+  as a Shopify newsletter subscriber (Kampagne audience).
 - The localStorage session id is a **per-browser thread id, not a person**. It
   is never used to link anonymous sessions across visits, never fingerprinted,
   never enriched.
-- A `customers` row exists **only because an email was captured**. Sessions
-  without an email capture stay anonymous and unlinked — exactly as before.
+- **One `customers` row per person, whatever the channel** (migration
+  `0059_customer_profiles_everywhere.sql`). `customers.source` records where
+  the person first came from:
+
+  | `source` | Created by | Admin label |
+  | --- | --- | --- |
+  | `chat` | e-mail capture in the widget | Chat |
+  | `shopify_account` | Shopify sign-in without an e-mail capture | Shopify-Konto |
+  | `kampagne` | Kampagne audience sync (Shopify newsletter subscriber) | Newsletter |
+
+  The source never changes afterwards: a Kampagne contact who later chats
+  keeps `kampagne`, and the chat attaches to the same row.
+- `campaign_contacts.customer_id` links each Kampagne contact to its customer
+  (FK `ON DELETE SET NULL`). The audience sync
+  (`linkCampaignContactsToCustomers` in `src/lib/campaign-store.ts`) links by
+  Shopify customer id first, then by e-mail, and creates the missing
+  customers. It is idempotent.
+- Sessions without an e-mail stay anonymous and unlinked — exactly as before.
 
 ## Linking rule
 
@@ -31,17 +49,55 @@ On every email capture (`/api/capture-email` →
 
 Linking is best-effort: a failure never blocks the capture/summary/DOI flow.
 
-## Cached summaries (on demand, from the admin dashboard)
+## The central customer profile
 
-| Field | Source | Refresh |
-| --- | --- | --- |
-| `purchase_summary` (+`_updated_at`) | Shopify order history by email (`fetchOrderHistoryByEmail`, read_orders; full history beyond 60 days needs `read_all_orders`) | "Käufe aktualisieren" button → `POST /api/admin/customers/purchases` |
-| `profile_summary` (+`_updated_at`) | One Anthropic pass over all linked transcripts + purchase history (`generateCustomerProfile`) | "Kundenverständnis generieren" button → `POST /api/admin/customers/profile` |
+Every customer has one profile: the single place where everything we know
+about the person is condensed. It has two parts, both written by one AI pass
+(`generateCustomerProfile` in `src/lib/customer-profile.ts`, **deep** tier —
+see [`AI_MODELS.md`](./AI_MODELS.md)):
 
-The profile is **regenerated fresh each time**, never mechanically merged from
-per-session profiles — contradictions between sessions resolve toward the
-newer statement. Each run costs tokens; the dashboard shows the usage and an
-approximate USD cost after every run.
+| Column | Content |
+| --- | --- |
+| `profile_summary` (+`_updated_at`) | The readable "current understanding" (Markdown). |
+| `profile_data` (jsonb) | Structured facts: `persona` (archetype), `level` (einsteiger / fortgeschritten / profi / unbekannt), `budget` (niedrig / mittel / hoch / unbekannt), `goals`, `owned`, `interests`, `nextSteps` (≤ 8 short items each; normalised by `src/lib/customer-profile-core.mjs`). |
+| `persona_label` | The persona, denormalised for list filters and badges. |
+| `profile_checked_at` | When upkeep last looked at the customer (also set when there was nothing to profile). |
+
+**Inputs:** all linked chat transcripts, the Shopify order history
+(`purchase_summary`), the correspondence (`email_messages`) and the Kampagne
+history (newsletter status, sent mails, clicks). A Kampagne contact who never
+chatted still gets a profile from purchases + newsletter history.
+
+**One path writes it:** `regenerateCustomerProfile(customerId)` — used by the
+nightly upkeep, the "Neu generieren" button (`POST /api/admin/customers/profile`)
+and the Analyse report. It refreshes the purchase cache first when it is
+empty. The profile is regenerated fresh each time, never merged mechanically —
+contradictions resolve toward the newer statement.
+
+**Kept current automatically.** `/api/cron/refresh-customers` (daily) first
+refreshes Shopify data, then runs `runProfileUpkeep`: customers whose last
+activity (chat, correspondence, Kampagne send, order) is newer than their
+profile — or who have never been checked — are regenerated, up to
+`CUSTOMER_PROFILE_BATCH` per night (default 30, `0` disables). Customers with
+nothing to profile are only marked checked, so they cost nothing.
+For the first fill run `npm run profiles:backfill` (loops the deployed cron
+with `?only=profiles` until nothing is left; ~$0.10 per profile).
+
+**Who reads it** (`profileForPrompt` / `profileFactsBlock` in the core,
+`customerProfileForPrompt` in TS):
+
+| Component | Use |
+| --- | --- |
+| Live chat (`customer-memory.ts` → system prompt) | "Profil auf einen Blick" block + readable profile for a re-identified, consented customer. |
+| Kampagne drafts (`campaign-draft.ts`) | "Kundenverständnis" section: the text speaks to the person's goals and level instead of generic purchase lists. |
+| Kampagne recommendations (`campaign-recommendations.ts`) | Similarity picks are ranked 60 % purchase + 40 % profile similarity; winback picks and contacts without a purchase signal are ranked by the profile alone (accessory picks unchanged). |
+| Summary mail (`summary-email.ts`) | Returning customers' mailed summary builds on the profile. |
+| Marketing / Kampagne hero images (`email-hero.ts`) | Profile as art-direction context. |
+| Bundle suggestions, letter drafts, marketing drafts | `profileSummary` in the generator prompt. |
+| Admin | Kunden → Profil tab (facts + text), persona filter/badges, Kampagne card "Kundenprofil". |
+
+`purchase_summary` (+`_updated_at`) stays the Shopify order-history cache
+(`fetchOrderHistoryByEmail`), refreshed nightly and by "Käufe aktualisieren".
 
 ## Welcome discount (historical, recorded here) — ⚠️ feature retired
 
@@ -77,8 +133,9 @@ Memory is injected into the system prompt only when **both** hold:
    (`wasEmailCapturedFromSession`, fail-closed). A forged request body naming
    someone else's address resolves nothing.
 
-What gets injected (compact, never raw transcripts): the cached
-`profile_summary` ("current understanding"), owned items + quantities from the
+What gets injected (compact, never raw transcripts): the structured profile
+facts ("Profil auf einen Blick"), the cached `profile_summary` ("current
+understanding"), owned items + quantities from the
 cached `purchase_summary`, the prior-consultation count, and first-seen date.
 The prompt block instructs Mo to acknowledge the return lightly (once, warm,
 never exhaustive), not to re-recommend owned products (suggest complements
@@ -93,12 +150,41 @@ by the email the user just provided in this session.
 
 ## Retention / erasure
 
-- `conversations.customer_id` and `email_captures.customer_id` are
-  `ON DELETE SET NULL`: deleting a customer returns their conversations to
-  plain pseudonymous rows.
-- The retention job ([`src/lib/retention.ts`](../src/lib/retention.ts)) purges
-  the customer row (email + cached profile/purchase summaries — all PII) with
-  the same opted-out criteria and grace period as the capture purge.
+**One erasure path for every way to delete:** `erasePerson()` in
+[`src/lib/customer-erasure.ts`](../src/lib/customer-erasure.ts). It is used by
+
+- the **widget button** "Meine Daten löschen" (signed-in customer,
+  `/api/account/erase` → `eraseSignedInCustomer`),
+- the **mail-footer link** "Daten löschen" in every marketing and Kampagne mail
+  (`/api/erase-data?token=…`: GET shows a confirmation page, POST erases — so
+  link scanners never delete anything; the token is purpose-bound and cannot
+  be swapped with an unsubscribe token),
+- the admin **"Löschen"** button in Kunden (customer) and Kampagne (contact)
+  (`POST /api/admin/customers/erase`, confirmed, audit-logged as
+  `customer.erase` with the numeric id only).
+
+It resolves every address, Kampagne contact, conversation and session of the
+person and removes them in **one transaction**: customer + profile, all chats
+(all devices), consent records, marketing + Kampagne drafts and sends, the
+Kampagne contact, correspondence, letters, feedback, KPI events, attribution
+tokens, sign-in state, usage rows and the person's section in stored Analyse
+reports. Order rows stay for revenue KPIs with session id and token removed;
+the hero images in Blob storage are deleted afterwards. The address is put on
+the **suppression list with reason `erasure`**, so it is never mailed again and
+the Shopify audience sync never re-imports it.
+
+The table-by-table plan is `ERASURE_PLAN` in
+`src/lib/customer-erasure-core.mjs`. Its test parses every migration and
+**fails when a table with personal data has no erasure decision** — a new
+table cannot silently escape deletion.
+
+The customer's data export (`/api/account/export`) includes the Kampagne
+contact and sends.
+
+**Retention:** the job ([`src/lib/retention.ts`](../src/lib/retention.ts))
+purges inactive customer rows with the same opted-out criteria and grace
+period as the capture purge — but never a customer whose Kampagne contact is
+still subscribed.
 
 ## ✅ GDPR: profile building — LAWYER-APPROVED
 
@@ -129,7 +215,9 @@ by the email the user just provided in this session.
 >       this same mechanism. Re-identification is the authenticated session, but
 >       the **personalisation consent requirement is unchanged**: history /
 >       profile / address are gated on `canPersonaliseSignedIn`
->       (`CONSENT_COPY_LAWYER_APPROVED` **and** `marketing_status = 'confirmed'`),
+>       (`CONSENT_COPY_LAWYER_APPROVED` **and** either `marketing_status =
+>       'confirmed'` or an active Shopify newsletter subscription of the
+>       linked Kampagne contact),
 >       so a non-consented signed-in user gets **only** the authenticated
 >       greeting-by-name and no personalised data. This gate matches the
 >       intended lawful basis.
@@ -143,7 +231,8 @@ by the email the user just provided in this session.
 
 ## What deliberately did NOT change
 
-- `email_captures` remains the only consent record; `customers` mirrors state
-  but never replaces the audit trail.
+- `email_captures` remains the chat consent record and Shopify stays the
+  newsletter consent record; `customers` mirrors state but never replaces the
+  audit trail.
 - Anonymous (no-email) sessions remain exactly as pseudonymous and unlinked as
   before.

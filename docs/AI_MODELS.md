@@ -12,7 +12,7 @@ Single source of truth in code: [`src/lib/ai-models.mjs`](../src/lib/ai-models.m
 | `chat` | `claude-sonnet-5-5` | `between_tools` (no up-front thinking), effort `high` | `/api/chat` |
 | `writer` | `claude-sonnet-5-5` | adaptive, effort `low` | marketing + campaign drafts, bundle suggestion, hero prompt, summary e-mail, persona top-questions (KPI + report), Q&A answer drafts |
 | `analyst` | `claude-sonnet-5-5` | adaptive, effort `medium` | Verbesserung (Wirkungs-Check + Vorschläge), insights rollup, report customer synthesis, hero image check (vision) |
-| `deep` | `claude-opus-5-5` | adaptive (always on), effort `medium` | customer profile (dashboard + report) |
+| `deep` | `claude-opus-5-5` | adaptive (always on), effort `medium` | central customer profile — nightly upkeep, "Neu generieren", report (structured output: summary + persona, level, budget, goals, owned, interests, next steps) |
 | `bulk` | `claude-haiku-4-5` | none | per-conversation analysis, Q&A translation |
 
 Every tier on a 5.x model sends `fallbacks: "default"` (Anthropic server-side
@@ -31,7 +31,10 @@ model inside the same call instead of failing the request.
   level `between_tools` accepts) buys more thorough tool use and answers for
   somewhat more output tokens.
 - **Opus 5.5 replaces Opus 4.8** for the customer profile: better and cheaper
-  ($4 / $20 vs $5 / $25). It always thinks; the output caps carry thinking
+  ($4 / $20 vs $5 / $25). The profile is the input every other generator reads
+  (chat, Kampagne, mails, recommendations — see [`CUSTOMERS.md`](./CUSTOMERS.md)),
+  so it gets the strongest model; upkeep only regenerates customers with new
+  activity (≈ $0.10 each, `CUSTOMER_PROFILE_BATCH` per night). It always thinks; the output caps carry thinking
   headroom (`maxOutputTokensFor`) so answers are not truncated.
 - **Haiku 4.5 stays** for high-volume, per-item work — still the current Haiku
   and the cheapest model that does these tasks well. The one-off insights rollup
