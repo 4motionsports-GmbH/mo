@@ -377,3 +377,62 @@ export async function getMoEffectKpis(sql: Sql | null = getSql()): Promise<MoEff
     return null;
   }
 }
+
+/** Kunden → „Ähnliche Kunden“: people like this one, and the audience that describes them. */
+export interface SimilarCustomers {
+  items: Array<{ id: number; name: string | null; email: string; sharedCategories: string[]; sameSegment: boolean; consented: boolean }>;
+  /** The campaign audience spec these people share (value tier + bought categories). */
+  audience: { v: 1; valueTier?: string[]; categories?: string[] } | null;
+}
+
+/**
+ * Customers similar to one person — deterministic and free (no embeddings):
+ * the same value tier and at least one shared bought category, ranked by the
+ * number of shared categories, then the same lifecycle segment and persona,
+ * then spend. Never throws.
+ */
+export async function listSimilarCustomers(
+  customerId: number,
+  limit = 8,
+  sql: Sql | null = getSql()
+): Promise<SimilarCustomers | null> {
+  if (!sql) return null;
+  try {
+    const me = (await sql`
+      SELECT value_tier, bought_categories, lifecycle_segment, persona_label
+        FROM customer_overview WHERE customer_id = ${customerId}
+    `) as Array<{ value_tier: string | null; bought_categories: string[] | null; lifecycle_segment: string | null; persona_label: string | null }>;
+    const p = me[0];
+    const categories = (p?.bought_categories ?? []).filter(Boolean);
+    if (!p || !p.value_tier || categories.length === 0) return { items: [], audience: null };
+    const rows = (await sql`
+      SELECT o.customer_id, o.display_name, o.email,
+             ARRAY(SELECT unnest(o.bought_categories) INTERSECT SELECT unnest(${categories}::text[])) AS shared,
+             (o.lifecycle_segment IS NOT DISTINCT FROM ${p.lifecycle_segment}) AS same_segment,
+             (o.email_consent_state = 'subscribed' AND NOT o.blocked) AS consented
+        FROM customer_overview o
+       WHERE o.customer_id <> ${customerId}
+         AND o.value_tier = ${p.value_tier}
+         AND o.bought_categories && ${categories}::text[]
+       ORDER BY cardinality(ARRAY(SELECT unnest(o.bought_categories) INTERSECT SELECT unnest(${categories}::text[]))) DESC,
+                (o.lifecycle_segment IS NOT DISTINCT FROM ${p.lifecycle_segment}) DESC,
+                (o.persona_label IS NOT DISTINCT FROM ${p.persona_label}) DESC,
+                o.total_spent_cents DESC
+       LIMIT ${Math.max(1, Math.min(limit, 25))}
+    `) as Array<Record<string, unknown>>;
+    return {
+      items: rows.map((r) => ({
+        id: Number(r.customer_id),
+        name: (r.display_name as string | null) ?? null,
+        email: String(r.email),
+        sharedCategories: Array.isArray(r.shared) ? (r.shared as string[]) : [],
+        sameSegment: r.same_segment === true,
+        consented: r.consented === true,
+      })),
+      audience: { v: 1, valueTier: [p.value_tier], categories: categories.slice(0, 6) },
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/customer-list-store", phase: "listSimilarCustomers" });
+    return null;
+  }
+}

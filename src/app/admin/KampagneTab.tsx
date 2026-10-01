@@ -30,7 +30,7 @@ import {
   type CampaignWithStats,
 } from "@/lib/campaigns-store";
 import { campaignPhase } from "@/lib/campaign-def.mjs";
-import { describeAudienceSpec } from "@/lib/audience-spec.mjs";
+import { describeAudienceSpec, normalizeAudienceSpec } from "@/lib/audience-spec.mjs";
 import { campaignAutoPrepareConfig } from "@/lib/campaign-flags.mjs";
 import { DISCOUNT_PERCENT_MAX } from "@/lib/discount-validation.mjs";
 import { ARCHETYPE_META } from "@/lib/persona";
@@ -96,13 +96,25 @@ function cardProps(c: CampaignWithStats, all: CampaignWithStats[]): CampaignCard
   };
 }
 
+/** `?audience=<json>` → a normalised audience spec, or null for anything unparsable. */
+function parsePresetAudience(raw: string | undefined): Record<string, unknown> | null {
+  if (!raw || raw.length > 4000) return null;
+  try {
+    return normalizeAudienceSpec(JSON.parse(raw)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 async function Overview({
   campaigns,
   initialEdit,
+  presetAudience,
   notFound,
 }: {
   campaigns: CampaignWithStats[];
   initialEdit: number | "new" | null;
+  presetAudience?: Record<string, unknown> | null;
   notFound?: boolean;
 }) {
   const catalog = await loadProductCatalog().catch(() => []);
@@ -113,6 +125,7 @@ async function Overview({
     <CampaignsOverview
       campaigns={campaigns.map((c) => cardProps(c, campaigns))}
       initialEdit={initialEdit}
+      presetAudience={presetAudience ?? null}
       notFound={notFound}
       sendsApproved={isCampaignSendsApproved()}
       options={{
@@ -133,6 +146,7 @@ export async function KampagneTab({
   dbReady,
   campaignRef,
   editRef,
+  audienceRef,
   initialContactId,
   initialView,
   initialFilter,
@@ -142,6 +156,8 @@ export async function KampagneTab({
   campaignRef: string | undefined;
   /** `?edit=<id|new>` — open the editor on the overview. */
   editRef: string | undefined;
+  /** `?audience=<json>` with `edit=new` — the new campaign's starting audience. */
+  audienceRef?: string | undefined;
   initialContactId: number | null;
   initialView: string | undefined;
   initialFilter: string | undefined;
@@ -161,7 +177,14 @@ export async function KampagneTab({
   if (campaignRef) campaign = await resolveCampaign(campaignRef);
   else if (initialContactId && editId === null) campaign = await getCampaignForContact(initialContactId);
   if (!campaign || editId !== null) {
-    return <Overview campaigns={campaigns} initialEdit={editId} notFound={Boolean(campaignRef) && !campaign} />;
+    return (
+      <Overview
+        campaigns={campaigns}
+        initialEdit={editId}
+        presetAudience={editId === "new" ? parsePresetAudience(audienceRef) : null}
+        notFound={Boolean(campaignRef) && !campaign}
+      />
+    );
   }
   const campaignId = campaign.id;
 
