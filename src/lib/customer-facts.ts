@@ -3,8 +3,9 @@
 // Recomputes customer_facts in batches: dirty customers first (an order, chat,
 // send or mail changed something), then everyone whose facts are older than a
 // day (lifecycle segment and churn risk move with the calendar). Zero tokens;
-// a few aggregate queries per batch of 500. Run by /api/cron/refresh-customers
-// and after the bulk import. docs/CUSTOMER_PLATFORM_PLAN.md §6.4.
+// a few aggregate queries per batch of 500. Run by the nightly
+// /api/cron/shopify-reconcile and after the bulk import (Einstellungen →
+// Shopify-Abgleich). docs/CUSTOMER_PLATFORM_PLAN.md §6.4.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";

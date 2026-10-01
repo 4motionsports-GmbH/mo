@@ -8,7 +8,7 @@
 // forms NOT triggered by the tool (e.g. a proactive share-form entry point),
 // and lets the widget refresh its copy without a theme release.
 //
-// Three surfaces, ONE version stamp (v4):
+// Four surfaces, ONE version stamp (v4):
 //   * default            — the in-chat capture form (email + two checkboxes).
 //   * ?surface=signin    — the AT-SIGN-IN marketing opt-in for a signed-in
 //                          customer (benefit-framed button-consent block, no
@@ -18,7 +18,10 @@
 //                          marketing-only signup shown once per session after
 //                          the first chat message; same button-consent
 //                          mechanic. The widget POSTs the accept to
-//                          /api/chat-marketing-opt-in.
+//                          /api/chat-marketing-opt-in. Carries `signIn`: the
+//                          sign-in-first path the gate leads with.
+//   * ?surface=erase     — the "Meine Daten löschen" confirmation (mentions
+//                          the shop account when SHOPIFY_ERASURE_SYNC is on).
 //
 // Public read-only strings already shown to every form user, so no
 // shared-secret auth is required — origin allowlist + rate limit are the
