@@ -10,7 +10,12 @@
 //   kpi_persona_question_summaries, conversation_insights (per-window rollups),
 //   customers, email_captures, suppression_list, marketing_sends, bundle_offers,
 //   email_messages, physical_letters,
+//   campaigns (Lebenszyklus, Einzelansprache, Black Friday, a finished Aktion),
 //   campaign_contacts, campaign_drafts, campaign_sends (incl. 0054/0055 columns),
+//   the customer platform (0061–0068): Shopify-mirrored customers with the one
+//   consent, customer_orders, customer_facts (computed by the real core),
+//   consent_events, inbox_items (from the real signal rules), shopify_sync_runs,
+//   shopify_webhook_events, shopify_outbox,
 //   feedback, qa_entries, analytics_reports, improvement_runs,
 //   improvement_suggestions, mo_directives, mo_directive_versions,
 //   email_design_selections, mo_attribution_tokens, mo_orders, admin_access_log.
@@ -45,6 +50,8 @@ import { neon, neonConfig } from "@neondatabase/serverless";
 import { CATEGORY_LABELS, QUALITY_LABELS } from "../src/lib/conversation-analysis-core.mjs";
 import { CAMPAIGN_SEGMENT_KEYS } from "../src/lib/campaign-segments.mjs";
 import { SHOP_CATEGORIES, MO_CATEGORIES } from "../src/lib/improvement-core.mjs";
+import { computeCustomerFacts } from "../src/lib/customer-facts-core.mjs";
+import { capSignals, signalsForCustomer } from "../src/lib/customer-signals.mjs";
 
 if (process.env.NEON_FETCH_ENDPOINT) {
   neonConfig.fetchEndpoint = process.env.NEON_FETCH_ENDPOINT;
@@ -468,8 +475,13 @@ const SEEDED_TABLES = [
   "email_captures", "email_design_selections", "email_messages", "feedback", "improvement_runs",
   "improvement_suggestions", "kpi_events", "kpi_persona_question_summaries", "marketing_sends", "messages",
   "mo_attribution_tokens", "mo_directive_versions", "mo_directives", "mo_orders", "physical_letters",
-  "qa_entries", "suppression_list",
+  "qa_entries", "suppression_list", "customer_orders", "customer_facts", "consent_events", "inbox_items",
+  "shopify_sync_runs", "shopify_webhook_events", "shopify_outbox", "erasure_tombstones",
 ];
+
+// Migration 0066 seeds two campaigns, so `campaigns` is never empty — it is
+// truncated with the rest but not part of the "already holds data" check.
+const ALSO_TRUNCATED = ["campaigns"];
 
 async function main() {
   console.log(`[seed-dev] database ${dbName} @ ${dbHost} — anchor ${ANCHOR_YMD}`);
@@ -486,14 +498,30 @@ async function main() {
       );
       process.exit(1);
     }
-    await sql.query(`TRUNCATE ${SEEDED_TABLES.join(", ")} RESTART IDENTITY CASCADE`);
+    await sql.query(`TRUNCATE ${[...SEEDED_TABLES, ...ALSO_TRUNCATED].join(", ")} RESTART IDENTITY CASCADE`);
     console.log("[seed-dev] truncated seeded tables");
+  } else {
+    await sql.query(`TRUNCATE ${ALSO_TRUNCATED.join(", ")} RESTART IDENTITY CASCADE`);
   }
 
   const counts = {};
   const count = (table, n) => {
     counts[table] = (counts[table] ?? 0) + n;
   };
+
+  // ── Campaigns (0066) ─────────────────────────────────────────────────────────
+  const campaignRows = [
+    { name: "Bestandskunden – Lebenszyklus", slug: "lebenszyklus", kind: "laufend", status: "aktiv", brief: null, audience: json({ v: 1, lifecycle: ["ausbauen_frueh", "ausbauen", "weiterentwickeln", "zurueckholen", "unbekannt"] }), audience_mode: "dynamisch", priority: 10, starts_at: null, ends_at: null, reentry_days: 180, discount_percent: 0, discount_valid_until: null, hero_mode: "ai_ab", cta_kind: "mo_chat", cta_url: null, auto_prepare_per_day: 0, audience_refreshed_at: shopTime(0), started_at: shopTime(120), ended_at: null },
+    { name: "Einzelansprache", slug: "einzelansprache", kind: "einzel", status: "aktiv", brief: null, audience: json({ v: 1 }), audience_mode: "fest", priority: 100, starts_at: null, ends_at: null, reentry_days: null, discount_percent: 0, discount_valid_until: null, hero_mode: "none", cta_kind: "mo_chat", cta_url: null, auto_prepare_per_day: 0, audience_refreshed_at: null, started_at: shopTime(120), ended_at: null },
+    { name: "Black Friday 2026", slug: "black-friday-2026", kind: "aktion", status: "aktiv", brief: "Anlass: Black Friday — vier Tage die besten Preise des Jahres.\nZiel: Wiederkauf bei Bestandskund:innen, besonders Zubehör zu Großgeräten.\nTon: freundlich, klar, kein Countdown-Geschrei.\nMuss rein: Rabatt gilt bis Montag 23:59.\nBitte nicht: Preise erfinden.", audience: json({ v: 1, optInLevels: ["confirmed_opt_in"], lastOrderDays: { max: 1095 }, excludeMailedWithinDays: 14 }), audience_mode: "fest", priority: 50, starts_at: "2026-11-27T00:00:00.000Z", ends_at: "2026-11-30T22:59:00.000Z", reentry_days: null, discount_percent: 15, discount_valid_until: "2026-11-30T22:59:00.000Z", hero_mode: "default", cta_kind: "shop", cta_url: "https://motionsports.de/collections/black-friday", auto_prepare_per_day: 0, audience_refreshed_at: shopTime(1), started_at: shopTime(2), ended_at: null },
+    { name: "Frühjahrs-Aktion 2026", slug: "fruehjahrs-aktion-2026", kind: "aktion", status: "beendet", brief: "Frühjahrsputz fürs Homegym: Mobilität und Regeneration.", audience: json({ v: 1, valueTier: ["komponente", "grossgeraet"] }), audience_mode: "fest", priority: 40, starts_at: shopTime(110), ends_at: shopTime(95), reentry_days: null, discount_percent: 10, discount_valid_until: shopTime(95), hero_mode: "default", cta_kind: "mo_chat", cta_url: null, auto_prepare_per_day: 0, audience_refreshed_at: shopTime(110), started_at: shopTime(110), ended_at: shopTime(95) },
+  ];
+  const campaignIdRows = await insertRows("campaigns", ["name", "slug", "kind", "status", "brief", "audience", "audience_mode", "priority", "starts_at", "ends_at", "reentry_days", "discount_percent", "discount_valid_until", "hero_mode", "cta_kind", "cta_url", "auto_prepare_per_day", "audience_refreshed_at", "started_at", "ended_at"], campaignRows, {
+    casts: { audience: "jsonb", starts_at: "timestamptz", ends_at: "timestamptz", discount_valid_until: "timestamptz", audience_refreshed_at: "timestamptz", started_at: "timestamptz", ended_at: "timestamptz" },
+    returning: "id",
+  });
+  const CAMPAIGN = { lebenszyklus: Number(campaignIdRows[0].id), einzel: Number(campaignIdRows[1].id), blackFriday: Number(campaignIdRows[2].id), fruehjahr: Number(campaignIdRows[3].id) };
+  count("campaigns", campaignRows.length);
 
   // ── Customers + captures ─────────────────────────────────────────────────────
   const customers = [];
@@ -521,8 +549,20 @@ async function main() {
       : [];
     const [city, plz] = CITIES[i % CITIES.length];
     const hasAddress = tier >= 2 && chance(0.35);
+    const consentState = { confirmed: "subscribed", pending: "pending", unsubscribed: "unsubscribed", none: "not_subscribed" }[marketing];
     customers.push({
       i, first, last, email, tier, marketing, orders,
+      first_name: tier === 3 || chance(0.5) ? first : null,
+      last_name: tier === 3 ? last : null,
+      locale: i % 7 === 0 ? "en" : null,
+      country_code: tier === 3 ? "DE" : null,
+      source: "chat",
+      email_consent_state: consentState,
+      email_consent_level: consentState === "subscribed" ? "confirmed_opt_in" : null,
+      email_consent_at: consentState === "not_subscribed" ? null : shopTime(int(lastSeenDays, firstSeenDays)),
+      email_consent_source: consentState === "not_subscribed" ? null : tier === 3 ? "mo_signin" : "mo_chat_gate",
+      // Anyone who ordered is a Shopify customer after the import (matched by e-mail).
+      shopify_synced_at: tier === 3 || hasPurchases ? shopTime(0) : null,
       created_at: at(firstSeenDays, 9),
       first_seen_at: shopTime(firstSeenDays),
       last_seen_at: shopTime(lastSeenDays),
@@ -538,8 +578,8 @@ async function main() {
       purchase_summary_updated_at: hasPurchases ? shopTime(int(0, 10)) : null,
       admin_instructions: i % 9 === 0 ? pick(["Erwähne die neue Rudergeräte-Linie.", "Kunde hat nach Lieferung nach Österreich gefragt.", "Kein Rabatt anbieten — Stammkunde zahlt gern Vollpreis."]) : null,
       admin_instructions_updated_at: i % 9 === 0 ? shopTime(int(0, 20)) : null,
-      shopify_customer_id: tier === 3 ? String(7100000000000 + i) : null,
-      shopify_customer_gid: tier === 3 ? `gid://shopify/Customer/${7100000000000 + i}` : null,
+      shopify_customer_id: tier === 3 || hasPurchases ? String(7100000000000 + i) : null,
+      shopify_customer_gid: tier === 3 || hasPurchases ? `gid://shopify/Customer/${7100000000000 + i}` : null,
       shopify_linked_at: tier === 3 ? shopTime(int(lastSeenDays, firstSeenDays)) : null,
       identity_tier: tier,
       shopify_account_summary: tier === 3
@@ -557,9 +597,9 @@ async function main() {
       letter_draft_updated_at: i === 3 || i === 17 ? shopTime(int(0, 5)) : null,
     });
   }
-  const customerCols = ["email", "created_at", "first_seen_at", "last_seen_at", "transactional_consent", "marketing_status", "profile_summary", "profile_summary_updated_at", "purchase_summary", "purchase_summary_updated_at", "admin_instructions", "admin_instructions_updated_at", "shopify_customer_id", "shopify_customer_gid", "shopify_linked_at", "identity_tier", "shopify_account_summary", "shopify_account_summary_updated_at", "postal_address", "postal_address_source", "postal_address_updated_at", "postal_address_checked_at", "letter_draft_subject", "letter_draft_body", "letter_draft_updated_at"];
+  const customerCols = ["first_name", "last_name", "locale", "country_code", "source", "email_consent_state", "email_consent_level", "email_consent_at", "email_consent_source", "shopify_synced_at", "email", "created_at", "first_seen_at", "last_seen_at", "transactional_consent", "marketing_status", "profile_summary", "profile_summary_updated_at", "purchase_summary", "purchase_summary_updated_at", "admin_instructions", "admin_instructions_updated_at", "shopify_customer_id", "shopify_customer_gid", "shopify_linked_at", "identity_tier", "shopify_account_summary", "shopify_account_summary_updated_at", "postal_address", "postal_address_source", "postal_address_updated_at", "postal_address_checked_at", "letter_draft_subject", "letter_draft_body", "letter_draft_updated_at"];
   const customerIds = await insertRows("customers", customerCols, customers, {
-    casts: { purchase_summary: "jsonb", shopify_account_summary: "jsonb", postal_address: "jsonb", created_at: "timestamptz", first_seen_at: "timestamptz", last_seen_at: "timestamptz", profile_summary_updated_at: "timestamptz", purchase_summary_updated_at: "timestamptz", admin_instructions_updated_at: "timestamptz", shopify_linked_at: "timestamptz", shopify_account_summary_updated_at: "timestamptz", postal_address_updated_at: "timestamptz", postal_address_checked_at: "timestamptz", letter_draft_updated_at: "timestamptz" },
+    casts: { email_consent_at: "timestamptz", shopify_synced_at: "timestamptz", purchase_summary: "jsonb", shopify_account_summary: "jsonb", postal_address: "jsonb", created_at: "timestamptz", first_seen_at: "timestamptz", last_seen_at: "timestamptz", profile_summary_updated_at: "timestamptz", purchase_summary_updated_at: "timestamptz", admin_instructions_updated_at: "timestamptz", shopify_linked_at: "timestamptz", shopify_account_summary_updated_at: "timestamptz", postal_address_updated_at: "timestamptz", postal_address_checked_at: "timestamptz", letter_draft_updated_at: "timestamptz" },
     returning: "id",
   });
   customers.forEach((c, k) => { c.id = Number(customerIds[k].id); });
@@ -770,7 +810,8 @@ async function main() {
       lastOrderDays,
     });
   }
-  const contactIds = await insertRows("campaign_contacts", ["shopify_customer_id", "email", "first_name", "last_name", "language", "opt_in_level", "consent_updated_at", "orders_count", "total_spent_cents", "last_synced_at", "status", "sent_at", "skipped_at", "created_at", "language_override", "last_order_at"], contacts, {
+  contacts.forEach((c) => { c.campaign_id = CAMPAIGN.lebenszyklus; });
+  const contactIds = await insertRows("campaign_contacts", ["campaign_id", "shopify_customer_id", "email", "first_name", "last_name", "language", "opt_in_level", "consent_updated_at", "orders_count", "total_spent_cents", "last_synced_at", "status", "sent_at", "skipped_at", "created_at", "language_override", "last_order_at"], contacts, {
     casts: { consent_updated_at: "timestamptz", last_synced_at: "timestamptz", sent_at: "timestamptz", skipped_at: "timestamptz", created_at: "timestamptz", last_order_at: "timestamptz" },
     returning: "id",
   });
@@ -895,7 +936,7 @@ async function main() {
     const bounced = k % 15 === 7;
     const withBundle = k < campaignBundleIds.length * 2 && chance(0.6);
     sends.push({
-      contact_id: c.id, email: c.email,
+      contact_id: c.id, campaign_id: CAMPAIGN.lebenszyklus, email: c.email,
       subject: c.language === "en" ? `${c.first}, three additions for your training` : `${c.first}, drei Ergänzungen für dein Training`,
       body_hash: sha256(body),
       body_text: k % 11 === 10 ? null : body,
@@ -926,7 +967,7 @@ async function main() {
       heroVariant,
     });
   }
-  const sendIds = await insertRows("campaign_sends", ["contact_id", "email", "subject", "body_hash", "body_text", "body_html", "sent_via", "discount_code", "discount_code_gid", "discount_expires_at", "sent_at", "created_at", "redirect_token", "clicked_at", "segment", "design_key", "hero_variant", "hero_image_url", "hero_headline", "text_mode", "language", "discount_percent", "bundle_offer_id", "bundle_clicked_at", "unsubscribed_at", "provider_email_id", "delivered_at", "bounced_at", "bounce_type", "complained_at"], sends, {
+  const sendIds = await insertRows("campaign_sends", ["contact_id", "campaign_id", "email", "subject", "body_hash", "body_text", "body_html", "sent_via", "discount_code", "discount_code_gid", "discount_expires_at", "sent_at", "created_at", "redirect_token", "clicked_at", "segment", "design_key", "hero_variant", "hero_image_url", "hero_headline", "text_mode", "language", "discount_percent", "bundle_offer_id", "bundle_clicked_at", "unsubscribed_at", "provider_email_id", "delivered_at", "bounced_at", "bounce_type", "complained_at"], sends, {
     casts: { discount_expires_at: "timestamptz", sent_at: "timestamptz", created_at: "timestamptz", clicked_at: "timestamptz", bundle_clicked_at: "timestamptz", unsubscribed_at: "timestamptz", delivered_at: "timestamptz", bounced_at: "timestamptz", complained_at: "timestamptz" },
     returning: "id",
   });
@@ -1177,6 +1218,214 @@ async function main() {
   }
   await insertRows("mo_orders", ["shopify_order_id", "order_name", "processed_at", "financial_status", "currency", "total_price", "discount_codes", "line_items", "attribution_token", "session_id", "attribution_source", "attribution_tier", "recommended_overlap", "matched_handles", "created_at", "updated_at"], orderRows, { casts: { processed_at: "timestamptz", discount_codes: "text[]", line_items: "jsonb", matched_handles: "text[]", created_at: "timestamptz", updated_at: "timestamptz" } });
   count("mo_orders", orderRows.length);
+
+  // ── Customer platform (0061–0068) ────────────────────────────────────────────
+  // Shopify-mirrored customers: every Lebenszyklus recipient becomes a
+  // customer (source 'shopify'), plus Shopify-only customers who never talked
+  // to Mo — so Kunden shows the whole base, with and without Mo contact.
+  const OPT_LEVEL = { CONFIRMED_OPT_IN: "confirmed_opt_in", SINGLE_OPT_IN: "single_opt_in", UNKNOWN: "unknown" };
+  const shopCustomers = contacts.map((c) => ({
+    kind: "contact", contact: c, email: c.email, first_name: c.first, last_name: c.last,
+    shopify_customer_id: c.shopify_customer_id,
+    locale: c.language === "en" ? "en" : "de", country_code: c.language === "en" ? "GB" : "DE",
+    email_consent_state: c.status === "suppressed" ? "unsubscribed" : "subscribed",
+    email_consent_level: c.status === "suppressed" ? null : OPT_LEVEL[c.opt_in_level] ?? "unknown",
+    ordersCount: c.orders_count, lastOrderDays: c.lastOrderDays ?? int(30, 500), spentCents: c.total_spent_cents,
+  }));
+  for (let k = 0; k < 90; k++) {
+    const [first, last] = personName(k + 140);
+    const consent = pick(["subscribed", "subscribed", "not_subscribed", "not_subscribed", "not_subscribed", "unsubscribed"]);
+    shopCustomers.push({
+      kind: "shop", email: emailFor(first, last, k + 140).replace("@", ".shop@"), first_name: first, last_name: last,
+      shopify_customer_id: String(7300000000000 + k), locale: k % 9 === 0 ? "en" : "de", country_code: k % 9 === 0 ? "AT" : "DE",
+      email_consent_state: consent, email_consent_level: consent === "subscribed" ? pick(["confirmed_opt_in", "single_opt_in"]) : null,
+      ordersCount: pick([1, 1, 1, 2, 2, 3, 4, 6]), lastOrderDays: int(3, 900), spentCents: 0,
+    });
+  }
+  const shopRows = shopCustomers.map((sc, k) => ({
+    email: sc.email, source: "shopify", first_name: sc.first_name, last_name: sc.last_name,
+    shopify_customer_id: sc.shopify_customer_id, shopify_customer_gid: `gid://shopify/Customer/${sc.shopify_customer_id}`,
+    locale: sc.locale, country_code: sc.country_code, shopify_state: "ENABLED",
+    shopify_tags: k % 11 === 0 ? ["VIP"] : k % 13 === 0 ? ["Studio"] : [],
+    shopify_created_at: shopTime(int(Math.max(sc.lastOrderDays, 30), 1200)), shopify_synced_at: shopTime(0),
+    email_consent_state: sc.email_consent_state, email_consent_level: sc.email_consent_level,
+    email_consent_at: sc.email_consent_state === "not_subscribed" ? null : shopTime(int(20, 700)),
+    email_consent_source: sc.email_consent_state === "not_subscribed" ? null : "shopify",
+    marketing_status: { subscribed: "confirmed", unsubscribed: "unsubscribed", not_subscribed: "none" }[sc.email_consent_state],
+    created_at: shopTime(int(1, 40)), first_seen_at: shopTime(int(1, 40)), last_seen_at: shopTime(int(0, 30)),
+    identity_tier: 2, transactional_consent: false,
+  }));
+  const shopIds = await insertRows("customers", ["email", "source", "first_name", "last_name", "shopify_customer_id", "shopify_customer_gid", "locale", "country_code", "shopify_state", "shopify_tags", "shopify_created_at", "shopify_synced_at", "email_consent_state", "email_consent_level", "email_consent_at", "email_consent_source", "marketing_status", "created_at", "first_seen_at", "last_seen_at", "identity_tier", "transactional_consent"], shopRows, {
+    casts: { shopify_tags: "text[]", shopify_created_at: "timestamptz", shopify_synced_at: "timestamptz", email_consent_at: "timestamptz", created_at: "timestamptz", first_seen_at: "timestamptz", last_seen_at: "timestamptz" },
+    returning: "id",
+  });
+  shopCustomers.forEach((sc, k) => { sc.id = Number(shopIds[k].id); if (sc.contact) sc.contact.customer_id = sc.id; });
+  count("customers", shopRows.length);
+  await sql.query(
+    `UPDATE campaign_contacts cc SET customer_id = x.customer_id
+       FROM jsonb_to_recordset($1::jsonb) AS x(contact_id bigint, customer_id bigint) WHERE cc.id = x.contact_id`,
+    [JSON.stringify(contacts.map((c) => ({ contact_id: c.id, customer_id: c.customer_id })))]
+  );
+  await sql.query(`UPDATE campaign_sends s SET customer_id = cc.customer_id FROM campaign_contacts cc WHERE cc.id = s.contact_id`);
+
+  // Black Friday recipients (planned, pending — nothing drafted yet).
+  const bfRows = shopCustomers.filter((sc) => sc.email_consent_state === "subscribed").slice(0, 24).map((sc) => ({
+    campaign_id: CAMPAIGN.blackFriday, customer_id: sc.id, shopify_customer_id: sc.shopify_customer_id, email: sc.email,
+    first_name: sc.first_name, last_name: sc.last_name, language: sc.locale === "en" ? "en" : "de",
+    opt_in_level: (sc.email_consent_level ?? "unknown").toUpperCase(), consent_updated_at: shopTime(30),
+    orders_count: sc.ordersCount, total_spent_cents: 0, last_order_at: shopTime(sc.lastOrderDays), last_synced_at: shopTime(1),
+    status: "pending", created_at: shopTime(2), added_at: shopTime(2),
+  }));
+  await insertRows("campaign_contacts", ["campaign_id", "customer_id", "shopify_customer_id", "email", "first_name", "last_name", "language", "opt_in_level", "consent_updated_at", "orders_count", "total_spent_cents", "last_order_at", "last_synced_at", "status", "created_at", "added_at"], bfRows, {
+    casts: { consent_updated_at: "timestamptz", last_order_at: "timestamptz", last_synced_at: "timestamptz", created_at: "timestamptz", added_at: "timestamptz" },
+  });
+  count("campaign_contacts", bfRows.length);
+
+  // The local order ledger (0062) for everyone with orders.
+  const ledgerRows = [];
+  let ledgerSeq = 5000;
+  const lineItem = (id, qty) => ({ id: String(17000000000 + ledgerSeq * 10 + qty), title: productName(id), variantTitle: null, quantity: qty, unitPrice: productPrice(id), handle: id, productId: String(8000000000 + (parseInt(sha256(id).slice(0, 6), 16) % 999999)), variantId: variantIdFor(id) });
+  for (const c of customers) {
+    for (const o of c.orders) {
+      ledgerSeq++;
+      ledgerRows.push({ shopify_order_id: String(6100000000000 + ledgerSeq), customer_id: c.id, shopify_customer_id: c.shopify_customer_id, order_name: o.name, processed_at: o.createdAt, financial_status: o.financialStatus, fulfillment_status: "FULFILLED", cancelled_at: null, currency: "EUR", subtotal_cents: Math.round(Number(o.totalAmount) * 100), total_cents: Math.round(Number(o.totalAmount) * 100), refunded_cents: o.financialStatus === "REFUNDED" ? Math.round(Number(o.totalAmount) * 100) : 0, discount_codes: [], source_name: "web", line_items: json(o.items.map((it) => lineItem(it.handle, it.quantity))), shopify_updated_at: o.createdAt, synced_at: shopTime(0) });
+    }
+  }
+  for (const sc of shopCustomers) {
+    let days = sc.lastOrderDays;
+    for (let k = 0; k < sc.ordersCount; k++) {
+      ledgerSeq++;
+      const ids = shuffle(ALL_PRODUCTS).slice(0, int(1, 3));
+      const total = ids.reduce((s, id) => s + productPrice(id), 0);
+      const at = shopTime(days);
+      ledgerRows.push({ shopify_order_id: String(6100000000000 + ledgerSeq), customer_id: sc.id, shopify_customer_id: sc.shopify_customer_id, order_name: `#${ledgerSeq}`, processed_at: at, financial_status: k === 0 && chance(0.05) ? "PARTIALLY_REFUNDED" : "PAID", fulfillment_status: "FULFILLED", cancelled_at: null, currency: "EUR", subtotal_cents: Math.round(total * 100), total_cents: Math.round(total * 100), refunded_cents: 0, discount_codes: chance(0.15) ? [`MK-${hex(6).toUpperCase()}`] : [], source_name: "web", line_items: json(ids.map((id) => lineItem(id, 1))), shopify_updated_at: at, synced_at: shopTime(0) });
+      days += int(40, 260);
+    }
+  }
+  await insertRows("customer_orders", ["shopify_order_id", "customer_id", "shopify_customer_id", "order_name", "processed_at", "financial_status", "fulfillment_status", "cancelled_at", "currency", "subtotal_cents", "total_cents", "refunded_cents", "discount_codes", "source_name", "line_items", "shopify_updated_at", "synced_at"], ledgerRows, {
+    casts: { processed_at: "timestamptz", cancelled_at: "timestamptz", discount_codes: "text[]", line_items: "jsonb", shopify_updated_at: "timestamptz", synced_at: "timestamptz" },
+  });
+  count("customer_orders", ledgerRows.length);
+
+  // customer_facts — computed by the real core, as the nightly job would.
+  const everyone = [...customers.map((c) => ({ id: c.id, consent: c.email_consent_state })), ...shopCustomers.map((sc) => ({ id: sc.id, consent: sc.email_consent_state }))];
+  const ordersBy = new Map();
+  for (const o of ledgerRows) {
+    if (!ordersBy.has(o.customer_id)) ordersBy.set(o.customer_id, []);
+    ordersBy.get(o.customer_id).push({ processedAt: o.processed_at, totalCents: o.total_cents, refundedCents: o.refunded_cents, financialStatus: o.financial_status, cancelledAt: null, discountCodes: o.discount_codes, lineItems: JSON.parse(o.line_items).map((li) => ({ handle: li.handle, quantity: li.quantity, unitPrice: li.unitPrice })) });
+  }
+  const chatsBy = new Map();
+  for (const conv of conversations) {
+    if (!conv.customer_id) continue;
+    const cur = chatsBy.get(conv.customer_id) ?? { count: 0, lastAt: null, discussed: [], selected: [] };
+    cur.count++;
+    if (!cur.lastAt || conv.last_activity_at > cur.lastAt) cur.lastAt = conv.last_activity_at;
+    cur.discussed.push(...(conv.recommended_product_ids ?? []));
+    cur.selected.push(...(conv.selected_product_ids ?? []));
+    chatsBy.set(conv.customer_id, cur);
+  }
+  const contactCustomer = new Map(contacts.map((c) => [c.id, c.customer_id]));
+  const mailBy = new Map();
+  for (const sRow of sends) {
+    const cid = contactCustomer.get(sRow.contact_id);
+    if (!cid) continue;
+    const cur = mailBy.get(cid) ?? { sentCount: 0, lastSentAt: null, lastClickAt: null, clicks90d: 0, redemptions: 0 };
+    cur.sentCount++;
+    if (!cur.lastSentAt || sRow.sent_at > cur.lastSentAt) cur.lastSentAt = sRow.sent_at;
+    if (sRow.clicked_at) {
+      cur.clicks90d++;
+      if (!cur.lastClickAt || sRow.clicked_at > cur.lastClickAt) cur.lastClickAt = sRow.clicked_at;
+    }
+    mailBy.set(cid, cur);
+  }
+  const inboundBy = new Map();
+  for (const m of mailRows) {
+    if (!m.customer_id || m.direction !== "received") continue;
+    const cur = inboundBy.get(m.customer_id) ?? { lastInboundAt: null, unanswered: 0 };
+    if (!cur.lastInboundAt || m.occurred_at > cur.lastInboundAt) cur.lastInboundAt = m.occurred_at;
+    cur.unanswered++;
+    inboundBy.set(m.customer_id, cur);
+  }
+  const catalogFacts = Object.fromEntries(catalog.map((p) => [p.id, { category: p.category ?? null, compatibleWith: p.compatibleWith ?? [] }]));
+  const factRows = everyone.map((p) => {
+    const f = computeCustomerFacts({
+      orders: ordersBy.get(p.id) ?? [],
+      chats: chatsBy.get(p.id) ?? { count: 0, lastAt: null, discussed: [], selected: [] },
+      marketing: mailBy.get(p.id) ?? { sentCount: 0, lastSentAt: null, lastClickAt: null, clicks90d: 0, redemptions: 0 },
+      service: inboundBy.get(p.id) ?? { lastInboundAt: null, unanswered: 0 },
+      catalog: catalogFacts,
+      now: ANCHOR,
+    });
+    return { customer_id: p.id, consent: p.consent, f };
+  });
+  await insertRows("customer_facts", ["customer_id", "orders_count", "total_spent_cents", "first_order_at", "last_order_at", "aov_cents", "median_interval_days", "expected_next_order_at", "refunds_count", "discount_order_share", "lifecycle_segment", "value_tier", "rfm_r", "rfm_f", "rfm_m", "churn_risk", "bought_handles", "bought_categories", "complement_handles", "conversations_count", "last_chat_at", "discussed_handles", "selected_handles", "emails_sent_count", "last_marketing_at", "last_click_at", "clicks_90d", "redemptions_count", "last_inbound_at", "unanswered_inbound_count", "last_activity_at", "computed_at"],
+    factRows.map(({ customer_id, f }) => ({ customer_id, orders_count: f.ordersCount, total_spent_cents: f.totalSpentCents, first_order_at: f.firstOrderAt, last_order_at: f.lastOrderAt, aov_cents: f.aovCents, median_interval_days: f.medianIntervalDays, expected_next_order_at: f.expectedNextOrderAt, refunds_count: f.refundsCount, discount_order_share: f.discountOrderShare, lifecycle_segment: f.lifecycleSegment, value_tier: f.valueTier, rfm_r: f.rfmR, rfm_f: f.rfmF, rfm_m: f.rfmM, churn_risk: f.churnRisk, bought_handles: f.boughtHandles, bought_categories: f.boughtCategories, complement_handles: f.complementHandles, conversations_count: f.conversationsCount, last_chat_at: f.lastChatAt, discussed_handles: f.discussedHandles, selected_handles: f.selectedHandles, emails_sent_count: f.emailsSentCount, last_marketing_at: f.lastMarketingAt, last_click_at: f.lastClickAt, clicks_90d: f.clicks90d, redemptions_count: f.redemptionsCount, last_inbound_at: f.lastInboundAt, unanswered_inbound_count: f.unansweredInboundCount, last_activity_at: f.lastActivityAt, computed_at: shopTime(0) })),
+    { casts: { first_order_at: "timestamptz", last_order_at: "timestamptz", expected_next_order_at: "timestamptz", bought_handles: "text[]", bought_categories: "text[]", complement_handles: "text[]", last_chat_at: "timestamptz", discussed_handles: "text[]", selected_handles: "text[]", last_marketing_at: "timestamptz", last_click_at: "timestamptz", last_inbound_at: "timestamptz", last_activity_at: "timestamptz", computed_at: "timestamptz" } });
+  count("customer_facts", factRows.length);
+  await sql.query(`UPDATE customers SET profile_depth = 'voll' WHERE profile_summary IS NOT NULL`);
+
+  // The one consent's history (0064): one act per person with a consent state.
+  const consentRows = [
+    ...customers.filter((c) => c.email_consent_state !== "not_subscribed").map((c) => ({ customer_id: c.id, occurred_at: c.email_consent_at, source: c.email_consent_source, state: c.email_consent_state, level: c.email_consent_level, origin_ref: "seed", note: null })),
+    ...shopRows.map((r, k) => ({ r, id: shopCustomers[k].id })).filter(({ r }) => r.email_consent_state !== "not_subscribed").map(({ r, id }) => ({ customer_id: id, occurred_at: r.email_consent_at, source: "shopify", state: r.email_consent_state, level: r.email_consent_level, origin_ref: "seed", note: null })),
+  ];
+  await insertRows("consent_events", ["customer_id", "occurred_at", "source", "state", "level", "origin_ref", "note"], consentRows, { casts: { occurred_at: "timestamptz" } });
+  count("consent_events", consentRows.length);
+
+  // Eingang items from the real rules, evaluated at the anchor.
+  const signalItems = capSignals(factRows.flatMap(({ customer_id, consent, f }) => signalsForCustomer({
+    customerId: customer_id, consentState: consent, blocked: false, ordersCount: f.ordersCount, totalSpentCents: f.totalSpentCents,
+    lastOrderAt: f.lastOrderAt, lastOrderCents: (ordersBy.get(customer_id) ?? []).slice(-1)[0]?.totalCents ?? null,
+    medianIntervalDays: f.medianIntervalDays, valueTier: f.valueTier, conversationsCount: f.conversationsCount, lastChatAt: f.lastChatAt,
+    selectedHandles: f.selectedHandles, discussedHandles: f.discussedHandles, lastClickAt: f.lastClickAt, lastMarketingAt: f.lastMarketingAt,
+    lastInboundAt: f.lastInboundAt, unansweredInboundCount: f.unansweredInboundCount,
+    ordersLast12m: (ordersBy.get(customer_id) ?? []).filter((o) => new Date(o.processedAt).getTime() > ANCHOR.getTime() - 365 * DAY_MS).length,
+    topPercentile: f.totalSpentCents >= 400000, inOpenCampaign: false, recentBigOrderCents: null,
+  }, ANCHOR)));
+  signalItems.push({ kind: "datenauskunft", customerId: customers[4].id, priority: 95, title: "Datenauskunft angefordert", reason: "Shopify meldet eine Datenauskunft (customers/data_request). Export bereitstellen und antworten — Frist 30 Tage.", evidence: { deadline: addDays(shopTime(1), 29) }, dedupeKey: `datenauskunft:${customers[4].id}:seed`, expiresAt: addDays(shopTime(1), 30) });
+  // Seeded suggestions follow the same rules as lib/inbox-suggest.ts: a reply
+  // for an unanswered mail, an e-mail only with consent, otherwise internal.
+  const consentBy = new Map(factRows.map((r) => [r.customer_id, r.consent]));
+  const seedSuggestion = (it) => {
+    const base = { rabatt: null, produkte: [], generatedAt: shopTime(0), model: "seed" };
+    if (it.kind === "antwort_offen") {
+      return { ...base, warum: "Die Mail wartet seit Tagen. Eine schnelle, persönliche Antwort hält das Vertrauen.", aktion: "Kurz antworten und die offene Frage klären", kanal: "antwort", betreff: "Re: Deine Anfrage", text: "Hallo,\n\ndanke für deine Nachricht und entschuldige die späte Antwort. …\n\nViele Grüße\nDein motion sports Team" };
+    }
+    if (consentBy.get(it.customerId) === "subscribed") {
+      return { ...base, warum: "Die Person war kürzlich aktiv und passt zum Anlass. Ein kurzer, persönlicher Anstoß hat hier die beste Chance.", aktion: "Persönliche Mail mit den besprochenen Produkten, ohne Rabatt", kanal: "email", betreff: "Kurze Nachfrage zu deinem Training", text: "Kurz an das Gespräch anknüpfen, die zwei passenden Produkte zeigen, Hilfe bei der Auswahl anbieten." };
+    }
+    return { ...base, warum: "Ohne Einwilligung ist keine Werbe-Mail möglich. Beim nächsten Kontakt im Chat oder per Brief ansprechen.", aktion: "Notiz für den nächsten Kontakt", kanal: "intern", betreff: null, text: null };
+  };
+  const inboxRows = signalItems.map((it, k) => ({
+    kind: it.kind, customer_id: it.customerId, status: k % 17 === 5 ? "zurueckgestellt" : k % 13 === 7 ? "erledigt" : "offen",
+    priority: it.priority, title: it.title, reason: it.reason, evidence: json(it.evidence), dedupe_key: it.dedupeKey,
+    snoozed_until: k % 17 === 5 ? addDays(shopTime(0), 3) : null, decided_at: k % 13 === 7 ? shopTime(int(1, 10)) : null,
+    decision: k % 13 === 7 ? "einzelansprache" : null, expires_at: it.expiresAt,
+    suggestion: k < 3 && it.kind !== "datenauskunft" ? json(seedSuggestion(it)) : null,
+    suggested_at: k < 3 && it.kind !== "datenauskunft" ? shopTime(0) : null,
+    created_at: shopTime(int(0, 6)), updated_at: shopTime(0),
+  }));
+  await insertRows("inbox_items", ["kind", "customer_id", "status", "priority", "title", "reason", "evidence", "dedupe_key", "snoozed_until", "decided_at", "decision", "expires_at", "suggestion", "suggested_at", "created_at", "updated_at"], inboxRows, {
+    casts: { evidence: "jsonb", snoozed_until: "timestamptz", decided_at: "timestamptz", expires_at: "timestamptz", suggestion: "jsonb", suggested_at: "timestamptz", created_at: "timestamptz", updated_at: "timestamptz" },
+  });
+  count("inbox_items", inboxRows.length);
+
+  // Shopify sync bookkeeping (0065): a finished import, last night's reconcile,
+  // a few webhooks and one write-back that gave up.
+  await insertRows("shopify_sync_runs", ["kind", "status", "lines_processed", "customers_upserted", "orders_upserted", "started_at", "updated_at", "finished_at"], [
+    { kind: "import_customers", status: "done", lines_processed: shopRows.length, customers_upserted: shopRows.length, orders_upserted: 0, started_at: shopTime(14), updated_at: shopTime(14), finished_at: shopTime(14) },
+    { kind: "import_orders", status: "done", lines_processed: ledgerRows.length * 3, customers_upserted: 0, orders_upserted: ledgerRows.length, started_at: shopTime(14), updated_at: shopTime(14), finished_at: shopTime(14) },
+    { kind: "reconcile", status: "done", lines_processed: 41, customers_upserted: 12, orders_upserted: 29, started_at: at(0, 1, 45), updated_at: at(0, 1, 47), finished_at: at(0, 1, 47) },
+  ], { casts: { started_at: "timestamptz", updated_at: "timestamptz", finished_at: "timestamptz" } });
+  count("shopify_sync_runs", 3);
+  const hooks = Array.from({ length: 12 }, () => ({ webhook_id: `seed-${hex(12)}`, topic: pick(["customers/update", "orders/create", "orders/updated", "customers_email_marketing_consent/update"]), received_at: shopTime(int(0, 2)), processed_at: shopTime(int(0, 2)), outcome: "ok" }));
+  await insertRows("shopify_webhook_events", ["webhook_id", "topic", "received_at", "processed_at", "outcome"], hooks, { casts: { received_at: "timestamptz", processed_at: "timestamptz" } });
+  count("shopify_webhook_events", hooks.length);
+  await insertRows("shopify_outbox", ["kind", "customer_id", "shopify_customer_id", "payload", "status", "attempts", "last_error", "created_at"], [
+    { kind: "consent_update", customer_id: shopCustomers[3].id, shopify_customer_id: shopCustomers[3].shopify_customer_id, payload: json({ state: "unsubscribed" }), status: "dead", attempts: 8, last_error: "Shopify 429: Throttled", created_at: shopTime(3) },
+    { kind: "consent_update", customer_id: shopCustomers[5].id, shopify_customer_id: shopCustomers[5].shopify_customer_id, payload: json({ state: "subscribed" }), status: "done", attempts: 1, last_error: null, created_at: shopTime(0) },
+  ], { casts: { payload: "jsonb", created_at: "timestamptz" } });
+  count("shopify_outbox", 2);
 
   // ── Telemetry + AI usage + access log ────────────────────────────────────────
   for (let k = 0; k < 6; k++) kpiRows.push({ session_id: `sess_${hex(24)}`, event: "contact_form_submitted", data: json({ reason: pick(["studio", "rehab", "public_procurement"]) }), created_at: shopTime(int(0, 60)) });

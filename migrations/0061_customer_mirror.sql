@@ -51,17 +51,17 @@ ALTER TABLE customers ADD CONSTRAINT customers_source_check
 UPDATE customers SET source = 'shopify' WHERE source IN ('kampagne', 'shopify_account');
 
 -- Backfill identity from the linked Kampagne contacts: the Shopify id (the
--- contact stores the GID), the name and the language pin. Never steals an id
--- another customer already holds.
+-- contact stores the GID; a bare numeric id is accepted too), the name and the
+-- language pin. Never steals an id another customer already holds.
 UPDATE customers c
    SET shopify_customer_id  = regexp_replace(cc.shopify_customer_id, '^gid://shopify/Customer/', ''),
-       shopify_customer_gid = cc.shopify_customer_id,
+       shopify_customer_gid = 'gid://shopify/Customer/' || regexp_replace(cc.shopify_customer_id, '^gid://shopify/Customer/', ''),
        shopify_linked_at    = COALESCE(c.shopify_linked_at, now())
   FROM campaign_contacts cc
  WHERE cc.customer_id = c.id
    AND cc.is_test = false
    AND c.shopify_customer_id IS NULL
-   AND cc.shopify_customer_id LIKE 'gid://shopify/Customer/%'
+   AND cc.shopify_customer_id ~ '^(gid://shopify/Customer/)?[0-9]+$'
    AND NOT EXISTS (
          SELECT 1 FROM customers o
           WHERE o.shopify_customer_id = regexp_replace(cc.shopify_customer_id, '^gid://shopify/Customer/', '')
