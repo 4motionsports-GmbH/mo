@@ -240,7 +240,7 @@ function CampaignBreakdownTable({
             <TableRow>
               <TableHead>{firstColumn}</TableHead>
               <TableHead align="right">Gesendet</TableHead>
-              <TableHead align="right">Klickrate</TableHead>
+              <TableHead align="right">Button-Klickrate</TableHead>
               <TableHead align="right">Set geklickt</TableHead>
               {withChats && <TableHead align="right">Chat gestartet</TableHead>}
               <TableHead align="right">Eingelöst</TableHead>

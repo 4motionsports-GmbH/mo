@@ -192,7 +192,7 @@ export function ReportView({ sections }: { sections: ReportSections }) {
                 </TableHeader>
                 <TableBody>
                   {sections.campaigns.map((c) => (
-                    <TableRow key={c.name}>
+                    <TableRow key={c.campaignId ?? c.name}>
                       <TableCell className="font-medium">{c.name}</TableCell>
                       <TableCell align="right">{num(c.sent)}</TableCell>
                       <TableCell align="right">
