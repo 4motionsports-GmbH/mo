@@ -28,8 +28,13 @@ PKCE code exchange and holds both tokens server-side, encrypted.
 | Tier | Key | Created by | Authoritative for |
 |---|---|---|---|
 | 1 — Anonymous | `session_id` (localStorage thread id) | every visit | nothing (pseudonymous) |
-| 2 — Identified | normalised **email** | `/api/capture-email` (consent + DOI) | our consent record |
+| 2 — Identified | normalised **email** | `/api/capture-email` / `/api/chat-marketing-opt-in` (consent + DOI) | our Art. 7 consent evidence |
 | **3 — Signed-in** | **`shopify_customer_id`** (GID numeric) | Customer Account sign-in | **Shopify**: name, email, addresses, orders |
+
+The tiers describe the **session** (what the widget may show). The person
+behind it is always one `customers` row; since migration `0061` every Shopify
+customer has one too, mirrored from the shop whether or not they ever chat
+(see [`CUSTOMERS.md`](./CUSTOMERS.md)).
 
 The model from [`CUSTOMERS.md`](./CUSTOMERS.md) / [`DATA_RETENTION.md`](./DATA_RETENTION.md)
 **still holds**: anonymous stays pseudonymous and unlinked; the email-only
@@ -40,13 +45,20 @@ re-identification fails closed. Tier 3 is **added**, never a weakening of 1–2.
 **What's authoritative where (tier 3):**
 
 - **Shopify** owns the *identity*: name, verified email, addresses, order
-  history. We re-fetch these live (we don't cache customer PII names in CA-1).
-- **Our DB** owns what Shopify doesn't: transcripts, analytics, **our DOI
-  consent**, profile/persona — re-keyed by `shopify_customer_id`.
-- **Marketing consent stays ours.** Signing in establishes **identity, not
-  marketing consent**. Re-keying **never** imports Shopify's marketing state into
-  `marketing_status` — our DOI (`email_captures` / `customers.marketing_status`)
-  remains the only path to `confirmed`. See [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
+  history. The customer mirror keeps name, e-mail, locale, country and orders
+  locally (`customers`, `customer_orders`); the Customer Account API read at
+  sign-in adds the data-minimised address context (§8).
+- **Our DB** owns what Shopify doesn't: transcripts, analytics, the Art. 7
+  evidence of consents given in Mo (`email_captures`), profile/persona —
+  keyed by `shopify_customer_id`.
+- **One marketing consent, shared with Shopify.** Signing in establishes
+  **identity, not marketing consent**: `bindShopifyIdentity` never writes the
+  consent columns. The consent itself is one state per person
+  (`customers.email_consent_state`, mirrored to the legacy
+  `marketing_status`): our DOI writes it, and so does a subscription the
+  customer gave in the shop (via the customer mirror's webhooks, import and
+  nightly reconciliation). See [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "The one
+  consent".
 
 ## 2. The PKCE authorization-code flow
 
@@ -328,7 +340,11 @@ prefix), `fetchSignedInCustomerData` reads (signed-in customer only): **name**,
 > any residual shape drift degrades to "name only", never an error.
 
 For tier 3 this **REPLACES** the email-keyed Admin-API order fetch
-(`fetchOrderHistoryByEmail`) as the purchase-history source.
+(`fetchOrderHistoryByEmail`) as the source of the cached `purchase_summary`.
+Since the order ledger (migration `0062`), profile generation and campaign
+drafts read a mirrored customer's orders from `customer_orders`
+(`loadPurchaseHistory`); `purchase_summary` stays the cache the live-chat
+memory reads.
 
 ### Where it's cached — keyed by `shopify_customer_id`
 
@@ -391,9 +407,11 @@ The gate is two hard conditions, both fail-closed:
    off. It is **`true`** (lawyer-approved June 2026), so this condition is
    satisfied; personalisation then depends on condition 2 below, per user.
 2. **Marketing consent on record (`marketing_status = 'confirmed'`)** — the
-   affirmative, unbundled, double-opt-in consent the GDPR TODO
-   ([`CUSTOMERS.md`](./CUSTOMERS.md)) extends to cover personalisation from past
-   conversations + purchases. Signing in never sets this; only our DOI does.
+   mirror of the one consent `email_consent_state = 'subscribed'`, given in Mo
+   with a double opt-in **or** on a Shopify surface (the consent text covers
+   personalisation from past conversations + purchases, see
+   [`CUSTOMERS.md`](./CUSTOMERS.md)). Signing in never sets this
+   (`canPersonaliseSignedIn` in `src/lib/customer-account-data.mjs`).
 
 So a **non-consented or anonymous** user gets **no** purchase history, profile,
 or address in the prompt — the consent gate governs personalisation exactly as
@@ -535,31 +553,49 @@ This is the subtle part, and it follows the two-cluster lawful-basis split
 ### The distinct full "delete my data" path
 
 `POST /api/account/erase` (`lib/account-history.ts :: eraseSignedInCustomer`) is
-a **GDPR erasure of the person**, separate from the single-chat delete. In one
-transaction it:
+a **GDPR erasure of the person**, separate from the single-chat delete. It calls
+**the one erasure path** `erasePerson` (`src/lib/customer-erasure.ts`) — the same
+as the mail link `/api/erase-data` and the admin's "Löschen" — which, in one
+transaction:
 
 1. **Purges every linked conversation** — all transcripts + messages + chat
-   `ai_usage` cascade (not merely unlinked: the customer's own transcripts are
-   gone).
-2. **Suppresses + purges the consent record** — adds the (real) email to
-   `suppression_list` (reason `erasure`, so a future sign-in can't silently
-   re-attach the old data) and deletes its `email_captures` (`marketing_sends`
-   cascade). Skipped for the synthetic `shopify:<id>` placeholder email.
-3. **Deletes the `customers` row** — which **clears the profile + all cached
+   `ai_usage` cascade, on every device (not merely unlinked: the customer's own
+   transcripts are gone).
+2. **Suppresses + purges the consent records** — adds the (real) email to
+   `suppression_list` (reason `erasure`, so it is never mailed and no import
+   re-creates it) and deletes its `email_captures`; the `consent_events`
+   history cascades with the row. Skipped for the synthetic `shopify:<id>`
+   placeholder email.
+3. **Deletes everything else about the person** — marketing and campaign mails
+   and drafts, correspondence, letters, feedback, sign-in state, and Mo's copy
+   of the person's Shopify orders (`customer_orders`).
+4. **Deletes the `customers` row** — which **clears the profile + all cached
    summaries** (they live on the row), **revokes the OAuth tokens**
    (`customer_oauth_tokens` `ON DELETE CASCADE`), and de-identifies the
-   remaining FK refs (`bundle_offers` `ON DELETE SET NULL` — kept for
+   remaining aggregate refs (`bundle_offers`, `mo_orders` — kept for
    accounting, no PII).
 
-After erasure the session no longer resolves to a customer, so every subsequent
+**The Shopify side.** For a signed-in customer (always a Shopify id) the same
+call writes an **erasure tombstone** for the Shopify id — no import,
+reconciliation or webhook brings the person back — and queues one
+`data_erasure` outbox row: consent off in Shopify, then Shopify's own
+`customerRequestDataErasure`. It is sent only while `SHOPIFY_ERASURE_SYNC=true`
+(default `false`; the row waits until then). Shopify keeps its own orders as
+long as the law requires; Mo's copy is gone. The widget's confirmation copy
+comes from `GET /api/consent-copy?surface=erase` and names the shop account
+when the flag is on. The reverse direction — an erasure started in Shopify
+(`customers/redact`, `customers/delete`) — runs the same deletion in Mo.
+
+The response is unchanged (`{ ok, erased, deletedConversations }`). After
+erasure the session no longer resolves to a customer, so every subsequent
 `/api/account/*` call (and `/api/auth/me`) fails closed. Note this drops the
 stored tokens server-side; the customer may additionally log out of Shopify
 itself (the `end_session_endpoint`, §5 frontend doc).
 
-Erasure suppresses **both** lawful bases for the real email: it adds the address
-to `suppression_list` (DOI, reason `erasure`) **and** to
-`bestandskunden_suppression_list` (§7(3), reason `erasure`), so a future
-re-sign-in can re-derive neither audience from the unchanged Shopify history.
+> ℹ️ **Retired:** the second suppression list for the §7(3) existing-customer
+> basis (`bestandskunden_suppression_list`) was dropped with that feature
+> (migration `0029`, 2026-06-16). The `suppression_list` row with reason
+> `erasure` is the only block an erasure leaves.
 
 ## 10. At-sign-in marketing opt-in + the match-up (CA-4)
 
@@ -575,9 +611,18 @@ CA-1 established that **signing in is identity, not marketing consent** (§1). C
   the **existing DOI** via `upsertEmailCapture` — `'pending'` + confirmation
   email, `'confirmed'` only after the link click. The copy is served by
   `signInMarketingConsentCopy()` (`GET /api/consent-copy?surface=signin`, v3).
-- **Still ours, still DOI.** Re-keying on sign-in **never** imports Shopify's
-  marketing state; the *only* path to `confirmed` is the double-opt-in, on either
-  surface. The opt-in is a **separate, explicit act** the customer chooses.
+- **One consent, DOI on Mo's surfaces.** Sign-in itself never writes a
+  consent. On Mo's surfaces the *only* path to `confirmed` is the double opt-in;
+  a subscription the customer gave in the shop reaches the same consent through
+  the customer mirror. The opt-in is a **separate, explicit act** the customer
+  chooses. A customer already subscribed gets no second DOI mail (response
+  `confirmed`, `alreadyConfirmed: true`, `doiEmailSent: false`).
+- **Reached from the chat gate.** The anonymous chat consent gate now **leads
+  with sign-in** (`signIn` in `GET /api/consent-copy?surface=chat`, `loginPath`
+  `/api/auth/shopify/login`); after the round-trip this card asks for the
+  consent in one tap — or, for a customer already subscribed, nothing is asked.
+  The typed-e-mail opt-in stays the alternative for people without an account
+  ([`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "Chat consent gate").
 
 ### The match-up (consent carry-forward + session scope)
 
@@ -586,23 +631,26 @@ Both cases are handled by the existing merge (`decideMerge` →
 
 - **email-only → signed-in:** the **stamp** branch targets the tier-2 row matched
   by the verified email and writes **only identity columns**, so a **prior DOI
-  consent under that email carries forward intact** (`email_captures` +
-  the mirrored `customers.marketing_status` stay `confirmed`) — none invented,
-  none silently revoked. A collision/mismatch is logged to
-  `customer_merge_conflicts` and **never fuses** two consent records.
+  consent under that email carries forward intact** (`email_captures` + the
+  one consent `email_consent_state = 'subscribed'`, mirrored as
+  `marketing_status = 'confirmed'`) — none invented, none silently revoked. A
+  collision/mismatch is logged to `customer_merge_conflicts` and **never
+  fuses** two consent records. (The customer mirror's own merge —
+  `mergeCustomers`, when Shopify reports an e-mail change onto an Interessent's
+  address — replays the dropped row's consent through the resolver; the newer
+  act wins. See [`CUSTOMERS.md`](./CUSTOMERS.md).)
 - **current-anonymous-session → signed-in:** only the **current** session's
   conversation (the chat that led to sign-in, carried in the signed
   `state`/pending record) is attached — `WHERE session_id = THIS session`. Other
   anonymous threads are **never** retroactively scooped.
 
-### §7(3) Bestandskunden (separate basis, see CONSENT_FLOW.md)
+### §7(3) Bestandskunden — REMOVED
 
-A signed-in customer's **completed purchases** (pulled via the Customer Account
-API into `purchase_summary`, §8) also feed the **separate** §7(3)
-existing-customer audience (`customers.bestandskunde_eligible`, recomputed on
-every purchase refresh). That basis is **never merged** with DOI consent and its
-real sends stay gated behind the distinct `BESTANDSKUNDE_SENDS_APPROVED` flag —
-full details in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
+> ℹ️ **Retired 2026-06-16** (client decision; never live, schema dropped in
+> migration `0029`). The `bestandskunde_eligible` audience and the
+> `BESTANDSKUNDE_SENDS_APPROVED` flag no longer exist — see
+> [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "§7 Abs. 3 UWG Bestandskunden —
+> REMOVED". Marketing mail rests on the one consent only.
 
 ### Where the opt-in is surfaced for tier 3 — and where it is NOT
 
@@ -628,15 +676,19 @@ contract.
   ```
   optInActionable = signedIn
                  && customer has a REAL verified email (not the shopify:<id> placeholder)
-                 && marketing_status === 'none'      // no DOI decision on record yet
+                 && marketing_status === 'none'      // no consent decision on record yet (Mo or Shopify)
   ```
 
-  `marketing_status` is **our DOI state only** (`customers.marketing_status`,
-  mirrored from `email_captures`) — sign-in **never** imports Shopify's marketing
-  state (§1), so a freshly signed-in customer starts at `'none'` → **actionable**,
-  unless a **prior DOI under their verified email carried forward on merge** (§4
-  stamp branch), in which case it's already `pending`/`confirmed`/`unsubscribed`
-  → **not actionable** (decided). A synthetic-email tier-3 row (no real address to
+  `marketing_status` is the compatibility mirror of the **one** consent
+  (`customers.email_consent_state`: `subscribed` → `confirmed`,
+  `not_subscribed` → `none`; `src/lib/signed-in-identity.ts`). Sign-in itself
+  imports no consent (§1), but the customer's row already carries whatever the
+  one consent holds: a prior DOI under their verified email (carried forward on
+  merge, §4 stamp branch) **or** a newsletter subscription given in the shop
+  (once the customer mirror has the person — import, `customers/*` webhook or
+  nightly reconciliation). Such a customer is `pending`/`confirmed`/`unsubscribed`
+  → **not actionable** (decided, never re-asked). Everyone else starts at
+  `'none'` → **actionable**. A synthetic-email tier-3 row (no real address to
   DOI) is also **not actionable**. "Dismissed" (the customer closed the card
   without ticking) is a **widget-local** state the backend does not track — once a
   real decision is recorded via `POST /api/account/marketing-opt-in` the backend

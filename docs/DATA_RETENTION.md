@@ -8,11 +8,12 @@ The data model is split into two clusters with **different lawful bases**. They
 are kept structurally separate; for anonymous traffic the only bridge is the
 pseudonymous `session_id`, which a user severs by clearing their browser
 storage. Since migration `0008_customers.sql` there is **one explicit,
-consent-anchored exception**: the nullable `conversations.customer_id` /
+identity-anchored exception**: the nullable `conversations.customer_id` /
 `email_captures.customer_id` foreign keys (`ON DELETE SET NULL`), set only when
-the user actively submits their email — erasing a customer returns the linked
-rows to plain pseudonymous data (see [`DATABASE.md`](./DATABASE.md)). Keep the
-clusters separate otherwise — do not denormalise an email onto a conversation.
+the user actively submits their email or signs in with their shop account —
+erasing a customer returns the linked rows to plain pseudonymous data (see
+[`DATABASE.md`](./DATABASE.md)). Keep the clusters separate otherwise — do not
+denormalise an email onto a conversation.
 
 ---
 
@@ -70,15 +71,21 @@ have no conversation) are purged independently, on the analytics window.
 
 ## Cluster B — Consent & marketing
 
-**Lawful basis: explicit consent (Art. 6(1)(a)).** This is the **only** place an
-email address is stored. A row exists here *only* because the user actively
-submitted their email and made a consent choice. We record the **exact consent
-copy shown** (`consent_text_shown`) as proof, and run marketing consent through
-a **double opt-in** (`marketing_doi_status`).
+**Lawful basis: explicit consent (Art. 6(1)(a)).** E-mail addresses live only in
+Cluster B. An `email_captures` row exists *only* because the user actively
+submitted their email on a Mo surface and made a consent choice. We record the
+**exact consent copy shown** (`consent_text_shown`) as proof, and run Mo's
+marketing opt-in through a **double opt-in** (`marketing_doi_status`). Since
+migration `0064` the marketing consent itself is **one consent per person**,
+shared with Shopify in both directions: its state lives on
+`customers.email_consent_*` (Kundenstamm, below) and every change is appended to
+`consent_events`; `email_captures` stays the Art. 7 evidence for consents given
+on Mo's surfaces (see [`CONSENT_FLOW.md`](./CONSENT_FLOW.md)).
 
 | Table              | What's stored                                                                           | Lawful basis                |
 | ------------------ | --------------------------------------------------------------------------------------- | --------------------------- |
 | `email_captures`   | email, transactional/marketing consent flags, DOI status + token, consent copy, unsubscribe time | Explicit consent            |
+| `consent_events`   | history of the one consent: customer id, when, source (Mo surface / Shopify / admin / import), state, level, origin reference (never an email), Shopify consent text version, note | Proof of consent (Art. 7(1)) |
 | `suppression_list` | email, when, reason (unsubscribe / manual / bounce / complaint / erasure)               | Legitimate interest (honouring opt-outs) |
 | `marketing_sends`  | drafted/approved/sent marketing message tied to a capture, discount code, order match   | Explicit consent            |
 
@@ -88,6 +95,7 @@ a **double opt-in** (`marketing_doi_status`).
 | -------------------------------------- | ------------------- | ------------------------------- | --------------------- |
 | `email_captures` after unsubscribe     | **30 days** grace   | `SUPPRESSED_CAPTURE_PURGE_DAYS` | Hard delete the capture |
 | `email_captures` for suppressed emails | **30 days** grace   | `SUPPRESSED_CAPTURE_PURGE_DAYS` | Hard delete the capture |
+| `consent_events`                       | follows the customer | —                              | Cascade-deleted with the customer row (erasure); no own window |
 | `suppression_list`                     | **Kept**            | —                               | Retained to keep honouring the opt-out |
 
 **Why the suppression list is kept:** to *not* email someone who opted out, we
@@ -97,32 +105,76 @@ needed for that and is justified by legitimate interest. The richer capture
 
 ---
 
-## Cluster B (cont.) — Campaign audience (Shopify marketing subscribers)
+## Cluster B (cont.) — Campaigns
 
-**Lawful basis: the customer's Shopify marketing consent (Art. 6(1)(a),
-recorded by Shopify as `emailMarketingConsent`).** The campaign module
-([`CAMPAIGNS.md`](./CAMPAIGNS.md), migration `0034`) syncs the shop's
-SUBSCRIBED marketing contacts into `campaign_contacts` (name, email,
-language, opt-in level, order aggregates), keeps ONE editable draft per
-contact (`campaign_drafts`, incl. a compact purchase snapshot) and an
-immutable send record (`campaign_sends` — email, subject, **body hash**, the
-`MK-` discount code). ⚠️ Because this consent is not our own provable double
-opt-in, the whole channel is send-gated (`CAMPAIGN_SENDS_APPROVED`,
-`CAMPAIGN_ALLOW_SINGLE_OPT_IN` — see the legal model in `CAMPAIGNS.md`).
+**Lawful basis: the one marketing consent (Art. 6(1)(a)) — Shopify's checkbox
+consent or our DOI, shared in both directions (migration `0064`).** The campaign
+module ([`CAMPAIGNS.md`](./CAMPAIGNS.md), migrations `0034` / `0066`) defines
+campaigns (`campaigns` — no personal data) and materialises each campaign's
+audience from the Kundenstamm into recipient rows (`campaign_contacts`: name,
+email, language, opt-in level, order figures — a snapshot per campaign and
+cycle), keeps ONE editable draft per recipient (`campaign_drafts`, incl. a
+compact purchase snapshot) and an immutable send record (`campaign_sends` —
+email, subject, **body hash**, the shipped body, the `MK-` discount code). Only
+people whose consent is `subscribed` and who are not blocked ever become
+recipients; the send path re-checks both. ⚠️ Because the Shopify-side consent is
+not always a provable double opt-in, the channel is send-gated
+(`CAMPAIGN_SENDS_APPROVED`, `CAMPAIGN_ALLOW_SINGLE_OPT_IN` — see the legal model
+in `CAMPAIGNS.md` §3).
 
-Since migration `0059` every contact is linked to a `customers` row (source
-`kampagne`) and gets the central **customer profile** from its purchases and
-Kampagne history ([`CUSTOMERS.md`](./CUSTOMERS.md)). The profile lives on the
-customer row and goes with it: retention step 5 or a complete erasure removes
-it. An erased address is on `suppression_list` and is skipped by the sync.
+The **customer profile** a draft reads lives on the customer row and goes with
+it: a complete erasure removes it, an Art. 21 objection to profiling
+(`customers.profile_objection_at`) clears it and stops it being rebuilt, and
+retention step 5 / 5e remove it with a non-Shopify customer
+([`CUSTOMERS.md`](./CUSTOMERS.md)). An erased address is on `suppression_list`
+with reason `erasure` and is never matched by an audience again.
+
+*(Retired: until the customer platform the audience was the shop's SUBSCRIBED
+newsletter list, synced daily into `campaign_contacts` by
+`/api/cron/sync-campaign-audience`. Replaced by the Kundenstamm mirror and the
+nightly audience refresh `/api/cron/campaign-audiences`.)*
 
 ### Retention windows (campaign)
 
 | Data                | Default window | Env var                           | Action on expiry |
 | ------------------- | -------------- | --------------------------------- | ---------------- |
-| `campaign_contacts` (+ drafts, cascade) | **365 days** by `COALESCE(last_synced_at, created_at)` | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete (an actively re-synced contact keeps refreshing the timestamp and stays; a contact that dropped out of the sync ages out) |
+| `campaign_contacts` (+ drafts, cascade) | **365 days** by `COALESCE(last_synced_at, created_at)` | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete (an open recipient that still matches its audience is refreshed every night and stays; a sent, skipped, suppressed or excluded one ages out). Testkontakte are never purged by this step. |
 | `campaign_sends`    | **365 days** by `sent_at` | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete      |
+| `campaigns`         | kept           | —                                 | No personal data; archived by the operator |
 | `suppression_list`  | **Kept**       | —                                 | Retained to keep honouring the opt-out (unchanged) |
+
+---
+
+## Cluster B (cont.) — Kundenstamm (Shopify customer mirror)
+
+**Lawful basis: performance of a contract / legitimate interest (Art. 6(1)(b) /
+6(1)(f)) — the shop's existing customer relationship, NOT marketing consent.**
+Since migration `0061` every Shopify customer is a `customers` row
+(`source = 'shopify'`): bulk import, `customers/*` and `orders/*` webhooks and a
+nightly reconcile (`lib/shopify-sync.ts`, gate `SHOPIFY_CUSTOMER_SYNC_ENABLED`;
+see [`CUSTOMERS.md`](./CUSTOMERS.md)). Mo stores what the Kunden screen, the
+audiences and the Eingang need, minimised:
+
+| Table | What's stored | Notes |
+| --- | --- | --- |
+| `customers` (mirror columns, `0061`) | Shopify id + gid, email, first/last name, locale, country, Shopify account state, tags, Shopify timestamps, language pin, Art. 21 objections (`profile_objection_at`, `postal_objection_at`), the one consent (`email_consent_*`, `0064`) | The AI profile (`profile_summary` / `profile_data`, `profile_depth` Vollprofil/Kaufprofil) is built per `CUSTOMER_AI_PROFILE_SCOPE` (`consented` default \| `all` — decided for this shop, lawyer to confirm); with `all`, profiles of people without consent are flagged and every advertising action stays blocked. An objection deletes the profile and stops it being rebuilt. |
+| `customer_orders` (`0062`) | the order ledger: order ids, dates, statuses, money, discount codes, line items (title, variant, quantity, unit price, handle) | No addresses, payment data, notes or contact fields; guest orders without a customer are not stored |
+| `customer_facts` (`0063`) | derived figures per customer (orders, spend, intervals, lifecycle segment, value tier, churn risk, categories, chat / mail / click counts) | Zero tokens, recomputed nightly |
+| `inbox_items` (`0067`) | Eingang items: rule kind, customer id, title, reason, evidence (ids and numbers, never an email), AI suggestion, decision, 14-day outcome | Operator work queue |
+| `shopify_webhook_events`, `shopify_sync_runs`, `shopify_outbox` (`0065`) | webhook dedupe (id, topic, outcome — no payload), import / reconcile runs, Mo's pending writes to Shopify (a customer create carries the email until it is done or dead) | Operational bookkeeping |
+| `erasure_tombstones` (`0065`) | the Shopify id of every person erased in Mo, when, when Shopify confirmed | Keeps an erased person from being re-created by an import or webhook |
+
+### Retention windows (Kundenstamm)
+
+| Data | Default window | Env var | Action on expiry / erasure |
+| --- | --- | --- | --- |
+| `customers` with a Shopify id | lifetime of the Shopify record | — | **Exempt** from the customer purges of steps 5 (opted out) and 5e (dormant): the mirror follows Shopify. Removed by the complete erasure — from Mo, or from Shopify's `customers/redact` / `customers/delete` webhooks. The AI profile on the row has no window of its own; an Art. 21 objection clears it. |
+| `customer_orders`, `customer_facts`, `consent_events` | follow the customer | — | Cascade-deleted with the customer row; the erasure also deletes ledger rows not (yet) linked to the row, by Shopify id. Shopify keeps its own orders for as long as the law requires; Mo keeps no copy. |
+| `inbox_items` (decided: `erledigt` / `verworfen`) | **180 days** by `COALESCE(decided_at, updated_at)` | `INBOX_RETENTION_DAYS` | Hard delete (step 8). Open items stay; items about a person cascade with the customer. |
+| `shopify_webhook_events` | **90 days** by `received_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7) |
+| `shopify_sync_runs` (done / failed / cancelled) | **90 days** by `started_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7); the newest `done` run per kind always stays (import marker, reconcile floor). Running runs stay. |
+| `shopify_outbox` (done / dead) | **90 days** by `created_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7); pending / failed rows are never purged. `customer_id` is `SET NULL` when the customer goes; the erasure deletes the person's open rows. |
+| `erasure_tombstones` | **30 days** after Shopify confirmed the redaction (`shopify_confirmed_at`) | `ERASURE_TOMBSTONE_RETENTION_DAYS` | Hard delete (step 9). An unconfirmed tombstone always stays, so no import re-creates a person Shopify still holds. |
 
 ---
 
@@ -205,9 +257,14 @@ spike §3.)*
 Account API flow, see [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md)), we hold the
 **OAuth tokens** needed to read *their own* Shopify data on their behalf, plus the
 identity linkage on the `customers` row. **Shopify stays authoritative** for the
-name/email/addresses/orders themselves — we do not copy that PII into our DB in
-CA-1; we re-fetch it live. Signing in establishes **identity, not marketing
-consent** — Shopify's marketing state is never imported into `marketing_status`.
+account data; the sign-in only caches a data-minimised account summary (name,
+address context — `shopify_account_summary`, migration `0015`) and the order
+history (`purchase_summary`) on the customer row, refreshed from Shopify, never
+edited in Mo. Independently of any sign-in, the Kundenstamm mirror (above)
+stores the minimised customer record and the order ledger. Signing
+in establishes **identity, not marketing consent** — the consent is the one
+consent on `customers.email_consent_*`, which Shopify's own marketing state feeds
+through the mirror's webhooks and reconcile, never the sign-in itself.
 
 | Table | What's stored | Notes |
 | --- | --- | --- |
@@ -266,30 +323,53 @@ Every "delete everything about this person" runs through **one function**,
 | Widget button "Meine Daten löschen" | signed-in customer (tier 3) | `POST /api/account/erase` (`eraseSignedInCustomer` delegates) |
 | Mail footer "Daten löschen" | any recipient of a marketing or Kampagne mail | `GET /api/erase-data?token=…` shows a confirmation page, `POST` erases (link scanners never delete; the signed token is purpose-bound and differs from the unsubscribe token) |
 | Admin "Löschen" | operator, Kunden detail or Kampagne card | `POST /api/admin/customers/erase` (confirmed, audit-logged with the numeric id only) |
+| Shopify compliance webhooks `customers/redact`, `customers/delete` | Shopify (the customer deleted their shop account or asked the shop) | `POST /api/webhooks/shopify` (HMAC-verified) → the same erasure with trigger `shopify`; more than `SHOPIFY_ERASURE_ALERT_PER_HOUR` (default 20) per hour raises an alert and an Eingang item |
 
 In **one transaction** it removes the customer row (profile, cached purchases,
-address, drafts; OAuth tokens and session links cascade), **every** conversation
-of the person on any device (messages cascade), consent records, marketing
-drafts and sends, the Kampagne contact (drafts cascade) and its sends,
-correspondence, physical letters, feedback, KPI events and attribution tokens
-of the person's sessions, pending sign-in and merge-conflict rows, usage rows,
-and the person's section in stored Analyse reports. **Kept de-identified:**
-`mo_orders` (session id + token removed, for revenue KPIs), `bundle_offers`
-(person link removed), `qa_entries` (chat link removed). **Retained on
-purpose:** `suppression_list` (reason `erasure` — the address is never mailed
-again and the Shopify audience sync never re-imports it) and
-`admin_access_log` (numeric id only, own window). Hero images in Blob storage
-are deleted after the commit.
+address, drafts; OAuth tokens, session links, the order ledger
+`customer_orders`, `customer_facts`, the consent history `consent_events` and
+the person's Eingang items cascade), **every** conversation of the person on any
+device (messages cascade), consent records, marketing drafts and sends, every
+Kampagne recipient row of the person in every campaign (drafts cascade) and its
+sends, correspondence, physical letters, feedback, KPI events and attribution
+tokens of the person's sessions, pending sign-in and merge-conflict rows, usage
+rows, the person's open Shopify outbox rows, ledger rows not yet linked to the
+row (by Shopify id), and the person's section in stored Analyse reports.
+**Kept de-identified:** `mo_orders` (session id + token removed, for revenue
+KPIs), `bundle_offers` (person link removed), `qa_entries` (chat link removed),
+completed `shopify_outbox` rows (Shopify id only). **Retained on purpose:**
+`suppression_list` (reason `erasure` — the address is never mailed again and no
+audience matches it), `erasure_tombstones` (the Shopify id, so no import,
+reconcile or webhook re-creates the person; removed 30 days (default) after
+Shopify confirmed the redaction — see Kundenstamm above) and
+`admin_access_log` (numeric id only, own window). Hero images in Blob storage are
+deleted after the commit.
+
+**Orders.** Mo's copy of the person's orders (`customer_orders`) is deleted with
+them — cascade with the customer row, plus an explicit delete by Shopify id.
+Shopify keeps its own orders for as long as the law requires; nothing in Mo
+holds them in its place.
+
+**The Shopify side** (only when the erasure started in Mo, trigger `mo`, and the
+person has a Shopify id): the outbox (`lib/shopify-outbox.ts`) gets a consent
+write (`unsubscribed`, sent while `SHOPIFY_CONSENT_WRITEBACK` is on) and a
+`data_erasure` row (sent while `SHOPIFY_ERASURE_SYNC` is on: consent off again,
+then Shopify's `customerRequestDataErasure`). An erasure Shopify started
+(`customers/redact`, `customers/delete`) runs here without asking Shopify again
+and stamps the tombstone as confirmed. Shopify's `customers/data_request` creates
+an Eingang item `datenauskunft` with a 30-day deadline; `shop/redact` only raises
+an alert and an Eingang item — Mo never mass-deletes on it.
 
 The per-table decisions are `ERASURE_PLAN` in
 `lib/customer-erasure-core.mjs`; its test parses all migrations and **fails
 when a table with personal data has no decision**, so a new table cannot
 silently escape erasure.
 
-This is the stronger sibling of the retention cron's step 5: the cron erases
-*opted-out* customers and uses `ON DELETE SET NULL` to return their conversations
-to pseudonymous rows (and never touches a customer whose Kampagne contact is
-still subscribed); `erasePerson` **purges** everything.
+This is the stronger sibling of the retention cron's steps 5 and 5e: the cron
+removes *opted-out* or *dormant* customers without a Shopify id and uses
+`ON DELETE SET NULL` to return their conversations to pseudonymous rows (it
+never touches a Shopify customer, and step 5e keeps anyone whose one consent is
+`subscribed` or `pending`); `erasePerson` **purges** everything.
 
 ---
 
@@ -300,12 +380,13 @@ still subscribed); `erasePerson` **purges** everything.
 > window deletes everything — `RETENTION_DAYS=0` keeps every conversation
 > (parsing: `src/lib/retention-options.mjs`, tested).
 
-A daily cron — `GET /api/cron/retention`, scheduled in `vercel.json`, protected
-by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
+A daily cron — `GET /api/cron/retention`, scheduled in `vercel.json` (03:30 UTC),
+protected by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). The
+step numbers below are the ones in the code. Each run:
 
 1. Marks stale `active` conversations `abandoned`.
 2. Deletes conversations past `RETENTION_DAYS` (messages + chat `ai_usage` cascade).
-3. Deletes `kpi_events` past `KPI_RETENTION_DAYS`, and the dashboard/admin
+3. Deletes `kpi_events` past `KPI_RETENTION_DAYS`, and (3b) the dashboard/admin
    `ai_usage` rows (those with no `conversation_id`) on the same window.
 4. Purges PII for unsubscribed / suppressed `email_captures` past the grace
    window, keeping the `suppression_list` entry.
@@ -314,34 +395,64 @@ by `CRON_SECRET` — calls `runRetention()` (`src/lib/retention.ts`). Each run:
    addresses, after the capture purge; their `ON DELETE SET NULL` FKs return
    the linked conversations to plain pseudonymous rows (see
    [`CUSTOMERS.md`](./CUSTOMERS.md)), and their `customer_oauth_tokens` cascade
-   away.
-5b. Deletes `email_messages` (Korrespondenz) **and `physical_letters` (Briefe)**
-   past `CORRESPONDENCE_RETENTION_DAYS` (by `occurred_at`) — their **own**
-   schedule, decoupled from the consent-capture grace; the `ON DELETE SET NULL`
-   customer link means a customer erasure detaches (never cascade-deletes) these
-   rows.
-5c. Deletes `feedback` past `FEEDBACK_RETENTION_DAYS` (default **365 days**, by
-   `created_at`; `0` disables) — free-text comments can carry user-supplied PII,
-   so they don't live forever.
-5d. **Storage limitation (Art. 5(1)(e)):** purges IDENTIFIED but **dormant**
+   away. **Shopify customers are exempt** (only rows without a
+   `shopify_customer_id` are purged): opting out of advertising ends the
+   advertising, not the customer relationship — only the complete erasure
+   removes them.
+5b. Deletes `email_messages` (Korrespondenz) past `CORRESPONDENCE_RETENTION_DAYS`
+   (by `occurred_at`) — their **own** schedule, decoupled from the
+   consent-capture grace; the `ON DELETE SET NULL` customer link means a
+   customer erasure detaches (never cascade-deletes) these rows.
+5c. Deletes `physical_letters` (Briefe) past `PHYSICAL_LETTER_RETENTION_DAYS`
+   (default **365 days**, by `created_at`) — likewise their own schedule.
+5d. Deletes `feedback` past `FEEDBACK_RETENTION_DAYS` (default **365 days**, by
+   `created_at`) — free-text comments can carry user-supplied PII, so they
+   don't live forever.
+5e. **Storage limitation (Art. 5(1)(e)):** purges IDENTIFIED but **dormant**
    `customers` whose `last_seen_at` is older than
-   `CUSTOMER_INACTIVITY_RETENTION_DAYS` (default **1095 days / 3 years**; `0`
-   disables), **excluding** anyone holding an active marketing consent
-   (`marketing_status` `confirmed`/`pending` — a live basis to retain). Their
-   `ON DELETE SET NULL` FKs return conversations/correspondence to pseudonymous
-   rows and their OAuth tokens cascade away; the `suppression_list` (keyed by
-   email) is untouched, so opt-outs are still honoured. *(The exact window is a
-   policy choice — confirm with Legal.)*
-5e. Deletes `admin_access_log` past `ADMIN_ACCESS_LOG_RETENTION_DAYS` (default
-   **730 days**, by `occurred_at`; `0` disables) — the admin PII-access security
-   record (migration `0028`).
-5f. Deletes campaign data past `CAMPAIGN_CONTACT_RETENTION_DAYS` (default
-   **365 days**; `0` disables): `campaign_sends` by `sent_at`, then
-   `campaign_contacts` by `COALESCE(last_synced_at, created_at)` (drafts
-   cascade with their contact). The `suppression_list` is untouched — see
+   `CUSTOMER_INACTIVITY_RETENTION_DAYS` (default **1095 days / 3 years**),
+   **excluding** anyone whose one consent `email_consent_state` is `subscribed`
+   or `pending` (a live basis to retain; an unconfirmed DOI falls back to
+   `not_subscribed` one day after its link expired — `expirePendingConsents`,
+   nightly in `/api/cron/refresh-customers`) and **every Shopify customer** (the
+   mirror follows Shopify; Shopify's own deletion arrives as
+   `customers/redact` / `customers/delete` and runs the complete erasure).
+   Their `ON DELETE SET NULL` FKs return conversations/correspondence to
+   pseudonymous rows and their OAuth tokens cascade away; the
+   `suppression_list` (keyed by email) is untouched, so opt-outs are still
+   honoured. *(The exact window is a policy choice — confirm with Legal.)*
+5f. Deletes `admin_access_log` past `ADMIN_ACCESS_LOG_RETENTION_DAYS` (default
+   **730 days**, by `occurred_at`) — the admin PII-access security record
+   (migration `0028`).
+5g. Deletes campaign data past `CAMPAIGN_CONTACT_RETENTION_DAYS` (default
+   **365 days**): `campaign_sends` by `sent_at`, then `campaign_contacts` by
+   `COALESCE(last_synced_at, created_at)` (drafts cascade with their recipient;
+   Testkontakte are skipped). The `suppression_list` is untouched — see
    [`CAMPAIGNS.md`](./CAMPAIGNS.md).
+5h. Deletes `analytics_reports` past `ANALYTICS_REPORT_RETENTION_DAYS`, and
+   `conversation_insights` + `kpi_persona_question_summaries` on the
+   `KPI_RETENTION_DAYS` window.
+5i. Deletes `mo_orders` on the `KPI_RETENTION_DAYS` window (by
+   `COALESCE(processed_at, created_at)`) and `mo_attribution_tokens` older than
+   the attribution window + 7 days.
 6. Purges expired `customer_auth_pending` rows (the short-lived sign-in
    CSRF/PKCE state).
+7. Deletes Shopify sync bookkeeping past `SHOPIFY_SYNC_LOG_RETENTION_DAYS`
+   (default **90 days**): `shopify_webhook_events` by `received_at`, finished
+   `shopify_sync_runs` (done / failed / cancelled) by `started_at` — the newest
+   `done` run per kind always stays (it is the import marker and the reconcile
+   floor) — and `done` / `dead` `shopify_outbox` rows by `created_at`. Pending
+   and failed outbox rows are never purged.
+8. Deletes decided Eingang items (`inbox_items` with status `erledigt` /
+   `verworfen`) past `INBOX_RETENTION_DAYS` (default **180 days**, by
+   `COALESCE(decided_at, updated_at)`). Open and snoozed items stay.
+9. Deletes `erasure_tombstones` whose Shopify confirmation
+   (`shopify_confirmed_at`) is older than `ERASURE_TOMBSTONE_RETENTION_DAYS`
+   (default **30 days**); unconfirmed tombstones stay.
+
+The same run also executes the conversion sweep (status maintenance, see
+Cluster A). Every window is parsed by `src/lib/retention-options.mjs`; `0`
+skips the step.
 
 ### Running it manually
 
@@ -350,12 +461,13 @@ curl -H "Authorization: Bearer $CRON_SECRET" \
   https://chat.motionsports.de/api/cron/retention
 ```
 
-The endpoint returns a JSON summary with the counts affected, e.g.:
+The endpoint returns a JSON summary with the counts affected, e.g. (abridged —
+every step reports its count, `options` echoes every window):
 
 ```json
 {
   "ok": true,
-  "options": { "retentionDays": 180, "kpiRetentionDays": 180, "abandonAfterMinutes": 30, "suppressedPurgeDays": 30, "correspondenceRetentionDays": 365 },
+  "options": { "retentionDays": 180, "kpiRetentionDays": 180, "abandonAfterMinutes": 30, "suppressedPurgeDays": 30, "correspondenceRetentionDays": 365, "shopifySyncLogRetentionDays": 90, "inboxRetentionDays": 180, "erasureTombstoneRetentionDays": 30 },
   "abandonedConversations": 4,
   "deletedConversations": 12,
   "deletedKpiEvents": 833,
@@ -364,7 +476,13 @@ The endpoint returns a JSON summary with the counts affected, e.g.:
   "purgedSuppressedCustomers": 1,
   "deletedEmailMessages": 5,
   "deletedPhysicalLetters": 2,
+  "deletedInactiveCustomers": 0,
+  "deletedCampaignContacts": 3,
+  "deletedCampaignSends": 3,
   "purgedAuthPending": 3,
+  "deletedShopifySyncLog": 41,
+  "deletedInboxItems": 9,
+  "deletedErasureTombstones": 0,
   "ranAt": "2026-06-03T03:30:00.000Z"
 }
 ```
@@ -378,9 +496,14 @@ The consent flow has shipped (see [`CONSENT_FLOW.md`](./CONSENT_FLOW.md)).
 **Self-service erasure exists for everyone we can reach by mail or sign-in**
 (section above): the widget button (signed in), the "Daten löschen" link in
 every marketing and Kampagne mail, and — for requests by phone or letter —
-the operator's "Löschen" button in Kunden or Kampagne. All three run the same
-complete erasure. `DELETE /api/account/conversations/{id}` still erases a
-single transcript for a signed-in customer.
+the operator's "Löschen" button in Kunden or Kampagne. A deletion the person
+requests at the shop reaches Mo as Shopify's `customers/redact` /
+`customers/delete` webhook. All of them run the same complete erasure.
+`DELETE /api/account/conversations/{id}` still erases a single transcript for a
+signed-in customer.
+
+**Access requests** forwarded by Shopify (`customers/data_request`) become an
+Eingang item `datenauskunft` with a 30-day deadline for the operator to answer.
 
 The only manual case left:
 

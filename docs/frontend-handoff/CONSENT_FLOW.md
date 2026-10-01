@@ -14,13 +14,22 @@ would silently drift from what we store).
 | Surface | Who sees it | Email field? | Mechanic | Submit endpoint |
 |---|---|---|---|---|
 | **In-chat capture form** | anyone in the chat | **yes** (user types it) | two checkboxes (unchanged) | `POST /api/capture-email` |
-| **Chat consent gate** (NEW, v4) | **anonymous** sessions, once per session after the 1st chat message | **yes** (user types it) | button-consent | `POST /api/chat-marketing-opt-in` |
+| **Chat consent gate** (v4; leads with sign-in since 2026-10) | **anonymous** sessions, once per session after the 1st chat message | primary: **sign in**; alternative: **yes** (user types it) | sign-in button, then button-consent | `POST /api/chat-marketing-opt-in` |
 | **At-sign-in marketing opt-in** | a **signed-in** customer | **no** (we hold the verified email) | button-consent (v4) | `POST /api/account/marketing-opt-in` |
 
 **All three are the SAME double-opt-in.** Accepting only sends a confirmation
 email; marketing is permitted **only after** the customer clicks that link.
 **Nothing is ever pre-selected**, on any surface — a Shopify account NEVER
 implies consent, and neither does typing an email.
+
+**One consent, shared with the shop.** The marketing consent is the same one
+the shop's own newsletter uses (checkout checkbox, account). So an address that
+is **already subscribed** — in Shopify or through an earlier Mo DOI — gets **no
+second confirmation email**: every opt-in endpoint then answers
+`marketing.status: "confirmed"`, `alreadyConfirmed: true`,
+`doiEmailSent: false`. Show "already subscribed", not "check your inbox". A
+confirmation click and an unsubscribe in Mo are passed on to the shop; nothing
+for the widget to do.
 
 ---
 
@@ -51,11 +60,13 @@ implies consent, and neither does typing an email.
 
 ---
 
-## 2. Chat consent gate (v4) — the new surface
+## 2. Chat consent gate (v4) — sign-in first
 
 Shown **once per session** to an **anonymous** user after their **first chat
-message**: an Accept/Decline dialog with a typed-email field, marketing-only
-(no transactional consent, no summary email involved).
+message**. Since 2026-10 the gate **leads with sign-in**: the primary action is
+"Mit Kundenkonto anmelden"; the typed-email marketing opt-in (Accept/Decline,
+marketing-only — no transactional consent, no summary email) is the
+alternative for people without a shop account.
 
 ### 2.1 Fetch the copy — `GET /api/consent-copy?surface=chat`
 
@@ -66,6 +77,15 @@ shared secret — these are public strings already shown to users). A CORS
 ```jsonc
 // 200 OK  (Cache-Control: public, max-age=60, stale-while-revalidate=300)
 {
+  // Sign-in-first block — UI chrome, NOT consent text, never part of consentTextShown.
+  "signIn": {
+    "preferred": true,                       // lead with the sign-in button
+    "headline": "Schon Kunde bei motion sports?",
+    "body": "Melde dich mit deinem Kundenkonto an — dann kennt Mo deine Bestellungen und berät dich persönlich.",
+    "buttonLabel": "Mit Kundenkonto anmelden",
+    "alternativeLabel": "Kein Konto? Angebote per E-Mail erhalten",  // reveals the typed-email consent block below
+    "loginPath": "/api/auth/shopify/login"  // relative to the BACKEND base URL
+  },
   "version": "v4",
   "headline": "Persönliche Angebote und exklusive Rabatt-Aktionen — abgestimmt auf deine Beratung.",  // framing only — NOT consent text
   "marketingLabel": "Ja, schickt mir persönliche Angebote und exklusive Rabatt-Aktionen an diese E-Mail-Adresse — nur für Abonnenten. Jederzeit abbestellbar.",  // the consent text — render FULLY VISIBLE
@@ -77,10 +97,23 @@ shared secret — these are public strings already shown to users). A CORS
 }
 ```
 
-Render: the `headline`, the email input, the fully-visible `marketingLabel` +
-`consentFooter`, the imprint/privacy links, and the two actions — the
-affirmative **"Ja, Angebote aktivieren"** button and an equally-reachable
-decline. Nothing pre-selected.
+Render, when `signIn.preferred` is `true`:
+
+1. **First** the sign-in block: `signIn.headline`, `signIn.body` and a button
+   `signIn.buttonLabel` that starts the Customer Account sign-in as a
+   **top-level redirect** to `{BASE_URL}{signIn.loginPath}?session={session_id}&return_url={current storefront URL}`
+   (exactly the login of [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §2).
+   After the return (`?ms_auth=ok`) call `/api/auth/me`: show the at-sign-in
+   card (§3) only when `marketing.optInActionable === true` — a customer who
+   is already subscribed (Shopify or Mo) is **not** asked again.
+2. **Then**, behind `signIn.alternativeLabel`, the typed-email consent block:
+   the `headline`, the email input, the fully-visible `marketingLabel` +
+   `consentFooter`, the imprint/privacy links, and the two actions — the
+   affirmative **"Ja, Angebote aktivieren"** button and an equally-reachable
+   decline. Nothing pre-selected.
+
+A widget that ignores `signIn` keeps the previous typed-email gate unchanged
+(the field is additive). Never add the `signIn` strings to `consentTextShown`.
 
 ### 2.2 Submit the accept — `POST /api/chat-marketing-opt-in`
 
@@ -110,9 +143,10 @@ Body:
 {
   "ok": true,
   "marketing": {
-    "status": "pending",        // "pending" → DOI email sent; "confirmed" → was already confirmed
+    "status": "pending",        // "pending" → DOI email sent; "confirmed" → already subscribed
     "doiEmailSent": true,
-    "alreadyConfirmed": false   // true when this address was already DOI-confirmed (re-opt-in)
+    "alreadyConfirmed": false   // true when the address already held the consent (earlier Mo DOI
+                                // or subscribed in the shop) — then doiEmailSent is false
   }
 }
 ```
@@ -126,7 +160,9 @@ Body:
 - `503 upstream_unavailable` — consent couldn't be stored; let the user retry.
 
 After a `pending` response, tell the user to **check their inbox and click the
-confirmation link** — they are **not** subscribed until they do.
+confirmation link** — they are **not** subscribed until they do. After a
+`confirmed` response (`alreadyConfirmed: true`) no email was sent — tell them
+they are already subscribed.
 
 **Returning-customer memory:** after a success response the widget MAY attach
 the captured email as `customer.email` on this session's subsequent
@@ -172,13 +208,18 @@ Same response shape and errors as before (`400 marketing_consent_required`,
 
 Only show this surface once `/api/auth/me` reports `signedIn: true` **and**
 `marketing.optInActionable === true`. Emit the same four KPI events with
-`{ surface: "signin" }`.
+`{ surface: "signin" }`. `marketing.status` reflects the **one** consent, so a
+customer subscribed to the shop's newsletter reads `"confirmed"` and
+`optInActionable: false` — don't ask them. Should the POST arrive for an
+already-subscribed address anyway, it sends no email and answers
+`confirmed` / `alreadyConfirmed: true`.
 
 ### 3.3 Confirmation + withdrawal (unchanged)
 
 The DOI confirmation link (`/api/confirm-marketing`) and the unsubscribe link in
 every marketing email are the **same** for all surfaces — nothing widget-side to
-build. Consent is withdrawable any time via that unsubscribe link.
+build. Consent is withdrawable any time via that unsubscribe link (or in the
+shop — both sides stay in step).
 
 ---
 
@@ -189,7 +230,10 @@ build. Consent is withdrawable any time via that unsubscribe link.
 `returningHint`, …). **This surface is NOT button-consent**: both checkboxes
 render **unchecked**, its audit string covers both consents, and a submit
 without the transactional tick is rejected `400 transactional_consent_required`.
-See [`API_CONTRACT.md`](./API_CONTRACT.md) §7 for the full capture contract.
+With the marketing box ticked on an already-subscribed address the response is
+`marketing.status: "confirmed"`, `alreadyConfirmed: true`, no DOI email (the
+summary email is sent as usual). See [`API_CONTRACT.md`](./API_CONTRACT.md) §7
+for the full capture contract.
 
 ---
 
@@ -198,5 +242,7 @@ See [`API_CONTRACT.md`](./API_CONTRACT.md) §7 for the full capture contract.
 Sign-in is still **identity only**, and a typed email in the gate is still
 **consent only for what was accepted**. Every marketing opt-in — gate accept,
 sign-in accept, or capture-form tick — is a **separate, explicit act** the
-customer chooses; the double-opt-in remains the **only** path to marketing
-consent, and nothing is ever pre-selected.
+customer chooses; on Mo's surfaces the double-opt-in remains the **only** path
+to marketing consent, and nothing is ever pre-selected. (A consent the
+customer gave in the shop itself counts too — that is why an
+already-subscribed address is not asked again.)
