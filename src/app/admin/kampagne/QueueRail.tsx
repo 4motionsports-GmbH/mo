@@ -20,6 +20,7 @@ import {
   StatusBadge,
   Tooltip,
   cn,
+  useConfirm,
 } from "../ui";
 import { adminFetch } from "../lib/admin-fetch";
 import {
@@ -67,6 +68,7 @@ export function QueueRail({
   onSelect,
   onUnskip,
   onDraft,
+  onLiftOptOut,
   onRetrySend,
   onDismissOutbox,
 }: {
@@ -83,6 +85,8 @@ export function QueueRail({
   onSelect: (contactId: number) => void;
   onUnskip: (contactId: number) => void;
   onDraft: (contactId: number) => void;
+  /** Lift a suppressed contact's opt-out; resolves to its new status or null. */
+  onLiftOptOut: (contactId: number) => Promise<string | null>;
   onRetrySend: (contactId: number) => void;
   onDismissOutbox: (contactId: number) => void;
 }) {
@@ -91,6 +95,20 @@ export function QueueRail({
   const [searching, setSearching] = React.useState(false);
   const searchSeq = React.useRef(0);
   const listRef = React.useRef<HTMLUListElement | null>(null);
+  const { confirm, confirmDialog } = useConfirm();
+
+  const reactivate = async (c: CampaignContactHit) => {
+    const ok = await confirm({
+      title: "Abmeldung aufheben?",
+      description: `Nur wenn die Abmeldung von ${c.email} ein Versehen war oder die Person ausdrücklich wieder Werbung möchte. Die Sperre wird entfernt und der Kontakt kehrt in die Warteschlange zurück. Es wird keine E-Mail verschickt; die Änderung wird protokolliert. Kommt die Abmeldung aus Shopify, dort wieder aktivieren und synchronisieren.`,
+      confirmLabel: "Abmeldung aufheben",
+    });
+    if (!ok) return;
+    const status = await onLiftOptOut(c.id);
+    if (status) {
+      setResults((prev) => prev.map((r) => (r.id === c.id ? { ...r, status } : r)));
+    }
+  };
 
   // Search-as-you-type over ALL campaign contacts (any status), debounced;
   // results clear below 2 chars.
@@ -161,7 +179,12 @@ export function QueueRail({
       case "sent":
         return <StatusBadge tone="success">Gesendet</StatusBadge>;
       case "suppressed":
-        return <StatusBadge tone="warning">Unterdrückt</StatusBadge>;
+        // The "Unterdrückt" badge sits next to the name; the slot keeps the action.
+        return (
+          <Button variant="outline" size="xs" loading={pending} onClick={() => void reactivate(c)}>
+            Reaktivieren
+          </Button>
+        );
       default:
         return <StatusBadge tone="neutral">{c.status}</StatusBadge>;
     }
@@ -171,6 +194,7 @@ export function QueueRail({
 
   return (
     <div className="flex min-h-0 flex-col rounded-lg border border-border bg-card text-sm lg:h-full">
+      {confirmDialog}
       {/* Search */}
       <div className="border-b border-border p-2">
         <SearchInput
@@ -195,9 +219,9 @@ export function QueueRail({
                 {results.map((c) => (
                   <li
                     key={c.id}
-                    className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5"
+                    className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md border border-border px-2 py-1.5"
                   >
-                    <span className="min-w-0">
+                    <span className="min-w-[8rem] flex-1">
                       <span className="flex items-center gap-1 text-xs font-medium">
                         <span className="truncate">{contactName(c)}</span>
                         {c.isTest && (
@@ -206,9 +230,12 @@ export function QueueRail({
                           </StatusBadge>
                         )}
                       </span>
-                      <span className="block truncate text-2xs text-muted-foreground">{c.email}</span>
+                      <span className="flex min-w-0 items-center gap-1 text-2xs text-muted-foreground">
+                        {c.status === "suppressed" && <StatusBadge tone="warning">Unterdrückt</StatusBadge>}
+                        <span className="truncate">{c.email}</span>
+                      </span>
                     </span>
-                    {statusAction(c)}
+                    <span className="shrink-0">{statusAction(c)}</span>
                   </li>
                 ))}
               </ul>

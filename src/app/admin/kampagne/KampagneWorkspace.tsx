@@ -255,6 +255,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
               onSelect={a.select}
               onUnskip={(id) => void a.unskip(id)}
               onDraft={(id) => void a.draftContact(id)}
+              onLiftOptOut={a.liftOptOut}
               onRetrySend={a.retrySend}
               onDismissOutbox={a.dismissOutbox}
             />

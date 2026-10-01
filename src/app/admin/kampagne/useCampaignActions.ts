@@ -699,6 +699,66 @@ export function useCampaignActions({
     [removeItem, restoreItem]
   );
 
+  /** Opt the contact out on request ("Abmelden", lib/marketing-optout.ts):
+   * the card leaves the queue at once. No e-mail is sent. The caller confirms. */
+  const optOut = React.useCallback(
+    async (contactId: number) => {
+      const item = itemsRef.current.find((it) => it.contactId === contactId);
+      if (!item || removedRef.current.has(contactId)) return;
+      removeItem(contactId);
+      setCountsLocal((c) => ({ ...c, drafted: Math.max(0, c.drafted - 1) }));
+      try {
+        await adminFetch("/api/admin/customers/marketing-optout", {
+          body: { contactId, action: "optout", confirm: true },
+        });
+        toast({ variant: "success", title: "Abgemeldet — keine E-Mail verschickt", description: item.email });
+      } catch (err) {
+        restoreItem(item);
+        setCountsLocal((c) => ({ ...c, drafted: c.drafted + 1 }));
+        fail("Abmelden fehlgeschlagen", err);
+      }
+    },
+    [removeItem, restoreItem]
+  );
+
+  /** Lift a contact's opt-out ("Reaktivieren" on a suppressed search hit).
+   * Resolves to the contact's new status (drafted → back in the queue,
+   * pending → needs a draft), or null when the server refused. No e-mail. */
+  const liftOptOut = React.useCallback(
+    async (contactId: number): Promise<string | null> => {
+      if (restoring.has(contactId)) return null;
+      setRestoring((s) => new Set(s).add(contactId));
+      try {
+        const json = await adminFetch<{ contactStatus?: string | null }>(
+          "/api/admin/customers/marketing-optout",
+          { body: { contactId, action: "lift", confirm: true } }
+        );
+        const status = json.contactStatus ?? null;
+        removedRef.current.delete(contactId);
+        toast({
+          variant: "success",
+          title: "Abmeldung aufgehoben",
+          description:
+            status === "drafted"
+              ? "Zurück in der Warteschlange — es wurde keine E-Mail verschickt."
+              : "Es wurde keine E-Mail verschickt. Jetzt einen Entwurf erstellen.",
+        });
+        reloadFromServer();
+        return status;
+      } catch (err) {
+        fail("Aufheben nicht möglich", err);
+        return null;
+      } finally {
+        setRestoring((s) => {
+          const nextSet = new Set(s);
+          nextSet.delete(contactId);
+          return nextSet;
+        });
+      }
+    },
+    [restoring, reloadFromServer]
+  );
+
   /** Undo a skip. If the contact still has its draft it lands straight back in
    * the queue; otherwise a fresh draft is generated first. */
   const unskip = React.useCallback(
@@ -1423,6 +1483,8 @@ export function useCampaignActions({
     dismissOutbox,
     skip,
     erase,
+    optOut,
+    liftOptOut,
     unskip,
     draftContact,
     previewItem,

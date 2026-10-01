@@ -37,9 +37,10 @@ import { EmailTextModeToggle, type EmailTextModeValue } from "../../EmailTextMod
 import { HeroImagePanel } from "../../HeroImagePanel";
 import { BundleComposer } from "../BundleComposer";
 import { useCustomerActions } from "../CustomerDetail";
+import { OptOutControl } from "./OptOutControl";
 
 const BLOCKED_NOTE: Record<Exclude<CustomerDetail["marketingStatus"], "confirmed">, string> = {
-  none: "Keine Marketing-Einwilligung — es kann keine Marketing-E-Mail generiert werden.",
+  none: "Keine Einwilligung aus dem Chat — von hier aus keine persönliche Marketing-E-Mail. Newsletter-Abonnenten erreichst du über die Kampagne.",
   pending: "Double-Opt-In noch nicht bestätigt — bis dahin keine Marketing-E-Mail.",
   unsubscribed: "Abgemeldet — es wird keine Marketing-E-Mail mehr generiert oder gesendet.",
 };
@@ -75,7 +76,12 @@ export function MarketingTab({ customer }: { customer: CustomerDetail }) {
   const [busy, setBusy] = React.useState<null | "draft" | "save" | "send" | "delete">(null);
 
   if (customer.marketingStatus !== "confirmed") {
-    return <Callout tone="info">{BLOCKED_NOTE[customer.marketingStatus]}</Callout>;
+    return (
+      <div className="flex flex-col gap-4">
+        <OptOutControl customer={customer} />
+        <Callout tone="info">{BLOCKED_NOTE[customer.marketingStatus]}</Callout>
+      </div>
+    );
   }
 
   // Depth, instructions or text mode changed vs. the open draft ⇒ the visible
@@ -218,6 +224,7 @@ export function MarketingTab({ customer }: { customer: CustomerDetail }) {
   return (
     <div className="flex flex-col gap-4">
       {confirmDialog}
+      <OptOutControl customer={customer} />
 
       {isSent && send && (
         <Callout tone="success" title={`Gesendet am ${formatAdmin(send.sentAt, ADMIN_DATE)}`}>

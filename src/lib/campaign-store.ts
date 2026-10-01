@@ -358,6 +358,26 @@ function isoDay(v: unknown): string {
   return Number.isNaN(d.getTime()) ? "?" : d.toISOString().slice(0, 10);
 }
 
+/** The customer's (non-test) Kampagne contact: id + queue status, or null. */
+export async function getCampaignContactForCustomer(
+  customerId: number,
+  sql: Sql | null = getSql()
+): Promise<{ id: number; status: CampaignContactStatus } | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT id, status FROM campaign_contacts
+       WHERE customer_id = ${customerId} AND is_test = false
+       ORDER BY id
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    return rows[0] ? { id: Number(rows[0].id), status: rows[0].status as CampaignContactStatus } : null;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "getCampaignContactForCustomer" });
+    return null;
+  }
+}
+
 /** Most recent Kampagne mails folded into the profile (the newest say most). */
 const PROFILE_CAMPAIGN_SENDS = 6;
 

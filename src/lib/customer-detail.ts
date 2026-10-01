@@ -20,6 +20,8 @@ import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
 import type { OrderHistory } from "./shopify-orders";
 import type { EmailTextMode } from "./email-text-mode.mjs";
+import { getOptOutState, type OptOutState } from "./marketing-optout";
+import { getCampaignContactForCustomer, type CampaignContactStatus } from "./campaign-store";
 
 export interface CustomerDetailTranscriptTurn {
   role: "user" | "assistant" | "system" | "tool";
@@ -88,6 +90,10 @@ export interface CustomerDetail {
   personaLabel: string | null;
   /** Where the record came from (chat / Shopify sign-in / Kampagne). */
   source: CustomerSource;
+  /** Local marketing opt-out (block list / chat unsubscribe) — Marketing tab. */
+  optOut: OptOutState | null;
+  /** The linked Kampagne (Shopify newsletter) contact, if any. */
+  newsletter: { contactId: number; status: CampaignContactStatus } | null;
   purchaseSummary: OrderHistory | null;
   purchaseSummaryUpdatedAt: string | null;
   sessions: CustomerDetailSession[];
@@ -111,12 +117,14 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
   const c = await getCustomerById(customerId);
   if (!c) return null;
 
-  const [sessions, send, bundles, correspondence, physicalLetters] = await Promise.all([
+  const [sessions, send, bundles, correspondence, physicalLetters, optOut, contact] = await Promise.all([
     loadCustomerSessions(c.id),
     getLatestSendForEmail(c.email),
     listBundleOffersWithSignalsForCustomer(c.id),
     listCustomerMessages(c.id),
     listCustomerLetters(c.id),
+    c.email.startsWith("shopify:") ? Promise.resolve(null) : getOptOutState(c.email),
+    getCampaignContactForCustomer(c.id),
   ]);
   const physical = physicalEligibilityForCustomer(c);
 
@@ -152,6 +160,8 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
     profileData: c.profileData,
     personaLabel: c.personaLabel,
     source: c.source,
+    optOut,
+    newsletter: contact ? { contactId: contact.id, status: contact.status } : null,
     purchaseSummary: c.purchaseSummary,
     purchaseSummaryUpdatedAt: c.purchaseSummaryUpdatedAt,
     // No session ids leave the server — the browser doesn't need the

@@ -6,12 +6,12 @@
 // depth + Set line), Text (Sprache, Modus — the two settings that
 // regenerate), Hero (only when the campaign design has a hero), Kundenprofil
 // (persona + excerpt of the central profile), Kaufhistorie (collapsed, with
-// the recommendation basis) and Kontakt (facts + Verlauf + Löschen).
+// the recommendation basis) and Kontakt (facts + Verlauf + Abmelden + Löschen).
 // Explanations sit in InfoTips; every mutation goes through the desk hook.
 
 import * as React from "react";
 import Link from "next/link";
-import { AlertTriangle, CircleCheck, ExternalLink, History, Info, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, CircleCheck, ExternalLink, History, Info, MailX, Plus, Trash2, X } from "lucide-react";
 import { ADMIN_DATE, ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { eur, eurFromCents, money, num, plural } from "@/lib/admin-format.mjs";
 import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
@@ -133,6 +133,16 @@ export function ReviewColumn({
       tone: "destructive",
     });
     if (ok) void actions.erase(id);
+  };
+  const onOptOut = async () => {
+    const ok = await confirm({
+      title: "Werbung an diese Person stoppen?",
+      description:
+        "Die Adresse kommt auf die Sperrliste (Grund: manuell) — keine Kampagnen- und Marketing-Mails mehr, der Kontakt verlässt die Warteschlange. Es wird keine E-Mail verschickt. Rückgängig über die Kontaktsuche („Reaktivieren“) oder im Kunden unter Marketing.",
+      confirmLabel: "Abmelden",
+      tone: "destructive",
+    });
+    if (ok) void actions.optOut(id);
   };
 
   // A new card resets the transient editors.
@@ -585,6 +595,17 @@ export function ReviewColumn({
               <Button variant="ghost" size="xs" className="-my-1 h-6 px-1.5" onClick={onHistory}>
                 <History /> Verlauf
               </Button>
+              {!item.isTest && (
+                <IconButton
+                  label="Abmelden — keine Werbung mehr (auf Wunsch der Person)"
+                  size="icon-sm"
+                  className="-my-1 shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => void onOptOut()}
+                  disabled={locked}
+                >
+                  <MailX />
+                </IconButton>
+              )}
               {!item.isTest && (
                 <IconButton
                   label="Kontakt und alle Daten dieser Person löschen (DSGVO)"
