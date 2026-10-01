@@ -7,7 +7,7 @@
 
 import { listInboxItems, getInboxCounts } from "@/lib/inbox-store";
 import { listCampaigns } from "@/lib/campaigns-store";
-import { getOverviewSnapshot } from "@/lib/admin-overview-store";
+import { getEingangSystemSnapshot } from "@/lib/admin-overview-store";
 import { listUnmatchedInbound } from "@/lib/email-messages-store";
 import { describeSyncProblems, getSyncHealth } from "@/lib/shopify-sync";
 import { getOutboxStats } from "@/lib/shopify-outbox";
@@ -35,7 +35,7 @@ export async function EingangTab({
     listInboxItems({ status, limit: 300 }),
     getInboxCounts(),
     listCampaigns(),
-    getOverviewSnapshot({ windowDays: 30, limit: 1 }),
+    getEingangSystemSnapshot({ windowDays: 30 }),
     listUnmatchedInbound(),
     getSyncHealth(),
     getOutboxStats(),
@@ -47,14 +47,14 @@ export async function EingangTab({
     campaigns: campaigns
       .filter((c) => c.status === "aktiv" && c.stats.drafted > 0)
       .map((c) => ({ id: c.id, slug: c.slug, name: c.name, drafted: c.stats.drafted })),
-    qaOpen: snapshot?.qaCounts.open ?? 0,
-    runningReports: snapshot?.running.reports ?? 0,
-    runningImprovementRuns: snapshot?.running.improvementRuns ?? 0,
+    qaOpen: snapshot?.qaOpen ?? 0,
+    runningReports: snapshot?.runningReports ?? 0,
+    runningImprovementRuns: snapshot?.runningImprovementRuns ?? 0,
     syncProblems,
     strip: {
-      chats: snapshot?.core ? snapshot.core.chatsByDay.reduce((sum, d) => sum + d.count, 0) : null,
-      campaignMails: snapshot?.campaignActivity.sentInWindow ?? 0,
-      newSubscribers: snapshot?.recentConfirmed.length ?? 0,
+      chats: snapshot?.chats ?? null,
+      campaignMails: snapshot?.campaignMails ?? 0,
+      newSubscribers: snapshot?.newSubscribers ?? 0,
     },
   };
 
