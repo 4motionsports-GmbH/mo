@@ -619,7 +619,8 @@ export async function refreshCampaignAudience(
     `) as Array<{ n: number }>;
     result.suppressed = Number(sup[0]?.n ?? 0);
 
-    // Dynamic audiences: pending rows that no longer match leave.
+    // Dynamic audiences: pending rows that no longer match leave — except
+    // people added by hand (0069), who stay until they are sent or removed.
     if (campaign.audienceMode === "dynamisch") {
       const ids = match.members.map((m) => m.customerId);
       const exc = (await sql`
@@ -629,6 +630,7 @@ export async function refreshCampaignAudience(
            WHERE campaign_id = ${campaignId}
              AND is_test = false
              AND status IN ('pending', 'draft_failed')
+             AND added_manually = false
              AND NOT (customer_id = ANY(${ids}::bigint[]))
           RETURNING 1
         )
@@ -671,7 +673,8 @@ export type AddRecipientResult =
  * Put one person into a campaign by hand — the Einzelansprache from Kunden or
  * an Eingang suggestion, or "zur Kampagne hinzufügen". Requires the one
  * consent and no hard block (the send gate re-checks). An open row is reused
- * (its note updated); after a sent / skipped row a new cycle starts.
+ * (its note updated); after a sent / skipped row a new cycle starts. The row
+ * is marked `added_manually` (0069): a dynamic audience refresh keeps it.
  */
 export async function addRecipient(
   input: { campaignId: number; customerId: number; adminNote?: string | null; conversationId?: number | null },
@@ -710,7 +713,8 @@ export async function addRecipient(
            SET admin_note = COALESCE(${input.adminNote ?? null}, admin_note),
                conversation_id = COALESCE(${input.conversationId ?? null}::bigint, conversation_id),
                status = CASE WHEN status IN ('excluded', 'suppressed') THEN 'pending' ELSE status END,
-               excluded_reason = CASE WHEN status IN ('excluded', 'suppressed') THEN NULL ELSE excluded_reason END
+               excluded_reason = CASE WHEN status IN ('excluded', 'suppressed') THEN NULL ELSE excluded_reason END,
+               added_manually = true
          WHERE id = ${latest.id}
       `;
       return { ok: true, contactId: Number(latest.id), created: false };
@@ -725,14 +729,14 @@ export async function addRecipient(
       INSERT INTO campaign_contacts
         (campaign_id, customer_id, cycle, shopify_customer_id, email, first_name, last_name, language,
          opt_in_level, consent_updated_at, orders_count, total_spent_cents, last_order_at,
-         last_synced_at, status, created_at, added_at, admin_note, conversation_id)
+         last_synced_at, status, created_at, added_at, admin_note, conversation_id, added_manually)
       VALUES
         (${input.campaignId}, ${input.customerId}, ${latest ? Number(latest.cycle) + 1 : 1},
          ${(p.shopify_customer_id as string | null) ?? null}, ${String(p.email)},
          ${(p.first_name as string | null) ?? null}, ${(p.last_name as string | null) ?? null}, ${language},
          ${String(p.email_consent_level ?? "unknown").toUpperCase()}, ${iso(p.email_consent_at)},
          ${Number(p.orders_count ?? 0)}, ${Number(p.total_spent_cents ?? 0)}, ${iso(p.last_order_at)},
-         now(), 'pending', now(), now(), ${input.adminNote ?? null}, ${input.conversationId ?? null})
+         now(), 'pending', now(), now(), ${input.adminNote ?? null}, ${input.conversationId ?? null}, true)
       RETURNING id
     `) as Array<{ id: number }>;
     return { ok: true, contactId: Number(rows[0].id), created: true };

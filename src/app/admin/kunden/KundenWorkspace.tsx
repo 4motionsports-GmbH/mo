@@ -48,6 +48,8 @@ import { CustomerDetail } from "./CustomerDetail";
 import { ChurnBadge, CONSENT_META, ConsentBadge, MoBadge, PersonaBadge, SegmentBadge, ShopBadge, VALUE_LABELS } from "./badges";
 import { useCustomerDetail } from "./useCustomerDetail";
 
+// The add-recipients route takes at most 200 people per call.
+const MAX_PICK = 200;
 const SELECT_CLASS = "h-8 w-auto min-w-[8.5rem] py-0 pr-8 text-xs";
 
 const CONSENT_FILTER_LABELS: Record<string, string> = {
@@ -106,6 +108,7 @@ export function KundenWorkspace({
   const [target, setTarget] = React.useState<string>(campaigns[0] ? String(campaigns[0].id) : "");
   const [note, setNote] = React.useState("");
   const [adding, setAdding] = React.useState(false);
+  const tooMany = picked.size > MAX_PICK;
   const pageIds = items.map((c) => c.id);
   const pickedOnPage = pageIds.filter((id) => picked.has(id)).length;
   const togglePick = (id: number) =>
@@ -125,25 +128,35 @@ export function KundenWorkspace({
   async function addPicked() {
     setAdding(true);
     try {
-      const res = await adminFetch<{ added: number; alreadyIn: number; noConsent: number; blocked: number; notFound: number }>(
+      const res = await adminFetch<{
+        added: number;
+        alreadyIn: number;
+        noConsent: number;
+        blocked: number;
+        notFound: number;
+        failed: number;
+      }>(
         "/api/admin/campaigns/add-recipients",
         { body: { campaignId: target ? Number(target) : undefined, customerIds: [...picked], adminNote: note.trim() || undefined } }
       );
       const skipped = res.noConsent + res.blocked + res.notFound;
       toast({
-        variant: res.added + res.alreadyIn > 0 ? "success" : "warning",
+        variant: res.failed > 0 || res.added + res.alreadyIn === 0 ? "warning" : "success",
         title: `${num(res.added)} hinzugefügt`,
         description: [
           res.alreadyIn > 0 ? `${num(res.alreadyIn)} waren schon dabei` : null,
           skipped > 0 ? `${num(skipped)} übersprungen (keine Einwilligung oder gesperrt)` : null,
+          res.failed > 0 ? `${num(res.failed)} fehlgeschlagen — bitte erneut versuchen` : null,
         ]
           .filter(Boolean)
           .join(" · ") || undefined,
       });
       setAddOpen(false);
-      setPicked(new Set());
-      setNote("");
-      setPicking(false);
+      if (res.failed === 0) {
+        setPicked(new Set());
+        setNote("");
+        setPicking(false);
+      }
     } catch (e) {
       toast({ variant: "error", title: "Hinzufügen fehlgeschlagen", description: errorMessage(e) });
     } finally {
@@ -403,8 +416,18 @@ export function KundenWorkspace({
                             placeholder="z. B. „Nachfrage zum Rack, Zubehör für Klimmzüge anbieten“"
                           />
                         </Field>
+                        {tooMany && (
+                          <Callout tone="warning">
+                            Höchstens {num(MAX_PICK)} Personen auf einmal — bitte die Auswahl verkleinern.
+                          </Callout>
+                        )}
                         <div className="flex justify-end">
-                          <Button size="sm" onClick={() => void addPicked()} loading={adding} disabled={picked.size === 0}>
+                          <Button
+                            size="sm"
+                            onClick={() => void addPicked()}
+                            loading={adding}
+                            disabled={picked.size === 0 || tooMany}
+                          >
                             Hinzufügen
                           </Button>
                         </div>
