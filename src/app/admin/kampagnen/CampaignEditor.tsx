@@ -59,6 +59,7 @@ interface Preview {
   preview: {
     total: number;
     withMo: number;
+    withoutConsent?: { total: number; letterReach: number };
     byLanguage: { de: number; en: number };
     sample: Array<{ customerId: number; email: string; name: string | null }>;
   };
@@ -565,6 +566,19 @@ export function CampaignEditor({
                       {num(preview.preview.byLanguage.en)}
                     </p>
                     <p className="text-xs">{preview.description}</p>
+                    {preview.preview.withoutConsent && preview.preview.withoutConsent.total > 0 && (
+                      <p className="flex items-start gap-1 text-xs text-muted-foreground">
+                        <span>
+                          Ohne Einwilligung passen weitere {num(preview.preview.withoutConsent.total)} — davon{" "}
+                          {num(preview.preview.withoutConsent.letterReach)} per Brief erreichbar.
+                        </span>
+                        <InfoTip>
+                          E-Mail-Werbung geht nur an Personen mit Einwilligung. Bestandskunden ohne Einwilligung lassen
+                          sich per Werbebrief erreichen, wenn eine Lieferadresse bekannt ist und kein Widerspruch vorliegt
+                          (Kunden → Brief).
+                        </InfoTip>
+                      </p>
+                    )}
                     {preview.preview.sample.length > 0 && (
                       <ul className="flex flex-col gap-0.5 border-t border-border pt-2 text-xs text-muted-foreground">
                         {preview.preview.sample.map((s) => (

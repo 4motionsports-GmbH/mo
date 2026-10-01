@@ -40,6 +40,9 @@ export interface AudienceMatch {
   /** Of the total: how many talked to Mo, how many get English mail. */
   totalWithMo: number;
   totalEnglish: number;
+  /** Only meaningful with `withoutConsent`: matches without the e-mail consent, and of those reachable by letter. */
+  totalNoConsent: number;
+  totalLetter: number;
   members: AudienceMember[];
 }
 
@@ -56,13 +59,16 @@ const iso = (v: unknown) => (v ? new Date(String(v)).toISOString() : null);
  */
 export async function matchAudience(
   rawSpec: unknown,
-  opts: { limit?: number; now?: Date } = {},
+  opts: { limit?: number; now?: Date; withoutConsent?: boolean } = {},
   sql: Sql | null = getSql()
 ): Promise<AudienceMatch> {
-  if (!sql) return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, members: [] };
+  if (!sql) return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalNoConsent: 0, totalLetter: 0, members: [] };
   const spec = normalizeAudienceSpec(rawSpec);
   const p = audienceQueryParams(spec, opts.now ?? new Date());
   const limit = Math.max(1, Math.min(opts.limit ?? 20, AUDIENCE_MAX_MEMBERS));
+  // Only the preview's letter-reach count matches WITHOUT the consent; every
+  // materialisation (the e-mail channel) requires it.
+  const requireConsent = opts.withoutConsent !== true;
   try {
     const rows = (await sql`
       WITH base AS (
@@ -86,15 +92,19 @@ export async function matchAudience(
              ORDER BY cv.last_activity_at DESC
              LIMIT 1
           ) lc ON true
-         WHERE o.email_consent_state = 'subscribed'
-           AND NOT o.blocked
+         WHERE (${requireConsent}::boolean IS FALSE
+                OR (o.email_consent_state = 'subscribed' AND NOT o.blocked))
       )
       SELECT b.customer_id, b.email, b.first_name, b.last_name, b.shopify_customer_id, b.lang,
              b.email_consent_level, b.email_consent_at, b.orders_count, b.total_spent_cents,
              b.last_order_at, b.lifecycle_segment, b.conversations_count, b.facts_computed_at,
              count(*) OVER () AS total,
              count(*) FILTER (WHERE b.conversations_count > 0) OVER () AS total_mo,
-             count(*) FILTER (WHERE b.lang = 'en') OVER () AS total_en
+             count(*) FILTER (WHERE b.lang = 'en') OVER () AS total_en,
+             -- Letter reach (D-7): no e-mail consent (or blocked), a postal address, no objection.
+             count(*) FILTER (WHERE NOT (b.email_consent_state = 'subscribed' AND NOT b.blocked)) OVER () AS total_no_consent,
+             count(*) FILTER (WHERE NOT (b.email_consent_state = 'subscribed' AND NOT b.blocked)
+                                AND b.has_postal_address AND b.postal_objection_at IS NULL) OVER () AS total_letter
         FROM base b
        WHERE (${p.optInLevels}::text[] IS NULL
               OR COALESCE(b.email_consent_level, 'unknown') = ANY(${p.optInLevels}::text[]))
@@ -137,6 +147,8 @@ export async function matchAudience(
       total: rows.length > 0 ? Number(rows[0].total) : 0,
       totalWithMo: rows.length > 0 ? Number(rows[0].total_mo) : 0,
       totalEnglish: rows.length > 0 ? Number(rows[0].total_en) : 0,
+      totalNoConsent: rows.length > 0 ? Number(rows[0].total_no_consent) : 0,
+      totalLetter: rows.length > 0 ? Number(rows[0].total_letter) : 0,
       members: rows.map((r) => ({
         customerId: Number(r.customer_id),
         email: String(r.email),
@@ -156,7 +168,7 @@ export async function matchAudience(
     };
   } catch (err) {
     reportError(err, { route: "lib/audience-store", phase: "matchAudience" });
-    return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, members: [] };
+    return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalNoConsent: 0, totalLetter: 0, members: [] };
   }
 }
 
@@ -165,16 +177,22 @@ export interface AudiencePreview {
   /** How many of the matches have talked to Mo. */
   withMo: number;
   byLanguage: { de: number; en: number };
+  /** The same spec WITHOUT the consent: how many more match, and how many of them a letter could reach. */
+  withoutConsent: { total: number; letterReach: number };
   sample: Array<{ customerId: number; email: string; name: string | null }>;
 }
 
 /** Count + a small sample for the wizard ("1.240 Kunden passen") — the counts are window aggregates, only 8 rows travel. */
 export async function previewAudience(rawSpec: unknown, sql: Sql | null = getSql()): Promise<AudiencePreview> {
-  const match = await matchAudience(rawSpec, { limit: 8 }, sql);
+  const [match, all] = await Promise.all([
+    matchAudience(rawSpec, { limit: 8 }, sql),
+    matchAudience(rawSpec, { limit: 1, withoutConsent: true }, sql),
+  ]);
   return {
     total: match.total,
     withMo: match.totalWithMo,
     byLanguage: { de: match.total - match.totalEnglish, en: match.totalEnglish },
+    withoutConsent: { total: all.totalNoConsent, letterReach: all.totalLetter },
     sample: match.members.slice(0, 8).map((m) => ({
       customerId: m.customerId,
       email: m.email,
