@@ -27,6 +27,8 @@ import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
 import { getAiCostMetrics } from "@/lib/ai-usage-store";
 import { getPhysicalLetterStats } from "@/lib/physical-letters-store";
 import { loadKpiShopifyBlock } from "@/lib/kpi-cache";
+import { getCustomerBaseKpis } from "@/lib/customer-list-store";
+import { getInboxKpis } from "@/lib/inbox-store";
 import type { KpiRange } from "@/lib/kpi-range";
 import { Callout, InfoTip } from "./ui";
 import { KPI_GROUPS, kpiGroupAnchor, type KpiGroup } from "./kpi/groups";
@@ -48,6 +50,8 @@ import { PhysicalMailSection } from "./kpi/sections/PhysicalMailSection";
 import { MarketingFunnelSection } from "./kpi/sections/MarketingFunnelSection";
 import { PersonaSection } from "./kpi/sections/PersonaSection";
 import { LoopSection } from "./kpi/sections/LoopSection";
+import { KundenbasisSection } from "./kpi/sections/KundenbasisSection";
+import { EingangSection } from "./kpi/sections/EingangSection";
 
 export async function KpiTab({
   dbReady,
@@ -85,6 +89,8 @@ export async function KpiTab({
     account,
     cachedQuestions,
     letterStats,
+    customerBase,
+    inboxKpis,
   ] = await Promise.all([
     getCoreMetrics(range),
     getMoAttributionKpis(range),
@@ -101,6 +107,8 @@ export async function KpiTab({
     getAccountActivity(range),
     getCachedTopQuestionsMap(),
     getPhysicalLetterStats(),
+    getCustomerBaseKpis(),
+    getInboxKpis(range),
   ]);
 
   const [beratung, marketing, umsatz, kosten, gesamt] = KPI_GROUPS;
@@ -129,6 +137,7 @@ export async function KpiTab({
         <ConsentGateSection funnel={gateFunnel} />
         <EmailCaptureSection funnel={captureFunnel} />
         <CampaignSection cached={shopify.campaign} />
+        <EingangSection kpis={inboxKpis} />
         <BundleSection kpis={bundles} />
       </Group>
 
@@ -142,6 +151,7 @@ export async function KpiTab({
       </Group>
 
       <Group group={gesamt}>
+        <KundenbasisSection kpis={customerBase} />
         <PhysicalMailSection stats={letterStats} />
         <MarketingFunnelSection cached={shopify.funnel} />
         <PersonaSection personas={personas} cachedQuestions={cachedQuestions} />

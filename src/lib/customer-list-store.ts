@@ -267,3 +267,77 @@ export async function getCustomerFigures(customerId: number, sql: Sql | null = g
     return null;
   }
 }
+
+/** KPIs → Kundenbasis: the shape of the customer base (pure DB, period-free). */
+export interface CustomerBaseKpis {
+  total: number;
+  shopifyCustomers: number;
+  leads: number;
+  withMo: number;
+  shopifyWithMo: number;
+  consent: { subscribed: number; pending: number; unsubscribed: number; none: number; blocked: number };
+  doiShare: number | null;
+  bySegment: Array<{ key: string; n: number }>;
+  byValueTier: Array<{ key: string; n: number }>;
+  churnHigh: number;
+  profiles: { voll: number; kauf: number; none: number };
+  factsComputed: number;
+}
+
+export async function getCustomerBaseKpis(sql: Sql | null = getSql()): Promise<CustomerBaseKpis | null> {
+  if (!sql) return null;
+  try {
+    const [totals, segs, tiers] = (await Promise.all([
+      sql`
+        SELECT count(*)::int AS total,
+               count(*) FILTER (WHERE is_shopify_customer)::int AS shopify,
+               count(*) FILTER (WHERE NOT is_shopify_customer)::int AS leads,
+               count(*) FILTER (WHERE conversations_count > 0)::int AS mo,
+               count(*) FILTER (WHERE is_shopify_customer AND conversations_count > 0)::int AS shopify_mo,
+               count(*) FILTER (WHERE email_consent_state = 'subscribed' AND NOT blocked)::int AS subscribed,
+               count(*) FILTER (WHERE email_consent_state = 'subscribed' AND NOT blocked
+                                  AND email_consent_level = 'confirmed_opt_in')::int AS doi,
+               count(*) FILTER (WHERE email_consent_state = 'pending' AND NOT blocked)::int AS pending,
+               count(*) FILTER (WHERE email_consent_state = 'unsubscribed' AND NOT blocked)::int AS unsubscribed,
+               count(*) FILTER (WHERE email_consent_state = 'not_subscribed' AND NOT blocked)::int AS none,
+               count(*) FILTER (WHERE blocked)::int AS blocked,
+               count(*) FILTER (WHERE churn_risk = 'hoch')::int AS churn_high,
+               count(*) FILTER (WHERE profile_depth = 'voll' AND has_profile)::int AS voll,
+               count(*) FILTER (WHERE profile_depth = 'kauf' AND has_profile)::int AS kauf,
+               count(*) FILTER (WHERE NOT has_profile)::int AS no_profile,
+               count(*) FILTER (WHERE facts_computed_at IS NOT NULL)::int AS facts
+          FROM customer_overview
+      `,
+      sql`
+        SELECT COALESCE(lifecycle_segment, CASE WHEN orders_count = 0 THEN 'keine_bestellung' ELSE 'unbekannt' END) AS key,
+               count(*)::int AS n
+          FROM customer_overview
+         GROUP BY 1 ORDER BY 2 DESC
+      `,
+      sql`
+        SELECT value_tier AS key, count(*)::int AS n
+          FROM customer_overview WHERE value_tier IS NOT NULL
+         GROUP BY 1 ORDER BY 2 DESC
+      `,
+    ])) as [Array<Record<string, unknown>>, Array<{ key: string; n: number }>, Array<{ key: string; n: number }>];
+    const t = totals[0] ?? {};
+    const n = (k: string) => Number(t[k] ?? 0);
+    return {
+      total: n("total"),
+      shopifyCustomers: n("shopify"),
+      leads: n("leads"),
+      withMo: n("mo"),
+      shopifyWithMo: n("shopify_mo"),
+      consent: { subscribed: n("subscribed"), pending: n("pending"), unsubscribed: n("unsubscribed"), none: n("none"), blocked: n("blocked") },
+      doiShare: n("subscribed") > 0 ? n("doi") / n("subscribed") : null,
+      bySegment: segs.map((r) => ({ key: String(r.key), n: Number(r.n) })),
+      byValueTier: tiers.map((r) => ({ key: String(r.key), n: Number(r.n) })),
+      churnHigh: n("churn_high"),
+      profiles: { voll: n("voll"), kauf: n("kauf"), none: n("no_profile") },
+      factsComputed: n("facts"),
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/customer-list-store", phase: "getCustomerBaseKpis" });
+    return null;
+  }
+}
