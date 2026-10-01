@@ -64,6 +64,8 @@ export interface RetentionOptions {
   shopifySyncLogRetentionDays: number;
   /** Decided Eingang items (erledigt / verworfen) older than this are deleted. 0 disables. */
   inboxRetentionDays: number;
+  /** Erasure tombstones confirmed by Shopify longer ago than this are deleted. 0 disables. */
+  erasureTombstoneRetentionDays: number;
   /**
    * Order-attribution window (days) between token minting and an order —
    * mirrors MO_ATTRIBUTION_WINDOW_DAYS (lib/mo-orders-store). Tokens older
@@ -111,6 +113,8 @@ export interface RetentionResult {
   deletedShopifySyncLog: number;
   /** Decided Eingang items removed. */
   deletedInboxItems: number;
+  /** Erasure tombstones Shopify confirmed more than ERASURE_TOMBSTONE_RETENTION_DAYS ago. */
+  deletedErasureTombstones: number;
   ranAt: string;
 }
 
@@ -438,7 +442,7 @@ export async function runRetention(
 
   // 7. Shopify sync bookkeeping (0065): webhook dedupe rows, finished sync
   //    runs and done / dead outbox rows leave on their own window; open
-  //    outbox rows and erasure tombstones are never purged here.
+  //    outbox rows are never purged, erasure tombstones only in step 9.
   let deletedShopifySyncLog = 0;
   if (opts.shopifySyncLogRetentionDays > 0) {
     const syncCutoff = daysAgo(opts.shopifySyncLogRetentionDays);
@@ -472,6 +476,23 @@ export async function runRetention(
     deletedInboxItems = rows[0]?.n ?? 0;
   }
 
+  // 9. Erasure tombstones (0065) — only once Shopify confirmed the redaction
+  //    (customers/redact) and the window passed; unconfirmed ones stay, so no
+  //    import re-creates a person Shopify still holds.
+  let deletedErasureTombstones = 0;
+  if (opts.erasureTombstoneRetentionDays > 0) {
+    const tombCutoff = daysAgo(opts.erasureTombstoneRetentionDays);
+    const rows = (await sql`
+      WITH del AS (
+        DELETE FROM erasure_tombstones
+         WHERE shopify_confirmed_at IS NOT NULL AND shopify_confirmed_at < ${tombCutoff}
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+    deletedErasureTombstones = rows[0]?.n ?? 0;
+  }
+
   return {
     abandonedConversations: abandoned[0]?.n ?? 0,
     deletedConversations: deletedConvos[0]?.n ?? 0,
@@ -494,6 +515,7 @@ export async function runRetention(
     purgedAuthPending,
     deletedShopifySyncLog,
     deletedInboxItems,
+    deletedErasureTombstones,
     ranAt: new Date().toISOString(),
   };
 }
