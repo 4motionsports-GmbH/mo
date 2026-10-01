@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deriveCampaignLanguage } from "./campaign-language.mjs";
+import { deriveCampaignLanguage, effectiveEmailLanguage } from "./campaign-language.mjs";
 
 test("locale wins: de* → de, anything else → en", () => {
   assert.equal(deriveCampaignLanguage({ locale: "de" }), "de");
@@ -31,4 +31,13 @@ test("final fallback is German (German store default)", () => {
   assert.equal(deriveCampaignLanguage({ locale: null, countryCode: null }), "de");
   assert.equal(deriveCampaignLanguage({ locale: "  ", countryCode: "" }), "de");
   assert.equal(deriveCampaignLanguage(), "de");
+});
+
+test("a person's e-mail language: pin, then profile, then last chat, then de", () => {
+  assert.equal(effectiveEmailLanguage({ override: "en", locale: "de-DE" }), "en");
+  assert.equal(effectiveEmailLanguage({ locale: "de-AT", chatLocale: "en" }), "de");
+  assert.equal(effectiveEmailLanguage({ countryCode: "FR" }), "en");
+  assert.equal(effectiveEmailLanguage({ chatLocale: "en" }), "en");
+  assert.equal(effectiveEmailLanguage({ chatLocale: "de" }), "de");
+  assert.equal(effectiveEmailLanguage({}), "de");
 });

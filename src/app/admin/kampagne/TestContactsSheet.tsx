@@ -26,6 +26,7 @@ const STATUS_LABEL: Record<string, { label: string; tone: "neutral" | "success" 
 };
 
 export function TestContactsSheet({
+  campaignId,
   open,
   onOpenChange,
   queueIds,
@@ -36,6 +37,8 @@ export function TestContactsSheet({
   onUnskip,
   onChanged,
 }: {
+  /** Test contacts belong to one campaign (0066). */
+  campaignId: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Ids currently in the working queue (for „Öffnen“). */
@@ -61,14 +64,14 @@ export function TestContactsSheet({
   const load = React.useCallback(async () => {
     try {
       const json = await adminFetch<{ contacts: CampaignTestContactProps[] }>(
-        "/api/admin/campaign/test-contacts"
+        `/api/admin/campaign/test-contacts?campaignId=${campaignId}`
       );
       setContacts(json.contacts);
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
     }
-  }, []);
+  }, [campaignId]);
 
   React.useEffect(() => {
     if (open) void load();
@@ -84,6 +87,7 @@ export function TestContactsSheet({
         "/api/admin/campaign/test-contacts",
         {
           body: {
+            campaignId,
             action: "create",
             email,
             firstName,

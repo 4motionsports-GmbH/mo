@@ -12,8 +12,12 @@
 // back to the top of the queue with the server's reason as a blocked
 // Prüfpunkt, so nothing is ever lost silently.
 //
-// Bulk operations that change the server-side queue (Sync, Vorbereiten, Neu
-// aufbauen, Wiederherstellen, Entwurf erstellen) call router.refresh(); the
+// The desk works on ONE campaign (0066): Vorbereiten, Neu aufbauen and
+// „Zielgruppe aktualisieren“ carry its id, and the Vorbereiten settings start
+// from the campaign's offer defaults (remembered per campaign).
+//
+// Bulk operations that change the server-side queue (Zielgruppe, Vorbereiten,
+// Neu aufbauen, Wiederherstellen, Entwurf erstellen) call router.refresh(); the
 // server re-renders the screen and the working copy re-syncs from the fresh
 // props while keeping the operator's position, filter and local edits.
 
@@ -100,6 +104,17 @@ function rememberFirstSendConfirm(): void {
 
 const PREPARE_SETTINGS_KEY = "ms-campaign-prepare";
 
+/** The campaign's own offer defaults as Vorbereiten settings. */
+function campaignPrepareDefaults(campaign: CampaignDeskProps["campaign"]): PrepareSettings {
+  return {
+    count: PREPARE_TOTAL,
+    depth: campaign.discountPercent,
+    scope: campaign.discountScope,
+    textMode: (campaign.textMode ?? DEFAULT_EMAIL_TEXT_MODE) as EmailTextModeValue,
+    withHero: campaign.heroMode === "ai_ab" || campaign.heroMode === "ai_all",
+  };
+}
+
 export interface PrepareSettings {
   count: number;
   depth: number;
@@ -117,29 +132,29 @@ const DEFAULT_PREPARE_SETTINGS: PrepareSettings = {
   withHero: false,
 };
 
-function loadPrepareSettings(): PrepareSettings {
+function loadPrepareSettings(campaignId: number, defaults: PrepareSettings): PrepareSettings {
   try {
-    const raw = window.localStorage.getItem(PREPARE_SETTINGS_KEY);
-    if (!raw) return DEFAULT_PREPARE_SETTINGS;
+    const raw = window.localStorage.getItem(`${PREPARE_SETTINGS_KEY}:${campaignId}`);
+    if (!raw) return defaults;
     const parsed = JSON.parse(raw) as Partial<PrepareSettings>;
     return {
       count: [25, 50, 100].includes(Number(parsed.count)) ? Number(parsed.count) : PREPARE_TOTAL,
-      depth: Number.isInteger(parsed.depth) ? Number(parsed.depth) : 0,
-      scope: parseDiscountScope(parsed.scope),
+      depth: Number.isInteger(parsed.depth) ? Number(parsed.depth) : defaults.depth,
+      scope: parseDiscountScope(parsed.scope ?? defaults.scope),
       textMode: (["detailed", "compact", "minimal"] as const).includes(
         parsed.textMode as EmailTextModeValue
       )
         ? (parsed.textMode as EmailTextModeValue)
-        : DEFAULT_PREPARE_SETTINGS.textMode,
-      withHero: parsed.withHero === true,
+        : defaults.textMode,
+      withHero: typeof parsed.withHero === "boolean" ? parsed.withHero : defaults.withHero,
     };
   } catch {
-    return DEFAULT_PREPARE_SETTINGS;
+    return defaults;
   }
 }
-function savePrepareSettings(settings: PrepareSettings): void {
+function savePrepareSettings(campaignId: number, settings: PrepareSettings): void {
   try {
-    window.localStorage.setItem(PREPARE_SETTINGS_KEY, JSON.stringify(settings));
+    window.localStorage.setItem(`${PREPARE_SETTINGS_KEY}:${campaignId}`, JSON.stringify(settings));
   } catch {
     // best-effort only
   }
@@ -232,6 +247,7 @@ const REGENERATE_BATCH_MS = 1500;
 const OUTBOX_FADE_MS = 8000;
 
 export function useCampaignActions({
+  campaign,
   counts,
   queue,
   skipped,
@@ -244,6 +260,7 @@ export function useCampaignActions({
   initialFilter,
 }: Pick<
   CampaignDeskProps,
+  | "campaign"
   | "counts"
   | "queue"
   | "skipped"
@@ -297,16 +314,21 @@ export function useCampaignActions({
   const [emailView, setEmailView] = React.useState<EmailView | null>(null);
   const [emailViewBusy, setEmailViewBusy] = React.useState(false);
 
+  const campaignId = campaign.id;
+  const campaignDefaults = React.useMemo(() => campaignPrepareDefaults(campaign), [campaign]);
   React.useEffect(() => {
-    setPrepareSettingsState(loadPrepareSettings());
-  }, []);
-  const setPrepareSettings = React.useCallback((patch: Partial<PrepareSettings>) => {
-    setPrepareSettingsState((prev) => {
-      const next = { ...prev, ...patch };
-      savePrepareSettings(next);
-      return next;
-    });
-  }, []);
+    setPrepareSettingsState(loadPrepareSettings(campaignId, campaignDefaults));
+  }, [campaignId, campaignDefaults]);
+  const setPrepareSettings = React.useCallback(
+    (patch: Partial<PrepareSettings>) => {
+      setPrepareSettingsState((prev) => {
+        const next = { ...prev, ...patch };
+        savePrepareSettings(campaignId, next);
+        return next;
+      });
+    },
+    [campaignId]
+  );
 
   // Re-sync the working copies whenever the SERVER hands over fresh data
   // (router.refresh() after a bulk job). Session-only facts (an edit, a
@@ -1216,29 +1238,32 @@ export function useCampaignActions({
   );
 
   // ── batch jobs (header) ──────────────────────────────────────────────────
+  /** „Zielgruppe aktualisieren“: re-match the campaign's audience now. */
   const sync = React.useCallback(async () => {
     if (jobBusy) return;
     setJobBusy("sync");
-    const pending = toast({ title: "Shopify-Sync läuft…", description: "Abonnent:innen werden abgeglichen.", duration: 0 });
+    const pending = toast({ title: "Zielgruppe wird aktualisiert…", description: "Die Kundenbasis wird abgeglichen.", duration: 0 });
     try {
-      const json = await adminFetch<{ total?: number; created?: number; suppressed?: number }>(
-        "/api/admin/campaign/sync",
-        { body: {} }
+      const json = await adminFetch<{ matched?: number; added?: number; suppressed?: number; excluded?: number; note?: string }>(
+        "/api/admin/campaigns/refresh",
+        { body: { campaignId } }
       );
       toast.dismiss(pending);
       toast({
         variant: "success",
-        title: "Sync abgeschlossen",
-        description: `${json.total ?? 0} Abonnent:innen (${json.created ?? 0} neu, ${json.suppressed ?? 0} unterdrückt).`,
+        title: "Zielgruppe aktualisiert",
+        description:
+          json.note ??
+          `${json.matched ?? 0} passende Kunden · ${json.added ?? 0} neu · ${json.suppressed ?? 0} ohne Einwilligung · ${json.excluded ?? 0} nicht mehr passend.`,
       });
       reloadFromServer();
     } catch (err) {
       toast.dismiss(pending);
-      fail("Sync fehlgeschlagen", err);
+      fail("Aktualisieren fehlgeschlagen", err);
     } finally {
       setJobBusy(null);
     }
-  }, [jobBusy, reloadFromServer]);
+  }, [jobBusy, reloadFromServer, campaignId]);
 
   /** Rebuild the queue: all open drafts are discarded (edits included), the
    * contacts return to 'pending', and Vorbereiten regenerates them. Called
@@ -1248,7 +1273,7 @@ export function useCampaignActions({
     setResetOpen(false);
     setJobBusy("reset");
     try {
-      const json = await adminFetch<{ reset?: number }>("/api/admin/campaign/reset-queue", { body: {} });
+      const json = await adminFetch<{ reset?: number }>("/api/admin/campaign/reset-queue", { body: { campaignId } });
       toast({
         variant: "success",
         title: `${json.reset ?? 0} Entwürfe verworfen`,
@@ -1261,7 +1286,7 @@ export function useCampaignActions({
     } finally {
       setJobBusy(null);
     }
-  }, [jobBusy, reloadFromServer]);
+  }, [jobBusy, reloadFromServer, campaignId]);
 
   /** Vorbereiten as a background job: chunked drafts, then (optionally) the
    * KI-Hero for every prepared contact of the A group. The review keeps
@@ -1297,7 +1322,7 @@ export function useCampaignActions({
             exhausted: boolean;
             preparedContactIds?: number[];
           }>("/api/admin/campaign/prepare", {
-            body: { count, discountPercent: settings.depth, textMode: settings.textMode, discountScope: settings.scope },
+            body: { campaignId, count, discountPercent: settings.depth, textMode: settings.textMode, discountScope: settings.scope },
           });
           preparedIds.push(...(json.preparedContactIds ?? []));
           job = {
@@ -1320,7 +1345,8 @@ export function useCampaignActions({
           }
         }
         if (settings.withHero && !prepareCancelled.current) {
-          const heroIds = preparedIds.filter((id) => abGroupOf(id) === "A");
+          // ai_all: every prepared card gets a hero; otherwise the A group (A/B).
+          const heroIds = campaign.heroMode === "ai_all" ? preparedIds : preparedIds.filter((id) => abGroupOf(id) === "A");
           job = { ...job, phase: "heroes", heroTotal: heroIds.length };
           setPrepareJob(job);
           for (const id of heroIds) {
@@ -1363,7 +1389,7 @@ export function useCampaignActions({
         setTimeout(() => setPrepareJob((j) => (j && j.phase === "done" ? null : j)), 6000);
       }
     },
-    [prepareJob, setPrepareSettings, reloadFromServer, setHero]
+    [prepareJob, setPrepareSettings, reloadFromServer, setHero, campaignId, campaign.heroMode]
   );
   const cancelPrepare = React.useCallback(() => {
     prepareCancelled.current = true;

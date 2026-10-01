@@ -3,11 +3,15 @@
   "regions": ["fra1"],
   "crons": [
     {
+      "path": "/api/cron/shopify-reconcile",
+      "schedule": "45 1 * * *"
+    },
+    {
       "path": "/api/cron/refresh-customers",
       "schedule": "0 2 * * *"
     },
     {
-      "path": "/api/cron/sync-campaign-audience",
+      "path": "/api/cron/campaign-audiences",
       "schedule": "30 2 * * *"
     },
     {
@@ -25,6 +29,14 @@
     {
       "path": "/api/cron/prepare-campaign-drafts",
       "schedule": "15 4 * * *"
+    },
+    {
+      "path": "/api/cron/shopify-sync",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/inbox",
+      "schedule": "20 * * * *"
     }
   ]
 }

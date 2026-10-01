@@ -1,6 +1,6 @@
-// POST /api/admin/campaign/reset-queue  {}
+// POST /api/admin/campaign/reset-queue  { campaignId }
 //
-// Rebuild the review queue: delete the drafts of ALL contacts still in review
+// Rebuild one campaign's review queue: delete the drafts of ALL its recipients still in review
 // ('drafted') and return them to 'pending', so the next "Nächste 50
 // vorbereiten" regenerates them with the CURRENT generation code (used after a
 // deploy that changed prompts/recommendations). Destructive for the open
@@ -19,8 +19,18 @@ export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
   if (blocked) return blocked;
 
+  let campaignId: number;
   try {
-    const reset = await resetDraftedContacts();
+    const body = (await req.json().catch(() => ({}))) as { campaignId?: unknown };
+    campaignId = Number(body.campaignId);
+  } catch {
+    return adminJsonError("bad_request", "Invalid JSON body", 400);
+  }
+  if (!Number.isInteger(campaignId) || campaignId <= 0) {
+    return adminJsonError("bad_request", "campaignId required.", 400);
+  }
+  try {
+    const reset = await resetDraftedContacts(campaignId);
     return adminJson({ ok: true, reset });
   } catch (err) {
     reportError(err, { route: "api/admin/campaign/reset-queue" });

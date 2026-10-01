@@ -13,7 +13,7 @@ import { redirect } from "next/navigation";
 import { ADMIN_COOKIE_NAME } from "@/lib/admin-auth";
 import { parseAdminTab, type AdminTabKey } from "@/lib/admin-tabs.mjs";
 import { isDbConfigured } from "@/lib/db";
-import { getCampaignCounts } from "@/lib/campaign-store";
+import { getCampaignQueueTotals } from "@/lib/campaign-store";
 import { getQaCounts } from "@/lib/qa-store";
 import { countUnmatchedInbound } from "@/lib/email-messages-store";
 import { resolveKpiRange } from "@/lib/kpi-range";
@@ -59,7 +59,7 @@ const idParam = (v: string | string[] | undefined): number | null => {
 async function loadBadges(dbReady: boolean): Promise<AdminBadges> {
   if (!dbReady) return {};
   const [campaign, qa, unmatched] = await Promise.all([
-    getCampaignCounts(),
+    getCampaignQueueTotals(),
     getQaCounts(),
     countUnmatchedInbound(),
   ]);
@@ -90,11 +90,15 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
       );
     }
     case "kampagne":
-      // The review desk keeps its position in the URL (?contact=, ?view=,
-      // ?filter=) so a refresh or a shared link lands on the same card.
+      // Without ?campaign= the Kampagnen overview (?edit= opens the editor);
+      // with it the campaign's review desk, which keeps its position in the
+      // URL (?contact=, ?view=, ?filter=) so a refresh or a shared link lands
+      // on the same card.
       return (
         <KampagneTab
           dbReady={dbReady}
+          campaignRef={firstParam(sp.campaign)}
+          editRef={firstParam(sp.edit)}
           initialContactId={idParam(sp.contact)}
           initialView={firstParam(sp.view)}
           initialFilter={firstParam(sp.filter)}

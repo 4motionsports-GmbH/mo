@@ -3,14 +3,17 @@
 // guarantee in one auditable place — the campaign sibling of
 // marketing-email.approveAndSend:
 //
+//   0. CAMPAIGN — the recipient's campaign must be live (aktiv, inside its
+//      schedule); a Testkontakt may preview a campaign before it starts.
 //   1. GATES — evaluated in one place (campaign-gates.mjs), all fail-closed:
 //      a. CAMPAIGN_SENDS_APPROVED master flag (lawyer sign-off; default false —
 //         while false NOTHING is sent, via UI or direct API call).
-//      b. Opt-in level: contacts without a provable double opt-in
-//         (SINGLE_OPT_IN / UNKNOWN) are refused unless
-//         CAMPAIGN_ALLOW_SINGLE_OPT_IN is explicitly true.
-//      c. Suppression re-checked at send time against OUR opt-out store.
-//      d. Cross-channel frequency cap: MARKETING_MIN_SEND_INTERVAL_DAYS spans
+//      b. The one consent (customers.email_consent_state, shared with
+//         Shopify) must be `subscribed` — read fresh at send time.
+//      c. Opt-in level (customers.email_consent_level): no provable double
+//         opt-in → refused unless CAMPAIGN_ALLOW_SINGLE_OPT_IN is true.
+//      d. Suppression re-checked at send time against OUR opt-out store.
+//      e. Cross-channel frequency cap: MARKETING_MIN_SEND_INTERVAL_DAYS spans
 //         BOTH channels (marketing_sends + campaign_sends) in both directions.
 //   2. UNSUBSCRIBE — the signed unsubscribe link is ALWAYS appended (footer +
 //      List-Unsubscribe header); if we can't build one, we REFUSE to send.
@@ -38,7 +41,11 @@ import {
 import {
   evaluateCampaignSendGates,
   GATE_REASONS,
+  optInLevelFromConsent,
 } from "./campaign-gates.mjs";
+import { getCampaignForContact, campaignAcceptsWork, type Campaign } from "./campaigns-store";
+import { getCustomerById } from "./customer-store";
+import { recordSentMessage } from "./email-messages-store";
 import {
   campaignMoDeeplinkUrl,
   isCampaignSendsApproved,
@@ -50,10 +57,10 @@ import {
   moPromoIntroText,
   moPromoCtaLabel,
 } from "./campaign-draft-core.mjs";
-import { sendEmail } from "./email";
+import { sendEmail, senderAddress } from "./email";
 import { outboundThreading } from "./email-inbound";
 import { withEmailDesign, withEmailRenderData } from "./email-design-context";
-import { getCachedEmailDesignForKind } from "./email-design-store";
+import { getEmailDesignForKey } from "./email-design-store";
 import { getEmailHeroRenderData } from "./email-hero-store";
 import {
   renderBrandedEmail,
@@ -105,6 +112,8 @@ export type CampaignSendResult =
       reason:
         | "not_found"
         | "no_draft"
+        | "campaign_closed"
+        | "no_consent"
         | "already_sent"
         | "sends_not_approved"
         | "opt_in_blocked"
@@ -144,16 +153,43 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       return { ok: false, reason: "no_draft", message: "No draft exists for this contact." };
     }
 
+    // GATE 0 — the campaign must be live. A Testkontakt may preview a
+    // campaign that has not started yet (Black Friday drafts are tested
+    // before the day), never one that was ended or archived.
+    const campaign = await getCampaignForContact(contactId);
+    if (
+      !campaign ||
+      (contact.isTest
+        ? campaign.status === "beendet" || campaign.status === "archiviert"
+        : !campaignAcceptsWork(campaign))
+    ) {
+      return {
+        ok: false,
+        reason: "campaign_closed",
+        message: "Die Kampagne läuft gerade nicht (Entwurf, pausiert, beendet oder außerhalb ihres Zeitraums).",
+      };
+    }
+
+    // The person, read fresh: the one consent and its level, and the CURRENT
+    // address (a Shopify e-mail change merges people — the recipient row may
+    // still carry the old one). A Testkontakt is the operator's own inbox.
+    const person = contact.isTest || contact.customerId == null ? null : await getCustomerById(contact.customerId);
+    if (!contact.isTest && !person) {
+      return { ok: false, reason: "not_eligible", message: "Zu diesem Empfänger gibt es keinen Kunden mehr — Versand verweigert." };
+    }
+    const recipient = person?.email ?? contact.email;
+
     // GATE 1 — all campaign gates, evaluated before any claim/mint/send step.
     const gate = evaluateCampaignSendGates({
       sendsApproved: isCampaignSendsApproved(),
       allowSingleOptIn: isSingleOptInAllowed(),
-      optInLevel: contact.optInLevel,
+      consentState: contact.isTest ? "subscribed" : (person?.emailConsentState ?? null),
+      optInLevel: contact.isTest ? contact.optInLevel : optInLevelFromConsent(person?.emailConsentLevel ?? null),
       // A Testkontakt is the operator's own inbox (0057): neither an old
       // unsubscribe/bounce on that address nor the cadence cap may stop a test
       // send. Every other gate (master flag, opt-in, discount check) applies.
-      suppressed: contact.isTest ? false : await isSuppressed(contact.email),
-      lastSendAt: await lastCrossChannelSendAt(contact.email),
+      suppressed: contact.isTest ? false : await isSuppressed(recipient),
+      lastSendAt: await lastCrossChannelSendAt(recipient),
       minIntervalDays: contact.isTest ? 0 : minSendIntervalDays(),
     });
     if (!gate.allowed) {
@@ -166,13 +202,21 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
               "Kampagnen-Versand ist noch nicht freigegeben (CAMPAIGN_SENDS_APPROVED) — " +
               "die anwaltliche Freigabe für diesen Kanal steht aus. Kopieren/Vorschau bleibt möglich.",
           };
+        case GATE_REASONS.NO_CONSENT:
+          return {
+            ok: false,
+            reason: "no_consent",
+            message:
+              "Für diese Person liegt keine Einwilligung in E-Mail-Werbung vor " +
+              "(Shopify und Mo teilen sich eine Einwilligung) — Versand verweigert.",
+          };
         case GATE_REASONS.OPT_IN_LEVEL:
           return {
             ok: false,
             reason: "opt_in_blocked",
             message:
-              "Für diesen Kontakt liegt kein nachweisbares Double-Opt-in vor " +
-              "(Shopify-Opt-in-Level) — erneute Einwilligung erforderlich.",
+              "Für diese Person liegt kein nachweisbares Double-Opt-in vor " +
+              "— erneute Einwilligung erforderlich.",
           };
         case GATE_REASONS.TOO_SOON:
           return {
@@ -190,7 +234,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
     }
 
     // GATE 2 — a working unsubscribe link is mandatory. No link → no send.
-    const unsubToken = buildUnsubscribeToken(contact.email);
+    const unsubToken = buildUnsubscribeToken(recipient);
     if (!unsubToken) {
       return {
         ok: false,
@@ -250,6 +294,8 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         const minted = await createUniqueDiscountCode({
           percentage: draft.discountPercent / 100,
           codePrefix: CAMPAIGN_DISCOUNT_CODE_PREFIX,
+          // An Aktion's codes all end with it (discount_valid_until, 0066).
+          endsAt: campaign.discountValidUntil,
           title: `Kampagnen-Rabatt (${draft.discountPercent}%${
             draft.discountScope === "recommendations" ? ", Empfehlungen" : draft.discountScope === "set" ? ", Set" : ""
           })`,
@@ -304,8 +350,13 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       // Render inside the design selected for this email type (admin
       // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
       // The per-contact hero image (email-hero.ts) rides along for hero designs.
-      const emailDesign = await getCachedEmailDesignForKind("campaign");
-      const hero = await getEmailHeroRenderData("campaign", contactId);
+      // The campaign's own design (design_key) wins over the selection.
+      const emailDesign = await getEmailDesignForKey(campaign.designKey, "campaign");
+      // hero_mode 'none': no per-contact AI hero rides along, even if one exists.
+      const hero =
+        campaign.heroMode === "none"
+          ? { heroImageUrl: null, heroImageMobileUrl: null, heroHeadline: null }
+          : await getEmailHeroRenderData("campaign", contactId);
       let bundleOfferId: number | null = null;
       const { text, html } = await withEmailDesign(emailDesign, () =>
         withEmailRenderData(
@@ -326,7 +377,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         unsubscribe: unsubscribeFooter(
           unsubscribeUrl,
           contact.language,
-          buildErasureUrl(contact.email, contact.language)
+          buildErasureUrl(recipient, contact.language)
         ),
         // SPECIAL-OFFER block — ADDITIVE, exactly like the marketing path:
         // when a created, still-active bundle is attached to this contact,
@@ -343,12 +394,13 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         })(),
         labelForUrl: await catalogNameLookup("lib/campaign-email"),
         ctaUrl: trackedCtaUrl,
+        ...campaignCtaOptions(campaign, contact.language),
       }))
         );
 
       const threading = outboundThreading();
       const result = await sendEmail({
-        to: contact.email,
+        to: recipient,
         subject: draft.subject,
         text,
         html,
@@ -375,7 +427,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       // admin can open exactly what the recipient received.
       await recordCampaignSend({
         contactId,
-        email: contact.email,
+        email: recipient,
         subject: draft.subject,
         bodyHash: hashCampaignBody(text),
         bodyText: text,
@@ -401,10 +453,22 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         providerEmailId: result.id ?? null,
         isTest: contact.isTest,
       });
+      // The mail in the person's Korrespondenz (additive, never breaks the send).
+      if (!contact.isTest && person) {
+        await recordSentMessage({
+          customerId: person.id,
+          messageId: threading.messageId,
+          fromAddress: senderAddress() ?? "",
+          toAddress: recipient,
+          subject: draft.subject,
+          bodyText: text,
+          bodyHtml: html,
+        });
+      }
       // A Testkontakt keeps its draft and returns to the queue (0057).
       if (contact.isTest) await resetTestContactAfterSend(contactId);
       else await markContactSent(contactId);
-      return { ok: true, sentTo: contact.email, test: contact.isTest };
+      return { ok: true, sentTo: recipient, test: contact.isTest };
     } catch (err) {
       await revertContactClaim(contactId);
       throw err;
@@ -416,6 +480,25 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
 }
 
 
+
+/**
+ * The campaign's call to action for renderCampaignEmail (0066): the Mo hint
+ * on/off and — for cta_kind 'shop' — the shop button label + untracked link
+ * (the send path passes the tracked /api/r link as ctaUrl, which then
+ * redirects to the shop).
+ */
+export function campaignCtaOptions(
+  campaign: Pick<Campaign, "moPromo" | "ctaKind" | "ctaUrl"> | null,
+  language: "de" | "en"
+): { moPromo: boolean; shopCtaLabel: string | null; shopCtaUrl: string | null } {
+  if (!campaign) return { moPromo: true, shopCtaLabel: null, shopCtaUrl: null };
+  const shop = campaign.ctaKind === "shop" && campaign.ctaUrl ? campaign.ctaUrl : null;
+  return {
+    moPromo: campaign.moPromo,
+    shopCtaLabel: shop ? (language === "en" ? "Shop the offer" : "Zum Angebot") : null,
+    shopCtaUrl: shop,
+  };
+}
 
 /**
  * Resolve the draft's recommended product ids (including review-time curation;
@@ -599,8 +682,12 @@ export async function renderCampaignEmailPreview(
   // including the per-contact hero image and the bundle block, which is
   // built inside the design context below — so what the operator reviews is
   // what ships.
-  const emailDesign = await getCachedEmailDesignForKind("campaign");
-  const hero = await getEmailHeroRenderData("campaign", contactId);
+  const campaign = await getCampaignForContact(contactId);
+  const emailDesign = await getEmailDesignForKey(campaign?.designKey ?? null, "campaign");
+  const hero =
+    campaign?.heroMode === "none"
+      ? { heroImageUrl: null, heroImageMobileUrl: null, heroHeadline: null }
+      : await getEmailHeroRenderData("campaign", contactId);
   const { html } = await withEmailDesign(emailDesign, () =>
     withEmailRenderData(
       { ...hero, recipientFirstName: contact.firstName?.trim() || null },
@@ -625,6 +712,7 @@ export async function renderCampaignEmailPreview(
         ),
     bundle: await buildBundleBlockForContact(contactId, contact.language),
     labelForUrl: await catalogNameLookup("lib/campaign-email"),
+    ...campaignCtaOptions(campaign, contact.language),
   }))
     );
   return { ok: true, subject, html };
@@ -674,12 +762,23 @@ export function renderCampaignEmail(opts: {
   /** The tracked /api/r/<token> CTA URL at send time; omitted (preview) the
    * promo links straight to the untracked Mo deep link. */
   ctaUrl?: string;
+  /** Append the Mo chat hint (campaign mo_promo, default true). */
+  moPromo?: boolean;
+  /** The button text when the campaign's CTA leads to the shop (cta_kind
+   * 'shop'); omitted = the Mo button ("Beratung starten"). */
+  shopCtaLabel?: string | null;
+  /** Untracked shop link for previews (the send path tracks via ctaUrl). */
+  shopCtaUrl?: string | null;
 }): { text: string; html: string } {
   const { subject, body, language, discountCode, discountExpiresLabel, unsubscribe, bundle } =
     opts;
   const products = opts.products ?? [];
   const en = language === "en";
-  const deeplink = opts.ctaUrl ?? campaignMoDeeplinkUrl();
+  const moPromo = opts.moPromo !== false;
+  const shopCta = opts.shopCtaLabel ? { label: opts.shopCtaLabel, url: opts.ctaUrl ?? opts.shopCtaUrl ?? "" } : null;
+  // With a shop button the tracked link leads to the shop; the Mo hint (if
+  // kept) then links Mo directly, untracked.
+  const deeplink = shopCta ? campaignMoDeeplinkUrl() : (opts.ctaUrl ?? campaignMoDeeplinkUrl());
 
   // The personalised recommendation rows — products the attached set already
   // shows are dropped so nothing appears twice (the set block presents them).
@@ -717,7 +816,8 @@ export function renderCampaignEmail(opts: {
       : null;
   const countdownLine = offerExpiresAt ? countdownText(offerExpiresAt, language) : "";
   if (countdownLine) textLines.push("", countdownLine);
-  textLines.push("", moPromoBlockText(language, deeplink));
+  if (shopCta?.url) textLines.push("", `${shopCta.label}: ${shopCta.url}`);
+  if (moPromo) textLines.push("", moPromoBlockText(language, deeplink));
   textLines.push("", "—", unsubscribe.text);
   const text = textLines.join("\n");
 
@@ -737,12 +837,14 @@ export function renderCampaignEmail(opts: {
   // The Mo promo goes through the shared renderer so a design can present it
   // as its own advisor card (email-template renderMoPromoBlock); the classic
   // chat-style media row is unchanged.
-  const promoRows = renderMoPromoBlock({
-    introText: moPromoIntroText(language),
-    ctaLabel: moPromoCtaLabel(language),
-    ctaUrl: deeplink,
-    language,
-  });
+  const promoRows = moPromo
+    ? renderMoPromoBlock({
+        introText: moPromoIntroText(language),
+        ctaLabel: moPromoCtaLabel(language),
+        ctaUrl: deeplink,
+        language,
+      })
+    : "";
 
   // Personalised product section: black separator band + one ROW per product
   // (image, name link, price with red strikethrough compare-at in the first
@@ -774,7 +876,11 @@ export function renderCampaignEmail(opts: {
       `${productsRows}${bundle ? bundle.html : ""}${couponRows}${
         offerExpiresAt ? renderOfferCountdown({ expiresAt: offerExpiresAt, language }) : ""
       }${promoRows}` || undefined,
-    ctas: [{ label: moPromoCtaLabel(language), url: deeplink }],
+    ctas: shopCta?.url
+      ? [{ label: shopCta.label, url: shopCta.url }]
+      : moPromo
+        ? [{ label: moPromoCtaLabel(language), url: deeplink }]
+        : [],
     footer: {
       // GATE 2 guarantees `unsubscribe` is always present.
       unsubscribeHtml: unsubscribe.html,

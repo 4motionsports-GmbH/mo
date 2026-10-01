@@ -10,7 +10,7 @@ import { reportError } from "./observability";
 import { getCoreMetrics, type CoreMetrics } from "./kpi-store";
 import { getAiCostMetrics, type AiCostMetrics } from "./ai-usage-store";
 import { getMarketingActivity, type MarketingActivity } from "./marketing-store";
-import { getCampaignCounts, type CampaignCounts } from "./campaign-store";
+import { getCampaignQueueTotals, type CampaignQueueTotals } from "./campaign-store";
 import { getQaCounts, type QaCounts } from "./qa-store";
 import { countUnmatchedInbound } from "./email-messages-store";
 import { resolveKpiRange } from "./kpi-range";
@@ -61,7 +61,7 @@ export interface OverviewSnapshot {
   recentConfirmed: OverviewConfirmedContact[];
   campaignActivity: OverviewCampaignActivity;
   marketingActivity: MarketingActivity | null;
-  campaignCounts: CampaignCounts | null;
+  campaignCounts: CampaignQueueTotals | null;
   qaCounts: QaCounts;
   unmatchedInbound: number;
   running: OverviewRunning;
@@ -209,7 +209,7 @@ export async function getOverviewSnapshot(
     recentConfirmed(sql, cap),
     campaignActivity(sql, days, cap),
     getMarketingActivity({ windowDays: days, limit: cap }, sql),
-    getCampaignCounts(sql),
+    getCampaignQueueTotals(sql),
     getQaCounts(sql),
     countUnmatchedInbound(sql),
     running(sql),

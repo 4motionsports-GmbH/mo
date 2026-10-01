@@ -204,8 +204,40 @@ export interface CampaignSentSummaryProps {
   unsubscribed: number;
 }
 
+/** The campaign this desk works on (0066) — its offer defaults seed Vorbereiten. */
+export interface CampaignDeskCampaign {
+  id: number;
+  name: string;
+  slug: string;
+  kind: "laufend" | "aktion" | "einzel";
+  status: string;
+  /** campaign-def.campaignPhase: laeuft | geplant | abgelaufen | pausiert | … */
+  phase: string;
+  discountPercent: number;
+  discountScope: DiscountScope;
+  textMode: EmailTextModeValue | null;
+  heroMode: "none" | "default" | "ai_ab" | "ai_all";
+  /** The audience in plain German (audience-spec.describeAudienceSpec). */
+  audienceText: string;
+  startsAt: string | null;
+  endsAt: string | null;
+  audienceRefreshedAt: string | null;
+}
+
+/** One entry of the desk's campaign switcher. */
+export interface CampaignSwitchItem {
+  id: number;
+  name: string;
+  slug: string;
+  kind: "laufend" | "aktion" | "einzel";
+  phase: string;
+  drafted: number;
+}
+
 /** Everything the server hands to the desk (KampagneTab → KampagneWorkspace). */
 export interface CampaignDeskProps {
+  campaign: CampaignDeskCampaign;
+  campaigns: CampaignSwitchItem[];
   counts: CampaignCountsProps;
   queue: CampaignQueueItemProps[];
   skipped: CampaignSkippedItemProps[];

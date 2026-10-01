@@ -17,6 +17,10 @@ export const KampagneWorkspace = dynamic(() =>
   import("./kampagne/KampagneWorkspace").then((m) => m.KampagneWorkspace)
 );
 
+export const CampaignsOverview = dynamic(() =>
+  import("./kampagnen/CampaignsOverview").then((m) => m.CampaignsOverview)
+);
+
 export const GespraecheWorkspace = dynamic(() =>
   import("./gespraeche/GespraecheWorkspace").then((m) => m.GespraecheWorkspace)
 );

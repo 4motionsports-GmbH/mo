@@ -87,6 +87,26 @@ export async function getCachedEmailDesignForKind(
   }
 }
 
+/**
+ * A specific design for an email kind (a campaign's own design_key, 0066), or
+ * the kind's selected design when `key` is null. Unknown key → the selection.
+ * NEVER throws.
+ */
+export async function getEmailDesignForKey(
+  key: string | null,
+  kind: string
+): Promise<ResolvedEmailDesign | null> {
+  if (!key) return getCachedEmailDesignForKind(kind);
+  const parsedKind = parseEmailThemeKind(kind);
+  if (!parsedKind) return null;
+  try {
+    return resolveEmailDesignForKind(key, parsedKind as EmailDesignKind) ?? getCachedEmailDesignForKind(kind);
+  } catch (err) {
+    reportError(err, { route: "lib/email-design-store", phase: "resolveByKey" });
+    return getCachedEmailDesignForKind(kind);
+  }
+}
+
 /** Drop the send-path cache (called after every admin mutation). */
 function invalidateEmailDesignCache(): void {
   selectionCache = null;

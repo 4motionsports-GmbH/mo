@@ -1,7 +1,7 @@
-// POST /api/admin/campaign/contacts  { query }
+// POST /api/admin/campaign/contacts  { query, campaignId? }
 //
 // Global contact search for the review UI: case-insensitive substring match
-// over ALL campaign contacts (email + name), ANY status — not just the drafted
+// over a campaign's recipients (email + name), ANY status — not just the drafted
 // queue — so the admin can look a specific person up and pull them into the
 // queue (generate a draft / restore a skip) or see that they were already
 // sent/suppressed. Read-only.
@@ -19,16 +19,19 @@ export async function POST(req: Request) {
   if (blocked) return blocked;
 
   let query: string;
+  let campaignId: number | null = null;
   try {
-    const body = (await req.json()) as { query?: unknown };
+    const body = (await req.json()) as { query?: unknown; campaignId?: unknown };
     query = String(body.query ?? "").trim();
+    const cid = Number(body.campaignId);
+    campaignId = Number.isInteger(cid) && cid > 0 ? cid : null;
     if (!query) return adminJsonError("bad_request", "query required", 400);
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
 
   try {
-    const hits = await searchCampaignContacts(query);
+    const hits = await searchCampaignContacts(query, 10, campaignId);
     return adminJson({
       contacts: hits.map((h) => ({
         id: h.contact.id,

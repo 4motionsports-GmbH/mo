@@ -1,13 +1,14 @@
-// POST /api/admin/campaign/prepare  { count, discountPercent, textMode?, discountScope? }
+// POST /api/admin/campaign/prepare  { campaignId, count, discountPercent?, textMode?, discountScope? }
 //
-// Batch pre-generation (Task C): draft the next `count` PENDING campaign
-// contacts so the review queue is instant. Sequential with modest concurrency;
+// Batch pre-generation (Task C): draft the next `count` PENDING recipients of
+// one campaign so its review queue is instant. Offer settings default to the
+// campaign's own (0066); the Vorbereiten popover may override them. Sequential with modest concurrency;
 // resilient per contact (a failure marks 'draft_failed' and continues). The
 // dashboard calls this in small chunks so it can show live progress and stay
 // well inside the function-duration limit.
 //
-// Generation costs API money — this is only ever triggered by the admin
-// (deliberately no cron).
+// Generation costs API money — triggered by the admin here; the nightly
+// auto-prepare (cron/prepare-campaign-drafts) is opt-in per campaign.
 //
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 
@@ -35,17 +36,23 @@ export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
   if (blocked) return blocked;
 
+  let campaignId: number;
   let count: number;
-  let discountPercent: number;
+  let discountPercent: number | undefined;
   let textMode: EmailTextMode;
   let discountScope: DiscountScope;
   try {
     const body = (await req.json()) as {
+      campaignId?: unknown;
       count?: unknown;
       discountPercent?: unknown;
       textMode?: unknown;
       discountScope?: unknown;
     };
+    campaignId = Number(body.campaignId);
+    if (!Number.isInteger(campaignId) || campaignId <= 0) {
+      return adminJsonError("bad_request", "campaignId required.", 400);
+    }
     count = Number(body.count);
     if (!Number.isInteger(count) || count <= 0 || count > MAX_COUNT_PER_REQUEST) {
       return adminJsonError(
@@ -54,7 +61,7 @@ export async function POST(req: Request) {
         400
       );
     }
-    const parsedPercent = parseDiscountPercent(body.discountPercent ?? 0);
+    const parsedPercent = body.discountPercent == null ? undefined : parseDiscountPercent(body.discountPercent);
     if (parsedPercent === null) {
       return adminJsonError(
         "bad_request",
@@ -80,7 +87,10 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await prepareNextDrafts(count, discountPercent, textMode, discountScope);
+    const result = await prepareNextDrafts({ campaignId, count, discountPercent, textMode, discountScope });
+    if (result.campaignClosed) {
+      return adminJsonError("campaign_closed", "Die Kampagne ist nicht aktiv — es wird nichts vorbereitet.", 409);
+    }
     return adminJson(result);
   } catch (err) {
     reportError(err, { route: "api/admin/campaign/prepare" });

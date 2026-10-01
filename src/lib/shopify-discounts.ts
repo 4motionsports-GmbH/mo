@@ -188,6 +188,9 @@ export interface CreateDiscountOptions {
   codePrefix?: string;
   /** Days until the code expires. Defaults to the marketing expiry (7d). */
   expiryDays?: number;
+  /** Absolute end (an Aktion's codes all end with it, 0066) — wins over
+   * expiryDays when it lies in the future. */
+  endsAt?: string | null;
   /**
    * Restrict the code to these products (gid://shopify/Product/…). Omitted or
    * empty = the whole order. The caller decides whether an unresolvable scope
@@ -214,7 +217,11 @@ export async function createUniqueDiscountCode(
     options.expiryDays != null && options.expiryDays > 0
       ? options.expiryDays
       : discountExpiryDays();
-  const endsAt = new Date(startsAt.getTime() + expiryDays * 86_400_000);
+  const fixedEnd = options.endsAt ? new Date(options.endsAt) : null;
+  const endsAt =
+    fixedEnd && !Number.isNaN(fixedEnd.getTime()) && fixedEnd.getTime() > startsAt.getTime()
+      ? fixedEnd
+      : new Date(startsAt.getTime() + expiryDays * 86_400_000);
 
   const productIds = [...new Set((options.productIds ?? []).filter((g) => /^gid:\/\/shopify\/Product\/\d+$/.test(g)))];
   const basicCodeDiscount = {
