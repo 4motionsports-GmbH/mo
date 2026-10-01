@@ -424,7 +424,7 @@ async function bindShopifyIdentityOnce(
     const rows = (await sql`
       INSERT INTO customers
         (email, shopify_customer_id, shopify_customer_gid, shopify_linked_at, identity_tier, source)
-      VALUES (${insertEmail}, ${shopifyId}, ${input.shopifyCustomerGid}, now(), 3, 'shopify_account')
+      VALUES (${insertEmail}, ${shopifyId}, ${input.shopifyCustomerGid}, now(), 3, 'shopify')
       ON CONFLICT (email) DO UPDATE SET last_seen_at = now()
       RETURNING id
     `) as Array<Record<string, unknown>>;

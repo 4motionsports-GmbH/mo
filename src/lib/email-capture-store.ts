@@ -39,7 +39,7 @@ function generateDoiToken(): string {
   return randomBytes(32).toString("hex");
 }
 
-function doiExpiryDays(): number {
+export function doiExpiryDays(): number {
   return parseIntEnv("MARKETING_DOI_EXPIRY_DAYS", 7);
 }
 
@@ -164,6 +164,12 @@ export interface UpsertCaptureResult {
   doiToken: string | null;
   /** True when a fresh DOI confirmation email must be sent for marketing. */
   doiEmailRequired: boolean;
+  /**
+   * Marketing was granted and the address already holds the one consent
+   * (input.alreadySubscribed) and is not suppressed — answer "confirmed",
+   * no DOI mail.
+   */
+  subscribedElsewhere: boolean;
   /** The stored language for this address ("de" default). */
   locale: Locale;
 }
@@ -268,6 +274,7 @@ export async function upsertEmailCapture(
     marketingDoiStatus: status,
     doiToken,
     doiEmailRequired,
+    subscribedElsewhere: Boolean(input.marketingConsent && !suppressed && input.alreadySubscribed),
     locale,
   };
 }

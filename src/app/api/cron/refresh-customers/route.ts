@@ -22,6 +22,10 @@
 // scripts/backfill-customer-profiles.mjs for the first full build);
 // `?batch=N` overrides the profile batch for that call.
 //
+// First of all, a pending double opt-in whose link expired (MARKETING_DOI_
+// EXPIRY_DAYS + 1 day) falls back to „Keine Einwilligung“ (lib/consent-store
+// expirePendingConsents) — so the person can be asked again.
+//
 // Protected by CRON_SECRET — Vercel Cron sends Authorization: Bearer <secret>.
 // Manual: curl -H "Authorization: Bearer $CRON_SECRET" $URL
 
@@ -33,6 +37,8 @@ import { runProfileUpkeep } from "@/lib/customer-profile";
 import { customerProfileLightBatch } from "@/lib/platform-flags.mjs";
 import { reportError } from "@/lib/observability";
 import { requireCronAuth } from "@/lib/cron-auth";
+import { expirePendingConsents } from "@/lib/consent-store";
+import { doiExpiryDays } from "@/lib/email-capture-store";
 
 export const maxDuration = 300;
 
@@ -68,6 +74,7 @@ async function handle(req: Request): Promise<Response> {
   const staleBefore = new Date(Date.now() - staleHours * 3_600_000).toISOString();
 
   try {
+    const pendingExpired = onlyProfiles ? 0 : await expirePendingConsents({ expiryDays: doiExpiryDays() });
     let considered = 0;
     let refreshed = 0;
     let failed = 0;
@@ -98,6 +105,7 @@ async function handle(req: Request): Promise<Response> {
       concurrency: 4,
     });
     const summary = {
+      pendingExpired,
       considered,
       refreshed,
       failed,

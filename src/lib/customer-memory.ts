@@ -26,7 +26,7 @@
 // confirmed. See docs/CUSTOMERS.md → "GDPR" and docs/CONSENT_FLOW.md.
 //
 // Data minimisation: only the compact cached summaries (CUST-A "current
-// understanding", owned items from the cached purchase summary) and counts go
+// understanding", owned items from the order ledger) and counts go
 // into the prompt — never raw transcripts, order totals, or the email itself.
 
 import { isValidEmail, normalizeEmail, wasEmailCapturedFromSession } from "./email-capture-store";
@@ -44,6 +44,7 @@ import { canPersonaliseSignedIn } from "./customer-account-data.mjs";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
 import { reportError } from "./observability";
+import { loadPurchaseHistory } from "./customer-orders-store";
 
 /** Compact memory injected into the system prompt for a re-identified customer. */
 export interface CustomerMemoryContext {
@@ -156,9 +157,9 @@ export async function resolveCustomerMemory(
 
     const priorConversationCount = await countPriorConversations(customer.id, sessionId);
 
-    // Aggregate owned items from the cached purchase summary (titles +
-    // quantities only — no order numbers, no totals).
-    const { ownedItems, lastPurchaseAt } = aggregateOwnedItems(customer.purchaseSummary);
+    // Aggregate owned items from the order ledger (the cached purchase summary
+    // for people without one) — titles + quantities only, no order numbers or totals.
+    const { ownedItems, lastPurchaseAt } = aggregateOwnedItems(await loadPurchaseHistory(customer));
 
     const profileSummary = customer.profileSummary?.trim() || null;
 
@@ -242,7 +243,7 @@ async function resolveSignedInMemory(
 
     // Consented: full personalisation from the cached Shopify data.
     const priorConversationCount = await countPriorConversations(customer.id, sid);
-    const { ownedItems, lastPurchaseAt } = aggregateOwnedItems(customer.purchaseSummary);
+    const { ownedItems, lastPurchaseAt } = aggregateOwnedItems(await loadPurchaseHistory(customer));
     const profileSummary = customer.profileSummary?.trim() || null;
 
     return {

@@ -400,3 +400,42 @@ export function isSubscribed(c: Pick<CustomerConsent, "state" | "suppression"> |
   if (!c) return false;
   return c.state === "subscribed" && !["bounce", "complaint", "erasure"].includes(c.suppression ?? "");
 }
+
+/**
+ * A pending double opt-in whose confirmation link has expired is no consent:
+ * set the person back to `not_subscribed` (local only — pending never reached
+ * Shopify, so nothing is pushed) with a history entry, so the at-sign-in card
+ * and the chat gate may ask again. `graceDays` after the link's expiry.
+ * Returns the number of people reset; never throws.
+ */
+export async function expirePendingConsents(
+  opts: { expiryDays: number; graceDays?: number },
+  sql: Sql | null = getSql()
+): Promise<number> {
+  if (!sql || opts.expiryDays <= 0) return 0;
+  const days = opts.expiryDays + (opts.graceDays ?? 1);
+  try {
+    const rows = (await sql`
+      WITH expired AS (
+        UPDATE customers
+           SET email_consent_state = 'not_subscribed',
+               email_consent_level = NULL,
+               email_consent_at = now(),
+               email_consent_source = 'mo',
+               marketing_status = ${legacyMarketingStatus("not_subscribed")}
+         WHERE email_consent_state = 'pending'
+           AND email_consent_at < now() - make_interval(days => ${days})
+        RETURNING id
+      )
+      INSERT INTO consent_events (customer_id, occurred_at, source, state, level, origin_ref, note)
+      SELECT id, now(), 'mo', 'not_subscribed', NULL, 'doi_expiry',
+             'Bestätigungslink nicht geklickt — Anmeldung verfallen'
+        FROM expired
+      RETURNING customer_id
+    `) as Array<{ customer_id: number }>;
+    return rows.length;
+  } catch (err) {
+    reportError(err, { route: "lib/consent-store", phase: "expirePendingConsents" });
+    return 0;
+  }
+}
