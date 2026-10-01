@@ -113,4 +113,12 @@ test("validateCampaignInput: a chat button needs the Mo block", () => {
     { create: true }
   );
   assert.equal(shop.errors.moPromo, undefined);
+  // A create without ctaKind gets the chat button (the column default).
+  assert.ok(validateCampaignInput({ name: "BF", kind: "aktion", moPromo: false }, { create: true }).errors.moPromo);
+  // A patch reads the other field from the stored campaign.
+  const current = { ctaKind: "mo_chat", moPromo: true };
+  assert.ok(validateCampaignInput({ moPromo: false }, { current }).errors.moPromo);
+  assert.ok(validateCampaignInput({ ctaKind: "mo_chat" }, { current: { ctaKind: "shop", moPromo: false } }).errors.moPromo);
+  assert.equal(validateCampaignInput({ moPromo: false }, { current: { ctaKind: "shop", moPromo: true } }).ok, true);
+  assert.equal(validateCampaignInput({ name: "Neu" }, { current: { ctaKind: "mo_chat", moPromo: false } }).ok, true);
 });

@@ -94,10 +94,14 @@ const intIn = (v, lo, hi) => (Number.isInteger(v) && v >= lo && v <= hi ? v : un
 /**
  * Validate the wizard / edit form. Returns the clean value plus German error
  * messages per field. Only the fields present in `raw` are validated, so the
- * same function serves create (all fields) and patch (some fields).
+ * same function serves create (all fields) and patch (some fields). Rules
+ * that span two fields (the chat button needs the Mo block) read the missing
+ * one from `current` (the stored campaign) on a patch, or the column default
+ * on a create.
  *
  * @param {Record<string, unknown>} raw
- * @param {{ create?: boolean, maxDiscountPercent?: number }} [opts]
+ * @param {{ create?: boolean, maxDiscountPercent?: number,
+ *           current?: { ctaKind?: string, moPromo?: boolean } | null }} [opts]
  */
 export function validateCampaignInput(raw, opts = {}) {
   const r = raw && typeof raw === "object" ? raw : {};
@@ -196,7 +200,9 @@ export function validateCampaignInput(raw, opts = {}) {
     errors.ctaUrl = "Für einen Shop-Button einen Link angeben.";
   }
   // The chat button lives in the Mo block — without it the mail has no button at all.
-  if (ctaKind === "mo_chat" && has("moPromo") && value.moPromo === false) {
+  const effectiveCta = value.ctaKind ?? opts.current?.ctaKind ?? (opts.create ? "mo_chat" : undefined);
+  const effectivePromo = has("moPromo") ? value.moPromo : opts.current?.moPromo ?? (opts.create ? true : undefined);
+  if ((has("moPromo") || has("ctaKind")) && effectiveCta === "mo_chat" && effectivePromo === false) {
     errors.moPromo = "Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.";
   }
   return { ok: Object.keys(errors).length === 0, value, errors };

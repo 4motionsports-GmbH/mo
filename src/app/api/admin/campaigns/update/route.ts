@@ -27,9 +27,11 @@ export async function POST(req: Request) {
   const { id: _omit, kind: _kind, ...fields } = raw;
   void _omit;
   void _kind;
-  const v = validateCampaignInput(fields, { maxDiscountPercent: DISCOUNT_PERCENT_MAX });
-  if (!v.ok) return adminJsonError("invalid", Object.values(v.errors)[0] ?? "Ungültige Eingabe.", 400);
   try {
+    const current = await getCampaign(id);
+    if (!current) return adminJsonError("not_found", "Kampagne nicht gefunden.", 404);
+    const v = validateCampaignInput(fields, { maxDiscountPercent: DISCOUNT_PERCENT_MAX, current });
+    if (!v.ok) return adminJsonError("invalid", Object.values(v.errors)[0] ?? "Ungültige Eingabe.", 400);
     const ok = await updateCampaign(id, v.value as unknown as CampaignInput);
     if (!ok) return adminJsonError("not_found", "Kampagne nicht gefunden.", 404);
     let campaign = await getCampaign(id);
