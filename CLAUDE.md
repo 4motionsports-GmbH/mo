@@ -1,7 +1,7 @@
 # CLAUDE.md — conventions for working in this repository
 
 Read this before changing anything. It is short on purpose; the living design docs are in `docs/`
-(start with `docs/README`-level files: `ADMIN_DASHBOARD.md`, `CAMPAIGNS.md`, `API_CONTRACT.md`,
+(start with `docs/README`-level files: `ADMIN_DASHBOARD.md`, `CUSTOMER_PLATFORM_PLAN.md`, `CAMPAIGNS.md`, `API_CONTRACT.md`,
 `DATABASE.md`, `DATA_RETENTION.md`, `EMAIL_DESIGNS.md`). `docs/FEATURE_INVENTORY.md` lists every
 capability; do not remove one without an explicit decision by the maintainer. `docs/archive/` holds
 historical audits, spikes and change reports — context only, never the current state.
@@ -11,7 +11,8 @@ Next.js 16 App Router on Vercel (`fra1`), Neon Postgres, TypeScript + a set of p
 Three products in one repo: the chat API for the external Shopify widget (`/api/chat` and friends),
 the German admin dashboard (`/admin`), and the e-mail subsystem (marketing, campaign, transactional,
 inbound, physical letters). The widget is **not** in this repo — keep `docs/API_CONTRACT.md` backward
-compatible.
+compatible. Since the customer platform (`docs/CUSTOMER_PLATFORM_PLAN.md`) every Shopify customer is a
+`customers` row with a local order ledger and nightly facts; the chat is one data source among several.
 
 ## Hard rules
 - **Neon `sql` tagged templates are not composable.** Never nest a fragment inside another template or
@@ -56,6 +57,16 @@ compatible.
   chunk. Never import a screen's workspace directly from a server file.
 - **Fail-soft is the house style** for background and best-effort work (log + continue); the legal
   gates in the send paths fail **closed**.
+- **One marketing consent, shared with Shopify.** `customers.email_consent_state/level/at/source` is THE
+  e-mail-marketing consent; change it only through `applyConsentActs` (`src/lib/consent-store.ts`, rules
+  in the tested `consent-core.mjs`) — Mo surfaces via `src/lib/consent-flows.ts`. Every change writes a
+  `consent_events` row and, for Mo-side changes, a `shopify_outbox` row. Never write the columns directly.
+- **One deletion.** Erase a person only through `erasePerson` (`src/lib/customer-erasure.ts`): it writes
+  the erasure tombstone and queues the Shopify side. Shopify flags (`SHOPIFY_CUSTOMER_SYNC_ENABLED`,
+  `SHOPIFY_CONSENT_WRITEBACK`, `SHOPIFY_ERASURE_SYNC`) default to `false`.
+- **Marketing mail goes through a campaign.** Audiences are matched over `customer_overview` and always
+  require consent `subscribed` and not blocked; the 1:1 mail is the system campaign „Einzelansprache“.
+  AI suggestions (Eingang) are re-checked against consent and objections — they never widen a gate.
 
 ## Before you push
 `npm run lint`, `npx tsc --noEmit`, `npm run build`, `npm test` — all clean. UI changes: screenshots
@@ -71,6 +82,10 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
 - `src/lib/*-store.ts` — database access per table group; `src/lib/*.mjs` — pure cores + tests.
 - `src/lib/campaign-*.ts`, `marketing-*.ts`, `email-*.ts`, `email-designs/` — the e-mail subsystem;
   `approveAndSendCampaign` / `approveAndSend` are the only paths that deliver marketing mail.
+- `src/lib/shopify-sync.ts`, `customer-mirror-store.ts`, `customer-orders-store.ts`, `customer-facts.ts`,
+  `shopify-outbox.ts` — the Shopify customer mirror, order ledger, nightly facts and write-back queue;
+  `campaigns-store.ts` + `audience-*.{mjs,ts}` — many campaigns and their audiences; `customer-signals.mjs`
+  + `inbox-*.ts` — the Eingang rules, items and AI suggestions (docs/CUSTOMER_PLATFORM_PLAN.md).
 - `src/app/admin/` — the dashboard: `page.tsx` (one screen per request), `AdminShell.tsx` (sidebar,
   shortcuts, theme), the screen registry `src/lib/admin-tabs.mjs` + `tabs.tsx` (icons), `lazy.tsx`
   (per-screen chunks), `<Screen>Tab.tsx` (server queries → props) with its client workspace in
@@ -95,7 +110,8 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
   mutates through `adminFetch()` + `useAsyncAction()`, updates its own state (or calls `router.refresh()`),
   never `window.location.reload()`. Long-running generation uses `useStepLoop()`.
 - **State that a colleague should be able to link to lives in the URL**: `?tab=`, `?customer=`, `?gid=`,
-  `?report=`, `?run=`, `?kpiRange=…`, `?filter=` (see `docs/ADMIN_DASHBOARD.md` §2.2). Use
+  `?report=`, `?run=`, `?kpiRange=…`, `?filter=`, `?campaign=`, `?edit=`, `?status=` (Eingang), the
+  Kunden list filters (see `docs/ADMIN_DASHBOARD.md` §2.2). Use
   `history.replaceState` for selection, `router.push` for filters that change the server render.
 - **Adding a screen**: entry in `src/lib/admin-tabs.mjs` (+ its test), icon in `tabs.tsx`, `<Screen>Tab.tsx`,
   a `<screen>/` folder whose workspace is exported from `lazy.tsx`, routes under `src/app/api/admin/<screen>/`
@@ -104,4 +120,4 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
   screen at 1440 px and 1024 px in light and dark, and exercise the interactions you touched (the
   before/after sets of the 2026-09 redesign are under `docs/screenshots/`).
 - **Keep the German terminology** and the keyboard shortcuts (`1…9`/`0` screens, `/` search; Kampagne
-  `N P V C S X`; Wissen `j k Esc`).
+  `N P V C S X`; Wissen `j k Esc`; Eingang `J K Enter E Z D Esc`).

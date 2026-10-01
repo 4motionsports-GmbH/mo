@@ -77,6 +77,7 @@ test("buildLetterPdf: produces a valid-looking PDF with the recipient + EOF", ()
   assert.ok(text.includes("/BaseFont /Helvetica"), "embeds the font");
   assert.ok(text.includes("startxref"), "has an xref table");
   assert.ok(text.trimEnd().endsWith("%%EOF"), "ends with EOF");
+  assert.ok(text.includes("jederzeit m\u00f6glich \\(Art. 21 DSGVO\\)"), "carries the objection notice");
 });
 
 test("buildLetterPdf: long body paginates onto multiple pages", () => {
