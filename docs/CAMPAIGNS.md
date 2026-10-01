@@ -220,8 +220,9 @@ fallback discipline as `marketing-draft.ts`):
    price, genuine "statt", tracked `/api/r/<token>` CTA) is appended at send
    time (`buildBundleBlockForContact`, same active-only guard + renderer as
    the marketing path) and a resolution failure degrades to "no block", never
-   blocking a send. Archive-on-expiry stays with the existing cron; "Set
-   entfernen" uses the existing archive route.
+   blocking a send. Expiry stays with the existing cron (it deletes the set's
+   Shopify product); "Set entfernen" uses the existing archive route, which
+   deletes it too.
 5. Mo promo block + deep link (`CAMPAIGN_MO_DEEPLINK_URL`, default
    `https://motionsports.de/?mo=open&mo_new=1&mo_view=fullscreen&utm_source=campaign&utm_medium=email`)
    — appended **deterministically** at send time, both languages
