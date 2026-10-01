@@ -59,6 +59,8 @@ export const KPI_CONSENT_GATE_DISMISSED = "consent_gate_dismissed";
  * Emitted by campaign-store.recordCampaignClick with
  * `data: {sendId, firstClick}` and a NULL session. */
 export const KPI_CAMPAIGN_EMAIL_CLICKED = "campaign_email_clicked";
+/** The widget opened a chat from a campaign mail's Mo link (`mo_c`). Session-less, once per send. */
+export const KPI_CAMPAIGN_CHAT_STARTED = "campaign_chat_started";
 
 // ---------------------------------------------------------------------------
 // Contact-form hand-over + customer-account lifecycle (server-emitted)

@@ -225,6 +225,7 @@ function CampaignBreakdownTable({
 }) {
   if (rows.length === 0) return null;
   const dash = "—";
+  const withChats = rows.some((r) => r.chatStarted !== undefined);
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -241,6 +242,7 @@ function CampaignBreakdownTable({
               <TableHead align="right">Gesendet</TableHead>
               <TableHead align="right">Klickrate</TableHead>
               <TableHead align="right">Set geklickt</TableHead>
+              {withChats && <TableHead align="right">Chat gestartet</TableHead>}
               <TableHead align="right">Eingelöst</TableHead>
               <TableHead align="right">Umsatz</TableHead>
               <TableHead align="right">Umsatz / Send</TableHead>
@@ -260,6 +262,7 @@ function CampaignBreakdownTable({
                 <TableCell align="right">
                   {r.bundleSends > 0 ? `${num(r.bundleClicked)}/${num(r.bundleSends)}` : dash}
                 </TableCell>
+                {withChats && <TableCell align="right">{num(r.chatStarted ?? 0)}</TableCell>}
                 <TableCell align="right">
                   {!shopifyConfigured || r.conversionRate == null
                     ? dash
