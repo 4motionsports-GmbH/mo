@@ -11,6 +11,7 @@
 
 import { cookies } from "next/headers";
 import { ADMIN_COOKIE_NAME, verifyAdminSessionToken } from "./admin-auth";
+import { neutralizeRecipientLinks } from "./email-preview-links.mjs";
 
 function jsonError(code: string, message: string, status: number): Response {
   return new Response(JSON.stringify({ error: { code, message } }), {
@@ -58,3 +59,15 @@ export function adminJson(data: unknown, status = 200): Response {
 }
 
 export { jsonError as adminJsonError };
+
+/**
+ * A rendered e-mail for an admin preview iframe. Links that would act on the
+ * real recipient (unsubscribe, erase, DOI, tracked clicks) are made inert —
+ * a click in the admin must never unsubscribe or delete a customer.
+ */
+export function adminEmailHtml(html: string): Response {
+  return new Response(neutralizeRecipientLinks(html), {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}

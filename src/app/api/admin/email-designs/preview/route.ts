@@ -6,7 +6,7 @@
 // (email-design-preview.ts), so the preview per design × type is exactly what
 // a real send would look like. Nothing is stored or sent.
 
-import { guardAdminPost, adminJsonError } from "@/lib/admin-api";
+import { guardAdminPost, adminJsonError, adminEmailHtml } from "@/lib/admin-api";
 import {
   designSupportsKind,
   isKnownEmailDesign,
@@ -50,10 +50,7 @@ export async function POST(req: Request) {
   try {
     const design = resolveEmailDesignForKind(designKey, kind);
     const html = await renderEmailDesignPreview(kind, design);
-    return new Response(html, {
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-    });
+    return adminEmailHtml(html);
   } catch (err) {
     reportError(err, { route: "api/admin/email-designs/preview" });
     return adminJsonError("internal_error", "Vorschau fehlgeschlagen.", 500);

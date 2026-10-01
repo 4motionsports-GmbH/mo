@@ -8,7 +8,7 @@
 //
 // Auth + CSRF: guardAdminPost (the proxy already gates /api/admin/*).
 
-import { guardAdminPost, adminJsonError } from "@/lib/admin-api";
+import { guardAdminPost, adminJsonError, adminEmailHtml } from "@/lib/admin-api";
 import { renderCorrespondenceEmail } from "@/lib/correspondence-email";
 import { reportError } from "@/lib/observability";
 
@@ -34,10 +34,7 @@ export async function POST(req: Request) {
 
   try {
     const { html } = renderCorrespondenceEmail(body);
-    return new Response(html, {
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-    });
+    return adminEmailHtml(html);
   } catch (err) {
     reportError(err, { route: "api/admin/correspondence/email-preview" });
     return adminJsonError("internal_error", "Vorschau fehlgeschlagen.", 500);

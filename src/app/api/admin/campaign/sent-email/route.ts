@@ -8,7 +8,7 @@
 //
 // Auth + CSRF: guardAdminPost (the proxy already gates /api/admin/*).
 
-import { guardAdminPost, adminJsonError } from "@/lib/admin-api";
+import { guardAdminPost, adminJsonError, adminEmailHtml } from "@/lib/admin-api";
 import { getCampaignSendContent } from "@/lib/campaign-store";
 import { escapeHtml } from "@/lib/html-escape";
 import { reportError } from "@/lib/observability";
@@ -55,10 +55,7 @@ export async function POST(req: Request) {
         404
       );
     }
-    return new Response(html, {
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-    });
+    return adminEmailHtml(html);
   } catch (err) {
     reportError(err, { route: "api/admin/campaign/sent-email" });
     return adminJsonError("internal_error", "Inhalt konnte nicht geladen werden.", 500);
