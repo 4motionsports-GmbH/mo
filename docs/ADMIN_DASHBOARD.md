@@ -105,10 +105,13 @@ has two chunks: `CampaignsOverview` (overview + editor) and
 Übersicht (2026-09 redesign): ≈ 159 KB gzip of JavaScript in total, ≈ 126 KB of
 which is the Next/React framework (before the redesign: 344 KB on every tab).
 
-The navigation badges are three cheap COUNT queries in `page.tsx`, all
-fail-soft: Eingang = open items with priority ≥ 80
-(`getInboxCounts().highPriority`), Kampagnen = drafts waiting on the desks of
-all active campaigns (test contacts excluded), Wissen = open questions.
+The navigation badges are four cheap COUNT queries in `page.tsx`, all
+fail-soft and read-only: Eingang = open items with priority ≥ 80
+(`getInboxCounts().highPriority` — a snooze whose time has come already counts
+as open; the badge path never writes) **plus** the inbound mails no customer
+could be matched to (`countUnmatchedInbound`), Kampagnen = drafts waiting on
+the desks of all active campaigns (test contacts excluded), Wissen = open
+questions.
 
 The shell: grouped sidebar (Arbeit · Einblicke · System) with full labels from
 1280 px, an icon rail with tooltips on tablet widths and a slide-in drawer
@@ -133,10 +136,12 @@ Everything an operator can point a colleague at is in the URL:
 | Kunden | `?kview=<view>` | Ansicht (preset): `alle`, `mo`, `ohne_mo`, `einwilligung`, `aufgaben`, `neu`, `top`, `abwanderung`, `interessenten`, `aktiv_ohne_einwilligung` — seeds the other fields |
 | Kunden | `?kconsent=`, `?kseg=` | Einwilligung (`subscribed`, `pending`, `unsubscribed`, `not_subscribed`, `blocked`), Lebenszyklus (`frisch` … `ruhen`, `keine_bestellung`) |
 | Kunden | `?kmo=`, `?kvalue=`, `?kpersona=`, `?kshop=`, `?kchurn=` | „Weitere Filter“: Mo (`yes`/`no`), Wert (`klein`/`komponente`/`grossgeraet`), Persona (archetype or `unknown`), Shop (`shopify`/`lead`), Abwanderung (`niedrig`/`mittel`/`hoch`) |
-| Kunden | `?ksort=`, `?kpage=` | sort (`activity`, `revenue`, `orders`, `last_order`, `name`, `created`), 1-based page (50 per page) |
+| Kunden | `?ksort=`, `?kpage=` | sort (`activity`, `revenue`, `orders`, `last_order`, `name`, `created`), 1-based page (50 per page; a page past the end — an old link, a narrowed filter — renders page 1 instead of „0 Personen“) |
+| Kunden | `?filter=marketing\|no_purchase` | legacy presets of the retired Übersicht cards, read only when there is no valid `?kview=`: `marketing` → view „Mit Einwilligung“, `no_purchase` → „Mit Einwilligung“ + Lebenszyklus „Ohne Bestellung“; any other value is ignored |
 | Kunden | `?customer=<id>` | open this customer (kept in sync while browsing; works for a person outside the current page) |
 | Kampagnen | `?campaign=<slug\|id>` | the review desk of that campaign (absent = the overview; an unknown ref shows the overview with a notice) |
 | Kampagnen | `?edit=<id\|new>` | the editor sheet on the overview (kept in sync while it is open) |
+| Kampagnen | `?edit=new&audience=<json>` | a new campaign whose Zielgruppe starts from this audience spec (set by Kunden → Überblick → „Ähnliche Kunden“ → „Als Zielgruppe verwenden“); normalised on the server (`normalizeAudienceSpec`), ignored when unparsable or longer than 4,000 characters |
 | Kampagnen | `?contact=<id>` | the card on the desk (kept in sync while reviewing; a sent/skipped id falls back to the first card). Alone, without `?campaign=`, it opens the desk of the campaign the recipient belongs to (legacy desk links) |
 | Kampagnen | `?view=liste\|gesendet` | the Liste or Gesendet view of the desk (absent = Prüfen) |
 | Kampagnen | `?filter=<chip>` | desk queue filter chip: `doi`, `soi`, `en`, `discount`, `set`, `hints`, `blocked` (absent = Alle) |
@@ -153,9 +158,10 @@ The Kunden parameters are parsed and written by the pure, tested
 back). Every Kunden filter change is a `router.push` (the server renders the
 next page); selection in Eingang, Kunden, Kampagnen editor and desk uses
 `history.replaceState`. The Eingang's „Art“ filter is client-side only. The
-former Kunden `?filter=<preset>` (e.g. `no_purchase`, set by the Übersicht
-cards) is **retired** with the client-side list — it is no longer read and
-shows the full list; the views above replace it.
+former Kunden `?filter=<preset>` (set by the Übersicht cards) is **retired**
+with the client-side list; the views above replace it, and the two old
+presets still land on the closest view (table above, `parseCustomerFilter`,
+tested).
 
 Other screens link into these: „Im Gespräche-Tab öffnen“ in a customer's
 consultation (`?tab=gespraeche&gid=…`), „Gespräch #n“ in a Wissen entry; the
@@ -163,6 +169,9 @@ Eingang system strip links each active campaign's desk
 (`?tab=kampagne&campaign=<slug>`), an Eingang item its customer
 (`?tab=kunden&customer=…`), and „Entwurf übernehmen“ / Kunden → Marketing →
 Einzelansprache land on `?tab=kampagne&campaign=einzelansprache&contact=<id>`.
+Kunden → Überblick → „Ähnliche Kunden“ links each person
+(`?tab=kunden&customer=…`) and „Als Zielgruppe verwenden“ opens
+`?tab=kampagne&edit=new&audience=<json>`.
 
 ### 2.3 Files
 
@@ -339,11 +348,19 @@ Nothing on this screen sends.
 of [`customer-signals.mjs`](../src/lib/customer-signals.mjs) over the customer
 facts and writes `inbox_items` (migration 0067,
 [`inbox-store.ts`](../src/lib/inbox-store.ts)). A dedupe key names the episode
-(the order, mail or chat), so a snoozed or dismissed item stays decided; an
+(the order, mail or chat), so a snoozed or dismissed item stays decided —
+also after retention, which clears a decided item's content after
+`INBOX_RETENTION_DAYS` but keeps a marker (kind, customer, decision, dedupe
+key) for two years ([`DATA_RETENTION.md`](./DATA_RETENTION.md), step 8); an
 item whose rule no longer fires closes itself (`erledigt_von_selbst`), an item
 past `expires_at` expires; the low-priority kinds are capped per run
 (`SIGNAL_CAPS`); 14 days after a decision the outcome (mail, orders, revenue)
-is recorded for the KPI (§5.18). Kinds that advertise are only raised for
+is recorded for the KPI (§5.18). A snooze whose time has come reopens
+(`reopenDueSnoozed`) when the Eingang screen loads and in the hourly job —
+never on the read path of the sidebar badge, which simply counts it as open.
+The Shopify webhooks add **system items** without a customer
+(`abgleich_konflikt`: more than `SHOPIFY_ERASURE_ALERT_PER_HOUR` erasures in
+an hour, `shop/redact`). Kinds that advertise are only raised for
 people with consent. The same job writes AI suggestions (writer tier) for at
 most `INBOX_AI_DAILY_LIMIT` items per day; a suggestion is re-checked against
 consent and objections and never widens a gate. „Jetzt prüfen“ runs the rules
@@ -352,6 +369,7 @@ on demand without AI.
 | Kind | Label | Group | Needs consent |
 | --- | --- | --- | --- |
 | `datenauskunft` | Datenauskunft angefordert (Shopify `customers/data_request`) | Jetzt | — |
+| `abgleich_konflikt` | Shopify-Abgleich prüfen (system item of the Shopify sync: erasure-rate alert, `shop/redact`; no customer) | Jetzt | — |
 | `antwort_offen` | Antwort ausstehend | Jetzt | — |
 | `nicht_zugeordnet` | E-Mail nicht zugeordnet (registered; unassigned mail is currently shown in its own block, not as items) | Jetzt | — |
 | `kaufabsicht` | Kaufabsicht ohne Kauf | Jetzt | yes |
@@ -369,8 +387,12 @@ on demand without AI.
 
 - **System strip** — „n Entwürfe zur Prüfung“ with a link per active campaign
   that has drafts (→ its desk), open Wissen questions plus running Analyse /
-  Verbesserungslauf, and the fixed **last-30-days** strip (Gespräche,
-  Kampagnen-Mails, neu angemeldet, „Alle KPIs“). When the Shopify sync needs
+  Verbesserungslauf, and the fixed **last-30-days** strip from Berlin midnight
+  (Gespräche = conversations started, Kampagnen-Mails = campaign sends without
+  test sends, neu angemeldet = people with a sign-up to the one consent in
+  `consent_events` on any surface, the 0064 backfill excluded; „Alle KPIs“;
+  `getEingangSystemSnapshot` in [`admin-overview-store.ts`](../src/lib/admin-overview-store.ts),
+  the module's only export since the Übersicht helpers were removed). When the Shopify sync needs
   attention (`describeSyncProblems` in `shopify-sync.ts`: first import still
   pending, no webhook for two days, no reconcile for 36 hours, write-backs
   given up) a warning Callout links to Einstellungen.
@@ -395,13 +417,18 @@ on demand without AI.
 **Decisions** (Offen only): the primary action — **„Entwurf übernehmen“** when
 the kind or the suggestion is an e-mail and the person has consent, otherwise
 „Antworten“ (`antwort_offen`), „Daten bereitstellen“ (`datenauskunft`) or
-„Kunde öffnen“ —, „Erledigt“, „Später“ (in 3 / 7 / 30 Tagen) and „Verwerfen“
+„Kunde öffnen“, which navigate client-side (`router.push`, no page reload) —,
+„Erledigt“, „Später“ (in 3 / 7 / 30 Tagen) and „Verwerfen“
 with a reason (passt nicht, schon erledigt, falscher Zeitpunkt, anderes).
 „Entwurf übernehmen“ (`inbox/accept`) adds the person to the **Einzelansprache**
 (§3.2) with the suggestion as the drafter's operator note (Anlass, Warum, Ziel,
 Skizze, Produkte) and its discount (else the campaign's), writes the draft,
 marks the item erledigt and opens the card on the Einzelansprache desk. The
-Erledigt view shows Erledigt and Verworfen items with decision, reason and date.
+Erledigt view shows Erledigt and Verworfen items with decision, reason and date;
+in the Später and Erledigt views every item has **„Wieder öffnen“**
+(`inbox/decide` `wieder_offen` → back to Offen, toast „Wieder offen“).
+„Entwurf übernehmen“ and „Vorschlag erzeugen“ are written to the admin access
+log (`inbox.accept`, `inbox.suggest`).
 
 **Keys** (not while typing, not with a modifier, not while a dialog or menu is
 open):
@@ -413,10 +440,9 @@ open):
 | `E` | erledigt |
 | `Z` | später (3 Tage) |
 | `D` | verwerfen (reason „anderes“) |
-| `Esc` | clear the selection |
+| `Esc` | clear the selection (all views) |
 
-`Enter`, `E`, `Z`, `D` and `Esc` act only in the Offen view with an item
-selected.
+`Enter`, `E`, `Z` and `D` act only in the Offen view with an item selected.
 
 ### 3.2 Kampagnen
 
@@ -442,7 +468,8 @@ campaign.
 - **One card per campaign:** name (→ desk), phase badge, kind (Laufend /
   Aktion / Einzelansprache), Zielgruppe fest/dynamisch, discount, the audience
   in plain German (`describeAudienceSpec`, [`audience-spec.mjs`](../src/lib/audience-spec.mjs)),
-  start – end, figures (Empfänger, Entwürfe, Gesendet, Klickrate), „Prüftisch
+  start – end, figures (Empfänger, Entwürfe, Gesendet, Klickrate — sends with
+  any click, the button or the set link, over real sends), „Prüftisch
   öffnen (n)“, the start action and a ⋯ menu (Bearbeiten, Pausieren, Beenden,
   Archivieren).
 - **Status and phase** ([`campaign-def.mjs`](../src/lib/campaign-def.mjs)):
@@ -459,16 +486,18 @@ campaign.
 
 „Neue Kampagne“ / „Bearbeiten“ open one sheet (`?edit=<id|new>`; a new
 campaign starts as Entwurf). The server validates again
-(`validateCampaignInput`); the audience spec is normalised there.
+(`validateCampaignInput`); the audience spec is normalised there. With
+`?edit=new&audience=<json>` (Kunden → „Ähnliche Kunden“ → „Als Zielgruppe
+verwenden“, §3.3) the new campaign's Zielgruppe starts from that spec.
 
 | Section | Content |
 | --- | --- |
 | Grundlagen | Name (3–80), Art Aktion / Laufend (only when creating; seeds the defaults — Laufend: dynamisch, KI-Titelbild A/B, re-entry after 180 days), Start, Ende, Priorität 0–100 |
 | Briefing | free text (≤ 4,000) the AI writer reads for every mail of the campaign; „Briefing vorschlagen“ (`campaigns/assist`, writer tier) |
-| Zielgruppe | „Beschreiben“ + „Filter setzen“ (AI turns a sentence into the filters and explains them); builder with `ToggleChips` and ranges: Lebenszyklus, Wertstufe, Abwanderungsrisiko, Mit Mo gesprochen, Letzter Kauf vor (Tage), Bestellungen, Umsatz (€), Kategorie, Persona, Sprache, Einwilligung (opt-in level), keine Werbe-Mail in den letzten n Tagen, hat geklickt in den letzten n Tagen, nicht in Kampagne; Zielgruppe Fest / Dynamisch; „Erneut aufnehmen nach“ (Laufend). Beside it the live count **„Passende Kund:innen mit Einwilligung“** (`campaigns/audience-preview`, debounced): total, with Mo chat, DE / EN, the plain-German description, a few names |
+| Zielgruppe | „Beschreiben“ + „Filter setzen“ (AI turns a sentence into the filters and explains them); builder with `ToggleChips` and ranges: Lebenszyklus, Wertstufe, Abwanderungsrisiko, Mit Mo gesprochen, Letzter Kauf vor (Tage), Bestellungen, Umsatz (€), Kategorie, Persona, Sprache, Einwilligung (opt-in level), keine Werbe-Mail in den letzten n Tagen, hat geklickt in den letzten n Tagen, nicht in Kampagne; Zielgruppe Fest / Dynamisch; „Erneut aufnehmen nach“ (Laufend). The chips state the code's bounds: Lebenszyklus „Ausbauen (1–3 Mon.)“, „Weiterentwickeln (3–12 Mon.)“; Wertstufe by the most expensive single item ever bought (Kleinteile < 150 €, Komponenten to 1,499 €, Großgeräte from 1,500 €). Beside it the live count **„Passende Kund:innen mit Einwilligung“** (`campaigns/audience-preview`, debounced): total, with Mo chat, DE / EN (window aggregates over the whole match — only 8 rows travel), the plain-German description, a few names, and — when there are any — „Ohne Einwilligung passen weitere N — davon M per Brief erreichbar“ (InfoTip: e-mail advertising needs the consent; people without it can be reached by an advertising letter when a postal address is known and they have not objected) |
 | Angebot | Rabatt, Gilt für Alles / Empfehlungen / Set, „Codes gültig bis“ (Aktion) — starting values for Vorbereiten; codes are minted at send |
-| Gestaltung | Design (blank = the Einstellungen choice), Titelbild (kein / Standard / KI A/B / KI für alle), Textlänge, „Button führt zu“ Mo-Chat / Shop (+ https link), „Mo-Hinweis anhängen“ |
-| Automatik | „Automatisch vorbereiten“ n Entwürfe / Nacht (from the shared `CAMPAIGN_AUTO_PREPARE_COUNT` budget, higher priority first; cron `prepare-campaign-drafts`), Tagesziel (display only) |
+| Gestaltung | Design (blank = the Einstellungen choice), Titelbild (kein / Standard / KI A/B / KI für alle), Textlänge, „Button führt zu“ Mo-Chat / Shop (+ https link), „Mo-Hinweis anhängen“ — the chat button lives in the Mo hint, so Mo-Chat without the hint is refused („Der Button zu Mo steht im Mo-Hinweis — …“) |
+| Automatik | „Automatisch vorbereiten“ n Entwürfe / Nacht (from the shared `CAMPAIGN_AUTO_PREPARE_COUNT` budget, higher priority first; cron `prepare-campaign-drafts`), Tagesziel (display only — shown in the desk header) |
 
 Saving an active campaign with a changed audience re-matches it right away
 (`campaigns/update`). For the Einzelansprache the editor hides Zielgruppe and
@@ -482,19 +511,25 @@ clearing 100–200 e-mails a day:
 
 - **Header strip.** The campaign switcher (a menu of all non-archived
   campaigns with their draft counts and „Alle Kampagnen“), the phase badge and
-  an InfoTip (kind, audience, start/end; outside „Läuft“ no mail reaches a
-  customer — Vorbereiten and Testkontakte still work); today's progress („n
-  gesendet · m zu prüfen“ with a bar that ends at the day's queue), the view
+  an InfoTip (kind, audience, start/end; „Geplant“: no mail reaches a customer
+  before the start, Vorbereiten and Testkontakte already work; „Entwurf“ /
+  „Pausiert“: nothing goes out and drafts can only be prepared once the
+  campaign runs); today's progress („n gesendet · m zu prüfen“, plus „Tagesziel
+  n“ when the campaign sets one, with a bar that ends at the day's queue), the view
   switch Prüfen · Liste · Gesendet, status pills (Versand freigegeben/gesperrt,
   Shopify, „Zielgruppe vor …“ = the last audience refresh — „Einzeln
   aufgenommen“ for the Einzelansprache —, failed drafts; the original texts sit
   in InfoTips), „Vorbereiten…“ (a popover with Anzahl, Rabatt, Gilt für,
   Textmodus, optional KI-Hero and a cost/time estimate from the recorded
   `ai_usage` averages; it starts from the campaign's offer and hero settings,
-  remembers changes per campaign, generates heroes for the A group — for every
-  card with „KI-Titelbild für alle“ —, runs as a background job with a
+  remembers changes per campaign, offers the KI-Hero only for the hero modes
+  „KI-Titelbild für einen Teil (A/B)“ (`ai_ab`: „KI-Hero für die A-Gruppe
+  erzeugen“, about one hero per two drafts in the estimate) and „KI-Titelbild
+  für alle“ (`ai_all`: „KI-Hero für jede Mail erzeugen“, one hero per draft),
+  runs as a background job with a
   progress pill and cancel, and is refused for a campaign that is not active
-  or past its end) and a ⋯ menu (Zielgruppe aktualisieren — `campaigns/refresh`,
+  or past its end; with nothing to prepare it says „Keine offenen Empfänger —
+  erst „Zielgruppe aktualisieren“.“) and a ⋯ menu (Zielgruppe aktualisieren — `campaigns/refresh`,
   not for the Einzelansprache —, Kampagne bearbeiten, Testkontakte…,
   Tastenkürzel, Warteschlange neu aufbauen behind the ConfirmDialog).
 - **Prüfen — three columns.** The *rail* (contact search on `/` within this
@@ -510,7 +545,11 @@ clearing 100–200 e-mails a day:
   ⋯ (Vorschau `V`, Kopieren `C` → „Als erledigt markieren“, Verlauf,
   Fokus-Modus `F`, Tastenkürzel `?`), Senden `S`). The *review column*:
   Prüfpunkte (the verdict — bereit / Hinweise / blockiert — with one fix per
-  check, computed by [`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs)),
+  check, computed by [`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs);
+  the hero hint follows the campaign's hero mode — `ai_ab`: an A-group card
+  without a KI-Hero, `ai_all`: every card without one („Ohne KI-Hero“),
+  `default` / `none`: no hero hints — and the send-window hint
+  „Segment … — nicht im Sendefenster“ only applies to `laufend` campaigns),
   Empfehlungen (thumbnails, prices, availability, „+ Produkt“ with the catalog
   picker), Angebot (Rabatt 0/5/10/15/20/custom, „Gilt für“ Alles / Empfehlungen /
   Set — what Shopify applies the code to, coupon and prose follow; Set line with
@@ -533,7 +572,8 @@ clearing 100–200 e-mails a day:
   card has its own busy state. Vorbereiten runs while the review continues.
 - **Liste.** The queue as a sortable table with multi-select and bulk
   Überspringen (free, undoable), Neu generieren… and Rabatt setzen… (confirmed
-  with count and cost estimate).
+  with count and cost estimate). The Hero column shows only for the KI hero
+  modes (`ai_ab`: KI-Hero / „A ohne“ / B; `ai_all`: KI-Hero / „fehlt“).
 - **Gesendet.** This campaign's sends: the pure-DB 30-day delivery strip (gesendet, zugestellt %,
   geklickt %, Bounces, Beschwerden, Abmeldungen; link to the Kampagnen-Funnel
   on the KPI screen), then the paged, searchable history (e-mail/subject,
@@ -579,8 +619,12 @@ no block (409 otherwise), store the operator note as the drafter's brief
 (`campaign_contacts.admin_note`), write the draft and open the card on the
 Einzelansprache desk (`?campaign=einzelansprache&contact=<id>`). From there it
 is the same desk, the same Prüfpunkte and the same send path as every
-campaign. The desk's „Zielgruppe aktualisieren“ is disabled; its empty state
-points to Kunden and the Eingang.
+campaign. Several people at once come from the Kunden list („Auswählen“ →
+„Zur Kampagne…“, §3.3; `campaigns/add-recipients`): the Einzelansprache is
+preselected, the optional note becomes every recipient's brief, and the
+drafts are written on the desk with „Vorbereiten…“ — nothing is drafted or
+sent by the add itself. The desk's „Zielgruppe aktualisieren“ is disabled; its
+empty state points to Kunden and the Eingang.
 
 ### 3.3 Kunden
 
@@ -598,9 +642,12 @@ is loaded **on demand** (`GET /api/admin/customers/detail?id=`).
 
 **Retired with the client-side list:** the slim list that loaded every person
 into the browser (filters Tier, Marketing, Kauf, Versand, Herkunft), the
-`?filter=` presets, the **bulk-draft bar** (marketing drafts for many
-DOI-confirmed customers — replaced by campaigns and Vorbereiten, §3.2) and the
-**Posteingang** above the list (moved to the Eingang, §3.1).
+`?filter=` presets (the two old ones land on the closest view, §2.2), the
+**bulk-draft bar** (marketing drafts for many DOI-confirmed customers —
+replaced by „Auswählen“ → „Zur Kampagne…“ below, and by campaigns with
+Vorbereiten, §3.2) and the **Posteingang** above the list (moved to the
+Eingang, §3.1). The unused `searchCustomers` helper of `customer-list-store.ts`
+has been removed as well (the Eingang's „Zuordnen“ search uses `customers/list`).
 
 - **Summary line** — Kunden · Interessenten · mit Mo · mit Einwilligung · mit
   offenen Aufgaben, each a click on the matching view. Until the first Shopify
@@ -614,7 +661,19 @@ DOI-confirmed customers — replaced by campaigns and Vorbereiten, §3.2) and th
 - **Row** — name and e-mail, a dot for open Eingang items, last activity,
   orders × revenue, and the badges Shop / Interessent, Mo (n×), the consent
   (Einwilligung / Bestätigung offen / Abgemeldet / Ohne Einwilligung /
-  Gesperrt), Lebenszyklus, Abwanderung (mittel / hoch), Persona.
+  Gesperrt), Lebenszyklus, Abwanderung (mittel / hoch), Persona. A page past
+  the end of the list renders page 1.
+- **Auswählen → Zur Kampagne…** — „Auswählen“ (above the list) puts a checkbox
+  on every row and one in the bar for the whole page; „n ausgewählt“, „Zur
+  Kampagne…“ opens a popover (InfoTip: only people with the consent and
+  without a block are added, the rest are skipped; drafts are written on the
+  desk with „Vorbereiten…“, nothing is sent) with **Kampagne** (every campaign
+  that is not beendet or archiviert, the Einzelansprache first and
+  preselected), **„Notiz für den KI-Texter (optional)“** (≤ 2,000 characters)
+  and „Hinzufügen“; „Fertig“ leaves the mode. `POST campaigns/add-recipients`
+  (≤ 200 people per call) runs `addRecipient` per person; the toast reports „n
+  hinzugefügt“, „n waren schon dabei“ and „n übersprungen (keine Einwilligung
+  oder gesperrt)“. It replaces the retired bulk-draft bar.
 
 | Ansicht | `kview` | Means |
 | --- | --- | --- |
@@ -634,8 +693,13 @@ The header shows name, e-mail, first/last seen and the badges Shop /
 Interessent, signed-in tier, Mo, persona, returning (n×) and the one consent;
 **„Löschen“** (after a destructive confirm) runs the complete erasure
 (`customers/erase`, `erasePerson`) — the same deletion as the widget button and
-the mail link; for a Shopify customer it also queues the Shopify-side request
-(sent while `SHOPIFY_ERASURE_SYNC` is on). **No-consent strip:** without a
+the mail link; for a Shopify customer it also queues the Shopify side (a
+consent write to „abgemeldet“ and the erasure request, sent while
+`SHOPIFY_CONSENT_WRITEBACK` / `SHOPIFY_ERASURE_SYNC` are on). The confirm text
+for a Shopify customer follows `SHOPIFY_ERASURE_SYNC`: on, it says Shopify is
+asked to delete the data too; off, it says the person is unsubscribed from
+e-mail advertising in Shopify and the deletion of the shop account is queued
+until the hand-over of deletions is switched on. **No-consent strip:** without a
 sendable consent a strip under the header says the person is view-only —
 profile and data stay visible, every advertising action (campaign,
 Einzelansprache, Set-Angebot per mail) is blocked; for a blocked address it
@@ -644,11 +708,11 @@ mounted, so an edit survives switching):
 
 | Sub-tab | Content | Routes |
 | --- | --- | --- |
-| Überblick | **Kennzahlen** from `customer_facts` (Bestellungen, Umsatz, Ø Bestellwert, erster / letzter Kauf, Kaufrhythmus, Lebenszyklus, Wertstufe, Abwanderungsrisiko, nächster Kauf erwartet, Kampagnen-Mails + Klicks 90 T., Kategorien, „Wahrscheinlich als Nächstes“ — complementary products to what the person owns, with price — „Noch nicht berechnet“ until the nightly run); **Datenquellen** (Shopify seit …, Mo n Gespräche, E-Mail n Nachrichten, Shopify-Tags); **Sprache für E-Mails** Automatisch / Deutsch / Englisch — pins `customers.language_override` for every campaign and the Einzelansprache, open recipient rows follow at once; the **AI profile** („Aktuelles Kundenverständnis“: structured facts + text, badge Vollprofil / Kaufprofil, „Neu generieren“ with cost; „Kein KI-Profil ohne Einwilligung“ when `CUSTOMER_AI_PROFILE_SCOPE=consented` excludes the person); **„Widerspruch gegen Profilbildung eintragen“** (Art. 21, confirmed — deletes the stored profile and persona, none is built or used again; „Aufheben“) | `customers/language`, `customers/profile`, `customers/objection` |
-| Aktivität | one timeline, newest first: orders, Mo chats, campaign mails, consent changes, mail in / out ([`customer-timeline.mjs`](../src/lib/customer-timeline.mjs)) | — |
+| Überblick | **Kennzahlen** from `customer_facts` (Bestellungen, Umsatz, Ø Bestellwert, erster / letzter Kauf, Kaufrhythmus, Lebenszyklus, Wertstufe, Abwanderungsrisiko, nächster Kauf erwartet, Kampagnen-Mails + Klicks 90 T., Kategorien, „Wahrscheinlich als Nächstes“ — complementary products to what the person owns, with price — „Noch nicht berechnet“ until the nightly run; the InfoTip defines Wertstufe as the most expensive single item ever bought); **Datenquellen** (Shopify seit …, Mo n Gespräche, E-Mail n Nachrichten, Shopify-Tags); **Sprache für E-Mails** Automatisch / Deutsch / Englisch — pins `customers.language_override` for every campaign and the Einzelansprache, open recipient rows follow at once (`setCustomerLanguageOverride` in `customer-store.ts`); when saving fails the control snaps back to the stored value; the **AI profile** („Aktuelles Kundenverständnis“: structured facts + text, badge Vollprofil / Kaufprofil, „Neu generieren“ with cost; „Kein KI-Profil ohne Einwilligung“ when `CUSTOMER_AI_PROFILE_SCOPE=consented` excludes the person); **„Widerspruch gegen Profilbildung eintragen“** (Art. 21, confirmed — deletes the stored profile and persona, none is built or used again, and queues the removal of Mo's `mo-` tags in Shopify, §3.10; „Aufheben“); **„Ähnliche Kunden“** (a Disclosure, only for a person with orders, loaded when opened: up to 8 people with the same value tier and at least one shared bought category — most shared categories first, then same lifecycle segment, persona, revenue; deterministic, no tokens — each a link to the person with the shared categories and „ohne Einwilligung“ where the consent is missing; „n von m per E-Mail erreichbar“ and **„Als Zielgruppe verwenden“** → a new campaign with the audience value tier + these categories, `?tab=kampagne&edit=new&audience=<json>`) | `customers/language`, `customers/profile`, `customers/objection`, `customers/similar` |
+| Aktivität | one timeline, newest first: orders, Mo chats, campaign mails (with „angeklickt“ for any click), consent changes, mail in / out ([`customer-timeline.mjs`](../src/lib/customer-timeline.mjs); amounts through `admin-format.mjs`); **„Frag Mo“** — a question about this person (3–500 characters) answered from the record in one writer-tier call with cited sources („[n] Datum · Art · Titel“; the AI profile only without an Art. 21 objection) | `customers/ask` |
 | Käufe | the order ledger (`customer_orders`, migration 0062: Artikel, Bestellnummer, Rabattcode, storniert, Datum, Summe, Status; „die neuesten n von m“) with paid count, revenue and Ø; for a person not (yet) mirrored the cached per-e-mail history with „Käufe aktualisieren“ | `customers/purchases` |
 | Gespräche | the person's conversations with the shared `TranscriptView` and „Im Gespräche-Tab öffnen“ | — |
-| Marketing | **Werbe-Einwilligung** — the one consent shared with Shopify: state, Seit, Quelle, „Verlauf (n)“ from `consent_events`; „Abmelden“ on request and „Abmeldung aufheben“ for a mistaken unsubscribe (no e-mail; the change reaches Shopify through the outbox); **Einzelansprache** (only with consent: „Hinweis für die KI“ + „Einzelansprache vorbereiten“, or the open one with „Im Prüftisch öffnen“, §3.2); **Kampagnen** — the person's participation (campaign, status, date, subject, geklickt, danach abgemeldet). An open draft of the former personal marketing e-mail stays editable and sendable under „Persönliche E-Mail (bisheriger Weg)“ until it is sent or deleted (§4) | `customers/marketing-optout`, `campaigns/add-recipient`; former path: `customers/marketing-draft`, `marketing/*`, `bundles/*`, `catalog/search`, `email-hero/*` |
+| Marketing | **Werbe-Einwilligung** — the one consent shared with Shopify: state, Seit, Quelle, „Verlauf (n)“ from `consent_events`; „Abmelden“ on request and „Abmeldung aufheben“ for a mistaken unsubscribe (no e-mail; the change reaches Shopify through the outbox); **Einzelansprache** (only with consent: „Hinweis für die KI“ + „Einzelansprache vorbereiten“, or the open one with „Im Prüftisch öffnen“, §3.2); **Kampagnen** — the person's participation (campaign, status, date, subject, geklickt — any click, the button or the set link —, danach abgemeldet). An open draft of the former personal marketing e-mail stays editable and sendable under „Persönliche E-Mail (bisheriger Weg)“ until it is sent or deleted (§4) | `customers/marketing-optout`, `campaigns/add-recipient`; former path: `customers/marketing-draft`, `marketing/*`, `bundles/*`, `catalog/search`, `email-hero/*` |
 | Korrespondenz | sent + received mail threads (lazy body), reply composer with preview | `correspondence/*` |
 | Brief | physical letter: AI draft, preview, „Brief senden“ (gated by `PHYSICAL_MAIL_SENDS_APPROVED`); **„Widerspruch gegen Briefwerbung eintragen“** (Art. 21, confirmed — deletes the letter draft; the tab then shows only the objection with „Aufheben“, and drafting and sending are refused) | `customers/letter-draft`, `customers/letter-preview`, `physical/send`, `customers/objection` |
 
@@ -688,8 +752,9 @@ platform: **Kundenbasis** (Gesamtwerte, §5.17 — the shape of the whole base),
 **Eingang** (Marketing & Kampagne, §5.18 — what came up, what was done, what
 happened in the 14 days after), **Mo-Effekt** (Gesamtwerte, §5.19 — Mo
 customers vs. comparable customers without a chat) and, inside the
-Kampagnen-Funnel, the table **„Kampagnen im Vergleich“** (the same funnel per
-campaign, §5.9).
+Kampagnen-Funnel (title „Kampagnen-Funnel“, no longer „(Shopify-Subscriber)“),
+the table **„Kampagnen im Vergleich“** (the same funnel per campaign plus
+„Chat gestartet“, §5.9).
 Screenshots: `docs/screenshots/customer-platform/` (`kpi`, `kpi-kundenbasis`).
 
 ### 3.6 Gespräche
@@ -851,6 +916,24 @@ options (per-customer section, appendix), creates the report
 can be downloaded as PDF (`analytics/<id>/pdf`) or deleted (confirm). Deep link
 `?report=<id>`.
 
+Two chapters come from the customer platform — deterministic, pure DB, no extra
+tokens, assembled in the last step (`getReportCustomerBase`,
+`getReportCampaigns` in [`analytics-report-store.ts`](../src/lib/analytics-report-store.ts))
+and rendered on screen ([`ReportView.tsx`](../src/app/admin/analytics/ReportView.tsx))
+and in the PDF ([`analytics-report-pdf.mjs`](../src/lib/analytics-report-pdf.mjs)), after the
+Kennzahlen:
+
+- **Kundenbasis** („Stand heute; neue Anmeldungen im gewählten Zeitraum.“) —
+  Kunden gesamt, Shopify-Kunden, Mit Mo gesprochen, Mit Einwilligung (subscribed,
+  not blocked) as of the report's assembly, „Neu angemeldet“ (people with a
+  sign-up to the one consent in `consent_events` within the interval, any
+  surface, the backfill excluded) and the Lebenszyklus mix.
+- **Kampagnen** („Im Zeitraum gesendete Kampagnen-Mails und was daraus wurde.“)
+  — per campaign the real sends in the interval: Gesendet, Geklickt (any click,
+  with the rate), Chat gestartet (§5.9), Abgemeldet.
+
+Reports generated before these chapters render unchanged.
+
 ### 3.9 Verbesserung
 
 Mo reads a **completed Komplettanalyse** together with his own current
@@ -897,7 +980,8 @@ the customer platform's link to Shopify:
 - **Flags** as badges with InfoTips: Kundenstamm abgleichen
   (`SHOPIFY_CUSTOMER_SYNC_ENABLED`), Einwilligung an Shopify zurückschreiben
   (`SHOPIFY_CONSENT_WRITEBACK`), Löschungen an Shopify weitergeben
-  (`SHOPIFY_ERASURE_SYNC`), KI-Profile alle / mit Einwilligung
+  (`SHOPIFY_ERASURE_SYNC`), Merkmale als Shopify-Tags
+  (`SHOPIFY_WRITEBACK_ENABLED`, below), KI-Profile alle / mit Einwilligung
   (`CUSTOMER_AI_PROFILE_SCOPE`); a warning when Shopify is not configured.
 - **Counts:** Kund:innen aus Shopify, Bestellungen (Kopie), Erster Import,
   Nächtlicher Abgleich, Letzter Webhook (+ count in 24 h), Warteschlange an
@@ -915,8 +999,29 @@ the customer platform's link to Shopify:
   account with **„In Shopify anlegen…“** (confirmed; needs a finished import;
   `shopify/align` queues one `customer_create` per person, sent by the outbox
   only while `SHOPIFY_CONSENT_WRITEBACK` is on).
-- **Outbox:** write-backs that gave up (dead) with their error and **„Erneut
-  versuchen“** (`shopify/outbox`).
+- **Outbox:** write-backs that gave up (dead) with their kind („Einwilligung
+  an Shopify“, „Kunde in Shopify anlegen“, „Löschung in Shopify beantragen“,
+  „Merkmale an Shopify“), their error and **„Erneut versuchen“**
+  (`shopify/outbox`).
+- **Merkmale als Shopify-Tags** (plan D-11, `SHOPIFY_WRITEBACK_ENABLED`,
+  default off): after the nightly facts run, `/api/cron/shopify-reconcile`
+  compares each mirrored customer's desired `mo-` tags
+  ([`shopify-insight-tags.mjs`](../src/lib/shopify-insight-tags.mjs), pure and
+  tested: `mo-segment-<lifecycle segment>`, `mo-wert-<value tier>`,
+  `mo-kontakt` after a Mo chat, `mo-abwanderung-hoch`) with the `mo-` tags the
+  mirror holds and queues the difference as one `writeback` outbox row per
+  person ([`shopify-insights.ts`](../src/lib/shopify-insights.ts), at most
+  2,000 a night, none while one is still open). The outbox adds / removes only
+  `mo-` tags (`tagsAdd` / `tagsRemove`) and mirrors the result into
+  `customers.shopify_tags`; the shop's own tags are never touched. The tags can
+  be used in Shopify segments, Flow and Shopify Email. An **Art. 21 objection
+  to profiling** (Kunden → Überblick, `customers/objection` with `kind:
+  profile`) removes them: `removeInsightTags` drops the person's pending /
+  failed tag write-backs and queues one `writeback` removing every `mo-` tag
+  the mirror holds (queued whatever the switch says — it waits until the
+  switch is on), and `desiredMoTags` returns no tags while
+  `profile_objection_at` is set, so the nightly run never adds them again.
+  Lifting the objection lets the next nightly run add them back.
 - **Letzte Läufe** (Disclosure): the last 8 runs (Import Kunden, Import
   Bestellungen, Nächtlicher Abgleich) with status and counts.
 
@@ -1291,10 +1396,24 @@ campaigns incl. the Einzelansprache (see [`CAMPAIGNS.md`](./CAMPAIGNS.md)) — a
 - **Sprache** — sends by the recipient contact's *effective* language
   (`language_override ?? language`); purged contacts land in "unbekannt".
 - **Kampagnen im Vergleich** (migration 0066) — the same funnel per campaign
-  (`byCampaign`: Gesendet, Klickrate, Set geklickt, Eingelöst, Umsatz, Umsatz /
-  Send, Abgemeldet;
+  (`byCampaign`: Gesendet, Button-Klickrate, Set geklickt, **Chat gestartet**,
+  Eingelöst, Umsatz, Umsatz / Send, Abgemeldet;
   sends without a campaign as „Ohne Kampagne“), next to the existing
   breakdowns per hero variant and per lifecycle segment.
+- **Chat gestartet** („Chat-Start“) — sends whose Mo link opened a chat: the
+  tracked redirect appends the send's token as `mo_c` to the Mo deep link, the
+  widget passes it back as `campaignToken` on `POST /api/chat`
+  ([`API_CONTRACT.md`](./API_CONTRACT.md) §2), and
+  `recordCampaignChatStarted` stores **one session-less** `kpi_events` row
+  `campaign_chat_started` (`data: { sendId, campaignId }`) per real send — the
+  pseudonymous chat is never tied to the person. Shop-CTA campaigns carry no
+  `mo_c`. Until the widget sends the token the column stays at 0.
+
+The tables of this funnel label their rate **Button-Klickrate**: it counts the
+main button (`clicked_at`) and shows set clicks separately („Set geklickt“);
+the „Klickrate“ of the campaign cards on the
+Kampagnen overview, Kunden → Marketing („geklickt“), the Aktivität timeline and
+the AI profile's campaign history count **any** click (button or set link).
 
 ### 5.10 Bundle-Angebote — [`getBundleKpis()`](../src/lib/bundle-offers-store.ts)
 
@@ -1401,8 +1520,8 @@ The learning loop of the operator inbox (§3.1), windowed on
 | **Gehandelt** | status `erledigt` by an operator decision (not expired, not `erledigt_von_selbst`) |
 | **Verworfen** | status `verworfen`; „Häufigster Verwerfgrund“ = the most frequent reason |
 | **Von selbst** | closed because the rule stopped firing or the item expired |
-| **Bestellung danach (gehandelt)** | erledigt items whose 14-day outcome has ≥ 1 order (count and share) |
-| **Umsatz danach** | the outcome revenue of erledigt items |
+| **Bestellung danach (gehandelt)** | the „Gehandelt“ items (operator decisions only — self-closed and expired items are left out, so the share can no longer exceed 100 %) whose 14-day outcome has ≥ 1 order (count and share) |
+| **Umsatz danach** | the outcome revenue of the same „Gehandelt“ items |
 
 Plus the totals Hinweise, Gehandelt (share) and KI-Vorschläge (items with a
 suggestion). The caveat states it verbatim: a **description, not proof of
@@ -1497,7 +1616,8 @@ insight references), `0041` (locale + campaign click tracking), `0042`
 platform: Shopify customer mirror on `customers`, the order ledger
 `customer_orders`, `customer_facts`, the one e-mail consent + `consent_events`,
 the Shopify sync tables and outbox, `campaigns` with per-campaign recipients in
-`campaign_contacts`, `inbox_items`, the `customer_overview` view). The full
+`campaign_contacts`, `inbox_items`, the `customer_overview` view) and `0069`
+(hand-added campaign recipients keep their place in a dynamic audience). The full
 schema map is in
 [`DATABASE.md`](./DATABASE.md); migrations are forward-only and run manually by
 the maintainer.
@@ -1613,30 +1733,35 @@ anomaly is logged server-side.
 
 ## 11. Admin API routes
 
-All under `/api/admin/*`, gated by the Edge proxy **and** `guardAdminPost(req)` /
-`guardAdminGet()` in the handler (§1); JSON envelope `{ error: { code, message } }`
-on failure. Grouped by the screen that calls them.
+All under `/api/admin/*` — 96 route files —, gated by the Edge proxy **and**
+`guardAdminPost(req)` / `guardAdminGet()` in the handler (§1); JSON envelope
+`{ error: { code, message } }` on failure. Grouped by the screen that calls
+them. Actions that read or act on one person's data write the admin access log
+(`recordAdminAccess`, 33 route files) — among them `customers/ask`,
+`customers/objection`, `campaigns/add-recipient(s)`, `inbox/accept` and
+`inbox/suggest`.
 
 | Screen | Route | Purpose |
 | --- | --- | --- |
 | Eingang | `GET inbox/item?id=` | one item with the customer mini-card (identity, the one consent, sendable, figures, persona, profile excerpt) |
-| | `POST inbox/decide { id, decision, note?, snoozeDays?, action? }` | `erledigt`, `verworfen` (reason in `note`), `zurueckgestellt` (3 / 7 / 30 days), `wieder_offen` |
-| | `POST inbox/suggest { id }` | „Vorschlag erzeugen“ for one item (writer tier, `inbox-suggest.ts`) |
-| | `POST inbox/accept { id }` | „Entwurf übernehmen“: Einzelansprache recipient with the suggestion as note + discount, draft written, item erledigt → `{ contactId, campaignId, drafted }` |
+| | `POST inbox/decide { id, decision, note?, snoozeDays?, action? }` | `erledigt`, `verworfen` (reason in `note`), `zurueckgestellt` (3 / 7 / 30 days), `wieder_offen` („Wieder öffnen“); 404 `not_found` only when the item does not exist, 500 `internal_error` on a database problem |
+| | `POST inbox/suggest { id }` | „Vorschlag erzeugen“ for one item (writer tier, `inbox-suggest.ts`; access log `inbox.suggest`) |
+| | `POST inbox/accept { id }` | „Entwurf übernehmen“: Einzelansprache recipient with the suggestion as note + discount, draft written, item erledigt → `{ contactId, campaignId, drafted }` (access log `inbox.accept`) |
 | | `POST inbox/run` | „Jetzt prüfen“: run the rules now, without AI suggestions |
 | Eingang, Kunden | `GET customers/list?kq=&kview=&…` | the Kunden list as JSON (same URL parameters as the screen, §2.2) — used by the Eingang's „Zuordnen“ search |
 | Kampagnen | `GET campaigns`, `POST campaigns { name, kind, … }` | all campaigns with stats / „Neue Kampagne“ (starts as Entwurf; `validateCampaignInput`) |
 | | `POST campaigns/update { id, …fields }` | edit; an active campaign with a changed audience is re-matched at once |
 | | `POST campaigns/status { id, status }` | Starten / Pausieren / Fortsetzen / Beenden / Archivieren (`canTransition`; starting materialises the audience) |
-| | `POST campaigns/audience-preview { audience }` | the editor's live count with consent (total, with Mo, DE / EN, sample, plain-German description) |
+| | `POST campaigns/audience-preview { audience }` | the editor's live count with consent (total, with Mo, DE / EN as window aggregates, 8 sample names, plain-German description) plus `withoutConsent { total, letterReach }` — the same spec without the consent (the only match that skips it; nothing is materialised) and how many of those a letter could reach (postal address, no objection) |
 | | `POST campaigns/assist { action: audience \| brief, … }` | AI help in the editor: „Filter setzen“ from a sentence, „Briefing vorschlagen“ (proposals only) |
 | | `POST campaigns/refresh { campaignId }` | „Zielgruppe aktualisieren“ on the desk |
-| Kampagnen, Kunden | `POST campaigns/add-recipient { customerId, campaignId?, adminNote?, conversationId?, draft? }` | put one person into a campaign — without `campaignId` into the Einzelansprache; needs consent and no block; `draft: true` writes the draft |
+| Kampagnen, Kunden | `POST campaigns/add-recipient { customerId, campaignId?, adminNote?, conversationId?, draft? }` | put one person into a campaign — without `campaignId` into the Einzelansprache; needs consent and no block; `draft: true` writes the draft (access log `campaign.add_recipient`) |
+| Kunden | `POST campaigns/add-recipients { customerIds, campaignId?, adminNote? }` | „Zur Kampagne…“ for a selection (≤ 200 ids, else 400): `addRecipient` per person — without consent or with a block counted and skipped, never added; nothing drafted or sent → `{ campaignId, campaignSlug, added, alreadyIn, noConsent, blocked, notFound, failed }`; 404 / 409 `campaign_closed` for an ended or archived campaign (access log `campaign.add_recipients` with counts) |
 | Kampagnen (desk) | `POST campaign/prepare { campaignId, count, discountPercent?, textMode?, discountScope? }` | draft the next *n* pending recipients of one campaign (offer defaults from the campaign; 409 `campaign_closed` when not active or past its end) |
 | | `POST campaign/draft { contactId, … }` | (re)generate one draft |
 | | `POST campaign/update / discount / recommendations / language` | edit text, discount depth, recommended products, language pin of a draft |
 | | `POST campaign/email-preview` | render the on-screen draft as text/html |
-| | `POST campaign/send { contactId }` | approve & send through the system (`approveAndSendCampaign`) |
+| | `POST campaign/send { contactId }` | approve & send through the system (`approveAndSendCampaign`); a refusal answers with its reason as the code — e.g. `campaign_closed` 409, `sends_not_approved` / `no_consent` / `opt_in_blocked` 403, `too_soon` 429 |
 | | `POST campaign/skip / unskip / mark-done` | review decisions; `mark-done` closes the copy workflow (consent + block checked) |
 | | `POST campaign/reset-queue { campaignId }` | rebuild one campaign's review queue (destructive, behind confirm) |
 | | `POST campaign/contacts { query, campaignId? }` | contact search within a campaign's recipients |
@@ -1646,9 +1771,11 @@ on failure. Grouped by the screen that calls them.
 | Kunden, Kampagnen | `POST customers/marketing-optout { customerId \| contactId, action: optout \| lift, confirm: true }` | manual opt-out on request / lift a mistaken unsubscribe (no e-mail, audit-logged; reaches Shopify through the outbox) |
 | | `POST customers/erase { customerId \| contactId, confirm: true }` | delete the person completely (`erasePerson`, audit-logged; queues the Shopify side) |
 | Kunden | `GET customers/detail?id=` | one customer's full detail (on open) |
+| | `GET customers/similar?id=` | „Ähnliche Kunden“: up to 8 people with the same value tier and shared bought categories (consent flag each) + the audience spec that describes them (`{ items, audience }`, pure DB, `listSimilarCustomers`; access log `customer.similar`) |
+| | `POST customers/ask { customerId, question }` | „Frag Mo“: one answer from the person's record with cited sources (writer tier; access log `customer.ask`) |
 | | `POST customers/profile / purchases` | regenerate the customer profile (409 `profile_not_allowed` outside `CUSTOMER_AI_PROFILE_SCOPE`) / refresh the cached Shopify purchase history |
-| | `POST customers/language { customerId, language: de \| en \| null }` | pin / clear the e-mail language (`customers.language_override`; open recipient rows follow) |
-| | `POST customers/objection { customerId, kind: profile \| postal, objected }` | record / lift an Art. 21 objection: `profile` deletes the AI profile and stops it, `postal` stops advertising letters |
+| | `POST customers/language { customerId, language: de \| en \| null }` | pin / clear the e-mail language (`setCustomerLanguageOverride` in `customer-store.ts`: `customers.language_override`, open recipient rows follow); 404 unknown customer, 500 when it could not be saved (also without a database) |
+| | `POST customers/objection { customerId, kind: profile \| postal, objected }` | record / lift an Art. 21 objection: `profile` deletes the AI profile and stops it and queues the removal of Mo's `mo-` tags in Shopify (`removeInsightTags`, §3.10), `postal` stops advertising letters (access log `customer.objection`) |
 | | `POST customers/marketing-draft` | per-customer marketing draft of the former path (§4.2; no longer started from the UI) |
 | | `POST marketing/update / email-preview / send / delete` | edit, preview, approve & send (`approveAndSend`), delete an open draft of the former path |
 | | `POST bundles/suggest / create / archive / delete` | Set-Angebot composer |

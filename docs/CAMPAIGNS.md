@@ -139,8 +139,8 @@ Everything is validated again on the server (`validateCampaignInput`):
 | Briefing | `brief`, max 4,000 chars — Anlass, Ziel, Ton, Muss rein, Bitte nicht. The drafter reads it for every mail of the campaign (§4). „Briefing vorschlagen“ drafts one from name, kind, end date, discount and notes. |
 | Zielgruppe | The audience spec (`audience`, below), Fest/Dynamisch (`audience_mode`), „Erneut aufnehmen nach“ (`reentry_days`, `laufend` only, 14–3,650 days, empty = never), live count. Hidden for the Einzelansprache. |
 | Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations / set), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them |
-| Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode`: `none` / `default` / `ai_ab` / `ai_all`), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on) |
-| Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000, stored only) |
+| Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode`: `none` / `default` / `ai_ab` / `ai_all`), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
+| Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000 — no automation; shown as „Tagesziel n“ next to today's progress in the desk header) |
 
 Defaults per kind (`campaignDefaults`): `laufend` → dynamisch, re-entry 180 days, hero `ai_ab`,
 priority 10; `aktion` → fest, no re-entry, hero `default`, priority 50.
@@ -152,7 +152,7 @@ jsonb; unknown fields and values are dropped, never guessed. Every field is opti
 | --- | --- |
 | `optInLevels` | `confirmed_opt_in` / `single_opt_in` / `unknown` |
 | `lifecycle` | segment keys (`frisch` … `ruhen`, see Lifecycle-Segmentierung) + `unbekannt` (no purchase date) |
-| `valueTier` | `klein` / `komponente` / `grossgeraet` (by the most valuable purchase, `repurchase-analysis.mjs`) |
+| `valueTier` | `klein` / `komponente` / `grossgeraet` — by the most expensive single item the person ever bought (`anchorValueEur` / `valueTierKey` in `repurchase-analysis.mjs`): under 150 €, 150–1,499 €, from 1,500 € |
 | `churn` | `niedrig` / `mittel` / `hoch` |
 | `lastOrderDays`, `ordersCount`, `totalSpentEur` | `{ min?, max? }` |
 | `boughtAny`, `boughtNone`, `categories` | catalog handles / categories |
@@ -165,9 +165,24 @@ jsonb; unknown fields and values are dropped, never guessed. Every field is opti
 
 `describeAudienceSpec` renders the spec in German („Alle Kunden mit Einwilligung für E-Mail-Werbung
 · …“) on the card, in the editor and in the desk header. The editor exposes all fields except
-`boughtAny`/`boughtNone`/`country`/`shopifyTags`. The live count
+`boughtAny`/`boughtNone`/`country`/`shopifyTags`; its chips and InfoTips state the code's bounds
+(Lebenszyklus „Ausbauen (1–3 Mon.)“, „Weiterentwickeln (3–12 Mon.)“, Wertstufe as above), and so
+does the AI prompt of „Filter setzen“. The live count
 (`POST /api/admin/campaigns/audience-preview`, pure DB) always means „with consent“: matches, how
-many talked to Mo, the DE/EN split and a few names.
+many talked to Mo and the DE/EN split — window aggregates over the whole match (`count(*) OVER ()`),
+only 8 sample names are fetched. Below it the editor adds **„Ohne Einwilligung passen weitere N —
+davon M per Brief erreichbar“** (InfoTip): a second `matchAudience` call with `withoutConsent: true`
+counts the same spec among people WITHOUT the consent (or blocked) and how many of them have a
+postal address and no objection to advertising letters. It is the only match that skips the
+consent — a count, nothing is materialised; every recipient row still requires it.
+
+**Preset audience from Kunden.** Kunden → Überblick → „Ähnliche Kunden“ (`GET
+/api/admin/customers/similar`, `listSimilarCustomers`: the same value tier and at least one shared
+bought category, deterministic) → **„Als Zielgruppe verwenden“** opens the editor at
+`?tab=kampagne&edit=new&audience=<json>` with `{ valueTier: [<tier>], categories: [<up to six of the
+person's categories>] }` as the starting Zielgruppe. The server normalises the spec
+(`normalizeAudienceSpec`) and ignores anything unparsable or longer than 4,000 characters; the
+campaign still reaches only people with the consent.
 
 **AI help** ([`campaign-assist.ts`](../src/lib/campaign-assist.ts), writer tier, `ai_usage` call
 site `campaign_assist`, `POST /api/admin/campaigns/assist`): „Filter setzen“ turns a sentence
@@ -208,11 +223,23 @@ A recipient is added by hand (`addRecipient`, `POST /api/admin/campaigns/add-rec
 - **Eingang → „Entwurf übernehmen“** (`POST /api/admin/inbox/accept`): the item's title, reason and
   AI suggestion become the recipient's `admin_note` (the drafter brief), the suggested discount is
   used, the draft is written, the item is marked erledigt.
+- **Kunden → „Auswählen“ → „Zur Kampagne…“** (`POST /api/admin/campaigns/add-recipients
+  { customerIds, campaignId?, adminNote? }`): several people at once — at most 200 per call — into
+  the Einzelansprache (preselected, also the default without `campaignId`) or any campaign that is
+  not `beendet` / `archiviert` (else 409 `campaign_closed`), with one optional note (≤ 2,000 chars)
+  for the drafter. Each person goes through `addRecipient`; people without the consent or with a
+  block are counted and skipped, never added (`{ added, alreadyIn, noConsent, blocked, notFound,
+  failed }`). Nothing is drafted or sent — the drafts are prepared on the desk („Vorbereiten…“).
+  It replaces the retired bulk-draft bar of the Kunden screen.
 
 Adding requires the one consent and no block (the send gate re-checks). An open row is reused (note
-updated); after a `sent` / `skipped` row a new cycle starts. `conversation_id` records a chat the
-mail was started from. Einzelansprache mails go through the same desk, gates and send path as every
-campaign.
+updated; an `excluded` / `suppressed` row returns to `pending`); after a `sent` / `skipped` row a new
+cycle starts. `conversation_id` records a chat the mail was started from. Einzelansprache mails go
+through the same desk, gates and send path as every campaign. Hand-added people stay in a **`dynamisch`**
+campaign even when they do not match its spec: `addRecipient` marks the row `added_manually`
+(migration 0069) and the refresh (§2.3) only excludes rows it added itself; consent and blocks are
+still re-checked for every row. The Kunden selection takes at most 200 people per call. Every add is
+written to the admin access log (`campaign.add_recipient`, `campaign.add_recipients`).
 
 ### 2.5 Data model
 
@@ -248,9 +275,9 @@ the first failing gate is the refusal:
 
 | # | Gate | Flag / source | Code default | Effect |
 | --- | --- | --- | --- | --- |
-| 0 | Campaign live | `campaigns.status` + schedule | — | Only a campaign in phase `laeuft` sends (the Einzelansprache while `aktiv`); otherwise `campaign_closed`. A Testkontakt may send before the start, never for an ended or archived campaign. |
+| 0 | Campaign live | `campaigns.status` + schedule | — | Only a campaign in phase `laeuft` sends (the Einzelansprache while `aktiv`); otherwise `campaign_closed` (409). A Testkontakt may send before the start, never for an ended or archived campaign. |
 | 1 | Master send gate | `CAMPAIGN_SENDS_APPROVED` | **false** | While false, **every** campaign send is refused server-side (403) — UI *and* direct API calls. Drafting, preview and Copy keep working. The desk shows a banner that the sign-off for this channel is pending. Separate from `CONSENT_COPY_LAWYER_APPROVED` and `PHYSICAL_MAIL_SENDS_APPROVED`. |
-| 2 | Consent | `customers.email_consent_state`, read fresh | — | Must be `subscribed`; otherwise `no_consent`. A recipient whose customer row is gone is refused (`not_eligible`). |
+| 2 | Consent | `customers.email_consent_state`, read fresh | — | Must be `subscribed`; otherwise `no_consent` (403). A recipient whose customer row is gone is refused (`not_eligible`, 409). |
 | 3 | Opt-in level | `CAMPAIGN_ALLOW_SINGLE_OPT_IN` + `customers.email_consent_level` | **false** | Without `confirmed_opt_in` the send is refused (403, "Erneute Einwilligung erforderlich") while the flag is false; such recipients stay visible in the queue (Copy allowed). |
 | 4 | Suppression | `suppression_list` (`isSuppressed`) | — | Every reason blocks (unsubscribe, manual, bounce, complaint, erasure). Fail-closed: a DB error blocks the send. Also checked at refresh and prepare time. |
 | 5 | Frequency cap | `MARKETING_MIN_SEND_INTERVAL_DAYS` | 0 (off) | Spans **every** campaign (Einzelansprache included) **and** the Mo funnel: the newest send to the address across `campaign_sends` *and* `marketing_sends` (`lastCrossChannelSendAt`) must be older than the window (429 otherwise). |
@@ -372,7 +399,10 @@ discipline as `marketing-draft.ts`):
      `mo_view=fullscreen` (open the panel full-screen) shape how it opens.
    - `shop`: the main button („Zum Angebot“ / „Shop the offer“) leads to the campaign's `cta_url`;
      the Mo hint, if kept (`mo_promo`), then links the untracked Mo deep link.
-   - `mo_promo = false` drops the Mo hint block (with `mo_chat` the mail then has no button).
+   - `mo_promo = false` drops the Mo hint block. With `mo_chat` that would leave the mail without a
+     button, so `validateCampaignInput` refuses the combination (error on `moPromo`) — also when only
+     one of the two fields is sent: an update reads the other from the stored campaign, a create
+     without `ctaKind` counts as `mo_chat`.
 6. Footer: signed unsubscribe + Impressum/privacy via the existing
    composition (`unsubscribeFooter` + branded template), plus a separate
    "Daten löschen" link (`buildErasureUrl` → `/api/erase-data`, confirmation
@@ -402,7 +432,8 @@ and rationale in [`KAMPAGNE_REDESIGN.md`](./KAMPAGNE_REDESIGN.md); screen descri
 [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2): a rail with the queue, the rendered e-mail in
 the middle, the review column on the right. The header strip carries the campaign switcher (every
 non-archived campaign with its open drafts, „Alle Kampagnen“ back to the overview), the phase, the
-audience in German and the ⋯ menu (Zielgruppe aktualisieren, Kampagne bearbeiten,
+audience in German, today's progress („n gesendet · m zu prüfen“, plus „Tagesziel n“ when the
+campaign sets `daily_target`) and the ⋯ menu (Zielgruppe aktualisieren, Kampagne bearbeiten,
 Testkontakte…, Tastenkürzel, Warteschlange neu aufbauen). Counts, queue, Liste, Gesendet, the
 contact search and the delivery strip are per campaign; a legacy link with only `?contact=` opens the desk of that recipient's
 campaign. Keyboard-driven (`N`/`P` next/previous, `S` send, `X` skip, `E`/`Esc` edit,
@@ -421,9 +452,12 @@ discount — the same `detectDiscountTextMismatch` the send path enforces — or
 `MO-XXXX` placeholder without a discount, or a refusal the server returned for
 the last attempt), *hint* when worth a look (low-confidence recommendations, a
 recommended product gone or sold out, an attached set expired or expiring
-within two days, A-group contact without a KI-Hero while the campaign design
-has a hero, draft older than 14 days, non-sendable segment, subject over 70
-characters), *info* (edited by hand). Each check carries one fix action
+within two days, a missing KI-Hero while the campaign design has a hero —
+following the campaign's hero mode: under `ai_ab` an A-group card without one,
+under `ai_all` every card without one („Ohne KI-Hero“), under `default` /
+`none` never —, draft older than 14 days, a segment outside the send window
+(`laufend` campaigns only — an Aktion and the Einzelansprache have no window),
+subject over 70 characters), *info* (edited by hand). Each check carries one fix action
 (Überspringen, Neu generieren, Basis anpassen, Produkt tauschen, Set neu
 erstellen, Hero erzeugen, Betreff kürzen). The rail dot, the „Hinweise“ /
 „Blockiert“ chips and the Liste column show the same verdict.
@@ -445,10 +479,14 @@ while the review continues.
 Sendefenster“ — the window applies to `laufend` campaigns only), Rabatt and Textmodus for the NEW
 drafts (starting from the campaign's offer settings, remembered per browser; they also apply to
 „Entwurf erstellen“ and „Wiederherstellen“), the optional **KI-Hero** (after the drafts,
-`suggest` + `generate` for every prepared card under `ai_all`, otherwise for the A group — see
-„Hero-A/B-Test“ below; offered when the hero mode is not `none`, the design has a hero and
-generation is configured; pre-selected for `ai_ab` / `ai_all`) and an estimate — drafts, ≈ € from
-the recorded `ai_usage` averages (`estimateCampaignCosts`), ≈ minutes — before any money is spent.
+`suggest` + `generate` for every prepared card under `ai_all` — „KI-Hero für jede Mail erzeugen“ —,
+for the A group under `ai_ab` — „KI-Hero für die A-Gruppe erzeugen“, see „Hero-A/B-Test“ below;
+offered only for these two hero modes, when the design has a hero and generation is configured, and
+pre-selected) and an estimate — drafts, heroes (one per draft under `ai_all`, about half the drafts
+under `ai_ab`; `prepareEstimate` in `campaign-desk-core.mjs`), ≈ € from the recorded `ai_usage`
+averages (`estimateCampaignCosts`), ≈ minutes — before any money is spent. With nothing to prepare
+it says „Keine offenen Empfänger — erst „Zielgruppe aktualisieren“.“ The desk's Liste shows its Hero
+column only for `ai_ab` / `ai_all` („fehlt“ under `ai_all`, „A ohne“ / B under `ai_ab`).
 
 **Nightly Vorbereiten** (`GET/POST /api/cron/prepare-campaign-drafts`, 04:15 UTC, after the
 reconcile, the audience refresh and the catalog sync). `CAMPAIGN_AUTO_PREPARE_COUNT` is the nightly
@@ -577,7 +615,25 @@ via `recordCampaignClick` (`campaign-store.ts`): first click stamps `clicked_at`
 read at click time, so a config or campaign change applies to already-sent emails. Copy-path sends
 and the review-time preview stay untracked. This powers the **Kampagnen-Funnel** on the KPI tab
 (`getCampaignKpis` — sent → clicked → redeemed, the language split and the table „Kampagnen im
-Vergleich“, the same funnel per campaign); see `ADMIN_DASHBOARD.md` §5.9.
+Vergleich“, the same funnel per campaign); see `ADMIN_DASHBOARD.md` §5.9. The funnel's
+„Button-Klickrate“ counts the button (`clicked_at`) and shows set clicks separately; the campaign cards (`listCampaigns`
+„Klickrate“), Kunden → Marketing („geklickt“), the Aktivität timeline and the AI profile's campaign
+history count **any** click — the button or the set link (`clicked_at` or `bundle_clicked_at`).
+
+### Chat-Start (`mo_c` → `campaignToken`)
+
+The Mo deep link a campaign click lands on carries the send's redirect token as `mo_c`. The widget
+reads it from the landing URL and sends it back as the optional, additive **`campaignToken`** on
+`POST /api/chat` (the first turn of the session the link opened; contract in
+[`API_CONTRACT.md`](./API_CONTRACT.md) §2). The server checks the shape (`/^[A-Za-z0-9_-]{16,64}$/`),
+looks the token up among real (non-test) `campaign_sends` and records **one** `kpi_events` row
+`campaign_chat_started` per send (`recordCampaignChatStarted` in `campaign-store.ts`) — with
+`session_id = NULL` and `data: { sendId, campaignId }`, so the pseudonymous chat is never tied to the
+person. Anything else is ignored; it never blocks or fails the chat. It shows as **„Chat gestartet“**
+in „Kampagnen im Vergleich“ and in the Komplettanalyse chapter „Kampagnen“. Shop-CTA campaigns
+(`cta_kind = 'shop'`) redirect to the shop and carry no `mo_c`. The widget side (capture `mo_c` before
+the theme strips the URL parameters, send it once) is a frontend task; until it ships the column
+stays at 0.
 
 ## 6. Retention
 
@@ -607,7 +663,10 @@ tombstone, so no audience, import or webhook brings the person back.
 | AI help: audience from a sentence / Briefing draft | `POST /api/admin/campaigns/assist` (`action: "audience" \| "brief"`) |
 | Zielgruppe aktualisieren | `POST /api/admin/campaigns/refresh` |
 | Add one person (Einzelansprache by default) | `POST /api/admin/campaigns/add-recipient` |
+| Add a Kunden selection (≤ 200, consent-gated, nothing drafted) | `POST /api/admin/campaigns/add-recipients` (`{ customerIds, campaignId?, adminNote? }`) |
+| „Ähnliche Kunden“ + their audience spec (→ `?edit=new&audience=`) | `GET /api/admin/customers/similar?id=` |
 | Eingang suggestion → Einzelansprache | `POST /api/admin/inbox/accept` |
+| Chat-Start from a campaign link (widget) | `POST /api/chat` with `campaignToken` (the `mo_c` value) |
 | Nightly audience refresh (cron) | `GET/POST /api/cron/campaign-audiences` (`CRON_SECRET`, 02:30 UTC) |
 | Batch prepare | `POST /api/admin/campaign/prepare` (`campaignId`; returns `preparedContactIds`) |
 | Nightly prepare (cron, off by default) | `GET/POST /api/cron/prepare-campaign-drafts` (`CRON_SECRET`, `CAMPAIGN_AUTO_PREPARE_*`, per-campaign `auto_prepare_per_day`) |
@@ -778,18 +837,25 @@ verschickt wurde.
 - **Bewertung** — `feedback.rating` / `email_kind`: die Klick-Bewertung als
   Zahl (Ø je Zeitraum). Absichtlich anonym, daher keiner Variante zuordenbar.
 - **Chat-Start** — der Redirect hängt den Send-Token als `mo_c` an den
-  Mo-Deeplink. Die Zuordnung Chat → Send braucht noch die Widget-Seite
-  (Parameter beim Sitzungsstart mitschicken); bis dahin bleibt der Funnel beim
-  Klick stehen.
+  Mo-Deeplink; das Widget schickt ihn als `campaignToken` mit der ersten
+  Chat-Anfrage zurück (`POST /api/chat`, additiv). Der Server prüft das Format,
+  sucht den echten (Nicht-Test-)Send und speichert je Send **einmal** ein
+  sitzungsloses KPI-Event `campaign_chat_started` (`data: { sendId,
+  campaignId }`) — der pseudonyme Chat wird nie mit der Person verknüpft.
+  Sichtbar als „Chat gestartet“ in „Kampagnen im Vergleich“ und in der
+  Komplettanalyse. Die Widget-Seite (`mo_c` lesen und mitschicken) ist eine
+  Frontend-Aufgabe; bis sie live ist, bleibt die Spalte bei 0.
 
 **Der Kampagnen- und Hero-Vergleich im KPI-Tab.** Tabelle „Kampagnen im Vergleich“: derselbe
-Funnel je Kampagne (Lebenszyklus, Aktionen, Einzelansprache). Tabelle „Hero-Vergleich: lohnt sich
+Funnel je Kampagne (Lebenszyklus, Aktionen, Einzelansprache), zusätzlich mit „Chat gestartet“.
+Tabelle „Hero-Vergleich: lohnt sich
 das KI-Bild?": je Variante Gesendet, Klickrate, Set geklickt, Eingelöst, Umsatz,
 Umsatz je Send, Hero-Kosten, Kosten je Send, Abgemeldet — dazu dieselbe
 Tabelle je Lebenszyklus-Segment. Damit beide Gruppen Sends bekommen, zeigt der
 Prüftisch je Kontakt die **A/B-Gruppe** (gerade Kontakt-ID: mit KI-Hero senden, ungerade:
 Hero-Panel leer lassen). Der Titelbild-Modus der Kampagne legt fest, für wen „Vorbereiten…“
-KI-Heros erzeugt (`ai_ab`: A-Gruppe, `ai_all`: alle); bei `none` reist kein KI-Hero mit. Der
+KI-Heros erzeugt (`ai_ab`: A-Gruppe, `ai_all`: alle); bei `none` reist kein KI-Hero mit, und bei
+`default` / `none` zeigt der Prüftisch keine Hero-Hinweise und keine Hero-Spalte. Der
 Stempel hält fest, was
 tatsächlich verschickt wurde, nicht die Empfehlung. Faustregel: erst ab etwa
 100 Sends je Gruppe sind Klickraten-Unterschiede von wenigen Prozentpunkten

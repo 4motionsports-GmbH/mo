@@ -275,8 +275,9 @@ After a **successful `POST /api/capture-email` in the current chat session**
 ```
 
 When that email matches an **existing customer with history** (prior linked
-conversations, a generated "current understanding" summary, and/or a cached
-purchase history), the backend injects a compact memory block into the system
+conversations, a generated "current understanding" summary, and/or purchases —
+Mo's copy of the person's Shopify orders, else the cached purchase history),
+the backend injects a compact memory block into the system
 prompt so the assistant can consult like someone who remembers a returning
 client — acknowledge the return lightly, skip products they already own,
 tailor to their known profile. The response shape is unchanged; memory only
@@ -300,6 +301,36 @@ give their email in *this* conversation. Therefore:
   the request behaves exactly as if `customer` was never sent.
 - The session id alone never unlocks memory; the match is strictly by the
   email the user just provided in this session.
+
+#### Optional `campaignToken` — a chat opened from a campaign mail („Chat-Start“, additive 2026-10)
+
+A click on the Mo button of a campaign e-mail goes through the tracked
+redirect (§11.2), which lands on the storefront's Mo deep link with the send's
+token appended as **`mo_c=<token>`**. The widget MAY send that value back:
+
+```jsonc
+{
+  "messages": [ /* first turn of the session the link opened */ ],
+  "campaignToken": "Hk3f9QWm2xVbT0aLr7c1sYpNeD5uZ8gJ"   // the `mo_c` query value, verbatim
+}
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `campaignToken` | string? | The `mo_c` value from the landing URL. Read it **before** the theme strips the `mo*` parameters and send it with the **first** `/api/chat` request of the session that link opened; sending it again on later turns is harmless. |
+
+- **Server side:** the value is trimmed and must match
+  `/^[A-Za-z0-9_-]{16,64}$/` (real tokens are 32 base64url characters); it
+  is looked up among real campaign sends and recorded **once per send** as a
+  session-less KPI event (`campaign_chat_started`, `data: { sendId,
+  campaignId }`). The chat's `x-ms-session` is never stored with it, so the
+  pseudonymous chat is not tied to the recipient.
+- **Ignored gracefully:** a missing, malformed, unknown, test-send or
+  already-recorded token changes nothing — **no error**, no different
+  response. The recording is best-effort (it runs alongside the turn's other
+  lookups and never fails the stream); the response shape is unchanged.
+- Only campaign mails whose button leads to Mo carry `mo_c`; a shop-button
+  campaign redirects to the shop without it.
 
 **40-message cap.** If `messages.length > 40` the route returns:
 
@@ -1071,6 +1102,7 @@ them:
 | -------------------------- | ---------- | ------ |
 | `marketing_email_clicked`  | `GET /api/r/<token>` (marketing send) | `{ sendId, captureId, firstClick }`, session `NULL` |
 | `campaign_email_clicked`   | `GET /api/r/<token>` (campaign send, migration 0041) | `{ sendId, firstClick }`, session `NULL` |
+| `campaign_chat_started`    | `POST /api/chat` with a valid `campaignToken` (§2) — once per campaign send | `{ sendId, campaignId }`, session `NULL` (the widget sends the token, never this event) |
 | `bundle_offer_clicked`     | `GET /api/r/<token>` (bundle offer) | `{ offerId, status, expired }`, session `NULL` |
 | `contact_form_submitted`   | `POST /api/contact` (accepted submissions) | `{ reason, productCount }` — never the name/email/message. Session-keyed when the widget sends `sessionId` in the payload. |
 | `account_signin_succeeded` | `GET /api/auth/shopify/callback` (success) | `{ silent }` — `prompt=none` re-detects flagged. Session-keyed. |
@@ -1152,13 +1184,19 @@ What that means for the widget — all additive, no field changed:
   stays `pending` until the DOI link is clicked; nothing goes to Shopify
   before that.
 - An address that **already holds the consent** — subscribed in Shopify or
-  through an earlier Mo DOI — gets **no second DOI mail**. The opt-in
+  through an earlier Mo DOI — and is **not on the suppression list** gets **no
+  second DOI mail**. The opt-in
   endpoints then answer `marketing.status: "confirmed"`,
   `alreadyConfirmed: true`, `doiEmailSent: false`. The tap itself is still
   stored as Art. 7 evidence (`email_captures`). Treat it like any
   `confirmed` answer: no "bitte bestätigen" hint.
 - The DOI click and the unsubscribe link are reported to Shopify (§7.2,
   §7.3), so both sides stay in step.
+- A `pending` opt-in whose DOI link was never clicked falls back to „no
+  consent“ one day after the link expired (`MARKETING_DOI_EXPIRY_DAYS` + 1,
+  nightly, local only). The surfaces may then ask again — e.g.
+  `/api/auth/me` reports `marketing.status: "none"` and
+  `optInActionable: true` for a signed-in customer with a real address.
 
 ### 7.1 `POST /api/capture-email`
 
@@ -1891,11 +1929,13 @@ What an erasure does since the deletion is shared with Shopify:
    the link to the person. The address stays on the suppression list with
    reason `erasure`.
 2. **For a person with a Shopify customer id**, an erasure tombstone stops the
-   import, the reconciliation and the webhooks from re-creating them, and one
-   `data_erasure` row goes into the Shopify outbox: consent off in Shopify
-   first, then Shopify's own `customerRequestDataErasure`. The row is only sent
-   while `SHOPIFY_ERASURE_SYNC=true`; otherwise it waits. Shopify keeps the
-   order records the law requires.
+   import, the reconciliation and the webhooks from re-creating them, and two
+   rows go into the Shopify outbox: a `consent_update` to unsubscribed (sent
+   while `SHOPIFY_CONSENT_WRITEBACK=true` — so the write-back switch alone
+   already stops every Shopify-side mailer) and a `data_erasure` (sent while
+   `SHOPIFY_ERASURE_SYNC=true`: consent off again first, then Shopify's own
+   `customerRequestDataErasure`). A row whose switch is off waits. Shopify keeps
+   the order records the law requires.
 3. A Mo contact without a Shopify account (Interessent) is erased in Mo only.
 
 The reverse direction: Shopify's `customers/redact` and `customers/delete`
@@ -1912,7 +1952,7 @@ redirected with `302`. The token is tried in this order:
 | --- | --- |
 | 1:1 marketing send | The prefilled Shopify cart (discount code intact). |
 | Campaign send, campaign CTA = shop (`cta_kind = 'shop'`, an `https://` URL) | That shop URL. |
-| Campaign send, CTA = Mo (default) | The Mo deep link (`CAMPAIGN_MO_DEEPLINK_URL`) with `mo_c=<token>` appended, so the widget can attribute the chat it opens to the send. |
+| Campaign send, CTA = Mo (default) | The Mo deep link (`CAMPAIGN_MO_DEEPLINK_URL`) with `mo_c=<token>` appended; the widget passes it back as `campaignToken` on `POST /api/chat` (§2) so the chat it opens is counted for the send. |
 | Bundle offer | The bundle's cart permalink, or a branded "Angebot abgelaufen" page (`410`) for an expired / archived offer. |
 | Unknown / pruned | The storefront cart (never an error page). |
 

@@ -29,7 +29,7 @@ the lawyer items are in `ANWALTSDOSSIER.md` §13 (F-22 to F-29).
 
 | Plan | As built |
 | --- | --- |
-| Migrations 0061–0069 as in §13 | `0061_customer_mirror`, `0062_customer_orders`, `0063_customer_facts`, `0064_email_consent`, `0065_shopify_sync`, `0066_campaigns`, `0067_inbox`, `0068_customer_overview`. No `marketing_unify`, no `drop_legacy` (one release later). |
+| Migrations 0061–0069 as in §13 | `0061_customer_mirror`, `0062_customer_orders`, `0063_customer_facts`, `0064_email_consent`, `0065_shopify_sync`, `0066_campaigns`, `0067_inbox`, `0068_customer_overview`, plus `0069_campaign_manual_recipients` (hand-added recipients stay in a dynamic campaign). No `marketing_unify`, no `drop_legacy` (one release later). |
 | New `campaign_recipients` table | `campaign_contacts` became the per-campaign recipients (campaign_id, customer_id, cycle, excluded, admin_note, conversation_id); legacy rows belong to „Bestandskunden – Lebenszyklus“. |
 | Test inboxes (§10.8) | Test contacts per campaign (unchanged mechanics, scoped to the campaign). |
 | Consent alignment script (§7.7) | Migration 0064 backfills; the first import runs everyone through the resolver; Mo-only subscribers are queued from the Shopify-Abgleich card after a confirm. |

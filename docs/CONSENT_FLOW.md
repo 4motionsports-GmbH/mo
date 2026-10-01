@@ -197,8 +197,9 @@ The rules:
 | Act | One consent | Shopify (outbox) |
 | --- | --- | --- |
 | Opt-in on the capture form / chat gate / sign-in card (DOI mail sent) | `pending`, source `mo_capture_form` / `mo_chat_gate` / `mo_signin` | — (nothing before the click) |
-| Opt-in on an address already `subscribed` (Shopify or earlier DOI) | unchanged; **no DOI mail**; response `confirmed`, `alreadyConfirmed: true`; the tap is kept in `email_captures` | — |
+| Opt-in on an address already `subscribed` (Shopify or earlier DOI) and not on the block list | unchanged; **no DOI mail**; response `confirmed`, `alreadyConfirmed: true` (`subscribedElsewhere` in `email-capture-store.ts`); the tap is kept in `email_captures` | — |
 | DOI link clicked (`/api/confirm-marketing`) | `subscribed` / `confirmed_opt_in` | `consent_update`, or `customer_create` with the consent for a Mo-only subscriber |
+| DOI link never clicked — `MARKETING_DOI_EXPIRY_DAYS` + 1 day after the opt-in (nightly `/api/cron/refresh-customers`, `expirePendingConsents` in `consent-store.ts`) | `pending` → `not_subscribed` (source `mo`), history entry `origin_ref` `doi_expiry` „Bestätigungslink nicht geklickt — Anmeldung verfallen“; the surfaces may ask again | — (pending never reached Shopify) |
 | Unsubscribe link (`/api/unsubscribe`) | `unsubscribed` + block-list `unsubscribe` | `consent_update` |
 | Admin opt-out (Kunden → Marketing, Kampagne card; `/api/admin/customers/marketing-optout`) | `unsubscribed`, source `admin` + block-list `manual` | `consent_update` |
 | Admin "Abmeldung aufheben" (a mistaken opt-out) | the previous `subscribed` state and level from `consent_events` (nothing without one) | `consent_update` (or `customer_create`) |
@@ -220,9 +221,13 @@ carries its target state, is tried inline right after the change and by
 after the last attempt (shown in Einstellungen → Shopify-Abgleich). Kinds:
 `consent_update` (`customerEmailMarketingConsentUpdate`), `customer_create`
 (`customerCreate` with e-mail, name and consent — the Mo-only subscriber
-becomes a Shopify customer, one subscriber list) and `data_erasure` (see
-"Erasure"). Consent rows are sent only while **`SHOPIFY_CONSENT_WRITEBACK=true`**
-(default `false`); while off they wait and are flushed when it is turned on.
+becomes a Shopify customer, one subscriber list), `data_erasure` (see
+"Erasure") and `writeback` (Mo's `mo-…` customer tags, not consent — plan
+D-11, `SHOPIFY_WRITEBACK_ENABLED`, see
+[`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.10; an Art. 21 objection to
+profiling queues the removal of every `mo-` tag). Consent rows are sent only
+while **`SHOPIFY_CONSENT_WRITEBACK=true`** (default `false`); while off they
+wait and are flushed when it is turned on.
 
 **Erstabgleich (initial alignment)** — `src/lib/consent-alignment.ts`, card
 Einstellungen → Shopify-Abgleich:
@@ -269,8 +274,9 @@ Chat → assistant calls offer_email_summary (value-triggered: after a
         │      • German summary of the conversation
         │      • prefilled-cart permalink (NO discount)
         └─ (B) marketing: if ticked & not suppressed
-               • already subscribed (Shopify or earlier DOI)? → no token,
-                 no mail; response confirmed / alreadyConfirmed: true
+               • already subscribed (Shopify or earlier DOI) and not
+                 suppressed? → no token, no mail; response confirmed /
+                 alreadyConfirmed: true
                • else marketing_doi_status = 'pending', issue doi_token,
                  one consent → 'pending' (local only)
                • send DOI confirmation email ─────────────────────► user inbox
@@ -282,6 +288,12 @@ Chat → assistant calls offer_email_summary (value-triggered: after a
         ├─ one consent → 'subscribed' / confirmed_opt_in
         │    → shopify_outbox: consent_update, or customer_create (Mo-only)
         └─ render "Danke, deine Anmeldung ist bestätigt."
+
+   link never clicked:
+     → nightly /api/cron/refresh-customers (expirePendingConsents), one day
+       after the link expired: one consent 'pending' → 'not_subscribed' +
+       consent_events row (origin_ref 'doi_expiry'); local only — nothing
+       goes to Shopify; the person may be asked again
 
 Later, every marketing email carries:
      → GET /api/unsubscribe?token=<signed email>
@@ -319,7 +331,8 @@ email**. This is a *presentation* optimisation only — the lawful basis is
   `'confirmed'` only after the link is clicked. Withdrawable via the **same**
   unsubscribe. A customer already subscribed (Shopify or earlier DOI) is
   normally never shown the card (`optInActionable: false`); should the POST
-  arrive anyway, no DOI mail is sent and the answer is `confirmed`.
+  arrive anyway, no DOI mail is sent and the answer is `confirmed` (unless the
+  address is on the block list).
 - **Same consent audit.** The exact label + footer shown are stored verbatim as
   `consent_text_shown` with the same `consent_copy_version` stamp (v3). The copy
   is **served by the backend** (`GET /api/consent-copy?surface=signin` →
@@ -336,7 +349,7 @@ user ticks the box  ────────────────────
                                                  (guard: origin + secret + LIVE access token)
                                                  ├─ require marketingConsent === true
                                                  ├─ email = customers.email (verified; refuse shopify:<id>)
-                                                 ├─ already subscribed? → no DOI, answer 'confirmed'
+                                                 ├─ already subscribed, not suppressed? → no DOI, answer 'confirmed'
                                                  ├─ upsertEmailCapture(marketing=true) → 'pending' + token
                                                  ├─ linkCustomerOnEmailCapture (attach session)
                                                  ├─ one consent → 'pending' (source mo_signin)
@@ -395,7 +408,7 @@ marketing only, full DOI — with a typed email instead of a stored one:
   'pending'`, issues a token, and sends the **same** confirmation email;
   consent becomes `'confirmed'` only after the link is clicked. A
   suppressed/unsubscribed address is never re-pended; an address already
-  subscribed (Shopify or earlier DOI) gets no DOI mail (`confirmed`,
+  subscribed (Shopify or earlier DOI) and not suppressed gets no DOI mail (`confirmed`,
   `alreadyConfirmed: true`, `doiEmailSent: false`). Withdrawable via the
   **same** unsubscribe. Response `{ ok, marketing: { status, doiEmailSent,
   alreadyConfirmed } }`; errors `400 invalid_email |
@@ -420,7 +433,7 @@ alternative: typed email +
 user taps "Ja, Angebote aktivieren" ─────────► POST /api/chat-marketing-opt-in
                                                  (guard: origin + secret + session)
                                                  ├─ require marketingConsent === true + valid email
-                                                 ├─ already subscribed? → no DOI, answer 'confirmed'
+                                                 ├─ already subscribed, not suppressed? → no DOI, answer 'confirmed'
                                                  ├─ upsertEmailCapture(marketing=true, session_id) → 'pending' + token
                                                  ├─ linkCustomerOnEmailCapture (attach session)
                                                  ├─ one consent → 'pending' (source mo_chat_gate)
@@ -540,9 +553,14 @@ An erasure ends the consent on both sides. `erasePerson`
 consent record, `consent_events` and Mo's copy of the orders — and keeps the
 address on `suppression_list` with reason `erasure`. For a person with a
 Shopify id it writes an erasure tombstone (no import, reconciliation or webhook
-re-creates them) and queues `data_erasure`: consent off in Shopify, then
+re-creates them) and queues two outbox rows: a `consent_update` to
+`unsubscribed`, sent while `SHOPIFY_CONSENT_WRITEBACK=true` — so the write-back
+switch alone already switches the Shopify consent off and no Shopify mailer
+keeps writing to the person —, and `data_erasure`: consent off again, then
 `customerRequestDataErasure` — sent only while `SHOPIFY_ERASURE_SYNC=true`.
-Shopify keeps its own orders as long as the law requires. Shopify's
+Shopify keeps its own orders as long as the law requires. (The admin's
+„Löschen“ confirm names the Shopify deletion only while `SHOPIFY_ERASURE_SYNC`
+is on; otherwise it says the shop-account deletion is queued.) Shopify's
 `customers/redact` / `customers/delete` webhooks run the same deletion in Mo.
 A later **new** subscribe act (newer than the erasure) lifts the erasure block
 (resolver rule 1). Details: [`CUSTOMERS.md`](./CUSTOMERS.md) "Retention /
@@ -605,6 +623,14 @@ Collected from `docs/CUSTOMER_PLATFORM_PLAN.md` §4 (D-1, D-3, D-5), §7.8 and
 - [ ] **AI profiles without consent** (`CUSTOMER_AI_PROFILE_SCOPE=all`, D-1):
       Art. 6(1)(f) basis, privacy policy, right to object
       ([`CUSTOMERS.md`](./CUSTOMERS.md)).
+- [ ] **Mo's insights as Shopify customer tags** (D-11,
+      `SHOPIFY_WRITEBACK_ENABLED`, default `false`): lifecycle segment, value
+      tier, „talked to Mo“ and high churn risk are written as `mo-…` tags to
+      every mirrored Shopify customer with computed figures — independent of
+      the marketing consent — and can drive Shopify segments, Flow and Shopify
+      Email. An Art. 21 objection to profiling removes every `mo-` tag (queued
+      when the objection is recorded; the nightly run adds none while it
+      stands). Open: the basis and the privacy-policy wording for the tags.
 
 The chat gate's `signIn` strings (`chatGateSignInHint`) are UI chrome, not
 consent text, and are not part of `consentTextShown`.

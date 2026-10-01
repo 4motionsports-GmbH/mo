@@ -39,18 +39,38 @@ against `git diff d48ad77..HEAD`; (2) `npm test` 1016 green (116 files); (3) scr
 in light and dark: [`screenshots/customer-platform/`](./screenshots/customer-platform/). Touched rows below are
 updated in place and marked **2026-10**; new items carry the new IDs of the inventory (`EIG-…`, `KUN-113…`,
 `KAM-96…`, `KPI-71…`, `EIN-07…`, `GES-43`). In this update ❌ means **retired with a named replacement**; „Plan D-n“ is a
-decision of the plan. One retirement has no replacement yet: the Kunden bulk-draft bar (plan §18 maps it to
-„Zu Einzelansprache hinzufügen…“ on a selection, which is not built) — **open, needs a maintainer decision**.
+decision of the plan. One retirement had no replacement at first: the Kunden bulk-draft bar (plan §18 maps it to
+„Zu Einzelansprache hinzufügen…“ on a selection) — **closed by the follow-up below** (KUN-133).
 
 | Screen | Touched | ✅ | 🔁 | ➕ (new) | ❌ (retired → replacement) |
 | --- | --- | --- | --- | --- | --- |
 | Shell | 5 | 0 | 4 | Eingang + Kampagnen badges, `?item=`/`?status=` (Eingang), `k*` (Kunden), `?campaign=`/`?edit=`, aliases `overview`, `kampagnen` | 1 — SHL-14 Kunden `?filter=` → `?kview=` |
 | Übersicht → **Eingang** | 15 | 0 | 15 — moved to Eingang, Kunden, KPIs (Plan D-9) | EIG-01…13 | 0 (the screen itself is retired) |
-| Kunden | 80 | 2 | 65 (incl. KUN-50…84: the per-customer mail and set composer only in an open draft of the former path, Plan D-8) | KUN-113…132 (server-side list, views, Überblick, Aktivität, ledger, one consent, Einzelansprache, objections, „Wahrscheinlich als Nächstes“, „Frag Mo“) | 13 — Tier/Kauf/Versand filters, `?filter=` presets, purchase/send badges, bulk-draft bar (open, see above) |
+| Kunden | 80 | 2 | 65 (incl. KUN-50…84: the per-customer mail and set composer only in an open draft of the former path, Plan D-8) | KUN-113…132 (server-side list, views, Überblick, Aktivität, ledger, one consent, Einzelansprache, objections, „Wahrscheinlich als Nächstes“, „Frag Mo“) | 13 — Tier/Kauf/Versand filters, `?filter=` presets, purchase/send badges, bulk-draft bar (replacement built in the follow-up: KUN-133) |
 | Kampagne → **Kampagnen** | 11 (+ 5 post-baseline desk items) | 2 | 8 (+ KAM-75, 77, 87, 91, 92) | KAM-96…106 (overview, editor, live count, AI assist, desk per campaign, Einzelansprache, send gate) | 1 — „Sync“ → „Zielgruppe aktualisieren“ |
 | KPIs | 5 | 0 | 5 | KPI-71 Kampagnen im Vergleich, KPI-72 Eingang, KPI-73 Kundenbasis, KPI-74 Mo-Effekt | 0 |
 | Gespräche | 0 | — | — | GES-43 „Kunde öffnen“ on identified conversations | 0 |
 | Einstellungen | 0 | — | — | EIN-07…11 Shopify-Abgleich (incl. Erstabgleich) | 0 |
+
+### Follow-up 2026-10-01 — after `eb1816d`
+
+Verified against `main` @ `6327b0f` (commits `6cc3cce` … `6327b0f`, no migration). (1) Code check of every touched row
+and both new routes against `git diff eb1816d..HEAD -- src scripts .env.example package.json`; (2) `npm test` 1024 green
+(117 files). No new screenshots in this pass. Rows below are updated in place and marked **2026-10 follow-up**.
+Final fixes before the merge (`03b2d8d` … `b55f248`): migration `0069` (hand-added recipients stay in a dynamic
+campaign), `mo-` tags removed on a profiling objection, „Zur Kampagne…“ capped at 200 with failed adds reported,
+„Button-Klickrate“ in the KPI tables, `customer.similar` in the access log (34 route files), `inbox/decide` 404 vs 500
+from the store; `npm test` 1027 green (118 files).
+
+| Screen | Touched | 🔁 | ➕ (new) | Notes |
+| --- | --- | --- | --- | --- |
+| Shell | 2 | SHL-05 (Eingang badge + unassigned mails, read-only), SHL-14 (old `?filter=` presets land on a view) | — | `?edit=new&audience=` |
+| Eingang | 4 | EIG-09…11 („Wieder öffnen“, `Esc` in every view, client-side navigation), EIG-13 (`abgleich_konflikt`, snoozes reopen on the screen and in the cron) | — | `inbox/decide` 500 vs 404 |
+| Kunden | 8 | KUN-14, KUN-25…29 (replacement built), KUN-111 (erase wording), KUN-118 (page past the end), KUN-121/122 (Wertstufe InfoTip, language snap-back), KUN-126 (any click), KUN-132 (access log) | KUN-133 „Auswählen“ → „Zur Kampagne…“, KUN-134 „Ähnliche Kunden“ | `campaigns/add-recipients`, `customers/similar` |
+| Kampagnen | 7 | KAM-97 (Klickrate = any click), KAM-98 (true bounds, chat button needs the Mo block, preset audience), KAM-99 (window aggregates, letter reach), KAM-101 (InfoTip per phase, Tagesziel), KAM-103 (hero mode, send window), KAM-106 (409 / 403) | — | — |
+| KPIs | 3 | KPI-34…38 (title „Kampagnen-Funnel“), KPI-71 („Chat gestartet“), KPI-72 (Gehandelt-based outcome) | — | `campaignToken` on `/api/chat` |
+| Analyse | 1 | — | ANA-15 chapters „Kundenbasis“ and „Kampagnen“ (screen + PDF) | — |
+| Einstellungen | 1 | EIN-07 (new switch) | EIN-12 Merkmale als Shopify-Tags (plan D-11) | `SHOPIFY_WRITEBACK_ENABLED` |
 
 ---
 
@@ -62,7 +82,7 @@ decision of the plan. One retirement has no replacement yet: the Kunden bulk-dra
 | SHL-02 | 🔁 | The ten tab subtitles are the `description`s in `src/lib/admin-tabs.mjs` and appear verbatim in the InfoTip next to the title (UX-G4). **2026-10:** new texts for Eingang and Kampagnen (inventory §0). |
 | SHL-03 | ✅ | Theme toggle, same cookie `ms_admin_theme`, same aria-labels; Tooltip instead of `title`. |
 | SHL-04 | ✅ | „Abmelden“ server action unchanged. |
-| SHL-05 | 🔁 | Flat pill row → grouped sidebar (Arbeit · Einblicke · System) with the same labels and `?tab=` keys; every screen is a real (soft) navigation (D-2/D-3); icon rail on tablet, drawer below; ➕ badges (Kampagne queue, Posteingang, offene Fragen). **2026-10:** Eingang replaces Übersicht, „Kampagne“ → „Kampagnen“ (key `kampagne`); badges Eingang (open items with priority ≥ 80), Kampagnen (drafts over active campaigns), Wissen — the Kunden Posteingang badge is gone (the mails are a card in the Eingang, not counted in a badge). |
+| SHL-05 | 🔁 | Flat pill row → grouped sidebar (Arbeit · Einblicke · System) with the same labels and `?tab=` keys; every screen is a real (soft) navigation (D-2/D-3); icon rail on tablet, drawer below; ➕ badges (Kampagne queue, Posteingang, offene Fragen). **2026-10:** Eingang replaces Übersicht, „Kampagne“ → „Kampagnen“ (key `kampagne`); badges Eingang (open items with priority ≥ 80), Kampagnen (drafts over active campaigns), Wissen — the Kunden Posteingang badge is gone (the mails are a card in the Eingang, not counted in a badge). **2026-10 follow-up:** the Eingang badge counts the unassigned inbound mails too (`countUnmatchedInbound` is back); the badge path is read-only (a due snooze counts as open, nothing is reopened there). |
 | SHL-06 | ✅ | `1…9` unchanged; ➕ `0` reaches Einstellungen (the gap noted in the inventory is closed); ➕ shortcut sheet in the top bar (UX-G11). |
 | SHL-07 | ✅ | `/` focuses `#ms-search` on Kunden. |
 | SHL-08 | 🔁 | One fluid content area; screens flagged `wide` use the full width, prose screens an inner max width (UX-G3). |
@@ -71,7 +91,7 @@ decision of the plan. One retirement has no replacement yet: the Kunden bulk-dra
 | SHL-11 | 🔁 | `Callout` inside the Kunden screen. |
 | SHL-12 | 🔁 | `EmptyState` inside the list; search and filters stay visible (UX-G5). |
 | SHL-13 | 🔁 | `?tab=` incl. legacy `customers`; ➕ `marketing` alias. **2026-10:** default `eingang`; ➕ aliases `overview` → Eingang, `kampagnen` → Kampagnen. |
-| SHL-14 | ❌ | `?filter=no_purchase\|marketing\|draft`, legacy `?status=`. **2026-10:** the server-side Kunden list no longer reads `?filter=`/`?status=` (old links open the unfiltered list) → views `?kview=` + `k*` params (KUN-115…118); `?status=` now belongs to the Eingang. |
+| SHL-14 | ❌ | `?filter=no_purchase\|marketing\|draft`, legacy `?status=`. **2026-10:** the server-side Kunden list no longer reads `?filter=`/`?status=` (old links open the unfiltered list) → views `?kview=` + `k*` params (KUN-115…118); `?status=` now belongs to the Eingang. **2026-10 follow-up:** without `?kview=`, `?filter=marketing` lands on „Mit Einwilligung“ and `?filter=no_purchase` on „Mit Einwilligung“ + „Ohne Bestellung“ (tested); other values are ignored. |
 | SHL-15 | ✅ | `?kpiRange`, `?kpiFrom`, `?kpiTo`; ➕ `?kpiFresh=`. |
 | SHL-16 | ✅ | `grange, gfrom, gto, gtier, gerr, gcat, gqual, gq, gpage` parsed by the tested `admin-conversation-filter.mjs`; ➕ `gid`. |
 
@@ -113,9 +133,9 @@ decision of the plan. One retirement has no replacement yet: the Kunden bulk-dra
 | EIG-01…02 | ➕ | DB callout; system strip (drafts per campaign, Wissen, running analyses, 30-day strip, Shopify sync warning) — the former Übersicht. |
 | EIG-03…05 | ➕ | Status `SegmentedControl` (`?status=`), kind select, „Jetzt prüfen“ (`inbox/run`), list grouped Jetzt / Diese Woche / Später. |
 | EIG-06…08 | ➕ | Detail with evidence, customer mini-card (`inbox/item`), AI suggestion (`inbox/suggest`, re-checked against consent / objections). |
-| EIG-09…11 | ➕ | „Entwurf übernehmen“ → Einzelansprache draft (`inbox/accept`), Erledigt / Später 3·7·30 / Verwerfen with reason (`inbox/decide`), keys `J K Enter E Z D Esc`. |
+| EIG-09…11 | ➕ | „Entwurf übernehmen“ → Einzelansprache draft (`inbox/accept`), Erledigt / Später 3·7·30 / Verwerfen with reason (`inbox/decide`), keys `J K Enter E Z D Esc`. **2026-10 follow-up:** „Wieder öffnen“ on snoozed and decided items; `Esc` clears the selection in every view; the primary actions navigate client-side; `inbox/decide` answers 500 (not 404) when an existing item could not be saved; accept / suggest are audit-logged. |
 | EIG-12 | 🔁 | KUN-01…04 moved here: unmatched mails with a customer search over the whole base instead of the preselected „(passende Adresse)“. |
-| EIG-13 | ➕ | Signal kinds and rules (`customer-signals.mjs`, tested), hourly job `/api/cron/inbox`. |
+| EIG-13 | ➕ | Signal kinds and rules (`customer-signals.mjs`, tested), hourly job `/api/cron/inbox`. **2026-10 follow-up:** `abgleich_konflikt` („Shopify-Abgleich prüfen“, Jetzt) labelled; due snoozes reopen when the screen loads and in the cron (`reopenDueSnoozed`); decided items keep a marker after retention (step 8). |
 
 ## 3. Kunden (KUN)
 
@@ -127,14 +147,14 @@ decision of the plan. One retirement has no replacement yet: the Kunden bulk-dra
 | KUN-10 | 🔁 | Sort options; „Meiste Sessions“ → „Meiste Beratungen“. **2026-10:** Zuletzt aktiv / Umsatz / Bestellungen / Letzter Kauf / Name A–Z / Neueste zuerst (`?ksort=`); „Älteste zuerst“ and „Meiste Beratungen“ gone. |
 | KUN-11, 12 | 🔁 | Counter; „Zurücksetzen“ from the `FilterBar`. **2026-10:** „N Personen“ (total hits); reset returns to the chosen view. |
 | KUN-13 | ❌ | Tri-state „Alle N bestätigten auswählen“ + InfoTip. **2026-10:** retired with the bulk-draft bar (see KUN-25…29). |
-| KUN-14 | ❌ | `?filter=` presets seed the filter; ➕ `?customer=` opens a person. **2026-10:** `?filter=` no longer read → `?kview=` views (KUN-115); `?customer=` kept. |
+| KUN-14 | ❌ | `?filter=` presets seed the filter; ➕ `?customer=` opens a person. **2026-10:** `?filter=` no longer read → `?kview=` views (KUN-115); `?customer=` kept. **2026-10 follow-up:** `marketing` / `no_purchase` land on the closest view (SHL-14). |
 | KUN-15, 16 | ✅ · ❌ | Row (`role=button`, Enter/Space), per-row checkbox. **2026-10:** row kept (button, KUN-119); checkbox ❌ (bulk-draft bar retired). |
 | KUN-17 | 🔁 | Name / e-mail / tier badge — tier badge explains itself in an InfoTip (UX-K2). **2026-10:** tier badge → Shop/Interessent + Mo badges (KUN-119). |
 | KUN-18…21 | 🔁 · ❌ | `StatusBadge`s Marketing / DOI offen / Abgemeldet / gekauft / nicht gekauft / Entwurf / Gesendet. **2026-10:** Marketing 🔁 → `ConsentBadge`; gekauft 🔁 → „n × · Umsatz“ + Lebenszyklus; nicht gekauft ❌ → „Ohne Bestellung“ / Eingang „Kaufabsicht ohne Kauf“; Entwurf / Gesendet ❌ → Marketing „Kampagnen“. |
 | KUN-22 | ✅ | Relative date (`relativeDay`). |
 | KUN-23 | 🔁 | `EmptyState` in the list. |
 | KUN-24 | ✅ | |
-| KUN-25…29 | ❌ | Bulk bar: count, `#ms-bulk-depth`, Textmodus (shared `SegmentedControl`), „Auswahl aufheben“, „Entwürfe erstellen“ with live toast and pool of 4. **2026-10:** retired with the 1:1 marketing path (Plan D-8). Plan §18 maps it to „Zu Einzelansprache hinzufügen…“ on a selection — **not built; open**. Today: many people → a campaign with an audience + „Vorbereiten…“ (KAM-96…103); one person → Einzelansprache (KUN-125). |
+| KUN-25…29 | ❌ | Bulk bar: count, `#ms-bulk-depth`, Textmodus (shared `SegmentedControl`), „Auswahl aufheben“, „Entwürfe erstellen“ with live toast and pool of 4. **2026-10:** retired with the 1:1 marketing path (Plan D-8). Plan §18 maps it to „Zu Einzelansprache hinzufügen…“ on a selection — **not built; open**. Today: many people → a campaign with an audience + „Vorbereiten…“ (KAM-96…103); one person → Einzelansprache (KUN-125). **2026-10 follow-up: built** — „Auswählen“ → „Zur Kampagne…“ (KUN-133). |
 | KUN-30…33 | 🔁 | Header: name/e-mail, „Zuerst … · Zuletzt …“, tier badge, „N×“ returning badge, marketing status badge. **2026-10:** Shop/Interessent + Mo badges, tier only for tier 3, long `ConsentBadge`; no-consent strip below (KUN-120, KUN-130). |
 | KUN-34 | 🔁 | Six sub-tabs (roving focus); counts on Beratungen / Korrespondenz / Brief. **2026-10:** seven — Überblick · Aktivität · Käufe · Gespräche · Marketing · Korrespondenz · Brief (counts on Käufe, Gespräche, Korrespondenz, Brief). |
 | KUN-35…38 | 🔁 | Profil: „Kundenverständnis“, „Stand“, generate/regenerate, Markdown, token/cost line. **2026-10:** inside „Überblick“; badge Vollprofil / Kaufprofil; button hidden without permission (`CUSTOMER_AI_PROFILE_SCOPE`, Art. 21 objection — KUN-129). |
@@ -167,11 +187,13 @@ decision of the plan. One retirement has no replacement yet: the Kunden bulk-dra
 | KUN-97…103 | ✅ | Brief: header, generate, „Hinweise für den Brief“, „Briefbetreff“, „Brieftext“, save, „Vorschau aktualisieren“ (PDF blob). |
 | KUN-104 | 🔁 | „Brief senden“ → `useConfirm`; disabled reason shown as text. |
 | KUN-105…107 | ✅ | PDF iframe „Brief-Vorschau“, reason text, letter history with status badges and „Porto“. |
-| KUN-108…112 | 🔁 | Post-baseline items: „Herkunft“ filter ❌ → Shop + Mo; source badge → Shop/Mo badges; profile facts in Überblick; erasure dialog names the Shopify side; Werbe-Einwilligung → the one consent with source and history. |
-| KUN-113…119 | ➕ | Server-side list over `customer_overview`: header counts, „noch nicht übernommen“ callout, views (`?kview=`), Einwilligung / Lebenszyklus, „Weitere Filter“ (Mo, Wert, Persona, Shop, Abwanderung), search / sort / 50-row pages in the URL, rows with Shop / Mo / consent / segment / churn badges. |
-| KUN-120…124 | ➕ | No-consent strip; Überblick (Kennzahlen from `customer_facts`, Datenquellen, Shopify tags, „Sprache für E-Mails“); Aktivität timeline; Käufe from the ledger. |
-| KUN-125…130 | ➕ | Marketing: Einzelansprache, campaign participation, consent history; Brief: Art. 21 objection (and the objection notice in every letter's footer); profile depth + objection; new header. |
-| KUN-131, 132 | ➕ | Überblick „Wahrscheinlich als Nächstes“ (complements of what the person owns); Aktivität „Frag Mo“ (question about the person, answered from the record with cited sources, `customers/ask`). |
+| KUN-108…112 | 🔁 | Post-baseline items: „Herkunft“ filter ❌ → Shop + Mo; source badge → Shop/Mo badges; profile facts in Überblick; erasure dialog names the Shopify side; Werbe-Einwilligung → the one consent with source and history. **2026-10 follow-up:** the erasure dialog promises the Shopify deletion only while `SHOPIFY_ERASURE_SYNC` is on, otherwise it says the shop-account deletion is queued. |
+| KUN-113…119 | ➕ | Server-side list over `customer_overview`: header counts, „noch nicht übernommen“ callout, views (`?kview=`), Einwilligung / Lebenszyklus, „Weitere Filter“ (Mo, Wert, Persona, Shop, Abwanderung), search / sort / 50-row pages in the URL, rows with Shop / Mo / consent / segment / churn badges. **2026-10 follow-up:** a page past the end shows page 1. |
+| KUN-120…124 | ➕ | No-consent strip; Überblick (Kennzahlen from `customer_facts`, Datenquellen, Shopify tags, „Sprache für E-Mails“); Aktivität timeline; Käufe from the ledger. **2026-10 follow-up:** Wertstufe InfoTip = the most expensive single item; the language pin snaps back after a failed save (route → `setCustomerLanguageOverride`); timeline amounts through `admin-format`. |
+| KUN-125…130 | ➕ | Marketing: Einzelansprache, campaign participation („geklickt“ = any click since the follow-up), consent history; Brief: Art. 21 objection (and the objection notice in every letter's footer); profile depth + objection; new header. |
+| KUN-131, 132 | ➕ | Überblick „Wahrscheinlich als Nächstes“ (complements of what the person owns); Aktivität „Frag Mo“ (question about the person, answered from the record with cited sources, `customers/ask`; audit-logged since the follow-up). |
+| KUN-133 | ➕ | **2026-10 follow-up:** „Auswählen“ → „Zur Kampagne…“ — select people (per page header checkbox), pick a campaign (Einzelansprache first), optional note, `campaigns/add-recipients` (≤ 200, consent-gated, nothing drafted or sent). Replaces the retired bulk-draft bar (KUN-13, 16, 25…29). |
+| KUN-134 | ➕ | **2026-10 follow-up:** Überblick „Ähnliche Kunden“ (`customers/similar`: same value tier, shared bought categories, deterministic) with „Als Zielgruppe verwenden“ → `?tab=kampagne&edit=new&audience=<json>`. |
 
 ## 4. Kampagne (KAM) — heavy daily use, every behaviour kept
 
@@ -211,9 +233,9 @@ decision of the plan. One retirement has no replacement yet: the Kunden bulk-dra
 | KAM-68 | 🔁 | „Gesendet“ is paged and searchable (e-mail/subject, date range) with a „Zustellung“ column from the Resend webhook; redemption looked up for the visible page only (`GET campaign/history`; UX-C5, TECH-C3/E6). Columns Empfänger / Betreff / Via / Code / Eingelöst / Gesendet / Inhalt kept. **2026-10:** per campaign (`campaignId`). |
 | KAM-69 | ✅ | „Ansehen“ → `campaign/sent-email`. |
 | KAM-70…95 (desk, post-baseline) | 🔁 | **2026-10:** KAM-75 „Sync vor …“ → „Zielgruppe vor …“; KAM-77 menu „Zielgruppe aktualisieren“ + „Kampagne bearbeiten“; KAM-87 delivery strip per campaign; KAM-91 nightly prepare = budget across campaigns (`planAutoPrepare`); KAM-92 test contacts per campaign. |
-| KAM-96…100 | ➕ | Kampagnen overview (Aktuell / Alle / Archiv, cards with phase, audience text, figures, status actions with confirms), editor sheet (`?edit=`), live audience count, AI „Briefing vorschlagen“ / „Filter setzen“. |
-| KAM-101…103 | ➕ | Desk per campaign (`?campaign=`, switcher, phase), „Zielgruppe aktualisieren“, Vorbereiten defaults from the campaign's offer (per campaign in localStorage). |
-| KAM-104…106 | ➕ | Einzelansprache system campaign; campaign brief / end date / design / hero mode / CTA in drafts and mails; send gate campaign live → master flag → consent → opt-in → suppression → cadence. |
+| KAM-96…100 | ➕ | Kampagnen overview (Aktuell / Alle / Archiv, cards with phase, audience text, figures, status actions with confirms), editor sheet (`?edit=`), live audience count, AI „Briefing vorschlagen“ / „Filter setzen“. **2026-10 follow-up:** card Klickrate counts any click (button or set link); editor chips and the AI prompt state the code's bounds (Ausbauen 1–3 Mon., Weiterentwickeln 3–12 Mon., Wertstufe by the most expensive single item, 150 € / 1,500 €); Mo-Chat button without the Mo hint refused; live count as window aggregates (8 rows) plus „Ohne Einwilligung passen weitere N — davon M per Brief erreichbar“; `?edit=new&audience=<json>` (KUN-134). |
+| KAM-101…103 | ➕ | Desk per campaign (`?campaign=`, switcher, phase), „Zielgruppe aktualisieren“, Vorbereiten defaults from the campaign's offer (per campaign in localStorage). **2026-10 follow-up:** header InfoTip per phase and „Tagesziel n“; hero hints, the Liste hero column and the Vorbereiten hero option / estimate follow the hero mode (`ai_all` = every card, `default` / `none` = none); the send-window hint only for `laufend`; texts no longer mention the retired newsletter sync. |
+| KAM-104…106 | ➕ | Einzelansprache system campaign; campaign brief / end date / design / hero mode / CTA in drafts and mails; send gate campaign live → master flag → consent → opt-in → suppression → cadence. **2026-10 follow-up:** `campaign/send` answers `campaign_closed` 409 and `no_consent` 403; several people at once via KUN-133. |
 
 ## 5. KPIs (KPI) — every number and every caveat kept
 
@@ -229,7 +251,7 @@ decision of the plan. One retirement has no replacement yet: the Kunden bulk-dra
 | KPI-26…29 | ✅ | E-Mail-Capture-Funnel incl. „Angebote nach Auslöser“. |
 | KPI-30, 31 | ✅ | Umsatz über Mo-Rabattcodes — served from the 10-minute cache with a freshness badge. |
 | KPI-32, 33 | ✅ | Mo-zugeordneter Umsatz. |
-| KPI-34…38 | 🔁 | Kampagnen-Funnel incl. „Hero-Vergleich“ and „Nach Lebenszyklus-Segment“ tables (on `ui/table`); cached. **2026-10:** covers every campaign (recipients = customers with consent); the section title still reads „(Shopify-Subscriber)“. |
+| KPI-34…38 | 🔁 | Kampagnen-Funnel incl. „Hero-Vergleich“ and „Nach Lebenszyklus-Segment“ tables (on `ui/table`); cached. **2026-10:** covers every campaign (recipients = customers with consent); the section title still reads „(Shopify-Subscriber)“. **2026-10 follow-up:** title „Kampagnen-Funnel“. |
 | KPI-39…48 | ✅ | Bundle-Angebote, Wissen-KPIs, Feedback, Kundenkonto & Self-Service. |
 | KPI-49…54 | ✅ | KI-Kosten incl. „Nach Einsatzort“ and „Prompt-Caching (Chat)“. |
 | KPI-55 | 🔁 | Divider label → „Gesamtwerte“ group heading in the navigation plus a „Gesamt“ badge on each lifetime section. |
@@ -238,7 +260,7 @@ decision of the plan. One retirement has no replacement yet: the Kunden bulk-dra
 | KPI-61…65 | ✅ | Personas incl. „Top-Fragen generieren“ (`adminFetch` + `useAsyncAction`). |
 | KPI-66…69 | ✅ | Empfehlung → Kauf incl. the honesty banner; cached. |
 | KPI-70 | ✅ | Chart skeleton until mount (height via context), themed tooltip; Recharts loads only on this screen. |
-| KPI-71…74 | ➕ | **2026-10:** „Kampagnen im Vergleich“ table (cached with the funnel); section „Eingang“ (period, pure DB); sections „Kundenbasis“ and „Mo-Effekt“ (Gesamtwerte, pure DB; Mo-Effekt re-weights the no-Mo group to the same value-tier mix, `mo-effect.mjs`). Group descriptions in `kpi/groups.ts` updated. |
+| KPI-71…74 | ➕ | **2026-10:** „Kampagnen im Vergleich“ table (cached with the funnel; **follow-up:** column „Chat gestartet“ — session-less `campaign_chat_started` events from the widget's `campaignToken`); section „Eingang“ (period, pure DB; **follow-up:** „Bestellung danach (gehandelt)“ / „Umsatz danach“ count operator decisions only); sections „Kundenbasis“ and „Mo-Effekt“ (Gesamtwerte, pure DB; Mo-Effekt re-weights the no-Mo group to the same value-tier mix, `mo-effect.mjs`). Group descriptions in `kpi/groups.ts` updated. |
 
 All 66 caveat texts of the inventory are behind the (i) of their section, verbatim (UX-P1).
 
@@ -307,6 +329,7 @@ All 66 caveat texts of the inventory are behind the (i) of their section, verbat
 | ANA-09, 10 | ✅ | Header, „PDF herunterladen“. |
 | ANA-11 | 🔁 | „Löschen“ → `useConfirm`. |
 | ANA-12…14 | ✅ | Failure state, loading/error states, full `ReportView`. |
+| ANA-15 | ➕ | **2026-10 follow-up:** chapters „Kundenbasis“ (base today + new subscribers in the interval + Lebenszyklus) and „Kampagnen“ (per campaign: Gesendet, Geklickt, Chat gestartet, Abgemeldet) on screen and in the PDF — deterministic, no extra tokens; older reports unchanged. |
 | ➕ | | `?report=<id>`. |
 
 ## 10. Verbesserung (VER)
@@ -337,6 +360,7 @@ All 66 caveat texts of the inventory are behind the (i) of their section, verbat
 | EIN-06 | ✅ | Versand-Konfiguration (read-only). |
 | ➕ | | Systemstatus card (D-5): DB, Shopify, Resend send/webhook, Pingen, Anthropic, OpenAI, three legal gates — configured / not configured only. |
 | EIN-07…11 | ➕ | **2026-10:** „Shopify-Abgleich“ card — switches (sync, consent write-back, erasure sync, AI-profile scope), counts and last runs, first import / re-import with a step loop and cancel, dead write-backs with „Erneut versuchen“, „Erstabgleich der Einwilligung“ (Mo-only subscribers → Shopify customers after a confirm, only after the import). |
+| EIN-12 | ➕ | **2026-10 follow-up:** switch „Merkmale als Shopify-Tags“ (`SHOPIFY_WRITEBACK_ENABLED`, plan D-11, default off): nightly `mo-` tags (segment, value tier, Mo contact, high churn) through the outbox (`writeback`, „Merkmale an Shopify“); the shop's own tags untouched. An Art. 21 objection to profiling removes every `mo-` tag (queued by `customers/objection` via `removeInsightTags`, none added while it stands; lifting it lets the next nightly run add them again). |
 
 ## 12. Shared components — where they went
 
@@ -365,6 +389,8 @@ updates `?gid=`. Kampagne → Kunden remains no link (campaign contacts are Shop
 **2026-10:** recipients are customers, the desk's „Kundenprofil“ block links to `?tab=kunden&customer=`. New links:
 `?tab=eingang` (default; `?status=`, `?item=`), `?tab=kampagne&campaign=<slug>` / `&edit=<id|new>`, Kunden `?kview=` +
 `k*`, aliases `overview` and `kampagnen`. The Übersicht links `?tab=kunden&filter=…` no longer filter (SHL-14).
+**2026-10 follow-up:** `filter=marketing` / `no_purchase` land on the view „Mit Einwilligung“ (+ „Ohne Bestellung“);
+`?tab=kampagne&edit=new&audience=<json>` (from Kunden „Ähnliche Kunden“).
 
 ## 14. Documented-but-not-found
 
@@ -405,7 +431,8 @@ Both discrepancies (server-side tab switching claim, missing Einstellungen) are 
   `GET /api/consent-copy?surface=chat` carries `signIn` (sign-in first), ➕ `?surface=erase`; `/api/confirm-marketing`,
   `/api/unsubscribe`, `/api/erase-data`, `/api/account/erase`, `/api/account/export`, `/api/r/[token]` 🔁 (one consent,
   erasure reaches Shopify — a consent write to unsubscribed plus the erasure request —, export with orders / facts /
-  consent history, shop CTA redirect).
+  consent history, shop CTA redirect). **Follow-up:** ➕ optional `campaignToken` on `POST /api/chat` (the `mo_c` value
+  of a campaign link → one session-less `campaign_chat_started` event per send; anything else ignored, never an error).
 - **Webhooks:** 🔁 `/api/webhooks/shopify` — customer, consent, order-ledger, bulk and GDPR compliance topics,
   deduplicated by `X-Shopify-Webhook-Id`; accepts `SHOPIFY_WEBHOOK_SECRET` or `SHOPIFY_CLIENT_SECRET`.
 - **Admin routes:** ➕ 20 — `campaigns` (GET/POST), `campaigns/{update,status,refresh,audience-preview,assist,add-recipient}`,
@@ -413,14 +440,23 @@ Both discrepancies (server-side tab switching claim, missing Einstellungen) are 
   🔁 `campaign/{contacts,history,prepare,reset-queue,test-contacts}` take a `campaignId`, `campaign/mark-done` is gated
   by consent, `customers/{profile,letter-draft}` answer 409 on an objection / outside the profile scope; ❌ retired:
   `POST /api/admin/campaign/sync` → `campaigns/refresh`. All 94 admin route files keep `guardAdminPost`/`guardAdminGet`.
+  **Follow-up:** ➕ `campaigns/add-recipients` (POST), `customers/similar` (GET) → **96** route files, all guarded (16 GET,
+  82 POST, two both); `recordAdminAccess` in 33 files (+ `campaigns/add-recipient(s)`, `customers/ask`,
+  `customers/objection`, `inbox/accept`, `inbox/suggest`); 🔁 `campaign/send` maps `campaign_closed` → 409, `no_consent` →
+  403; `customers/language` through `setCustomerLanguageOverride` (500 instead of 503 without a database); `inbox/decide`
+  500 vs 404.
 - **Crons:** nine in `vercel.json`. ➕ `shopify-reconcile` (01:45), `campaign-audiences` (02:30), `shopify-sync`
-  (every 5 min), `inbox` (hourly :20); 🔁 `refresh-customers` (+ Kaufprofile), `prepare-campaign-drafts` (budget across
-  campaigns; expires stale pending DOIs first), `retention` (+ steps 7, 8 and 9 — sync log, decided Eingang items reduced to a marker,
+  (every 5 min), `inbox` (hourly :20); 🔁 `refresh-customers` (+ Kaufprofile; first expires stale pending DOIs —
+  `expirePendingConsents`), `prepare-campaign-drafts` (budget across campaigns), `retention` (+ steps 7, 8 and 9 — sync log, decided Eingang items reduced to a marker,
   Shopify-confirmed erasure tombstones; Shopify customers exempt from the inactive / suppressed purges);
-  ❌ `sync-campaign-audience` → `shopify-reconcile` + `campaign-audiences`.
+  ❌ `sync-campaign-audience` → `shopify-reconcile` + `campaign-audiences`. **Follow-up:** `shopify-reconcile` queues the
+  `mo-` insight tags after the facts (`writeback` outbox rows, `SHOPIFY_WRITEBACK_ENABLED`); `shopify-sync` sends them;
+  `inbox` reopens due snoozes.
 - **Libraries retired:** `src/lib/campaign-sync.ts`, `src/lib/campaign-sync-core.mjs` (+ test), `src/lib/shopify-customers.ts`,
-  `src/lib/admin-overview.mjs` (+ test), `getOverviewSnapshot` and its feeds (`admin-overview-store.ts`),
-  `countUnmatchedInbound` (`email-messages-store.ts`), `getMarketingActivity` (`marketing-store.ts`); exports removed from `campaign-store.ts` (`upsertCampaignContact(s)`,
+  `src/lib/admin-overview.mjs` (+ test), `getOverviewSnapshot` and its feeds (`admin-overview-store.ts` now exports
+  only `getEingangSystemSnapshot`), `getMarketingActivity` (`marketing-store.ts`), `searchCustomers`
+  (`customer-list-store.ts`, follow-up — unused); `countUnmatchedInbound` (`email-messages-store.ts`) was removed and
+  is back in the follow-up for the Eingang badge; exports removed from `campaign-store.ts` (`upsertCampaignContact(s)`,
   `getContactStatusesByShopifyIds`, `suppressContactsMissingFromSync`, `hasActiveCampaignSubscription`,
   `getCampaignContactForCustomer`, `linkCampaignContactsToCustomers`, `listErasedEmails`, `testContactSyncId`) and from
   `customer-store.ts` (`listCustomerListRows`, `CustomerListRow`, `CustomerPurchaseState`) — replaced by
@@ -430,13 +466,16 @@ Both discrepancies (server-side tab switching claim, missing Einstellungen) are 
 - **Environment:** ➕ 11 variables, all in `.env.example` with defaults (switches off): `SHOPIFY_CUSTOMER_SYNC_ENABLED`,
   `SHOPIFY_CONSENT_WRITEBACK`, `SHOPIFY_ERASURE_SYNC`, `SHOPIFY_CONSENT_TEXT_VERSION`, `SHOPIFY_ERASURE_ALERT_PER_HOUR`,
   `CUSTOMER_PROFILE_LIGHT_BATCH`, `CUSTOMER_AI_PROFILE_SCOPE`, `INBOX_AI_DAILY_LIMIT`, `SHOPIFY_SYNC_LOG_RETENTION_DAYS`,
-  `INBOX_RETENTION_DAYS`, `ERASURE_TOMBSTONE_RETENTION_DAYS`. Shopify scopes now include `read_customers`, `write_customers`, `read_all_orders`.
-- **Database:** migrations `0061`–`0068` (customer mirror, order ledger, facts, the one consent + `consent_events`, sync
-  tables + outbox + erasure tombstones, campaigns, inbox, view `customer_overview`) — **to be run manually** by the
+  `INBOX_RETENTION_DAYS`, `ERASURE_TOMBSTONE_RETENTION_DAYS`; **follow-up:** ➕ `SHOPIFY_WRITEBACK_ENABLED` (false). Shopify
+  scopes now include `read_customers`, `write_customers`, `read_all_orders`.
+- **Database:** migrations `0061`–`0069` (customer mirror, order ledger, facts, the one consent + `consent_events`, sync
+  tables + outbox + erasure tombstones, campaigns, inbox, view `customer_overview`, hand-added campaign recipients) — **to be run manually** by the
   maintainer, in order, before the deploy that ships the code.
 - **Tests:** 867 → 1016 green at `eb1816d` (116 files; new cores `audience-spec`, `campaign-def`, `consent-core`,
   `customer-ask-core`, `customer-facts-core`, `customer-fk-plan`, `customer-signals`, `customer-timeline`, `mo-effect`,
-  `outbox-core`, `platform-flags`, `shopify-bulk-core`, `shopify-customer-map`).
+  `outbox-core`, `platform-flags`, `shopify-bulk-core`, `shopify-customer-map`); **1024 green at `6327b0f`** (117 files;
+  ➕ `shopify-insight-tags`); **1027 green before the merge** (118 files; ➕ `text-excerpt`). The follow-up added
+  migration `0069` (`campaign_contacts.added_manually`).
 
 ## Screenshots
 
