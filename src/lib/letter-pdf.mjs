@@ -58,7 +58,7 @@ const SUBJECT_Y = PAGE_H - 326; // ≈ 115mm
 const BODY_LEFT_X = MARGIN_X;
 const BODY_TOP_Y_PAGE1 = PAGE_H - 356; // below the subject (≈ 125mm)
 const BODY_TOP_Y_PAGEN = PAGE_H - 70; // full height on continuation pages
-const BODY_BOTTOM_Y = 78; // clears the two-line footer
+const BODY_BOTTOM_Y = 78; // clears the three-line footer
 const BODY_FONT = 11;
 const BODY_LEADING = 15;
 // Helvetica 11pt over a ~481pt frame ⇒ ~80 chars; wrap a touch shorter to be safe.
@@ -94,24 +94,32 @@ function letterHeadOps() {
   );
 }
 
-/** The legal footer on every page — two muted lines under a hairline rule,
- *  mirroring the email footer's address + menu. Sits at ≈13–21mm from the bottom
- *  (clear of the 5mm border). */
+/** The objection notice every advertising letter carries (Art. 21 (2)–(4)
+ *  DSGVO: the right to object to direct marketing, stated explicitly and
+ *  separately from other information). A received objection is recorded on the
+ *  customer (`postal_objection_at`) and blocks every further letter. */
+export const LETTER_OBJECTION_NOTICE =
+  "Widerspruch gegen Werbung per Post jederzeit möglich (Art. 21 DSGVO): info@motionsports.de oder an die Anschrift unten.";
+
+/** The legal footer on every page — under a hairline rule: the objection
+ *  notice on its own line, then two muted lines mirroring the email footer's
+ *  address + menu. Sits at ≈11–20mm from the bottom (clear of the 5mm border). */
 function letterFooterOps() {
   return (
-    ruleOp(MARGIN_X, PAGE_W - MARGIN_X, 60, 0.5, "0.8 0.8 0.8") +
+    ruleOp(MARGIN_X, PAGE_W - MARGIN_X, 62, 0.5, "0.8 0.8 0.8") +
+    textOp("F1", MARGIN_X, 52, 7.5, LETTER_OBJECTION_NOTICE) +
     textOp(
       "F1",
       MARGIN_X,
-      48,
+      42,
       7.5,
-      "4motionsports GmbH · Am Weidegrund 1 · 82194 Gröbenzell",
+      "4motionsports GmbH · Am Weidegrund 1 · 82194 Gröbenzell · Datenschutz: motionsports.de/policies/privacy-policy",
       MUTED_RGB
     ) +
     textOp(
       "F1",
       MARGIN_X,
-      38,
+      32,
       7.5,
       "www.motionsports.de · Shop · Über · Kontakt · Impressum",
       MUTED_RGB
