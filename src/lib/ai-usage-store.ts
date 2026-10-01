@@ -70,6 +70,9 @@ export type AiCallSite =
   // Eingang (docs/ADMIN_DASHBOARD.md §3.1): the AI suggestion per inbox item.
   // Dashboard/admin-side spend (no conversation FK).
   | "inbox_suggestion"
+  // Kunden → Aktivität „Frag Mo“: a question answered from one customer's
+  // record (docs/CUSTOMER_PLATFORM_PLAN.md §9.5). Admin-side spend.
+  | "customer_ask"
   // Text-to-speech for voice mode (/api/tts). NB: for this call site the
   // input_tokens column carries CHARACTERS synthesized (not LLM tokens) and
   // output_tokens is 0 — OpenAI TTS is billed per character of input, and its
