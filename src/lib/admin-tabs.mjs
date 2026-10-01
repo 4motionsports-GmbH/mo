@@ -4,12 +4,14 @@
 // does not need React lives here so the shell, the page and the tests share
 // one source of truth.
 //
-// URL contract (unchanged since the first dashboard): `/admin` is the Übersicht,
-// every other screen is `/admin?tab=<key>`. The legacy `?tab=customers` (the
-// former Marketing tab) keeps resolving to Kunden.
+// URL contract (unchanged since the first dashboard): `/admin` is the first
+// screen — since the customer platform the Eingang (`?tab=eingang`) — every
+// other screen is `/admin?tab=<key>`. Legacy keys keep resolving: `overview`
+// (the former Übersicht) → Eingang, `customers` / `marketing` → Kunden,
+// `kampagnen` → Kampagnen.
 
 /**
- * @typedef {"overview" | "kunden" | "kampagne" | "kpi" | "feedback" | "gespraeche" |
+ * @typedef {"eingang" | "kunden" | "kampagne" | "kpi" | "feedback" | "gespraeche" |
  *   "wissen" | "analyse" | "verbesserung" | "einstellungen"} AdminTabKey
  * @typedef {"Arbeit" | "Einblicke" | "System"} AdminTabGroup
  * @typedef {{
@@ -32,11 +34,12 @@ export const ADMIN_TAB_GROUPS = /** @type {const} */ (["Arbeit", "Einblicke", "S
  */
 export const ADMIN_TABS = Object.freeze([
   {
-    key: "overview",
-    label: "Übersicht",
+    key: "eingang",
+    label: "Eingang",
     group: "Arbeit",
-    description: "Kennzahlen & Schnellzugriff auf einen Blick.",
-    wide: false,
+    description:
+      "Wer braucht uns heute, warum und was ist der beste nächste Schritt — Kundensignale, offene Antworten und Systemhinweise.",
+    wide: true,
     shortcut: "1",
   },
   {
@@ -124,13 +127,18 @@ export const ADMIN_TABS = Object.freeze([
 export const ADMIN_TAB_KEYS = Object.freeze(ADMIN_TABS.map((t) => t.key));
 
 /** Legacy `?tab=` values that still resolve to a screen. */
-const TAB_ALIASES = Object.freeze({ customers: "kunden", marketing: "kunden", kampagnen: "kampagne" });
+const TAB_ALIASES = Object.freeze({
+  overview: "eingang",
+  customers: "kunden",
+  marketing: "kunden",
+  kampagnen: "kampagne",
+});
 
-const DEFAULT_ADMIN_TAB = "overview";
+const DEFAULT_ADMIN_TAB = "eingang";
 
 /**
  * Resolve a raw `?tab=` value (string, array or nothing) to a screen key.
- * Unknown values fall back to the Übersicht — never to an error page.
+ * Unknown values fall back to the Eingang — never to an error page.
  * @param {unknown} raw
  * @returns {AdminTabKey}
  */
@@ -154,7 +162,7 @@ export function adminTabMeta(key) {
 }
 
 /**
- * URL of a screen. The Übersicht is the bare `/admin`; extra params are
+ * URL of a screen. The Eingang is the bare `/admin`; extra params are
  * appended (e.g. `{ filter: "no_purchase" }` for a pre-filtered Kunden list).
  * @param {AdminTabKey} key
  * @param {Record<string, string | undefined>} [params]

@@ -178,7 +178,7 @@ function Brand({ compact }: { compact: boolean }) {
         "flex h-14 items-center gap-2.5 border-b border-border px-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         compact && "justify-center px-0"
       )}
-      aria-label="motion sports Admin — Übersicht"
+      aria-label="motion sports Admin — Eingang"
     >
       <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground">
         M

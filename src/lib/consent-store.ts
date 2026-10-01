@@ -19,7 +19,6 @@ import {
   legacyMarketingStatus,
   type ConsentState,
   type ConsentLevel,
-  type ConsentSource,
   type IncomingConsent,
 } from "./consent-core.mjs";
 

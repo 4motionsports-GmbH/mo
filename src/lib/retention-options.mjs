@@ -29,7 +29,7 @@ export const RETENTION_DEFAULTS = Object.freeze({
   ANALYTICS_REPORT_RETENTION_DAYS: 365,
   // Operational records of the Shopify sync and the Eingang (0065 / 0067).
   SHOPIFY_SYNC_LOG_RETENTION_DAYS: 90,
-  INBOX_RETENTION_DAYS: 365,
+  INBOX_RETENTION_DAYS: 180,
   MO_ATTRIBUTION_WINDOW_DAYS: 30,
 });
 

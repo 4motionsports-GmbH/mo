@@ -23,7 +23,7 @@ test("registry has ten screens with unique keys, labels and shortcuts", () => {
 
 test("every legacy tab key still resolves", () => {
   for (const key of [
-    "overview",
+    "eingang",
     "kunden",
     "kampagne",
     "kpi",
@@ -41,24 +41,26 @@ test("every legacy tab key still resolves", () => {
 test("parseAdminTab handles aliases, arrays, casing and junk", () => {
   assert.equal(parseAdminTab("customers"), "kunden");
   assert.equal(parseAdminTab("marketing"), "kunden");
+  assert.equal(parseAdminTab("overview"), "eingang");
+  assert.equal(parseAdminTab("kampagnen"), "kampagne");
   assert.equal(parseAdminTab(["kpi", "x"]), "kpi");
   assert.equal(parseAdminTab(" KPI "), "kpi");
-  assert.equal(parseAdminTab(undefined), "overview");
-  assert.equal(parseAdminTab(""), "overview");
-  assert.equal(parseAdminTab("nope"), "overview");
-  assert.equal(parseAdminTab(42), "overview");
+  assert.equal(parseAdminTab(undefined), "eingang");
+  assert.equal(parseAdminTab(""), "eingang");
+  assert.equal(parseAdminTab("nope"), "eingang");
+  assert.equal(parseAdminTab(42), "eingang");
 });
 
 test("adminTabHref keeps the historical URL contract", () => {
-  assert.equal(adminTabHref("overview"), "/admin");
+  assert.equal(adminTabHref("eingang"), "/admin");
   assert.equal(adminTabHref("kunden"), "/admin?tab=kunden");
   assert.equal(adminTabHref("kunden", { filter: "no_purchase" }), "/admin?tab=kunden&filter=no_purchase");
-  assert.equal(adminTabHref("overview", { x: "" }), "/admin");
+  assert.equal(adminTabHref("eingang", { x: "" }), "/admin");
   assert.equal(adminTabHref("kpi", { kpiRange: "7d", kpiFrom: undefined }), "/admin?tab=kpi&kpiRange=7d");
 });
 
 test("shortcuts map 1…9 and 0 in display order", () => {
-  assert.equal(adminTabForShortcut("1"), "overview");
+  assert.equal(adminTabForShortcut("1"), "eingang");
   assert.equal(adminTabForShortcut("0"), "einstellungen");
   assert.equal(adminTabForShortcut("x"), null);
   assert.equal(adminTabMeta("kampagne").wide, true);

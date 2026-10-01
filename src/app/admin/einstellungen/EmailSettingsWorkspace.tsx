@@ -43,6 +43,7 @@ import {
   type DesignPreviewTarget,
 } from "./DesignPreviewDialog";
 import { SystemStatusCard } from "./SystemStatusCard";
+import { ShopifySyncCard, type ShopifySyncCardProps } from "./ShopifySyncCard";
 import type {
   EmailDesignMetaItem,
   SendConfigProps,
@@ -60,12 +61,15 @@ export function EmailSettingsWorkspace({
   initialSelections,
   sendConfig,
   systemStatus,
+  shopifySync,
 }: {
   dbReady: boolean;
   designs: EmailDesignMetaItem[];
   initialSelections: Partial<Record<string, string>>;
   sendConfig: SendConfigProps;
   systemStatus: SystemStatus;
+  /** Einstellungen → Shopify-Abgleich (null without a database). */
+  shopifySync: ShopifySyncCardProps | null;
 }) {
   const [selections, setSelections] =
     React.useState<Partial<Record<string, string>>>(initialSelections);
@@ -313,6 +317,8 @@ export function EmailSettingsWorkspace({
           </dl>
         </CardContent>
       </Card>
+
+      {shopifySync && <ShopifySyncCard {...shopifySync} />}
 
       <SystemStatusCard status={systemStatus} />
 

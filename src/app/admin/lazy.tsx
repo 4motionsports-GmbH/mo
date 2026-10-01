@@ -9,6 +9,10 @@
 
 import dynamic from "next/dynamic";
 
+export const EingangWorkspace = dynamic(() =>
+  import("./eingang/EingangWorkspace").then((m) => m.EingangWorkspace)
+);
+
 export const KundenWorkspace = dynamic(() =>
   import("./kunden/KundenWorkspace").then((m) => m.KundenWorkspace)
 );

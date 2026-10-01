@@ -15,7 +15,7 @@ import { parseAdminTab, type AdminTabKey } from "@/lib/admin-tabs.mjs";
 import { isDbConfigured } from "@/lib/db";
 import { getCampaignQueueTotals } from "@/lib/campaign-store";
 import { getQaCounts } from "@/lib/qa-store";
-import { countUnmatchedInbound } from "@/lib/email-messages-store";
+import { getInboxCounts } from "@/lib/inbox-store";
 import { resolveKpiRange } from "@/lib/kpi-range";
 import { parseAdminConversationFilter } from "@/lib/admin-conversations";
 import { parseConversationId } from "@/lib/admin-conversation-filter.mjs";
@@ -24,7 +24,7 @@ import { KpiTab } from "./KpiTab";
 import { FeedbackTab } from "./FeedbackTab";
 import { GespraecheTab } from "./GespraecheTab";
 import { WissenTab } from "./WissenTab";
-import { OverviewTab } from "./OverviewTab";
+import { EingangTab } from "./EingangTab";
 import { AnalyseTab } from "./AnalyseTab";
 import { VerbesserungTab } from "./VerbesserungTab";
 import { KampagneTab } from "./KampagneTab";
@@ -58,15 +58,11 @@ const idParam = (v: string | string[] | undefined): number | null => {
  */
 async function loadBadges(dbReady: boolean): Promise<AdminBadges> {
   if (!dbReady) return {};
-  const [campaign, qa, unmatched] = await Promise.all([
-    getCampaignQueueTotals(),
-    getQaCounts(),
-    countUnmatchedInbound(),
-  ]);
+  const [campaign, qa, inbox] = await Promise.all([getCampaignQueueTotals(), getQaCounts(), getInboxCounts()]);
   return {
+    eingang: inbox.highPriority,
     kampagne: campaign?.drafted ?? 0,
     wissen: qa.open,
-    kunden: unmatched,
   };
 }
 
@@ -74,8 +70,8 @@ async function loadBadges(dbReady: boolean): Promise<AdminBadges> {
 // so rendering one screen ships that screen's JavaScript only (TECH-E7).
 async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean) {
   switch (tab) {
-    case "overview":
-      return <OverviewTab dbReady={dbReady} />;
+    case "eingang":
+      return <EingangTab dbReady={dbReady} initialItemId={idParam(sp.item)} initialStatus={firstParam(sp.status)} />;
     case "kunden":
       // The list's search, view, filters, sort and page live in the URL
       // (k* params, lib/admin-customer-filter.mjs); ?customer= opens one.

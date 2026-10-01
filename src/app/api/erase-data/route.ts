@@ -14,6 +14,7 @@
 import { verifyErasureToken } from "@/lib/email-capture-store";
 import { erasePerson } from "@/lib/customer-erasure";
 import { erasurePageCopy } from "@/lib/consent-copy";
+import { isShopifyErasureSyncEnabled } from "@/lib/platform-flags.mjs";
 import { resolveLocale } from "@/lib/locale";
 import { renderResultPage } from "@/lib/result-page";
 import { reportError } from "@/lib/observability";
@@ -22,7 +23,7 @@ export const maxDuration = 30;
 
 export async function GET(req: Request) {
   const locale = resolveLocale(req);
-  const copy = erasurePageCopy(locale);
+  const copy = erasurePageCopy(locale, isShopifyErasureSyncEnabled());
   const token = new URL(req.url).searchParams.get("token") ?? "";
   if (!token.trim() || !verifyErasureToken(token)) {
     return renderResultPage({ status: 400, heading: copy.invalidHeading, body: copy.invalidBody, tone: "error", locale });
@@ -39,7 +40,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const locale = resolveLocale(req);
-  const copy = erasurePageCopy(locale);
+  const copy = erasurePageCopy(locale, isShopifyErasureSyncEnabled());
   let token = "";
   try {
     const form = await req.formData();

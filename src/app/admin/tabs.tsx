@@ -4,7 +4,7 @@
 import {
   BookOpen,
   FileText,
-  LayoutDashboard,
+  Inbox,
   MessagesSquare,
   MessageSquareText,
   Send,
@@ -19,7 +19,7 @@ import type { AdminTabKey } from "@/lib/admin-tabs.mjs";
 export type AdminTab = AdminTabKey;
 
 export const TAB_ICONS: Record<AdminTab, LucideIcon> = {
-  overview: LayoutDashboard,
+  eingang: Inbox,
   kampagne: Send,
   kunden: Users,
   wissen: BookOpen,
