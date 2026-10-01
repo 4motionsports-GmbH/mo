@@ -109,6 +109,19 @@ test("the prepare estimate caps at the sendable contacts and prices heroes for t
   assert.ok(Math.abs(e.costEur - (14 * 0.025 + 7 * 0.2)) < 1e-9);
   assert.equal(e.seconds, 14 * SECONDS_PER_DRAFT + 7 * SECONDS_PER_HERO);
 
+  // Hero mode „ai_all“: every draft gets a hero image.
+  const all = prepareEstimate({
+    count: 50,
+    pendingSendable: 14,
+    draftCostEur: 0.025,
+    heroCostEur: 0.2,
+    withHero: true,
+    heroForAll: true,
+  });
+  assert.equal(all.heroes, 14);
+  assert.ok(Math.abs(all.costEur - (14 * 0.025 + 14 * 0.2)) < 1e-9);
+  assert.equal(all.seconds, 14 * SECONDS_PER_DRAFT + 14 * SECONDS_PER_HERO);
+
   const noHero = prepareEstimate({ count: 25, pendingSendable: 100, draftCostEur: null, heroCostEur: null, withHero: false });
   assert.equal(noHero.drafts, 25);
   assert.equal(noHero.heroes, 0);
