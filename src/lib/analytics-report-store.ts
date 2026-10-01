@@ -115,6 +115,30 @@ export interface ReportSections {
   profiles: ReportProfileSection[];
   appendix: ReportAppendixItem[];
   notes: string[];
+  /** Chapter „Kundenbasis“ (since the customer platform; absent in older reports). */
+  customerBase?: ReportCustomerBase | null;
+  /** Chapter „Kampagnen“: mails sent in the interval, per campaign. */
+  campaigns?: ReportCampaignRow[];
+}
+
+export interface ReportCustomerBase {
+  total: number;
+  shopifyCustomers: number;
+  leads: number;
+  withMo: number;
+  subscribed: number;
+  /** People who signed up to the one consent within the interval (any surface). */
+  newSubscribers: number;
+  bySegment: Array<{ key: string; n: number }>;
+}
+
+export interface ReportCampaignRow {
+  name: string;
+  kind: string;
+  sent: number;
+  clicked: number;
+  chatStarted: number;
+  unsubscribed: number;
 }
 
 // ── Row shapes ────────────────────────────────────────────────────────────────
@@ -716,5 +740,85 @@ export async function getRangeSpend(
   } catch (err) {
     reportError(err, { route: "lib/analytics-report-store", phase: "spend" });
     return empty;
+  }
+}
+
+
+/** Chapter „Kundenbasis“: the base today plus the interval's new subscribers. Pure DB, never throws. */
+export async function getReportCustomerBase(
+  from: string,
+  to: string,
+  sql: Sql | null = getSql()
+): Promise<ReportCustomerBase | null> {
+  if (!sql) return null;
+  try {
+    const [totals, segs, fresh] = (await Promise.all([
+      sql`
+        SELECT count(*)::int AS total,
+               count(*) FILTER (WHERE is_shopify_customer)::int AS shopify,
+               count(*) FILTER (WHERE NOT is_shopify_customer)::int AS leads,
+               count(*) FILTER (WHERE conversations_count > 0)::int AS mo,
+               count(*) FILTER (WHERE email_consent_state = 'subscribed' AND NOT blocked)::int AS subscribed
+          FROM customer_overview
+      `,
+      sql`
+        SELECT COALESCE(lifecycle_segment, CASE WHEN orders_count = 0 THEN 'keine_bestellung' ELSE 'unbekannt' END) AS key,
+               count(*)::int AS n
+          FROM customer_overview
+         GROUP BY 1 ORDER BY 2 DESC
+      `,
+      sql`
+        SELECT count(DISTINCT customer_id)::int AS n
+          FROM consent_events
+         WHERE state = 'subscribed' AND COALESCE(origin_ref, '') <> 'import'
+           AND occurred_at >= ${from}::date AND occurred_at < (${to}::date + 1)
+      `,
+    ])) as [Array<Record<string, number>>, Array<{ key: string; n: number }>, Array<{ n: number }>];
+    const t = totals[0] ?? {};
+    return {
+      total: Number(t.total ?? 0),
+      shopifyCustomers: Number(t.shopify ?? 0),
+      leads: Number(t.leads ?? 0),
+      withMo: Number(t.mo ?? 0),
+      subscribed: Number(t.subscribed ?? 0),
+      newSubscribers: Number(fresh[0]?.n ?? 0),
+      bySegment: segs.map((r) => ({ key: String(r.key), n: Number(r.n) })),
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/analytics-report-store", phase: "getReportCustomerBase" });
+    return null;
+  }
+}
+
+/** Chapter „Kampagnen“: per campaign, the mails sent in the interval and what they led to. Never throws. */
+export async function getReportCampaigns(from: string, to: string, sql: Sql | null = getSql()): Promise<ReportCampaignRow[]> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT COALESCE(k.name, 'Ohne Kampagne') AS name, COALESCE(k.kind, '') AS kind,
+             count(*)::int AS sent,
+             count(*) FILTER (WHERE s.clicked_at IS NOT NULL OR s.bundle_clicked_at IS NOT NULL)::int AS clicked,
+             count(*) FILTER (WHERE EXISTS (
+               SELECT 1 FROM kpi_events e
+                WHERE e.event = 'campaign_chat_started' AND e.data->>'sendId' = s.id::text))::int AS chats,
+             count(*) FILTER (WHERE s.unsubscribed_at IS NOT NULL)::int AS unsubscribed
+        FROM campaign_sends s
+        LEFT JOIN campaigns k ON k.id = s.campaign_id
+       WHERE s.is_test = false
+         AND s.sent_at >= ${from}::date AND s.sent_at < (${to}::date + 1)
+       GROUP BY 1, 2
+       ORDER BY 3 DESC
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      name: String(r.name),
+      kind: String(r.kind),
+      sent: Number(r.sent ?? 0),
+      clicked: Number(r.clicked ?? 0),
+      chatStarted: Number(r.chats ?? 0),
+      unsubscribed: Number(r.unsubscribed ?? 0),
+    }));
+  } catch (err) {
+    reportError(err, { route: "lib/analytics-report-store", phase: "getReportCampaigns" });
+    return [];
   }
 }

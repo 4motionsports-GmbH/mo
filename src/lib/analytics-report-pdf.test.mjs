@@ -136,3 +136,20 @@ test("mdToBlocks classifies headings, bullets and paragraphs", () => {
   assert.equal(blocks[3].type, "para");
   assert.equal(blocks[3].text, "plain paragraph line");
 });
+
+test("the Kundenbasis and Kampagnen chapters render when present", () => {
+  const pdf = buildAnalyticsReportPdf({
+    title: "T",
+    from: "2026-09-01",
+    to: "2026-09-30",
+    sections: {
+      kpis: {},
+      customerBase: { total: 205, shopifyCustomers: 188, leads: 17, withMo: 35, subscribed: 120, newSubscribers: 4, bySegment: [{ key: "ausbauen", n: 29 }] },
+      campaigns: [{ name: "Black Friday 2026", kind: "aktion", sent: 10, clicked: 3, chatStarted: 1, unsubscribed: 0 }],
+    },
+  });
+  const text = pdf.toString("latin1");
+  assert.ok(text.includes("Kundenbasis"));
+  assert.ok(text.includes("Black Friday 2026"));
+  assert.ok(text.includes("Chat gestartet 1"));
+});

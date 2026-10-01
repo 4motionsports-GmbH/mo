@@ -13,8 +13,24 @@ import type {
   ReportAppendixItem,
 } from "@/lib/analytics-report-store";
 import { ADMIN_DATE_MEDIUM, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { eur, num, plural } from "@/lib/admin-format.mjs";
-import { BarList, Callout, Card, CardContent, Markdown, Section, Stat, StatusBadge } from "../ui";
+import { eur, num, plural, ratio } from "@/lib/admin-format.mjs";
+import { SEGMENT_LABELS } from "@/lib/admin-customer-filter.mjs";
+import {
+  BarList,
+  Callout,
+  Card,
+  CardContent,
+  Markdown,
+  Section,
+  Stat,
+  StatusBadge,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../ui";
 
 function fmtDate(iso: string): string {
   return formatAdmin(iso, ADMIN_DATE_MEDIUM, iso);
@@ -133,6 +149,65 @@ export function ReportView({ sections }: { sections: ReportSections }) {
           </span>
         </div>
       </Section>
+
+      {sections.customerBase && (
+        <Section title="Kundenbasis" level={3} info="Stand heute; neue Anmeldungen im gewählten Zeitraum.">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <Stat label="Kunden gesamt" value={num(sections.customerBase.total)} size="sm" />
+            <Stat label="Shopify-Kunden" value={num(sections.customerBase.shopifyCustomers)} size="sm" />
+            <Stat label="Mit Mo gesprochen" value={num(sections.customerBase.withMo)} size="sm" />
+            <Stat label="Mit Einwilligung" value={num(sections.customerBase.subscribed)} size="sm" />
+            <Stat label="Neu angemeldet" value={num(sections.customerBase.newSubscribers)} size="sm" info="Im Zeitraum, über alle Wege (Shop und Mo)." />
+          </div>
+          {sections.customerBase.bySegment.length > 0 && (
+            <Card className="mt-3">
+              <CardContent className="p-4">
+                <div className="mb-2 text-xs font-semibold text-foreground">Lebenszyklus</div>
+                <BarList
+                  rows={sections.customerBase.bySegment.map((r) => ({
+                    key: r.key,
+                    label: SEGMENT_LABELS[r.key as keyof typeof SEGMENT_LABELS] ?? r.key,
+                    count: r.n,
+                  }))}
+                />
+              </CardContent>
+            </Card>
+          )}
+        </Section>
+      )}
+
+      {sections.campaigns && sections.campaigns.length > 0 && (
+        <Section title="Kampagnen" level={3} info="Im Zeitraum gesendete Kampagnen-Mails und was daraus wurde.">
+          <Card>
+            <CardContent className="p-0 pb-2">
+              <Table className="text-xs [&_td]:tabular-nums">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Kampagne</TableHead>
+                    <TableHead align="right">Gesendet</TableHead>
+                    <TableHead align="right">Geklickt</TableHead>
+                    <TableHead align="right">Chat gestartet</TableHead>
+                    <TableHead align="right">Abgemeldet</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sections.campaigns.map((c) => (
+                    <TableRow key={c.name}>
+                      <TableCell className="font-medium">{c.name}</TableCell>
+                      <TableCell align="right">{num(c.sent)}</TableCell>
+                      <TableCell align="right">
+                        {num(c.clicked)} ({ratio(c.sent > 0 ? c.clicked / c.sent : null)})
+                      </TableCell>
+                      <TableCell align="right">{num(c.chatStarted)}</TableCell>
+                      <TableCell align="right">{num(c.unsubscribed)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </Section>
+      )}
 
       <Section title="Verteilung der Gespräche" level={3}>
         <div className="grid gap-4 sm:grid-cols-2">
