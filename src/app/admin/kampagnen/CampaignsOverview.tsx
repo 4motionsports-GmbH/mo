@@ -146,7 +146,7 @@ export function CampaignsOverview({ campaigns, options, initialEdit, sendsApprov
 
       {visible.length === 0 ? (
         <Card>
-          <CardContent className="py-10">
+          <CardContent className="py-10 pt-10">
             <EmptyState
               plain
               icon={<Megaphone />}
@@ -216,7 +216,7 @@ function CampaignCard({
 
   return (
     <Card className="flex flex-col">
-      <CardContent className="flex flex-1 flex-col gap-3 p-4">
+      <CardContent className="flex flex-1 flex-col gap-3 p-4 pt-4">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">

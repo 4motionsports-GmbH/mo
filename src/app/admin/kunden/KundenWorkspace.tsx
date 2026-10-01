@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Users } from "lucide-react";
+import { SlidersHorizontal, Users } from "lucide-react";
 import type { CustomerListItem, CustomerBaseSummary } from "@/lib/customer-list-store";
 import {
   CHURN_FILTERS,
@@ -33,6 +33,7 @@ import {
   FilterGroup,
   InfoTip,
   Pagination,
+  Popover,
   SearchInput,
   Select,
   Skeleton,
@@ -85,6 +86,10 @@ export function KundenWorkspace({
   const pathname = usePathname();
   const [pending, startTransition] = React.useTransition();
   const [query, setQuery] = React.useState(filter.q);
+  const [moreOpen, setMoreOpen] = React.useState(false);
+  // Filters behind „Weitere Filter“ that deviate from the selected view.
+  const viewBase = { ...defaultCustomerFilter(), ...(CUSTOMER_VIEWS[filter.view]?.set ?? {}) } as CustomerFilter;
+  const moreCount = (["mo", "value", "persona", "shop", "churn"] as const).filter((k) => filter[k] !== viewBase[k]).length;
   const [selectedId, setSelectedId] = React.useState<number | null>(initialCustomerId ?? items[0]?.id ?? null);
   const { customer: detail, loading, error, reload } = useCustomerDetail(selectedId);
 
@@ -165,9 +170,20 @@ export function KundenWorkspace({
         activeCount={activeCustomerFilterCount(filter)}
         onReset={() => navigate({ ...defaultCustomerFilter(), view: filter.view, ...(CUSTOMER_VIEWS[filter.view]?.set ?? {}) })}
         end={
-          <span className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
-            {pending ? "Lädt…" : `${num(total)} ${total === 1 ? "Person" : "Personen"}`}
-          </span>
+          <>
+            <FilterGroup label="Sortierung" htmlFor="k-sort">
+              <Select id="k-sort" value={filter.sort} onChange={(e) => set("sort", e.target.value as CustomerFilter["sort"])} className={SELECT_CLASS}>
+                {Object.entries(SORT_LABELS).map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            </FilterGroup>
+            <span className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
+              {pending ? "Lädt…" : `${num(total)} ${total === 1 ? "Person" : "Personen"}`}
+            </span>
+          </>
         }
       >
         <SearchInput
@@ -187,13 +203,6 @@ export function KundenWorkspace({
                 {v.label}
               </option>
             ))}
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Mo" htmlFor="k-mo">
-          <Select id="k-mo" value={filter.mo} onChange={(e) => set("mo", e.target.value as CustomerFilter["mo"])} className={SELECT_CLASS}>
-            <option value="any">Alle</option>
-            <option value="yes">Mit Mo gesprochen</option>
-            <option value="no">Noch ohne Mo</option>
           </Select>
         </FilterGroup>
         <FilterGroup label="Einwilligung" htmlFor="k-consent">
@@ -216,53 +225,67 @@ export function KundenWorkspace({
             ))}
           </Select>
         </FilterGroup>
-        <FilterGroup label="Wert" htmlFor="k-value">
-          <Select id="k-value" value={filter.value ?? ""} onChange={(e) => set("value", e.target.value || null)} className={SELECT_CLASS}>
-            <option value="">Alle</option>
-            {VALUE_FILTERS.map((v) => (
-              <option key={v} value={v}>
-                {VALUE_LABELS[v]}
-              </option>
-            ))}
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Persona" htmlFor="k-persona">
-          <Select id="k-persona" value={filter.persona ?? ""} onChange={(e) => set("persona", e.target.value || null)} className={SELECT_CLASS}>
-            <option value="">Alle</option>
-            {personas.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.label}
-              </option>
-            ))}
-            <option value="unknown">Ohne Persona</option>
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Shop" htmlFor="k-shop">
-          <Select id="k-shop" value={filter.shop} onChange={(e) => set("shop", e.target.value as CustomerFilter["shop"])} className={SELECT_CLASS}>
-            <option value="any">Alle</option>
-            <option value="shopify">Shopify-Kunden</option>
-            <option value="lead">Interessenten</option>
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Abwanderung" htmlFor="k-churn">
-          <Select id="k-churn" value={filter.churn ?? ""} onChange={(e) => set("churn", e.target.value || null)} className={SELECT_CLASS}>
-            <option value="">Alle</option>
-            {CHURN_FILTERS.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Sortierung" htmlFor="k-sort">
-          <Select id="k-sort" value={filter.sort} onChange={(e) => set("sort", e.target.value as CustomerFilter["sort"])} className={SELECT_CLASS}>
-            {Object.entries(SORT_LABELS).map(([k, label]) => (
-              <option key={k} value={k}>
-                {label}
-              </option>
-            ))}
-          </Select>
-        </FilterGroup>
+        <Popover
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          label="Weitere Filter"
+          align="start"
+          trigger={
+            <Button variant="outline" size="sm">
+              <SlidersHorizontal aria-hidden />
+              Weitere Filter
+              {moreCount > 0 && <span className="tabular-nums">({moreCount})</span>}
+            </Button>
+          }
+        >
+          <div className="flex w-72 flex-col gap-2">
+            <FilterGroup className="grid grid-cols-[6.5rem_minmax(0,1fr)]" label="Mo" htmlFor="k-mo">
+              <Select id="k-mo" value={filter.mo} onChange={(e) => set("mo", e.target.value as CustomerFilter["mo"])} className={SELECT_CLASS}>
+                <option value="any">Alle</option>
+                <option value="yes">Mit Mo gesprochen</option>
+                <option value="no">Noch ohne Mo</option>
+              </Select>
+            </FilterGroup>
+            <FilterGroup className="grid grid-cols-[6.5rem_minmax(0,1fr)]" label="Wert" htmlFor="k-value">
+              <Select id="k-value" value={filter.value ?? ""} onChange={(e) => set("value", e.target.value || null)} className={SELECT_CLASS}>
+                <option value="">Alle</option>
+                {VALUE_FILTERS.map((v) => (
+                  <option key={v} value={v}>
+                    {VALUE_LABELS[v]}
+                  </option>
+                ))}
+              </Select>
+            </FilterGroup>
+            <FilterGroup className="grid grid-cols-[6.5rem_minmax(0,1fr)]" label="Persona" htmlFor="k-persona">
+              <Select id="k-persona" value={filter.persona ?? ""} onChange={(e) => set("persona", e.target.value || null)} className={SELECT_CLASS}>
+                <option value="">Alle</option>
+                {personas.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+                <option value="unknown">Ohne Persona</option>
+              </Select>
+            </FilterGroup>
+            <FilterGroup className="grid grid-cols-[6.5rem_minmax(0,1fr)]" label="Shop" htmlFor="k-shop">
+              <Select id="k-shop" value={filter.shop} onChange={(e) => set("shop", e.target.value as CustomerFilter["shop"])} className={SELECT_CLASS}>
+                <option value="any">Alle</option>
+                <option value="shopify">Shopify-Kunden</option>
+                <option value="lead">Interessenten</option>
+              </Select>
+            </FilterGroup>
+            <FilterGroup className="grid grid-cols-[6.5rem_minmax(0,1fr)]" label="Abwanderung" htmlFor="k-churn">
+              <Select id="k-churn" value={filter.churn ?? ""} onChange={(e) => set("churn", e.target.value || null)} className={SELECT_CLASS}>
+                <option value="">Alle</option>
+                {CHURN_FILTERS.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </Select>
+            </FilterGroup>
+          </div>
+        </Popover>
       </FilterBar>
 
       <SplitPane

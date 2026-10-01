@@ -150,7 +150,7 @@ function RangeInputs({
     onChange(next.min === undefined && next.max === undefined ? undefined : next);
   };
   return (
-    <Field label={label} info={info}>
+    <Field label={unit ? `${label} (${unit})` : label} info={info}>
       <div className="flex items-center gap-2">
         <Input
           type="number"
@@ -171,7 +171,6 @@ function RangeInputs({
           value={value?.max ?? ""}
           onChange={(e) => set("max", e.target.value)}
         />
-        <span className="text-xs text-muted-foreground">{unit}</span>
       </div>
     </Field>
   );
@@ -360,7 +359,7 @@ export function CampaignEditor({
           <SectionTitle>Grundlagen</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Name" required>
-              <Input value={form.name} maxLength={80} onChange={(e) => patch({ name: e.target.value })} placeholder="z. B. Black Friday 2026" />
+              <Input data-autofocus value={form.name} maxLength={80} onChange={(e) => patch({ name: e.target.value })} placeholder="z. B. Black Friday 2026" />
             </Field>
             {!campaign && (
               <Field
@@ -463,7 +462,7 @@ export function CampaignEditor({
                   </Field>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <RangeInputs label="Letzter Kauf vor" unit="Tagen" info="Tage seit dem letzten Kauf." value={a.lastOrderDays} onChange={(v) => patchAudience({ lastOrderDays: v })} />
+                  <RangeInputs label="Letzter Kauf vor" unit="Tage" info="Tage seit dem letzten Kauf." value={a.lastOrderDays} onChange={(v) => patchAudience({ lastOrderDays: v })} />
                   <RangeInputs label="Bestellungen" unit="" info="Anzahl bezahlter Bestellungen." value={a.ordersCount} onChange={(v) => patchAudience({ ordersCount: v })} />
                   <RangeInputs label="Umsatz" unit="€" info="Summe aller bezahlten Bestellungen." value={a.totalSpentEur} onChange={(v) => patchAudience({ totalSpentEur: v })} />
                 </div>
