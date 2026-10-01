@@ -1,8 +1,8 @@
 // POST /api/admin/bundles/archive  { id }
 //
-// Manually archive a bundle offer (S11 UI): archives the Shopify product
-// (ARCHIVED, never deleted — preserves order history, reversible) and flips the
-// row to expired. Late clicks then hit the friendly "Angebot abgelaufen" page.
+// Manually end a bundle offer (S11 UI): deletes the Shopify product (placed
+// orders keep their own line items) and flips the row to expired. Late clicks
+// then hit the friendly "Angebot abgelaufen" page.
 //
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 

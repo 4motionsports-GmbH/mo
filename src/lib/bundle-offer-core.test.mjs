@@ -13,6 +13,10 @@ import {
   validateAndSnapshotComponents,
   isExpired,
   runBundleExpirySweep,
+  isProductGoneUserError,
+  bundleItemList,
+  bundleItemLabel,
+  bundleDescriptionHtml,
   isDeletableBundleStatus,
   DELETABLE_BUNDLE_STATUSES,
 } from "./bundle-offer-core.mjs";
@@ -196,37 +200,46 @@ test("isExpired compares against now", () => {
 
 // ── expiry-cron idempotency ──────────────────────────────────────────────────
 
-test("runBundleExpirySweep archives due offers and is a no-op on re-run", async () => {
+test("runBundleExpirySweep deletes due offers' products and is a no-op on re-run", async () => {
   // Simulate the store: a guarded markExpired flips active→expired, so the
   // second fetch (active-only) returns nothing — the idempotency guarantee.
-  let store = [{ id: 1, status: "active", shopifyProductId: "gid://shopify/Product/9" }];
-  const archived = [];
+  let store = [{ id: 1, status: "active", shopifyProductId: "gid://shopify/Product/9", removed: false }];
+  const removedPids = [];
   const deps = {
     fetchDueOffers: async () =>
       store
         .filter((o) => o.status === "active")
         .map((o) => ({ id: o.id, shopifyProductId: o.shopifyProductId })),
-    archiveProduct: async (pid) => {
-      archived.push(pid);
+    removeProduct: async (pid) => {
+      removedPids.push(pid);
     },
     markExpired: async (id) => {
       const o = store.find((x) => x.id === id);
       if (o && o.status === "active") o.status = "expired"; // guarded flip
     },
+    markProductRemoved: async (id) => {
+      const o = store.find((x) => x.id === id);
+      if (o) o.removed = true;
+    },
+    fetchLeftoverProducts: async () =>
+      store
+        .filter((o) => o.status !== "active" && o.shopifyProductId && !o.removed)
+        .map((o) => ({ id: o.id, shopifyProductId: o.shopifyProductId })),
     onError: () => {},
   };
 
   const first = await runBundleExpirySweep(deps);
-  assert.deepEqual(first, { archived: 1, failed: 0, scanned: 1 });
-  assert.deepEqual(archived, ["gid://shopify/Product/9"]);
+  assert.deepEqual(first, { expired: 1, removed: 1, failed: 0, scanned: 1 });
+  assert.deepEqual(removedPids, ["gid://shopify/Product/9"]);
+  assert.equal(store[0].removed, true);
 
-  // Re-run: nothing is due, nothing is archived again.
+  // Re-run: nothing is due, nothing is deleted again.
   const second = await runBundleExpirySweep(deps);
-  assert.deepEqual(second, { archived: 0, failed: 0, scanned: 0 });
-  assert.equal(archived.length, 1);
+  assert.deepEqual(second, { expired: 0, removed: 0, failed: 0, scanned: 0 });
+  assert.equal(removedPids.length, 1);
 });
 
-test("runBundleExpirySweep keeps a failed archive due for the next run", async () => {
+test("runBundleExpirySweep keeps a failed removal due for the next run", async () => {
   const store = [{ id: 7, status: "active", shopifyProductId: "gid://shopify/Product/7" }];
   let attempt = 0;
   const errors = [];
@@ -235,7 +248,7 @@ test("runBundleExpirySweep keeps a failed archive due for the next run", async (
       store
         .filter((o) => o.status === "active")
         .map((o) => ({ id: o.id, shopifyProductId: o.shopifyProductId })),
-    archiveProduct: async () => {
+    removeProduct: async () => {
       attempt++;
       if (attempt === 1) throw new Error("Shopify 500");
     },
@@ -247,14 +260,99 @@ test("runBundleExpirySweep keeps a failed archive due for the next run", async (
   };
 
   const first = await runBundleExpirySweep(deps);
-  assert.deepEqual(first, { archived: 0, failed: 1, scanned: 1 });
+  assert.deepEqual(first, { expired: 0, removed: 0, failed: 1, scanned: 1 });
   assert.equal(errors.length, 1); // failure logged loudly
   assert.equal(store[0].status, "active"); // NOT marked expired — stays due
 
   // Next run succeeds and clears it.
   const second = await runBundleExpirySweep(deps);
-  assert.deepEqual(second, { archived: 1, failed: 0, scanned: 1 });
+  assert.deepEqual(second, { expired: 1, removed: 1, failed: 0, scanned: 1 });
   assert.equal(store[0].status, "expired");
+});
+
+test("runBundleExpirySweep cleans up ended offers whose Shopify product still exists", async () => {
+  // An offer ended earlier (manually, or while products were only archived):
+  // the clean-up pass deletes its product; a failure stays for the next run.
+  const store = [
+    { id: 1, status: "expired", shopifyProductId: "gid://shopify/Product/1", removed: false },
+    { id: 2, status: "expired", shopifyProductId: "gid://shopify/Product/2", removed: false },
+    { id: 3, status: "expired", shopifyProductId: null, removed: false },
+  ];
+  const removedPids = [];
+  const deps = {
+    fetchDueOffers: async () => [],
+    removeProduct: async (pid) => {
+      if (pid.endsWith("/2") && removedPids.length === 0) {
+        removedPids.push("fail");
+        throw new Error("throttled");
+      }
+      removedPids.push(pid);
+    },
+    markExpired: async () => {},
+    markProductRemoved: async (id) => {
+      store.find((x) => x.id === id).removed = true;
+    },
+    fetchLeftoverProducts: async () =>
+      store
+        .filter((o) => o.shopifyProductId && !o.removed)
+        .map((o) => ({ id: o.id, shopifyProductId: o.shopifyProductId })),
+  };
+  // Order the list so product 2 is attempted first and fails once.
+  store.reverse();
+
+  const first = await runBundleExpirySweep(deps);
+  assert.deepEqual(first, { expired: 0, removed: 1, failed: 1, scanned: 2 });
+  const second = await runBundleExpirySweep(deps);
+  assert.deepEqual(second, { expired: 0, removed: 1, failed: 0, scanned: 1 });
+  assert.ok(store.every((o) => o.removed || !o.shopifyProductId));
+});
+
+test("isProductGoneUserError: only 'already deleted' errors count as success", () => {
+  assert.equal(isProductGoneUserError([{ field: ["id"], message: "Product does not exist" }]), true);
+  assert.equal(isProductGoneUserError([{ message: "Product not found" }]), true);
+  assert.equal(isProductGoneUserError([{ message: "Access denied" }]), false);
+  assert.equal(
+    isProductGoneUserError([{ message: "Product does not exist" }, { message: "Access denied" }]),
+    false
+  );
+  assert.equal(isProductGoneUserError([]), false);
+  assert.equal(isProductGoneUserError(null), false);
+});
+
+// ── Set contents as a counted list ────────────────────────────────────────────
+
+test("bundleItemList: one entry per item with its count, duplicates merged", () => {
+  assert.deepEqual(
+    bundleItemList([
+      { title: "Kettlebell – 16 kg", quantity: 2 },
+      { title: "Bodenmatte", quantity: 1 },
+      { title: "Kettlebell – 16 kg", quantity: 1 },
+      { name: "Springseil" },
+      { title: "  ", quantity: 3 },
+    ]),
+    [
+      { name: "Kettlebell – 16 kg", quantity: 3 },
+      { name: "Bodenmatte", quantity: 1 },
+      { name: "Springseil", quantity: 1 },
+    ]
+  );
+  assert.deepEqual(bundleItemList(null), []);
+  assert.deepEqual(bundleItemList([{ title: "A", quantity: 0 }]), [{ name: "A", quantity: 1 }]);
+});
+
+test("bundleItemLabel shows the count in front of the name", () => {
+  assert.equal(bundleItemLabel({ name: "Bodenmatte", quantity: 1 }), "1× Bodenmatte");
+  assert.equal(bundleItemLabel({ name: "Kettlebell", quantity: 4 }), "4× Kettlebell");
+});
+
+test("bundleDescriptionHtml lists every item with its count, escaped", () => {
+  assert.equal(
+    bundleDescriptionHtml([
+      { title: "Hantel <Pro>", quantity: 2 },
+      { title: "Matte & Co", quantity: 1 },
+    ]),
+    "<p>Dieses Set enthält:</p><ul><li>2× Hantel &lt;Pro&gt;</li><li>1× Matte &amp; Co</li></ul>"
+  );
 });
 
 // ── Variant-pinned components ─────────────────────────────────────────────────

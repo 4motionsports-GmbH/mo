@@ -28,6 +28,7 @@ import {
   marketingMinSendIntervalDays,
 } from "@/lib/campaign-flags.mjs";
 import { parseDeskView, parseQueueFilter } from "@/lib/campaign-desk-core.mjs";
+import { bundleItemLabel, bundleItemList } from "@/lib/bundle-offer-core.mjs";
 import { getCachedEmailDesignForKind } from "@/lib/email-design-store";
 import { emailDesignHasHero, listEmailDesignMeta } from "@/lib/email-designs/registry";
 import { isHeroGenerationConfigured } from "@/lib/email-hero";
@@ -116,7 +117,7 @@ export async function KampagneTab({
         ? {
             id: b.id,
             title: b.title ?? "Dein persönliches Set",
-            components: b.components.map((c) => c.title),
+            components: bundleItemList(b.components).map(bundleItemLabel),
             bundlePrice: b.bundlePrice,
             componentsSum: b.componentsSum,
             currency: b.currency,

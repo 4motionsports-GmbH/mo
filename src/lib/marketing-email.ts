@@ -45,7 +45,7 @@ import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
 import { getEmailHeroRenderData } from "./email-hero-store";
 import { getCustomerById } from "./customer-store";
-import { renderEmailProductRows, productRowItems, highlightDescriptionFor, firstProductImageUrl, catalogNameLookup } from "./email-products";
+import { renderEmailProductRows, productRowItems, firstProductImageUrl, catalogNameLookup } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -322,7 +322,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         // block". Built HERE, inside withEmailDesign: the block is HTML
         // rendered through the design's renderers, and building it before the
         // design was active shipped the classic block inside a Performance mail.
-        bundle: await buildBundleBlockForSend(sendId, claimed.productHighlights),
+        bundle: await buildBundleBlockForSend(sendId),
         labelForUrl: await catalogNameLookup("lib/marketing-email"),
       })));
 
@@ -398,8 +398,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
  * failure degrades to "no block" so a send is never blocked by the bundle path.
  */
 async function buildBundleBlockForSend(
-  sendId: number,
-  highlights: Array<{ name: string; description: string }> | null = null
+  sendId: number
 ): Promise<{ text: string; html: string; componentNames: string[]; expiresAt: string | null } | null> {
   try {
     const bundle = await getActiveBundleForSend(sendId);
@@ -408,8 +407,8 @@ async function buildBundleBlockForSend(
     if (!offerUrl) return null;
 
     // Resolve component images from the live catalog (the row snapshots names +
-    // prices, not images — the latter can drift, so we look them up fresh) and
-    // the per-component description: personalised highlight → catalog copy.
+    // prices, not images — the latter can drift, so we look them up fresh); the
+    // block lists the contents with the snapshotted count of each item.
     const catalog = await loadProductCatalog();
     const byId = new Map(catalog.map((p) => [p.id, p]));
     const components = bundle.components.map((c) => {
@@ -417,10 +416,7 @@ async function buildBundleBlockForSend(
       return {
         name: c.title,
         imageUrl: firstProductImageUrl(product),
-        description:
-          highlightDescriptionFor(c.title, highlights) ||
-          product?.shortDescription?.trim() ||
-          null,
+        quantity: c.quantity,
       };
     });
 
@@ -513,7 +509,7 @@ export async function renderMarketingEmailPreview(
       "de",
       capture ? buildErasureUrl(capture.email) : null
     ),
-    bundle: await buildBundleBlockForSend(sendId, send.productHighlights),
+    bundle: await buildBundleBlockForSend(sendId),
     labelForUrl: await catalogNameLookup("lib/marketing-email"),
   })));
   return { ok: true, subject, html };

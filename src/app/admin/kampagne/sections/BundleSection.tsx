@@ -46,7 +46,11 @@ export function BundleSection({
     return (
       <div className="rounded-md border border-border px-2.5 py-2 text-xs">
         <div className="font-medium">{bundle.title}</div>
-        <div className="text-muted-foreground">{bundle.components.join(" + ")}</div>
+        <ul className="list-disc pl-4 text-muted-foreground">
+          {bundle.components.map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
         <div className="mt-1 tabular-nums">
           {Number.isFinite(price) ? money(price, bundle.currency || "EUR") : bundle.bundlePrice}
           {Number.isFinite(price) && Number.isFinite(sum) && price < sum && (
@@ -57,7 +61,7 @@ export function BundleSection({
           ) : null}
         </div>
         <Button variant="outline" size="sm" className="mt-2" onClick={onArchive} disabled={busy}>
-          Set entfernen (archivieren)
+          Set entfernen
         </Button>
       </div>
     );

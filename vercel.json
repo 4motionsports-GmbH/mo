@@ -20,7 +20,7 @@
     },
     {
       "path": "/api/cron/expire-bundles",
-      "schedule": "45 3 * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/prepare-campaign-drafts",

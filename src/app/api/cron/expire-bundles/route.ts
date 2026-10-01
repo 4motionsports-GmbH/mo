@@ -1,11 +1,13 @@
 // Scheduled bundle-offer expiry sweep.
 //
-// Triggered by Vercel Cron (see vercel.json). Sweeps bundle offers that are
-// status='active' AND past expires_at: archives their Shopify product (ARCHIVED,
-// never deleted — preserves order history, reversible; spike §5) and flips the
-// row to status='expired' + archived_at. Idempotent; archive failures are
-// logged loudly and retried on the next run. A late click on an archived offer
-// is handled gracefully by /api/r/<token> (the "Angebot abgelaufen" page).
+// Triggered by Vercel Cron every 15 minutes (see vercel.json). Sweeps bundle
+// offers that are status='active' AND past expires_at: DELETES their Shopify
+// product (an ended set must not linger in the Shopify admin) and flips the row
+// to status='expired' + archived_at; then deletes the Shopify products ended
+// offers still have (manual ends whose delete failed, sets archived before
+// migration 0060). Idempotent; failures are logged loudly and retried on the
+// next run. A click on a set past its deadline gets the friendly "Angebot
+// abgelaufen" page from /api/r/<token> immediately, even before this sweep.
 //
 // Protected by CRON_SECRET — Vercel Cron sends Authorization: Bearer <secret>.
 // Manual invocation: curl -H "Authorization: Bearer $CRON_SECRET" $URL

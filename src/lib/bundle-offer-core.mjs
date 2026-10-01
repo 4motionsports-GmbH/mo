@@ -70,9 +70,9 @@ export function pickBundleCreator(creators, mode) {
  * unsent and never went live.
  *
  * An `active` (published) or `expired` offer is deliberately NOT here: it uses
- * the ARCHIVE path (archiveBundleOffer → Shopify ARCHIVED + status='expired'),
- * which preserves order history and is reversible. Delete is only ever for the
- * draft/unsent rows.
+ * the END path (archiveBundleOffer → Shopify product deleted + status='expired'),
+ * which keeps the row for the expired page, audit and KPIs. Deleting the ROW is
+ * only ever for the draft/unsent offers.
  */
 export const DELETABLE_BUNDLE_STATUSES = ["pending", "failed"];
 
@@ -292,45 +292,145 @@ export function isExpired(offer, now = Date.now()) {
 }
 
 /**
- * Idempotent expiry-sweep orchestrator (the daily cron's core). Pure: all I/O is
+ * Idempotent expiry-sweep orchestrator (the cron's core). Pure: all I/O is
  * injected, so it is fully unit-testable.
  *
- * For every due offer (active AND past expiry — `fetchDueOffers` is responsible
- * for that filter) it: archives the Shopify product (ARCHIVED, never deleted —
- * preserves order history, reversible, spike §5), then flips the row to
- * `expired` with an archived_at stamp. Idempotency comes from two places:
- *   1. `fetchDueOffers` only returns status='active' rows, so an already-swept
- *      offer is never revisited.
- *   2. `markExpired` is guarded (… WHERE status='active') in the store, so a
- *      concurrent/duplicate run is a no-op on an already-expired row.
- * An archive failure is logged LOUDLY via `onError` and does NOT mark the row
- * expired, so the next run retries it (the offer stays active+due).
+ * Two passes:
+ *   1. EXPIRE — for every due offer (active AND past expiry — `fetchDueOffers`
+ *      is responsible for that filter) it DELETES the Shopify product (a set
+ *      that ran out must not linger in the Shopify admin), then flips the row to
+ *      `expired` and stamps the product as removed. A removal failure is logged
+ *      LOUDLY via `onError` and does NOT mark the row expired, so the next run
+ *      retries it (the offer stays active+due).
+ *   2. CLEAN UP — `fetchLeftoverProducts` (optional) lists ended offers whose
+ *      Shopify product still exists: a manual end whose delete failed, or sets
+ *      that ended while products were only archived. Each is deleted and
+ *      stamped; a failure stays on the list for the next run.
+ *
+ * Idempotency: `fetchDueOffers` only returns status='active' rows and
+ * `markExpired` is guarded (… WHERE status='active'); `markProductRemoved` is
+ * guarded the same way, and `removeProduct` treats an already-deleted product
+ * as success (see isProductGoneUserError).
  *
  * @param {{
  *   fetchDueOffers: () => Promise<Array<{ id: number|string, shopifyProductId?: string|null }>>,
- *   archiveProduct: (shopifyProductId: string) => Promise<void>,
+ *   removeProduct: (shopifyProductId: string) => Promise<void>,
  *   markExpired: (id: number|string) => Promise<void>,
+ *   markProductRemoved?: (id: number|string) => Promise<void>,
+ *   fetchLeftoverProducts?: () => Promise<Array<{ id: number|string, shopifyProductId: string }>>,
  *   onError?: (err: unknown, offer: object) => void,
  * }} deps
- * @returns {Promise<{ archived: number, failed: number, scanned: number }>}
+ * @returns {Promise<{ expired: number, removed: number, failed: number, scanned: number }>}
  */
 export async function runBundleExpirySweep(deps) {
   const due = (await deps.fetchDueOffers()) ?? [];
-  let archived = 0;
+  let expired = 0;
+  let removed = 0;
   let failed = 0;
   for (const offer of due) {
     try {
       // Only the Shopify side can fail; a never-created (failed) offer with no
       // product id just gets its row flipped.
       if (offer.shopifyProductId) {
-        await deps.archiveProduct(offer.shopifyProductId);
+        await deps.removeProduct(offer.shopifyProductId);
       }
       await deps.markExpired(offer.id);
-      archived++;
+      if (offer.shopifyProductId) {
+        if (deps.markProductRemoved) await deps.markProductRemoved(offer.id);
+        removed++;
+      }
+      expired++;
     } catch (err) {
       failed++;
       if (deps.onError) deps.onError(err, offer);
     }
   }
-  return { archived, failed, scanned: due.length };
+
+  const leftovers = deps.fetchLeftoverProducts ? ((await deps.fetchLeftoverProducts()) ?? []) : [];
+  for (const offer of leftovers) {
+    try {
+      await deps.removeProduct(offer.shopifyProductId);
+      if (deps.markProductRemoved) await deps.markProductRemoved(offer.id);
+      removed++;
+    } catch (err) {
+      failed++;
+      if (deps.onError) deps.onError(err, offer);
+    }
+  }
+  return { expired, removed, failed, scanned: due.length + leftovers.length };
+}
+
+/**
+ * Whether a `productDelete` userErrors list only says the product is already
+ * gone — the idempotent case (a retry after a timeout, a manual delete in the
+ * Shopify admin). Anything else is a real failure.
+ *
+ * @param {Array<{ message?: string | null }> | null | undefined} errors
+ * @returns {boolean}
+ */
+export function isProductGoneUserError(errors) {
+  if (!Array.isArray(errors) || errors.length === 0) return false;
+  return errors.every((e) =>
+    /does ?n[o']t exist|not found|could ?n[o']t be found/i.test(String(e?.message ?? ""))
+  );
+}
+
+// ── Set contents as a counted list ───────────────────────────────────────────
+
+/**
+ * The set's contents as one entry per distinct item with how many of it the
+ * set contains — the shape every customer-facing view renders as a bullet
+ * list ("2× Kettlebell – 16 kg"). Entries with the same name (same product
+ * and variant: pinned variants carry their variant in the name) are merged
+ * and their quantities added; order follows the first appearance. A missing
+ * or invalid quantity counts as 1.
+ *
+ * @param {Array<{ name?: string | null, title?: string | null, quantity?: number | null }> | null | undefined} components
+ * @returns {Array<{ name: string, quantity: number }>}
+ */
+export function bundleItemList(components) {
+  const items = [];
+  const byName = new Map();
+  for (const c of components ?? []) {
+    const name = String(c?.name ?? c?.title ?? "").trim();
+    if (!name) continue;
+    const qty = Number.isFinite(c?.quantity) && c.quantity > 0 ? Math.floor(c.quantity) : 1;
+    const existing = byName.get(name);
+    if (existing) {
+      existing.quantity += qty;
+    } else {
+      const item = { name, quantity: qty };
+      byName.set(name, item);
+      items.push(item);
+    }
+  }
+  return items;
+}
+
+/**
+ * One bullet's text: "2× Name".
+ * @param {{ name: string, quantity: number }} item
+ * @returns {string}
+ */
+export function bundleItemLabel(item) {
+  return `${item.quantity}× ${item.name}`;
+}
+
+function escapeHtmlText(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * The Shopify product description of a set: an intro line and the contents
+ * as a bullet list with counts — what the customer sees on the set's product
+ * page, and what fulfilment reads on the fallback path.
+ *
+ * @param {Array<{ title?: string | null, name?: string | null, quantity?: number | null }>} components
+ * @returns {string}
+ */
+export function bundleDescriptionHtml(components) {
+  const items = bundleItemList(components)
+    .map((item) => `<li>${escapeHtmlText(bundleItemLabel(item))}</li>`)
+    .join("");
+  return `<p>Dieses Set enthält:</p><ul>${items}</ul>`;
 }

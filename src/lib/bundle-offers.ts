@@ -4,8 +4,8 @@
 // (bundle-offers-store.ts) and the Shopify seam (shopify-bundles.ts) into the
 // three operations the product needs:
 //   - createBundleOffer  — validate → snapshot → run the seam → persist active/failed
-//   - archiveBundleOffer  — manual archive (S11 UI) → Shopify ARCHIVED + status=expired
-//   - expireBundleOffers  — the daily cron sweep (idempotent)
+//   - archiveBundleOffer  — manual end (S11 UI) → Shopify product deleted + status=expired
+//   - expireBundleOffers  — the cron sweep every 15 minutes (idempotent)
 //
 // See docs/BUNDLES.md for the model, the two creation modes + seam, and the
 // lifecycle; docs/archive/BUNDLES_SPIKE.md for the live verification this builds on.
@@ -25,10 +25,12 @@ import {
   centsToMoney,
   runBundleExpirySweep,
   isDeletableBundleStatus,
+  bundleItemList,
+  bundleItemLabel,
 } from "./bundle-offer-core.mjs";
 import {
   createBundleProduct,
-  archiveBundleProduct,
+  deleteBundleProduct,
   type BundleComponentSnapshot,
 } from "./shopify-bundles";
 import {
@@ -39,6 +41,8 @@ import {
   deleteDraftOffer,
   getBundleOfferById,
   fetchDueBundleOffers,
+  fetchEndedOffersWithShopifyProduct,
+  markShopifyProductDeleted,
   type BundleOfferRow,
   type BundleComponentRecord,
 } from "./bundle-offers-store";
@@ -56,7 +60,7 @@ function bundleCreationMode(): string {
   return resolveBundleCreationMode(process.env.BUNDLE_CREATION_MODE);
 }
 
-/** Days an offer stays live before the cron archives it (env-overridable, 7). */
+/** Days an offer stays live before it ends (env-overridable, 7). */
 function bundleExpiryDays(): number {
   return parseIntEnv("BUNDLE_OFFER_EXPIRY_DAYS", 7);
 }
@@ -110,7 +114,10 @@ export type CreateBundleOfferResult =
     };
 
 function deriveTitle(components: BundleComponentRecord[]): string {
-  const names = components.map((c) => c.title);
+  // "Set: 2× A + B" — the count only where the set holds more than one.
+  const names = bundleItemList(components).map((item) =>
+    item.quantity > 1 ? bundleItemLabel(item) : item.name
+  );
   return `Set: ${names.join(" + ")}`.slice(0, 250);
 }
 
@@ -269,9 +276,10 @@ export type ArchiveBundleOfferResult =
   | { ok: false; reason: "not_found" | "not_active" | "archive_failed"; message: string };
 
 /**
- * Manually archive an offer (S11 UI). Archives the Shopify product (ARCHIVED,
- * never deleted) and flips the row to expired. Idempotent on the row side via
- * the status='active' guard. Only acts on active offers.
+ * Manually end an offer (S11 UI, and replacing a campaign set). Deletes the
+ * Shopify product and flips the row to expired (kept for the expired page,
+ * audit and KPIs). Idempotent on the row side via the status='active' guard.
+ * Only acts on active offers; a failed delete leaves the offer active.
  */
 export async function archiveBundleOffer(id: number): Promise<ArchiveBundleOfferResult> {
   const offer = await getBundleOfferById(id);
@@ -281,9 +289,10 @@ export async function archiveBundleOffer(id: number): Promise<ArchiveBundleOffer
   }
   try {
     if (offer.shopifyProductId) {
-      await archiveBundleProduct(offer.shopifyProductId);
+      await deleteBundleProduct(offer.shopifyProductId);
     }
     await markOfferExpired(id);
+    if (offer.shopifyProductId) await markShopifyProductDeleted(id);
     const updated = (await getBundleOfferById(id)) ?? offer;
     return { ok: true, offer: updated };
   } catch (err) {
@@ -291,7 +300,7 @@ export async function archiveBundleOffer(id: number): Promise<ArchiveBundleOffer
     return {
       ok: false,
       reason: "archive_failed",
-      message: `Could not archive the offer: ${(err as Error).message}`,
+      message: `Could not end the offer: ${(err as Error).message}`,
     };
   }
 }
@@ -308,12 +317,12 @@ export type DeleteDraftBundleOfferResult =
  * DELETE a draft/unsent bundle offer (S11 UI). STRICT: only the never-published
  * DRAFT states (pending/failed — see isDeletableBundleStatus) are deletable. An
  * active/published or expired offer is rejected with `not_deletable` so the
- * admin uses the ARCHIVE path (archiveBundleOffer), which keeps the Shopify
- * product ARCHIVED and the row for audit/KPIs — delete never orphans a live,
- * sellable product or erases sent/redeemed history.
+ * admin uses the END path (archiveBundleOffer), which deletes the Shopify
+ * product but keeps the row for the expired page and audit/KPIs — deleting a
+ * row never erases sent/redeemed history.
  *
  * Pre-send a draft shouldn't carry a Shopify product, but we guard anyway: if a
- * (pending/failed) row somehow has a shopify_product_id we ARCHIVE that product
+ * (pending/failed) row somehow has a shopify_product_id we DELETE that product
  * first rather than leaving it orphaned on the store, then remove the row.
  */
 export async function deleteDraftBundleOffer(
@@ -331,7 +340,7 @@ export async function deleteDraftBundleOffer(
   try {
     // Defensive: a draft shouldn't have a live product, but never orphan one.
     if (offer.shopifyProductId) {
-      await archiveBundleProduct(offer.shopifyProductId);
+      await deleteBundleProduct(offer.shopifyProductId);
     }
     const deleted = await deleteDraftOffer(id);
     if (!deleted) {
@@ -355,39 +364,47 @@ export async function deleteDraftBundleOffer(
 }
 
 export interface ExpireBundleOffersResult {
-  archived: number;
+  /** Offers that ran out and were ended in this run. */
+  expired: number;
+  /** Shopify products deleted (expired now + clean-up of earlier ends). */
+  removed: number;
   failed: number;
   scanned: number;
   ranAt: string;
 }
 
 /**
- * The daily expiry sweep (cron). Archives the Shopify product of every active
- * offer past its deadline and flips it to expired. Idempotent (guarded UPDATE +
- * active-only work list); archive failures are logged LOUDLY and retried next
- * run (the offer stays active+due). Throws only when no DB is configured, so the
- * cron route can report a visible 503.
+ * The expiry sweep (cron, every 15 minutes). Deletes the Shopify product of
+ * every active offer past its deadline and flips it to expired, then deletes
+ * the products ended offers still have (see fetchEndedOffersWithShopifyProduct).
+ * Idempotent (guarded UPDATEs + active-only work list + gone-is-success delete);
+ * failures are logged LOUDLY and retried next run (the offer stays active+due).
+ * Throws only when no DB is configured, so the cron route can report a visible 503.
  */
 export async function expireBundleOffers(
   nowIso: string = new Date().toISOString()
 ): Promise<ExpireBundleOffersResult> {
-  const { archived, failed, scanned } = await runBundleExpirySweep({
+  const { expired, removed, failed, scanned } = await runBundleExpirySweep({
     fetchDueOffers: () => fetchDueBundleOffers(nowIso),
-    archiveProduct: (productId: string) => archiveBundleProduct(productId),
+    removeProduct: (productId: string) => deleteBundleProduct(productId),
     markExpired: async (id: number | string) => {
       await markOfferExpired(Number(id));
     },
+    markProductRemoved: async (id: number | string) => {
+      await markShopifyProductDeleted(Number(id));
+    },
+    fetchLeftoverProducts: () => fetchEndedOffersWithShopifyProduct(),
     onError: (err, offer) => {
       reportError(err, {
         route: "lib/bundle-offers",
         phase: "expireBundleOffers",
         offerId: (offer as { id?: number }).id,
       });
-      console.error("[bundle-offers] expiry archive FAILED — will retry next run", {
+      console.error("[bundle-offers] Shopify product delete FAILED — will retry next run", {
         offerId: (offer as { id?: number }).id,
         error: (err as Error)?.message ?? String(err),
       });
     },
   });
-  return { archived, failed, scanned, ranAt: new Date().toISOString() };
+  return { expired, removed, failed, scanned, ranAt: new Date().toISOString() };
 }

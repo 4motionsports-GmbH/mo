@@ -7,7 +7,7 @@
 //   FALLBACK plain_unlisted_product productCreate (UNLISTED), components in body (spike §6a)
 //
 // EVERYTHING around the create step is shared (finalizeBundleProduct +
-// pollParentVariantInventory + archiveBundleProduct), so switching modes is a
+// pollParentVariantInventory + deleteBundleProduct), so switching modes is a
 // localized swap of just the create call — exactly as the spike de-risks it.
 //
 // ⚠️ Mutation shapes are taken from the LIVE-VERIFIED probe sequence
@@ -33,11 +33,12 @@
 
 import { adminGraphql } from "./shopify";
 import { parseNumericVariantId } from "./shopify-cart-url.mjs";
-import { escapeHtml } from "./html-escape";
 import {
   NATIVE_FIXED_BUNDLE,
   PLAIN_UNLISTED_PRODUCT,
   pickBundleCreator,
+  bundleDescriptionHtml,
+  isProductGoneUserError,
 } from "./bundle-offer-core.mjs";
 
 // ── Shared types ─────────────────────────────────────────────────────────────
@@ -293,16 +294,6 @@ async function createNativeFixedBundleProduct(
 
 // ── Seam impl 2: plain UNLISTED product (fallback, spike §6a) ─────────────────
 
-function componentsDescriptionHtml(components: BundleComponentSnapshot[]): string {
-  const items = components
-    .map((c) => {
-      const qty = c.quantity > 1 ? `${c.quantity}× ` : "";
-      return `<li>${qty}${escapeHtml(c.title)}</li>`;
-    })
-    .join("");
-  return `<p>Dieses Set enthält:</p><ul>${items}</ul>`;
-}
-
 async function createPlainUnlistedProduct(
   args: CreateBundleProductArgs
 ): Promise<BareCreatedProduct> {
@@ -325,7 +316,7 @@ async function createPlainUnlistedProduct(
     {
       product: {
         title: args.title,
-        descriptionHtml: componentsDescriptionHtml(args.components),
+        descriptionHtml: bundleDescriptionHtml(args.components),
         status: "DRAFT",
       },
     }
@@ -357,14 +348,16 @@ const BUNDLE_CREATORS: Record<
 
 /**
  * Step 3–5: price the parent variant (price + PAngV-safe compareAtPrice), flip
- * the product to UNLISTED, and publish it to the Online Store. Shared by both
- * creation modes.
+ * the product to UNLISTED with the contents as a bullet list with counts in its
+ * description (what the customer sees on the set's product page), and publish
+ * it to the Online Store. Shared by both creation modes.
  */
 async function finalizeBundleProduct(
   productId: string,
   variantId: string,
   bundlePrice: string,
-  compareAtPrice: string | null
+  compareAtPrice: string | null,
+  descriptionHtml: string
 ): Promise<void> {
   // 3. price + compare-at. userErrors here ARE ProductVariantsBulkUpdateUserError
   //    (has `code`) — a different type from productBundleCreate's plain UserError.
@@ -387,7 +380,9 @@ async function finalizeBundleProduct(
   );
   throwOnUserErrors("productVariantsBulkUpdate", priced.productVariantsBulkUpdate?.userErrors);
 
-  // 4. status → UNLISTED (productUpdate takes `product: ProductUpdateInput!`).
+  // 4. status → UNLISTED + the contents list as description (productUpdate
+  //    takes `product: ProductUpdateInput!`). The native path has no
+  //    description of its own; the fallback's is rewritten identically.
   const updated = await adminGraphql<{
     productUpdate: { product: { id: string; status: string } | null; userErrors: UserError[] };
   }>(
@@ -397,7 +392,7 @@ async function finalizeBundleProduct(
          userErrors { field message }
        }
      }`,
-    { product: { id: productId, status: "UNLISTED" } }
+    { product: { id: productId, status: "UNLISTED", descriptionHtml } }
   );
   throwOnUserErrors("productUpdate(UNLISTED)", updated.productUpdate?.userErrors);
 
@@ -468,7 +463,7 @@ async function pollParentVariantInventory(
  * Create the Shopify bundle product end-to-end (seam create + shared finalize +
  * inventory settle), selecting the impl by BUNDLE_CREATION_MODE. Throws on any
  * failure so the service layer can record status='failed' and (best-effort)
- * archive a partial product.
+ * delete a partial product.
  */
 export async function createBundleProduct(
   args: CreateBundleProductArgs
@@ -478,7 +473,13 @@ export async function createBundleProduct(
 
   const creator = pickBundleCreator(BUNDLE_CREATORS, args.mode);
   const bare = await creator(args);
-  await finalizeBundleProduct(bare.productId, bare.variantId, args.bundlePrice, args.compareAtPrice);
+  await finalizeBundleProduct(
+    bare.productId,
+    bare.variantId,
+    args.bundlePrice,
+    args.compareAtPrice,
+    bundleDescriptionHtml(args.components)
+  );
   const availableForSale = await pollParentVariantInventory(bare.productId, bare.variantId);
 
   return {
@@ -492,22 +493,28 @@ export async function createBundleProduct(
 }
 
 /**
- * Archive (NOT delete) a bundle's Shopify product — the expiry path and the
- * failure-cleanup path. ARCHIVE preserves order history, is reversible, and
- * leaves the record intact for audit/KPIs (spike §5). Idempotent: archiving an
- * already-archived product is a harmless no-op on Shopify's side.
+ * DELETE a bundle's Shopify product — the expiry path, the manual "end the
+ * set" path and the draft clean-up. An ended set has no further use on
+ * Shopify (its link already shows our "Angebot abgelaufen" page), so it is
+ * removed instead of piling up as archived products. Placed orders keep their
+ * own line-item snapshot (title, price, SKUs); our bundle_offers row stays for
+ * the expired page, audit and KPIs. For a native fixed bundle only the parent
+ * product goes — the component products are untouched. Idempotent: a product
+ * that is already gone counts as success.
  */
-export async function archiveBundleProduct(productId: string): Promise<void> {
+export async function deleteBundleProduct(productId: string): Promise<void> {
   const data = await adminGraphql<{
-    productUpdate: { product: { id: string; status: string } | null; userErrors: UserError[] };
+    productDelete: { deletedProductId: string | null; userErrors: UserError[] };
   }>(
-    `mutation BundleArchive($product: ProductUpdateInput!) {
-       productUpdate(product: $product) {
-         product { id status }
+    `mutation BundleDelete($input: ProductDeleteInput!) {
+       productDelete(input: $input) {
+         deletedProductId
          userErrors { field message }
        }
      }`,
-    { product: { id: productId, status: "ARCHIVED" } }
+    { input: { id: productId } }
   );
-  throwOnUserErrors("productUpdate(ARCHIVED)", data.productUpdate?.userErrors);
+  const errors = data.productDelete?.userErrors;
+  if (isProductGoneUserError(errors)) return;
+  throwOnUserErrors("productDelete", errors);
 }
