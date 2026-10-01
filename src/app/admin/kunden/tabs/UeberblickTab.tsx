@@ -73,7 +73,7 @@ export function UeberblickTab({ customer }: { customer: CustomerDetail }) {
           Kennzahlen
           <InfoTip>
             Aus den Bestellungen und Kontakten berechnet (nächtlich und nach jeder neuen Bestellung).
-            Lebenszyklus: Zeit seit dem letzten Kauf. Wertstufe: der wertvollste Kauf.
+            Lebenszyklus: Zeit seit dem letzten Kauf. Wertstufe: der teuerste einzelne Artikel, der je gekauft wurde.
             Abwanderungsrisiko: Zeit seit dem letzten Kauf gemessen am persönlichen Kaufrhythmus.
           </InfoTip>
           {f?.factsComputedAt && (

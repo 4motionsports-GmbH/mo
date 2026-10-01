@@ -67,8 +67,8 @@ interface Preview {
 const LIFECYCLE = [
   { value: "frisch", label: "Frisch gekauft (<7 T.)" },
   { value: "ausbauen_frueh", label: "Ausbauen — früh (7–30 T.)" },
-  { value: "ausbauen", label: "Ausbauen (1–6 Mon.)" },
-  { value: "weiterentwickeln", label: "Weiterentwickeln (6–12 Mon.)" },
+  { value: "ausbauen", label: "Ausbauen (1–3 Mon.)" },
+  { value: "weiterentwickeln", label: "Weiterentwickeln (3–12 Mon.)" },
   { value: "zurueckholen", label: "Zurückholen (1–2 J.)" },
   { value: "ruhen", label: "Ruhen (>2 J.)" },
   { value: "unbekannt", label: "Ohne Kauf" },
@@ -441,7 +441,7 @@ export function CampaignEditor({
                 <Field label="Lebenszyklus" info="Wie lange der letzte Kauf zurückliegt.">
                   <ToggleChips label="Lebenszyklus" options={LIFECYCLE} value={a.lifecycle ?? []} onChange={(v) => patchAudience({ lifecycle: v })} />
                 </Field>
-                <Field label="Wertstufe" info="Nach dem wertvollsten Kauf: Kleinteile unter 150 €, Komponenten bis 999 €, Großgeräte ab 1.000 €.">
+                <Field label="Wertstufe" info="Nach dem teuersten einzelnen Artikel: Kleinteile unter 150 €, Komponenten bis 1.499 €, Großgeräte ab 1.500 €.">
                   <ToggleChips label="Wertstufe" options={VALUE_TIERS} value={a.valueTier ?? []} onChange={(v) => patchAudience({ valueTier: v })} />
                 </Field>
                 <div className="grid gap-3 sm:grid-cols-2">
