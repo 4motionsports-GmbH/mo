@@ -15,7 +15,7 @@ import {
   offerExpiringSignal,
   signalsForCustomer,
 } from "./customer-signals.mjs";
-import { closeStaleInboxItems, expireInboxItems, upsertInboxItems, type InboxItemInput } from "./inbox-store";
+import { closeStaleInboxItems, expireInboxItems, reopenDueSnoozed, upsertInboxItems, type InboxItemInput } from "./inbox-store";
 import { inboxAiDailyLimit } from "./platform-flags.mjs";
 import { suggestForInboxItems } from "./inbox-suggest";
 
@@ -238,6 +238,7 @@ export async function runInboxSignals(
     }
     out.closed = await closeStaleInboxItems([...JOB_SIGNAL_KINDS], items.map((i) => i.dedupeKey), sql);
     out.expired = await expireInboxItems(sql);
+    await reopenDueSnoozed(sql);
     out.outcomes = await fillOutcomes(sql);
     if (opts.suggest !== false) {
       out.suggested = await suggestForInboxItems({ limit: inboxAiDailyLimit(), deadlineMs: opts.deadlineMs }, sql);

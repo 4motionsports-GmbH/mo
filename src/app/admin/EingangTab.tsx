@@ -5,7 +5,7 @@
 // matches no customer) and a compact 30-day strip. Items are decided in the
 // client workspace; nothing here sends. docs/ADMIN_DASHBOARD.md §3.1.
 
-import { listInboxItems, getInboxCounts } from "@/lib/inbox-store";
+import { listInboxItems, getInboxCounts, reopenDueSnoozed } from "@/lib/inbox-store";
 import { listCampaigns } from "@/lib/campaigns-store";
 import { getEingangSystemSnapshot } from "@/lib/admin-overview-store";
 import { listUnmatchedInbound } from "@/lib/email-messages-store";
@@ -31,6 +31,8 @@ export async function EingangTab({
     );
   }
   const status = initialStatus === "zurueckgestellt" || initialStatus === "erledigt" ? initialStatus : "offen";
+  // Snoozes that are due reopen before the list is read (the badge counts them as open already).
+  await reopenDueSnoozed();
   const [items, counts, campaigns, snapshot, unmatched, health, outbox] = await Promise.all([
     listInboxItems({ status, limit: 300 }),
     getInboxCounts(),

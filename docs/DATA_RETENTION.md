@@ -170,7 +170,7 @@ audiences and the Eingang need, minimised:
 | --- | --- | --- | --- |
 | `customers` with a Shopify id | lifetime of the Shopify record | — | **Exempt** from the customer purges of steps 5 (opted out) and 5e (dormant): the mirror follows Shopify. Removed by the complete erasure — from Mo, or from Shopify's `customers/redact` / `customers/delete` webhooks. The AI profile on the row has no window of its own; an Art. 21 objection clears it. |
 | `customer_orders`, `customer_facts`, `consent_events` | follow the customer | — | Cascade-deleted with the customer row; the erasure also deletes ledger rows not (yet) linked to the row, by Shopify id. Shopify keeps its own orders for as long as the law requires; Mo keeps no copy. |
-| `inbox_items` (decided: `erledigt` / `verworfen`) | **180 days** by `COALESCE(decided_at, updated_at)` | `INBOX_RETENTION_DAYS` | Hard delete (step 8). Open items stay; items about a person cascade with the customer. |
+| `inbox_items` (decided: `erledigt` / `verworfen`) | **180 days** by `COALESCE(decided_at, updated_at)`, marker **2 years** | `INBOX_RETENTION_DAYS` | Content cleared, a marker (kind, customer, decision, dedupe key) stays until 2 years (step 8). Open items stay; items about a person cascade with the customer. |
 | `shopify_webhook_events` | **90 days** by `received_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7) |
 | `shopify_sync_runs` (done / failed / cancelled) | **90 days** by `started_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7); the newest `done` run per kind always stays (import marker, reconcile floor). Running runs stay. |
 | `shopify_outbox` (done / dead) | **90 days** by `created_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7); pending / failed rows are never purged. `customer_id` is `SET NULL` when the customer goes; the erasure deletes the person's open rows. |
@@ -443,9 +443,13 @@ step numbers below are the ones in the code. Each run:
    `done` run per kind always stays (it is the import marker and the reconcile
    floor) — and `done` / `dead` `shopify_outbox` rows by `created_at`. Pending
    and failed outbox rows are never purged.
-8. Deletes decided Eingang items (`inbox_items` with status `erledigt` /
+8. Reduces decided Eingang items (`inbox_items` with status `erledigt` /
    `verworfen`) past `INBOX_RETENTION_DAYS` (default **180 days**, by
-   `COALESCE(decided_at, updated_at)`). Open and snoozed items stay.
+   `COALESCE(decided_at, updated_at)`) to a marker — reason, evidence, AI
+   suggestion and note are cleared; kind, customer, decision and the dedupe key
+   stay, so a rule cannot re-create an item the operator already decided while
+   its episode lasts. Markers are deleted after two years (the longest rule
+   episode) or with the customer. Open and snoozed items stay.
 9. Deletes `erasure_tombstones` whose Shopify confirmation
    (`shopify_confirmed_at`) is older than `ERASURE_TOMBSTONE_RETENTION_DAYS`
    (default **30 days**); unconfirmed tombstones stay.

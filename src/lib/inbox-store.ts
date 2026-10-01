@@ -248,19 +248,39 @@ export interface InboxCounts {
 }
 
 /** Badge + chips. Snoozed items whose time has come re-open here. */
+/**
+ * Snoozed items whose time is up become open again. Called by the Eingang
+ * screen before it lists and by the hourly inbox cron — never on the read
+ * path of the sidebar badge. Returns the number reopened; never throws.
+ */
+export async function reopenDueSnoozed(sql: Sql | null = getSql()): Promise<number> {
+  if (!sql) return 0;
+  try {
+    const rows = await sql`
+      UPDATE inbox_items SET status = 'offen', snoozed_until = NULL, updated_at = now()
+       WHERE status = 'zurueckgestellt' AND snoozed_until IS NOT NULL AND snoozed_until <= now()
+      RETURNING id
+    `;
+    return rows.length;
+  } catch (err) {
+    reportError(err, { route: "lib/inbox-store", phase: "reopenDueSnoozed" });
+    return 0;
+  }
+}
+
+/** Counts for the sidebar badge and the Eingang tabs. Read-only: a snooze that is due counts as open. */
 export async function getInboxCounts(sql: Sql | null = getSql()): Promise<InboxCounts> {
   const empty: InboxCounts = { open: 0, highPriority: 0, snoozed: 0, byKind: {} };
   if (!sql) return empty;
   try {
-    await sql`
-      UPDATE inbox_items SET status = 'offen', snoozed_until = NULL, updated_at = now()
-       WHERE status = 'zurueckgestellt' AND snoozed_until IS NOT NULL AND snoozed_until <= now()
-    `;
     const rows = (await sql`
-      SELECT kind, status, count(*)::int AS n, count(*) FILTER (WHERE priority >= 80)::int AS high
+      SELECT kind,
+             CASE WHEN status = 'zurueckgestellt' AND (snoozed_until IS NULL OR snoozed_until > now())
+                  THEN 'zurueckgestellt' ELSE 'offen' END AS status,
+             count(*)::int AS n, count(*) FILTER (WHERE priority >= 80)::int AS high
         FROM inbox_items
        WHERE status IN ('offen', 'zurueckgestellt')
-       GROUP BY kind, status
+       GROUP BY 1, 2
     `) as Array<{ kind: string; status: string; n: number; high: number }>;
     const out: InboxCounts = { open: 0, highPriority: 0, snoozed: 0, byKind: {} };
     for (const r of rows) {
@@ -344,13 +364,19 @@ export async function getInboxKpis(range: { from: string; to: string }, sql: Sql
     const rows = (await sql`
       SELECT kind,
              count(*)::int AS created,
-             count(*) FILTER (WHERE status = 'erledigt' AND decision NOT IN ('abgelaufen', 'erledigt_von_selbst'))::int AS acted,
+             -- "acted" = an operator decision; items that closed themselves or expired are not.
+             count(*) FILTER (WHERE status = 'erledigt'
+                                AND COALESCE(decision, '') NOT IN ('abgelaufen', 'erledigt_von_selbst'))::int AS acted,
              count(*) FILTER (WHERE status = 'verworfen')::int AS dismissed,
              count(*) FILTER (WHERE decision IN ('abgelaufen', 'erledigt_von_selbst'))::int AS closed_by_self,
              count(*) FILTER (WHERE outcome IS NOT NULL)::int AS with_outcome,
-             count(*) FILTER (WHERE status = 'erledigt' AND (outcome->>'orders')::int > 0)::int AS orders_acted,
+             count(*) FILTER (WHERE status = 'erledigt'
+                                AND COALESCE(decision, '') NOT IN ('abgelaufen', 'erledigt_von_selbst')
+                                AND (outcome->>'orders')::int > 0)::int AS orders_acted,
              count(*) FILTER (WHERE status = 'verworfen' AND (outcome->>'orders')::int > 0)::int AS orders_dismissed,
-             COALESCE(sum((outcome->>'revenueCents')::bigint) FILTER (WHERE status = 'erledigt'), 0)::bigint AS revenue_acted,
+             COALESCE(sum((outcome->>'revenueCents')::bigint)
+                        FILTER (WHERE status = 'erledigt'
+                                  AND COALESCE(decision, '') NOT IN ('abgelaufen', 'erledigt_von_selbst')), 0)::bigint AS revenue_acted,
              count(*) FILTER (WHERE suggestion IS NOT NULL)::int AS suggested,
              mode() WITHIN GROUP (ORDER BY decision_note) FILTER (WHERE status = 'verworfen') AS top_reason
         FROM inbox_items
