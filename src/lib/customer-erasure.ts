@@ -21,12 +21,21 @@
 // All database steps run in ONE transaction (all-or-nothing). Blob images are
 // removed afterwards (fail-soft — an orphaned image is unreachable once no row
 // points at it, but we still try to delete it).
+//
+// ONE deletion with Shopify (docs/CUSTOMER_PLATFORM_PLAN.md §8): an erasure
+// started in Mo writes an erasure tombstone for the Shopify id (no import,
+// reconciliation or webhook brings the person back) and enqueues the Shopify
+// side — consent off at once, then Shopify's own data erasure
+// (customerRequestDataErasure, SHOPIFY_ERASURE_SYNC). An erasure Shopify
+// started (customers/redact, customers/delete webhooks → trigger "shopify")
+// runs the same deletion here without asking Shopify again.
 
 import { del } from "@vercel/blob";
 import { getSql, type Sql } from "./db";
 import { normalizeEmail } from "./email-capture-store";
 import { heroBlobPathnameFromUrl } from "./email-hero-blob.mjs";
 import { reportError } from "./observability";
+import { enqueueShopifyErasure, runOutboxInline } from "./shopify-outbox";
 
 export interface ErasureResult {
   /** A customer record existed and was deleted. */
@@ -34,6 +43,8 @@ export interface ErasureResult {
   deletedConversations: number;
   deletedCampaignContacts: number;
   deletedHeroImages: number;
+  /** The Shopify side was enqueued (consent off + data erasure request). */
+  shopifyErasureEnqueued: boolean;
 }
 
 export interface ErasureTarget {
@@ -43,6 +54,13 @@ export interface ErasureTarget {
   email?: string | null;
   /** A Kampagne contact to erase (Kampagne card); its customer goes with it. */
   campaignContactId?: number | null;
+  /** A Shopify customer id to erase (customers/redact, customers/delete). */
+  shopifyCustomerId?: string | null;
+  /**
+   * Who started it: "mo" (widget, mail link, admin — Shopify is asked to
+   * erase too) or "shopify" (a Shopify webhook — Shopify is already erasing).
+   */
+  trigger?: "mo" | "shopify";
 }
 
 function isRealEmail(e: string | null | undefined): e is string {
@@ -60,6 +78,7 @@ export async function erasePerson(
   sql: Sql | null = getSql()
 ): Promise<ErasureResult | null> {
   if (!sql) return null;
+  const trigger = target.trigger ?? "mo";
   try {
     // ── 1. Resolve who this is ──────────────────────────────────────────────
     let customerId = target.customerId ?? null;
@@ -77,20 +96,26 @@ export async function erasePerson(
         if (customerId == null && rows[0].customer_id != null) customerId = Number(rows[0].customer_id);
       }
     }
+    if (customerId == null && target.shopifyCustomerId) {
+      const rows = (await sql`
+        SELECT id FROM customers WHERE shopify_customer_id = ${target.shopifyCustomerId}
+      `) as Array<Record<string, unknown>>;
+      if (rows[0]) customerId = Number(rows[0].id);
+    }
     if (customerId == null && emails.size > 0) {
       const rows = (await sql`
         SELECT id FROM customers WHERE email = ANY(${[...emails]}::text[]) LIMIT 1
       `) as Array<Record<string, unknown>>;
       if (rows[0]) customerId = Number(rows[0].id);
     }
-    let shopifyCustomerId: string | null = null;
+    let shopifyCustomerId: string | null = target.shopifyCustomerId ?? null;
     if (customerId != null) {
       const rows = (await sql`
         SELECT email, shopify_customer_id FROM customers WHERE id = ${customerId}
       `) as Array<Record<string, unknown>>;
       if (rows[0]) {
         if (isRealEmail(String(rows[0].email))) emails.add(String(rows[0].email));
-        shopifyCustomerId = (rows[0].shopify_customer_id as string | null) ?? null;
+        shopifyCustomerId = (rows[0].shopify_customer_id as string | null) ?? shopifyCustomerId;
       } else {
         customerId = null;
       }
@@ -193,7 +218,8 @@ export async function erasePerson(
            WHERE customer_id = ${cid} OR campaign_contact_id = ANY(${contactIds}::bigint[])`,
       sql`DELETE FROM ai_usage WHERE campaign_contact_id = ANY(${contactIds}::bigint[])`,
       sql`DELETE FROM campaign_sends
-           WHERE contact_id = ANY(${contactIds}::bigint[]) OR email = ANY(${emailList}::text[])`,
+           WHERE contact_id = ANY(${contactIds}::bigint[]) OR email = ANY(${emailList}::text[])
+              OR customer_id = ${cid}`,
       // campaign_drafts cascade with the contact.
       sql`DELETE FROM campaign_contacts WHERE id = ANY(${contactIds}::bigint[])`,
       sql`DELETE FROM email_messages m
@@ -207,19 +233,44 @@ export async function erasePerson(
               OR email_capture_id IN (SELECT id FROM email_captures WHERE email = ANY(${emailList}::text[]))`,
       // messages + chat ai_usage cascade; qa_entries keep their text, lose the link.
       sql`WITH del AS (DELETE FROM conversations WHERE id = ANY(${convIds}::bigint[]) RETURNING 1)
-          SELECT count(*)::int AS n FROM del`,
-      // Never mail or re-import this address again.
+          SELECT count(*)::int AS n, 'conversations' AS what FROM del`,
+      // Never mail or re-import this address again (added_at = the erasure
+      // time: only a NEWER consent act can ever lift it, consent-core.mjs).
       sql`INSERT INTO suppression_list (email, reason)
           SELECT e, 'erasure' FROM unnest(${emailList}::text[]) e
-          ON CONFLICT (email) DO UPDATE SET reason = 'erasure'`,
+          ON CONFLICT (email) DO UPDATE SET reason = 'erasure', added_at = now()`,
+      // ... and never re-create the Shopify identity from an import or webhook
+      // before Shopify has redacted it.
+      sql`INSERT INTO erasure_tombstones (shopify_customer_id, shopify_confirmed_at)
+          SELECT ${shopifyCustomerId}::text, CASE WHEN ${trigger}::text = 'shopify' THEN now() ELSE NULL END
+           WHERE ${shopifyCustomerId}::text IS NOT NULL
+          ON CONFLICT (shopify_customer_id) DO UPDATE
+            SET erased_at = now(),
+                shopify_confirmed_at = COALESCE(EXCLUDED.shopify_confirmed_at, erasure_tombstones.shopify_confirmed_at)`,
+      // Mirrored orders not (yet) linked to the row go too.
+      sql`DELETE FROM customer_orders WHERE ${shopifyCustomerId}::text IS NOT NULL
+           AND shopify_customer_id = ${shopifyCustomerId}`,
+      // Open Shopify writes for the person are moot (a pending create carries the e-mail).
+      sql`DELETE FROM shopify_outbox WHERE customer_id = ${cid} AND status <> 'done'`,
       sql`DELETE FROM email_captures WHERE email = ANY(${emailList}::text[])`,
-      // OAuth tokens + session links cascade.
+      // OAuth tokens, session links, orders, facts, consent history, Eingang
+      // items and campaign places cascade with the customer row.
       sql`WITH del AS (DELETE FROM customers WHERE id = ${cid} RETURNING 1)
-          SELECT count(*)::int AS n FROM del`,
+          SELECT count(*)::int AS n, 'customers' AS what FROM del`,
     ];
     const results = (await sql.transaction(queries)) as Array<Array<Record<string, unknown>>>;
-    const deletedConversations = Number(results[queries.length - 4]?.[0]?.n ?? 0);
-    const customerDeleted = Number(results[queries.length - 1]?.[0]?.n ?? 0) > 0;
+    const counted = (what: string) =>
+      Number(results.flat().find((r) => r && r.what === what)?.n ?? 0);
+    const deletedConversations = counted("conversations");
+    const customerDeleted = counted("customers") > 0;
+
+    // ── Shopify side: consent off + data erasure, only when Mo started it ───
+    let shopifyErasureEnqueued = false;
+    if (trigger === "mo" && shopifyCustomerId) {
+      const ids = await enqueueShopifyErasure(shopifyCustomerId, sql);
+      shopifyErasureEnqueued = ids.length > 0;
+      await runOutboxInline(ids);
+    }
 
     // ── 3. Stored hero images ───────────────────────────────────────────────
     let deletedHeroImages = 0;
@@ -237,6 +288,7 @@ export async function erasePerson(
       deletedConversations,
       deletedCampaignContacts: contactIds.length,
       deletedHeroImages,
+      shopifyErasureEnqueued,
     };
   } catch (err) {
     reportError(err, { route: "lib/customer-erasure", phase: "erase" });
