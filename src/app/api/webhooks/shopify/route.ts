@@ -69,13 +69,18 @@ import { reportError } from "@/lib/observability";
 // comfortably within 60s, well above the other webhooks' 30s.
 export const maxDuration = 60;
 
-function webhookSecret(): string | undefined {
-  return process.env.SHOPIFY_WEBHOOK_SECRET?.trim() || undefined;
+// Admin-made subscriptions are signed with the store's webhook key
+// (SHOPIFY_WEBHOOK_SECRET), app-made ones — Admin API, app configuration, the
+// compliance topics — with the app's client secret. Either verifies.
+function webhookSecrets(): string[] {
+  return [process.env.SHOPIFY_WEBHOOK_SECRET?.trim(), process.env.SHOPIFY_CLIENT_SECRET?.trim()].filter(
+    (s): s is string => Boolean(s)
+  );
 }
 
 export async function POST(req: Request) {
-  const secret = webhookSecret();
-  if (!secret) {
+  const secret = webhookSecrets();
+  if (secret.length === 0) {
     // No signing secret ⇒ we cannot trust ANY payload. Fail closed.
     return NextResponse.json(
       { ok: false, error: "Shopify webhook not configured" },

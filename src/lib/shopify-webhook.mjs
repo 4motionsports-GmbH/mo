@@ -41,13 +41,19 @@ export function isValidShopifyWebhook({ rawBody, hmacHeader, secret }) {
  * header is missing, or the signature doesn't match — the route turns that into a
  * 401 and never touches the body. Never returns an unverified payload.
  *
- * @param {{ rawBody: string, hmacHeader: string | null, secret: string }} args
+ * `secret` may be a list: subscriptions made in the Shopify admin are signed
+ * with the store's webhook key, those made through the app (Admin API, app
+ * configuration — incl. the compliance topics) with the app's client secret.
+ * A signature valid under ANY configured secret is accepted.
+ *
+ * @param {{ rawBody: string, hmacHeader: string | null, secret: string | Array<string | null | undefined> }} args
  * @returns {unknown} the parsed JSON payload (only after the signature checks out)
  */
 export function verifyShopifyWebhook({ rawBody, hmacHeader, secret }) {
-  if (!secret) throw new Error("SHOPIFY_WEBHOOK_SECRET is not configured");
+  const secrets = (Array.isArray(secret) ? secret : [secret]).filter((s) => typeof s === "string" && s.length > 0);
+  if (secrets.length === 0) throw new Error("SHOPIFY_WEBHOOK_SECRET is not configured");
   if (!hmacHeader) throw new Error("Missing X-Shopify-Hmac-SHA256 header");
-  if (!isValidShopifyWebhook({ rawBody, hmacHeader, secret })) {
+  if (!secrets.some((s) => isValidShopifyWebhook({ rawBody, hmacHeader, secret: s }))) {
     throw new Error("Invalid Shopify webhook signature");
   }
   return JSON.parse(rawBody);
