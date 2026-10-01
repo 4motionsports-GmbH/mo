@@ -127,7 +127,7 @@ export async function POST(req: Request) {
     // DB OR-merges it so an existing transactional consent is never downgraded.
     // ONE consent (docs/CUSTOMER_PLATFORM_PLAN.md §7): an address already
     // subscribed — via Shopify or an earlier DOI — gets no second DOI mail.
-    const alreadySubscribed = true ? await isEmailAlreadySubscribed(email) : false;
+    const alreadySubscribed = await isEmailAlreadySubscribed(email);
 
     const capture = await upsertEmailCapture({
       sessionId,
