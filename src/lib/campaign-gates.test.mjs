@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   evaluateCampaignSendGates,
   GATE_REASONS,
+  optInLevelFromConsent,
 } from "./campaign-gates.mjs";
 import {
   isCampaignSendsApproved,
@@ -15,6 +16,7 @@ function openInput(overrides = {}) {
   return {
     sendsApproved: true,
     allowSingleOptIn: false,
+    consentState: "subscribed",
     optInLevel: "CONFIRMED_OPT_IN",
     suppressed: false,
     lastSendAt: null,
@@ -31,6 +33,20 @@ test("master flag off → refused, regardless of everything else", () => {
   const r = evaluateCampaignSendGates(openInput({ sendsApproved: false }));
   assert.equal(r.allowed, false);
   assert.equal(r.reason, GATE_REASONS.NOT_APPROVED);
+});
+
+test("no live consent → refused before the opt-in level is even looked at", () => {
+  for (const consentState of ["not_subscribed", "pending", "unsubscribed", null, undefined]) {
+    const r = evaluateCampaignSendGates(openInput({ consentState, optInLevel: "SINGLE_OPT_IN" }));
+    assert.equal(r.allowed, false);
+    assert.equal(r.reason, GATE_REASONS.NO_CONSENT);
+  }
+});
+
+test("consent levels map onto the gate vocabulary", () => {
+  assert.equal(optInLevelFromConsent("confirmed_opt_in"), "CONFIRMED_OPT_IN");
+  assert.equal(optInLevelFromConsent("single_opt_in"), "SINGLE_OPT_IN");
+  assert.equal(optInLevelFromConsent(null), "UNKNOWN");
 });
 
 test("SINGLE_OPT_IN / UNKNOWN blocked while the allow-flag is off", () => {
