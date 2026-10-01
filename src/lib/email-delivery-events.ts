@@ -7,6 +7,7 @@ import { unsubscribeByEmail } from "./email-capture-store";
 import { stampCampaignDelivery } from "./campaign-store";
 import { parseResendDeliveryEvent, suppressionReasonFor } from "./email-delivery-events.mjs";
 import { reportError } from "./observability";
+import { recordMoWithdrawal } from "./consent-flows";
 
 export interface DeliveryEventOutcome {
   kind: string;
@@ -30,6 +31,9 @@ export async function applyResendDeliveryEvent(evt: unknown): Promise<DeliveryEv
     if (reason) {
       try {
         if (await unsubscribeByEmail(email, reason)) suppressed++;
+        // A spam complaint is a withdrawal of the ONE consent (Mo + Shopify);
+        // a bounce is a block only (deliverability) and leaves consent alone.
+        if (reason === "complaint") await recordMoWithdrawal({ email, reason: "complaint" });
       } catch (err) {
         reportError(err, { route: "lib/email-delivery-events", phase: `suppress:${reason}` });
       }

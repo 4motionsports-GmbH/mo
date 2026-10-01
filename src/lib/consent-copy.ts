@@ -203,11 +203,54 @@ export function signInMarketingConsentCopy(
  * personalised offers and exclusive discount promotions — and is NOT part of
  * the `consentTextShown` audit string (label + footer only).
  */
+/**
+ * The sign-in-first path of the chat consent gate (UI chrome, NOT consent
+ * text — never part of consentTextShown). Since the one consent
+ * (docs/CUSTOMER_PLATFORM_PLAN.md §7), the gate leads with "sign in with your
+ * shop account": the person is then the Shopify customer, Mo knows their
+ * orders, and the at-sign-in card (surface=signin) asks for the consent in one
+ * tap — or they are already subscribed and are never asked. The typed-e-mail
+ * consent below stays as the alternative for people without an account.
+ */
+export interface ChatGateSignInHint {
+  /** Lead with the sign-in button (the typed-e-mail consent becomes secondary). */
+  preferred: boolean;
+  headline: string;
+  body: string;
+  buttonLabel: string;
+  /** Caption of the secondary path (typed e-mail + consent). */
+  alternativeLabel: string;
+  /** Start of the Customer Account sign-in (top-level navigation, see CUSTOMER_ACCOUNT.md §2). */
+  loginPath: string;
+}
+
+export function chatGateSignInHint(locale: Locale = "de"): ChatGateSignInHint {
+  if (locale === "en") {
+    return {
+      preferred: true,
+      headline: "Already a motion sports customer?",
+      body: "Sign in with your shop account — Mo then knows your orders and can advise you personally.",
+      buttonLabel: "Sign in with your account",
+      alternativeLabel: "No account? Get offers by e-mail instead",
+      loginPath: "/api/auth/shopify/login",
+    };
+  }
+  return {
+    preferred: true,
+    headline: "Schon Kunde bei motion sports?",
+    body: "Melde dich mit deinem Kundenkonto an — dann kennt Mo deine Bestellungen und berät dich persönlich.",
+    buttonLabel: "Mit Kundenkonto anmelden",
+    alternativeLabel: "Kein Konto? Angebote per E-Mail erhalten",
+    loginPath: "/api/auth/shopify/login",
+  };
+}
+
 export function chatGateMarketingConsentCopy(
   locale: Locale = "de"
-): SignInMarketingConsentCopy {
+): SignInMarketingConsentCopy & { signIn: ChatGateSignInHint } {
   const s = consentStrings(locale);
   return {
+    signIn: chatGateSignInHint(locale),
     version: CONSENT_COPY_VERSION,
     locale,
     headline: s.chatGateHeadline,

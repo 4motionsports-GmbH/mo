@@ -7,9 +7,14 @@
 // MARKETING_DOI_EXPIRY_DAYS (default 7).
 //
 // Until this runs, NO marketing email is permitted for the address.
+//
+// The confirmation is reported to the ONE consent (lib/consent-flows.ts): the
+// person is subscribed with a provable double opt-in, in Mo and — through the
+// outbox — in Shopify (a Mo-only subscriber becomes a Shopify customer with
+// that consent). docs/CUSTOMER_PLATFORM_PLAN.md §7.4.
 
 import { confirmMarketingByToken } from "@/lib/email-capture-store";
-import { syncCustomerConsent } from "@/lib/customer-store";
+import { recordDoiConfirmed } from "@/lib/consent-flows";
 import { reportError } from "@/lib/observability";
 import { doiPageCopy } from "@/lib/consent-copy";
 import { resolveLocale } from "@/lib/locale";
@@ -44,8 +49,8 @@ export async function GET(req: Request) {
 
     const result = await confirmMarketingByToken(token);
     if (result.ok) {
-      // Mirror the confirmed state onto the customer entity (best-effort).
-      await syncCustomerConsent(result.email);
+      // The one consent: subscribed in Mo and (via the outbox) in Shopify.
+      if (!result.alreadyConfirmed) await recordDoiConfirmed({ email: result.email });
       // Funnel telemetry: count each unique DOI confirmation once, keyed by
       // the pseudonymous session the capture came from (no email in the event).
       if (!result.alreadyConfirmed) {

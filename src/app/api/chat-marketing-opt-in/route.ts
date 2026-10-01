@@ -36,6 +36,7 @@ import { errorResponse, reportError } from "@/lib/observability";
 import { isValidEmail } from "@/lib/capture-validation.mjs";
 import { resolveConsentCopyVersion } from "@/lib/consent-copy-version.mjs";
 import { upsertEmailCapture } from "@/lib/email-capture-store";
+import { isEmailAlreadySubscribed, recordMoOptIn } from "@/lib/consent-flows";
 import { linkCustomerOnEmailCapture } from "@/lib/customer-store";
 import { sendEmail, senderAddress } from "@/lib/email";
 import { outboundThreading } from "@/lib/email-inbound";
@@ -149,6 +150,10 @@ export async function POST(req: Request) {
     // so an existing transactional consent is never downgraded. The session id
     // is recorded on the capture, which is what the /api/chat returning-
     // customer memory gate verifies (wasEmailCapturedFromSession).
+    // ONE consent (docs/CUSTOMER_PLATFORM_PLAN.md §7): an address already
+    // subscribed — via Shopify or an earlier DOI — gets no second DOI mail.
+    const alreadySubscribed = true ? await isEmailAlreadySubscribed(email) : false;
+
     const capture = await upsertEmailCapture({
       sessionId,
       email,
@@ -157,6 +162,7 @@ export async function POST(req: Request) {
       consentTextShown,
       consentCopyVersion,
       locale,
+      alreadySubscribed,
     });
     if (!capture) {
       return errorResponse(
@@ -171,6 +177,9 @@ export async function POST(req: Request) {
     // for this email, attach the current conversation, bump last_seen_at.
     // Best-effort — a linking failure must not block the DOI email.
     await linkCustomerOnEmailCapture({ email, sessionId });
+    // Report the act to the one consent (pending until the DOI link is
+    // clicked; nothing goes to Shopify before that).
+    await recordMoOptIn({ email, surface: "mo_chat_gate", captureId: capture.id, doiPending: capture.doiEmailRequired });
 
     // Funnel telemetry (pseudonymous, session-keyed — NO email in the data),
     // tagged with the gate trigger so the surface splits out in the funnel.
@@ -232,11 +241,11 @@ export async function POST(req: Request) {
       {
         ok: true,
         marketing: {
-          status: capture.marketingDoiStatus,
+          status: alreadySubscribed ? "confirmed" : capture.marketingDoiStatus,
           doiEmailSent,
           // True when the address was already confirmed (re-opt-in) — no DOI needed.
           alreadyConfirmed:
-            capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired,
+            alreadySubscribed || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired),
         },
       },
       headers

@@ -41,7 +41,6 @@ import {
 import { getValidAccessToken } from "./customer-oauth-store";
 import { CONSENT_COPY_LAWYER_APPROVED } from "./consent-copy";
 import { canPersonaliseSignedIn } from "./customer-account-data.mjs";
-import { hasActiveCampaignSubscription } from "./campaign-store";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
 import { reportError } from "./observability";
@@ -216,10 +215,11 @@ async function resolveSignedInMemory(
     const displayName =
       customer.shopifyAccountSummary?.displayName?.trim() || resolved.name || null;
 
+    // marketingStatus mirrors the ONE consent (Shopify or Mo — consent-store),
+    // so a Shopify newsletter subscription counts without a separate lookup.
     const personalise = canPersonaliseSignedIn({
       lawyerApproved: CONSENT_COPY_LAWYER_APPROVED,
       marketingStatus: customer.marketingStatus,
-      shopifySubscribed: await hasActiveCampaignSubscription(customer.id),
     });
 
     if (!personalise) {

@@ -48,22 +48,20 @@ function doiExpiryDays(): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Hard block for ANY send: true when the address is on the suppression list OR
- * has an unsubscribed_at timestamp. Always returns true (fail-closed) if it
- * can't reach the database, so a transient DB error can never let a send slip
- * past the opt-out.
+ * Hard block for ANY send: true when the address is on the suppression list
+ * (opt-out, bounce, complaint, erasure). Since the one consent
+ * (lib/consent-core.mjs) every withdrawal — ours or Shopify's — writes the
+ * block list, and a newer real re-subscribe lifts it, so the list alone is the
+ * truth (email_captures.unsubscribed_at stays as evidence only). Always
+ * returns true (fail-closed) if it can't reach the database, so a transient DB
+ * error can never let a send slip past the opt-out.
  */
 export async function isSuppressed(email: string, sql: Sql | null = getSql()): Promise<boolean> {
   if (!sql) return true; // fail-closed: no DB means we can't prove it's allowed
   const e = normalizeEmail(email);
   try {
     const rows = await sql`
-      SELECT 1
-        FROM suppression_list WHERE email = ${e}
-      UNION
-      SELECT 1
-        FROM email_captures WHERE email = ${e} AND unsubscribed_at IS NOT NULL
-      LIMIT 1
+      SELECT 1 FROM suppression_list WHERE email = ${e} LIMIT 1
     `;
     return rows.length > 0;
   } catch {
@@ -151,6 +149,12 @@ export interface UpsertCaptureInput {
    * language. Defaults to German when absent.
    */
   locale?: Locale;
+  /**
+   * The person is already subscribed in the ONE consent (Shopify or an earlier
+   * Mo DOI — lib/consent-flows.isEmailAlreadySubscribed): the tap is recorded
+   * as evidence, but no new DOI token / mail is issued.
+   */
+  alreadySubscribed?: boolean;
 }
 
 export interface UpsertCaptureResult {
@@ -201,7 +205,12 @@ export async function upsertEmailCapture(
 
   const alreadyConfirmed = existing?.marketing_doi_status === "confirmed";
 
-  if (input.marketingConsent && !suppressed) {
+  if (input.marketingConsent && !suppressed && input.alreadySubscribed && !alreadyConfirmed) {
+    // Subscribed elsewhere already (one consent): keep the record's own DOI
+    // state, issue no token, send no DOI mail.
+    status = existing?.marketing_doi_status === "pending" ? "pending" : "none";
+    doiToken = existing?.doi_token ?? null;
+  } else if (input.marketingConsent && !suppressed) {
     if (alreadyConfirmed) {
       // Keep the existing confirmation; don't re-send a DOI.
       status = "confirmed";
