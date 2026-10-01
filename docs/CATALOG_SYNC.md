@@ -291,8 +291,23 @@ then register these topics against `https://<deployment>/api/webhooks/shopify`
   ([`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)); register them here so
   the Mo-attributed-revenue KPI fills.
 
-Register either via the Shopify Admin (Settings → Notifications → Webhooks) or
-the Admin API `webhookSubscriptionCreate` mutation. Verify deliveries are
+The customer platform adds `orders/updated`, `orders/cancelled`,
+`customers/create|update|delete`, `customers_email_marketing_consent/update` and
+`bulk_operations/finish` on the same endpoint (`docs/CUSTOMER_PLATFORM_PLAN.md` §6).
+
+Register with `npm run shopify:webhooks` (dry run: lists what exists and what is
+missing, and checks the app's scopes) and `npm run shopify:webhooks -- --apply`
+(creates the missing subscriptions through `webhookSubscriptionCreate`; never
+changes or deletes one). The compliance topics `customers/data_request`,
+`customers/redact` and `shop/redact` are set in the app configuration (Dev
+Dashboard → Configuration → Compliance webhooks), not through the API. Manual
+registration in the Shopify Admin (Settings → Notifications → Webhooks) still
+works.
+
+Signing: app-made subscriptions (script, app configuration, compliance topics)
+are signed with the app's client secret, admin-made ones with the store key
+shown in Settings → Notifications. The route accepts a signature valid under
+`SHOPIFY_WEBHOOK_SECRET` or `SHOPIFY_CLIENT_SECRET`. Verify deliveries are
 `2xx`-acked in the Shopify webhook dashboard.
 
 ## How the runtime reads the catalog
