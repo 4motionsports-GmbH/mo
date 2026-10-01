@@ -6,10 +6,13 @@
 // On a valid token we stamp unsubscribed_at, add the address to the suppression
 // list, revoke marketing DOI, and render a confirmation page. Clicked as a
 // top-level navigation from a mail client → no CORS/secret guard.
+//
+// The withdrawal goes to the ONE consent (lib/consent-flows.ts) and from there
+// to Shopify, so no Shopify-side mailer keeps writing to the person either.
 
 import { unsubscribeByEmail, verifyUnsubscribeToken } from "@/lib/email-capture-store";
 import { markCampaignUnsubscribed } from "@/lib/campaign-store";
-import { syncCustomerConsent } from "@/lib/customer-store";
+import { recordMoWithdrawal } from "@/lib/consent-flows";
 import { reportError } from "@/lib/observability";
 import { unsubscribePageCopy } from "@/lib/consent-copy";
 import { resolveLocale } from "@/lib/locale";
@@ -53,8 +56,8 @@ export async function GET(req: Request) {
       });
     }
 
-    // Mirror the unsubscribe onto the customer entity (best-effort).
-    await syncCustomerConsent(email);
+    // The one consent: unsubscribed in Mo and (via the outbox) in Shopify.
+    await recordMoWithdrawal({ email, reason: "unsubscribe" });
 
     return renderResultPage({
       status: 200,

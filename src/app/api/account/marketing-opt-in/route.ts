@@ -23,6 +23,7 @@ import { preflightResponse } from "@/lib/security";
 import { errorResponse, reportError } from "@/lib/observability";
 import { resolveConsentCopyVersion } from "@/lib/consent-copy-version.mjs";
 import { upsertEmailCapture } from "@/lib/email-capture-store";
+import { isEmailAlreadySubscribed, recordMoOptIn } from "@/lib/consent-flows";
 import { getCustomerById, linkCustomerOnEmailCapture } from "@/lib/customer-store";
 import { sendEmail, senderAddress } from "@/lib/email";
 import { outboundThreading } from "@/lib/email-inbound";
@@ -124,6 +125,10 @@ export async function POST(req: Request) {
     // Same upsert + DOI machinery as /api/capture-email — only the email source
     // differs. transactionalConsent stays false (no summary requested here); the
     // DB OR-merges it so an existing transactional consent is never downgraded.
+    // ONE consent (docs/CUSTOMER_PLATFORM_PLAN.md §7): an address already
+    // subscribed — via Shopify or an earlier DOI — gets no second DOI mail.
+    const alreadySubscribed = true ? await isEmailAlreadySubscribed(email) : false;
+
     const capture = await upsertEmailCapture({
       sessionId,
       email,
@@ -132,6 +137,7 @@ export async function POST(req: Request) {
       consentTextShown,
       consentCopyVersion,
       locale,
+      alreadySubscribed,
     });
     if (!capture) {
       return errorResponse(
@@ -145,6 +151,9 @@ export async function POST(req: Request) {
     // Attach the current conversation + sync the customer's mirrored consent.
     // GREATEST(identity_tier, 2) never downgrades this signed-in (tier-3) row.
     await linkCustomerOnEmailCapture({ email, sessionId });
+    // Report the act to the one consent (pending until the DOI link is
+    // clicked; nothing goes to Shopify before that).
+    await recordMoOptIn({ email, surface: "mo_signin", captureId: capture.id, doiPending: capture.doiEmailRequired });
 
     // Funnel telemetry (pseudonymous, session-keyed — NO email in the data),
     // tagged so the opt-in surface can be split out from the in-chat capture.
@@ -206,11 +215,11 @@ export async function POST(req: Request) {
       {
         ok: true,
         marketing: {
-          status: capture.marketingDoiStatus,
+          status: alreadySubscribed ? "confirmed" : capture.marketingDoiStatus,
           doiEmailSent,
           // True when the address was already confirmed (re-opt-in) — no DOI needed.
           alreadyConfirmed:
-            capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired,
+            alreadySubscribed || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired),
         },
       },
       headers

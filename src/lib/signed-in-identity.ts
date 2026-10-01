@@ -41,7 +41,9 @@ export interface MarketingOptInState {
 /**
  * The at-sign-in marketing opt-in state for a signed-in customer (CA-4): surface
  * the opt-in card ONLY for a customer who has NOT recorded a marketing decision
- * AND has a real (mailable) verified email. Any DOI decision already on record
+ * AND has a real (mailable) verified email. The status is the ONE consent
+ * (Shopify or Mo): a customer subscribed in Shopify reads "confirmed" and is
+ * never asked again. Any DOI decision already on record
  * (pending / confirmed / unsubscribed) — or a synthetic placeholder email — makes
  * it non-actionable. Best-effort + fail-closed: a read failure degrades to
  * "not actionable" (never invite an opt-in we can't substantiate) and is logged.

@@ -240,9 +240,11 @@ export async function linkCustomerOnEmailCapture(
 }
 
 /**
- * Re-mirror the aggregated consent state from email_captures onto the
- * customer row. Call after any consent transition (capture, DOI confirm,
- * unsubscribe). No-op when no customer/capture exists. Never throws.
+ * Mirror the transactional consent (the summary request) from email_captures
+ * onto the customer row. The MARKETING consent is no longer mirrored from the
+ * capture: it is the one consent shared with Shopify, written only by
+ * lib/consent-store.ts (which also keeps marketing_status as its legacy
+ * mirror). No-op when no customer/capture exists. Never throws.
  */
 export async function syncCustomerConsent(
   email: string,
@@ -254,12 +256,7 @@ export async function syncCustomerConsent(
   try {
     await sql`
       UPDATE customers c
-         SET transactional_consent = ec.transactional_consent,
-             marketing_status = CASE
-               WHEN ec.unsubscribed_at IS NOT NULL THEN 'unsubscribed'
-               WHEN ec.marketing_doi_status IN ('pending', 'confirmed') THEN ec.marketing_doi_status
-               ELSE 'none'
-             END
+         SET transactional_consent = c.transactional_consent OR ec.transactional_consent
         FROM email_captures ec
        WHERE ec.email = c.email
          AND c.email = ${e}

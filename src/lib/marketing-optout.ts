@@ -13,12 +13,13 @@
 //     cleared, so an accidental click doesn't count as an Abmeldung,
 //   - a Kampagne contact returns to its queue state (drafted when a draft
 //     exists, else pending).
-// Neither direction sends any e-mail. Consent from Shopify is not touched: a
-// contact unsubscribed on the Shopify side is re-subscribed there.
+// Neither direction sends any e-mail. Both directions go to the ONE consent
+// (lib/consent-flows.ts) and from there to Shopify: an opt-out unsubscribes
+// the person in Shopify too, lifting restores the earlier subscription there.
 
 import { getSql, type Sql } from "./db";
 import { normalizeEmail, unsubscribeByEmail } from "./email-capture-store";
-import { syncCustomerConsent } from "./customer-store";
+import { recordMoWithdrawal, restoreConsentAfterLift } from "./consent-flows";
 import { optOutState } from "./marketing-optout-core.mjs";
 import { reportError } from "./observability";
 
@@ -51,14 +52,15 @@ export async function getOptOutState(
   if (!sql) return null;
   const e = normalizeEmail(email);
   try {
-    const [suppression, capture] = (await sql.transaction([
-      sql`SELECT reason, added_at FROM suppression_list WHERE email = ${e}`,
-      sql`SELECT max(unsubscribed_at) AS unsubscribed_at FROM email_captures WHERE email = ${e}`,
-    ])) as Array<Array<Record<string, unknown>>>;
+    // The block list is the truth since the one consent (isSuppressed); the
+    // capture's unsubscribed_at stays as evidence only.
+    const suppression = (await sql`
+      SELECT reason, added_at FROM suppression_list WHERE email = ${e}
+    `) as Array<Record<string, unknown>>;
     const row = suppression[0];
     return optOutState(
       row ? { reason: (row.reason as string | null) ?? null, addedAt: iso(row.added_at) } : null,
-      iso(capture[0]?.unsubscribed_at)
+      null
     ) as OptOutState;
   } catch (err) {
     reportError(err, { route: "lib/marketing-optout", phase: "getOptOutState" });
@@ -81,9 +83,9 @@ export async function optOutManually(
     if (!(await unsubscribeByEmail(e, "manual", sql))) return null;
     await sql`
       UPDATE campaign_contacts SET status = 'suppressed'
-       WHERE email = ${e} AND is_test = false AND status <> 'suppressed'
+       WHERE email = ${e} AND is_test = false AND status IN ('pending', 'drafted', 'draft_failed')
     `;
-    await syncCustomerConsent(e, sql);
+    await recordMoWithdrawal({ email: e, reason: "manual" });
     return await getOptOutState(e, sql);
   } catch (err) {
     reportError(err, { route: "lib/marketing-optout", phase: "optOutManually" });
@@ -107,7 +109,7 @@ export async function liftOptOut(email: string, sql: Sql | null = getSql()): Pro
       ok: false,
       reason: "not_blocked",
       message:
-        "Die Adresse ist bei uns nicht gesperrt. Ist der Kontakt trotzdem unterdrückt, kommt die Abmeldung aus Shopify — dort die E-Mail-Werbung wieder aktivieren und synchronisieren.",
+        "Die Adresse ist nicht gesperrt — es gibt keine Abmeldung aufzuheben.",
     };
   }
   if (!state.canLift) {
@@ -147,7 +149,7 @@ export async function liftOptOut(email: string, sql: Sql | null = getSql()): Pro
         RETURNING cc.id
       `,
     ])) as Array<Array<Record<string, unknown>>>;
-    await syncCustomerConsent(e, sql);
+    await restoreConsentAfterLift({ email: e });
     const after = await getOptOutState(e, sql);
     return {
       ok: true,

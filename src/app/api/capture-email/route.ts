@@ -25,6 +25,7 @@ import { errorResponse, reportError } from "@/lib/observability";
 import { validateCaptureRequest } from "@/lib/capture-validation.mjs";
 import { resolveConsentCopyVersion } from "@/lib/consent-copy-version.mjs";
 import { upsertEmailCapture } from "@/lib/email-capture-store";
+import { isEmailAlreadySubscribed, recordMoOptIn } from "@/lib/consent-flows";
 import { linkCustomerOnEmailCapture } from "@/lib/customer-store";
 import { sendEmail, senderAddress } from "@/lib/email";
 import { outboundThreading } from "@/lib/email-inbound";
@@ -142,6 +143,10 @@ export async function POST(req: Request) {
       captureConsentCopy(locale).consentTextShown
     );
 
+    // ONE consent (docs/CUSTOMER_PLATFORM_PLAN.md §7): an address already
+    // subscribed — via Shopify or an earlier DOI — gets no second DOI mail.
+    const alreadySubscribed = marketingConsent ? await isEmailAlreadySubscribed(email) : false;
+
     const capture = await upsertEmailCapture({
       sessionId,
       email,
@@ -150,6 +155,7 @@ export async function POST(req: Request) {
       consentTextShown,
       consentCopyVersion,
       locale,
+      alreadySubscribed,
     });
     if (!capture) {
       // No DB configured (or the write failed) — we cannot store the consent,
@@ -169,6 +175,9 @@ export async function POST(req: Request) {
     // same customer. Best-effort (never throws): the consent is already stored,
     // and a linking failure must not block the summary/DOI emails.
     await linkCustomerOnEmailCapture({ email, sessionId });
+    // Report the act to the one consent (pending until the DOI link is
+    // clicked; nothing goes to Shopify before that).
+    await recordMoOptIn({ email, surface: "mo_capture_form", captureId: capture.id, doiPending: capture.doiEmailRequired });
 
     // Funnel telemetry (pseudonymous, session-keyed — NO email in the data).
     // Emitted as soon as the consent is stored, so a downstream summary-send
@@ -256,10 +265,11 @@ export async function POST(req: Request) {
         ok: true,
         transactional: { summarySent: summary.sent || summarySkipped },
         marketing: {
-          status: capture.marketingDoiStatus,
+          status: alreadySubscribed ? "confirmed" : capture.marketingDoiStatus,
           doiEmailSent,
           // True once the user is already confirmed (re-submission) — no DOI needed.
-          alreadyConfirmed: capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired,
+          alreadyConfirmed:
+            alreadySubscribed || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired),
         },
       },
       headers
