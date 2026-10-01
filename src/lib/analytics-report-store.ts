@@ -133,6 +133,8 @@ export interface ReportCustomerBase {
 }
 
 export interface ReportCampaignRow {
+  /** campaigns.id; null for sends without a campaign (older reports: absent). */
+  campaignId?: number | null;
   name: string;
   kind: string;
   sent: number;
@@ -795,7 +797,7 @@ export async function getReportCampaigns(from: string, to: string, sql: Sql | nu
   if (!sql) return [];
   try {
     const rows = (await sql`
-      SELECT COALESCE(k.name, 'Ohne Kampagne') AS name, COALESCE(k.kind, '') AS kind,
+      SELECT s.campaign_id, COALESCE(min(k.name), 'Ohne Kampagne') AS name, COALESCE(min(k.kind), '') AS kind,
              count(*)::int AS sent,
              count(*) FILTER (WHERE s.clicked_at IS NOT NULL OR s.bundle_clicked_at IS NOT NULL)::int AS clicked,
              count(*) FILTER (WHERE EXISTS (
@@ -806,10 +808,11 @@ export async function getReportCampaigns(from: string, to: string, sql: Sql | nu
         LEFT JOIN campaigns k ON k.id = s.campaign_id
        WHERE s.is_test = false
          AND s.sent_at >= ${from}::date AND s.sent_at < (${to}::date + 1)
-       GROUP BY 1, 2
-       ORDER BY 3 DESC
+       GROUP BY s.campaign_id
+       ORDER BY sent DESC
     `) as Array<Record<string, unknown>>;
     return rows.map((r) => ({
+      campaignId: r.campaign_id == null ? null : Number(r.campaign_id),
       name: String(r.name),
       kind: String(r.kind),
       sent: Number(r.sent ?? 0),
