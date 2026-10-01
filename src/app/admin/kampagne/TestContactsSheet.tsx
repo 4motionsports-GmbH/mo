@@ -148,8 +148,8 @@ export function TestContactsSheet({
               Der Entwurf wird sofort mit den aktuellen Vorbereiten-Einstellungen erzeugt
               (Rabatt {prepareSettings.depth} %, Textmodus {prepareSettings.textMode}). Mit der
               E-Mail eines echten Kunden übernimmt der Entwurf dessen Kaufhistorie und
-              Empfehlungen — die Mail geht trotzdem nur an die Testadresse. Sync und
-              „Warteschlange neu aufbauen“ lassen Testkontakte unberührt; Sperrfrist und
+              Empfehlungen — die Mail geht trotzdem nur an die Testadresse. „Zielgruppe
+              aktualisieren“ und „Warteschlange neu aufbauen“ lassen Testkontakte unberührt; Sperrfrist und
               Unterdrückungsliste gelten für sie nicht.
             </InfoTip>
           </div>

@@ -31,6 +31,7 @@ export function PreparePopover({
   settings,
   onSettings,
   heroOffered,
+  heroForAll = false,
   disabled,
   onStart,
   trigger,
@@ -42,6 +43,8 @@ export function PreparePopover({
   settings: PrepareSettings;
   onSettings: (patch: Partial<PrepareSettings>) => void;
   heroOffered: boolean;
+  /** The campaign generates a hero for every card (hero mode „ai_all“), not only the A group. */
+  heroForAll?: boolean;
   disabled: boolean;
   onStart: (settings: PrepareSettings) => void;
   trigger: React.ReactElement<{ onClick?: (e: React.MouseEvent) => void }>;
@@ -53,6 +56,7 @@ export function PreparePopover({
     draftCostEur: costs.draftEur,
     heroCostEur: costs.heroEur,
     withHero,
+    heroForAll,
   });
   const nothingToDo = estimate.drafts === 0;
 
@@ -160,22 +164,32 @@ export function PreparePopover({
               disabled={disabled}
               onChange={(e) => onSettings({ withHero: e.target.checked })}
             />
-            <span>
-              KI-Hero für die A-Gruppe erzeugen
-              <InfoTip className="ml-1">
-                Nach den Entwürfen wird für jeden vorbereiteten Kontakt mit gerader ID (A-Gruppe des
-                Hero-A/B-Tests) ein Bild-Prompt vorgeschlagen und das Hero-Bild gerendert — etwa
-                anderthalb Minuten und die angegebenen Kosten pro Bild. Ungerade IDs (B-Gruppe)
-                senden ohne Hero; der KPI-Bereich vergleicht beide Gruppen.
-              </InfoTip>
-            </span>
+            {heroForAll ? (
+              <span>
+                KI-Hero für jede Mail erzeugen
+                <InfoTip className="ml-1">
+                  Nach den Entwürfen wird für jeden vorbereiteten Kontakt ein Bild-Prompt vorgeschlagen und
+                  das Hero-Bild gerendert — etwa anderthalb Minuten und die angegebenen Kosten pro Bild.
+                </InfoTip>
+              </span>
+            ) : (
+              <span>
+                KI-Hero für die A-Gruppe erzeugen
+                <InfoTip className="ml-1">
+                  Nach den Entwürfen wird für jeden vorbereiteten Kontakt mit gerader ID (A-Gruppe des
+                  Hero-A/B-Tests) ein Bild-Prompt vorgeschlagen und das Hero-Bild gerendert — etwa
+                  anderthalb Minuten und die angegebenen Kosten pro Bild. Ungerade IDs (B-Gruppe)
+                  senden ohne Hero; der KPI-Bereich vergleicht beide Gruppen.
+                </InfoTip>
+              </span>
+            )}
           </label>
         )}
 
         <div className="rounded-md bg-surface-2 px-2.5 py-2 text-xs tabular-nums">
           {nothingToDo ? (
             <span className="text-muted-foreground">
-              Keine offenen Kontakte im Sendefenster — erst „Jetzt synchronisieren“.
+              Keine offenen Empfänger — erst „Zielgruppe aktualisieren“.
             </span>
           ) : (
             <>

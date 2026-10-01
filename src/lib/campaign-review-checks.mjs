@@ -98,6 +98,8 @@ function parseTime(value) {
  *   sendsApproved?: boolean,
  *   allowSingleOptIn?: boolean,
  *   heroDesignActive?: boolean,
+ *   heroMode?: "none" | "default" | "ai_ab" | "ai_all",
+ *   sendWindowApplies?: boolean,
  *   minSendIntervalDays?: number,
  *   now?: Date | number,
  * }} ReviewContext
@@ -120,6 +122,11 @@ export function reviewChecks(item, ctx = {}) {
         : Date.now();
   const allowSingleOptIn = ctx.allowSingleOptIn === true;
   const heroDesignActive = ctx.heroDesignActive === true;
+  // The campaign's hero mode (0066): only „ai_ab“ splits by contact id, only
+  // „ai_all“ expects a KI-Hero on every card. Without a mode: the A/B split.
+  const heroMode = ctx.heroMode ?? "ai_ab";
+  // The send window (lifecycle segments) only applies to „laufend“ campaigns.
+  const sendWindowApplies = ctx.sendWindowApplies !== false;
   const minDays = Number(ctx.minSendIntervalDays);
 
   /** @type {ReviewCheck[]} */
@@ -287,10 +294,18 @@ export function reviewChecks(item, ctx = {}) {
       }
     }
   }
-  if (heroDesignActive) {
+  if (heroDesignActive && (heroMode === "ai_ab" || heroMode === "ai_all")) {
     const hasHero = typeof item.heroUrl === "string" && item.heroUrl.length > 0;
     const group = abGroupOf(item.contactId);
-    if (group === "A" && !hasHero) {
+    if (heroMode === "ai_all" && !hasHero) {
+      hints.push({
+        key: "hero_missing",
+        level: "hint",
+        title: "Ohne KI-Hero",
+        detail: "Diese Kampagne sendet jede Mail mit einem generierten Hero-Bild.",
+        fix: "generate_hero",
+      });
+    } else if (heroMode === "ai_ab" && group === "A" && !hasHero) {
       hints.push({
         key: "hero_missing",
         level: "hint",
@@ -303,7 +318,8 @@ export function reviewChecks(item, ctx = {}) {
       infos.push({
         key: "hero_present",
         level: "info",
-        title: group === "A" ? "KI-Hero vorhanden (A-Gruppe)" : "KI-Hero vorhanden (B-Gruppe)",
+        title:
+          heroMode === "ai_all" ? "KI-Hero vorhanden" : group === "A" ? "KI-Hero vorhanden (A-Gruppe)" : "KI-Hero vorhanden (B-Gruppe)",
         detail: null,
         fix: null,
       });
@@ -321,7 +337,7 @@ export function reviewChecks(item, ctx = {}) {
     });
   }
   const segment = item.segment ? campaignSegmentByKey(item.segment) : null;
-  if (segment && segment.sendable === false) {
+  if (sendWindowApplies && segment && segment.sendable === false) {
     hints.push({
       key: "segment_not_sendable",
       level: "hint",

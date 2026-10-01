@@ -25,6 +25,8 @@ const STATUS_BY_REASON: Record<string, number> = {
   sends_not_approved: 403,
   opt_in_blocked: 403,
   not_eligible: 409,
+  campaign_closed: 409,
+  no_consent: 403,
   too_soon: 429,
   no_unsubscribe: 503,
   claim_failed: 409,

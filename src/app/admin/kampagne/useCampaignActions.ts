@@ -360,13 +360,15 @@ export function useCampaignActions({
       sendsApproved,
       allowSingleOptIn,
       heroDesignActive,
+      heroMode: campaign.heroMode,
+      sendWindowApplies: campaign.kind === "laufend",
       minSendIntervalDays,
       now: Date.now(),
     };
     const map = new Map<number, ReviewCheck[]>();
     for (const it of items) map.set(it.contactId, reviewChecks(it, ctx) as ReviewCheck[]);
     return map;
-  }, [items, sendsApproved, allowSingleOptIn, heroDesignActive, minSendIntervalDays]);
+  }, [items, sendsApproved, allowSingleOptIn, heroDesignActive, minSendIntervalDays, campaign.heroMode, campaign.kind]);
 
   const checksOf = React.useCallback(
     (contactId: number): ReviewCheck[] => checksById.get(contactId) ?? [],

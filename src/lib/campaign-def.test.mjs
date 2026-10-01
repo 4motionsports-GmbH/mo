@@ -103,3 +103,14 @@ test("auto-prepare plan: live campaigns by priority within the global budget", (
     { campaignId: 1, count: 10 },
   ]);
 });
+
+test("validateCampaignInput: a chat button needs the Mo block", () => {
+  const bad = validateCampaignInput({ name: "BF", kind: "aktion", ctaKind: "mo_chat", moPromo: false }, { create: true });
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.moPromo);
+  const shop = validateCampaignInput(
+    { name: "BF", kind: "aktion", ctaKind: "shop", ctaUrl: "https://motionsports.de/collections/bf", moPromo: false },
+    { create: true }
+  );
+  assert.equal(shop.errors.moPromo, undefined);
+});

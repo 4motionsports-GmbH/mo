@@ -140,7 +140,8 @@ export const SECONDS_PER_HERO = 90;
 /**
  * What a "Vorbereiten" run will do, before it is started: how many drafts can
  * actually be prepared (the pending contacts inside the send window cap the
- * request), how many heroes the A group needs, and the money and time that
+ * request), how many heroes are needed (the A group, or every draft when the
+ * campaign generates a hero for all), and the money and time that
  * costs based on the recorded averages (null when nothing was recorded yet).
  *
  * @param {{
@@ -149,13 +150,14 @@ export const SECONDS_PER_HERO = 90;
  *   draftCostEur: number | null,
  *   heroCostEur: number | null,
  *   withHero: boolean,
+ *   heroForAll?: boolean,
  * }} input
  * @returns {{ drafts: number, heroes: number, costEur: number | null, seconds: number }}
  */
 export function prepareEstimate(input) {
   const drafts = Math.max(0, Math.min(Math.floor(input.count) || 0, Math.floor(input.pendingSendable) || 0));
-  // Half of the prepared contacts land in the A group (even ids) on average.
-  const heroes = input.withHero ? Math.ceil(drafts / 2) : 0;
+  // „ai_all“: every draft; otherwise half land in the A group (even ids) on average.
+  const heroes = input.withHero ? (input.heroForAll ? drafts : Math.ceil(drafts / 2)) : 0;
   const draftCost = typeof input.draftCostEur === "number" ? input.draftCostEur * drafts : null;
   const heroCost =
     heroes > 0 ? (typeof input.heroCostEur === "number" ? input.heroCostEur * heroes : null) : 0;

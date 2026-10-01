@@ -103,7 +103,7 @@ export function QueueRail({
   const reactivate = async (c: CampaignContactHit) => {
     const ok = await confirm({
       title: "Abmeldung aufheben?",
-      description: `Nur wenn die Abmeldung von ${c.email} ein Versehen war oder die Person ausdrücklich wieder Werbung möchte. Die Sperre wird entfernt und der Kontakt kehrt in die Warteschlange zurück. Es wird keine E-Mail verschickt; die Änderung wird protokolliert. Kommt die Abmeldung aus Shopify, dort wieder aktivieren und synchronisieren.`,
+      description: `Nur wenn die Abmeldung von ${c.email} ein Versehen war oder die Person ausdrücklich wieder Werbung möchte. Die Sperre wird entfernt und der Kontakt kehrt in die Warteschlange zurück. Es wird keine E-Mail verschickt; die Änderung wird protokolliert. Die frühere Anmeldung gilt danach wieder — in Mo und, über die Warteschlange, auch in Shopify.`,
       confirmLabel: "Abmeldung aufheben",
     });
     if (!ok) return;

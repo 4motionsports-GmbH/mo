@@ -217,6 +217,8 @@ export interface CampaignDeskCampaign {
   discountScope: DiscountScope;
   textMode: EmailTextModeValue | null;
   heroMode: "none" | "default" | "ai_ab" | "ai_all";
+  /** Sends per day the team aims for (shown next to today's progress), or null. */
+  dailyTarget: number | null;
   /** The audience in plain German (audience-spec.describeAudienceSpec). */
   audienceText: string;
   startsAt: string | null;

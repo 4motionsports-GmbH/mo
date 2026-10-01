@@ -37,6 +37,9 @@ export interface AudienceMatch {
   /** false = the query failed; callers must not act on an empty match. */
   ok: boolean;
   total: number;
+  /** Of the total: how many talked to Mo, how many get English mail. */
+  totalWithMo: number;
+  totalEnglish: number;
   members: AudienceMember[];
 }
 
@@ -56,7 +59,7 @@ export async function matchAudience(
   opts: { limit?: number; now?: Date } = {},
   sql: Sql | null = getSql()
 ): Promise<AudienceMatch> {
-  if (!sql) return { ok: false, total: 0, members: [] };
+  if (!sql) return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, members: [] };
   const spec = normalizeAudienceSpec(rawSpec);
   const p = audienceQueryParams(spec, opts.now ?? new Date());
   const limit = Math.max(1, Math.min(opts.limit ?? 20, AUDIENCE_MAX_MEMBERS));
@@ -89,7 +92,9 @@ export async function matchAudience(
       SELECT b.customer_id, b.email, b.first_name, b.last_name, b.shopify_customer_id, b.lang,
              b.email_consent_level, b.email_consent_at, b.orders_count, b.total_spent_cents,
              b.last_order_at, b.lifecycle_segment, b.conversations_count, b.facts_computed_at,
-             count(*) OVER () AS total
+             count(*) OVER () AS total,
+             count(*) FILTER (WHERE b.conversations_count > 0) OVER () AS total_mo,
+             count(*) FILTER (WHERE b.lang = 'en') OVER () AS total_en
         FROM base b
        WHERE (${p.optInLevels}::text[] IS NULL
               OR COALESCE(b.email_consent_level, 'unknown') = ANY(${p.optInLevels}::text[]))
@@ -130,6 +135,8 @@ export async function matchAudience(
     return {
       ok: true,
       total: rows.length > 0 ? Number(rows[0].total) : 0,
+      totalWithMo: rows.length > 0 ? Number(rows[0].total_mo) : 0,
+      totalEnglish: rows.length > 0 ? Number(rows[0].total_en) : 0,
       members: rows.map((r) => ({
         customerId: Number(r.customer_id),
         email: String(r.email),
@@ -149,7 +156,7 @@ export async function matchAudience(
     };
   } catch (err) {
     reportError(err, { route: "lib/audience-store", phase: "matchAudience" });
-    return { ok: false, total: 0, members: [] };
+    return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, members: [] };
   }
 }
 
@@ -161,15 +168,13 @@ export interface AudiencePreview {
   sample: Array<{ customerId: number; email: string; name: string | null }>;
 }
 
-/** Count + a small sample for the wizard ("1.240 Kunden passen"). */
+/** Count + a small sample for the wizard ("1.240 Kunden passen") — the counts are window aggregates, only 8 rows travel. */
 export async function previewAudience(rawSpec: unknown, sql: Sql | null = getSql()): Promise<AudiencePreview> {
-  const match = await matchAudience(rawSpec, { limit: AUDIENCE_MAX_MEMBERS }, sql);
-  const withMo = match.members.filter((m) => m.hasMoContact).length;
-  const en = match.members.filter((m) => m.language === "en").length;
+  const match = await matchAudience(rawSpec, { limit: 8 }, sql);
   return {
     total: match.total,
-    withMo,
-    byLanguage: { de: match.members.length - en, en },
+    withMo: match.totalWithMo,
+    byLanguage: { de: match.total - match.totalEnglish, en: match.totalEnglish },
     sample: match.members.slice(0, 8).map((m) => ({
       customerId: m.customerId,
       email: m.email,

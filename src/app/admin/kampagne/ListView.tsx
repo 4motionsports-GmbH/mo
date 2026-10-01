@@ -72,6 +72,7 @@ export function ListView({
   verdictOf,
   busyIds,
   heroDesignActive,
+  heroMode = "ai_ab",
   costs,
   bulkProgress,
   onOpen,
@@ -83,12 +84,15 @@ export function ListView({
   verdictOf: (item: CampaignQueueItemProps) => ReviewVerdict;
   busyIds: Record<number, string>;
   heroDesignActive: boolean;
+  /** The campaign's hero mode — the column only shows for the KI modes. */
+  heroMode?: "none" | "default" | "ai_ab" | "ai_all";
   costs: CampaignCostsProps;
   bulkProgress: BulkProgress | null;
   onOpen: (contactId: number) => void;
   onBulkSkip: (ids: number[]) => Promise<void>;
   onBulkRegenerate: (ids: number[], depth?: number) => Promise<void>;
 }) {
+  const showHero = heroDesignActive && (heroMode === "ai_ab" || heroMode === "ai_all");
   const [selected, setSelected] = React.useState<Set<number>>(() => new Set());
   const [sort, setSort] = React.useState<SortState>({ key: "checks", dir: "asc" });
   const [depth, setDepth] = React.useState("10");
@@ -215,7 +219,7 @@ export function ListView({
                 <TableHead className="hidden xl:table-cell">Sprache</TableHead>
                 <SortHead label="Rabatt" sortKey="discount" sort={sort} onToggle={toggleSort} />
                 <TableHead className="hidden xl:table-cell">Set</TableHead>
-                {heroDesignActive && <TableHead className="hidden xl:table-cell">Hero</TableHead>}
+                {showHero && <TableHead className="hidden xl:table-cell">Hero</TableHead>}
                 <SortHead label="Prüfung" sortKey="checks" sort={sort} onToggle={toggleSort} />
                 <SortHead label="Entwurf" sortKey="draft" sort={sort} onToggle={toggleSort} className="hidden md:table-cell" />
                 <TableHead className="w-20" />
@@ -272,10 +276,12 @@ export function ListView({
                     <TableCell className="hidden xl:table-cell">
                       {it.bundle ? <span className="truncate">{it.bundle.title}</span> : <span className="text-muted-foreground">—</span>}
                     </TableCell>
-                    {heroDesignActive && (
+                    {showHero && (
                       <TableCell className="hidden xl:table-cell">
                         {it.heroUrl ? (
                           <StatusBadge tone="success" dot={false}>KI-Hero</StatusBadge>
+                        ) : heroMode === "ai_all" ? (
+                          <StatusBadge tone="warning" dot={false}>fehlt</StatusBadge>
                         ) : it.contactId % 2 === 0 ? (
                           <StatusBadge tone="warning" dot={false}>A ohne</StatusBadge>
                         ) : (

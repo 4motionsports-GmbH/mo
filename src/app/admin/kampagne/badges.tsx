@@ -64,8 +64,8 @@ export function LanguageToggle({
     <Tooltip
       content={
         overridden
-          ? "Sprache manuell festgelegt (Sync ändert sie nicht mehr)."
-          : "Sprache aus dem Shopify-Profil abgeleitet — Klick legt sie manuell fest und generiert den Text neu."
+          ? "Sprache manuell festgelegt (gilt für alle Kampagnen dieser Person)."
+          : "Sprache automatisch (Shopify-Profil oder letztes Gespräch) — Klick legt sie manuell fest und generiert den Text neu."
       }
     >
       <span className="inline-flex items-center gap-1">

@@ -596,22 +596,27 @@ export async function listNextPendingContacts(
   const windowed = opts.windowed === true;
   const minInterval = `${windowed ? minDays : 0} days`;
   const maxInterval = `${windowed && Number.isFinite(maxDays) ? maxDays : 36_500} days`;
-  const rows = (await sql`
-    SELECT * FROM campaign_contacts
-     WHERE status = 'pending'
-       AND is_test = false
-       AND campaign_id = ${campaignId}
-       AND (
-         last_order_at IS NULL
-         OR (
-           last_order_at <= now() - ${minInterval}::interval
-           AND last_order_at > now() - ${maxInterval}::interval
+  try {
+    const rows = (await sql`
+      SELECT * FROM campaign_contacts
+       WHERE status = 'pending'
+         AND is_test = false
+         AND campaign_id = ${campaignId}
+         AND (
+           last_order_at IS NULL
+           OR (
+             last_order_at <= now() - ${minInterval}::interval
+             AND last_order_at > now() - ${maxInterval}::interval
+           )
          )
-       )
-     ORDER BY id ASC
-     LIMIT ${limit}
-  `) as Array<Record<string, unknown>>;
-  return rows.map(mapContactRow);
+       ORDER BY id ASC
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map(mapContactRow);
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "listNextPendingContacts" });
+    return [];
+  }
 }
 
 /** A contact row + whether a draft exists — the global contact search /

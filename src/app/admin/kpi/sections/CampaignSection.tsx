@@ -53,7 +53,7 @@ export function CampaignSection({ cached }: { cached: Cached<CampaignKpis | null
   return (
     <KpiSection
       id="kampagne"
-      title="Kampagnen-Funnel (Shopify-Subscriber)"
+      title="Kampagnen-Funnel"
       info={INFO}
       badges={<FreshnessBadge fetchedAt={cached.fetchedAt} fromCache={cached.fromCache} />}
       empty={empty}

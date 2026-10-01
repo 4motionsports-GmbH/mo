@@ -231,6 +231,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
           verdictOf={a.verdictOf}
           busyIds={a.busyById}
           heroDesignActive={heroDesignActive}
+          heroMode={props.campaign.heroMode}
           costs={costs}
           bulkProgress={a.bulkProgress}
           onOpen={a.jumpToContact}
