@@ -4,6 +4,7 @@ import {
   isShopifyCustomerSyncEnabled,
   isShopifyConsentWritebackEnabled,
   isShopifyErasureSyncEnabled,
+  isShopifyInsightsWritebackEnabled,
   aiProfileScope,
   shopifyConsentTextVersion,
   erasureAlertPerHour,
@@ -11,6 +12,11 @@ import {
   inboxAiDailyLimit,
   mayBuildAiProfile,
 } from "./platform-flags.mjs";
+
+test("the insight tags are off unless explicitly enabled", () => {
+  assert.equal(isShopifyInsightsWritebackEnabled({}), false);
+  assert.equal(isShopifyInsightsWritebackEnabled({ SHOPIFY_WRITEBACK_ENABLED: "true" }), true);
+});
 
 test("Shopify write switches are off unless explicitly enabled", () => {
   for (const fn of [isShopifyCustomerSyncEnabled, isShopifyConsentWritebackEnabled, isShopifyErasureSyncEnabled]) {

@@ -44,6 +44,15 @@ export function isShopifyErasureSyncEnabled(env = process.env) {
 }
 
 /**
+ * Write Mo's insights back to Shopify as `mo-…` customer tags (lifecycle,
+ * value tier, Mo contact, churn risk) for Shopify segments, Flow and Email
+ * (SHOPIFY_WRITEBACK_ENABLED, plan D-11). Default off.
+ */
+export function isShopifyInsightsWritebackEnabled(env = process.env) {
+  return parseFlag(env.SHOPIFY_WRITEBACK_ENABLED);
+}
+
+/**
  * Whom the AI profile may be built for (CUSTOMER_AI_PROFILE_SCOPE):
  *   "consented" — only customers with an e-mail-marketing consent (default)
  *   "all"       — every customer; non-consented ones are flagged in the admin

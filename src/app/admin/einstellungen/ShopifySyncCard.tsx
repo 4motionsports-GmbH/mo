@@ -181,6 +181,7 @@ export function ShopifySyncCard({ health, runs, outbox, alignment, flags }: Shop
     ["Kundenstamm abgleichen", "SHOPIFY_CUSTOMER_SYNC_ENABLED", flags.customerSync, "Import, Webhooks und nächtlicher Abgleich der Kund:innen und Bestellungen."],
     ["Einwilligung an Shopify zurückschreiben", "SHOPIFY_CONSENT_WRITEBACK", flags.consentWriteback, "An- und Abmeldungen aus Mo werden in Shopify übernommen; Mo-Abonnent:innen ohne Shopify-Konto werden dort angelegt."],
     ["Löschungen an Shopify weitergeben", "SHOPIFY_ERASURE_SYNC", flags.erasureSync, "Eine Löschung in Mo beantragt die Löschung der Kundendaten auch in Shopify."],
+    ["Merkmale als Shopify-Tags", "SHOPIFY_WRITEBACK_ENABLED", flags.insightsWriteback, "Lebenszyklus, Wertstufe, Mo-Kontakt und hohes Abwanderungsrisiko werden nachts als Tags (mo-…) an die Shopify-Kunden geschrieben — nutzbar in Shopify-Segmenten, Flow und Shopify Email. Eigene Tags des Shops bleiben unberührt."],
   ];
 
   return (

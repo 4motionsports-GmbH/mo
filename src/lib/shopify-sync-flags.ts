@@ -7,6 +7,7 @@ import {
   isShopifyConsentWritebackEnabled,
   isShopifyCustomerSyncEnabled,
   isShopifyErasureSyncEnabled,
+  isShopifyInsightsWritebackEnabled,
 } from "./platform-flags.mjs";
 
 export interface ShopifySyncFlags {
@@ -14,6 +15,7 @@ export interface ShopifySyncFlags {
   customerSync: boolean;
   consentWriteback: boolean;
   erasureSync: boolean;
+  insightsWriteback: boolean;
   profileScope: "consented" | "all";
 }
 
@@ -23,6 +25,7 @@ export function shopifySyncFlags(): ShopifySyncFlags {
     customerSync: isShopifyCustomerSyncEnabled(),
     consentWriteback: isShopifyConsentWritebackEnabled(),
     erasureSync: isShopifyErasureSyncEnabled(),
+    insightsWriteback: isShopifyInsightsWritebackEnabled(),
     profileScope: aiProfileScope() === "all" ? "all" : "consented",
   };
 }
