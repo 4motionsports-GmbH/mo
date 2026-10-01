@@ -34,7 +34,7 @@ capability is listed in [`docs/FEATURE_INVENTORY.md`](docs/FEATURE_INVENTORY.md)
 | `/api/auth/*`, `/api/account/*` | Shopify Customer Account sign-in (tier 3), conversation history, export, erasure ([`docs/CUSTOMER_ACCOUNT.md`](docs/CUSTOMER_ACCOUNT.md)). | session / signed |
 | `/api/attribution/token`, `/api/r/<token>`, `/api/email-countdown/<token>`, `/api/email-hero-image/<file>` | Order-attribution token, tracked e-mail redirect, live countdown image, hero-image assets. | tokens |
 | `/api/webhooks/shopify`, `/api/webhooks/resend`, `/api/inbound/resend`, `/api/webhooks/pingen` | Orders → `mo_orders`, catalog changes; Resend delivery events and inbound mail; letter status. | signature over the raw body |
-| `/api/cron/*` | `refresh-customers` 02:00 · `sync-campaign-audience` 02:30 · `sync-catalog` 03:00 · `retention` 03:30 · `expire-bundles` 03:45 UTC ([`vercel.json`](vercel.json)). | `Authorization: Bearer CRON_SECRET` |
+| `/api/cron/*` | `refresh-customers` 02:00 · `sync-campaign-audience` 02:30 · `sync-catalog` 03:00 · `retention` 03:30 · `expire-bundles` every 15 min ([`vercel.json`](vercel.json)). | `Authorization: Bearer CRON_SECRET` |
 | `/api/admin/*` (72 routes) | The dashboard's API ([`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md) §11). | Edge proxy + `guardAdmin*` |
 | `GET /` | Plain health string. | — |
 

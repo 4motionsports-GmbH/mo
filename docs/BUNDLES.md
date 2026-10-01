@@ -4,7 +4,7 @@ Per-customer **bundle offers** replace per-customer discount codes: a real
 Shopify product, composed of selected catalog products at an admin-set price,
 created automatically by the backend, kept **UNLISTED** (purchasable by direct
 link, hidden from storefront browsing), linked from a marketing email, and
-**archived on expiry**.
+**deleted from Shopify when it ends** (timer at 0 or removed manually).
 
 This is the S10 build of the feasibility spike in
 [`archive/BUNDLES_SPIKE.md`](./archive/BUNDLES_SPIKE.md). The spike's **"Probe results (S9b,
@@ -20,7 +20,7 @@ live against the store, including the click-through-to-checkout.
 > | Scope                 | Needed for                                              |
 > | --------------------- | ------------------------------------------------------- |
 > | `read_products`       | reading the catalog / resolving components              |
-> | `write_products`      | `productBundleCreate` / `productCreate`, price, `UNLISTED`, `ARCHIVED` |
+> | `write_products`      | `productBundleCreate` / `productCreate`, price, `UNLISTED`, `productDelete` |
 > | **`read_publications`**  | finding the Online Store publication (`publications`)   |
 > | **`write_publications`** | publishing the bundle (`publishablePublish`)            |
 >
@@ -67,7 +67,8 @@ auto-recomputes (spike §2).
 | `cart_url`            | materialized real `/cart/<id>:1` permalink (the redirect target)       |
 | `redirect_token`      | token for the tracked link `/api/r/<token>`                            |
 | `expires_at`          | offer deadline (created + `BUNDLE_OFFER_EXPIRY_DAYS`, default 7)        |
-| `archived_at`         | set when the offer was archived (expiry cron or manual)                |
+| `archived_at`         | set when the offer ended (expiry sweep or manual)                      |
+| `shopify_deleted_at`  | set when the Shopify product was deleted (migration 0060)              |
 
 Indexes: `(status, expires_at)` (cron sweep), `(customer_id)` (admin listing),
 `UNIQUE(redirect_token)`.
@@ -81,7 +82,7 @@ The "create the Shopify product" step sits behind a **seam** — one entry point
 the config flag **`BUNDLE_CREATION_MODE`** (default `native_fixed_bundle`). The
 chosen mode is persisted per offer (`creation_mode`). **Everything around the
 create step is shared** (price + compare-at, `UNLISTED`, publish, inventory
-settle, cart permalink, archive-on-expiry), so switching modes is a localized
+settle, cart permalink, contents description, delete-on-end), so switching modes is a localized
 swap — exactly as the spike de-risks it.
 
 ### PRIMARY — `native_fixed_bundle` (verified GO)
@@ -133,20 +134,35 @@ createBundleOffer ─┬─ validate components in-stock (REJECT sold-out offend
                    └─ success → status = active  (+ Shopify ids, cart_url)
                       failure → status = failed  (+ recorded error)
 
-daily cron  /api/cron/expire-bundles  (vercel.json, 03:45)
-                   └─ active && expires_at < now
-                        → productUpdate status = ARCHIVED   (never DELETE)
-                        → status = expired, archived_at = now   (idempotent)
+cron every 15 min  /api/cron/expire-bundles  (vercel.json, */15)
+                   ├─ active && expires_at < now
+                   │    → productDelete                       (gone = success)
+                   │    → status = expired, archived_at = now, shopify_deleted_at = now
+                   └─ clean-up: ended offers whose product still exists
+                        (manual end whose delete failed; sets archived before 0060)
+                        → productDelete → shopify_deleted_at = now   (25 per run)
 
-archiveBundleOffer(id)   manual archive (S11 UI) — same Shopify ARCHIVE + expired
+archiveBundleOffer(id)   manual end (S11 UI, replacing a campaign set) — same delete + expired
 ```
 
-**ARCHIVE, never DELETE** (spike §5): archiving removes the product from all
-storefronts but **preserves order history**, is reversible, and keeps the record
-for audit/KPIs. The sweep is **idempotent** — the work list is `status='active'`
-only and `markOfferExpired` is guarded (`… WHERE status='active'`), so a repeat
-or concurrent run is a no-op. An archive failure is **logged loudly** and the
-offer stays active+due, so the next run retries it.
+**Ended sets are DELETED from Shopify** (maintainer decision 2026-10, replacing
+the spike's §5 "archive, never delete"): an ended set has no further use in the
+Shopify admin and would otherwise pile up as archived products. Placed orders
+keep their own line-item snapshot (title, price, SKUs); for a native fixed
+bundle only the parent product is deleted, the component products are
+untouched. The `bundle_offers` row stays (`status = expired`) for the
+expired page, audit and KPIs.
+
+**The set ends the moment its timer hits 0**, not only when the sweep runs: the
+tracked link (`/api/r/<token>`) and the e-mail renderers
+(`shouldRenderBundleBlock`) treat an `active` row past `expires_at` as expired
+right away; the sweep then deletes the Shopify product within 15 minutes. The
+sweep is **idempotent** — the work list is `status='active'` only,
+`markOfferExpired` is guarded (`… WHERE status='active'`), and deleting an
+already-deleted product counts as success. A delete failure is **logged
+loudly** and the offer stays active+due (or on the clean-up list), so the next
+run retries it. On Vercel Hobby (daily crons only) the schedule must go back to
+daily; the link still ends on time.
 
 ### The link rail + graceful expired page
 
@@ -154,12 +170,12 @@ The email CTA links to **`/api/r/<redirect_token>`** (the existing tracked
 redirector), **not** straight to Shopify — so bundle clicks log like discount
 links *and* expired offers degrade gracefully. The redirector:
 
-- **active** offer → 302 to the materialized `cart_url` (`/cart/<id>:1`);
-- **expired / archived / failed** offer → a friendly branded **"Angebot
+- **active** offer (deadline not passed) → 302 to the materialized `cart_url` (`/cart/<id>:1`);
+- **expired / past its deadline / failed** offer → a friendly branded **"Angebot
   abgelaufen"** page (HTTP 410), optionally pointing at a collection via
   `BUNDLE_EXPIRED_REDIRECT_URL`.
 
-Shopify has no native friendly-expired page (an archived product's URL 404s and
+Shopify has no native friendly-expired page (a deleted product's URL 404s and
 a stale cart permalink drops the line), so the redirector wrapper supplies it
 (spike §5).
 
@@ -176,7 +192,7 @@ in place:
   the sitemap and `Shopify Catalog`, and carries `noindex/nofollow`, so it is not
   *discoverable*, only *shareable*;
 - **short expiry** (default 7 days) bounds the window;
-- **archive on expiry** kills every old link at once.
+- **delete on expiry** kills every old link at once.
 
 This is the same exposure profile as a shared discount-code link, which the
 business already runs with.
@@ -188,14 +204,14 @@ business already runs with.
 - `createBundleOffer(customerId, components[], { bundlePriceOverride?, title?, expiryDays = 7, marketingSendId? })`
   — `src/lib/bundle-offers.ts`. Returns `{ ok, offer, redirectUrl }` or a typed
   refusal (`sold_out` with offenders, `unknown_products`, `bad_price`, …).
-- `archiveBundleOffer(id)` — manual archive for the S11 UI.
+- `archiveBundleOffer(id)` — manual end for the S11 UI (deletes the Shopify product, row → `expired`).
 - `expireBundleOffers()` — the cron sweep entry.
 
 Admin endpoints (behind the existing admin auth + CSRF via `guardAdminPost`):
 
 | Endpoint                        | Body                                                            |
 | ------------------------------- | -------------------------------------------------------------- |
-| `POST /api/admin/bundles/create`  | `{ customerId?, components:[{productId,quantity?}], bundlePriceOverride?, title?, expiryDays?, marketingSendId? }` |
+| `POST /api/admin/bundles/create`  | `{ customerId?, components:[{productId,variantId?,quantity?}], bundlePriceOverride?, title?, expiryDays?, marketingSendId? }` |
 | `POST /api/admin/bundles/archive` | `{ id }` → `{ offer }`                                         |
 | `POST /api/admin/bundles/suggest` | `{ customerId }` → `{ title, components, componentsSum }` (AI) |
 | `POST /api/admin/catalog/search`  | `{ query }` → `{ products }` (name search for "add product")   |
@@ -212,7 +228,8 @@ personalized-email flow (`CustomerProfileCard`):
    rationale. Structured output (`generateObject`); token usage recorded under
    the `bundle_suggestions` call site (S6).
 2. **Editable composition** — remove suggested products / add by name search
-   (`/catalog/search`) over the synced catalog; the live component sum is shown.
+   (`/catalog/search`) over the synced catalog, set the **count** of each item
+   (1–10×); the live component sum (unit price × count) is shown.
 3. **Price** (default = component sum; admin-set, validated `> 0`; a price above
    the sum only **warns** — no "statt" line per S10's rule), **title** (default
    "Dein persönliches Set"), **expiry days** (default 7).
@@ -220,8 +237,8 @@ personalized-email flow (`CustomerProfileCard`):
    (sold-out offenders, lost-publication-scope) surface inline.
 5. **Email integration** — a created, still-active bundle is **attached** to the
    send (`marketing_send_id`). The personalized email then carries a
-   SPECIAL-OFFER block (title, component image+name rows reusing the S5 product
-   row, the bundle price and — only when `bundle_price < components_sum` — a
+   SPECIAL-OFFER block (title, the set's contents as a **bullet list with the
+   count of each item** — "2× Kettlebell – 16 kg" — the bundle price and — only when `bundle_price < components_sum` — a
    PAngV "statt €<sum>" line) with a "Zum Angebot" CTA on the **tracked**
    `/api/r/<token>` link. The drafting prompt is extended minimally so the prose
    references the set; the rest of the send path (unsubscribe, suppression,
@@ -229,7 +246,24 @@ personalized-email flow (`CustomerProfileCard`):
 6. **Coexistence** — a send may carry a discount code, a bundle, both or neither.
    The per-customer bundle list shows each offer's status (active / sent /
    expired), a "Klick erfasst" signal when the tracked link reported a click, and
-   a manual **Archivieren** action (`/bundles/archive`).
+   a manual **Entfernen** action (`/bundles/archive`, deletes the Shopify product).
+
+---
+
+## How a set is shown to the customer
+
+Everywhere a customer sees a set, its contents are a **bullet list, one line per
+item with how many the set contains** ("2× Kettlebell – 16 kg"), built by the
+pure `bundleItemList` / `bundleItemLabel` (`bundle-offer-core.mjs`, tested;
+items with the same name are merged and their counts added):
+
+- **E-mail** — the special-offer block in every design (classic, studio,
+  performance) and its plain-text part (`- 2× …`).
+- **Shopify** — the set product's description (`<p>Dieses Set enthält:</p><ul>…</ul>`,
+  `bundleDescriptionHtml`), written on both creation paths, so the set's
+  product page lists the contents. A generated title carries the count where it
+  is above one ("Set: 2× A + B"). Checkout shows Shopify's own line items.
+- **Admin** — the per-customer set list, the Kampagne set row and its tooltip.
 
 ---
 
@@ -238,7 +272,7 @@ personalized-email flow (`CustomerProfileCard`):
 | Var                          | Default               | Purpose                                          |
 | ---------------------------- | --------------------- | ------------------------------------------------ |
 | `BUNDLE_CREATION_MODE`       | `native_fixed_bundle` | seam selector (`native_fixed_bundle` \| `plain_unlisted_product`) |
-| `BUNDLE_OFFER_EXPIRY_DAYS`   | `7`                   | offer lifetime before the cron archives it       |
+| `BUNDLE_OFFER_EXPIRY_DAYS`   | `7`                   | offer lifetime before it ends and its Shopify product is deleted |
 | `BUNDLE_EXPIRED_REDIRECT_URL`| storefront root       | "Zum Shop" target on the expired page            |
 | `CRON_SECRET`                | —                     | gates `/api/cron/expire-bundles` (Bearer)        |
 
@@ -261,8 +295,9 @@ The probe confirmed the path end-to-end on 2026-06-13. To re-verify after deploy
    decrement (native linkage) and the order references the bundle.
 4. **Force expiry** — set the offer's `expires_at` to the past (or wait) and run
    `curl -H "Authorization: Bearer $CRON_SECRET" $URL/api/cron/expire-bundles`.
-5. **Archived + friendly page** — confirm the Shopify product is **ARCHIVED**
-   (not deleted) and the offer is `expired`; re-open `/api/r/<token>` → the
+5. **Deleted + friendly page** — confirm the Shopify product is **gone** from
+   the Shopify admin and the offer is `expired` with `shopify_deleted_at` set;
+   re-open `/api/r/<token>` → the
    branded **"Angebot abgelaufen"** page (not a Shopify 404 / empty cart).
 
 ## Product variants

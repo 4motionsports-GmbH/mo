@@ -259,7 +259,7 @@ Master-Detail-Workspace für alles Kundenbezogene (alter Kunden- + Marketing-Tab
 | KUN-81 | Liste „Bundles für <email> (N)": Titel, Status-Badge (Fehlgeschlagen/Abgelaufen/Wird erstellt…/Versendet/Aktiv), „↗ Klick erfasst", Preis „(statt …)", Komponenten, „Erstellt … · läuft ab …", Fehlertext | display | Bestehende Bundles | server-render | CustomerProfileCard.tsx:1077-1083, 1453-1481 |
 | KUN-82 | „🗑 Löschen" (nur pending/failed) | button + confirm (`"Dieses Bundle wirklich löschen? …"`) | Löscht unveröffentlichtes Bundle | POST /api/admin/bundles/delete `{id}` | CustomerProfileCard.tsx:1289-1303, 1482-1494 |
 | KUN-83 | „↗ Angebots-Link" (nur active) | link (target=_blank) | Getrackter `/api/r/<token>`-Link | – | CustomerProfileCard.tsx:1497-1505 |
-| KUN-84 | „Archivieren" (nur active) | button + confirm (`"Dieses Bundle wirklich archivieren? …"`) | Setzt expired | POST /api/admin/bundles/archive `{id}` | CustomerProfileCard.tsx:1270-1284, 1507-1509 |
+| KUN-84 | „Entfernen" (nur active) | button + confirm („Set entfernen?" — Link ungültig, Set-Produkt in Shopify gelöscht) | Löscht das Shopify-Produkt, setzt expired | POST /api/admin/bundles/archive `{id}` | kunden/BundleComposer.tsx |
 | **Sub-Tab Korrespondenz (KorrespondenzPanel)** ||||||
 | KUN-85 | Zähler „Noch keine E-Mails mit diesem Kunden." / „N Nachricht(en) in M Thread(s)." | display | – | server-render | KorrespondenzPanel.tsx:135-139 |
 | KUN-86 | „✉ Neue E-Mail" | button | Öffnet Composer (neuer Thread) | client-only | KorrespondenzPanel.tsx:140-142 |
@@ -338,7 +338,7 @@ CustomerProfileCard:
 42. Toast „An die E-Mail angehängt. Tipp: E-Mail neu generieren, damit der Text das Set erwähnt." / „Es wird an die nächste generierte E-Mail angehängt." — :1259-1260
 43. „Bundles für <email> (N)" — :1456
 44. „Erstellt <Datum> · läuft ab <Datum>" — :1476-1477
-45. Confirm „Dieses Bundle wirklich archivieren? Der Angebots-Link wird ungültig." — :1271
+45. Confirm „Set entfernen?" / „Der Angebots-Link wird ungültig und das Set-Produkt in Shopify gelöscht." — kunden/BundleComposer.tsx
 46. Confirm „Dieses Bundle wirklich löschen? Es kann nicht wiederhergestellt werden." — :1290
 47. Confirm „Diesen Entwurf wirklich löschen? Er kann nicht wiederhergestellt werden." — :756
 48. Confirm „E-Mail an <email> wirklich senden?" — :784
@@ -437,8 +437,8 @@ Review-Warteschlange für personalisierte E-Mails an Shopify-Marketing-Abonnent:
 | KAM-48 | „Übernehmen" / „Speichert…" (disabled wenn unverändert) | button | Setzt Rabatt am Draft + Regenerate; Toast „Rabatt auf N % gesetzt"/„Rabatt entfernt" | POST /api/admin/campaign/discount `{contactId, discountPercent}` + /draft | KampagneWorkspace.tsx:897-936, 2121-2128 |
 | KAM-49 | Hinweistext „Aktuell N % — echter MK-Code wird beim Senden erzeugt (voraussichtlich gültig bis …). …" / „Kein Rabatt. …" | display | – | – | KampagneWorkspace.tsx:2130-2140 |
 | **Set-Angebot (BundleSection)** ||||||
-| KAM-50 | Angehängtes Set: Titel, Komponenten „A + B", Preis „(statt …)", „· läuft ab …" | display | – | server-render | KampagneWorkspace.tsx:1689-1711 |
-| KAM-51 | „Set entfernen (archivieren)" | button | Archiviert Bundle + Regenerate | POST /api/admin/bundles/archive `{id}` + /draft | KampagneWorkspace.tsx:710-732, 1712-1720 |
+| KAM-50 | Angehängtes Set: Titel, Inhalt als Aufzählung mit Anzahl („2× A"), Preis „(statt …)", „· läuft ab …" | display | – | server-render | kampagne/sections/BundleSection.tsx |
+| KAM-51 | „Set entfernen" | button | Beendet das Set (Shopify-Produkt gelöscht) + Regenerate | POST /api/admin/bundles/archive `{id}` + /draft | kampagne/sections/BundleSection.tsx |
 | KAM-52 | „Keine Empfehlungen, aus denen ein Set gebaut werden könnte." / „Shopify nicht konfiguriert — keine Set-Angebote möglich." | display | – | – | KampagneWorkspace.tsx:1726-1737 |
 | KAM-53 | Composer: Checkbox je Empfehlung (vorausgewählt), Input „Set-Preis € (optional)" | checkbox + input | Zusammensetzung/Preis | client-only | KampagneWorkspace.tsx:1743-1770 |
 | KAM-54 | „Set aus Empfehlungen erstellen" / „Erstellt…" | button | Erstellt Bundle mit campaignContactId + Regenerate | POST /api/admin/bundles/create `{campaignContactId, components, bundlePriceOverride?}` + /draft | KampagneWorkspace.tsx:659-708, 1771-1778 |
@@ -473,7 +473,7 @@ Review-Warteschlange für personalisierte E-Mails an Shopify-Marketing-Abonnent:
 | KAM-79 | Aktionsleiste: `P` ←, „i / N", → `N`; Überspringen `X`, Neu generieren `R`, Bearbeiten `E`/Fertig `Esc`, „Als erledigt markieren" nach Kopieren, ⋯ (Vorschau `V`, Kopieren `C`, Verlauf, Fokus-Modus `F`, Tastenkürzel `?`), Senden `S` (Tooltip nennt Grund bei blockiert/beschäftigt); unter 2xl nur Icon + Taste | buttons + menu | Eine Primäraktion, eine Taste | s. KAM-59…65 | kampagne/MailPane.tsx |
 | KAM-80 | Fokus-Modus (`F`/Esc): Rail und Prüfspalte ausgeblendet, Mail zentriert, Prüfpunkte als Einzeiler über der Mail | mode | Tastaturlauf durch saubere Entwürfe | client-only | kampagne/KampagneWorkspace.tsx, MailPane.tsx (ChecksStrip) |
 | KAM-81 | Block „Angebot": Rabatt als Segmented 0/5/10/15/20 % + „…" (eigener Wert, Übernehmen); InfoTip mit Original-Hinweistext (MK-Code beim Senden, gültig bis …) | segmented + input | Persistiert sofort, Text wird im Hintergrund gebündelt neu generiert | POST /api/admin/campaign/discount + /draft (gebündelt) | kampagne/ReviewColumn.tsx |
-| KAM-82 | „Set"-Zeile: angehängt → Titel · Preis (statt …) · bis …, Bestandteile-Tooltip, „Entfernen"; sonst „Set erstellen…" → Sheet mit Composer (KAM-53/54) | display + sheet | Set anhängen/entfernen, Regenerate gebündelt | POST /api/admin/bundles/create / archive + /draft | kampagne/ReviewColumn.tsx, sections/BundleSection.tsx |
+| KAM-82 | „Set"-Zeile: angehängt → Titel · Preis (statt …) · bis …, Bestandteile-Tooltip (Aufzählung mit Anzahl), „Entfernen"; sonst „Set erstellen…" → Sheet mit Composer (KAM-53/54) | display + sheet | Set anhängen/entfernen, Regenerate gebündelt | POST /api/admin/bundles/create / archive + /draft | kampagne/ReviewColumn.tsx, sections/BundleSection.tsx |
 | KAM-83 | Block „Empfehlungen · n": Zeilen mit Thumbnail, Name (Link), Preis, Badge „Ausverkauft"/„Nicht im Katalog", ✕ (deaktiviert bei ≤ 1); „+ Produkt" klappt den CatalogProductPicker (mit Thumbnails, Varianten) auf | list + picker | Sofort persistiert, Set angepasst, Regenerate gebündelt | POST /api/admin/campaign/recommendations + /draft | kampagne/ReviewColumn.tsx |
 | KAM-84 | Block „Hero · <Design>" (nur wenn das Kampagnen-Design einen Hero hat): Thumbnail, Pille „KI-Hero / Standard-Bild / A-Gruppe ohne Hero", Schlagzeile, „Erzeugen" (Vorschlag + Rendern in einem Zug), „Anpassen…" (Sheet: Schlagzeile, Prompt, Prompt vorschlagen, Schlagzeile speichern, Bild generieren), „Entfernen" | display + buttons + sheet | Alle fünf Hero-Aktionen (HERO-*), Karte während Generierung als beschäftigt markiert, Prüfpunkt aktualisiert | GET /api/admin/email-hero, POST …/suggest, generate, headline, remove (`useEmailHero`) | kampagne/sections/HeroBlock.tsx, useEmailHero.ts |
 | KAM-85 | Block „Kontakt": Opt-in, Segment (Grund im InfoTip), Letzte Mail (kanalübergreifend) + „Sperrfrist bis …", A/B-Gruppe, Umsatz; „Verlauf" → Sheet mit allen Kampagnen-Sendungen an die Adresse (Betreff, Datum, Zustellung, Code, eingelöst, Hero, „Ansehen") | description list + sheet | Neue Fakten: letzte Sendung + Sperrfrist | GET /api/admin/campaign/history?q=<email> | kampagne/ReviewColumn.tsx, ContactHistorySheet.tsx |
@@ -1123,7 +1123,7 @@ All six accept **GET and POST** (same `handle()`), all call `requireCronAuth(req
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
-| `GET/POST /api/cron/expire-bundles` (`src/app/api/cron/expire-bundles/route.ts`) | GET, POST | `expireBundleOffers()` (`lib/bundle-offers`): archives Shopify bundle products past `expires_at`, flips rows to `expired`. | Vercel Cron (03:45 UTC); manual curl | requireCronAuth | none | `maxDuration = 60` | none | `{ok:true, ...result}` 200; `{ok:false,error}` 503 (no DB or thrown) | Returns 503 on thrown errors (other routes use 500) — cron routes uniformly use 503 for "visibly skipped". |
+| `GET/POST /api/cron/expire-bundles` (`src/app/api/cron/expire-bundles/route.ts`) | GET, POST | `expireBundleOffers()` (`lib/bundle-offers`): deletes Shopify bundle products past `expires_at`, flips rows to `expired`, then deletes products ended offers still have. | Vercel Cron (every 15 min); manual curl | requireCronAuth | none | `maxDuration = 60` | none | `{ok:true, ...result}` 200; `{ok:false,error}` 503 (no DB or thrown) | Returns 503 on thrown errors (other routes use 500) — cron routes uniformly use 503 for "visibly skipped". |
 | `GET/POST /api/cron/prepare-campaign-drafts` (`src/app/api/cron/prepare-campaign-drafts/route.ts`) | GET, POST | Nightly „Vorbereiten“: `prepareNextDrafts(5, discount, textMode)` in chunks until `CAMPAIGN_AUTO_PREPARE_COUNT` drafts exist or the pending contacts run out (240 s budget); never sends | Vercel Cron 04:15 UTC (`vercel.json`) | `requireCronAuth` | none | `maxDuration = 300`; `CAMPAIGN_AUTO_PREPARE_COUNT` (0 = skipped, default), `_DISCOUNT`, `_TEXT_MODE` (`campaignAutoPrepareConfig`) | env only | `{ ok, requested, prepared, failed, suppressed, exhausted, textMode, discountPercent }` / `{ ok:true, skipped:"disabled" }` | Off by default — generation costs API money (docs/CAMPAIGNS.md §5) |
 | `GET/POST /api/cron/refresh-customers` (`src/app/api/cron/refresh-customers/route.ts`) | GET, POST | `listCustomersForDataRefresh(batch, staleBefore)` → sequential `refreshCustomerData(c)` (Shopify orders + address cache), then `runProfileUpkeep` (regenerates profiles of customers with new activity, 200-s budget, concurrency 3). Env `CUSTOMER_REFRESH_BATCH` (25), `CUSTOMER_REFRESH_STALE_HOURS` (24), `CUSTOMER_PROFILE_BATCH` (30, 0 = off). `?only=profiles` skips the data refresh, `?batch=N` overrides the profile batch (used by `npm run profiles:backfill`). | Vercel Cron (02:00 UTC) | requireCronAuth | none | `maxDuration = 300` | env ints via `intEnv` | `{ok:true, considered, refreshed, failed, batch, staleHours}`; 503 on throw | No `isDbConfigured` pre-check unlike expire-bundles. |
 | `GET/POST /api/cron/retention` (`src/app/api/cron/retention/route.ts`) | GET, POST | `runRetention(retentionOptionsFromEnv())` (abandon stale conversations, delete expired conversations/messages/kpi_events, purge opted-out capture PII) then `runConversionSweep()` (marks redeemed MS5- codes / converted conversations). | Vercel Cron (03:30 UTC) | requireCronAuth | none | `maxDuration = 60` | env via `retentionOptionsFromEnv` | `{ok:true, options, ...result, conversionSweep}`; 503 on throw | Two unrelated jobs piggybacked on one cron (documented). |
@@ -1180,7 +1180,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
-| `POST /api/admin/bundles/archive` | POST | `archiveBundleOffer(id)` — archives the Shopify product, row → `expired`. | `CustomerProfileCard.tsx:1273`, `KampagneWorkspace.tsx:714` | proxy + guardAdminPost | none | `maxDuration = 30` | `id` | `{ok, offer}`; `not_found` 404 / `not_active` 409 / `archive_failed` 502 | Not audit-logged. |
+| `POST /api/admin/bundles/archive` | POST | `archiveBundleOffer(id)` — deletes the Shopify product, row → `expired`. | `CustomerProfileCard.tsx:1273`, `KampagneWorkspace.tsx:714` | proxy + guardAdminPost | none | `maxDuration = 30` | `id` | `{ok, offer}`; `not_found` 404 / `not_active` 409 / `archive_failed` 502 | Not audit-logged. |
 | `POST /api/admin/bundles/create` | POST | `createBundleOffer(customerId\|null, components[{productId, variantId?, quantity?}], {bundlePriceOverride, title, expiryDays, marketingSendId, campaignContactId})` — Shopify bundle creation + row + redirect token. | `CustomerProfileCard.tsx:1197`, `KampagneWorkspace.tsx:664,1659` | proxy + guardAdminPost | none | `maxDuration = 60` | manual: ids positive ints, `components` non-empty, `expiryDays` > 0; `bundlePriceOverride` passed through unvalidated (`number\|string`), `title` unbounded | `{ok, offer, redirectUrl}`; refusal envelope `{error:{code,message}, offenders?, offer?}` with `STATUS_BY_REASON` (`sold_out` 409, `no_variant` 422, `variant_not_found` 409, `create_failed` 502, `not_configured`/`no_db` 503, ...) | Refusal responses are built with `adminJson(...)` rather than `adminJsonError` to carry `offenders` — same envelope shape, different helper. |
 | `POST /api/admin/bundles/delete` | POST | `deleteDraftBundleOffer(id)` — only `pending`/`failed` rows. | `CustomerProfileCard.tsx:1292` | proxy + guardAdminPost | none | `maxDuration = 30` | `id` | `{ok, offer}`; 404 / `not_deletable` 409 / `delete_failed` 502 | — |
 | `POST /api/admin/bundles/list` | POST | `listBundleOffersForCustomer(customerId)`. | **none in `src/`** — only `docs/BUNDLES.md:198`; `src/app/admin/page.tsx` loads offers server-side via `listBundleOffersWithSignalsForCustomer` | proxy + guardAdminPost | none | `maxDuration = 15` | `customerId` | `{offers}` | **Dead-route candidate** (see §12). |
@@ -1565,8 +1565,8 @@ Idempotent: yes. Every DELETE is by cutoff; the abandon flip only touches `statu
 
 ### 1.6 `/api/cron/expire-bundles` — `src/app/api/cron/expire-bundles/route.ts`
 
-Purpose: archive Shopify bundle products for `bundle_offers` rows that are `status='active'` and past `expires_at`;
-flip the row to `expired` + `archived_at`.
+Purpose: delete the Shopify bundle products of `bundle_offers` rows that are `status='active'` and past `expires_at`;
+flip the row to `expired` + `archived_at` + `shopify_deleted_at`; then delete the products ended offers still have.
 
 Steps (`route.ts:21-39`):
 1. `requireCronAuth`.
@@ -1575,14 +1575,17 @@ Steps (`route.ts:21-39`):
    (`src/lib/bundle-offer-core.mjs:317-336`) with:
    - `fetchDueBundleOffers(nowIso)` (`src/lib/bundle-offers-store.ts:415-436`): `SELECT id, shopify_product_id FROM
      bundle_offers WHERE status='active' AND expires_at < now ORDER BY expires_at LIMIT 500` — throws on DB error.
-   - per offer, sequential: `archiveBundleProduct(productId)` (shopify-bundles, `productUpdate status: ARCHIVED`;
-     skipped when `shopifyProductId` is null) then `markOfferExpired(id)` (`bundle-offers-store.ts:202-219`,
-     `UPDATE … WHERE id=$1 AND status='active'`).
+   - per offer, sequential: `deleteBundleProduct(productId)` (shopify-bundles, `productDelete`, an already-deleted
+     product counts as success; skipped when `shopifyProductId` is null) then `markOfferExpired(id)`
+     (`UPDATE … WHERE id=$1 AND status='active'`) and `markShopifyProductDeleted(id)` (fail-soft).
+   - clean-up pass: `fetchEndedOffersWithShopifyProduct()` (expired/failed rows with a product and no
+     `shopify_deleted_at`, 25 per run, fail-soft) → `deleteBundleProduct` + `markShopifyProductDeleted`.
    - per-offer error → `failed++`, `reportError` + loud `console.error("… will retry next run")` (`bundle-offers.ts:380-390`).
-4. Response `{ ok:true, archived, failed, scanned, ranAt }`.
+4. Response `{ ok:true, expired, removed, failed, scanned, ranAt }`.
 
-Failure behaviour: per-offer failures don't abort; the row stays `active` so it is retried next night. A DB read error
-propagates → 503. Idempotent: yes (Shopify archive is idempotent, the UPDATE is guarded by `status='active'`).
+Failure behaviour: per-offer failures don't abort; the row stays `active` (or on the clean-up list) so it is retried
+on the next run 15 minutes later. A DB read error of the due list propagates → 503. Idempotent: yes (a gone product
+counts as deleted, the UPDATEs are guarded).
 
 ### 1.7 Scheduled / background work that is NOT a Vercel cron
 

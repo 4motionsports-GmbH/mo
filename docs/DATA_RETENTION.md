@@ -145,7 +145,7 @@ materialized cart link and the lifecycle status.
 
 | Data                          | Default window | Env var                    | Action on expiry / erasure                          |
 | ----------------------------- | -------------- | -------------------------- | --------------------------------------------------- |
-| Offer **availability**        | **7 days**     | `BUNDLE_OFFER_EXPIRY_DAYS` | `/api/cron/expire-bundles` archives the Shopify product + flips the row to `expired` (kept for audit/KPIs) |
+| Offer **availability**        | **7 days**     | `BUNDLE_OFFER_EXPIRY_DAYS` | `/api/cron/expire-bundles` (every 15 min) deletes the Shopify product + flips the row to `expired` (kept for audit/KPIs) |
 | Offer **record → customer link** | follows the customer | `SUPPRESSED_CAPTURE_PURGE_DAYS` | erasing the customer **SET NULL**s `customer_id`; the de-identified offer row (Shopify ids + prices, no PII) is retained for order-history/KPI integrity |
 
 **Why the record is kept after the customer is erased.** Like `marketing_sends`,
@@ -154,8 +154,8 @@ orphan order history. The `ON DELETE SET NULL` link means a GDPR erasure removes
 the *person* (the email + cached summaries on `customers`) while the offer row —
 which carries no directly-identifying field — stays for accounting/KPIs. The
 **archived-offer window** is therefore "kept de-identified"; the *active* window
-is the 7-day availability above, enforced by the expiry cron (ARCHIVE, never
-DELETE, so the Shopify side stays reversible too).
+is the 7-day availability above, enforced by the expiry cron, which deletes the
+set's Shopify product (orders keep their own line items).
 
 ---
 
