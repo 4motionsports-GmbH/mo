@@ -4,6 +4,7 @@
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { generateInboxSuggestion } from "@/lib/inbox-suggest";
+import { recordAdminAccess } from "@/lib/admin-access-log";
 
 export const maxDuration = 60;
 
@@ -19,5 +20,6 @@ export async function POST(req: Request) {
   if (!Number.isInteger(id) || id <= 0) return adminJsonError("bad_request", "id required", 400);
   const res = await generateInboxSuggestion(id);
   if (!res.ok) return adminJsonError("suggest_failed", res.message, 422);
+  await recordAdminAccess({ action: "inbox.suggest", detail: { itemId: id } }, req);
   return adminJson({ suggestion: res.suggestion });
 }

@@ -43,6 +43,7 @@ import { UnmatchedInbound } from "./UnmatchedInbound";
 import type { EingangSystemCards, InboxCustomerCard } from "./types";
 
 type Status = "offen" | "zurueckgestellt" | "erledigt";
+type Decision = "erledigt" | "verworfen" | "zurueckgestellt" | "wieder_offen";
 
 const GROUPS: Array<{ key: string; label: string }> = [
   { key: "jetzt", label: "Jetzt" },
@@ -123,13 +124,20 @@ export function EingangWorkspace({
   );
 
   const decide = React.useCallback(
-    async (item: InboxItem, decision: "erledigt" | "verworfen" | "zurueckgestellt", opts: { snoozeDays?: number; note?: string } = {}) => {
+    async (item: InboxItem, decision: Decision, opts: { snoozeDays?: number; note?: string } = {}) => {
       try {
         await adminFetch("/api/admin/inbox/decide", { body: { id: item.id, decision, ...opts } });
         removeAndAdvance(item.id);
         toast({
           variant: "success",
-          title: decision === "erledigt" ? "Erledigt" : decision === "verworfen" ? "Verworfen" : `Zurückgestellt (${opts.snoozeDays ?? 3} Tage)`,
+          title:
+            decision === "erledigt"
+              ? "Erledigt"
+              : decision === "verworfen"
+                ? "Verworfen"
+                : decision === "wieder_offen"
+                  ? "Wieder offen"
+                  : `Zurückgestellt (${opts.snoozeDays ?? 3} Tage)`,
         });
       } catch (e) {
         toast({ variant: "error", title: "Nicht gespeichert", description: errorMessage(e) });
@@ -168,6 +176,8 @@ export function EingangWorkspace({
         e.preventDefault();
         const prev = ordered[Math.max(0, idx - 1)];
         if (prev) select(prev.id);
+      } else if (e.key === "Escape") {
+        select(null);
       } else if (!current || status !== "offen") {
         return;
       } else if (e.key === "Enter") {
@@ -182,8 +192,6 @@ export function EingangWorkspace({
       } else if (k === "d") {
         e.preventDefault();
         void decide(current, "verworfen", { note: "anderes" });
-      } else if (e.key === "Escape") {
-        select(null);
       }
     }
     document.addEventListener("keydown", onKey);
@@ -408,10 +416,11 @@ function ItemDetail({
   item: InboxItem;
   status: Status;
   primaryRef: React.MutableRefObject<() => void>;
-  onDecide: (item: InboxItem, decision: "erledigt" | "verworfen" | "zurueckgestellt", opts?: { snoozeDays?: number; note?: string }) => Promise<void>;
+  onDecide: (item: InboxItem, decision: Decision, opts?: { snoozeDays?: number; note?: string }) => Promise<void>;
   onAccepted: (contactId: number) => void;
   onSuggestion: (s: InboxItem["suggestion"]) => void;
 }) {
+  const router = useRouter();
   const [customer, setCustomer] = React.useState<InboxCustomerCard | null>(null);
   const [loading, setLoading] = React.useState(item.customerId != null);
   const [busy, setBusy] = React.useState<null | "accept" | "suggest">(null);
@@ -463,7 +472,7 @@ function ItemDetail({
   const mailAction = needsConsent(item.kind) || (s?.kanal === "email" && canMail);
   let primary: { label: string; run: () => void; disabled?: boolean } | null = null;
   if (mailAction && canMail) primary = { label: "Entwurf übernehmen", run: () => void accept() };
-  else if (customerHref) primary = { label: item.kind === "antwort_offen" ? "Antworten" : item.kind === "datenauskunft" ? "Daten bereitstellen" : "Kunde öffnen", run: () => window.location.assign(customerHref) };
+  else if (customerHref) primary = { label: item.kind === "antwort_offen" ? "Antworten" : item.kind === "datenauskunft" ? "Daten bereitstellen" : "Kunde öffnen", run: () => router.push(customerHref) };
   React.useEffect(() => {
     primaryRef.current = primary ? primary.run : () => {};
   });
@@ -604,12 +613,19 @@ function ItemDetail({
             />
           </div>
         )}
-        {status !== "offen" && item.decision && (
-          <p className="text-xs text-muted-foreground">
-            Entscheidung: {item.decision}
-            {item.decisionNote ? ` (${item.decisionNote})` : ""}
-            {item.decidedAt ? ` · ${formatAdmin(item.decidedAt, ADMIN_DATE)}` : ""}
-          </p>
+        {status !== "offen" && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+            {item.decision && (
+              <span>
+                Entscheidung: {item.decision}
+                {item.decisionNote ? ` (${item.decisionNote})` : ""}
+                {item.decidedAt ? ` · ${formatAdmin(item.decidedAt, ADMIN_DATE)}` : ""}
+              </span>
+            )}
+            <Button size="sm" variant="outline" className="ml-auto" onClick={() => void onDecide(item, "wieder_offen")}>
+              Wieder öffnen
+            </Button>
+          </div>
         )}
       </CardContent>
     </Card>
