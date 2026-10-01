@@ -470,6 +470,8 @@ export async function runRetention(
   //    item the operator already decided while its episode lasts (episodes
   //    end within two years: abwanderung ≤ 730 days after the last order). The
   //    marker itself goes after INBOX_MARKER_MAX_DAYS, and with the customer.
+  //    The two windows do not overlap, so no row is both slimmed and deleted
+  //    by the same statement (Postgres would apply only one and count both).
   let deletedInboxItems = 0;
   if (opts.inboxRetentionDays > 0) {
     const inboxCutoff = daysAgo(opts.inboxRetentionDays);
@@ -479,6 +481,7 @@ export async function runRetention(
         UPDATE inbox_items
            SET reason = '', evidence = '{}'::jsonb, suggestion = NULL, decision_note = NULL, updated_at = now()
          WHERE status IN ('erledigt', 'verworfen') AND COALESCE(decided_at, updated_at) < ${inboxCutoff}
+           AND COALESCE(decided_at, updated_at) >= ${markerCutoff}
            AND (reason <> '' OR suggestion IS NOT NULL OR decision_note IS NOT NULL OR evidence <> '{}'::jsonb)
         RETURNING 1
       ),
