@@ -10,6 +10,7 @@ import { getCustomerFigures } from "@/lib/customer-list-store";
 import { consentLabel } from "@/lib/consent-core.mjs";
 import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
+import { plainExcerpt } from "@/lib/text-excerpt.mjs";
 
 export async function GET(req: Request) {
   const blocked = await guardAdminGet();
@@ -34,7 +35,7 @@ export async function GET(req: Request) {
       letterPossible: !c.postalObjectionAt && c.postalAddress != null,
       persona: c.personaLabel ? (ARCHETYPE_META[c.personaLabel as PersonaArchetype]?.label ?? null) : null,
       profileDepth: c.profileDepth,
-      profileExcerpt: c.profileObjectionAt ? null : (c.profileSummary?.slice(0, 600) ?? null),
+      profileExcerpt: c.profileObjectionAt ? null : plainExcerpt(c.profileSummary, 320),
       figures,
     },
   });
