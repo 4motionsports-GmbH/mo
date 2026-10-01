@@ -129,6 +129,14 @@ retention step 5 / 5e remove it with a non-Shopify customer
 ([`CUSTOMERS.md`](./CUSTOMERS.md)). An erased address is on `suppression_list`
 with reason `erasure` and is never matched by an audience again.
 
+**Clicks and chats from a campaign mail** are counted without linking the
+pseudonymous chat to the person: a click stamps the send (`clicked_at`) and
+writes a `campaign_email_clicked` KPI event; a chat the widget opens from the
+mail's Mo link (`campaignToken` on `POST /api/chat`) writes ONE
+`campaign_chat_started` event per send. Both events have `session_id = NULL`
+and carry only ids (`sendId`, `campaignId` / `firstClick`); they age out with
+`KPI_RETENTION_DAYS` like every `kpi_events` row.
+
 *(Retired: until the customer platform the audience was the shop's SUBSCRIBED
 newsletter list, synced daily into `campaign_contacts` by
 `/api/cron/sync-campaign-audience`. Replaced by the Kundenstamm mirror and the
@@ -161,8 +169,28 @@ audiences and the Eingang need, minimised:
 | `customer_orders` (`0062`) | the order ledger: order ids, dates, statuses, money, discount codes, line items (title, variant, quantity, unit price, handle) | No addresses, payment data, notes or contact fields; guest orders without a customer are not stored |
 | `customer_facts` (`0063`) | derived figures per customer (orders, spend, intervals, lifecycle segment, value tier, churn risk, categories, chat / mail / click counts) | Zero tokens, recomputed nightly |
 | `inbox_items` (`0067`) | Eingang items: rule kind, customer id, title, reason, evidence (ids and numbers, never an email), AI suggestion, decision, 14-day outcome | Operator work queue |
-| `shopify_webhook_events`, `shopify_sync_runs`, `shopify_outbox` (`0065`) | webhook dedupe (id, topic, outcome — no payload), import / reconcile runs, Mo's pending writes to Shopify (a customer create carries the email until it is done or dead) | Operational bookkeeping |
+| `shopify_webhook_events`, `shopify_sync_runs`, `shopify_outbox` (`0065`) | webhook dedupe (id, topic, outcome — no payload), import / reconcile runs, Mo's pending writes to Shopify (a customer create carries the email until it is done or dead; a `writeback` row carries only `mo-` tag names) | Operational bookkeeping |
 | `erasure_tombstones` (`0065`) | the Shopify id of every person erased in Mo, when, when Shopify confirmed | Keeps an erased person from being re-created by an import or webhook |
+
+**Mo's insights in Shopify (plan D-11, `SHOPIFY_WRITEBACK_ENABLED`, default
+off).** When switched on, the nightly `/api/cron/shopify-reconcile` queues
+derived figures for the Shopify customer as tags — `mo-segment-<segment>`,
+`mo-wert-<value tier>`, `mo-kontakt` (talked to Mo), `mo-abwanderung-hoch` —
+as `writeback` outbox rows, which `/api/cron/shopify-sync` sends (only `mo-`
+tags are added or removed, the shop's own tags are never touched) and mirrors
+into `customers.shopify_tags`. From then on these tags are also Shopify
+data: they follow the Shopify customer record, so Shopify's own deletion (or the
+erasure request Mo sends with `SHOPIFY_ERASURE_SYNC`) removes them; a Mo-side
+erasure deletes the person's open outbox rows. The tags are computed for every
+mirrored customer with figures — the marketing consent is not a condition. An
+**Art. 21 objection to profiling** removes them: recording it
+(`POST /api/admin/customers/objection`, `kind: profile`) drops the person's
+pending / failed tag write-backs and queues one `writeback` that removes every
+`mo-` tag the mirror holds (`removeInsightTags`; queued even while the switch
+is off — it waits until it is on), and the nightly run adds none while the
+objection stands. Lifting the objection lets the next nightly run add them
+again. The basis and privacy-policy wording are an open legal item
+([`CONSENT_FLOW.md`](./CONSENT_FLOW.md) „Customer platform (2026-10)“).
 
 ### Retention windows (Kundenstamm)
 
@@ -450,6 +478,8 @@ step numbers below are the ones in the code. Each run:
    stay, so a rule cannot re-create an item the operator already decided while
    its episode lasts. Markers are deleted after two years (the longest rule
    episode) or with the customer. Open and snoozed items stay.
+   `deletedInboxItems` in the summary counts both — items reduced to a marker
+   and markers removed.
 9. Deletes `erasure_tombstones` whose Shopify confirmation
    (`shopify_confirmed_at`) is older than `ERASURE_TOMBSTONE_RETENTION_DAYS`
    (default **30 days**); unconfirmed tombstones stay.

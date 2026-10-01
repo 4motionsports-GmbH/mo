@@ -126,7 +126,7 @@ src/
 │   ├── shopify*, catalog-*, retrieval, system-prompt*, persona, tools   # the chat
 │   └── kpi-*, admin-*, retention*, rate-limit, security, observability
 └── proxy.ts                  # Edge gate for /admin and /api/admin
-migrations/                   # forward-only SQL, 0001 … 0068
+migrations/                   # forward-only SQL, 0001 … 0069
 scripts/                      # operational scripts (npm aliases above)
 docs/                         # living documentation; docs/archive/ = historical reports and spikes
 ```
