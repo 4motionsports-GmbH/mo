@@ -156,6 +156,15 @@ export function CampaignSection({ cached }: { cached: Cached<CampaignKpis | null
 
           <div className="mt-4 flex flex-col gap-4">
             <CampaignBreakdownTable
+              title="Kampagnen im Vergleich"
+              info="Derselbe Funnel je Kampagne (Lebenszyklus, Aktionen, Einzelansprache) — welche Kampagne bringt was?"
+              rows={kpis.byCampaign ?? []}
+              labelFor={(key) => kpis.byCampaign?.find((r) => r.key === key)?.label ?? key}
+              firstColumn="Kampagne"
+              withCost={false}
+              shopifyConfigured={kpis.shopifyConfigured}
+            />
+            <CampaignBreakdownTable
               title="Hero-Vergleich: lohnt sich das KI-Bild?"
               info="Derselbe Funnel je Hero-Variante der versendeten Mail — mit den Hero-Kosten der jeweiligen Kontakte (Prompt, Renders, Prüfung)."
               rows={kpis.byHeroVariant}
@@ -203,6 +212,7 @@ function CampaignBreakdownTable({
   labelFor,
   withCost,
   shopifyConfigured,
+  firstColumn = "Variante",
 }: {
   title: string;
   info: string;
@@ -210,6 +220,8 @@ function CampaignBreakdownTable({
   labelFor: (key: string) => string;
   withCost: boolean;
   shopifyConfigured: boolean;
+  /** Header of the label column. */
+  firstColumn?: string;
 }) {
   if (rows.length === 0) return null;
   const dash = "—";
@@ -225,7 +237,7 @@ function CampaignBreakdownTable({
         <Table className="text-xs [&_td]:tabular-nums">
           <TableHeader>
             <TableRow>
-              <TableHead>Variante</TableHead>
+              <TableHead>{firstColumn}</TableHead>
               <TableHead align="right">Gesendet</TableHead>
               <TableHead align="right">Klickrate</TableHead>
               <TableHead align="right">Set geklickt</TableHead>

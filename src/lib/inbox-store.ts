@@ -316,3 +316,69 @@ export async function closeStaleInboxItems(
     return 0;
   }
 }
+
+/** KPIs → Eingang: per kind in the range — created, accepted, dismissed, and the 14-day outcome. */
+export interface InboxKindKpi {
+  kind: string;
+  created: number;
+  acted: number;
+  dismissed: number;
+  closedBySelf: number;
+  withOutcome: number;
+  ordersAfterActed: number;
+  ordersAfterDismissed: number;
+  revenueAfterActedCents: number;
+  topDismissReason: string | null;
+}
+
+export interface InboxKpis {
+  kinds: InboxKindKpi[];
+  totalCreated: number;
+  totalActed: number;
+  suggestionsMade: number;
+}
+
+export async function getInboxKpis(range: { from: string; to: string }, sql: Sql | null = getSql()): Promise<InboxKpis | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT kind,
+             count(*)::int AS created,
+             count(*) FILTER (WHERE status = 'erledigt' AND decision NOT IN ('abgelaufen', 'erledigt_von_selbst'))::int AS acted,
+             count(*) FILTER (WHERE status = 'verworfen')::int AS dismissed,
+             count(*) FILTER (WHERE decision IN ('abgelaufen', 'erledigt_von_selbst'))::int AS closed_by_self,
+             count(*) FILTER (WHERE outcome IS NOT NULL)::int AS with_outcome,
+             count(*) FILTER (WHERE status = 'erledigt' AND (outcome->>'orders')::int > 0)::int AS orders_acted,
+             count(*) FILTER (WHERE status = 'verworfen' AND (outcome->>'orders')::int > 0)::int AS orders_dismissed,
+             COALESCE(sum((outcome->>'revenueCents')::bigint) FILTER (WHERE status = 'erledigt'), 0)::bigint AS revenue_acted,
+             count(*) FILTER (WHERE suggestion IS NOT NULL)::int AS suggested,
+             mode() WITHIN GROUP (ORDER BY decision_note) FILTER (WHERE status = 'verworfen') AS top_reason
+        FROM inbox_items
+       WHERE created_at >= ${range.from}::date
+         AND created_at < (${range.to}::date + 1)
+       GROUP BY kind
+       ORDER BY created DESC
+    `) as Array<Record<string, unknown>>;
+    const kinds = rows.map((r) => ({
+      kind: String(r.kind),
+      created: Number(r.created ?? 0),
+      acted: Number(r.acted ?? 0),
+      dismissed: Number(r.dismissed ?? 0),
+      closedBySelf: Number(r.closed_by_self ?? 0),
+      withOutcome: Number(r.with_outcome ?? 0),
+      ordersAfterActed: Number(r.orders_acted ?? 0),
+      ordersAfterDismissed: Number(r.orders_dismissed ?? 0),
+      revenueAfterActedCents: Number(r.revenue_acted ?? 0),
+      topDismissReason: (r.top_reason as string | null) ?? null,
+    }));
+    return {
+      kinds,
+      totalCreated: kinds.reduce((s, k) => s + k.created, 0),
+      totalActed: kinds.reduce((s, k) => s + k.acted, 0),
+      suggestionsMade: rows.reduce((s, r) => s + Number(r.suggested ?? 0), 0),
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/inbox-store", phase: "getInboxKpis" });
+    return null;
+  }
+}

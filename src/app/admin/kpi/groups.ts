@@ -26,7 +26,7 @@ export const KPI_GROUPS: readonly KpiGroup[] = [
     key: "marketing",
     label: "Marketing & Kampagne",
     description:
-      "Consent-Gate, E-Mail-Capture, Kampagnen-Funnel (Shopify-Subscriber) und Set-Angebote im gewählten Zeitraum.",
+      "Consent-Gate, E-Mail-Capture, Kampagnen-Funnel mit Kampagnen-Vergleich, Eingang und Set-Angebote im gewählten Zeitraum.",
     periodic: true,
   },
   {
@@ -46,7 +46,7 @@ export const KPI_GROUPS: readonly KpiGroup[] = [
     key: "gesamt",
     label: "Gesamtwerte",
     description:
-      "Vom Zeitraum unabhängig: Postversand, Marketing-Funnel, Persona-Insights und Empfehlung → Kauf sind Lebenszyklus-, Kohorten- bzw. Gesamtaggregate.",
+      "Vom Zeitraum unabhängig: Kundenbasis, Postversand, Marketing-Funnel, Persona-Insights und Empfehlung → Kauf sind Lebenszyklus-, Kohorten- bzw. Gesamtaggregate.",
     periodic: false,
   },
 ];
