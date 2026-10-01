@@ -3,7 +3,7 @@
 // The Kunden „Aktivität“ tab renders it; lib/customer-detail.ts gathers the
 // inputs (all already loaded for the detail — no extra queries).
 
-import { money } from "./admin-format.mjs";
+import { money, plural } from "./admin-format.mjs";
 
 /**
  * @typedef {{
@@ -52,7 +52,7 @@ export function buildCustomerTimeline(input, limit = 80) {
     out.push({
       at: s.createdAt,
       kind: "chat",
-      title: `Gespräch mit Mo · ${s.messageCount} Nachrichten`,
+      title: `Gespräch mit Mo · ${plural(s.messageCount, "Nachricht", "Nachrichten")}`,
       detail: s.personaDisplay,
     });
   }
