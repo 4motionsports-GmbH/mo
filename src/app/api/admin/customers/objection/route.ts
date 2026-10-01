@@ -2,12 +2,14 @@
 //
 // Record or lift an Art. 21 DSGVO objection the person told us about (mail,
 // phone): `profile` stops the AI profile (and deletes the stored one),
-// `postal` stops advertising letters. Kunden → Überblick / Brief.
+// `postal` stops advertising letters. Kunden → Überblick / Brief. A profile
+// objection also removes Mo's `mo-…` tags in Shopify (plan D-11).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { setCustomerObjection } from "@/lib/customer-store";
 import { reportError } from "@/lib/observability";
 import { recordAdminAccess } from "@/lib/admin-access-log";
+import { removeInsightTags } from "@/lib/shopify-insights";
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
@@ -24,6 +26,7 @@ export async function POST(req: Request) {
   try {
     const ok = await setCustomerObjection(customerId, body.kind, body.objected === true);
     if (!ok) return adminJsonError("not_found", "Kunde nicht gefunden.", 404);
+    if (body.kind === "profile" && body.objected === true) await removeInsightTags(customerId);
     await recordAdminAccess(
       { action: "customer.objection", targetCustomerId: customerId, detail: { kind: body.kind, objected: body.objected === true } },
       req
