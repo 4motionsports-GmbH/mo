@@ -43,7 +43,7 @@ export async function POST(req: Request) {
           ? 404
           : result.reason === "unconfigured"
             ? 503
-            : result.reason === "no_data"
+            : result.reason === "no_data" || result.reason === "not_allowed"
               ? 409
               : 502;
       return adminJsonError(`profile_${result.reason}`, result.message, status);

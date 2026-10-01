@@ -13,7 +13,7 @@ import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { num } from "@/lib/admin-format.mjs";
-import { Button, DescriptionItem, DescriptionList, EmptyState, InfoTip, Markdown, toast } from "../../ui";
+import { Button, DescriptionItem, DescriptionList, EmptyState, InfoTip, Markdown, StatusBadge, toast } from "../../ui";
 import { adminFetch } from "../../lib/admin-fetch";
 import { useAsyncAction } from "../../lib/use-async-action";
 import { useCustomerActions } from "../CustomerDetail";
@@ -71,20 +71,36 @@ export function ProfilTab({ customer }: { customer: CustomerDetail }) {
         <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
           Aktuelles Kundenverständnis
           <InfoTip>
-            Das zentrale Kundenprofil aus allen Gesprächen, Käufen, der Korrespondenz und dem
-            Newsletter. Es wird jede Nacht für alle Kunden mit neuen Daten aktualisiert und fließt
-            in den Chat, alle E-Mails, die Kampagne und die Produktempfehlungen ein. Jede
-            Generierung ist ein KI-Durchlauf und kostet Tokens.
+            Das zentrale Kundenprofil aus allen Gesprächen, Käufen, der Korrespondenz und den
+            Kampagnen-Mails. Vollprofil: mit Gesprächen oder Korrespondenz. Kaufprofil: nur aus
+            Käufen. Es wird nächtlich für Personen mit neuen Daten aktualisiert und fließt in den
+            Chat, alle E-Mails und die Produktempfehlungen ein. Jede Generierung ist ein
+            KI-Durchlauf und kostet Tokens.
           </InfoTip>
+          {customer.profileDepth && (
+            <StatusBadge tone="neutral" dot={false}>
+              {customer.profileDepth === "voll" ? "Vollprofil" : "Kaufprofil"}
+            </StatusBadge>
+          )}
           {updatedAt && (
             <span className="text-xs font-normal text-muted-foreground">
               · Stand {formatAdmin(updatedAt, ADMIN_DATE)}
             </span>
           )}
         </div>
-        <Button size="sm" onClick={() => void generate.run()} loading={generate.pending}>
-          <Sparkles /> {profile ? "Neu generieren" : "Kundenverständnis generieren"}
-        </Button>
+        {customer.profileAllowed ? (
+          <Button size="sm" onClick={() => void generate.run()} loading={generate.pending}>
+            <Sparkles /> {profile ? "Neu generieren" : "Kundenverständnis generieren"}
+          </Button>
+        ) : (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+            Kein KI-Profil ohne Einwilligung
+            <InfoTip>
+              CUSTOMER_AI_PROFILE_SCOPE=consented: Profile entstehen nur für Personen mit Einwilligung
+              in E-Mail-Werbung. Mit „all“ entstehen sie für alle (vom Anwalt abgedeckt).
+            </InfoTip>
+          </span>
+        )}
       </div>
 
       {profile ? (
@@ -98,7 +114,11 @@ export function ProfilTab({ customer }: { customer: CustomerDetail }) {
         <EmptyState
           compact
           title="Noch kein Profil"
-          description="Wird in der nächsten Nacht automatisch erstellt, sobald Gespräche, Käufe oder Korrespondenz vorliegen — oder jetzt per Klick."
+          description={
+            customer.profileAllowed
+              ? "Wird in der nächsten Nacht automatisch erstellt, sobald Gespräche, Käufe oder Korrespondenz vorliegen — oder jetzt per Klick."
+              : "Für diese Person wird kein KI-Profil erstellt."
+          }
         />
       )}
 

@@ -27,6 +27,9 @@ export const RETENTION_DEFAULTS = Object.freeze({
   ADMIN_ACCESS_LOG_RETENTION_DAYS: 730,
   CAMPAIGN_CONTACT_RETENTION_DAYS: 365,
   ANALYTICS_REPORT_RETENTION_DAYS: 365,
+  // Operational records of the Shopify sync and the Eingang (0065 / 0067).
+  SHOPIFY_SYNC_LOG_RETENTION_DAYS: 90,
+  INBOX_RETENTION_DAYS: 365,
   MO_ATTRIBUTION_WINDOW_DAYS: 30,
 });
 
@@ -53,6 +56,7 @@ export function parseWindow(raw, fallback, { min = 0 } = {}) {
  *   physicalLetterRetentionDays: number, feedbackRetentionDays: number,
  *   customerInactivityRetentionDays: number, adminAccessLogRetentionDays: number,
  *   campaignContactRetentionDays: number, analyticsReportRetentionDays: number,
+ *   shopifySyncLogRetentionDays: number, inboxRetentionDays: number,
  *   attributionWindowDays: number,
  * }} RetentionOptions
  */
@@ -77,6 +81,8 @@ export function parseRetentionOptions(env = process.env) {
     adminAccessLogRetentionDays: w("ADMIN_ACCESS_LOG_RETENTION_DAYS"),
     campaignContactRetentionDays: w("CAMPAIGN_CONTACT_RETENTION_DAYS"),
     analyticsReportRetentionDays: w("ANALYTICS_REPORT_RETENTION_DAYS"),
+    shopifySyncLogRetentionDays: w("SHOPIFY_SYNC_LOG_RETENTION_DAYS"),
+    inboxRetentionDays: w("INBOX_RETENTION_DAYS"),
     // Not a retention window — never 0 (see header).
     attributionWindowDays: parseWindow(env.MO_ATTRIBUTION_WINDOW_DAYS, d.MO_ATTRIBUTION_WINDOW_DAYS, { min: 1 }),
   };

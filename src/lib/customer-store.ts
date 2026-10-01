@@ -31,7 +31,9 @@ import { linkSessionToCustomer, resolveSignedInCustomerRow } from "./customer-se
 export type CustomerMarketingStatus = "none" | "pending" | "confirmed" | "unsubscribed";
 
 /** Where a customer row came from (migration 0059). */
-export type CustomerSource = "chat" | "shopify_account" | "kampagne";
+/** Where the row came from (0061: Shopify mirror rows are "shopify"; the
+ *  legacy "shopify_account" / "kampagne" values were folded into it). */
+export type CustomerSource = "chat" | "shopify" | "shopify_account" | "kampagne";
 
 /** The structured profile fields (customer-profile-core.normalizeProfileData). */
 export interface CustomerProfileData {
@@ -125,6 +127,29 @@ export interface Customer {
   shopifyLinkedAt: string | null;
   /** 1 anonymous, 2 email-identified, 3 signed-in. */
   identityTier: 1 | 2 | 3;
+  // --- Shopify mirror (migration 0061) ---------------------------------------
+  firstName: string | null;
+  lastName: string | null;
+  locale: string | null;
+  countryCode: string | null;
+  /** The person's e-mail language pin (all campaigns, Kunden). */
+  languageOverride: "de" | "en" | null;
+  shopifyState: string | null;
+  shopifyTags: string[];
+  shopifyCreatedAt: string | null;
+  /** Last time the mirror wrote this row from Shopify (null = not mirrored). */
+  shopifySyncedAt: string | null;
+  /** kauf = purchase profile only, voll = full profile (chat + purchases). */
+  profileDepth: "kauf" | "voll" | null;
+  /** Art. 21 objection to profiling — no AI profile is built or used. */
+  profileObjectionAt: string | null;
+  /** Art. 21 objection to postal advertising — no letters. */
+  postalObjectionAt: string | null;
+  // --- The one e-mail consent (migration 0064) --------------------------------
+  emailConsentState: "subscribed" | "pending" | "unsubscribed" | "not_subscribed";
+  emailConsentLevel: "confirmed_opt_in" | "single_opt_in" | "unknown" | null;
+  emailConsentAt: string | null;
+  emailConsentSource: string | null;
 }
 
 function mapCustomer(r: Record<string, unknown>): Customer {
@@ -161,7 +186,39 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     shopifyCustomerGid: (r.shopify_customer_gid as string | null) ?? null,
     shopifyLinkedAt: (r.shopify_linked_at as string | null) ?? null,
     identityTier: (Number(r.identity_tier ?? 1) as 1 | 2 | 3) ?? 1,
+    firstName: (r.first_name as string | null) ?? null,
+    lastName: (r.last_name as string | null) ?? null,
+    locale: (r.locale as string | null) ?? null,
+    countryCode: (r.country_code as string | null) ?? null,
+    languageOverride: r.language_override === "de" || r.language_override === "en" ? r.language_override : null,
+    shopifyState: (r.shopify_state as string | null) ?? null,
+    shopifyTags: Array.isArray(r.shopify_tags) ? (r.shopify_tags as string[]) : [],
+    shopifyCreatedAt: isoOrNull(r.shopify_created_at),
+    shopifySyncedAt: isoOrNull(r.shopify_synced_at),
+    profileDepth: r.profile_depth === "kauf" || r.profile_depth === "voll" ? r.profile_depth : null,
+    profileObjectionAt: isoOrNull(r.profile_objection_at),
+    postalObjectionAt: isoOrNull(r.postal_objection_at),
+    emailConsentState:
+      r.email_consent_state === "subscribed" ||
+      r.email_consent_state === "pending" ||
+      r.email_consent_state === "unsubscribed"
+        ? r.email_consent_state
+        : "not_subscribed",
+    emailConsentLevel:
+      r.email_consent_level === "confirmed_opt_in" ||
+      r.email_consent_level === "single_opt_in" ||
+      r.email_consent_level === "unknown"
+        ? r.email_consent_level
+        : null,
+    emailConsentAt: isoOrNull(r.email_consent_at),
+    emailConsentSource: (r.email_consent_source as string | null) ?? null,
   };
+}
+
+function isoOrNull(v: unknown): string | null {
+  if (v == null) return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 // ---------------------------------------------------------------------------
@@ -838,8 +895,11 @@ export async function listCustomersForDataRefresh(
     const rows = (await sql`
       SELECT id, email, shopify_customer_id
         FROM customers
-       WHERE purchase_summary_updated_at IS NULL
-          OR purchase_summary_updated_at < ${staleBeforeIso}
+       -- Mirrored people read their orders from the ledger (0062); only the
+       -- rest still need the per-e-mail Shopify read.
+       WHERE shopify_synced_at IS NULL
+         AND (purchase_summary_updated_at IS NULL
+              OR purchase_summary_updated_at < ${staleBeforeIso})
        ORDER BY purchase_summary_updated_at ASC NULLS FIRST, id ASC
        LIMIT ${limit}
     `) as Array<Record<string, unknown>>;
@@ -965,7 +1025,7 @@ export async function loadCustomerProductSelections(
  *  nightly upkeep only picks the customer again after new activity. */
 export async function saveCustomerProfile(
   customerId: number,
-  profile: { summary: string; data: CustomerProfileData },
+  profile: { summary: string; data: CustomerProfileData; depth?: "kauf" | "voll" },
   sql: Sql | null = getSql()
 ): Promise<boolean> {
   if (!sql) return false;
@@ -977,6 +1037,7 @@ export async function saveCustomerProfile(
              profile_summary_updated_at = now(),
              profile_data = ${JSON.stringify(profile.data)}::jsonb,
              persona_label = ${persona},
+             profile_depth = ${profile.depth ?? "voll"},
              profile_checked_at = now()
        WHERE id = ${customerId}
       RETURNING id
@@ -1004,45 +1065,47 @@ export async function markCustomerProfileChecked(
 }
 
 /**
- * Customers whose profile needs (re)generation: never checked, or with
- * activity since the last check — a chat, a correspondence message, a
- * Kampagne send, or an order newer than the check (read from the cached
- * purchase history, so the nightly purchase refresh alone doesn't retrigger
- * it). Same rule as customer-profile-core.profileNeedsUpkeep. Never-checked
- * customers first, then the most recently active. Returns ids plus the total
- * count still waiting (for the backfill script's progress).
+ * Customers whose profile needs (re)generation, per depth (0061):
+ *   voll — people with a Mo chat or correspondence (deep tier);
+ *   kauf — Shopify customers with orders but no conversation (writer tier).
+ * Due = never checked, or activity (chat, mail, campaign send, order) newer
+ * than the last check. Only people the scope allows (CUSTOMER_AI_PROFILE_SCOPE:
+ * `consented` = with the one consent, `all` = everyone) and without an Art. 21
+ * objection. Never-checked first, then the most recently active. Returns ids
+ * plus the total still waiting (backfill progress).
  */
 export async function listCustomersForProfileUpkeep(
   limit: number,
+  opts: { depth?: "voll" | "kauf"; scope?: "consented" | "all" } = {},
   sql: Sql | null = getSql()
 ): Promise<{ ids: number[]; remaining: number }> {
   if (!sql) return { ids: [], remaining: 0 };
+  const depth = opts.depth ?? "voll";
+  const scope = opts.scope ?? "consented";
   try {
     const rows = (await sql`
       WITH activity AS (
         SELECT c.id, c.profile_checked_at, c.last_seen_at,
+               EXISTS (SELECT 1 FROM conversations v WHERE v.customer_id = c.id)
+                 OR EXISTS (SELECT 1 FROM email_messages m WHERE m.customer_id = c.id) AS has_dialogue,
+               COALESCE(f.orders_count, 0) AS orders_count,
                GREATEST(
                  (SELECT max(v.last_activity_at) FROM conversations v WHERE v.customer_id = c.id),
                  (SELECT max(m.occurred_at) FROM email_messages m WHERE m.customer_id = c.id),
-                 (SELECT max(s.sent_at)
-                    FROM campaign_sends s
-                    JOIN campaign_contacts cc ON cc.id = s.contact_id
-                   WHERE cc.customer_id = c.id),
-                 (SELECT max(cc.last_order_at) FROM campaign_contacts cc WHERE cc.customer_id = c.id),
-                 (SELECT max((o->>'createdAt')::timestamptz)
-                    FROM jsonb_array_elements(
-                           CASE WHEN jsonb_typeof(c.purchase_summary->'orders') = 'array'
-                                THEN c.purchase_summary->'orders' ELSE '[]'::jsonb END
-                         ) o
-                   WHERE o->>'createdAt' ~ '^\d{4}-')
+                 (SELECT max(s.sent_at) FROM campaign_sends s WHERE s.customer_id = c.id AND s.is_test = false),
+                 f.last_order_at
                ) AS last_activity_at
           FROM customers c
+          LEFT JOIN customer_facts f ON f.customer_id = c.id
+         WHERE c.profile_objection_at IS NULL
+           AND (${scope} = 'all' OR c.email_consent_state = 'subscribed')
       ),
       due AS (
         SELECT id, profile_checked_at, last_seen_at
           FROM activity
-         WHERE profile_checked_at IS NULL
-            OR (last_activity_at IS NOT NULL AND last_activity_at > profile_checked_at)
+         WHERE (CASE WHEN ${depth} = 'voll' THEN has_dialogue ELSE (NOT has_dialogue AND orders_count > 0) END)
+           AND (profile_checked_at IS NULL
+                OR (last_activity_at IS NOT NULL AND last_activity_at > profile_checked_at))
       )
       SELECT id, (SELECT count(*)::int FROM due) AS remaining
         FROM due
@@ -1056,5 +1119,47 @@ export async function listCustomersForProfileUpkeep(
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "listCustomersForProfileUpkeep" });
     return { ids: [], remaining: 0 };
+  }
+}
+
+/**
+ * Record or lift an Art. 21 DSGVO objection (0061). `profile`: no AI profile
+ * is built or used any more — the stored profile is deleted with it;
+ * `postal`: no advertising letters (the letter draft is cleared). Returns
+ * false when the customer is unknown / no DB.
+ */
+export async function setCustomerObjection(
+  customerId: number,
+  kind: "profile" | "postal",
+  objected: boolean,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows =
+      kind === "profile"
+        ? await sql`
+            UPDATE customers
+               SET profile_objection_at = CASE WHEN ${objected} THEN COALESCE(profile_objection_at, now()) ELSE NULL END,
+                   profile_summary = CASE WHEN ${objected} THEN NULL ELSE profile_summary END,
+                   profile_summary_updated_at = CASE WHEN ${objected} THEN NULL ELSE profile_summary_updated_at END,
+                   profile_data = CASE WHEN ${objected} THEN NULL ELSE profile_data END,
+                   persona_label = CASE WHEN ${objected} THEN NULL ELSE persona_label END,
+                   profile_depth = CASE WHEN ${objected} THEN NULL ELSE profile_depth END
+             WHERE id = ${customerId}
+            RETURNING id
+          `
+        : await sql`
+            UPDATE customers
+               SET postal_objection_at = CASE WHEN ${objected} THEN COALESCE(postal_objection_at, now()) ELSE NULL END,
+                   letter_draft_subject = CASE WHEN ${objected} THEN NULL ELSE letter_draft_subject END,
+                   letter_draft_body = CASE WHEN ${objected} THEN NULL ELSE letter_draft_body END
+             WHERE id = ${customerId}
+            RETURNING id
+          `;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "setCustomerObjection" });
+    return false;
   }
 }

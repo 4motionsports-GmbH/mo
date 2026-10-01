@@ -58,6 +58,13 @@ export interface RetentionOptions {
    */
   analyticsReportRetentionDays: number;
   /**
+   * Shopify sync bookkeeping (webhook dedupe rows, finished sync runs, done /
+   * dead outbox rows) older than this are deleted. 0 disables.
+   */
+  shopifySyncLogRetentionDays: number;
+  /** Decided Eingang items (erledigt / verworfen) older than this are deleted. 0 disables. */
+  inboxRetentionDays: number;
+  /**
    * Order-attribution window (days) between token minting and an order —
    * mirrors MO_ATTRIBUTION_WINDOW_DAYS (lib/mo-orders-store). Tokens older
    * than this (+ grace) can never attribute again and are purged; mo_orders
@@ -100,6 +107,10 @@ export interface RetentionResult {
   deletedAttributionTokens: number;
   /** Expired customer_auth_pending rows (CSRF/PKCE state) removed. */
   purgedAuthPending: number;
+  /** Shopify webhook / sync-run / outbox bookkeeping rows removed. */
+  deletedShopifySyncLog: number;
+  /** Decided Eingang items removed. */
+  deletedInboxItems: number;
   ranAt: string;
 }
 
@@ -228,11 +239,15 @@ export async function runRetention(
   //    conversations back to anonymous, pseudonymous rows.
   let purgedCustomers: Array<{ n: number }> = [{ n: 0 }];
   if (opts.suppressedPurgeDays > 0) {
+    // A Shopify customer (mirror, 0061) stays: the record serves the
+    //    customer relationship, not the consent — opting out of advertising
+    //    ends the advertising, not the customer. Erasure is its own path.
     purgedCustomers = (await sql`
     WITH del AS (
       DELETE FROM customers c
        WHERE EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = c.email)
          AND c.created_at < ${suppressedCutoff}
+         AND c.shopify_customer_id IS NULL
          AND NOT EXISTS (SELECT 1 FROM email_captures ec WHERE ec.email = c.email)
       RETURNING 1
     )
@@ -294,9 +309,9 @@ export async function runRetention(
   //     return their conversations/correspondence to pseudonymous rows and the
   //     ON DELETE CASCADE drops their OAuth tokens; the suppression_list (keyed by
   //     email, not customer_id) is untouched, so opt-outs are still honoured.
-  //     A customer whose linked Kampagne contact is still a live Shopify
-  //     subscriber (migration 0059) holds that consent too and is kept; once
-  //     the contact is suppressed the normal inactivity window applies.
+  //     Since the one consent (0064) the test is email_consent_state; a Shopify
+  //     customer (0061) is never purged here — the mirror follows Shopify, and
+  //     Shopify's own deletion (customers/redact) removes them.
   //     Disabled when the window is 0.
   let deletedInactiveCustomers = [{ n: 0 }] as Array<{ n: number }>;
   if (opts.customerInactivityRetentionDays > 0) {
@@ -304,11 +319,8 @@ export async function runRetention(
       WITH del AS (
         DELETE FROM customers c
          WHERE c.last_seen_at < ${inactiveCustomerCutoff}
-           AND c.marketing_status NOT IN ('confirmed', 'pending')
-           AND NOT EXISTS (
-                 SELECT 1 FROM campaign_contacts cc
-                  WHERE cc.customer_id = c.id AND cc.status <> 'suppressed'
-               )
+           AND c.email_consent_state NOT IN ('subscribed', 'pending')
+           AND c.shopify_customer_id IS NULL
         RETURNING 1
       )
       SELECT count(*)::int AS n FROM del
@@ -424,6 +436,42 @@ export async function runRetention(
   //    customer purge in step 5 already removes them.
   const purgedAuthPending = await purgeExpiredPendingAuth(sql);
 
+  // 7. Shopify sync bookkeeping (0065): webhook dedupe rows, finished sync
+  //    runs and done / dead outbox rows leave on their own window; open
+  //    outbox rows and erasure tombstones are never purged here.
+  let deletedShopifySyncLog = 0;
+  if (opts.shopifySyncLogRetentionDays > 0) {
+    const syncCutoff = daysAgo(opts.shopifySyncLogRetentionDays);
+    const rows = (await sql`
+      WITH w AS (DELETE FROM shopify_webhook_events WHERE received_at < ${syncCutoff} RETURNING 1),
+           -- The newest finished run per kind stays: it is the import marker
+           -- and the reconcile floor.
+           r AS (DELETE FROM shopify_sync_runs
+                  WHERE status IN ('done', 'failed', 'cancelled') AND started_at < ${syncCutoff}
+                    AND id NOT IN (SELECT max(id) FROM shopify_sync_runs WHERE status = 'done' GROUP BY kind)
+                 RETURNING 1),
+           o AS (DELETE FROM shopify_outbox
+                  WHERE status IN ('done', 'dead') AND created_at < ${syncCutoff} RETURNING 1)
+      SELECT (SELECT count(*) FROM w)::int + (SELECT count(*) FROM r)::int + (SELECT count(*) FROM o)::int AS n
+    `) as Array<{ n: number }>;
+    deletedShopifySyncLog = rows[0]?.n ?? 0;
+  }
+
+  // 8. Decided Eingang items (0067) leave on their own window.
+  let deletedInboxItems = 0;
+  if (opts.inboxRetentionDays > 0) {
+    const inboxCutoff = daysAgo(opts.inboxRetentionDays);
+    const rows = (await sql`
+      WITH del AS (
+        DELETE FROM inbox_items
+         WHERE status IN ('erledigt', 'verworfen') AND COALESCE(decided_at, updated_at) < ${inboxCutoff}
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+    deletedInboxItems = rows[0]?.n ?? 0;
+  }
+
   return {
     abandonedConversations: abandoned[0]?.n ?? 0,
     deletedConversations: deletedConvos[0]?.n ?? 0,
@@ -444,6 +492,8 @@ export async function runRetention(
     deletedMoOrders: deletedMoOrders[0]?.n ?? 0,
     deletedAttributionTokens: deletedAttributionTokens[0]?.n ?? 0,
     purgedAuthPending,
+    deletedShopifySyncLog,
+    deletedInboxItems,
     ranAt: new Date().toISOString(),
   };
 }

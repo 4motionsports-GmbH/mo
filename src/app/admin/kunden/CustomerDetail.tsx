@@ -1,8 +1,11 @@
 "use client";
 
-// One customer's detail: header (identity + status) and six sub-tabs
-// (Profil · Beratungen · Käufe · Marketing · Korrespondenz · Brief). Panels
-// stay mounted while hidden so an in-progress edit survives switching.
+// One customer's detail: header (identity, Shopify / Mo, the one consent) and
+// seven sub-tabs (Überblick · Aktivität · Käufe · Gespräche · Marketing ·
+// Korrespondenz · Brief). Panels stay mounted while hidden so an in-progress
+// edit survives switching. Without consent for e-mail advertising the person
+// is flagged in the header and every advertising action is blocked (the
+// server gates enforce it; the UI says why).
 // Mutations call `refresh()` from the actions context, which re-loads this
 // detail and the list.
 
@@ -26,8 +29,9 @@ import {
 } from "../ui";
 import { adminFetch } from "../lib/admin-fetch";
 import { useAsyncAction } from "../lib/use-async-action";
-import { MarketingStatusBadge, PersonaBadge, SourceBadge, TierBadge } from "./badges";
-import { ProfilTab } from "./tabs/ProfilTab";
+import { ConsentBadge, MoBadge, PersonaBadge, ShopBadge, TierBadge } from "./badges";
+import { UeberblickTab } from "./tabs/UeberblickTab";
+import { AktivitaetTab } from "./tabs/AktivitaetTab";
 import { BeratungenTab } from "./tabs/BeratungenTab";
 import { KaeufeTab } from "./tabs/KaeufeTab";
 import { MarketingTab } from "./tabs/MarketingTab";
@@ -76,8 +80,9 @@ export function CustomerDetail({
   async function onErase() {
     const ok = await confirm({
       title: "Kunde vollständig löschen?",
-      description:
-        "Löscht alles über diese Person: Profil, alle Gespräche, Einwilligungen, Marketing- und Kampagnen-Mails, Newsletter-Kontakt, Korrespondenz und Briefe. Die Adresse wird gesperrt und nie wieder angeschrieben oder aus Shopify importiert. Das lässt sich nicht rückgängig machen.",
+      description: customer.isShopifyCustomer
+        ? "Löscht alles über diese Person bei Mo: Profil, Gespräche, Einwilligung, Bestellkopien, Kampagnen-Mails, Korrespondenz und Briefe. Zusätzlich wird Shopify gebeten, die Kundendaten dort ebenfalls zu löschen (Shopify erledigt das nach seinen Fristen; Bestellungen bleiben dort aus steuerlichen Gründen erhalten). Die Adresse wird gesperrt und nie wieder angeschrieben oder importiert. Das lässt sich nicht rückgängig machen."
+        : "Löscht alles über diese Person: Profil, Gespräche, Einwilligung, Kampagnen-Mails, Korrespondenz und Briefe. Die Adresse wird gesperrt und nie wieder angeschrieben oder importiert. Das lässt sich nicht rückgängig machen.",
       confirmLabel: "Endgültig löschen",
       tone: "destructive",
     });
@@ -102,8 +107,9 @@ export function CustomerDetail({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <TierBadge tier={customer.identityTier} size="md" />
-            <SourceBadge source={customer.source} />
+            <ShopBadge isShopify={customer.isShopifyCustomer} />
+            {customer.identityTier === 3 && <TierBadge tier={3} size="md" />}
+            <MoBadge conversations={customer.sessions.length} />
             <PersonaBadge persona={customer.personaLabel} size="md" />
             {returning && (
               <Tooltip content="Mehrere Beratungen unter derselben E-Mail (wiederkehrender Kunde)">
@@ -112,7 +118,7 @@ export function CustomerDetail({
                 </StatusBadge>
               </Tooltip>
             )}
-            <MarketingStatusBadge status={customer.marketingStatus} full size="md" />
+            <ConsentBadge state={customer.consent.state} blockReason={customer.consent.blockReason} full size="md" />
             <Tooltip content="Kunde vollständig löschen (DSGVO)">
               <Button
                 variant="ghost"
@@ -127,14 +133,25 @@ export function CustomerDetail({
           </div>
         </div>
 
-        <Tabs defaultValue="profil" className="mt-4">
+        {!customer.consent.sendable && (
+          <div className="mx-5 mt-3 rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted-foreground">
+            {customer.consent.blockReason
+              ? "Adresse gesperrt — keine Werbung per E-Mail. Profil und Daten bleiben einsehbar."
+              : "Keine Einwilligung für E-Mail-Werbung — nur ansehen: keine Kampagne, keine Einzelansprache, kein Set-Angebot per Mail."}
+          </div>
+        )}
+
+        <Tabs defaultValue="ueberblick" className="mt-4">
           <div className="overflow-x-auto px-5">
             <TabsList variant="underline" className="min-w-max">
-              <TabsTrigger value="profil">Profil</TabsTrigger>
-              <TabsTrigger value="beratungen" badge={customer.sessions.length}>
-                Beratungen
+              <TabsTrigger value="ueberblick">Überblick</TabsTrigger>
+              <TabsTrigger value="aktivitaet">Aktivität</TabsTrigger>
+              <TabsTrigger value="kaeufe" badge={customer.ordersTotal || undefined}>
+                Käufe
               </TabsTrigger>
-              <TabsTrigger value="kaeufe">Käufe</TabsTrigger>
+              <TabsTrigger value="beratungen" badge={customer.sessions.length || undefined}>
+                Gespräche
+              </TabsTrigger>
               <TabsTrigger value="marketing">Marketing</TabsTrigger>
               <TabsTrigger value="korrespondenz" badge={customer.correspondence.length || undefined}>
                 Korrespondenz
@@ -145,8 +162,11 @@ export function CustomerDetail({
             </TabsList>
           </div>
           <div className="px-5 pb-5 pt-4">
-            <TabsContent value="profil" forceMount>
-              <ProfilTab customer={customer} />
+            <TabsContent value="ueberblick" forceMount>
+              <UeberblickTab customer={customer} />
+            </TabsContent>
+            <TabsContent value="aktivitaet" forceMount>
+              <AktivitaetTab customer={customer} />
             </TabsContent>
             <TabsContent value="beratungen" forceMount>
               <BeratungenTab customer={customer} />

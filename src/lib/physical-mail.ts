@@ -45,12 +45,13 @@ export interface PhysicalEligibility {
  * refusal below. Reads the lawful address store + the flag + Pingen config.
  */
 export function physicalEligibilityForCustomer(
-  customer: Pick<Customer, "id" | "postalAddress">
+  customer: Pick<Customer, "id" | "postalAddress"> & { postalObjectionAt?: string | null }
 ): PhysicalEligibility {
   return decidePhysicalEligibility({
     flagApproved: isPhysicalMailSendsApproved(),
     pingenConfigured: isPingenConfigured(),
     address: customer.postalAddress ?? null,
+    postalObjectionAt: customer.postalObjectionAt ?? null,
   }) as PhysicalEligibility;
 }
 
@@ -61,6 +62,7 @@ export type SendPhysicalLetterResult =
       reason:
         | "not_found"
         | "no_draft"
+        | "objection"
         | "flag_off"
         | "no_address"
         | "incomplete_address"
@@ -85,6 +87,7 @@ export async function sendPhysicalLetter(customerId: number): Promise<SendPhysic
     const eligibility = physicalEligibilityForCustomer(customer);
     if (!eligibility.eligible || !eligibility.address) {
       const reason = (eligibility.reasonCode ?? "no_address") as
+        | "objection"
         | "flag_off"
         | "no_address"
         | "incomplete_address"

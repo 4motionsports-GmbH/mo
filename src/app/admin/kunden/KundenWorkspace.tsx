@@ -1,118 +1,117 @@
 "use client";
 
-// The Kunden screen: a slim, searchable/filterable list of every customer on
-// the left; the selected person's full detail (loaded on demand) on the right.
-// Bulk action: queue a reviewable marketing draft for many DOI-confirmed
-// customers at once (nothing is sent).
+// The Kunden screen: the whole customer base as a server-side list on the
+// left (search, views, filters, sort and page in the URL — every change is a
+// router.push, the server renders the next page), the selected person's full
+// detail (loaded on demand) on the right. Chat contact and Shopify status are
+// visible on every row, so „mit Mo“ vs. „ohne Mo“ is one glance.
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
-import { Sparkles, Users, X } from "lucide-react";
-import type { CustomerListRow } from "@/lib/customer-store";
-import type { UnmatchedInboundMessage } from "@/lib/email-messages-store";
+import { usePathname, useRouter } from "next/navigation";
+import { Users } from "lucide-react";
+import type { CustomerListItem, CustomerBaseSummary } from "@/lib/customer-list-store";
 import {
-  DEFAULT_FILTER,
-  activeFilterCount,
-  filterCustomers,
-  presetFilter,
-  sendState,
-  type CustomerFilterState,
+  CHURN_FILTERS,
+  CONSENT_FILTERS,
+  CUSTOMER_PAGE_SIZE,
+  CUSTOMER_VIEWS,
+  SEGMENT_FILTERS,
+  SEGMENT_LABELS,
+  SORT_LABELS,
+  VALUE_FILTERS,
+  activeCustomerFilterCount,
+  customerFilterParams,
+  defaultCustomerFilter,
+  type CustomerFilter,
 } from "@/lib/admin-customer-filter.mjs";
-import {
-  DISCOUNT_PERCENT_MIN,
-  DISCOUNT_PERCENT_MAX,
-  clampDiscountPercent,
-} from "@/lib/discount-validation.mjs";
-import { DEFAULT_EMAIL_TEXT_MODE } from "@/lib/email-text-mode.mjs";
-import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { num, plural } from "@/lib/admin-format.mjs";
+import { eurFromCents, num, relativeTime } from "@/lib/admin-format.mjs";
 import {
   Button,
   Callout,
-  Checkbox,
   EmptyState,
   FilterBar,
   FilterGroup,
   InfoTip,
-  Input,
-  Label,
+  Pagination,
   SearchInput,
   Select,
   Skeleton,
   SplitPane,
-  toast,
 } from "../ui";
-import { adminFetch, errorMessage } from "../lib/admin-fetch";
-import { EmailTextModeToggle, type EmailTextModeValue } from "../EmailTextModeToggle";
 import { CustomerDetail } from "./CustomerDetail";
-import { UnmatchedInboundQueue } from "./UnmatchedInboundQueue";
-import {
-  MarketingStatusBadge,
-  PersonaBadge,
-  PurchaseBadge,
-  SendBadge,
-  SourceBadge,
-  TierBadge,
-} from "./badges";
-import { ARCHETYPE_META } from "@/lib/persona";
+import { ChurnBadge, CONSENT_META, ConsentBadge, MoBadge, PersonaBadge, SegmentBadge, ShopBadge, VALUE_LABELS } from "./badges";
 import { useCustomerDetail } from "./useCustomerDetail";
 
-// Cap concurrent bulk-draft calls so a big selection can't open dozens of model
-// runs at once.
-const BULK_CONCURRENCY = 4;
+const SELECT_CLASS = "h-8 w-auto min-w-[8.5rem] py-0 pr-8 text-xs";
 
-function relativeDay(iso: string | null): string {
-  if (!iso) return "—";
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "—";
-  const days = Math.floor((Date.now() - t) / 86_400_000);
-  if (days <= 0) return "heute";
-  if (days === 1) return "gestern";
-  if (days < 30) return `vor ${days} Tagen`;
-  return formatAdmin(iso, ADMIN_DATE);
-}
+const CONSENT_FILTER_LABELS: Record<string, string> = {
+  subscribed: CONSENT_META.subscribed.short,
+  pending: CONSENT_META.pending.short,
+  unsubscribed: CONSENT_META.unsubscribed.short,
+  not_subscribed: CONSENT_META.not_subscribed.short,
+  blocked: "Gesperrt",
+};
 
 function syncCustomerParam(id: number | null) {
-  if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
   if (id === null) url.searchParams.delete("customer");
   else url.searchParams.set("customer", String(id));
   window.history.replaceState(window.history.state, "", url.toString());
 }
 
-const SELECT_CLASS = "h-8 w-auto min-w-[9rem] py-0 pr-8 text-xs";
-
-/** Persona filter options — every archetype, "unknown" as "Ohne Persona". */
-const PERSONA_OPTIONS = Object.values(ARCHETYPE_META).map((m) => ({
-  id: m.id,
-  label: m.id === "unknown" ? "Ohne Persona" : m.label,
-}));
-
 export function KundenWorkspace({
-  customers,
-  unmatched,
-  initialFilter,
+  filter,
+  items,
+  total,
+  summary,
+  importDone,
+  syncEnabled,
+  personas,
   initialCustomerId,
 }: {
-  customers: CustomerListRow[];
-  unmatched: UnmatchedInboundMessage[];
-  /** Übersicht deep-link preset (?filter=) — seeds the filter on load. */
-  initialFilter?: string;
+  filter: CustomerFilter;
+  items: CustomerListItem[];
+  total: number;
+  summary: CustomerBaseSummary | null;
+  /** The first Shopify import has finished. */
+  importDone: boolean;
+  /** SHOPIFY_CUSTOMER_SYNC_ENABLED. */
+  syncEnabled: boolean;
+  personas: Array<{ key: string; label: string }>;
   /** ?customer= deep link — the customer to open on load. */
   initialCustomerId: number | null;
 }) {
   const router = useRouter();
-  const [filter, setFilter] = React.useState<CustomerFilterState>(() =>
-    presetFilter(initialFilter)
-  );
-  const visible = React.useMemo(() => filterCustomers(customers, filter), [customers, filter]);
-  const [selectedId, setSelectedId] = React.useState<number | null>(() => {
-    if (initialCustomerId !== null && customers.some((c) => c.id === initialCustomerId)) {
-      return initialCustomerId;
-    }
-    return filterCustomers(customers, presetFilter(initialFilter))[0]?.id ?? null;
-  });
+  const pathname = usePathname();
+  const [pending, startTransition] = React.useTransition();
+  const [query, setQuery] = React.useState(filter.q);
+  const [selectedId, setSelectedId] = React.useState<number | null>(initialCustomerId ?? items[0]?.id ?? null);
   const { customer: detail, loading, error, reload } = useCustomerDetail(selectedId);
+
+  const navigate = React.useCallback(
+    (next: CustomerFilter) => {
+      const sp = customerFilterParams(next);
+      sp.set("tab", "kunden");
+      if (selectedId !== null) sp.set("customer", String(selectedId));
+      startTransition(() => router.push(`${pathname}?${sp.toString()}`, { scroll: false }));
+    },
+    [pathname, router, selectedId]
+  );
+  const set = <K extends keyof CustomerFilter>(key: K, value: CustomerFilter[K]) =>
+    navigate({ ...filter, [key]: value, page: 1 });
+
+  // Search as you type (debounced) — the server filters.
+  React.useEffect(() => {
+    if (query.trim() === filter.q) return;
+    const handle = setTimeout(() => navigate({ ...filter, q: query.trim(), page: 1 }), 350);
+    return () => clearTimeout(handle);
+  }, [query, filter, navigate]);
+
+  const setView = (view: string) => {
+    const base = defaultCustomerFilter();
+    navigate({ ...base, ...(CUSTOMER_VIEWS[view]?.set ?? {}), view, q: filter.q, sort: (CUSTOMER_VIEWS[view]?.set?.sort as CustomerFilter["sort"]) ?? filter.sort });
+  };
+
   const refresh = React.useCallback(() => {
     reload();
     router.refresh();
@@ -123,241 +122,145 @@ export function KundenWorkspace({
     syncCustomerParam(id);
   };
 
-  const set = <K extends keyof CustomerFilterState>(key: K, value: CustomerFilterState[K]) =>
-    setFilter((f) => ({ ...f, [key]: value }));
-
-  // ── Bulk draft (DOI-confirmed customers only) ─────────────────────────────
-  const [selected, setSelected] = React.useState<Set<number>>(new Set());
-  const [bulkDepth, setBulkDepth] = React.useState(0);
-  const [bulkTextMode, setBulkTextMode] = React.useState<EmailTextModeValue>(
-    DEFAULT_EMAIL_TEXT_MODE as EmailTextModeValue
-  );
-  const [bulkBusy, setBulkBusy] = React.useState(false);
-
-  const isSelectable = (c: CustomerListRow) => c.marketingStatus === "confirmed";
-  const selectableVisible = React.useMemo(() => visible.filter(isSelectable), [visible]);
-  const selectedVisibleCount = selectableVisible.filter((c) => selected.has(c.id)).length;
-  const allVisibleSelected =
-    selectableVisible.length > 0 && selectedVisibleCount === selectableVisible.length;
-  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
-
-  function toggleOne(id: number, next: boolean) {
-    setSelected((prev) => {
-      const copy = new Set(prev);
-      if (next) copy.add(id);
-      else copy.delete(id);
-      return copy;
-    });
-  }
-  function toggleAllInFilter() {
-    setSelected((prev) => {
-      const copy = new Set(prev);
-      if (allVisibleSelected) for (const c of selectableVisible) copy.delete(c.id);
-      else for (const c of selectableVisible) copy.add(c.id);
-      return copy;
-    });
-  }
-  const clearSelection = () => setSelected(new Set());
-
-  // Per-customer draft calls through a small concurrency pool with a live
-  // progress toast + a partial-failure summary. NOTHING is sent — each is only
-  // QUEUED as a reviewable draft (visible in that customer's Marketing sub-tab).
-  async function runBulkDraft() {
-    const byId = new Map(customers.map((c) => [c.id, c]));
-    const ids = [...selected].filter((id) => {
-      const c = byId.get(id);
-      return c != null && isSelectable(c);
-    });
-    if (ids.length === 0 || bulkBusy) return;
-
-    setBulkBusy(true);
-    const total = ids.length;
-    let done = 0;
-    let ok = 0;
-    const failures: Array<{ email: string; message: string }> = [];
-    const progressId = toast({
-      variant: "info",
-      title: "Entwürfe werden erstellt…",
-      description: `0 / ${total}`,
-      duration: 0,
-    });
-
-    const queue = [...ids];
-    async function worker() {
-      for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
-        try {
-          // regenerate:false → an existing open draft at this depth + mode is
-          // reused untouched; the server re-checks eligibility on every call.
-          await adminFetch("/api/admin/customers/marketing-draft", {
-            body: {
-              customerId: id,
-              discountPercent: bulkDepth,
-              textMode: bulkTextMode,
-              regenerate: false,
-            },
-          });
-          ok += 1;
-        } catch (e) {
-          failures.push({ email: byId.get(id)?.email ?? `#${id}`, message: errorMessage(e) });
-        } finally {
-          done += 1;
-          toast.update(progressId, { description: `${done} / ${total}` });
-        }
-      }
-    }
-
-    try {
-      await Promise.all(
-        Array.from({ length: Math.min(BULK_CONCURRENCY, total) }, () => worker())
-      );
-    } finally {
-      toast.dismiss(progressId);
-      if (failures.length === 0) {
-        toast({
-          variant: "success",
-          title: "Entwürfe erstellt",
-          description: `${plural(ok, "Entwurf", "Entwürfe")} zur Prüfung erstellt — sichtbar im Marketing-Tab des Kunden.`,
-        });
-      } else if (ok === 0) {
-        toast({
-          variant: "error",
-          title: "Keine Entwürfe erstellt",
-          description: `Alle ${total} fehlgeschlagen — z. B. ${failures[0].email}: ${failures[0].message}`,
-        });
-      } else {
-        toast({
-          variant: "warning",
-          title: "Teilweise erstellt",
-          description: `${ok} von ${total} erstellt, ${failures.length} fehlgeschlagen (z. B. ${failures[0].email}: ${failures[0].message}).`,
-        });
-      }
-      clearSelection();
-      setBulkBusy(false);
-      refresh();
-    }
-  }
-
-  const assignTargets = React.useMemo(
-    () => customers.map((c) => ({ id: c.id, email: c.email })),
-    [customers]
-  );
+  const pageCount = Math.max(1, Math.ceil(total / CUSTOMER_PAGE_SIZE));
 
   return (
     <div className="flex flex-col gap-4">
-      <UnmatchedInboundQueue messages={unmatched} customers={assignTargets} />
+      {summary && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+          {[
+            ["alle", "Kunden", summary.total],
+            ["interessenten", "Interessenten", summary.leads],
+            ["mo", "mit Mo", summary.withMo],
+            ["einwilligung", "mit Einwilligung", summary.subscribed],
+            ["aufgaben", "mit offenen Aufgaben", summary.withOpenTasks],
+          ].map(([view, label, value]) => (
+            <button
+              key={view as string}
+              type="button"
+              onClick={() => setView(view as string)}
+              className="rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <strong className="tabular-nums">{num(value as number)}</strong>{" "}
+              <span className="text-muted-foreground hover:text-foreground">{label as string}</span>
+            </button>
+          ))}
+          <InfoTip>
+            Der Kundenstamm umfasst alle Shopify-Kund:innen und alle Personen, die Mo ihre E-Mail
+            gegeben haben — eine Person, ein Eintrag. Kennzahlen wie Lebenszyklus und
+            Abwanderungsrisiko werden nächtlich aus den Bestellungen berechnet.
+          </InfoTip>
+        </div>
+      )}
+
+      {!importDone && (
+        <Callout tone="info" title="Shopify-Kundenstamm noch nicht übernommen">
+          {syncEnabled
+            ? "Die Liste zeigt bisher nur Personen aus Mo und dem früheren Newsletter-Abgleich. Den vollständigen Import startest du unter Einstellungen → Shopify-Abgleich."
+            : "Der Abgleich mit Shopify ist ausgeschaltet (SHOPIFY_CUSTOMER_SYNC_ENABLED). Bis dahin zeigt die Liste nur Personen aus Mo und dem früheren Newsletter-Abgleich."}
+        </Callout>
+      )}
 
       <FilterBar
-        activeCount={activeFilterCount(filter)}
-        onReset={() => setFilter({ ...DEFAULT_FILTER })}
+        activeCount={activeCustomerFilterCount(filter)}
+        onReset={() => navigate({ ...defaultCustomerFilter(), view: filter.view, ...(CUSTOMER_VIEWS[filter.view]?.set ?? {}) })}
         end={
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {visible.length === customers.length
-              ? plural(customers.length, "Kunde", "Kunden")
-              : `${num(visible.length)} von ${num(customers.length)}`}
+          <span className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
+            {pending ? "Lädt…" : `${num(total)} ${total === 1 ? "Person" : "Personen"}`}
           </span>
         }
       >
         <SearchInput
           id="ms-search"
-          value={filter.query}
-          onValueChange={(v) => set("query", v)}
+          value={query}
+          onValueChange={setQuery}
           placeholder="Name oder E-Mail"
           shortcut="/"
           size="sm"
-          containerClassName="w-60"
+          containerClassName="w-56"
           aria-label="Kunden suchen (Name oder E-Mail)"
         />
-        <FilterGroup label="Tier" htmlFor="ms-filter-tier">
-          <Select
-            id="ms-filter-tier"
-            value={filter.tier}
-            onChange={(e) => set("tier", e.target.value as CustomerFilterState["tier"])}
-            className={SELECT_CLASS}
-          >
-            <option value="all">Alle</option>
-            <option value="3">Tier 3 · angemeldet</option>
-            <option value="2">Tier 2 · E-Mail</option>
-            <option value="1">Tier 1 · anonym</option>
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Marketing" htmlFor="ms-filter-marketing">
-          <Select
-            id="ms-filter-marketing"
-            value={filter.marketing}
-            onChange={(e) => set("marketing", e.target.value as CustomerFilterState["marketing"])}
-            className={SELECT_CLASS}
-          >
-            <option value="all">Alle</option>
-            <option value="confirmed">DOI bestätigt</option>
-            <option value="pending">DOI offen</option>
-            <option value="none">Keine Einwilligung</option>
-            <option value="unsubscribed">Abgemeldet</option>
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Kauf" htmlFor="ms-filter-kauf">
-          <Select
-            id="ms-filter-kauf"
-            value={filter.kauf}
-            onChange={(e) => set("kauf", e.target.value as CustomerFilterState["kauf"])}
-            className={SELECT_CLASS}
-          >
-            <option value="all">Alle</option>
-            <option value="purchased">Hat gekauft</option>
-            <option value="no_purchase">Nicht gekauft</option>
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Versand" htmlFor="ms-filter-send">
-          <Select
-            id="ms-filter-send"
-            value={filter.send}
-            onChange={(e) => set("send", e.target.value as CustomerFilterState["send"])}
-            className={SELECT_CLASS}
-          >
-            <option value="all">Alle</option>
-            <option value="draft">Offener Entwurf</option>
-            <option value="sent">Gesendet</option>
-            <option value="none">Kein Entwurf</option>
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Herkunft" htmlFor="ms-filter-source">
-          <Select
-            id="ms-filter-source"
-            value={filter.source}
-            onChange={(e) => set("source", e.target.value as CustomerFilterState["source"])}
-            className={SELECT_CLASS}
-          >
-            <option value="all">Alle</option>
-            <option value="chat">Chat</option>
-            <option value="kampagne">Newsletter</option>
-            <option value="shopify_account">Shopify-Konto</option>
-          </Select>
-        </FilterGroup>
-        <FilterGroup label="Persona" htmlFor="ms-filter-persona">
-          <Select
-            id="ms-filter-persona"
-            value={filter.persona}
-            onChange={(e) => set("persona", e.target.value)}
-            className={SELECT_CLASS}
-          >
-            <option value="all">Alle</option>
-            {PERSONA_OPTIONS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
+        <FilterGroup label="Ansicht" htmlFor="k-view">
+          <Select id="k-view" value={filter.view} onChange={(e) => setView(e.target.value)} className={SELECT_CLASS}>
+            {Object.entries(CUSTOMER_VIEWS).map(([key, v]) => (
+              <option key={key} value={key}>
+                {v.label}
               </option>
             ))}
           </Select>
         </FilterGroup>
-        <FilterGroup label="Sortierung" htmlFor="ms-filter-sort">
-          <Select
-            id="ms-filter-sort"
-            value={filter.sort}
-            onChange={(e) => set("sort", e.target.value as CustomerFilterState["sort"])}
-            className={SELECT_CLASS}
-          >
-            <option value="recent">Zuletzt aktiv</option>
-            <option value="name">Name A–Z</option>
-            <option value="first_seen">Älteste zuerst</option>
-            <option value="sessions">Meiste Beratungen</option>
+        <FilterGroup label="Mo" htmlFor="k-mo">
+          <Select id="k-mo" value={filter.mo} onChange={(e) => set("mo", e.target.value as CustomerFilter["mo"])} className={SELECT_CLASS}>
+            <option value="any">Alle</option>
+            <option value="yes">Mit Mo gesprochen</option>
+            <option value="no">Noch ohne Mo</option>
+          </Select>
+        </FilterGroup>
+        <FilterGroup label="Einwilligung" htmlFor="k-consent">
+          <Select id="k-consent" value={filter.consent ?? ""} onChange={(e) => set("consent", e.target.value || null)} className={SELECT_CLASS}>
+            <option value="">Alle</option>
+            {CONSENT_FILTERS.map((c) => (
+              <option key={c} value={c}>
+                {CONSENT_FILTER_LABELS[c]}
+              </option>
+            ))}
+          </Select>
+        </FilterGroup>
+        <FilterGroup label="Lebenszyklus" htmlFor="k-seg">
+          <Select id="k-seg" value={filter.segment ?? ""} onChange={(e) => set("segment", e.target.value || null)} className={SELECT_CLASS}>
+            <option value="">Alle</option>
+            {SEGMENT_FILTERS.map((s) => (
+              <option key={s} value={s}>
+                {SEGMENT_LABELS[s]}
+              </option>
+            ))}
+          </Select>
+        </FilterGroup>
+        <FilterGroup label="Wert" htmlFor="k-value">
+          <Select id="k-value" value={filter.value ?? ""} onChange={(e) => set("value", e.target.value || null)} className={SELECT_CLASS}>
+            <option value="">Alle</option>
+            {VALUE_FILTERS.map((v) => (
+              <option key={v} value={v}>
+                {VALUE_LABELS[v]}
+              </option>
+            ))}
+          </Select>
+        </FilterGroup>
+        <FilterGroup label="Persona" htmlFor="k-persona">
+          <Select id="k-persona" value={filter.persona ?? ""} onChange={(e) => set("persona", e.target.value || null)} className={SELECT_CLASS}>
+            <option value="">Alle</option>
+            {personas.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.label}
+              </option>
+            ))}
+            <option value="unknown">Ohne Persona</option>
+          </Select>
+        </FilterGroup>
+        <FilterGroup label="Shop" htmlFor="k-shop">
+          <Select id="k-shop" value={filter.shop} onChange={(e) => set("shop", e.target.value as CustomerFilter["shop"])} className={SELECT_CLASS}>
+            <option value="any">Alle</option>
+            <option value="shopify">Shopify-Kunden</option>
+            <option value="lead">Interessenten</option>
+          </Select>
+        </FilterGroup>
+        <FilterGroup label="Abwanderung" htmlFor="k-churn">
+          <Select id="k-churn" value={filter.churn ?? ""} onChange={(e) => set("churn", e.target.value || null)} className={SELECT_CLASS}>
+            <option value="">Alle</option>
+            {CHURN_FILTERS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </Select>
+        </FilterGroup>
+        <FilterGroup label="Sortierung" htmlFor="k-sort">
+          <Select id="k-sort" value={filter.sort} onChange={(e) => set("sort", e.target.value as CustomerFilter["sort"])} className={SELECT_CLASS}>
+            {Object.entries(SORT_LABELS).map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
           </Select>
         </FilterGroup>
       </FilterBar>
@@ -367,60 +270,48 @@ export function KundenWorkspace({
         listLabel="Kundenliste"
         stickyTopClassName="lg:top-[4.5rem] lg:max-h-[calc(100vh-5.5rem)]"
         list={
-          <div className="flex max-h-full flex-col rounded-lg border border-border bg-card">
-            {selectableVisible.length > 0 && (
-              <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
-                <label className="flex cursor-pointer items-center gap-2">
-                  <Checkbox
-                    checked={allVisibleSelected}
-                    indeterminate={someVisibleSelected}
-                    onChange={toggleAllInFilter}
-                  />
-                  <span>Alle {num(selectableVisible.length)} bestätigten auswählen</span>
-                </label>
-                <InfoTip>
-                  Wählt alle sichtbaren Kunden mit bestätigter Marketing-Einwilligung für den
-                  Sammel-Entwurf aus. Die Leiste unten erstellt dann je Kunde einen Entwurf zur
-                  Prüfung — es wird nichts gesendet.
-                </InfoTip>
-              </div>
-            )}
+          <div className="flex max-h-full flex-col rounded-lg border border-border bg-card" aria-busy={pending}>
             <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-              {customers.length === 0 ? (
+              {items.length === 0 ? (
                 <EmptyState
                   plain
                   compact
                   icon={<Users />}
-                  title="Noch keine Kunden"
-                  description="Ein Kunde entsteht, sobald jemand im Chat seine E-Mail-Adresse mit Einwilligung hinterlässt — anonyme Sessions bleiben unverknüpft."
-                />
-              ) : visible.length === 0 ? (
-                <EmptyState
-                  plain
-                  compact
-                  title="Keine Kunden für diese Suche/Filter."
+                  title={total === 0 && filter.view === "alle" && !filter.q ? "Noch keine Kunden" : "Keine Kunden für diese Suche/Filter."}
+                  description={
+                    total === 0 && filter.view === "alle" && !filter.q
+                      ? "Kunden kommen aus dem Shopify-Abgleich und aus Mo, sobald jemand seine E-Mail mit Einwilligung hinterlässt."
+                      : undefined
+                  }
                   action={
-                    <Button variant="outline" size="sm" onClick={() => setFilter({ ...DEFAULT_FILTER })}>
-                      Filter zurücksetzen
-                    </Button>
+                    activeCustomerFilterCount(filter) > 0 || filter.view !== "alle" ? (
+                      <Button variant="outline" size="sm" onClick={() => navigate(defaultCustomerFilter())}>
+                        Filter zurücksetzen
+                      </Button>
+                    ) : undefined
                   }
                 />
               ) : (
                 <ul className="flex flex-col gap-0.5">
-                  {visible.map((c) => (
-                    <CustomerRow
-                      key={c.id}
-                      customer={c}
-                      active={c.id === selectedId}
-                      onSelect={() => selectCustomer(c.id)}
-                      selectable={isSelectable(c)}
-                      checked={selected.has(c.id)}
-                      onCheckedChange={(next) => toggleOne(c.id, next)}
-                    />
+                  {items.map((c) => (
+                    <CustomerRow key={c.id} customer={c} active={c.id === selectedId} onSelect={() => selectCustomer(c.id)} />
                   ))}
                 </ul>
               )}
             </div>
+            {total > CUSTOMER_PAGE_SIZE && (
+              <div className="border-t border-border px-3 py-2">
+                <Pagination
+                  compact
+                  page={filter.page}
+                  pageCount={pageCount}
+                  total={total}
+                  pageSize={CUSTOMER_PAGE_SIZE}
+                  itemLabel="Kunden"
+                  onPageChange={(page) => navigate({ ...filter, page })}
+                />
+              </div>
+            )}
           </div>
         }
         detail={
@@ -428,7 +319,7 @@ export function KundenWorkspace({
             <EmptyState
               icon={<Users />}
               title="Kunde auswählen"
-              description="Wähle links einen Kunden, um Profil, Beratungen, Käufe, Marketing, Korrespondenz und Brief zu sehen."
+              description="Wähle links eine Person, um Überblick, Aktivität, Käufe, Gespräche, Marketing, Korrespondenz und Brief zu sehen."
               className="min-h-[16rem]"
             />
           ) : error ? (
@@ -450,8 +341,6 @@ export function KundenWorkspace({
               onRefresh={refresh}
               onErased={() => {
                 setSelectedId(null);
-                // One navigation drops ?customer= and re-renders the list —
-                // replaceState + refresh() would restore the stale param.
                 const url = new URL(window.location.href);
                 url.searchParams.delete("customer");
                 router.replace(url.pathname + url.search, { scroll: false });
@@ -463,62 +352,6 @@ export function KundenWorkspace({
           )
         }
       />
-
-      {/* Sticky bulk-draft bar (only with a selection). */}
-      {selected.size > 0 && (
-        <div className="sticky bottom-4 z-30">
-          <div
-            role="region"
-            aria-label="Sammel-Entwurf für ausgewählte Kund:innen"
-            className="mx-auto flex max-w-3xl flex-wrap items-center gap-x-4 gap-y-3 rounded-lg border border-border bg-popover/95 px-4 py-3 text-popover-foreground shadow-lg backdrop-blur"
-          >
-            <span className="text-sm font-semibold tabular-nums">
-              {num(selected.size)} ausgewählt
-            </span>
-            <div className="flex items-center gap-2">
-              <Label htmlFor="ms-bulk-depth" className="text-xs text-muted-foreground">
-                Rabatt (%)
-              </Label>
-              <Input
-                id="ms-bulk-depth"
-                type="number"
-                inputMode="numeric"
-                min={DISCOUNT_PERCENT_MIN}
-                max={DISCOUNT_PERCENT_MAX}
-                step={1}
-                value={bulkDepth}
-                disabled={bulkBusy}
-                onChange={(e) => setBulkDepth(clampDiscountPercent(e.target.valueAsNumber))}
-                className="h-8 w-20"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground">Textmodus</Label>
-              <EmailTextModeToggle
-                value={bulkTextMode}
-                disabled={bulkBusy}
-                onSelect={setBulkTextMode}
-              />
-            </div>
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              Erstellt Entwürfe zur Prüfung — es wird nichts gesendet.
-              <InfoTip>
-                Je ausgewählter Kund:in wird ein Entwurf mit diesem Rabatt und Textmodus erzeugt und
-                im Marketing-Tab des Kunden zur Prüfung abgelegt. Ein bestehender offener Entwurf
-                bleibt unverändert.
-              </InfoTip>
-            </span>
-            <div className="ml-auto flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={clearSelection} disabled={bulkBusy}>
-                <X /> Auswahl aufheben
-              </Button>
-              <Button onClick={runBulkDraft} loading={bulkBusy}>
-                <Sparkles /> Entwürfe erstellen
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -534,7 +367,7 @@ function DetailSkeleton() {
         <Skeleton className="h-5 w-24" />
       </div>
       <div className="mt-5 flex gap-4 border-b border-border pb-2">
-        {[1, 2, 3, 4, 5, 6].map((i) => (
+        {[1, 2, 3, 4, 5, 6, 7].map((i) => (
           <Skeleton key={i} className="h-3.5 w-16" />
         ))}
       </div>
@@ -543,67 +376,45 @@ function DetailSkeleton() {
   );
 }
 
-function CustomerRow({
-  customer,
-  active,
-  onSelect,
-  selectable,
-  checked,
-  onCheckedChange,
-}: {
-  customer: CustomerListRow;
-  active: boolean;
-  onSelect: () => void;
-  selectable: boolean;
-  checked: boolean;
-  onCheckedChange: (next: boolean) => void;
-}) {
+function CustomerRow({ customer: c, active, onSelect }: { customer: CustomerListItem; active: boolean; onSelect: () => void }) {
   return (
     <li>
-      <div
-        role="button"
-        tabIndex={0}
+      <button
+        type="button"
         onClick={onSelect}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onSelect();
-          }
-        }}
         aria-pressed={active}
-        className={`flex cursor-pointer items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
+        className={`flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
           active ? "bg-accent-soft" : "hover:bg-secondary/70"
         }`}
       >
-        {selectable && (
-          <span className="mt-0.5" onClick={(e) => e.stopPropagation()}>
-            <Checkbox
-              checked={checked}
-              onChange={(e) => onCheckedChange(e.target.checked)}
-              aria-label={`${customer.email} für Sammel-Entwurf auswählen`}
-            />
-          </span>
-        )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">{customer.name ?? customer.email}</span>
+            <span className="truncate text-sm font-medium">{c.name ?? c.email}</span>
+            {c.openTasks > 0 && (
+              <span className="size-1.5 shrink-0 rounded-full bg-warning" aria-label={`${c.openTasks} offene Aufgaben`} />
+            )}
             <span className="ml-auto shrink-0 whitespace-nowrap text-2xs text-muted-foreground">
-              {relativeDay(customer.lastSeenAt)}
+              {c.lastActivityAt ? relativeTime(c.lastActivityAt) : "—"}
             </span>
           </div>
-          {customer.name && (
-            <div className="truncate text-xs text-muted-foreground">{customer.email}</div>
-          )}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="truncate">{c.name ? c.email : " "}</span>
+            {c.ordersCount > 0 && (
+              <span className="ml-auto shrink-0 tabular-nums">
+                {num(c.ordersCount)} × · {eurFromCents(c.totalSpentCents)}
+              </span>
+            )}
+          </div>
           <div className="mt-1 flex flex-wrap items-center gap-1">
-            <TierBadge tier={customer.identityTier} />
-            <SourceBadge source={customer.source} />
-            <PersonaBadge persona={customer.personaLabel} />
-            <MarketingStatusBadge status={customer.marketingStatus} />
-            <PurchaseBadge state={customer.purchaseState} marketingStatus={customer.marketingStatus} />
-            <SendBadge state={sendState(customer)} />
+            <ShopBadge isShopify={c.isShopifyCustomer} />
+            <MoBadge conversations={c.conversationsCount} />
+            <ConsentBadge state={c.consentState} blockReason={c.blockReason} />
+            <SegmentBadge segment={c.lifecycleSegment} />
+            <ChurnBadge risk={c.churnRisk} />
+            <PersonaBadge persona={c.personaLabel} />
           </div>
         </div>
-      </div>
+      </button>
     </li>
   );
 }

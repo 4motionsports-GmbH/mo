@@ -12,7 +12,9 @@
 // button).
 //
 // Then the PROFILE UPKEEP (lib/customer-profile runProfileUpkeep): up to
-// CUSTOMER_PROFILE_BATCH customers (default 30, 0 disables) whose profile is
+// CUSTOMER_PROFILE_BATCH people with a Mo chat or correspondence (Vollprofil,
+// default 30, 0 disables) and up to CUSTOMER_PROFILE_LIGHT_BATCH Shopify
+// customers with orders only (Kaufprofil, writer tier, default 0) whose profile is
 // missing or older than their latest activity get it regenerated — the same
 // regenerateCustomerProfile as the Kunden button — a few at a time and never
 // starting a new one after the time budget, so the run fits maxDuration.
@@ -28,6 +30,7 @@ import { listCustomersForDataRefresh } from "@/lib/customer-store";
 import { refreshCustomerData } from "@/lib/customer-refresh";
 import { autoCaptureMissingAddresses } from "@/lib/address-capture";
 import { runProfileUpkeep } from "@/lib/customer-profile";
+import { customerProfileLightBatch } from "@/lib/platform-flags.mjs";
 import { reportError } from "@/lib/observability";
 import { requireCronAuth } from "@/lib/cron-auth";
 
@@ -87,6 +90,13 @@ async function handle(req: Request): Promise<Response> {
       deadlineMs: startedAt + PROFILE_BUDGET_MS,
       concurrency: 3,
     });
+    // Purchase-only profiles with whatever time is left (off by default).
+    const lightProfiles = await runProfileUpkeep({
+      batch: customerProfileLightBatch(),
+      depth: "kauf",
+      deadlineMs: startedAt + PROFILE_BUDGET_MS + 40_000,
+      concurrency: 4,
+    });
     const summary = {
       considered,
       refreshed,
@@ -96,6 +106,7 @@ async function handle(req: Request): Promise<Response> {
       addressesChecked: addresses.checked,
       addressesCaptured: addresses.captured,
       profiles,
+      lightProfiles,
     };
     console.log("[cron/refresh-customers] done", summary);
     return NextResponse.json({ ok: true, ...summary });

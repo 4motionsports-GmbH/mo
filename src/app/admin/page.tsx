@@ -76,19 +76,10 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
   switch (tab) {
     case "overview":
       return <OverviewTab dbReady={dbReady} />;
-    case "kunden": {
-      // Overview deep-links seed a Kunden filter preset via ?filter= (e.g.
-      // "no_purchase", "marketing"); accept the legacy ?status= as a fallback.
-      const initialFilter = firstParam(sp.filter) ?? firstParam(sp.status);
-      const initialCustomerId = idParam(sp.customer);
-      return (
-        <KundenTab
-          dbReady={dbReady}
-          initialFilter={initialFilter}
-          initialCustomerId={initialCustomerId}
-        />
-      );
-    }
+    case "kunden":
+      // The list's search, view, filters, sort and page live in the URL
+      // (k* params, lib/admin-customer-filter.mjs); ?customer= opens one.
+      return <KundenTab dbReady={dbReady} searchParams={sp} initialCustomerId={idParam(sp.customer)} />;
     case "kampagne":
       // Without ?campaign= the Kampagnen overview (?edit= opens the editor);
       // with it the campaign's review desk, which keeps its position in the

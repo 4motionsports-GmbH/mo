@@ -1,32 +1,27 @@
 "use client";
 
-// Werbe-Einwilligung — the person's marketing state at a glance (chat
-// newsletter, Shopify newsletter / Kampagne, local block) with the manual
-// controls: "Abmelden" on request and "Abmeldung aufheben" when an
-// unsubscribe was a mistake or has been taken back. Neither sends an e-mail.
+// Werbe-Einwilligung — the ONE e-mail consent (shared with Shopify) at a
+// glance: state, level, since when and where it came from, the block list
+// state, the history, and the manual controls: "Abmelden" on request and
+// "Abmeldung aufheben" when an unsubscribe was a mistake or has been taken
+// back. Neither sends an e-mail; both reach Shopify through the outbox.
 // Server side: /api/admin/customers/marketing-optout (lib/marketing-optout.ts).
 
 import * as React from "react";
 import { MailCheck, MailX } from "lucide-react";
 import type { CustomerDetail } from "@/lib/customer-detail";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { Button, Callout, DescriptionItem, DescriptionList, InfoTip, toast, useConfirm } from "../../ui";
+import { Button, Callout, DescriptionItem, DescriptionList, Disclosure, InfoTip, toast, useConfirm } from "../../ui";
 import { adminFetch } from "../../lib/admin-fetch";
 import { useAsyncAction } from "../../lib/use-async-action";
 import { useCustomerActions } from "../CustomerDetail";
 
-const CHAT_STATUS: Record<CustomerDetail["marketingStatus"], string> = {
-  confirmed: "Bestätigt (Double-Opt-in)",
+const STATE_SHORT: Record<string, string> = {
+  subscribed: "angemeldet",
   pending: "Bestätigung ausstehend",
-  none: "Keine Einwilligung",
-  unsubscribed: "Abgemeldet",
+  unsubscribed: "abgemeldet",
+  not_subscribed: "keine Einwilligung",
 };
-
-function newsletterLabel(status: string | undefined): string {
-  if (!status) return "Kein Abonnent";
-  if (status === "suppressed") return "Unterdrückt — erhält keine Kampagnen-Mails";
-  return "Abonniert";
-}
 
 export function OptOutControl({ customer }: { customer: CustomerDetail }) {
   const { refresh } = useCustomerActions();
@@ -50,7 +45,7 @@ export function OptOutControl({ customer }: { customer: CustomerDetail }) {
           title: action === "lift" ? "Abmeldung aufgehoben" : "Abgemeldet",
           description:
             action === "lift" && json.restoredContacts
-              ? `${customer.email} — zurück in der Kampagnen-Warteschlange`
+              ? `${customer.email} — zurück in ${json.restoredContacts === 1 ? "der Kampagne" : "den Kampagnen"}`
               : customer.email,
         });
         refresh();
@@ -62,7 +57,7 @@ export function OptOutControl({ customer }: { customer: CustomerDetail }) {
     const ok = await confirm({
       title: "Werbung an diese Person stoppen?",
       description:
-        "Die Adresse kommt auf die Sperrliste (Grund: manuell). Es gehen keine Marketing- oder Kampagnen-Mails mehr an sie, der Kampagnen-Kontakt verlässt sofort die Warteschlange. Es wird keine E-Mail verschickt. Rückgängig über „Abmeldung aufheben“.",
+        "Die Person wird von E-Mail-Werbung abgemeldet — bei Mo und in Shopify (eine gemeinsame Einwilligung). Offene Kampagnen-Entwürfe verlassen sofort die Warteschlange. Es wird keine E-Mail verschickt. Rückgängig über „Abmeldung aufheben“.",
       confirmLabel: "Abmelden",
       tone: "destructive",
     });
@@ -73,7 +68,7 @@ export function OptOutControl({ customer }: { customer: CustomerDetail }) {
     const ok = await confirm({
       title: "Abmeldung aufheben?",
       description:
-        "Nur wenn die Abmeldung ein Versehen war oder die Person ausdrücklich wieder Werbung möchte. Die Sperre wird entfernt, eine frühere Double-Opt-in-Bestätigung gilt wieder und der Kampagnen-Kontakt kehrt in die Warteschlange zurück. Es wird keine E-Mail verschickt; die Änderung wird protokolliert.",
+        "Nur wenn die Abmeldung ein Versehen war oder die Person ausdrücklich wieder Werbung möchte. Die frühere Einwilligung gilt wieder (auch in Shopify), offene Kampagnen-Empfänger kehren in die Warteschlange zurück. Es wird keine E-Mail verschickt; die Änderung wird protokolliert.",
       confirmLabel: "Abmeldung aufheben",
     });
     if (ok) void run.run("lift");
@@ -88,9 +83,9 @@ export function OptOutControl({ customer }: { customer: CustomerDetail }) {
         <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
           Werbe-Einwilligung
           <InfoTip>
-            Chat-Newsletter = Einwilligung aus dem Mo-Chat (Double-Opt-in). Shopify-Newsletter = Abonnent
-            im Shop, Grundlage der Kampagne. Eine Abmeldung (Link in einer Mail, manuell, Bounce,
-            Spam-Beschwerde) sperrt beide Kanäle. Abmelden und Aufheben verschicken keine E-Mail.
+            Eine Einwilligung für Shopify und Mo: Anmeldung im Shop, an der Kasse, im Chat oder über
+            das Formular zählt überall; eine Abmeldung (Link in einer Mail, im Shop, manuell,
+            Spam-Beschwerde) gilt ebenfalls überall. Abmelden und Aufheben verschicken keine E-Mail.
           </InfoTip>
         </div>
         {!optOut.blocked && (
@@ -106,12 +101,29 @@ export function OptOutControl({ customer }: { customer: CustomerDetail }) {
         )}
       </div>
 
-      <DescriptionList columns={2}>
-        <DescriptionItem label="Chat-Newsletter">{CHAT_STATUS[customer.marketingStatus]}</DescriptionItem>
-        <DescriptionItem label="Shopify-Newsletter (Kampagne)">
-          {newsletterLabel(customer.newsletter?.status)}
-        </DescriptionItem>
+      <DescriptionList columns={3}>
+        <DescriptionItem label="E-Mail-Werbung">{customer.consent.label}</DescriptionItem>
+        <DescriptionItem label="Seit">{formatAdmin(customer.consent.at, ADMIN_DATE_TIME_SHORT)}</DescriptionItem>
+        <DescriptionItem label="Quelle">{customer.consent.sourceLabel ?? "—"}</DescriptionItem>
       </DescriptionList>
+
+      {customer.consent.history.length > 0 && (
+        <Disclosure title={`Verlauf (${customer.consent.history.length})`} framed={false}>
+          <ul className="flex flex-col gap-1 text-xs">
+            {customer.consent.history.map((h) => (
+              <li key={h.id} className="flex flex-wrap gap-x-2">
+                <span className="tabular-nums text-muted-foreground">{formatAdmin(h.occurredAt, ADMIN_DATE_TIME_SHORT)}</span>
+                <span>{STATE_SHORT[h.state] ?? h.state}</span>
+                <span className="text-muted-foreground">
+                  {h.sourceLabel}
+                  {h.level === "confirmed_opt_in" ? " · DOI" : ""}
+                  {h.note ? ` · ${h.note}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Disclosure>
+      )}
 
       {optOut.blocked && (
         <Callout
