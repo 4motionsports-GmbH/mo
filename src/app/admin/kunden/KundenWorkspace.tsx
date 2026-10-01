@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { SlidersHorizontal, Users } from "lucide-react";
+import { ListChecks, Megaphone, SlidersHorizontal, Users } from "lucide-react";
 import type { CustomerListItem, CustomerBaseSummary } from "@/lib/customer-list-store";
 import {
   CHURN_FILTERS,
@@ -28,6 +28,8 @@ import { eurFromCents, num, relativeTime } from "@/lib/admin-format.mjs";
 import {
   Button,
   Callout,
+  Checkbox,
+  Field,
   EmptyState,
   FilterBar,
   FilterGroup,
@@ -38,7 +40,10 @@ import {
   Select,
   Skeleton,
   SplitPane,
+  Textarea,
+  toast,
 } from "../ui";
+import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { CustomerDetail } from "./CustomerDetail";
 import { ChurnBadge, CONSENT_META, ConsentBadge, MoBadge, PersonaBadge, SegmentBadge, ShopBadge, VALUE_LABELS } from "./badges";
 import { useCustomerDetail } from "./useCustomerDetail";
@@ -68,6 +73,7 @@ export function KundenWorkspace({
   importDone,
   syncEnabled,
   personas,
+  campaigns,
   initialCustomerId,
 }: {
   filter: CustomerFilter;
@@ -79,6 +85,8 @@ export function KundenWorkspace({
   /** SHOPIFY_CUSTOMER_SYNC_ENABLED. */
   syncEnabled: boolean;
   personas: Array<{ key: string; label: string }>;
+  /** Campaigns that take recipients (not ended), the Einzelansprache first. */
+  campaigns: Array<{ id: number; name: string; kind: string }>;
   /** ?customer= deep link — the customer to open on load. */
   initialCustomerId: number | null;
 }) {
@@ -91,6 +99,57 @@ export function KundenWorkspace({
   const viewBase = { ...defaultCustomerFilter(), ...(CUSTOMER_VIEWS[filter.view]?.set ?? {}) } as CustomerFilter;
   const moreCount = (["mo", "value", "persona", "shop", "churn"] as const).filter((k) => filter[k] !== viewBase[k]).length;
   const [selectedId, setSelectedId] = React.useState<number | null>(initialCustomerId ?? items[0]?.id ?? null);
+  // Bulk: pick several people and put them into a campaign (consent is checked per person).
+  const [picking, setPicking] = React.useState(false);
+  const [picked, setPicked] = React.useState<Set<number>>(() => new Set());
+  const [addOpen, setAddOpen] = React.useState(false);
+  const [target, setTarget] = React.useState<string>(campaigns[0] ? String(campaigns[0].id) : "");
+  const [note, setNote] = React.useState("");
+  const [adding, setAdding] = React.useState(false);
+  const pageIds = items.map((c) => c.id);
+  const pickedOnPage = pageIds.filter((id) => picked.has(id)).length;
+  const togglePick = (id: number) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const togglePage = () =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (pickedOnPage === pageIds.length) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  async function addPicked() {
+    setAdding(true);
+    try {
+      const res = await adminFetch<{ added: number; alreadyIn: number; noConsent: number; blocked: number; notFound: number }>(
+        "/api/admin/campaigns/add-recipients",
+        { body: { campaignId: target ? Number(target) : undefined, customerIds: [...picked], adminNote: note.trim() || undefined } }
+      );
+      const skipped = res.noConsent + res.blocked + res.notFound;
+      toast({
+        variant: res.added + res.alreadyIn > 0 ? "success" : "warning",
+        title: `${num(res.added)} hinzugefügt`,
+        description: [
+          res.alreadyIn > 0 ? `${num(res.alreadyIn)} waren schon dabei` : null,
+          skipped > 0 ? `${num(skipped)} übersprungen (keine Einwilligung oder gesperrt)` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined,
+      });
+      setAddOpen(false);
+      setPicked(new Set());
+      setNote("");
+      setPicking(false);
+    } catch (e) {
+      toast({ variant: "error", title: "Hinzufügen fehlgeschlagen", description: errorMessage(e) });
+    } finally {
+      setAdding(false);
+    }
+  }
   const { customer: detail, loading, error, reload } = useCustomerDetail(selectedId);
 
   const navigate = React.useCallback(
@@ -294,6 +353,82 @@ export function KundenWorkspace({
         stickyTopClassName="lg:top-[4.5rem] lg:max-h-[calc(100vh-5.5rem)]"
         list={
           <div className="flex max-h-full flex-col rounded-lg border border-border bg-card" aria-busy={pending}>
+            {items.length > 0 && (
+              <div className="flex min-h-10 flex-wrap items-center gap-2 border-b border-border px-3 py-1.5 text-xs">
+                {picking ? (
+                  <>
+                    <Checkbox
+                      aria-label="Alle auf dieser Seite auswählen"
+                      checked={pickedOnPage > 0 && pickedOnPage === pageIds.length}
+                      indeterminate={pickedOnPage > 0 && pickedOnPage < pageIds.length}
+                      onChange={togglePage}
+                    />
+                    <span className="tabular-nums text-muted-foreground">{num(picked.size)} ausgewählt</span>
+                    <Popover
+                      open={addOpen}
+                      onOpenChange={setAddOpen}
+                      label="Zur Kampagne hinzufügen"
+                      align="start"
+                      trigger={
+                        <Button size="xs" disabled={picked.size === 0 || campaigns.length === 0}>
+                          <Megaphone aria-hidden /> Zur Kampagne…
+                        </Button>
+                      }
+                    >
+                      <div className="flex w-72 flex-col gap-3">
+                        <div className="flex items-center gap-1 text-sm font-semibold">
+                          {num(picked.size)} Personen hinzufügen
+                          <InfoTip>
+                            Nur Personen mit Einwilligung in E-Mail-Werbung und ohne Sperre kommen in die Kampagne; die
+                            übrigen werden übersprungen. Die Entwürfe entstehen im Prüftisch („Vorbereiten…“) — es wird
+                            nichts gesendet.
+                          </InfoTip>
+                        </div>
+                        <Field label="Kampagne" htmlFor="k-add-campaign">
+                          <Select id="k-add-campaign" value={target} onChange={(e) => setTarget(e.target.value)}>
+                            {campaigns.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                        <Field label="Notiz für den KI-Texter (optional)" htmlFor="k-add-note">
+                          <Textarea
+                            id="k-add-note"
+                            rows={3}
+                            value={note}
+                            maxLength={2000}
+                            onChange={(e) => setNote(e.target.value)}
+                            placeholder="z. B. „Nachfrage zum Rack, Zubehör für Klimmzüge anbieten“"
+                          />
+                        </Field>
+                        <div className="flex justify-end">
+                          <Button size="sm" onClick={() => void addPicked()} loading={adding} disabled={picked.size === 0}>
+                            Hinzufügen
+                          </Button>
+                        </div>
+                      </div>
+                    </Popover>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      className="ml-auto"
+                      onClick={() => {
+                        setPicking(false);
+                        setPicked(new Set());
+                      }}
+                    >
+                      Fertig
+                    </Button>
+                  </>
+                ) : (
+                  <Button size="xs" variant="ghost" className="ml-auto text-muted-foreground" onClick={() => setPicking(true)}>
+                    <ListChecks aria-hidden /> Auswählen
+                  </Button>
+                )}
+              </div>
+            )}
             <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
               {items.length === 0 ? (
                 <EmptyState
@@ -317,7 +452,15 @@ export function KundenWorkspace({
               ) : (
                 <ul className="flex flex-col gap-0.5">
                   {items.map((c) => (
-                    <CustomerRow key={c.id} customer={c} active={c.id === selectedId} onSelect={() => selectCustomer(c.id)} />
+                    <CustomerRow
+                      key={c.id}
+                      customer={c}
+                      active={c.id === selectedId}
+                      onSelect={() => selectCustomer(c.id)}
+                      picking={picking}
+                      picked={picked.has(c.id)}
+                      onPick={() => togglePick(c.id)}
+                    />
                   ))}
                 </ul>
               )}
@@ -399,9 +542,31 @@ function DetailSkeleton() {
   );
 }
 
-function CustomerRow({ customer: c, active, onSelect }: { customer: CustomerListItem; active: boolean; onSelect: () => void }) {
+function CustomerRow({
+  customer: c,
+  active,
+  onSelect,
+  picking,
+  picked,
+  onPick,
+}: {
+  customer: CustomerListItem;
+  active: boolean;
+  onSelect: () => void;
+  picking: boolean;
+  picked: boolean;
+  onPick: () => void;
+}) {
   return (
-    <li>
+    <li className="flex items-start gap-1">
+      {picking && (
+        <Checkbox
+          className="ml-2 mt-3"
+          checked={picked}
+          onChange={onPick}
+          aria-label={`${c.name ?? c.email} auswählen`}
+        />
+      )}
       <button
         type="button"
         onClick={onSelect}

@@ -8,6 +8,7 @@
 
 import { parseCustomerFilter } from "@/lib/admin-customer-filter.mjs";
 import { getCustomerBaseSummary, listCustomers } from "@/lib/customer-list-store";
+import { listCampaigns } from "@/lib/campaigns-store";
 import { getSyncHealth } from "@/lib/shopify-sync";
 import { isShopifyCustomerSyncEnabled } from "@/lib/platform-flags.mjs";
 import { ARCHETYPE_META } from "@/lib/persona";
@@ -34,7 +35,12 @@ export async function KundenTab({
   }
 
   let filter = parseCustomerFilter(searchParams);
-  const [firstPage, summary, health] = await Promise.all([listCustomers(filter), getCustomerBaseSummary(), getSyncHealth()]);
+  const [firstPage, summary, health, campaigns] = await Promise.all([
+    listCustomers(filter),
+    getCustomerBaseSummary(),
+    getSyncHealth(),
+    listCampaigns(),
+  ]);
   let page = firstPage;
   // A page past the end (an old link, a shrunk filter) shows the first page instead of „0 Personen“.
   if (page.items.length === 0 && filter.page > 1) {
@@ -53,6 +59,10 @@ export async function KundenTab({
       personas={Object.values(ARCHETYPE_META)
         .filter((m) => m.id !== "unknown")
         .map((m) => ({ key: m.id, label: m.label }))}
+      campaigns={campaigns
+        .filter((c) => c.status !== "beendet" && c.status !== "archiviert")
+        .sort((a, b) => (a.kind === "einzel" ? -1 : b.kind === "einzel" ? 1 : 0))
+        .map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
       initialCustomerId={initialCustomerId ?? null}
     />
   );
