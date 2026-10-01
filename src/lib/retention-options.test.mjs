@@ -31,6 +31,9 @@ test("parseRetentionOptions: defaults with an empty env", () => {
   assert.equal(o.adminAccessLogRetentionDays, 730);
   assert.equal(o.campaignContactRetentionDays, 365);
   assert.equal(o.analyticsReportRetentionDays, 365);
+  assert.equal(o.shopifySyncLogRetentionDays, 90);
+  assert.equal(o.inboxRetentionDays, 180);
+  assert.equal(o.erasureTombstoneRetentionDays, 30);
   assert.equal(o.attributionWindowDays, 30);
 });
 
