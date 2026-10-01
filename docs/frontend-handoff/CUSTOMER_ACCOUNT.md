@@ -165,15 +165,19 @@ Response (always HTTP 200, `Cache-Control: no-store`):
   addresses, or orders in CA-1 (those arrive in CA-2/CA-3).
 - **`marketing`** (present only when `signedIn: true`) drives the **at-sign-in
   opt-in** and the **tier-3 suppression** (§6):
-  - `status` — our DOI marketing state for this customer:
-    `"none" | "pending" | "confirmed" | "unsubscribed"`. This is **our**
-    double-opt-in state only; signing in never imports Shopify's marketing state.
+  - `status` — the customer's marketing consent:
+    `"none" | "pending" | "confirmed" | "unsubscribed"`. Since 2026-10 this is
+    the **one** consent shared with the shop: `"confirmed"` also when the
+    customer subscribed to the newsletter in the shop (checkout, account) —
+    once the backend's customer mirror has them. Signing in itself never
+    grants or changes it.
   - `optInActionable` — `true` ⇔ surface the at-sign-in opt-in card (§6.1). It is
     `true` exactly when the customer has **no marketing decision on record yet**
     (`status === "none"`) **and** has a real verified email. It is `false` once a
-    decision exists (`pending` / `confirmed` / `unsubscribed`) or for the rare
-    account with no verified email. Treat it as the single source of truth for
-    "should I show the opt-in" — don't re-derive it from `status` yourself.
+    decision exists (`pending` / `confirmed` / `unsubscribed` — in Mo or in the
+    shop) or for the rare account with no verified email. Treat it as the single
+    source of truth for "should I show the opt-in" — don't re-derive it from
+    `status` yourself.
 - A `CORS` preflight (`OPTIONS`) is supported; the endpoint advertises
   `GET, OPTIONS`.
 
@@ -204,9 +208,17 @@ not the account (full erasure is §7.5). Same open-redirect rule as login:
 ## 6. What does NOT change — and where the opt-in moves for tier 3
 
 The anonymous and email-capture flows are untouched. Sign-in is **identity only**
-— it does **not** opt the customer into marketing. The double-opt-in email flow
-remains the only path to marketing consent. A visitor can use the chat fully
-without ever signing in.
+— it does **not** opt the customer into marketing. On Mo's surfaces the
+double-opt-in email flow remains the only path to marketing consent; a
+subscription the customer already gave in the shop counts as the same consent
+(they are not asked again). A visitor can use the chat fully without ever
+signing in.
+
+Since 2026-10 the **chat consent gate leads with sign-in** (`signIn` block in
+`GET /api/consent-copy?surface=chat`): its primary button starts exactly the
+login of §2 (`loginPath` = `/api/auth/shopify/login` on the backend). After the
+return, §6.1 decides whether the opt-in card is shown. Render contract:
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §2.
 
 ### 6.0 Tier-3 suppression contract (end-of-chat capture widget)
 
@@ -224,12 +236,12 @@ suppressed**, and the opt-in is surfaced **at sign-in** instead (§6.1).
   in [`API_CONTRACT.md`](./API_CONTRACT.md) §2/§7). This is purely a tier-3
   frontend gate — the backend's capture flow is untouched.
 
-### 6.1 The at-sign-in marketing opt-in (v3) — gated on `optInActionable`
+### 6.1 The at-sign-in marketing opt-in (button-consent since v4) — gated on `optInActionable`
 
-A signed-in customer is offered a one-tick marketing opt-in that skips re-typing
+A signed-in customer is offered a one-tap marketing opt-in that skips re-typing
 their email (we already hold the verified address). It is **still the same
-double-opt-in**, **still unticked by default**, and **still a separate, explicit
-act** — signing in never enrols anyone.
+double-opt-in**, **nothing is pre-selected**, and it is **still a separate,
+explicit act** — signing in never enrols anyone.
 
 **When to show it — read `marketing.optInActionable` from `/api/auth/me` (§4).**
 Show the at-sign-in opt-in card **only** when `signedIn: true` **and**
@@ -237,15 +249,18 @@ Show the at-sign-in opt-in card **only** when `signedIn: true` **and**
 customer who has **not yet recorded a marketing decision**; it is `false` once
 they've decided (DOI `pending` / `confirmed` / unsubscribed) — so a customer who
 already opted in (or whose prior opt-in carried forward when their email merged
-into the signed-in identity) is **not** re-asked. The widget MAY additionally
+into the signed-in identity, or who subscribed in the shop) is **not**
+re-asked. The widget MAY additionally
 remember a local "dismissed" state for the session so a customer who closed the
 card isn't shown it again in the same session — but the **backend** truth for
 "already decided" is `optInActionable: false`.
 
 Render contract (copy + submit endpoint) is in
-[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §2 (`GET /api/consent-copy?surface=signin`
-→ tick → `POST /api/account/marketing-opt-in`). Never pre-tick it. After a
-successful opt-in, the next `/api/auth/me` reports `optInActionable: false`.
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §3 (`GET /api/consent-copy?surface=signin`
+→ "Ja, Angebote aktivieren" → `POST /api/account/marketing-opt-in`). Never
+pre-select it. After a successful opt-in, the next `/api/auth/me` reports
+`optInActionable: false`. An already-subscribed address is answered with
+`marketing.status: "confirmed"`, `alreadyConfirmed: true` and no DOI email.
 
 ## 7. Signed-in conversation history (CA-3-THEME contract)
 
@@ -381,6 +396,33 @@ A **distinct, heavier** action from §7.4 — confirm it explicitly in the UI.
 
 This erases the **person**: purges **all** conversations, clears the profile +
 cached summaries, **revokes the stored OAuth tokens**, and suppresses the email.
+Since 2026-10 the same call also reaches the **shop** (response unchanged): when
+the backend's `SHOPIFY_ERASURE_SYNC` is on, the newsletter consent is switched
+off in Shopify and Shopify is asked to erase the customer account; Shopify
+keeps its orders as long as the law requires.
+
+**Confirmation copy — `GET /api/consent-copy?surface=erase`** (same guard and
+cache as the other consent-copy calls, `?locale=en` on `/en`). Render
+`confirmHeading` + `confirmBody` + a `confirmButton` button (plus a cancel) in
+the confirmation, `doneHeading` + `doneBody` after a `200`, and `failedBody` on
+a `503`. `confirmBody` is served per backend config — it mentions the shop
+account only when the shop is erased too — so never hard-code it.
+(`invalidHeading` / `invalidBody` belong to the mail-link page and can be
+ignored.)
+
+```jsonc
+{
+  "confirmHeading": "Alle deine Daten löschen?",
+  "confirmBody": "Damit löschen wir alles, was motion sports über dich gespeichert hat: …",
+  "confirmButton": "Meine Daten endgültig löschen",
+  "doneHeading": "Deine Daten wurden gelöscht",
+  "doneBody": "Wir haben alle Daten gelöscht, die wir über dich gespeichert hatten, und melden uns nicht mehr bei dir.",
+  "invalidHeading": "Dieser Link ist ungültig",
+  "invalidBody": "Der Link ist unvollständig oder wurde verändert. …",
+  "failedBody": "Es wurde nichts gelöscht — bitte versuch es gleich noch einmal."
+}
+```
+
 After it returns:
 
 - the session **no longer resolves** — `/api/auth/me` now returns

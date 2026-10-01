@@ -1,167 +1,305 @@
-# Kampagnen-Modul — personalized emails to Shopify marketing subscribers
+# Kampagnen-Modul — personalised marketing e-mails to the customer base
 
-The campaign module (R12) emails the shop's **existing Shopify customer base**:
-customers who ticked the shop's marketing checkbox (in the Shopify
-login/checkout flow, pre-Mo) **and** have order history. For each contact the
-system generates a personalized email from their past purchases, recommends
-2–3 suitable catalog products, optionally weaves in a unique single-use
-discount code (the existing mechanism, `MK-` prefix), and always ends with a
-promo block for the Mo chatbot including a deep link that auto-opens the
-widget. A human reviews **every** email (~200/day) in the **Kampagne** tab of
-`/admin` before anything is sent.
+The campaign module (R12; many campaigns since migration `0066`) e-mails the shop's customer base
+in **campaigns**: the running lifecycle campaign „Bestandskunden – Lebenszyklus“, time-boxed
+**Aktionen** the team creates in the admin (Black Friday, a launch …), and the built-in
+**Einzelansprache** for single, hand-picked mails. For each recipient the system generates a
+personalised email from the customer profile, the past purchases and the campaign's **Briefing**,
+recommends 2–3 suitable catalog products, optionally weaves in a unique single-use discount code
+(`MK-` prefix) and/or a bundle offer, and ends with the campaign's call to action — the Mo chatbot
+deep link that auto-opens the widget, or a shop link. A human reviews **every** email on the
+campaign's review desk (Prüftisch) in the **Kampagnen** screen of `/admin` before anything is sent.
 
-This channel is **distinct from the Mo marketing funnel** (`email_captures` +
-our own double-opt-in): the audience, the consent basis, the tables, the send
-path, and the legal gates are all separate. Zero behavior change to the
-existing chat/capture/marketing/admin flows.
+Audiences are defined over the **whole customer base** — every Shopify customer is mirrored into
+`customers` (see [`CUSTOMERS.md`](./CUSTOMERS.md)) — and the e-mail channel reaches only people
+with the **one marketing consent** that Shopify and Mo share
+([`CONSENT_FLOW.md`](./CONSENT_FLOW.md)). The Einzelansprache supersedes the Mo funnel's
+per-customer marketing draft (`marketing_sends`, `MS5-` codes): Kunden → Marketing shows that
+„bisheriger Weg“ only for a still-open legacy draft. Both send paths check the same block list,
+and the campaign gate's frequency cap counts the Mo funnel's sends too (§3).
 
 ---
 
-## 1. Audience definition
+## 1. Audience — who can be mailed
 
-A **campaign contact** is a Shopify customer with
-`emailMarketingConsent.marketingState = SUBSCRIBED`. Nobody else is ever
-stored ([`campaign-sync-core.mjs`](../src/lib/campaign-sync-core.mjs) enforces
-this per node — the GraphQL filter `email_marketing_state:SUBSCRIBED` is only
-an optimization).
-
-The sync ([`campaign-sync.ts`](../src/lib/campaign-sync.ts), triggered by the
-tab's **Sync** button → `POST /api/admin/campaign/sync`, and daily by
-`/api/cron/sync-campaign-audience`) pages through the `customers` query
-(scope: `read_customers`; ⚠️ email/name are **protected customer data** — the
-app may need Protected Customer Data access approved in the Partner
-dashboard) and stores per customer: id, email, name, derived language,
-opt-in level, consent timestamp, orders count, lifetime spend.
+Every campaign matches its audience spec (§2.2) against the read model `customer_overview`
+(migration `0068`: `customers` + `customer_facts` + the block state from `suppression_list`). The
+query is written once, in [`audience-store.ts`](../src/lib/audience-store.ts) (`matchAudience`),
+with every spec field as a nullable parameter. For the e-mail channel it **always** requires
+`email_consent_state = 'subscribed'` and no hard block (`bounce` / `complaint` / `erasure`) — a spec
+can narrow an audience, never widen it past consent. A failed query matches nobody (fail-closed).
 
 Rules:
 
-- **Idempotent** — upsert on `shopify_customer_id`.
-- **Local suppression wins** — every synced email is cross-checked (in bulk)
-  against our suppression store (`suppression_list` + unsubscribed
-  `email_captures`, the same store the unsubscribe flow writes). Suppressed
-  addresses are stored as `status='suppressed'`: visible for audit, never
-  queued, re-checked again at prepare **and** send time.
+- **Recipients are snapshots.** A matched person becomes one `campaign_contacts` row per campaign
+  (and per re-entry cycle, §2.3) with name, effective language, opt-in level (from
+  `customers.email_consent_level`, stored upper-case: `CONFIRMED_OPT_IN` / `SINGLE_OPT_IN` /
+  `UNKNOWN`), consent time and the order figures from `customer_facts`. Every audience refresh
+  rewrites the snapshot of open rows that still match. The send path never trusts the snapshot:
+  it re-reads the person (§3).
+- **Every recipient is a customer.** Real recipients carry `customer_id`; only Testkontakte (§5)
+  have none.
+- **Losing consent or getting blocked suppresses, never deletes.** Open rows (`pending`, `drafted`,
+  `draft_failed`) of a person whose consent is no longer `subscribed` or who got blocked are marked
+  `suppressed` at the next refresh (`excluded_reason = 'keine_einwilligung'`) and again at prepare
+  time (`gesperrt` / `keine_einwilligung` / `kein_kunde`). They stay visible for audit; a person who
+  matches again with consent returns to `pending`.
 - **Manual control** (`lib/marketing-optout.ts`, `POST /api/admin/customers/marketing-optout`):
-  the operator can opt a person out on request (reason `manual` — the card's
-  „Abmelden“ icon or Kunden → Marketing) and lift an opt-out that was a mistake
-  („Reaktivieren“ on a suppressed hit in the contact search, or „Abmeldung
-  aufheben“ in Kunden → Marketing). Lifting is the exact inverse of the
-  unsubscribe: the block-list row goes, a previously confirmed chat DOI comes
-  back, the 30-day KPI attribution on campaign sends is cleared and the contact
-  returns to `drafted` (draft kept) or `pending`. Only `unsubscribe` / `manual`
-  blocks can be lifted — bounces, spam complaints and erasures stay. Neither
-  direction sends an e-mail; both are audit-logged (`customer.optout`,
-  `customer.optout.lift`). An unsubscribe that came from Shopify is undone in
-  Shopify, then synced.
-- **Admin previews are inert** — every rendered mail the dashboard shows
-  (draft preview, Gesendet viewer, marketing/correspondence/design previews)
-  goes through `adminEmailHtml()`, which points the recipient-action links
-  (`/api/unsubscribe`, `/api/erase-data`, `/api/confirm-marketing`,
-  `/api/r/…`) at `#`. A click in the admin can never unsubscribe, delete or
-  count a click for the real recipient.
-- **Shopify-side unsubscribes** — a contact that dropped out of the
-  SUBSCRIBED set is marked `suppressed` on re-sync, never deleted
-  mid-campaign (audit trail). A contact who re-subscribed on the Shopify side
-  returns to `pending` — unless our local suppression list says otherwise
-  (a local opt-out can never be undone by a sync).
-- **Erased people stay out** — an address on `suppression_list` with reason
-  `erasure` (complete deletion, see [`CUSTOMERS.md`](./CUSTOMERS.md)) is
-  dropped before the upsert; it is never stored again.
-- **Every contact is a customer** (migration `0059`) — after each sync
-  `linkCampaignContactsToCustomers` links contacts to their `customers` row
-  (Shopify id first, then e-mail) and creates the missing ones with
-  `source = 'kampagne'`. The result reports `customersCreated` /
-  `customersLinked`. From then on the contact has the central customer
-  profile, and a later chat attaches to the same person.
-- **Language derivation** ([`campaign-language.mjs`](../src/lib/campaign-language.mjs)):
-  customer `locale` if present (`de*` → de, otherwise en); fallback
-  `defaultAddress` country DE/AT/CH → de, else en; final fallback de.
-- **Language override** (migration `0040`): the operator can pin DE/EN per
-  contact in the review card (`POST /api/admin/campaign/language`) when the
-  derivation is wrong for a person. The pin lives in its own column
-  (`language_override`) so a re-sync never clobbers it; picking the language
-  the profile already derives clears the pin (back to automatic). The
-  EFFECTIVE language (override ?? derived, computed in `campaign-store.ts`)
-  drives the AI draft, the deterministic send-time blocks (Mo promo, discount
-  line, bundle offer labels, unsubscribe footer) and the expiry-date format
-  (German `31.07.2026` vs English `31 July 2026`,
-  `formatExpiryDateForLanguage`). Switching the language in the UI chains a
-  regenerate so the prose matches.
+  the operator can opt a person out on request (reason `manual` — the card's „Abmelden“ icon or
+  Kunden → Marketing) and lift an opt-out that was a mistake („Reaktivieren“ on a suppressed hit in
+  the contact search, or „Abmeldung aufheben“ in Kunden → Marketing). Both directions go to the one
+  consent (`lib/consent-flows.ts`) and from there to Shopify (outbox, `SHOPIFY_CONSENT_WRITEBACK`):
+  an opt-out unsubscribes the person in Shopify too and marks their open recipient rows
+  `suppressed`; lifting deletes the block-list
+  row, brings back a previously confirmed chat DOI, clears the 30-day KPI attribution on campaign
+  sends, restores the earlier subscription (level from the consent history) and returns the
+  person's suppressed recipient rows to `drafted` (draft kept) or `pending`. Only
+  `unsubscribe` / `manual` blocks can be lifted — bounces, spam complaints and
+  erasures stay. Neither direction sends an e-mail; both are audit-logged (`customer.optout`,
+  `customer.optout.lift`).
+- **Admin previews are inert** — every rendered mail the dashboard shows (draft preview, Gesendet
+  viewer, marketing/correspondence/design previews) goes through `adminEmailHtml()`, which points
+  the recipient-action links (`/api/unsubscribe`, `/api/erase-data`, `/api/confirm-marketing`,
+  `/api/r/…`) at `#`. A click in the admin can never unsubscribe, delete or count a click for the
+  real recipient.
+- **Erased people stay out** — an erased address is on `suppression_list` with reason `erasure`
+  (complete deletion, see [`CUSTOMERS.md`](./CUSTOMERS.md)), which `customer_overview` reports as
+  `blocked`, and a known Shopify id gets an `erasure_tombstones` row, so neither the mirror import
+  nor a webhook re-creates the person.
+- **Language derivation** (`effectiveEmailLanguage` in
+  [`campaign-language.mjs`](../src/lib/campaign-language.mjs); `audience-store.ts` spells the same
+  rules in SQL): the person's pin first; then the Shopify `locale` (`de*` → de, otherwise en); then
+  the country DE/AT/CH → de, else en; for a chat-only lead without either, the language of their
+  last Mo chat (`en*` → en); final fallback de.
+- **Language override** (migrations `0040`, `0061`): the operator can pin DE/EN in the review card
+  (`POST /api/admin/campaign/language`) when the derivation is wrong for a person. The pin is the
+  PERSON's (`customers.language_override`, also stored on the recipient row), so every later
+  campaign and the Kunden screen use it and an audience refresh never clobbers it; picking the
+  language the profile already derives clears the pin. The EFFECTIVE language (override ?? derived,
+  computed in `campaign-store.ts`) drives the AI draft, the deterministic send-time blocks (Mo promo,
+  discount line, bundle offer labels, unsubscribe footer) and the expiry-date format (German
+  `31.07.2026` vs English `31 July 2026`, `formatExpiryDateForLanguage`). Switching the language in
+  the UI chains a regenerate so the prose matches.
 
-## 2. Legal gating model (Germany: GDPR + §7 UWG)
+**Retired: the Shopify newsletter sync.** Until the customer platform, the audience was the shop's
+SUBSCRIBED newsletter list, pulled into `campaign_contacts` by `src/lib/campaign-sync.ts` /
+`campaign-sync-core.mjs` / `src/lib/shopify-customers.ts` — daily by
+`/api/cron/sync-campaign-audience` and on demand by the desk's **Sync** button
+(`POST /api/admin/campaign/sync`), which also linked contacts to `customers`
+(`linkCampaignContactsToCustomers`, source `kampagne`). All of it is removed. Replaced by the
+customer mirror (`lib/shopify-sync.ts`, bulk import + webhooks + nightly reconcile — see
+[`CUSTOMERS.md`](./CUSTOMERS.md)), the one consent, and the audience refresh of §2.3 („Zielgruppe
+aktualisieren“ on the desk, `/api/cron/campaign-audiences` at night).
 
-This audience's consent comes from **Shopify's marketing checkbox, not from
-our own double-opt-in flow**. German case law effectively requires a
-*provable* double opt-in, and Shopify records the quality per customer as
-`marketingOptInLevel` (`CONFIRMED_OPT_IN` | `SINGLE_OPT_IN` | `UNKNOWN`).
-The gates (evaluated in one tested place,
-[`campaign-gates.mjs`](../src/lib/campaign-gates.mjs), consumed by the single
-send chokepoint [`campaign-email.ts`](../src/lib/campaign-email.ts)):
+## 2. Campaigns (migration `0066`)
 
-> ✅ **APPROVED by the lawyer (2026-07-21)** — both flags below are enabled in
-> the documented defaults (`.env.example`). The code still fails closed (an
-> absent env var means false), so the EFFECTIVE switch is the deployment env;
-> either flag can be set false there at any time to re-lock the channel.
+Definitions and the pure rules live in [`campaign-def.mjs`](../src/lib/campaign-def.mjs) (tested);
+the I/O in [`campaigns-store.ts`](../src/lib/campaigns-store.ts). The queue per recipient (drafts,
+sends) stays in [`campaign-store.ts`](../src/lib/campaign-store.ts).
 
-| Gate | Flag / source | Code default | Effect |
+### 2.1 Kinds, status and phase
+
+| Kind (`kind`) | Label | Audience | Notes |
 | --- | --- | --- | --- |
-| Master send gate | `CAMPAIGN_SENDS_APPROVED` | **false** (approved 2026-07-21 → set true in deployment) | While false, **every** campaign send is refused server-side (403) — UI *and* direct API calls. Drafting, preview and Copy keep working. The tab shows a banner that the lawyer sign-off for this channel is pending. Separate from `CONSENT_COPY_LAWYER_APPROVED` and `PHYSICAL_MAIL_SENDS_APPROVED`. |
-| Opt-in level | `CAMPAIGN_ALLOW_SINGLE_OPT_IN` | **false** (approved 2026-07-21 → set true in deployment) | `SINGLE_OPT_IN` / `UNKNOWN` contacts are visible in the queue but send-blocked ("Erneute Einwilligung erforderlich"; Copy allowed) while false. |
-| Suppression | our opt-out store | — | Re-checked at sync, prepare AND send time; fail-closed (a DB error blocks the send). |
-| Frequency cap | `MARKETING_MIN_SEND_INTERVAL_DAYS` | 0 (off) | Spans **both** channels in both directions: the newest send to the address across `marketing_sends` *and* `campaign_sends` must be older than the window (429 otherwise). |
+| `laufend` | Laufend | default `dynamisch` | Re-entry after `reentry_days` (default 180); the lifecycle send window applies (Lifecycle-Segmentierung below). Migration `0066` turned the former single queue into „Bestandskunden – Lebenszyklus“ (`lebenszyklus`, `dynamisch`, priority 10, hero `ai_ab`, re-entry 180 days) — every existing recipient and send belongs to it. |
+| `aktion` | Aktion | default `fest` | Mails its whole audience (no lifecycle window). `discount_valid_until` makes every code of the Aktion end at the same moment. |
+| `einzel` | Einzelansprache | none — recipients are added by hand | Exactly one (unique index), created by `0066` (`einzelansprache`, priority 100), always `aktiv`, no status changes; only offer, design and texts are editable. |
 
-**What the lawyer must approve** before `CAMPAIGN_SENDS_APPROVED` is flipped:
-mailing this audience on the basis of Shopify's checkbox consent at all, and —
-separately — whether `SINGLE_OPT_IN`/`UNKNOWN` contacts may be included
-(`CAMPAIGN_ALLOW_SINGLE_OPT_IN`) or must first re-confirm.
+New campaigns are created as `laufend` or `aktion` (never `einzel`) with status `entwurf`; nothing is
+materialised or drafted until they start. Status transitions (`canTransition`):
 
-**DOI refresh (FUTURE option, deliberately not built):** contacts without a
-provable double opt-in could be sent a one-time re-confirmation request
-through the existing DOI confirmation infrastructure
-(`/api/confirm-marketing`, `email_captures.marketing_doi_status`), upgrading
-them into the regular Mo-marketing funnel. Documented here as the designated
-path; nothing in this round implements it.
+```
+entwurf → aktiv | archiviert      aktiv → pausiert | beendet
+pausiert → aktiv | beendet        beendet → archiviert | aktiv
+```
 
-Every campaign email carries, outside the editable prose (an edit can never
-remove them): the signed unsubscribe link (writing to the same suppression
-store), a `List-Unsubscribe` header, and the branded shell's
-Impressum/privacy footer ([`email-template.ts`](../src/lib/email-template.ts)).
-Copy ceiling: no fake urgency, no countdowns — same rule as the existing
-marketing drafts, enforced in the prompt and in the deterministic promo copy.
+The buttons say Starten / Fortsetzen / Wieder aufnehmen / Pausieren / Beenden / Archivieren;
+Starten, Fortsetzen and Beenden are confirmed. Moving to `aktiv` stamps `started_at` once and
+materialises the audience at once (§2.3); Beenden stamps `ended_at` and leaves every row as it is
+(audit trail). The nightly audience job ends every `aktiv` campaign whose `ends_at` has passed
+(`endExpiredCampaigns`).
 
-## 3. Data model (migration `0034_campaign_contacts.sql`)
+**Phase** (`campaignPhase`) is what the UI shows: `geplant` (aktiv, start ahead), `laeuft`,
+`abgelaufen` (aktiv, end passed, until the nightly job ends it), or the status itself. Mails go out
+only in `laeuft` (`campaignAcceptsWork`; the Einzelansprache whenever it is `aktiv`). Vorbereiten
+works for any `aktiv` campaign whose end has not passed — a `geplant` Aktion can be drafted ahead.
+
+### 2.2 Neue Kampagne / Bearbeiten (the editor)
+
+The Kampagnen overview (`?tab=kampagne`, alias `kampagnen`) shows one card per campaign —
+phase, audience in plain German, recipients and send figures — with the scopes Aktuell / Alle /
+Archiv, „Öffnen“ (the campaign's desk, §5) and the status actions. „Neue Kampagne“ and „Bearbeiten“
+open the editor sheet (`?edit=new` / `?edit=<id>`;
+[`CampaignEditor.tsx`](../src/app/admin/kampagnen/CampaignEditor.tsx)) with six sections.
+Everything is validated again on the server (`validateCampaignInput`):
+
+| Section | Fields (column) |
+| --- | --- |
+| Grundlagen | Name 3–80 chars (`name`, a unique `slug` is derived), Art (`kind`), Start/Ende (`starts_at`/`ends_at`, end after start), Priorität 0–100 (`priority`) |
+| Briefing | `brief`, max 4,000 chars — Anlass, Ziel, Ton, Muss rein, Bitte nicht. The drafter reads it for every mail of the campaign (§4). „Briefing vorschlagen“ drafts one from name, kind, end date, discount and notes. |
+| Zielgruppe | The audience spec (`audience`, below), Fest/Dynamisch (`audience_mode`), „Erneut aufnehmen nach“ (`reentry_days`, `laufend` only, 14–3,650 days, empty = never), live count. Hidden for the Einzelansprache. |
+| Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations / set), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them |
+| Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode`: `none` / `default` / `ai_ab` / `ai_all`), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on) |
+| Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000, stored only) |
+
+Defaults per kind (`campaignDefaults`): `laufend` → dynamisch, re-entry 180 days, hero `ai_ab`,
+priority 10; `aktion` → fest, no re-entry, hero `default`, priority 50.
+
+**The audience spec** ([`audience-spec.mjs`](../src/lib/audience-spec.mjs), tested) is versioned
+jsonb; unknown fields and values are dropped, never guessed. Every field is optional:
+
+| Field | Meaning |
+| --- | --- |
+| `optInLevels` | `confirmed_opt_in` / `single_opt_in` / `unknown` |
+| `lifecycle` | segment keys (`frisch` … `ruhen`, see Lifecycle-Segmentierung) + `unbekannt` (no purchase date) |
+| `valueTier` | `klein` / `komponente` / `grossgeraet` (by the most valuable purchase, `repurchase-analysis.mjs`) |
+| `churn` | `niedrig` / `mittel` / `hoch` |
+| `lastOrderDays`, `ordersCount`, `totalSpentEur` | `{ min?, max? }` |
+| `boughtAny`, `boughtNone`, `categories` | catalog handles / categories |
+| `persona` | archetype keys + `unknown` |
+| `moContact` | `yes` / `no` (has talked to Mo) |
+| `language`, `country`, `shopifyTags` | effective language, ISO country, Shopify customer tags |
+| `clickedWithinDays` | clicked a marketing mail within N days |
+| `excludeMailedWithinDays` | no marketing mail within N days |
+| `excludeCampaignIds` | not (yet) a recipient of these campaigns |
+
+`describeAudienceSpec` renders the spec in German („Alle Kunden mit Einwilligung für E-Mail-Werbung
+· …“) on the card, in the editor and in the desk header. The editor exposes all fields except
+`boughtAny`/`boughtNone`/`country`/`shopifyTags`. The live count
+(`POST /api/admin/campaigns/audience-preview`, pure DB) always means „with consent“: matches, how
+many talked to Mo, the DE/EN split and a few names.
+
+**AI help** ([`campaign-assist.ts`](../src/lib/campaign-assist.ts), writer tier, `ai_usage` call
+site `campaign_assist`, `POST /api/admin/campaigns/assist`): „Filter setzen“ turns a sentence
+(„Beschreiben“) into a spec, which is normalised and shown with the live count before anyone saves;
+„Briefing vorschlagen“ drafts the Briefing. Both only propose.
+
+A changed audience of an `aktiv` campaign is re-materialised on save
+(`POST /api/admin/campaigns/update`).
+
+### 2.3 Recipients and the audience refresh
+
+`refreshCampaignAudience` materialises or refreshes one campaign's recipients from its spec — on
+Starten / Fortsetzen, on save of a changed audience, via „Zielgruppe aktualisieren“ on the desk
+(`POST /api/admin/campaigns/refresh`), and nightly for every `aktiv` campaign
+(`/api/cron/campaign-audiences`, 02:30 UTC, after the reconcile and the facts run). Rules:
+
+| Situation | Effect |
+| --- | --- |
+| matched, no row yet | new `pending` recipient — `dynamisch`: always; `fest`: only on the first materialisation |
+| matched, latest row `sent` longer ago than `reentry_days` (`laufend` only) | a new row with `cycle + 1` (re-entry) |
+| matched, open row (`pending`, `drafted`, `draft_failed`, `excluded`, `suppressed`) | snapshot refreshed (`last_synced_at = now()`); `suppressed` comes back as `pending`, `excluded` too where new rows are allowed |
+| open row whose person lost the consent or got blocked (any mode) | `suppressed`, `excluded_reason = 'keine_einwilligung'` |
+| `dynamisch`: `pending` / `draft_failed` row that no longer matches | `excluded`, `excluded_reason = 'zielgruppe'` (drafted rows stay — the operator decides) |
+
+`sent` is terminal per campaign and cycle, not per person: a person can be in many campaigns, and a
+`laufend` campaign takes them again after the re-entry period. Before the first facts run
+(`customer_facts` empty) a refresh waits — every customer would look like „no purchase“. Archived
+campaigns and the Einzelansprache are never refreshed. A `fest` campaign's nightly refresh only
+updates snapshots and consent.
+
+### 2.4 Einzelansprache
+
+A recipient is added by hand (`addRecipient`, `POST /api/admin/campaigns/add-recipient`; without
+`campaignId` it targets the Einzelansprache):
+
+- **Kunden → Marketing → „Einzelansprache vorbereiten“** with an optional hint for the drafter;
+  the draft is written at once and the desk opens on the card.
+- **Eingang → „Entwurf übernehmen“** (`POST /api/admin/inbox/accept`): the item's title, reason and
+  AI suggestion become the recipient's `admin_note` (the drafter brief), the suggested discount is
+  used, the draft is written, the item is marked erledigt.
+
+Adding requires the one consent and no block (the send gate re-checks). An open row is reused (note
+updated); after a `sent` / `skipped` row a new cycle starts. `conversation_id` records a chat the
+mail was started from. Einzelansprache mails go through the same desk, gates and send path as every
+campaign.
+
+### 2.5 Data model
 
 | Table | Purpose | Key columns |
 | --- | --- | --- |
-| `campaign_contacts` | The synced audience + review-queue lifecycle | `shopify_customer_id` (unique), normalized `email`, `first_name`/`last_name`, `language` (de/en), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `draft_failed`), `sent_at`, `skipped_at`; `is_test` + `test_source_email` (migration `0057`, Testkontakte — §5) |
-| `campaign_drafts` | ONE editable draft per contact (unique `contact_id`) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, `discount_scope` (`all` \| `recommendations` \| `set`, migration `0058`), compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
-| `campaign_sends` | Immutable send record (audit + KPI) | `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — migration `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `redirect_token`/`clicked_at` (migration `0041` — the tracked Mo-promo CTA, see below; NULL for copy sends and pre-0041 rows), `sent_at` |
+| `campaigns` (`0066`) | One row per campaign | `name`, `slug` (unique), `kind`, `status`, `brief`, `audience` (jsonb spec), `audience_mode` (`dynamisch` \| `fest`), `priority`, `starts_at`/`ends_at`, `daily_target`, `auto_prepare_per_day`, `reentry_days`, `discount_percent`, `discount_scope`, `discount_valid_until`, `design_key`, `hero_mode`, `text_mode`, `mo_promo`, `cta_kind`/`cta_url`, `audience_refreshed_at`, `started_at`/`ended_at` |
+| `campaign_contacts` (`0034`, recipients since `0066`) | One row per person per campaign per cycle + the review-queue lifecycle | `campaign_id` (FK campaigns, cascade), `customer_id` (FK customers, SET NULL, `0059`), `cycle`, normalized `email`, `first_name`/`last_name`, `language` + `language_override` (`0040`), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_order_at` (`0052`), `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `excluded` \| `draft_failed`), `excluded_reason`, `admin_note`, `conversation_id` (FK conversations, SET NULL), `added_at`, `sent_at`, `skipped_at`; `is_test` + `test_source_email` (`0057`, Testkontakte — §5). Unique `(campaign_id, customer_id, cycle)` for real rows and `(campaign_id, email)` for test rows; `shopify_customer_id` is no longer unique and may be NULL. |
+| `campaign_drafts` | ONE editable draft per recipient (unique `contact_id`, cascade) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, `discount_scope` (`all` \| `recommendations` \| `set`, `0058`), compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
+| `campaign_sends` | Immutable send record (audit + KPI) | `contact_id` (SET NULL), `campaign_id` (FK campaigns, SET NULL, `0066`), `customer_id` (FK customers, SET NULL, `0066`), `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `redirect_token`/`clicked_at` (`0041` — the tracked CTA, see below; NULL for copy sends and pre-0041 rows), `sent_at`; snapshot and delivery columns of `0052`/`0054`/`0055` below |
 
-Deliberately **not** stored: full order history (read from Shopify at draft
-time; only the compact `purchase_summary` snapshot needed for the review card
-is kept). Since migration `0038` the shipped body IS retained next to its
-`body_hash`, so the "Gesendet" view can open exactly what the recipient
-received; rows purge on the same retention window (§6).
+Purchases are no longer read per draft from Shopify: the draft reads the local order ledger
+`customer_orders` (`0062`, [`CUSTOMERS.md`](./CUSTOMERS.md); fallbacks in §4) and keeps only the
+compact `purchase_summary` snapshot the review card needs. Since migration `0038` the shipped body IS
+retained next to its `body_hash`, so the "Gesendet" view can open exactly what the recipient
+received; rows purge on the retention window (§6).
+
+## 3. Legal gating model (Germany: GDPR + §7 UWG)
+
+The consent is the **one consent** on `customers.email_consent_state` / `email_consent_level`
+(migration `0064`), shared with Shopify in both directions: Shopify's checkbox and account
+settings, Mo's DOI, unsubscribe links and admin opt-outs all write it
+([`CONSENT_FLOW.md`](./CONSENT_FLOW.md)). German case law effectively requires a *provable* double
+opt-in; the level records it (`confirmed_opt_in` | `single_opt_in` | `unknown`; a confirmed Mo DOI
+is `confirmed_opt_in`). The gates are evaluated in one tested place,
+[`campaign-gates.mjs`](../src/lib/campaign-gates.mjs), consumed by the single send chokepoint
+[`campaign-email.ts`](../src/lib/campaign-email.ts) (`approveAndSendCampaign`), in this order —
+the first failing gate is the refusal:
+
+> ✅ **APPROVED by the lawyer (2026-07-21)** for the Shopify-checkbox audience, including
+> `SINGLE_OPT_IN`/`UNKNOWN`. `.env.example` ships both flags `false` so a fresh copy never sends;
+> production enables them in the deployment env. The code fails closed (an absent env var means
+> false), and either flag can be set false there at any time to re-lock the channel.
+
+| # | Gate | Flag / source | Code default | Effect |
+| --- | --- | --- | --- | --- |
+| 0 | Campaign live | `campaigns.status` + schedule | — | Only a campaign in phase `laeuft` sends (the Einzelansprache while `aktiv`); otherwise `campaign_closed`. A Testkontakt may send before the start, never for an ended or archived campaign. |
+| 1 | Master send gate | `CAMPAIGN_SENDS_APPROVED` | **false** | While false, **every** campaign send is refused server-side (403) — UI *and* direct API calls. Drafting, preview and Copy keep working. The desk shows a banner that the sign-off for this channel is pending. Separate from `CONSENT_COPY_LAWYER_APPROVED` and `PHYSICAL_MAIL_SENDS_APPROVED`. |
+| 2 | Consent | `customers.email_consent_state`, read fresh | — | Must be `subscribed`; otherwise `no_consent`. A recipient whose customer row is gone is refused (`not_eligible`). |
+| 3 | Opt-in level | `CAMPAIGN_ALLOW_SINGLE_OPT_IN` + `customers.email_consent_level` | **false** | Without `confirmed_opt_in` the send is refused (403, "Erneute Einwilligung erforderlich") while the flag is false; such recipients stay visible in the queue (Copy allowed). |
+| 4 | Suppression | `suppression_list` (`isSuppressed`) | — | Every reason blocks (unsubscribe, manual, bounce, complaint, erasure). Fail-closed: a DB error blocks the send. Also checked at refresh and prepare time. |
+| 5 | Frequency cap | `MARKETING_MIN_SEND_INTERVAL_DAYS` | 0 (off) | Spans **every** campaign (Einzelansprache included) **and** the Mo funnel: the newest send to the address across `campaign_sends` *and* `marketing_sends` (`lastCrossChannelSendAt`) must be older than the window (429 otherwise). |
+
+Testkontakte (§5) skip gates 2, 4 and 5 — they are the operator's own inboxes. The **copy path**
+(`POST /api/admin/campaign/mark-done`) delivers nothing, so the master flag does not apply; it does
+check the consent and the block list (409 `not_eligible`).
+
+**What the lawyer approved** with `CAMPAIGN_SENDS_APPROVED`: mailing this audience on the basis of
+Shopify's checkbox consent at all, and — separately — whether `SINGLE_OPT_IN`/`UNKNOWN` contacts may
+be included (`CAMPAIGN_ALLOW_SINGLE_OPT_IN`) or must first re-confirm.
+
+**DOI refresh (FUTURE option, deliberately not built):** people without a provable double opt-in
+could be sent a one-time re-confirmation request through the existing DOI confirmation
+infrastructure (`/api/confirm-marketing`, `email_captures.marketing_doi_status`), upgrading their
+level to `confirmed_opt_in`. Documented here as the designated path; nothing implements it yet.
+
+Every campaign email carries, outside the editable prose (an edit can never remove them): the
+signed unsubscribe link (writing to the same consent and block list), a `List-Unsubscribe` header,
+and the branded shell's Impressum/privacy footer
+([`email-template.ts`](../src/lib/email-template.ts)). Copy ceiling: no fake urgency, no countdowns
+— same rule as the existing marketing drafts, enforced in the prompt and in the deterministic promo
+copy; the real end date of an Aktion may be named factually.
 
 ## 4. Draft generation
 
-`POST /api/admin/campaign/prepare { count, discountPercent, textMode?, discountScope? }` drafts the next
-N `pending` contacts ([`campaign-prepare.ts`](../src/lib/campaign-prepare.ts)),
-sequentially with modest concurrency; a per-contact failure marks that row
-`draft_failed` and continues. The dashboard chunks the batch so it can show
-progress. Generation costs API money — there is **no** auto-generation cron;
-the admin clicks "Nächste 50 vorbereiten" explicitly.
+`POST /api/admin/campaign/prepare { campaignId, count, discountPercent?, textMode?, discountScope? }`
+drafts the next N `pending` recipients of one campaign
+([`campaign-prepare.ts`](../src/lib/campaign-prepare.ts)), with modest concurrency; a per-recipient
+failure marks that row `draft_failed` and continues. Offer settings default to the campaign's own
+(§2.2); the Vorbereiten popover may override them. A campaign that is not `aktiv` or whose end has
+passed prepares nothing (409 `campaign_closed`). Before drafting, each recipient's block and consent
+are re-checked (fail-closed → `suppressed`). The dashboard chunks the batch so it can show progress.
+Generation costs API money: the admin starts it on the desk, and the nightly run (§5) is opt-in per
+campaign.
 
-Per contact ([`campaign-draft.ts`](../src/lib/campaign-draft.ts), same model +
-fallback discipline as `marketing-draft.ts`):
+Per recipient ([`campaign-draft.ts`](../src/lib/campaign-draft.ts), same model + fallback
+discipline as `marketing-draft.ts`):
 
-0. **The customer profile is the brief.** When the contact's customer has a
-   profile (goals, level, owned gear, interests, next steps — see
-   [`CUSTOMERS.md`](./CUSTOMERS.md)), the prompt carries it as
-   "Kundenverständnis" and the text speaks to *this* person's goals instead of
-   a generic purchase recap; it also steers the product picks (below). Test
-   contacts use the profile of their `test_source_email` customer. Without a
-   profile the draft works exactly as before.
+0. **The campaign and the customer profile are the brief.** The prompt opens with an „Anlass“
+   section: for an Aktion or the Einzelansprache the campaign name and kind (and an Aktion's real
+   end date), the campaign's **Briefing**, and the recipient's `admin_note` (Einzelansprache,
+   Eingang). When the recipient's customer has a profile (goals, level, owned gear, interests, next
+   steps — see [`CUSTOMERS.md`](./CUSTOMERS.md)), the prompt carries it as "Kundenverständnis" and
+   the text speaks to *this* person's goals instead of a generic purchase recap; it also steers the
+   product picks (below). A person with an Art. 21 objection to profiling
+   (`customers.profile_objection_at`) is drafted without the profile. Test contacts use the profile
+   of their `test_source_email` customer. Purchases come from the order ledger (`customer_orders`)
+   once the person is mirrored, else the cached `customers.purchase_summary`, else a Shopify read.
 
 1. Personal greeting by first name (graceful fallback).
 2. A natural, warm reference to the purchase history — one category or one
@@ -187,13 +325,14 @@ fallback discipline as `marketing-draft.ts`):
    manually curated) so the prose, the picture grid and the review card can
    never drift apart; recommendations are recomputed only for the first
    draft or an explicit basis change (`refreshRecommendations`).
-4. Optional discount block — the **exact existing mechanism**: admin picks
-   0–50 % (`discount-validation.mjs`), the draft weaves in the
-   `MO-XXXX` placeholder + projected expiry
-   (`formatGermanExpiryDate`/`discountExpiryDaysPublic`); the real `MK-` code
-   is minted **only at send**. Changed depth or explicit regenerate overwrites
-   the open draft (`shouldReuseCampaignDraft`) so text and eventual code never
-   disagree.
+4. Optional discount block — the **exact existing mechanism**: the campaign
+   (or the admin) picks 0–50 % (`discount-validation.mjs`), the draft weaves in
+   the `MO-XXXX` placeholder + projected expiry
+   (`formatGermanExpiryDate`/`discountExpiryDaysPublic`; for a campaign with
+   `discount_valid_until`, that date — `campaignDiscountExpiry`); the real `MK-`
+   code is minted **only at send**, with the same end date. Changed depth or
+   explicit regenerate overwrites the open draft (`shouldReuseCampaignDraft`)
+   so text and eventual code never disagree.
    **Scope** (`discount_scope`, migration `0058`, `discount-scope.mjs`): the
    code applies to the whole order (`all`, the default), only to the products
    recommended in this mail (`recommendations`) or only to the attached set
@@ -223,14 +362,17 @@ fallback discipline as `marketing-draft.ts`):
    blocking a send. Expiry stays with the existing cron (it deletes the set's
    Shopify product); "Set entfernen" uses the existing archive route, which
    deletes it too.
-5. Mo promo block + deep link (`CAMPAIGN_MO_DEEPLINK_URL`, default
-   `https://motionsports.de/?mo=open&mo_new=1&mo_view=fullscreen&utm_source=campaign&utm_medium=email`)
-   — appended **deterministically** at send time, both languages
-   (`moPromoBlockText`), never editable prose. Theme-side handling (Task F in
-   the theme repo — a separate follow-up): `mo=open` auto-opens the widget
-   after init and strips the params; the modifiers `mo_new=1` (start a FRESH
-   consultation, no old thread resumed) and `mo_view=fullscreen` (open the
-   panel full-screen) shape how it opens.
+5. Call to action — appended **deterministically** at send time, never editable
+   prose, per the campaign's `cta_kind` and `mo_promo`:
+   - `mo_chat` (default): the Mo promo block + deep link (`CAMPAIGN_MO_DEEPLINK_URL`, default
+     `https://motionsports.de/?mo=open&mo_new=1&mo_view=fullscreen&utm_source=campaign&utm_medium=email`),
+     both languages (`moPromoBlockText`). Theme-side handling (Task F in the theme repo — a
+     separate follow-up): `mo=open` auto-opens the widget after init and strips the params; the
+     modifiers `mo_new=1` (start a FRESH consultation, no old thread resumed) and
+     `mo_view=fullscreen` (open the panel full-screen) shape how it opens.
+   - `shop`: the main button („Zum Angebot“ / „Shop the offer“) leads to the campaign's `cta_url`;
+     the Mo hint, if kept (`mo_promo`), then links the untracked Mo deep link.
+   - `mo_promo = false` drops the Mo hint block (with `mo_chat` the mail then has no button).
 6. Footer: signed unsubscribe + Impressum/privacy via the existing
    composition (`unsubscribeFooter` + branded template), plus a separate
    "Daten löschen" link (`buildErasureUrl` → `/api/erase-data`, confirmation
@@ -247,26 +389,35 @@ fallback discipline as `marketing-draft.ts`):
    and prose (`moAvatar` in `email-template.ts`). Clients without GIF
    playback (Outlook desktop) show the first frame.
 
-## 5. Review workflow (Kampagne tab)
+**Design and hero per campaign.** A campaign's `design_key` wins over the design selected for
+campaign mails in Einstellungen (`getEmailDesignForKey`; unknown key → the selection).
+`hero_mode`: `none` — no per-recipient KI-Hero rides along even if one was generated; `default` —
+the design's standard hero; `ai_ab` — Vorbereiten generates the KI-Hero for the A group (even
+recipient ids); `ai_all` — for every prepared card (§5).
 
-The screen is a **review desk** (layout and rationale in
-[`KAMPAGNE_REDESIGN.md`](./KAMPAGNE_REDESIGN.md); screen description in
-[`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2): a rail with the queue, the
-rendered e-mail in the middle, the review column on the right. Keyboard-driven
-(`N`/`P` next/previous, `S` send, `X` skip, `E`/`Esc` edit, `R` regenerate,
-`V` full-size preview, `C` copy, `F` Fokus-Modus, `/` contact search, `?`
-the key list — shortcuts pause while a dialog is open). The queue can be
-**filtered by chips** (Alle / DOI / Single+Unbekannt / EN / Rabatt / Set /
-Hinweise / Blockiert) and searched by email/name — mutations are keyed by
-contact id, so filtering never mis-targets a card. Position, view and filter
+## 5. Review workflow (Kampagnen screen)
+
+Each campaign has its own **review desk** (Prüftisch) at `?tab=kampagne&campaign=<slug|id>` (layout
+and rationale in [`KAMPAGNE_REDESIGN.md`](./KAMPAGNE_REDESIGN.md); screen description in
+[`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2): a rail with the queue, the rendered e-mail in
+the middle, the review column on the right. The header strip carries the campaign switcher (every
+non-archived campaign with its open drafts, „Alle Kampagnen“ back to the overview), the phase, the
+audience in German and the ⋯ menu (Zielgruppe aktualisieren, Kampagne bearbeiten,
+Testkontakte…, Tastenkürzel, Warteschlange neu aufbauen). Counts, queue, Liste, Gesendet, the
+contact search and the delivery strip are per campaign; a legacy link with only `?contact=` opens the desk of that recipient's
+campaign. Keyboard-driven (`N`/`P` next/previous, `S` send, `X` skip, `E`/`Esc` edit,
+`R` regenerate, `V` full-size preview, `C` copy, `F` Fokus-Modus, `/` contact search, `?` the key
+list — shortcuts pause while a dialog is open). The queue can be **filtered by chips** (Alle / DOI /
+Single/Unbekannt / EN / Rabatt / Set / Hinweise / Blockiert) and searched by email/name —
+mutations are keyed by contact id, so filtering never mis-targets a card. Position, view and filter
 live in the URL (`?contact=`, `?view=`, `?filter=`).
 
 **Prüfpunkte.** Every card opens with a precomputed verdict from the pure
 [`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs) (tested):
 *blocked* when the send route would refuse (master flag off, no provable DOI
-while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off, address inside the cross-channel
-frequency cap, prose naming a different percentage than the set discount —
-the same `detectDiscountTextMismatch` the send path enforces — or the
+while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off, address on the block list or without the one consent,
+address inside the cross-channel frequency cap, prose naming a different percentage than the set
+discount — the same `detectDiscountTextMismatch` the send path enforces — or the
 `MO-XXXX` placeholder without a discount, or a refusal the server returned for
 the last attempt), *hint* when worth a look (low-confidence recommendations, a
 recommended product gone or sold out, an attached set expired or expiring
@@ -291,45 +442,46 @@ fresh, the operator may move on). Every card has its own busy state;
 while the review continues.
 
 **Vorbereiten…** is a popover: Anzahl (25/50/100, next to „n offen · m im
-Sendefenster“), Rabatt and Textmodus for the NEW drafts (remembered per
-browser; they also apply to „Entwurf erstellen“ and „Wiederherstellen“), the
-optional **KI-Hero for the A group** (after the drafts, `suggest` + `generate`
-per prepared contact with an even id — see „Hero-A/B-Test“ below; off by
-default, only offered when the campaign design has a hero and generation is
-configured) and an estimate — drafts, ≈ € from the recorded `ai_usage`
-averages (`estimateCampaignCosts`), ≈ minutes — before any money is spent.
+Sendefenster“ — the window applies to `laufend` campaigns only), Rabatt and Textmodus for the NEW
+drafts (starting from the campaign's offer settings, remembered per browser; they also apply to
+„Entwurf erstellen“ and „Wiederherstellen“), the optional **KI-Hero** (after the drafts,
+`suggest` + `generate` for every prepared card under `ai_all`, otherwise for the A group — see
+„Hero-A/B-Test“ below; offered when the hero mode is not `none`, the design has a hero and
+generation is configured; pre-selected for `ai_ab` / `ai_all`) and an estimate — drafts, ≈ € from
+the recorded `ai_usage` averages (`estimateCampaignCosts`), ≈ minutes — before any money is spent.
 
-**Nightly Vorbereiten** (`GET/POST /api/cron/prepare-campaign-drafts`, 04:15
-UTC after the audience and catalog syncs) drafts the next
-`CAMPAIGN_AUTO_PREPARE_COUNT` pending contacts with
-`CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `CAMPAIGN_AUTO_PREPARE_TEXT_MODE`, so the
-queue is full when the day starts. **Off by default** (`0`): generation costs
-API money, so the cap is the deployment's explicit decision (`.env.example`).
-It never sends — every draft still needs a human on the desk.
+**Nightly Vorbereiten** (`GET/POST /api/cron/prepare-campaign-drafts`, 04:15 UTC, after the
+reconcile, the audience refresh and the catalog sync). `CAMPAIGN_AUTO_PREPARE_COUNT` is the nightly
+**budget** across all campaigns; each campaign in phase `laeuft` takes its own
+`auto_prepare_per_day` from it, highest priority first (`planAutoPrepare`), with its own offer
+settings. When no campaign sets a figure, the whole budget goes to the `lebenszyklus` campaign with
+`CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `_TEXT_MODE` / `_DISCOUNT_SCOPE` (the behaviour before
+campaigns). **Off by default** (`0`): generation costs API money, so the budget is the deployment's
+explicit decision (`.env.example`). It never sends — every draft still needs a human on the desk.
 
-**Testkontakte** (migration `0057`, ⋯ → „Testkontakte…“). The operator's own
-inboxes as campaign contacts, for testing every variation before going live:
-created from the desk (sync key `test:<email>`, so the audience sync never
-overwrites or suppresses them), `opt_in_level = CONFIRMED_OPT_IN` so the gate
-passes, exempt from the cross-channel frequency cap AND from the suppression
-check (an old unsubscribe or bounce on the operator's own address must not stop
-testing; the desk shows it as an info), and put back to
-`drafted` with their draft intact after every send (a real contact flips to
-`sent`) — the card returns to the top of the queue. Optionally a test contact
-borrows a real customer's purchase history (`test_source_email` →
-`loadCampaignPersonalization`) so the generated mail is realistic. Everything
-else about a test send is real: MK- code, set block, tracked link,
-unsubscribe link, Resend delivery events. Test sends are stamped
-`campaign_sends.is_test` and left out of the Kampagnen-Funnel, the delivery
-strip, the overview and the revenue KPI; the „Gesendet“ view lists them with a
-„Test“ badge. „Vorbereiten“, the nightly cron and „Warteschlange neu aufbauen“
-never touch test contacts; counts in the header exclude them.
+**Testkontakte** (migration `0057`, ⋯ → „Testkontakte…“). The operator's own inboxes as recipients
+of ONE campaign (since `0066` — they see its Briefing and offer), for testing every variation
+before going live: created from the desk (`POST /api/admin/campaign/test-contacts`, unique per
+campaign and address, drafted at once with the desk's Vorbereiten settings), with
+`opt_in_level = CONFIRMED_OPT_IN` so the gate passes, exempt from the consent check, the
+cross-channel frequency cap AND the suppression check (an old unsubscribe or bounce on the
+operator's own address must not stop testing; the desk shows it as an info), and put back to
+`drafted` with their draft intact after every send (a real recipient flips to `sent`) — the card
+returns to the top of the queue. A test send works before the campaign starts (Entwurf, Geplant,
+Pausiert), not after it ended. Optionally a test contact borrows a real customer's purchase history
+and profile (`test_source_email` → `loadCampaignPersonalization`) so the generated mail is
+realistic. Everything else about a test send is real: MK- code, set block, tracked link,
+unsubscribe link, Resend delivery events. Test sends are stamped `campaign_sends.is_test` and left
+out of the Kampagnen-Funnel, the delivery strip, the campaign cards and the revenue KPI; the
+„Gesendet“ view lists them with a „Test“ badge. „Vorbereiten“, the nightly cron, the audience
+refresh and „Warteschlange neu aufbauen“ never touch test contacts; counts in the header exclude
+them.
 
 **Liste** shows the queue as a sortable table with multi-select and bulk
 Überspringen (free, undoable), Neu generieren… and Rabatt setzen… (paid runs,
 confirmed with count and cost estimate). **Gesendet** adds delivery-state chips
 (Zugestellt / Geklickt / Bounce / Beschwerde / Kopiert, `?delivery=` on the
-history route) and a pure-DB 30-day strip (`getCampaignDeliverySummary`);
+history route, scoped by `campaignId`) and a pure-DB 30-day strip (`getCampaignDeliverySummary`);
 redemption and revenue stay on the KPI screen with its Shopify cache.
 
 The workflow is generated-first but everything stays adjustable per card
@@ -358,10 +510,10 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   items) stay visible greyed out with an InfoTip ("Grau = nicht als Basis
   wählbar"). The snapshot keeps only the newest 5 orders (≤ 6 items each) and
   records `orderCount` / per-order `itemCount`; the card then says
-  "Letzte 5 von N Bestellungen" (N = the larger of the contact's lifetime
-  `ordersCount` and the orders read at draft time) and "+ N weitere Artikel",
-  because the Kontakt block's Umsatz is Shopify's lifetime figure from the
-  last sync and will not equal the sum of the shown orders
+  "Letzte 5 von N Bestellungen" (N = the larger of the recipient's
+  `orders_count` and the orders read at draft time) and "+ N weitere Artikel",
+  because the Kontakt block's Umsatz is the lifetime figure of the recipient snapshot
+  (`customer_facts` at the last audience refresh) and will not equal the sum of the shown orders
   (`purchaseHistoryCoverage` in `campaign-desk-core.mjs`).
 - **Discount** can be set/changed/cleared AFTER generation
   (`POST /api/admin/campaign/discount { contactId, discountPercent, discountScope? }`):
@@ -375,34 +527,36 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
 Actions:
 
 - **Send** (`POST /api/admin/campaign/send`) — re-verifies every gate
-  server-side, mints the `MK-` code (depth > 0), swaps placeholder + stale
+  server-side (§3), mints the `MK-` code (depth > 0), swaps placeholder + stale
   expiry via the shared [`discount-swap.mjs`](../src/lib/discount-swap.mjs)
   (extracted from the marketing send path — one logic, two channels), sends
-  via Resend with unsubscribe link + `List-Unsubscribe` header, records the
-  `campaign_sends` row, flips the contact to `sent`, auto-advances. Confirm
+  via Resend to the person's CURRENT address (a Shopify e-mail change may have merged people) with
+  unsubscribe link + `List-Unsubscribe` header, records the `campaign_sends` row (with
+  `campaign_id` and `customer_id`), writes the mail into the person's Korrespondenz
+  (`email_messages`; not for test sends), flips the recipient to `sent`, auto-advances. Confirm
   dialog on the first send of the day only — it confirms that ONE e-mail
   (every send is a single card; the desk never sends the whole queue) and
   is skipped for test contacts.
 - **Copy** — subject + body to the clipboard. Copying alone **never** mutates
   state; the explicit "Als erledigt markieren" (`POST
-  /api/admin/campaign/mark-done`) marks the contact `sent` with
-  `sent_via='copy'`. No code is minted on this path (the UI warns that the
-  placeholder is not a working code).
+  /api/admin/campaign/mark-done`) marks the recipient `sent` with
+  `sent_via='copy'` — refused (409) when the person has no consent or is blocked. No code is
+  minted on this path (the UI warns that the placeholder is not a working code).
 - **Vorschau** (`POST /api/admin/campaign/email-preview`) — renders the
   CURRENT card (the on-screen, possibly unsaved subject/body) through the
   exact send-path composition (`renderCampaignEmailPreview` reuses
-  `renderCampaignEmail`: branded shell, bundle block, Mo promo, discount
-  line, unsubscribe footer) and returns `text/html`, shown in an in-tab
+  `renderCampaignEmail`: the campaign's design and hero mode, branded shell, bundle block, CTA,
+  discount line, unsubscribe footer) and returns `text/html`, shown in an in-tab
   dialog iframe — the campaign sibling of the Kunden letter-preview route.
   READ-ONLY and gate-free: nothing is claimed, minted, sent or recorded; the
   discount line shows the `MO-XXXX` placeholder with the projected expiry.
 - **Regenerate** (`POST /api/admin/campaign/draft`, `R`, with whatever offer
   changes are pending) and **Skip** (`POST /api/admin/campaign/skip`, `X`,
   optimistic — undo via „Übersprungen“).
-- **Verlauf** — every campaign send to the card's address (the history route
-  narrowed by e-mail) in a sheet, with „Ansehen“ for retained content.
+- **Verlauf** — every campaign send to the card's address, across all campaigns (the history
+  route narrowed by e-mail) in a sheet, with „Ansehen“ for retained content.
 
-The "Gesendet" sub-view lists sent campaign emails with redemption status
+The "Gesendet" sub-view lists the campaign's sent emails with redemption status
 (existing `wasDiscountCodeRedeemed`, bounded fan-out). `MK-` codes also feed
 the existing revenue KPI (`kpi-revenue-store.ts` unions `campaign_sends`
 codes) — campaign revenue stays separable from `MS5-` marketing revenue by
@@ -413,62 +567,68 @@ rows retained nothing and say so.
 
 ### Click tracking (migration 0041)
 
-System sends route the email's main CTA — the Mo-promo deep link — through the
-tracked redirect `GET /api/r/<token>`, exactly like the marketing channel's
-cart link (no pixel; only the link the recipient chose to click). At send time
-`approveAndSendCampaign` mints a `redirect_token`, embeds
-`/api/r/<token>` as the CTA/promo URL and stores the token on the
-`campaign_sends` row. The redirect resolves campaign tokens via
-`recordCampaignClick` (`campaign-store.ts`): first click stamps `clicked_at`,
-every click logs a `campaign_email_clicked` kpi_event, and the visitor is
-302'd to `campaignMoDeeplinkUrl()` (computed at click time, so a config change
-applies to already-sent emails). Copy-path sends and the review-time preview
-stay untracked. This powers the **Kampagnen-Funnel** on the KPI tab
-(`getCampaignKpis` — sent → clicked → redeemed, plus the language split); see
-`ADMIN_DASHBOARD.md` §5.9.
+System sends route the email's main CTA through the tracked redirect `GET /api/r/<token>`,
+exactly like the marketing channel's cart link (no pixel; only the link the recipient chose to
+click). At send time `approveAndSendCampaign` mints a `redirect_token`, embeds `/api/r/<token>` as
+the CTA URL and stores the token on the `campaign_sends` row. The redirect resolves campaign tokens
+via `recordCampaignClick` (`campaign-store.ts`): first click stamps `clicked_at`, every click logs a
+`campaign_email_clicked` kpi_event, and the visitor is 302'd to the campaign's shop link
+(`cta_kind = 'shop'`) or to `campaignMoDeeplinkUrl()` with the token as `mo_c`. Both targets are
+read at click time, so a config or campaign change applies to already-sent emails. Copy-path sends
+and the review-time preview stay untracked. This powers the **Kampagnen-Funnel** on the KPI tab
+(`getCampaignKpis` — sent → clicked → redeemed, the language split and the table „Kampagnen im
+Vergleich“, the same funnel per campaign); see `ADMIN_DASHBOARD.md` §5.9.
 
 ## 6. Retention
 
-`CAMPAIGN_CONTACT_RETENTION_DAYS` (default **365**, 0 disables), enforced by
-the existing `/api/cron/retention` job: `campaign_sends` purge by `sent_at`,
-`campaign_contacts` by `COALESCE(last_synced_at, created_at)` (an actively
-re-synced contact keeps refreshing its timestamp and stays; one that dropped
-out of the sync ages out; drafts cascade with their contact). The
-`suppression_list` is never touched — opt-outs are honoured forever. See
-[`DATA_RETENTION.md`](./DATA_RETENTION.md).
+`CAMPAIGN_CONTACT_RETENTION_DAYS` (default **365**, 0 disables), enforced by the existing
+`/api/cron/retention` job: `campaign_sends` purge by `sent_at`, recipients (`campaign_contacts`,
+test contacts excepted) by `COALESCE(last_synced_at, created_at)` — an open recipient that still
+matches is refreshed by every audience refresh and stays; a sent, skipped or dropped one ages out;
+drafts cascade with their recipient. `campaigns` rows are not purged. The `suppression_list` is
+never touched — opt-outs are honoured forever. See [`DATA_RETENTION.md`](./DATA_RETENTION.md).
 
-**Complete deletion** of a contact — the "Löschen" icon in the card's Kontakt
+**Complete deletion** of a person — the "Löschen" icon in the card's Kontakt
 block (`POST /api/admin/customers/erase { contactId }`), the "Daten löschen"
-link in the mail, or the customer's own widget button — runs the one erasure
-path (`erasePerson`): contact, drafts, sends, customer + profile, chats and
-correspondence go in one transaction, and the address is suppressed with
-reason `erasure` so the next sync does not re-import it.
+link in the mail, the customer's own widget button, or Shopify's `customers/redact` /
+`customers/delete` webhook — runs the one erasure path (`erasePerson`): every recipient row of
+the person in every campaign, drafts, sends, customer + profile, orders, chats and correspondence
+go in one transaction; the address is suppressed with reason `erasure` and the Shopify id gets a
+tombstone, so no audience, import or webhook brings the person back.
 
 ## 7. Endpoints & files
 
 | Piece | Path |
 | --- | --- |
-| Sync (admin) | `POST /api/admin/campaign/sync` |
-| Sync (cron, daily) | `GET/POST /api/cron/sync-campaign-audience` (`CRON_SECRET`) |
-| Batch prepare | `POST /api/admin/campaign/prepare` (returns `preparedContactIds`) |
-| Nightly prepare (cron, off by default) | `GET/POST /api/cron/prepare-campaign-drafts` (`CRON_SECRET`, `CAMPAIGN_AUTO_PREPARE_*`) |
+| Campaign list / create (Entwurf) | `GET` + `POST /api/admin/campaigns` |
+| Edit a campaign (re-materialises a changed audience of an active one) | `POST /api/admin/campaigns/update` |
+| Status change (Starten, Pausieren, Fortsetzen, Beenden, Archivieren) | `POST /api/admin/campaigns/status` |
+| Live audience count + German description | `POST /api/admin/campaigns/audience-preview` |
+| AI help: audience from a sentence / Briefing draft | `POST /api/admin/campaigns/assist` (`action: "audience" \| "brief"`) |
+| Zielgruppe aktualisieren | `POST /api/admin/campaigns/refresh` |
+| Add one person (Einzelansprache by default) | `POST /api/admin/campaigns/add-recipient` |
+| Eingang suggestion → Einzelansprache | `POST /api/admin/inbox/accept` |
+| Nightly audience refresh (cron) | `GET/POST /api/cron/campaign-audiences` (`CRON_SECRET`, 02:30 UTC) |
+| Batch prepare | `POST /api/admin/campaign/prepare` (`campaignId`; returns `preparedContactIds`) |
+| Nightly prepare (cron, off by default) | `GET/POST /api/cron/prepare-campaign-drafts` (`CRON_SECRET`, `CAMPAIGN_AUTO_PREPARE_*`, per-campaign `auto_prepare_per_day`) |
 | Single draft / regenerate / purchase-basis selection | `POST /api/admin/campaign/draft` |
 | Save edits | `POST /api/admin/campaign/update` |
 | Curate recommendations (+ bundle rebuild) | `POST /api/admin/campaign/recommendations` |
 | Set discount post-generation | `POST /api/admin/campaign/discount` |
-| Rebuild queue (discard all open drafts → pending) | `POST /api/admin/campaign/reset-queue` |
+| Rebuild one campaign's queue (discard its open drafts → pending) | `POST /api/admin/campaign/reset-queue` (`campaignId`) |
 | Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` |
-| Global contact search (all statuses) | `POST /api/admin/campaign/contacts` |
-| Testkontakte (list / create + draft / delete) | `GET` + `POST /api/admin/campaign/test-contacts` |
-| Pin/clear the contact's email language | `POST /api/admin/campaign/language` |
+| Contact search (all statuses, one campaign) | `POST /api/admin/campaign/contacts` (`query`, `campaignId`) |
+| Testkontakte (list / create + draft / delete) | `GET ?campaignId=` + `POST /api/admin/campaign/test-contacts` |
+| Pin/clear the person's email language | `POST /api/admin/campaign/language` |
 | Delete the person completely | `POST /api/admin/customers/erase` (`{ contactId, confirm: true }`) |
 | Rendered draft preview (read-only, `text/html`) | `POST /api/admin/campaign/email-preview` |
 | Retained sent content (read-only, `text/html`) | `POST /api/admin/campaign/sent-email` |
-| Send history (paged, filtered) | `GET /api/admin/campaign/history?q=&from=&to=&delivery=&page=&pageSize=` |
-| UI | `src/app/admin/KampagneTab.tsx` + `src/app/admin/kampagne/` (desk: `KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `SentHistory`, `ContactHistorySheet`, `useCampaignActions`, `useRenderedPreview`) |
-| Libs | `campaign-{sync,store,prepare,draft,recommendations,email,recommendation-view}.ts`, `campaign-{language,flags,gates,sync-core,draft-core,review-checks,desk-core}.mjs`, `discount-swap.mjs`, `shopify-customers.ts` |
+| Send history (paged, filtered) | `GET /api/admin/campaign/history?campaignId=&q=&from=&to=&delivery=&page=&pageSize=` |
+| Retired | `POST /api/admin/campaign/sync`, `GET/POST /api/cron/sync-campaign-audience` (§1) |
+| UI | `src/app/admin/KampagneTab.tsx` (overview or desk); overview + editor in `src/app/admin/kampagnen/` (`CampaignsOverview`, `CampaignEditor`); desk in `src/app/admin/kampagne/` (`KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `SentHistory`, `ContactHistorySheet`, `TestContactsSheet`, `useCampaignActions`, `useRenderedPreview`) |
+| Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist}.ts`, `campaign-{def,language,flags,gates,segments,draft-core,review-checks,desk-core}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs` |
 
-All admin routes sit behind the existing proxy gate + `guardAdminPost`
+All admin routes sit behind the existing proxy gate + `guardAdminPost` / `guardAdminGet`
 (auth + JSON-content-type CSRF defense). Everything fails closed: missing
 Shopify/DB config → "not configured" in the UI, never a crash, never an
 ungated send.
@@ -495,7 +655,9 @@ geschrieben wird — hängt davon ab, **wie lange der letzte Kauf zurückliegt u
 wie groß er war**. Alle Grenzen sind gemessen, nicht geschätzt: sie stammen aus
 `npm run analyze:repurchase` über die vollständige Bestellhistorie
 (28.541 Bestellungen, 18.355 Kunden — siehe
-[`REPURCHASE_ANALYSIS.md`](./REPURCHASE_ANALYSIS.md)).
+[`REPURCHASE_ANALYSIS.md`](./REPURCHASE_ANALYSIS.md)). Seit Migration `0063` steht das Segment
+jedes Kunden in `customer_facts.lifecycle_segment` (nächtlich berechnet) — dieselben Schlüssel
+nutzen die Zielgruppen (§2.2) und die Kunden-Liste.
 
 ### Die drei Befunde, die das Design bestimmen
 
@@ -563,10 +725,12 @@ anderer Auftrag.
 
 ### Warteschlange
 
-`listNextPendingContacts` überspringt Kontakte, die die Daten ausschließen
-(`frisch`, `ruhen`) — per SQL-Filter, **nicht** durch Statuswechsel: ein
-„frischer" Kontakt geht nicht verloren, er wird sendbar, sobald er ins nächste
-Fenster altert. Kontakte ohne bekanntes Kaufdatum sind nie ausgeschlossen.
+In **laufenden** Kampagnen überspringt `listNextPendingContacts` Empfänger:innen, die die Daten
+ausschließen (`frisch`, `ruhen`) — per SQL-Filter, **nicht** durch Statuswechsel: ein „frischer"
+Kontakt geht nicht verloren, er wird sendbar, sobald er ins nächste Fenster altert. Kontakte ohne
+bekanntes Kaufdatum sind nie ausgeschlossen. Eine **Aktion** und die Einzelansprache schreiben ihre
+ganze Zielgruppe an (kein Sendefenster); wer dort frische oder ruhende Kund:innen ausschließen
+will, tut das über den Lebenszyklus-Filter der Zielgruppe.
 
 `listDraftedQueue` sortiert nach gemessenem Wert statt nach Eingang: das
 Frühfenster zuerst, dann nach Lebensumsatz. Ein Kontakt ab 150 € ist rund
@@ -595,7 +759,8 @@ jetzt einen Schnappschuss der Mail auf `campaign_sends`: `design_key`,
 `hero_variant` (`ai` = individuell generierter KI-Hero, `default` = Hero-Design
 mit Standard-Bild, `none` = ohne Hero / Kopier-Pfad), `hero_image_url`,
 `hero_headline`, `text_mode`, `language`, `discount_percent`,
-`discount_scope` (0058), `bundle_offer_id`. Der Entwurf wird bei jedem Regenerieren überschrieben —
+`discount_scope` (0058), `bundle_offer_id`; seit 0066 auch `campaign_id` und `customer_id`. Der
+Entwurf wird bei jedem Regenerieren überschrieben —
 ohne den Stempel wäre nach dem Versand nicht mehr rekonstruierbar, was
 verschickt wurde.
 
@@ -604,7 +769,7 @@ verschickt wurde.
 - **Set-Klick** — `bundle_clicked_at`: der erste Klick auf „Zur Kasse" des
   mitgeschickten Sets (Redirect-Route stempelt über `bundle_offer_id`).
 - **Einlösung + Umsatz** — Shopify-Abfrage je MK-Code (`fetchCodeRedemption`),
-  jetzt mit Bestellwert, je Variante und Segment summiert.
+  jetzt mit Bestellwert, je Variante, Segment und Kampagne summiert.
 - **Abmeldung** — `unsubscribed_at`: eine Abmeldung wird den Kampagnen-Mails
   der letzten 30 Tage an diese Adresse zugeordnet.
 - **Hero-Kosten** — `ai_usage.campaign_contact_id` verknüpft jede
@@ -617,12 +782,15 @@ verschickt wurde.
   (Parameter beim Sitzungsstart mitschicken); bis dahin bleibt der Funnel beim
   Klick stehen.
 
-**Der Hero-Vergleich im KPI-Tab.** Tabelle „Hero-Vergleich: lohnt sich das
-KI-Bild?": je Variante Gesendet, Klickrate, Set geklickt, Eingelöst, Umsatz,
+**Der Kampagnen- und Hero-Vergleich im KPI-Tab.** Tabelle „Kampagnen im Vergleich“: derselbe
+Funnel je Kampagne (Lebenszyklus, Aktionen, Einzelansprache). Tabelle „Hero-Vergleich: lohnt sich
+das KI-Bild?": je Variante Gesendet, Klickrate, Set geklickt, Eingelöst, Umsatz,
 Umsatz je Send, Hero-Kosten, Kosten je Send, Abgemeldet — dazu dieselbe
 Tabelle je Lebenszyklus-Segment. Damit beide Gruppen Sends bekommen, zeigt der
-Kampagnen-Workspace je Kontakt die **A/B-Gruppe** (gerade Kontakt-ID: mit
-KI-Hero senden, ungerade: Hero-Panel leer lassen). Der Stempel hält fest, was
+Prüftisch je Kontakt die **A/B-Gruppe** (gerade Kontakt-ID: mit KI-Hero senden, ungerade:
+Hero-Panel leer lassen). Der Titelbild-Modus der Kampagne legt fest, für wen „Vorbereiten…“
+KI-Heros erzeugt (`ai_ab`: A-Gruppe, `ai_all`: alle); bei `none` reist kein KI-Hero mit. Der
+Stempel hält fest, was
 tatsächlich verschickt wurde, nicht die Empfehlung. Faustregel: erst ab etwa
 100 Sends je Gruppe sind Klickraten-Unterschiede von wenigen Prozentpunkten
 belastbar; Umsatz je Send braucht noch mehr.

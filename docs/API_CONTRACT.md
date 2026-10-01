@@ -20,9 +20,11 @@ Endpoints:
 | POST   | `/api/feedback`           | Customer feedback capture (free text + optional context). §9. |
 | POST   | `/api/capture-email`      | GDPR email capture + double opt-in (summary + marketing).|
 | POST   | `/api/chat-marketing-opt-in` | Chat consent gate: marketing-only opt-in, typed email (DOI). §7.6. |
-| GET    | `/api/consent-copy`       | Canonical consent copy (capture form / `?surface=signin` / `?surface=chat`). |
+| GET    | `/api/consent-copy`       | Canonical copy (capture form / `?surface=signin` / `?surface=chat` / `?surface=erase`). §7.4. |
 | GET    | `/api/confirm-marketing`  | Marketing double-opt-in confirmation link (HTML page).   |
 | GET    | `/api/unsubscribe`        | Signed unsubscribe link → suppression (HTML page).        |
+| GET/POST | `/api/erase-data`       | Mail-footer "Daten löschen" link: confirmation page (GET), erasure (POST). HTML. §11.1. |
+| GET    | `/api/r/{token}`          | Tracked mail link → 302 to cart / shop / Mo deep link. §11.2. |
 | GET    | `/api/auth/shopify/login` | Customer Account sign-in (top-level redirect). |
 | GET    | `/api/auth/shopify/callback` | OAuth callback (server-side PKCE exchange). |
 | GET    | `/api/auth/me`            | Signed-in identity re-hydration (`{ name, tier, marketing }`). |
@@ -32,7 +34,9 @@ Endpoints:
 | GET/PATCH/DELETE | `/api/account/conversations/{id}` | Signed-in: fetch / rename / delete one conversation. |
 | GET    | `/api/account/summary`    | Signed-in: download a thread's S5 summary as a **PDF**. |
 | POST   | `/api/account/marketing-opt-in` | Signed-in: at-sign-in marketing opt-in (DOI). |
-| POST   | `/api/account/erase`      | Signed-in: full "delete my data" (erase customer). |
+| POST   | `/api/account/erase`      | Signed-in: full "delete my data" (erase customer; also reaches Shopify, §11.1). |
+| GET    | `/api/account/export`     | Signed-in: JSON data export (Art. 15/20) as a download. |
+| POST   | `/api/webhooks/shopify`   | Shopify → backend only (never the widget). HMAC-verified. §11.3. |
 
 > **Customer Account sign-in (tier 3)** is documented in full in
 > [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) (frontend contract:
@@ -50,11 +54,13 @@ Endpoints:
 > end-of-chat capture widget for tier 3; `marketing.optInActionable` gates the
 > at-sign-in card) are documented in `CUSTOMER_ACCOUNT.md` §10–§11.
 
-> `/api/confirm-marketing` and `/api/unsubscribe` are **clicked from emails**
-> as top-level browser navigations — they return an HTML page, not JSON, and
-> have **no** CORS allowlist or shared-secret guard (a mail client sends no
-> `Origin` and no custom header). They're protected by unguessable / signed
-> tokens instead. The widget never calls them directly.
+> `/api/confirm-marketing`, `/api/unsubscribe`, `/api/erase-data` and
+> `/api/r/{token}` are **clicked from emails** as top-level browser
+> navigations — they return an HTML page or a redirect, not JSON, and have
+> **no** CORS allowlist or shared-secret guard (a mail client sends no `Origin`
+> and no custom header). They're protected by unguessable / signed tokens
+> instead. The widget never calls them directly. `/api/webhooks/shopify` is
+> server-to-server (Shopify signs every delivery, §11.3).
 
 ### Security model
 
@@ -1130,11 +1136,29 @@ consent choice.)
 
 ## 7. Email capture + double opt-in (GDPR)
 
-This is the only flow that handles an email address. Two **separate**
-consents, marketing requires a **double opt-in**. The full legal rationale,
-the data model, and the sign-off status are in
-[`CONSENT_FLOW.md`](./CONSENT_FLOW.md). The checkbox/email copy is
+This is the only flow that handles an email address. The capture form
+collects two **separate** consents — transactional (the summary) and
+marketing — and a marketing opt-in on a Mo surface requires a **double
+opt-in**. The full legal rationale, the data model, and the sign-off status
+are in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md). The checkbox/email copy is
 lawyer-approved (`lawyerApproved: true`, `src/lib/consent-copy.ts`).
+
+**One marketing consent, shared with Shopify.** The marketing consent is one
+state per person (`customers.email_consent_state`), shared with the shop's own
+newsletter consent in both directions (`CONSENT_FLOW.md` "The one consent").
+What that means for the widget — all additive, no field changed:
+
+- An opt-in on a Mo surface (§7.1, §7.6, `/api/account/marketing-opt-in`)
+  stays `pending` until the DOI link is clicked; nothing goes to Shopify
+  before that.
+- An address that **already holds the consent** — subscribed in Shopify or
+  through an earlier Mo DOI — gets **no second DOI mail**. The opt-in
+  endpoints then answer `marketing.status: "confirmed"`,
+  `alreadyConfirmed: true`, `doiEmailSent: false`. The tap itself is still
+  stored as Art. 7 evidence (`email_captures`). Treat it like any
+  `confirmed` answer: no "bitte bestätigen" hint.
+- The DOI click and the unsubscribe link are reported to Shopify (§7.2,
+  §7.3), so both sides stay in step.
 
 ### 7.1 `POST /api/capture-email`
 
@@ -1169,7 +1193,9 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
 - `marketingConsent` is independent. When `true` (and the address isn't
   suppressed), the backend sets `marketing_doi_status='pending'`, issues a DOI
   token, and sends the confirmation email. **No marketing** is sent until the
-  user clicks that link.
+  user clicks that link. Exception: the address already holds the one
+  consent (Shopify or an earlier DOI) → no token, no DOI mail, response
+  `confirmed` (§7 intro).
 - `consentTextShown` is stored verbatim as Art. 7 proof. It MUST be the
   **backend-provided** `consentCopy.consentTextShown` string (from the
   `offer_email_summary` tool result or `GET /api/consent-copy`, §7.4) echoed
@@ -1204,9 +1230,10 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
    regardless of set. The same rule drives the marketing email's cart link, so
    all cart links behave identically. (The "Besprochene Produkte" list in the
    summary email still shows the full discussed set — only the cart narrows.)
-3. **Marketing:** if newly granted, sends the DOI confirmation email. A
-   suppressed/unsubscribed address is never re-pended; an already-confirmed
-   address isn't re-sent a DOI.
+3. **Marketing:** if newly granted, sends the DOI confirmation email and
+   records the one consent as `pending`. A suppressed/unsubscribed address is
+   never re-pended; an address already confirmed in Mo **or subscribed in
+   Shopify** isn't sent a DOI (only checked when `marketingConsent: true`).
 
 #### Success response
 
@@ -1220,7 +1247,8 @@ HTTP/1.1 200 OK
   "marketing": {
     "status": "pending",        // "none" | "pending" | "confirmed"
     "doiEmailSent": true,
-    "alreadyConfirmed": false
+    "alreadyConfirmed": false   // true (+ status "confirmed", doiEmailSent false) when the
+                                // address already held the consent — Mo DOI or Shopify
   }
 }
 ```
@@ -1260,6 +1288,11 @@ top-level navigation — returns an **HTML page**, no JSON, no auth guard.
 - Valid, unexpired token → flips `marketing_doi_status='confirmed'`, sets
   `doi_confirmed_at`, renders **"Danke, deine Anmeldung ist bestätigt."** (200).
   Idempotent for an already-confirmed token.
+- The first confirmation also sets the one consent to `subscribed`
+  (`confirmed_opt_in`) and queues the Shopify write (`src/lib/consent-flows.ts`
+  → `shopify_outbox`, sent while `SHOPIFY_CONSENT_WRITEBACK=true`): the
+  Shopify customer's consent is updated, or — for a Mo-only subscriber — a
+  Shopify customer is created with that consent.
 - Invalid token → error page (400). Expired token (older than
   `MARKETING_DOI_EXPIRY_DAYS`, default 7) → error page (410).
 
@@ -1270,21 +1303,27 @@ signed, email-keyed value (`b64url(email).b64url(hmac-sha256)`) — unforgeable
 and verifiable without a DB lookup.
 
 - Valid signature → stamps `unsubscribed_at`, adds the address to the
-  `suppression_list`, revokes marketing DOI, renders **"Du wurdest
+  `suppression_list`, revokes marketing DOI, sets the one consent to
+  `unsubscribed` and queues the same withdrawal for Shopify (so no
+  Shopify-side mailer keeps writing either), renders **"Du wurdest
   abgemeldet."** (200).
 - Invalid/forged token → error page (400). No DB → error page (503).
 
-`isSuppressed(email)` (suppression list OR unsubscribed, fail-closed) and
-`canSendMarketing(email)` (DOI confirmed AND not suppressed) gate every future
-marketing send. See [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
+`isSuppressed(email)` (on the suppression list, fail-closed — every withdrawal,
+Mo's or Shopify's, writes it) blocks every marketing send. Campaign mails
+(including Einzelansprache) additionally require the one consent `subscribed`
+with a provable double opt-in (`src/lib/campaign-gates.mjs`); the legacy 1:1
+marketing path requires a confirmed Mo DOI (`canSendMarketing`). See
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
 
 ### 7.4 `GET /api/consent-copy`
 
 Serves the canonical consent copy for the widget's consent surfaces. The
 capture-form payload is already attached to every `offer_email_summary` tool
 result (§2), so the widget only needs this endpoint for capture forms **not**
-triggered by the tool (e.g. a proactive share-form entry point) and for the
-`surface=signin` / `surface=chat` marketing surfaces. The widget MUST source
+triggered by the tool (e.g. a proactive share-form entry point), for the
+`surface=signin` / `surface=chat` marketing surfaces, and for the
+`surface=erase` "Meine Daten löschen" confirmation. The widget MUST source
 all consent copy from these paths and **never hard-code it** — the strings
 are the Art. 7 audit text.
 
@@ -1298,7 +1337,10 @@ origin allowlist + rate limit only (shares the products bucket, 60 req /
 GET /api/consent-copy                   # in-chat capture form (default)
 GET /api/consent-copy?surface=signin    # at-sign-in opt-in card
 GET /api/consent-copy?surface=chat      # chat consent gate (v4) — submit via §7.6
+GET /api/consent-copy?surface=erase     # "Meine Daten löschen" confirmation (POST /api/account/erase)
 ```
+
+All surfaces accept `?locale=en` (default German).
 
 The `signin` and `chat` surfaces share one payload shape (`headline`,
 `marketingLabel`, `consentFooter`, `consentTextShown`, `imprintUrl`,
@@ -1310,7 +1352,50 @@ the strings differ. `headline` is benefit framing and NOT part of
 decline equally reachable. The widget renders nothing while `lawyerApproved`
 is `false` (it is `true`).
 
-#### Response
+**`surface=chat` additionally carries `signIn`** (additive; the chat gate
+**leads with sign-in**, `chatGateSignInHint()` in `src/lib/consent-copy.ts`).
+It is UI chrome — **never** part of `consentTextShown`, never echoed back:
+
+```jsonc
+"signIn": {
+  "preferred": true,                                  // lead with the sign-in button; the typed-e-mail consent is the secondary path
+  "headline": "Schon Kunde bei motion sports?",
+  "body": "Melde dich mit deinem Kundenkonto an — dann kennt Mo deine Bestellungen und berät dich persönlich.",
+  "buttonLabel": "Mit Kundenkonto anmelden",
+  "alternativeLabel": "Kein Konto? Angebote per E-Mail erhalten",  // caption that reveals the typed-e-mail consent block
+  "loginPath": "/api/auth/shopify/login"             // on the BACKEND origin; top-level redirect with ?session=&return_url= (CUSTOMER_ACCOUNT.md §2)
+}
+```
+
+After sign-in the widget reads `/api/auth/me`: `marketing.optInActionable:
+true` → show the at-sign-in card (`surface=signin`); `false` → the person has
+already decided (or is subscribed in Shopify) — ask nothing. Widgets that
+ignore `signIn` keep working with the typed-e-mail gate exactly as before.
+
+**`surface=erase`** returns the confirmation copy for the widget's "Meine Daten
+löschen" (the same wording as the mail-link page `/api/erase-data`,
+`erasurePageCopy()`). It is not consent text; it has no `version` /
+`consentTextShown`, only these strings:
+
+```jsonc
+{
+  "confirmHeading": "Alle deine Daten löschen?",
+  "confirmBody": "Damit löschen wir alles, was motion sports über dich gespeichert hat: …",
+  "confirmButton": "Meine Daten endgültig löschen",
+  "doneHeading": "Deine Daten wurden gelöscht",
+  "doneBody": "Wir haben alle Daten gelöscht, die wir über dich gespeichert hatten, und melden uns nicht mehr bei dir.",
+  "invalidHeading": "Dieser Link ist ungültig",     // mail-link page only
+  "invalidBody": "Der Link ist unvollständig oder wurde verändert. …",  // mail-link page only
+  "failedBody": "Es wurde nichts gelöscht — bitte versuch es gleich noch einmal."
+}
+```
+
+`confirmBody` depends on `SHOPIFY_ERASURE_SYNC`: when on, it names the
+customer account in the shop as deleted too and says orders stay in the shop
+as long as the law requires; when off, it says the orders in the shop are not
+affected. Render it verbatim.
+
+#### Response (default surface — the capture form)
 
 ```http
 HTTP/1.1 200 OK
@@ -1371,6 +1456,9 @@ do not persist it across sessions.
 | `MARKETING_DOI_EXPIRY_DAYS` | DOI token validity window (default 7).                             |
 | `UNSUBSCRIBE_SECRET`      | HMAC secret for unsubscribe tokens (falls back to `CHAT_SHARED_SECRET`). |
 | `CONTACT_FROM_EMAIL`      | Reused as the sender for summary + DOI emails.                       |
+| `RETURNING_HINT_ENABLED`  | **Default `true`.** Server-side switch for `returningHint.enabled` (§7.4); set `false` to make the widget hide the hint. |
+| `SHOPIFY_CONSENT_WRITEBACK` | **Default `false`.** Send Mo-side consent changes (DOI confirm, unsubscribe) to Shopify; while off they wait in the outbox. No change to any response. |
+| `SHOPIFY_ERASURE_SYNC`    | **Default `false`.** An erasure in Mo also asks Shopify to erase the customer (§11.1); switches the `surface=erase` `confirmBody` (§7.4). |
 
 ### 7.6 `POST /api/chat-marketing-opt-in`
 
@@ -1381,6 +1469,10 @@ session after the user's first chat message (copy from
 "Ja, Angebote aktivieren" tap. Not `/api/capture-email` — that endpoint
 hard-requires the transactional tick and its audit string covers both
 consents.
+
+The gate **leads with sign-in** (`signIn` in the `surface=chat` payload, §7.4):
+the primary action is the Customer Account sign-in; this typed-e-mail opt-in is
+the alternative for people without a shop account.
 
 #### Required request headers
 
@@ -1408,8 +1500,10 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   `surface=chat` string, `NULL` otherwise) — same rules as §7.1.
 - Runs the **same double-opt-in pipeline** as `/api/capture-email` (marketing
   half): upsert, DOI `pending` + token, confirmation email; a
-  suppressed/unsubscribed address is never re-pended; an already-confirmed
-  address is not re-sent a DOI. **No marketing until the link is clicked.**
+  suppressed/unsubscribed address is never re-pended; an address already
+  confirmed in Mo or subscribed in Shopify is not sent a DOI (response
+  `confirmed`, `alreadyConfirmed: true`, `doiEmailSent: false`). **No
+  marketing until the link is clicked.**
 - The capture records the **session id** and links the customer exactly like
   `/api/capture-email`, so after a success the widget MAY attach the email as
   `customer.email` on subsequent `/api/chat` requests to enable
@@ -1422,15 +1516,17 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
 {
   "ok": true,
   "marketing": {
-    "status": "pending",        // "pending" → DOI email sent; "confirmed" → was already confirmed
+    "status": "pending",        // "pending" → DOI email sent; "confirmed" → already subscribed
     "doiEmailSent": true,
-    "alreadyConfirmed": false   // true when the address was already DOI-confirmed (re-opt-in)
+    "alreadyConfirmed": false   // true when the address already held the consent (earlier
+                                // Mo DOI or subscribed in Shopify) — no DOI mail, doiEmailSent false
   }
 }
 ```
 
 After a `pending` response, tell the user to check their inbox and click the
-confirmation link — they are **not** subscribed until they do.
+confirmation link — they are **not** subscribed until they do. After
+`confirmed`, there is nothing to confirm (e.g. "Du bist bereits angemeldet").
 
 #### Error responses
 
@@ -1444,7 +1540,6 @@ confirmation link — they are **not** subscribed until they do.
 | 429    | `rate_limited`               | Chat bucket (20 req / 60 s) or per-recipient DOI cap (3 / 60 min); carries `Retry-After`. |
 | 503    | `upstream_unavailable`       | No database configured — consent could not be stored.      |
 | 500    | `internal_error`             | Anything else.                                             |
-| `RETURNING_HINT_ENABLED`  | **Default `true`.** Server-side switch for `returningHint.enabled` (§7.4); set `false` to make the widget hide the hint. |
 
 ---
 
@@ -1687,7 +1782,8 @@ Same as `/api/chat`:
   blanks become `null`.
 - **`email` here is user-supplied contact context for this comment** (like
   `/api/contact`), **not** a consent record and grants **no** permission. The
-  audit-grade consent trail lives exclusively in `email_captures`.
+  audit-grade consent trail lives exclusively in `email_captures` (Mo's Art. 7
+  evidence) and `consent_events` (the history of the one consent).
 
 ### Success response
 
@@ -1763,3 +1859,87 @@ add-to-cart click (a completed checkout clears the cart and its attributes).
 | 429    | `rate_limited`         | Shared `kpi` bucket. `Retry-After` set.                    |
 | 503    | `upstream_unavailable` | No database configured / token could not be minted.        |
 | 500    | `internal_error`       | Anything else.                                             |
+
+---
+
+## 11. Mail-link and server-to-server endpoints
+
+None of these is called by the widget. They are listed because they act on the
+data the widget creates (consents, conversations, the signed-in customer).
+
+### 11.1 Erasure — `POST /api/account/erase` and `GET/POST /api/erase-data`
+
+Both run **the one erasure path** `erasePerson` (`src/lib/customer-erasure.ts`),
+the same one as the admin's "Löschen". Request and response shapes are
+unchanged:
+
+- `POST /api/account/erase` (signed-in widget XHR, `CUSTOMER_ACCOUNT.md` §9) →
+  `{ "ok": true, "erased": true, "deletedConversations": 7 }`; `503
+  upstream_unavailable` when nothing could be erased.
+- `/api/erase-data?token=…` (the "Daten löschen" link in every marketing and
+  campaign mail): `GET` renders a confirmation page with a button (mail
+  scanners open links, so the link itself never deletes), `POST` (the button)
+  erases. HTML pages; `400` for an invalid token, `503` when the erasure
+  failed.
+
+What an erasure does since the deletion is shared with Shopify:
+
+1. **Mo deletes at once**, in one transaction: the customer and profile, every
+   conversation, consent records and history, marketing and campaign mails,
+   correspondence, letters, feedback, Mo's copy of the person's Shopify orders,
+   sign-in state. Aggregate order facts for the revenue KPIs (`mo_orders`) lose
+   the link to the person. The address stays on the suppression list with
+   reason `erasure`.
+2. **For a person with a Shopify customer id**, an erasure tombstone stops the
+   import, the reconciliation and the webhooks from re-creating them, and one
+   `data_erasure` row goes into the Shopify outbox: consent off in Shopify
+   first, then Shopify's own `customerRequestDataErasure`. The row is only sent
+   while `SHOPIFY_ERASURE_SYNC=true`; otherwise it waits. Shopify keeps the
+   order records the law requires.
+3. A Mo contact without a Shopify account (Interessent) is erased in Mo only.
+
+The reverse direction: Shopify's `customers/redact` and `customers/delete`
+webhooks run the same deletion in Mo (§11.3). The widget's confirmation dialog
+uses the `surface=erase` copy (§7.4), whose `confirmBody` names the shop
+account when `SHOPIFY_ERASURE_SYNC` is on.
+
+### 11.2 `GET /api/r/{token}` — tracked mail links
+
+A click on a link in a Mo mail is recorded (`clicked_at` + a KPI event, §5) and
+redirected with `302`. The token is tried in this order:
+
+| Token | Destination |
+| --- | --- |
+| 1:1 marketing send | The prefilled Shopify cart (discount code intact). |
+| Campaign send, campaign CTA = shop (`cta_kind = 'shop'`, an `https://` URL) | That shop URL. |
+| Campaign send, CTA = Mo (default) | The Mo deep link (`CAMPAIGN_MO_DEEPLINK_URL`) with `mo_c=<token>` appended, so the widget can attribute the chat it opens to the send. |
+| Bundle offer | The bundle's cart permalink, or a branded "Angebot abgelaufen" page (`410`) for an expired / archived offer. |
+| Unknown / pruned | The storefront cart (never an error page). |
+
+`&locale=` on the link sets the language of the expired-offer page.
+
+### 11.3 `POST /api/webhooks/shopify`
+
+Shopify → backend. The `X-Shopify-Hmac-SHA256` signature is verified over the
+**raw body before it is parsed** (`verifyShopifyWebhook`,
+`src/lib/shopify-webhook.mjs`) against `SHOPIFY_WEBHOOK_SECRET` (subscriptions
+made in the Shopify admin) or `SHOPIFY_CLIENT_SECRET` (subscriptions made by
+the app, including the compliance topics). No secret configured → `503`; bad
+or missing signature → `401`, body never read.
+
+| Topic (`X-Shopify-Topic`) | Effect |
+| --- | --- |
+| `products/*`, `inventory_levels/*` | Targeted single-product catalog refresh (`docs/CATALOG_SYNC.md`). |
+| `customers/create`, `customers/update` | Upsert the customer mirror (a `customers` row per Shopify customer); the embedded e-mail-marketing consent goes through the consent resolver. |
+| `customers_email_marketing_consent/update` | Consent resolver only (Shopify-side subscribe / unsubscribe). Unknown customers are left to the reconciliation. |
+| `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled` | Order ledger (`customer_orders`). `orders/create` and `orders/paid` also feed the pseudonymous order attribution (`mo_orders`, `ORDER_ATTRIBUTION.md`). Other `orders/*` topics are acknowledged and ignored. |
+| `customers/delete`, `customers/redact` | The one erasure in Mo (trigger `shopify`: Shopify is not asked again). More than `SHOPIFY_ERASURE_ALERT_PER_HOUR` (default 20) in an hour raises an alert and an Eingang item. |
+| `customers/data_request` | An Eingang item `datenauskunft` (deadline 30 days) for the operator to answer with the data export. |
+| `shop/redact` | Alert + Eingang item only — never an automatic mass deletion. |
+| `bulk_operations/finish` | Acknowledged; the import's next step polls the bulk operation itself. |
+
+All customer, consent, order and compliance topics are de-duplicated by
+`X-Shopify-Webhook-Id` (a Shopify retry answers `{ "ok": true, "duplicate":
+true }`). A processing failure answers `500` and forgets the delivery id, so
+Shopify's retry is applied. The nightly `/api/cron/shopify-reconcile` catches
+whatever a webhook missed.
