@@ -18,14 +18,21 @@ import { isCampaignSendsApproved, isSingleOptInAllowed } from "@/lib/campaign-fl
 import { getSyncHealth, listSyncRuns } from "@/lib/shopify-sync";
 import { getOutboxStats } from "@/lib/shopify-outbox";
 import { shopifySyncFlags } from "@/lib/shopify-sync-flags";
+import { getConsentAlignmentReport } from "@/lib/consent-alignment";
 import { EmailSettingsWorkspace } from "./lazy";
 import type { SystemStatus } from "./einstellungen/types";
 
 export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
   const designs = listEmailDesignMeta();
-  const [selections, health, runs, outbox] = dbReady
-    ? await Promise.all([listEmailDesignSelections(), getSyncHealth(), listSyncRuns(8), getOutboxStats()])
-    : [{}, null, [], null];
+  const [selections, health, runs, outbox, alignment] = dbReady
+    ? await Promise.all([
+        listEmailDesignSelections(),
+        getSyncHealth(),
+        listSyncRuns(8),
+        getOutboxStats(),
+        getConsentAlignmentReport(),
+      ])
+    : [{}, null, [], null, null];
 
   // Presence checks only — the values never leave the server.
   const systemStatus: SystemStatus = {
@@ -53,7 +60,7 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
         logoOverride: process.env.EMAIL_LOGO_URL ?? null,
       }}
       systemStatus={systemStatus}
-      shopifySync={dbReady ? { health, runs, outbox, flags: shopifySyncFlags() } : null}
+      shopifySync={dbReady ? { health, runs, outbox, alignment, flags: shopifySyncFlags() } : null}
     />
   );
 }
