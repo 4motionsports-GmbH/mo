@@ -1,5 +1,8 @@
 // The Eingang rules (pure, tested): which customer needs us today, why, and
-// how urgent — docs/CUSTOMER_PLATFORM_PLAN.md §11.3. The job
+// how urgent — docs/CUSTOMER_PLATFORM_PLAN.md §11.3. Dedupe keys name the
+// EPISODE (the order, chat, click or mail that triggered the rule), never a
+// calendar window: while the condition holds the key stays the same, so a
+// snoozed or dismissed item is not recreated next week. The job
 // (lib/inbox-signals.ts) loads the facts per person and the few extra facts
 // some rules need, calls these functions, and upserts the items by dedupe
 // key. Every rule is deterministic and spelled out here, so the thresholds
@@ -42,7 +45,7 @@ const days = (fromIso, now) => {
   return Number.isNaN(t) ? null : (now.getTime() - t) / DAY;
 };
 
-/** ISO week key (YYYY-Www) — the dedupe window of weekly rules. */
+/** ISO week key (YYYY-Www) — a helper for event rules and reports. */
 export function isoWeekKey(now) {
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const dayNum = d.getUTCDay() || 7;
@@ -108,7 +111,8 @@ const eur = (cents) =>
 export function signalsForCustomer(f, now = new Date()) {
   if (f.blocked) return [];
   const out = [];
-  const week = isoWeekKey(now);
+  const year = String(now.getUTCFullYear());
+  const orderDay = String(f.lastOrderAt).slice(0, 10);
   const consented = f.consentState === "subscribed";
   const sinceOrder = days(f.lastOrderAt, now);
   const sinceChat = days(f.lastChatAt, now);
@@ -199,7 +203,7 @@ export function signalsForCustomer(f, now = new Date()) {
       "wiederkauf_faellig",
       `Kauft sonst etwa alle ${Math.round(f.medianIntervalDays)} Tage — der letzte Kauf ist ${Math.round(sinceOrder)} Tage her.`,
       { ordersCount: f.ordersCount, medianIntervalDays: f.medianIntervalDays, lastOrderAt: f.lastOrderAt },
-      week,
+      orderDay,
       14,
       null
     );
@@ -218,7 +222,7 @@ export function signalsForCustomer(f, now = new Date()) {
       "abwanderung",
       `${f.ordersCount} ${f.ordersCount === 1 ? "Bestellung" : "Bestellungen"} über ${eur(f.totalSpentCents)}, letzter Kauf vor ${Math.round(sinceOrder)} Tagen.`,
       { ordersCount: f.ordersCount, totalSpentCents: f.totalSpentCents, lastOrderAt: f.lastOrderAt },
-      `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`,
+      orderDay,
       30,
       null
     );
@@ -232,7 +236,7 @@ export function signalsForCustomer(f, now = new Date()) {
         ? `Neue Bestellung über ${eur(f.recentBigOrderCents)} — ein persönlicher Dank lohnt sich (ohne Rabatt).`
         : `Gehört mit ${eur(f.totalSpentCents)} Umsatz zum besten Prozent der Kund:innen.`,
       { totalSpentCents: f.totalSpentCents, recentBigOrderCents: f.recentBigOrderCents },
-      `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`,
+      f.recentBigOrderCents && f.recentBigOrderCents >= 150000 ? `order:${orderDay}` : year,
       30,
       null
     );
@@ -246,7 +250,7 @@ export function signalsForCustomer(f, now = new Date()) {
         ? `${f.ordersLast12m} Bestellungen in 12 Monaten, aber keine Einwilligung für E-Mail-Werbung.`
         : "Hat mit Mo gesprochen, aber keine Einwilligung für E-Mail-Werbung.",
       { ordersLast12m: f.ordersLast12m, conversationsCount: f.conversationsCount },
-      `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`,
+      year,
       90,
       null
     );

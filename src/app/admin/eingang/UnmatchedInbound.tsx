@@ -120,27 +120,31 @@ function UnmatchedRow({ message }: { message: UnmatchedInboundMessage }) {
       </div>
       {message.snippet && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{message.snippet}</p>}
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Kunde suchen (Name oder E-Mail)"
-          aria-label="Kunde suchen"
-          className="h-8 max-w-[16rem] text-xs"
-        />
-        <Select
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          disabled={busy || hits.length === 0}
-          className="h-8 max-w-[18rem] text-xs"
-          aria-label="Kunde für die Zuordnung"
-        >
-          {hits.length === 0 ? <option value="">—</option> : null}
-          {hits.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name ? `${c.name} · ${c.email}` : c.email}
-            </option>
-          ))}
-        </Select>
+        <div className="w-64 max-w-full">
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Kunde suchen (Name oder E-Mail)"
+            aria-label="Kunde suchen"
+            className="h-8 text-xs"
+          />
+        </div>
+        <div className="w-72 max-w-full">
+          <Select
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            disabled={busy || hits.length === 0}
+            className="h-8 text-xs"
+            aria-label="Kunde für die Zuordnung"
+          >
+            {hits.length === 0 ? <option value="">Erst suchen …</option> : null}
+            {hits.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name ? `${c.name} · ${c.email}` : c.email}
+              </option>
+            ))}
+          </Select>
+        </div>
         <Button size="sm" onClick={onAssign} loading={busy} disabled={!target}>
           Zuordnen
         </Button>

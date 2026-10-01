@@ -492,7 +492,9 @@ export function describeSyncProblems(
       out.push("Der nächtliche Abgleich ist seit über 36 Stunden nicht durchgelaufen.");
     }
   }
-  if (deadOutbox > 0) out.push(`${deadOutbox} Übertragungen an Shopify wurden aufgegeben.`);
+  if (deadOutbox > 0) {
+    out.push(deadOutbox === 1 ? "1 Übertragung an Shopify wurde aufgegeben." : `${deadOutbox} Übertragungen an Shopify wurden aufgegeben.`);
+  }
   return out;
 }
 

@@ -81,13 +81,16 @@ test("priority: weight + value + freshness, bounded", () => {
   assert.equal(signalPriority("datenauskunft", { valueTier: "grossgeraet", ageDays: 0 }), 100);
 });
 
-test("dedupe keys are stable inside the window", () => {
-  const a = signalsForCustomer({ ...base, ordersCount: 4, medianIntervalDays: 60, lastOrderAt: ago(90) }, NOW)[0];
+test("dedupe keys name the episode, not a calendar window", () => {
+  const lastOrderAt = ago(90);
+  const a = signalsForCustomer({ ...base, ordersCount: 4, medianIntervalDays: 60, lastOrderAt }, NOW)[0];
+  // Three weeks later the same overdue order is the same item (a snooze holds).
   const b = signalsForCustomer(
-    { ...base, ordersCount: 4, medianIntervalDays: 60, lastOrderAt: ago(90) },
-    new Date(NOW.getTime() + 86_400_000)
+    { ...base, ordersCount: 4, medianIntervalDays: 60, lastOrderAt },
+    new Date(NOW.getTime() + 21 * 86_400_000)
   )[0];
   assert.equal(a.dedupeKey, b.dedupeKey);
+  assert.equal(a.dedupeKey, `wiederkauf_faellig:7:${lastOrderAt.slice(0, 10)}`);
   assert.equal(isoWeekKey(new Date("2026-01-01T00:00:00Z")), "2026-W01");
 });
 
