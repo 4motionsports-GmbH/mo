@@ -9,13 +9,17 @@ repository:
    lives in the Shopify theme and is **not** in this repo;
    [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) is the contract it targets and
    must stay backward compatible.
-2. **The admin dashboard** at `/admin` (German) — customers, the campaign review
-   queue, KPIs, the conversation inspector, the knowledge queue, analyses, the
-   improvement loop and e-mail settings. [`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md).
+2. **The admin dashboard** at `/admin` (German) — the Eingang (operator inbox
+   with AI suggestions), Kampagnen (many campaigns over the whole customer base),
+   Kunden (every Shopify customer and every Mo lead, with order ledger, facts and
+   AI profile), KPIs, the conversation inspector, the knowledge queue, analyses,
+   the improvement loop and settings incl. the Shopify sync.
+   [`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md),
+   [`docs/CUSTOMER_PLATFORM_PLAN.md`](docs/CUSTOMER_PLATFORM_PLAN.md).
 3. **The e-mail subsystem** — transactional mail (summary, double opt-in),
-   personalised marketing mail (`MS5-` codes), the campaign channel to Shopify
-   marketing subscribers (`MK-` codes), inbound mail, physical letters via
-   Pingen, code-based designs with AI hero images.
+   campaign mail to everyone holding the one marketing consent shared with
+   Shopify (`MK-` codes; the 1:1 mail is the campaign „Einzelansprache“), inbound
+   mail, physical letters via Pingen, code-based designs with AI hero images.
    [`docs/CAMPAIGNS.md`](docs/CAMPAIGNS.md), [`docs/EMAIL_DESIGNS.md`](docs/EMAIL_DESIGNS.md),
    [`docs/CONSENT_FLOW.md`](docs/CONSENT_FLOW.md).
 
@@ -33,9 +37,9 @@ capability is listed in [`docs/FEATURE_INVENTORY.md`](docs/FEATURE_INVENTORY.md)
 | `/api/capture-email`, `/api/chat-marketing-opt-in`, `/api/confirm-marketing`, `/api/unsubscribe`, `/api/consent-copy` | Consent + double-opt-in flow ([`docs/CONSENT_FLOW.md`](docs/CONSENT_FLOW.md)). | per route |
 | `/api/auth/*`, `/api/account/*` | Shopify Customer Account sign-in (tier 3), conversation history, export, erasure ([`docs/CUSTOMER_ACCOUNT.md`](docs/CUSTOMER_ACCOUNT.md)). | session / signed |
 | `/api/attribution/token`, `/api/r/<token>`, `/api/email-countdown/<token>`, `/api/email-hero-image/<file>` | Order-attribution token, tracked e-mail redirect, live countdown image, hero-image assets. | tokens |
-| `/api/webhooks/shopify`, `/api/webhooks/resend`, `/api/inbound/resend`, `/api/webhooks/pingen` | Orders → `mo_orders`, catalog changes; Resend delivery events and inbound mail; letter status. | signature over the raw body |
-| `/api/cron/*` | `refresh-customers` 02:00 · `sync-campaign-audience` 02:30 · `sync-catalog` 03:00 · `retention` 03:30 · `expire-bundles` every 15 min ([`vercel.json`](vercel.json)). | `Authorization: Bearer CRON_SECRET` |
-| `/api/admin/*` (72 routes) | The dashboard's API ([`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md) §11). | Edge proxy + `guardAdmin*` |
+| `/api/webhooks/shopify`, `/api/webhooks/resend`, `/api/inbound/resend`, `/api/webhooks/pingen` | Shopify: catalog changes, the customer mirror and order ledger, consent changes, compliance topics (erasure, data request), bulk-import completion, order attribution; Resend delivery events and inbound mail; letter status. | signature over the raw body |
+| `/api/cron/*` | `shopify-reconcile` 01:45 · `refresh-customers` 02:00 · `campaign-audiences` 02:30 · `sync-catalog` 03:00 · `retention` 03:30 · `prepare-campaign-drafts` 04:15 · `inbox` hourly · `shopify-sync` every 5 min · `expire-bundles` every 15 min ([`vercel.json`](vercel.json)). | `Authorization: Bearer CRON_SECRET` |
+| `/api/admin/*` (95 routes) | The dashboard's API ([`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md) §11). | Edge proxy + `guardAdmin*` |
 | `GET /` | Plain health string. | — |
 
 ## Run locally
@@ -63,7 +67,7 @@ curl -N -X POST http://localhost:3000/api/chat \
 ## Configuration
 
 [`.env.example`](.env.example) is the **canonical, complete** list — every
-variable the code reads, with its purpose and default (81 variables). Two rules
+variable the code reads, with its purpose and default (97 variables). Two rules
 hold everywhere: the legal send gates (`CAMPAIGN_SENDS_APPROVED`,
 `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `PHYSICAL_MAIL_SENDS_APPROVED`) default to
 `false` and are enabled only in production; every retention window treats `0`
@@ -78,9 +82,10 @@ as „disabled“, never as „delete everything“.
 | Marketing + campaign | `MARKETING_DISCOUNT_EXPIRY_DAYS`, `MARKETING_ORDER_LOOKBACK_DAYS`, `MARKETING_MIN_SEND_INTERVAL_DAYS`, `CONVERSION_SWEEP_MAX_CODES`, `CAMPAIGN_SENDS_APPROVED`, `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `CAMPAIGN_MO_DEEPLINK_URL` |
 | Physical mail (Pingen) | `PINGEN_CLIENT_ID`, `PINGEN_CLIENT_SECRET`, `PINGEN_ORGANISATION_ID`, `PINGEN_STAGING`, `PINGEN_WEBHOOK_SECRET`, `PHYSICAL_MAIL_SENDS_APPROVED`, `PINGEN_LETTER_COST_CENTS` |
 | Shopify (Admin API, webhooks, Customer Account) | `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_API_VERSION`, `SHOPIFY_APP_PROXY_SECRET`, `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_ID`, `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_SECRET`, `SHOPIFY_STOREFRONT_DOMAIN`, `TOKEN_ENC_KEY`, `SHOPIFY_CUSTOMER_ACCOUNT_STATE_SECRET`, `CUSTOMER_AUTH_PENDING_TTL_MINUTES`, `CUSTOMER_REFRESH_BATCH`, `CUSTOMER_REFRESH_STALE_HOURS` |
+| Customer platform (all switches default off) | `SHOPIFY_CUSTOMER_SYNC_ENABLED`, `SHOPIFY_CONSENT_WRITEBACK`, `SHOPIFY_ERASURE_SYNC`, `SHOPIFY_CONSENT_TEXT_VERSION`, `SHOPIFY_ERASURE_ALERT_PER_HOUR`, `CUSTOMER_PROFILE_BATCH`, `CUSTOMER_PROFILE_LIGHT_BATCH`, `CUSTOMER_AI_PROFILE_SCOPE`, `INBOX_AI_DAILY_LIMIT`, `CAMPAIGN_AUTO_PREPARE_COUNT` (+ `_DISCOUNT`, `_TEXT_MODE`, `_DISCOUNT_SCOPE`) |
 | Bundles | `BUNDLE_CREATION_MODE`, `BUNDLE_OFFER_EXPIRY_DAYS`, `BUNDLE_EXPIRED_REDIRECT_URL` |
 | Storage, crons, observability | `BLOB_READ_WRITE_TOKEN`, `CRON_SECRET`, `NEXT_PUBLIC_SENTRY_DSN` (errors only, no tracing, no source-map upload) |
-| Retention ([`docs/DATA_RETENTION.md`](docs/DATA_RETENTION.md)) | `RETENTION_DAYS`, `KPI_RETENTION_DAYS`, `ABANDON_AFTER_MINUTES`, `MO_ATTRIBUTION_WINDOW_DAYS`, `SUPPRESSED_CAPTURE_PURGE_DAYS`, `CORRESPONDENCE_RETENTION_DAYS`, `FEEDBACK_RETENTION_DAYS`, `CUSTOMER_INACTIVITY_RETENTION_DAYS`, `ADMIN_ACCESS_LOG_RETENTION_DAYS`, `CAMPAIGN_CONTACT_RETENTION_DAYS`, `ANALYTICS_REPORT_RETENTION_DAYS`, `PHYSICAL_LETTER_RETENTION_DAYS` |
+| Retention ([`docs/DATA_RETENTION.md`](docs/DATA_RETENTION.md)) | `RETENTION_DAYS`, `KPI_RETENTION_DAYS`, `ABANDON_AFTER_MINUTES`, `MO_ATTRIBUTION_WINDOW_DAYS`, `SUPPRESSED_CAPTURE_PURGE_DAYS`, `CORRESPONDENCE_RETENTION_DAYS`, `FEEDBACK_RETENTION_DAYS`, `CUSTOMER_INACTIVITY_RETENTION_DAYS`, `ADMIN_ACCESS_LOG_RETENTION_DAYS`, `CAMPAIGN_CONTACT_RETENTION_DAYS`, `ANALYTICS_REPORT_RETENTION_DAYS`, `PHYSICAL_LETTER_RETENTION_DAYS`, `SHOPIFY_SYNC_LOG_RETENTION_DAYS`, `INBOX_RETENTION_DAYS`, `ERASURE_TOMBSTONE_RETENTION_DAYS` |
 
 ## Scripts
 
@@ -91,6 +96,8 @@ as „disabled“, never as „delete everything“.
 | `npm run db:migrate` | Apply pending SQL migrations from `migrations/` (forward-only, run manually). |
 | `npm run db:proxy`, `npm run db:seed`, `npm run db:reset` | Local Neon-protocol proxy, demo data, test-data reset (see `docs/DATABASE.md`). |
 | `npm run verify:shopify` / `verify:pingen` / `verify:customer-account` | Check the respective credentials. |
+| `npm run shopify:webhooks` (`-- --apply`) | List (and create) the Shopify webhook subscriptions Mo needs; checks the app's scopes. |
+| `npm run profiles:backfill` | Build missing AI customer profiles in batches. |
 | `npm run diagnose:address` | Inspect the address capture for one customer. |
 | `npm run analyze:repurchase` | Repurchase analysis behind the lifecycle segments ([`docs/REPURCHASE_ANALYSIS.md`](docs/REPURCHASE_ANALYSIS.md)). |
 | `npm run convert-catalog`, `npm run index` | One-off catalog conversion and embedding build (the daily cron does this in production). |
@@ -107,7 +114,7 @@ src/
 │   │   ├── capture-email, confirm-marketing, chat-marketing-opt-in, unsubscribe, consent-copy
 │   │   ├── auth/, account/, attribution/, r/[token], email-countdown/, email-hero-image/
 │   │   ├── webhooks/{shopify,resend,pingen}, inbound/resend, cron/*
-│   │   └── admin/**          # 72 guarded dashboard routes
+│   │   └── admin/**          # 95 guarded dashboard routes
 │   ├── admin/                # the dashboard: page.tsx (one screen per request), AdminShell,
 │   │                         # <Screen>Tab.tsx + <screen>/ workspaces, ui/ primitives, lib/ helpers
 │   ├── icon.svg, layout.tsx, page.tsx
@@ -119,7 +126,7 @@ src/
 │   ├── shopify*, catalog-*, retrieval, system-prompt*, persona, tools   # the chat
 │   └── kpi-*, admin-*, retention*, rate-limit, security, observability
 └── proxy.ts                  # Edge gate for /admin and /api/admin
-migrations/                   # forward-only SQL, 0001 … 0056
+migrations/                   # forward-only SQL, 0001 … 0068
 scripts/                      # operational scripts (npm aliases above)
 docs/                         # living documentation; docs/archive/ = historical reports and spikes
 ```
@@ -168,15 +175,18 @@ the customer entity above both. [`docs/DATABASE.md`](docs/DATABASE.md),
    Expect `mode: "shopify"` and a non-zero product count; `mode:
    "fallback-bundle"` means the Shopify credentials are wrong
    (`npm run verify:shopify`).
-7. **Register the webhooks** (Shopify orders/products → `/api/webhooks/shopify`,
-   Resend → `/api/webhooks/resend` and `/api/inbound/resend`, Pingen →
-   `/api/webhooks/pingen`) with the secrets from step 2.
+7. **Register the webhooks**: Shopify with `npm run shopify:webhooks -- --apply`
+   (plus the compliance topics in the app configuration), Resend →
+   `/api/webhooks/resend` and `/api/inbound/resend`, Pingen →
+   `/api/webhooks/pingen`, with the secrets from step 2. Then switch on the
+   customer platform in order (`docs/CUSTOMER_PLATFORM_PLAN.md`): sync →
+   import (Einstellungen → Shopify-Abgleich) → consent write-back → erasure sync.
 8. **Set hard monthly spend caps** in the Anthropic and OpenAI consoles.
 9. **Smoke-test** the deployed chat endpoint (the `curl` above against the
    domain; `401` = wrong shared secret, `403` = origin not allow-listed) and log
    in at `/admin` — Einstellungen → Systemstatus shows which integrations are
    configured.
-10. **Next day:** check Vercel → Logs for the five cron invocations (200 each).
+10. **Next day:** check Vercel → Logs for the cron invocations (200 each).
 
 ## Quality gates
 
