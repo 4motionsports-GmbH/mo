@@ -28,7 +28,7 @@ import { reportError } from "./observability";
 import { loadModelPrices, usdCostForUsage, usdEurRate, usdToEur } from "./ai-pricing.mjs";
 import { fetchCodeRedemption } from "./shopify-orders";
 import { isShopifyConfigured } from "./shopify";
-import { KPI_CAMPAIGN_EMAIL_CLICKED } from "./kpi-events";
+import { KPI_CAMPAIGN_CHAT_STARTED, KPI_CAMPAIGN_EMAIL_CLICKED } from "./kpi-events";
 import type { KpiRange } from "./kpi-range";
 import { stripMarkdown } from "./tts-text.mjs";
 
@@ -1445,6 +1445,36 @@ export async function recordCampaignClick(
   }
 }
 
+/**
+ * „Chat-Start“: the widget sends the `mo_c` token of the campaign link that
+ * opened it (POST /api/chat `campaignToken`). Recorded once per send as a
+ * session-LESS KPI event — the pseudonymous chat is never tied to the person.
+ * Returns true when this was the first chat for the send. Never throws.
+ */
+export async function recordCampaignChatStarted(token: string, sql: Sql | null = getSql()): Promise<boolean> {
+  if (!sql) return false;
+  const t = token.trim();
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(t)) return false;
+  try {
+    const rows = (await sql`
+      INSERT INTO kpi_events (session_id, event, data)
+      SELECT NULL, ${KPI_CAMPAIGN_CHAT_STARTED}, jsonb_build_object('sendId', s.id, 'campaignId', s.campaign_id)
+        FROM campaign_sends s
+       WHERE s.redirect_token = ${t} AND s.is_test = false
+         AND NOT EXISTS (
+               SELECT 1 FROM kpi_events e
+                WHERE e.event = ${KPI_CAMPAIGN_CHAT_STARTED} AND e.data->>'sendId' = s.id::text
+             )
+       LIMIT 1
+      RETURNING id
+    `) as Array<{ id: number }>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "recordCampaignChatStarted" });
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Campaign KPIs (KPI tab) — the MK- channel funnel + language split
 // ---------------------------------------------------------------------------
@@ -1477,6 +1507,8 @@ export interface CampaignBreakdownRow {
   heroCostEur: number | null;
   /** Display label (campaign rows carry the campaign name). */
   label?: string;
+  /** Campaign rows only: sends whose Mo link opened a chat (widget `mo_c`). */
+  chatStarted?: number;
 }
 
 export interface CampaignKpis {
@@ -1676,7 +1708,11 @@ export async function getCampaignKpis(
                              AND s.clicked_at IS NOT NULL)::int AS clicked,
           count(*) FILTER (WHERE s.bundle_offer_id IS NOT NULL)::int AS bundle_sends,
           count(*) FILTER (WHERE s.bundle_clicked_at IS NOT NULL)::int AS bundle_clicked,
-          count(*) FILTER (WHERE s.unsubscribed_at IS NOT NULL)::int AS unsubscribed
+          count(*) FILTER (WHERE s.unsubscribed_at IS NOT NULL)::int AS unsubscribed,
+          -- „Chat-Start“: the widget reported the send's mo_c token (session-less KPI event).
+          count(*) FILTER (WHERE EXISTS (
+            SELECT 1 FROM kpi_events e
+             WHERE e.event = ${KPI_CAMPAIGN_CHAT_STARTED} AND e.data->>'sendId' = s.id::text))::int AS chat_started
           FROM campaign_sends s
           LEFT JOIN campaigns k ON k.id = s.campaign_id
          WHERE s.is_test = false
@@ -1717,8 +1753,8 @@ export async function getCampaignKpis(
     const bySeg = new Map<string, CampaignBreakdownRow>();
     for (const a of segmentRows as Agg[]) bySeg.set(a.key, rowFrom(a, false));
     const byCamp = new Map<string, CampaignBreakdownRow>();
-    for (const a of campaignRows as Array<Agg & { label: string | null }>) {
-      byCamp.set(a.key, { ...rowFrom(a, false), label: a.label ?? "Ohne Kampagne" });
+    for (const a of campaignRows as Array<Agg & { label: string | null; chat_started: number }>) {
+      byCamp.set(a.key, { ...rowFrom(a, false), label: a.label ?? "Ohne Kampagne", chatStarted: Number(a.chat_started ?? 0) });
     }
 
     const byLanguage = { de: 0, en: 0, unknown: 0 };

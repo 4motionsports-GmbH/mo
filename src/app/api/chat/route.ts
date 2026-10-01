@@ -33,6 +33,7 @@ import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { persistTurn, ensureConversationStarted, type ToolInvocation } from "@/lib/conversation-store";
+import { recordCampaignChatStarted } from "@/lib/campaign-store";
 import {
   KPI_EMAIL_CAPTURE_ASK_SHOWN,
   hasDeclinedEmailCapture,
@@ -243,6 +244,10 @@ export async function POST(req: Request) {
       // Storefront-selected language ("de" default, "en" on /en). Drives Mo's
       // output language + the model-facing instructions/tools. Default German.
       locale?: unknown;
+      // The `mo_c` token of the campaign mail link that opened the chat
+      // (optional, additive). Recorded once per send as a session-less KPI
+      // event („Chat-Start“) — never tied to this pseudonymous session.
+      campaignToken?: unknown;
     };
     try {
       body = (await req.json()) as typeof body;
@@ -312,6 +317,7 @@ export async function POST(req: Request) {
       return null;
     })();
 
+    const campaignToken = typeof body.campaignToken === "string" ? body.campaignToken.slice(0, 128) : null;
     const [hits, customerMemory, emailOfferDeclined, generalQa, directives] = await Promise.all([
       latestUserText
         ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
@@ -351,6 +357,8 @@ export async function POST(req: Request) {
               typeof latestUserMessage.id === "string" ? latestUserMessage.id : null,
           })
         : Promise.resolve(null),
+      // Campaign attribution („Chat-Start“, best-effort, never blocks the chat).
+      campaignToken ? recordCampaignChatStarted(campaignToken) : Promise.resolve(false),
     ]);
     // Optional product context (chat opened "about" a product) and/or
     // browsing context (small recently-viewed trail brought along by the
