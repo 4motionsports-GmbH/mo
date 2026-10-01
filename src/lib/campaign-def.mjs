@@ -195,6 +195,10 @@ export function validateCampaignInput(raw, opts = {}) {
   if (ctaKind === "shop" && has("ctaUrl") && !value.ctaUrl && !errors.ctaUrl) {
     errors.ctaUrl = "Für einen Shop-Button einen Link angeben.";
   }
+  // The chat button lives in the Mo block — without it the mail has no button at all.
+  if (ctaKind === "mo_chat" && has("moPromo") && value.moPromo === false) {
+    errors.moPromo = "Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.";
+  }
   return { ok: Object.keys(errors).length === 0, value, errors };
 }
 

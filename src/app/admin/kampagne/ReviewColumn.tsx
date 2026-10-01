@@ -667,7 +667,7 @@ export function ReviewColumn({
           </DescriptionItem>
           <DescriptionItem
             label="Umsatz"
-            info="Anzahl und Gesamtwert aller Bestellungen dieses Kunden laut Shopify-Kundenkonto, Stand letzter Kontakt-Sync. Die Kaufhistorie oben zeigt nur die neuesten Bestellungen zur E-Mail-Adresse, Stand Entwurf — die Summen müssen daher nicht übereinstimmen."
+            info="Anzahl und Gesamtwert aller Bestellungen dieser Person, Stand letzte Aktualisierung der Zielgruppe. Die Kaufhistorie oben zeigt nur die neuesten Bestellungen, Stand Entwurf — die Summen müssen daher nicht übereinstimmen."
           >
             <span className="text-xs tabular-nums">
               {plural(item.ordersCount, "Bestellung", "Bestellungen")} · {eurFromCents(item.totalSpentCents)}

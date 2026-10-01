@@ -135,8 +135,10 @@ export function CampaignHeader({
           {CAMPAIGN_KIND_LABELS[campaign.kind]}. {campaign.audienceText}.
           {campaign.startsAt && <> Start {formatAdmin(campaign.startsAt, ADMIN_DATE)}.</>}
           {campaign.endsAt && <> Ende {formatAdmin(campaign.endsAt, ADMIN_DATE)}.</>}
-          {campaign.phase !== "laeuft" &&
-            " Solange die Kampagne nicht läuft, gehen keine Mails an Kund:innen — Vorbereiten und Testkontakte funktionieren."}
+          {campaign.phase === "geplant" &&
+            " Bis zum Start gehen keine Mails an Kund:innen — Vorbereiten und Testkontakte funktionieren schon."}
+          {(campaign.phase === "entwurf" || campaign.phase === "pausiert") &&
+            " Die Kampagne läuft nicht: es gehen keine Mails hinaus, und Entwürfe lassen sich erst nach dem Start vorbereiten."}
         </InfoTip>
       </div>
 
@@ -146,6 +148,12 @@ export function CampaignHeader({
           <strong>{num(progress.done)}</strong> <span className="text-muted-foreground">gesendet</span>
           <span className="text-muted-foreground"> · </span>
           <strong>{num(queueSize)}</strong> <span className="text-muted-foreground">zu prüfen</span>
+          {campaign.dailyTarget != null && campaign.dailyTarget > 0 && (
+            <>
+              <span className="text-muted-foreground"> · </span>
+              <span className="text-muted-foreground">Tagesziel</span> <strong>{num(campaign.dailyTarget)}</strong>
+            </>
+          )}
         </span>
         <ProgressBar
           value={progress.ratio * 100}
@@ -155,7 +163,8 @@ export function CampaignHeader({
         />
         <InfoTip>
           Heute gesendete Kampagnen-E-Mails gegenüber den Entwürfen, die noch in der
-          Warteschlange liegen. Der Balken endet bei der Tagesmenge — kein festes Ziel.
+          Warteschlange liegen. Der Balken endet bei der Tagesmenge
+          {campaign.dailyTarget != null && campaign.dailyTarget > 0 ? "; das Tagesziel stammt aus der Kampagne." : " — kein festes Ziel."}
           {counts.pending > 0 && (
             <>
               {" "}
@@ -286,7 +295,10 @@ export function CampaignHeader({
           costs={costs}
           settings={prepareSettings}
           onSettings={onPrepareSettings}
-          heroOffered={heroDesignActive && heroGenerationConfigured}
+          heroOffered={
+            heroDesignActive && heroGenerationConfigured && (campaign.heroMode === "ai_ab" || campaign.heroMode === "ai_all")
+          }
+          heroForAll={campaign.heroMode === "ai_all"}
           disabled={jobBusy !== null}
           onStart={(settings) => {
             onPrepareOpen(false);

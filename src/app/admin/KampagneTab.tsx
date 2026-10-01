@@ -274,6 +274,7 @@ export async function KampagneTab({
         discountScope: campaign.discountScope,
         textMode: campaign.textMode,
         heroMode: campaign.heroMode,
+        dailyTarget: campaign.dailyTarget,
         audienceText: audienceText(campaign, campaigns),
         startsAt: campaign.startsAt,
         endsAt: campaign.endsAt,

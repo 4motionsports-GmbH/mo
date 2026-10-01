@@ -186,6 +186,23 @@ test("hero: the A group without a hero is a hint, only while the design has a he
   assert.deepEqual(keys(noHeroDesign), []);
 });
 
+test("hero: the campaign's hero mode decides who needs one", () => {
+  // ai_all: every card, odd ids too.
+  const all = reviewChecks(readyItem({ contactId: 13, heroUrl: null }), ctx({ heroMode: "ai_all" }));
+  assert.ok(keys(all).includes("hero_missing"));
+  assert.equal(all.find((c) => c.key === "hero_missing").title, "Ohne KI-Hero");
+  // default / none: no hero hints at all.
+  for (const heroMode of ["default", "none"]) {
+    const none = reviewChecks(readyItem({ heroUrl: null }), ctx({ heroMode }));
+    assert.ok(!keys(none).includes("hero_missing"), heroMode);
+  }
+});
+
+test("the send window only applies to campaigns that use it", () => {
+  const aktion = reviewChecks(readyItem({ segment: "frisch" }), ctx({ sendWindowApplies: false }));
+  assert.ok(!keys(aktion).includes("segment_not_sendable"));
+});
+
 test("stale drafts, non-sendable segments and long subjects are hints", () => {
   const checks = reviewChecks(
     readyItem({
