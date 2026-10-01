@@ -33,6 +33,17 @@ test("rejects a tampered body (signature no longer matches)", () => {
   );
 });
 
+test("accepts a signature under any of several secrets (store key or app secret)", () => {
+  const appSecret = "shpss_app_secret";
+  const evt = verifyShopifyWebhook({ rawBody: BODY, hmacHeader: sign(BODY, appSecret), secret: [SECRET, null, appSecret] });
+  assert.equal(evt.handle, "power-rack");
+  assert.throws(
+    () => verifyShopifyWebhook({ rawBody: BODY, hmacHeader: sign(BODY, "other"), secret: [SECRET, appSecret] }),
+    /Invalid Shopify webhook signature/
+  );
+  assert.throws(() => verifyShopifyWebhook({ rawBody: BODY, hmacHeader: sign(BODY), secret: [null, ""] }), /not configured/);
+});
+
 test("rejects a signature made with a different secret", () => {
   const sig = sign(BODY, "wrong_secret");
   assert.throws(
