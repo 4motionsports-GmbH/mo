@@ -1,7 +1,8 @@
 // The Shopify outbox — every write Mo makes to a Shopify customer.
 //
-// Rows are enqueued by the consent store (consent_update, customer_create) and
-// by the erasure path (consent_update + data_erasure). Each row carries its
+// Rows are enqueued by the consent store (consent_update, customer_create), by
+// the erasure path (consent_update + data_erasure) and by the nightly insight
+// tags (writeback, lib/shopify-insights.ts). Each row carries its
 // TARGET state, so running it twice is harmless. The worker runs right after a
 // change (best-effort, inline) and from /api/cron/shopify-sync every five
 // minutes; failures back off (lib/outbox-core.mjs) until done or dead. A dead
@@ -22,6 +23,7 @@ import { toShopifyConsentInput, customerGid, numericShopifyId } from "./shopify-
 import {
   isShopifyConsentWritebackEnabled,
   isShopifyErasureSyncEnabled,
+  isShopifyInsightsWritebackEnabled,
 } from "./platform-flags.mjs";
 
 interface OutboxRow {
@@ -65,6 +67,18 @@ const DATA_ERASURE = /* GraphQL */ `
       customerId
       userErrors { field message code }
     }
+  }
+`;
+
+const TAGS_ADD = /* GraphQL */ `
+  mutation MoTagsAdd($id: ID!, $tags: [String!]!) {
+    tagsAdd(id: $id, tags: $tags) { userErrors { field message } }
+  }
+`;
+
+const TAGS_REMOVE = /* GraphQL */ `
+  mutation MoTagsRemove($id: ID!, $tags: [String!]!) {
+    tagsRemove(id: $id, tags: $tags) { userErrors { field message } }
   }
 `;
 
@@ -188,9 +202,39 @@ async function runDataErasure(shopifyId: string): Promise<void> {
   assertNoUserErrors(data.customerRequestDataErasure?.userErrors);
 }
 
+/** Mo's insight tags (D-11): add / remove only `mo-` tags, then mirror the result locally. */
+async function runWriteback(sql: Sql, row: OutboxRow): Promise<void> {
+  const shopifyId = row.shopifyCustomerId;
+  if (!shopifyId) throw new PermanentOutboxError("no Shopify id");
+  const onlyMo = (v: unknown) =>
+    Array.isArray(v) ? v.map(String).filter((t) => t.startsWith("mo-")).slice(0, 20) : [];
+  const add = onlyMo(row.payload.add);
+  const remove = onlyMo(row.payload.remove);
+  if (add.length > 0) {
+    const data = await adminGraphql<{ tagsAdd: { userErrors: UserError[] } | null }>(TAGS_ADD, { id: customerGid(shopifyId), tags: add });
+    assertNoUserErrors(data.tagsAdd?.userErrors);
+  }
+  if (remove.length > 0) {
+    const data = await adminGraphql<{ tagsRemove: { userErrors: UserError[] } | null }>(TAGS_REMOVE, {
+      id: customerGid(shopifyId),
+      tags: remove,
+    });
+    assertNoUserErrors(data.tagsRemove?.userErrors);
+  }
+  await sql`
+    UPDATE customers
+       SET shopify_tags = ARRAY(
+             SELECT DISTINCT t FROM unnest(COALESCE(shopify_tags, '{}'::text[]) || ${add}::text[]) t
+              WHERE NOT (t = ANY(${remove}::text[]))
+           )
+     WHERE shopify_customer_id = ${shopifyId}
+  `;
+}
+
 function enabledFor(kind: string): boolean {
   if (kind === "data_erasure") return isShopifyErasureSyncEnabled();
   if (kind === "consent_update" || kind === "customer_create") return isShopifyConsentWritebackEnabled();
+  if (kind === "writeback") return isShopifyInsightsWritebackEnabled();
   return false;
 }
 
@@ -210,6 +254,9 @@ async function runRow(sql: Sql, row: OutboxRow): Promise<void> {
       await runDataErasure(row.shopifyCustomerId);
       return;
     }
+    case "writeback":
+      await runWriteback(sql, row);
+      return;
     default:
       throw new PermanentOutboxError(`unknown kind ${row.kind}`);
   }
@@ -236,7 +283,7 @@ export async function processShopifyOutbox(
     result.disabled = true;
     return result;
   }
-  const kinds = ["consent_update", "customer_create", "data_erasure"].filter(enabledFor);
+  const kinds = ["consent_update", "customer_create", "data_erasure", "writeback"].filter(enabledFor);
   if (kinds.length === 0) {
     result.disabled = true;
     return result;
