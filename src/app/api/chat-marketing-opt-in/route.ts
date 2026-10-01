@@ -241,11 +241,11 @@ export async function POST(req: Request) {
       {
         ok: true,
         marketing: {
-          status: alreadySubscribed ? "confirmed" : capture.marketingDoiStatus,
+          status: capture.subscribedElsewhere ? "confirmed" : capture.marketingDoiStatus,
           doiEmailSent,
           // True when the address was already confirmed (re-opt-in) — no DOI needed.
           alreadyConfirmed:
-            alreadySubscribed || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired),
+            capture.subscribedElsewhere || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired),
         },
       },
       headers

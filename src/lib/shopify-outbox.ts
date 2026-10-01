@@ -3,7 +3,7 @@
 // Rows are enqueued by the consent store (consent_update, customer_create) and
 // by the erasure path (consent_update + data_erasure). Each row carries its
 // TARGET state, so running it twice is harmless. The worker runs right after a
-// change (best-effort, inline) and from /api/cron/shopify-outbox every five
+// change (best-effort, inline) and from /api/cron/shopify-sync every five
 // minutes; failures back off (lib/outbox-core.mjs) until done or dead. A dead
 // row is shown in Einstellungen → Shopify-Abgleich and in the Eingang.
 //
@@ -383,16 +383,23 @@ export async function retryOutboxRow(id: number, sql: Sql | null = getSql()): Pr
   }
 }
 
-/** Enqueue the Shopify side of an erasure (one row: consent off, then the erasure request). */
+/**
+ * Enqueue the Shopify side of an erasure: a consent write (unsubscribed — sent
+ * while SHOPIFY_CONSENT_WRITEBACK is on, so no Shopify mailer keeps writing
+ * even when the erasure itself is not passed on) and the erasure request
+ * (SHOPIFY_ERASURE_SYNC; it switches the consent off again first).
+ */
 export async function enqueueShopifyErasure(
   shopifyCustomerId: string,
   sql: Sql | null = getSql()
 ): Promise<number[]> {
   if (!sql) return [];
   try {
+    const consentOff = JSON.stringify({ state: "unsubscribed", level: null, at: new Date().toISOString() });
     const rows = (await sql`
       INSERT INTO shopify_outbox (kind, shopify_customer_id, payload)
-      VALUES ('data_erasure', ${shopifyCustomerId}, '{}'::jsonb)
+      VALUES ('consent_update', ${shopifyCustomerId}, ${consentOff}::jsonb),
+             ('data_erasure', ${shopifyCustomerId}, '{}'::jsonb)
       RETURNING id
     `) as Array<{ id: number }>;
     return rows.map((r) => Number(r.id));
