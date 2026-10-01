@@ -315,7 +315,9 @@ person clearing 100–200 e-mails a day:
   background job with a progress pill and cancel) and a ⋯ menu (Jetzt
   synchronisieren, Tastenkürzel, Warteschlange neu aufbauen behind the
   ConfirmDialog).
-- **Prüfen — three columns.** The *rail* (global contact search on `/`, filter
+- **Prüfen — three columns.** The *rail* (global contact search on `/` — a
+  suppressed hit shows „Unterdrückt“ and „Reaktivieren“ to lift a mistaken
+  opt-out —, filter
   chips with counts, rows with segment/discount/set/language chips, an edit
   mark and a verdict dot, the Postausgang strip, Übersprungen with
   Wiederherstellen). The *mail column* (identity line, subject inline, the
@@ -336,8 +338,11 @@ person clearing 100–200 e-mails a day:
   Kunden), Kaufhistorie (collapsed, with the recommendation basis; "Letzte 5
   von N Bestellungen" when the snapshot is cut), Kontakt (opt-in, segment,
   last mail + Sperrfrist, A/B group, Umsatz = Shopify lifetime value at the
-  last sync, Verlauf sheet, and a trash icon that deletes the person
-  completely after a confirm — not shown for Testkontakte).
+  last sync, Verlauf sheet, an „Abmelden“ icon (opt-out on request, no
+  e-mail) and a trash icon that deletes the person completely after a
+  confirm — neither shown for Testkontakte). Every rendered mail in the admin
+  has inert recipient links (`adminEmailHtml`), so a click in a preview never
+  unsubscribes anyone.
 - **Nothing blocks the next card.** `S` takes the card out of the queue at
   once and the server answers in the Postausgang; a refused send comes back to
   the top with the server's reason as a blocked Prüfpunkt and a retry. Offer
@@ -395,7 +400,7 @@ link. Six sub-tabs:
 | Profil | the central customer profile: structured facts (Persona, Niveau, Budget-Signal, Ziele, Besitzt, Interessen, Nächste Schritte) above the readable „Kundenverständnis“; kept current nightly, „Neu generieren“ on demand (cost shown) | `customers/profile` |
 | Beratungen | the customer's conversations with the shared `TranscriptView` and „Im Gespräche-Tab öffnen“ | — |
 | Käufe | cached Shopify purchase history, „Käufe aktualisieren“ | `customers/purchases` |
-| Marketing | the personalised marketing e-mail: settings row (Hinweise, Rabatt, Textmodus), editor, preview, approve & send with a confirm that shows recipient, subject and discount; the **Set-Angebot** composer as a side panel | §4, `customers/marketing-draft`, `marketing/*`, `bundles/*`, `catalog/search`, `email-hero/*` |
+| Marketing | **Werbe-Einwilligung** on top (Chat-Newsletter, Shopify-Newsletter (Kampagne), an opt-out with reason and date; „Abmelden“ on request, „Abmeldung aufheben“ for a mistaken unsubscribe — no e-mail is sent, `customers/marketing-optout`), then the personalised marketing e-mail: settings row (Hinweise, Rabatt, Textmodus), editor, preview, approve & send with a confirm that shows recipient, subject and discount; the **Set-Angebot** composer as a side panel | §4, `customers/marketing-draft`, `marketing/*`, `bundles/*`, `catalog/search`, `email-hero/*` |
 | Korrespondenz | sent + received mail threads (lazy body), reply composer with preview | `correspondence/*` |
 | Brief | physical letter: AI draft, preview, „Brief senden“ (gated by `PHYSICAL_MAIL_SENDS_APPROVED`) | `customers/letter-draft`, `customers/letter-preview`, `physical/send` |
 
@@ -1230,6 +1235,7 @@ on failure. Grouped by the screen that calls them.
 | | `POST campaign/skip / unskip / mark-done` | review decisions; `mark-done` closes the copy workflow |
 | | `POST campaign/reset-queue` | rebuild the review queue (destructive, behind confirm) |
 | | `POST campaign/contacts { query }` | global contact search |
+| Kunden, Kampagne | `POST customers/marketing-optout { customerId \| contactId, action: optout \| lift, confirm: true }` | manual opt-out on request / lift a mistaken unsubscribe (no e-mail, audit-logged) |
 | | `GET campaign/test-contacts`, `POST campaign/test-contacts { action: create \| delete, … }` | Testkontakte: list, create (+ draft right away), delete |
 | | `GET campaign/history?q=&from=&to=&delivery=&page=&pageSize=` | paged „Gesendet“ view with delivery + redemption state and code/set expiry; `delivery` = delivered \| clicked \| bounced \| complained \| copy \| expiring (offer ends within 48 h) |
 | | `POST campaign/sent-email { sendId }` | retained content of one send |

@@ -41,6 +41,24 @@ Rules:
   `email_captures`, the same store the unsubscribe flow writes). Suppressed
   addresses are stored as `status='suppressed'`: visible for audit, never
   queued, re-checked again at prepare **and** send time.
+- **Manual control** (`lib/marketing-optout.ts`, `POST /api/admin/customers/marketing-optout`):
+  the operator can opt a person out on request (reason `manual` — the card's
+  „Abmelden“ icon or Kunden → Marketing) and lift an opt-out that was a mistake
+  („Reaktivieren“ on a suppressed hit in the contact search, or „Abmeldung
+  aufheben“ in Kunden → Marketing). Lifting is the exact inverse of the
+  unsubscribe: the block-list row goes, a previously confirmed chat DOI comes
+  back, the 30-day KPI attribution on campaign sends is cleared and the contact
+  returns to `drafted` (draft kept) or `pending`. Only `unsubscribe` / `manual`
+  blocks can be lifted — bounces, spam complaints and erasures stay. Neither
+  direction sends an e-mail; both are audit-logged (`customer.optout`,
+  `customer.optout.lift`). An unsubscribe that came from Shopify is undone in
+  Shopify, then synced.
+- **Admin previews are inert** — every rendered mail the dashboard shows
+  (draft preview, Gesendet viewer, marketing/correspondence/design previews)
+  goes through `adminEmailHtml()`, which points the recipient-action links
+  (`/api/unsubscribe`, `/api/erase-data`, `/api/confirm-marketing`,
+  `/api/r/…`) at `#`. A click in the admin can never unsubscribe, delete or
+  count a click for the real recipient.
 - **Shopify-side unsubscribes** — a contact that dropped out of the
   SUBSCRIBED set is marked `suppressed` on re-sync, never deleted
   mid-campaign (audit trail). A contact who re-subscribed on the Shopify side

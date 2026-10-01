@@ -79,7 +79,7 @@ a **double opt-in** (`marketing_doi_status`).
 | Table              | What's stored                                                                           | Lawful basis                |
 | ------------------ | --------------------------------------------------------------------------------------- | --------------------------- |
 | `email_captures`   | email, transactional/marketing consent flags, DOI status + token, consent copy, unsubscribe time | Explicit consent            |
-| `suppression_list` | email, when, reason (unsubscribe / bounce / complaint / erasure)                        | Legitimate interest (honouring opt-outs) |
+| `suppression_list` | email, when, reason (unsubscribe / manual / bounce / complaint / erasure)               | Legitimate interest (honouring opt-outs) |
 | `marketing_sends`  | drafted/approved/sent marketing message tied to a capture, discount code, order match   | Explicit consent            |
 
 ### Retention windows (Cluster B)
