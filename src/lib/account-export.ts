@@ -28,8 +28,13 @@ export interface CustomerDataExport {
   marketingSends: Array<Record<string, unknown>>;
   bundleOffers: Array<Record<string, unknown>>;
   feedback: Array<Record<string, unknown>>;
-  /** The Kampagne relationship: the synced newsletter contact and the
-   *  campaign mails sent to it (migration 0059 links them to the customer). */
+  /** The one e-mail consent's history (0064): every act with source and time. */
+  consentEvents: Array<Record<string, unknown>>;
+  /** The local copy of the person's Shopify orders (0062). */
+  orders: Array<Record<string, unknown>>;
+  /** The computed figures (0063) — lifecycle, value tier, churn risk, … */
+  facts: Record<string, unknown> | null;
+  /** Campaign participation (0066) and the campaign mails sent. */
   campaign: { contacts: Array<Record<string, unknown>>; sends: Array<Record<string, unknown>> };
   suppression: { marketing: Array<Record<string, unknown>> };
 }
@@ -115,18 +120,38 @@ export async function buildCustomerDataExport(
        ORDER BY created_at DESC LIMIT ${MAX_ROWS}
     `) as Array<Record<string, unknown>>;
 
+    const consentEvents = (await sql`
+      SELECT occurred_at, source, state, level, text_version, note
+        FROM consent_events WHERE customer_id = ${customerId}
+       ORDER BY occurred_at DESC LIMIT ${MAX_ROWS}
+    `) as Array<Record<string, unknown>>;
+
+    const orders = (await sql`
+      SELECT order_name, processed_at, financial_status, fulfillment_status, cancelled_at,
+             currency, total_cents, refunded_cents, discount_codes, line_items
+        FROM customer_orders WHERE customer_id = ${customerId}
+       ORDER BY processed_at DESC LIMIT ${MAX_ROWS}
+    `) as Array<Record<string, unknown>>;
+
+    const factsRows = (await sql`
+      SELECT orders_count, total_spent_cents, first_order_at, last_order_at, lifecycle_segment,
+             value_tier, churn_risk, conversations_count, emails_sent_count, computed_at
+        FROM customer_facts WHERE customer_id = ${customerId}
+    `) as Array<Record<string, unknown>>;
+
     const campaignContacts = (await sql`
-      SELECT email, first_name, last_name, language, opt_in_level, orders_count,
-             total_spent_cents, last_order_at, status, sent_at, created_at
-        FROM campaign_contacts
-       WHERE customer_id = ${customerId} OR email = ${email}
+      SELECT k.name AS campaign, cc.email, cc.first_name, cc.last_name, cc.language,
+             cc.opt_in_level, cc.status, cc.sent_at, cc.added_at, cc.created_at
+        FROM campaign_contacts cc
+        LEFT JOIN campaigns k ON k.id = cc.campaign_id
+       WHERE (cc.customer_id = ${customerId} OR cc.email = ${email}) AND cc.is_test = false
        LIMIT ${MAX_ROWS}
     `) as Array<Record<string, unknown>>;
     const campaignSends = (await sql`
-      SELECT s.subject, s.body_text, s.discount_code, s.sent_at
+      SELECT k.name AS campaign, s.subject, s.body_text, s.discount_code, s.sent_at
         FROM campaign_sends s
-       WHERE s.email = ${email}
-          OR s.contact_id IN (SELECT id FROM campaign_contacts WHERE customer_id = ${customerId})
+        LEFT JOIN campaigns k ON k.id = s.campaign_id
+       WHERE (s.email = ${email} OR s.customer_id = ${customerId}) AND s.is_test = false
        ORDER BY s.sent_at DESC LIMIT ${MAX_ROWS}
     `) as Array<Record<string, unknown>>;
 
@@ -146,6 +171,9 @@ export async function buildCustomerDataExport(
       marketingSends,
       bundleOffers,
       feedback,
+      consentEvents,
+      orders,
+      facts: factsRows[0] ?? null,
       campaign: { contacts: campaignContacts, sends: campaignSends },
       suppression: { marketing: suppMarketing },
     };

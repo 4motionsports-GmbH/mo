@@ -462,7 +462,12 @@ function unsubscribeFooterBase(
 /** Copy for the "Daten löschen" page (/api/erase-data): the confirmation
  *  step (a button — mail scanners open links, so the GET never deletes), the
  *  result and the invalid-link state. */
-export function erasurePageCopy(locale: Locale = "de"): {
+/**
+ * Copy of the "Daten löschen" confirmation page. `includesShop` (the one
+ * erasure, SHOPIFY_ERASURE_SYNC on): the shop customer account is deleted
+ * too, while orders stay in the shop for the statutory retention periods.
+ */
+export function erasurePageCopy(locale: Locale = "de", includesShop = false): {
   confirmHeading: string;
   confirmBody: string;
   confirmButton: string;
@@ -475,8 +480,9 @@ export function erasurePageCopy(locale: Locale = "de"): {
   if (locale === "en") {
     return {
       confirmHeading: "Delete all your data?",
-      confirmBody:
-        "This deletes everything motion sports holds about you: your chats with Mo, your customer profile, our emails and letters to you and your newsletter subscription. It cannot be undone. Your orders in the shop are not affected.",
+      confirmBody: includesShop
+        ? "This deletes everything motion sports holds about you: your chats with Mo, your customer profile, our emails and letters to you, your newsletter subscription and your customer account in the shop. It cannot be undone. Your orders stay stored in the shop for as long as the law requires us to keep them (e.g. for tax purposes)."
+        : "This deletes everything motion sports holds about you: your chats with Mo, your customer profile, our emails and letters to you and your newsletter subscription. It cannot be undone. Your orders in the shop are not affected.",
       confirmButton: "Delete my data permanently",
       doneHeading: "Your data has been deleted",
       doneBody:
@@ -488,8 +494,9 @@ export function erasurePageCopy(locale: Locale = "de"): {
   }
   return {
     confirmHeading: "Alle deine Daten löschen?",
-    confirmBody:
-      "Damit löschen wir alles, was motion sports über dich gespeichert hat: deine Gespräche mit Mo, dein Kundenprofil, unsere E-Mails und Briefe an dich und dein Newsletter-Abo. Das lässt sich nicht rückgängig machen. Deine Bestellungen im Shop sind davon nicht betroffen.",
+    confirmBody: includesShop
+      ? "Damit löschen wir alles, was motion sports über dich gespeichert hat: deine Gespräche mit Mo, dein Kundenprofil, unsere E-Mails und Briefe an dich, dein Newsletter-Abo und dein Kundenkonto im Shop. Das lässt sich nicht rückgängig machen. Deine Bestellungen bleiben im Shop so lange gespeichert, wie das Gesetz es verlangt (z. B. aus steuerlichen Gründen)."
+      : "Damit löschen wir alles, was motion sports über dich gespeichert hat: deine Gespräche mit Mo, dein Kundenprofil, unsere E-Mails und Briefe an dich und dein Newsletter-Abo. Das lässt sich nicht rückgängig machen. Deine Bestellungen im Shop sind davon nicht betroffen.",
     confirmButton: "Meine Daten endgültig löschen",
     doneHeading: "Deine Daten wurden gelöscht",
     doneBody:

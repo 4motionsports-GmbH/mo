@@ -1,4 +1,5 @@
-// "Einstellungen" tab body (server component): everything e-mail — the
+// "Einstellungen" tab body (server component): the Shopify-Abgleich (import,
+// sync health, write-back outbox) and everything e-mail — the
 // registered CODE designs (src/lib/email-designs/registry.ts) with live
 // previews, the per-email-type design selection, the read-only send
 // configuration and the Systemstatus overview (decision D-5, env-derived
@@ -14,12 +15,17 @@ import { isShopifyConfigured } from "@/lib/shopify";
 import { isPingenConfigured } from "@/lib/pingen";
 import { isPhysicalMailSendsApproved } from "@/lib/pingen-flag.mjs";
 import { isCampaignSendsApproved, isSingleOptInAllowed } from "@/lib/campaign-flags.mjs";
+import { getSyncHealth, listSyncRuns } from "@/lib/shopify-sync";
+import { getOutboxStats } from "@/lib/shopify-outbox";
+import { shopifySyncFlags } from "@/lib/shopify-sync-flags";
 import { EmailSettingsWorkspace } from "./lazy";
 import type { SystemStatus } from "./einstellungen/types";
 
 export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
   const designs = listEmailDesignMeta();
-  const selections = dbReady ? await listEmailDesignSelections() : {};
+  const [selections, health, runs, outbox] = dbReady
+    ? await Promise.all([listEmailDesignSelections(), getSyncHealth(), listSyncRuns(8), getOutboxStats()])
+    : [{}, null, [], null];
 
   // Presence checks only — the values never leave the server.
   const systemStatus: SystemStatus = {
@@ -47,6 +53,7 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
         logoOverride: process.env.EMAIL_LOGO_URL ?? null,
       }}
       systemStatus={systemStatus}
+      shopifySync={dbReady ? { health, runs, outbox, flags: shopifySyncFlags() } : null}
     />
   );
 }

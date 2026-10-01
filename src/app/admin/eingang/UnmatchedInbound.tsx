@@ -1,10 +1,10 @@
 "use client";
 
-// "Unmatched inbound" — the ONE global view of the in-admin email client:
-// received messages from an address we don't recognise (customer_id IS NULL)
-// land here so a reply from an unknown sender is never lost. The only action
-// is "assign to customer": it sets customer_id and re-threads, moving the
-// message into that customer's Korrespondenz.
+// E-Mails, die keinem Kunden zugeordnet sind — received messages from an
+// address we don't recognise (customer_id IS NULL), so a reply from an unknown
+// sender is never lost. The only action is „Zuordnen“: pick the person (search
+// by name or e-mail over the whole customer base) — the message moves into
+// that customer's Korrespondenz.
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
@@ -12,23 +12,16 @@ import { Inbox, Paperclip } from "lucide-react";
 import type { UnmatchedInboundMessage } from "@/lib/email-messages-store";
 import { ADMIN_DATE_TIME_PADDED, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { num } from "@/lib/admin-format.mjs";
-import { Button, Disclosure, InfoTip, Select, StatusBadge, toast } from "../ui";
+import { Button, Disclosure, InfoTip, Input, Select, StatusBadge, toast } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 
-export interface AssignTarget {
+interface Hit {
   id: number;
   email: string;
+  name: string | null;
 }
 
-export function UnmatchedInboundQueue({
-  messages,
-  customers,
-}: {
-  messages: UnmatchedInboundMessage[];
-  customers: AssignTarget[];
-}) {
-  if (messages.length === 0) return null;
-
+export function UnmatchedInbound({ messages }: { messages: UnmatchedInboundMessage[] }) {
   return (
     <Disclosure
       defaultOpen
@@ -36,47 +29,63 @@ export function UnmatchedInboundQueue({
       title={
         <span className="inline-flex items-center gap-2">
           <Inbox className="size-4 text-warning" aria-hidden />
-          Nicht zugeordneter Posteingang
+          E-Mails nicht zugeordnet
           <StatusBadge tone="warning">{num(messages.length)}</StatusBadge>
         </span>
       }
       actions={
         <InfoTip>
-          Antworten von Adressen, die zu keinem Kunden passen. Ordne jede einem Kunden zu — sie
-          wandert dann in dessen Korrespondenz-Verlauf.
+          Antworten von Adressen, die zu keinem Kunden passen. Ordne jede einem Kunden zu — sie wandert dann
+          in dessen Korrespondenz-Verlauf.
         </InfoTip>
       }
     >
       <div className="flex flex-col gap-2">
         {messages.map((m) => (
-          <UnmatchedRow key={m.id} message={m} customers={customers} />
+          <UnmatchedRow key={m.id} message={m} />
         ))}
       </div>
     </Disclosure>
   );
 }
 
-function UnmatchedRow({
-  message,
-  customers,
-}: {
-  message: UnmatchedInboundMessage;
-  customers: AssignTarget[];
-}) {
+function UnmatchedRow({ message }: { message: UnmatchedInboundMessage }) {
   const router = useRouter();
-  const [target, setTarget] = React.useState<string>("");
+  const [query, setQuery] = React.useState("");
+  const [hits, setHits] = React.useState<Hit[]>([]);
+  const [target, setTarget] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
-  // A customer whose email matches the sender is the obvious assignment —
-  // pre-select it so the common case is one click.
-  const suggested = customers.find(
-    (c) => c.email.toLowerCase() === message.fromAddress.toLowerCase()
-  );
+  React.useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setHits([]);
+      return;
+    }
+    const controller = new AbortController();
+    const handle = setTimeout(() => {
+      adminFetch<{ items: Array<{ id: number; email: string; name: string | null }> }>(
+        `/api/admin/customers/list?kq=${encodeURIComponent(q)}`,
+        { signal: controller.signal }
+      )
+        .then((json) => {
+          if (controller.signal.aborted) return;
+          const next = json.items.slice(0, 10).map((c) => ({ id: c.id, email: c.email, name: c.name }));
+          setHits(next);
+          setTarget(next[0] ? String(next[0].id) : "");
+        })
+        .catch(() => undefined);
+    }, 300);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
+  }, [query]);
 
   async function onAssign() {
-    const customerId = Number(target || (suggested ? suggested.id : 0));
+    const customerId = Number(target);
     if (!Number.isInteger(customerId) || customerId <= 0) {
-      toast({ variant: "warning", title: "Kein Kunde gewählt", description: "Bitte einen Kunden auswählen." });
+      toast({ variant: "warning", title: "Kein Kunde gewählt", description: "Bitte einen Kunden suchen und auswählen." });
       return;
     }
     setBusy(true);
@@ -92,8 +101,6 @@ function UnmatchedRow({
       setBusy(false);
     }
   }
-
-  const selectId = `unmatched-target-${message.id}`;
 
   return (
     <div className="rounded-md border border-border bg-card px-3 py-2">
@@ -111,27 +118,30 @@ function UnmatchedRow({
           {formatAdmin(message.occurredAt, ADMIN_DATE_TIME_PADDED)}
         </span>
       </div>
-      {message.snippet && (
-        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{message.snippet}</p>
-      )}
+      {message.snippet && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{message.snippet}</p>}
       <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Kunde suchen (Name oder E-Mail)"
+          aria-label="Kunde suchen"
+          className="h-8 max-w-[16rem] text-xs"
+        />
         <Select
-          id={selectId}
-          value={target || (suggested ? String(suggested.id) : "")}
+          value={target}
           onChange={(e) => setTarget(e.target.value)}
-          disabled={busy || customers.length === 0}
+          disabled={busy || hits.length === 0}
           className="h-8 max-w-[18rem] text-xs"
           aria-label="Kunde für die Zuordnung"
         >
-          <option value="">Kunde wählen…</option>
-          {customers.map((c) => (
+          {hits.length === 0 ? <option value="">—</option> : null}
+          {hits.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.email}
-              {suggested && c.id === suggested.id ? " (passende Adresse)" : ""}
+              {c.name ? `${c.name} · ${c.email}` : c.email}
             </option>
           ))}
         </Select>
-        <Button size="sm" onClick={onAssign} loading={busy} disabled={customers.length === 0}>
+        <Button size="sm" onClick={onAssign} loading={busy} disabled={!target}>
           Zuordnen
         </Button>
       </div>

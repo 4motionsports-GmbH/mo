@@ -1,0 +1,71 @@
+// Eingang (server-rendered) — the operator's start of the day: one ranked list
+// of customer signals (lib/customer-signals.mjs via the hourly job) plus the
+// system cards that used to be the Übersicht „Heute“ (drafts per campaign,
+// open Wissen questions, running analyses, Shopify sync trouble, mail that
+// matches no customer) and a compact 30-day strip. Items are decided in the
+// client workspace; nothing here sends. docs/ADMIN_DASHBOARD.md §3.1.
+
+import { listInboxItems, getInboxCounts } from "@/lib/inbox-store";
+import { listCampaigns } from "@/lib/campaigns-store";
+import { getOverviewSnapshot } from "@/lib/admin-overview-store";
+import { listUnmatchedInbound } from "@/lib/email-messages-store";
+import { describeSyncProblems, getSyncHealth } from "@/lib/shopify-sync";
+import { getOutboxStats } from "@/lib/shopify-outbox";
+import { isShopifyCustomerSyncEnabled } from "@/lib/platform-flags.mjs";
+import { EingangWorkspace } from "./lazy";
+import { Callout } from "./ui";
+import type { EingangSystemCards } from "./eingang/types";
+
+export async function EingangTab({
+  dbReady,
+  initialItemId,
+  initialStatus,
+}: {
+  dbReady: boolean;
+  initialItemId: number | null;
+  initialStatus: string | undefined;
+}) {
+  if (!dbReady) {
+    return (
+      <Callout tone="warning">Keine Datenbank konfiguriert (DATABASE_URL) — der Eingang kann nicht geladen werden.</Callout>
+    );
+  }
+  const status = initialStatus === "zurueckgestellt" || initialStatus === "erledigt" ? initialStatus : "offen";
+  const [items, counts, campaigns, snapshot, unmatched, health, outbox] = await Promise.all([
+    listInboxItems({ status, limit: 300 }),
+    getInboxCounts(),
+    listCampaigns(),
+    getOverviewSnapshot({ windowDays: 30, limit: 1 }),
+    listUnmatchedInbound(),
+    getSyncHealth(),
+    getOutboxStats(),
+  ]);
+
+  const syncProblems = describeSyncProblems(health, outbox?.dead ?? 0, { syncEnabled: isShopifyCustomerSyncEnabled() });
+
+  const system: EingangSystemCards = {
+    campaigns: campaigns
+      .filter((c) => c.status === "aktiv" && c.stats.drafted > 0)
+      .map((c) => ({ id: c.id, slug: c.slug, name: c.name, drafted: c.stats.drafted })),
+    qaOpen: snapshot?.qaCounts.open ?? 0,
+    runningReports: snapshot?.running.reports ?? 0,
+    runningImprovementRuns: snapshot?.running.improvementRuns ?? 0,
+    syncProblems,
+    strip: {
+      chats: snapshot?.core ? snapshot.core.chatsByDay.reduce((sum, d) => sum + d.count, 0) : null,
+      campaignMails: snapshot?.campaignActivity.sentInWindow ?? 0,
+      newSubscribers: snapshot?.recentConfirmed.length ?? 0,
+    },
+  };
+
+  return (
+    <EingangWorkspace
+      items={items}
+      counts={counts}
+      status={status}
+      system={system}
+      unmatched={unmatched}
+      initialItemId={initialItemId}
+    />
+  );
+}

@@ -472,6 +472,30 @@ export async function reconcileShopifyCustomers(
   }
 }
 
+/**
+ * What is wrong with the sync, in plain German (the Eingang card); empty =
+ * all good. Thresholds: no webhook for two days, no reconcile for 36 hours.
+ */
+export function describeSyncProblems(
+  health: SyncHealth | null,
+  deadOutbox: number,
+  opts: { syncEnabled: boolean; now?: number }
+): string[] {
+  const now = opts.now ?? Date.now();
+  const out: string[] = [];
+  if (opts.syncEnabled && health) {
+    if (!health.importDone) out.push("Der erste Import des Shopify-Kundenstamms steht noch aus.");
+    if (health.lastWebhookAt && now - new Date(health.lastWebhookAt).getTime() > 2 * 86_400_000) {
+      out.push("Seit über zwei Tagen kam kein Shopify-Webhook an.");
+    }
+    if (health.importDone && (!health.lastReconcileAt || now - new Date(health.lastReconcileAt).getTime() > 1.5 * 86_400_000)) {
+      out.push("Der nächtliche Abgleich ist seit über 36 Stunden nicht durchgelaufen.");
+    }
+  }
+  if (deadOutbox > 0) out.push(`${deadOutbox} Übertragungen an Shopify wurden aufgegeben.`);
+  return out;
+}
+
 /** Sync health for Einstellungen + the Eingang system items. */
 export interface SyncHealth {
   importDone: boolean;

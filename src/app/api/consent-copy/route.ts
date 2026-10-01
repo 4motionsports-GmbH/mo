@@ -1,4 +1,4 @@
-// GET /api/consent-copy[?surface=signin] — canonical consent copy for the widget.
+// GET /api/consent-copy[?surface=signin|chat|erase] — canonical consent copy for the widget.
 //
 // The checkbox labels, the marketing benefit hint, and the pre-composed
 // `consentTextShown` audit string are legally load-bearing (Art. 7 proof of
@@ -34,8 +34,10 @@ import { errorResponse, reportError } from "@/lib/observability";
 import {
   captureConsentCopy,
   chatGateMarketingConsentCopy,
+  erasurePageCopy,
   signInMarketingConsentCopy,
 } from "@/lib/consent-copy";
+import { isShopifyErasureSyncEnabled } from "@/lib/platform-flags.mjs";
 import { resolveLocale } from "@/lib/locale";
 
 export const maxDuration = 10;
@@ -60,12 +62,17 @@ export async function GET(req: Request) {
     // /en requests ?locale=en so the form, the audit string, and the version
     // stamp all match the language the user will be shown.
     const locale = resolveLocale(req);
+    // surface=erase: the "Meine Daten löschen" confirmation the widget shows
+    // (the same wording as the mail-link page; mentions the shop account
+    // when the one erasure reaches Shopify).
     const copy =
       surface === "signin"
         ? signInMarketingConsentCopy(locale)
         : surface === "chat"
           ? chatGateMarketingConsentCopy(locale)
-          : captureConsentCopy(locale);
+          : surface === "erase"
+            ? erasurePageCopy(locale, isShopifyErasureSyncEnabled())
+            : captureConsentCopy(locale);
 
     // Short cache only: a lawyer copy change must propagate to live widgets
     // quickly, since the served strings ARE the audit-trail text.
