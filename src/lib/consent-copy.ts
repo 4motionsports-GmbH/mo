@@ -190,20 +190,6 @@ export function signInMarketingConsentCopy(
 }
 
 /**
- * The exact copy the widget needs to render the CHAT CONSENT GATE (v4): an
- * anonymous typed-email, MARKETING-ONLY signup shown once per session after
- * the user's first chat message. Same shape as the sign-in surface — the only
- * differences are the strings (worded for a typed email instead of the stored
- * account address) and the submit endpoint (POST /api/chat-marketing-opt-in).
- *
- * Button-consent mechanic (lawyer-approved July 2026), same as sign-in: the
- * served `marketingLabel` + `consentFooter` are fully visible; the explicit
- * "Ja, Angebote aktivieren" tap is the affirmative act (nothing pre-selected,
- * decline equally reachable). The `headline` is benefit framing — it sells
- * personalised offers and exclusive discount promotions — and is NOT part of
- * the `consentTextShown` audit string (label + footer only).
- */
-/**
  * The sign-in-first path of the chat consent gate (UI chrome, NOT consent
  * text — never part of consentTextShown). Since the one consent
  * (docs/CUSTOMER_PLATFORM_PLAN.md §7), the gate leads with "sign in with your
@@ -245,6 +231,20 @@ export function chatGateSignInHint(locale: Locale = "de"): ChatGateSignInHint {
   };
 }
 
+/**
+ * The exact copy the widget needs to render the CHAT CONSENT GATE (v4): an
+ * anonymous typed-email, MARKETING-ONLY signup shown once per session after
+ * the user's first chat message. Same shape as the sign-in surface — the only
+ * differences are the strings (worded for a typed email instead of the stored
+ * account address) and the submit endpoint (POST /api/chat-marketing-opt-in).
+ *
+ * Button-consent mechanic (lawyer-approved July 2026), same as sign-in: the
+ * served `marketingLabel` + `consentFooter` are fully visible; the explicit
+ * "Ja, Angebote aktivieren" tap is the affirmative act (nothing pre-selected,
+ * decline equally reachable). The `headline` is benefit framing — it sells
+ * personalised offers and exclusive discount promotions — and is NOT part of
+ * the `consentTextShown` audit string (label + footer only).
+ */
 export function chatGateMarketingConsentCopy(
   locale: Locale = "de"
 ): SignInMarketingConsentCopy & { signIn: ChatGateSignInHint } {
@@ -459,13 +459,13 @@ function unsubscribeFooterBase(
   return { text, html };
 }
 
-/** Copy for the "Daten löschen" page (/api/erase-data): the confirmation
- *  step (a button — mail scanners open links, so the GET never deletes), the
- *  result and the invalid-link state. */
 /**
- * Copy of the "Daten löschen" confirmation page. `includesShop` (the one
- * erasure, SHOPIFY_ERASURE_SYNC on): the shop customer account is deleted
- * too, while orders stay in the shop for the statutory retention periods.
+ * Copy for the "Daten löschen" page (/api/erase-data) and the widget's erase
+ * confirmation (/api/consent-copy?surface=erase): the confirmation step (a
+ * button — mail scanners open links, so the GET never deletes), the result and
+ * the invalid-link state. `includesShop` (the one erasure, SHOPIFY_ERASURE_SYNC
+ * on): the shop customer account is deleted too, while orders stay in the
+ * shop for the statutory retention periods.
  */
 export function erasurePageCopy(locale: Locale = "de", includesShop = false): {
   confirmHeading: string;
