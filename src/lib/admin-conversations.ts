@@ -85,6 +85,8 @@ export interface AdminConversationDetail {
   lastActivityAt: string;
   status: string;
   tier: AdminTier;
+  /** The linked customer's id, for „Kunde öffnen“ (navigation only — no identity value). */
+  customerId: number | null;
   personaLabel: string | null;
   messageCount: number;
   transcript: AdminTranscriptTurn[];
@@ -485,7 +487,8 @@ export async function getAdminConversationDetail(
              c.analysis_model, c.analysis_input_tokens, c.analysis_output_tokens,
              c.analysis_updated_at,
              (cu.shopify_customer_id IS NOT NULL OR cul.shopify_customer_id IS NOT NULL) AS signed_in,
-             (c.customer_id IS NOT NULL OR csl.customer_id IS NOT NULL) AS identified
+             (c.customer_id IS NOT NULL OR csl.customer_id IS NOT NULL) AS identified,
+             COALESCE(c.customer_id, csl.customer_id) AS linked_customer_id
         FROM conversations c
         LEFT JOIN customers cu ON cu.id = c.customer_id
         LEFT JOIN customer_session_links csl ON csl.session_id = c.session_id
@@ -493,6 +496,7 @@ export async function getAdminConversationDetail(
        WHERE c.id = ${conversationId}
     `) as Array<
       ListRow & {
+        linked_customer_id: number | string | null;
         last_activity_at: unknown;
         status: string;
         selected_product_ids: string[] | null;
@@ -539,6 +543,7 @@ export async function getAdminConversationDetail(
       lastActivityAt: toIso(meta.last_activity_at),
       status: meta.status,
       tier: classifyTier({ signedIn: meta.signed_in, identified: meta.identified }),
+      customerId: meta.linked_customer_id != null ? Number(meta.linked_customer_id) : null,
       personaLabel: meta.persona_label ?? null,
       messageCount: transcript.length,
       transcript,

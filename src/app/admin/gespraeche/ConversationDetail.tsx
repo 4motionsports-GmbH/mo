@@ -7,11 +7,13 @@
 // /api/admin/conversations/analyze (same payloads as before).
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MessagesSquare, Sparkles } from "lucide-react";
+import { MessagesSquare, Sparkles, UserRound } from "lucide-react";
 import type { AdminConversationDetail } from "@/lib/admin-conversations";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { eur, num, plural } from "@/lib/admin-format.mjs";
+import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
   Button,
   Callout,
@@ -22,6 +24,7 @@ import {
   Skeleton,
   StatusBadge,
   TranscriptView,
+  buttonVariants,
   toast,
 } from "../ui";
 import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
@@ -167,6 +170,14 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
             {plural(detail.messageCount, "Nachricht", "Nachrichten")} · {detail.status}
           </span>
           <span className="ml-auto text-2xs text-muted-foreground">#{detail.id}</span>
+          {detail.customerId != null && (
+            <Link
+              href={adminTabHref("kunden", { customer: String(detail.customerId) })}
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              <UserRound /> Kunde öffnen
+            </Link>
+          )}
         </div>
 
         <OutcomeChips item={detail.outcomes} size="md" interactive />
