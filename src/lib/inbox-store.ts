@@ -188,14 +188,16 @@ export async function getInboxItem(id: number, sql: Sql | null = getSql()): Prom
 
 export type InboxDecision = "erledigt" | "verworfen" | "zurueckgestellt" | "wieder_offen";
 
-/** Record the operator's decision. Snoozing needs `snoozeDays`. */
+export type DecideInboxResult = { ok: true; item: InboxItem } | { ok: false; reason: "not_found" | "db" };
+
+/** Record the operator's decision. Snoozing needs `snoozeDays`. Never throws. */
 export async function decideInboxItem(
   id: number,
   decision: InboxDecision,
   opts: { note?: string | null; action?: string | null; snoozeDays?: number } = {},
   sql: Sql | null = getSql()
-): Promise<InboxItem | null> {
-  if (!sql) return null;
+): Promise<DecideInboxResult> {
+  if (!sql) return { ok: false, reason: "db" };
   try {
     const status: InboxStatus =
       decision === "wieder_offen" ? "offen" : decision === "zurueckgestellt" ? "zurueckgestellt" : decision;
@@ -214,10 +216,12 @@ export async function decideInboxItem(
        WHERE id = ${id}
       RETURNING id
     `) as Array<{ id: number }>;
-    return rows[0] ? await getInboxItem(id, sql) : null;
+    if (!rows[0]) return { ok: false, reason: "not_found" };
+    const item = await getInboxItem(id, sql);
+    return item ? { ok: true, item } : { ok: false, reason: "db" };
   } catch (err) {
     reportError(err, { route: "lib/inbox-store", phase: "decideInboxItem" });
-    return null;
+    return { ok: false, reason: "db" };
   }
 }
 
@@ -247,7 +251,6 @@ export interface InboxCounts {
   byKind: Record<string, number>;
 }
 
-/** Badge + chips. Snoozed items whose time has come re-open here. */
 /**
  * Snoozed items whose time is up become open again. Called by the Eingang
  * screen before it lists and by the hourly inbox cron — never on the read
