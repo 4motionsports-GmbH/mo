@@ -29,6 +29,7 @@ import { listCustomerOrders, type LedgerOrder } from "./customer-orders-store";
 import { listCampaignParticipation, type CampaignParticipation } from "./campaigns-store";
 import { buildCustomerTimeline, type TimelineEntry } from "./customer-timeline.mjs";
 import { aiProfileScope, mayBuildAiProfile } from "./platform-flags.mjs";
+import { getProductsByIds } from "./product-catalog";
 
 export interface CustomerDetailTranscriptTurn {
   role: "user" | "assistant" | "system" | "tool";
@@ -118,6 +119,8 @@ export interface CustomerDetail {
   postalObjectionAt: string | null;
   /** The computed figures (customer_facts), or null before the first run. */
   figures: CustomerFigures | null;
+  /** „Wahrscheinlich als Nächstes“ — accessories of what the person owns (facts' complement handles). */
+  nextLikely: Array<{ id: string; name: string; price: number }>;
   /** The local order ledger (newest first) + the total count. */
   orders: LedgerOrder[];
   ordersTotal: number;
@@ -179,6 +182,13 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
     ]);
   const physical = physicalEligibilityForCustomer(c);
   const blockReason = figures?.blockReason ?? null;
+  const nextLikely = figures?.complementHandles.length
+    ? (await getProductsByIds(figures.complementHandles.slice(0, 4)).catch(() => [])).map((p) => ({
+        id: p.id,
+        name: p.name,
+        price: p.salePrice ?? p.price,
+      }))
+    : [];
   const consentHistory = consentEvents.map((e) => ({
     id: e.id,
     occurredAt: e.occurredAt,
@@ -233,6 +243,7 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
     profileObjectionAt: c.profileObjectionAt,
     postalObjectionAt: c.postalObjectionAt,
     figures,
+    nextLikely,
     orders: ledger.orders,
     ordersTotal: ledger.total,
     campaigns,
