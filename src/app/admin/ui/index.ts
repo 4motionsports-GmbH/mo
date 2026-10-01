@@ -20,6 +20,7 @@ export { Field, type FieldProps } from "./field";
 export { Select } from "./select";
 export { Checkbox, type CheckboxProps } from "./checkbox";
 export { SegmentedControl, type SegmentedControlProps, type SegmentedOption } from "./segmented-control";
+export { ToggleChips, type ToggleChipsProps, type ToggleChipOption } from "./toggle-chips";
 export { Badge, type BadgeProps } from "./badge";
 export { StatusBadge, type StatusBadgeProps, type StatusTone } from "./status-badge";
 export {

@@ -355,7 +355,11 @@ export async function loadCampaignPersonalization(
   email: string,
   selectedProductIds?: string[] | null,
   strategyOverride?: RecommendationStrategy | null,
-  profileData?: CustomerProfileData | null
+  profileData?: CustomerProfileData | null,
+  /** The purchase history from the local order ledger (0062) when the
+   * customer is mirrored — saves the per-draft Shopify read. Undefined = read
+   * it from Shopify by e-mail (test contacts, not yet mirrored people). */
+  preloadedHistory?: OrderHistory | null
 ): Promise<{
   history: OrderHistory | null;
   purchaseSummary: CampaignPurchaseSummary | null;
@@ -363,7 +367,7 @@ export async function loadCampaignPersonalization(
   lifecycle: CampaignLifecycleFacts;
   segment: CampaignSegment;
 }> {
-  const history = await fetchOrderHistoryByEmail(email);
+  const history = preloadedHistory !== undefined ? preloadedHistory : await fetchOrderHistoryByEmail(email);
   // The segment falls out of the SAME history read — resolving it here keeps
   // the Shopify call at exactly one per draft.
   const catalog = await loadProductCatalog();

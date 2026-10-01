@@ -1,11 +1,12 @@
-// GET  /api/admin/campaign/test-contacts            → { contacts: [...] }
+// GET  /api/admin/campaign/test-contacts?campaignId=  → { contacts: [...] }
 // POST /api/admin/campaign/test-contacts
-//   { action: "create", email, firstName?, language?, sourceEmail?,
+//   { action: "create", campaignId, email, firstName?, language?, sourceEmail?,
 //     discountPercent?, textMode? }                 → { contact, drafted }
 //   { action: "delete", contactId }                 → { ok: true }
 //
 // Testkontakte for the Kampagne desk (migration 0057, docs/CAMPAIGNS.md §5):
-// the operator's own inboxes as campaign contacts that survive every send.
+// the operator's own inboxes as recipients of ONE campaign (0066 — they see
+// its briefing and offer) that survive every send.
 // "create" also drafts the contact right away (with the desk's Vorbereiten
 // settings, optionally borrowing a real customer's purchase history), so the
 // card appears in the queue in one step. Everything a test send does is real —
@@ -44,10 +45,14 @@ function contactPayload(hit: { contact: { id: number; email: string; firstName: 
   };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const blocked = await guardAdminGet();
   if (blocked) return blocked;
-  const contacts = await listTestContacts();
+  const campaignId = Number(new URL(req.url).searchParams.get("campaignId"));
+  if (!Number.isInteger(campaignId) || campaignId <= 0) {
+    return adminJsonError("bad_request", "campaignId required", 400);
+  }
+  const contacts = await listTestContacts(campaignId);
   return adminJson({ contacts: contacts.map(contactPayload) });
 }
 
@@ -60,6 +65,7 @@ export async function POST(req: Request) {
 
   let body: {
     action?: unknown;
+    campaignId?: unknown;
     contactId?: unknown;
     email?: unknown;
     firstName?: unknown;
@@ -92,6 +98,10 @@ export async function POST(req: Request) {
   if (body.action !== "create") {
     return adminJsonError("bad_request", "action must be create or delete", 400);
   }
+  const campaignId = Number(body.campaignId);
+  if (!Number.isInteger(campaignId) || campaignId <= 0) {
+    return adminJsonError("bad_request", "campaignId required", 400);
+  }
   const email = String(body.email ?? "").trim().toLowerCase();
   if (!EMAIL_RE.test(email)) {
     return adminJsonError("bad_request", "Bitte eine gültige E-Mail-Adresse angeben.", 400);
@@ -117,6 +127,7 @@ export async function POST(req: Request) {
 
   try {
     const contact = await createTestContact({
+      campaignId,
       email,
       firstName,
       lastName: null,
@@ -137,7 +148,7 @@ export async function POST(req: Request) {
     } catch (err) {
       reportError(err, { route: "api/admin/campaign/test-contacts", phase: "draft" });
     }
-    const hits = await listTestContacts();
+    const hits = await listTestContacts(campaignId);
     const hit = hits.find((h) => h.contact.id === contact.id);
     return adminJson({
       contact: hit ? contactPayload(hit) : contactPayload({ contact, hasDraft: drafted }),

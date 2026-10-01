@@ -41,10 +41,10 @@ export const ADMIN_TABS = Object.freeze([
   },
   {
     key: "kampagne",
-    label: "Kampagne",
+    label: "Kampagnen",
     group: "Arbeit",
     description:
-      "Personalisierte E-Mails an Shopify-Marketing-Abonnent:innen — prüfen, anpassen, senden.",
+      "Kampagnen planen und personalisierte E-Mails an Kund:innen mit Einwilligung prüfen, anpassen, senden.",
     wide: true,
     shortcut: "2",
   },
@@ -124,7 +124,7 @@ export const ADMIN_TABS = Object.freeze([
 export const ADMIN_TAB_KEYS = Object.freeze(ADMIN_TABS.map((t) => t.key));
 
 /** Legacy `?tab=` values that still resolve to a screen. */
-const TAB_ALIASES = Object.freeze({ customers: "kunden", marketing: "kunden" });
+const TAB_ALIASES = Object.freeze({ customers: "kunden", marketing: "kunden", kampagnen: "kampagne" });
 
 const DEFAULT_ADMIN_TAB = "overview";
 

@@ -86,11 +86,14 @@ function DeliveryStrip({ summary }: { summary: CampaignSentSummaryProps }) {
 }
 
 export function SentHistory({
+  campaignId,
   initialTotal,
   summary,
   viewBusy,
   onView,
 }: {
+  /** One campaign's sends (0066). */
+  campaignId: number;
   initialTotal: number;
   summary: CampaignSentSummaryProps | null;
   viewBusy: boolean;
@@ -115,7 +118,7 @@ export function SentHistory({
   React.useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    const sp = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    const sp = new URLSearchParams({ page: String(page), pageSize: String(pageSize), campaignId: String(campaignId) });
     if (debounced) sp.set("q", debounced);
     if (from) sp.set("from", from);
     if (to) sp.set("to", to);
@@ -133,7 +136,7 @@ export function SentHistory({
         setLoading(false);
       });
     return () => controller.abort();
-  }, [debounced, from, to, delivery, page, pageSize]);
+  }, [debounced, from, to, delivery, page, pageSize, campaignId]);
 
   const activeFilters = (debounced ? 1 : 0) + (from ? 1 : 0) + (to ? 1 : 0) + (delivery !== "all" ? 1 : 0);
   const total = data?.total ?? initialTotal;

@@ -64,6 +64,12 @@ export type AiCallSite =
   | "improvement"
   | "embeddings"
   | "bundle_suggestions"
+  // Kampagnen wizard (docs/CAMPAIGNS.md §2): "Zielgruppe beschreiben" and the
+  // briefing suggestion. Dashboard/admin-side spend (no conversation FK).
+  | "campaign_assist"
+  // Eingang (docs/ADMIN_DASHBOARD.md §3.1): the AI suggestion per inbox item.
+  // Dashboard/admin-side spend (no conversation FK).
+  | "inbox_suggestion"
   // Text-to-speech for voice mode (/api/tts). NB: for this call site the
   // input_tokens column carries CHARACTERS synthesized (not LLM tokens) and
   // output_tokens is 0 — OpenAI TTS is billed per character of input, and its

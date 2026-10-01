@@ -2,17 +2,21 @@
 // queue is instant: read → tweak → send/copy → next.
 //
 // Shared by POST /api/admin/campaign/prepare (batch over the next N pending
-// contacts) and POST /api/admin/campaign/draft (single regenerate / depth
-// change). Per contact: re-check suppression (fail-closed), read the order
-// history from Shopify AT DRAFT TIME, pick recommendations, generate the AI
-// draft around the PLACEHOLDER code (MO-XXXX) + projected expiry, and persist.
-// Resilient: a per-contact failure marks that contact 'draft_failed' and the
-// batch continues.
-//
-// Generation costs API money — there is deliberately NO cron that calls this;
-// the admin triggers "Prepare next 50" explicitly.
+// recipients of ONE campaign), POST /api/admin/campaign/draft (single
+// regenerate / depth change) and the nightly auto-prepare of campaigns that
+// opted in (auto_prepare_per_day, bounded by CAMPAIGN_AUTO_PREPARE_COUNT).
+// Per recipient: re-check block + consent (fail-closed), read the purchase
+// history from the local order ledger (Shopify only for people not mirrored
+// yet), pick recommendations, generate the AI draft around the PLACEHOLDER
+// code (MO-XXXX) + projected expiry with the campaign's briefing, and
+// persist. Resilient: a per-recipient failure marks that row 'draft_failed'
+// and the batch continues.
 
 import { isSuppressed } from "./email-capture-store";
+import { getCampaignForContact, getCampaign, type Campaign } from "./campaigns-store";
+import { campaignDiscountExpiry } from "./campaign-def.mjs";
+import { formatAdmin, ADMIN_DATE } from "./admin-datetime.mjs";
+import { loadPurchaseHistory } from "./customer-orders-store";
 import {
   PLACEHOLDER_DISCOUNT_CODE,
   discountExpiryDaysPublic,
@@ -32,8 +36,8 @@ import {
   getDraftForContact,
   listNextPendingContacts,
   markContactDraftFailed,
+  markContactSuppressed,
   saveCampaignDraft,
-  upsertCampaignContact,
   type CampaignContactRow,
   type CampaignDraftRow,
 } from "./campaign-store";
@@ -51,10 +55,20 @@ async function profileCustomerFor(contact: CampaignContactRow): Promise<Customer
 }
 
 /** Projected expiry the real MK- code will get, for the preview (same rule as
- * the marketing draft route: the send step swaps in the real date if they
- * drift apart). */
-function projectedExpiry(): Date {
-  return new Date(Date.now() + discountExpiryDaysPublic() * 86_400_000);
+ * the send step, which swaps in the real date if they drift apart): an
+ * Aktion's end date, else the usual validity. */
+function projectedExpiry(campaign: Campaign | null): Date {
+  return new Date(
+    campaignDiscountExpiry(
+      { discountValidUntil: campaign?.discountValidUntil ?? null },
+      discountExpiryDaysPublic()
+    )
+  );
+}
+
+/** Whole days between now and an expiry (the "gültig N Tage" the prose may state). */
+function daysUntil(d: Date): number {
+  return Math.max(1, Math.round((d.getTime() - Date.now()) / 86_400_000));
 }
 
 export interface PrepareDraftOptions {
@@ -115,13 +129,20 @@ export async function prepareDraftForContact(
   // is realistic (0057); everything else about the draft is the test address.
   // The central customer profile (migration 0059) steers both the product
   // picks and the prose.
-  const profileCustomer = await profileCustomerFor(contact);
+  const loadedCustomer = await profileCustomerFor(contact);
+  // An Art. 21 objection to profiling: no AI profile is read for the mail.
+  const profileCustomer = loadedCustomer?.profileObjectionAt ? null : loadedCustomer;
+  const campaign = await getCampaignForContact(contact.id);
+  // The purchase history comes from the local order ledger once the person
+  // is mirrored; a Testkontakt without a mirrored source reads Shopify.
+  const preloaded = loadedCustomer ? await loadPurchaseHistory(loadedCustomer) : undefined;
   const { history, purchaseSummary, recommendations, segment } =
     await loadCampaignPersonalization(
       contact.testSourceEmail ?? contact.email,
       purchaseSelection,
       null,
-      profileCustomer?.profileData ?? null
+      profileCustomer?.profileData ?? null,
+      preloaded ?? undefined
     );
 
   // Which products the email recommends: preserve the draft's stored list
@@ -178,7 +199,7 @@ export async function prepareDraftForContact(
   }
 
   const hasDiscount = discountPercent > 0;
-  const expiry = hasDiscount ? projectedExpiry() : null;
+  const expiry = hasDiscount ? projectedExpiry(campaign) : null;
 
   // An attached (active) bundle offer is referenced NATURALLY in the prose;
   // the deterministic offer block itself is appended at send time
@@ -212,6 +233,15 @@ export async function prepareDraftForContact(
   const draft = await generateCampaignDraft({
     language: contact.language,
     firstName: contact.firstName,
+    campaign: campaign
+      ? {
+          name: campaign.name,
+          kind: campaign.kind,
+          brief: campaign.brief,
+          endsLabel: campaign.endsAt ? formatAdmin(campaign.endsAt, ADMIN_DATE) : null,
+        }
+      : null,
+    adminNote: contact.adminNote,
     purchaseSummary,
     focusPurchaseTitles,
     recommendations: recommendedProducts.map((p) => ({
@@ -242,7 +272,7 @@ export async function prepareDraftForContact(
     discountExpiresLabel: expiry
       ? formatExpiryDateForLanguage(expiry, contact.language)
       : null,
-    discountValidityDays: hasDiscount ? discountExpiryDaysPublic() : null,
+    discountValidityDays: expiry ? daysUntil(expiry) : null,
   });
 
   return saveCampaignDraft({
@@ -276,19 +306,43 @@ export interface PrepareBatchResult {
   preparedContactIds: number[];
 }
 
+/** Is the address blocked or without the one consent? (fail-closed) */
+async function blockedForMarketing(contact: CampaignContactRow): Promise<string | null> {
+  if (await isSuppressed(contact.email)) return "gesperrt";
+  if (contact.isTest || contact.customerId == null) return null;
+  const customer = await getCustomerById(contact.customerId);
+  if (!customer) return "kein_kunde";
+  return customer.emailConsentState === "subscribed" ? null : "keine_einwilligung";
+}
+
+export interface PrepareBatchInput {
+  campaignId: number;
+  count: number;
+  /** Overrides of the campaign's offer defaults (the Vorbereiten popover). */
+  discountPercent?: number;
+  textMode?: EmailTextMode;
+  discountScope?: DiscountScope;
+  concurrency?: number;
+}
+
 /**
- * Prepare drafts for the next `count` pending contacts, sequentially with
- * modest concurrency. Never throws — per-contact failures are recorded
- * ('draft_failed') and the run continues.
+ * Prepare drafts for the next `count` pending recipients of one campaign,
+ * with modest concurrency. Never throws — per-recipient failures are recorded
+ * ('draft_failed') and the run continues. A campaign that is not active (or
+ * whose end passed) prepares nothing.
  */
-export async function prepareNextDrafts(
-  count: number,
-  discountPercent: number,
-  textMode: EmailTextMode = DEFAULT_EMAIL_TEXT_MODE,
-  discountScope: DiscountScope = DEFAULT_DISCOUNT_SCOPE,
-  concurrency = 3
-): Promise<PrepareBatchResult> {
-  const contacts = await listNextPendingContacts(count);
+export async function prepareNextDrafts(input: PrepareBatchInput): Promise<PrepareBatchResult & { campaignClosed?: boolean }> {
+  const { count } = input;
+  const campaign = await getCampaign(input.campaignId);
+  const empty = { requested: count, prepared: 0, failed: 0, suppressed: 0, exhausted: true, preparedContactIds: [] };
+  if (!campaign || campaign.status !== "aktiv" || (campaign.endsAt && new Date(campaign.endsAt) <= new Date())) {
+    return { ...empty, campaignClosed: true };
+  }
+  const discountPercent = input.discountPercent ?? campaign.discountPercent;
+  const textMode = input.textMode ?? campaign.textMode ?? DEFAULT_EMAIL_TEXT_MODE;
+  const discountScope = input.discountScope ?? campaign.discountScope ?? DEFAULT_DISCOUNT_SCOPE;
+  const concurrency = input.concurrency ?? 3;
+  const contacts = await listNextPendingContacts(campaign.id, count, { windowed: campaign.kind === "laufend" });
   const result: PrepareBatchResult = {
     requested: count,
     prepared: 0,
@@ -303,21 +357,12 @@ export async function prepareNextDrafts(
     while (cursor < contacts.length) {
       const contact = contacts[cursor++];
       try {
-        // Suppression re-check at prepare time (fail-closed): a contact whose
-        // address opted out since the last sync is marked and never drafted.
-        if (await isSuppressed(contact.email)) {
-          await upsertCampaignContact({
-            shopifyCustomerId: contact.shopifyCustomerId,
-            email: contact.email,
-            firstName: contact.firstName,
-            lastName: contact.lastName,
-            language: contact.language,
-            optInLevel: contact.optInLevel ?? "UNKNOWN",
-            consentUpdatedAt: contact.consentUpdatedAt,
-            ordersCount: contact.ordersCount,
-            totalSpentCents: contact.totalSpentCents,
-            status: "suppressed",
-          });
+        // Block + consent re-check at prepare time (fail-closed): a person
+        // who opted out or got blocked since the last refresh is marked and
+        // never drafted.
+        const blocked = await blockedForMarketing(contact);
+        if (blocked) {
+          await markContactSuppressed(contact.id, blocked);
           result.suppressed++;
           continue;
         }

@@ -7,7 +7,9 @@
 // text carries the placeholder, which the UI warns about).
 //
 // Deliberately NOT gated by CAMPAIGN_SENDS_APPROVED: nothing is delivered by
-// the system here — the flag gates system sends, Copy always works.
+// the system here — the flag gates system sends. The PERSON is gated though
+// (0066): a copied text still becomes a marketing mail, so the one consent and
+// the block list apply exactly as on the send path.
 //
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 
@@ -21,6 +23,8 @@ import {
   resetTestContactAfterSend,
 } from "@/lib/campaign-store";
 import { emailProseToText } from "@/lib/email-prose.mjs";
+import { isSuppressed } from "@/lib/email-capture-store";
+import { getCustomerById } from "@/lib/customer-store";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 10;
@@ -50,6 +54,17 @@ export async function POST(req: Request) {
         "Contact has no reviewable draft (already sent or skipped?).",
         409
       );
+    }
+
+    if (!contact.isTest) {
+      const person = contact.customerId != null ? await getCustomerById(contact.customerId) : null;
+      if (!person || person.emailConsentState !== "subscribed" || (await isSuppressed(person.email))) {
+        return adminJsonError(
+          "not_eligible",
+          "Für diese Person liegt keine Einwilligung in E-Mail-Werbung vor oder die Adresse ist gesperrt.",
+          409
+        );
+      }
     }
 
     // Flip FIRST (double-send-proof guard), then append the audit record. A

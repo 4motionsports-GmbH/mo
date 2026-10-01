@@ -158,7 +158,9 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
         title={items.length === 0 ? "Keine Entwürfe in der Warteschlange" : "Nichts in diesem Filter"}
         description={
           items.length === 0
-            ? "„Vorbereiten…“ erzeugt die Entwürfe der nächsten offenen Kontakte, „Jetzt synchronisieren“ holt die Shopify-Abonnent:innen — oder über die Kontaktsuche links eine:n einzelne:n Kund:in aufnehmen."
+            ? props.campaign.kind === "einzel"
+              ? "Einzelne Kund:innen kommen über „Einzelansprache“ in Kunden oder über einen Vorschlag im Eingang hierher."
+              : "„Vorbereiten…“ erzeugt die Entwürfe der nächsten offenen Empfänger:innen, „Zielgruppe aktualisieren“ gleicht die Kundenbasis ab."
             : "Einen anderen Filter wählen oder „Alle“."
         }
         action={
@@ -167,15 +169,17 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
               <Button size="sm" onClick={() => setPrepareOpen(true)} disabled={a.jobBusy !== null}>
                 <Sparkles /> Vorbereiten…
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={a.sync}
-                loading={a.jobBusy === "sync"}
-                disabled={a.jobBusy !== null || !shopifyConfigured}
-              >
-                <RefreshCw /> Jetzt synchronisieren
-              </Button>
+              {props.campaign.kind !== "einzel" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={a.sync}
+                  loading={a.jobBusy === "sync"}
+                  disabled={a.jobBusy !== null}
+                >
+                  <RefreshCw /> Zielgruppe aktualisieren
+                </Button>
+              )}
             </div>
           ) : (
             <Button variant="outline" size="sm" onClick={() => a.setFilter("all")}>
@@ -190,6 +194,8 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
   return (
     <div className="flex flex-col gap-3">
       <CampaignHeader
+        campaign={props.campaign}
+        campaigns={props.campaigns}
         counts={a.counts}
         progress={a.progress}
         queueSize={items.length}
@@ -217,7 +223,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
       />
 
       {view === "gesendet" ? (
-        <SentHistory initialTotal={a.counts.sentTotal} summary={sentSummary} viewBusy={a.emailViewBusy} onView={a.viewSent} />
+        <SentHistory campaignId={props.campaign.id} initialTotal={a.counts.sentTotal} summary={sentSummary} viewBusy={a.emailViewBusy} onView={a.viewSent} />
       ) : view === "liste" ? (
         <ListView
           items={items}
@@ -242,6 +248,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
         >
           {!focusMode && (
             <QueueRail
+              campaignId={props.campaign.id}
               items={visibleItems}
               currentContactId={currentId}
               filter={a.filter}
@@ -333,6 +340,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
       )}
 
       <TestContactsSheet
+        campaignId={props.campaign.id}
         open={testOpen}
         onOpenChange={setTestOpen}
         queueIds={items.map((it) => it.contactId)}

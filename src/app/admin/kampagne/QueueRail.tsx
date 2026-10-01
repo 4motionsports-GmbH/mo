@@ -55,6 +55,7 @@ function rowChips(it: CampaignQueueItemProps): string[] {
 }
 
 export function QueueRail({
+  campaignId,
   items,
   currentContactId,
   filter,
@@ -72,6 +73,8 @@ export function QueueRail({
   onRetrySend,
   onDismissOutbox,
 }: {
+  /** The search stays inside this campaign's recipients (0066). */
+  campaignId: number;
   items: CampaignQueueItemProps[];
   currentContactId: number | null;
   filter: QueueFilter;
@@ -126,7 +129,7 @@ export function QueueRail({
       try {
         const json = await adminFetch<{ contacts?: CampaignContactHit[] }>(
           "/api/admin/campaign/contacts",
-          { body: { query: q } }
+          { body: { query: q, campaignId } }
         );
         if (seq !== searchSeq.current) return;
         setResults(json.contacts ?? []);
@@ -138,7 +141,7 @@ export function QueueRail({
       }
     }, 250);
     return () => clearTimeout(handle);
-  }, [query]);
+  }, [query, campaignId]);
 
   // Keep the active row in view when the selection moves by keyboard.
   React.useEffect(() => {

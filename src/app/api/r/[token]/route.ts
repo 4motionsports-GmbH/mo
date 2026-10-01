@@ -103,7 +103,12 @@ export async function GET(
     // 2. Campaign send token (0041): destination is the Mo-promo deep link the
     // untracked CTA pointed at before — computed at click time so a config
     // change (CAMPAIGN_MO_DEEPLINK_URL) applies to already-sent emails too.
+    // A campaign whose button leads to the shop (cta_kind 'shop', 0066)
+    // redirects there instead.
     const campaign = await recordCampaignClick(token);
+    if (campaign?.shopUrl) {
+      return Response.redirect(campaign.shopUrl, 302);
+    }
     if (campaign) {
       // The redirect token rides along as `mo_c` so the storefront widget can
       // attribute the chat it opens back to this send (the widget-side capture

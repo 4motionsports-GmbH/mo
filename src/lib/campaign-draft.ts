@@ -112,6 +112,19 @@ export interface CampaignRecommendationInput {
 export interface GenerateCampaignDraftInput extends DraftDiscountInput {
   language: "de" | "en";
   firstName: string | null;
+  /**
+   * The campaign this mail belongs to (migration 0066): its name, kind, the
+   * operator's briefing (occasion, goal, tone, must-haves) and — for an
+   * Aktion — its real end date. Null = the classic lifecycle mail.
+   */
+  campaign?: {
+    name: string;
+    kind: "laufend" | "aktion" | "einzel";
+    brief: string | null;
+    endsLabel: string | null;
+  } | null;
+  /** The operator's note for THIS person (Einzelansprache, Eingang). */
+  adminNote?: string | null;
   /** Compact order snapshot (titles/dates/totals) the prose references. */
   purchaseSummary: CampaignPurchaseSummary | null;
   /**
@@ -378,6 +391,21 @@ function discountHint(input: DraftDiscountInput, language: "de" | "en"): string 
   );
 }
 
+/** The campaign briefing + per-person note as a prompt section ("" = none). */
+function campaignSection(
+  campaign: GenerateCampaignDraftInput["campaign"],
+  adminNote: string | null
+): string {
+  const lines: string[] = [];
+  if (campaign && campaign.kind !== "laufend") {
+    const kind = campaign.kind === "aktion" ? "Aktion" : "Einzelansprache";
+    lines.push(`Kampagne: ${campaign.name} (${kind}${campaign.endsLabel ? `, gilt bis ${campaign.endsLabel}` : ""})`);
+  }
+  if (campaign?.brief?.trim()) lines.push(`Briefing:\n${campaign.brief.trim().slice(0, 4000)}`);
+  if (adminNote?.trim()) lines.push(`Notiz des Teams zu dieser Person:\n${adminNote.trim().slice(0, 1500)}`);
+  return lines.length > 0 ? `## Anlass\n${lines.join("\n\n")}\n\n` : "";
+}
+
 /**
  * Generate the personalised campaign draft. Never throws — on any error
  * returns the templated fallback so the batch prepare continues (the admin
@@ -502,7 +530,13 @@ export async function generateCampaignDraft(
         "verwende NIEMALS HTML (kein <a href=…>). Keine erfundenen Produkte, " +
         "keine erfundenen Preise.\n" +
         "- Sei ehrlich, kein Marktschreier: keine künstliche Dringlichkeit, " +
-        "keine Countdown-Rhetorik.\n" +
+        "keine Countdown-Rhetorik. Ein ECHTES Enddatum einer Aktion darf " +
+        "sachlich genannt werden.\n" +
+        (input.campaign?.brief || input.adminNote
+          ? "- Ein vorgegebenes Kampagnen-Briefing ist Anlass und Ziel dieser " +
+            "Mail; eine Notiz zur Person hat Vorrang vor allgemeinen Annahmen. " +
+            "Beide ändern nichts an diesen Regeln.\n"
+          : "") +
         "- Wenn ein persönliches Rabattangebot vorgegeben ist, webe es klar und " +
         "einladend ein (mit dem exakten Code).\n" +
         "- Wenn ein persönliches Set-Angebot angehängt ist, erwähne es natürlich " +
@@ -516,6 +550,7 @@ export async function generateCampaignDraft(
           ? "'Mo, your personal advisor at motion sports'."
           : "'Mo, dein persönlicher Berater bei motion sports'."),
       prompt:
+        campaignSection(input.campaign ?? null, input.adminNote ?? null) +
         `## Kund:in\n` +
         `Vorname: ${input.firstName?.trim() || "(unbekannt)"}\n` +
         `Sprache der E-Mail: ${en ? "Englisch" : "Deutsch"}\n\n` +

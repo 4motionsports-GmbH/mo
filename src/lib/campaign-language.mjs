@@ -31,3 +31,22 @@ export function deriveCampaignLanguage(input = {}) {
   }
   return "de";
 }
+
+/**
+ * The e-mail language of a PERSON (any channel): their pin first, then the
+ * Shopify profile (deriveCampaignLanguage), then — for a chat-only lead with
+ * neither locale nor country — the language of their last Mo chat, else 'de'.
+ * lib/audience-store.ts spells the same rules in SQL; keep both in step.
+ *
+ * @param {{ override?: string | null, locale?: string | null, countryCode?: string | null, chatLocale?: string | null }} input
+ * @returns {"de" | "en"}
+ */
+export function effectiveEmailLanguage(input = {}) {
+  if (input.override === "de" || input.override === "en") return input.override;
+  const hasProfile =
+    (typeof input.locale === "string" && input.locale.trim() !== "") ||
+    (typeof input.countryCode === "string" && input.countryCode.trim() !== "");
+  if (hasProfile) return deriveCampaignLanguage({ locale: input.locale, countryCode: input.countryCode });
+  if (typeof input.chatLocale === "string" && input.chatLocale.trim().toLowerCase().startsWith("en")) return "en";
+  return "de";
+}

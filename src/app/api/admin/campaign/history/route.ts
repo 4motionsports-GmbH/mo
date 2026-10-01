@@ -22,6 +22,7 @@ export async function GET(req: Request) {
     from: sp.get("from"),
     to: sp.get("to"),
     delivery: parseDeliveryFilter(sp.get("delivery")),
+    campaignId: /^\d+$/.test(sp.get("campaignId") ?? "") ? Number(sp.get("campaignId")) : null,
     page: Number(sp.get("page") ?? 1),
     pageSize: Number(sp.get("pageSize") ?? 25),
   });
