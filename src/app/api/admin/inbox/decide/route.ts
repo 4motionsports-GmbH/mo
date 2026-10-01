@@ -4,7 +4,7 @@
 // reason), zurueckgestellt (3 / 7 / 30 days) or wieder_offen.
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
-import { decideInboxItem, type InboxDecision } from "@/lib/inbox-store";
+import { decideInboxItem, getInboxItem, type InboxDecision } from "@/lib/inbox-store";
 
 const DECISIONS = ["erledigt", "verworfen", "zurueckgestellt", "wieder_offen"];
 
@@ -25,6 +25,12 @@ export async function POST(req: Request) {
     action: typeof body.action === "string" ? body.action.slice(0, 40) : null,
     snoozeDays: Number.isInteger(body.snoozeDays) ? Number(body.snoozeDays) : undefined,
   });
-  if (!item) return adminJsonError("not_found", "Eintrag nicht gefunden.", 404);
+  if (!item) {
+    // null is "no such item" or a database problem — tell them apart.
+    const exists = await getInboxItem(id);
+    return exists
+      ? adminJsonError("internal_error", "Die Entscheidung konnte nicht gespeichert werden.", 500)
+      : adminJsonError("not_found", "Eintrag nicht gefunden.", 404);
+  }
   return adminJson({ item });
 }

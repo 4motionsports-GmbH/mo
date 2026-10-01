@@ -11,6 +11,7 @@ import { addRecipient, getEinzelCampaign } from "@/lib/campaigns-store";
 import { getContactById } from "@/lib/campaign-store";
 import { prepareDraftForContact } from "@/lib/campaign-prepare";
 import { reportError } from "@/lib/observability";
+import { recordAdminAccess } from "@/lib/admin-access-log";
 
 export const maxDuration = 120;
 
@@ -64,6 +65,10 @@ export async function POST(req: Request) {
       }
     } else drafted = contact?.status === "drafted";
     await decideInboxItem(id, "erledigt", { action: "einzelansprache" });
+    await recordAdminAccess(
+      { action: "inbox.accept", targetCustomerId: item.customerId, detail: { itemId: id, contactId: res.contactId, drafted } },
+      req
+    );
     return adminJson({ contactId: res.contactId, campaignId: campaign.id, drafted });
   } catch (err) {
     reportError(err, { route: "api/admin/inbox/accept" });

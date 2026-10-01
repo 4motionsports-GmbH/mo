@@ -16,6 +16,7 @@ import { isDbConfigured } from "@/lib/db";
 import { getCampaignQueueTotals } from "@/lib/campaign-store";
 import { getQaCounts } from "@/lib/qa-store";
 import { getInboxCounts } from "@/lib/inbox-store";
+import { countUnmatchedInbound } from "@/lib/email-messages-store";
 import { resolveKpiRange } from "@/lib/kpi-range";
 import { parseAdminConversationFilter } from "@/lib/admin-conversations";
 import { parseConversationId } from "@/lib/admin-conversation-filter.mjs";
@@ -58,9 +59,15 @@ const idParam = (v: string | string[] | undefined): number | null => {
  */
 async function loadBadges(dbReady: boolean): Promise<AdminBadges> {
   if (!dbReady) return {};
-  const [campaign, qa, inbox] = await Promise.all([getCampaignQueueTotals(), getQaCounts(), getInboxCounts()]);
+  const [campaign, qa, inbox, unmatched] = await Promise.all([
+    getCampaignQueueTotals(),
+    getQaCounts(),
+    getInboxCounts(),
+    countUnmatchedInbound(),
+  ]);
   return {
-    eingang: inbox.highPriority,
+    // „Jetzt“-items plus mails no customer could be matched to.
+    eingang: inbox.highPriority + unmatched,
     kampagne: campaign?.drafted ?? 0,
     wissen: qa.open,
   };

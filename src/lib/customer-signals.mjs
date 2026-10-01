@@ -8,11 +8,15 @@
 // key. Every rule is deterministic and spelled out here, so the thresholds
 // can be read, tested and tuned by a human.
 
+import { money } from "./admin-format.mjs";
+
 /** Kind → German label, base priority, whether an e-mail action needs the one consent. */
 export const SIGNAL_KINDS = {
   antwort_offen: { label: "Antwort ausstehend", weight: 90, needsConsent: false, group: "jetzt" },
   nicht_zugeordnet: { label: "E-Mail nicht zugeordnet", weight: 85, needsConsent: false, group: "jetzt" },
   datenauskunft: { label: "Datenauskunft angefordert", weight: 95, needsConsent: false, group: "jetzt" },
+  // System items of the Shopify sync (erasure-rate alert, shop/redact) — no customer.
+  abgleich_konflikt: { label: "Shopify-Abgleich prüfen", weight: 95, needsConsent: false, group: "jetzt" },
   kaufabsicht: { label: "Kaufabsicht ohne Kauf", weight: 80, needsConsent: true, group: "jetzt" },
   unzufrieden: { label: "Unzufriedenheit", weight: 80, needsConsent: false, group: "jetzt" },
   angebot_laeuft_ab: { label: "Angebot läuft ab", weight: 70, needsConsent: true, group: "woche" },
@@ -71,8 +75,7 @@ export function signalPriority(kind, ctx = {}) {
   return Math.max(0, Math.min(100, base + value + fresh));
 }
 
-const eur = (cents) =>
-  `${Math.round((Number(cents) || 0) / 100).toLocaleString("de-DE")} €`;
+const eur = (cents) => money(Math.round((Number(cents) || 0) / 100), "EUR", 0);
 
 /**
  * @typedef {{
