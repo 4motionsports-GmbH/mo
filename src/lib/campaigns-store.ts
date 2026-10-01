@@ -177,7 +177,8 @@ export async function listCampaigns(
                  count(*) FILTER (
                    WHERE (sent_at AT TIME ZONE 'Europe/Berlin')::date = (now() AT TIME ZONE 'Europe/Berlin')::date
                  )::int AS sent_today,
-                 count(*) FILTER (WHERE bundle_clicked_at IS NOT NULL)::int AS clicks,
+                 -- Any click: the button (clicked_at) or the set link (bundle_clicked_at).
+                 count(*) FILTER (WHERE clicked_at IS NOT NULL OR bundle_clicked_at IS NOT NULL)::int AS clicks,
                  count(*) FILTER (WHERE unsubscribed_at IS NOT NULL)::int AS unsubscribes,
                  max(sent_at) AS last_sent_at
             FROM campaign_sends
@@ -274,12 +275,12 @@ export async function listCampaignParticipation(
     const rows = (await sql`
       SELECT cc.id AS contact_id, cc.campaign_id, c.name, c.kind, c.status AS campaign_status,
              cc.cycle, cc.status, cc.excluded_reason, cc.admin_note, cc.added_at, cc.sent_at,
-             s.subject, s.bundle_clicked_at, s.unsubscribed_at,
+             s.subject, s.clicked_at, s.unsubscribed_at,
              EXISTS (SELECT 1 FROM campaign_drafts d WHERE d.contact_id = cc.id) AS has_draft
         FROM campaign_contacts cc
         JOIN campaigns c ON c.id = cc.campaign_id
         LEFT JOIN LATERAL (
-          SELECT subject, bundle_clicked_at, unsubscribed_at FROM campaign_sends
+          SELECT subject, COALESCE(clicked_at, bundle_clicked_at) AS clicked_at, unsubscribed_at FROM campaign_sends
            WHERE contact_id = cc.id AND is_test = false
            ORDER BY sent_at DESC LIMIT 1
         ) s ON true
@@ -300,7 +301,7 @@ export async function listCampaignParticipation(
       addedAt: iso(r.added_at),
       sentAt: iso(r.sent_at),
       subject: (r.subject as string | null) ?? null,
-      clickedAt: iso(r.bundle_clicked_at),
+      clickedAt: iso(r.clicked_at),
       unsubscribedAt: iso(r.unsubscribed_at),
       hasDraft: r.has_draft === true,
     }));

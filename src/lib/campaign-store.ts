@@ -296,7 +296,8 @@ export async function loadCampaignHistoryForCustomer(
   if (!sql) return "";
   try {
     const sends = (await sql`
-      SELECT s.sent_at, s.subject, s.bundle_clicked_at, s.unsubscribed_at, k.name AS campaign_name
+      SELECT s.sent_at, s.subject, COALESCE(s.clicked_at, s.bundle_clicked_at) AS clicked_at, s.unsubscribed_at,
+             k.name AS campaign_name
         FROM campaign_sends s
         LEFT JOIN campaigns k ON k.id = s.campaign_id
        WHERE s.customer_id = ${customerId} AND s.is_test = false
@@ -307,7 +308,7 @@ export async function loadCampaignHistoryForCustomer(
     const lines = ["Kampagnen-Mails (neueste zuerst):"];
     for (const s of sends) {
       const flags = [
-        s.bundle_clicked_at ? "angeklickt" : null,
+        s.clicked_at ? "angeklickt" : null,
         s.unsubscribed_at ? "danach abgemeldet" : null,
       ].filter(Boolean);
       lines.push(

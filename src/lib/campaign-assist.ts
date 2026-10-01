@@ -73,10 +73,10 @@ export async function suggestAudienceSpec(
         "andere ist null. Erfinde keine Produkt-Handles. Die Einwilligung in E-Mail-Werbung " +
         "wird immer automatisch verlangt — dafür brauchst du kein Feld.\n\n" +
         `Erlaubte Werte:\n- optInLevels: ${AUDIENCE_SPEC_FIELDS.optInLevels.join(", ")}\n` +
-        `- lifecycle (Tage seit letztem Kauf: frisch <7, ausbauen_frueh 7–30, ausbauen 31–180, ` +
-        `weiterentwickeln 181–365, zurueckholen 366–730, ruhen >730, unbekannt = kein Kauf): ` +
+        `- lifecycle (Tage seit letztem Kauf: frisch <7, ausbauen_frueh 7–30, ausbauen 31–90, ` +
+        `weiterentwickeln 91–365, zurueckholen 366–730, ruhen >730, unbekannt = kein Kauf): ` +
         `${AUDIENCE_SPEC_FIELDS.lifecycle.join(", ")}\n` +
-        `- valueTier (wertvollster Kauf: klein <150 €, komponente 150–999 €, grossgeraet ≥1000 €): ` +
+        `- valueTier (teuerster Einzelartikel, der je gekauft wurde: klein <150 €, komponente 150–1499 €, grossgeraet ≥1500 €): ` +
         `${AUDIENCE_SPEC_FIELDS.valueTier.join(", ")}\n` +
         `- churn: ${AUDIENCE_SPEC_FIELDS.churn.join(", ")}\n` +
         `- language: ${AUDIENCE_SPEC_FIELDS.language.join(", ")}\n` +
