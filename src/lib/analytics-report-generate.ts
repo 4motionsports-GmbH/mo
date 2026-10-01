@@ -31,6 +31,8 @@ import {
   getActiveCustomerIdsInRange,
   loadAppendixRows,
   getRangeSpend,
+  getReportCustomerBase,
+  getReportCampaigns,
   sampleUserMessagesForPersona,
   type AnalyticsReportDetail,
   type ReportProgress,
@@ -516,12 +518,14 @@ async function stepAssemble(report: AnalyticsReportDetail): Promise<void> {
   const scratch = getScratch(progress);
 
   const appendixCap = Math.min(options.maxAnalyze, APPENDIX_HARD_CAP);
-  const [kpis, stats, personasAgg, appendix, spend] = await Promise.all([
+  const [kpis, stats, personasAgg, appendix, spend, customerBase, campaigns] = await Promise.all([
     getReportKpis(from, to),
     getConversationStats(from, to),
     getRangePersonaInsights(from, to, 5),
     options.includeAppendix ? loadAppendixRows(from, to, appendixCap) : Promise.resolve([]),
     getRangeSpend(from, to),
+    getReportCustomerBase(from, to),
+    getReportCampaigns(from, to),
   ]);
 
   const topQ = scratch.personaTopQ ?? {};
@@ -543,6 +547,8 @@ async function stepAssemble(report: AnalyticsReportDetail): Promise<void> {
     profiles: scratch.profiles ?? [],
     appendix,
     notes,
+    customerBase,
+    campaigns,
   };
 
   await updateAnalyticsReport(report.id, {

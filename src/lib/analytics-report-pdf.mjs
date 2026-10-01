@@ -201,6 +201,17 @@ function eur(n) {
 
 const TIER_LABELS = { anonymous: "Anonym", emailOnly: "E-Mail", signedIn: "Angemeldet" };
 
+const SEGMENT_PDF_LABELS = {
+  frisch: "Frisch gekauft",
+  ausbauen_frueh: "Ausbauen — früh",
+  ausbauen: "Ausbauen",
+  weiterentwickeln: "Weiterentwickeln",
+  zurueckholen: "Zurückholen",
+  ruhen: "Ruhen lassen",
+  keine_bestellung: "Ohne Bestellung",
+  unbekannt: "Unbekannt",
+};
+
 // ── Builder ───────────────────────────────────────────────────────────────────
 
 /**
@@ -265,6 +276,41 @@ export function buildAnalyticsReportPdf(input) {
     leading: 15,
   });
   flow.gap();
+
+  // ── Kundenbasis (since the customer platform; older reports have none) ──
+  const cb = s.customerBase;
+  if (cb) {
+    flow.sectionHeading("Kundenbasis");
+    for (const [label, value] of [
+      ["Kunden gesamt", cb.total],
+      ["davon Shopify-Kunden", cb.shopifyCustomers],
+      ["Mit Mo gesprochen", cb.withMo],
+      ["Mit Einwilligung in E-Mail-Werbung", cb.subscribed],
+      ["Neu angemeldet im Zeitraum", cb.newSubscribers],
+    ]) {
+      flow.line(`${label}:  ${value ?? 0}`);
+    }
+    if (Array.isArray(cb.bySegment) && cb.bySegment.length) {
+      flow.gap(0.4);
+      flow.subHeading("Lebenszyklus");
+      renderDistribution(flow, cb.bySegment.map((r) => ({ label: SEGMENT_PDF_LABELS[r.key] ?? r.key, count: r.n })));
+    }
+    flow.gap();
+  }
+
+  // ── Kampagnen ──
+  const campaigns = Array.isArray(s.campaigns) ? s.campaigns : [];
+  if (campaigns.length) {
+    flow.sectionHeading("Kampagnen");
+    for (const c of campaigns) {
+      flow.line(c.name, { font: "F2", size: 10.5, leading: 14 });
+      flow.line(
+        `Gesendet ${c.sent} · geklickt ${c.clicked} · Chat gestartet ${c.chatStarted} · abgemeldet ${c.unsubscribed}`,
+        { color: MUTED_RGB, size: 9, leading: 13 }
+      );
+    }
+    flow.gap();
+  }
 
   // ── Verteilung ──
   flow.sectionHeading("Verteilung der Gespräche");
