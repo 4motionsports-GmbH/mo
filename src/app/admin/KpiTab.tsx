@@ -27,7 +27,7 @@ import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
 import { getAiCostMetrics } from "@/lib/ai-usage-store";
 import { getPhysicalLetterStats } from "@/lib/physical-letters-store";
 import { loadKpiShopifyBlock } from "@/lib/kpi-cache";
-import { getCustomerBaseKpis } from "@/lib/customer-list-store";
+import { getCustomerBaseKpis, getMoEffectKpis } from "@/lib/customer-list-store";
 import { getInboxKpis } from "@/lib/inbox-store";
 import type { KpiRange } from "@/lib/kpi-range";
 import { Callout, InfoTip } from "./ui";
@@ -51,6 +51,7 @@ import { MarketingFunnelSection } from "./kpi/sections/MarketingFunnelSection";
 import { PersonaSection } from "./kpi/sections/PersonaSection";
 import { LoopSection } from "./kpi/sections/LoopSection";
 import { KundenbasisSection } from "./kpi/sections/KundenbasisSection";
+import { MoEffektSection } from "./kpi/sections/MoEffektSection";
 import { EingangSection } from "./kpi/sections/EingangSection";
 
 export async function KpiTab({
@@ -91,6 +92,7 @@ export async function KpiTab({
     letterStats,
     customerBase,
     inboxKpis,
+    moEffect,
   ] = await Promise.all([
     getCoreMetrics(range),
     getMoAttributionKpis(range),
@@ -109,6 +111,7 @@ export async function KpiTab({
     getPhysicalLetterStats(),
     getCustomerBaseKpis(),
     getInboxKpis(range),
+    getMoEffectKpis(),
   ]);
 
   const [beratung, marketing, umsatz, kosten, gesamt] = KPI_GROUPS;
@@ -152,6 +155,7 @@ export async function KpiTab({
 
       <Group group={gesamt}>
         <KundenbasisSection kpis={customerBase} />
+        <MoEffektSection kpis={moEffect} />
         <PhysicalMailSection stats={letterStats} />
         <MarketingFunnelSection cached={shopify.funnel} />
         <PersonaSection personas={personas} cachedQuestions={cachedQuestions} />

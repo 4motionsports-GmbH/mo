@@ -341,3 +341,68 @@ export async function getCustomerBaseKpis(sql: Sql | null = getSql()): Promise<C
     return null;
   }
 }
+
+/** KPIs → Mo-Effekt: the raw sums for lib/mo-effect.mjs, plus who Mo won and where subscribers come from. */
+export interface MoEffectKpis {
+  rows: Array<{ tier: string; mo: boolean; n: number; orders: number; spentCents: number; repeaters: number }>;
+  /** Customers whose first chat came before their first order. */
+  wonByMo: { n: number; revenueCents: number };
+  /** Current subscribers by the source of the deciding act. */
+  subscribersBySource: Array<{ source: string; n: number }>;
+}
+
+export async function getMoEffectKpis(sql: Sql | null = getSql()): Promise<MoEffectKpis | null> {
+  if (!sql) return null;
+  try {
+    const [rows, won, sources] = (await Promise.all([
+      sql`
+        SELECT COALESCE(value_tier, 'unbekannt') AS tier,
+               (conversations_count > 0) AS mo,
+               count(*)::int AS n,
+               COALESCE(sum(orders_count), 0)::bigint AS orders,
+               COALESCE(sum(total_spent_cents), 0)::bigint AS spent,
+               count(*) FILTER (WHERE orders_count >= 2)::int AS repeaters
+          FROM customer_overview
+         WHERE orders_count > 0
+         GROUP BY 1, 2
+      `,
+      sql`
+        SELECT count(*)::int AS n, COALESCE(sum(o.total_spent_cents), 0)::bigint AS revenue
+          FROM customer_overview o
+         WHERE o.orders_count > 0
+           AND o.first_order_at IS NOT NULL
+           AND EXISTS (
+                 SELECT 1 FROM conversations cv
+                  WHERE cv.created_at < o.first_order_at
+                    AND (cv.customer_id = o.customer_id
+                         OR cv.session_id IN (SELECT l.session_id FROM customer_session_links l WHERE l.customer_id = o.customer_id))
+               )
+      `,
+      sql`
+        SELECT COALESCE(email_consent_source, 'unbekannt') AS source, count(*)::int AS n
+          FROM customer_overview
+         WHERE email_consent_state = 'subscribed' AND NOT blocked
+         GROUP BY 1 ORDER BY 2 DESC
+      `,
+    ])) as [
+      Array<{ tier: string; mo: boolean; n: number; orders: number | string; spent: number | string; repeaters: number }>,
+      Array<{ n: number; revenue: number | string }>,
+      Array<{ source: string; n: number }>,
+    ];
+    return {
+      rows: rows.map((r) => ({
+        tier: String(r.tier),
+        mo: r.mo === true,
+        n: Number(r.n),
+        orders: Number(r.orders),
+        spentCents: Number(r.spent),
+        repeaters: Number(r.repeaters),
+      })),
+      wonByMo: { n: Number(won[0]?.n ?? 0), revenueCents: Number(won[0]?.revenue ?? 0) },
+      subscribersBySource: sources.map((s) => ({ source: String(s.source), n: Number(s.n) })),
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/customer-list-store", phase: "getMoEffectKpis" });
+    return null;
+  }
+}

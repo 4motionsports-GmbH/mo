@@ -46,7 +46,7 @@ export const KPI_GROUPS: readonly KpiGroup[] = [
     key: "gesamt",
     label: "Gesamtwerte",
     description:
-      "Vom Zeitraum unabhängig: Kundenbasis, Postversand, Marketing-Funnel, Persona-Insights und Empfehlung → Kauf sind Lebenszyklus-, Kohorten- bzw. Gesamtaggregate.",
+      "Vom Zeitraum unabhängig: Kundenbasis, Mo-Effekt, Postversand, Marketing-Funnel, Persona-Insights und Empfehlung → Kauf sind Lebenszyklus-, Kohorten- bzw. Gesamtaggregate.",
     periodic: false,
   },
 ];
