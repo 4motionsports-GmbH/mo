@@ -82,6 +82,8 @@ export interface CampaignsOverviewProps {
   options: CampaignEditorOptions;
   /** Open the editor for this campaign on load (`?edit=<id>`); "new" = create. */
   initialEdit: number | "new" | null;
+  /** `?edit=new&audience=<json>` — a new campaign starts with this audience (Kunden „Ähnliche Kunden“). */
+  presetAudience?: Record<string, unknown> | null;
   sendsApproved: boolean;
   notFound?: boolean;
 }

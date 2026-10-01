@@ -93,6 +93,7 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
           dbReady={dbReady}
           campaignRef={firstParam(sp.campaign)}
           editRef={firstParam(sp.edit)}
+          audienceRef={firstParam(sp.audience)}
           initialContactId={idParam(sp.contact)}
           initialView={firstParam(sp.view)}
           initialFilter={firstParam(sp.filter)}

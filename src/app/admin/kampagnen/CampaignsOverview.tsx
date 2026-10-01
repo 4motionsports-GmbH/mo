@@ -60,7 +60,7 @@ function setEditParam(value: string | null) {
   window.history.replaceState(window.history.state, "", url.toString());
 }
 
-export function CampaignsOverview({ campaigns, options, initialEdit, sendsApproved, notFound }: CampaignsOverviewProps) {
+export function CampaignsOverview({ campaigns, options, initialEdit, presetAudience, sendsApproved, notFound }: CampaignsOverviewProps) {
   const router = useRouter();
   const { confirm, confirmDialog } = useConfirm();
   const [scope, setScope] = React.useState<Scope>("aktuell");
@@ -179,6 +179,7 @@ export function CampaignsOverview({ campaigns, options, initialEdit, sendsApprov
         campaign={editingCampaign}
         campaigns={campaigns}
         options={options}
+        presetAudience={editing === "new" ? presetAudience ?? null : null}
         onClose={() => openEditor(null)}
         onSaved={(id) => {
           openEditor(null);

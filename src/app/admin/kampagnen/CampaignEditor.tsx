@@ -105,7 +105,7 @@ function toLocalInput(iso: string | null): string {
 const fromLocalInput = (v: string): string | null => (v ? new Date(v).toISOString() : null);
 const intOrNull = (v: string): number | null => (v.trim() === "" ? null : Math.round(Number(v)));
 
-function initialState(c: CampaignCardProps | null): FormState {
+function initialState(c: CampaignCardProps | null, presetAudience: Record<string, unknown> | null = null): FormState {
   return {
     name: c?.name ?? "",
     kind: c?.kind === "laufend" ? "laufend" : "aktion",
@@ -113,7 +113,7 @@ function initialState(c: CampaignCardProps | null): FormState {
     endsAt: toLocalInput(c?.endsAt ?? null),
     priority: String(c?.priority ?? 50),
     brief: c?.brief ?? "",
-    audience: c?.audience ?? { v: 1 },
+    audience: c?.audience ?? (presetAudience as FormState["audience"] | null) ?? { v: 1 },
     audienceMode: c?.audienceMode ?? "fest",
     reentryDays: c?.reentryDays != null ? String(c.reentryDays) : "",
     discountPercent: String(c?.discountPercent ?? 0),
@@ -191,6 +191,7 @@ export function CampaignEditor({
   campaign,
   campaigns,
   options,
+  presetAudience = null,
   onClose,
   onSaved,
 }: {
@@ -198,10 +199,12 @@ export function CampaignEditor({
   campaign: CampaignCardProps | null;
   campaigns: CampaignCardProps[];
   options: CampaignEditorOptions;
+  /** A new campaign starts with this audience (from Kunden „Ähnliche Kunden“). */
+  presetAudience?: Record<string, unknown> | null;
   onClose: () => void;
   onSaved: (id: number) => void;
 }) {
-  const [form, setForm] = React.useState<FormState>(() => initialState(campaign));
+  const [form, setForm] = React.useState<FormState>(() => initialState(campaign, presetAudience));
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [preview, setPreview] = React.useState<Preview | null>(null);
@@ -213,12 +216,12 @@ export function CampaignEditor({
 
   React.useEffect(() => {
     if (open) {
-      setForm(initialState(campaign));
+      setForm(initialState(campaign, presetAudience));
       setError(null);
       setAiNote(null);
       setDescribe("");
     }
-  }, [open, campaign]);
+  }, [open, campaign, presetAudience]);
 
   const patch = (p: Partial<FormState>) => setForm((f) => ({ ...f, ...p }));
   const patchAudience = (p: Partial<AudienceSpecProps>) =>
