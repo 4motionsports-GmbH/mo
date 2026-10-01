@@ -23,6 +23,9 @@ import { getSql } from "./db";
 import { purgeExpiredPendingAuth } from "./customer-oauth-store";
 import { parseRetentionOptions } from "./retention-options.mjs";
 
+/** How long a decided Eingang item's bare marker stays (the longest rule episode). */
+const INBOX_MARKER_MAX_DAYS = 730;
+
 export interface RetentionOptions {
   /** Conversations + messages older than this (by last_activity_at) are deleted. */
   retentionDays: number;
@@ -111,7 +114,7 @@ export interface RetentionResult {
   purgedAuthPending: number;
   /** Shopify webhook / sync-run / outbox bookkeeping rows removed. */
   deletedShopifySyncLog: number;
-  /** Decided Eingang items removed. */
+  /** Decided Eingang items reduced to a marker (after the window) or removed (after two years). */
   deletedInboxItems: number;
   /** Erasure tombstones Shopify confirmed more than ERASURE_TOMBSTONE_RETENTION_DAYS ago. */
   deletedErasureTombstones: number;
@@ -461,17 +464,30 @@ export async function runRetention(
     deletedShopifySyncLog = rows[0]?.n ?? 0;
   }
 
-  // 8. Decided Eingang items (0067) leave on their own window.
+  // 8. Decided Eingang items (0067). After the window their content goes
+  //    (reason, evidence, suggestion, note) and only a marker stays — kind,
+  //    customer, decision and its dedupe key — so a rule cannot re-create an
+  //    item the operator already decided while its episode lasts (episodes
+  //    end within two years: abwanderung ≤ 730 days after the last order). The
+  //    marker itself goes after INBOX_MARKER_MAX_DAYS, and with the customer.
   let deletedInboxItems = 0;
   if (opts.inboxRetentionDays > 0) {
     const inboxCutoff = daysAgo(opts.inboxRetentionDays);
+    const markerCutoff = daysAgo(Math.max(opts.inboxRetentionDays, INBOX_MARKER_MAX_DAYS));
     const rows = (await sql`
-      WITH del AS (
-        DELETE FROM inbox_items
+      WITH slim AS (
+        UPDATE inbox_items
+           SET reason = '', evidence = '{}'::jsonb, suggestion = NULL, decision_note = NULL, updated_at = now()
          WHERE status IN ('erledigt', 'verworfen') AND COALESCE(decided_at, updated_at) < ${inboxCutoff}
+           AND (reason <> '' OR suggestion IS NOT NULL OR decision_note IS NOT NULL OR evidence <> '{}'::jsonb)
+        RETURNING 1
+      ),
+      del AS (
+        DELETE FROM inbox_items
+         WHERE status IN ('erledigt', 'verworfen') AND COALESCE(decided_at, updated_at) < ${markerCutoff}
         RETURNING 1
       )
-      SELECT count(*)::int AS n FROM del
+      SELECT (SELECT count(*) FROM slim)::int + (SELECT count(*) FROM del)::int AS n
     `) as Array<{ n: number }>;
     deletedInboxItems = rows[0]?.n ?? 0;
   }
