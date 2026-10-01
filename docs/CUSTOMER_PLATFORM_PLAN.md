@@ -1,15 +1,62 @@
 # Mo as the AI marketing layer — the customer-centric restructuring (plan)
 
-Status: **proposal, 2026-10-01.** Nothing in this document is implemented yet. It is the
-blueprint for moving Mo from a system built around the chat widget to an AI marketing layer
-for the whole Shopify shop, in which the chat is one feature and one data source among several.
-Decisions that need the maintainer or the lawyer are marked **D-n** (§4). Everything else is a
-recommendation that can be built as described.
+Status: **built, 2026-10-01** (phases 1–7, see §0 „As built“). This document stays the design
+record: §1–§20 are the plan as agreed; where the build deviates, §0 says so and the code and the
+reference docs (`ADMIN_DASHBOARD.md`, `CAMPAIGNS.md`, `CONSENT_FLOW.md`, `CUSTOMERS.md`,
+`DATABASE.md`, `DATA_RETENTION.md`, `API_CONTRACT.md`) are authoritative. Decisions that need the
+maintainer or the lawyer are marked **D-n** (§4).
 
-The plan rests on a read of the code as of `d48ad77`. File references point at that state.
+The plan rests on a read of the code as of `d48ad77`. File references in §1–§20 point at that state.
+
+## 0. As built (2026-10-01)
+
+**Decisions.** D-1: the maintainer chose „all, flagged“ — AI profiles are built for every
+customer when `CUSTOMER_AI_PROFILE_SCOPE=all` (code default stays `consented`); people without
+consent are flagged and every marketing action on them is blocked; an Art. 21 objection deletes
+the profile. D-2: Shopify holds the consent state. D-3: a confirmed Mo DOI creates the Shopify
+customer; existing Mo-only subscribers are created after an operator confirm („Erstabgleich“,
+Einstellungen → Shopify-Abgleich). D-4: one opt-in-level switch (`CAMPAIGN_ALLOW_SINGLE_OPT_IN`).
+D-5: two-way erasure behind `SHOPIFY_ERASURE_SYNC`; with only `SHOPIFY_CONSENT_WRITEBACK` on, an
+erasure still switches the Shopify consent off. D-6: mirror + order ledger + facts behind
+`SHOPIFY_CUSTOMER_SYNC_ENABLED`. D-7: letters stay a per-customer channel (Kunden → Brief) with a
+postal objection flag, the Art. 21 notice in every letter, letter suggestions in the Eingang and
+the letter reach in the campaign editor. D-8: the Einzelansprache is a campaign. D-9: the Eingang
+is screen 1. D-10: Serien-Mail not built (undecided). D-11: insight tags built, off by default
+(`SHOPIFY_WRITEBACK_ENABLED`). D-12: names as listed. All Shopify switches default to `false`;
+the lawyer items are in `ANWALTSDOSSIER.md` §13 (F-22 to F-29).
+
+**Deviations from the plan.**
+
+| Plan | As built |
+| --- | --- |
+| Migrations 0061–0069 as in §13 | `0061_customer_mirror`, `0062_customer_orders`, `0063_customer_facts`, `0064_email_consent`, `0065_shopify_sync`, `0066_campaigns`, `0067_inbox`, `0068_customer_overview`. No `marketing_unify`, no `drop_legacy` (one release later). |
+| New `campaign_recipients` table | `campaign_contacts` became the per-campaign recipients (campaign_id, customer_id, cycle, excluded, admin_note, conversation_id); legacy rows belong to „Bestandskunden – Lebenszyklus“. |
+| Test inboxes (§10.8) | Test contacts per campaign (unchanged mechanics, scoped to the campaign). |
+| Consent alignment script (§7.7) | Migration 0064 backfills; the first import runs everyone through the resolver; Mo-only subscribers are queued from the Shopify-Abgleich card after a confirm. |
+| Facts in refresh-customers | `customer_facts` are recomputed by `/api/cron/shopify-reconcile` (01:45) and after the import. |
+| Chat gate (§7.6) | Leads with sign-in (`signIn` in `/api/consent-copy?surface=chat`); the typed e-mail is the alternative. |
+| Kampagnen tab key | Stays `kampagne` (label „Kampagnen“, alias `kampagnen`). |
+| Accepting an Eingang suggestion | Creates an Einzelansprache recipient whose note is the drafter brief. |
+| Inbox retention | Content cleared after 180 days (`INBOX_RETENTION_DAYS`), a marker stays two years so a decided item is not re-created. |
+| `mo_c` capture (§12.5) | `POST /api/chat` `campaignToken` → one session-less KPI event per send („Chat gestartet“); the chat itself is never tied to the person. Widget side: frontend handoff. |
+| Ähnliche Kunden via embeddings (§9.5) | Deterministic: same value tier, shared bought categories → „Als Zielgruppe verwenden“. |
+| Kunden bulk draft | „Auswählen“ → „Zur Kampagne…“ (consent-gated, Einzelansprache first). |
+| Webhook registration (Phase 0) | `npm run shopify:webhooks [-- --apply]`; the route accepts the store key or the app secret. |
+
+**Phase 7 built:** KPI groups Kundenbasis, Eingang, Mo-Effekt and „Kampagnen im Vergleich“;
+Komplettanalyse chapters „Kundenbasis“ and „Kampagnen“; Gespräche → „Kunde öffnen“; „Frag Mo“;
+„Wahrscheinlich als Nächstes“; Ähnliche Kunden; `mo_c` capture (backend); letter reach; insight
+tags (D-11).
+
+**Not built:** the Verbesserung lane „Marketing“ (offers, segments, triggers as proposals) — it
+needs a proposal type that is not a prompt directive; letters as a campaign channel (batch letters
+with review and Pingen costs) — today letters are sent per customer; Serien-Mail (D-10); the
+legacy drop (`marketing_sends` → Einzelansprache, removal of `customers.marketing_status` and
+`purchase_summary`) — the old 1:1 path remains only for drafts that were open before the switch.
 
 Contents
 
+0. As built (2026-10-01)
 1. Summary
 2. Mission and principles
 3. Where we are today (and why it does not fit the mission)
