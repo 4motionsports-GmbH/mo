@@ -17,7 +17,7 @@ import type { InboxCounts, InboxItem } from "@/lib/inbox-store";
 import type { UnmatchedInboundMessage } from "@/lib/email-messages-store";
 import { SIGNAL_KINDS, signalGroup } from "@/lib/customer-signals.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
-import { eurFromCents, num, relativeTime } from "@/lib/admin-format.mjs";
+import { eurFromCents, num, plural, relativeTime } from "@/lib/admin-format.mjs";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { SEGMENT_LABELS } from "@/lib/admin-customer-filter.mjs";
 import {
@@ -209,14 +209,16 @@ export function EingangWorkspace({
             { value: "erledigt", label: "Erledigt" },
           ]}
         />
-        <Select aria-label="Art" value={kind} onChange={(e) => setKind(e.target.value)} className="h-8 w-auto min-w-[12rem] py-0 pr-8 text-xs">
-          <option value="">Alle Arten</option>
-          {kindsInList.map((k) => (
-            <option key={k} value={k}>
-              {kindLabel(k)} ({num(items.filter((i) => i.kind === k).length)})
-            </option>
-          ))}
-        </Select>
+        <div className="w-60">
+          <Select aria-label="Art" value={kind} onChange={(e) => setKind(e.target.value)} className="h-8 py-0 pr-8 text-xs">
+            <option value="">Alle Arten</option>
+            {kindsInList.map((k) => (
+              <option key={k} value={k}>
+                {kindLabel(k)} ({num(items.filter((i) => i.kind === k).length)})
+              </option>
+            ))}
+          </Select>
+        </div>
         <span className="hidden items-center gap-1 text-2xs text-muted-foreground lg:inline-flex">
           <Kbd>J</Kbd>/<Kbd>K</Kbd> wechseln · <Kbd>Enter</Kbd> Aktion · <Kbd>E</Kbd> erledigt · <Kbd>Z</Kbd> später · <Kbd>D</Kbd> verwerfen
         </span>
@@ -310,10 +312,10 @@ function SystemStrip({ system }: { system: EingangSystemCards }) {
     <div className="flex flex-col gap-2">
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
-          <CardContent className="flex items-start gap-3 p-3">
+          <CardContent className="flex items-start gap-3 p-3 pt-3">
             <Send className="mt-0.5 size-4 text-muted-foreground" aria-hidden />
             <div className="min-w-0 text-sm">
-              <div className="font-medium">{drafted > 0 ? `${num(drafted)} Entwürfe zur Prüfung` : "Keine Entwürfe offen"}</div>
+              <div className="font-medium">{drafted > 0 ? `${plural(drafted, "Entwurf", "Entwürfe")} zur Prüfung` : "Keine Entwürfe offen"}</div>
               <div className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
                 {system.campaigns.map((c) => (
                   <Link key={c.id} href={adminTabHref("kampagne", { campaign: c.slug })} className="hover:text-foreground hover:underline">
@@ -330,11 +332,11 @@ function SystemStrip({ system }: { system: EingangSystemCards }) {
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="flex items-start gap-3 p-3">
+          <CardContent className="flex items-start gap-3 p-3 pt-3">
             <BookOpen className="mt-0.5 size-4 text-muted-foreground" aria-hidden />
             <div className="text-sm">
               <Link href={adminTabHref("wissen")} className="font-medium hover:underline">
-                {system.qaOpen > 0 ? `${num(system.qaOpen)} offene Wissensfragen` : "Wissen: nichts offen"}
+                {system.qaOpen > 0 ? `${plural(system.qaOpen, "offene Wissensfrage", "offene Wissensfragen")}` : "Wissen: nichts offen"}
               </Link>
               {(system.runningReports > 0 || system.runningImprovementRuns > 0) && (
                 <div className="text-xs text-muted-foreground">
@@ -346,7 +348,7 @@ function SystemStrip({ system }: { system: EingangSystemCards }) {
           </CardContent>
         </Card>
         <Card className="xl:col-span-2">
-          <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-1 p-3 text-sm">
+          <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-1 p-3 pt-3 text-sm">
             <span>
               <strong className="tabular-nums">{system.strip.chats == null ? "—" : num(system.strip.chats)}</strong>{" "}
               <span className="text-muted-foreground">Gespräche</span>
@@ -468,7 +470,7 @@ function ItemDetail({
 
   return (
     <Card className="overflow-hidden">
-      <CardContent className="flex flex-col gap-4 p-5">
+      <CardContent className="flex flex-col gap-4 p-5 pt-5">
         <div className="flex flex-wrap items-start gap-2">
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-semibold">{item.title}</h2>
@@ -510,13 +512,13 @@ function ItemDetail({
                 {customer.figures && (
                   <div className="text-xs text-muted-foreground">
                     {customer.figures.ordersCount > 0
-                      ? `${num(customer.figures.ordersCount)} Bestellungen · ${eurFromCents(customer.figures.totalSpentCents)}`
+                      ? `${plural(customer.figures.ordersCount, "Bestellung", "Bestellungen")} · ${eurFromCents(customer.figures.totalSpentCents)}`
                       : "Noch keine Bestellung"}
                     {customer.figures.lastOrderAt && <> · zuletzt {formatAdmin(customer.figures.lastOrderAt, ADMIN_DATE)}</>}
                     {customer.figures.lifecycleSegment && (
                       <> · {SEGMENT_LABELS[customer.figures.lifecycleSegment as keyof typeof SEGMENT_LABELS] ?? customer.figures.lifecycleSegment}</>
                     )}
-                    {customer.figures.conversationsCount > 0 && <> · {num(customer.figures.conversationsCount)} Gespräche mit Mo</>}
+                    {customer.figures.conversationsCount > 0 && <> · {plural(customer.figures.conversationsCount, "Gespräch", "Gespräche")} mit Mo</>}
                   </div>
                 )}
                 {customer.profileExcerpt && <p className="line-clamp-3 text-xs">{customer.profileExcerpt}</p>}

@@ -15,7 +15,7 @@ import type { OutboxStats } from "@/lib/shopify-outbox";
 import type { ShopifySyncFlags } from "@/lib/shopify-sync-flags";
 import { outboxKindLabel } from "@/lib/outbox-core.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { num, relativeTime } from "@/lib/admin-format.mjs";
+import { num, plural, relativeTime } from "@/lib/admin-format.mjs";
 import {
   Button,
   Callout,
@@ -244,7 +244,7 @@ export function ShopifySyncCard({ health, runs, outbox, flags }: ShopifySyncCard
         )}
 
         {outbox && outbox.deadRows.length > 0 && (
-          <Callout tone="warning" title={`${num(outbox.dead)} Übertragungen an Shopify aufgegeben`}>
+          <Callout tone="warning" title={`${plural(outbox.dead, "Übertragung", "Übertragungen")} an Shopify aufgegeben`}>
             <ul className="mt-1 flex flex-col gap-1">
               {outbox.deadRows.map((r) => (
                 <li key={r.id} className="flex flex-wrap items-center gap-2 text-xs">
