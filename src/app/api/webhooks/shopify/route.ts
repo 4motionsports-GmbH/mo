@@ -24,6 +24,12 @@
 //      Queued targets are drained a few at a time after later successful
 //      mutations; the daily sync remains the reconciliation backstop.
 //
+// CUSTOMER PLATFORM (docs/CUSTOMER_PLATFORM_PLAN.md §6.2, §8.3): customers/*,
+// the e-mail-marketing consent topic, the order ledger (orders/create|updated|
+// paid|cancelled) and the GDPR compliance topics are routed to
+// lib/shopify-webhook-customers.ts — deduplicated by X-Shopify-Webhook-Id, so a
+// Shopify retry never applies a delivery twice.
+//
 // Same ingest contract as the other webhooks: 503 without a secret (fail closed),
 // 401 on a bad signature, 500 only on a real processing failure (so Shopify
 // retries safely — the update is idempotent). The daily sync remains the baseline
@@ -33,7 +39,19 @@
 // docs/CATALOG_SYNC.md "Real-time stock webhook".
 
 import { NextResponse } from "next/server";
-import { verifyShopifyWebhook, planCatalogAction } from "@/lib/shopify-webhook.mjs";
+import { verifyShopifyWebhook, planCatalogAction, classifyShopifyTopic } from "@/lib/shopify-webhook.mjs";
+import {
+  recordWebhookDelivery,
+  finishWebhookDelivery,
+  forgetWebhookDelivery,
+  handleCustomerWebhook,
+  handleConsentWebhook,
+  handleOrderLedgerWebhook,
+  handleErasureWebhook,
+  handleDataRequestWebhook,
+  handleShopRedactWebhook,
+  type WebhookOutcome,
+} from "@/lib/shopify-webhook-customers";
 import {
   refreshProductInCatalog,
   refreshInventoryItemInCatalog,
@@ -81,26 +99,54 @@ export async function POST(req: Request) {
   }
 
   try {
-    // (2a) ORDER topics → the attribution ingest (not a catalog action).
-    //      orders/create captures the order early (possibly still pending);
-    //      orders/paid updates the same row's financial status/total. Every
-    //      other orders/* topic is acked-ignored. The ingest is idempotent, so
-    //      a 500 (→ Shopify retry) is safe on a real processing failure.
     const t = String(topic ?? "").trim().toLowerCase();
-    if (t.startsWith("orders/")) {
-      if (t !== "orders/create" && t !== "orders/paid") {
-        return NextResponse.json({ ok: true, ignored: `unhandled-topic:${t}` });
+    const routeKind = classifyShopifyTopic(t);
+
+    // (2a) CUSTOMER PLATFORM topics (incl. the order ledger): deduplicated.
+    if (routeKind !== "catalog" && routeKind !== "other") {
+      const webhookId = req.headers.get("x-shopify-webhook-id");
+      if (!(await recordWebhookDelivery(webhookId, t))) {
+        return NextResponse.json({ ok: true, duplicate: true });
       }
-      const ingest = await ingestShopifyOrder(payload);
-      if (!ingest.ok) {
-        return NextResponse.json({ ok: false, error: ingest.reason }, { status: 500 });
+      let outcome: WebhookOutcome;
+      let attribution: Awaited<ReturnType<typeof ingestShopifyOrder>> | null = null;
+      if (routeKind === "order") {
+        if (!["orders/create", "orders/updated", "orders/paid", "orders/cancelled"].includes(t)) {
+          outcome = { ok: true, action: `ignored:${t}` };
+        } else {
+          outcome = await handleOrderLedgerWebhook(payload);
+          // orders/create + orders/paid also feed the pseudonymous attribution
+          // pipeline exactly as before (Mo-marked orders only).
+          if (t === "orders/create" || t === "orders/paid") {
+            attribution = await ingestShopifyOrder(payload);
+            if (!attribution.ok) outcome = { ok: false, action: `attribution:${attribution.reason}` };
+          }
+        }
+      } else if (routeKind === "customer") {
+        outcome = await handleCustomerWebhook(payload, webhookId);
+      } else if (routeKind === "consent") {
+        outcome = await handleConsentWebhook(payload, webhookId);
+      } else if (routeKind === "customer_delete" || t === "customers/redact") {
+        outcome = await handleErasureWebhook(t, payload, webhookId);
+      } else if (t === "customers/data_request") {
+        outcome = await handleDataRequestWebhook(payload);
+      } else if (t === "shop/redact") {
+        outcome = await handleShopRedactWebhook(payload);
+      } else {
+        // bulk_operations/finish: the import's next step polls the operation itself.
+        outcome = { ok: true, action: "noted" };
       }
+      if (!outcome.ok) {
+        // Let Shopify retry: forget the delivery so the retry is applied.
+        await forgetWebhookDelivery(webhookId);
+        return NextResponse.json({ ok: false, error: outcome.action }, { status: 500 });
+      }
+      await finishWebhookDelivery(webhookId, outcome.action);
       return NextResponse.json({
         ok: true,
         topic,
-        action: ingest.action,
-        ...(ingest.reason ? { reason: ingest.reason } : {}),
-        ...(ingest.tier ? { tier: ingest.tier } : {}),
+        action: outcome.action,
+        ...(attribution?.tier ? { tier: attribution.tier } : {}),
       });
     }
 
