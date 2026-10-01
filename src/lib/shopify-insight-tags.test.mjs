@@ -11,6 +11,20 @@ test("desired tags from the facts", () => {
   assert.deepEqual(desiredMoTags({ lifecycleSegment: "Ausbauen früh!" }), ["mo-segment-ausbauen_fr_h"]);
 });
 
+test("an objection to profiling removes every mo- tag", () => {
+  const desired = desiredMoTags({
+    lifecycleSegment: "zurueckholen",
+    valueTier: "grossgeraet",
+    conversationsCount: 2,
+    churnRisk: "hoch",
+    profileObjection: true,
+  });
+  assert.deepEqual(desired, []);
+  const d = moTagDiff(["VIP", "mo-kontakt", "mo-wert-grossgeraet"], desired);
+  assert.deepEqual(d.add, []);
+  assert.deepEqual(d.remove, ["mo-kontakt", "mo-wert-grossgeraet"]);
+});
+
 test("the diff only touches mo- tags", () => {
   const d = moTagDiff(["VIP", "mo-segment-frisch", "mo-kontakt", "Newsletter"], ["mo-kontakt", "mo-segment-ausbauen"]);
   assert.deepEqual(d.add, ["mo-segment-ausbauen"]);

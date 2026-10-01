@@ -5,7 +5,9 @@
 // the mirror last saw; a difference becomes one `writeback` outbox row
 // (add / remove), which the 5-minute outbox cron sends at Shopify's pace. The
 // shop's own tags are never touched. Only runs while the switch is on, so no
-// rows pile up while it is off. Never throws.
+// rows pile up while it is off. An Art. 21 objection to profiling removes
+// every `mo-` tag — at once when it is recorded (removeInsightTags), and the
+// nightly run never adds one again. Never throws.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
@@ -27,7 +29,7 @@ export async function queueInsightWritebacks(
       if (opts.deadlineMs && Date.now() > opts.deadlineMs) break;
       const rows = (await sql`
         SELECT o.customer_id, o.shopify_customer_id, o.shopify_tags, o.lifecycle_segment, o.value_tier,
-               o.conversations_count, o.churn_risk
+               o.conversations_count, o.churn_risk, o.profile_objection_at
           FROM customer_overview o
          WHERE o.shopify_customer_id IS NOT NULL
            AND o.facts_computed_at IS NOT NULL
@@ -50,6 +52,7 @@ export async function queueInsightWritebacks(
           valueTier: r.value_tier as string | null,
           conversationsCount: Number(r.conversations_count ?? 0),
           churnRisk: r.churn_risk as string | null,
+          profileObjection: r.profile_objection_at != null,
         });
         const diff = moTagDiff(r.shopify_tags as string[] | null, desired);
         if (!diff.changed) continue;
@@ -76,5 +79,38 @@ export async function queueInsightWritebacks(
   } catch (err) {
     reportError(err, { route: "lib/shopify-insights", phase: "queue" });
     return out;
+  }
+}
+
+/**
+ * After an Art. 21 objection to profiling: drop the person's open tag
+ * write-backs and queue the removal of every `mo-` tag Shopify has. Queued
+ * whatever the switch says — tags written while it was on must go; the row
+ * waits until the switch is on. Returns whether a removal was queued. Never
+ * throws.
+ */
+export async function removeInsightTags(customerId: number, sql: Sql | null = getSql()): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      SELECT shopify_customer_id, shopify_tags FROM customers
+       WHERE id = ${customerId} AND shopify_customer_id IS NOT NULL
+    `) as Array<{ shopify_customer_id: string; shopify_tags: string[] | null }>;
+    const row = rows[0];
+    if (!row) return false;
+    await sql`
+      DELETE FROM shopify_outbox
+       WHERE kind = 'writeback' AND customer_id = ${customerId} AND status IN ('pending', 'failed')
+    `;
+    const diff = moTagDiff(row.shopify_tags, desiredMoTags({ profileObjection: true }));
+    if (!diff.changed) return false;
+    await sql`
+      INSERT INTO shopify_outbox (kind, customer_id, shopify_customer_id, payload)
+      VALUES ('writeback', ${customerId}, ${row.shopify_customer_id}, ${JSON.stringify({ add: [], remove: diff.remove })}::jsonb)
+    `;
+    return true;
+  } catch (err) {
+    reportError(err, { route: "lib/shopify-insights", phase: "removeInsightTags" });
+    return false;
   }
 }
