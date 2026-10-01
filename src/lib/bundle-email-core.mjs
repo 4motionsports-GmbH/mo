@@ -4,25 +4,28 @@
 // unit-testable without the email template / catalog / DB:
 //   1. shouldRenderBundleBlock — the block appears ONLY when a created, still
 //      active bundle is attached to the send (never for a draft with no bundle,
-//      and never for an expired/failed/pending offer).
+//      never for an expired/failed/pending offer, and never once its deadline
+//      has passed — even before the expiry sweep has flipped the row).
 //   2. bundleStattPrice — the PAngV "statt €X" strike price is the genuine
 //      snapshotted component sum, and ONLY when the bundle truly costs less than
 //      its parts (reuses the S10 compare-at rule so the email and the Shopify
 //      compareAtPrice can never disagree).
 
-import { computeCompareAtPrice } from "./bundle-offer-core.mjs";
+import { computeCompareAtPrice, isExpired } from "./bundle-offer-core.mjs";
 
 /**
  * Whether the personalized email should carry a special-offer block. True ONLY
- * for an attached, ACTIVE bundle offer; false for no bundle (null/undefined) or
- * any non-active lifecycle state (pending/expired/failed) — a dead offer must
- * never be advertised.
+ * for an attached, ACTIVE bundle offer whose deadline has not passed; false for
+ * no bundle (null/undefined), any non-active lifecycle state
+ * (pending/expired/failed) or an active row already past `expiresAt` — a dead
+ * offer must never be advertised.
  *
- * @param {{ status?: string } | null | undefined} bundle
+ * @param {{ status?: string, expiresAt?: string | Date | null } | null | undefined} bundle
+ * @param {number} [now]  epoch ms
  * @returns {boolean}
  */
-export function shouldRenderBundleBlock(bundle) {
-  return Boolean(bundle && bundle.status === "active");
+export function shouldRenderBundleBlock(bundle, now = Date.now()) {
+  return Boolean(bundle && bundle.status === "active" && !isExpired(bundle, now));
 }
 
 /**

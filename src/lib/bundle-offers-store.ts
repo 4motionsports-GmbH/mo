@@ -8,6 +8,7 @@
 import { getSql, type Sql } from "./db";
 import { generateRedirectToken } from "./marketing-store";
 import { reportError } from "./observability";
+import { isExpired } from "./bundle-offer-core.mjs";
 
 export type BundleOfferStatus = "pending" | "active" | "expired" | "failed";
 
@@ -435,6 +436,66 @@ export async function fetchDueBundleOffers(
   }
 }
 
+/**
+ * Ended offers (not active, not pending) whose Shopify product has not been
+ * deleted yet — the clean-up pass of the expiry sweep: a manual end whose
+ * delete failed, and sets that were only archived before migration 0060.
+ * Small batches so one run stays inside the cron's time budget. Fail-soft:
+ * returns [] on error (e.g. before migration 0060 has run).
+ */
+export async function fetchEndedOffersWithShopifyProduct(
+  limit = 25,
+  sql: Sql | null = getSql()
+): Promise<Array<{ id: number; shopifyProductId: string }>> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT id, shopify_product_id
+        FROM bundle_offers
+       WHERE status IN ('expired', 'failed')
+         AND shopify_product_id IS NOT NULL
+         AND shopify_deleted_at IS NULL
+       ORDER BY id ASC
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: Number(r.id),
+      shopifyProductId: String(r.shopify_product_id),
+    }));
+  } catch (err) {
+    reportError(err, {
+      route: "lib/bundle-offers-store",
+      phase: "fetchEndedOffersWithShopifyProduct",
+    });
+    return [];
+  }
+}
+
+/**
+ * Stamp that an offer's Shopify product has been deleted (migration 0060).
+ * Guarded so a repeat run keeps the first timestamp. Fail-soft: the product is
+ * already gone at this point, so a failed stamp only means the clean-up pass
+ * tries the (idempotent) delete once more.
+ */
+export async function markShopifyProductDeleted(
+  id: number,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      UPDATE bundle_offers
+         SET shopify_deleted_at = now(), updated_at = now()
+       WHERE id = ${id} AND shopify_deleted_at IS NULL
+      RETURNING id
+    `) as Array<Record<string, unknown>>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/bundle-offers-store", phase: "markShopifyProductDeleted" });
+    return false;
+  }
+}
+
 /** The ACTIVE offer attached to a campaign contact — what the campaign card
  * shows and the campaign send path renders as the special-offer block. Null
  * when none. Newest first, mirroring getActiveBundleForSend. */
@@ -516,7 +577,7 @@ export async function resolveBundleRedirect(
   if (!t) return null;
   try {
     const rows = (await sql`
-      SELECT id, status, cart_url, customer_id
+      SELECT id, status, cart_url, customer_id, expires_at
         FROM bundle_offers
        WHERE redirect_token = ${t}
        LIMIT 1
@@ -525,7 +586,13 @@ export async function resolveBundleRedirect(
     if (!row) return null;
 
     const offerId = Number(row.id);
-    const status = row.status as BundleOfferStatus;
+    // A set whose deadline has passed is over the moment its timer hits 0 —
+    // even if the expiry sweep (every 15 min) has not flipped the row yet.
+    const rawStatus = row.status as BundleOfferStatus;
+    const status: BundleOfferStatus =
+      rawStatus === "active" && isExpired({ expiresAt: row.expires_at as string | Date | null })
+        ? "expired"
+        : rawStatus;
     // Only an active offer forwards to its live cart; everything else (expired,
     // failed, pending) yields no destination so the route serves the friendly page.
     const destination = status === "active" ? ((row.cart_url as string | null) ?? null) : null;

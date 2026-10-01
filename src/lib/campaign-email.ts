@@ -65,7 +65,7 @@ import {
   renderOfferCountdown,
   renderDiscountCoupon,
 } from "./email-template";
-import { renderEmailProductRows, productRowItems, highlightDescriptionFor, firstProductImageUrl, catalogNameLookup } from "./email-products";
+import { renderEmailProductRows, productRowItems, firstProductImageUrl, catalogNameLookup } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -337,7 +337,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         // before the design was active shipped the classic block inside a
         // Performance mail.
         bundle: await (async () => {
-          const b = await buildBundleBlockForContact(contactId, contact.language, draft.productHighlights);
+          const b = await buildBundleBlockForContact(contactId, contact.language);
           bundleOfferId = b?.offerId ?? null;
           return b;
         })(),
@@ -518,8 +518,7 @@ async function resolveRecommendedProducts(productIds: string[]): Promise<Product
  */
 async function buildBundleBlockForContact(
   contactId: number,
-  language: "de" | "en",
-  highlights: Array<{ name: string; description: string }> | null = null
+  language: "de" | "en"
 ): Promise<{ text: string; html: string; componentNames: string[]; expiresAt: string | null; offerId: number } | null> {
   try {
     const bundle = await getActiveBundleForCampaignContact(contactId);
@@ -527,8 +526,8 @@ async function buildBundleBlockForContact(
     const offerUrl = buildBundleRedirectUrl(bundle.redirectToken);
     if (!offerUrl) return null;
 
-    // Component images fresh from the catalog; the per-component description
-    // resolves personalised highlight → catalog copy (same as the rows above).
+    // Component images fresh from the catalog; the block lists the contents
+    // with the snapshotted count of each item.
     const catalog = await loadProductCatalog();
     const byId = new Map(catalog.map((p) => [p.id, p]));
     const components = bundle.components.map((c) => {
@@ -536,10 +535,7 @@ async function buildBundleBlockForContact(
       return {
         name: c.title,
         imageUrl: firstProductImageUrl(product),
-        description:
-          highlightDescriptionFor(c.title, highlights) ||
-          product?.shortDescription?.trim() ||
-          null,
+        quantity: c.quantity,
       };
     });
 
@@ -627,7 +623,7 @@ export async function renderCampaignEmailPreview(
           contact.language,
           buildErasureUrl(contact.email, contact.language)
         ),
-    bundle: await buildBundleBlockForContact(contactId, contact.language, draft.productHighlights),
+    bundle: await buildBundleBlockForContact(contactId, contact.language),
     labelForUrl: await catalogNameLookup("lib/campaign-email"),
   }))
     );

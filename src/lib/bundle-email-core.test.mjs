@@ -15,6 +15,15 @@ test("shouldRenderBundleBlock: only an ACTIVE attached bundle renders", () => {
   assert.equal(shouldRenderBundleBlock({ status: "failed" }), false);
 });
 
+test("shouldRenderBundleBlock: an active set past its deadline no longer renders", () => {
+  const now = Date.UTC(2026, 9, 1, 12);
+  const future = new Date(now + 60_000).toISOString();
+  const past = new Date(now - 60_000).toISOString();
+  assert.equal(shouldRenderBundleBlock({ status: "active", expiresAt: future }, now), true);
+  assert.equal(shouldRenderBundleBlock({ status: "active", expiresAt: past }, now), false);
+  assert.equal(shouldRenderBundleBlock({ status: "active", expiresAt: null }, now), true);
+});
+
 test("bundleStattPrice: present (= true component sum) only when bundle is cheaper", () => {
   // A genuine saving → strike price = the snapshotted component sum.
   assert.equal(bundleStattPrice("149.00", "160.00"), "160.00");

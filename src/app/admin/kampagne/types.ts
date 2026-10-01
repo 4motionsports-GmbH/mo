@@ -21,6 +21,7 @@ export type CampaignRecommendation = CampaignRecommendationView;
 export interface CampaignBundle {
   id: number;
   title: string;
+  /** The set's contents, one display line per item with its count ("2× A"). */
   components: string[];
   /** Decimal Money strings (as stored). */
   bundlePrice: string;

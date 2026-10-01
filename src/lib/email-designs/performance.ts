@@ -36,6 +36,7 @@ import type {
 import { activeEmailRenderData } from "../email-design-context";
 import { getBaseUrl } from "../base-url";
 import { bundleHeadline } from "../bundle-email-core.mjs";
+import { bundleItemList } from "../bundle-offer-core.mjs";
 import { EMAIL_RATING_FACES, emailRatingUrl } from "../email-rating.mjs";
 import {
   escapeAttr,
@@ -302,7 +303,14 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
       ? `
                           <td valign="bottom" style="${priceLabel} padding-bottom:2px;">${bluePill(`${c.labels.save} ${c.savingLabel}`)}</td>`
       : "");
-  const componentNames = input.components.map((comp) => escapeHtml(comp.name)).join(" · ");
+  // The contents as a bullet list with the count of each item ("2× …").
+  const itemStyle = `font-family:${FONT}; font-size:12px; line-height:17px; color:#555555; padding:0 0 3px 0;`;
+  const itemList = bundleItemList(input.components)
+    .map(
+      (item) =>
+        `<tr><td valign="top" width="12" style="${itemStyle} width:12px;">&bull;</td><td valign="top" style="${itemStyle}"><strong style="color:#111111;">${item.quantity}&times;</strong> ${escapeHtml(item.name)}</td></tr>`
+    )
+    .join("");
   return `
                 <tr>
                   <td class="content-pad" style="padding: 8px 38px 16px 38px;" bgcolor="#ffffff">
@@ -315,7 +323,7 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
                         <td width="58%" valign="middle" class="bundle-column" style="width:58%; padding:24px 24px 24px 0;">
                           <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#111111; font-weight:700;">${escapeHtml(bundleHeadline(input.title, en ? "en" : "de"))}</div>
                           <div class="bundle-rule" style="width:14px; height:2px; background:${RED}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
-                          <div style="font-family:${FONT}; font-size:11px; line-height:16px; color:#555555; margin-bottom:16px;">${componentNames}</div>
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:13px;">${itemList}</table>
                           <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="bundle-prices"><tr>${priceCells}
                           </tr></table>
                           <div style="height:18px; font-size:0; line-height:0;">&nbsp;</div>

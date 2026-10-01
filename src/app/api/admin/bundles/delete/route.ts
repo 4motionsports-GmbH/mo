@@ -3,9 +3,9 @@
 // DELETE a draft/unsent bundle offer (S11 UI). STRICT counterpart to the
 // archive path: ONLY the never-published DRAFT states (pending/failed) are
 // deletable. An active/published or expired offer is refused (409 not_deletable)
-// and must go through /api/admin/bundles/archive instead — archive keeps the
-// Shopify product ARCHIVED and the row for audit/KPIs. A (pending/failed) row
-// that somehow already minted a Shopify product has that product archived first
+// and must go through /api/admin/bundles/archive instead — that deletes the
+// Shopify product but keeps the row for audit/KPIs. A (pending/failed) row
+// that somehow already minted a Shopify product has that product deleted first
 // rather than orphaned. See deleteDraftBundleOffer (lib/bundle-offers).
 //
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).

@@ -10,6 +10,7 @@ import { ExternalLink, Gift, Sparkles, Trash2, X } from "lucide-react";
 import type { CustomerDetailBundle } from "@/lib/customer-detail";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { money, num, plural } from "@/lib/admin-format.mjs";
+import { bundleItemLabel, bundleItemList } from "@/lib/bundle-offer-core.mjs";
 import {
   Button,
   Callout,
@@ -19,6 +20,7 @@ import {
   IconButton,
   InfoTip,
   Input,
+  Select,
   StatusBadge,
   toast,
   useConfirm,
@@ -33,6 +35,8 @@ const DEFAULT_BUNDLE_TITLE = "Dein persönliches Set";
 const DEFAULT_EXPIRY_DAYS = 7;
 const BUNDLE_MIN = 2;
 const BUNDLE_MAX = 5;
+const QUANTITY_MAX = 10;
+const QUANTITY_OPTIONS = Array.from({ length: QUANTITY_MAX }, (_, i) => i + 1);
 
 interface ComposerComponent {
   productId: string;
@@ -45,6 +49,8 @@ interface ComposerComponent {
   currency: string;
   inStock: boolean;
   rationale?: string;
+  /** How many of this item the set contains (≥ 1). */
+  quantity: number;
 }
 
 /** Composite key — the same product may appear once per pinned variant. */
@@ -54,7 +60,7 @@ function componentKey(c: { productId: string; variantId?: string | null }): stri
 
 interface SuggestResponse {
   title?: string;
-  components?: ComposerComponent[];
+  components?: Array<Omit<ComposerComponent, "quantity">>;
 }
 
 interface CreateResponse {
@@ -105,7 +111,7 @@ export function BundleComposer({
   const [busy, setBusy] = React.useState<null | "suggest" | "create">(null);
   const [bundles, setBundles] = React.useState<CustomerDetailBundle[]>(initialBundles);
 
-  const componentSum = components.reduce((s, c) => s + c.unitPrice, 0);
+  const componentSum = components.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
   const priceNum = Number(price.replace(",", "."));
   const priceValid = Number.isFinite(priceNum) && priceNum > 0;
   const aboveSum = priceValid && priceNum > componentSum + 0.0001;
@@ -118,7 +124,7 @@ export function BundleComposer({
   function applyComponents(next: ComposerComponent[]) {
     setComponents(next);
     if (!priceEdited) {
-      const sum = next.reduce((s, c) => s + c.unitPrice, 0);
+      const sum = next.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
       setPrice(next.length ? sum.toFixed(2) : "");
     }
   }
@@ -137,6 +143,7 @@ export function BundleComposer({
         currency: c.currency,
         inStock: c.inStock,
         rationale: c.rationale,
+        quantity: 1,
       }));
       applyComponents(next);
       if (json.title && (!title || title === DEFAULT_BUNDLE_TITLE)) setTitle(json.title);
@@ -161,6 +168,7 @@ export function BundleComposer({
       unitPrice: variant?.unitPrice ?? hit.unitPrice,
       currency: variant?.currency ?? hit.currency,
       inStock: variant ? variant.available : hit.inStock,
+      quantity: 1,
     };
     if (components.some((c) => componentKey(c) === componentKey(next))) return;
     applyComponents([...components, next]);
@@ -168,6 +176,11 @@ export function BundleComposer({
 
   function removeProduct(key: string) {
     applyComponents(components.filter((c) => componentKey(c) !== key));
+  }
+
+  function setQuantity(key: string, value: number) {
+    const quantity = Math.min(QUANTITY_MAX, Math.max(1, Math.floor(value) || 1));
+    applyComponents(components.map((c) => (componentKey(c) === key ? { ...c, quantity } : c)));
   }
 
   async function onCreate() {
@@ -195,6 +208,7 @@ export function BundleComposer({
           components: components.map((c) => ({
             productId: c.productId,
             ...(c.variantId ? { variantId: c.variantId } : {}),
+            quantity: c.quantity,
           })),
           bundlePriceOverride: priceNum,
           title: title.trim() || DEFAULT_BUNDLE_TITLE,
@@ -266,19 +280,19 @@ export function BundleComposer({
 
   async function onArchive(id: number) {
     const ok = await confirm({
-      title: "Set archivieren?",
-      description: "Der Angebots-Link wird ungültig.",
-      confirmLabel: "Archivieren",
+      title: "Set entfernen?",
+      description: "Der Angebots-Link wird ungültig und das Set-Produkt in Shopify gelöscht.",
+      confirmLabel: "Entfernen",
       tone: "destructive",
     });
     if (!ok) return;
     try {
       await adminFetch("/api/admin/bundles/archive", { body: { id } });
       setBundles((prev) => prev.map((b) => (b.id === id ? { ...b, status: "expired" as const } : b)));
-      toast({ variant: "success", title: "Set archiviert" });
+      toast({ variant: "success", title: "Set entfernt" });
       refresh();
     } catch (e) {
-      fail(e, "Archivieren fehlgeschlagen.");
+      fail(e, "Entfernen fehlgeschlagen.");
     }
   }
 
@@ -353,6 +367,20 @@ export function BundleComposer({
                     {money(c.unitPrice, c.currency)}
                     {c.rationale ? ` · ${c.rationale}` : ""}
                   </div>
+                </div>
+                <div className="w-20 shrink-0">
+                  <Select
+                    value={c.quantity}
+                    aria-label={`Anzahl ${c.title}`}
+                    onChange={(e) => setQuantity(componentKey(c), Number(e.target.value))}
+                    className="h-8"
+                  >
+                    {QUANTITY_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}×
+                      </option>
+                    ))}
+                  </Select>
                 </div>
                 <IconButton
                   label={`${c.title} aus dem Set entfernen`}
@@ -459,9 +487,11 @@ export function BundleComposer({
                           : ""}
                       </span>
                     </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
-                      {b.components.map((c) => c.title).join(" + ")}
-                    </div>
+                    <ul className="mt-0.5 list-disc pl-4 text-xs text-muted-foreground">
+                      {bundleItemList(b.components).map((item) => (
+                        <li key={item.name}>{bundleItemLabel(item)}</li>
+                      ))}
+                    </ul>
                     <div className="mt-0.5 text-2xs text-muted-foreground">
                       Erstellt {formatAdmin(b.createdAt, ADMIN_DATE)}
                       {b.expiresAt ? ` · läuft ab ${formatAdmin(b.expiresAt, ADMIN_DATE)}` : ""}
@@ -492,7 +522,7 @@ export function BundleComposer({
                       )}
                       {b.status === "active" && (
                         <Button variant="outline" size="xs" onClick={() => onArchive(b.id)}>
-                          Archivieren
+                          Entfernen
                         </Button>
                       )}
                     </div>

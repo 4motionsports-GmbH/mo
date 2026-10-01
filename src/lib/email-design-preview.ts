@@ -74,9 +74,10 @@ function renderSampleForKind(kind: EmailDesignKind, products: Product[]): string
       const bundle = bundleComponents.length
         ? renderBundleOfferBlock({
             title: "Dein persönliches Home-Gym Set",
-            components: bundleComponents.map((p) => ({
+            components: bundleComponents.map((p, i) => ({
               name: p.name,
               imageUrl: firstImage(p),
+              quantity: i === 0 ? 2 : 1,
             })),
             bundlePrice: 899,
             componentsSum: 998,

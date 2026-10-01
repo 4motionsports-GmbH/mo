@@ -2,8 +2,8 @@
 //
 // Rendered ONLY when a created, still-active bundle is attached to the send
 // (see shouldRenderBundleBlock). Newsletter-styled: the signature BLACK
-// SEPARATOR BAND ("Dein persönliches Angebot"), the component products as the
-// shared personalised ROWS (image/name | description), then the price BLOCK —
+// SEPARATOR BAND ("Dein persönliches Angebot"), the set's contents as a
+// BULLET LIST with the count of each item ("2× Kettlebell"), then the price BLOCK —
 // the offer's visual anchor: the component sum struck through in red, the set
 // price big and bold, and a "Du sparst …" line. The strike + saving appear
 // ONLY when the bundle genuinely costs less than its parts (PAngV: the GENUINE
@@ -25,16 +25,16 @@ import {
   emailTextStyle,
   EMAIL_SALE_STRIKE_COLOR,
 } from "./email-template";
-import { renderEmailProductRows } from "./email-products";
 import { activeEmailDesignRenderers } from "./email-design-context";
 import { bundleStattPrice } from "./bundle-email-core.mjs";
+import { bundleItemList, bundleItemLabel } from "./bundle-offer-core.mjs";
 
 export interface BundleEmailComponent {
   name: string;
   imageUrl: string | null;
-  /** Personalised (or catalog-fallback) description shown beside the image in
-   * the component rows. Null/absent = row without a description paragraph. */
-  description?: string | null;
+  /** How many of this item the set contains (default 1) — shown in front of
+   * the name in the bullet list ("2× Kettlebell"). */
+  quantity?: number;
 }
 
 export interface BundleOfferBlockInput {
@@ -121,7 +121,7 @@ export function renderBundleOfferBlock(input: BundleOfferBlockInput): { text: st
     "",
     "—",
     `${labels.kicker}: ${input.title}`,
-    ...input.components.map((c) => `- ${c.name}`),
+    ...bundleItemList(input.components).map((item) => `- ${bundleItemLabel(item)}`),
     stattLabel
       ? `${labels.price}: ${priceLabel} (${labels.instead} ${stattLabel})`
       : `${labels.price}: ${priceLabel}`,
@@ -145,18 +145,22 @@ export function renderBundleOfferBlock(input: BundleOfferBlockInput): { text: st
     };
   }
 
-  // Classic: band + title + component rows + price block + pill CTA.
-  // Components render as the personalised ROWS layout (image/name in the first
-  // third, description in the remaining two thirds) — no per-component prices
-  // and no per-component buttons: the set's price block + "Zum Angebot" CTA
-  // below are the one offer the block sells.
-  const rowsHtml = renderEmailProductRows(
-    input.components.map((c) => ({
-      imageUrl: c.imageUrl,
-      name: c.name,
-      description: c.description ?? null,
-    }))
-  );
+  // Classic: band + title + bullet list + price block + pill CTA.
+  // The contents render as a bullet list, one line per item with its count —
+  // no per-component prices and no per-component buttons: the set's price
+  // block + CTA below are the one offer the block sells. A table instead of
+  // <ul> so Outlook keeps the bullets and indentation.
+  const itemStyle = `${emailTextStyle()} font-size: 14px; padding: 0 0 6px;`;
+  const listHtml =
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 0 auto;">` +
+    bundleItemList(input.components)
+      .map(
+        (item) =>
+          `<tr><td valign="top" width="18" style="${itemStyle} width: 18px;">&bull;</td>` +
+          `<td valign="top" align="left" style="${itemStyle}"><strong>${item.quantity}&times;</strong> ${escapeHtml(item.name)}</td></tr>`
+      )
+      .join("") +
+    `</table>`;
 
   // The price BLOCK — the offer's visual anchor: small label, the genuine
   // component sum struck through in red, the set price big and bold, and a
@@ -181,7 +185,7 @@ export function renderBundleOfferBlock(input: BundleOfferBlockInput): { text: st
                     <p style="${emailTextStyle()} font-size: 15px; font-weight: 700;" align="center"><strong>${escapeHtml(input.title)}</strong></p>`,
       { padding: "25px 60px 0", align: "center" }
     ) +
-    renderSectionRow(rowsHtml, { padding: "0 60px 10px", align: "center" }) +
+    renderSectionRow(listHtml, { padding: "14px 60px 4px", align: "center" }) +
     renderSectionRow(priceHtml, { padding: "14px 60px 10px", align: "center" }) +
     renderSectionRow(renderCtaButton({ label: labels.cta, url: input.offerUrl }), {
       padding: "10px 60px 20px",

@@ -22,6 +22,7 @@ import { useRouter } from "next/navigation";
 import { EMAIL_TEXT_MODE_LABELS, DEFAULT_EMAIL_TEXT_MODE } from "@/lib/email-text-mode.mjs";
 import { DEFAULT_DISCOUNT_SCOPE, parseDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
 import { emailProseToText } from "@/lib/email-prose.mjs";
+import { bundleItemLabel, bundleItemList } from "@/lib/bundle-offer-core.mjs";
 import { abGroupOf, reviewChecks, reviewVerdict } from "@/lib/campaign-review-checks.mjs";
 import {
   deskProgress,
@@ -217,7 +218,7 @@ interface DraftResponse {
 interface BundleOfferResponse {
   id: number;
   title: string | null;
-  components: Array<{ title: string }>;
+  components: Array<{ title: string; quantity?: number }>;
   bundlePrice: string;
   componentsSum: string;
   currency: string;
@@ -1151,7 +1152,7 @@ export function useCampaignActions({
             bundle: {
               id: json.offer.id,
               title: json.offer.title ?? "Dein persönliches Set",
-              components: json.offer.components.map((c) => c.title),
+              components: bundleItemList(json.offer.components).map(bundleItemLabel),
               bundlePrice: json.offer.bundlePrice,
               componentsSum: json.offer.componentsSum,
               currency: json.offer.currency,
@@ -1183,7 +1184,7 @@ export function useCampaignActions({
       try {
         await adminFetch("/api/admin/bundles/archive", { body: { id: item.bundle.id } });
         patchItem(contactId, { bundle: null });
-        toast({ variant: "success", title: "Set-Angebot archiviert", description: "Text wird angepasst…" });
+        toast({ variant: "success", title: "Set-Angebot entfernt", description: "Text wird angepasst…" });
         scheduleRegenerate(contactId);
       } catch (err) {
         setBusy(contactId, null);

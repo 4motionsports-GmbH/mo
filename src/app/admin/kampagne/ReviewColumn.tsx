@@ -443,7 +443,15 @@ export function ReviewColumn({
                     {item.bundle.expiresAt ? ` · bis ${formatAdmin(item.bundle.expiresAt, ADMIN_DATE)}` : ""}
                   </span>
                 </span>
-                <Tooltip content={item.bundle.components.join(" + ")}>
+                <Tooltip
+                  content={
+                    <ul className="list-disc pl-4">
+                      {item.bundle.components.map((line, i) => (
+                        <li key={i}>{line}</li>
+                      ))}
+                    </ul>
+                  }
+                >
                   <span tabIndex={0} className="text-muted-foreground">
                     <Info className="size-3.5" aria-label="Bestandteile" />
                   </span>
