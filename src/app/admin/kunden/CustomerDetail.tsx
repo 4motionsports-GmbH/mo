@@ -81,7 +81,9 @@ export function CustomerDetail({
     const ok = await confirm({
       title: "Kunde vollständig löschen?",
       description: customer.isShopifyCustomer
-        ? "Löscht alles über diese Person bei Mo: Profil, Gespräche, Einwilligung, Bestellkopien, Kampagnen-Mails, Korrespondenz und Briefe. Zusätzlich wird Shopify gebeten, die Kundendaten dort ebenfalls zu löschen (Shopify erledigt das nach seinen Fristen; Bestellungen bleiben dort aus steuerlichen Gründen erhalten). Die Adresse wird gesperrt und nie wieder angeschrieben oder importiert. Das lässt sich nicht rückgängig machen."
+        ? customer.shopifyErasureSync
+          ? "Löscht alles über diese Person bei Mo: Profil, Gespräche, Einwilligung, Bestellkopien, Kampagnen-Mails, Korrespondenz und Briefe. Zusätzlich wird Shopify gebeten, die Kundendaten dort ebenfalls zu löschen (Shopify erledigt das nach seinen Fristen; Bestellungen bleiben dort aus steuerlichen Gründen erhalten). Die Adresse wird gesperrt und nie wieder angeschrieben oder importiert. Das lässt sich nicht rückgängig machen."
+          : "Löscht alles über diese Person bei Mo: Profil, Gespräche, Einwilligung, Bestellkopien, Kampagnen-Mails, Korrespondenz und Briefe. In Shopify wird sie von E-Mail-Werbung abgemeldet; die Löschung des Shop-Kundenkontos wird vorgemerkt und erst weitergegeben, wenn die Weitergabe von Löschungen eingeschaltet ist (SHOPIFY_ERASURE_SYNC). Die Adresse wird gesperrt und nie wieder angeschrieben oder importiert. Das lässt sich nicht rückgängig machen."
         : "Löscht alles über diese Person: Profil, Gespräche, Einwilligung, Kampagnen-Mails, Korrespondenz und Briefe. Die Adresse wird gesperrt und nie wieder angeschrieben oder importiert. Das lässt sich nicht rückgängig machen.",
       confirmLabel: "Endgültig löschen",
       tone: "destructive",

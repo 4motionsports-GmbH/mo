@@ -64,3 +64,15 @@ test("every view has a label and an explanation", () => {
     assert.ok(v.label && v.info.length > 10, key);
   }
 });
+
+test("parseCustomerFilter: old ?filter= presets land on the closest view", () => {
+  const marketing = parseCustomerFilter({ filter: "marketing" });
+  assert.equal(marketing.view, "einwilligung");
+  assert.equal(marketing.consent, "subscribed");
+  const noPurchase = parseCustomerFilter({ filter: "no_purchase" });
+  assert.equal(noPurchase.consent, "subscribed");
+  assert.equal(noPurchase.segment, "keine_bestellung");
+  assert.equal(parseCustomerFilter({ filter: "draft" }).view, "alle");
+  // An explicit view wins over the old preset.
+  assert.equal(parseCustomerFilter({ kview: "mo", filter: "marketing" }).view, "mo");
+});

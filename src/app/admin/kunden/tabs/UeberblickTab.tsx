@@ -29,7 +29,12 @@ export function UeberblickTab({ customer }: { customer: CustomerDetail }) {
       adminFetch("/api/admin/customers/language", {
         body: { customerId: customer.id, language: value === "auto" ? null : value },
       }),
-    { errorToast: "Sprache nicht gespeichert", onSuccess: () => refresh() }
+    {
+      errorToast: "Sprache nicht gespeichert",
+      onSuccess: () => refresh(),
+      // Back to the stored value — the control must not show a pin that was not saved.
+      onError: () => setLanguage(customer.languageOverride ?? "auto"),
+    }
   );
 
   const objection = useAsyncAction(

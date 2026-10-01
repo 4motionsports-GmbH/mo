@@ -7,6 +7,7 @@
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { setCustomerObjection } from "@/lib/customer-store";
 import { reportError } from "@/lib/observability";
+import { recordAdminAccess } from "@/lib/admin-access-log";
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
@@ -23,6 +24,10 @@ export async function POST(req: Request) {
   try {
     const ok = await setCustomerObjection(customerId, body.kind, body.objected === true);
     if (!ok) return adminJsonError("not_found", "Kunde nicht gefunden.", 404);
+    await recordAdminAccess(
+      { action: "customer.objection", targetCustomerId: customerId, detail: { kind: body.kind, objected: body.objected === true } },
+      req
+    );
     return adminJson({ ok: true });
   } catch (err) {
     reportError(err, { route: "api/admin/customers/objection" });

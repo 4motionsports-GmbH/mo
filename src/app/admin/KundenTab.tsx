@@ -33,8 +33,14 @@ export async function KundenTab({
     );
   }
 
-  const filter = parseCustomerFilter(searchParams);
-  const [page, summary, health] = await Promise.all([listCustomers(filter), getCustomerBaseSummary(), getSyncHealth()]);
+  let filter = parseCustomerFilter(searchParams);
+  const [firstPage, summary, health] = await Promise.all([listCustomers(filter), getCustomerBaseSummary(), getSyncHealth()]);
+  let page = firstPage;
+  // A page past the end (an old link, a shrunk filter) shows the first page instead of „0 Personen“.
+  if (page.items.length === 0 && filter.page > 1) {
+    filter = { ...filter, page: 1 };
+    page = await listCustomers(filter);
+  }
 
   return (
     <KundenWorkspace
