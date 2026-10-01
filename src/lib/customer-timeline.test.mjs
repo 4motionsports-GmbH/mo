@@ -26,7 +26,7 @@ test("merges every source newest first", () => {
     t.map((e) => e.kind),
     ["mail_in", "campaign", "order", "consent", "chat"]
   );
-  assert.equal(t[2].title, "Bestellung #1001 · 1.299,00 €");
+  assert.equal(t[2].title, "Bestellung #1001 · 1.299,00\u00a0€");
   assert.equal(t[2].detail, "Power Rack");
   assert.equal(t[1].detail, "angeklickt");
 });

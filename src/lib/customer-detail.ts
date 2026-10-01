@@ -28,7 +28,7 @@ import { getCustomerFigures, type CustomerFigures } from "./customer-list-store"
 import { listCustomerOrders, type LedgerOrder } from "./customer-orders-store";
 import { listCampaignParticipation, type CampaignParticipation } from "./campaigns-store";
 import { buildCustomerTimeline, type TimelineEntry } from "./customer-timeline.mjs";
-import { aiProfileScope, mayBuildAiProfile } from "./platform-flags.mjs";
+import { aiProfileScope, isShopifyErasureSyncEnabled, mayBuildAiProfile } from "./platform-flags.mjs";
 import { getProductsByIds } from "./product-catalog";
 
 export interface CustomerDetailTranscriptTurn {
@@ -101,6 +101,8 @@ export interface CustomerDetail {
   name: string | null;
   /** A Shopify customer (mirrored or signed in) vs. a Mo-only lead. */
   isShopifyCustomer: boolean;
+  /** SHOPIFY_ERASURE_SYNC — an erasure here is passed on to Shopify now (else it waits in the queue). */
+  shopifyErasureSync: boolean;
   shopifyCustomerId: string | null;
   shopifyState: string | null;
   shopifyTags: string[];
@@ -215,6 +217,7 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
       c.shopifyAccountSummary?.firstName?.trim() ||
       null,
     isShopifyCustomer: c.shopifyCustomerId != null,
+    shopifyErasureSync: isShopifyErasureSyncEnabled(),
     shopifyCustomerId: c.shopifyCustomerId,
     shopifyState: c.shopifyState,
     shopifyTags: c.shopifyTags,

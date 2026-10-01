@@ -108,6 +108,17 @@ export function parseCustomerFilter(params) {
   if (typeof view === "string" && CUSTOMER_VIEWS[view]) {
     f.view = view;
     Object.assign(f, CUSTOMER_VIEWS[view].set);
+  } else {
+    // Links from before the customer platform (?filter=, the old Übersicht
+    // presets) land on the closest view instead of the full list.
+    const legacy = get("filter");
+    if (legacy === "marketing") {
+      f.view = "einwilligung";
+      Object.assign(f, CUSTOMER_VIEWS.einwilligung.set);
+    } else if (legacy === "no_purchase") {
+      f.view = "einwilligung";
+      Object.assign(f, CUSTOMER_VIEWS.einwilligung.set, { segment: "keine_bestellung" });
+    }
   }
   const q = get("kq");
   if (typeof q === "string") f.q = q.trim().slice(0, 120);

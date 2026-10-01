@@ -5,8 +5,7 @@
 // follow at once.
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
-import { getSql } from "@/lib/db";
-import { reportError } from "@/lib/observability";
+import { setCustomerLanguageOverride } from "@/lib/customer-store";
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
@@ -20,18 +19,8 @@ export async function POST(req: Request) {
   const customerId = Number(body.customerId);
   const language = body.language === "de" || body.language === "en" ? body.language : null;
   if (!Number.isInteger(customerId) || customerId <= 0) return adminJsonError("bad_request", "customerId required", 400);
-  const sql = getSql();
-  if (!sql) return adminJsonError("no_database", "No database configured.", 503);
-  try {
-    const rows = await sql`UPDATE customers SET language_override = ${language} WHERE id = ${customerId} RETURNING id`;
-    if (rows.length === 0) return adminJsonError("not_found", "Kunde nicht gefunden.", 404);
-    await sql`
-      UPDATE campaign_contacts SET language_override = ${language}
-       WHERE customer_id = ${customerId} AND status IN ('pending', 'drafted', 'draft_failed')
-    `;
-    return adminJson({ ok: true });
-  } catch (err) {
-    reportError(err, { route: "api/admin/customers/language" });
-    return adminJsonError("internal_error", "Die Sprache konnte nicht gespeichert werden.", 500);
-  }
+  const ok = await setCustomerLanguageOverride(customerId, language);
+  if (ok === false) return adminJsonError("not_found", "Kunde nicht gefunden.", 404);
+  if (ok === null) return adminJsonError("internal_error", "Die Sprache konnte nicht gespeichert werden.", 500);
+  return adminJson({ ok: true });
 }

@@ -163,35 +163,6 @@ export async function getCustomerBaseSummary(sql: Sql | null = getSql()): Promis
   }
 }
 
-/** Search customers by name / e-mail (assignment pickers, the Eingang). */
-export async function searchCustomers(
-  query: string,
-  limit = 10,
-  sql: Sql | null = getSql()
-): Promise<Array<{ id: number; email: string; name: string | null }>> {
-  if (!sql) return [];
-  const q = query.trim().toLowerCase();
-  if (q.length < 2) return [];
-  const pattern = `%${q.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
-  try {
-    const rows = (await sql`
-      SELECT customer_id, email, display_name
-        FROM customer_overview
-       WHERE lower(email) LIKE ${pattern} OR lower(COALESCE(display_name, '')) LIKE ${pattern}
-       ORDER BY last_activity_at DESC NULLS LAST
-       LIMIT ${Math.max(1, Math.min(limit, 50))}
-    `) as Array<Record<string, unknown>>;
-    return rows.map((r) => ({
-      id: Number(r.customer_id),
-      email: String(r.email),
-      name: (r.display_name as string | null) ?? null,
-    }));
-  } catch (err) {
-    reportError(err, { route: "lib/customer-list-store", phase: "searchCustomers" });
-    return [];
-  }
-}
-
 /** The computed figures + block state of ONE customer (detail header). */
 export interface CustomerFigures {
   blocked: boolean;

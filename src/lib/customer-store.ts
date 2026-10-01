@@ -1063,3 +1063,28 @@ export async function setCustomerObjection(
     return false;
   }
 }
+
+/**
+ * Pin (or clear, `null`) a person's e-mail language (customers.language_override,
+ * 0061); open recipient rows of every campaign follow at once. false when the
+ * customer is unknown; null on a database problem. Never throws.
+ */
+export async function setCustomerLanguageOverride(
+  customerId: number,
+  language: "de" | "en" | null,
+  sql: Sql | null = getSql()
+): Promise<boolean | null> {
+  if (!sql) return null;
+  try {
+    const rows = await sql`UPDATE customers SET language_override = ${language} WHERE id = ${customerId} RETURNING id`;
+    if (rows.length === 0) return false;
+    await sql`
+      UPDATE campaign_contacts SET language_override = ${language}
+       WHERE customer_id = ${customerId} AND status IN ('pending', 'drafted', 'draft_failed')
+    `;
+    return true;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "setCustomerLanguageOverride" });
+    return null;
+  }
+}

@@ -12,6 +12,7 @@ import { addRecipient, getCampaign, getEinzelCampaign } from "@/lib/campaigns-st
 import { getContactById } from "@/lib/campaign-store";
 import { prepareDraftForContact } from "@/lib/campaign-prepare";
 import { reportError } from "@/lib/observability";
+import { recordAdminAccess } from "@/lib/admin-access-log";
 
 export const maxDuration = 120;
 
@@ -60,6 +61,10 @@ export async function POST(req: Request) {
         }
       } else drafted = contact?.status === "drafted";
     }
+    await recordAdminAccess(
+      { action: "campaign.add_recipient", targetCustomerId: customerId, detail: { campaignId: campaign.id, contactId: res.contactId, drafted } },
+      req
+    );
     return adminJson({ contactId: res.contactId, campaignId: campaign.id, created: res.created, drafted });
   } catch (err) {
     reportError(err, { route: "api/admin/campaigns/add-recipient" });

@@ -3,6 +3,8 @@
 // The Kunden „Aktivität“ tab renders it; lib/customer-detail.ts gathers the
 // inputs (all already loaded for the detail — no extra queries).
 
+import { money } from "./admin-format.mjs";
+
 /**
  * @typedef {{
  *   at: string,
@@ -12,11 +14,7 @@
  * }} TimelineEntry
  */
 
-const euro = (cents, currency) => {
-  const value = (Number(cents) || 0) / 100;
-  const formatted = value.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `${formatted} ${currency && currency !== "EUR" ? currency : "€"}`;
-};
+const euro = (cents, currency) => money((Number(cents) || 0) / 100, currency || "EUR");
 
 const STATE_TITLES = {
   subscribed: "Für E-Mail-Werbung angemeldet",
