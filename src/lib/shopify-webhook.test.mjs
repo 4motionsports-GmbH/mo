@@ -80,3 +80,19 @@ test("planCatalogAction routes topics to the right targeted action", () => {
   });
   assert.equal(planCatalogAction("orders/create", {}).action, "ignore");
 });
+
+test("classifyShopifyTopic routes every platform topic", async () => {
+  const { classifyShopifyTopic } = await import("./shopify-webhook.mjs");
+  assert.equal(classifyShopifyTopic("products/update"), "catalog");
+  assert.equal(classifyShopifyTopic("inventory_levels/connect"), "catalog");
+  assert.equal(classifyShopifyTopic("orders/updated"), "order");
+  assert.equal(classifyShopifyTopic("ORDERS/PAID"), "order");
+  assert.equal(classifyShopifyTopic("customers/update"), "customer");
+  assert.equal(classifyShopifyTopic("customers_email_marketing_consent/update"), "consent");
+  assert.equal(classifyShopifyTopic("customers/delete"), "customer_delete");
+  assert.equal(classifyShopifyTopic("customers/redact"), "compliance");
+  assert.equal(classifyShopifyTopic("shop/redact"), "compliance");
+  assert.equal(classifyShopifyTopic("bulk_operations/finish"), "bulk");
+  assert.equal(classifyShopifyTopic("app/uninstalled"), "other");
+  assert.equal(classifyShopifyTopic(null), "other");
+});

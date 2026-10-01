@@ -108,3 +108,24 @@ export function planCatalogAction(topic, payload) {
   }
   return { action: "ignore", reason: `unhandled-topic:${t || "none"}` };
 }
+
+/**
+ * Which handler a (verified) delivery belongs to. The catalog topics keep the
+ * existing path; the customer-platform topics (docs/CUSTOMER_PLATFORM_PLAN.md
+ * §6.2, §8) are deduplicated by X-Shopify-Webhook-Id and routed to
+ * lib/shopify-webhook-customers.ts.
+ *
+ * @param {string | null} topic
+ * @returns {"catalog" | "order" | "customer" | "consent" | "customer_delete" | "compliance" | "bulk" | "other"}
+ */
+export function classifyShopifyTopic(topic) {
+  const t = String(topic ?? "").trim().toLowerCase();
+  if (t.startsWith("products/") || t.startsWith("inventory_levels/")) return "catalog";
+  if (t.startsWith("orders/")) return "order";
+  if (t === "customers/create" || t === "customers/update") return "customer";
+  if (t === "customers_email_marketing_consent/update") return "consent";
+  if (t === "customers/delete") return "customer_delete";
+  if (t === "customers/redact" || t === "customers/data_request" || t === "shop/redact") return "compliance";
+  if (t === "bulk_operations/finish") return "bulk";
+  return "other";
+}

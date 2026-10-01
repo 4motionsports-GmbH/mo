@@ -56,6 +56,21 @@ export const ERASURE_PLAN = {
     treatment: "retain",
     why: "The address is kept with reason 'erasure' so it is never mailed or re-imported from Shopify again (Art. 17(3)(b)/(e) — honouring the request).",
   },
+  customer_orders: {
+    treatment: "cascade",
+    why: "The mirrored Shopify orders (FK customers). Shopify keeps the legally required records itself.",
+  },
+  customer_facts: { treatment: "cascade", why: "Derived purchase/activity figures (FK customers)." },
+  consent_events: { treatment: "cascade", why: "The person's consent history (FK customers)." },
+  shopify_outbox: {
+    treatment: "delete",
+    why: "Open Shopify writes for the person are deleted; completed rows keep only the Shopify id (FK SET NULL, e-mail blanked on completion).",
+  },
+  inbox_items: { treatment: "cascade", why: "Eingang items about the person (FK customers)." },
+  erasure_tombstones: {
+    treatment: "retain",
+    why: "The Shopify id of the erased person, so no import or webhook re-creates them before Shopify has redacted the record; removed 30 days after Shopify confirms (Art. 17(3)(b)/(e)).",
+  },
   admin_access_log: {
     treatment: "retain",
     why: "Security audit of operator actions: operator IP and a numeric customer id only, own retention window.",
