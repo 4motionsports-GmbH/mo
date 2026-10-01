@@ -385,7 +385,7 @@ export function KundenWorkspace({
                           </InfoTip>
                         </div>
                         <Field label="Kampagne" htmlFor="k-add-campaign">
-                          <Select id="k-add-campaign" value={target} onChange={(e) => setTarget(e.target.value)}>
+                          <Select id="k-add-campaign" data-autofocus value={target} onChange={(e) => setTarget(e.target.value)}>
                             {campaigns.map((c) => (
                               <option key={c.id} value={c.id}>
                                 {c.name}
@@ -585,14 +585,16 @@ function CustomerRow({
               {c.lastActivityAt ? relativeTime(c.lastActivityAt) : "—"}
             </span>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="truncate">{c.name ? c.email : " "}</span>
-            {c.ordersCount > 0 && (
-              <span className="ml-auto shrink-0 tabular-nums">
-                {num(c.ordersCount)} × · {eurFromCents(c.totalSpentCents)}
-              </span>
-            )}
-          </div>
+          {(c.name || c.ordersCount > 0) && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="truncate">{c.name ? c.email : ""}</span>
+              {c.ordersCount > 0 && (
+                <span className="ml-auto shrink-0 tabular-nums">
+                  {num(c.ordersCount)} × · {eurFromCents(c.totalSpentCents)}
+                </span>
+              )}
+            </div>
+          )}
           <div className="mt-1 flex flex-wrap items-center gap-1">
             <ShopBadge isShopify={c.isShopifyCustomer} />
             <MoBadge conversations={c.conversationsCount} />

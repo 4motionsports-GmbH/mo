@@ -101,7 +101,7 @@ export function MoEffektSection({ kpis }: { kpis: MoEffectKpis | null }) {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0 pb-2">
-                <Table className="text-xs [&_td]:tabular-nums">
+                <Table className="text-xs [&_td]:tabular-nums [&_td]:whitespace-nowrap">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Wertstufe</TableHead>
