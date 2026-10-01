@@ -9,7 +9,7 @@
 import * as React from "react";
 import type { CustomerDetail } from "@/lib/customer-detail";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { eurFromCents, num } from "@/lib/admin-format.mjs";
+import { eur, eurFromCents, num } from "@/lib/admin-format.mjs";
 import { SEGMENT_LABELS } from "@/lib/admin-customer-filter.mjs";
 import { Button, DescriptionItem, DescriptionList, InfoTip, SegmentedControl, StatusBadge, toast, useConfirm } from "../../ui";
 import { adminFetch } from "../../lib/admin-fetch";
@@ -114,6 +114,18 @@ export function UeberblickTab({ customer }: { customer: CustomerDetail }) {
             </DescriptionItem>
             {f.boughtCategories.length > 0 && (
               <DescriptionItem label="Kategorien">{f.boughtCategories.slice(0, 6).join(", ")}</DescriptionItem>
+            )}
+            {customer.nextLikely.length > 0 && (
+              <DescriptionItem
+                label={
+                  <span className="inline-flex items-center gap-1">
+                    Wahrscheinlich als Nächstes
+                    <InfoTip>Ergänzende Produkte zu dem, was die Person schon besitzt (aus den Produktdaten des Katalogs).</InfoTip>
+                  </span>
+                }
+              >
+                {customer.nextLikely.map((p) => `${p.name} (${eur(p.price)})`).join(", ")}
+              </DescriptionItem>
             )}
           </DescriptionList>
         )}
