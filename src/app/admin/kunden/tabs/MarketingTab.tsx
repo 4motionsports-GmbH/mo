@@ -1,14 +1,16 @@
 "use client";
 
-// Marketing — the per-customer personalised email: settings (Hinweise, Rabatt,
-// Textmodus) → generate → edit → preview → approve & send. Editing and sending
-// reuse the marketing endpoints, so the send path (eligibility, unsubscribe,
-// mint-at-send, tracking, logging) is the same single audited pipeline. All
-// gating is server-side; this is presentation only. The bundle composer
-// ("Set-Angebot") lives in a collapsible section below the settings.
+// Marketing — the one consent (OptOutControl), the Einzelansprache (a 1:1
+// campaign mail: note → draft → review on the campaign desk, the same audited
+// send path as every campaign) and the person's campaign history. A personal
+// mail started on the former Marketing path stays editable here until it is
+// sent or deleted. Without consent every advertising action is blocked — the
+// server gates enforce it; this is presentation only.
 
 import * as React from "react";
-import { RotateCcw, Save, Send, Sparkles, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ExternalLink, Megaphone, RotateCcw, Save, Send, Sparkles, Trash2 } from "lucide-react";
 import type { CustomerDetail, CustomerDetailMarketingSend } from "@/lib/customer-detail";
 import {
   DISCOUNT_PERCENT_MIN,
@@ -17,8 +19,10 @@ import {
 } from "@/lib/discount-validation.mjs";
 import { DEFAULT_EMAIL_TEXT_MODE, EMAIL_TEXT_MODE_HINTS } from "@/lib/email-text-mode.mjs";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
   Button,
+  buttonVariants,
   Callout,
   Disclosure,
   Field,
@@ -39,13 +43,141 @@ import { BundleComposer } from "../BundleComposer";
 import { useCustomerActions } from "../CustomerDetail";
 import { OptOutControl } from "./OptOutControl";
 
-const BLOCKED_NOTE: Record<Exclude<CustomerDetail["marketingStatus"], "confirmed">, string> = {
-  none: "Keine Einwilligung aus dem Chat — von hier aus keine persönliche Marketing-E-Mail. Newsletter-Abonnenten erreichst du über die Kampagne.",
-  pending: "Double-Opt-In noch nicht bestätigt — bis dahin keine Marketing-E-Mail.",
-  unsubscribed: "Abgemeldet — es wird keine Marketing-E-Mail mehr generiert oder gesendet.",
+const BLOCKED_NOTE: Record<string, string> = {
+  not_subscribed: "Keine Einwilligung für E-Mail-Werbung — keine Einzelansprache, keine Kampagne. Erreichbar nur, wenn die Person sich im Shop oder bei Mo anmeldet.",
+  pending: "Die Anmeldung ist noch nicht bestätigt (Double-Opt-in) — bis dahin keine Werbe-Mail.",
+  unsubscribed: "Abgemeldet — es wird keine Werbe-Mail mehr erstellt oder gesendet.",
+};
+
+const PARTICIPATION_STATUS: Record<string, string> = {
+  pending: "Offen",
+  drafted: "Entwurf bereit",
+  sending: "Wird gesendet",
+  sent: "Gesendet",
+  skipped: "Übersprungen",
+  suppressed: "Gesperrt",
+  excluded: "Nicht mehr in der Zielgruppe",
+  draft_failed: "Entwurf fehlgeschlagen",
 };
 
 export function MarketingTab({ customer }: { customer: CustomerDetail }) {
+  const blockNote = customer.consent.blockReason
+    ? "Die Adresse ist gesperrt (Bounce, Beschwerde oder Löschung) — keine Werbe-Mail."
+    : BLOCKED_NOTE[customer.consent.state];
+  const legacyOpen = customer.marketingSend != null && customer.marketingSend.status !== "sent";
+  return (
+    <div className="flex flex-col gap-5">
+      <OptOutControl customer={customer} />
+      {customer.consent.sendable ? <Einzelansprache customer={customer} /> : blockNote && <Callout tone="info">{blockNote}</Callout>}
+      <Participation customer={customer} />
+      {legacyOpen && customer.consent.sendable && (
+        <Disclosure title="Persönliche E-Mail (bisheriger Weg) — offener Entwurf">
+          <LegacyMarketingMail customer={customer} />
+        </Disclosure>
+      )}
+    </div>
+  );
+}
+
+function Einzelansprache({ customer }: { customer: CustomerDetail }) {
+  const router = useRouter();
+  const { refresh } = useCustomerActions();
+  const [note, setNote] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const open = customer.campaigns.find(
+    (p) => p.campaignKind === "einzel" && ["pending", "drafted", "draft_failed", "sending"].includes(p.status)
+  );
+  const deskHref = (contactId: number) => adminTabHref("kampagne", { campaign: "einzelansprache", contact: String(contactId) });
+
+  async function prepare() {
+    setBusy(true);
+    try {
+      const json = await adminFetch<{ contactId: number; drafted: boolean }>("/api/admin/campaigns/add-recipient", {
+        body: { customerId: customer.id, adminNote: note.trim() || null, draft: true },
+      });
+      toast({
+        variant: "success",
+        title: json.drafted ? "Entwurf bereit" : "In der Einzelansprache",
+        description: json.drafted ? "Weiter im Prüftisch." : "Der Entwurf kann im Prüftisch erstellt werden.",
+      });
+      refresh();
+      router.push(deskHref(json.contactId));
+    } catch (e) {
+      toast({ variant: "error", title: "Einzelansprache nicht möglich", description: errorMessage(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3">
+      <div className="flex items-center gap-1.5 text-sm font-semibold">
+        Einzelansprache
+        <InfoTip>
+          Eine persönliche Mail nur an diese Person — mit Profil, Käufen und Gesprächen, auf Wunsch mit
+          Rabatt oder Set. Der Entwurf landet im Prüftisch der Kampagne „Einzelansprache“ und geht
+          erst nach deiner Prüfung raus (gleiche Prüfungen und Sperren wie jede Kampagne).
+        </InfoTip>
+      </div>
+      {open ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span>{PARTICIPATION_STATUS[open.status] ?? open.status}</span>
+          <Link href={deskHref(open.contactId)} className={buttonVariants({ size: "sm", variant: "outline" })}>
+            <ExternalLink /> Im Prüftisch öffnen
+          </Link>
+        </div>
+      ) : (
+        <>
+          <Textarea
+            aria-label="Hinweis für die KI"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            maxLength={1500}
+            className="min-h-0 resize-y bg-card"
+            placeholder="Optional: worum soll es gehen? z. B. „Nachfrage zum Rack, Zubehör für Klimmzüge anbieten“"
+          />
+          <div>
+            <Button size="sm" onClick={() => void prepare()} loading={busy}>
+              <Sparkles /> Einzelansprache vorbereiten
+            </Button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Participation({ customer }: { customer: CustomerDetail }) {
+  if (customer.campaigns.length === 0) {
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Megaphone className="size-3.5" aria-hidden /> Noch in keiner Kampagne.
+      </p>
+    );
+  }
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-sm font-semibold">Kampagnen</div>
+      <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
+        {customer.campaigns.map((p) => (
+          <li key={p.contactId} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+            <span className="font-medium">{p.campaignName}</span>
+            <StatusBadge tone={p.status === "sent" ? "success" : p.status === "drafted" ? "info" : "neutral"}>
+              {PARTICIPATION_STATUS[p.status] ?? p.status}
+            </StatusBadge>
+            {p.sentAt && <span className="text-xs text-muted-foreground">{formatAdmin(p.sentAt, ADMIN_DATE)}</span>}
+            {p.subject && <span className="min-w-0 truncate text-xs text-muted-foreground">„{p.subject}“</span>}
+            {p.clickedAt && <StatusBadge tone="accent">geklickt</StatusBadge>}
+            {p.unsubscribedAt && <StatusBadge tone="destructive">danach abgemeldet</StatusBadge>}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
   const { refresh } = useCustomerActions();
   const { confirm, confirmDialog } = useConfirm();
   const [send, setSend] = React.useState<CustomerDetailMarketingSend | null>(
@@ -74,15 +206,6 @@ export function MarketingTab({ customer }: { customer: CustomerDetail }) {
       : (DEFAULT_EMAIL_TEXT_MODE as EmailTextModeValue)
   );
   const [busy, setBusy] = React.useState<null | "draft" | "save" | "send" | "delete">(null);
-
-  if (customer.marketingStatus !== "confirmed") {
-    return (
-      <div className="flex flex-col gap-4">
-        <OptOutControl customer={customer} />
-        <Callout tone="info">{BLOCKED_NOTE[customer.marketingStatus]}</Callout>
-      </div>
-    );
-  }
 
   // Depth, instructions or text mode changed vs. the open draft ⇒ the visible
   // text was generated with other inputs — force a re-generate before sending.
@@ -224,7 +347,6 @@ export function MarketingTab({ customer }: { customer: CustomerDetail }) {
   return (
     <div className="flex flex-col gap-4">
       {confirmDialog}
-      <OptOutControl customer={customer} />
 
       {isSent && send && (
         <Callout tone="success" title={`Gesendet am ${formatAdmin(send.sentAt, ADMIN_DATE)}`}>

@@ -75,6 +75,9 @@ export async function POST(req: Request) {
   try {
     const customer = await getCustomerById(customerId);
     if (!customer) return adminJsonError("not_found", "Customer not found.", 404);
+    if (customer.postalObjectionAt) {
+      return adminJsonError("objection", "Widerspruch gegen Briefwerbung — kein Briefentwurf.", 409);
+    }
 
     // SAVE mode — just persist the edited subject/body (the operator's review).
     if (save) {

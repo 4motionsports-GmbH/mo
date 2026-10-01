@@ -77,6 +77,7 @@ export function validateFullAddress(address) {
  * button and the server-side refusal in lib/physical-mail.
  *
  * Order of checks is deliberate so the UI shows the MOST actionable reason:
+ *   0. Art. 21 objection            → the person said no (customers.postal_objection_at)
  *   1. no lawful full address       → the product blocker (most common today)
  *   2. address present but incomplete→ never part-fill; say what's missing
  *   3. Pingen not configured        → ops/env
@@ -84,7 +85,8 @@ export function validateFullAddress(address) {
  * When every check passes, `address` is the normalised recipient to post to.
  *
  * @param {{ flagApproved: boolean, pingenConfigured: boolean,
- *           address: Record<string, unknown> | null | undefined }} input
+ *           address: Record<string, unknown> | null | undefined,
+ *           postalObjectionAt?: string | null }} input
  * @returns {{ eligible: boolean, reasonCode: string | null,
  *             reason: string | null,
  *             address: ReturnType<typeof validateFullAddress> extends { ok: true }
@@ -92,6 +94,17 @@ export function validateFullAddress(address) {
  */
 export function decidePhysicalEligibility(input) {
   const { flagApproved, pingenConfigured, address } = input;
+
+  // An Art. 21 DSGVO objection to postal advertising wins over everything —
+  // the person said no; no address check, no draft, no letter.
+  if (input.postalObjectionAt) {
+    return {
+      eligible: false,
+      reasonCode: "objection",
+      reason: "Widerspruch gegen Briefwerbung (Art. 21 DSGVO) — es werden keine Briefe mehr verschickt.",
+      address: null,
+    };
+  }
 
   const validated = validateFullAddress(address);
   if (!validated.ok) {

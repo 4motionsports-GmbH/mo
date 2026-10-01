@@ -1,11 +1,14 @@
 "use client";
 
-// Käufe — the cached Shopify purchase history (refreshed on demand and by the
-// daily customer-refresh cron).
+// Käufe — the local copy of the person's Shopify orders (order ledger, 0062:
+// kept current by webhooks and the nightly reconcile, with line items and
+// discount codes). Before a person is mirrored, the cached per-e-mail history
+// (refreshed on demand) is shown instead.
 
 import * as React from "react";
 import { RotateCcw, ShoppingBag } from "lucide-react";
 import type { CustomerDetail } from "@/lib/customer-detail";
+import type { LedgerOrder } from "@/lib/customer-orders-store";
 import type { OrderHistory, OrderHistoryEntry } from "@/lib/shopify-orders";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { money, num } from "@/lib/admin-format.mjs";
@@ -89,7 +92,92 @@ const COLUMNS: DataTableColumn<OrderHistoryEntry>[] = [
   },
 ];
 
+const LEDGER_COLUMNS: DataTableColumn<LedgerOrder>[] = [
+  {
+    key: "items",
+    header: "Artikel",
+    cell: (o) => (
+      <div>
+        <div className="font-medium">
+          {o.lineItems.length > 0
+            ? o.lineItems.map((it) => `${it.quantity > 1 ? `${it.quantity}× ` : ""}${it.title}`).join(", ")
+            : "(keine Positionen)"}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {o.name}
+          {o.discountCodes.length > 0 && <> · Code {o.discountCodes.join(", ")}</>}
+          {o.cancelledAt && <> · storniert</>}
+        </div>
+      </div>
+    ),
+  },
+  {
+    key: "date",
+    header: "Datum",
+    width: "7rem",
+    sortValue: (o) => o.processedAt,
+    defaultDir: "desc",
+    cell: (o) => formatAdmin(o.processedAt, ADMIN_DATE),
+  },
+  {
+    key: "total",
+    header: "Summe",
+    align: "right",
+    width: "7rem",
+    sortValue: (o) => o.totalCents,
+    cell: (o) => money(o.totalCents / 100, o.currency ?? "EUR"),
+  },
+  {
+    key: "status",
+    header: "Status",
+    width: "8rem",
+    cell: (o) => <FinancialStatusBadge status={o.financialStatus} />,
+  },
+];
+
 export function KaeufeTab({ customer }: { customer: CustomerDetail }) {
+  if (customer.ordersTotal > 0 || customer.shopifySyncedAt) return <LedgerOrders customer={customer} />;
+  return <CachedPurchases customer={customer} />;
+}
+
+function LedgerOrders({ customer }: { customer: CustomerDetail }) {
+  const f = customer.figures;
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-1.5 text-sm font-semibold text-foreground">
+        Bestellungen
+        <InfoTip>
+          Kopie der Shopify-Bestellungen dieser Person (Bestellnummer, Datum, Artikel, Summe,
+          Rabattcode). Neue Bestellungen kommen per Webhook sofort dazu, nächtlich wird abgeglichen.
+          Empfehlungen schließen bereits Gekauftes aus.
+        </InfoTip>
+        {f && f.ordersCount > 0 && (
+          <span className="text-xs font-normal text-muted-foreground">
+            · {num(f.ordersCount)} bezahlt · {money(f.totalSpentCents / 100, "EUR")}
+            {f.aovCents != null && <> · Ø {money(f.aovCents / 100, "EUR")}</>}
+          </span>
+        )}
+      </div>
+      <DataTable
+        columns={LEDGER_COLUMNS}
+        rows={customer.orders}
+        rowKey={(o) => o.shopifyOrderId}
+        defaultSort={{ key: "date", dir: "desc" }}
+        dense
+        empty={<EmptyState compact plain icon={<ShoppingBag />} title="Noch keine Bestellungen." />}
+        footer={
+          customer.ordersTotal > customer.orders.length ? (
+            <span className="text-2xs text-muted-foreground">
+              Die neuesten {num(customer.orders.length)} von {num(customer.ordersTotal)} Bestellungen.
+            </span>
+          ) : undefined
+        }
+      />
+    </div>
+  );
+}
+
+function CachedPurchases({ customer }: { customer: CustomerDetail }) {
   const { refresh } = useCustomerActions();
   const [purchases, setPurchases] = React.useState<OrderHistory | null>(customer.purchaseSummary);
   const [updatedAt, setUpdatedAt] = React.useState(customer.purchaseSummaryUpdatedAt);

@@ -4,6 +4,8 @@
 // from the email: generate a letter-optimised draft, edit, preview the PDF,
 // send via Pingen. Sending is disabled (with the reason) until a complete,
 // lawfully held postal address, the feature flag and the Pingen config exist.
+// Letters to existing customers rest on legitimate interest (Art. 6(1)(f),
+// Recital 47 DSGVO); an Art. 21 objection recorded here stops them for good.
 
 import * as React from "react";
 import { Eye, Mailbox, Save, Send, Sparkles } from "lucide-react";
@@ -163,9 +165,46 @@ export function BriefTab({ customer }: { customer: CustomerDetail }) {
   const sent = letters.filter((l) => l.status !== "pending" && l.status !== "failed");
   const totalCents = sent.reduce((sum, l) => sum + (l.costCents ?? DEFAULT_LETTER_COST_CENTS), 0);
 
+  async function toggleObjection() {
+    const objected = !customer.postalObjectionAt;
+    const ok = await confirm({
+      title: objected ? "Widerspruch gegen Briefwerbung eintragen?" : "Widerspruch aufheben?",
+      description: objected
+        ? "Diese Person erhält keine Werbebriefe mehr (Art. 21 DSGVO); der Briefentwurf wird gelöscht."
+        : "Nur aufheben, wenn die Person ihren Widerspruch zurückgenommen hat.",
+      confirmLabel: objected ? "Widerspruch eintragen" : "Aufheben",
+      tone: objected ? "destructive" : "default",
+    });
+    if (!ok) return;
+    try {
+      await adminFetch("/api/admin/customers/objection", { body: { customerId: customer.id, kind: "postal", objected } });
+      toast({ variant: "success", title: "Gespeichert" });
+      refresh();
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  if (customer.postalObjectionAt) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface-2 px-3 py-2 text-sm">
+        {confirmDialog}
+        <span>Widerspruch gegen Briefwerbung seit {formatAdmin(customer.postalObjectionAt, ADMIN_DATE)} — keine Briefe.</span>
+        <Button variant="ghost" size="xs" onClick={() => void toggleObjection()}>
+          Aufheben
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {confirmDialog}
+      <div className="flex justify-end">
+        <Button variant="ghost" size="xs" onClick={() => void toggleObjection()}>
+          Widerspruch gegen Briefwerbung eintragen
+        </Button>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
           <Mailbox className="size-4 text-muted-foreground" aria-hidden /> Brief (Postversand)

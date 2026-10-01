@@ -12,6 +12,12 @@
 // we never merge them mechanically; the model resolves contradictions in favour
 // of the newer statement.
 //
+// Two depths (0061): a VOLLPROFIL (deep tier) for people with a Mo chat or
+// correspondence, a KAUFPROFIL (writer tier, purchases + campaign reactions
+// only) for Shopify customers who never talked to us. Who gets one at all is
+// CUSTOMER_AI_PROFILE_SCOPE (`consented` | `all`); an Art. 21 objection always
+// wins (platform-flags.mayBuildAiProfile).
+//
 // Who triggers it: the nightly customer-refresh cron keeps profiles current for
 // every customer with new activity (lib/customer-refresh.ts runProfileUpkeep),
 // the Kunden "Kundenverständnis generieren" button forces one, and the
@@ -44,6 +50,8 @@ import {
 import { loadCustomerCorrespondence } from "./email-messages-store";
 import { loadCampaignHistoryForCustomer } from "./campaign-store";
 import { refreshCustomerData } from "./customer-refresh";
+import { loadPurchaseHistory } from "./customer-orders-store";
+import { aiProfileScope, mayBuildAiProfile } from "./platform-flags.mjs";
 import type { OrderHistory } from "./shopify-orders";
 import { ARCHETYPE_META } from "./persona";
 import type { PersonaArchetype } from "./types";
@@ -60,6 +68,8 @@ import { reportError } from "./observability";
 
 // Deep tier (lib/ai-models.mjs): identity-level judgement over dense input.
 const PROFILE_MODEL = modelFor("deep");
+// Writer tier for the purchase-only profile — short input, one perspective.
+const LIGHT_PROFILE_MODEL = modelFor("writer");
 
 // Keep the prompt bounded: a customer with many long sessions must not turn
 // into an unbounded mega-prompt. Newest sessions matter most, so when
@@ -91,6 +101,8 @@ export interface GenerateProfileInput {
   correspondence?: string | null;
   /** The Kampagne relationship (loadCampaignHistoryForCustomer). Empty = none. */
   campaignHistory?: string | null;
+  /** kauf = purchase profile on the writer tier; voll (default) = deep tier. */
+  depth?: "kauf" | "voll";
 }
 
 export type GenerateProfileResult =
@@ -209,12 +221,15 @@ export async function generateCustomerProfile(
   // Newest sessions carry the freshest signal; drop the oldest beyond the cap.
   const kept = sessions.slice(-MAX_SESSIONS_IN_PROMPT);
   const blocks = kept.map((s, i) => sessionBlock(s, i, kept.length)).join("\n\n");
+  const light = input.depth === "kauf";
+  const model = light ? LIGHT_PROFILE_MODEL : PROFILE_MODEL;
+  const tier = light ? "writer" : "deep";
 
   try {
     const { object, usage } = await generateObject({
-      model: anthropic(PROFILE_MODEL),
-      providerOptions: anthropicOptionsFor("deep"),
-      maxOutputTokens: maxOutputTokensFor("deep", 2000),
+      model: anthropic(model),
+      providerOptions: anthropicOptionsFor(tier),
+      maxOutputTokens: maxOutputTokensFor(tier, light ? 1200 : 2000),
       schema: profileSchema,
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
@@ -252,7 +267,7 @@ export async function generateCustomerProfile(
     const outputTokens = usage?.outputTokens ?? 0;
     await recordAiUsage({
       callSite: "customer_profile",
-      model: PROFILE_MODEL,
+      model,
       inputTokens,
       outputTokens,
     });
@@ -264,7 +279,7 @@ export async function generateCustomerProfile(
         inputTokens,
         outputTokens,
         // Priced from the same table as the cost KPI (lib/ai-pricing.mjs).
-        approxCostUsd: usdCostForUsage({ model: PROFILE_MODEL, inputTokens, outputTokens }),
+        approxCostUsd: usdCostForUsage({ model, inputTokens, outputTokens }),
       },
     };
   } catch (err) {
@@ -276,7 +291,7 @@ export async function generateCustomerProfile(
 export type RegenerateProfileResult =
   | (Extract<GenerateProfileResult, { ok: true }> & { saved: boolean; sessionCount: number })
   | Extract<GenerateProfileResult, { ok: false }>
-  | { ok: false; reason: "not_found"; message: string };
+  | { ok: false; reason: "not_found" | "not_allowed"; message: string };
 
 /**
  * THE one path that (re)builds and stores a customer's profile — used by the
@@ -293,24 +308,45 @@ export async function regenerateCustomerProfile(
   try {
     let customer = await getCustomerById(customerId);
     if (!customer) return { ok: false, reason: "not_found", message: "Kunde nicht gefunden." };
+    if (
+      !mayBuildAiProfile({
+        consentState: customer.emailConsentState,
+        profileObjectionAt: customer.profileObjectionAt,
+        scope: aiProfileScope(),
+      })
+    ) {
+      return {
+        ok: false,
+        reason: "not_allowed",
+        message: customer.profileObjectionAt
+          ? "Widerspruch gegen Profilbildung — es wird kein KI-Profil erstellt."
+          : "Ohne Einwilligung wird kein KI-Profil erstellt (CUSTOMER_AI_PROFILE_SCOPE=consented).",
+      };
+    }
 
-    if (!customer.purchaseSummary) {
+    // Purchases: the order ledger for mirrored people, else the per-e-mail
+    // Shopify read (fetched first when it was never loaded).
+    if (!customer.shopifySyncedAt && !customer.purchaseSummary) {
       const refreshed = await refreshCustomerData(customer);
       if (refreshed.ok) customer = (await getCustomerById(customerId)) ?? customer;
     }
 
-    const [sessions, correspondence, campaignHistory] = await Promise.all([
+    const [sessions, correspondence, campaignHistory, purchases] = await Promise.all([
       loadCustomerSessions(customerId),
       loadCustomerCorrespondence(customerId),
       loadCampaignHistoryForCustomer(customerId),
+      loadPurchaseHistory(customer),
     ]);
+    const depth: "kauf" | "voll" =
+      sessions.some((s) => s.transcript.length > 0) || correspondence.trim() ? "voll" : "kauf";
 
     const result = await generateCustomerProfile({
       sessions,
-      purchases: customer.purchaseSummary,
+      purchases,
       accountContext: customer.shopifyAccountSummary?.addressContext ?? null,
       correspondence,
       campaignHistory,
+      depth,
     });
     if (!result.ok) {
       // "unconfigured" is an environment problem, not a verdict on the
@@ -318,7 +354,7 @@ export async function regenerateCustomerProfile(
       if (result.reason !== "unconfigured") await markCustomerProfileChecked(customerId);
       return result;
     }
-    const saved = await saveCustomerProfile(customerId, { summary: result.summary, data: result.data });
+    const saved = await saveCustomerProfile(customerId, { summary: result.summary, data: result.data, depth });
     return { ...result, saved, sessionCount: sessions.length };
   } catch (err) {
     reportError(err, { route: "lib/customer-profile", phase: "regenerate" });
@@ -351,10 +387,15 @@ export async function runProfileUpkeep(opts: {
   batch: number;
   deadlineMs: number;
   concurrency?: number;
+  /** kauf = the purchase-only profiles (CUSTOMER_PROFILE_LIGHT_BATCH). */
+  depth?: "voll" | "kauf";
 }): Promise<ProfileUpkeepResult> {
   const empty = { considered: 0, generated: 0, noData: 0, failed: 0, remaining: 0, stoppedByDeadline: false };
   if (opts.batch <= 0 || !process.env.ANTHROPIC_API_KEY) return empty;
-  const { ids, remaining } = await listCustomersForProfileUpkeep(opts.batch);
+  const { ids, remaining } = await listCustomersForProfileUpkeep(opts.batch, {
+    depth: opts.depth ?? "voll",
+    scope: aiProfileScope(),
+  });
   const queue = [...ids];
   const out = { ...empty, considered: ids.length };
   const worker = async () => {

@@ -105,3 +105,14 @@ test("decide: everything present → eligible with the normalised recipient", ()
   assert.equal(d.reasonCode, null);
   assert.equal(d.address.city, "Musterstadt");
 });
+
+test("an Art. 21 objection to postal advertising blocks every letter", () => {
+  const r = decidePhysicalEligibility({
+    flagApproved: true,
+    pingenConfigured: true,
+    postalObjectionAt: "2026-09-01T00:00:00Z",
+    address: { name: "A B", address_line_1: "Str. 1", postal_code: "10115", city: "Berlin", country: "DE" },
+  });
+  assert.equal(r.eligible, false);
+  assert.equal(r.reasonCode, "objection");
+});

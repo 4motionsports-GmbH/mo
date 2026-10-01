@@ -1,91 +1,66 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_FILTER,
-  activeFilterCount,
-  filterCustomers,
-  isFilterActive,
-  presetFilter,
-  sendState,
+  parseCustomerFilter,
+  customerFilterParams,
+  customerQueryParams,
+  activeCustomerFilterCount,
+  defaultCustomerFilter,
+  CUSTOMER_PAGE_SIZE,
+  CUSTOMER_VIEWS,
 } from "./admin-customer-filter.mjs";
 
-const row = (overrides) => ({
-  id: 1,
-  email: "a@x.de",
-  name: null,
-  identityTier: 2,
-  firstSeenAt: "2026-05-01T00:00:00Z",
-  lastSeenAt: "2026-09-01T00:00:00Z",
-  marketingStatus: "confirmed",
-  purchaseState: "unknown",
-  sendStatus: null,
-  sessionCount: 1,
-  ...overrides,
+test("empty params give the default filter", () => {
+  assert.deepEqual(parseCustomerFilter({}), defaultCustomerFilter());
+  assert.deepEqual(parseCustomerFilter(new URLSearchParams()), defaultCustomerFilter());
 });
 
-const rows = [
-  row({ id: 1, email: "anna@x.de", name: "Anna Neumann", purchaseState: "purchased", sendStatus: "sent", lastSeenAt: "2026-09-05T00:00:00Z", sessionCount: 3 }),
-  row({ id: 2, email: "ben@x.de", purchaseState: "no_purchase", sendStatus: "draft", lastSeenAt: "2026-09-07T00:00:00Z", firstSeenAt: "2026-01-01T00:00:00Z" }),
-  row({ id: 3, email: "cara@x.de", marketingStatus: "pending", identityTier: 3, lastSeenAt: null }),
-  row({ id: 4, email: "dan@x.de", marketingStatus: "unsubscribed", identityTier: 1, lastSeenAt: "2026-08-01T00:00:00Z", firstSeenAt: null }),
-];
-
-test("presetFilter seeds the Übersicht deep links", () => {
-  assert.deepEqual(presetFilter("no_purchase"), { ...DEFAULT_FILTER, marketing: "confirmed", kauf: "no_purchase" });
-  assert.deepEqual(presetFilter("marketing"), { ...DEFAULT_FILTER, marketing: "confirmed" });
-  assert.deepEqual(presetFilter("draft"), { ...DEFAULT_FILTER, send: "draft" });
-  assert.deepEqual(presetFilter(undefined), { ...DEFAULT_FILTER });
-  assert.deepEqual(presetFilter("nope"), { ...DEFAULT_FILTER });
+test("a view seeds its fields; explicit params refine it", () => {
+  const f = parseCustomerFilter({ kview: "top", kmo: "yes" });
+  assert.equal(f.view, "top");
+  assert.equal(f.minSpentEur, 1500);
+  assert.equal(f.sort, "revenue");
+  assert.equal(f.mo, "yes");
 });
 
-test("sendState collapses approved into draft", () => {
-  assert.equal(sendState(row({ sendStatus: null })), "none");
-  assert.equal(sendState(row({ sendStatus: "draft" })), "draft");
-  assert.equal(sendState(row({ sendStatus: "approved" })), "draft");
-  assert.equal(sendState(row({ sendStatus: "sent" })), "sent");
+test("unknown values are dropped, never guessed", () => {
+  const f = parseCustomerFilter({ kview: "nope", kconsent: "maybe", kseg: "x", ksort: "random", kpage: "-2", kpersona: "DROP TABLE" });
+  assert.deepEqual(f, defaultCustomerFilter());
 });
 
-test("filterCustomers searches name and email case-insensitively", () => {
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, query: "NEUMANN" }).map((c) => c.id), [1]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, query: "@x.de" }).length, 4);
+test("round trip through the URL keeps only what differs", () => {
+  const f = parseCustomerFilter({ kview: "einwilligung", kq: " Anna ", kseg: "ausbauen", kpage: "3" });
+  const params = customerFilterParams(f);
+  assert.equal(params.get("kview"), "einwilligung");
+  assert.equal(params.get("kq"), "Anna");
+  assert.equal(params.get("kseg"), "ausbauen");
+  assert.equal(params.get("kpage"), "3");
+  // The view's own consent value is implied, not repeated.
+  assert.equal(params.get("kconsent"), null);
+  assert.deepEqual(parseCustomerFilter(params), f);
 });
 
-test("filterCustomers applies tier, marketing, purchase and send filters", () => {
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, tier: "3" }).map((c) => c.id), [3]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, marketing: "unsubscribed" }).map((c) => c.id), [4]);
-  assert.deepEqual(filterCustomers(rows, presetFilter("no_purchase")).map((c) => c.id), [2]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, kauf: "purchased" }).map((c) => c.id), [1]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, send: "draft" }).map((c) => c.id), [2]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, send: "none" }).map((c) => c.id), [4, 3]);
+test("query params: nullable predicates, escaped search, paging", () => {
+  const now = new Date("2026-10-01T00:00:00.000Z");
+  const f = parseCustomerFilter({ kview: "neu", kq: "50%_off", kpage: "2" });
+  const p = customerQueryParams(f, now);
+  assert.equal(p.q, "%50\\%\\_off%");
+  assert.equal(p.mo, null);
+  assert.equal(p.newSince, "2026-09-01T00:00:00.000Z");
+  assert.equal(p.offset, CUSTOMER_PAGE_SIZE);
+  assert.equal(p.limit, CUSTOMER_PAGE_SIZE);
+  const leads = customerQueryParams(parseCustomerFilter({ kview: "interessenten" }), now);
+  assert.equal(leads.shop, "lead");
+  assert.equal(customerQueryParams(parseCustomerFilter({ kview: "aufgaben" }), now).tasks, true);
 });
 
-test("filterCustomers sorts: recent (nulls last), name, first_seen, sessions", () => {
-  assert.deepEqual(filterCustomers(rows, DEFAULT_FILTER).map((c) => c.id), [2, 1, 4, 3]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, sort: "name" }).map((c) => c.id), [1, 2, 3, 4]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, sort: "first_seen" }).map((c) => c.id), [2, 1, 3, 4]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, sort: "sessions" }).map((c) => c.id), [1, 2, 4, 3]);
+test("active filter count ignores what the view sets", () => {
+  assert.equal(activeCustomerFilterCount(parseCustomerFilter({ kview: "mo" })), 0);
+  assert.equal(activeCustomerFilterCount(parseCustomerFilter({ kview: "mo", kq: "x", kvalue: "klein" })), 2);
 });
 
-test("filterCustomers does not mutate its input", () => {
-  const copy = rows.map((r) => ({ ...r }));
-  filterCustomers(rows, { ...DEFAULT_FILTER, sort: "name" });
-  assert.deepEqual(rows, copy);
-});
-
-test("activeFilterCount / isFilterActive count non-default filters", () => {
-  assert.equal(activeFilterCount(DEFAULT_FILTER), 0);
-  assert.equal(isFilterActive(DEFAULT_FILTER), false);
-  assert.equal(activeFilterCount({ ...DEFAULT_FILTER, query: " x ", tier: "2", sort: "name" }), 2);
-  assert.equal(isFilterActive({ ...DEFAULT_FILTER, send: "sent" }), true);
-});
-
-test("source and persona filters narrow the list and count as active filters", () => {
-  const rows = [
-    { id: 1, email: "a@x.de", name: null, identityTier: 2, firstSeenAt: null, lastSeenAt: null, marketingStatus: "none", purchaseState: "unknown", sendStatus: null, sessionCount: 1, source: "chat", personaLabel: "strength_focused" },
-    { id: 2, email: "b@x.de", name: null, identityTier: 2, firstSeenAt: null, lastSeenAt: null, marketingStatus: "none", purchaseState: "unknown", sendStatus: null, sessionCount: 0, source: "kampagne", personaLabel: null },
-  ];
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, source: "kampagne" }).map((c) => c.id), [2]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, persona: "strength_focused" }).map((c) => c.id), [1]);
-  assert.deepEqual(filterCustomers(rows, { ...DEFAULT_FILTER, persona: "unknown" }).map((c) => c.id), [2]);
-  assert.equal(activeFilterCount({ ...DEFAULT_FILTER, source: "chat", persona: "physio" }), 2);
+test("every view has a label and an explanation", () => {
+  for (const [key, v] of Object.entries(CUSTOMER_VIEWS)) {
+    assert.ok(v.label && v.info.length > 10, key);
+  }
 });
