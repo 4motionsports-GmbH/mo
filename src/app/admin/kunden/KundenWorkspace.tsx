@@ -77,6 +77,7 @@ export function KundenWorkspace({
   personas,
   campaigns,
   initialCustomerId,
+  initialDetailTab,
 }: {
   filter: CustomerFilter;
   items: CustomerListItem[];
@@ -91,6 +92,8 @@ export function KundenWorkspace({
   campaigns: Array<{ id: number; name: string; kind: string }>;
   /** ?customer= deep link — the customer to open on load. */
   initialCustomerId: number | null;
+  /** ?ctab= — the detail tab that customer opens on (e.g. korrespondenz). */
+  initialDetailTab?: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -527,6 +530,7 @@ export function KundenWorkspace({
             <CustomerDetail
               key={detail.id}
               customer={detail}
+              initialTab={detail.id === initialCustomerId ? initialDetailTab : null}
               onRefresh={refresh}
               onErased={() => {
                 setSelectedId(null);

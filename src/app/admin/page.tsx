@@ -81,8 +81,16 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
       return <EingangTab dbReady={dbReady} initialItemId={idParam(sp.item)} initialStatus={firstParam(sp.status)} />;
     case "kunden":
       // The list's search, view, filters, sort and page live in the URL
-      // (k* params, lib/admin-customer-filter.mjs); ?customer= opens one.
-      return <KundenTab dbReady={dbReady} searchParams={sp} initialCustomerId={idParam(sp.customer)} />;
+      // (k* params, lib/admin-customer-filter.mjs); ?customer= opens one,
+      // ?ctab= (e.g. korrespondenz) the detail tab it opens on.
+      return (
+        <KundenTab
+          dbReady={dbReady}
+          searchParams={sp}
+          initialCustomerId={idParam(sp.customer)}
+          initialDetailTab={firstParam(sp.ctab)}
+        />
+      );
     case "kampagne":
       // Without ?campaign= the Kampagnen overview (?edit= opens the editor);
       // with it the campaign's review desk, which keeps its position in the
