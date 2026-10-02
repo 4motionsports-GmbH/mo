@@ -10,6 +10,8 @@
 //   3. MAP the sender to a customer (normalise from → customers.email). Known →
 //      customer_id; unknown → NULL (the unmatched-inbound queue).
 //   4. INSERT a direction='received' row, dedup'd on Message-ID.
+//   5. A known customer's mail opens (or joins) their Eingang item
+//      „E-Mail beantworten“ (lib/inbox-mail.ts) — fail-soft.
 //
 // LAWFUL BASIS: this writes Korrespondenz only — it does NOT touch any consent
 // gate. Receiving a reply rests on contract/legitimate interest, independent of
@@ -24,6 +26,7 @@ import { verifyResendWebhook } from "@/lib/email-webhook.mjs";
 import { applyResendDeliveryEvent } from "@/lib/email-delivery-events";
 import { normalizeInboundMessage } from "@/lib/email-inbound-core.mjs";
 import { reportError } from "@/lib/observability";
+import { noteInboundMail } from "@/lib/inbox-mail";
 
 export const maxDuration = 30;
 
@@ -121,6 +124,15 @@ export async function POST(req: Request) {
       // A real DB failure: 500 so Resend retries (the dedup index makes the
       // retry safe — a row that did land won't be duplicated).
       return NextResponse.json({ ok: false, error: "Store failed" }, { status: 500 });
+    }
+    if (result.inserted && customerId != null) {
+      await noteInboundMail({
+        customerId,
+        emailMessageId: result.id,
+        subject: normalized.subject,
+        snippet: normalized.snippet,
+        occurredAt: normalized.occurredAt,
+      });
     }
 
     return NextResponse.json({

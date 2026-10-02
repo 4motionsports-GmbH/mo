@@ -5,7 +5,8 @@
 // the referenced conversation's thread_id when we hold it), so the message moves
 // out of the global queue and into that customer's Korrespondenz panel.
 //
-// Korrespondenz only — no consent gate touched.
+// The mail then opens (or joins) the customer's Eingang item „E-Mail
+// beantworten“. Korrespondenz only — no consent gate touched.
 //
 // Auth + CSRF: guardAdminPost (the proxy already gates /api/admin/*).
 
@@ -13,6 +14,7 @@ import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { getCustomerById } from "@/lib/customer-store";
 import { assignInboundToCustomer } from "@/lib/email-messages-store";
 import { reportError } from "@/lib/observability";
+import { noteInboundMail } from "@/lib/inbox-mail";
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
@@ -53,7 +55,16 @@ export async function POST(req: Request) {
       return adminJsonError("internal_error", "Zuordnung fehlgeschlagen.", 500);
     }
 
-    return adminJson({ ok: true, customerId, customerEmail: customer.email });
+    const itemId = await noteInboundMail({
+      customerId,
+      emailMessageId: messageId,
+      subject: result.subject,
+      snippet: result.snippet,
+      occurredAt: result.occurredAt,
+      source: result.provider === "kontaktformular" ? "kontaktformular" : "email",
+    });
+
+    return adminJson({ ok: true, customerId, customerEmail: customer.email, itemId });
   } catch (err) {
     reportError(err, { route: "api/admin/correspondence/assign" });
     return adminJsonError("internal_error", "Zuordnung fehlgeschlagen.", 500);
