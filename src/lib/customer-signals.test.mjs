@@ -35,11 +35,8 @@ test("blocked people get nothing", () => {
   assert.deepEqual(kinds({ blocked: true, unansweredInboundCount: 2, lastInboundAt: ago(3) }), []);
 });
 
-test("an unanswered mail older than a day", () => {
-  assert.deepEqual(kinds({ unansweredInboundCount: 1, lastInboundAt: ago(0.5) }), []);
-  const [s] = signalsForCustomer({ ...base, unansweredInboundCount: 1, lastInboundAt: ago(2) }, NOW);
-  assert.equal(s.kind, "antwort_offen");
-  assert.match(s.reason, /seit 2 Tagen/);
+test("an unanswered mail is not a facts signal (lib/inbox-mail.ts opens it at once)", () => {
+  assert.deepEqual(kinds({ unansweredInboundCount: 1, lastInboundAt: ago(2) }), []);
 });
 
 test("kaufabsicht needs a recent chat with chosen products and consent", () => {

@@ -44,6 +44,8 @@ export interface InboundMessageInput {
   attachments: AttachmentMeta[];
   providerEmailId: string | null;
   occurredAt: string | null;
+  /** 'resend' (default) or 'kontaktformular' (a request from /api/contact). */
+  provider?: string;
 }
 
 export type InsertReceivedResult =
@@ -75,7 +77,7 @@ export async function insertReceivedMessage(
          ${input.inReplyTo}, ${input.references}::text[], ${input.threadId},
          ${input.fromAddress}, ${input.toAddress}, ${input.subject},
          ${input.bodyText}, ${input.bodyHtml}, ${input.snippet},
-         ${JSON.stringify(input.attachments ?? [])}::jsonb, 'resend',
+         ${JSON.stringify(input.attachments ?? [])}::jsonb, ${input.provider ?? "resend"},
          ${input.providerEmailId}, NULL, ${occurredAt})
       ON CONFLICT (message_id) WHERE message_id IS NOT NULL
         DO NOTHING
@@ -487,7 +489,7 @@ export async function listUnmatchedInbound(
 }
 
 export type AssignInboundResult =
-  | { ok: true; threadId: string | null }
+  | { ok: true; threadId: string | null; subject: string | null; snippet: string | null; occurredAt: string | null; provider: string }
   | { ok: false; reason: "not_found" | "not_unmatched" | "no_db" | "error" };
 
 /**
@@ -507,7 +509,7 @@ export async function assignInboundToCustomer(
   if (!sql) return { ok: false, reason: "no_db" };
   try {
     const rows = (await sql`
-      SELECT id, in_reply_to, references_ids, thread_id, customer_id
+      SELECT id, in_reply_to, references_ids, thread_id, customer_id, subject, snippet, occurred_at, provider
         FROM email_messages
        WHERE id = ${messageId}
     `) as Array<Record<string, unknown>>;
@@ -545,7 +547,14 @@ export async function assignInboundToCustomer(
        WHERE id = ${messageId}
          AND customer_id IS NULL
     `;
-    return { ok: true, threadId };
+    return {
+      ok: true,
+      threadId,
+      subject: (row.subject as string | null) ?? null,
+      snippet: (row.snippet as string | null) ?? null,
+      occurredAt: row.occurred_at ? new Date(String(row.occurred_at)).toISOString() : null,
+      provider: String(row.provider ?? "resend"),
+    };
   } catch (err) {
     reportError(err, { route: "lib/email-messages-store", phase: "assignInboundToCustomer" });
     return { ok: false, reason: "error" };

@@ -297,6 +297,36 @@ export async function linkCustomerOnEmailCapture(
 }
 
 /**
+ * Find-or-create a prospect („Interessent“) for someone who wrote to us — a
+ * contact-form request or an unknown sender the operator takes on. Keyed by
+ * e-mail; an existing customer is returned unchanged (a name only fills empty
+ * fields). No consent is set. Returns the id, null on failure. Never throws.
+ */
+export async function findOrCreateProspect(
+  input: { email: string; firstName?: string | null; lastName?: string | null },
+  sql: Sql | null = getSql()
+): Promise<number | null> {
+  if (!sql) return null;
+  const email = normalizeEmail(input.email);
+  if (!email) return null;
+  try {
+    const rows = (await sql`
+      INSERT INTO customers (email, identity_tier, first_name, last_name)
+      VALUES (${email}, 2, ${input.firstName ?? null}, ${input.lastName ?? null})
+      ON CONFLICT (email) DO UPDATE SET
+        first_name = COALESCE(customers.first_name, EXCLUDED.first_name),
+        last_name = COALESCE(customers.last_name, EXCLUDED.last_name),
+        last_seen_at = now()
+      RETURNING id
+    `) as Array<{ id: number }>;
+    return rows[0]?.id != null ? Number(rows[0].id) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "findOrCreateProspect" });
+    return null;
+  }
+}
+
+/**
  * Mirror the transactional consent (the summary request) from email_captures
  * onto the customer row. The MARKETING consent is no longer mirrored from the
  * capture: it is the one consent shared with Shopify, written only by
