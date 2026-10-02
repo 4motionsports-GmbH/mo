@@ -42,7 +42,7 @@ Last updated: 2026-10-02.
   in Vercel; the widget calls it (`POST /api/chat` on `mo.`); the Customer Account API
   callback and logout URIs (Shopify admin → Headless) point at it. Docs updated (C.2).
 
-- [x] **1.4 App Proxy (shop-native sign-in detection)** — M — done 02.10.: „Page not found“ → no App Proxy configured; the feature is off (the chat's „Anmelden“ works). Set it up with 5.2 if wanted.
+- [x] **1.4 App Proxy (shop-native sign-in detection)** — M — done 02.10.: „Page not found“ → no App Proxy configured; the feature is off (the chat's „Anmelden“ works). Wanted → 5.4.
   - Open `https://www.motionsports.de/apps/chat/whoami` in the browser.
   - `{"signedIn":false}` (or `true` while logged in to the shop) → works, done.
   - Shopify's „Page not found“ → no App Proxy configured: the feature is simply off (the
@@ -50,12 +50,20 @@ Last updated: 2026-10-02.
   - Any other error page → the proxy points at a dead address (probably `chat.`): F (or
     M+C in 5.2) sets the proxy URL to `https://mo.motionsports.de/api/auth/storefront`.
 
-- [ ] **1.5 Inbound e-mail (customer replies)** — M
-  - Vercel → Environment Variables: what is `INBOUND_EMAIL_ADDRESS`?
-  - Send a short test mail to that address from your own mailbox.
-  - Done when: it shows up within a minute in Mo → Eingang → „E-Mails nicht zugeordnet“
-    (unassigned e-mails). If not: Resend → Domains — is the address's domain still verified
-    (its MX records may have gone with `chat.motionsports.de`)?
+- [ ] **1.5 Inbound e-mail (customer replies)** — M (C diagnoses)
+  - `INBOUND_EMAIL_ADDRESS` = `hello@mo.motionsports.de` (also the Reply-To of every mail
+    Mo sends). A test mail on 02.10. did **not** arrive in Mo.
+  - Check in this order: (a) did the sender get a bounce („Undeliverable“)? (b) Resend →
+    the receiving / inbound section: does the test mail appear there? (c) Resend →
+    Webhooks: is there one with the event `email.received` → `https://mo.motionsports.de/api/inbound/resend`?
+    (d) Vercel → Logs: any `POST /api/inbound/resend`, and with which status?
+  - Likely cause: `mo.motionsports.de` is the website's address (DNS → Vercel), and a
+    name that points at a website usually cannot also receive mail. Fix then: a dedicated
+    mail subdomain (e.g. `antwort@mail.motionsports.de` with its MX at Resend), set as
+    `INBOUND_EMAIL_ADDRESS`.
+  - Done when: a test mail from an unknown address appears in Mo → Eingang → „E-Mails
+    nicht zugeordnet“, one from a customer's address in Kunden → the customer →
+    „Korrespondenz“.
 
 ## 2 · Tomorrow morning
 
@@ -136,6 +144,16 @@ Last updated: 2026-10-02.
     use „Erase personal data“ instead, also „Löschen“ (delete) the person in Mo → Kunden.
     A data request → also look the person up in Mo → Kunden.
 
+- [ ] **5.4 Shop sign-in detection** (customers signed in to the shop are recognised in
+  the chat without „Anmelden“) — M + C, FE
+  - In the 5.2 session: add the App Proxy to `shopify.app.toml` — `[app_proxy]`
+    `url = "https://mo.motionsports.de/api/auth/storefront"`, `subpath = "chat"`,
+    `prefix = "apps"` — and deploy.
+  - FE: task 6 of the frontend prompt (calls `/apps/chat/whoami`, falls back silently while
+    the proxy is missing — can ship before the proxy exists).
+  - Done when: `https://www.motionsports.de/apps/chat/whoami` shows `{"signedIn":true,…}`
+    while you are signed in to the shop, and the chat greets you by name without „Anmelden“.
+
 - [ ] **5.3 App ownership** (optional) — M + F
   - Move the Shopify app to an organisation owned by motionsports, or at least keep M as a
     member, so scopes, secret and configuration no longer depend on one freelancer.
@@ -191,6 +209,12 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       order's last change, so old refunds on recently touched orders show up as new (62 open
       items after the import). Store the refund date in the order ledger and use it;
       consider a minimum share of the order — medium priority.
+- [ ] **C.10** **E-Mails im Eingang** (proposal, waits for M's OK): every incoming mail
+      becomes an Eingang item the moment it arrives (today a customer's mail only shows
+      up as „Antwort ausstehend“ after a day and the nightly run): the mail and its thread
+      in the item, an AI summary and a reply draft (service reply, never advertising; a
+      human sends), assign / reply / done from the item, a filter „E-Mails“; unknown
+      senders stay in „E-Mails nicht zugeordnet“ with an assignment suggestion.
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
       index the lookup (migration `0070`) — low priority.
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead

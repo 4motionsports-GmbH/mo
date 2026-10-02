@@ -11,7 +11,7 @@ how marketing consent, sign-in and data deletion work. Shop and Mo now share **o
 marketing consent and **one** deletion: whoever subscribes or unsubscribes in the shop or in the
 chat is subscribed or unsubscribed in both, and a deletion in one deletes in both. The chat
 should lead people to sign in with their shop account (or give the marketing consent) instead of
-typing an e-mail address. Implement the five changes below. The exact request and response
+typing an e-mail address. Implement the six changes below. The exact request and response
 shapes are in the attached handoff files: `API_CONTRACT.md` (2026-10 change table at the top),
 `CONSENT_FLOW.md` §2–§4, `CUSTOMER_ACCOUNT.md` §2, §3, §4, §6 and §7.5. Where this prompt and
 those files disagree, the files win.
@@ -94,6 +94,19 @@ Campaign e-mails link to the storefront with the Mo deep link (`?mo=open&mo_new=
 The backend records it once per send and never ties it to the chat; an invalid or unknown token
 is ignored without an error. Don't put it in `localStorage`, cookies or KPI payloads.
 
+## 6. Recognise customers already signed in to the shop (`/apps/chat/whoami`)
+
+A customer who signed in through the shop's own login should be recognised in the chat
+without pressing „Anmelden“. Implement `CUSTOMER_ACCOUNT.md` §3a: on the first panel open
+of a session, call the **same-origin** storefront path
+`/apps/chat/whoami?session={session_id}` (`credentials: "include"`, not the backend
+origin). When it answers JSON with `signedIn: true`, treat the visitor exactly like a
+`/api/auth/me` sign-in (name, tier 3, `marketing` → task 2's opt-in rule) and skip the
+sign-in block of task 1. On anything else — 404, an HTML page, a network error,
+`signedIn: false` — fall back silently to today's flow (`/api/auth/me`). The store's App
+Proxy is not set up yet, so today the call returns Shopify's 404 page; the fallback must
+make that invisible. Never send the answer anywhere else; never retry in a loop.
+
 ## Acceptance checklist
 
 - [ ] Anonymous visitor, first message: the gate shows the sign-in block first; the e-mail block
@@ -108,5 +121,7 @@ is ignored without an error. Don't put it in `localStorage`, cookies or KPI payl
 - [ ] `/?mo=open&mo_c=<token>` opens the chat, sends `campaignToken` once on the first turn, and
       the address bar no longer shows `mo_c`.
 - [ ] `/en` uses `?locale=en` everywhere; the old flows still work when a field is missing.
+- [ ] `/apps/chat/whoami` is called once per session on first open; while it returns
+      Shopify's 404 page nothing visible changes (no error, no extra sign-in prompt).
 - [ ] No new hard-coded legal text; no consent pre-selection; screenshots of the gate (both
       blocks), the opt-in card, the already-subscribed state and the erase dialog in DE and EN.
