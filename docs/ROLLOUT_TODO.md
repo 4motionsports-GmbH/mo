@@ -60,10 +60,11 @@ Last updated: 2026-10-02.
   - **Found 02.10.:** Resend → Emails → Receiving: „No received emails yet“ — receiving is
     not set up for `mo.motionsports.de` (sending only); no bounce yet (servers retry for
     days). The webhook `…/api/inbound/resend` exists.
-  - **Pipeline test without DNS:** send a mail to `test@ieisteagra.resend.app` (Resend's
-    built-in receiving address). It must appear in Resend → Receiving and — if the webhook
-    has the event `email.received` — in Mo (Eingang „E-Mails nicht zugeordnet“, or the
-    customer's „Korrespondenz“).
+  - **Pipeline test without DNS — passed 02.10.:** a mail to `test@ieisteagra.resend.app`
+    (Resend's built-in address) appeared in Resend → Receiving and in Mo → Eingang „E-Mails
+    nicht zugeordnet“. Webhook (`email.received`) and Mo work.
+  - `mo.motionsports.de` is a CNAME to Vercel (checked 02.10.), so it cannot carry an MX
+    record → receive on `reply.motionsports.de` (next point, second variant).
   - **Fix:** Resend → Receiving → „custom domain“ → add the MX record it shows for
     `mo.motionsports.de` at the DNS provider of motionsports.de. If the DNS provider refuses
     (`mo` is a CNAME to Vercel), receive on a dedicated subdomain instead (e.g.
