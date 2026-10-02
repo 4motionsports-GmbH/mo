@@ -520,9 +520,11 @@ function ItemDetail({
                 </div>
                 {customer.figures && (
                   <div className="text-xs text-muted-foreground">
-                    {customer.figures.ordersCount > 0
-                      ? `${plural(customer.figures.ordersCount, "Bestellung", "Bestellungen")} · ${eurFromCents(customer.figures.totalSpentCents)}`
-                      : "Noch keine Bestellung"}
+                    {customer.figures.factsComputedAt == null
+                      ? "Kennzahlen werden heute Nacht berechnet"
+                      : customer.figures.ordersCount > 0
+                        ? `${plural(customer.figures.ordersCount, "Bestellung", "Bestellungen")} · ${eurFromCents(customer.figures.totalSpentCents)}`
+                        : "Noch keine Bestellung"}
                     {customer.figures.lastOrderAt && <> · zuletzt {formatAdmin(customer.figures.lastOrderAt, ADMIN_DATE)}</>}
                     {customer.figures.lifecycleSegment && (
                       <> · {SEGMENT_LABELS[customer.figures.lifecycleSegment as keyof typeof SEGMENT_LABELS] ?? customer.figures.lifecycleSegment}</>

@@ -32,5 +32,7 @@ export interface InboxCustomerCard {
     valueTier: string | null;
     churnRisk: string | null;
     conversationsCount: number;
+    /** null until the nightly facts run has computed this person's figures. */
+    factsComputedAt: string | null;
   } | null;
 }
