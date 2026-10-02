@@ -21,7 +21,8 @@
 // ⚠️ REQUIRES A STORE / THEME ACTION (Lucas) before it can fire — see the report
 // and docs/frontend-handoff/CUSTOMER_ACCOUNT.md §3a:
 //   1. Add an App Proxy to the app (Shopify admin → app → App proxy):
-//        Subpath prefix: apps   Subpath: chat   URL: https://chat.motionsports.de/api/auth/storefront
+//        Subpath prefix: apps   Subpath: chat   URL: https://mo.motionsports.de/api/auth/storefront
+//      (Shopify appends the sub-path, so /apps/chat/whoami lands on ./whoami — same handler)
 //   2. The theme calls the proxied path (same-origin) with ?session=<widget sid>.
 //   3. Set SHOPIFY_APP_PROXY_SECRET (the app's API secret key) — falls back to
 //      SHOPIFY_CLIENT_SECRET. The spike flagged `logged_in_customer_id` as

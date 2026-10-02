@@ -2,7 +2,7 @@
 // already-signed-in detection (docs/CUSTOMER_ACCOUNT.md §3a).
 //
 // WHY THIS EXISTS. The chat widget lives in the theme (motionsports.de); the
-// backend is cross-origin on Vercel (chat.motionsports.de). The backend therefore
+// backend is cross-origin on Vercel (mo.motionsports.de). The backend therefore
 // CANNOT read the storefront customer session cookie, so it cannot tell — on its
 // own — whether the visitor is logged in to their Shopify account via the SHOP'S
 // OWN login. The CA-3 design only ever recognised customers who signed in through

@@ -3,7 +3,7 @@
 // clicked as top-level navigations from the user's mail client, so they must be
 // absolute and point at THIS deployment.
 //
-// Prefer the explicit PUBLIC_BASE_URL (e.g. https://chat.motionsports.de). Fall
+// Prefer the explicit PUBLIC_BASE_URL (e.g. https://mo.motionsports.de). Fall
 // back to Vercel's injected host, then to the request's own origin.
 
 function stripTrailingSlash(s: string): string {
@@ -24,5 +24,5 @@ export function getBaseUrl(req?: Request): string {
       // fall through
     }
   }
-  return "https://chat.motionsports.de";
+  return "https://mo.motionsports.de";
 }
