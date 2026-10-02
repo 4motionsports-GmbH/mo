@@ -285,7 +285,10 @@ then register these topics against `https://<deployment>/api/webhooks/shopify`
 - `products/delete` — best-effort; id-only payloads are reconciled by the daily
   sync.
 - `inventory_levels/update` — catches pure quantity changes (resolved item →
-  product).
+  product). Needs the `read_inventory` scope; without it Shopify refuses the
+  subscription („You cannot create a webhook subscription with the specified
+  topic“). Not the admin's „Inventory item update“ (`inventory_items/update`),
+  which Mo ignores.
 - `orders/create` + `orders/paid` — NOT a catalog concern: the same endpoint
   routes verified order payloads to the order-attribution ingest
   ([`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)); register them here so

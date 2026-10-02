@@ -39,26 +39,28 @@ const endpoint = `${base}/api/webhooks/shopify`;
 const domain = process.env.SHOPIFY_STORE_DOMAIN.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
 const apiVersion = process.env.SHOPIFY_API_VERSION.trim();
 
-// Catalog sync + order attribution (existing) and the customer platform.
+// Catalog sync + order attribution (existing) and the customer platform, each
+// with the access scope Shopify requires to subscribe to the topic.
 const TOPICS = [
-  ["PRODUCTS_CREATE", "Katalog"],
-  ["PRODUCTS_UPDATE", "Katalog"],
-  ["PRODUCTS_DELETE", "Katalog"],
-  ["INVENTORY_LEVELS_UPDATE", "Katalog"],
-  ["ORDERS_CREATE", "Bestellungen"],
-  ["ORDERS_UPDATED", "Bestellungen"],
-  ["ORDERS_PAID", "Bestellungen"],
-  ["ORDERS_CANCELLED", "Bestellungen"],
-  ["CUSTOMERS_CREATE", "Kundenstamm"],
-  ["CUSTOMERS_UPDATE", "Kundenstamm"],
-  ["CUSTOMERS_DELETE", "Kundenstamm"],
-  ["CUSTOMERS_EMAIL_MARKETING_CONSENT_UPDATE", "Einwilligung"],
-  ["BULK_OPERATIONS_FINISH", "Import"],
+  ["PRODUCTS_CREATE", "Katalog", "read_products"],
+  ["PRODUCTS_UPDATE", "Katalog", "read_products"],
+  ["PRODUCTS_DELETE", "Katalog", "read_products"],
+  ["INVENTORY_LEVELS_UPDATE", "Katalog", "read_inventory"],
+  ["ORDERS_CREATE", "Bestellungen", "read_orders"],
+  ["ORDERS_UPDATED", "Bestellungen", "read_orders"],
+  ["ORDERS_PAID", "Bestellungen", "read_orders"],
+  ["ORDERS_CANCELLED", "Bestellungen", "read_orders"],
+  ["CUSTOMERS_CREATE", "Kundenstamm", "read_customers"],
+  ["CUSTOMERS_UPDATE", "Kundenstamm", "read_customers"],
+  ["CUSTOMERS_DELETE", "Kundenstamm", "read_customers"],
+  ["CUSTOMERS_EMAIL_MARKETING_CONSENT_UPDATE", "Einwilligung", "read_customers"],
+  ["BULK_OPERATIONS_FINISH", "Import", null],
 ];
 
 const REQUIRED_SCOPES = [
   "read_products",
   "write_products",
+  "read_inventory",
   "read_orders",
   "read_all_orders",
   "read_customers",
@@ -140,9 +142,10 @@ async function main() {
 
   console.log(`\nEndpoint: ${endpoint}`);
   const missing = [];
-  for (const [topic, area] of TOPICS) {
+  for (const [topic, area, scope] of TOPICS) {
     const ok = existing.has(topic);
-    console.log(`  ${ok ? "ok      " : "MISSING "} ${topic.padEnd(42)} ${area}`);
+    const noScope = !ok && scope && !granted.has(scope) ? `  (needs ${scope})` : "";
+    console.log(`  ${ok ? "ok      " : "MISSING "} ${topic.padEnd(42)} ${area}${noScope}`);
     if (!ok) missing.push(topic);
   }
 
@@ -151,7 +154,9 @@ async function main() {
     for (const topic of missing) {
       const res = await gql(accessToken, legacy ? CREATE_LEGACY : CREATE_URI, { topic, url: endpoint });
       const errs = [...(res.errors ?? []), ...(res.data?.webhookSubscriptionCreate?.userErrors ?? [])];
-      console.log(errs.length ? `  FAILED  ${topic}: ${errs.map((e) => e.message).join("; ")}` : `  created ${topic}`);
+      const scope = TOPICS.find(([t]) => t === topic)?.[2];
+      const hint = errs.length && scope && !granted.has(scope) ? ` — add the scope ${scope}, release, reinstall the app` : "";
+      console.log(errs.length ? `  FAILED  ${topic}: ${errs.map((e) => e.message).join("; ")}${hint}` : `  created ${topic}`);
     }
   } else if (missing.length) {
     console.log(`\nDry run — ${missing.length} missing. Re-run with --apply to create them.`);
