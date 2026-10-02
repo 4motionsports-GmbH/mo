@@ -5,6 +5,7 @@
 //
 //   npm run shopify:webhooks                       # dry run: what exists, what is missing
 //   npm run shopify:webhooks -- --apply            # create the missing subscriptions
+//   npm run shopify:webhooks -- --dedupe           # delete exact duplicates (same topic + endpoint)
 //   npm run shopify:webhooks -- --url https://…    # endpoint base (default PUBLIC_BASE_URL)
 //
 // Subscriptions created through the Admin API with the app's client-credentials
@@ -15,12 +16,16 @@
 // → Configuration → Compliance webhooks, or shopify.app.toml). The script
 // prints that reminder.
 //
-// Never deletes or changes an existing subscription.
+// Lists the app's granted scopes and how many subscriptions each topic has at
+// the endpoint (a duplicate delivers every event twice), plus subscriptions of
+// these topics that point elsewhere. Never changes a subscription; deletes only
+// with --dedupe, and then only the extra copies of a topic at this endpoint.
 
 import process from "node:process";
 
 const args = process.argv.slice(2);
 const apply = args.includes("--apply");
+const dedupe = args.includes("--dedupe");
 const urlArg = args.includes("--url") ? args[args.indexOf("--url") + 1] : null;
 
 const REQUIRED_ENV = ["SHOPIFY_STORE_DOMAIN", "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET", "SHOPIFY_API_VERSION"];
@@ -108,6 +113,9 @@ const CREATE_LEGACY = `mutation($topic: WebhookSubscriptionTopic!, $url: URL!) {
   webhookSubscriptionCreate(topic: $topic, webhookSubscription: { callbackUrl: $url, format: JSON }) {
     webhookSubscription { id } userErrors { field message } } }`;
 
+const DELETE = `mutation($id: ID!) {
+  webhookSubscriptionDelete(id: $id) { deletedWebhookSubscriptionId userErrors { field message } } }`;
+
 const unknownField = (json) => (json.errors ?? []).some((e) => /field|argument|doesn't exist|undefined/i.test(e.message ?? ""));
 
 async function main() {
@@ -118,6 +126,7 @@ async function main() {
   const granted = new Set((scopes.data?.currentAppInstallation?.accessScopes ?? []).map((s) => s.handle));
   const missingScopes = REQUIRED_SCOPES.filter((s) => !granted.has(s));
   console.log(`\nScopes: ${granted.size} granted.`);
+  console.log(`  ${[...granted].sort().join(", ")}`);
   if (missingScopes.length) {
     console.log(`  MISSING: ${missingScopes.join(", ")} — add them to the app, then REINSTALL it on the store.`);
   } else {
@@ -132,21 +141,46 @@ async function main() {
     list = await gql(accessToken, LIST_LEGACY);
   }
   if (list.errors) throw new Error(`listing subscriptions failed: ${JSON.stringify(list.errors)}`);
-  const nodes = list.data?.webhookSubscriptions?.nodes ?? [];
-  const existing = new Set(
-    nodes
-      .map((n) => ({ topic: n.topic, url: legacy ? n.endpoint?.callbackUrl : n.uri }))
-      .filter((n) => n.url === endpoint)
-      .map((n) => n.topic)
-  );
+  const nodes = (list.data?.webhookSubscriptions?.nodes ?? []).map((n) => ({
+    id: n.id,
+    topic: n.topic,
+    url: legacy ? n.endpoint?.callbackUrl : n.uri,
+  }));
+  // Subscription ids per topic at this endpoint.
+  const atEndpoint = new Map();
+  for (const n of nodes.filter((n) => n.url === endpoint)) {
+    atEndpoint.set(n.topic, [...(atEndpoint.get(n.topic) ?? []), n.id]);
+  }
 
   console.log(`\nEndpoint: ${endpoint}`);
   const missing = [];
+  const duplicates = [];
   for (const [topic, area, scope] of TOPICS) {
-    const ok = existing.has(topic);
-    const noScope = !ok && scope && !granted.has(scope) ? `  (needs ${scope})` : "";
-    console.log(`  ${ok ? "ok      " : "MISSING "} ${topic.padEnd(42)} ${area}${noScope}`);
-    if (!ok) missing.push(topic);
+    const count = atEndpoint.get(topic)?.length ?? 0;
+    const noScope = count === 0 && scope && !granted.has(scope) ? `  (needs ${scope})` : "";
+    const status = count === 0 ? "MISSING " : count === 1 ? "ok      " : `${count}×`.padEnd(8);
+    const dup = count > 1 ? "  DUPLICATE — every event arrives twice; run with --dedupe" : "";
+    console.log(`  ${status} ${topic.padEnd(42)} ${area}${noScope}${dup}`);
+    if (count === 0) missing.push(topic);
+    if (count > 1) duplicates.push(topic);
+  }
+  const elsewhere = nodes.filter((n) => n.url !== endpoint && TOPICS.some(([t]) => t === n.topic));
+  if (elsewhere.length) {
+    console.log(`\nThese topics also point elsewhere (left as they are):`);
+    for (const n of elsewhere) console.log(`  ${n.topic.padEnd(42)} ${n.url ?? "(no URL)"}`);
+  }
+
+  if (duplicates.length && dedupe) {
+    console.log(`\nDeleting the extra copies of ${duplicates.length} topic(s)…`);
+    for (const topic of duplicates) {
+      for (const id of atEndpoint.get(topic).slice(1)) {
+        const res = await gql(accessToken, DELETE, { id });
+        const errs = [...(res.errors ?? []), ...(res.data?.webhookSubscriptionDelete?.userErrors ?? [])];
+        console.log(errs.length ? `  FAILED  ${topic} ${id}: ${errs.map((e) => e.message).join("; ")}` : `  deleted ${topic} ${id}`);
+      }
+    }
+  } else if (duplicates.length) {
+    console.log(`\n${duplicates.length} topic(s) subscribed more than once. Re-run with --dedupe to keep one each.`);
   }
 
   if (missing.length && apply) {
@@ -160,7 +194,7 @@ async function main() {
     }
   } else if (missing.length) {
     console.log(`\nDry run — ${missing.length} missing. Re-run with --apply to create them.`);
-  } else {
+  } else if (!duplicates.length) {
     console.log("\nAll subscriptions are in place.");
   }
 
