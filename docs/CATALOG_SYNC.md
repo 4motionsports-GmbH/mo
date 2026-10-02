@@ -298,10 +298,15 @@ The customer platform adds `orders/updated`, `orders/cancelled`,
 `customers/create|update|delete`, `customers_email_marketing_consent/update` and
 `bulk_operations/finish` on the same endpoint (`docs/CUSTOMER_PLATFORM_PLAN.md` §6).
 
-Register with `npm run shopify:webhooks` (dry run: lists what exists and what is
-missing, and checks the app's scopes) and `npm run shopify:webhooks -- --apply`
-(creates the missing subscriptions through `webhookSubscriptionCreate`; never
-changes or deletes one). The compliance topics `customers/data_request`,
+Register with `npm run shopify:webhooks` (dry run: lists the granted scopes, how
+many subscriptions each topic has at the endpoint — a duplicate delivers every
+event twice — and subscriptions of these topics pointing elsewhere) and
+`npm run shopify:webhooks -- --apply` (creates the missing subscriptions through
+`webhookSubscriptionCreate`). `-- --dedupe` deletes the extra copies of a topic at
+the endpoint; nothing else is ever changed or deleted. Webhooks created by hand
+in the Shopify Admin are not visible to the app: delete them there before
+`--apply`, or every event arrives twice. Uninstalling the app deletes its
+subscriptions — run `--apply` again after a reinstall. The compliance topics `customers/data_request`,
 `customers/redact` and `shop/redact` are set in the app configuration (Dev
 Dashboard → Configuration → Compliance webhooks), not through the API. Manual
 registration in the Shopify Admin (Settings → Notifications → Webhooks) still
