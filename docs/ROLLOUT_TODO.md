@@ -42,7 +42,7 @@ Last updated: 2026-10-02.
   in Vercel; the widget calls it (`POST /api/chat` on `mo.`); the Customer Account API
   callback and logout URIs (Shopify admin → Headless) point at it. Docs updated (C.2).
 
-- [ ] **1.4 App Proxy (shop-native sign-in detection)** — M
+- [x] **1.4 App Proxy (shop-native sign-in detection)** — M — done 02.10.: „Page not found“ → no App Proxy configured; the feature is off (the chat's „Anmelden“ works). Set it up with 5.2 if wanted.
   - Open `https://www.motionsports.de/apps/chat/whoami` in the browser.
   - `{"signedIn":false}` (or `true` while logged in to the shop) → works, done.
   - Shopify's „Page not found“ → no App Proxy configured: the feature is simply off (the
@@ -159,11 +159,11 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [ ] **6.4 Mo's insights as Shopify tags** (F-28, optional) — M
   - `SHOPIFY_WRITEBACK_ENABLED=true` → `mo-…` customer tags usable in Shopify segments.
 
-- [ ] **6.5 Send gates** — M — check what is on today, keep off what is not signed off
-  - `CAMPAIGN_SENDS_APPROVED=true` — campaign mails (needed for Black Friday).
-  - `CAMPAIGN_ALLOW_SINGLE_OPT_IN=true` — also mail single-opt-in shop subscribers (F-25).
-  - `PHYSICAL_MAIL_SENDS_APPROVED=true` — advertising letters (F-27, incl. the Robinson-list
-    question).
+- [x] **6.5 Send gates** — already on in production (Systemstatus, 02.10.): campaign mails
+  „Freigegeben“, single-opt-in contacts „Erlaubt“, letters „Freigegeben“ — the state from
+  before the customer platform. Black Friday is not blocked by a gate. The lawyer's view on
+  F-25 (single opt-in, now one switch for all marketing mail) and F-27 (letters, Robinson
+  list) is still worth having; switch a gate off in Vercel if the answer says so.
 
 ## 7 · Optional tuning
 
@@ -182,6 +182,15 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [x] **C.2** Domain in the docs and the `base-url.ts` fallback → `mo.motionsports.de`.
 - [x] **C.6** `/api/auth/storefront/whoami` answers like `/api/auth/storefront` (the App
       Proxy appends `/whoami` to the proxy URL).
+- [x] **C.7** False alarm „Der nächtliche Abgleich ist seit über 36 Stunden nicht
+      durchgelaufen“ right after the import (counted „no reconcile yet“ as overdue) — now
+      measured from the newer of import and reconcile; tested core `shopify-sync-health.mjs`.
+- [x] **C.8** Eingang customer card said „Noch keine Bestellung“ before the nightly figures
+      existed — now „Kennzahlen werden heute Nacht berechnet“.
+- [ ] **C.9** Eingang rule „Unzufriedenheit“ (refunds/cancellations): it dates a refund by the
+      order's last change, so old refunds on recently touched orders show up as new (62 open
+      items after the import). Store the refund date in the order ledger and use it;
+      consider a minimum share of the order — medium priority.
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
       index the lookup (migration `0070`) — low priority.
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
