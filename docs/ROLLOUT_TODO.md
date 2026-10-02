@@ -57,10 +57,19 @@ Last updated: 2026-10-02.
     the receiving / inbound section: does the test mail appear there? (c) Resend →
     Webhooks: is there one with the event `email.received` → `https://mo.motionsports.de/api/inbound/resend`?
     (d) Vercel → Logs: any `POST /api/inbound/resend`, and with which status?
-  - Likely cause: `mo.motionsports.de` is the website's address (DNS → Vercel), and a
-    name that points at a website usually cannot also receive mail. Fix then: a dedicated
-    mail subdomain (e.g. `antwort@mail.motionsports.de` with its MX at Resend), set as
-    `INBOUND_EMAIL_ADDRESS`.
+  - **Found 02.10.:** Resend → Emails → Receiving: „No received emails yet“ — receiving is
+    not set up for `mo.motionsports.de` (sending only); no bounce yet (servers retry for
+    days). The webhook `…/api/inbound/resend` exists.
+  - **Pipeline test without DNS:** send a mail to `test@ieisteagra.resend.app` (Resend's
+    built-in receiving address). It must appear in Resend → Receiving and — if the webhook
+    has the event `email.received` — in Mo (Eingang „E-Mails nicht zugeordnet“, or the
+    customer's „Korrespondenz“).
+  - **Fix:** Resend → Receiving → „custom domain“ → add the MX record it shows for
+    `mo.motionsports.de` at the DNS provider of motionsports.de. If the DNS provider refuses
+    (`mo` is a CNAME to Vercel), receive on a dedicated subdomain instead (e.g.
+    `reply.motionsports.de`, MX at Resend) and set `INBOUND_EMAIL_ADDRESS` to
+    `hello@reply.motionsports.de` + redeploy. Replies to mails already sent (Reply-To
+    `hello@mo.…`) only arrive with the first variant.
   - Done when: a test mail from an unknown address appears in Mo → Eingang → „E-Mails
     nicht zugeordnet“, one from a customer's address in Kunden → the customer →
     „Korrespondenz“.
@@ -214,7 +223,9 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       up as „Antwort ausstehend“ after a day and the nightly run): the mail and its thread
       in the item, an AI summary and a reply draft (service reply, never advertising; a
       human sends), assign / reply / done from the item, a filter „E-Mails“; unknown
-      senders stay in „E-Mails nicht zugeordnet“ with an assignment suggestion.
+      senders stay in „E-Mails nicht zugeordnet“ with an assignment suggestion. Also the
+      contact form (`/api/contact`): today it only mails `info@motionsports.de` and stores
+      nothing in Mo — its requests should become Eingang items too.
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
       index the lookup (migration `0070`) — low priority.
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
