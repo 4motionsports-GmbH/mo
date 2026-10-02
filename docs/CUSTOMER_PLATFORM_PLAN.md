@@ -48,6 +48,15 @@ Komplettanalyse chapters „Kundenbasis“ and „Kampagnen“; Gespräche → �
 „Wahrscheinlich als Nächstes“; Ähnliche Kunden; `mo_c` capture (backend); letter reach; insight
 tags (D-11).
 
+**After the rollout (2026-10-02): E-Mails im Eingang.** `antwort_offen` became an event instead of
+a facts rule: every incoming mail of a known customer opens the item „E-Mail beantworten“ at once
+(inbound webhook, „Zuordnen“, the new „Als Interessent anlegen“, the shop's contact form — now
+stored as a received message, its sender created as an Interessent without consent), later mails
+join it, the hourly job catches up missed ones, and a reply closes it. The item shows the
+conversation, an AI summary and a reply draft (writer tier, call site `inbox_mail_reply`; a
+service reply, never advertising) and sends from the Eingang (`inbox-mail.ts`,
+`inbox-mail-core.mjs`, `eingang/MailReply.tsx`). Dossier §14 (F-30).
+
 **Not built:** the Verbesserung lane „Marketing“ (offers, segments, triggers as proposals) — it
 needs a proposal type that is not a prompt directive; letters as a campaign channel (batch letters
 with review and Pingen costs) — today letters are sent per customer; Serien-Mail (D-10); the
@@ -1011,7 +1020,7 @@ Schritt?“ One ranked list; each item decidable in under a minute; nothing send
 
 | Kind | Label | Rule (initial thresholds, tuned by humans later) | Prio | Suggested action | Needs consent |
 | --- | --- | --- | --- | --- | --- |
-| `antwort_offen` | Antwort ausstehend | received mail, no sent reply in the thread after it, older than 24 h | hoch | reply with AI draft (Korrespondenz) | no (they wrote to us) |
+| `antwort_offen` | E-Mail beantworten | *as built:* an event — every received mail of a known customer, at once (one open item per person, later mails join, a reply closes it; §0) | hoch | reply with AI draft (in the Eingang) | no (they wrote to us) |
 | `nicht_zugeordnet` | E-Mail nicht zugeordnet | inbound mail with `customer_id IS NULL` (today's Posteingang) | hoch | assign; suggested match by sender/name | no |
 | `datenauskunft` | Datenauskunft angefordert | `customers/data_request` | hoch | export + reply before the deadline | no |
 | `kaufabsicht` | Kaufabsicht ohne Kauf | identified customer; chat in the last 7 days with a cart (`selected_handles`) or two chats about the same product; no order since | hoch | Einzelansprache with the discussed products, optional discount | yes |

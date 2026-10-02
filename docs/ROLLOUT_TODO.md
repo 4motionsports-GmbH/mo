@@ -65,15 +65,15 @@ Last updated: 2026-10-02.
     nicht zugeordnet“. Webhook (`email.received`) and Mo work.
   - `mo.motionsports.de` is a CNAME to Vercel (checked 02.10.), so it cannot carry an MX
     record → receive on `reply.motionsports.de` (next point, second variant).
-  - **Fix:** Resend → Receiving → „custom domain“ → add the MX record it shows for
-    `mo.motionsports.de` at the DNS provider of motionsports.de. If the DNS provider refuses
-    (`mo` is a CNAME to Vercel), receive on a dedicated subdomain instead (e.g.
-    `reply.motionsports.de`, MX at Resend) and set `INBOUND_EMAIL_ADDRESS` to
-    `hello@reply.motionsports.de` + redeploy. Replies to mails already sent (Reply-To
-    `hello@mo.…`) only arrive with the first variant.
-  - Done when: a test mail from an unknown address appears in Mo → Eingang → „E-Mails
-    nicht zugeordnet“, one from a customer's address in Kunden → the customer →
-    „Korrespondenz“.
+  - **1.5b Fix (M, in progress 02.10.):** Resend → Domains → add `reply.motionsports.de`
+    with receiving on → add the MX record Resend shows at the DNS provider of
+    motionsports.de → wait until Resend shows it verified → Vercel: `INBOUND_EMAIL_ADDRESS`
+    = `hello@reply.motionsports.de` (Production) → Redeploy. Replies to mails already sent
+    (Reply-To `hello@mo.…`) cannot arrive; every mail sent after the redeploy carries the
+    new Reply-To.
+  - Done when: a test mail to `hello@reply.motionsports.de` from an unknown address appears
+    in Mo → Eingang → „E-Mails nicht zugeordnet“; one from a customer's address opens
+    „E-Mail beantworten“ in the Eingang (C.10) with an AI draft.
 
 ## 2 · Tomorrow morning
 
@@ -219,14 +219,15 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       order's last change, so old refunds on recently touched orders show up as new (62 open
       items after the import). Store the refund date in the order ledger and use it;
       consider a minimum share of the order — medium priority.
-- [ ] **C.10** **E-Mails im Eingang** (proposal, waits for M's OK): every incoming mail
-      becomes an Eingang item the moment it arrives (today a customer's mail only shows
-      up as „Antwort ausstehend“ after a day and the nightly run): the mail and its thread
-      in the item, an AI summary and a reply draft (service reply, never advertising; a
-      human sends), assign / reply / done from the item, a filter „E-Mails“; unknown
-      senders stay in „E-Mails nicht zugeordnet“ with an assignment suggestion. Also the
-      contact form (`/api/contact`): today it only mails `info@motionsports.de` and stores
-      nothing in Mo — its requests should become Eingang items too.
+- [x] **C.10** **E-Mails im Eingang** — built 02.10. (no migration): every incoming mail of
+      a known customer opens „E-Mail beantworten“ in the Eingang at once (later mails join
+      it; the hourly job catches up missed ones); the item shows the conversation, an AI
+      summary and a reply draft (service reply, never advertising — placeholders in
+      [brackets] for anything it cannot know); „Antwort senden“ sends it threaded and
+      closes the item, as does a reply from Kunden → Korrespondenz. Unknown senders: „Als
+      Interessent anlegen“ next to „Zuordnen“. The contact form now also lands in Mo
+      (prospect + Korrespondenz + item); the team mail is unchanged. Filter: „Alle Arten“ →
+      „E-Mail beantworten“. Lawyer: dossier § 14 (F-30) → goes with 3.2.
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
       index the lookup (migration `0070`) — low priority.
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
