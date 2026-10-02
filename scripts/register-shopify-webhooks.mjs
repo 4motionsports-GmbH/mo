@@ -10,11 +10,13 @@
 //
 // Subscriptions created through the Admin API with the app's client-credentials
 // token are signed with the app's client secret — /api/webhooks/shopify accepts
-// SHOPIFY_WEBHOOK_SECRET and SHOPIFY_CLIENT_SECRET. The mandatory compliance
-// topics (customers/data_request, customers/redact, shop/redact) CANNOT be
-// subscribed here: set their URL in the app configuration (Dev Dashboard → app
-// → Configuration → Compliance webhooks, or shopify.app.toml). The script
-// prints that reminder.
+// SHOPIFY_WEBHOOK_SECRET and SHOPIFY_CLIENT_SECRET. The compliance topics
+// (customers/data_request, customers/redact, shop/redact) CANNOT be subscribed
+// here: they live in the app configuration — a `compliance_topics` block in
+// shopify.app.toml, released with `shopify app config link` + `shopify app
+// deploy` by someone with access to the app (the Dev Dashboard has no field for
+// them). Optional for a custom app; docs/CATALOG_SYNC.md has the manual rule
+// while they are missing. The script prints that reminder.
 //
 // Lists the app's granted scopes and how many subscriptions each topic has at
 // the endpoint (a duplicate delivers every event twice), plus subscriptions of
@@ -199,8 +201,9 @@ async function main() {
   }
 
   console.log(
-    "\nCompliance topics (customers/data_request, customers/redact, shop/redact) are set in the app" +
-      `\nconfiguration, not here: Dev Dashboard → app → Configuration → Compliance webhooks → ${endpoint}`
+    "\nCompliance topics (customers/data_request, customers/redact, shop/redact) are not set here:" +
+      "\nadd a compliance_topics block to the app's shopify.app.toml (shopify app config link) with" +
+      `\nuri = "${endpoint}" and release it with shopify app deploy — see docs/CATALOG_SYNC.md.`
   );
 }
 

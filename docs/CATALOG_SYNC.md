@@ -306,11 +306,32 @@ event twice — and subscriptions of these topics pointing elsewhere) and
 the endpoint; nothing else is ever changed or deleted. Webhooks created by hand
 in the Shopify Admin are not visible to the app: delete them there before
 `--apply`, or every event arrives twice. Uninstalling the app deletes its
-subscriptions — run `--apply` again after a reinstall. The compliance topics `customers/data_request`,
-`customers/redact` and `shop/redact` are set in the app configuration (Dev
-Dashboard → Configuration → Compliance webhooks), not through the API. Manual
-registration in the Shopify Admin (Settings → Notifications → Webhooks) still
-works.
+subscriptions — run `--apply` again after a reinstall. Manual registration in the
+Shopify Admin (Settings → Notifications → Webhooks) still works, but those are
+invisible to the script and signed with the store key.
+
+**Compliance topics** (`customers/data_request`, `customers/redact`, `shop/redact`)
+cannot be subscribed through the API, and the Dev Dashboard has no field for them.
+Someone with access to the app runs `shopify app config link` (writes the app's
+current `shopify.app.toml` — check the scopes and the app proxy are in it, a deploy
+replaces the whole configuration), adds
+
+```toml
+[webhooks]
+api_version = "2026-04"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+uri = "https://<deployment>/api/webhooks/shopify"
+```
+
+(only the subscription block if `[webhooks]` exists; never the other topics — the
+script registers those, a second copy doubles every event) and runs `shopify app
+deploy`. No reinstall (it would delete the script's subscriptions). They are
+optional for a custom app. **While they are missing:** delete a person in Shopify
+with „Delete customer“ (the `customers/delete` webhook erases them in Mo too) — after
+Shopify's „Erase personal data“, also „Löschen“ the person in Mo → Kunden; for a data
+request, also look the person up in Mo → Kunden.
 
 Signing: app-made subscriptions (script, app configuration, compliance topics)
 are signed with the app's client secret, admin-made ones with the store key

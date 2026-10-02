@@ -25,7 +25,7 @@ Last updated: 2026-10-02.
 
 ## 1 · Now
 
-- [ ] **1.1 Consent write-back on** — M
+- [x] **1.1 Consent write-back on** — M — done 02.10.: 0 offen · 5 erledigt
   - Vercel → project `mo` → Settings → Environment Variables: `SHOPIFY_CONSENT_WRITEBACK`
     = `true` (Production only) → Deployments → latest → ⋯ → Redeploy.
   - Done when: Mo admin → Einstellungen (Settings) → „Shopify-Abgleich“ → „Warteschlange an
@@ -166,7 +166,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 
 ## C · Claude's tasks
 
-- [ ] **C.1** Correct the compliance-webhook hint in `scripts/register-shopify-webhooks.mjs`
+- [x] **C.1** Correct the compliance-webhook hint in `scripts/register-shopify-webhooks.mjs`
       and `docs/CATALOG_SYNC.md` (no Dev Dashboard field; `shopify.app.toml` + CLI; the
       manual rule from 5.2 while it is missing).
 - [ ] **C.2** After 1.3: update the domain in the docs (`README.md`, `CUSTOMER_ACCOUNT.md`
