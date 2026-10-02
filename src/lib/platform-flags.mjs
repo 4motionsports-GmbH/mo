@@ -21,9 +21,10 @@ function parseNonNegativeInt(raw, fallback, max = Number.MAX_SAFE_INTEGER) {
 }
 
 /**
- * Bulk import + nightly reconciliation of the Shopify customer base
- * (SHOPIFY_CUSTOMER_SYNC_ENABLED). Webhooks are processed regardless — they
- * only arrive when registered.
+ * Bulk import, nightly reconciliation and the customer / consent / order-ledger
+ * webhooks of the Shopify customer base (SHOPIFY_CUSTOMER_SYNC_ENABLED). While
+ * off, those webhooks are acknowledged without writing (the order attribution
+ * keeps working); deletions and the compliance topics are always handled.
  */
 export function isShopifyCustomerSyncEnabled(env = process.env) {
   return parseFlag(env.SHOPIFY_CUSTOMER_SYNC_ENABLED);

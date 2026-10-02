@@ -65,7 +65,7 @@ created date — no addresses, no phone numbers) and their orders:
 | Path | When | Gate |
 | --- | --- | --- |
 | Bulk import (Shopify bulk operation, resumable step loop) | Einstellungen → Shopify-Abgleich ("Kundenstamm übernehmen"); `/api/cron/shopify-sync` (every 5 min) continues a started import | `SHOPIFY_CUSTOMER_SYNC_ENABLED` |
-| Webhooks `customers/create`, `customers/update`, `customers_email_marketing_consent/update`, `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled` | live | processed whenever registered |
+| Webhooks `customers/create`, `customers/update`, `customers_email_marketing_consent/update`, `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled` | live | `SHOPIFY_CUSTOMER_SYNC_ENABLED` — while off they are acknowledged without writing (`ignored:sync-off` / `ledger:sync-off`; the order attribution of `orders/create|paid` keeps working). `customers/delete` and the compliance topics are always handled |
 | Reconciliation `/api/cron/shopify-reconcile` | nightly 01:45 UTC: customers and orders changed since the last run, then the facts | `SHOPIFY_CUSTOMER_SYNC_ENABLED` (the facts run always) |
 
 Rules of the one write path (`upsertMirrorCustomers`):

@@ -39,7 +39,13 @@
 // docs/CATALOG_SYNC.md "Real-time stock webhook".
 
 import { NextResponse } from "next/server";
-import { verifyShopifyWebhook, planCatalogAction, classifyShopifyTopic } from "@/lib/shopify-webhook.mjs";
+import {
+  verifyShopifyWebhook,
+  planCatalogAction,
+  classifyShopifyTopic,
+  webhookNeedsCustomerSync,
+} from "@/lib/shopify-webhook.mjs";
+import { isShopifyCustomerSyncEnabled } from "@/lib/platform-flags.mjs";
 import {
   recordWebhookDelivery,
   finishWebhookDelivery,
@@ -115,11 +121,14 @@ export async function POST(req: Request) {
       }
       let outcome: WebhookOutcome;
       let attribution: Awaited<ReturnType<typeof ingestShopifyOrder>> | null = null;
+      // Mirror writes wait for SHOPIFY_CUSTOMER_SYNC_ENABLED (the import and
+      // the reconcile catch up); the attribution below does not.
+      const syncOff = webhookNeedsCustomerSync(routeKind) && !isShopifyCustomerSyncEnabled();
       if (routeKind === "order") {
         if (!["orders/create", "orders/updated", "orders/paid", "orders/cancelled"].includes(t)) {
           outcome = { ok: true, action: `ignored:${t}` };
         } else {
-          outcome = await handleOrderLedgerWebhook(payload);
+          outcome = syncOff ? { ok: true, action: "ledger:sync-off" } : await handleOrderLedgerWebhook(payload);
           // orders/create + orders/paid also feed the pseudonymous attribution
           // pipeline exactly as before (Mo-marked orders only).
           if (t === "orders/create" || t === "orders/paid") {
@@ -127,6 +136,8 @@ export async function POST(req: Request) {
             if (!attribution.ok) outcome = { ok: false, action: `attribution:${attribution.reason}` };
           }
         }
+      } else if (syncOff) {
+        outcome = { ok: true, action: "ignored:sync-off" };
       } else if (routeKind === "customer") {
         outcome = await handleCustomerWebhook(payload, webhookId);
       } else if (routeKind === "consent") {
