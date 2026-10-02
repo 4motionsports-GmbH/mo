@@ -62,9 +62,10 @@ re-identification fails closed. Tier 3 is **added**, never a weakening of 1–2.
 
 ## 2. The PKCE authorization-code flow
 
-All redirect/callback URLs are built from `PUBLIC_BASE_URL` (never hardcoded), so
-the later DNS cutover to `chat.motionsports.de` is just an env flip + re-registering
-the URLs in the Shopify admin.
+All redirect/callback URLs are built from `PUBLIC_BASE_URL` (never hardcoded) —
+production: `https://mo.motionsports.de`, registered in the Shopify admin (Headless →
+Customer Account API → Application setup). A domain change is an env flip plus
+re-registering the URLs there.
 
 ```
  widget (storefront, motionsports.de)        backend (Vercel)            Shopify (account.motionsports.de)
@@ -149,7 +150,9 @@ widget `session_id`. Response:
 > **⚠️ REQUIRES A ONE-TIME STORE + THEME ACTION (Lucas) before it can fire:**
 > 1. **Add an App Proxy** to the app — Shopify admin → the app → *App proxy*:
 >    **Subpath prefix** `apps`, **Subpath** `chat`, **Proxy URL**
->    `https://chat.motionsports.de/api/auth/storefront`.
+>    `https://mo.motionsports.de/api/auth/storefront` (Shopify appends the sub-path:
+>    `/apps/chat/whoami` arrives at `/api/auth/storefront/whoami`, which answers the
+>    same).
 > 2. **Theme** calls the proxied same-origin path `/apps/chat/whoami?session={sid}`
 >    on first panel open (see `frontend-handoff/CUSTOMER_ACCOUNT.md` §3a).
 > 3. **Backend env** `SHOPIFY_APP_PROXY_SECRET` = the app's API secret key (falls

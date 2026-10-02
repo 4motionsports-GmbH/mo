@@ -9,8 +9,7 @@ Shopify customer) on top of the existing anonymous/email-capture flows. The
 widget **never** handles OAuth tokens — it only triggers a full-page redirect and
 later asks the backend who the session belongs to.
 
-**Base URL (production):** `https://chat.motionsports.de` (today the Vercel URL;
-always read it from config — it moves on DNS cutover).
+**Base URL (production):** `https://mo.motionsports.de` (always read it from config).
 
 ## 1. The opaque session reference
 
@@ -115,7 +114,7 @@ Response (HTTP 200, `no-store`), shape compatible with `/api/auth/me` (§4):
 
 > **⚠️ Requires a one-time STORE + THEME action (Lucas), see `docs/CUSTOMER_ACCOUNT.md`
 > §2:** (1) add an **App Proxy** to the app (Shopify admin → app → *App proxy*):
-> subpath prefix `apps`, subpath `chat`, URL `https://chat.motionsports.de/api/auth/storefront`;
+> subpath prefix `apps`, subpath `chat`, URL `https://mo.motionsports.de/api/auth/storefront`;
 > (2) the theme calls the proxied path above with `?session={sid}`; (3) backend env
 > `SHOPIFY_APP_PROXY_SECRET` (the app's API secret key; falls back to
 > `SHOPIFY_CLIENT_SECRET`). Until the proxy is configured this endpoint isn't

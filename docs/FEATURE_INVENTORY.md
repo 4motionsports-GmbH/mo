@@ -2018,7 +2018,7 @@ O optional with a code default, P platform-injected (Vercel/Neon/Upstash), S scr
 | `PINGEN_STAGING` | `pingen.ts:39`; `verify-pingen.mjs:26` | yes (**true**) | no | false = production | O | `.env.example` ships staging ON |
 | `PINGEN_WEBHOOK_SECRET` | `api/webhooks/pingen/route.ts:24`; `verify-pingen.mjs:55` | yes | no | none → webhook 503 (fail closed); comma-separated list | R (letter status) | |
 | `POSTGRES_URL` / `POSTGRES_URL_NON_POOLING` | `db.ts:32`; `migrate.mjs:27,29`; `reset-test-data.mjs:67,69` | c (comment only) | no | legacy fallbacks | P | |
-| `PUBLIC_BASE_URL` | `base-url.ts:14`; `scripts/verify-customer-account.mjs:43` | yes | **no** | → `VERCEL_PROJECT_PRODUCTION_URL` → `VERCEL_URL` → request origin → `https://chat.motionsports.de` (`base-url.ts:27`) | R (correct links in e-mails / OAuth redirect) | README omits it; the hard-coded final fallback `chat.motionsports.de` vs the hero comment's `mo.motionsports.de` (`.env.example:471`) hints at a domain change — check which is live |
+| `PUBLIC_BASE_URL` | `base-url.ts:14`; `scripts/verify-customer-account.mjs:43` | yes | **no** | → `VERCEL_PROJECT_PRODUCTION_URL` → `VERCEL_URL` → request origin → `https://mo.motionsports.de` (`base-url.ts:27`; `chat.` until 2026-10-02) | R (correct links in e-mails / OAuth redirect) | README omits it; the hard-coded final fallback `chat.motionsports.de` vs the hero comment's `mo.motionsports.de` (`.env.example:471`) hints at a domain change — check which is live |
 | `RESEND_API_KEY` | `email.ts:54,68`, `email-webhook.mjs:23` (placeholder), `api/contact/route.ts:150`, `api/inbound/resend/route.ts:144`, `api/admin/correspondence/message/route.ts:91` | yes | yes | none → all e-mail disabled | R (e-mail) | |
 | `RESEND_EVENTS_WEBHOOK_SECRET` | `api/webhooks/resend/route.ts:23` | yes | no | falls back to `RESEND_WEBHOOK_SECRET`; none → 503 | O | new in #186 |
 | `RESEND_WEBHOOK_SECRET` | `email-inbound.ts:23`, `api/webhooks/resend/route.ts:23` | yes | no | none → `/api/inbound/resend` 503 | R (inbound mail) | |
@@ -2097,7 +2097,8 @@ storefront domain, deep-link URL, hero model `gpt-image-2` / quality `high`, bun
    Code defaults are all false. Consider shipping the example with the gates `false`.
 8. **Base URL drift.** `base-url.ts:27` hard-codes `https://chat.motionsports.de` as the final fallback and README
    (166-199) deploys to `chat.motionsports.de`, while `.env.example:471` gives `https://mo.motionsports.de/...` as an
-   example asset URL. One of the two hostnames is stale.
+   example asset URL. One of the two hostnames is stale. **Resolved 2026-10-02:** production runs on
+   `mo.motionsports.de` only; the fallback, README and docs name it.
 9. **README architecture tree** (203-230) lists 4 API routes and 12 libs; the repo has 149 route files and ~300 lib
    files. It is a 2026-Q1 snapshot; treat as historical.
 

@@ -164,13 +164,13 @@ the customer entity above both. [`docs/DATABASE.md`](docs/DATABASE.md),
    the first deploy and again whenever a PR says it needs a migration.
 4. **Deploy.** The first build works with an empty Blob because the runtime
    falls back to the bundled catalog.
-5. **Add the domain** `chat.motionsports.de` (Settings → Domains, DNS CNAME) and
+5. **Add the domain** `mo.motionsports.de` (Settings → Domains, DNS CNAME) and
    set `PUBLIC_BASE_URL` to it.
 6. **Trigger the catalog sync once** so Blob has data before the first
    scheduled run:
    ```bash
    curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
-     https://chat.motionsports.de/api/cron/sync-catalog
+     https://mo.motionsports.de/api/cron/sync-catalog
    ```
    Expect `mode: "shopify"` and a non-zero product count; `mode:
    "fallback-bundle"` means the Shopify credentials are wrong

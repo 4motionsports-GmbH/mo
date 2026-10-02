@@ -6,7 +6,7 @@ wins — open an issue and we'll fix one or the other so they match.
 
 ## 1. Overview
 
-**Base URL (production):** `https://chat.motionsports.de`
+**Base URL (production):** `https://mo.motionsports.de`
 
 Endpoints:
 

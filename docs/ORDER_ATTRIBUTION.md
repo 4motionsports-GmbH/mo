@@ -110,7 +110,7 @@ simply can't contribute to the overlap check.
 2. In the Shopify admin/Partner dashboard, register **two additional webhook
    topics** against the existing endpoint (same URL + signing secret as the
    stock webhook): `orders/create` and `orders/paid` →
-   `https://chat.motionsports.de/api/webhooks/shopify`.
+   `https://mo.motionsports.de/api/webhooks/shopify`.
 3. Optionally set `MO_ATTRIBUTION_WINDOW_DAYS` (default 30).
 4. The KPI section shows an explicit empty state until the first webhook
    delivery arrives — ingestion starts at registration, it is **not**

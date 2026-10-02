@@ -492,7 +492,7 @@ skips the step.
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" \
-  https://chat.motionsports.de/api/cron/retention
+  https://mo.motionsports.de/api/cron/retention
 ```
 
 The endpoint returns a JSON summary with the counts affected, e.g. (abridged —

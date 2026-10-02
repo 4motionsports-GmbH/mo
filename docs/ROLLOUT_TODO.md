@@ -38,14 +38,24 @@ Last updated: 2026-10-02.
   - Done when: name and e-mail are filled. If they are empty, the app lacks *protected
     customer data* access (name, e-mail, address) → ask F to request it, then tell C.
 
-- [ ] **1.3 Which domain is live** — M
-  - The old order webhooks pointed at `chat.motionsports.de`; Mo now runs on
-    `mo.motionsports.de`. Vercel → project `mo` → Settings → Domains: is
-    `chat.motionsports.de` still listed?
-  - Ask F where the app's **App Proxy** (`/apps/chat`, the shop-native sign-in check) points.
-    It must be a domain that is listed in Vercel.
-  - Done when: you tell C which domains are attached and where the proxy points (C then
-    fixes the docs, see C.2).
+- [x] **1.3 Which domain is live** — M — done 02.10.: only `mo.motionsports.de` is attached
+  in Vercel; the widget calls it (`POST /api/chat` on `mo.`); the Customer Account API
+  callback and logout URIs (Shopify admin → Headless) point at it. Docs updated (C.2).
+
+- [ ] **1.4 App Proxy (shop-native sign-in detection)** — M
+  - Open `https://www.motionsports.de/apps/chat/whoami` in the browser.
+  - `{"signedIn":false}` (or `true` while logged in to the shop) → works, done.
+  - Shopify's „Page not found“ → no App Proxy configured: the feature is simply off (the
+    chat's own „Anmelden“ still works). Optional to add later — with 5.2.
+  - Any other error page → the proxy points at a dead address (probably `chat.`): F (or
+    M+C in 5.2) sets the proxy URL to `https://mo.motionsports.de/api/auth/storefront`.
+
+- [ ] **1.5 Inbound e-mail (customer replies)** — M
+  - Vercel → Environment Variables: what is `INBOUND_EMAIL_ADDRESS`?
+  - Send a short test mail to that address from your own mailbox.
+  - Done when: it shows up within a minute in Mo → Eingang → „E-Mails nicht zugeordnet“
+    (unassigned e-mails). If not: Resend → Domains — is the address's domain still verified
+    (its MX records may have gone with `chat.motionsports.de`)?
 
 ## 2 · Tomorrow morning
 
@@ -169,8 +179,9 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [x] **C.1** Correct the compliance-webhook hint in `scripts/register-shopify-webhooks.mjs`
       and `docs/CATALOG_SYNC.md` (no Dev Dashboard field; `shopify.app.toml` + CLI; the
       manual rule from 5.2 while it is missing).
-- [ ] **C.2** After 1.3: update the domain in the docs (`README.md`, `CUSTOMER_ACCOUNT.md`
-      still name `chat.motionsports.de`).
+- [x] **C.2** Domain in the docs and the `base-url.ts` fallback → `mo.motionsports.de`.
+- [x] **C.6** `/api/auth/storefront/whoami` answers like `/api/auth/storefront` (the App
+      Proxy appends `/whoami` to the proxy URL).
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
       index the lookup (migration `0070`) — low priority.
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead

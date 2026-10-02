@@ -59,7 +59,7 @@ minimum:
 ```liquid
 <script>
   window.MS_CHAT_CONFIG = {
-    apiBase: "https://chat.motionsports.de",
+    apiBase: "https://mo.motionsports.de",
     chatKey: {{ settings.ms_chat_shared_secret | json }},
     // optional overrides:
     allowedFromTheme: true
@@ -67,7 +67,7 @@ minimum:
 </script>
 ```
 
-- `apiBase` — the backend origin (`https://chat.motionsports.de`).
+- `apiBase` — the backend origin (`https://mo.motionsports.de`).
 - `chatKey` — the shared secret, read from a **theme/app setting**
   (`settings.ms_chat_shared_secret`, configured in `settings_schema.json`
   so a non-developer can paste it in the theme editor). This becomes the
