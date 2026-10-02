@@ -12,7 +12,8 @@ import { money } from "./admin-format.mjs";
 
 /** Kind → German label, base priority, whether an e-mail action needs the one consent. */
 export const SIGNAL_KINDS = {
-  antwort_offen: { label: "Antwort ausstehend", weight: 90, needsConsent: false, group: "jetzt" },
+  // Opened by every incoming mail (lib/inbox-mail.ts), not by the facts pass.
+  antwort_offen: { label: "E-Mail beantworten", weight: 90, needsConsent: false, group: "jetzt" },
   nicht_zugeordnet: { label: "E-Mail nicht zugeordnet", weight: 85, needsConsent: false, group: "jetzt" },
   datenauskunft: { label: "Datenauskunft angefordert", weight: 95, needsConsent: false, group: "jetzt" },
   // System items of the Shopify sync (erasure-rate alert, shop/redact) — no customer.
@@ -31,7 +32,6 @@ export const SIGNAL_KINDS = {
 
 /** The kinds the nightly facts pass produces (others come from events). */
 export const FACT_SIGNAL_KINDS = [
-  "antwort_offen",
   "kaufabsicht",
   "klick_ohne_kauf",
   "zubehoer_fenster",
@@ -121,7 +121,6 @@ export function signalsForCustomer(f, now = new Date()) {
   const sinceChat = days(f.lastChatAt, now);
   const sinceClick = days(f.lastClickAt, now);
   const sinceMail = days(f.lastMarketingAt, now);
-  const sinceInbound = days(f.lastInboundAt, now);
   const push = (kind, reason, evidence, dedupeWindow, expiresInDays, ageDays) => {
     const meta = SIGNAL_KINDS[kind];
     if (meta.needsConsent && !consented) return;
@@ -137,17 +136,8 @@ export function signalsForCustomer(f, now = new Date()) {
     });
   };
 
-  // antwort_offen — they wrote, nobody answered for > 24 h.
-  if (f.unansweredInboundCount > 0 && sinceInbound != null && sinceInbound > 1) {
-    push(
-      "antwort_offen",
-      `${f.unansweredInboundCount === 1 ? "Eine E-Mail wartet" : `${f.unansweredInboundCount} E-Mails warten`} seit ${Math.floor(sinceInbound)} ${Math.floor(sinceInbound) === 1 ? "Tag" : "Tagen"} auf Antwort.`,
-      { lastInboundAt: f.lastInboundAt, count: f.unansweredInboundCount },
-      String(f.lastInboundAt).slice(0, 10),
-      null,
-      sinceInbound
-    );
-  }
+  // An incoming mail is no longer a facts signal: every mail opens its item at
+  // once (lib/inbox-mail.ts, „E-Mail beantworten“), the hourly job catches up.
 
   // kaufabsicht — a recent chat with a cart / chosen products, no order since.
   const orderedAfterChat = sinceOrder != null && sinceChat != null && sinceOrder < sinceChat;

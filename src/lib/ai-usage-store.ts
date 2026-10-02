@@ -73,6 +73,9 @@ export type AiCallSite =
   // Kunden → Aktivität „Frag Mo“: a question answered from one customer's
   // record (docs/CUSTOMER_PLATFORM_PLAN.md §9.5). Admin-side spend.
   | "customer_ask"
+  // Eingang „E-Mail beantworten“: summary + reply draft for an incoming mail
+  // (lib/inbox-mail.ts). Admin-side spend.
+  | "inbox_mail_reply"
   // Text-to-speech for voice mode (/api/tts). NB: for this call site the
   // input_tokens column carries CHARACTERS synthesized (not LLM tokens) and
   // output_tokens is 0 — OpenAI TTS is billed per character of input, and its

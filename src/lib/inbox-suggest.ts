@@ -19,6 +19,8 @@ import { customerProfileForPrompt } from "./customer-profile";
 import { getInboxItem, saveInboxSuggestion, type InboxSuggestion } from "./inbox-store";
 import { SIGNAL_KINDS } from "./customer-signals.mjs";
 import { SEGMENT_LABELS } from "./admin-customer-filter.mjs";
+import { MAIL_ITEM_KIND } from "./inbox-mail-core.mjs";
+import { generateMailReplyDraft } from "./inbox-mail";
 
 const MODEL = modelFor("writer");
 const MAX_DISCOUNT = 15;
@@ -42,6 +44,8 @@ export async function generateInboxSuggestion(itemId: number, sql: Sql | null = 
     const item = await getInboxItem(itemId, sql);
     if (!item) return { ok: false, message: "Eintrag nicht gefunden." };
     if (item.customerId == null) return { ok: false, message: "Für Systemeinträge gibt es keinen Vorschlag." };
+    // An incoming mail gets a summary and a reply draft instead.
+    if (item.kind === MAIL_ITEM_KIND) return await generateMailReplyDraft(item, sql);
     const [customer, figures] = await Promise.all([getCustomerById(item.customerId), getCustomerFigures(item.customerId)]);
     if (!customer) return { ok: false, message: "Kunde nicht gefunden." };
 

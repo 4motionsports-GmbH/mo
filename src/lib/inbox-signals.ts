@@ -18,6 +18,7 @@ import {
 import { closeStaleInboxItems, expireInboxItems, reopenDueSnoozed, upsertInboxItems, type InboxItemInput } from "./inbox-store";
 import { inboxAiDailyLimit } from "./platform-flags.mjs";
 import { suggestForInboxItems } from "./inbox-suggest";
+import { catchUpMailItems } from "./inbox-mail";
 
 const iso = (v: unknown) => (v ? new Date(String(v)).toISOString() : null);
 const MAX_CANDIDATES = 20_000;
@@ -237,6 +238,8 @@ export async function runInboxSignals(
       out.created += await upsertInboxItems(items.slice(i, i + 500), sql);
     }
     out.closed = await closeStaleInboxItems([...JOB_SIGNAL_KINDS], items.map((i) => i.dedupeKey), sql);
+    // Mails the live hook missed get their „E-Mail beantworten“ item here.
+    out.created += await catchUpMailItems(200, sql);
     out.expired = await expireInboxItems(sql);
     await reopenDueSnoozed(sql);
     out.outcomes = await fillOutcomes(sql);

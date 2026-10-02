@@ -7,6 +7,7 @@
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
+import { MAIL_ITEM_KIND, MAIL_ITEM_PRIORITY, mailItemReason, mergeMailEvidence, newMailItem } from "./inbox-mail-core.mjs";
 
 export type InboxStatus = "offen" | "zurueckgestellt" | "erledigt" | "verworfen";
 
@@ -29,6 +30,10 @@ export interface InboxSuggestion {
   text?: string | null;
   rabatt?: { prozent: number; begruendung: string } | null;
   produkte?: string[];
+  /** Mail items (lib/inbox-mail.ts): the topic, urgency and placeholders to fill. */
+  anliegen?: string;
+  dringlichkeit?: string;
+  offenePunkte?: string[];
   generatedAt?: string;
   model?: string;
 }
@@ -130,6 +135,117 @@ export async function upsertInboxItems(items: InboxItemInput[], sql: Sql | null 
 /** One item (system events). Never throws. */
 export async function createInboxItem(item: InboxItemInput, sql: Sql | null = getSql()): Promise<void> {
   await upsertInboxItems([item], sql);
+}
+
+/**
+ * E-Mails im Eingang: an incoming mail of a known customer opens their item
+ * „E-Mail beantworten“ — or joins the one still open (or snoozed, which then
+ * opens again; a stale AI draft is dropped). Returns the item id, null when
+ * nothing was written. Never throws. Rules: lib/inbox-mail-core.mjs.
+ */
+export async function upsertMailItem(
+  mail: { customerId: number; emailMessageId: number; subject: string | null; snippet: string | null; occurredAt: string; source?: string },
+  sql: Sql | null = getSql()
+): Promise<number | null> {
+  if (!sql) return null;
+  try {
+    const open = (await sql`
+      SELECT id, evidence FROM inbox_items
+       WHERE kind = ${MAIL_ITEM_KIND} AND customer_id = ${mail.customerId}
+         AND status IN ('offen', 'zurueckgestellt')
+       ORDER BY id DESC LIMIT 1
+    `) as Array<{ id: number; evidence: Record<string, unknown> | null }>;
+    if (open[0]) {
+      const evidence = mergeMailEvidence(open[0].evidence, mail);
+      const reason = mailItemReason({ subject: mail.subject, snippet: mail.snippet, count: evidence.count, source: evidence.source });
+      await sql`
+        UPDATE inbox_items
+           SET evidence = ${JSON.stringify(evidence)}::jsonb, reason = ${reason.slice(0, 1000)},
+               status = 'offen', snoozed_until = NULL, priority = ${MAIL_ITEM_PRIORITY},
+               suggestion = NULL, suggested_at = NULL, updated_at = now()
+         WHERE id = ${open[0].id}
+      `;
+      return Number(open[0].id);
+    }
+    const item = newMailItem(mail);
+    const rows = (await sql`
+      INSERT INTO inbox_items (kind, customer_id, priority, title, reason, evidence, dedupe_key, expires_at)
+      SELECT ${item.kind}, ${item.customerId}, ${item.priority}, ${item.title}, ${item.reason.slice(0, 1000)},
+             ${JSON.stringify(item.evidence)}::jsonb, ${item.dedupeKey}, NULL
+       WHERE EXISTS (SELECT 1 FROM customers WHERE id = ${item.customerId})
+      ON CONFLICT (dedupe_key) DO NOTHING
+      RETURNING id
+    `) as Array<{ id: number }>;
+    return rows[0] ? Number(rows[0].id) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/inbox-store", phase: "upsertMailItem" });
+    return null;
+  }
+}
+
+/**
+ * A reply went out to this customer (Eingang or Korrespondenz): their open
+ * „E-Mail beantworten“ item is done. Returns the number closed. Never throws.
+ */
+export async function closeMailItems(customerId: number, sql: Sql | null = getSql()): Promise<number> {
+  if (!sql) return 0;
+  try {
+    const rows = await sql`
+      UPDATE inbox_items
+         SET status = 'erledigt', decision = 'beantwortet', decided_at = now(), snoozed_until = NULL, updated_at = now()
+       WHERE kind = ${MAIL_ITEM_KIND} AND customer_id = ${customerId} AND status IN ('offen', 'zurueckgestellt')
+      RETURNING id
+    `;
+    return rows.length;
+  } catch (err) {
+    reportError(err, { route: "lib/inbox-store", phase: "closeMailItems" });
+    return 0;
+  }
+}
+
+/**
+ * The safety net (hourly job): received mails of the last 14 days from known
+ * customers that no mail item has seen yet and that were not answered in their
+ * conversation since — e.g. when the live hook failed, or a mail predates the
+ * feature.
+ * Oldest first, at most `limit`. Never throws.
+ */
+export async function listUnseenInboundMails(
+  limit = 200,
+  sql: Sql | null = getSql()
+): Promise<Array<{ customerId: number; emailMessageId: number; subject: string | null; snippet: string | null; occurredAt: string; source: string }>> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT m.id, m.customer_id, m.subject, m.snippet, m.occurred_at, m.provider
+        FROM email_messages m
+       WHERE m.direction = 'received' AND m.customer_id IS NOT NULL
+         AND m.occurred_at > now() - interval '14 days'
+         -- answered = a reply in the same conversation (campaign, DOI or summary
+         -- mails have their own threads and do not count)
+         AND NOT EXISTS (
+               SELECT 1 FROM email_messages s
+                WHERE s.customer_id = m.customer_id AND s.direction = 'sent'
+                  AND s.thread_id IS NOT NULL AND s.thread_id = m.thread_id AND s.occurred_at > m.occurred_at)
+         AND NOT EXISTS (
+               SELECT 1 FROM inbox_items i
+                WHERE i.kind = ${MAIL_ITEM_KIND} AND i.customer_id = m.customer_id
+                  AND i.evidence->'messageIds' @> to_jsonb(m.id))
+       ORDER BY m.occurred_at ASC
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      customerId: Number(r.customer_id),
+      emailMessageId: Number(r.id),
+      subject: (r.subject as string | null) ?? null,
+      snippet: (r.snippet as string | null) ?? null,
+      occurredAt: iso(r.occurred_at) ?? new Date().toISOString(),
+      source: r.provider === "kontaktformular" ? "kontaktformular" : "email",
+    }));
+  } catch (err) {
+    reportError(err, { route: "lib/inbox-store", phase: "listUnseenInboundMails" });
+    return [];
+  }
 }
 
 export interface InboxListFilter {
