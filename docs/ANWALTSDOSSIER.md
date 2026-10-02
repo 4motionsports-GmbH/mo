@@ -1,7 +1,7 @@
 # Rechtsdossier „Mo“ — KI-Verkaufsberater auf motionsports.de
 
 **Zweck:** Vollständige, aktuelle Beschreibung des Systems für die externe anwaltliche Prüfung (Datenschutz, Wettbewerbs-/Lauterkeitsrecht, KI-Regulierung, Verbraucherrecht) — als Grundlage für Ihr Feedback und Ihre Handlungsempfehlungen.
-**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29).
+**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30).
 **Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`archive/LEGAL_READINESS_REPORT.md`](./archive/LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
 **Verantwortlicher:** motion sports [genaue Firmierung, Anschrift, Geschäftsführung, ggf. DSB — vom Mandanten zu ergänzen]. Betrieben wird der Onlineshop motionsports.de (Shopify) für Sport- und Fitnessgeräte (B2C, Studios/Physiotherapie, öffentliche Auftraggeber).
 
@@ -58,7 +58,7 @@ Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Ch
 
 **Kundenkonto (Stufe 3):** Eigene Gespräarchivliste über alle Geräte, Transkript lesen/umbenennen/einzeln löschen, PDF-Zusammenfassung, **Daten-Export als JSON** (Art. 15/20), **vollständige Selbst-Löschung** (Art. 17), Marketing-Opt-in ohne erneute E-Mail-Eingabe (voller DOI).
 
-**Kontaktformular:** Name, E-Mail, Telefon, Organisation, Nachricht + Anliegen (8 Kategorien inkl. Bestellsupport). Wird per Resend an das interne Postfach weitergeleitet und **nicht** in der Systemdatenbank gespeichert.
+**Kontaktformular:** Name, E-Mail, Telefon, Organisation, Nachricht + Anliegen (8 Kategorien inkl. Bestellsupport). Wird per Resend an das interne Postfach weitergeleitet und **seit 02.10.2026 zusätzlich in der Systemdatenbank gespeichert** (Korrespondenz der Person; unbekannte Absender werden als Interessent ohne Einwilligung angelegt, → § 14).
 
 **Feedback:** Freitextfeld (optional mit E-Mail); Speicherung 365 Tage; nur lesend im Admin sichtbar.
 
@@ -103,7 +103,7 @@ Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Ch
 | D-15 | Analyse-Berichte | KI-Berichte; **mit Klarnamen**, wenn Pro-Kunde-Option gewählt | **365 T** |
 | D-16 | Admin-Zugriffsprotokoll | Aktion, Kunden-ID, **IP (Klartext)**, Cookie-Fingerprint | **730 T** |
 | D-17 | IP-Adressen (Endnutzer) | Nur als Rate-Limit-Schlüssel in Upstash Redis (Fallback, wenn keine Session-ID; Kontaktformular pro IP) | TTL 60 s–60 min; kein Hashing, keine Analytics |
-| D-18 | Kontaktformular | Name, E-Mail, Telefon, Organisation, Nachricht | **Nicht** im System gespeichert; liegt im internen Postfach (organisatorische Frist nötig, → F-05) |
+| D-18 | Kontaktformular | Name, E-Mail, Telefon, Organisation, Nachricht | Seit 02.10.2026 als eingehende Mail in der Korrespondenz (D-09, **365 T**); Absender als Kundenakte ohne Einwilligung (Löschung bei Inaktivität wie jede Akte ohne Shop-Konto); Kopie im internen Postfach (organisatorische Frist nötig, → F-05) |
 | D-19 | Merge-Konflikte beim Login | Shopify-/lokale E-Mail, Session-ID | **Keine Frist, kein Lösch-Lauf** (→ F-10) |
 
 **Kein** Einsatz von: Google Analytics, Meta-Pixel o. ä. Tracking-Diensten; keine Öffnungs-Pixel in E-Mails (nur Klick-Tracking auf vom Empfänger angeklickten Links); keine User-Agent-Speicherung; kein Geräte-Fingerprinting.
@@ -130,7 +130,7 @@ Ein täglicher, abgesicherter Lösch-Lauf setzt alle Fristen automatisch durch. 
 | R-08 | E-Mail-Korrespondenz (Antworten, 365 T inkl. unbekannter Absender) | Art. 6 (1) b/f | Frist + Unbekannten-Speicherung bestätigen |
 | R-09 | Kundenkonto-Login, Token-Haltung | Art. 6 (1) b/f | — |
 | R-10 | **Briefversand** (Pingen/CH) | Versandkontext + kaufbasierte Adresse (Art. 6 (1) b/f) | Erfassung inzwischen strikt gegated (§ 11); Freigabe 14.06.2026 |
-| R-11 | Kontaktformular | Art. 6 (1) b/f | — |
+| R-11 | Kontaktformular (inkl. Speicherung in der Kundenakte, § 14) | Art. 6 (1) b/f | → F-30 |
 | R-12 | Rate-Limiting (IP), Fehlerüberwachung, Admin-Zugriffsprotokoll | Art. 6 (1) f | IP-Verarbeitung in DSE erwähnen |
 
 ---
@@ -198,6 +198,7 @@ KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (S
 | Live-Chat | Anthropic `claude-sonnet-5-5` | Gesprächsverlauf verbatim; abgeleitetes Bedarfsprofil; bei berechtigtem „Wiedererkennen“ (s. u.): Profiltext, gekaufte Artikel (nur Titel/Menge), Vorname, Stadt/Land |
 | Zusammenfassungs-Mail | dito | Transkript des Gesprächs |
 | Kundenprofil (jede Nacht für Kunden mit neuer Aktivität) | Anthropic `claude-opus-5-5` | Alle verknüpften Transkripte, Kaufhistorie, Korrespondenz-Texte, Kampagnen-Historie (Abo-Status, gesendete Mails, Klicks), Name, Stadt/Land |
+| Antwortentwurf auf eingehende E-Mails (Eingang, seit 02.10.2026) | Anthropic Sonnet | Name, die letzten 12 Mails der Korrespondenz (eingehend und ausgehend, ohne Zitate), die letzten 3 Bestellungen (Datum, Status, Artikel — **ohne** Bestellnummer und Beträge), Profiltext (nicht nach Widerspruch). Der Inhalt der Mails selbst kann beliebige Angaben der Person enthalten |
 | Gesprächsanalyse/Q&A-Übersetzung | Anthropic `claude-haiku-4-5`; Insights-Rollup und Q&A-Entwürfe `claude-sonnet-5-5` | Einzeltranskripte bzw. deren Zusammenfassungen — **ohne** E-Mail/Identität |
 | Marketing-/Kampagnen-/Brief-Entwürfe, Zusammenfassungs-Mail (wiederkehrende Kunden), Hero-Bilder, Set-Vorschläge | Anthropic Sonnet (Hero-Bild: OpenAI, nur verdichteter Kontext) | Profil, Kaufhistorie, Name (Brief), Operator-Anweisungen |
 | Produktsuche | OpenAI `text-embedding-3-small` | **Jede Nutzernachricht** wird zur Suche eingebettet (keine Identifikatoren) |
@@ -338,6 +339,20 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 - **F-27 — Briefwerbung an Bestandskunden ohne E-Mail-Einwilligung (D-7):** Einschätzung der Entwicklung: zulässig auf Grundlage von Art. 6 (1) f i. V. m. Erwägungsgrund 47 (Direktwerbung als berechtigtes Interesse), wettbewerbsrechtlich § 7 Abs. 1 UWG (Briefwerbung ohne Einwilligung zulässig, solange die Person nicht erkennbar widersprochen hat). Voraussetzungen: Hinweis in der Datenschutzerklärung, Widerspruchshinweis in jedem Brief (Art. 21 (4) — Wortlaut oben, bitte prüfen), sofortige Beachtung jedes Widerspruchs (umgesetzt). Bitte bestätigen und angeben, ob ein Abgleich mit der Robinsonliste für Bestandskunden erforderlich ist.
 - **F-28 — Datenschutzerklärung (ergänzt F-05):** Ergänzungen für Kundenspiegel und Bestellkopie, Kennzahlen und Segmente, KI-Profile (Umfang nach F-23), die gemeinsame Einwilligung und Löschung mit Shopify, Briefwerbung mit Widerspruchsrecht, KI-Vorschläge im Eingang, neue Speicherfristen — und, falls eingeschaltet, die Übertragung abgeleiteter Merkmale als Tags an Shopify (D-11; bitte vor dem Einschalten bestätigen).
 - **F-29 — Einwilligungstext im Shop:** Der Text der Newsletter-Checkbox im Shop (Checkout, Konto, Footer) und der Mo-Text sollten inhaltlich übereinstimmen (gleicher Zweck: personalisierte Angebote per E-Mail, Auswertung von Käufen und Gesprächen). Bitte einen gemeinsamen Wortlaut vorgeben; dessen Version wird als `SHOPIFY_CONSENT_TEXT_VERSION` mitprotokolliert.
+
+---
+
+## 14. Nachtrag 02.10.2026 — E-Mails im Eingang
+
+### 14.1 Was sich geändert hat (Tatsachen)
+
+1. **Jede eingehende Mail wird zur Aufgabe.** Schreibt eine bekannte Person an Mo (Antwort auf eine Mail, neue Mail an die Empfangsadresse), öffnet sich sofort im Eingang die Aufgabe „E-Mail beantworten“. Weitere Mails derselben Person hängen sich an; eine Antwort des Teams schließt die Aufgabe. Das betrifft Korrespondenz, die schon bisher gespeichert wurde (D-09); neu ist nur die Aufgabe.
+2. **KI-Zusammenfassung und Antwortentwurf.** Für die Aufgabe schreibt ein KI-Modell (Anthropic) eine kurze Zusammenfassung und einen Antwortentwurf. Eingabe: siehe § 7.1. Der Entwurf ist eine Service-Antwort — der Prompt verbietet Werbung, Produktempfehlungen ohne Nachfrage, Rabatte und erfundene Zusagen; fehlende Angaben bleiben als Platzhalter stehen. **Nichts wird automatisch versendet**: ein Mensch prüft, ändert und sendet. Weil es keine Werbung ist, hängt die Antwort nicht an der Werbe-Einwilligung (wie bisher die Korrespondenz, R-08).
+3. **Kontaktformular in der Kundenakte.** Eine Anfrage über das Kontaktformular des Shops wird zusätzlich zur Team-Mail als eingehende Mail gespeichert (Name, E-Mail, Telefon, Organisation, Anliegen, Produkte, Nachricht). Ist die Absenderadresse unbekannt, wird eine Kundenakte als **Interessent ohne Einwilligung** angelegt. Dasselbe kann das Team für eine nicht zugeordnete Mail mit „Als Interessent anlegen“ tun. Speicherdauer: Mail 365 Tage (D-09); die Akte wird wie jede Akte ohne Shop-Konto bei Inaktivität gelöscht.
+
+### 14.2 Neue Prüfbitte
+
+- **F-30 — Kontaktanfragen und eingehende Mails in Mo:** Bitte bestätigen, dass die Speicherung der Kontaktanfrage in der Kundenakte (einschließlich Anlage eines Interessenten ohne Einwilligung) und die KI-gestützte Zusammenfassung mit Antwortentwurf auf Art. 6 (1) b (Anfrage/Vertragsanbahnung) bzw. f (effiziente Bearbeitung) gestützt werden können, und welche Ergänzung der Datenschutzerklärung (Kontaktformular, KI-Unterstützung bei der Beantwortung, Anthropic als Auftragsverarbeiter) nötig ist. Einschätzung der Entwicklung: keine automatisierte Entscheidung im Sinne von Art. 22 — jede Antwort sendet ein Mensch.
 
 ---
 

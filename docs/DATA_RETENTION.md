@@ -255,6 +255,17 @@ reply from an **unknown** address is stored with `customer_id = NULL` (the
 "unmatched inbound" triage queue). Attachments are stored as **metadata only**
 (filename / type / size / provider ref) — never the blob.
 
+**Since 2026-10-02 the shop's contact form is stored here too.** `/api/contact`
+writes the request as a received message (`provider = 'kontaktformular'`; subject
+„Kontaktanfrage: <Anliegen>“, body = the message plus organisation, phone and
+products) and finds or creates the sender as a `customers` row — an
+*Interessent* without any consent and without a Shopify id. The Eingang's „Als
+Interessent anlegen“ does the same for an unmatched sender. Such a row follows
+the dormant-customer purge (step 5e) like every customer without a Shopify id;
+the mail follows `CORRESPONDENCE_RETENTION_DAYS`. Every incoming mail of a known
+customer also opens an Eingang item „E-Mail beantworten“ (`inbox_items`, step 8);
+its AI reply draft is stored in the item's `suggestion` and is cleared with it.
+
 | Table | What's stored | Lawful basis |
 | --- | --- | --- |
 | `email_messages` | direction (sent/received), RFC-5322 identity + threading (message_id, in_reply_to, references, derived thread_id), from/to/subject/body, snippet, attachment **metadata**, provider refetch handle, nullable `customer_id` + `marketing_send_id` | Contract / legitimate interest |

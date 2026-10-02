@@ -139,6 +139,7 @@ Everything an operator can point a colleague at is in the URL:
 | Kunden | `?ksort=`, `?kpage=` | sort (`activity`, `revenue`, `orders`, `last_order`, `name`, `created`), 1-based page (50 per page; a page past the end — an old link, a narrowed filter — renders page 1 instead of „0 Personen“) |
 | Kunden | `?filter=marketing\|no_purchase` | legacy presets of the retired Übersicht cards, read only when there is no valid `?kview=`: `marketing` → view „Mit Einwilligung“, `no_purchase` → „Mit Einwilligung“ + Lebenszyklus „Ohne Bestellung“; any other value is ignored |
 | Kunden | `?customer=<id>` | open this customer (kept in sync while browsing; works for a person outside the current page) |
+| Kunden | `?ctab=<tab>` | with `?customer=`: the detail tab to open first (`ueberblick`, `aktivitaet`, `kaeufe`, `beratungen`, `marketing`, `korrespondenz`, `brief`; anything else → Überblick) — set by the Eingang's „Ganzer Verlauf“ |
 | Kampagnen | `?campaign=<slug\|id>` | the review desk of that campaign (absent = the overview; an unknown ref shows the overview with a notice) |
 | Kampagnen | `?edit=<id\|new>` | the editor sheet on the overview (kept in sync while it is open) |
 | Kampagnen | `?edit=new&audience=<json>` | a new campaign whose Zielgruppe starts from this audience spec (set by Kunden → Überblick → „Ähnliche Kunden“ → „Als Zielgruppe verwenden“); normalised on the server (`normalizeAudienceSpec`), ignored when unparsable or longer than 4,000 characters |
@@ -366,11 +367,24 @@ most `INBOX_AI_DAILY_LIMIT` items per day; a suggestion is re-checked against
 consent and objections and never widens a gate. „Jetzt prüfen“ runs the rules
 on demand without AI.
 
+**E-Mails** ([`inbox-mail.ts`](../src/lib/inbox-mail.ts), rules in the tested
+[`inbox-mail-core.mjs`](../src/lib/inbox-mail-core.mjs)). `antwort_offen` is
+not a facts rule but an event: every incoming mail of a known customer opens
+their item „E-Mail beantworten“ at once — the inbound webhook, „Zuordnen“ /
+„Als Interessent anlegen“ below, and the shop's contact form (`/api/contact`
+stores the request as a received message, provider `kontaktformular`, and
+creates the sender as an Interessent without consent when unknown). One open
+item per person: later mails join it (`evidence.messageIds`, count; the reason
+shows the newest mail without its quoted history) and reopen a snoozed one.
+The hourly job catches up mails the live hook missed (14 days, not answered in
+the same thread). A reply — from the Eingang or Kunden → Korrespondenz — closes
+the item (`erledigt`, decision `beantwortet`).
+
 | Kind | Label | Group | Needs consent |
 | --- | --- | --- | --- |
 | `datenauskunft` | Datenauskunft angefordert (Shopify `customers/data_request`) | Jetzt | — |
 | `abgleich_konflikt` | Shopify-Abgleich prüfen (system item of the Shopify sync: erasure-rate alert, `shop/redact`; no customer) | Jetzt | — |
-| `antwort_offen` | Antwort ausstehend | Jetzt | — |
+| `antwort_offen` | E-Mail beantworten (every incoming mail of a known customer, see above) | Jetzt | — |
 | `nicht_zugeordnet` | E-Mail nicht zugeordnet (registered; unassigned mail is currently shown in its own block, not as items) | Jetzt | — |
 | `kaufabsicht` | Kaufabsicht ohne Kauf | Jetzt | yes |
 | `unzufrieden` | Unzufriedenheit (cancellation / refund in 14 days) | Jetzt | — |
@@ -399,7 +413,9 @@ on demand without AI.
 - **E-Mails nicht zugeordnet** (only when there are any) — inbound mail from an
   address that matches no customer: search a customer by name or e-mail
   (`customers/list?kq=`), pick, „Zuordnen“ (`correspondence/assign`) — the
-  message moves into that customer's Korrespondenz.
+  message moves into that customer's Korrespondenz — or „Als Interessent
+  anlegen“ (`correspondence/assign-prospect`: a new customer from the sender's
+  address, no consent). Both open the item „E-Mail beantworten“.
 - **Toolbar** — Status Offen n · Später n · Erledigt (`?status=`), „Art“
   (kinds present, with counts), the key hint, „Jetzt prüfen“.
 - **List** (left) — grouped **Jetzt / Diese Woche / Später** by kind; each row
@@ -413,11 +429,26 @@ on demand without AI.
   kinds that need consent); **Vorschlag** („Vorschlag erzeugen“ / „Neu
   erzeugen“: Warum, Kanal + Aktion, Betreff, Skizze, Rabatt, Produkte); the
   decisions.
+- **„E-Mail beantworten“** ([`eingang/MailReply.tsx`](../src/app/admin/eingang/MailReply.tsx))
+  replaces the Vorschlag: the conversation (the item's mails highlighted,
+  quoted history removed, earlier mails under „Früherer Verlauf“, „Ganzer
+  Verlauf“ → Kunden → Korrespondenz via `?ctab=korrespondenz`); the
+  **KI-Zusammenfassung** (Anliegen, Dringlichkeit, „Vor dem Senden:“ and the
+  open points) and a reply draft, written automatically when the item is
+  opened without one (writer tier, call site `inbox_mail_reply`; a service
+  reply — no advertising, no discounts, nothing invented: missing facts become
+  `[Platzhalter]`; the person's language and du/Sie; no order numbers or
+  amounts in the prompt; the profile only without an Art. 21 objection);
+  „Neuer Entwurf“; the editable Betreff and Text with a warning while a
+  `[…]` placeholder is left; **„Antwort senden“** (with confirmation) →
+  `correspondence/send` as a threaded reply to the newest mail, no consent
+  needed (a service reply, not marketing). The item is then erledigt and the
+  next one opens.
 
 **Decisions** (Offen only): the primary action — **„Entwurf übernehmen“** when
 the kind or the suggestion is an e-mail and the person has consent, otherwise
-„Antworten“ (`antwort_offen`), „Daten bereitstellen“ (`datenauskunft`) or
-„Kunde öffnen“, which navigate client-side (`router.push`, no page reload) —,
+„Daten bereitstellen“ (`datenauskunft`) or „Kunde öffnen“ (for
+`antwort_offen` the primary action is „Antwort senden“ in the item itself), which navigate client-side (`router.push`, no page reload) —,
 „Erledigt“, „Später“ (in 3 / 7 / 30 Tagen) and „Verwerfen“
 with a reason (passt nicht, schon erledigt, falscher Zeitpunkt, anderes).
 „Entwurf übernehmen“ (`inbox/accept`) adds the person to the **Einzelansprache**
@@ -436,7 +467,7 @@ open):
 | Key | Action |
 | --- | --- |
 | `J` / `K` | next / previous item (all views) |
-| `Enter` | the primary action |
+| `Enter` | the primary action („E-Mail beantworten“: „Antwort senden“, after the confirmation) |
 | `E` | erledigt |
 | `Z` | später (3 Tage) |
 | `D` | verwerfen (reason „anderes“) |
@@ -1737,15 +1768,15 @@ All under `/api/admin/*` — 96 route files —, gated by the Edge proxy **and**
 `guardAdminPost(req)` / `guardAdminGet()` in the handler (§1); JSON envelope
 `{ error: { code, message } }` on failure. Grouped by the screen that calls
 them. Actions that read or act on one person's data write the admin access log
-(`recordAdminAccess`, 33 route files) — among them `customers/ask`,
-`customers/objection`, `campaigns/add-recipient(s)`, `inbox/accept` and
-`inbox/suggest`.
+(`recordAdminAccess`, 35 route files) — among them `customers/ask`,
+`customers/objection`, `campaigns/add-recipient(s)`, `inbox/accept`,
+`inbox/suggest` and `correspondence/assign-prospect`.
 
 | Screen | Route | Purpose |
 | --- | --- | --- |
-| Eingang | `GET inbox/item?id=` | one item with the customer mini-card (identity, the one consent, sendable, figures, persona, profile excerpt) |
+| Eingang | `GET inbox/item?id=` | one item with the customer mini-card (identity, the one consent, sendable, figures, persona, profile excerpt); for `antwort_offen` also `mail: { messages, replyToMessageId }` (the last 12 messages oldest first, quoted history removed, the item's mails `isNew`) |
 | | `POST inbox/decide { id, decision, note?, snoozeDays?, action? }` | `erledigt`, `verworfen` (reason in `note`), `zurueckgestellt` (3 / 7 / 30 days), `wieder_offen` („Wieder öffnen“); 404 `not_found` only when the item does not exist, 500 `internal_error` on a database problem |
-| | `POST inbox/suggest { id }` | „Vorschlag erzeugen“ for one item (writer tier, `inbox-suggest.ts`; access log `inbox.suggest`) |
+| | `POST inbox/suggest { id }` | „Vorschlag erzeugen“ for one item (writer tier, `inbox-suggest.ts`; for `antwort_offen` the summary + reply draft of `inbox-mail.ts`; access log `inbox.suggest`) |
 | | `POST inbox/accept { id }` | „Entwurf übernehmen“: Einzelansprache recipient with the suggestion as note + discount, draft written, item erledigt → `{ contactId, campaignId, drafted }` (access log `inbox.accept`) |
 | | `POST inbox/run` | „Jetzt prüfen“: run the rules now, without AI suggestions |
 | Eingang, Kunden | `GET customers/list?kq=&kview=&…` | the Kunden list as JSON (same URL parameters as the screen, §2.2) — used by the Eingang's „Zuordnen“ search |
@@ -1780,7 +1811,8 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST marketing/update / email-preview / send / delete` | edit, preview, approve & send (`approveAndSend`), delete an open draft of the former path |
 | | `POST bundles/suggest / create / archive / delete` | Set-Angebot composer |
 | | `POST catalog/search { query }` | product search for the composer and pickers |
-| | `POST correspondence/send / message / assign / email-preview` | reply, lazy body, assign unmatched inbound (now from the Eingang), preview |
+| | `POST correspondence/send / message / assign / email-preview` | reply (closes the person's open „E-Mail beantworten“ item → `closedItems`), lazy body, assign unmatched inbound (now from the Eingang; opens the item → `itemId`), preview |
+| Eingang | `POST correspondence/assign-prospect { messageId }` | „Als Interessent anlegen“: a customer from the sender (no consent), the mail assigned, the item opened → `{ customerId, itemId }` (access log `correspondence.assign_prospect`) |
 | | `POST customers/letter-draft / letter-preview`, `POST physical/send` | physical letter (`letter-draft` 409 after a postal objection) |
 | | `GET email-hero`, `POST email-hero/suggest / generate / headline / remove` | hero image of a marketing or campaign draft |
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |

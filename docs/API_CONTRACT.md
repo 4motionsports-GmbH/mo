@@ -955,7 +955,10 @@ Same shape as `/api/chat`. Bucket: 60 req / 60 s per session/IP.
 ## 4. `POST /api/contact`
 
 JSON contact-form submission. Forwards to Resend; falls back to a
-stdout log when Resend env vars are unset.
+stdout log when Resend env vars are unset. Since 2026-10-02 the request is
+also stored in Mo (the sender's Korrespondenz and an Eingang item, best
+effort) before the team mail — the request and response shapes are
+unchanged.
 
 ### Required request headers
 
