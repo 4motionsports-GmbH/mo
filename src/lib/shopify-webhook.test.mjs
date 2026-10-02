@@ -107,3 +107,19 @@ test("classifyShopifyTopic routes every platform topic", async () => {
   assert.equal(classifyShopifyTopic("app/uninstalled"), "other");
   assert.equal(classifyShopifyTopic(null), "other");
 });
+
+test("only mirror writes wait for the customer sync switch", async () => {
+  const { classifyShopifyTopic, webhookNeedsCustomerSync } = await import("./shopify-webhook.mjs");
+  const needs = (t) => webhookNeedsCustomerSync(classifyShopifyTopic(t));
+  assert.equal(needs("customers/create"), true);
+  assert.equal(needs("customers/update"), true);
+  assert.equal(needs("customers_email_marketing_consent/update"), true);
+  assert.equal(needs("orders/create"), true);
+  // Deletions and the compliance topics are honoured whatever the switch says.
+  assert.equal(needs("customers/delete"), false);
+  assert.equal(needs("customers/redact"), false);
+  assert.equal(needs("customers/data_request"), false);
+  assert.equal(needs("shop/redact"), false);
+  assert.equal(needs("bulk_operations/finish"), false);
+  assert.equal(needs("products/update"), false);
+});

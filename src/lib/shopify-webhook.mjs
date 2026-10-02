@@ -116,6 +116,21 @@ export function planCatalogAction(topic, payload) {
 }
 
 /**
+ * Does this customer-platform webhook write to the mirror (customers, their
+ * consent, the order ledger)? Those writes wait for
+ * SHOPIFY_CUSTOMER_SYNC_ENABLED — the orders/* topics were registered for the
+ * attribution long before the mirror, so registration alone is no gate. The
+ * import and the nightly reconcile catch up once the switch is on. Deletions,
+ * data requests and the shop/redact alert are always handled.
+ *
+ * @param {string} routeKind classifyShopifyTopic's answer
+ * @returns {boolean}
+ */
+export function webhookNeedsCustomerSync(routeKind) {
+  return routeKind === "customer" || routeKind === "consent" || routeKind === "order";
+}
+
+/**
  * Which handler a (verified) delivery belongs to. The catalog topics keep the
  * existing path; the customer-platform topics (docs/CUSTOMER_PLATFORM_PLAN.md
  * §6.2, §8) are deduplicated by X-Shopify-Webhook-Id and routed to
