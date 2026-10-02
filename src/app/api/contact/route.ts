@@ -6,6 +6,7 @@ import { escapeHtml } from "@/lib/html-escape";
 import { resolveLocale } from "@/lib/locale";
 import { apiMessage } from "@/lib/api-messages.mjs";
 import { recordKpiEvent, KPI_CONTACT_FORM_SUBMITTED } from "@/lib/kpi-events";
+import { storeContactRequest } from "@/lib/inbox-mail";
 
 export const maxDuration = 10;
 
@@ -147,6 +148,20 @@ export async function POST(req: Request) {
       },
     });
 
+    // Into Mo as well (lib/inbox-mail.ts): the sender is found or created as a
+    // prospect, the request lands in their Korrespondenz and opens the Eingang
+    // item „E-Mail beantworten“ with a reply draft. Fail-soft — the team mail
+    // below goes out regardless.
+    await storeContactRequest({
+      reasonLabel: REASON_LABELS[payload.reason] ?? payload.reason,
+      name: payload.name,
+      email: payload.email,
+      organization: payload.organization ?? null,
+      phone: payload.phone ?? null,
+      message: payload.message,
+      products: payload.productIds ?? [],
+    });
+
     const apiKey = process.env.RESEND_API_KEY;
     const to = process.env.CONTACT_TO_EMAIL;
     const from = process.env.CONTACT_FROM_EMAIL;
@@ -175,8 +190,9 @@ export async function POST(req: Request) {
     try {
       // Deliberately the Resend SDK directly, not lib/email's sendEmail(): this
       // is a lead notification to the team's own inbox — no customer recipient,
-      // no consent gate, no email_messages mirror row, reply-to = the submitter —
-      // so none of sendEmail's transactional/marketing bookkeeping applies.
+      // no consent gate, reply-to = the submitter — so none of sendEmail's
+      // transactional/marketing bookkeeping applies. (The request itself is
+      // already in Mo's mail log as a received message, above.)
       const resend = new Resend(apiKey);
       const result = await resend.emails.send({
         from,

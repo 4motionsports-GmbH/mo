@@ -9,6 +9,9 @@
 // NEXT reply threads back; it adopts the parent's thread_id so the sent row
 // lands in the same conversation. A fresh compose starts its own thread.
 //
+// A sent reply closes the customer's open Eingang item „E-Mail beantworten“
+// (lib/inbox-store.ts closeMailItems).
+//
 // This is plain correspondence — it does NOT touch marketing eligibility /
 // lockout / send-guarantees. It does not mint discounts or append a campaign
 // footer; it sends exactly the operator's text.
@@ -27,6 +30,7 @@ import {
 } from "@/lib/email-inbound-core.mjs";
 import { renderCorrespondenceEmail } from "@/lib/correspondence-email";
 import { reportError } from "@/lib/observability";
+import { closeMailItems } from "@/lib/inbox-store";
 
 export const maxDuration = 30;
 
@@ -145,7 +149,9 @@ export async function POST(req: Request) {
       threadId: threadId ?? threading.messageId,
     });
 
-    return adminJson({ ok: true, sentTo: customer.email, threaded: inReplyToMessageId != null });
+    const closedItems = await closeMailItems(customerId);
+
+    return adminJson({ ok: true, sentTo: customer.email, threaded: inReplyToMessageId != null, closedItems });
   } catch (err) {
     reportError(err, { route: "api/admin/correspondence/send" });
     return adminJsonError("internal_error", "Senden fehlgeschlagen.", 500);
