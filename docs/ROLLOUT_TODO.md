@@ -33,7 +33,7 @@ Last updated: 2026-10-02.
   - From now on every unsubscribe in Mo also unsubscribes in Shopify, and a deletion in Mo
     switches the Shopify consent off.
 
-- [ ] **1.2 Names and e-mails came through** — M
+- [x] **1.2 Names and e-mails came through** — M — done 02.10.: filled, protected data access works
   - Mo admin → Kunden (Customers) → open 2–3 customers.
   - Done when: name and e-mail are filled. If they are empty, the app lacks *protected
     customer data* access (name, e-mail, address) → ask F to request it, then tell C.
