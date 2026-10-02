@@ -21,10 +21,12 @@ export async function KundenTab({
   dbReady,
   searchParams,
   initialCustomerId,
+  initialDetailTab,
 }: {
   dbReady: boolean;
   searchParams: SearchParams;
   initialCustomerId?: number | null;
+  initialDetailTab?: string | null;
 }) {
   if (!dbReady) {
     return (
@@ -64,6 +66,7 @@ export async function KundenTab({
         .sort((a, b) => (a.kind === "einzel" ? -1 : b.kind === "einzel" ? 1 : 0))
         .map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
       initialCustomerId={initialCustomerId ?? null}
+      initialDetailTab={initialDetailTab ?? null}
     />
   );
 }

@@ -2,9 +2,11 @@
 
 // E-Mails, die keinem Kunden zugeordnet sind — received messages from an
 // address we don't recognise (customer_id IS NULL), so a reply from an unknown
-// sender is never lost. The only action is „Zuordnen“: pick the person (search
-// by name or e-mail over the whole customer base) — the message moves into
-// that customer's Korrespondenz.
+// sender is never lost. „Zuordnen“: pick the person (search by name or e-mail
+// over the whole customer base) — the message moves into that customer's
+// Korrespondenz. „Als Interessent anlegen“: the sender is new — a prospect is
+// created from the address. Either way the mail then opens the Eingang item
+// „E-Mail beantworten“ with the reply draft.
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
@@ -35,8 +37,9 @@ export function UnmatchedInbound({ messages }: { messages: UnmatchedInboundMessa
       }
       actions={
         <InfoTip>
-          Antworten von Adressen, die zu keinem Kunden passen. Ordne jede einem Kunden zu — sie wandert dann
-          in dessen Korrespondenz-Verlauf.
+          E-Mails von Adressen, die zu keinem Kunden passen. Ordne jede einem Kunden zu oder lege den Absender
+          als Interessent an — sie wandert dann in dessen Korrespondenz und wird ein Eintrag „E-Mail
+          beantworten“ mit Antwortentwurf.
         </InfoTip>
       }
     >
@@ -54,7 +57,7 @@ function UnmatchedRow({ message }: { message: UnmatchedInboundMessage }) {
   const [query, setQuery] = React.useState("");
   const [hits, setHits] = React.useState<Hit[]>([]);
   const [target, setTarget] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
+  const [busy, setBusy] = React.useState<null | "assign" | "prospect">(null);
 
   React.useEffect(() => {
     const q = query.trim();
@@ -88,17 +91,30 @@ function UnmatchedRow({ message }: { message: UnmatchedInboundMessage }) {
       toast({ variant: "warning", title: "Kein Kunde gewählt", description: "Bitte einen Kunden suchen und auswählen." });
       return;
     }
-    setBusy(true);
+    setBusy("assign");
     try {
       const json = await adminFetch<{ customerEmail?: string }>("/api/admin/correspondence/assign", {
         body: { messageId: message.id, customerId },
       });
-      toast({ variant: "success", title: "Zugeordnet", description: json.customerEmail ?? "Kunde" });
+      toast({ variant: "success", title: "Zugeordnet", description: `${json.customerEmail ?? "Kunde"} — jetzt im Eingang zum Beantworten.` });
       router.refresh();
     } catch (e) {
       toast({ variant: "error", title: "Zuordnung fehlgeschlagen", description: errorMessage(e) });
     } finally {
-      setBusy(false);
+      setBusy(null);
+    }
+  }
+
+  async function onProspect() {
+    setBusy("prospect");
+    try {
+      await adminFetch("/api/admin/correspondence/assign-prospect", { body: { messageId: message.id } });
+      toast({ variant: "success", title: "Als Interessent angelegt", description: "Die E-Mail steht jetzt im Eingang zum Beantworten." });
+      router.refresh();
+    } catch (e) {
+      toast({ variant: "error", title: "Anlegen fehlgeschlagen", description: errorMessage(e) });
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -133,7 +149,7 @@ function UnmatchedRow({ message }: { message: UnmatchedInboundMessage }) {
           <Select
             value={target}
             onChange={(e) => setTarget(e.target.value)}
-            disabled={busy || hits.length === 0}
+            disabled={busy !== null || hits.length === 0}
             className="h-8 text-xs"
             aria-label="Kunde für die Zuordnung"
           >
@@ -145,8 +161,11 @@ function UnmatchedRow({ message }: { message: UnmatchedInboundMessage }) {
             ))}
           </Select>
         </div>
-        <Button size="sm" onClick={onAssign} loading={busy} disabled={!target}>
+        <Button size="sm" onClick={onAssign} loading={busy === "assign"} disabled={!target || busy !== null}>
           Zuordnen
+        </Button>
+        <Button size="sm" variant="outline" onClick={onProspect} loading={busy === "prospect"} disabled={busy !== null}>
+          Als Interessent anlegen
         </Button>
       </div>
     </div>

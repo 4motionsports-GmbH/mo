@@ -49,13 +49,18 @@ export function useCustomerActions(): CustomerActions {
   return React.useContext(CustomerActionsContext);
 }
 
+const DETAIL_TABS = ["ueberblick", "aktivitaet", "kaeufe", "beratungen", "marketing", "korrespondenz", "brief"];
+
 export function CustomerDetail({
   customer,
+  initialTab,
   onRefresh,
   onErased,
   reloading = false,
 }: {
   customer: CustomerDetailData;
+  /** ?ctab= deep link (e.g. from an Eingang mail item → korrespondenz). */
+  initialTab?: string | null;
   onRefresh: () => void;
   /** Called after the customer was erased — the workspace drops the selection. */
   onErased: () => void;
@@ -143,7 +148,7 @@ export function CustomerDetail({
           </div>
         )}
 
-        <Tabs defaultValue="ueberblick" className="mt-4">
+        <Tabs defaultValue={initialTab && DETAIL_TABS.includes(initialTab) ? initialTab : "ueberblick"} className="mt-4">
           <div className="overflow-x-auto px-5">
             <TabsList variant="underline" className="min-w-max">
               <TabsTrigger value="ueberblick">Überblick</TabsTrigger>

@@ -36,3 +36,20 @@ export interface InboxCustomerCard {
     factsComputedAt: string | null;
   } | null;
 }
+
+/** GET /api/admin/inbox/item — the conversation of an „E-Mail beantworten“ item. */
+export interface InboxMailThread {
+  messages: Array<{
+    id: number;
+    direction: "sent" | "received";
+    subject: string | null;
+    fromAddress: string;
+    occurredAt: string | null;
+    text: string;
+    attachmentCount: number;
+    /** One of the mails this item is about (not answered yet). */
+    isNew: boolean;
+  }>;
+  /** The newest received message — the reply answers it (threading). */
+  replyToMessageId: number | null;
+}

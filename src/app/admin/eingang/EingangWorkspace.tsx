@@ -3,8 +3,9 @@
 // The Eingang — one ranked list on the left (grouped Jetzt / Diese Woche /
 // Später, filterable by kind), the selected item on the right: the reason with
 // its evidence, the customer mini-card (consent, figures, profile), the AI
-// suggestion and the decisions. Nothing sends from here: „Entwurf übernehmen“
-// creates an Einzelansprache draft for the campaign desk.
+// suggestion and the decisions. „Entwurf übernehmen“ creates an Einzelansprache
+// draft for the campaign desk; an „E-Mail beantworten“ item shows the mail and
+// answers it in place (MailReply — the only send from here, confirmed).
 //
 //   Keys (not while typing, no dialog open): J / K next / previous ·
 //   Enter primary action · E erledigt · Z später (3 Tage) · D verwerfen · Esc
@@ -40,7 +41,9 @@ import {
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { UnmatchedInbound } from "./UnmatchedInbound";
-import type { EingangSystemCards, InboxCustomerCard } from "./types";
+import { MailReply } from "./MailReply";
+import { MAIL_ITEM_KIND } from "@/lib/inbox-mail-core.mjs";
+import type { EingangSystemCards, InboxCustomerCard, InboxMailThread } from "./types";
 
 type Status = "offen" | "zurueckgestellt" | "erledigt";
 type Decision = "erledigt" | "verworfen" | "zurueckgestellt" | "wieder_offen";
@@ -303,6 +306,10 @@ export function EingangWorkspace({
                 removeAndAdvance(current.id);
                 router.push(adminTabHref("kampagne", { campaign: "einzelansprache", contact: String(contactId) }));
               }}
+              onReplied={() => {
+                removeAndAdvance(current.id);
+                router.refresh();
+              }}
               onSuggestion={(s) => setItems((list) => list.map((x) => (x.id === current.id ? { ...x, suggestion: s } : x)))}
             />
           ) : (
@@ -411,6 +418,7 @@ function ItemDetail({
   primaryRef,
   onDecide,
   onAccepted,
+  onReplied,
   onSuggestion,
 }: {
   item: InboxItem;
@@ -418,9 +426,13 @@ function ItemDetail({
   primaryRef: React.MutableRefObject<() => void>;
   onDecide: (item: InboxItem, decision: Decision, opts?: { snoozeDays?: number; note?: string }) => Promise<void>;
   onAccepted: (contactId: number) => void;
+  onReplied: () => void;
   onSuggestion: (s: InboxItem["suggestion"]) => void;
 }) {
   const router = useRouter();
+  const isMail = item.kind === MAIL_ITEM_KIND;
+  const sendRef = React.useRef<() => void>(() => {});
+  const [mail, setMail] = React.useState<InboxMailThread | null>(null);
   const [customer, setCustomer] = React.useState<InboxCustomerCard | null>(null);
   const [loading, setLoading] = React.useState(item.customerId != null);
   const [busy, setBusy] = React.useState<null | "accept" | "suggest">(null);
@@ -428,9 +440,13 @@ function ItemDetail({
   React.useEffect(() => {
     if (item.customerId == null) return;
     const controller = new AbortController();
-    adminFetch<{ customer: InboxCustomerCard | null }>(`/api/admin/inbox/item?id=${item.id}`, { signal: controller.signal })
+    adminFetch<{ customer: InboxCustomerCard | null; mail?: InboxMailThread | null }>(`/api/admin/inbox/item?id=${item.id}`, {
+      signal: controller.signal,
+    })
       .then((json) => {
-        if (!controller.signal.aborted) setCustomer(json.customer);
+        if (controller.signal.aborted) return;
+        setCustomer(json.customer);
+        setMail(json.mail ?? null);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -471,10 +487,11 @@ function ItemDetail({
   // The primary action per kind (Enter).
   const mailAction = needsConsent(item.kind) || (s?.kanal === "email" && canMail);
   let primary: { label: string; run: () => void; disabled?: boolean } | null = null;
-  if (mailAction && canMail) primary = { label: "Entwurf übernehmen", run: () => void accept() };
-  else if (customerHref) primary = { label: item.kind === "antwort_offen" ? "Antworten" : item.kind === "datenauskunft" ? "Daten bereitstellen" : "Kunde öffnen", run: () => router.push(customerHref) };
+  if (isMail) primary = null; // „Antwort senden“ lives in the reply form (MailReply).
+  else if (mailAction && canMail) primary = { label: "Entwurf übernehmen", run: () => void accept() };
+  else if (customerHref) primary = { label: item.kind === "datenauskunft" ? "Daten bereitstellen" : "Kunde öffnen", run: () => router.push(customerHref) };
   React.useEffect(() => {
-    primaryRef.current = primary ? primary.run : () => {};
+    primaryRef.current = isMail ? () => sendRef.current() : primary ? primary.run : () => {};
   });
 
   return (
@@ -543,7 +560,19 @@ function ItemDetail({
           </section>
         )}
 
-        {item.customerId != null && (
+        {isMail && !loading && (
+          <MailReply
+            item={item}
+            customer={customer}
+            mail={mail}
+            open={status === "offen"}
+            sendRef={sendRef}
+            onSuggestion={onSuggestion}
+            onSent={onReplied}
+          />
+        )}
+
+        {item.customerId != null && !isMail && (
           <section className="flex flex-col gap-2">
             <div className="flex items-center gap-1.5 text-sm font-semibold">
               Vorschlag
@@ -583,7 +612,7 @@ function ItemDetail({
                 {primary.label}
               </Button>
             )}
-            {customerHref && primary?.label === "Entwurf übernehmen" && (
+            {customerHref && (primary?.label === "Entwurf übernehmen" || isMail) && (
               <Link href={customerHref} className={buttonVariants({ variant: "outline" })}>
                 Kunde öffnen
               </Link>

@@ -52,6 +52,7 @@ import { CAMPAIGN_SEGMENT_KEYS } from "../src/lib/campaign-segments.mjs";
 import { SHOP_CATEGORIES, MO_CATEGORIES } from "../src/lib/improvement-core.mjs";
 import { computeCustomerFacts } from "../src/lib/customer-facts-core.mjs";
 import { capSignals, signalsForCustomer } from "../src/lib/customer-signals.mjs";
+import { mailItemReason, mergeMailEvidence, newMailItem } from "../src/lib/inbox-mail-core.mjs";
 
 if (process.env.NEON_FETCH_ENDPOINT) {
   neonConfig.fetchEndpoint = process.env.NEON_FETCH_ENDPOINT;
@@ -1031,16 +1032,18 @@ async function main() {
     if (k % 2 === 0) {
       const replyId = `<${hex(16)}@${DOMAINS[k % DOMAINS.length]}>`;
       const t1 = addMs(t0, int(2, 48) * 3_600_000);
-      mailRows.push({ customer_id: c.id, direction: "received", channel: "email", message_id: replyId, in_reply_to: threadId, references_ids: [threadId], thread_id: threadId, from_address: c.email, to_address: "bot@chat.motionsports.de", subject: "Re: Deine Frage zur Lieferzeit", body_text: `Danke, das passt. Können Sie die Lieferung auf Samstag legen?\n\nViele Grüße\n${c.first} ${c.last}`, body_html: null, snippet: "Danke, das passt. Können Sie die Lieferung auf Samstag legen?", attachments: json(k % 4 === 0 ? [{ filename: "Rechnung.pdf", content_type: "application/pdf", size: 48213 }] : []), provider: "resend", provider_email_id: `re_${hex(24)}`, marketing_send_id: null, occurred_at: t1, created_at: t1 });
+      mailRows.push({ customer_id: c.id, direction: "received", channel: "email", message_id: replyId, in_reply_to: threadId, references_ids: [threadId], thread_id: threadId, from_address: c.email, to_address: "hello@reply.motionsports.de", subject: "Re: Deine Frage zur Lieferzeit", body_text: `Danke, das passt. Können Sie die Lieferung auf Samstag legen?\n\nViele Grüße\n${c.first} ${c.last}`, body_html: null, snippet: "Danke, das passt. Können Sie die Lieferung auf Samstag legen?", attachments: json(k % 4 === 0 ? [{ filename: "Rechnung.pdf", content_type: "application/pdf", size: 48213 }] : []), provider: "resend", provider_email_id: `re_${hex(24)}`, marketing_send_id: null, occurred_at: t1, created_at: t1 });
     }
   });
   for (let k = 0; k < 3; k++) {
     const t = shopTime(int(0, 6));
-    mailRows.push({ customer_id: null, direction: "received", channel: "email", message_id: `<${hex(16)}@unknown.example>`, in_reply_to: null, references_ids: [], thread_id: `<${hex(16)}@unknown.example>`, from_address: `neu${k}@example.com`, to_address: "bot@chat.motionsports.de", subject: pick(["Frage zu Ihrem Angebot", "Anfrage Studioausstattung", "Reklamation Lieferung"]), body_text: "Guten Tag, ich habe Ihre E-Mail weitergeleitet bekommen und hätte eine Frage zur Lieferzeit der Hantelbank.", body_html: null, snippet: "Guten Tag, ich habe Ihre E-Mail weitergeleitet bekommen und hätte eine Frage…", attachments: json([]), provider: "resend", provider_email_id: `re_${hex(24)}`, marketing_send_id: null, occurred_at: t, created_at: t });
+    mailRows.push({ customer_id: null, direction: "received", channel: "email", message_id: `<${hex(16)}@unknown.example>`, in_reply_to: null, references_ids: [], thread_id: `<${hex(16)}@unknown.example>`, from_address: `neu${k}@example.com`, to_address: "hello@reply.motionsports.de", subject: pick(["Frage zu Ihrem Angebot", "Anfrage Studioausstattung", "Reklamation Lieferung"]), body_text: "Guten Tag, ich habe Ihre E-Mail weitergeleitet bekommen und hätte eine Frage zur Lieferzeit der Hantelbank.", body_html: null, snippet: "Guten Tag, ich habe Ihre E-Mail weitergeleitet bekommen und hätte eine Frage…", attachments: json([]), provider: "resend", provider_email_id: `re_${hex(24)}`, marketing_send_id: null, occurred_at: t, created_at: t });
   }
-  await insertRows("email_messages", ["customer_id", "direction", "channel", "message_id", "in_reply_to", "references_ids", "thread_id", "from_address", "to_address", "subject", "body_text", "body_html", "snippet", "attachments", "provider", "provider_email_id", "marketing_send_id", "occurred_at", "created_at"], mailRows, {
+  const mailIds = await insertRows("email_messages", ["customer_id", "direction", "channel", "message_id", "in_reply_to", "references_ids", "thread_id", "from_address", "to_address", "subject", "body_text", "body_html", "snippet", "attachments", "provider", "provider_email_id", "marketing_send_id", "occurred_at", "created_at"], mailRows, {
     casts: { references_ids: "text[]", attachments: "jsonb", occurred_at: "timestamptz", created_at: "timestamptz" },
+    returning: "id",
   });
+  mailRows.forEach((m, i) => (m.id = Number(mailIds[i]?.id)));
   count("email_messages", mailRows.length);
 
   const letterRows = [];
@@ -1382,6 +1385,21 @@ async function main() {
     ordersLast12m: (ordersBy.get(customer_id) ?? []).filter((o) => new Date(o.processedAt).getTime() > ANCHOR.getTime() - 365 * DAY_MS).length,
     topPercentile: f.totalSpentCents >= 400000, inOpenCampaign: false, recentBigOrderCents: null,
   }, ANCHOR)));
+  // E-Mails im Eingang: every unanswered mail of a known customer opens one
+  // „E-Mail beantworten“ item (the same rules as lib/inbox-mail.ts).
+  const mailItems = new Map();
+  for (const m of [...mailRows].sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at)))) {
+    if (!m.customer_id || m.direction !== "received") continue;
+    const mail = { customerId: m.customer_id, emailMessageId: m.id, subject: m.subject, snippet: m.snippet, occurredAt: m.occurred_at };
+    const open = mailItems.get(m.customer_id);
+    if (!open) {
+      mailItems.set(m.customer_id, newMailItem(mail));
+    } else {
+      open.evidence = mergeMailEvidence(open.evidence, mail);
+      open.reason = mailItemReason({ subject: m.subject, snippet: m.snippet, count: open.evidence.count });
+    }
+  }
+  signalItems.unshift(...mailItems.values());
   signalItems.push({ kind: "datenauskunft", customerId: customers[4].id, priority: 95, title: "Datenauskunft angefordert", reason: "Shopify meldet eine Datenauskunft (customers/data_request). Export bereitstellen und antworten — Frist 30 Tage.", evidence: { deadline: addDays(shopTime(1), 29) }, dedupeKey: `datenauskunft:${customers[4].id}:seed`, expiresAt: addDays(shopTime(1), 30) });
   // Seeded suggestions follow the same rules as lib/inbox-suggest.ts: a reply
   // for an unanswered mail, an e-mail only with consent, otherwise internal.
@@ -1389,7 +1407,7 @@ async function main() {
   const seedSuggestion = (it) => {
     const base = { rabatt: null, produkte: [], generatedAt: shopTime(0), model: "seed" };
     if (it.kind === "antwort_offen") {
-      return { ...base, warum: "Die Mail wartet seit Tagen. Eine schnelle, persönliche Antwort hält das Vertrauen.", aktion: "Kurz antworten und die offene Frage klären", kanal: "antwort", betreff: "Re: Deine Anfrage", text: "Hallo,\n\ndanke für deine Nachricht und entschuldige die späte Antwort. …\n\nViele Grüße\nDein motion sports Team" };
+      return { ...base, warum: "Die Person bestätigt die Lieferzeit und bittet darum, die Lieferung auf einen Samstag zu legen.", aktion: "Bei der Spedition klären, ob eine Samstagszustellung möglich ist.", kanal: "antwort", betreff: "Re: Deine Frage zur Lieferzeit", text: "Hallo,\n\ndanke für deine Rückmeldung! Wir haben bei der Spedition nachgefragt: [Samstagszustellung möglich / nicht möglich]. Wir melden uns, sobald der genaue Termin feststeht.\n\nViele Grüße\nDein motion sports Team", anliegen: "bestellung_lieferung", dringlichkeit: "mittel", offenePunkte: ["[Samstagszustellung möglich / nicht möglich] mit der Spedition klären"] };
     }
     if (consentBy.get(it.customerId) === "subscribed") {
       return { ...base, warum: "Die Person war kürzlich aktiv und passt zum Anlass. Ein kurzer, persönlicher Anstoß hat hier die beste Chance.", aktion: "Persönliche Mail mit den besprochenen Produkten, ohne Rabatt", kanal: "email", betreff: "Kurze Nachfrage zu deinem Training", text: "Kurz an das Gespräch anknüpfen, die zwei passenden Produkte zeigen, Hilfe bei der Auswahl anbieten." };
