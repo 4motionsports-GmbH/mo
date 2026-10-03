@@ -81,6 +81,15 @@ export const KPI_ACCOUNT_EXPORT_REQUESTED = "account_export_requested";
 /** A signed-in customer completed self-service erasure. */
 export const KPI_ACCOUNT_ERASED = "account_erased";
 
+// ---------------------------------------------------------------------------
+// Order status in the chat (server-emitted, lib/order-status.ts)
+// ---------------------------------------------------------------------------
+
+/** Mo looked up the customer's orders (one event per get_order_status call).
+ * Session-keyed; `data: {outcome, topic, source: "ledger"|"ledger+live",
+ * orders}` — never an order number, amount or any other id. */
+export const KPI_ORDER_STATUS_LOOKUP = "order_status_lookup";
+
 /**
  * Record one pseudonymous KPI event from server code. Same table and shape as
  * the widget's fail-silent track() → POST /api/kpi path, so dashboard
