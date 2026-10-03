@@ -139,6 +139,10 @@ test("mapShopifyOrder handles a GraphQL order with bulk child line items", () =>
       subtotalPriceSet: { shopMoney: { amount: "100.00" } },
       currentTotalPriceSet: { shopMoney: { amount: "89.90" } },
       totalRefundedSet: { shopMoney: { amount: "10.10" } },
+      refunds: [
+        { createdAt: "2026-08-05T08:00:00Z", totalRefundedSet: { shopMoney: { amount: "10.10" } } },
+        { createdAt: "2026-08-09T08:00:00Z", totalRefundedSet: { shopMoney: { amount: "0.00" } } },
+      ],
       discountCodes: ["MK-ABC", ""],
       sourceName: "web",
       customer: { id: "gid://shopify/Customer/42" },
@@ -162,6 +166,7 @@ test("mapShopifyOrder handles a GraphQL order with bulk child line items", () =>
   assert.equal(o.totalCents, 8990);
   assert.equal(o.subtotalCents, 10000);
   assert.equal(o.refundedCents, 1010);
+  assert.equal(o.lastRefundAt, "2026-08-05T08:00:00.000Z");
   assert.deepEqual(o.discountCodes, ["MK-ABC"]);
   assert.deepEqual(o.lineItems, [
     {
@@ -194,7 +199,10 @@ test("mapShopifyOrder handles a REST orders webhook incl. refunds", () => {
     discount_codes: [{ code: "MS5-XYZ", amount: "5.00" }],
     source_name: "web",
     customer: { id: 42, email: "jonas@example.com" },
-    refunds: [{ transactions: [{ kind: "refund", status: "success", amount: "20.00" }, { kind: "sale", amount: "1" }] }],
+    refunds: [
+      { created_at: "2026-09-02T12:00:00+02:00", transactions: [{ kind: "refund", status: "success", amount: "20.00" }, { kind: "sale", amount: "1" }] },
+      { created_at: "2026-09-03T09:00:00+02:00", transactions: [] }, // restock only: moves no money
+    ],
     line_items: [{ id: 31, title: "Matte", variant_title: null, quantity: 1, price: "120.00", variant_id: 7, product_id: 8 }],
   });
   assert.equal(o.shopifyOrderId, "2002");
@@ -202,6 +210,7 @@ test("mapShopifyOrder handles a REST orders webhook incl. refunds", () => {
   assert.equal(o.financialStatus, "PAID");
   assert.equal(o.processedAt, "2026-09-01T08:00:00.000Z");
   assert.equal(o.refundedCents, 2000);
+  assert.equal(o.lastRefundAt, "2026-09-02T10:00:00.000Z");
   assert.deepEqual(o.discountCodes, ["MS5-XYZ"]);
   assert.equal(o.lineItems[0].handle, null);
   assert.equal(o.lineItems[0].variantId, "7");

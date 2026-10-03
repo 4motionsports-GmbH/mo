@@ -128,7 +128,7 @@ export async function buildCustomerDataExport(
 
     const orders = (await sql`
       SELECT order_name, processed_at, financial_status, fulfillment_status, cancelled_at,
-             currency, total_cents, refunded_cents, discount_codes, line_items
+             currency, total_cents, refunded_cents, last_refund_at, discount_codes, line_items
         FROM customer_orders WHERE customer_id = ${customerId}
        ORDER BY processed_at DESC LIMIT ${MAX_ROWS}
     `) as Array<Record<string, unknown>>;

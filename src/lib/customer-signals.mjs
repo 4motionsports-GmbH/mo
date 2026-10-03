@@ -286,12 +286,33 @@ export function offerExpiringSignal(row, now = new Date()) {
   );
 }
 
+/** A refund counts for „Unzufriedenheit“ from this share of the order value on. */
+export const REFUND_MIN_SHARE = 0.1;
+
 /**
- * unzufrieden — a cancellation or refund in the last 14 days.
- * @param {{ customerId: number, orderName: string | null, cancelled: boolean, refundedCents: number, at: string }} row
+ * Is a refund big enough to mean something (a return, a complaint) rather than
+ * a goodwill or shipping correction? Share of the original order value
+ * (current total + refunded), at least REFUND_MIN_SHARE.
+ * @param {{ refundedCents: number, totalCents: number }} o
+ */
+export function isNotableRefund(o) {
+  const refunded = Math.max(0, Number(o.refundedCents) || 0);
+  if (refunded === 0) return false;
+  const original = refunded + Math.max(0, Number(o.totalCents) || 0);
+  return refunded / original >= REFUND_MIN_SHARE;
+}
+
+/**
+ * unzufrieden — a cancellation or a notable refund in the last 14 days, dated
+ * by the cancellation or the refund itself (customer_orders.last_refund_at),
+ * never by the order's last change.
+ * @param {{ customerId: number, orderName: string | null, cancelled: boolean, refundedCents: number, totalCents?: number, at: string }} row
  */
 export function dissatisfiedSignal(row) {
-  const what = row.cancelled ? "storniert" : `teilweise erstattet (${eur(row.refundedCents)})`;
+  const full = !row.cancelled && row.totalCents != null && Number(row.totalCents) <= 0;
+  const what = row.cancelled
+    ? "storniert"
+    : `${full ? "vollständig" : "teilweise"} erstattet (${eur(row.refundedCents)})`;
   return itemFor(
     "unzufrieden",
     row.customerId,

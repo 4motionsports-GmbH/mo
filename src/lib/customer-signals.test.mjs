@@ -95,7 +95,7 @@ test("every fact kind is described", () => {
   for (const k of FACT_SIGNAL_KINDS) assert.ok(SIGNAL_KINDS[k]?.label, k);
 });
 
-import { offerExpiringSignal, dissatisfiedSignal, bounceSignal, capSignals } from "./customer-signals.mjs";
+import { offerExpiringSignal, dissatisfiedSignal, isNotableRefund, bounceSignal, capSignals } from "./customer-signals.mjs";
 
 test("event rules: expiring offer, refund, bounce", () => {
   const o = offerExpiringSignal(
@@ -107,7 +107,23 @@ test("event rules: expiring offer, refund, bounce", () => {
   assert.equal(o.dedupeKey, "angebot_laeuft_ab:3:send99");
   const d = dissatisfiedSignal({ customerId: 3, orderName: "#1002", cancelled: true, refundedCents: 0, at: ago(2) });
   assert.match(d.reason, /#1002 wurde storniert/);
+  const at = ago(3);
+  const p = dissatisfiedSignal({ customerId: 3, orderName: "#1003", cancelled: false, refundedCents: 5000, totalCents: 15000, at });
+  assert.match(p.reason, /#1003 wurde teilweise erstattet/);
+  assert.equal(p.dedupeKey, `unzufrieden:3:#1003:${at.slice(0, 10)}`);
+  assert.match(
+    dissatisfiedSignal({ customerId: 3, orderName: "#1004", cancelled: false, refundedCents: 9900, totalCents: 0, at }).reason,
+    /vollständig erstattet/
+  );
   assert.equal(bounceSignal({ customerId: 3, bouncedAt: ago(1) }).kind, "zustellproblem");
+});
+
+test("only a notable refund counts as dissatisfaction", () => {
+  assert.equal(isNotableRefund({ refundedCents: 0, totalCents: 10000 }), false);
+  assert.equal(isNotableRefund({ refundedCents: 490, totalCents: 29510 }), false); // 1.6 %: shipping / goodwill
+  assert.equal(isNotableRefund({ refundedCents: 1000, totalCents: 9000 }), true); // exactly 10 %
+  assert.equal(isNotableRefund({ refundedCents: 4999, totalCents: 0 }), true); // full refund
+  assert.equal(isNotableRefund({ refundedCents: -5, totalCents: 100 }), false);
 });
 
 test("low-priority kinds are capped per run", () => {

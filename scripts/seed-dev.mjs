@@ -1291,7 +1291,7 @@ async function main() {
   for (const c of customers) {
     for (const o of c.orders) {
       ledgerSeq++;
-      ledgerRows.push({ shopify_order_id: String(6100000000000 + ledgerSeq), customer_id: c.id, shopify_customer_id: c.shopify_customer_id, order_name: o.name, processed_at: o.createdAt, financial_status: o.financialStatus, fulfillment_status: "FULFILLED", cancelled_at: null, currency: "EUR", subtotal_cents: Math.round(Number(o.totalAmount) * 100), total_cents: Math.round(Number(o.totalAmount) * 100), refunded_cents: o.financialStatus === "REFUNDED" ? Math.round(Number(o.totalAmount) * 100) : 0, discount_codes: [], source_name: "web", line_items: json(o.items.map((it) => lineItem(it.handle, it.quantity))), shopify_updated_at: o.createdAt, synced_at: shopTime(0) });
+      ledgerRows.push({ shopify_order_id: String(6100000000000 + ledgerSeq), customer_id: c.id, shopify_customer_id: c.shopify_customer_id, order_name: o.name, processed_at: o.createdAt, financial_status: o.financialStatus, fulfillment_status: "FULFILLED", cancelled_at: null, currency: "EUR", subtotal_cents: Math.round(Number(o.totalAmount) * 100), total_cents: Math.round(Number(o.totalAmount) * 100), refunded_cents: o.financialStatus === "REFUNDED" ? Math.round(Number(o.totalAmount) * 100) : 0, last_refund_at: o.financialStatus === "REFUNDED" ? new Date(new Date(o.createdAt).getTime() + 3 * 86_400_000).toISOString() : null, discount_codes: [], source_name: "web", line_items: json(o.items.map((it) => lineItem(it.handle, it.quantity))), shopify_updated_at: o.createdAt, synced_at: shopTime(0) });
     }
   }
   for (const sc of shopCustomers) {
@@ -1301,12 +1301,12 @@ async function main() {
       const ids = shuffle(ALL_PRODUCTS).slice(0, int(1, 3));
       const total = ids.reduce((s, id) => s + productPrice(id), 0);
       const at = shopTime(days);
-      ledgerRows.push({ shopify_order_id: String(6100000000000 + ledgerSeq), customer_id: sc.id, shopify_customer_id: sc.shopify_customer_id, order_name: `#${ledgerSeq}`, processed_at: at, financial_status: k === 0 && chance(0.05) ? "PARTIALLY_REFUNDED" : "PAID", fulfillment_status: "FULFILLED", cancelled_at: null, currency: "EUR", subtotal_cents: Math.round(total * 100), total_cents: Math.round(total * 100), refunded_cents: 0, discount_codes: chance(0.15) ? [`MK-${hex(6).toUpperCase()}`] : [], source_name: "web", line_items: json(ids.map((id) => lineItem(id, 1))), shopify_updated_at: at, synced_at: shopTime(0) });
+      ledgerRows.push({ shopify_order_id: String(6100000000000 + ledgerSeq), customer_id: sc.id, shopify_customer_id: sc.shopify_customer_id, order_name: `#${ledgerSeq}`, processed_at: at, financial_status: k === 0 && chance(0.05) ? "PARTIALLY_REFUNDED" : "PAID", fulfillment_status: "FULFILLED", cancelled_at: null, currency: "EUR", subtotal_cents: Math.round(total * 100), total_cents: Math.round(total * 100), refunded_cents: 0, last_refund_at: null, discount_codes: chance(0.15) ? [`MK-${hex(6).toUpperCase()}`] : [], source_name: "web", line_items: json(ids.map((id) => lineItem(id, 1))), shopify_updated_at: at, synced_at: shopTime(0) });
       days += int(40, 260);
     }
   }
-  await insertRows("customer_orders", ["shopify_order_id", "customer_id", "shopify_customer_id", "order_name", "processed_at", "financial_status", "fulfillment_status", "cancelled_at", "currency", "subtotal_cents", "total_cents", "refunded_cents", "discount_codes", "source_name", "line_items", "shopify_updated_at", "synced_at"], ledgerRows, {
-    casts: { processed_at: "timestamptz", cancelled_at: "timestamptz", discount_codes: "text[]", line_items: "jsonb", shopify_updated_at: "timestamptz", synced_at: "timestamptz" },
+  await insertRows("customer_orders", ["shopify_order_id", "customer_id", "shopify_customer_id", "order_name", "processed_at", "financial_status", "fulfillment_status", "cancelled_at", "currency", "subtotal_cents", "total_cents", "refunded_cents", "last_refund_at", "discount_codes", "source_name", "line_items", "shopify_updated_at", "synced_at"], ledgerRows, {
+    casts: { processed_at: "timestamptz", cancelled_at: "timestamptz", last_refund_at: "timestamptz", discount_codes: "text[]", line_items: "jsonb", shopify_updated_at: "timestamptz", synced_at: "timestamptz" },
   });
   count("customer_orders", ledgerRows.length);
 

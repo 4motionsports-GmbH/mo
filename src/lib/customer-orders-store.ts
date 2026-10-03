@@ -98,6 +98,7 @@ export async function upsertMirrorOrders(
       subtotal_cents: o.subtotalCents,
       total_cents: o.totalCents,
       refunded_cents: o.refundedCents,
+      last_refund_at: o.lastRefundAt ?? null,
       discount_codes: o.discountCodes,
       source_name: o.sourceName,
       shopify_updated_at: o.updatedAt,
@@ -107,16 +108,16 @@ export async function upsertMirrorOrders(
     const rows = (await sql`
       INSERT INTO customer_orders (
         shopify_order_id, customer_id, shopify_customer_id, order_name, processed_at, financial_status,
-        fulfillment_status, cancelled_at, currency, subtotal_cents, total_cents, refunded_cents,
+        fulfillment_status, cancelled_at, currency, subtotal_cents, total_cents, refunded_cents, last_refund_at,
         discount_codes, source_name, line_items, shopify_updated_at, synced_at)
       SELECT x.shopify_order_id, c.id, x.shopify_customer_id, x.order_name, x.processed_at, x.financial_status,
              x.fulfillment_status, x.cancelled_at, x.currency, x.subtotal_cents, COALESCE(x.total_cents, 0),
-             COALESCE(x.refunded_cents, 0), COALESCE(x.discount_codes, '{}'), x.source_name,
+             COALESCE(x.refunded_cents, 0), x.last_refund_at, COALESCE(x.discount_codes, '{}'), x.source_name,
              COALESCE(x.line_items, '[]'::jsonb), x.shopify_updated_at, now()
         FROM jsonb_to_recordset(${JSON.stringify(payload)}::jsonb) AS x(
           shopify_order_id text, shopify_customer_id text, order_name text, processed_at timestamptz,
           financial_status text, fulfillment_status text, cancelled_at timestamptz, currency text,
-          subtotal_cents bigint, total_cents bigint, refunded_cents bigint, discount_codes text[],
+          subtotal_cents bigint, total_cents bigint, refunded_cents bigint, last_refund_at timestamptz, discount_codes text[],
           source_name text, shopify_updated_at timestamptz, line_items jsonb)
         LEFT JOIN customers c ON c.shopify_customer_id = x.shopify_customer_id
       ON CONFLICT (shopify_order_id) DO UPDATE SET
@@ -130,6 +131,7 @@ export async function upsertMirrorOrders(
         subtotal_cents     = EXCLUDED.subtotal_cents,
         total_cents        = EXCLUDED.total_cents,
         refunded_cents     = EXCLUDED.refunded_cents,
+        last_refund_at     = GREATEST(EXCLUDED.last_refund_at, customer_orders.last_refund_at),
         discount_codes     = EXCLUDED.discount_codes,
         source_name        = EXCLUDED.source_name,
         line_items         = CASE WHEN ${replace} THEN EXCLUDED.line_items ELSE customer_orders.line_items END,
