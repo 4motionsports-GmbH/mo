@@ -114,7 +114,7 @@ Last updated: 2026-10-03.
 
 - [ ] **1.9 Security fix: a sign-in counts only for the chat that started it** — `0073` run and
   exposure check done 03.10. (all 22 sign-ins visible, none silent; no foreign export or
-  deletion — dossier § 15.3). **Left: F ships the widget step (task 7)** — *before the other
+  deletion — dossier § 15.3). **Left: F ships the widget step (task 1 of the frontend prompt)** — *before the other
   frontend tasks*
   - Found by the review of „order status in the chat“ (still unmerged). The chat's
     „Anmelden“ took the chat session from the login link. A prepared link carrying a
@@ -130,7 +130,7 @@ Last updated: 2026-10-03.
   - **M:** right after the merge, pull main and run `npm run db:migrate` (applies `0073`).
     Until it has run, every sign-in returns `ms_auth=error` (fail closed).
   - **Consequence:** „Anmelden“ in the chat signs nobody in until the widget redeems the
-    code. Send F **task 7** of `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md` now (spec:
+    code. Send F `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md` (second version, 03.10.) now — **task 1** first (spec:
     `frontend-handoff/CUSTOMER_ACCOUNT.md` §2a). Nothing breaks meanwhile; the account
     features are off.
   - **M (exposure check), Neon → SQL Editor.** Every session that signed in and then
@@ -248,10 +248,11 @@ Last updated: 2026-10-03.
 ## 5 · Frontend and app access
 
 - [ ] **5.1 Frontend task** — M → FE, then C reviews
-  - Give the frontend agent `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md` plus all
-    files in `docs/frontend-handoff/`.
-  - Done when: its acceptance checklist is ticked; send C the screenshots (gate both blocks,
-    opt-in card, „already subscribed“, erase dialog, DE + EN) and C checks them against
+  - Give the frontend agent `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md` (second
+    version, 03.10.: builds on the widget of 01.10.; answers its KPI note) plus all files in
+    `docs/frontend-handoff/`.
+  - Done when: its acceptance checklist is ticked; send C the screenshots (sign-in popup,
+    consent popup, „already subscribed“, erase dialog, DE + EN) and C checks them against
     the contract.
 
 - [ ] **5.2 Compliance webhooks** — F adds M to the app's Dev Dashboard organisation,
@@ -269,7 +270,7 @@ Last updated: 2026-10-03.
   - In the 5.2 session: add the App Proxy to `shopify.app.toml` — `[app_proxy]`
     `url = "https://mo.motionsports.de/api/auth/storefront"`, `subpath = "chat"`,
     `prefix = "apps"` — and deploy.
-  - FE: task 6 of the frontend prompt (calls `/apps/chat/whoami`, falls back silently while
+  - FE: task 5 of the frontend prompt (calls `/apps/chat/whoami`, falls back silently while
     the proxy is missing — can ship before the proxy exists).
   - Done when: `https://www.motionsports.de/apps/chat/whoami` shows `{"signedIn":true,…}`
     while you are signed in to the shop, and the chat greets you by name without „Anmelden“.
@@ -311,7 +312,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
   - Before: the lawyer's answer on F-32 (and the privacy-policy sentence it asks for); FE
     confirms the live widget renders nothing for `get_order_status` and clears the stored
     chat history on logout (`docs/frontend-handoff/CHAT_ORDER_STATUS.md`, frontend prompt
-    task 7). `SHOPIFY_CUSTOMER_SYNC_ENABLED` stays on (it is — the answer needs the ledger).
+    task 6). `SHOPIFY_CUSTOMER_SYNC_ENABLED` stays on (it is — the answer needs the ledger).
   - Optional: `SHOPIFY_ACCOUNT_ORDERS_URL` if „Meine Bestellungen“ should open another page
     than `https://www.motionsports.de/account`.
   - Test on a Preview deployment first (`CHAT_ORDER_STATUS_ENABLED=true` for Preview only):
@@ -384,6 +385,11 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       senden“ checks every gate again per letter (objection, consent, address, 60-day cadence,
       budget). `docs/CAMPAIGNS.md` §8. Turning it on: 1.10. Lawyer: dossier § 18 (F-35) → goes
       with 3.2.
+- [x] **C.13** **Widget of 01.10. in the KPIs** — built 03.10. (no migration, no switch): the
+      new KPI section „Anmelde-Popup“ (per session up to „Im Chat angemeldet“ — the server now
+      writes `account_signin_linked` / `account_signin_link_refused` at `POST /api/auth/link`),
+      the consent section shows only the popup after sign-in, `starter_*` are marked
+      „eingestellt“. The frontend prompt is rewritten on top of that widget (5.1).
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
       index the lookup (next free migration number; `0071` went to the session-link fix) —
       low priority.

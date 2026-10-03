@@ -14,8 +14,8 @@ would silently drift from what we store).
 | Surface | Who sees it | Email field? | Mechanic | Submit endpoint |
 |---|---|---|---|---|
 | **In-chat capture form** | anyone in the chat | **yes** (user types it) | two checkboxes (unchanged) | `POST /api/capture-email` |
-| **Chat consent gate** (v4; leads with sign-in since 2026-10) | **anonymous** sessions, once per session after the 1st chat message | primary: **sign in**; alternative: **yes** (user types it) | sign-in button, then button-consent | `POST /api/chat-marketing-opt-in` |
-| **At-sign-in marketing opt-in** | a **signed-in** customer | **no** (we hold the verified email) | button-consent (v4) | `POST /api/account/marketing-opt-in` |
+| ~~Chat consent gate~~ — **not shown by the widget since 2026-10-01** (replaced by the sign-in popup for anonymous visitors); the endpoints stay for compatibility | — | — | — | (`POST /api/chat-marketing-opt-in`, unused) |
+| **At-sign-in marketing opt-in** — since 2026-10-01 a **popup after sign-in** (the main ask), plus the inline card after a mid-conversation sign-in | a **signed-in** customer with `marketing.optInActionable === true` | **no** (we hold the verified email) | button-consent (v4) | `POST /api/account/marketing-opt-in` |
 
 **All three are the SAME double-opt-in.** Accepting only sends a confirmation
 email; marketing is permitted **only after** the customer clicks that link.
@@ -61,6 +61,12 @@ for the widget to do.
 ---
 
 ## 2. Chat consent gate (v4) — sign-in first
+
+> **Retired in the widget (2026-10-01).** Anonymous visitors now get the
+> sign-in popup instead (`login_gate_*` events, `API_CONTRACT.md` §5). This
+> section stays as the contract of `surface=chat` and
+> `POST /api/chat-marketing-opt-in`, which the backend still serves; do not
+> build on it.
 
 Shown **once per session** to an **anonymous** user after their **first chat
 message**. Since 2026-10 the gate **leads with sign-in**: the primary action is
@@ -177,13 +183,21 @@ with `{ surface: "chat" }`) and don't show the gate again this session.
 ### 2.3 KPI events
 
 The gate emits `consent_gate_shown` / `_accepted` / `_declined` /
-`_dismissed` via `POST /api/kpi`, payload `{ surface: "signin" | "chat" }`.
-The `starter_shown` / `starter_clicked` events are **retired** — stop sending
-them.
+`_dismissed` via `POST /api/kpi`, payload `{ surface: "signin" | "chat" }` —
+since 2026-10-01 only `signin` (§3). The `starter_shown` / `starter_clicked`
+events are **retired**.
 
 ---
 
 ## 3. At-sign-in marketing opt-in — button-consent since v4
+
+Since the widget of 2026-10-01 this is a **popup right after the sign-in** (the
+signed-in welcome screen no longer shows the card) and still the inline card
+after a mid-conversation sign-in. Show either **only** when
+`/api/auth/me` answers `signedIn: true` **and** `marketing.optInActionable: true`
+— after the sign-in was completed with the one-time code
+([`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §2a). KPI events
+`consent_gate_*` with `{ surface: "signin" }`.
 
 The account removes **only** the "type your email" step: the customer is signed
 in (tier 3), so we already hold their **verified** Shopify email and don't ask

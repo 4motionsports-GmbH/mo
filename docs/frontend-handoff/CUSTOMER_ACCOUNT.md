@@ -259,11 +259,11 @@ subscription the customer already gave in the shop counts as the same consent
 (they are not asked again). A visitor can use the chat fully without ever
 signing in.
 
-Since 2026-10 the **chat consent gate leads with sign-in** (`signIn` block in
-`GET /api/consent-copy?surface=chat`): its primary button starts exactly the
-login of §2 (`loginPath` = `/api/auth/shopify/login` on the backend). After the
-return, §6.1 decides whether the opt-in card is shown. Render contract:
-[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §2.
+Since the widget of **2026-10-01** anonymous visitors get a **sign-in popup**
+after their first answered message (once per browser session, never in voice
+mode; KPI events `login_gate_*`, `API_CONTRACT.md` §5) instead of the anonymous
+chat consent gate. Its „Anmelden“ starts exactly the login of §2, completed by
+§2a. After the return, §6.1 decides whether the consent popup is shown.
 
 ### 6.0 Tier-3 suppression contract (end-of-chat capture widget)
 
@@ -288,16 +288,23 @@ their email (we already hold the verified address). It is **still the same
 double-opt-in**, **nothing is pre-selected**, and it is **still a separate,
 explicit act** — signing in never enrols anyone.
 
+**Where:** since the widget of 2026-10-01 as a **popup right after the
+sign-in** (the signed-in welcome screen no longer shows the card), and still as
+the inline card after a sign-in in the middle of a conversation. KPI events
+`consent_gate_*` with `{ surface: "signin" }`.
+
 **When to show it — read `marketing.optInActionable` from `/api/auth/me` (§4).**
-Show the at-sign-in opt-in card **only** when `signedIn: true` **and**
-`marketing.optInActionable === true`. That flag is `true` exactly for a signed-in
+Show it **only** when `signedIn: true` **and**
+`marketing.optInActionable === true` — i.e. after the code of §2a was redeemed. That flag is `true` exactly for a signed-in
 customer who has **not yet recorded a marketing decision**; it is `false` once
 they've decided (DOI `pending` / `confirmed` / unsubscribed) — so a customer who
 already opted in (or whose prior opt-in carried forward when their email merged
 into the signed-in identity, or who subscribed in the shop) is **not**
-re-asked. The widget MAY additionally
-remember a local "dismissed" state for the session so a customer who closed the
-card isn't shown it again in the same session — but the **backend** truth for
+re-asked. A „Nein“ / decline is **not** recorded by the
+backend (only the KPI event), so `optInActionable` stays `true` after it: the
+widget SHOULD remember a decline locally (for example 30 days on the device, like
+the 24 h snooze of the sign-in popup) so the customer is not asked at every
+sign-in, and a dismissal at least for the session. The **backend** truth for
 "already decided" is `optInActionable: false`.
 
 Render contract (copy + submit endpoint) is in

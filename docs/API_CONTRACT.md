@@ -1102,12 +1102,37 @@ trigger moment and per ask number. Captures via the chat consent gate
 (§7.6) ride in the same funnel with `trigger: "chat_gate"`; the at-sign-in
 opt-in with `trigger: "signin_optin"`.
 
+### Sign-in popup events (widget 2026-10-01)
+
+After an anonymous visitor's first answered message (once per browser session,
+never in voice mode) the widget asks them to sign in. **Widget-emitted**, names
+in `src/lib/kpi-widget-events.mjs`; the endpoint accepts them as they are (it
+has no event allowlist and does not validate `data`):
+
+| Event                       | `data`                    | When |
+| --------------------------- | ------------------------- | ---- |
+| `login_gate_shown`          | `{}`                      | The popup was shown. |
+| `login_gate_signin_clicked` | `{}`                      | „Anmelden“ — the redirect follows once the reply has finished streaming. |
+| `login_gate_declined`       | `{}`                      | „Später“ — snoozed for 24 h on the device. |
+| `login_gate_dismissed`      | `{}`                      | Closed with Esc or a backdrop click (no snooze). |
+| `account_signin_started`    | `{ source?: "login_gate" }` | Any sign-in start; `source` only when it came from the popup. |
+| `account_signin_return`     | `{ result: "ok" \| … }`   | The widget saw the return from the sign-in (widget truth). |
+
+The KPI tab's „Anmelde-Popup“ funnel counts **sessions** and joins them, in
+the same session after the click, to the server events
+`account_signin_succeeded` (Shopify) and `account_signin_linked` (the chat
+redeemed the one-time code — the sign-in that counts). So the `sessionId` of
+these events must be the session the login used (`login?session=`).
+
 ### Consent-gate events (canonical names, v4)
 
-The v4 button-consent marketing surfaces (the in-chat consent gate and the
-at-sign-in opt-in card) are measured through four **widget-emitted** events
-(names in `src/lib/kpi-events.ts`; the backend only observes the accept as an
-opt-in POST). Each carries `data: { surface: "signin" | "chat" }`:
+The marketing consent ask for **signed-in** customers (since the widget of
+2026-10-01 a popup after sign-in, plus the inline card after a mid-conversation
+sign-in) is measured through four **widget-emitted** events (names in
+`src/lib/kpi-events.ts`; the backend only observes the accept as an opt-in
+POST). Each carries `data: { surface: "signin" | "chat" }` — the widget sends
+only `signin` since 2026-10-01; `chat` was the anonymous e-mail gate, replaced by
+the sign-in popup (its endpoints stay, unused by the widget):
 
 | Event                    | When                                                        |
 | ------------------------ | ----------------------------------------------------------- |
@@ -1120,9 +1145,9 @@ They feed the Consent-Gate funnel on the admin KPI tab
 (`getConsentGateFunnel`, `src/lib/kpi-store.ts`).
 
 > ⚠️ **Retired:** the widget no longer sends `starter_shown` /
-> `starter_clicked`. The endpoint (which accepts any event name) doesn't
-> reject them, but nothing aggregates them anymore beyond the raw
-> event-name breakdown.
+> `starter_clicked` (starter prompts removed, 2026-10-01). The endpoint (which
+> accepts any event name) doesn't reject them; the raw event breakdown marks them
+> „eingestellt“ and nothing alerts on the drop.
 
 ### Server-emitted lifecycle events (canonical names)
 
@@ -1137,7 +1162,9 @@ them:
 | `campaign_chat_started`    | `POST /api/chat` with a valid `campaignToken` (§2) — once per campaign send | `{ sendId, campaignId }`, session `NULL` (the widget sends the token, never this event) |
 | `bundle_offer_clicked`     | `GET /api/r/<token>` (bundle offer) | `{ offerId, status, expired }`, session `NULL` |
 | `contact_form_submitted`   | `POST /api/contact` (accepted submissions) | `{ reason, productCount }` — never the name/email/message. Session-keyed when the widget sends `sessionId` in the payload. |
-| `account_signin_succeeded` | `GET /api/auth/shopify/callback` (success) | `{ silent }` — `prompt=none` re-detects flagged. Session-keyed. |
+| `account_signin_succeeded` | `GET /api/auth/shopify/callback` (success) | `{ silent }` — `prompt=none` re-detects flagged. Session-keyed (the session of `login?session=`). Since 0073 this alone does not sign the chat in. |
+| `account_signin_linked`    | `POST /api/auth/link` (code redeemed) | `{ kind }` — `customer_account` \| `app_proxy`. Session-keyed. The sign-in now counts for the chat. |
+| `account_signin_link_refused` | `POST /api/auth/link` (400) | `{ reason }` — `invalid` (expired, used, unknown) \| `session_mismatch` (another session's code). Session-keyed. |
 | `account_export_requested` | `GET /api/account/export` | `{}`, session `NULL` (pure volume counter) |
 | `account_erased`           | `POST /api/account/erase` | `{}`, session `NULL` (pure volume counter) |
 | `order_status_lookup`      | `POST /api/chat` — one per `get_order_status` call (2026-10, `CHAT_ORDER_STATUS_ENABLED`) | `{ outcome, topic, source, orders }` — `outcome` `ok` \| `no_orders` \| `not_found` \| `sign_in_required` \| `unavailable` \| `disabled` \| `ledger_off` \| `ledger_incomplete` (first order import not finished) \| `ledger_behind` (a live read found an order the ledger lacks); `topic` as the tool input; `source` `ledger` \| `ledger+live`; `orders` = number of orders in the answer. Never an order number, amount or id. Session-keyed. |

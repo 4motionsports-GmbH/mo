@@ -55,8 +55,8 @@ widget MUST NOT render“):
   visitor, a session linked by a typed e-mail or one recognised only through
   the shop (`/apps/chat/whoami`) gets `status: "sign_in_required"`; Mo then
   explains „Anmelden“ and offers the contact form. **Keep „Anmelden“ reachable
-  for shop-recognised sessions** (e.g. in the account menu), even though task 6
-  of the frontend prompt hides the sign-in block for them — the order status
+  for shop-recognised sessions** (e.g. in the account menu), even though task 5
+  of the frontend prompt skips the sign-in popup for them — the order status
   needs the chat sign-in once.
 - No marketing consent is needed (customer service).
 - `ordersPageUrl` may appear as a normal Markdown link in Mo's text („Meine

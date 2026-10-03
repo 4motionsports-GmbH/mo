@@ -264,7 +264,8 @@ removed.
 | KPI-08…16 | ✅ | Kern-Metriken: stats, „Chats pro Tag“ area chart, „Status-Verteilung“ donut, In-Chat-Klicks, „Event-Übersicht (Top 20)“, empty state. |
 | KPI-17, 18 | ✅ | Sprachen (DE/EN). |
 | KPI-19…21 | ✅ | Gesprächsqualität. |
-| KPI-22…25 | ✅ | Consent-Gate-Funnel incl. „Nach Oberfläche“. |
+| KPI-22…25 | ✅ | Einwilligung nach der Anmeldung (`surface: signin`); das eingestellte Chat-Gate nur noch mit Altdaten (2026-10-03). |
+| KPI-75…78 | ✅ | Anmelde-Popup je Sitzung bis „Im Chat angemeldet“, Anmeldestarts nach Herkunft (2026-10-03, Screenshots `docs/screenshots/kpi-anmeldung/`). |
 | KPI-26…29 | ✅ | E-Mail-Capture-Funnel incl. „Angebote nach Auslöser“. |
 | KPI-30, 31 | ✅ | Umsatz über Mo-Rabattcodes — served from the 10-minute cache with a freshness badge. |
 | KPI-32, 33 | ✅ | Mo-zugeordneter Umsatz. |
