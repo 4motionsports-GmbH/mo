@@ -1,16 +1,16 @@
 "use client";
 
-// The campaign editor (Neue Kampagne / Bearbeiten) — one sheet, seven sections:
+// The campaign editor (Neue Kampagne / Bearbeiten) — one sheet, eight sections:
 // Grundlagen, Briefing, Zielgruppe (builder + „beschreiben“ via KI + live
-// count), Angebot, Gestaltung, Automatik, Prüfen & testen (estimate + sample
-// mails, CampaignCheckSection). Everything is validated again on the
+// count), Angebot, Gestaltung, Brief (letters as a channel, 0074), Automatik,
+// Prüfen & testen (estimate + sample mails, CampaignCheckSection). Everything is validated again on the
 // server (campaign-def.validateCampaignInput); the audience spec is normalised
 // there (audience-spec.mjs). The live count always means „with consent“ — the
 // e-mail channel never reaches anyone without it. docs/CAMPAIGNS.md §2.2.
 
 import * as React from "react";
 import { Sparkles, Users } from "lucide-react";
-import { num } from "@/lib/admin-format.mjs";
+import { eurFromCents, num } from "@/lib/admin-format.mjs";
 import { HERO_MODE_LABELS } from "@/lib/campaign-def.mjs";
 import {
   Button,
@@ -54,6 +54,9 @@ interface FormState {
   ctaUrl: string;
   autoPreparePerDay: string;
   dailyTarget: string;
+  letterMode: "aus" | "ohne_einwilligung" | "alle";
+  /** Postage cap in euros as typed; empty = none. */
+  letterBudgetEur: string;
 }
 
 interface Preview {
@@ -62,6 +65,7 @@ interface Preview {
     total: number;
     withMo: number;
     withoutConsent?: { total: number; letterReach: number };
+    letters?: { total: number; withAddress: number };
     byLanguage: { de: number; en: number };
     sample: Array<{ customerId: number; email: string; name: string | null }>;
   };
@@ -147,6 +151,8 @@ function initialState(c: CampaignCardProps | null, presetAudience: Record<string
     ctaUrl: c?.ctaUrl ?? "",
     autoPreparePerDay: String(c?.autoPreparePerDay ?? 0),
     dailyTarget: c?.dailyTarget != null ? String(c.dailyTarget) : "",
+    letterMode: c?.letterMode ?? "aus",
+    letterBudgetEur: c?.letterBudgetCents != null ? String(c.letterBudgetCents / 100) : "",
   };
 }
 
@@ -255,13 +261,17 @@ export function CampaignEditor({
 
   // Live count, debounced; only while the sheet is open.
   const audienceKey = JSON.stringify(form.audience);
+  const letterModeKey = form.letterMode;
   React.useEffect(() => {
     if (!open || isEinzel) return;
     const controller = new AbortController();
     setPreviewLoading(true);
     const handle = setTimeout(() => {
       adminFetch<Preview>("/api/admin/campaigns/audience-preview", {
-        body: { audience: JSON.parse(audienceKey) },
+        body: {
+          audience: JSON.parse(audienceKey),
+          letterMode: letterModeKey === "aus" ? null : letterModeKey,
+        },
         signal: controller.signal,
       })
         .then((json) => {
@@ -278,7 +288,7 @@ export function CampaignEditor({
       clearTimeout(handle);
       controller.abort();
     };
-  }, [audienceKey, open, isEinzel]);
+  }, [audienceKey, letterModeKey, open, isEinzel]);
 
   const assistAudience = async () => {
     setAssisting("audience");
@@ -343,6 +353,9 @@ export function CampaignEditor({
         endsAt: fromLocalInput(form.endsAt),
         discountValidUntil: form.kind === "aktion" ? fromLocalInput(form.discountValidUntil) : null,
         reentryDays: form.kind === "laufend" ? intOrNull(form.reentryDays) : null,
+        letterMode: form.letterMode,
+        letterBudgetCents:
+          form.letterBudgetEur.trim() === "" ? null : Math.round(Number(form.letterBudgetEur.replace(",", ".")) * 100),
       });
     }
     try {
@@ -717,6 +730,58 @@ export function CampaignEditor({
             <Checkbox checked={form.moPromo} onChange={(e) => patch({ moPromo: e.target.checked })} />
           </Field>
         </section>
+
+        {/* Brief */}
+        {!isEinzel && (
+          <section className="flex flex-col gap-3">
+            <SectionTitle info="Werbebriefe per Post (Pingen) an Kund:innen mit abgeschlossener Bestellung, ohne Widerspruch gegen Briefwerbung — vor allem an alle, die keine E-Mail-Einwilligung haben. Adresse ist nur die Lieferadresse der letzten Bestellung. Jeder Brief wird im Prüftisch (Ansicht „Briefe“) geschrieben, geprüft und einzeln freigegeben; im Fuß stehen fest der Widerspruchshinweis und der Absender.">
+              Brief
+            </SectionTitle>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Briefe">
+                <Select value={form.letterMode} onChange={(e) => patch({ letterMode: e.target.value as FormState["letterMode"] })}>
+                  <option value="aus">Keine Briefe</option>
+                  <option value="ohne_einwilligung">An alle ohne E-Mail-Einwilligung</option>
+                  <option value="alle">An alle (auch mit Einwilligung)</option>
+                </Select>
+              </Field>
+              {form.letterMode !== "aus" && (
+                <Field
+                  label="Porto-Budget (€)"
+                  info="Obergrenze fürs Porto dieser Kampagne. Leer = ohne Grenze. Der Versand stoppt, wenn das Budget ausgeschöpft ist."
+                >
+                  <Input
+                    type="number"
+                    min={0}
+                    step="1"
+                    inputMode="decimal"
+                    value={form.letterBudgetEur}
+                    onChange={(e) => patch({ letterBudgetEur: e.target.value })}
+                    placeholder="ohne Grenze"
+                  />
+                </Field>
+              )}
+            </div>
+            {form.letterMode !== "aus" && (
+              <>
+                <p className="text-xs text-muted-foreground" aria-live="polite">
+                  {preview?.preview.letters
+                    ? `Per Brief: ${num(preview.preview.letters.total)} Empfänger:innen (Adresse schon bekannt: ${num(preview.preview.letters.withAddress)}) · ≈ ${eurFromCents(preview.preview.letters.total * options.letters.costCents)} Porto bei ${eurFromCents(options.letters.costCents)} je Brief`
+                    : "Per Brief: wird gezählt …"}
+                </p>
+                {!options.letters.sendsApproved && (
+                  <Callout tone="warning">
+                    Briefversand ist nicht freigeschaltet (PHYSICAL_MAIL_SENDS_APPROVED) — Briefe lassen sich vorbereiten,
+                    aber nicht senden.
+                  </Callout>
+                )}
+                {options.letters.sendsApproved && !options.letters.pingenConfigured && (
+                  <Callout tone="warning">Pingen ist nicht konfiguriert — Briefe lassen sich vorbereiten, aber nicht senden.</Callout>
+                )}
+              </>
+            )}
+          </section>
+        )}
 
         {/* Automatik */}
         <section className="flex flex-col gap-3">

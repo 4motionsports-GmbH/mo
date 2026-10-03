@@ -27,6 +27,7 @@ test("views and filters parse defensively", () => {
   assert.equal(parseDeskView("liste"), "liste");
   assert.equal(parseDeskView("gesendet"), "gesendet");
   assert.equal(parseDeskView("eingeplant"), "eingeplant");
+  assert.equal(parseDeskView("briefe"), "briefe");
   assert.equal(parseDeskView("nope"), "pruefen");
   assert.equal(parseDeskView(undefined), "pruefen");
   assert.equal(parseQueueFilter("doi"), "doi");
