@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toolCopy } from "./tool-descriptions.mjs";
+import { toolCopy, activeToolCopy, ORDER_STATUS_COPY_KEYS } from "./tool-descriptions.mjs";
 
 // The German tool copy is the model-facing instruction set that shipped before
 // i18n — it must stay byte-identical at the anchors; English is the /en variant.
@@ -69,4 +69,24 @@ test("the contact-form variant for get_order_status changes only the order_suppo
   }
   // The base (switch off) still routes order status to the form, as before.
   assert.match(toolCopy("de").contactDesc, /Bestellstatus\/Sendungsverfolgung, eine Retoure/);
+});
+
+test("activeToolCopy: switch off = the copy without any get_order_status key; on = the variant", () => {
+  for (const locale of ["de", "en"]) {
+    const all = toolCopy(locale);
+    const off = activeToolCopy(locale);
+    assert.deepEqual(activeToolCopy(locale, { orderStatus: false }), off);
+    for (const key of ORDER_STATUS_COPY_KEYS) assert.equal(key in off, false, key);
+    assert.deepEqual(
+      Object.keys(off),
+      Object.keys(all).filter((k) => !ORDER_STATUS_COPY_KEYS.includes(k))
+    );
+    assert.equal(off.contactDesc, all.contactDesc);
+    assert.doesNotMatch(JSON.stringify(off), /get_order_status/);
+
+    const on = activeToolCopy(locale, { orderStatus: true });
+    assert.equal(on.contactDesc, all.contactDescOrderStatus);
+    assert.equal(on.orderStatusDesc, all.orderStatusDesc);
+    assert.equal("contactDescOrderStatus" in on, false);
+  }
 });
