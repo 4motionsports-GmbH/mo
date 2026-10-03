@@ -165,8 +165,10 @@ identifies themselves in that session — an email captured via
 `src/lib/customer-store.ts` find-or-creates the customer, attaches the
 conversation, and bumps `last_seen_at`) or a sign-in with the shop account
 (`bindShopifyIdentity`, see [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md)). Both
-also record the session in `customer_session_links`. Sessions without either
-stay anonymous and unlinked. Multiple sessions under one person = the
+also record the session in `customer_session_links`, with the proof behind it
+(`link_kind`: `email` for a typed address, `customer_account` / `app_proxy` for a
+sign-in in that session, `legacy` before migration 0071; only the sign-in kinds
+count as signed in). Sessions without either stay anonymous and unlinked. Multiple sessions under one person = the
 returning-customer case. The marketing consent is the one consent on
 `customers.email_consent_*` (migration 0064, shared with Shopify; history in
 `consent_events`); `email_captures` stays the audit-grade evidence for consents

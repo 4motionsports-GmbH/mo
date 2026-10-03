@@ -243,10 +243,19 @@ unconditionally fixes that — identity resolves even with no chat history.
 ### The signed-in resolver
 
 `resolveSignedInCustomer(sessionId)` maps the opaque widget session reference →
-the linked customer (must have a `shopify_customer_id`). It reads the **direct**
-`customer_session_links` row first, falling back to the legacy
-`conversations.customer_id` stamp (so sessions linked before migration `0019`'s
-backfill still resolve). `/api/auth/me` then proves the session is still live by
+the linked customer (must have a `shopify_customer_id`). It reads **only** the
+direct `customer_session_links` row, and only when that link was proven by a
+sign-in **in this session** (`link_kind` `customer_account` or `app_proxy`,
+migration `0071`). A typed e-mail writes `link_kind = 'email'` and never resolves
+as signed in; links from before `0071` are `legacy` and fail closed (the
+customer signs in once more). Why: since the customer mirror every shop customer
+has a `shopify_customer_id`, and the token is kept per customer, so "the linked
+customer is a Shopify customer with a live token" no longer proved that *this*
+session signed in — typing the e-mail of a signed-in customer in another
+browser resolved as their session (fixed 03.10.2026). The old fallback via
+`conversations.customer_id` is gone for the same reason. A signed-in customer who
+types their **own** e-mail (summary mail) stays signed in; typing **another**
+customer's e-mail re-points the link as `email` and drops the sign-in. `/api/auth/me` then proves the session is still live by
 obtaining a **valid access token** (refreshing if needed) before reporting
 `signedIn: true`. Everything fails closed — a blank/unlinked session, or one
 linked only to a tier-1/2 customer (no `shopify_customer_id`), resolves to null.
@@ -271,8 +280,9 @@ at every hop (the widget's stable localStorage id — `?session=` on login,
 - `customer_merge_conflicts`: the admin-review audit log for case (d).
 - `customer_session_links` (`session_id` PK → `customer_id`, `ON DELETE CASCADE`,
   migration `0019`): the **direct, durable re-hydration link** written on every
-  identity bind, read first by `resolveSignedInCustomer`. Backfilled on deploy
-  from existing `conversations.customer_id` stamps.
+  identity bind, read by `resolveSignedInCustomer`. `link_kind` (`email` |
+  `customer_account` | `app_proxy` | `legacy`) and `authenticated_at` (migration
+  `0071`) record the proof behind the link; only the two sign-in kinds count.
 
 Retention: `customer_auth_pending` is purged past expiry by the retention cron;
 `customer_oauth_tokens` and `customer_session_links` cascade with the customer (so
@@ -437,9 +447,11 @@ requireSignedInCustomer`), in this order:
    like `/api/chat`. Widget XHR, with a CORS preflight.
 2. **Rate limit** — the chat bucket.
 3. **`resolveSignedInCustomer(session)`** — the session must link to a customer
-   with a `shopify_customer_id`. **Anonymous** (no customer) and **email-only**
-   (tier-2, no `shopify_customer_id`) sessions resolve to `null` → **401, fail
-   closed**, before any history is read.
+   with a `shopify_customer_id` **through a sign-in proven in this session**
+   (`link_kind` `customer_account` / `app_proxy`, migration `0071`).
+   **Anonymous** (no customer), **email-only** (a typed address, `link_kind =
+   'email'` — even for a Shopify customer) and pre-0071 (`legacy`) sessions
+   resolve to `null` → **401, fail closed**, before any history is read.
 4. **`getValidAccessToken`** — proves the session is **still authenticated**
    (refreshing if needed), exactly like `/api/auth/me`. A logged-out / expired
    session → 401.
