@@ -224,10 +224,17 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       measured from the newer of import and reconcile; tested core `shopify-sync-health.mjs`.
 - [x] **C.8** Eingang customer card said „Noch keine Bestellung“ before the nightly figures
       existed — now „Kennzahlen werden heute Nacht berechnet“.
-- [ ] **C.9** Eingang rule „Unzufriedenheit“ (refunds/cancellations): it dates a refund by the
-      order's last change, so old refunds on recently touched orders show up as new (62 open
-      items after the import). Store the refund date in the order ledger and use it;
-      consider a minimum share of the order — medium priority.
+- [x] **C.9** Eingang rule „Unzufriedenheit“ — built 03.10.: the order ledger stores the
+      refund date (`customer_orders.last_refund_at`, migration `0070`) and the rule uses it
+      instead of the order's last change; refunds below 10 % of the order value are ignored.
+      The old false items close by themselves („erledigt von selbst“) on the next hourly run.
+      **M runs `0070` before the merge** (below, C.9a).
+  - [ ] **C.9a** — M — run migration `0070` on production the same way as `0061`–`0069`
+        (`npm run db:migrate` against the production database), or paste
+        `migrations/0070_order_refund_date.sql` into Neon → SQL Editor (idempotent: one column,
+        one index; safe while the app runs). Then tell C, who merges.
+        Done when: C has merged and the Eingang shows no old „Unzufriedenheit“ items after
+        the next full hour.
 - [x] **C.10** **E-Mails im Eingang** — built 02.10. (no migration): every incoming mail of
       a known customer opens „E-Mail beantworten“ in the Eingang at once (later mails join
       it; the hourly job catches up missed ones); the item shows the conversation, an AI
@@ -238,7 +245,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       (prospect + Korrespondenz + item); the team mail is unchanged. Filter: „Alle Arten“ →
       „E-Mail beantworten“. Lawyer: dossier § 14 (F-30) → goes with 3.2.
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
-      index the lookup (migration `0070`) — low priority.
+      index the lookup (migration `0071`) — low priority.
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
       of UTC — low priority.
 - [ ] **C.5** Keep this file current after every step.
