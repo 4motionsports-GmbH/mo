@@ -53,6 +53,8 @@ export async function mergeCustomers(
              AND EXISTS (SELECT 1 FROM customer_oauth_tokens t WHERE t.customer_id = ${keepId})`,
       sql`UPDATE customer_oauth_tokens SET customer_id = ${keepId} WHERE customer_id = ${dropId}`,
       sql`UPDATE customer_session_links SET customer_id = ${keepId} WHERE customer_id = ${dropId}`,
+      // An in-flight sign-in code (0073) completes for the survivor.
+      sql`UPDATE customer_link_grants SET customer_id = ${keepId} WHERE customer_id = ${dropId}`,
       sql`UPDATE email_messages SET customer_id = ${keepId} WHERE customer_id = ${dropId}`,
       sql`UPDATE physical_letters SET customer_id = ${keepId} WHERE customer_id = ${dropId}`,
       // A person is in a campaign once per cycle: the survivor's place wins.

@@ -21,6 +21,7 @@
 
 import { getSql } from "./db";
 import { purgeExpiredPendingAuth } from "./customer-oauth-store";
+import { purgeSessionLinkGrants } from "./session-link-grants";
 import { parseRetentionOptions } from "./retention-options.mjs";
 
 /** How long a decided Eingang item's bare marker stays (the longest rule episode). */
@@ -441,7 +442,9 @@ export async function runRetention(
   //    encrypted token rows (customer_oauth_tokens) carry no separate window —
   //    they cascade with the customer (ON DELETE CASCADE), so a GDPR erasure /
   //    customer purge in step 5 already removes them.
-  const purgedAuthPending = await purgeExpiredPendingAuth(sql);
+  //    The one-time sign-in link codes (0073) leave a day after expiry and
+  //    count here too.
+  const purgedAuthPending = (await purgeExpiredPendingAuth(sql)) + (await purgeSessionLinkGrants(sql));
 
   // 7. Shopify sync bookkeeping (0065): webhook dedupe rows, finished sync
   //    runs and done / dead outbox rows leave on their own window; open
