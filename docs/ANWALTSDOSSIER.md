@@ -1,7 +1,7 @@
 # Rechtsdossier „Mo“ — KI-Verkaufsberater auf motionsports.de
 
 **Zweck:** Vollständige, aktuelle Beschreibung des Systems für die externe anwaltliche Prüfung (Datenschutz, Wettbewerbs-/Lauterkeitsrecht, KI-Regulierung, Verbraucherrecht) — als Grundlage für Ihr Feedback und Ihre Handlungsempfehlungen.
-**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34).
+**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34). **Nachtrag 03.10.2026 (2):** Bestellstatus im Chat — standardmäßig aus (§ 16, F-32); „Einplanen“ geprüfter Kampagnen-Mails (§ 17, F-33).
 **Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`archive/LEGAL_READINESS_REPORT.md`](./archive/LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
 **Verantwortlicher:** motion sports [genaue Firmierung, Anschrift, Geschäftsführung, ggf. DSB — vom Mandanten zu ergänzen]. Betrieben wird der Onlineshop motionsports.de (Shopify) für Sport- und Fitnessgeräte (B2C, Studios/Physiotherapie, öffentliche Auftraggeber).
 
@@ -86,7 +86,7 @@ Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Ch
 
 | # | Kategorie | Inhalt (Kernfelder) | Frist (Standard) |
 |---|---|---|---|
-| D-01 | **Chat-Transkripte** | Nutzer- und Mo-Texte, Tool-Aufrufe; pseudonym (Session-ID); Personenbezug nur nach E-Mail-Erfassung/Login | **180 T** ab letzter Aktivität |
+| D-01 | **Chat-Transkripte** | Nutzer- und Mo-Texte, Tool-Aufrufe; pseudonym (Session-ID); Personenbezug nur nach E-Mail-Erfassung/Login; bei angemeldeten Kunden ggf. Mos Auskunft zum Stand ihrer Bestellungen (§ 16) | **180 T** ab letzter Aktivität |
 | D-02 | Gesprächs-Metadaten | Persona, empfohlene/gewählte Produkte, Status, Titel, KI-Analyse (Zusammenfassung, Kategorie, Qualität) | 180 T |
 | D-03 | Nutzungs-Telemetrie (`kpi_events`) | Ereignisname, Session-ID, Kontextdaten; **nie** E-Mail | 180 T |
 | D-04 | **Einwilligungs-Nachweis** (`email_captures`) | E-Mail, beide Consent-Flags, DOI-Status/-Token, **wortlautgetreuer Einwilligungstext + Versionsstempel**, Abmeldezeitpunkt | Aktive Einwilligung: unbefristet (Art.-7-Nachweis); nach Abmeldung: PII-Löschung nach 30 T Karenz |
@@ -132,6 +132,7 @@ Ein täglicher, abgesicherter Lösch-Lauf setzt alle Fristen automatisch durch. 
 | R-10 | **Briefversand** (Pingen/CH) | Versandkontext + kaufbasierte Adresse (Art. 6 (1) b/f) | Erfassung inzwischen strikt gegated (§ 11); Freigabe 14.06.2026 |
 | R-11 | Kontaktformular (inkl. Speicherung in der Kundenakte, § 14) | Art. 6 (1) b/f | → F-30 |
 | R-12 | Rate-Limiting (IP), Fehlerüberwachung, Admin-Zugriffsprotokoll | Art. 6 (1) f | IP-Verarbeitung in DSE erwähnen |
+| R-13 | Bestellstatus im Chat für angemeldete Kunden (§ 16; Schalter standardmäßig aus) | Art. 6 (1) b (Kundenservice zum eigenen Vertrag) | → F-32 |
 
 ---
 
@@ -195,7 +196,7 @@ KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (S
 
 | Einsatz | Anbieter/Modell | Personenbezogene Daten im Prompt |
 |---|---|---|
-| Live-Chat | Anthropic `claude-sonnet-5-5` | Gesprächsverlauf verbatim; abgeleitetes Bedarfsprofil; bei berechtigtem „Wiedererkennen“ (s. u.): Profiltext, gekaufte Artikel (nur Titel/Menge), Vorname, Stadt/Land |
+| Live-Chat | Anthropic `claude-sonnet-5-5` | Gesprächsverlauf verbatim; abgeleitetes Bedarfsprofil; bei berechtigtem „Wiedererkennen“ (s. u.): Profiltext, gekaufte Artikel (nur Titel/Menge), Vorname, Stadt/Land. **Nur bei eingeschaltetem Bestellstatus (§ 16) und Anmeldung über das Kundenkonto in derselben Chat-Sitzung, auf Frage des Kunden:** Stand der eigenen Bestellungen — Bestelldatum, Artikel (Titel/Variante/Menge), Versand- und Zahlungsstatus, Name des Versanddienstleisters, angekündigter bzw. erfolgter Zustelltag; **ohne** Bestellnummer, Beträge, Sendungsnummer/-link, Adresse, E-Mail oder interne Kennungen |
 | Zusammenfassungs-Mail | dito | Transkript des Gesprächs |
 | Kundenprofil (jede Nacht für Kunden mit neuer Aktivität) | Anthropic `claude-opus-5-5` | Alle verknüpften Transkripte, Kaufhistorie, Korrespondenz-Texte, Kampagnen-Historie (Abo-Status, gesendete Mails, Klicks), Name, Stadt/Land |
 | Antwortentwurf auf eingehende E-Mails (Eingang, seit 02.10.2026) | Anthropic Sonnet | Name, die letzten 12 Mails der Korrespondenz (eingehend und ausgehend, ohne Zitate), die letzten 3 Bestellungen (Datum, Status, Artikel — **ohne** Bestellnummer und Beträge), Profiltext (nicht nach Widerspruch). Der Inhalt der Mails selbst kann beliebige Angaben der Person enthalten |
@@ -204,7 +205,7 @@ KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (S
 | Produktsuche | OpenAI `text-embedding-3-small` | **Jede Nutzernachricht** wird zur Suche eingebettet (keine Identifikatoren) |
 | Sprachausgabe | OpenAI `gpt-4o-mini-tts` | Mo-Antworttext |
 
-**Bewusst nie an KI-Modelle übermittelt:** E-Mail-Adressen, vollständige Straßenadressen (nur Stadt/Land; beim Brief nur der Name), Bestellnummern und -summen, Roh-Transkripte früherer Sitzungen (nur der verdichtete Profiltext). Auf dem Chat-Pfad ist Anthropic-**Prompt-Caching** aktiv (kurzlebiger serverseitiger Cache bei Anthropic; bei den Vertragsprüfungen zu berücksichtigen, → F-03).
+**Bewusst nie an KI-Modelle übermittelt:** E-Mail-Adressen, vollständige Straßenadressen (nur Stadt/Land; beim Brief nur der Name), Bestellnummern und -summen (auch nicht beim Bestellstatus, § 16 — technisch durch eine feste Feldliste und einen automatischen Test abgesichert), Roh-Transkripte früherer Sitzungen (nur der verdichtete Profiltext). Nennt der Kunde selbst eine Bestellnummer im Chat, steht sie — wie jede eigene Angabe — im Gesprächsverlauf. Auf dem Chat-Pfad ist Anthropic-**Prompt-Caching** aktiv (kurzlebiger serverseitiger Cache bei Anthropic; bei den Vertragsprüfungen zu berücksichtigen, → F-03).
 
 ### 7.2 Personalisierungs-Gate („Wiedererkennen“)
 
@@ -391,6 +392,26 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 
 ---
 
+## 16. Nachtrag 03.10.2026 — Bestellstatus im Chat
+
+### 16.1 Tatsachen
+
+- **Was neu ist.** Ein Kunde kann Mo nach dem Stand seiner eigenen Bestellungen fragen („Wo ist meine Bestellung?“, „Wann kommt mein Paket?“, „Ist meine Erstattung durch?“). Mo antwortet aus echten Daten statt nur auf das Kontaktformular zu verweisen. Mo **handelt nicht**: Rücksendungen, Stornierungen und Reklamationen laufen weiterhin über das Kontaktformular an das Team.
+- **Wer.** Nur Kunden, die sich **in derselben Chat-Sitzung** über „Anmelden“ mit ihrem Shop-Kundenkonto angemeldet haben (Customer-Account-Anmeldung) und deren Anmeldung noch gültig ist (gültiges Anmelde-Token, sonst „bitte anmelden“). Eine eingetippte E-Mail-Adresse, eine Bestellnummer, ein Name oder die Erkennung über den Shop (App Proxy) genügen **nicht**; Mo fragt auch nicht danach (siehe § 15 zur Sitzungsbindung). Eine Werbe-Einwilligung ist nicht erforderlich.
+- **Woher.** Aus Mos Bestellkopie (§ 13.1 Nr. 1, nur für die Bestellungen dieser Person) und — für höchstens drei nicht stornierte Bestellungen — aus einer kurzen Live-Abfrage bei Shopify (Versandfortschritt, Name des Versanddienstleisters, Zustelltage; höchstens 4 Sekunden, sonst ohne). Gehört eine Bestellung laut Shopify nicht (mehr) dieser Person, wird die Live-Angabe verworfen.
+- **Was das KI-Modell (Anthropic) erhält.** Je Bestellung: Kennbuchstabe (A, B, …), Bestelldatum, bis zu sechs Artikel (Titel, Variante, Menge), Versandstatus, Zahlungsstatus (bezahlt / offen / teilweise oder ganz erstattet / storniert), gegebenenfalls Name des Versanddienstleisters und angekündigter bzw. erfolgter Zustelltag, dazu ein allgemeiner Link auf „Meine Bestellungen“ im Shop. Höchstens fünf Bestellungen, bei genannter Bestellnummer nur die passende.
+- **Was das KI-Modell nie erhält** (feste Feldliste, automatischer Test): Bestellnummer, Beträge und Währung, Rabattcodes, Sendungsnummer und Sendungslink, Liefer- und Rechnungsadresse, E-Mail-Adresse, interne Shopify-Kennungen. Die Bestellnummer wird nur verwendet, um eine vom Kunden genannte Nummer **unter seinen eigenen Bestellungen** wiederzufinden.
+- **Verhaltensregeln für Mo.** Nur Fakten aus der Abfrage nennen, keine Liefertermine schätzen, **keine Rückgabe- oder Widerrufsfristen berechnen** (offen wegen F-11), keine Beträge; bei Zustellproblemen, angehaltenen Bestellungen und jedem Änderungswunsch das Kontaktformular anbieten.
+- **Wiederholung im Verlauf.** Das Widget sendet den Gesprächsverlauf bei jeder Nachricht mit. Ein älteres Abfrageergebnis wird dabei vor dem KI-Aufruf durch „veraltet“ ersetzt; Mo fragt bei Bedarf neu ab. Im Browser des Kunden (lokal gespeicherter Verlauf) steht das Ergebnis weiterhin; dem Widget-Team wird empfohlen, den gespeicherten Verlauf beim Abmelden zu löschen (geteilte Geräte).
+- **Speicherung.** Mos Antworttext — also der genannte Bestellstatus — wird wie jedes Transkript gespeichert (D-01, **180 Tage**) und fließt wie jedes Transkript in die Gesprächsanalyse und gegebenenfalls in die Zusammenfassungs-Mail ein. Das Abfrageergebnis selbst wird nicht gespeichert; gezählt wird nur ein pseudonymes Ereignis (Ergebnis, Thema, Anzahl — ohne Bestellnummer oder Beträge, D-03).
+- **Schalter.** `CHAT_ORDER_STATUS_ENABLED`, im Code standardmäßig **aus**; ausgeschaltet ist Mos Verhalten unverändert (Bestellfragen → Kontaktformular). Eingeschaltet wird er erst nach Ihrer Antwort auf F-32.
+
+### 16.2 Prüfbitte
+
+- **F-32 — Bestellstatus im Chat:** Bitte bestätigen Sie (a) die Rechtsgrundlage Art. 6 (1) b (Auskunft an den angemeldeten Kunden zu seinem eigenen Vertrag; hilfsweise f) für die Abfrage und die Übermittlung der genannten Angaben an Anthropic als Auftragsverarbeiter; (b) den nötigen Zusatz in der Datenschutzerklärung (KI-Chat beantwortet Fragen zu eigenen Bestellungen angemeldeter Kunden; Datenkategorien wie oben; keine Bestellnummern, Beträge, Adressen); (c) dass Transkripte mit Bestellstatus unter die bestehende Frist von 180 Tagen (D-01) fallen dürfen oder eine kürzere Frist nötig ist; (d) im Zusammenhang mit F-11, dass Mo Rückgabe- und Widerrufsfristen bewusst nicht berechnet und für Retouren auf das Kontaktformular verweist — oder ob und wie Mo Fristen nennen darf.
+
+---
+
 ## 17. Nachtrag 03.10.2026 — „Einplanen“: geprüfte Kampagnen-Mails später versenden
 
 ### 17.1 Tatsachen
@@ -408,6 +429,7 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 - **F-33 — Zeitversetzter Versand freigegebener Werbe-Mails:** Bitte bestätigen Sie, dass die Freigabe einer einzeln geprüften Mail mit späterem, automatischem Versand der bisherigen Freigabe (Kampagnen-Kanal, 21.07.2026) entspricht. Beim Versand werden Einwilligung und Widerspruch erneut geprüft.
 
 ---
+
 
 ## Anhang A — Chronologie der im Code dokumentierten anwaltlichen Freigaben
 
