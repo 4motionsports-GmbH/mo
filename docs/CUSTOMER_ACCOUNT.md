@@ -231,7 +231,12 @@ Implemented as a pure decision (`lib/customer-merge.mjs::decideMerge`, unit-test
 1. **(a)** Row already linked by `shopify_customer_id` → **use it**.
 2. **(b)** Else a tier-2 row matches the **verified email** → **stamp** it with
    the Shopify ids + `identity_tier = 3`. This carries the existing consent /
-   profile / transcript history forward to the signed-in identity.
+   profile / transcript history forward to the signed-in identity. **Unless**
+   that row already carries **another** `shopify_customer_id` (the mirror still
+   has the address on a different shop customer — e-mail changed in Shopify,
+   mirror lag): then it is never re-stamped (the person would inherit someone
+   else's orders and history); a new row is created under `shopify:<id>` and the
+   `row_collision` is logged for review (03.10.2026).
 3. **(c)** Else **create** a fresh tier-3 row.
 4. **(d) Conflict** — either the linked row's email differs from Shopify's
    verified email (`email_mismatch`), or an email-row and a shopify-id-row
@@ -486,13 +491,24 @@ personalisation, so it does **not** need the marketing consent above
   resolved once per chat request, so parallel tool calls never refresh the
   token twice;
 - `SHOPIFY_CUSTOMER_SYNC_ENABLED` keeps the ledger current — otherwise
+  `unavailable` (checked before the token refresh); the access step (link +
+  token) is bounded by 5 s → `unavailable`;
+- the first order import has finished (`isOrderImportDone`) — otherwise
   `unavailable`.
 
-The model receives order date, items, normalised order/payment state, the
-carrier name and delivery dates — never the order number, amounts, tracking
-numbers or links, addresses, ids or the e-mail. A live order whose
-`customer.id` is not the session's Shopify customer is dropped (ledger facts
-only). Returns, cancellations and complaints stay with the contact form. See
+The ledger rows read are those Shopify reports for **the session's Shopify
+customer** (`findCustomerOrders(customerId, shopifyCustomerId)`), linked to
+this customer or not linked yet (an order whose webhook came before the
+mirror). The upsert moves an order Shopify reassigns to another customer
+along with it. The model receives order date, items, normalised order/payment
+state, the carrier name and delivery dates — never the order number, amounts,
+tracking numbers or links, addresses, ids or the e-mail. A live order whose
+`customer.id` is not the session's Shopify customer is **not shown at all**
+(a matched number then reads as `not_found`). „No orders“ and „not found“ are
+answered only when a live read of the customer's five newest orders confirms
+the ledger is not behind (`confirmLedgerAnswer`); otherwise `unavailable`. At
+most three distinct lookups per chat request (repeats come from the request's
+cache). Returns, cancellations and complaints stay with the contact form. See
 `docs/ANWALTSDOSSIER.md` §16 (F-32) and `docs/API_CONTRACT.md` §2.
 
 ## 9. Signed-in conversation history (tier 3)

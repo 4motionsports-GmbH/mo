@@ -50,10 +50,14 @@ widget MUST NOT render“):
 
 ## When it is on
 
-- Only for sessions signed in via **„Anmelden“** (the Customer Account sign-in).
-  An anonymous visitor or a session linked by a typed e-mail gets
-  `status: "sign_in_required"`; Mo then explains „Anmelden“ and offers the
-  contact form. No new widget UI is needed for that.
+- Only for sessions signed in via **„Anmelden“** (the Customer Account sign-in,
+  completed with the one-time code — `CUSTOMER_ACCOUNT.md` §2a). An anonymous
+  visitor, a session linked by a typed e-mail or one recognised only through
+  the shop (`/apps/chat/whoami`) gets `status: "sign_in_required"`; Mo then
+  explains „Anmelden“ and offers the contact form. **Keep „Anmelden“ reachable
+  for shop-recognised sessions** (e.g. in the account menu), even though task 6
+  of the frontend prompt hides the sign-in block for them — the order status
+  needs the chat sign-in once.
 - No marketing consent is needed (customer service).
 - `ordersPageUrl` may appear as a normal Markdown link in Mo's text („Meine
   Bestellungen“); the existing link rendering covers it.

@@ -1140,7 +1140,7 @@ them:
 | `account_signin_succeeded` | `GET /api/auth/shopify/callback` (success) | `{ silent }` — `prompt=none` re-detects flagged. Session-keyed. |
 | `account_export_requested` | `GET /api/account/export` | `{}`, session `NULL` (pure volume counter) |
 | `account_erased`           | `POST /api/account/erase` | `{}`, session `NULL` (pure volume counter) |
-| `order_status_lookup`      | `POST /api/chat` — one per `get_order_status` call (2026-10, `CHAT_ORDER_STATUS_ENABLED`) | `{ outcome, topic, source, orders }` — `outcome` `ok` \| `no_orders` \| `not_found` \| `sign_in_required` \| `unavailable` \| `disabled` \| `ledger_off`; `topic` as the tool input; `source` `ledger` \| `ledger+live`; `orders` = number of orders in the answer. Never an order number, amount or id. Session-keyed. |
+| `order_status_lookup`      | `POST /api/chat` — one per `get_order_status` call (2026-10, `CHAT_ORDER_STATUS_ENABLED`) | `{ outcome, topic, source, orders }` — `outcome` `ok` \| `no_orders` \| `not_found` \| `sign_in_required` \| `unavailable` \| `disabled` \| `ledger_off` \| `ledger_incomplete` (first order import not finished) \| `ledger_behind` (a live read found an order the ledger lacks); `topic` as the tool input; `source` `ledger` \| `ledger+live`; `orders` = number of orders in the answer. Never an order number, amount or id. Session-keyed. |
 
 They feed the Kampagnen-Funnel, Bundle and Kundenkonto/Self-Service sections
 of the admin KPI tab (see `ADMIN_DASHBOARD.md` §5.9/§5.10/§5.15);
