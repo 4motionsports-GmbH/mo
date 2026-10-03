@@ -292,7 +292,9 @@ export const REFUND_MIN_SHARE = 0.1;
 /**
  * Is a refund big enough to mean something (a return, a complaint) rather than
  * a goodwill or shipping correction? Share of the original order value
- * (current total + refunded), at least REFUND_MIN_SHARE.
+ * (current total + refunded), at least REFUND_MIN_SHARE. A refund entered as an
+ * amount only does not lower Shopify's current total, so for those the share
+ * is understated (effective threshold about 11 %).
  * @param {{ refundedCents: number, totalCents: number }} o
  */
 export function isNotableRefund(o) {
@@ -305,11 +307,16 @@ export function isNotableRefund(o) {
 /**
  * unzufrieden — a cancellation or a notable refund in the last 14 days, dated
  * by the cancellation or the refund itself (customer_orders.last_refund_at),
- * never by the order's last change.
- * @param {{ customerId: number, orderName: string | null, cancelled: boolean, refundedCents: number, totalCents?: number, at: string }} row
+ * never by the order's last change. A full refund is told by Shopify's
+ * financial status (an amount-only refund leaves the current total as it is).
+ * @param {{ customerId: number, orderName: string | null, cancelled: boolean, refundedCents: number, totalCents?: number, financialStatus?: string | null, at: string }} row
  */
 export function dissatisfiedSignal(row) {
-  const full = !row.cancelled && row.totalCents != null && Number(row.totalCents) <= 0;
+  const full =
+    !row.cancelled &&
+    (row.financialStatus
+      ? String(row.financialStatus).toUpperCase() === "REFUNDED"
+      : row.totalCents != null && Number(row.totalCents) <= 0);
   const what = row.cancelled
     ? "storniert"
     : `${full ? "vollständig" : "teilweise"} erstattet (${eur(row.refundedCents)})`;

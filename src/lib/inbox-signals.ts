@@ -130,14 +130,14 @@ async function eventSignals(sql: Sql, now: Date): Promise<InboxItemInput[]> {
        LIMIT 500
     `,
     sql`
-      SELECT co.customer_id, co.order_name, (co.cancelled_at > now() - interval '14 days') AS cancelled,
-             co.refunded_cents, co.total_cents,
-             CASE WHEN co.cancelled_at > now() - interval '14 days' THEN co.cancelled_at ELSE co.last_refund_at END AS at
+      SELECT co.customer_id, co.order_name, (co.cancelled_at IS NOT NULL) AS cancelled,
+             co.refunded_cents, co.total_cents, co.financial_status,
+             COALESCE(co.cancelled_at, co.last_refund_at) AS at
         FROM customer_orders co
         JOIN customer_overview o ON o.customer_id = co.customer_id
        WHERE NOT o.blocked
          AND (co.cancelled_at > now() - interval '14 days'
-              OR (co.refunded_cents > 0 AND co.last_refund_at > now() - interval '14 days'))
+              OR (co.cancelled_at IS NULL AND co.refunded_cents > 0 AND co.last_refund_at > now() - interval '14 days'))
        LIMIT 500
     `,
     sql`
@@ -165,6 +165,8 @@ async function eventSignals(sql: Sql, now: Date): Promise<InboxItemInput[]> {
     );
   }
   for (const r of refunds) {
+    // A cancelled order is one episode, dated by the cancellation — its refund
+    // is the end of that episode, not a new sign (no second item later).
     const cancelled = r.cancelled === true;
     const amounts = { refundedCents: Number(r.refunded_cents ?? 0), totalCents: Number(r.total_cents ?? 0) };
     // A small refund (shipping, goodwill) is no sign of dissatisfaction.
@@ -175,6 +177,7 @@ async function eventSignals(sql: Sql, now: Date): Promise<InboxItemInput[]> {
         orderName: (r.order_name as string | null) ?? null,
         cancelled,
         ...amounts,
+        financialStatus: (r.financial_status as string | null) ?? null,
         at: iso(r.at) ?? now.toISOString(),
       }) as InboxItemInput
     );

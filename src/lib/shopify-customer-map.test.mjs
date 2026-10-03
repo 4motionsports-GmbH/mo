@@ -202,6 +202,9 @@ test("mapShopifyOrder handles a REST orders webhook incl. refunds", () => {
     refunds: [
       { created_at: "2026-09-02T12:00:00+02:00", transactions: [{ kind: "refund", status: "success", amount: "20.00" }, { kind: "sale", amount: "1" }] },
       { created_at: "2026-09-03T09:00:00+02:00", transactions: [] }, // restock only: moves no money
+      // a small follow-up (return shipping, 1.4 % of the order) never moves the date
+      { created_at: "2026-09-04T09:00:00+02:00", transactions: [{ kind: "refund", status: "success", amount: "2.00" }] },
+      { created_at: "2026-09-05T09:00:00+02:00", transactions: [{ kind: "refund", status: "pending", amount: "50.00" }] },
     ],
     line_items: [{ id: 31, title: "Matte", variant_title: null, quantity: 1, price: "120.00", variant_id: 7, product_id: 8 }],
   });
@@ -209,7 +212,7 @@ test("mapShopifyOrder handles a REST orders webhook incl. refunds", () => {
   assert.equal(o.shopifyCustomerId, "42");
   assert.equal(o.financialStatus, "PAID");
   assert.equal(o.processedAt, "2026-09-01T08:00:00.000Z");
-  assert.equal(o.refundedCents, 2000);
+  assert.equal(o.refundedCents, 2200);
   assert.equal(o.lastRefundAt, "2026-09-02T10:00:00.000Z");
   assert.deepEqual(o.discountCodes, ["MS5-XYZ"]);
   assert.equal(o.lineItems[0].handle, null);

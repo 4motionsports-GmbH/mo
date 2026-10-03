@@ -27,6 +27,7 @@ import { mapShopifyCustomer, mapShopifyOrder, mapShopifyLineItem, numericShopify
 import type { MirrorCustomer, MirrorOrder, MirrorLineItem } from "./shopify-customer-map.mjs";
 import { upsertMirrorCustomers } from "./customer-mirror-store";
 import { upsertMirrorOrders, appendOrderLineItems, linkOrphanOrders } from "./customer-orders-store";
+import { reopenSelfClosedRefundItems } from "./inbox-store";
 import { isShopifyCustomerSyncEnabled } from "./platform-flags.mjs";
 
 // ---------------------------------------------------------------------------
@@ -393,12 +394,26 @@ export interface ReconcileResult {
   customers: number;
   orders: number;
   complete: boolean;
+  /** This run looked back REFUND_BACKFILL_DAYS for orders (once, for 0070). */
+  refundBackfill?: boolean;
+  /** „Unzufriedenheit“ items reopened after that look-back. */
+  reopenedRefundItems?: number;
 }
+
+/** How far the one-off order look-back for refund dates reaches (migration 0070). */
+const REFUND_BACKFILL_DAYS = 15;
 
 /**
  * Re-read every customer and order Shopify changed since the last complete
- * reconciliation (minus one hour of overlap). Incomplete runs (deadline)
- * leave the floor unchanged, so the next run repeats — upserts are idempotent.
+ * reconciliation (minus one hour of overlap). Incomplete runs (deadline, a
+ * failed write) leave the floor unchanged, so the next run repeats — upserts
+ * are idempotent.
+ *
+ * Refund dates (customer_orders.last_refund_at, 0070) exist only for orders
+ * read since that change. Until one complete run has looked back at least 14
+ * days, the orders of the last REFUND_BACKFILL_DAYS are re-read once, and the
+ * „Unzufriedenheit“ items the hourly job closed meanwhile are reopened for it
+ * to judge again (reopenSelfClosedRefundItems).
  */
 export async function reconcileShopifyCustomers(
   opts: { deadlineMs: number },
@@ -417,27 +432,46 @@ export async function reconcileShopifyCustomers(
     const floor = last[0]?.last_reconcile ?? last[0]?.import_done;
     if (!floor) return { ok: false, reason: "no_import", ...empty };
     const since = new Date(new Date(floor).getTime() - 3_600_000).toISOString();
+    const lookback = (await sql`
+      SELECT NOT EXISTS (
+        SELECT 1 FROM shopify_sync_runs
+         WHERE kind = 'reconcile' AND status = 'done' AND since <= started_at - interval '14 days'
+      ) AS needed
+    `) as Array<{ needed: boolean }>;
+    const backfill = lookback[0]?.needed === true;
+    const orderSince = backfill
+      ? new Date(Math.min(new Date(since).getTime(), Date.now() - REFUND_BACKFILL_DAYS * 86_400_000)).toISOString()
+      : since;
+    // The run records the earliest point it reads (the order look-back when it runs).
     const runRows = (await sql`
-      INSERT INTO shopify_sync_runs (kind, status, since) VALUES ('reconcile', 'running', ${since}) RETURNING id
+      INSERT INTO shopify_sync_runs (kind, status, since) VALUES ('reconcile', 'running', ${orderSince}) RETURNING id
     `) as Array<{ id: number }>;
     const runId = Number(runRows[0].id);
     const query = `updated_at:>='${since}'`;
+    const orderQuery = `updated_at:>='${orderSince}'`;
 
     let customers = 0;
     let orders = 0;
     let complete = true;
+    let stopped = "";
 
     let cursor: string | null = null;
     for (;;) {
       if (Date.now() > opts.deadlineMs) {
         complete = false;
+        stopped = "deadline";
         break;
       }
       const data: { customers: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: unknown[] } } =
         await adminGraphql(RECONCILE_CUSTOMERS, { query, cursor });
       const mapped = data.customers.nodes.map(mapShopifyCustomer).filter((c): c is MirrorCustomer => c !== null);
       const res = await upsertMirrorCustomers(mapped, { origin: `reconcile:${runId}` }, sql);
-      customers += res ? res.inserted + res.updated + res.stamped : 0;
+      if (!res) {
+        complete = false;
+        stopped = "customer write failed";
+        break;
+      }
+      customers += res.inserted + res.updated + res.stamped;
       if (!data.customers.pageInfo.hasNextPage) break;
       cursor = data.customers.pageInfo.endCursor;
     }
@@ -446,27 +480,34 @@ export async function reconcileShopifyCustomers(
     while (complete) {
       if (Date.now() > opts.deadlineMs) {
         complete = false;
+        stopped = "deadline";
         break;
       }
       const data: { orders: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: unknown[] } } =
-        await adminGraphql(RECONCILE_ORDERS, { query, cursor });
+        await adminGraphql(RECONCILE_ORDERS, { query: orderQuery, cursor });
       const mapped = data.orders.nodes.map((o) => mapShopifyOrder(o)).filter((o): o is MirrorOrder => o !== null);
       const res = await upsertMirrorOrders(mapped, { lineItems: "replace" }, sql);
-      orders += res?.upserted ?? 0;
+      if (!res) {
+        complete = false;
+        stopped = "order write failed";
+        break;
+      }
+      orders += res.upserted;
       if (!data.orders.pageInfo.hasNextPage) break;
       cursor = data.orders.pageInfo.endCursor;
     }
     if (complete) await linkOrphanOrders(sql);
+    const reopened = complete && backfill ? await reopenSelfClosedRefundItems(sql) : 0;
 
     await sql`
       UPDATE shopify_sync_runs
          SET status = ${complete ? "done" : "failed"},
-             error = ${complete ? null : "deadline — repeats next run"},
+             error = ${complete ? null : `${stopped} — repeats next run`},
              customers_upserted = ${customers}, orders_upserted = ${orders},
              finished_at = now(), updated_at = now()
        WHERE id = ${runId}
     `;
-    return { ok: true, since, customers, orders, complete };
+    return { ok: true, since: orderSince, customers, orders, complete, refundBackfill: backfill, reopenedRefundItems: reopened };
   } catch (err) {
     reportError(err, { route: "lib/shopify-sync", phase: "reconcileShopifyCustomers" });
     return { ok: false, reason: "error", ...empty };
