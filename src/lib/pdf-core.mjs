@@ -36,12 +36,35 @@ export function escapePdfText(s) {
   return String(s).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
 
-/** Coerce to Latin-1-safe text: any code point > 0xFF (emoji etc.) → '?', so the
- *  latin1 byte encoding the PDF uses can never be corrupted. */
+/** Typographic characters WinAnsiEncoding (the fonts' encoding) has in its
+ *  0x80–0x9F range: written as that byte they print as themselves. */
+const WIN_ANSI = new Map([
+  [0x20ac, 0x80], // €
+  [0x201a, 0x82], // ‚
+  [0x201e, 0x84], // „
+  [0x2026, 0x85], // …
+  [0x2018, 0x91], // ‘
+  [0x2019, 0x92], // ’
+  [0x201c, 0x93], // “
+  [0x201d, 0x94], // ”
+  [0x2022, 0x95], // •
+  [0x2013, 0x96], // –
+  [0x2014, 0x97], // —
+  [0x2122, 0x99], // ™
+]);
+
+/** Coerce to Latin-1-safe text: the typographic characters WinAnsi knows
+ *  („“ – — … € …) become their WinAnsi byte, any other code point > 0xFF
+ *  (emoji etc.) → '?', so the latin1 byte encoding the PDF uses can never be
+ *  corrupted. Bytes 0x80–0x9F that are not WinAnsi glyphs (C1 controls) → '?'. */
 export function toLatin1Safe(s) {
   let out = "";
   for (const ch of String(s)) {
-    out += ch.codePointAt(0) > 0xff ? "?" : ch;
+    const cp = /** @type {number} */ (ch.codePointAt(0));
+    const mapped = WIN_ANSI.get(cp);
+    if (mapped != null) out += String.fromCharCode(mapped);
+    else if (cp > 0xff || (cp >= 0x80 && cp <= 0x9f)) out += "?";
+    else out += ch;
   }
   return out;
 }
