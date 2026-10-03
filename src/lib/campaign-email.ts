@@ -135,13 +135,29 @@ function minSendIntervalDays(): number {
   return marketingMinSendIntervalDays();
 }
 
+export type CampaignSendRefusal = Extract<CampaignSendResult, { ok: false }>;
+
+type CampaignSendPreflight =
+  | {
+      ok: true;
+      contact: NonNullable<Awaited<ReturnType<typeof getContactById>>>;
+      draft: NonNullable<Awaited<ReturnType<typeof getDraftForContact>>>;
+      campaign: NonNullable<Awaited<ReturnType<typeof getCampaignForContact>>>;
+      person: Awaited<ReturnType<typeof getCustomerById>> | null;
+      recipient: string;
+      unsubscribeUrl: string;
+    }
+  | CampaignSendRefusal;
+
 /**
- * Approve and send a drafted campaign email through the system. Performs every
- * gate, claims the contact atomically, mints the MK- code (if a depth was
- * selected), sends via Resend with unsubscribe link + header, records the
- * immutable send row and flips the contact to 'sent'. Never throws.
+ * Every gate of a campaign send that needs no claim: the row and its draft, the
+ * campaign being live, the person read fresh, all legal gates (master flag, the
+ * one consent, opt-in level, suppression, cadence) and a working unsubscribe
+ * link. approveAndSendCampaign runs it first; „Freigeben" runs it at approval
+ * time too (the release job then sends through approveAndSendCampaign, so it
+ * all runs again at send time). Never sends, never claims. Never throws.
  */
-export async function approveAndSendCampaign(contactId: number): Promise<CampaignSendResult> {
+export async function campaignSendPreflight(contactId: number): Promise<CampaignSendPreflight> {
   try {
     const contact = await getContactById(contactId);
     if (!contact) return { ok: false, reason: "not_found", message: "Contact not found." };
@@ -246,6 +262,28 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
     const unsubscribeUrl =
       `${getBaseUrl()}/api/unsubscribe?token=${encodeURIComponent(unsubToken)}` +
       (contact.language === "en" ? "&locale=en" : "");
+
+    return { ok: true, contact, draft, campaign, person, recipient, unsubscribeUrl };
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-email", phase: "campaignSendPreflight" });
+    return { ok: false, reason: "send_failed", message: "Unexpected error while checking the send." };
+  }
+}
+
+/**
+ * Approve and send a drafted campaign email through the system. Performs every
+ * gate (campaignSendPreflight), claims the contact atomically, mints the MK-
+ * code (if a depth was selected), sends via Resend with unsubscribe link +
+ * header, records the immutable send row and flips the contact to 'sent'. Once
+ * Resend has accepted the mail the claim is never reverted (a retry would send
+ * it twice) — bookkeeping errors after that are reported, the row is marked
+ * sent. Never throws.
+ */
+export async function approveAndSendCampaign(contactId: number): Promise<CampaignSendResult> {
+  try {
+    const pre = await campaignSendPreflight(contactId);
+    if (!pre.ok) return pre;
+    const { contact, draft, campaign, person, recipient, unsubscribeUrl } = pre;
 
     // Claim atomically so concurrent sends can't both proceed.
     const claimed = await claimContactForSend(contactId);
@@ -422,48 +460,54 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         return { ok: false, reason: "send_failed", message: "Email delivery failed." };
       }
 
-      // Immutable audit/KPI record — the redemption + revenue reads pick the
-      // MK- code up from here. The shipped parts are retained (0038) so the
-      // admin can open exactly what the recipient received.
-      await recordCampaignSend({
-        contactId,
-        email: recipient,
-        subject: draft.subject,
-        bodyHash: hashCampaignBody(text),
-        bodyText: text,
-        bodyHtml: html,
-        sentVia: "email",
-        discountCode,
-        discountCodeGid,
-        discountExpiresAt,
-        redirectToken,
-        // Stamped from the draft so the funnel can be read per segment later.
-        segment: draft.segment,
-        // Send-time snapshot (migration 0054): what this mail looked like, so
-        // the KPI tab can compare hero variants and designs after the fact.
-        designKey: emailDesign?.key ?? "classic",
-        heroVariant: hero.heroImageUrl ? "ai" : emailDesign ? "default" : "none",
-        heroImageUrl: hero.heroImageUrl,
-        heroHeadline: hero.heroHeadline,
-        textMode: draft.textMode ?? null,
-        language: contact.language,
-        discountPercent: draft.discountPercent,
-        discountScope: discountCode ? draft.discountScope : null,
-        bundleOfferId,
-        providerEmailId: result.id ?? null,
-        isTest: contact.isTest,
-      });
-      // The mail in the person's Korrespondenz (additive, never breaks the send).
-      if (!contact.isTest && person) {
-        await recordSentMessage({
-          customerId: person.id,
-          messageId: threading.messageId,
-          fromAddress: senderAddress() ?? "",
-          toAddress: recipient,
+      // The mail is out. From here on nothing may revert the claim — a retry
+      // would send it twice; bookkeeping failures are reported instead.
+      try {
+        // Immutable audit/KPI record — the redemption + revenue reads pick the
+        // MK- code up from here. The shipped parts are retained (0038) so the
+        // admin can open exactly what the recipient received.
+        await recordCampaignSend({
+          contactId,
+          email: recipient,
           subject: draft.subject,
+          bodyHash: hashCampaignBody(text),
           bodyText: text,
           bodyHtml: html,
+          sentVia: "email",
+          discountCode,
+          discountCodeGid,
+          discountExpiresAt,
+          redirectToken,
+          // Stamped from the draft so the funnel can be read per segment later.
+          segment: draft.segment,
+          // Send-time snapshot (migration 0054): what this mail looked like, so
+          // the KPI tab can compare hero variants and designs after the fact.
+          designKey: emailDesign?.key ?? "classic",
+          heroVariant: hero.heroImageUrl ? "ai" : emailDesign ? "default" : "none",
+          heroImageUrl: hero.heroImageUrl,
+          heroHeadline: hero.heroHeadline,
+          textMode: draft.textMode ?? null,
+          language: contact.language,
+          discountPercent: draft.discountPercent,
+          discountScope: discountCode ? draft.discountScope : null,
+          bundleOfferId,
+          providerEmailId: result.id ?? null,
+          isTest: contact.isTest,
         });
+        // The mail in the person's Korrespondenz (additive, never breaks the send).
+        if (!contact.isTest && person) {
+          await recordSentMessage({
+            customerId: person.id,
+            messageId: threading.messageId,
+            fromAddress: senderAddress() ?? "",
+            toAddress: recipient,
+            subject: draft.subject,
+            bodyText: text,
+            bodyHtml: html,
+          });
+        }
+      } catch (err) {
+        reportError(err, { route: "lib/campaign-email", phase: "approveAndSendCampaign.record" });
       }
       // A Testkontakt keeps its draft and returns to the queue (0057).
       if (contact.isTest) await resetTestContactAfterSend(contactId);

@@ -113,3 +113,29 @@ export function campaignMoDeeplinkUrl(env = process.env) {
   if (typeof raw === "string" && raw.trim()) return raw.trim();
   return "https://motionsports.de/?mo=open&mo_new=1&mo_view=fullscreen&utm_source=campaign&utm_medium=email";
 }
+
+/**
+ * „Freigeben" (migration 0072): whether approved campaign mails may be released
+ * by the job /api/cron/release-campaign-mails, and whether the desk offers the
+ * action. Default false. Approving never widens a gate — the job sends through
+ * approveAndSendCampaign, which checks everything again at send time.
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {boolean}
+ */
+export function isCampaignReleaseEnabled(env = process.env) {
+  return parseFlag(env.CAMPAIGN_RELEASE_ENABLED);
+}
+
+/**
+ * Pace of the release job: at most `maxPerRun` mails per run (1–200, default
+ * 30; the job runs every 10 minutes) with `spacingMs` between two sends
+ * (500–60000, default 1500 — Resend's default limit is about 2 requests per
+ * second, shared with every other mail Mo sends).
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {{ maxPerRun: number, spacingMs: number }}
+ */
+export function campaignReleaseConfig(env = process.env) {
+  const maxPerRun = Math.min(200, Math.max(1, parseNonNegativeInt(env.CAMPAIGN_RELEASE_MAX_PER_RUN, 30) || 30));
+  const spacingMs = Math.min(60_000, Math.max(500, parseNonNegativeInt(env.CAMPAIGN_RELEASE_SPACING_MS, 1500)));
+  return { maxPerRun, spacingMs };
+}

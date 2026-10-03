@@ -499,6 +499,32 @@ export async function markShopifyProductDeleted(
 /** The ACTIVE offer attached to a campaign contact — what the campaign card
  * shows and the campaign send path renders as the special-offer block. Null
  * when none. Newest first, mirroring getActiveBundleForSend. */
+/**
+ * The newest set offer of a campaign recipient (any status), for the release
+ * job: an expired one means the mail's text may mention a set the send would
+ * silently drop („Freigeben", lib/campaign-release.ts). Never throws.
+ */
+export async function getLatestBundleStateForCampaignContact(
+  contactId: number,
+  sql: Sql | null = getSql()
+): Promise<{ status: string; expiresAt: string | null } | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT status, expires_at FROM bundle_offers
+       WHERE campaign_contact_id = ${contactId} AND status IN ('active', 'expired')
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    if (!rows[0]) return null;
+    const exp = rows[0].expires_at;
+    return { status: String(rows[0].status), expiresAt: exp ? new Date(String(exp)).toISOString() : null };
+  } catch (err) {
+    reportError(err, { route: "lib/bundle-offers-store", phase: "getLatestBundleStateForCampaignContact" });
+    return null;
+  }
+}
+
 export async function getActiveBundleForCampaignContact(
   contactId: number,
   sql: Sql | null = getSql()
