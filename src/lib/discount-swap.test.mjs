@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyMintedDiscountToBody } from "./discount-swap.mjs";
+import { applyMintedDiscountToBody, hasStrayPlaceholder } from "./discount-swap.mjs";
 
 test("swaps the placeholder for the real code wherever it appears", () => {
   const body = "Dein Code MO-XXXX gilt 7 Tage. Nochmal: MO-XXXX.";
@@ -45,4 +45,14 @@ test("defensive: non-string body → empty string, empty swap fields are no-ops"
     applyMintedDiscountToBody("unchanged", { placeholder: "", code: "X" }),
     "unchanged"
   );
+});
+
+test("hasStrayPlaceholder: a placeholder without a discount is caught, with one it is swapped", () => {
+  assert.equal(hasStrayPlaceholder("Mit dem Code MO-XXXX sparst du.", "MO-XXXX", 0), true);
+  assert.equal(hasStrayPlaceholder("mit dem code mo-xxxx", "MO-XXXX", 0), true);
+  assert.equal(hasStrayPlaceholder("Mit dem Code MO-XXXX sparst du.", "MO-XXXX", 15), false);
+  assert.equal(hasStrayPlaceholder("Kein Code hier.", "MO-XXXX", 0), false);
+  assert.equal(hasStrayPlaceholder(null, "MO-XXXX", 0), false);
+  assert.equal(hasStrayPlaceholder("MO-XXXX", "", 0), false);
+  assert.equal(hasStrayPlaceholder("MO-XXXX", "MO-XXXX", null), true);
 });

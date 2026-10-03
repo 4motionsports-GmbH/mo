@@ -12,6 +12,7 @@
 // the raw ISO value in `meta`; the UI formats it.
 
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
+import { hasStrayPlaceholder } from "./discount-swap.mjs";
 import { campaignSegmentByKey } from "./campaign-segments.mjs";
 
 export const CHECK_LEVELS = Object.freeze({
@@ -235,12 +236,13 @@ export function reviewChecks(item, ctx = {}) {
       fix: "swap_products",
     });
   }
-  if (discount <= 0 && body.includes(REVIEW_PLACEHOLDER_CODE)) {
+  // Same rule as the send paths (discount-swap.hasStrayPlaceholder).
+  if (hasStrayPlaceholder(body, REVIEW_PLACEHOLDER_CODE, discount)) {
     blocked.push({
       key: "placeholder_without_discount",
       level: "blocked",
       title: "Platzhalter-Code ohne Rabatt",
-      detail: `Der Text enthält ${REVIEW_PLACEHOLDER_CODE}, aber es ist kein Rabatt gesetzt — der Platzhalter würde so verschickt.`,
+      detail: `Der Text enthält ${REVIEW_PLACEHOLDER_CODE}, aber es ist kein Rabatt gesetzt — der Versand würde abgelehnt (ohne Rabatt ersetzt nichts den Platzhalter).`,
       fix: "regenerate",
     });
   }
