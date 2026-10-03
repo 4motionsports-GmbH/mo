@@ -225,17 +225,20 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       measured from the newer of import and reconcile; tested core `shopify-sync-health.mjs`.
 - [x] **C.8** Eingang customer card said „Noch keine Bestellung“ before the nightly figures
       existed — now „Kennzahlen werden heute Nacht berechnet“.
-- [x] **C.9** Eingang rule „Unzufriedenheit“ — built 03.10.: the order ledger stores the
-      refund date (`customer_orders.last_refund_at`, migration `0070`) and the rule uses it
-      instead of the order's last change; refunds below 10 % of the order value are ignored.
-      The old false items close by themselves („erledigt von selbst“) on the next hourly run.
-      **M runs `0070` before the merge** (below, C.9a).
-  - [ ] **C.9a** — M — right after the merge (03.10.): pull main and run `npm run db:migrate`
-        against production (applies `0070`: one column, one index). Until it has run, order
-        updates fail to save for those few minutes; the nightly reconcile re-reads every order
-        changed since its last run, so nothing is lost.
-        Done when: C has merged and the Eingang shows no old „Unzufriedenheit“ items after
-        the next full hour.
+- [x] **C.9** Eingang rule „Unzufriedenheit“ — built 03.10.: the order ledger stores the date
+      of the newest notable refund (≥ 10 % of the order value; `customer_orders.last_refund_at`,
+      migration `0070`) and the rule uses it instead of the order's last change; smaller
+      refunds are ignored, a cancelled order stays one case (its refund raises nothing new).
+      Follow-up after the review (03.10.): existing orders have no refund date yet, so the
+      first hourly run after `0070` closes every refund-only item — real ones too. The next
+      Shopify sync therefore re-reads the orders of the last 15 days once and then reopens the
+      items the job closed by itself; the next Eingang run closes only the false ones again.
+  - [x] **C.9a** — M — `0070` run on production right after the merge (03.10.).
+  - [ ] **C.9b** — M — after C's follow-up merge: Vercel → project `mo` → Settings → Cron Jobs →
+        `/api/cron/shopify-reconcile` → **Run** (otherwise it happens tonight at 03:45 by itself),
+        then Mo → Eingang → **„Jetzt prüfen“**.
+        Done when: Einstellungen → Shopify-Abgleich shows a new „Nächtlicher Abgleich“ time and
+        the Eingang shows „Unzufriedenheit“ only for refunds and cancellations of the last 14 days.
 - [x] **C.10** **E-Mails im Eingang** — built 02.10. (no migration): every incoming mail of
       a known customer opens „E-Mail beantworten“ in the Eingang at once (later mails join
       it; the hourly job catches up missed ones); the item shows the conversation, an AI
