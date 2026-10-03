@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  isSignedInLinkKind,
   linkSessionToCustomer,
   resolveLinkedCustomerId,
   resolveSignedInCustomerRow,
@@ -15,26 +16,32 @@ import {
 // "the session the widget holds resolves to the linked signed-in customer."
 // ---------------------------------------------------------------------------
 function makeSql({ customers = {} } = {}) {
-  const links = new Map(); // session_id → customer_id
+  const links = new Map(); // session_id → { customerId, kind }
   const sql = (strings, ...values) => {
     const text = strings.join("?");
     if (text.includes("INSERT INTO customer_session_links")) {
-      const [sid, customerId] = values;
-      links.set(sid, customerId); // ON CONFLICT DO UPDATE → last write wins
+      const [sid, customerId, kind] = values;
+      const prev = links.get(sid);
+      // The ON CONFLICT rule: an e-mail link for the SAME customer keeps a
+      // signed-in kind; anything else takes the new kind.
+      const keep =
+        prev && prev.customerId === customerId && isSignedInLinkKind(prev.kind) && kind === "email";
+      links.set(sid, { customerId, kind: keep ? prev.kind : kind });
       return Promise.resolve([]);
     }
-    // NB: resolveSignedInCustomerRow's query ALSO contains a
-    // "SELECT customer_id FROM customer_session_links" subquery, so match the more
-    // specific "FROM customers c" first; the standalone link read falls through.
-    if (text.includes("FROM customers c")) {
-      // resolveSignedInCustomerRow interpolates the session id (link subquery).
+    // resolveSignedInCustomerRow joins the link to customers and only accepts
+    // the signed-in kinds; match it before the standalone link read.
+    if (text.includes("JOIN customers c")) {
+      assert.match(text, /link_kind IN \('customer_account', 'app_proxy'\)/);
       const sid = values[0];
-      const customerId = links.get(sid);
-      const cust = customerId != null ? customers[customerId] : undefined;
-      if (!cust || cust.shopify_customer_id == null) return Promise.resolve([]);
+      const link = links.get(sid);
+      const cust = link ? customers[link.customerId] : undefined;
+      if (!link || !isSignedInLinkKind(link.kind) || !cust || cust.shopify_customer_id == null) {
+        return Promise.resolve([]);
+      }
       return Promise.resolve([
         {
-          id: customerId,
+          id: link.customerId,
           shopify_customer_id: cust.shopify_customer_id,
           identity_tier: cust.identity_tier ?? 3,
         },
@@ -43,8 +50,8 @@ function makeSql({ customers = {} } = {}) {
     if (text.includes("SELECT customer_id FROM customer_session_links")) {
       // resolveLinkedCustomerId — the ANY-tier direct link read (standalone).
       const sid = values[0];
-      const customerId = links.get(sid);
-      return Promise.resolve(customerId != null ? [{ customer_id: customerId }] : []);
+      const link = links.get(sid);
+      return Promise.resolve(link ? [{ customer_id: link.customerId }] : []);
     }
     throw new Error(`unexpected query: ${text}`);
   };
@@ -68,7 +75,10 @@ test("linkSessionToCustomer no-ops (no DB write) without sql / session / custome
 test("linkSessionToCustomer trims and persists the link", async () => {
   const sql = makeSql();
   assert.equal(await linkSessionToCustomer(sql, "  sess-widget-1  ", 42), true);
-  assert.equal(sql._links.get("sess-widget-1"), 42);
+  assert.deepEqual(sql._links.get("sess-widget-1"), { customerId: 42, kind: "email" });
+  // An unknown kind is stored as the weakest one.
+  await linkSessionToCustomer(sql, "sess-2", 42, "admin");
+  assert.equal(sql._links.get("sess-2").kind, "email");
 });
 
 // ---------------------------------------------------------------------------
@@ -98,7 +108,7 @@ test("resolveSignedInCustomerRow finds the signed-in customer under the widget's
   const sql = makeSql({ customers: { 42: { shopify_customer_id: "9988", identity_tier: 3 } } });
 
   // Sign-in persists the DIRECT link under the SAME session the widget holds...
-  await linkSessionToCustomer(sql, "sess-widget-1", 42);
+  await linkSessionToCustomer(sql, "sess-widget-1", 42, "customer_account");
 
   // ...and /api/auth/me re-hydrates by resolving that exact session id.
   const resolved = await resolveSignedInCustomerRow(sql, "sess-widget-1");
@@ -120,7 +130,7 @@ test("resolveSignedInCustomerRow fails closed for blank / unlinked / non-signed-
     },
   });
   await linkSessionToCustomer(sql, "sess-email-only", 7);
-  await linkSessionToCustomer(sql, "sess-widget-1", 42);
+  await linkSessionToCustomer(sql, "sess-widget-1", 42, "customer_account");
 
   assert.equal(await resolveSignedInCustomerRow(sql, null), null);
   assert.equal(await resolveSignedInCustomerRow(sql, ""), null);
@@ -144,9 +154,49 @@ test("re-binding a session re-points the link (tier-2 link → tier-3 sign-in)",
   assert.equal(await resolveSignedInCustomerRow(sql, "sess-widget-1"), null);
 
   // Signing in re-points the SAME session to the tier-3 customer.
-  await linkSessionToCustomer(sql, "sess-widget-1", 42);
+  await linkSessionToCustomer(sql, "sess-widget-1", 42, "customer_account");
   assert.deepEqual(await resolveSignedInCustomerRow(sql, "sess-widget-1"), {
     customerId: 42,
     shopifyCustomerId: "9988",
   });
+});
+
+// ---------------------------------------------------------------------------
+// The proof behind a link (migration 0071)
+// ---------------------------------------------------------------------------
+
+test("a TYPED e-mail of a Shopify customer never makes the session signed in", async () => {
+  // Since the customer mirror every shop customer has a shopify_customer_id —
+  // typing their address in another browser must not resolve as their sign-in.
+  const sql = makeSql({ customers: { 42: { shopify_customer_id: "9988", identity_tier: 3 } } });
+  await linkSessionToCustomer(sql, "sess-attacker", 42, "email");
+  assert.equal(await resolveSignedInCustomerRow(sql, "sess-attacker"), null);
+  // The default kind is "email" too.
+  await linkSessionToCustomer(sql, "sess-default", 42);
+  assert.equal(await resolveSignedInCustomerRow(sql, "sess-default"), null);
+});
+
+test("the App Proxy sign-in counts; a legacy or unknown kind does not", async () => {
+  const sql = makeSql({ customers: { 42: { shopify_customer_id: "9988", identity_tier: 3 } } });
+  await linkSessionToCustomer(sql, "sess-proxy", 42, "app_proxy");
+  assert.deepEqual(await resolveSignedInCustomerRow(sql, "sess-proxy"), { customerId: 42, shopifyCustomerId: "9988" });
+  sql._links.set("sess-legacy", { customerId: 42, kind: "legacy" });
+  assert.equal(await resolveSignedInCustomerRow(sql, "sess-legacy"), null);
+  assert.equal(isSignedInLinkKind("legacy"), false);
+  assert.equal(isSignedInLinkKind("email"), false);
+  assert.equal(isSignedInLinkKind("customer_account"), true);
+});
+
+test("a signed-in customer typing their OWN e-mail stays signed in; another customer's drops it", async () => {
+  const sql = makeSql({
+    customers: {
+      42: { shopify_customer_id: "9988", identity_tier: 3 },
+      43: { shopify_customer_id: "7777", identity_tier: 3 },
+    },
+  });
+  await linkSessionToCustomer(sql, "sess-1", 42, "customer_account");
+  await linkSessionToCustomer(sql, "sess-1", 42, "email"); // summary mail to their own address
+  assert.deepEqual(await resolveSignedInCustomerRow(sql, "sess-1"), { customerId: 42, shopifyCustomerId: "9988" });
+  await linkSessionToCustomer(sql, "sess-1", 43, "email"); // someone else's address
+  assert.equal(await resolveSignedInCustomerRow(sql, "sess-1"), null);
 });

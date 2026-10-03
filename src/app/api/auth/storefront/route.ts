@@ -99,6 +99,7 @@ export async function GET(req: Request) {
         shopifyCustomerGid: gid,
         email: identity?.email ?? null,
         sessionId: auth.sessionId,
+        linkKind: "app_proxy",
       });
       customerId = bind?.customerId ?? null;
     } catch (err) {
