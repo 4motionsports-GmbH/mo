@@ -3,6 +3,7 @@ import { z } from "zod";
 import { retrieve, embedQuery } from "./retrieval";
 import { captureConsentCopy } from "./consent-copy";
 import { toolCopy } from "./tool-descriptions.mjs";
+import { createOrderStatusLookup } from "./order-status";
 import type { Locale } from "./locale";
 import type { CustomerProfile } from "./types";
 
@@ -81,8 +82,28 @@ export { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./email-offer-trigger.mjs";
 // LOCALE: `locale` only switches the language of the model-facing descriptions
 // (toolCopy) and the consent copy attached to the offer_email_summary result.
 // The schemas, enums and execute LOGIC are identical across locales.
-export function buildChatTools(profile: CustomerProfile, locale: Locale = "de") {
+//
+// get_order_status follows the same pattern: always built, withheld in
+// api/chat via `activeTools` while CHAT_ORDER_STATUS_ENABLED is off — so the
+// tools the model sees (and their bytes) are exactly today's with the switch
+// off. With it on, `orderStatusEnabled` also switches the contact-form copy
+// so order-STATUS questions go to get_order_status first.
+export interface ChatToolOptions {
+  /** The widget session (`x-ms-session`) — get_order_status resolves the signed-in customer from it. */
+  sessionId?: string | null;
+  /** CHAT_ORDER_STATUS_ENABLED (lib/platform-flags.mjs). */
+  orderStatusEnabled?: boolean;
+}
+
+export function buildChatTools(
+  profile: CustomerProfile,
+  locale: Locale = "de",
+  options: ChatToolOptions = {}
+) {
   const c = toolCopy(locale);
+  // One lookup per request: the access gate (link + live token) is resolved
+  // once even when the model calls the tool several times in parallel.
+  const lookupOrderStatus = createOrderStatusLookup(options.sessionId ?? null);
   return {
     update_customer_profile: tool({
       description: c.updateProfileDesc,
@@ -194,15 +215,34 @@ export function buildChatTools(profile: CustomerProfile, locale: Locale = "de") 
       execute: async () => ({ ok: true }),
     }),
 
+    // Order status for a customer signed in with the Customer Account in THIS
+    // session (lib/order-status.ts; gates and privacy whitelist in
+    // order-status-core.mjs). Placed BEFORE show_contact_form so the cache
+    // marker below stays on the last always-active tool: this one is present
+    // or withheld per deployment (CHAT_ORDER_STATUS_ENABLED), never per turn,
+    // so the cached tools prefix stays byte-stable either way. The widget
+    // renders nothing for it (docs/API_CONTRACT.md §2).
+    get_order_status: tool({
+      description: c.orderStatusDesc,
+      inputSchema: z.object({
+        orderRef: z.string().max(40).optional().describe(c.fieldOrderRef),
+        topic: z
+          .enum(["status", "shipping", "return", "cancellation", "refund"])
+          .describe(c.fieldOrderTopic),
+      }),
+      execute: async ({ orderRef, topic }) => lookupOrderStatus({ orderRef, topic }),
+    }),
+
     show_contact_form: tool({
-      description: c.contactDesc,
+      description: options.orderStatusEnabled ? c.contactDescOrderStatus : c.contactDesc,
       // PROMPT-CACHE BREAKPOINT (tools tier): Anthropic renders tools → system
       // → messages; a cache_control marker on a tool caches the tool prefix up
       // to and including it. This sits on the LAST always-active tool —
       // offer_email_summary (below) is sometimes withheld via activeTools, and
       // a marker there would vanish with it. The tool definitions are byte-
-      // stable per locale, so this prefix hits across turns, sessions and
-      // users. See docs/PROMPT_CACHING.md.
+      // stable per locale (and per CHAT_ORDER_STATUS_ENABLED, a deployment
+      // switch), so this prefix hits across turns, sessions and users. See
+      // docs/PROMPT_CACHING.md.
       providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
       inputSchema: z.object({
         reason: z.enum([
