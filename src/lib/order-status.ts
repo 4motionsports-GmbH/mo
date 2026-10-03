@@ -8,7 +8,9 @@
 //      ('customer_account') IN THIS SESSION (resolveSignedInLink),
 //   3. a live access token for that customer (getValidAccessToken) — a
 //      signed-out or expired account sees nothing,
-//   4. the customer's own orders from the ledger (customer_orders),
+//   4. the customer's own orders from the ledger (customer_orders) — only
+//      while SHOPIFY_CUSTOMER_SYNC_ENABLED keeps it current, else
+//      "unavailable",
 //   5. optionally, for at most MAX_LIVE_ENRICHMENTS orders that are not
 //      cancelled, a short live read from the Admin API (fulfillment progress,
 //      carrier name, delivery dates) — bounded by LIVE_TIMEOUT_MS and checked
@@ -26,7 +28,7 @@ import { resolveSignedInLink } from "./customer-session-link.mjs";
 import { getValidAccessToken } from "./customer-oauth-store";
 import { listCustomerOrders, type LedgerOrder } from "./customer-orders-store";
 import { adminGraphql, isShopifyConfigured } from "./shopify";
-import { isChatOrderStatusEnabled } from "./platform-flags.mjs";
+import { isChatOrderStatusEnabled, isShopifyCustomerSyncEnabled } from "./platform-flags.mjs";
 import { KPI_ORDER_STATUS_LOOKUP, recordKpiEvent } from "./kpi-events";
 import {
   LIVE_TIMEOUT_MS,
@@ -183,6 +185,12 @@ export async function lookupOrderStatus(
         status: access.access === "sign_in_required" ? "sign_in_required" : "unavailable",
         ordersPageUrl,
       });
+    } else if (!isShopifyCustomerSyncEnabled()) {
+      // Without the customer sync the ledger is not kept current (its order
+      // webhooks are acknowledged without writing) — never answer from a stale
+      // copy, e.g. "no orders" for someone who ordered yesterday.
+      outcome = "ledger_off";
+      result = buildOrderStatusForModel({ status: "unavailable", ordersPageUrl });
     } else {
       const { orders } = await listCustomerOrders(access.customerId, { limit: ORDERS_FOR_MATCH }, sql);
       const selection = selectOrders(orders, input.orderRef ?? null);
