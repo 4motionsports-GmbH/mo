@@ -82,7 +82,10 @@ Last updated: 2026-10-03.
 
 ## 2 · Tomorrow morning
 
-- [ ] **2.1 The first nightly run** — M (C checks with you)
+- [x] **2.1 The first nightly run** — M (C checks with you) — done 03.10.: reconcile shows a
+  time, customers have Lebenszyklus/Wertstufe. Kunden header 24,378 vs Shopify 24,367: the
+  header counts everyone incl. „Interessenten“ (Mo-only people without a shop account);
+  „Kund:innen aus Shopify“ in the Shopify-Abgleich card is the number to compare.
   - Einstellungen → „Shopify-Abgleich“: „Nächtlicher Abgleich“ (nightly reconcile) shows a
     time instead of „noch nie“ (never). It runs at 03:45 Berlin time.
   - Kunden: customers show „Lebenszyklus“ (lifecycle) and „Wertstufe“ (value tier), not
