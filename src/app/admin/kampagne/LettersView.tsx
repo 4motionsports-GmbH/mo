@@ -313,8 +313,8 @@ export function LettersView({ campaignId, campaignName }: { campaignId: number; 
 
       {!data.lettersOn && (
         <Callout tone="neutral">
-          Briefe sind für diese Kampagne ausgeschaltet (Bearbeiten → Brief) — die vorhandenen Briefe bleiben sichtbar, es wird
-          nichts geschrieben oder gesendet.
+          Briefe sind für diese Kampagne ausgeschaltet (Bearbeiten → Brief) — die vorhandenen Briefe bleiben sichtbar; es werden
+          keine Entwürfe geschrieben, freigegeben oder gesendet.
         </Callout>
       )}
       {!data.flagApproved && (

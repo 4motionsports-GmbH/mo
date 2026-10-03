@@ -92,6 +92,15 @@ export async function POST(req: Request) {
     const letter = await getCampaignLetter(id);
     if (!letter) return adminJsonError("not_found", "Brief nicht gefunden.", 404);
 
+    // With letters switched off (Bearbeiten → Brief) a letter can still be
+    // read, edited or skipped — but not drafted by the AI or released.
+    if (action === "redraft" || action === "approve") {
+      const campaign = await getCampaign(letter.campaignId);
+      if (!campaign || campaign.letterMode === "aus") {
+        return adminJsonError("letters_off", "Für diese Kampagne sind Briefe ausgeschaltet (Bearbeiten → Brief).", 409);
+      }
+    }
+
     switch (action) {
       case "redraft": {
         if (letter.postalObjectionAt) return adminJsonError("objection", "Widerspruch gegen Briefwerbung — kein Entwurf.", 409);
