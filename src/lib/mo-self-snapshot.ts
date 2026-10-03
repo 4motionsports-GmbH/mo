@@ -21,7 +21,8 @@
 import { createHash } from "node:crypto";
 import { EMPTY_PROFILE } from "./types";
 import { buildSystemPrompt } from "./system-prompt";
-import { toolCopy } from "./tool-descriptions.mjs";
+import { activeToolCopy } from "./tool-descriptions.mjs";
+import { isChatOrderStatusEnabled } from "./platform-flags.mjs";
 import { getPersonaAddendum } from "./system-prompt-core.mjs";
 import { ARCHETYPE_META } from "./persona";
 import { listPublishedGeneralQa } from "./qa-store";
@@ -51,6 +52,10 @@ export async function buildMoSelfSnapshot(): Promise<MoSelfSnapshot> {
     listActiveDirectives(),
   ]);
 
+  // The order status in the chat (get_order_status) is part of Mo only while
+  // CHAT_ORDER_STATUS_ENABLED is on — the snapshot shows what the model sees,
+  // so with the switch off it is exactly what it was before the feature.
+  const orderStatus = isChatOrderStatusEnabled();
   const promptText = buildSystemPrompt({
     profile: EMPTY_PROFILE,
     archetype: "unknown",
@@ -59,9 +64,10 @@ export async function buildMoSelfSnapshot(): Promise<MoSelfSnapshot> {
     generalQa,
     directives,
     locale: "de",
+    orderStatus,
   });
 
-  const tools = toolCopy("de") as Record<string, string>;
+  const tools = activeToolCopy("de", { orderStatus });
   const toolLines = Object.entries(tools)
     .map(([key, text]) => `### ${key}\n${text}`)
     .join("\n\n");

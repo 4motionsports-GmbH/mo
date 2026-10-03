@@ -13,6 +13,36 @@ export function toolCopy(locale) {
   return locale === "en" ? EN : DE;
 }
 
+/** Copy keys that exist only for get_order_status (CHAT_ORDER_STATUS_ENABLED). */
+export const ORDER_STATUS_COPY_KEYS = [
+  "orderStatusDesc",
+  "fieldOrderRef",
+  "fieldOrderTopic",
+  "contactDescOrderStatus",
+];
+
+/**
+ * The tool copy as the model actually sees it in a deployment — for Mo's
+ * self-snapshot (lib/mo-self-snapshot.ts). With the order status off the
+ * get_order_status keys are left out (the copy is exactly what it was before
+ * the feature); with it on, contactDesc carries the contact-form variant.
+ *
+ * @param {"de" | "en"} locale
+ * @param {{ orderStatus?: boolean }} [opts]
+ * @returns {Record<string, string>}
+ */
+export function activeToolCopy(locale, { orderStatus = false } = {}) {
+  const c = toolCopy(locale);
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const [key, text] of Object.entries(c)) {
+    if (key === "contactDescOrderStatus") continue;
+    if (!orderStatus && ORDER_STATUS_COPY_KEYS.includes(key)) continue;
+    out[key] = key === "contactDesc" && orderStatus ? c.contactDescOrderStatus : text;
+  }
+  return out;
+}
+
 const DE = {
   updateProfileDesc: `Aktualisiert das Kundenprofil basierend auf neuen Signalen aus der Konversation.
 Rufe dieses Tool SOFORT auf wenn du ein neues Signal erkennst — z.B. der Kunde nennt sein Budget, seinen Platz, sein Erfahrungslevel, ob er Studio/Physio/Behörde ist.
