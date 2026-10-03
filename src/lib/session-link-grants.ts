@@ -30,11 +30,14 @@ export async function mintSessionLinkGrant(
 export async function redeemSessionLinkGrant(
   input: { code: unknown; sessionId: string | null },
   sql: Sql | null = getSql()
-): Promise<{ ok: true; customerId: number } | { ok: false; reason: "invalid" | "session_mismatch" | "unavailable" }> {
+): Promise<
+  | { ok: true; customerId: number; kind: string }
+  | { ok: false; reason: "invalid" | "session_mismatch" | "unavailable" }
+> {
   if (!sql) return { ok: false, reason: "unavailable" };
   try {
     const r = await redeemLinkGrant(sql, input);
-    return r.ok ? { ok: true, customerId: r.customerId } : { ok: false, reason: r.reason };
+    return r.ok ? { ok: true, customerId: r.customerId, kind: String(r.kind) } : { ok: false, reason: r.reason };
   } catch (err) {
     reportError(err, { route: "lib/session-link-grants", phase: "redeem" });
     return { ok: false, reason: "unavailable" };

@@ -20,6 +20,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { readSession } from "@/lib/account-guard";
 import { redeemSessionLinkGrant } from "@/lib/session-link-grants";
+import { recordKpiEvent, KPI_ACCOUNT_SIGNIN_LINKED, KPI_ACCOUNT_SIGNIN_LINK_REFUSED } from "@/lib/kpi-events";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -43,7 +44,16 @@ export async function POST(req: Request) {
     } catch {
       return errorResponse("bad_request", "Invalid JSON body", 400, headers);
     }
-    const result = await redeemSessionLinkGrant({ code, sessionId: readSession(req) });
+    const sessionId = readSession(req);
+    const result = await redeemSessionLinkGrant({ code, sessionId });
+    // Pseudonymous, session-keyed: the KPI tab's sign-in funnel ends here (a
+    // Shopify sign-in only counts once the chat redeemed it), and refusals show
+    // a widget that redeems wrongly — or a planted link (session_mismatch).
+    if (result.ok) {
+      await recordKpiEvent({ sessionId, event: KPI_ACCOUNT_SIGNIN_LINKED, data: { kind: result.kind } });
+    } else if (result.reason !== "unavailable") {
+      await recordKpiEvent({ sessionId, event: KPI_ACCOUNT_SIGNIN_LINK_REFUSED, data: { reason: result.reason } });
+    }
     if (!result.ok) {
       if (result.reason === "unavailable") {
         return errorResponse("upstream_unavailable", "Anmeldung gerade nicht möglich — bitte später erneut versuchen.", 503, headers);
