@@ -24,9 +24,14 @@ function makeSql({ customers = {} } = {}) {
       const [sid, customerId, kind] = values;
       const prev = links.get(sid);
       // The ON CONFLICT rule: an e-mail link for the SAME customer keeps a
-      // signed-in kind; anything else takes the new kind.
+      // signed-in kind, an App Proxy link keeps a Customer Account sign-in;
+      // anything else takes the new kind.
+      assert.match(text, /link_kind = 'customer_account'\s+AND EXCLUDED\.link_kind = 'app_proxy'/);
       const keep =
-        prev && prev.customerId === customerId && isSignedInLinkKind(prev.kind) && kind === "email";
+        prev &&
+        prev.customerId === customerId &&
+        ((isSignedInLinkKind(prev.kind) && kind === "email") ||
+          (prev.kind === "customer_account" && kind === "app_proxy"));
       links.set(sid, { customerId, kind: keep ? prev.kind : kind });
       return Promise.resolve([]);
     }
@@ -247,4 +252,14 @@ test("resolveSignedInLink rejects a row whose kind is not a signed-in kind (defe
   // Even if a query ever returned a weaker kind, the helper must not pass it on.
   const sql = () => Promise.resolve([{ id: 42, shopify_customer_id: "9988", link_kind: "email" }]);
   assert.equal(await resolveSignedInLink(sql, "sess-1"), null);
+});
+
+test("the shop's App Proxy never downgrades a Customer Account sign-in of the same customer", async () => {
+  const sql = makeSql({ customers: { 7: { shopify_customer_id: "111" }, 8: { shopify_customer_id: "222" } } });
+  await linkSessionToCustomer(sql, "s", 7, "customer_account");
+  await linkSessionToCustomer(sql, "s", 7, "app_proxy");
+  assert.equal(sql._links.get("s").kind, "customer_account");
+  // Another customer always re-points with the new kind.
+  await linkSessionToCustomer(sql, "s", 8, "app_proxy");
+  assert.deepEqual(sql._links.get("s"), { customerId: 8, kind: "app_proxy" });
 });

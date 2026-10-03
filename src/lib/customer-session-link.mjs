@@ -32,9 +32,11 @@ export function isSignedInLinkKind(kind) {
  * Upsert the direct session → customer link. Idempotent: a later bind under the
  * same session re-points it (e.g. tier-2 email link → tier-3 sign-in). A typed
  * e-mail for the SAME customer never weakens a signed-in link (a signed-in
- * customer asking for the summary mail stays signed in); a link to ANOTHER
- * customer always takes the new kind, so typing someone else's e-mail drops
- * the sign-in (fail closed). Returns false (without touching the DB) when
+ * customer asking for the summary mail stays signed in), and the shop's App
+ * Proxy recognition never weakens a Customer Account sign-in of the same
+ * customer (the order status needs the latter); a link to ANOTHER customer
+ * always takes the new kind, so typing someone else's e-mail drops the
+ * sign-in (fail closed). Returns false (without touching the DB) when
  * there's nothing safe to write. Never throws — best-effort, exactly like the
  * conversation attach it backs up.
  *
@@ -55,15 +57,19 @@ export async function linkSessionToCustomer(sql, sessionId, customerId, kind = "
     ON CONFLICT (session_id) DO UPDATE SET
       link_kind = CASE
         WHEN customer_session_links.customer_id = EXCLUDED.customer_id
-         AND customer_session_links.link_kind IN ('customer_account', 'app_proxy')
-         AND EXCLUDED.link_kind = 'email'
+         AND ((customer_session_links.link_kind IN ('customer_account', 'app_proxy')
+               AND EXCLUDED.link_kind = 'email')
+           OR (customer_session_links.link_kind = 'customer_account'
+               AND EXCLUDED.link_kind = 'app_proxy'))
         THEN customer_session_links.link_kind
         ELSE EXCLUDED.link_kind
       END,
       authenticated_at = CASE
         WHEN customer_session_links.customer_id = EXCLUDED.customer_id
-         AND customer_session_links.link_kind IN ('customer_account', 'app_proxy')
-         AND EXCLUDED.link_kind = 'email'
+         AND ((customer_session_links.link_kind IN ('customer_account', 'app_proxy')
+               AND EXCLUDED.link_kind = 'email')
+           OR (customer_session_links.link_kind = 'customer_account'
+               AND EXCLUDED.link_kind = 'app_proxy'))
         THEN customer_session_links.authenticated_at
         ELSE EXCLUDED.authenticated_at
       END,

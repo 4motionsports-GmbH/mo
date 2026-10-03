@@ -9,7 +9,7 @@
 // is recorded for admin review so consent provenance stays auditable.
 // See docs/CUSTOMER_ACCOUNT.md (merge rule) and docs/CONSENT_FLOW.md.
 
-/** @typedef {{ id: number, email: string|null }} MergeRow */
+/** @typedef {{ id: number, email: string|null, shopifyCustomerId?: string|null }} MergeRow */
 
 /**
  * Decide what to do given the two rows looked up on sign-in.
@@ -20,9 +20,11 @@
  * @param {MergeRow|null} input.rowByEmail - customers row matching Shopify's
  *   verified (normalised) email, or null.
  * @param {string} input.shopifyEmail - Shopify's verified email, normalised.
+ * @param {string|null} [input.shopifyCustomerId] - the signing-in Shopify customer.
  * @returns {{
  *   action: "use" | "stamp" | "create",
  *   customerId: number | null,   // target row for use/stamp; null for create
+ *   syntheticEmail?: boolean,    // create under shopify:<id> — the e-mail row belongs to someone else
  *   conflict: null | {
  *     kind: "row_collision" | "email_mismatch",
  *     emailRowCustomerId: number | null,
@@ -31,7 +33,7 @@
  *   }
  * }}
  */
-export function decideMerge({ rowByShopifyId, rowByEmail, shopifyEmail }) {
+export function decideMerge({ rowByShopifyId, rowByEmail, shopifyEmail, shopifyCustomerId = null }) {
   const email = (shopifyEmail || "").trim().toLowerCase();
 
   // (a) Already linked to this Shopify customer.
@@ -70,11 +72,31 @@ export function decideMerge({ rowByShopifyId, rowByEmail, shopifyEmail }) {
     return { action: "use", customerId: rowByShopifyId.id, conflict: null };
   }
 
-  // (b) Not yet linked, but an existing tier-2 row matches the verified email →
-  // STAMP it with the Shopify identity (carries the existing consent / profile /
-  // history forward). By construction rowByEmail.email === shopifyEmail, so this
-  // is the clean merge — no conflict.
+  // (b) Not yet linked, but an existing row matches the verified email.
   if (rowByEmail) {
+    // That row already belongs to ANOTHER Shopify customer (the mirror still
+    // has the address on them — e-mail changed in Shopify, mirror lag). Never
+    // re-stamp it: the signing-in person would inherit someone else's orders,
+    // history and session. Create their own row under a synthetic address and
+    // log the collision for admin review.
+    const otherShopifyId = rowByEmail.shopifyCustomerId ? String(rowByEmail.shopifyCustomerId) : null;
+    const thisShopifyId = shopifyCustomerId ? String(shopifyCustomerId) : null;
+    if (otherShopifyId && thisShopifyId && otherShopifyId !== thisShopifyId) {
+      return {
+        action: "create",
+        customerId: null,
+        syntheticEmail: true,
+        conflict: {
+          kind: "row_collision",
+          emailRowCustomerId: rowByEmail.id,
+          emailRowEmail: rowByEmail.email ?? null,
+          shopifyRowCustomerId: null,
+        },
+      };
+    }
+    // STAMP the tier-2 row with the Shopify identity (carries the existing
+    // consent / profile / history forward). By construction rowByEmail.email ===
+    // shopifyEmail, so this is the clean merge — no conflict.
     return { action: "stamp", customerId: rowByEmail.id, conflict: null };
   }
 

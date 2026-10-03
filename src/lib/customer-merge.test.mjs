@@ -93,3 +93,26 @@ test("numericFromCustomerGid extracts the numeric id", () => {
   assert.equal(numericFromCustomerGid(null), null);
   assert.equal(numericFromCustomerGid(12345), null);
 });
+
+test("(b') e-mail row already belongs to ANOTHER Shopify customer → never re-stamp it; own row under a synthetic key + conflict", () => {
+  const d = decideMerge({
+    rowByShopifyId: null,
+    rowByEmail: { id: 7, email: "x@example.com", shopifyCustomerId: "111" },
+    shopifyEmail: "x@example.com",
+    shopifyCustomerId: "222",
+  });
+  assert.equal(d.action, "create");
+  assert.equal(d.customerId, null);
+  assert.equal(d.syntheticEmail, true);
+  assert.equal(d.conflict?.kind, "row_collision");
+  assert.equal(d.conflict?.emailRowCustomerId, 7);
+  // Same Shopify customer (or a row without one) still stamps.
+  assert.equal(
+    decideMerge({ rowByShopifyId: null, rowByEmail: { id: 7, email: "x@example.com", shopifyCustomerId: "222" }, shopifyEmail: "x@example.com", shopifyCustomerId: "222" }).action,
+    "stamp"
+  );
+  assert.equal(
+    decideMerge({ rowByShopifyId: null, rowByEmail: { id: 7, email: "x@example.com", shopifyCustomerId: null }, shopifyEmail: "x@example.com", shopifyCustomerId: "222" }).action,
+    "stamp"
+  );
+});
