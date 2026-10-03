@@ -72,6 +72,21 @@ from the store; `npm test` 1027 green (118 files).
 | Analyse | 1 | — | ANA-15 chapters „Kundenbasis“ and „Kampagnen“ (screen + PDF) | — |
 | Einstellungen | 1 | EIN-07 (new switch) | EIN-12 Merkmale als Shopify-Tags (plan D-11) | `SHOPIFY_WRITEBACK_ENABLED` |
 
+### Addition 2026-10-03 — letters as a campaign channel (migration 0074)
+
+A campaign can also write advertising letters (Pingen) to its audience, each one drafted, reviewed and released by
+hand on the desk ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §8; legal: [`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) § 18, F-35).
+Code check of the touched rows and the three new routes against the change set of migration `0074`; screenshots of
+the new view, the send dialog and the editor section at 1440 and 1024 px in light and dark, plus the printed PDF:
+[`screenshots/kampagne-briefe/`](./screenshots/kampagne-briefe/). Rows below are marked **2026-10-03**. Nothing was
+removed.
+
+| Screen | Touched | 🔁 | ➕ (new) | Notes |
+| --- | --- | --- | --- | --- |
+| Kampagnen | 0 | — | KAM-114 editor section „Brief“, KAM-115 letter recipients, KAM-116 view „Briefe“ (`?view=briefe`), KAM-117 „Adressen holen“ (+ nightly), KAM-118 „Entwürfe schreiben“, KAM-119 letter detail with „Freigeben“, KAM-120 „Freigegebene senden“ | `campaigns/letters`, `campaigns/letters/preview`; `campaigns/audience-preview` takes `letterMode` |
+| Kunden | 1 | KUN-97…107 (Brief: only a purchase address counts — any other stored address and an undeliverable one are refused) | KUN-135 „Adresse aus letzter Bestellung holen“ | `customers/letter-address`; `physical/send` 409 `not_purchase_address` / `address_invalid` |
+| KPIs | 1 | KPI-52 (call site „Kampagnen-Briefe“) | — | — |
+
 ---
 
 ## 0. Shell (SHL)
@@ -184,8 +199,8 @@ from the store; `npm test` 1027 green (118 files).
 | KUN-85…89 | ✅ | Korrespondenz: counter, „Neue E-Mail“, composer header, „Betreff“ (Re: prefill), „Nachricht“ (20000). |
 | KUN-90 | 🔁 | „Senden“ → `useConfirm`; „Leerer Text“ warning kept. |
 | KUN-91…96 | ✅ | Preview, cancel, empty state, thread cards + „Antworten“, lazy body (`Spinner` „Inhalt wird geladen“), expanded meta + attachments. |
-| KUN-97…103 | ✅ | Brief: header, generate, „Hinweise für den Brief“, „Briefbetreff“, „Brieftext“, save, „Vorschau aktualisieren“ (PDF blob). |
-| KUN-104 | 🔁 | „Brief senden“ → `useConfirm`; disabled reason shown as text. |
+| KUN-97…103 | ✅ | Brief: header, generate, „Hinweise für den Brief“, „Briefbetreff“, „Brieftext“, save, „Vorschau aktualisieren“ (PDF blob). **2026-10-03:** the preview shows only a purchase address (else the placeholder); the PDF helper is shared with Kampagnen → Briefe (`lib/fetch-pdf.ts`). |
+| KUN-104 | 🔁 | „Brief senden“ → `useConfirm`; disabled reason shown as text. **2026-10-03:** refused unless the address is the shipping address of the latest completed order (`not_purchase_address`) and did not come back undeliverable (`address_invalid`) — KUN-135. |
 | KUN-105…107 | ✅ | PDF iframe „Brief-Vorschau“, reason text, letter history with status badges and „Porto“. |
 | KUN-108…112 | 🔁 | Post-baseline items: „Herkunft“ filter ❌ → Shop + Mo; source badge → Shop/Mo badges; profile facts in Überblick; erasure dialog names the Shopify side; Werbe-Einwilligung → the one consent with source and history. **2026-10 follow-up:** the erasure dialog promises the Shopify deletion only while `SHOPIFY_ERASURE_SYNC` is on, otherwise it says the shop-account deletion is queued. |
 | KUN-113…119 | ➕ | Server-side list over `customer_overview`: header counts, „noch nicht übernommen“ callout, views (`?kview=`), Einwilligung / Lebenszyklus, „Weitere Filter“ (Mo, Wert, Persona, Shop, Abwanderung), search / sort / 50-row pages in the URL, rows with Shop / Mo / consent / segment / churn badges. **2026-10 follow-up:** a page past the end shows page 1. |
@@ -194,6 +209,7 @@ from the store; `npm test` 1027 green (118 files).
 | KUN-131, 132 | ➕ | Überblick „Wahrscheinlich als Nächstes“ (complements of what the person owns); Aktivität „Frag Mo“ (question about the person, answered from the record with cited sources, `customers/ask`; audit-logged since the follow-up). |
 | KUN-133 | ➕ | **2026-10 follow-up:** „Auswählen“ → „Zur Kampagne…“ — select people (per page header checkbox), pick a campaign (Einzelansprache first), optional note, `campaigns/add-recipients` (≤ 200, consent-gated, nothing drafted or sent). Replaces the retired bulk-draft bar (KUN-13, 16, 25…29). |
 | KUN-134 | ➕ | **2026-10 follow-up:** Überblick „Ähnliche Kunden“ (`customers/similar`: same value tier, shared bought categories, deterministic) with „Als Zielgruppe verwenden“ → `?tab=kampagne&edit=new&audience=<json>`. |
+| KUN-135 | ➕ | **2026-10-03 (0074):** Brief „Adresse aus letzter Bestellung holen“ (`customers/letter-address`, audit-logged) — shown while no usable purchase address is stored; refused while `PHYSICAL_MAIL_SENDS_APPROVED` is off. |
 
 ## 4. Kampagne (KAM) — heavy daily use, every behaviour kept
 
@@ -236,6 +252,7 @@ from the store; `npm test` 1027 green (118 files).
 | KAM-96…100 | ➕ | Kampagnen overview (Aktuell / Alle / Archiv, cards with phase, audience text, figures, status actions with confirms), editor sheet (`?edit=`), live audience count, AI „Briefing vorschlagen“ / „Filter setzen“. **2026-10 follow-up:** card Klickrate counts any click (button or set link); editor chips and the AI prompt state the code's bounds (Ausbauen 1–3 Mon., Weiterentwickeln 3–12 Mon., Wertstufe by the most expensive single item, 150 € / 1,500 €); Mo-Chat button without the Mo hint refused; live count as window aggregates (8 rows) plus „Ohne Einwilligung passen weitere N — davon M per Brief erreichbar“; `?edit=new&audience=<json>` (KUN-134). |
 | KAM-101…103 | ➕ | Desk per campaign (`?campaign=`, switcher, phase), „Zielgruppe aktualisieren“, Vorbereiten defaults from the campaign's offer (per campaign in localStorage). **2026-10 follow-up:** header InfoTip per phase and „Tagesziel n“; hero hints, the Liste hero column and the Vorbereiten hero option / estimate follow the hero mode (`ai_all` = every card, `default` / `none` = none); the send-window hint only for `laufend`; texts no longer mention the retired newsletter sync. |
 | KAM-104…106 | ➕ | Einzelansprache system campaign; campaign brief / end date / design / hero mode / CTA in drafts and mails; send gate campaign live → master flag → consent → opt-in → suppression → cadence. **2026-10 follow-up:** `campaign/send` answers `campaign_closed` 409 and `no_consent` 403; several people at once via KUN-133. |
+| KAM-114…120 | ➕ | **2026-10-03 (0074):** letters as a campaign channel — editor section „Brief“ (mode, „Porto-Budget (€)“, „Per Brief: …“ line), letter recipients from the audience refresh, view „Briefe“ (`?view=briefe`: filter, status line, Callouts, list + detail), „Adressen holen“ (purchase address of the latest completed order; nightly in `campaign-audiences`), „Entwürfe schreiben“ / „Neu schreiben“ (AI, `campaign_letter`), per-letter edit / „Vorschau“ / „Freigeben“ / „Zurücknehmen“ / „Überspringen“, „Freigegebene senden“ (5 per step, every gate per letter, `submitLetter`). No bulk release; releases and send steps in the access log. |
 
 ## 5. KPIs (KPI) — every number and every caveat kept
 
@@ -477,6 +494,23 @@ Both discrepancies (server-side tab switching claim, missing Einstellungen) are 
   ➕ `shopify-insight-tags`); **1027 green before the merge** (118 files; ➕ `text-excerpt`). The follow-up added
   migration `0069` (`campaign_contacts.added_manually`).
 
+**Letters as a campaign channel (2026-10-03, migration 0074, inventory parts 2–6 updated in place):**
+
+- **Admin routes:** ➕ `campaigns/letters` (the view „Briefe“: list, address / draft / send steps, per-letter
+  actions), `campaigns/letters/preview` (PDF), `customers/letter-address` → **103** route files, all `guardAdminPost`;
+  `recordAdminAccess` in 39 (+ `campaigns/letters`, `customers/letter-address`). 🔁 `campaigns/audience-preview` takes
+  `letterMode` (→ `letters { total, withAddress }`); `physical/send` refuses `not_purchase_address`,
+  `address_invalid`, `objection` (409).
+- **Crons:** 🔁 `campaign-audiences` refreshes the letter recipients of campaigns with a letter mode and fetches up to
+  `CAMPAIGN_LETTER_ADDRESS_NIGHTLY` purchase addresses; `retention` deletes `campaign_letters` on the campaign window
+  (by `updated_at`).
+- **Environment:** ➕ `LETTER_MIN_INTERVAL_DAYS` (60), `CAMPAIGN_LETTER_ADDRESS_NIGHTLY` (200),
+  `CAMPAIGN_LETTER_SHOP_URL`, all in `.env.example`.
+- **Database:** migration `0074_campaign_letters.sql` — **to be run manually** by the maintainer before the deploy
+  that ships the code.
+- **Tests:** new core `campaign-letter-core.mjs` (+ test); new cases in `campaign-def`, `campaign-desk-core`,
+  `letter-pdf`, `pdf-core`, `physical-address`, `pingen-core`, `postal-address`.
+
 ## Screenshots
 
 `docs/screenshots/before/` (baseline) and `docs/screenshots/after/` (2026-09-09), same names: `<screen>-light.png`,
@@ -488,3 +522,8 @@ theme, render time and page height per shot.
 for `eingang`, `kampagnen`, `kampagne-editor`, `kampagne-desk`, `kampagne-blackfriday`, `kunden`, `kunden-ohne-mo`,
 `kunden-detail-{ueberblick,aktivitaet,kaeufe,marketing}`, `kpi`, `kpi-kundenbasis`, `einstellungen`, plus
 `einzelansprache-desk-light-1440.png`.
+
+2026-10-03: [`screenshots/kampagne-briefe/`](./screenshots/kampagne-briefe/) — the view „Briefe“
+(`briefe-{light,dark}.png`, `briefe-{light,dark}-1024.png`, sent letters `briefe-versendet-{light,dark}.png`), the send
+dialog (`senden-dialog-{light,dark}.png`), the editor section „Brief“ (`editor-brief-{light,dark}.png`,
+`editor-brief-{light,dark}-1024.png`) and the printed letter (`brief-pdf.png`).

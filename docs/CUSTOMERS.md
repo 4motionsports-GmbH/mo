@@ -173,7 +173,7 @@ us (`POST /api/admin/customers/objection`, `setCustomerObjection`):
 | Column | Effect | Where |
 | --- | --- | --- |
 | `profile_objection_at` | The stored profile is deleted at once and none is built or used again — it always wins over the scope. | Kunden → Überblick ("Widerspruch gegen Profilbildung") |
-| `postal_objection_at` | No advertising letters; the letter draft is cleared. | Kunden → Brief |
+| `postal_objection_at` | No advertising letters; the letter draft is cleared. Campaign letters of the person are excluded at the next audience refresh and refused at send (`CAMPAIGNS.md` §8); the stored address is kept. | Kunden → Brief |
 
 **One path writes it:** `regenerateCustomerProfile(customerId)` — used by the
 nightly upkeep, the "Neu generieren" button (`POST /api/admin/customers/profile`)
@@ -280,7 +280,7 @@ It resolves every address, Kampagne contact, conversation and session of the
 person and removes them in **one transaction**: customer + profile, all chats
 (all devices), consent records and the consent history (`consent_events`),
 marketing + Kampagne drafts and sends, the Kampagne contacts, correspondence,
-letters, feedback, KPI events, attribution tokens, sign-in state, usage rows,
+letters (posted letters and campaign letters, `campaign_letters`), feedback, KPI events, attribution tokens, sign-in state, usage rows,
 Eingang items, the facts and the person's section in stored Analyse reports.
 **Mo's copy of the person's Shopify orders (`customer_orders`) is deleted with
 them** (cascade, plus an explicit delete by Shopify id for rows not yet linked);
@@ -323,7 +323,8 @@ table cannot silently escape deletion.
 The customer's data export (`/api/account/export`) contains the profile,
 consent records and the consent history, conversations, correspondence,
 letters, marketing sends, bundle offers, feedback, the order ledger, the facts,
-campaign participation and sends, and the suppression status.
+campaign participation, sends and letters (also unsent letter drafts, 0074), and the suppression
+status.
 
 **Retention:** the job ([`src/lib/retention.ts`](../src/lib/retention.ts))
 purges opted-out customer rows after the capture grace period and inactive

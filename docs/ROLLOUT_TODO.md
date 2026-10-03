@@ -146,6 +146,32 @@ Last updated: 2026-10-03.
     „Muster erzeugen“ shows three different people with their mails; „Testpostfach …“ with your
     own address delivers that mail (with a real code if the campaign has a discount).
 
+- [ ] **1.10 Letters as a campaign channel** — C built it 03.10. (C.12), M runs the migration and
+  tries it
+  - **M:** right after the merge pull main and run `npm run db:migrate` (applies `0074`). Until it
+    has run, saving a campaign, the audience match (live count and refresh — fail closed, nobody
+    matches) and every letter, Kunden → Brief included, fail, and the nightly retention run stops
+    at its campaign step — migrate right away.
+  - Optional env (Vercel; defaults in `.env.example`): `LETTER_MIN_INTERVAL_DAYS` (days between two
+    advertising letters to one person, default 60), `CAMPAIGN_LETTER_ADDRESS_NIGHTLY` (purchase
+    addresses fetched per night, default 200), `CAMPAIGN_LETTER_SHOP_URL` (shop address the letter
+    may name; default the shop's host).
+  - Production already has the letter gate on (6.5). Nothing new happens until a campaign's
+    „Briefe“ is set to something other than „Keine Briefe“ — and then every letter still needs
+    „Freigeben“ and „Freigegebene senden“. Kunden → Brief now takes only the shipping address of
+    the latest completed order: a customer whose stored address came from elsewhere needs
+    „Adresse aus letzter Bestellung holen“ first.
+  - **Try it with Pingen's test environment first** — on a Preview deployment with
+    `PHYSICAL_MAIL_SENDS_APPROVED=true` and `PINGEN_STAGING=true` (Preview only): Kampagnen → a
+    campaign → „Bearbeiten“ → section „Brief“ → „Briefe“ = „An alle ohne E-Mail-Einwilligung“
+    (optionally a „Porto-Budget (€)“) → Speichern → „Öffnen“ → view „Briefe“ → „Adressen holen“ →
+    „Entwürfe schreiben“ → open a letter, read it, „Vorschau“, „Freigeben“ → „Freigegebene senden“.
+    The view shows „Pingen-Testumgebung (PINGEN_STAGING) — es wird nichts gedruckt oder
+    verschickt.“
+  - Done when: the letter is under „Versendet“ with a Pingen status, and the PDF shows the
+    objection notice in the footer and prints „ “ – € correctly.
+  - Production letters only after L's answer on F-35 (dossier § 18) → goes with 3.2.
+
 ## 2 · Tomorrow morning
 
 - [x] **2.1 The first nightly run** — M (C checks with you) — done 03.10.: reconcile shows a
@@ -170,9 +196,9 @@ Last updated: 2026-10-03.
     opt-in and are only mailed with `CAMPAIGN_ALLOW_SINGLE_OPT_IN=true` (see 6.5).
 
 - [ ] **3.2 Lawyer dossier** — M → L
-  - Send `docs/ANWALTSDOSSIER.md` (focus §13 to §17, questions F-22 to F-34; F-31 and F-34
+  - Send `docs/ANWALTSDOSSIER.md` (focus §13 to §18, questions F-22 to F-35; F-31 and F-34
     — the two sign-in flaws of 03.10. — are the urgent ones; F-32 = order status in the chat,
-    blocks 6.6).
+    blocks 6.6; F-35 = advertising letters from campaigns, before production letters, 1.10).
   - Mention the deadline: Black Friday is **27 Nov 2026**; the campaign send gate (6.5)
     needs the sign-off by **~18 Nov** so mails can go out from 20 Nov.
   - Done when: L has it and has given a date.
@@ -181,7 +207,8 @@ Last updated: 2026-10-03.
   flows into Mo*
   - Add: customer and order data from the shop are processed in Mo; AI customer profiles
     (and the right to object); one shared e-mail consent and one deletion with Shopify;
-    advertising letters with the right to object; AI suggestions in the Eingang; contact
+    advertising letters with the right to object — also from campaigns, AI-drafted, sent via
+    Pingen (F-35 c); AI suggestions in the Eingang; contact
     requests stored in Mo and AI-assisted replies to incoming mails (F-30); once 6.6 is
     on, Mo answering signed-in customers' questions about their own orders (F-32); the
     retention periods (`docs/DATA_RETENTION.md`).
@@ -269,8 +296,9 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [x] **6.5 Send gates** — already on in production (Systemstatus, 02.10.): campaign mails
   „Freigegeben“, single-opt-in contacts „Erlaubt“, letters „Freigegeben“ — the state from
   before the customer platform. Black Friday is not blocked by a gate. The lawyer's view on
-  F-25 (single opt-in, now one switch for all marketing mail) and F-27 (letters, Robinson
-  list) is still worth having; switch a gate off in Vercel if the answer says so.
+  F-25 (single opt-in, now one switch for all marketing mail), F-27 (letters, Robinson
+  list) and F-35 (letters from campaigns, 1.10) is still worth having; switch a gate off in
+  Vercel if the answer says so.
 
 - [ ] **6.6 Order status in the chat** (F-32) — M (FE first, C checks)
   - Signed-in customers ask „Wo ist meine Bestellung?“ and Mo answers from the order ledger
@@ -343,6 +371,15 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       carrier, delivery day; never order number, amount, tracking number or address.
       Returns, cancellations and complaints stay with the contact form. Turning it on: 6.6.
       Lawyer: dossier § 16 (F-32) → goes with 3.2.
+- [x] **C.12** **Briefe als Kampagnen-Kanal** — built 03.10. (migration `0074`; every campaign
+      starts at „Keine Briefe“): a campaign can also write advertising letters (Pingen) — „An
+      alle ohne E-Mail-Einwilligung“ or „An alle (auch mit Einwilligung)“, with an optional
+      postage budget. Address = the shipping address of the latest completed order only (now
+      also for Kunden → Brief, with „Adresse aus letzter Bestellung holen“); an AI draft per
+      letter; each letter is read and released by hand in the desk view „Briefe“; „Freigegebene
+      senden“ checks every gate again per letter (objection, consent, address, 60-day cadence,
+      budget). `docs/CAMPAIGNS.md` §8. Turning it on: 1.10. Lawyer: dossier § 18 (F-35) → goes
+      with 3.2.
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
       index the lookup (next free migration number; `0071` went to the session-link fix) —
       low priority.
@@ -354,7 +391,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 
 - „Serien-Mail“ for big campaigns (D-10) — see 4.1.
 - Verbesserung (improvement) lane „Marketing“: offers, segments and triggers as proposals.
-- Letters as a campaign channel (batch letters with review and Pingen costs); today
-  letters go out per customer.
+- ~~Letters as a campaign channel (batch letters with review and Pingen costs)~~ — built
+  03.10. (C.12, 1.10).
 - Legacy clean-up, one release later: move open `marketing_sends` drafts into the
   Einzelansprache, drop `customers.marketing_status` and `purchase_summary`.

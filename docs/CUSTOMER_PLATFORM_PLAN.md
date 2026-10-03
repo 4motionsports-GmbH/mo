@@ -20,7 +20,8 @@ D-5: two-way erasure behind `SHOPIFY_ERASURE_SYNC`; with only `SHOPIFY_CONSENT_W
 erasure still switches the Shopify consent off. D-6: mirror + order ledger + facts behind
 `SHOPIFY_CUSTOMER_SYNC_ENABLED`. D-7: letters stay a per-customer channel (Kunden → Brief) with a
 postal objection flag, the Art. 21 notice in every letter, letter suggestions in the Eingang and
-the letter reach in the campaign editor. D-8: the Einzelansprache is a campaign. D-9: the Eingang
+the letter reach in the campaign editor (since 2026-10-03 also a campaign channel — see below).
+D-8: the Einzelansprache is a campaign. D-9: the Eingang
 is screen 1. D-10: Serien-Mail not built (undecided). D-11: insight tags built, off by default
 (`SHOPIFY_WRITEBACK_ENABLED`). D-12: names as listed. All Shopify switches default to `false`;
 the lawyer items are in `ANWALTSDOSSIER.md` §13 (F-22 to F-29).
@@ -73,9 +74,21 @@ still reviewed and approved by a person, one at a time; a release job sends the 
 through `approveAndSendCampaign` (all gates again) and returns changed or refused ones to the
 queue. Serien-Mail (D-10) stays not built.
 
+**After the rollout (2026-10-03): letters as a campaign channel (D-7).** Migration `0074`
+(`campaigns.letter_mode` + `letter_budget_cents`, table `campaign_letters`,
+`physical_letters.campaign_id`, `customers.postal_address_order_id` / `postal_address_invalid_at`).
+A campaign can also write advertising letters through Pingen — mode „Keine Briefe“ (default),
+„An alle ohne E-Mail-Einwilligung“ (never both channels) or „An alle (auch mit Einwilligung)“,
+with an optional postage budget. Letter recipients come from the campaign's audience (minus the
+e-mail-only filters) with at least one order, no postal objection and no block; the address is
+only the shipping address of the latest completed order, fetched from Shopify per recipient
+(this rule now also holds for Kunden → Brief). Each letter gets an AI draft, is reviewed and
+released by hand in the desk view „Briefe“, and „Freigegebene senden“ checks every gate again per
+letter (cadence `LETTER_MIN_INTERVAL_DAYS`, budget). Reference: `CAMPAIGNS.md` §8; dossier § 18
+(F-35).
+
 **Not built:** the Verbesserung lane „Marketing“ (offers, segments, triggers as proposals) — it
-needs a proposal type that is not a prompt directive; letters as a campaign channel (batch letters
-with review and Pingen costs) — today letters are sent per customer; Serien-Mail (D-10); the
+needs a proposal type that is not a prompt directive; Serien-Mail (D-10); the
 legacy drop (`marketing_sends` → Einzelansprache, removal of `customers.marketing_status` and
 `purchase_summary`) — the old 1:1 path remains only for drafts that were open before the switch.
 
