@@ -57,6 +57,12 @@ conversation, an AI summary and a reply draft (writer tier, call site `inbox_mai
 service reply, never advertising) and sends from the Eingang (`inbox-mail.ts`,
 `inbox-mail-core.mjs`, `eingang/MailReply.tsx`). Dossier §14 (F-30).
 
+**After the rollout (2026-10-03): „Unzufriedenheit“ dated by the refund.** Migration
+`0070_order_refund_date` adds `customer_orders.last_refund_at` (the newest refund that moved
+money, from the webhook's `refunds[]` and GraphQL `refunds { createdAt totalRefundedSet }`); the
+rule uses it instead of the order's last change and ignores refunds below 10 % of the order
+value. Cancellations count as before.
+
 **Not built:** the Verbesserung lane „Marketing“ (offers, segments, triggers as proposals) — it
 needs a proposal type that is not a prompt directive; letters as a campaign channel (batch letters
 with review and Pingen costs) — today letters are sent per customer; Serien-Mail (D-10); the
