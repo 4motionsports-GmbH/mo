@@ -278,6 +278,9 @@ customer's e-mail re-points the link as `email` and drops the sign-in. `/api/aut
 obtaining a **valid access token** (refreshing if needed) before reporting
 `signedIn: true`. Everything fails closed — a blank/unlinked session, or one
 linked only to a tier-1/2 customer (no `shopify_customer_id`), resolves to null.
+`resolveSignedInLink` (same module, same rules) additionally returns the
+`linkKind`, for callers that accept only one way of signing in — the order
+status in the chat accepts only `customer_account` (§8).
 
 A successful round-trip: login (`?session={sid}`) → callback binds the customer
 and mints a code for `sid` → 302 back to `return_url` **with
@@ -462,6 +465,35 @@ So a **non-consented or anonymous** user gets **no** purchase history, profile,
 or address in the prompt — the consent gate governs personalisation exactly as
 for tier 2; only the signed-in name greeting (the session's own identity) is
 added on top.
+
+### Order status in the chat (`get_order_status`, 2026-10, default off)
+
+Separate from personalisation: a signed-in customer may ask Mo about the **state
+of their own orders** (status, shipping, delivery, refund) and Mo answers from
+the order ledger plus a short live Admin API read (`lib/order-status.ts`, pure
+rules in `order-status-core.mjs`). This is customer service, not
+personalisation, so it does **not** need the marketing consent above
+(Art. 6 (1) b). Its gate is stricter than the resolver's:
+
+- `CHAT_ORDER_STATUS_ENABLED` is on (default off; while off the tool is
+  withheld and the prompt is unchanged);
+- the session's link is the **Customer Account sign-in in this session** —
+  `resolveSignedInLink` (`customer-session-link.mjs`) reads `link_kind`
+  explicitly and only `customer_account` counts; an App Proxy link
+  (`app_proxy`), a typed e-mail or a `legacy` link get `sign_in_required`;
+- `getValidAccessToken(customerId)` returns a **live token** (refreshing if
+  needed) — signed out or expired → `sign_in_required`. The access gate is
+  resolved once per chat request, so parallel tool calls never refresh the
+  token twice;
+- `SHOPIFY_CUSTOMER_SYNC_ENABLED` keeps the ledger current — otherwise
+  `unavailable`.
+
+The model receives order date, items, normalised order/payment state, the
+carrier name and delivery dates — never the order number, amounts, tracking
+numbers or links, addresses, ids or the e-mail. A live order whose
+`customer.id` is not the session's Shopify customer is dropped (ledger facts
+only). Returns, cancellations and complaints stay with the contact form. See
+`docs/ANWALTSDOSSIER.md` §16 (F-32) and `docs/API_CONTRACT.md` §2.
 
 ## 9. Signed-in conversation history (tier 3)
 
