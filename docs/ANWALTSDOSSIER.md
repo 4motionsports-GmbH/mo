@@ -373,6 +373,24 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 
 ---
 
+## 17. Nachtrag 03.10.2026 — „Einplanen“: geprüfte Kampagnen-Mails später versenden
+
+### 17.1 Tatsachen
+
+- **Was neu ist.** Eine Kampagnen-Mail kann nach der Prüfung am Pult **eingeplant** statt sofort gesendet werden („jetzt freigeben, später senden“, z. B. „morgen 09:00“).
+- **Prüfung bleibt einzeln und menschlich.** Jede Mail wird weiterhin von einem Menschen einzeln geprüft und einzeln freigegeben. Ein Sammel-Freigeben gibt es nicht.
+- **Versand durch einen Job.** Ein Versand-Job verschickt die fälligen Mails alle 10 Minuten nacheinander.
+- **Alle Prüfungen laufen beim Versand erneut**, im selben und einzigen Versandweg: Einwilligung, Opt-in-Stufe, Sperrliste, Versandabstand, Freigabeschalter.
+- **Zurück zur Prüfung statt Versand.** Eine Mail kommt mit dem Grund zurück in die Prüfung, wenn sich nach der Freigabe der Text oder die Kampagnen-Gestaltung geändert hat, ein Set-Angebot abgelaufen ist oder eine Prüfung ablehnt. Nichts wird automatisch wiederholt.
+- **Schalter** `CAMPAIGN_RELEASE_ENABLED`, standardmäßig aus.
+- **Formulierungen in diesem Dossier:** „einzeln versendet“ (§ 2.2 Kampagne, § 6, § 13.1 Nr. 5) ist ab Einschalten so zu lesen: einzeln geprüft und einzeln freigegeben, zeitversetzt versendet.
+
+### 17.2 Prüfbitte
+
+- **F-33 — Zeitversetzter Versand freigegebener Werbe-Mails:** Bitte bestätigen Sie, dass die Freigabe einer einzeln geprüften Mail mit späterem, automatischem Versand der bisherigen Freigabe (Kampagnen-Kanal, 21.07.2026) entspricht. Beim Versand werden Einwilligung und Widerspruch erneut geprüft.
+
+---
+
 ## Anhang A — Chronologie der im Code dokumentierten anwaltlichen Freigaben
 
 | Datum | Gegenstand | Code-Vermerk |

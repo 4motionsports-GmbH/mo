@@ -415,7 +415,7 @@ Vorbereiten, Postausgang) under `docs/screenshots/kampagne-desk/`.
 | Regenerate policy | Every offer/text change still regenerates the prose, but changes within 1,5 s collapse into one call and it runs in the background; sending that card waits for the fresh prose, moving on does not. |
 | Nightly Vorbereiten | Built as `/api/cron/prepare-campaign-drafts` behind `CAMPAIGN_AUTO_PREPARE_COUNT` — **off by default**; depth and text mode via `CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `_TEXT_MODE`. |
 | Heroes for the A group | An opt-in checkbox in the Vorbereiten popover (off by default, only offered when the campaign design has a hero and generation is configured); the client runs suggest + generate per prepared even id after the drafts, with the recorded per-image cost in the estimate. |
-| Batch or scheduled sending | **Not built.** Direct sends during review spread the volume over the day; „Freigeben“ stays a separate decision (would need a migration). |
+| Batch or scheduled sending | **Built 2026-10-03 as „Einplanen“** (migration 0072, `CAMPAIGN_RELEASE_ENABLED`, docs/CAMPAIGNS.md §5): each mail is still reviewed and approved one at a time, the release job sends it later through the one send path. Original note: Direct sends during review spread the volume over the day; „Freigeben“ stays a separate decision (would need a migration). |
 | Daily target | The progress bar ends at the day's queue (sent today + to review); no setting. |
 | Copy path | Kept in full (`C`, ⋯ menu → „Als erledigt markieren“ in the bar). |
 | Link chips in the editor | **Not built** (custom editor; the rendered-first view already hides the URLs while reading). |

@@ -574,7 +574,30 @@ Actions:
   (`email_messages`; not for test sends), flips the recipient to `sent`, auto-advances. Confirm
   dialog on the first send of the day only — it confirms that ONE e-mail
   (every send is a single card; the desk never sends the whole queue) and
-  is skipped for test contacts.
+  is skipped for test contacts. Once Resend has accepted a mail the claim is
+  never reverted (a retry would send it twice); bookkeeping errors after that
+  are reported and the recipient is marked sent.
+- **Einplanen** (`POST /api/admin/campaign/approve`, migration 0072, switch
+  `CAMPAIGN_RELEASE_ENABLED`, default off) — approve THIS reviewed mail now, send
+  it later: `campaignSendPreflight` runs every gate of §3 without sending, plus the
+  blockers the send path does not enforce itself (a `MO-XXXX` placeholder
+  without discount, an expired set offer — `campaign-release-core.mjs`). The row
+  keeps status `drafted` and gets `approved_at`, `release_at` and
+  `approved_fingerprint` (draft version + language + the campaign's design, hero,
+  CTA, Mo promo and code validity), so opt-out, consent loss and every other
+  open-status rule still apply to it. The job `/api/cron/release-campaign-mails`
+  (every 10 minutes, `CAMPAIGN_RELEASE_MAX_PER_RUN` default 30,
+  `CAMPAIGN_RELEASE_SPACING_MS` default 1500) sends the due mails one at a time
+  through `approveAndSendCampaign`; a changed fingerprint, an expired set or a
+  refused gate takes the approval back with `release_error` (shown on the card in
+  the queue) — nothing is retried automatically. „Zurücknehmen“
+  (`POST /api/admin/campaign/unapprove`) returns a planned mail to the queue.
+  Planned mails do not count as „zu prüfen“, „Warteschlange neu aufbauen“ leaves
+  them alone, and those of a paused campaign wait until it resumes (an ended
+  campaign's are returned to the queue by the send preflight).
+  The job first recovers rows a function timeout left in `sending` (`claimed_at`
+  older than 15 minutes): with a `campaign_sends` row → `sent`, without → back to
+  the queue with a reason.
 - **Copy** — subject + body to the clipboard. Copying alone **never** mutates
   state; the explicit "Als erledigt markieren" (`POST
   /api/admin/campaign/mark-done`) marks the recipient `sent` with
@@ -676,6 +699,8 @@ tombstone, so no audience, import or webhook brings the person back.
 | Set discount post-generation | `POST /api/admin/campaign/discount` |
 | Rebuild one campaign's queue (discard its open drafts → pending) | `POST /api/admin/campaign/reset-queue` (`campaignId`) |
 | Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` |
+| Einplanen / Zurücknehmen | `POST /api/admin/campaign/{approve,unapprove}` |
+| Release job (cron, off by default) | `GET/POST /api/cron/release-campaign-mails` (`CRON_SECRET`, every 10 min, `CAMPAIGN_RELEASE_*`) |
 | Contact search (all statuses, one campaign) | `POST /api/admin/campaign/contacts` (`query`, `campaignId`) |
 | Testkontakte (list / create + draft / delete) | `GET ?campaignId=` + `POST /api/admin/campaign/test-contacts` |
 | Pin/clear the person's email language | `POST /api/admin/campaign/language` |

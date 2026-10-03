@@ -99,6 +99,17 @@ Last updated: 2026-10-03.
     in Mo → Eingang → „E-Mails nicht zugeordnet“; one from a customer's address opens
     „E-Mail beantworten“ in the Eingang (C.10) with an AI draft.
 
+- [ ] **1.7 „Einplanen“ for campaigns (approve now, send later)** — C built it 03.10., M
+  switches it on
+  - **M:** right after the merge pull main and run `npm run db:migrate` (applies `0072`).
+    Until it has run the review desk and campaign sends fail (they read the new columns) —
+    migrate right away.
+  - **M:** Vercel → `CAMPAIGN_RELEASE_ENABLED` = `true` (Production) → Redeploy. Optional:
+    `CAMPAIGN_RELEASE_MAX_PER_RUN` (default 30 per 10 min), `CAMPAIGN_RELEASE_SPACING_MS`.
+  - Done when: Kampagnen → a campaign → a reviewed card → „Einplanen“ (A) → „Mit dem
+    nächsten Lauf“ → within 10 minutes the mail is in „Gesendet“. Lawyer: dossier § 17 (F-33)
+    → goes with 3.2.
+
 ## 2 · Tomorrow morning
 
 - [x] **2.1 The first nightly run** — M (C checks with you) — done 03.10.: reconcile shows a
