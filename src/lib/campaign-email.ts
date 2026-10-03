@@ -775,6 +775,62 @@ export async function renderCampaignEmailPreview(
 }
 
 /**
+ * Render a „Prüfen & testen“ sample (campaign-sample.ts) — a draft that has
+ * no recipient row. Same design and composition as
+ * renderCampaignEmailPreview, with the placeholder code, the design's own
+ * title image (per-person AI images and sets come only on the desk) and
+ * INERT unsubscribe/erasure links: the sample is shown to the operator and
+ * never delivered, so it must not carry a working link for a real customer.
+ */
+export async function renderCampaignSample(input: {
+  campaign: Pick<Campaign, "designKey" | "moPromo" | "ctaKind" | "ctaUrl">;
+  language: "de" | "en";
+  firstName: string | null;
+  subject: string;
+  body: string;
+  recommendedProductIds: string[];
+  productHighlights: Array<{ name: string; description: string }> | null;
+  discountPercent: number;
+  discountExpiresAt: string | null;
+  discountScope: DiscountScope;
+}): Promise<string> {
+  const { campaign, language } = input;
+  const emailDesign = await getEmailDesignForKey(campaign.designKey ?? null, "campaign");
+  const hasDiscount = input.discountPercent > 0;
+  const { html } = await withEmailDesign(emailDesign, () =>
+    withEmailRenderData(
+      {
+        heroImageUrl: null,
+        heroImageMobileUrl: null,
+        heroHeadline: null,
+        recipientFirstName: input.firstName?.trim() || null,
+      },
+      async () =>
+        renderCampaignEmail({
+          subject: input.subject,
+          body: input.body,
+          language,
+          products: await resolveRecommendedProducts(input.recommendedProductIds),
+          productHighlights: input.productHighlights,
+          discountCode: hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null,
+          discountExpiresLabel:
+            hasDiscount && input.discountExpiresAt
+              ? formatExpiryDateForLanguage(input.discountExpiresAt, language)
+              : null,
+          discountExpiresAt: hasDiscount ? input.discountExpiresAt : null,
+          discountPercent: input.discountPercent,
+          discountScope: input.discountScope,
+          unsubscribe: unsubscribeFooter("#", language, "#"),
+          bundle: null,
+          labelForUrl: await catalogNameLookup("lib/campaign-email"),
+          ...campaignCtaOptions(campaign, language),
+        })
+    )
+  );
+  return html;
+}
+
+/**
  * Render the campaign email (text + HTML): the (edited) prose, the recommended
  * products as the newsletter's picture-grid section ("Für dich ausgesucht" —
  * black separator band + two-column image grid), an optional bundle

@@ -57,7 +57,7 @@ async function profileCustomerFor(contact: CampaignContactRow): Promise<Customer
 /** Projected expiry the real MK- code will get, for the preview (same rule as
  * the send step, which swaps in the real date if they drift apart): an
  * Aktion's end date, else the usual validity. */
-function projectedExpiry(campaign: Campaign | null): Date {
+export function projectedExpiry(campaign: Pick<Campaign, "discountValidUntil"> | null): Date {
   return new Date(
     campaignDiscountExpiry(
       { discountValidUntil: campaign?.discountValidUntil ?? null },
@@ -67,7 +67,7 @@ function projectedExpiry(campaign: Campaign | null): Date {
 }
 
 /** Whole days between now and an expiry (the "gültig N Tage" the prose may state). */
-function daysUntil(d: Date): number {
+export function daysUntil(d: Date): number {
   return Math.max(1, Math.round((d.getTime() - Date.now()) / 86_400_000));
 }
 
