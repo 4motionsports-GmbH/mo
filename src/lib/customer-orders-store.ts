@@ -121,7 +121,17 @@ export async function upsertMirrorOrders(
           source_name text, shopify_updated_at timestamptz, line_items jsonb)
         LEFT JOIN customers c ON c.shopify_customer_id = x.shopify_customer_id
       ON CONFLICT (shopify_order_id) DO UPDATE SET
-        customer_id        = COALESCE(EXCLUDED.customer_id, customer_orders.customer_id),
+        -- An order Shopify now reports for ANOTHER customer follows them (or
+        -- becomes an orphan until that person is mirrored) instead of staying
+        -- on the old customer; an unresolved lookup for the same customer
+        -- keeps the current link.
+        customer_id        = CASE
+                               WHEN EXCLUDED.shopify_customer_id IS NOT NULL
+                                AND EXCLUDED.shopify_customer_id IS DISTINCT FROM customer_orders.shopify_customer_id
+                               THEN EXCLUDED.customer_id
+                               ELSE COALESCE(EXCLUDED.customer_id, customer_orders.customer_id)
+                             END,
+        shopify_customer_id = COALESCE(EXCLUDED.shopify_customer_id, customer_orders.shopify_customer_id),
         order_name         = EXCLUDED.order_name,
         processed_at       = EXCLUDED.processed_at,
         financial_status   = EXCLUDED.financial_status,
@@ -239,18 +249,34 @@ export async function listCustomerOrders(
 }
 
 /**
- * Like listCustomerOrders, but null without a database or on an error — for
- * callers that must not mistake a failure for "no orders" (the order status
- * in the chat answers "unavailable" then, never "you have no orders").
+ * The orders of ONE signed-in shop customer for the order status in the chat:
+ * only rows Shopify reports for that Shopify customer, linked to this
+ * customer row or not linked yet (an order whose webhook arrived before the
+ * customer was mirrored). Newest first. Null without a database or on an
+ * error — the caller must never mistake a failure for "no orders" (the chat
+ * answers "unavailable" then).
  */
 export async function findCustomerOrders(
   customerId: number,
+  shopifyCustomerId: string,
   opts: { limit?: number } = {},
   sql: Sql | null = getSql()
 ): Promise<LedgerOrder[] | null> {
   if (!sql) return null;
+  const sid = shopifyCustomerId.trim();
+  if (!sid) return null;
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 500));
   try {
-    return (await queryCustomerOrders(sql, customerId, opts)).orders;
+    const rows = (await sql`
+      SELECT id, shopify_order_id, order_name, processed_at, financial_status, fulfillment_status,
+             cancelled_at, currency, total_cents, refunded_cents, discount_codes, line_items
+        FROM customer_orders
+       WHERE shopify_customer_id = ${sid}
+         AND (customer_id = ${customerId} OR customer_id IS NULL)
+       ORDER BY processed_at DESC, id DESC
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map(mapOrder);
   } catch (err) {
     reportError(err, { route: "lib/customer-orders-store", phase: "findCustomerOrders" });
     return null;
