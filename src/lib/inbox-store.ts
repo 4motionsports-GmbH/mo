@@ -435,6 +435,31 @@ export async function expireInboxItems(sql: Sql | null = getSql()): Promise<numb
 }
 
 /** Close open items of given kinds whose dedupe key is no longer produced by the rules. */
+/**
+ * One-off after the refund-date backfill (migration 0070, reconcile look-back):
+ * reopen the „Unzufriedenheit“ items the hourly job closed by itself in the
+ * last 3 days while refund dates were still unknown. The next run closes again
+ * the ones its rule no longer raises; real refunds keep their item. Items an
+ * operator decided are never touched. Returns the number reopened. Never throws.
+ */
+export async function reopenSelfClosedRefundItems(sql: Sql | null = getSql()): Promise<number> {
+  if (!sql) return 0;
+  try {
+    const rows = await sql`
+      UPDATE inbox_items
+         SET status = CASE WHEN snoozed_until > now() THEN 'zurueckgestellt' ELSE 'offen' END,
+             decision = NULL, decided_at = NULL, updated_at = now()
+       WHERE kind = 'unzufrieden' AND status = 'erledigt' AND decision = 'erledigt_von_selbst'
+         AND decided_at > now() - interval '3 days'
+      RETURNING id
+    `;
+    return rows.length;
+  } catch (err) {
+    reportError(err, { route: "lib/inbox-store", phase: "reopenSelfClosedRefundItems" });
+    return 0;
+  }
+}
+
 export async function closeStaleInboxItems(
   kinds: string[],
   stillValidKeys: string[],

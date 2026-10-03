@@ -11,6 +11,8 @@
 // this module. Addresses (beyond the country code), phone numbers, notes and
 // payment details are dropped. See docs/CUSTOMER_PLATFORM_PLAN.md §6.2–§6.3.
 
+import { REFUND_MIN_SHARE } from "./customer-signals.mjs";
+
 /**
  * @typedef {"subscribed" | "pending" | "unsubscribed" | "not_subscribed"} ConsentState
  * @typedef {"confirmed_opt_in" | "single_opt_in" | "unknown"} ConsentLevel
@@ -56,7 +58,7 @@
  * @property {number | null} subtotalCents
  * @property {number} totalCents
  * @property {number} refundedCents
- * @property {string | null} lastRefundAt  newest refund that moved money (ISO), null when none or unknown
+ * @property {string | null} lastRefundAt  newest notable refund (≥ REFUND_MIN_SHARE of the order value, ISO), null when none or unknown
  * @property {string[]} discountCodes
  * @property {string | null} sourceName
  * @property {string | null} updatedAt
@@ -297,15 +299,10 @@ export function mapShopifyOrder(node, lineItems) {
 
   // REST carries the refunds as an array of refund objects with transactions;
   // total_refunded is not a top-level field, so sum the refund transactions.
-  // GraphQL has the total plus refunds { createdAt totalRefundedSet }. The
-  // newest refund that moved money dates the Eingang rule „Unzufriedenheit“
-  // (a restock-only refund does not count).
+  // GraphQL has the total plus refunds { createdAt totalRefundedSet }.
   let refundedCents = 0;
-  let lastRefundAt = null;
-  const noteRefund = (at, amountCents) => {
-    const when = amountCents > 0 ? iso(at) : null;
-    if (when && (!lastRefundAt || when > lastRefundAt)) lastRefundAt = when;
-  };
+  /** @type {Array<{ at: string | null, cents: number }>} */
+  const refunds = [];
   if (isRest) {
     for (const r of Array.isArray(node.refunds) ? node.refunds : []) {
       let refundCents = 0;
@@ -315,13 +312,25 @@ export function mapShopifyOrder(node, lineItems) {
         }
       }
       refundedCents += refundCents;
-      noteRefund(r?.created_at ?? r?.processed_at, refundCents);
+      refunds.push({ at: iso(r?.created_at ?? r?.processed_at), cents: refundCents });
     }
   } else {
     refundedCents = cents(moneyAmount(node.totalRefundedSet)) ?? 0;
     for (const r of Array.isArray(node.refunds) ? node.refunds : []) {
-      noteRefund(r?.createdAt, cents(moneyAmount(r?.totalRefundedSet)) ?? 0);
+      refunds.push({ at: iso(r?.createdAt), cents: cents(moneyAmount(r?.totalRefundedSet)) ?? 0 });
     }
+  }
+  const totalCents =
+    cents(isRest ? node.current_total_price ?? node.total_price : moneyAmount(node.currentTotalPriceSet)) ?? 0;
+  // The newest NOTABLE refund dates the Eingang rule „Unzufriedenheit“: one
+  // that moved at least REFUND_MIN_SHARE of the order value (current total +
+  // refunded). A restock-only refund or a small follow-up (return shipping,
+  // goodwill) never moves the date, so a handled case does not come back.
+  const original = Math.max(0, totalCents) + refundedCents;
+  let lastRefundAt = null;
+  for (const r of refunds) {
+    if (!r.at || r.cents <= 0 || original <= 0 || r.cents / original < REFUND_MIN_SHARE) continue;
+    if (!lastRefundAt || r.at > lastRefundAt) lastRefundAt = r.at;
   }
 
   return {
@@ -334,8 +343,7 @@ export function mapShopifyOrder(node, lineItems) {
     cancelledAt: iso(isRest ? node.cancelled_at : node.cancelledAt),
     currency: upper(isRest ? node.currency : node.currencyCode),
     subtotalCents: cents(isRest ? node.current_subtotal_price ?? node.subtotal_price : moneyAmount(node.subtotalPriceSet)),
-    totalCents:
-      cents(isRest ? node.current_total_price ?? node.total_price : moneyAmount(node.currentTotalPriceSet)) ?? 0,
+    totalCents,
     refundedCents,
     lastRefundAt,
     discountCodes,

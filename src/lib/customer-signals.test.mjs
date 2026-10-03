@@ -115,6 +115,16 @@ test("event rules: expiring offer, refund, bounce", () => {
     dissatisfiedSignal({ customerId: 3, orderName: "#1004", cancelled: false, refundedCents: 9900, totalCents: 0, at }).reason,
     /vollständig erstattet/
   );
+  // An amount-only full refund leaves Shopify's current total as it is: the
+  // financial status tells it, not the total.
+  assert.match(
+    dissatisfiedSignal({ customerId: 3, orderName: "#1005", cancelled: false, refundedCents: 12800, totalCents: 12800, financialStatus: "REFUNDED", at }).reason,
+    /vollständig erstattet \(128/
+  );
+  assert.match(
+    dissatisfiedSignal({ customerId: 3, orderName: "#1006", cancelled: false, refundedCents: 3000, totalCents: 0, financialStatus: "PARTIALLY_REFUNDED", at }).reason,
+    /teilweise erstattet/
+  );
   assert.equal(bounceSignal({ customerId: 3, bouncedAt: ago(1) }).kind, "zustellproblem");
 });
 
