@@ -162,7 +162,7 @@ export async function listCampaigns(
           SELECT campaign_id,
                  count(*) FILTER (WHERE status NOT IN ('excluded'))::int AS recipients,
                  count(*) FILTER (WHERE status = 'pending')::int AS pending,
-                 count(*) FILTER (WHERE status = 'drafted')::int AS drafted,
+                 count(*) FILTER (WHERE status = 'drafted' AND approved_at IS NULL)::int AS drafted,
                  count(*) FILTER (WHERE status = 'skipped')::int AS skipped,
                  count(*) FILTER (WHERE status = 'suppressed')::int AS suppressed,
                  count(*) FILTER (WHERE status = 'excluded')::int AS excluded,

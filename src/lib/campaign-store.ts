@@ -87,6 +87,12 @@ export interface CampaignContactRow {
   /** Chat the Einzelansprache was started from (conversion sweep). */
   conversationId: number | null;
   excludedReason: string | null;
+  /** „Freigeben" (migration 0072): approved on the desk, sent by the release
+   * job from releaseAt on. Null = not approved. */
+  approvedAt: string | null;
+  releaseAt: string | null;
+  /** Why the release job held an approved mail back (shown on the card). */
+  releaseError: string | null;
 }
 
 /** Compact per-order snapshot stored on the draft to render the review card. */
@@ -190,6 +196,9 @@ function mapContactRow(r: Record<string, unknown>): CampaignContactRow {
     adminNote: (r.admin_note as string | null) ?? null,
     conversationId: r.conversation_id != null ? Number(r.conversation_id) : null,
     excludedReason: (r.excluded_reason as string | null) ?? null,
+    approvedAt: toIso(r.approved_at),
+    releaseAt: toIso(r.release_at),
+    releaseError: (r.release_error as string | null) ?? null,
   };
 }
 
@@ -391,7 +400,8 @@ export async function getCampaignCounts(
                                   OR (last_order_at <= now() - ${minInterval}::interval
                                       AND last_order_at > now() - ${maxInterval}::interval)))::int
             AS pending_sendable,
-          count(*) FILTER (WHERE status IN ('drafted','sending'))::int AS drafted,
+          -- „zu prüfen“: planned mails („Einplanen“, 0072) are reviewed already.
+          count(*) FILTER (WHERE status IN ('drafted','sending') AND approved_at IS NULL)::int AS drafted,
           count(*) FILTER (WHERE status = 'sent')::int AS sent_total,
           count(*) FILTER (WHERE status = 'sent'
                              AND sent_at >= current_date)::int AS sent_today,
@@ -443,7 +453,7 @@ export async function getCampaignQueueTotals(sql: Sql | null = getSql()): Promis
   try {
     const rows = (await sql`
       SELECT count(*) FILTER (WHERE cc.status = 'pending')::int AS pending,
-             count(*) FILTER (WHERE cc.status IN ('drafted', 'sending'))::int AS drafted,
+             count(*) FILTER (WHERE cc.status IN ('drafted', 'sending') AND cc.approved_at IS NULL)::int AS drafted,
              count(*) FILTER (WHERE cc.status = 'sent' AND cc.sent_at >= current_date)::int AS sent_today
         FROM campaign_contacts cc
         JOIN campaigns k ON k.id = cc.campaign_id
@@ -529,6 +539,8 @@ export async function listDraftedQueue(
         JOIN campaign_drafts d ON d.contact_id = c.id
         LEFT JOIN customers cu ON cu.id = c.customer_id
        WHERE c.status = 'drafted' AND c.campaign_id = ${campaignId}
+         -- Approved mails („Freigeben", 0072) wait for the release job.
+         AND c.approved_at IS NULL
        -- Work the queue by measured value, not by arrival: the early window
        -- (7–30 days, 38,6 % Zubehör-Quote) closes, and a contact at/above
        -- 150 € is ~3x as likely to become a repeat accessory buyer
@@ -972,13 +984,15 @@ export async function resetDraftedContacts(
     DELETE FROM campaign_drafts d
      USING campaign_contacts c
      WHERE c.id = d.contact_id AND c.status = 'drafted' AND c.is_test = false
+       AND c.approved_at IS NULL
        AND c.campaign_id = ${campaignId}
   `;
   const rows = (await sql`
     WITH upd AS (
+      -- Planned mails („Einplanen“) were approved by a person — they stay.
       UPDATE campaign_contacts
          SET status = 'pending'
-       WHERE status = 'drafted' AND is_test = false AND campaign_id = ${campaignId}
+       WHERE status = 'drafted' AND is_test = false AND approved_at IS NULL AND campaign_id = ${campaignId}
       RETURNING 1
     )
     SELECT count(*)::int AS n FROM upd
@@ -1161,7 +1175,7 @@ export async function claimContactForSend(
   try {
     const rows = (await sql`
       UPDATE campaign_contacts
-         SET status = 'sending'
+         SET status = 'sending', claimed_at = now()
        WHERE id = ${contactId} AND status = 'drafted'
       RETURNING *
     `) as Array<Record<string, unknown>>;
@@ -1186,6 +1200,168 @@ export async function revertContactClaim(
     `;
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "revertContactClaim" });
+  }
+}
+
+// ── „Freigeben": approve now, send later (migration 0072) ─────────────────────
+
+/**
+ * Approve a reviewed draft for the release job. Only an open, non-test draft;
+ * clears any earlier hold. Returns false when nothing was approved.
+ */
+export async function approveContactForRelease(
+  contactId: number,
+  input: { releaseAt: string; fingerprint: string },
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      UPDATE campaign_contacts
+         SET approved_at = now(), release_at = ${input.releaseAt},
+             approved_fingerprint = ${input.fingerprint}, release_error = NULL
+       WHERE id = ${contactId} AND status = 'drafted' AND is_test = false
+      RETURNING id
+    `) as Array<Record<string, unknown>>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "approveContactForRelease" });
+    return false;
+  }
+}
+
+/**
+ * Take an approval back: by the operator („Zurücknehmen", error null) or by the
+ * release job (the reason the card then shows). The mail returns to the queue.
+ */
+export async function revokeContactApproval(
+  contactId: number,
+  releaseError: string | null,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      UPDATE campaign_contacts
+         SET approved_at = NULL, release_at = NULL, approved_fingerprint = NULL,
+             release_error = ${releaseError}
+       WHERE id = ${contactId} AND approved_at IS NOT NULL
+      RETURNING id
+    `) as Array<Record<string, unknown>>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "revokeContactApproval" });
+    return false;
+  }
+}
+
+/**
+ * Approved mails whose release time has come, oldest first. Mails of a paused
+ * campaign wait (they come back when it resumes); an ended one's are listed and
+ * then held by the send preflight. Never throws.
+ */
+export async function listDueApprovals(
+  limit: number,
+  sql: Sql | null = getSql()
+): Promise<Array<{ contactId: number; campaignId: number; fingerprint: string | null }>> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT c.id, c.campaign_id, c.approved_fingerprint
+        FROM campaign_contacts c
+        JOIN campaigns k ON k.id = c.campaign_id
+       WHERE c.approved_at IS NOT NULL AND c.status = 'drafted' AND c.is_test = false
+         AND c.release_at <= now()
+         AND k.status <> 'pausiert'
+       ORDER BY c.release_at, c.id
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      contactId: Number(r.id),
+      campaignId: Number(r.campaign_id),
+      fingerprint: (r.approved_fingerprint as string | null) ?? null,
+    }));
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "listDueApprovals" });
+    return [];
+  }
+}
+
+export interface ApprovedQueueEntry {
+  contactId: number;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  subject: string;
+  approvedAt: string | null;
+  releaseAt: string | null;
+}
+
+/** The approved, not yet sent mails of a campaign (desk view „Freigegeben"). */
+export async function listApprovedQueue(
+  campaignId: number,
+  limit = 500,
+  sql: Sql | null = getSql()
+): Promise<ApprovedQueueEntry[]> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT c.id, c.email, c.first_name, c.last_name, c.approved_at, c.release_at, d.subject
+        FROM campaign_contacts c
+        JOIN campaign_drafts d ON d.contact_id = c.id
+       WHERE c.campaign_id = ${campaignId} AND c.approved_at IS NOT NULL
+         AND c.status = 'drafted' AND c.is_test = false
+       ORDER BY c.release_at, c.id
+       LIMIT ${limit}
+    `) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      contactId: Number(r.id),
+      email: String(r.email),
+      firstName: (r.first_name as string | null) ?? null,
+      lastName: (r.last_name as string | null) ?? null,
+      subject: String(r.subject ?? ""),
+      approvedAt: toIso(r.approved_at),
+      releaseAt: toIso(r.release_at),
+    }));
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "listApprovedQueue" });
+    return [];
+  }
+}
+
+/**
+ * Rows a send claimed ('sending') and then lost — a function timeout between
+ * claim and record. With a campaign_sends row the mail went out → 'sent';
+ * without one it did not → back to 'drafted', approval cleared with a reason, so
+ * a person decides (never re-sent automatically). Returns the counts.
+ */
+export async function recoverStuckSending(
+  olderThanMinutes = 15,
+  sql: Sql | null = getSql()
+): Promise<{ sent: number; returned: number }> {
+  if (!sql) return { sent: 0, returned: 0 };
+  try {
+    const sent = (await sql`
+      UPDATE campaign_contacts c
+         SET status = 'sent', sent_at = COALESCE(c.sent_at, now())
+       WHERE c.status = 'sending' AND c.is_test = false
+         AND c.claimed_at < now() - make_interval(mins => ${olderThanMinutes})
+         AND EXISTS (SELECT 1 FROM campaign_sends s WHERE s.contact_id = c.id AND s.is_test = false)
+      RETURNING c.id
+    `) as Array<Record<string, unknown>>;
+    const returned = (await sql`
+      UPDATE campaign_contacts c
+         SET status = 'drafted', approved_at = NULL, release_at = NULL, approved_fingerprint = NULL,
+             release_error = 'Versand wurde unterbrochen — bitte prüfen und erneut senden.'
+       WHERE c.status = 'sending' AND c.is_test = false
+         AND c.claimed_at < now() - make_interval(mins => ${olderThanMinutes})
+         AND NOT EXISTS (SELECT 1 FROM campaign_sends s WHERE s.contact_id = c.id)
+      RETURNING c.id
+    `) as Array<Record<string, unknown>>;
+    return { sent: sent.length, returned: returned.length };
+  } catch (err) {
+    reportError(err, { route: "lib/campaign-store", phase: "recoverStuckSending" });
+    return { sent: 0, returned: 0 };
   }
 }
 
