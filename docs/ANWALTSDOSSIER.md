@@ -1,7 +1,7 @@
 # Rechtsdossier „Mo“ — KI-Verkaufsberater auf motionsports.de
 
 **Zweck:** Vollständige, aktuelle Beschreibung des Systems für die externe anwaltliche Prüfung (Datenschutz, Wettbewerbs-/Lauterkeitsrecht, KI-Regulierung, Verbraucherrecht) — als Grundlage für Ihr Feedback und Ihre Handlungsempfehlungen.
-**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34). **Nachtrag 03.10.2026 (2):** Bestellstatus im Chat — standardmäßig aus (§ 16, F-32); „Einplanen“ geprüfter Kampagnen-Mails (§ 17, F-33).
+**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34). **Nachtrag 03.10.2026 (2):** Bestellstatus im Chat — standardmäßig aus (§ 16, F-32); „Einplanen“ geprüfter Kampagnen-Mails (§ 17, F-33). **Nachtrag 03.10.2026 (3):** Werbebriefe als Kampagnen-Kanal (§ 18, F-35).
 **Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`archive/LEGAL_READINESS_REPORT.md`](./archive/LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
 **Verantwortlicher:** motion sports [genaue Firmierung, Anschrift, Geschäftsführung, ggf. DSB — vom Mandanten zu ergänzen]. Betrieben wird der Onlineshop motionsports.de (Shopify) für Sport- und Fitnessgeräte (B2C, Studios/Physiotherapie, öffentliche Auftraggeber).
 
@@ -133,6 +133,7 @@ Ein täglicher, abgesicherter Lösch-Lauf setzt alle Fristen automatisch durch. 
 | R-11 | Kontaktformular (inkl. Speicherung in der Kundenakte, § 14) | Art. 6 (1) b/f | → F-30 |
 | R-12 | Rate-Limiting (IP), Fehlerüberwachung, Admin-Zugriffsprotokoll | Art. 6 (1) f | IP-Verarbeitung in DSE erwähnen |
 | R-13 | Bestellstatus im Chat für angemeldete Kunden (§ 16; Schalter standardmäßig aus) | Art. 6 (1) b (Kundenservice zum eigenen Vertrag) | → F-32 |
+| R-14 | Werbebriefe aus Kampagnen an Bestandskunden (§ 18) | Art. 6 (1) f | Auch an Kunden ohne E-Mail-Einwilligung; Adresse nur aus der letzten abgeschlossenen Bestellung; → F-35 |
 
 ---
 
@@ -186,7 +187,7 @@ Der Admin kann aus Empfehlungen ein echtes (unlistetes) Shopify-Set erstellen; �
 
 ### 6.4 Physische Briefe
 
-KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (Schweiz, Adressübermittlung im PDF) an die Deutsche Post. Freigabe laut Code-Vermerk am 14.06.2026 (eigener AVV + Drittland-Hinweis CH erforderlich). Adressquelle ausschließlich **Lieferadresse einer abgeschlossenen Bestellung**; Erfassung findet nur statt, wenn der Briefkanal aktiv geschaltet ist. Vollständigkeits-Check vor Versand; Brief-Historie 365 T.
+KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (Schweiz, Adressübermittlung im PDF) an die Deutsche Post. Freigabe laut Code-Vermerk am 14.06.2026 (eigener AVV + Drittland-Hinweis CH erforderlich). Adressquelle ausschließlich **Lieferadresse einer abgeschlossenen Bestellung**; Erfassung findet nur statt, wenn der Briefkanal aktiv geschaltet ist. Vollständigkeits-Check vor Versand; Brief-Historie 365 T. Seit 03.10.2026 gibt es Werbebriefe auch als Kanal einer Kampagne (§ 18); seitdem wird die Adressregel auch beim Versand eines Einzelbriefs erzwungen — eine Adresse anderer Herkunft (z. B. aus dem Shop-Kundenkonto) wird abgelehnt.
 
 ---
 
@@ -205,7 +206,7 @@ KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (S
 | Produktsuche | OpenAI `text-embedding-3-small` | **Jede Nutzernachricht** wird zur Suche eingebettet (keine Identifikatoren) |
 | Sprachausgabe | OpenAI `gpt-4o-mini-tts` | Mo-Antworttext |
 
-**Bewusst nie an KI-Modelle übermittelt:** E-Mail-Adressen, vollständige Straßenadressen (nur Stadt/Land; beim Brief nur der Name), Bestellnummern und -summen (auch nicht beim Bestellstatus, § 16 — technisch durch eine feste Feldliste und einen automatischen Test abgesichert), Roh-Transkripte früherer Sitzungen (nur der verdichtete Profiltext). Nennt der Kunde selbst eine Bestellnummer im Chat, steht sie — wie jede eigene Angabe — im Gesprächsverlauf. Auf dem Chat-Pfad ist Anthropic-**Prompt-Caching** aktiv (kurzlebiger serverseitiger Cache bei Anthropic; bei den Vertragsprüfungen zu berücksichtigen, → F-03).
+**Bewusst nie an KI-Modelle übermittelt:** E-Mail-Adressen, vollständige Straßenadressen (nur Stadt/Land; beim Brief nur der Name), Bestellnummern und -summen (auch nicht beim Bestellstatus, § 16 — technisch durch eine feste Feldliste und einen automatischen Test abgesichert), Roh-Transkripte früherer Sitzungen (nur der verdichtete Profiltext). Nennt der Kunde selbst eine Bestellnummer im Chat, steht sie — wie jede eigene Angabe — im Gesprächsverlauf. **Korrektur 03.10.2026:** Bis zu diesem Tag enthielten die Kaufzeilen der Kampagnen-Mail-Entwürfe je Bestellung die Bestellbezeichnung des Shops (z. B. „#1042“) — entgegen dieser Aussage. Das ist behoben (seit 03.10.2026 nur Datum und Artikel); Beträge waren nie enthalten. Auf dem Chat-Pfad ist Anthropic-**Prompt-Caching** aktiv (kurzlebiger serverseitiger Cache bei Anthropic; bei den Vertragsprüfungen zu berücksichtigen, → F-03).
 
 ### 7.2 Personalisierungs-Gate („Wiedererkennen“)
 
@@ -433,6 +434,58 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 ### 17.2 Prüfbitte
 
 - **F-33 — Zeitversetzter Versand freigegebener Werbe-Mails:** Bitte bestätigen Sie, dass die Freigabe einer einzeln geprüften Mail mit späterem, automatischem Versand der bisherigen Freigabe (Kampagnen-Kanal, 21.07.2026) entspricht. Beim Versand werden Einwilligung und Widerspruch erneut geprüft.
+
+---
+
+## 18. Nachtrag 03.10.2026 — Werbebriefe als Kampagnen-Kanal
+
+### 18.1 Tatsachen
+
+- **Was neu ist.** Eine Kampagne kann ihre Zielgruppe zusätzlich per **Werbebrief** erreichen. Druck und Versand laufen über Pingen, auf demselben Weg wie die Einzelbriefe aus der Kundenakte (§ 6.4). Je Kampagne wählt das Team „Keine Briefe“ (Standard), „An alle ohne E-Mail-Einwilligung“ oder „An alle (auch mit Einwilligung)“, dazu optional ein Porto-Budget.
+- **Wer einen Brief bekommt.**
+  - Personen aus der Zielgruppe der Kampagne mit mindestens einer Bestellung, ohne Widerspruch gegen Briefwerbung und ohne Sperre (Bounce, Spam-Beschwerde, Löschung). Die reinen E-Mail-Filter der Zielgruppe (Opt-in-Stufe, „keine Werbe-Mail in den letzten n Tagen“) gelten für Briefe nicht.
+  - Modus „ohne E-Mail-Einwilligung“: nur Personen **ohne** E-Mail-Werbeeinwilligung. Wer sie hat, bekommt die E-Mail, nicht den Brief. Wer sie nach der Auswahl erteilt, bekommt keinen Brief mehr.
+  - Modus „auch mit Einwilligung“: auch Personen mit Einwilligung. Sie können dann E-Mail und Brief derselben Kampagne erhalten.
+  - Je Kampagne höchstens ein Brief pro Person; auch eine laufende Kampagne schreibt eine Person nur einmal an.
+  - Eine Abmeldung von E-Mail-Werbung gilt nicht als Widerspruch gegen Briefwerbung: Wer abgemeldet ist, erhält im Modus „ohne E-Mail-Einwilligung“ einen Brief, solange kein Widerspruch gegen Briefwerbung erfasst ist (→ F-35 (i)).
+- **Adresse.**
+  - Einzige Quelle ist die **Lieferadresse der letzten abgeschlossenen Bestellung** (bezahlt oder teilweise erstattet, nicht storniert). Sie wird nur für Personen abgerufen, die einen Brief bekommen sollen, einzeln aus Shopify, und mit Herkunft und Bestellbezug in der Kundenakte gespeichert. Gibt es eine neuere abgeschlossene Bestellung, wird sie neu abgerufen (Umzug).
+  - Abruf per Klick im Prüftisch oder nachts (standardmäßig bis 200 Personen je Nacht). Solange der Briefkanal (`PHYSICAL_MAIL_SENDS_APPROVED`) aus ist, wird nichts abgerufen.
+  - Andere gespeicherte Adressen, etwa die im Shop-Kundenkonto hinterlegte (`consented_capture`), bleiben gespeichert, werden aber für keinen Werbebrief verwendet. **Das gilt jetzt auch für Einzelbriefe aus der Kundenakte**; vorher genügte dort jede vollständige gespeicherte Adresse.
+  - Weicht der Name der Lieferadresse vom Namen der Kundin ab (Geschenkbestellung), zeigt der Prüftisch nur einen Hinweis; der Brief wird nicht gesperrt (→ F-35 (b)).
+  - Meldet Pingen einen Brief als unzustellbar, geht an diese Adresse kein Brief mehr (Kampagne und Einzelbrief), bis eine neuere Bestellung eine andere Adresse liefert.
+- **Text.**
+  - Ein KI-Modell (Anthropic) schreibt je Brief einen deutschen Entwurf in der Du-Form.
+  - Eingabe: Vorname der Person; Name, Art, Briefing und Enddatum der Kampagne; ggf. eine Notiz des Teams; Kaufhistorie (je Bestellung Datum, Artikel und Menge — derselbe Baustein wie bei den Kampagnen-Mails; **ohne** Bestellnummer und Beträge); Lebenszyklus-Segment; bis zu drei Produktnamen; das KI-Kundenprofil (nicht nach Widerspruch gegen Profilbildung).
+  - **Nicht** übermittelt: Adresse, E-Mail-Adresse, Beträge.
+  - Der Brief enthält keine Links, keinen Rabattcode, keine Prozentangaben und keine erfundene Dringlichkeit.
+  - Englischsprachige Kund:innen erhalten den deutschen Brief (→ F-35 (f)).
+- **Fußzeile.** Jede Seite trägt fest, außerhalb des editierbaren Textes, den Widerspruchshinweis aus § 13.1 Nr. 7, den Absender und den Link zur Datenschutzerklärung.
+- **Prüfung und Freigabe.** Jeder Brief wird im Prüftisch von einem Menschen gelesen, bei Bedarf geändert und **einzeln freigegeben**. Eine Sammel-Freigabe gibt es nicht. Jede Freigabe und jeder Versandschritt steht im Admin-Zugriffsprotokoll.
+- **Versand.**
+  - Erst ein weiterer Klick („Freigegebene senden“) verschickt die freigegebenen Briefe, in Schritten zu fünf.
+  - Vor jedem einzelnen Brief wird erneut geprüft: Briefkanal freigeschaltet, Pingen eingerichtet, Kampagne läuft, kein Widerspruch, im Modus „ohne E-Mail-Einwilligung“ keine inzwischen erteilte Einwilligung, Adresse vollständig, aus einer abgeschlossenen Bestellung und nicht unzustellbar, Text vorhanden, **mindestens 60 Tage** seit dem letzten Werbebrief an die Person (jeder Brief zählt, auch ein Einzelbrief; einstellbar über `LETTER_MIN_INTERVAL_DAYS`), Porto-Budget der Kampagne.
+  - Ein Widerspruch oder eine neue Einwilligung nimmt den Brief endgültig aus der Kampagne; jede andere Ablehnung schickt ihn mit Grund zurück in die Prüfung.
+  - **Nichts wird automatisch versendet.**
+- **Speicherung.**
+  - Der Kampagnen-Brief (Betreff, Text, Status, Verknüpfung zum gedruckten Brief; keine Adresse) wird mit den Kampagnen-Daten nach **365 Tagen** gelöscht (`CAMPAIGN_CONTACT_RETENTION_DAYS`), bei vollständiger Löschung der Person sofort.
+  - Der gedruckte Brief (D-10) bleibt unverändert 365 Tage.
+  - Ein Widerspruch gegen Briefwerbung löscht die gespeicherte Adresse nicht, er sperrt jeden weiteren Brief (→ F-35 (h)).
+- **Schalter.** Unverändert. Der Kanal läuft nur, wenn `PHYSICAL_MAIL_SENDS_APPROVED` an ist **und** eine Kampagne einen Brief-Modus hat (Standard „Keine Briefe“). Jeder Brief wird von einem Menschen einzeln freigegeben; es wird nichts automatisch versendet.
+- **Entscheidungen der Entwicklung (Standardwerte, zur Bestätigung):** Freigabe je Brief; Brief-Modus standardmäßig aus; Abstand 60 Tage; Adressen aus dem Shop-Kundenkonto bleiben gespeichert, aber ungenutzt; keine Adresslöschung beim Widerspruch; nur deutsche Briefe; kein Rabattcode auf Papier (erste Ausbaustufe); laufende Kampagnen schreiben eine Person einmal an.
+
+### 18.2 Prüfbitte
+
+- **F-35 — Werbebriefe aus Kampagnen:** Bitte bestätigen bzw. beraten Sie:
+  - (a) Die Rechtsgrundlage Art. 6 (1) f i. V. m. § 7 UWG für Werbebriefe in größerer Zahl an Bestandskunden **ohne** E-Mail-Einwilligung. Ebenso den Modus „auch mit Einwilligung“, in dem Personen mit Einwilligung zusätzlich zur E-Mail einen Brief erhalten (zwei Kanäle).
+  - (b) Den Abruf der Lieferadresse der letzten abgeschlossenen Bestellung aus Shopify für diesen Zweck (Zweckbindung der Bestelldaten, Art. 6 (4)). Geschenkbestellungen (Name der Lieferadresse ≠ Kundin) erzeugen derzeit nur einen Hinweis — sollen solche Briefe gesperrt werden?
+  - (c) Die KI-Entwürfe nutzen KI-Kundenprofil und Kaufhistorie für einen Papierbrief (ein Widerspruch gegen Profilbildung wird beachtet). Braucht die Datenschutzerklärung einen Satz zu Briefwerbung und Pingen?
+  - (d) Ist ein Abgleich mit der Robinsonliste bzw. der DDV-Briefsperrliste nötig? Nicht umgesetzt.
+  - (e) Ist ein Abstand von 60 Tagen zwischen zwei Werbebriefen an dieselbe Person angemessen?
+  - (f) Englischsprachige Kund:innen erhalten einen deutschen Brief, auch der Widerspruchshinweis ist nur deutsch. Ist das in Ordnung?
+  - (g) Adressen mit Herkunft `consented_capture` (hinterlegte Adresse aus dem Shop-Kundenkonto): löschen oder behalten? Derzeit behalten und für Briefe nicht verwendet.
+  - (h) Nach einem Widerspruch bleibt die Adresse gespeichert. Wird sie für die Sperre gebraucht, oder ist sie zu löschen?
+  - (i) Wer sich von E-Mail-Werbung abgemeldet hat (`unsubscribed`), erhält im Modus „ohne E-Mail-Einwilligung“ weiter Briefe, solange kein Widerspruch gegen Briefwerbung vorliegt. Ist eine E-Mail-Abmeldung auch als Widerspruch gegen Briefwerbung zu behandeln?
 
 ---
 

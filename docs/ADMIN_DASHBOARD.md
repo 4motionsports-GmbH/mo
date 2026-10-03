@@ -144,7 +144,7 @@ Everything an operator can point a colleague at is in the URL:
 | Kampagnen | `?edit=<id\|new>` | the editor sheet on the overview (kept in sync while it is open) |
 | Kampagnen | `?edit=new&audience=<json>` | a new campaign whose Zielgruppe starts from this audience spec (set by Kunden → Überblick → „Ähnliche Kunden“ → „Als Zielgruppe verwenden“); normalised on the server (`normalizeAudienceSpec`), ignored when unparsable or longer than 4,000 characters |
 | Kampagnen | `?contact=<id>` | the card on the desk (kept in sync while reviewing; a sent/skipped id falls back to the first card). Alone, without `?campaign=`, it opens the desk of the campaign the recipient belongs to (legacy desk links) |
-| Kampagnen | `?view=liste\|eingeplant\|gesendet` | the Liste, Eingeplant („Einplanen“, shown when switched on or when mails are planned) or Gesendet view of the desk (absent = Prüfen) |
+| Kampagnen | `?view=liste\|eingeplant\|briefe\|gesendet` | the Liste, Eingeplant („Einplanen“, shown when switched on or when mails are planned), Briefe (the campaign's letters — shown with a letter mode, or while letters exist; migration 0074) or Gesendet view of the desk (absent = Prüfen) |
 | Kampagnen | `?filter=<chip>` | desk queue filter chip: `doi`, `soi`, `en`, `discount`, `set`, `hints`, `blocked` (absent = Alle) |
 | KPIs | `?kpiRange=7d\|30d\|90d\|custom`, `?kpiFrom=`, `?kpiTo=` | period (validated + clamped by [`kpi-range.mjs`](../src/lib/kpi-range.mjs)) |
 | KPIs | `?kpiFresh=<unix seconds>` | freshness floor for the Shopify cache — set by „Aktualisieren“ (§5.0) |
@@ -186,7 +186,7 @@ src/app/admin/
 ├── <Screen>Tab.tsx       # server file per screen: queries → props (EingangTab replaced OverviewTab)
 ├── eingang/              # EingangWorkspace (list + item detail + keys), UnmatchedInbound, types
 ├── kampagnen/            # CampaignsOverview (cards), CampaignEditor (sheet), types
-├── kampagne/             # the desk of one campaign: KampagneWorkspace, CampaignHeader, PreparePopover, QueueRail, MailPane, ReviewColumn, sections/*, ListView, SentHistory, TestContactsSheet, ContactHistorySheet, EmailViewerDialog, useCampaignActions
+├── kampagne/             # the desk of one campaign: KampagneWorkspace, CampaignHeader, PreparePopover, QueueRail, MailPane, ReviewColumn, sections/*, ListView, SentHistory, LettersView, TestContactsSheet, ContactHistorySheet, EmailViewerDialog, useCampaignActions
 ├── kunden/               # KundenWorkspace, CustomerDetail, badges, useCustomerDetail, tabs/{Ueberblick (+Profil), Aktivitaet, Kaeufe, Beratungen („Gespräche“), Marketing (+OptOutControl), Korrespondenz, Brief}, BundleComposer
 ├── kpi/                  # KpiToolbar, KpiSection, groups, charts (Recharts via next/dynamic), sections/* (20)
 ├── gespraeche/           # ConversationFilters, StatsPanel, ConversationList, ConversationDetail, ReportPanel
@@ -194,7 +194,7 @@ src/app/admin/
 ├── einstellungen/        # EmailSettingsWorkspace, ShopifySyncCard, SystemStatusCard, DesignPreviewDialog
 ├── feedback/, analytics/, verbesserung/
 ├── HeroImagePanel.tsx, EmailPreviewButton.tsx, EmailPreviewFrame.tsx   # shared e-mail widgets
-├── lib/                  # admin-fetch, use-async-action, use-step-loop, use-media-query
+├── lib/                  # admin-fetch, use-async-action, use-step-loop, use-media-query, fetch-pdf
 └── ui/                   # the primitives (§2.5)
 ```
 
@@ -213,6 +213,7 @@ Shared, pure logic sits in `src/lib/*.mjs` with `node --test` suites next to it
 | `useConfirm()` | promise-based `ConfirmDialog` (title, description, confirm label, destructive tone) — used for sends, deletes and paid bulk runs only. |
 | `useStepLoop({ path, body, onStep, isDone, isBusy, retry })` | drives the step-wise jobs (Komplettanalyse, Verbesserungslauf, Shopify import): one bounded POST per step, retries network errors (60 × 5 s, „Verbindung wird wiederhergestellt“), pauses, stops on `AdminApiError`, polls while the server is busy, stops on unmount. |
 | `useMediaQuery(query, ssrDefault)` | responsive behaviour without layout flashes (sidebar labels, SplitPane stacking). |
+| `fetchPdf(path, payload)` | POST for a binary answer (a letter PDF) with the admin JSON error envelope — `adminFetch()` is JSON-only. Kunden → Brief and Kampagnen → Briefe. |
 
 ### 2.5 Design system
 
@@ -489,7 +490,10 @@ documented in [`CAMPAIGNS.md`](./CAMPAIGNS.md), the desk's design decisions in
 [`KAMPAGNE_REDESIGN.md`](./KAMPAGNE_REDESIGN.md). Server file
 [`KampagneTab.tsx`](../src/app/admin/KampagneTab.tsx): without `?campaign=`
 the **overview** (`?edit=` opens the **editor**), with it the **desk** of that
-campaign.
+campaign. Since migration 0074 a campaign can also write **letters** (Pingen)
+— mainly to customers without the e-mail consent — each one reviewed and
+released by hand in the desk's view „Briefe“ (below; module:
+[`CAMPAIGNS.md`](./CAMPAIGNS.md) §8).
 
 #### Overview — [`kampagnen/CampaignsOverview.tsx`](../src/app/admin/kampagnen/CampaignsOverview.tsx)
 
@@ -528,12 +532,13 @@ verwenden“, §3.3) the new campaign's Zielgruppe starts from that spec.
 | Zielgruppe | „Beschreiben“ + „Filter setzen“ (AI turns a sentence into the filters and explains them); builder with `ToggleChips` and ranges: Lebenszyklus, Wertstufe, Abwanderungsrisiko, Mit Mo gesprochen, Letzter Kauf vor (Tage), Bestellungen, Umsatz (€), Kategorie, Persona, Sprache, Einwilligung (opt-in level), keine Werbe-Mail in den letzten n Tagen, hat geklickt in den letzten n Tagen, nicht in Kampagne; Zielgruppe Fest / Dynamisch; „Erneut aufnehmen nach“ (Laufend). The chips state the code's bounds: Lebenszyklus „Ausbauen (1–3 Mon.)“, „Weiterentwickeln (3–12 Mon.)“; Wertstufe by the most expensive single item ever bought (Kleinteile < 150 €, Komponenten to 1,499 €, Großgeräte from 1,500 €). Beside it the live count **„Passende Kund:innen mit Einwilligung“** (`campaigns/audience-preview`, debounced): total, with Mo chat, DE / EN (window aggregates over the whole match — only 8 rows travel), the plain-German description, a few names, and — when there are any — „Ohne Einwilligung passen weitere N — davon M per Brief erreichbar“ (InfoTip: e-mail advertising needs the consent; people without it can be reached by an advertising letter when a postal address is known and they have not objected) |
 | Angebot | Rabatt, Gilt für Alles / Empfehlungen / Set, „Codes gültig bis“ (Aktion) — starting values for Vorbereiten; codes are minted at send |
 | Gestaltung | Design (blank = the Einstellungen choice), Titelbild (kein / Standard / KI A/B / KI für alle), Textlänge, „Button führt zu“ Mo-Chat / Shop (+ https link), „Mo-Hinweis anhängen“ — the chat button lives in the Mo hint, so Mo-Chat without the hint is refused („Der Button zu Mo steht im Mo-Hinweis — …“) |
+| Brief | (not for the Einzelansprache; migration 0074) **„Briefe“** — „Keine Briefe“ (default) / „An alle ohne E-Mail-Einwilligung“ / „An alle (auch mit Einwilligung)“; **„Porto-Budget (€)“** (InfoTip; empty = no cap — sending stops when spent + the next letter would exceed it); the live line „Per Brief: N Empfänger:innen (Adresse schon bekannt: M) · ≈ X € Porto bei Y € je Brief“ (`campaigns/audience-preview` with `letterMode`; M counts only addresses from a completed order); Callouts while `PHYSICAL_MAIL_SENDS_APPROVED` is off or Pingen is not configured. Section InfoTip: „Werbebriefe per Post (Pingen) an Kund:innen mit abgeschlossener Bestellung, ohne Widerspruch gegen Briefwerbung — vor allem an alle, die keine E-Mail-Einwilligung haben. Adresse ist nur die Lieferadresse der letzten Bestellung. Jeder Brief wird im Prüftisch (Ansicht „Briefe“) geschrieben, geprüft und einzeln freigegeben; im Fuß stehen fest der Widerspruchshinweis und der Absender.“ |
 | Automatik | „Automatisch vorbereiten“ n Entwürfe / Nacht (from the shared `CAMPAIGN_AUTO_PREPARE_COUNT` budget, higher priority first; cron `prepare-campaign-drafts`), Tagesziel (display only — shown in the desk header) |
 | Prüfen & testen | ([`CampaignCheckSection.tsx`](../src/app/admin/kampagnen/CampaignCheckSection.tsx), not for the Einzelansprache) **Estimate** from the live count and the recorded cost averages (`estimateCampaignCosts`, `campaignPlanEstimate` in [`campaign-sample-core.mjs`](../src/lib/campaign-sample-core.mjs)): Empfänger:innen, KI-Texte ≈ €, KI-Titelbilder ≈ € (A/B = half, „für alle“ = everyone), Prüfzeit (recipients ÷ Tagesziel, 100 / Tag without one), Zeitraum (days left), Vorbereitung (nights of the nightly run, else „im Prüftisch“); a warning when the review or the nightly preparation does not fit the window. **„Muster erzeugen“** picks three recipients who differ most (language, Mo chat, Lebenszyklus, orders) and writes their mails with the form's current settings, saved or not — stored nowhere, only the AI call is counted. Each card: name + badges, subject, the start of the text, „ohne KI-Profil“ / „Empfehlungen unsicher“, „Einstellungen geändert“ once the form moved on; **Ansehen** (the rendered mail with the placeholder code and inert links; Escape closes only the preview), **Testpostfach …** (a Testkontakt of the saved campaign with exactly this text, sent through the normal send path — real code, tracking, unsubscribe; refused while the form has unsaved changes or the sample was made under other settings; the address is remembered in this browser), **Neu schreiben** |
 
 Saving an active campaign with a changed audience re-matches it right away
 (`campaigns/update`). For the Einzelansprache the editor hides Zielgruppe, the
-schedule and „Prüfen & testen“.
+schedule, „Brief“ and „Prüfen & testen“.
 
 #### Desk — one campaign (`?campaign=<slug|id>`)
 
@@ -548,7 +553,8 @@ clearing 100–200 e-mails a day:
   „Pausiert“: nothing goes out and drafts can only be prepared once the
   campaign runs); today's progress („n gesendet · m zu prüfen“, plus „Tagesziel
   n“ when the campaign sets one, with a bar that ends at the day's queue), the view
-  switch Prüfen · Liste · Eingeplant · Gesendet, status pills (Versand freigegeben/gesperrt,
+  switch Prüfen · Liste · Eingeplant · Briefe · Gesendet (Briefe only with a letter
+  mode or while letters exist), status pills (Versand freigegeben/gesperrt,
   Shopify, „Zielgruppe vor …“ = the last audience refresh — „Einzeln
   aufgenommen“ for the Einzelansprache —, failed drafts; the original texts sit
   in InfoTips), „Vorbereiten…“ (a popover with Anzahl, Rabatt, Gilt für,
@@ -633,6 +639,36 @@ clearing 100–200 e-mails a day:
   **„Läuft bald ab"** filters to exactly those reminder candidates), and the
   viewer for the retained content of a send. The Verlauf sheet of a contact
   shows the same validity badge.
+- **Briefe** (`?view=briefe`, migration 0074,
+  [`kampagne/LettersView.tsx`](../src/app/admin/kampagne/LettersView.tsx);
+  rules in [`CAMPAIGNS.md`](./CAMPAIGNS.md) §8). In the view switch as „Briefe
+  n“ (n = open letters) while the campaign has a letter mode; after a switch back
+  to „Keine Briefe“ it stays as long as letters exist, with a Callout and the
+  three batch steps disabled (server: 409 `letters_off`, also for a single
+  letter's „Neu schreiben“ / „Freigeben“). It loads its own data
+  (`campaigns/letters`, `list`). Toolbar: filter Offen / Freigegeben /
+  Versendet / Alle and three step loops — **„Adressen holen (n)“** (the shipping
+  address of each recipient's latest completed order, n = fetchable now),
+  **„Entwürfe schreiben (n)“** (confirm: one AI call per letter), **„Freigegebene
+  senden (n)“** (confirm: „≈ n × Porto = Summe Porto“, budget and staging hints,
+  „Jeder Brief wird vor dem Versand noch einmal geprüft (Widerspruch,
+  Einwilligung, Adresse, Abstand, Budget)“). Status line: Porto bisher · ≈ € je
+  Brief · Budget (reicht noch für n Briefe) · n ohne Kaufadresse ·
+  ausgeschlossen / übersprungen; Callouts for the letter gate off, Pingen not
+  configured, the campaign not running and „Pingen-Testumgebung
+  (PINGEN_STAGING)“. A `SplitPane`: the list (Empfänger:in with postcode, city
+  and country or „Adresse fehlt“, status with „Blockiert“ / „n Hinweise“) and the
+  detail — name, e-mail, status, EN badge, the purchase address, the excluded
+  reason, for a sent letter date / Pingen status / pages / cost, the reason a
+  send step returned it, blocks (address problems as a warning) and hints (gift
+  order, abroad, English reader, long subject, likely multi-page); Betreff and
+  Brieftext editable („Speichern“ marks it edited); **„Vorschau“** (the printed
+  A4 PDF, `campaigns/letters/preview`); **„Freigeben“** (refused only for an
+  objection, a consent given since, an undeliverable address or a missing text —
+  address, cadence and budget are checked again at send); „Zurücknehmen“; „Neu
+  schreiben“; „Überspringen“ / „Wieder aufnehmen“. Every letter is released on
+  its own — there is no bulk release; releases (`campaign.letter_approve`) and
+  send steps (`campaign.letters_send`) are in the admin access log.
 - **Fokus-Modus** (`F`) hides rail and review column, centres the mail and
   shows the Prüfpunkte as a one-line strip.
 - **Testkontakte** (⋯ menu): the operator's own inboxes as recipients **of
@@ -650,9 +686,11 @@ State and every mutation live in
 batch call carries the campaign id; the rules in
 [`campaign-desk-core.mjs`](../src/lib/campaign-desk-core.mjs)); the send itself
 is `POST /api/admin/campaign/send` → `approveAndSendCampaign`, covered by its
-tests. Screenshots: `docs/screenshots/kampagne-desk/` (2026-09 desk) and
+tests. Screenshots: `docs/screenshots/kampagne-desk/` (2026-09 desk),
 `docs/screenshots/customer-platform/` (`kampagnen`, `kampagne-editor`,
-`kampagne-desk`, `kampagne-blackfriday`, `einzelansprache-desk`).
+`kampagne-desk`, `kampagne-blackfriday`, `einzelansprache-desk`) and
+`docs/screenshots/kampagne-briefe/` (view „Briefe“, sent letters, send dialog,
+editor section „Brief“, the printed PDF).
 
 #### Einzelansprache
 
@@ -762,10 +800,12 @@ mounted, so an edit survives switching):
 | Gespräche | the person's conversations with the shared `TranscriptView` and „Im Gespräche-Tab öffnen“ | — |
 | Marketing | **Werbe-Einwilligung** — the one consent shared with Shopify: state, Seit, Quelle, „Verlauf (n)“ from `consent_events`; „Abmelden“ on request and „Abmeldung aufheben“ for a mistaken unsubscribe (no e-mail; the change reaches Shopify through the outbox); **Einzelansprache** (only with consent: „Hinweis für die KI“ + „Einzelansprache vorbereiten“, or the open one with „Im Prüftisch öffnen“, §3.2); **Kampagnen** — the person's participation (campaign, status, date, subject, geklickt — any click, the button or the set link —, danach abgemeldet). An open draft of the former personal marketing e-mail stays editable and sendable under „Persönliche E-Mail (bisheriger Weg)“ until it is sent or deleted (§4) | `customers/marketing-optout`, `campaigns/add-recipient`; former path: `customers/marketing-draft`, `marketing/*`, `bundles/*`, `catalog/search`, `email-hero/*` |
 | Korrespondenz | sent + received mail threads (lazy body), reply composer with preview | `correspondence/*` |
-| Brief | physical letter: AI draft, preview, „Brief senden“ (gated by `PHYSICAL_MAIL_SENDS_APPROVED`); **„Widerspruch gegen Briefwerbung eintragen“** (Art. 21, confirmed — deletes the letter draft; the tab then shows only the objection with „Aufheben“, and drafting and sending are refused) | `customers/letter-draft`, `customers/letter-preview`, `physical/send`, `customers/objection` |
+| Brief | physical letter: AI draft, preview, „Brief senden“ (gated by `PHYSICAL_MAIL_SENDS_APPROVED`); **„Widerspruch gegen Briefwerbung eintragen“** (Art. 21, confirmed — deletes the letter draft; the tab then shows only the objection with „Aufheben“, and drafting and sending are refused). **Since migration 0074 only a purchase address counts** — the shipping address of the person's latest completed order (source `purchase`); any other stored address (e.g. the Shopify account address, `consented_capture`) is refused at send (`not_purchase_address`, 409), as is an address a letter came back from as undeliverable (`address_invalid`). Without a usable purchase address the tab shows **„Adresse aus letzter Bestellung holen“**: reads that order's shipping address from Shopify and stores it (toast „Adresse aus der letzten Bestellung übernommen“, or „Keine abgeschlossene Bestellung“ / „Die letzte Bestellung hat keine vollständige Lieferadresse“; refused while `PHYSICAL_MAIL_SENDS_APPROVED` is off) | `customers/letter-draft`, `customers/letter-preview`, `physical/send`, `customers/objection`, `customers/letter-address` |
 
 Address auto-capture for letters runs in the daily `refresh-customers` cron,
-not on page views. Screenshots: `docs/screenshots/customer-platform/`
+not on page views; purchase addresses for campaign letters come from the
+desk's „Adressen holen“ and the nightly `campaign-audiences` cron
+(`CAMPAIGN_LETTER_ADDRESS_NIGHTLY`, [`CAMPAIGNS.md`](./CAMPAIGNS.md) §8.3). Screenshots: `docs/screenshots/customer-platform/`
 (`kunden`, `kunden-ohne-mo`, `kunden-detail-ueberblick`,
 `kunden-detail-aktivitaet`, `kunden-detail-kaeufe`, `kunden-detail-marketing`).
 
@@ -1781,13 +1821,14 @@ anomaly is logged server-side.
 
 ## 11. Admin API routes
 
-All under `/api/admin/*` — 100 route files —, gated by the Edge proxy **and**
+All under `/api/admin/*` — 103 route files —, gated by the Edge proxy **and**
 `guardAdminPost(req)` / `guardAdminGet()` in the handler (§1); JSON envelope
 `{ error: { code, message } }` on failure. Grouped by the screen that calls
 them. Actions that read or act on one person's data write the admin access log
-(`recordAdminAccess`, 35 route files) — among them `customers/ask`,
-`customers/objection`, `campaigns/add-recipient(s)`, `inbox/accept`,
-`inbox/suggest` and `correspondence/assign-prospect`.
+(`recordAdminAccess`, 39 route files) — among them `customers/ask`,
+`customers/objection`, `campaigns/add-recipient(s)`, `campaigns/letters`,
+`customers/letter-address`, `inbox/accept`, `inbox/suggest` and
+`correspondence/assign-prospect`.
 
 | Screen | Route | Purpose |
 | --- | --- | --- |
@@ -1800,7 +1841,7 @@ them. Actions that read or act on one person's data write the admin access log
 | Kampagnen | `GET campaigns`, `POST campaigns { name, kind, … }` | all campaigns with stats / „Neue Kampagne“ (starts as Entwurf; `validateCampaignInput`) |
 | | `POST campaigns/update { id, …fields }` | edit; an active campaign with a changed audience is re-matched at once |
 | | `POST campaigns/status { id, status }` | Starten / Pausieren / Fortsetzen / Beenden / Archivieren (`canTransition`; starting materialises the audience) |
-| | `POST campaigns/audience-preview { audience }` | the editor's live count with consent (total, with Mo, DE / EN as window aggregates, 8 sample names, plain-German description) plus `withoutConsent { total, letterReach }` — the same spec without the consent (the only match that skips it; nothing is materialised) and how many of those a letter could reach (postal address, no objection) |
+| | `POST campaigns/audience-preview { audience, letterMode? }` | the editor's live count with consent (total, with Mo, DE / EN as window aggregates, 8 sample names, plain-German description) plus `withoutConsent { total, letterReach }` — the same spec without the consent (the only match that skips it; nothing is materialised) and how many of those a letter could reach (postal address, no objection); with `letterMode` (`ohne_einwilligung` \| `alle`, 0074) also `letters { total, withAddress }` — the letter recipients under the letter rules and how many have a purchase address (the editor's „Per Brief: …“ line) |
 | | `POST campaigns/assist { action: audience \| brief, … }` | AI help in the editor: „Filter setzen“ from a sentence, „Briefing vorschlagen“ (proposals only) |
 | | `POST campaigns/sample { action: pick \| generate \| send_test, … }` | „Prüfen & testen“: `pick { audience }` → three varied recipients; `generate { campaignId?, config, customerId, language }` → a sample mail (subject, body, html; consent + block list checked, nothing stored); `send_test { campaignId, to, sample }` → Testkontakt + `approveAndSendCampaign` (409 `stale_sample` when the saved settings differ from the sample's) |
 | | `POST campaigns/refresh { campaignId }` | „Zielgruppe aktualisieren“ on the desk |
@@ -1819,6 +1860,8 @@ them. Actions that read or act on one person's data write the admin access log
 | | `GET campaign/test-contacts?campaignId=`, `POST campaign/test-contacts { action: create \| delete, campaignId, … }` | Testkontakte of one campaign: list, create (+ draft right away), delete |
 | | `GET campaign/history?campaignId=&q=&from=&to=&delivery=&page=&pageSize=` | paged „Gesendet“ view with delivery + redemption state and code/set expiry; `delivery` = delivered \| clicked \| bounced \| complained \| copy \| expiring (offer ends within 48 h) |
 | | `POST campaign/sent-email { sendId }` | retained content of one send |
+| | `POST campaigns/letters { action, campaignId \| id, … }` | the view „Briefe“ (0074, `CAMPAIGNS.md` §8): `list` (letters, counts, postage, budget, flags), the steps `fill_addresses` (50 purchase addresses), `draft` (5 AI drafts) and `send_step` (5 released letters, every gate again per letter), and per letter `redraft`, `save { subject, body }`, `approve`, `unapprove`, `skip`, `unskip`; 409 `letters_off` for the steps, `redraft` and `approve` while the campaign's mode is „Keine Briefe“, 409 `objection` for a draft or release after a postal objection; access log `campaign.letter_approve` (each release) and `campaign.letters_send` (each send step) |
+| | `POST campaigns/letters/preview { id, subject?, body? }` | the letter as printed (`application/pdf`, read-only; unsaved text may be passed; a placeholder recipient while no purchase address is known) |
 | Kunden, Kampagnen | `POST customers/marketing-optout { customerId \| contactId, action: optout \| lift, confirm: true }` | manual opt-out on request / lift a mistaken unsubscribe (no e-mail, audit-logged; reaches Shopify through the outbox) |
 | | `POST customers/erase { customerId \| contactId, confirm: true }` | delete the person completely (`erasePerson`, audit-logged; queues the Shopify side) |
 | Kunden | `GET customers/detail?id=` | one customer's full detail (on open) |
@@ -1833,7 +1876,8 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST catalog/search { query }` | product search for the composer and pickers |
 | | `POST correspondence/send / message / assign / email-preview` | reply (closes the person's open „E-Mail beantworten“ item → `closedItems`), lazy body, assign unmatched inbound (now from the Eingang; opens the item → `itemId`), preview |
 | Eingang | `POST correspondence/assign-prospect { messageId }` | „Als Interessent anlegen“: a customer from the sender (no consent), the mail assigned, the item opened → `{ customerId, itemId }` (access log `correspondence.assign_prospect`) |
-| | `POST customers/letter-draft / letter-preview`, `POST physical/send` | physical letter (`letter-draft` 409 after a postal objection) |
+| | `POST customers/letter-draft / letter-preview`, `POST physical/send` | physical letter (`letter-draft` 409 after a postal objection; since 0074 `physical/send` answers 409 `objection`, `not_purchase_address` or `address_invalid` too) |
+| Kunden | `POST customers/letter-address { customerId }` | „Adresse aus letzter Bestellung holen“ (0074): the shipping address of the person's latest completed order, read from Shopify and stored as the purchase address → `{ checked, filled, unchanged, noOrder, noAddress, failed }`; 403 `flag_off` while `PHYSICAL_MAIL_SENDS_APPROVED` is off, 503 `shopify_not_configured`; access log `customer.letter_address` |
 | | `GET email-hero`, `POST email-hero/suggest / generate / headline / remove` | hero image of a marketing or campaign draft |
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |

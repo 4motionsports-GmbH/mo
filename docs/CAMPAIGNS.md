@@ -18,6 +18,10 @@ per-customer marketing draft (`marketing_sends`, `MS5-` codes): Kunden → Marke
 „bisheriger Weg“ only for a still-open legacy draft. Both send paths check the same block list,
 and the campaign gate's frequency cap counts the Mo funnel's sends too (§3).
 
+Since migration `0074` a campaign can also reach its audience **by letter** (Pingen) — above all
+the customers without the e-mail consent. Each letter is drafted, reviewed and released one by one
+on the desk's „Briefe“ view, behind `PHYSICAL_MAIL_SENDS_APPROVED` and its own gates (§8).
+
 ---
 
 ## 1. Audience — who can be mailed
@@ -130,7 +134,7 @@ The Kampagnen overview (`?tab=kampagne`, alias `kampagnen`) shows one card per c
 phase, audience in plain German, recipients and send figures — with the scopes Aktuell / Alle /
 Archiv, „Öffnen“ (the campaign's desk, §5) and the status actions. „Neue Kampagne“ and „Bearbeiten“
 open the editor sheet (`?edit=new` / `?edit=<id>`;
-[`CampaignEditor.tsx`](../src/app/admin/kampagnen/CampaignEditor.tsx)) with seven sections.
+[`CampaignEditor.tsx`](../src/app/admin/kampagnen/CampaignEditor.tsx)) with eight sections.
 Everything is validated again on the server (`validateCampaignInput`):
 
 | Section | Fields (column) |
@@ -140,6 +144,7 @@ Everything is validated again on the server (`validateCampaignInput`):
 | Zielgruppe | The audience spec (`audience`, below), Fest/Dynamisch (`audience_mode`), „Erneut aufnehmen nach“ (`reentry_days`, `laufend` only, 14–3,650 days, empty = never), live count. Hidden for the Einzelansprache. |
 | Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations / set), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them |
 | Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode`: `none` / `default` / `ai_ab` / `ai_all`), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
+| Brief | Letters as a channel (migration `0074`, §8): „Briefe“ (`letter_mode`: „Keine Briefe“ `aus` — the default —, „An alle ohne E-Mail-Einwilligung“ `ohne_einwilligung`, „An alle (auch mit Einwilligung)“ `alle`), „Porto-Budget (€)“ (`letter_budget_cents`, 0–100,000 €, empty = no cap) and the live line „Per Brief: N Empfänger:innen (Adresse schon bekannt: M) · ≈ X € Porto bei Y € je Brief“ (M counts purchase addresses only); Callouts while `PHYSICAL_MAIL_SENDS_APPROVED` is off or Pingen is not configured. Hidden for the Einzelansprache. |
 | Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000 — no automation; shown as „Tagesziel n“ next to today's progress in the desk header) |
 | Prüfen & testen | Nothing stored — the estimate and sample mails below. Hidden for the Einzelansprache. |
 
@@ -175,7 +180,10 @@ only 8 sample names are fetched. Below it the editor adds **„Ohne Einwilligung
 davon M per Brief erreichbar“** (InfoTip): a second `matchAudience` call with `withoutConsent: true`
 counts the same spec among people WITHOUT the consent (or blocked) and how many of them have a
 postal address and no objection to advertising letters. It is the only match that skips the
-consent — a count, nothing is materialised; every recipient row still requires it.
+consent — a count, nothing is materialised; every recipient row still requires it. With a letter
+mode (section „Brief“) the same call takes `letterMode` and adds a third match under the letter
+rules of §8.2: `letters { total, withAddress }` — the campaign's letter recipients and how many of
+them already have a purchase address.
 
 **Preset audience from Kunden.** Kunden → Überblick → „Ähnliche Kunden“ (`GET
 /api/admin/customers/similar`, `listSimilarCustomers`: the same value tier and at least one shared
@@ -244,7 +252,8 @@ Starten / Fortsetzen, on save of a changed audience, via „Zielgruppe aktualisi
 `laufend` campaign takes them again after the re-entry period. Before the first facts run
 (`customer_facts` empty) a refresh waits — every customer would look like „no purchase“. Archived
 campaigns and the Einzelansprache are never refreshed. A `fest` campaign's nightly refresh only
-updates snapshots and consent.
+updates snapshots and consent. A campaign with a letter mode refreshes its letter recipients
+in the same run, after the e-mail recipients (§8.2).
 
 ### 2.4 Einzelansprache
 
@@ -278,10 +287,11 @@ written to the admin access log (`campaign.add_recipient`, `campaign.add_recipie
 
 | Table | Purpose | Key columns |
 | --- | --- | --- |
-| `campaigns` (`0066`) | One row per campaign | `name`, `slug` (unique), `kind`, `status`, `brief`, `audience` (jsonb spec), `audience_mode` (`dynamisch` \| `fest`), `priority`, `starts_at`/`ends_at`, `daily_target`, `auto_prepare_per_day`, `reentry_days`, `discount_percent`, `discount_scope`, `discount_valid_until`, `design_key`, `hero_mode`, `text_mode`, `mo_promo`, `cta_kind`/`cta_url`, `audience_refreshed_at`, `started_at`/`ended_at` |
+| `campaigns` (`0066`) | One row per campaign | `name`, `slug` (unique), `kind`, `status`, `brief`, `audience` (jsonb spec), `audience_mode` (`dynamisch` \| `fest`), `priority`, `starts_at`/`ends_at`, `daily_target`, `auto_prepare_per_day`, `reentry_days`, `discount_percent`, `discount_scope`, `discount_valid_until`, `design_key`, `hero_mode`, `text_mode`, `mo_promo`, `cta_kind`/`cta_url`, `letter_mode` + `letter_budget_cents` (`0074`, §8), `audience_refreshed_at`, `started_at`/`ended_at` |
 | `campaign_contacts` (`0034`, recipients since `0066`) | One row per person per campaign per cycle + the review-queue lifecycle | `campaign_id` (FK campaigns, cascade), `customer_id` (FK customers, SET NULL, `0059`), `cycle`, normalized `email`, `first_name`/`last_name`, `language` + `language_override` (`0040`), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_order_at` (`0052`), `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `excluded` \| `draft_failed`), `excluded_reason`, `admin_note`, `conversation_id` (FK conversations, SET NULL), `added_at`, `sent_at`, `skipped_at`; `is_test` + `test_source_email` (`0057`, Testkontakte — §5). Unique `(campaign_id, customer_id, cycle)` for real rows and `(campaign_id, email)` for test rows; `shopify_customer_id` is no longer unique and may be NULL. |
 | `campaign_drafts` | ONE editable draft per recipient (unique `contact_id`, cascade) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, `discount_scope` (`all` \| `recommendations` \| `set`, `0058`), compact `purchase_summary` (jsonb), `recommended_product_ids`, `low_confidence` |
 | `campaign_sends` | Immutable send record (audit + KPI) | `contact_id` (SET NULL), `campaign_id` (FK campaigns, SET NULL, `0066`), `customer_id` (FK customers, SET NULL, `0066`), `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `redirect_token`/`clicked_at` (`0041` — the tracked CTA, see below; NULL for copy sends and pre-0041 rows), `sent_at`; snapshot and delivery columns of `0052`/`0054`/`0055` below |
+| `campaign_letters` (`0074`) | One letter per person per campaign per cycle (the letter channel, §8.1) — separate from `campaign_contacts`, whose queries all assume the e-mail consent | `campaign_id` (FK campaigns, cascade), `customer_id` (FK customers, cascade), `cycle` (always 0), `status`, `excluded_reason`, `subject`/`body`, `edited`, `admin_note`, `drafted_at`/`approved_at`/`sent_at`, `page_count`, `physical_letter_id` (FK physical_letters, SET NULL), `error`, `added_at`/`updated_at`; unique `(campaign_id, customer_id, cycle)` |
 
 Purchases are no longer read per draft from Shopify: the draft reads the local order ledger
 `customer_orders` (`0062`, [`CUSTOMERS.md`](./CUSTOMERS.md); fallbacks in §4) and keeps only the
@@ -328,6 +338,17 @@ check the consent and the block list (409 `not_eligible`).
 **What the lawyer approved** with `CAMPAIGN_SENDS_APPROVED`: mailing this audience on the basis of
 Shopify's checkbox consent at all, and — separately — whether `SINGLE_OPT_IN`/`UNKNOWN` contacts may
 be included (`CAMPAIGN_ALLOW_SINGLE_OPT_IN`) or must first re-confirm.
+
+**Letters (§8) do not pass these gates — they have their own.** An advertising letter needs no
+e-mail consent (mode `ohne_einwilligung` even requires its absence); it is checked per letter, at
+send time and with the person read fresh, by `decideCampaignLetterSend`
+([`campaign-letter-core.mjs`](../src/lib/campaign-letter-core.mjs), tested): the letter gate
+`PHYSICAL_MAIL_SENDS_APPROVED` (code default **false**) → Pingen configured → campaign live → no
+objection to postal advertising (Art. 21) → no e-mail consent given since (mode
+`ohne_einwilligung`) → a complete address taken from the latest completed order, not marked
+undeliverable → text present → `LETTER_MIN_INTERVAL_DAYS` since the person's last letter → the
+campaign's postage budget (§8.6). Every letter is released one by one by a person; the legal
+questions are in [`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) § 18 (F-35).
 
 **DOI refresh (FUTURE option, deliberately not built):** people without a provable double opt-in
 could be sent a one-time re-confirmation request through the existing DOI confirmation
@@ -480,7 +501,8 @@ campaign. Keyboard-driven (`N`/`P` next/previous, `S` send, `X` skip, `E`/`Esc` 
 list — shortcuts pause while a dialog is open). The queue can be **filtered by chips** (Alle / DOI /
 Single/Unbekannt / EN / Rabatt / Set / Hinweise / Blockiert) and searched by email/name —
 mutations are keyed by contact id, so filtering never mis-targets a card. Position, view and filter
-live in the URL (`?contact=`, `?view=`, `?filter=`).
+live in the URL (`?contact=`, `?view=`, `?filter=`). A campaign with a letter mode adds the
+view „Briefe“ (`?view=briefe`, §8.5) to the view switch.
 
 **Prüfpunkte.** Every card opens with a precomputed verdict from the pure
 [`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs) (tested):
@@ -703,15 +725,18 @@ stays at 0.
 `/api/cron/retention` job: `campaign_sends` purge by `sent_at`, recipients (`campaign_contacts`,
 test contacts excepted) by `COALESCE(last_synced_at, created_at)` — an open recipient that still
 matches is refreshed by every audience refresh and stays; a sent, skipped or dropped one ages out;
-drafts cascade with their recipient. `campaigns` rows are not purged. The `suppression_list` is
+drafts cascade with their recipient. Letter rows (`campaign_letters`, §8) leave on the same
+window by `updated_at` and are counted with the recipients; the posted letters
+(`physical_letters`) keep their own window (`PHYSICAL_LETTER_RETENTION_DAYS`, 365 days).
+`campaigns` rows are not purged. The `suppression_list` is
 never touched — opt-outs are honoured forever. See [`DATA_RETENTION.md`](./DATA_RETENTION.md).
 
 **Complete deletion** of a person — the "Löschen" icon in the card's Kontakt
 block (`POST /api/admin/customers/erase { contactId }`), the "Daten löschen"
 link in the mail, the customer's own widget button, or Shopify's `customers/redact` /
 `customers/delete` webhook — runs the one erasure path (`erasePerson`): every recipient row of
-the person in every campaign, drafts, sends, customer + profile, orders, chats and correspondence
-go in one transaction; the address is suppressed with reason `erasure` and the Shopify id gets a
+the person in every campaign, drafts, sends, campaign letters, customer + profile, orders, chats
+and correspondence go in one transaction; the address is suppressed with reason `erasure` and the Shopify id gets a
 tombstone, so no audience, import or webhook brings the person back.
 
 ## 7. Endpoints & files
@@ -721,7 +746,7 @@ tombstone, so no audience, import or webhook brings the person back.
 | Campaign list / create (Entwurf) | `GET` + `POST /api/admin/campaigns` |
 | Edit a campaign (re-materialises a changed audience of an active one) | `POST /api/admin/campaigns/update` |
 | Status change (Starten, Pausieren, Fortsetzen, Beenden, Archivieren) | `POST /api/admin/campaigns/status` |
-| Live audience count + German description | `POST /api/admin/campaigns/audience-preview` |
+| Live audience count + German description (with `letterMode` also `letters { total, withAddress }`, §8.2) | `POST /api/admin/campaigns/audience-preview` |
 | AI help: audience from a sentence / Briefing draft | `POST /api/admin/campaigns/assist` (`action: "audience" \| "brief"`) |
 | Prüfen & testen: sample recipients, sample mail, test send | `POST /api/admin/campaigns/sample` (`action: "pick" \| "generate" \| "send_test"`) |
 | Zielgruppe aktualisieren | `POST /api/admin/campaigns/refresh` |
@@ -730,7 +755,7 @@ tombstone, so no audience, import or webhook brings the person back.
 | „Ähnliche Kunden“ + their audience spec (→ `?edit=new&audience=`) | `GET /api/admin/customers/similar?id=` |
 | Eingang suggestion → Einzelansprache | `POST /api/admin/inbox/accept` |
 | Chat-Start from a campaign link (widget) | `POST /api/chat` with `campaignToken` (the `mo_c` value) |
-| Nightly audience refresh (cron) | `GET/POST /api/cron/campaign-audiences` (`CRON_SECRET`, 02:30 UTC) |
+| Nightly audience refresh (cron; also the letter recipients and up to `CAMPAIGN_LETTER_ADDRESS_NIGHTLY` purchase addresses, §8) | `GET/POST /api/cron/campaign-audiences` (`CRON_SECRET`, 02:30 UTC) |
 | Batch prepare | `POST /api/admin/campaign/prepare` (`campaignId`; returns `preparedContactIds`) |
 | Nightly prepare (cron, off by default) | `GET/POST /api/cron/prepare-campaign-drafts` (`CRON_SECRET`, `CAMPAIGN_AUTO_PREPARE_*`, per-campaign `auto_prepare_per_day`) |
 | Single draft / regenerate / purchase-basis selection | `POST /api/admin/campaign/draft` |
@@ -748,14 +773,240 @@ tombstone, so no audience, import or webhook brings the person back.
 | Rendered draft preview (read-only, `text/html`) | `POST /api/admin/campaign/email-preview` |
 | Retained sent content (read-only, `text/html`) | `POST /api/admin/campaign/sent-email` |
 | Send history (paged, filtered) | `GET /api/admin/campaign/history?campaignId=&q=&from=&to=&delivery=&page=&pageSize=` |
+| Letters: the „Briefe“ view — list, purchase addresses, drafts, edit, release, send steps (§8) | `POST /api/admin/campaigns/letters` (`action`: `list`, `fill_addresses`, `draft`, `redraft`, `save`, `approve`, `unapprove`, `skip`, `unskip`, `send_step`) |
+| Letter as printed (read-only, `application/pdf`) | `POST /api/admin/campaigns/letters/preview` (`{ id, subject?, body? }`) |
+| Purchase address of one customer (Kunden → Brief) | `POST /api/admin/customers/letter-address` (`{ customerId }`) |
 | Retired | `POST /api/admin/campaign/sync`, `GET/POST /api/cron/sync-campaign-audience` (§1) |
-| UI | `src/app/admin/KampagneTab.tsx` (overview or desk); overview + editor in `src/app/admin/kampagnen/` (`CampaignsOverview`, `CampaignEditor`, `CampaignCheckSection`); desk in `src/app/admin/kampagne/` (`KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `SentHistory`, `ContactHistorySheet`, `TestContactsSheet`, `useCampaignActions`, `useRenderedPreview`) |
-| Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist,sample}.ts`, `campaign-{def,language,flags,gates,segments,draft-core,review-checks,desk-core,sample-core}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs` |
+| UI | `src/app/admin/KampagneTab.tsx` (overview or desk); overview + editor in `src/app/admin/kampagnen/` (`CampaignsOverview`, `CampaignEditor`, `CampaignCheckSection`); desk in `src/app/admin/kampagne/` (`KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `SentHistory`, `ContactHistorySheet`, `TestContactsSheet`, `LettersView`, `useCampaignActions`, `useRenderedPreview`) |
+| Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist,sample}.ts`, `campaign-{def,language,flags,gates,segments,draft-core,review-checks,desk-core,sample-core}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs`; letters: `campaign-letters{,-store}.ts`, `campaign-letter-draft.ts`, `postal-address-fill.ts`, `campaign-letter-core.mjs`, `postal-address.mjs`, `physical-mail.ts` (`submitLetter`) |
 
 All admin routes sit behind the existing proxy gate + `guardAdminPost` / `guardAdminGet`
 (auth + JSON-content-type CSRF defense). Everything fails closed: missing
 Shopify/DB config → "not configured" in the UI, never a crash, never an
 ungated send.
+
+## 8. Briefe als Kanal (Migration `0074`)
+
+A campaign can also reach its audience **by post** — above all the people the e-mail channel may
+not reach because they have no e-mail consent. Letters are printed and posted by Pingen through
+the same hand-over as the 1:1 letter of Kunden → Brief (`submitLetter`), behind the same letter
+gate `PHYSICAL_MAIL_SENDS_APPROVED`. Each letter is drafted (AI), reviewed and **released one by
+one by a person** on the campaign's desk (view „Briefe“); a send step posts only released letters
+and checks every gate again. Nothing is posted automatically. The pure rules live in
+[`campaign-letter-core.mjs`](../src/lib/campaign-letter-core.mjs) (tested); the I/O in
+[`campaign-letters-store.ts`](../src/lib/campaign-letters-store.ts) (rows, refresh, claim),
+[`campaign-letters.ts`](../src/lib/campaign-letters.ts) (address, draft and send steps, desk
+data), [`campaign-letter-draft.ts`](../src/lib/campaign-letter-draft.ts) (AI draft) and
+[`postal-address-fill.ts`](../src/lib/postal-address-fill.ts) (purchase addresses).
+
+### 8.1 Modes and data model
+
+| `campaigns.letter_mode` | Editor „Briefe“ | Who gets a letter |
+| --- | --- | --- |
+| `aus` (default) | Keine Briefe | nobody |
+| `ohne_einwilligung` | An alle ohne E-Mail-Einwilligung | matches **without** the e-mail consent `subscribed` — they get the letter, the consented ones the e-mail; never both channels |
+| `alle` | An alle (auch mit Einwilligung) | every match, people with the consent included (who then get both) |
+
+`campaigns.letter_budget_cents` is the campaign's postage cap (editor „Porto-Budget (€)“; NULL =
+no cap). The Einzelansprache has no letter section; an update ignores `letterMode` for it.
+
+`campaign_letters` holds one row per person per campaign per `cycle` (unique
+`(campaign_id, customer_id, cycle)`, both FKs cascade) — separate from `campaign_contacts`, whose
+every query assumes the e-mail consent. `cycle` is always `0` for now: a `laufend` campaign writes
+a person **one** letter, there is no re-entry for letters. Further columns: `subject`, `body`,
+`edited`, `admin_note`, `drafted_at`, `approved_at`, `sent_at`, `page_count`,
+`physical_letter_id` (FK `physical_letters`, SET NULL), `error` (why a send step returned the
+letter), `added_at`, `updated_at`.
+
+| `status` | Meaning |
+| --- | --- |
+| `pending` | no text yet |
+| `drafted` | text written (AI or typed) — waiting for review |
+| `approved` | released by a person, this one letter |
+| `sending` | claimed by a send step |
+| `sent` | posted; its progress (printed, posted, undeliverable) is the `physical_letters` row — joined, never copied |
+| `skipped` | „Überspringen“ by the operator |
+| `excluded` | left the audience — `excluded_reason` `widerspruch` (objection to postal advertising), `einwilligung` (mode `ohne_einwilligung`: an e-mail consent given since — the person gets the e-mail instead), `zielgruppe` (no longer matches a dynamic audience) |
+| `failed` | Pingen refused the submission |
+
+The migration also adds `physical_letters.campaign_id` (the campaign a posted letter belongs to,
+NULL for 1:1 letters — postage per campaign), `customers.postal_address_order_id` (the Shopify
+order whose shipping address is stored) and `customers.postal_address_invalid_at` (a letter to
+this address came back undeliverable). Erasure, the FK plan and the person merge cover
+`campaign_letters` (cascade with the customer; a merge first deletes the duplicate's letters that
+collide with the survivor's per campaign and cycle, then repoints the rest). Retention: §6.
+
+### 8.2 Who gets a letter
+
+`matchAudience` ([`audience-store.ts`](../src/lib/audience-store.ts)) with `letterMode`; the rule
+is `letterMembership` in the core:
+
+- The campaign's audience spec applies — Lebenszyklus, Wertstufe, orders, products and
+  categories, language, country, tags, clicks, „Nicht in Kampagne“ … — **except** the two
+  e-mail-only filters: „Einwilligung“ (opt-in level, `optInLevels`) and „Keine Werbe-Mail in den
+  letzten n Tagen“ (`excludeMailedWithinDays`).
+- Plus: at least one order (`orders_count > 0` — the only address source is an order), no
+  objection to postal advertising (`customers.postal_objection_at`), no hard block.
+- `ohne_einwilligung` additionally requires that the person does **not** have the consent
+  `subscribed`; `alle` writes to everyone matched.
+- „Nicht in Kampagne“ (`excludeCampaignIds`) also excludes people who have a letter (not
+  `excluded`) in those campaigns.
+
+Letter rows are written by the audience refresh (§2.3: Starten / Fortsetzen, saving an active
+campaign, „Zielgruppe aktualisieren“ in the ⋯ menu, the nightly `/api/cron/campaign-audiences`),
+after the e-mail recipients (`refreshCampaignLetters`). A `fest` audience adds letters only on the
+first letter refresh; a `dynamisch` one adds newcomers and excludes the open letters (`pending`,
+`drafted`, `failed`) of people who no longer match (`zielgruppe`). An excluded letter whose person
+matches again is reopened (`drafted` when it has a text, else `pending`). At every refresh —
+and again at send time (§8.6) — an objection excludes an open letter (`widerspruch`), and with
+`ohne_einwilligung` a consent given since excludes it (`einwilligung`). A failed match changes
+nothing.
+
+### 8.3 Addresses — only the latest completed order
+
+The only address source for an advertising letter is the **shipping address of the person's
+latest completed order** (dossier § 6.4): the newest order in the local ledger with financial
+status `PAID` or `PARTIALLY_REFUNDED` that is not cancelled. The ledger stores no addresses, so
+`fillPostalAddressesFromOrders` reads that one order's `shippingAddress` live from the Shopify
+Admin API (`nodes(ids:)`, 50 orders per call) — only for people about to get a letter — and stores
+it as `customers.postal_address` with source `purchase` and `postal_address_order_id`
+(`savePurchaseAddress`). `decideAddressRefresh` ([`postal-address.mjs`](../src/lib/postal-address.mjs),
+tested) decides per person: no completed order → checked, nothing stored; the stored purchase
+address already comes from this order → kept; otherwise (none, another source, an older order —
+moved?) → fetched. The desk's batch and the nightly run check each person at most once a day
+(`postal_address_checked_at`); an order without a usable shipping address (pickup) → checked,
+nothing stored. **Nothing is fetched
+while `PHYSICAL_MAIL_SENDS_APPROVED` is off.**
+
+- **Other sources are never used for a letter.** An address with another source —
+  `consented_capture`, the saved Shopify account address — stays stored but is refused for every
+  advertising letter (`not_purchase_address`). This now also applies to the 1:1 letter of
+  Kunden → Brief, which previously accepted any complete stored address; the Brief tab offers
+  „Adresse aus letzter Bestellung holen“ (`POST /api/admin/customers/letter-address`, access log
+  `customer.letter_address`).
+- **Who fetches.** The desk's „Adressen holen“ (50 per step) and, nightly, the campaign-audiences
+  cron after the refresh: up to `CAMPAIGN_LETTER_ADDRESS_NIGHTLY` (default 200, max 2,000, 0 = off)
+  addresses for the open letters of active campaigns (not the Einzelansprache) with a letter mode.
+- **Gift orders.** When the shipping name contains neither the customer's last name nor — without
+  one — the first name, the desk shows „Lieferadresse auf einen anderen Namen (Geschenk?) —
+  prüfen.“ A hint, not a block.
+- **Undeliverable.** A Pingen `undeliverable` status (webhook) sets
+  `customers.postal_address_invalid_at` — only while the stored address is still the one that
+  letter went to (street line and postcode). From then on campaign and 1:1 letters to it are
+  refused (`address_invalid`) until a purchase address from another, newer order replaces it,
+  which clears the mark.
+
+### 8.4 Drafts
+
+One AI call per letter (`draftCampaignLetter`, writer tier, `ai_usage` call site
+`campaign_letter`, „Kampagnen-Briefe“ in the KI-Kosten). The prompt's rules: German, Du-form,
+„Hallo <Vorname>,“; tie in with the past purchases; recommend at most the given product names
+(up to three), no prices; it is paper — **no** links or buttons, **no** discount code, **no**
+percentages, **no** unsubscribe or objection text (that is fixed in the footer); no invented
+urgency (an Aktion's real end date may be named); never say where the knowledge comes from; at
+most about 1,500 characters (one page); signed „Herzliche Grüße“ / „Mo, dein persönlicher Berater
+bei motion sports“. The letter may name the shop as plain text (`CAMPAIGN_LETTER_SHOP_URL`;
+default the host of the first `ALLOWED_ORIGINS` entry, else `www.motionsports.de`).
+
+The prompt gets: the first name; the campaign's name, kind, Briefing and end date; the letter's
+operator note (`admin_note`); the AI profile (the same `profileSection` as a campaign mail — not
+after an Art. 21 objection to profiling); the purchase summary from the ledger; the lifecycle
+segment's intro rule; the product names. **Never** the address, the e-mail, order numbers or
+amounts — the purchase lines are the same `purchaseBlock` as a campaign mail: date and items
+(since 03.10.2026 without the shop's order name, for campaign mails too). Without `ANTHROPIC_API_KEY`, or when the call fails, a fixed template letter is stored —
+a person reviews every letter anyway. Nobody with a postal objection gets a draft. Phase 1 writes
+German only: an English reader gets a German letter (desk hint „Liest Englisch — der Brief ist
+deutsch.“).
+
+### 8.5 The desk view „Briefe“
+
+`?tab=kampagne&campaign=<slug>&view=briefe`
+([`LettersView.tsx`](../src/app/admin/kampagne/LettersView.tsx)), in the view switch as
+„Briefe n“ (n = open letters: without text, drafted, released, failed) while the campaign has a
+letter mode. After the mode went back to „Keine Briefe“ the view stays as long as letters exist:
+a Callout says no drafts are written, released or sent any more, and the three batch steps are
+disabled (the server answers them, and a single letter's „Neu schreiben“ / „Freigeben“, with 409
+`letters_off`; reading, editing and skipping stay possible). The view
+loads itself (`action: "list"`), so the desk render does not carry every letter text.
+
+- **Filter** Offen / Freigegeben / Versendet / Alle.
+- **Batch steps**, each a `useStepLoop`: „Adressen holen (n)“ (n = fetchable now), „Entwürfe
+  schreiben (n)“ (confirmed: one AI call per letter), „Freigegebene senden (n)“ (confirmed with
+  „≈ n × Porto = Summe Porto“, the budget hint, the Pingen staging hint and „Jeder Brief wird vor
+  dem Versand noch einmal geprüft (Widerspruch, Einwilligung, Adresse, Abstand, Budget)“).
+- **Status line:** Porto bisher · ≈ € je Brief · Budget (reicht noch für n Briefe) · n ohne
+  Kaufadresse · ausgeschlossen / übersprungen. Callouts: letter gate off, Pingen not configured,
+  campaign not running, „Pingen-Testumgebung (PINGEN_STAGING)“.
+- **Detail** of the selected letter: name, e-mail, status, EN badge; the purchase address; the
+  excluded reason; for a sent letter date, Pingen status, pages and cost; the reason a send step
+  returned it; blocks (address problems as a warning) and hints (gift order, abroad, English
+  reader, long subject, likely multi-page); Betreff and Brieftext editable (saving marks it
+  edited and takes back a release); „Vorschau“ (the printed A4 PDF); „Freigeben“ — refused only
+  for an objection, a consent given since, an undeliverable address or a missing text; address,
+  cadence and budget are checked again at send —; „Zurücknehmen“; „Neu schreiben“;
+  „Überspringen“ / „Wieder aufnehmen“.
+- **No bulk release.** Every release (`campaign.letter_approve`) and every send step
+  (`campaign.letters_send`) is written to the admin access log.
+
+### 8.6 Sending — every gate per letter
+
+„Freigegebene senden“ runs `sendCampaignLetterStep` in steps of 5 released letters. A step first
+settles letters a dead step left in `sending` for 15 minutes (`recoverStuckLetters`): without a
+physical letter they go back to `approved` (nothing was posted); with one they follow it —
+submitted to Pingen → `sent`, failed or cancelled → `failed`; a physical letter that never
+reached Pingen keeps its campaign letter in `sending` (a retry could print twice). Then it claims
+the oldest releases atomically (`FOR UPDATE SKIP LOCKED`), reads each person fresh and runs
+`decideCampaignLetterSend` — the first failing gate is the refusal:
+
+| # | Gate | Refusal |
+| --- | --- | --- |
+| 1 | `PHYSICAL_MAIL_SENDS_APPROVED` | `flag_off` |
+| 2 | Pingen configured | `pingen_not_configured` |
+| 3 | Campaign running — status and window (`campaignAcceptsWork`) | `campaign_closed` |
+| 4 | No objection to postal advertising | `objection` |
+| 5 | Mode `ohne_einwilligung`: no e-mail consent now | `consent_now` |
+| 6 | Complete postal address | `no_address` |
+| 7 | Address source `purchase` | `not_purchase_address` |
+| 8 | Address not undeliverable | `address_invalid` |
+| 9 | Subject and text | `no_text` |
+| 10 | Cadence `LETTER_MIN_INTERVAL_DAYS` (default 60, 0 = off) — counts **every** posted letter to the person, 1:1 letters included, except failed / cancelled ones | `too_soon` |
+| 11 | Budget: spent + this letter ≤ `letter_budget_cents` — spent = postage of this campaign's posted letters (the price Pingen reported, else `PINGEN_LETTER_COST_CENTS`) | `budget` |
+
+An objection excludes the letter (`widerspruch`), a consent given since too (`einwilligung`);
+every other refusal sends it back to „Entwurf“ (`drafted`) with the reason shown on it; a Pingen
+error marks it `failed`.
+
+Posting is `submitLetter` ([`physical-mail.ts`](../src/lib/physical-mail.ts)), the one hand-over
+to Pingen that Kunden → Brief uses too: render the PDF, create the `physical_letters` row (with
+`campaign_id`), attach it to the campaign letter, then submit with the row's Idempotency-Key and
+auto send, delivery options as before. Because the physical letter is attached **before** the
+submission, a step that dies after Pingen accepted it is never posted twice — the recovery puts
+back only letters without one. The PDF has the 1:1 layout; the footer of every page carries the
+Art. 21 objection notice, the sender and the privacy link. Typography: „ “ – — … € now print
+correctly in every PDF (WinAnsi; before they came out as „?“).
+
+### 8.7 Endpoints, environment, open decisions
+
+| Route (all `guardAdminPost`) | Purpose |
+| --- | --- |
+| `POST /api/admin/campaigns/letters` | The „Briefe“ view: `list`, `fill_addresses` (50 per step), `draft` (5 per step), `redraft`, `save`, `approve`, `unapprove`, `skip`, `unskip`, `send_step` (5 per step); 409 `letters_off` for the batch steps, `redraft` and `approve` while the mode is „aus“ |
+| `POST /api/admin/campaigns/letters/preview` | The letter as printed (PDF; a placeholder recipient while no purchase address is known) |
+| `POST /api/admin/customers/letter-address` | Fetch one customer's purchase address (Kunden → Brief) |
+| `POST /api/admin/campaigns/audience-preview` | Takes `letterMode` and then returns `letters { total, withAddress }` |
+
+**Environment** (in `.env.example`): `LETTER_MIN_INTERVAL_DAYS` (60; 0 = no cadence check),
+`CAMPAIGN_LETTER_ADDRESS_NIGHTLY` (200; max 2,000; 0 = only the desk's button),
+`CAMPAIGN_LETTER_SHOP_URL` (shop address named on paper). Existing: `PHYSICAL_MAIL_SENDS_APPROVED`,
+`PINGEN_*` (incl. `PINGEN_STAGING`), `PINGEN_LETTER_COST_CENTS`.
+
+**Defaults the developer chose — open for the lawyer / maintainer** (dossier § 18, F-35): release
+per letter (no bulk approve); letter mode default „aus“; cadence 60 days; `consented_capture`
+addresses stay stored but unused; an objection does not delete the stored address (it blocks
+every letter); German letters only; no discount code on paper (phase 1); `laufend` campaigns
+write a person once (cycle 0).
+
+Screenshots: `docs/screenshots/kampagne-briefe/` (the view, sent letters, the send dialog, the
+editor section, at 1440 and 1024 px in light and dark, plus the printed PDF).
 
 ## Product variants
 

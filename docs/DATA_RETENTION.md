@@ -154,12 +154,29 @@ newsletter list, synced daily into `campaign_contacts` by
 `/api/cron/sync-campaign-audience`. Replaced by the Kundenstamm mirror and the
 nightly audience refresh `/api/cron/campaign-audiences`.)*
 
+**Letters as a campaign channel (migration `0074`).** A campaign can also write
+advertising letters ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §8) — mostly to customers
+**without** the e-mail consent, so their basis is not the consent but the
+shop's legitimate interest in direct marketing to its existing customers
+(Art. 6(1)(f), opt-out with an Art. 21 objection — the developer's assessment,
+open with the lawyer: `ANWALTSDOSSIER.md` § 18, F-35). Each letter is a
+`campaign_letters` row (campaign id, customer id, review status, the letter's
+subject and text, the link to the posted letter — no address); the address is
+`customers.postal_address`, and only the shipping address of the person's
+latest completed order (`postal_address_source = 'purchase'`, with
+`postal_address_order_id`) is used. An address from another source stays stored
+but unused; an objection to postal advertising blocks every letter but does not
+delete the stored address. What was posted is a `physical_letters` row (with
+`campaign_id`) on its own window, unchanged.
+
 ### Retention windows (campaign)
 
 | Data                | Default window | Env var                           | Action on expiry |
 | ------------------- | -------------- | --------------------------------- | ---------------- |
 | `campaign_contacts` (+ drafts, cascade) | **365 days** by `COALESCE(last_synced_at, created_at)` | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete (an open recipient that still matches its audience is refreshed every night and stays; a sent, skipped, suppressed or excluded one ages out). Testkontakte are never purged by this step. |
 | `campaign_sends`    | **365 days** by `sent_at` | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete      |
+| `campaign_letters` (`0074`) | **365 days** by `updated_at` | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete (step 5g; counted with the recipients in the summary). Cascade-deleted with the customer (complete erasure) and with the campaign. A person merge keeps the survivor's letter where both have one in the same campaign and cycle and moves the rest. |
+| `physical_letters` (Briefe, incl. campaign letters) | **365 days** by `created_at` | `PHYSICAL_LETTER_RETENTION_DAYS` | Hard delete (step 5c) — unchanged by `0074`; a campaign letter whose posted letter is gone keeps its row with `physical_letter_id` NULL |
 | `campaigns`         | kept           | —                                 | No personal data; archived by the operator |
 | `suppression_list`  | **Kept**       | —                                 | Retained to keep honouring the opt-out (unchanged) |
 
@@ -384,7 +401,8 @@ address, drafts; OAuth tokens, session links, the order ledger
 the person's Eingang items cascade), **every** conversation of the person on any
 device (messages cascade), consent records, marketing drafts and sends, every
 Kampagne recipient row of the person in every campaign (drafts cascade) and its
-sends, correspondence, physical letters, feedback, KPI events and attribution
+sends, the person's campaign letters (`campaign_letters`, cascade),
+correspondence, physical letters, feedback, KPI events and attribution
 tokens of the person's sessions, pending sign-in and merge-conflict rows, usage
 rows, the person's open Shopify outbox rows, ledger rows not yet linked to the
 row (by Shopify id), and the person's section in stored Analyse reports.
@@ -480,8 +498,10 @@ step numbers below are the ones in the code. Each run:
 5g. Deletes campaign data past `CAMPAIGN_CONTACT_RETENTION_DAYS` (default
    **365 days**): `campaign_sends` by `sent_at`, then `campaign_contacts` by
    `COALESCE(last_synced_at, created_at)` (drafts cascade with their recipient;
-   Testkontakte are skipped). The `suppression_list` is untouched — see
-   [`CAMPAIGNS.md`](./CAMPAIGNS.md).
+   Testkontakte are skipped), then the campaign letters (`campaign_letters`,
+   migration `0074`) by `updated_at` — counted in `deletedCampaignContacts`; the
+   posted letters keep their own window (5c). The `suppression_list` is
+   untouched — see [`CAMPAIGNS.md`](./CAMPAIGNS.md).
 5h. Deletes `analytics_reports` past `ANALYTICS_REPORT_RETENTION_DAYS`, and
    `conversation_insights` + `kpi_persona_question_summaries` on the
    `KPI_RETENTION_DAYS` window.
