@@ -54,7 +54,7 @@ import {
   PLACEHOLDER_DISCOUNT_CODE,
 } from "./shopify-discounts";
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
-import { applyMintedDiscountToBody } from "./discount-swap.mjs";
+import { applyMintedDiscountToBody, hasStrayPlaceholder } from "./discount-swap.mjs";
 import {
   renderEmailProseHtml,
   emailProseToText,
@@ -198,6 +198,17 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       // grants 10 %. This is the server-side backstop for the dashboard's
       // regenerate-lockout; it's conservative (only a clear in-range contradiction
       // blocks — see detectDiscountTextMismatch) so it can't false-block a send.
+      // A placeholder code without a discount would ship as written — refuse.
+      if (hasStrayPlaceholder(claimed.draftedText, PLACEHOLDER_DISCOUNT_CODE, claimed.discountPercent)) {
+        await revertClaim(sendId);
+        return {
+          ok: false,
+          reason: "discount_mismatch",
+          message:
+            `Der Text nennt den Platzhalter-Code ${PLACEHOLDER_DISCOUNT_CODE}, aber für diese Mail ist kein Rabatt ` +
+            "gewählt — Text anpassen oder einen Rabatt wählen.",
+        };
+      }
       if (claimed.discountPercent > 0) {
         const { mismatch } = detectDiscountTextMismatch(
           claimed.discountPercent,

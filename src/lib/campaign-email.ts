@@ -84,7 +84,7 @@ import {
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
 import type { DiscountScope } from "./discount-scope.mjs";
 import { fetchProductGidsByHandles } from "./shopify";
-import { applyMintedDiscountToBody } from "./discount-swap.mjs";
+import { applyMintedDiscountToBody, hasStrayPlaceholder } from "./discount-swap.mjs";
 import {
   renderEmailProseHtml,
   emailProseToText,
@@ -247,6 +247,18 @@ export async function campaignSendPreflight(contactId: number): Promise<Campaign
             message: "Recipient is suppressed/unsubscribed — refusing to send.",
           };
       }
+    }
+
+    // GATE 1b — no placeholder code in a mail without a discount: nothing
+    // would replace it, the customer would read an offer that does not exist.
+    if (hasStrayPlaceholder(draft.body, PLACEHOLDER_DISCOUNT_CODE, draft.discountPercent)) {
+      return {
+        ok: false,
+        reason: "discount_mismatch",
+        message:
+          `Der Text nennt den Platzhalter-Code ${PLACEHOLDER_DISCOUNT_CODE}, aber für diese Mail ist kein Rabatt ` +
+          "gewählt — Text anpassen oder einen Rabatt wählen.",
+      };
     }
 
     // GATE 2 — a working unsubscribe link is mandatory. No link → no send.

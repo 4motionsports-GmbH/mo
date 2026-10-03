@@ -37,3 +37,21 @@ export function applyMintedDiscountToBody(body, swap) {
   }
   return out;
 }
+
+/**
+ * A placeholder code left in prose that ships WITHOUT a discount: the swap
+ * above only runs when a code is minted, so „Mit dem Code MO-XXXX …“ would
+ * reach the customer as written — an offer that does not exist. The send
+ * paths refuse such a draft (fail-closed); the operator edits the text or
+ * picks a depth. Case-insensitive, so „mo-xxxx“ typed by hand counts too.
+ *
+ * @param {unknown} body
+ * @param {string} placeholder
+ * @param {unknown} discountPercent
+ * @returns {boolean}
+ */
+export function hasStrayPlaceholder(body, placeholder, discountPercent) {
+  if (Number(discountPercent) > 0 || !placeholder) return false;
+  const text = typeof body === "string" ? body : "";
+  return text.toLowerCase().includes(String(placeholder).toLowerCase());
+}
