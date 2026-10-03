@@ -8,7 +8,7 @@ import type { DiscountScope } from "@/lib/discount-scope.mjs";
 import type { CampaignRecommendationView } from "@/lib/campaign-recommendation-view";
 
 /** The three views of the screen (`?view=`, campaign-desk-core.mjs). */
-export type DeskView = "pruefen" | "liste" | "eingeplant" | "gesendet";
+export type DeskView = "pruefen" | "liste" | "eingeplant" | "briefe" | "gesendet";
 
 /** One mail approved for later sending („Einplanen“, view „Eingeplant“). */
 export interface ScheduledItemProps {
@@ -235,6 +235,8 @@ export interface CampaignDeskCampaign {
   startsAt: string | null;
   endsAt: string | null;
   audienceRefreshedAt: string | null;
+  /** Letters as a channel (0074). */
+  letterMode: "aus" | "ohne_einwilligung" | "alle";
 }
 
 /** One entry of the desk's campaign switcher. */
@@ -273,6 +275,8 @@ export interface CampaignDeskProps {
   releaseEnabled: boolean;
   /** The campaign's approved, not yet sent mails. */
   scheduled: ScheduledItemProps[];
+  /** Open (not sent / skipped / excluded) letters of the campaign; null = letters off. */
+  letterOpenCount: number | null;
 }
 
 /** Sizes offered by the Vorbereiten popover; the middle one is the default. */

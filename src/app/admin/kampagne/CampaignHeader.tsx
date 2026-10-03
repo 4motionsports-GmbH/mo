@@ -40,6 +40,7 @@ export function CampaignHeader({
   onView,
   scheduledCount,
   releaseEnabled,
+  letterOpenCount,
   sendsApproved,
   allowSingleOptIn,
   shopifyConfigured,
@@ -70,6 +71,8 @@ export function CampaignHeader({
   /** Approved mails waiting for the release job („Einplanen“). */
   scheduledCount: number;
   releaseEnabled: boolean;
+  /** Open letters of the campaign; null = letters are off (no „Briefe“ view). */
+  letterOpenCount: number | null;
   sendsApproved: boolean;
   allowSingleOptIn: boolean;
   shopifyConfigured: boolean;
@@ -202,6 +205,9 @@ export function CampaignHeader({
           { value: "liste", label: "Liste" },
           ...(releaseEnabled || scheduledCount > 0
             ? [{ value: "eingeplant" as const, label: `Eingeplant ${num(scheduledCount)}` }]
+            : []),
+          ...(letterOpenCount != null
+            ? [{ value: "briefe" as const, label: `Briefe ${num(letterOpenCount)}` }]
             : []),
           { value: "gesendet", label: `Gesendet ${num(counts.sentTotal)}` },
         ]}

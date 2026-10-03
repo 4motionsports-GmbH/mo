@@ -4,16 +4,17 @@
 // rules it applies.
 
 /** The views of the screen (`?view=`); „eingeplant“ lists the mails approved
- * for later sending („Einplanen“, migration 0072). */
-export const DESK_VIEWS = Object.freeze(["pruefen", "liste", "eingeplant", "gesendet"]);
+ * for later sending („Einplanen“, migration 0072), „briefe“ the campaign's
+ * letters (0074). */
+export const DESK_VIEWS = Object.freeze(["pruefen", "liste", "eingeplant", "briefe", "gesendet"]);
 
 /**
  * @param {unknown} value
- * @returns {"pruefen" | "liste" | "eingeplant" | "gesendet"}
+ * @returns {"pruefen" | "liste" | "eingeplant" | "briefe" | "gesendet"}
  */
 export function parseDeskView(value) {
   return typeof value === "string" && DESK_VIEWS.includes(value)
-    ? /** @type {"pruefen" | "liste" | "eingeplant" | "gesendet"} */ (value)
+    ? /** @type {"pruefen" | "liste" | "eingeplant" | "briefe" | "gesendet"} */ (value)
     : "pruefen";
 }
 

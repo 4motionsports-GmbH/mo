@@ -30,6 +30,7 @@ import type { CampaignDeskProps } from "./types";
 import { useCampaignActions } from "./useCampaignActions";
 import { useReleaseActions } from "./useReleaseActions";
 import { ScheduleDialog, ScheduledList } from "./ScheduledViews";
+import { LettersView } from "./LettersView";
 import { usePrefetchPreview } from "./useRenderedPreview";
 
 const SHORTCUTS: Array<[string, string]> = [
@@ -212,6 +213,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
         onView={setView}
         scheduledCount={release.list.length}
         releaseEnabled={props.releaseEnabled}
+        letterOpenCount={props.letterOpenCount}
         sendsApproved={props.sendsApproved}
         allowSingleOptIn={props.allowSingleOptIn}
         shopifyConfigured={shopifyConfigured}
@@ -234,6 +236,8 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
 
       {view === "eingeplant" ? (
         <ScheduledList release={release} />
+      ) : view === "briefe" && props.letterOpenCount != null ? (
+        <LettersView campaignId={props.campaign.id} campaignName={props.campaign.name} />
       ) : view === "gesendet" ? (
         <SentHistory campaignId={props.campaign.id} initialTotal={a.counts.sentTotal} summary={sentSummary} viewBusy={a.emailViewBusy} onView={a.viewSent} />
       ) : view === "liste" ? (

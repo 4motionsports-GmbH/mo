@@ -14,6 +14,9 @@
 // /api/admin/campaign/* routes). The send history is paged and searched on
 // demand (GET /api/admin/campaign/history).
 
+import { getCampaignLetterCounts, letterCostCents, type CampaignLetterCounts } from "@/lib/campaign-letters-store";
+import { isPhysicalMailSendsApproved } from "@/lib/pingen-flag.mjs";
+import { isPingenConfigured } from "@/lib/pingen";
 import {
   estimateCampaignCosts,
   getCampaignCounts,
@@ -92,6 +95,8 @@ function cardProps(c: CampaignWithStats, all: CampaignWithStats[]): CampaignCard
     moPromo: c.moPromo,
     ctaKind: c.ctaKind,
     ctaUrl: c.ctaUrl,
+    letterMode: c.letterMode,
+    letterBudgetCents: c.letterBudgetCents,
     audienceRefreshedAt: c.audienceRefreshedAt,
     stats: c.stats,
   };
@@ -141,11 +146,22 @@ async function Overview({
         maxDiscountPercent: DISCOUNT_PERCENT_MAX,
         autoPrepareBudget: campaignAutoPrepareConfig().count,
         costs,
+        letters: {
+          sendsApproved: isPhysicalMailSendsApproved(),
+          pingenConfigured: isPingenConfigured(),
+          costCents: letterCostCents(),
+        },
       }}
     />
   );
 }
 import { Callout } from "./ui";
+
+
+/** Every letter of the campaign, whatever its state. */
+function letterTotal(c: CampaignLetterCounts): number {
+  return c.pending + c.drafted + c.approved + c.sending + c.sent + c.skipped + c.excluded + c.failed;
+}
 
 export async function KampagneTab({
   dbReady,
@@ -194,7 +210,7 @@ export async function KampagneTab({
   const campaignId = campaign.id;
 
   const shopifyConfigured = isShopifyConfigured();
-  const [counts, queue, skipped, design, costs, sentSummary, scheduled] = await Promise.all([
+  const [counts, queue, skipped, design, costs, sentSummary, scheduled, letterCounts] = await Promise.all([
     getCampaignCounts(campaignId, { windowed: campaign.kind === "laufend" }),
     listDraftedQueue(campaignId),
     listSkippedContacts(campaignId),
@@ -202,6 +218,7 @@ export async function KampagneTab({
     estimateCampaignCosts(),
     getCampaignDeliverySummary(30, campaignId),
     listApprovedQueue(campaignId),
+    campaign.kind !== "einzel" ? getCampaignLetterCounts(campaignId) : Promise.resolve(null),
   ]);
 
   // Resolve the recommended products once for the whole queue (name, link,
@@ -310,6 +327,7 @@ export async function KampagneTab({
         startsAt: campaign.startsAt,
         endsAt: campaign.endsAt,
         audienceRefreshedAt: campaign.audienceRefreshedAt,
+        letterMode: campaign.letterMode,
       }}
       campaigns={campaigns
         .filter((c) => c.status !== "archiviert")
@@ -340,6 +358,12 @@ export async function KampagneTab({
       initialFilter={parseQueueFilter(initialFilter)}
       releaseEnabled={isCampaignReleaseEnabled()}
       scheduled={scheduled}
+      letterOpenCount={
+        // The view stays while letters exist, even after the mode went back to „Keine Briefe“.
+        letterCounts && (campaign.letterMode !== "aus" || letterTotal(letterCounts) > 0)
+          ? letterCounts.pending + letterCounts.drafted + letterCounts.approved + letterCounts.failed
+          : null
+      }
     />
   );
 }

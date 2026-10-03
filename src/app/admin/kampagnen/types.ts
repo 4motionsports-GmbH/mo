@@ -65,6 +65,8 @@ export interface CampaignCardProps {
   moPromo: boolean;
   ctaKind: "mo_chat" | "shop";
   ctaUrl: string | null;
+  letterMode: "aus" | "ohne_einwilligung" | "alle";
+  letterBudgetCents: number | null;
   audienceRefreshedAt: string | null;
   stats: CampaignStatsProps;
 }
@@ -77,6 +79,8 @@ export interface CampaignEditorOptions {
   autoPrepareBudget: number;
   /** Recorded average cost of a draft / a per-contact AI hero, EUR (null = none yet). */
   costs: { draftEur: number | null; heroEur: number | null };
+  /** Letters as a channel (0074): PHYSICAL_MAIL_SENDS_APPROVED + Pingen configured, assumed postage. */
+  letters: { sendsApproved: boolean; pingenConfigured: boolean; costCents: number };
 }
 
 export interface CampaignsOverviewProps {
