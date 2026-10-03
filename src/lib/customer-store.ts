@@ -89,6 +89,10 @@ export interface Customer {
    */
   postalAddress: Record<string, unknown> | null;
   postalAddressSource: string | null;
+  /** The order the address was taken from (0074) — a newer completed order refreshes it. */
+  postalAddressOrderId: string | null;
+  /** A letter to the address came back undeliverable (0074) — no letter until a new address. */
+  postalAddressInvalidAt: string | null;
   /** When we last attempted a background Shopify address capture (throttle). */
   postalAddressCheckedAt: string | null;
   /**
@@ -173,6 +177,8 @@ function mapCustomer(r: Record<string, unknown>): Customer {
     shopifyAccountSummaryUpdatedAt: (r.shopify_account_summary_updated_at as string | null) ?? null,
     postalAddress: (r.postal_address as Record<string, unknown> | null) ?? null,
     postalAddressSource: (r.postal_address_source as string | null) ?? null,
+    postalAddressOrderId: (r.postal_address_order_id as string | null) ?? null,
+    postalAddressInvalidAt: isoOrNull(r.postal_address_invalid_at),
     postalAddressCheckedAt: (r.postal_address_checked_at as string | null) ?? null,
     letterDraftSubject: (r.letter_draft_subject as string | null) ?? null,
     letterDraftBody: (r.letter_draft_body as string | null) ?? null,
@@ -782,6 +788,40 @@ export async function saveCustomerPostalAddress(
     return rows.length > 0;
   } catch (err) {
     reportError(err, { route: "lib/customer-store", phase: "saveCustomerPostalAddress" });
+    return false;
+  }
+}
+
+/**
+ * Store the shipping address of a completed order (letters, 0074): source
+ * 'purchase' plus the order it came from. An address from ANOTHER order than
+ * the one that came back undeliverable clears the undeliverable mark.
+ */
+export async function savePurchaseAddress(
+  customerId: number,
+  address: Record<string, unknown>,
+  shopifyOrderId: string,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = await sql`
+      UPDATE customers
+         SET postal_address = ${JSON.stringify(address)}::jsonb,
+             postal_address_source = 'purchase',
+             postal_address_invalid_at = CASE
+               WHEN postal_address_order_id IS DISTINCT FROM ${shopifyOrderId} THEN NULL
+               ELSE postal_address_invalid_at
+             END,
+             postal_address_order_id = ${shopifyOrderId},
+             postal_address_updated_at = now(),
+             postal_address_checked_at = now()
+       WHERE id = ${customerId}
+      RETURNING id
+    `;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "savePurchaseAddress" });
     return false;
   }
 }

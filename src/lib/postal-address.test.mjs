@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeShopifyAddress, chooseLawfulAddress } from "./postal-address.mjs";
+import { normalizeShopifyAddress, chooseLawfulAddress, decideAddressRefresh } from "./postal-address.mjs";
 
 // A Customer Account API CustomerAddress (territoryCode) ...
 const CA_ADDR = {
@@ -93,4 +93,15 @@ test("chooseLawfulAddress: nothing complete → null (eligibility stays disabled
   void zip;
   assert.equal(chooseLawfulAddress({ orderShippingAddresses: [broken], defaultAddress: null }), null);
   assert.equal(chooseLawfulAddress({}), null);
+});
+
+test("decideAddressRefresh: fetch the latest completed order's address unless it is already stored", () => {
+  assert.equal(decideAddressRefresh({ latestOrderId: null }), "no_order");
+  assert.equal(decideAddressRefresh({ latestOrderId: "9", hasAddress: false }), "fetch");
+  // A profile address (tier-3 capture) is replaced by the purchase address.
+  assert.equal(decideAddressRefresh({ latestOrderId: "9", hasAddress: true, storedSource: "consented_capture", storedOrderId: null }), "fetch");
+  // An older order's address is refreshed (the person may have moved).
+  assert.equal(decideAddressRefresh({ latestOrderId: "9", hasAddress: true, storedSource: "purchase", storedOrderId: "7" }), "fetch");
+  // Already this order's address — nothing to do.
+  assert.equal(decideAddressRefresh({ latestOrderId: "9", hasAddress: true, storedSource: "purchase", storedOrderId: "9" }), "skip");
 });

@@ -127,6 +127,36 @@ function letterFooterOps() {
   );
 }
 
+/** Today's date as printed on the letter — Berlin time, not the server's. */
+export function letterDate(now = new Date()) {
+  return new Intl.DateTimeFormat("de-DE", {
+    timeZone: "Europe/Berlin",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(now);
+}
+
+/**
+ * How many pages buildLetterPdf will produce for this body (the same wrap and
+ * pagination) — a second page costs more postage.
+ * @param {string} body
+ * @returns {number}
+ */
+export function letterPageCount(body) {
+  let pages = 1;
+  let y = BODY_TOP_Y_PAGE1;
+  for (const _line of wrapText(String(body ?? ""), BODY_MAX_CHARS)) {
+    void _line;
+    if (y < BODY_BOTTOM_Y) {
+      pages++;
+      y = BODY_TOP_Y_PAGEN;
+    }
+    y -= BODY_LEADING;
+  }
+  return pages;
+}
+
 /**
  * Build the letter PDF.
  * @param {{ recipient: { name: string, company?: string|null,
@@ -164,7 +194,7 @@ export function buildLetterPdf(input) {
     BODY_LEFT_X,
     DATE_Y,
     10,
-    date || new Date().toLocaleDateString("de-DE"),
+    date || letterDate(),
     MUTED_RGB
   );
 

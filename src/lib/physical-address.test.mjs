@@ -116,3 +116,28 @@ test("an Art. 21 objection to postal advertising blocks every letter", () => {
   assert.equal(r.eligible, false);
   assert.equal(r.reasonCode, "objection");
 });
+
+test("decidePhysicalEligibility: only a purchase address counts, an undeliverable one never", () => {
+  const address = {
+    name: "Max Muster",
+    address_line_1: "Hauptstr. 1",
+    postal_code: "10115",
+    city: "Berlin",
+    country: "DE",
+  };
+  const base = { flagApproved: true, pingenConfigured: true, address };
+  assert.equal(decidePhysicalEligibility({ ...base, addressSource: "purchase" }).eligible, true);
+  assert.equal(decidePhysicalEligibility({ ...base, addressSource: "consented_capture" }).reasonCode, "not_purchase_address");
+  assert.equal(decidePhysicalEligibility({ ...base, addressSource: null }).reasonCode, "not_purchase_address");
+  assert.equal(
+    decidePhysicalEligibility({ ...base, addressSource: "purchase", addressInvalidAt: "2026-10-01T00:00:00Z" }).reasonCode,
+    "address_invalid"
+  );
+  // The objection still wins.
+  assert.equal(
+    decidePhysicalEligibility({ ...base, addressSource: "consented_capture", postalObjectionAt: "2026-09-01T00:00:00Z" }).reasonCode,
+    "objection"
+  );
+  // Callers without the source keep the old behaviour.
+  assert.equal(decidePhysicalEligibility(base).eligible, true);
+});

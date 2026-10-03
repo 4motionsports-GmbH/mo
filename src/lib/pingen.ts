@@ -39,6 +39,11 @@ function staging(): boolean {
   return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
 }
 
+/** Pingen staging (PINGEN_STAGING) — nothing is printed or posted there. */
+export function isPingenStaging(): boolean {
+  return staging();
+}
+
 function organisationId(): string | undefined {
   return process.env.PINGEN_ORGANISATION_ID?.trim() || undefined;
 }
@@ -178,7 +183,8 @@ function parseLetter(json: unknown): LetterResult | null {
   const data = (json as { data?: { id?: string; attributes?: Record<string, unknown> } })?.data;
   if (!data?.id) return null;
   const attrs = data.attributes ?? {};
-  const price = attrs.price;
+  // Pingen v2: `price_value` (+ `price_currency`); `price` on older shapes.
+  const price = attrs.price_value ?? attrs.price;
   const costCents =
     price == null ? null : Number.isFinite(Number(price)) ? Math.round(Number(price) * 100) : null;
   return {
