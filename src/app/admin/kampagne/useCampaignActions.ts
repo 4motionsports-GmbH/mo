@@ -1539,6 +1539,8 @@ export function useCampaignActions({
     bulkSkip,
     bulkRegenerate,
     reloadFromServer,
+    removeItem,
+    restoreItem,
   };
 }
 

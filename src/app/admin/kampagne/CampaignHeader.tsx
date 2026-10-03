@@ -38,6 +38,8 @@ export function CampaignHeader({
   visibleSize,
   view,
   onView,
+  scheduledCount,
+  releaseEnabled,
   sendsApproved,
   allowSingleOptIn,
   shopifyConfigured,
@@ -65,6 +67,9 @@ export function CampaignHeader({
   visibleSize: number;
   view: DeskView;
   onView: (view: DeskView) => void;
+  /** Approved mails waiting for the release job („Einplanen“). */
+  scheduledCount: number;
+  releaseEnabled: boolean;
   sendsApproved: boolean;
   allowSingleOptIn: boolean;
   shopifyConfigured: boolean;
@@ -195,6 +200,9 @@ export function CampaignHeader({
             label: `Prüfen${visibleSize !== queueSize ? ` ${num(visibleSize)}/${num(queueSize)}` : ""}`,
           },
           { value: "liste", label: "Liste" },
+          ...(releaseEnabled || scheduledCount > 0
+            ? [{ value: "eingeplant" as const, label: `Eingeplant ${num(scheduledCount)}` }]
+            : []),
           { value: "gesendet", label: `Gesendet ${num(counts.sentTotal)}` },
         ]}
       />

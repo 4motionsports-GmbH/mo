@@ -3,16 +3,17 @@
 // React side (src/app/admin/kampagne/) owns the state; this module owns the
 // rules it applies.
 
-/** The three views of the screen (`?view=`). */
-export const DESK_VIEWS = Object.freeze(["pruefen", "liste", "gesendet"]);
+/** The views of the screen (`?view=`); „eingeplant“ lists the mails approved
+ * for later sending („Einplanen“, migration 0072). */
+export const DESK_VIEWS = Object.freeze(["pruefen", "liste", "eingeplant", "gesendet"]);
 
 /**
  * @param {unknown} value
- * @returns {"pruefen" | "liste" | "gesendet"}
+ * @returns {"pruefen" | "liste" | "eingeplant" | "gesendet"}
  */
 export function parseDeskView(value) {
   return typeof value === "string" && DESK_VIEWS.includes(value)
-    ? /** @type {"pruefen" | "liste" | "gesendet"} */ (value)
+    ? /** @type {"pruefen" | "liste" | "eingeplant" | "gesendet"} */ (value)
     : "pruefen";
 }
 
