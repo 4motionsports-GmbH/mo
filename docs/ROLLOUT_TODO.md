@@ -10,7 +10,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-02.
+Last updated: 2026-10-03.
 
 ## Done
 
@@ -50,7 +50,12 @@ Last updated: 2026-10-02.
   - Any other error page → the proxy points at a dead address (probably `chat.`): F (or
     M+C in 5.2) sets the proxy URL to `https://mo.motionsports.de/api/auth/storefront`.
 
-- [ ] **1.5 Inbound e-mail (customer replies)** — M (C diagnoses)
+- [x] **1.5 Inbound e-mail (customer replies)** — M (C diagnoses) — done 03.10.: Resend
+  receives on `reply.motionsports.de` (MX at Resend, verified), `INBOUND_EMAIL_ADDRESS` =
+  `hello@reply.motionsports.de`, redeployed, test mail arrived in the Eingang. Mails sent
+  before the redeploy still carry `hello@mo.…` as Reply-To (no MX possible on the CNAME), so
+  replies to them bounce; a new mail typed to `hello@mo.…` bounces too. Revisit only if that
+  matters (A records on `mo.` instead of the CNAME, planned change).
   - `INBOUND_EMAIL_ADDRESS` = `hello@mo.motionsports.de` (also the Reply-To of every mail
     Mo sends). A test mail on 02.10. did **not** arrive in Mo.
   - Check in this order: (a) did the sender get a bounce („Undeliverable“)? (b) Resend →
@@ -95,7 +100,7 @@ Last updated: 2026-10-02.
     opt-in and are only mailed with `CAMPAIGN_ALLOW_SINGLE_OPT_IN=true` (see 6.5).
 
 - [ ] **3.2 Lawyer dossier** — M → L
-  - Send `docs/ANWALTSDOSSIER.md` (focus §13, questions F-22 to F-29).
+  - Send `docs/ANWALTSDOSSIER.md` (focus §13 and §14, questions F-22 to F-30).
   - Mention the deadline: Black Friday is **27 Nov 2026**; the campaign send gate (6.5)
     needs the sign-off by **~18 Nov** so mails can go out from 20 Nov.
   - Done when: L has it and has given a date.
@@ -104,7 +109,8 @@ Last updated: 2026-10-02.
   flows into Mo*
   - Add: customer and order data from the shop are processed in Mo; AI customer profiles
     (and the right to object); one shared e-mail consent and one deletion with Shopify;
-    advertising letters with the right to object; AI suggestions in the Eingang; the
+    advertising letters with the right to object; AI suggestions in the Eingang; contact
+    requests stored in Mo and AI-assisted replies to incoming mails (F-30); the
     retention periods (`docs/DATA_RETENTION.md`).
 
 - [ ] **3.4 One consent text** (F-29) — M (L approves)
