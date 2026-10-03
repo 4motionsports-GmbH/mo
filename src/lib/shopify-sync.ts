@@ -403,6 +403,15 @@ export interface ReconcileResult {
 /** How far the one-off order look-back for refund dates reaches (migration 0070). */
 const REFUND_BACKFILL_DAYS = 15;
 
+/** The one-off refund look-back is done: a 'refund_backfill' run row (see reconcile). */
+async function markRefundBackfillDone(since: string, sql: Sql): Promise<void> {
+  await sql`
+    INSERT INTO shopify_sync_runs (kind, status, since, finished_at)
+    SELECT 'refund_backfill', 'done', ${since}, now()
+     WHERE NOT EXISTS (SELECT 1 FROM shopify_sync_runs WHERE kind = 'refund_backfill' AND status = 'done')
+  `;
+}
+
 /**
  * Re-read every customer and order Shopify changed since the last complete
  * reconciliation (minus one hour of overlap). Incomplete runs (deadline, a
@@ -410,10 +419,12 @@ const REFUND_BACKFILL_DAYS = 15;
  * are idempotent.
  *
  * Refund dates (customer_orders.last_refund_at, 0070) exist only for orders
- * read since that change. Until one complete run has looked back at least 14
- * days, the orders of the last REFUND_BACKFILL_DAYS are re-read once, and the
- * „Unzufriedenheit“ items the hourly job closed meanwhile are reopened for it
- * to judge again (reopenSelfClosedRefundItems).
+ * read since that change. Once, the orders of the last REFUND_BACKFILL_DAYS
+ * are re-read and the „Unzufriedenheit“ items the hourly job closed meanwhile
+ * are reopened for it to judge again (reopenSelfClosedRefundItems). A done
+ * run of kind 'refund_backfill' marks it as done — its own kind, so log
+ * retention (which keeps the newest done run per kind) never prunes it and
+ * the look-back never re-arms.
  */
 export async function reconcileShopifyCustomers(
   opts: { deadlineMs: number },
@@ -433,12 +444,15 @@ export async function reconcileShopifyCustomers(
     if (!floor) return { ok: false, reason: "no_import", ...empty };
     const since = new Date(new Date(floor).getTime() - 3_600_000).toISOString();
     const lookback = (await sql`
-      SELECT NOT EXISTS (
-        SELECT 1 FROM shopify_sync_runs
-         WHERE kind = 'reconcile' AND status = 'done' AND since <= started_at - interval '14 days'
-      ) AS needed
-    `) as Array<{ needed: boolean }>;
-    const backfill = lookback[0]?.needed === true;
+      SELECT
+        EXISTS (SELECT 1 FROM shopify_sync_runs WHERE kind = 'refund_backfill' AND status = 'done') AS marked,
+        -- a reconcile that already read ≥ 14 days back (the first look-back, before the marker existed)
+        EXISTS (SELECT 1 FROM shopify_sync_runs
+                 WHERE kind = 'reconcile' AND status = 'done' AND since <= started_at - interval '14 days') AS looked_back
+    `) as Array<{ marked: boolean; looked_back: boolean }>;
+    const marked = lookback[0]?.marked === true;
+    if (!marked && lookback[0]?.looked_back === true) await markRefundBackfillDone(since, sql);
+    const backfill = !marked && lookback[0]?.looked_back !== true;
     const orderSince = backfill
       ? new Date(Math.min(new Date(since).getTime(), Date.now() - REFUND_BACKFILL_DAYS * 86_400_000)).toISOString()
       : since;
@@ -497,7 +511,11 @@ export async function reconcileShopifyCustomers(
       cursor = data.orders.pageInfo.endCursor;
     }
     if (complete) await linkOrphanOrders(sql);
-    const reopened = complete && backfill ? await reopenSelfClosedRefundItems(sql) : 0;
+    let reopened = 0;
+    if (complete && backfill) {
+      reopened = await reopenSelfClosedRefundItems(sql);
+      await markRefundBackfillDone(orderSince, sql);
+    }
 
     await sql`
       UPDATE shopify_sync_runs

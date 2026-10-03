@@ -451,8 +451,8 @@ export async function runRetention(
     const syncCutoff = daysAgo(opts.shopifySyncLogRetentionDays);
     const rows = (await sql`
       WITH w AS (DELETE FROM shopify_webhook_events WHERE received_at < ${syncCutoff} RETURNING 1),
-           -- The newest finished run per kind stays: it is the import marker
-           -- and the reconcile floor.
+           -- The newest finished run per kind stays: it is the import marker,
+           -- the reconcile floor and the one-off 'refund_backfill' marker.
            r AS (DELETE FROM shopify_sync_runs
                   WHERE status IN ('done', 'failed', 'cancelled') AND started_at < ${syncCutoff}
                     AND id NOT IN (SELECT max(id) FROM shopify_sync_runs WHERE status = 'done' GROUP BY kind)
