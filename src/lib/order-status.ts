@@ -8,14 +8,22 @@
 //      ('customer_account') IN THIS SESSION (resolveSignedInLink),
 //   3. a live access token for that customer (getValidAccessToken) — a
 //      signed-out or expired account sees nothing,
-//   4. the customer's own orders from the ledger (customer_orders) — only
-//      while SHOPIFY_CUSTOMER_SYNC_ENABLED keeps it current, else
-//      "unavailable",
+//   4. the customer's own orders from the ledger (customer_orders, rows
+//      Shopify reports for THIS Shopify customer, linked or not yet linked) —
+//      only while SHOPIFY_CUSTOMER_SYNC_ENABLED keeps it current and the first
+//      order import has finished, else "unavailable",
 //   5. optionally, for at most MAX_LIVE_ENRICHMENTS orders that are not
 //      cancelled, a short live read from the Admin API (fulfillment progress,
 //      carrier name, delivery dates) — bounded by LIVE_TIMEOUT_MS and checked
-//      for ownership; anything late, failing or foreign is dropped and the
-//      answer stays ledger-only.
+//      for ownership; anything late or failing stays ledger-only, an order
+//      Shopify reports for ANOTHER customer is dropped entirely,
+//   6. "no orders" / "not found" only when a live read of the customer's
+//      newest orders confirms that the ledger is not behind
+//      (confirmLedgerAnswer), else "unavailable".
+//
+// At most LOOKUPS_PER_REQUEST distinct lookups per chat request; repeats are
+// served from the request's cache (the Admin API bucket is shared with the
+// sync and the webhooks).
 //
 // Marketing consent is not required (customer service, Art. 6 (1) b). Every
 // step fails soft to a status the model can explain ("sign_in_required",
@@ -29,10 +37,15 @@ import { getValidAccessToken } from "./customer-oauth-store";
 import { findCustomerOrders, type LedgerOrder } from "./customer-orders-store";
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { isChatOrderStatusEnabled, isShopifyCustomerSyncEnabled } from "./platform-flags.mjs";
+import { isOrderImportDone } from "./shopify-sync";
 import { KPI_ORDER_STATUS_LOOKUP, recordKpiEvent } from "./kpi-events";
 import {
+  LIVE_CONFIRM_ORDERS,
   LIVE_TIMEOUT_MS,
+  LOOKUPS_PER_REQUEST,
   MAX_LIVE_ENRICHMENTS,
+  confirmLedgerAnswer,
+  withoutForeignOrders,
   ORDERS_FOR_MATCH,
   accountOrdersUrl,
   buildOrderStatusForModel,
@@ -52,7 +65,19 @@ type LiveOrder = NonNullable<ReturnType<typeof parseLiveOrder>>;
 /** The outcome of the access gate, resolved once per chat request. */
 export type OrderAccess =
   | { access: "ok"; customerId: number; shopifyCustomerId: string }
-  | { access: "disabled" | "sign_in_required" | "unavailable" };
+  | { access: "disabled" | "sign_in_required" | "unavailable" | "ledger_off" };
+
+/** The access step (link + token refresh) may not stall the chat stream. */
+const ACCESS_TIMEOUT_MS = 5000;
+
+/** The customer's newest order ids, for confirmLedgerAnswer. */
+const LIVE_CUSTOMER_ORDERS_QUERY = /* GraphQL */ `
+  query MoChatOrderConfirm($q: String!, $n: Int!) {
+    orders(first: $n, query: $q, sortKey: CREATED_AT, reverse: true) {
+      nodes { id }
+    }
+  }
+`;
 
 // The one live read. Only the fields the core whitelists are requested —
 // tracking numbers and URLs, addresses, amounts and the order name are not
@@ -90,6 +115,22 @@ export async function resolveOrderAccess(
   const sid = sessionId?.trim() || null;
   if (!sid) return { access: "sign_in_required" };
   if (!sql) return { access: "unavailable" };
+  // Without the customer sync the ledger is not kept current (its order
+  // webhooks are acknowledged without writing) — never answer from a stale
+  // copy. Checked BEFORE the token refresh, which may rotate the tokens.
+  if (!isShopifyCustomerSyncEnabled()) return { access: "ledger_off" };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<OrderAccess>((resolve) => {
+    timer = setTimeout(() => resolve({ access: "unavailable" }), ACCESS_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([resolveSignedInAccess(sql, sid, flagOn), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function resolveSignedInAccess(sql: Sql, sid: string, flagOn: boolean): Promise<OrderAccess> {
   try {
     const link = await resolveSignedInLink(sql, sid);
     const linkKind = link?.linkKind ?? null;
@@ -113,13 +154,14 @@ export async function resolveOrderAccess(
 async function readLiveOrders(
   orders: LedgerOrder[],
   shopifyCustomerId: string
-): Promise<Map<string, LiveOrder>> {
+): Promise<{ found: Map<string, LiveOrder>; foreign: Set<string> }> {
   const found = new Map<string, LiveOrder>();
-  if (!isShopifyConfigured()) return found;
+  const foreign = new Set<string>();
+  if (!isShopifyConfigured()) return { found, foreign };
   const targets = orders
     .filter((o) => wantsLiveRead(o) && /^\d+$/.test(o.shopifyOrderId))
     .slice(0, MAX_LIVE_ENRICHMENTS);
-  if (targets.length === 0) return found;
+  if (targets.length === 0) return { found, foreign };
 
   const reads = Promise.all(
     targets.map(async (order) => {
@@ -133,7 +175,8 @@ async function readLiveOrders(
           found.set(order.shopifyOrderId, live);
         } else {
           // The ledger links the order to this customer, Shopify says
-          // otherwise (e.g. reassigned) — keep the ledger facts only.
+          // otherwise (e.g. reassigned) — the order is not shown at all.
+          foreign.add(order.shopifyOrderId);
           reportError(new Error("order_status_live_owner_mismatch"), {
             route: "lib/order-status",
             phase: "live-ownership",
@@ -154,7 +197,40 @@ async function readLiveOrders(
   } finally {
     if (timer) clearTimeout(timer);
   }
-  return new Map(found);
+  return { found: new Map(found), foreign: new Set(foreign) };
+}
+
+/**
+ * The customer's newest order ids straight from Shopify (confirmLedgerAnswer).
+ * `ok: false` when Shopify is not configured, the read fails or is late.
+ */
+async function readLiveOrderIds(shopifyCustomerId: string): Promise<{ ok: boolean; orderIds: string[] }> {
+  if (!isShopifyConfigured() || !/^\d+$/.test(shopifyCustomerId)) return { ok: false, orderIds: [] };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<{ ok: boolean; orderIds: string[] }>((resolve) => {
+    timer = setTimeout(() => resolve({ ok: false, orderIds: [] }), LIVE_TIMEOUT_MS);
+  });
+  const read = (async () => {
+    try {
+      const data = await adminGraphql<{ orders?: { nodes?: Array<{ id?: string }> } }>(LIVE_CUSTOMER_ORDERS_QUERY, {
+        q: `customer_id:${shopifyCustomerId}`,
+        n: LIVE_CONFIRM_ORDERS,
+      });
+      if (!data?.orders || !Array.isArray(data.orders.nodes)) return { ok: false, orderIds: [] };
+      const orderIds = data.orders.nodes
+        .map((n) => /(\d+)$/.exec(String(n?.id ?? ""))?.[1] ?? null)
+        .filter((x): x is string => x != null);
+      return { ok: true, orderIds };
+    } catch (err) {
+      reportError(err, { route: "lib/order-status", phase: "live-confirm" });
+      return { ok: false, orderIds: [] };
+    }
+  })();
+  try {
+    return await Promise.race([read, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -187,33 +263,56 @@ export async function lookupOrderStatus(
         status: access.access === "sign_in_required" ? "sign_in_required" : "unavailable",
         ordersPageUrl,
       });
-    } else if (!isShopifyCustomerSyncEnabled()) {
-      // Without the customer sync the ledger is not kept current (its order
-      // webhooks are acknowledged without writing) — never answer from a stale
-      // copy, e.g. "no orders" for someone who ordered yesterday.
-      outcome = "ledger_off";
+    } else if ((await isOrderImportDone(sql)) !== true) {
+      // Before the first order import the ledger can be empty for someone who
+      // ordered — never "you have no orders" from that.
+      outcome = "ledger_incomplete";
       result = buildOrderStatusForModel({ status: "unavailable", ordersPageUrl });
     } else {
-      const orders = await findCustomerOrders(access.customerId, { limit: ORDERS_FOR_MATCH }, sql);
-      if (!orders) {
+      const ledger = await findCustomerOrders(
+        access.customerId,
+        access.shopifyCustomerId,
+        { limit: ORDERS_FOR_MATCH },
+        sql
+      );
+      if (!ledger) {
         // A database error must never read as "you have no orders".
         outcome = "unavailable";
         result = buildOrderStatusForModel({ status: "unavailable", ordersPageUrl });
       } else {
-        const selection = selectOrders(orders, input.orderRef ?? null);
-        const live =
-          selection.selected.length > 0
-            ? await readLiveOrders(selection.selected, access.shopifyCustomerId)
-            : new Map<string, LiveOrder>();
+        let orders = ledger;
+        let selection = selectOrders(orders, input.orderRef ?? null);
+        let live = new Map<string, LiveOrder>();
+        if (selection.selected.length > 0) {
+          const read = await readLiveOrders(selection.selected, access.shopifyCustomerId);
+          live = read.found;
+          if (read.foreign.size > 0) {
+            // Shopify reports these for another customer: drop them and select
+            // again (a matched order that is foreign becomes "not found").
+            orders = withoutForeignOrders(orders, read.foreign);
+            selection = selectOrders(orders, input.orderRef ?? null);
+          }
+        }
         if (live.size > 0) source = "ledger+live";
-        outcome = selection.status;
-        result = buildOrderStatusForModel({
+        const status = confirmLedgerAnswer({
           status: selection.status,
-          matched: selection.matched,
-          orders: selection.selected,
-          live,
-          ordersPageUrl,
+          ledgerOrderIds: ledger.map((o) => o.shopifyOrderId),
+          live:
+            selection.status === "no_orders" || selection.status === "not_found"
+              ? await readLiveOrderIds(access.shopifyCustomerId)
+              : null,
         });
+        outcome = status === "unavailable" ? "ledger_behind" : status;
+        result =
+          status === "unavailable"
+            ? buildOrderStatusForModel({ status: "unavailable", ordersPageUrl })
+            : buildOrderStatusForModel({
+                status: selection.status,
+                matched: selection.matched,
+                orders: selection.selected,
+                live,
+                ordersPageUrl,
+              });
       }
     }
   } catch (err) {
@@ -239,8 +338,19 @@ export async function lookupOrderStatus(
  */
 export function createOrderStatusLookup(sessionId: string | null) {
   let access: Promise<OrderAccess> | null = null;
+  const cache = new Map<string, Promise<OrderStatusResult>>();
   return (input: { orderRef?: string | null; topic?: string | null }) => {
+    const key = `${(input.orderRef ?? "").trim().toLowerCase()}|${normalizeTopic(input.topic)}`;
+    const hit = cache.get(key);
+    if (hit) return hit;
+    if (cache.size >= LOOKUPS_PER_REQUEST) {
+      // Enough lookups for one answer — the model gets "unavailable" and
+      // points to the account page instead of hammering the Admin API.
+      return Promise.resolve(buildOrderStatusForModel({ status: "unavailable", ordersPageUrl: accountOrdersUrl() }));
+    }
     access ??= resolveOrderAccess(sessionId);
-    return lookupOrderStatus({ sessionId, orderRef: input.orderRef, topic: input.topic, access });
+    const pending = lookupOrderStatus({ sessionId, orderRef: input.orderRef, topic: input.topic, access });
+    cache.set(key, pending);
+    return pending;
   };
 }

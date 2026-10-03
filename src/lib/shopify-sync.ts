@@ -535,6 +535,26 @@ export async function reconcileShopifyCustomers(
 // What is wrong with the sync (Eingang card) — pure, in shopify-sync-health.mjs.
 export { describeSyncProblems } from "./shopify-sync-health.mjs";
 
+/**
+ * Whether the first order import has finished — before that, the ledger of a
+ * customer can be empty although they ordered (the order status in the chat
+ * answers "unavailable" then). Null when unknown (no DB / error).
+ */
+export async function isOrderImportDone(sql: Sql | null = getSql()): Promise<boolean | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT EXISTS (
+        SELECT 1 FROM shopify_sync_runs WHERE kind = 'import_orders' AND status = 'done'
+      ) AS done
+    `) as Array<{ done: boolean }>;
+    return Boolean(rows[0]?.done);
+  } catch (err) {
+    reportError(err, { route: "lib/shopify-sync", phase: "isOrderImportDone" });
+    return null;
+  }
+}
+
 /** Sync health for Einstellungen + the Eingang system items. */
 export interface SyncHealth {
   importDone: boolean;
