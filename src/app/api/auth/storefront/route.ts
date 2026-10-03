@@ -40,6 +40,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { evaluateAppProxyAuth } from "@/lib/shopify-app-proxy.mjs";
 import { fetchAdminCustomerById } from "@/lib/shopify-orders";
 import { bindShopifyIdentity } from "@/lib/customer-store";
+import { endAppProxySessionLink, mintSessionLinkGrant } from "@/lib/session-link-grants";
 import {
   displayNameOf,
   resolveMarketingOptInState,
@@ -71,7 +72,12 @@ export async function GET(req: Request) {
     //    Fail-closed: a bad signature or a logged-out (empty id) session → not
     //    signed in. NO Admin API / DB work happens until this passes.
     const auth = evaluateAppProxyAuth(url.searchParams, appProxySecret());
-    if (!auth.ok) return json({ signedIn: false });
+    if (!auth.ok) {
+      // Shopify vouches that this browser is logged OUT of the shop: the
+      // session's App Proxy link ends with it (a shop logout signs the chat out).
+      if (auth.reason === "not_logged_in") await endAppProxySessionLink(auth.sessionId);
+      return json({ signedIn: false });
+    }
 
     // Per-customer rate limit (the request carries no x-ms-session header — key
     // on the widget session, else the customer id) so a single signed-in session
@@ -89,19 +95,27 @@ export async function GET(req: Request) {
     const name = identity ? displayNameOf(identity) : null;
     const gid = identity?.gid ?? `gid://shopify/Customer/${auth.shopifyCustomerId}`;
 
-    // 3) Find-or-create the customer row + LINK the widget session (so /api/account/*
-    //    history resolves), reusing the same merge the chatbot-OAuth callback uses.
+    // 3) Find-or-create the customer row (the same merge the chatbot-OAuth
+    //    callback uses) and mint a one-time link code for the widget session.
+    //    The session is NOT linked here: `session` is a URL parameter anyone can
+    //    set, so a stranger could make a logged-in shopper's browser call
+    //    whoami?session=<stranger's session>. The code travels only in this
+    //    same-origin response to the shopper's own page; the widget redeems it
+    //    at POST /api/auth/link with its x-ms-session (migration 0073).
     //    Best-effort — a DB miss degrades to "signed-in, no history", never an error.
     let customerId: number | null = null;
+    let linkCode: string | null = null;
     try {
       const bind = await bindShopifyIdentity({
         shopifyCustomerId: auth.shopifyCustomerId,
         shopifyCustomerGid: gid,
         email: identity?.email ?? null,
         sessionId: auth.sessionId,
-        linkKind: "app_proxy",
       });
       customerId = bind?.customerId ?? null;
+      if (customerId != null && auth.sessionId) {
+        linkCode = await mintSessionLinkGrant({ sessionId: auth.sessionId, customerId, kind: "app_proxy" });
+      }
     } catch (err) {
       reportError(err, { route: "api/auth/storefront", phase: "bind" });
     }
@@ -124,6 +138,9 @@ export async function GET(req: Request) {
       shopify_customer_id: auth.shopifyCustomerId,
       identity: { name, tier: 3 },
       marketing,
+      // Redeem at POST /api/auth/link (x-ms-session) — until then the session
+      // has no history, export or signed-in chat context.
+      linkCode,
     });
   } catch (err) {
     reportError(err, { route: "api/auth/storefront" });

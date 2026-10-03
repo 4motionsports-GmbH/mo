@@ -7,7 +7,16 @@
 //   3. verifies the id_token against the JWKS (signature + iss/aud/nonce/exp);
 //   4. reads customer { id } → shopify_customer_id (keyed on the GID numeric);
 //   5. runs the email↔Shopify merge and persists the encrypted tokens;
-//   6. 302s the browser back to the storefront return_url with an ?ms_auth marker.
+//   6. mints a one-time link code for the widget session that started the
+//      sign-in (migration 0073) and 302s the browser back to the storefront
+//      return_url with ?ms_auth=ok&ms_code=<code>.
+//
+// The session is NOT linked here. The session id came from the login URL,
+// which anyone can prepare: a stranger could have sent a shop customer a link
+// carrying the stranger's own session, and the silent sign-in (prompt=none)
+// would have bound the customer's account to it. The widget redeems ms_code at
+// POST /api/auth/link with its own x-ms-session; the link is written only when
+// that is the session the code was minted for (customer-link-grant.mjs).
 //
 // Tokens NEVER reach the browser. On any error we still redirect back to the
 // storefront (with ?ms_auth=error / login_required) so the widget can recover —
@@ -23,6 +32,7 @@ import {
   authStateSecret,
 } from "@/lib/shopify-customer-account";
 import { consumePendingAuth, saveCustomerTokens } from "@/lib/customer-oauth-store";
+import { mintSessionLinkGrant } from "@/lib/session-link-grants";
 import { bindShopifyIdentity } from "@/lib/customer-store";
 import { refreshSignedInCustomerCache } from "@/lib/customer-account-cache";
 import { verifyState, withAuthMarker } from "@/lib/customer-account-oauth.mjs";
@@ -107,14 +117,13 @@ export async function GET(req: Request) {
       return redirect(withMarker(returnUrl, "error"));
     }
 
-    // 5. Merge (email↔shopify) + persist encrypted tokens.
+    // 5. Merge (email↔shopify) + persist encrypted tokens. No session link yet.
     const bind = await bindShopifyIdentity({
       shopifyCustomerId,
       shopifyCustomerGid: identity.gid,
       email: identity.email,
       idTokenSub,
       sessionId: pending.sessionId,
-      linkKind: "customer_account",
     });
     if (!bind) {
       // Identity couldn't be stored (no DB) — still send the user back; the
@@ -123,6 +132,15 @@ export async function GET(req: Request) {
     }
 
     await saveCustomerTokens(bind.customerId, tokens, idTokenSub);
+
+    // 6. The one-time code for the session that started the sign-in. Without
+    // it (no DB) the widget stays signed out — fail closed.
+    const linkCode = await mintSessionLinkGrant({
+      sessionId: pending.sessionId,
+      customerId: bind.customerId,
+      kind: "customer_account",
+    });
+    if (!linkCode) return redirect(withMarker(returnUrl, "error"));
 
     // Cluster-A telemetry: one pseudonymous event per completed sign-in, so the
     // KPI tab can show account adoption. Session-keyed (the pending record's
@@ -139,7 +157,7 @@ export async function GET(req: Request) {
     // the very next turn. Best-effort: never block the redirect on it.
     await refreshSignedInCustomerCache(bind.customerId);
 
-    return redirect(withMarker(returnUrl, "ok"));
+    return redirect(withMarker(returnUrl, "ok", linkCode));
   } catch (err) {
     reportError(err, { route: "api/auth/shopify/callback" });
     return redirect(withMarker(returnUrl, "error"));

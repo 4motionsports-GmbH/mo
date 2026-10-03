@@ -103,8 +103,12 @@ export function verifyAppProxySignature(query, secret) {
  *
  * @param {URLSearchParams | Record<string, string|string[]>} query
  * @param {string|null|undefined} secret
+ * A signed request from a logged-out browser (`not_logged_in`) still carries
+ * its `sessionId`, so the route can end that session's App Proxy link.
+ *
  * @returns {{ ok: true, shopifyCustomerId: string, sessionId: string|null }
- *          | { ok: false, reason: "bad_signature" | "not_logged_in" }}
+ *          | { ok: false, reason: "bad_signature" }
+ *          | { ok: false, reason: "not_logged_in", sessionId: string|null }}
  */
 export function evaluateAppProxyAuth(query, secret) {
   if (!verifyAppProxySignature(query, secret)) {
@@ -112,10 +116,10 @@ export function evaluateAppProxyAuth(query, secret) {
   }
   const map = toMultiMap(query);
   const id = (map.get("logged_in_customer_id")?.[0] ?? "").trim();
+  const sessionId = (map.get("session")?.[0] ?? "").trim() || null;
   // Shopify sends the param empty when logged out; trust only a POSITIVE numeric
   // customer id (the GID numeric, no leading zeros). Empty / "0" / non-numeric →
   // not signed in (fail closed) — never bind a bogus customer 0.
-  if (!/^[1-9]\d*$/.test(id)) return { ok: false, reason: "not_logged_in" };
-  const sessionId = (map.get("session")?.[0] ?? "").trim() || null;
+  if (!/^[1-9]\d*$/.test(id)) return { ok: false, reason: "not_logged_in", sessionId };
   return { ok: true, shopifyCustomerId: id, sessionId };
 }

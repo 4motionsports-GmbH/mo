@@ -127,3 +127,13 @@ test("isRevokedTokenError detects a 401 (revoked/invalid token), not other failu
   assert.equal(isRevokedTokenError(undefined), false);
   assert.equal(isRevokedTokenError("401"), false);
 });
+
+test("withAuthMarker carries the one-time link code only when given, and drops a stale one", () => {
+  const withCode = new URL(withAuthMarker("https://www.motionsports.de/?a=1", "ok", "abc_DEF-123"));
+  assert.equal(withCode.searchParams.get("ms_auth"), "ok");
+  assert.equal(withCode.searchParams.get("ms_code"), "abc_DEF-123");
+  assert.equal(withCode.searchParams.get("a"), "1");
+  const stale = new URL(withAuthMarker("https://www.motionsports.de/?ms_code=old", "error"));
+  assert.equal(stale.searchParams.get("ms_auth"), "error");
+  assert.equal(stale.searchParams.has("ms_code"), false);
+});
