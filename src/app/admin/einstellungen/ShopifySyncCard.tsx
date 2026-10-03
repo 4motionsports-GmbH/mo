@@ -55,6 +55,7 @@ const RUN_KIND: Record<string, string> = {
   import_customers: "Import Kunden",
   import_orders: "Import Bestellungen",
   reconcile: "Nächtlicher Abgleich",
+  refund_backfill: "Erstattungsdaten nachgelesen",
 };
 
 const RUN_STATUS: Record<string, { label: string; tone: "success" | "warning" | "destructive" | "info" | "neutral" }> = {
