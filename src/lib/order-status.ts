@@ -26,7 +26,7 @@ import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import { resolveSignedInLink } from "./customer-session-link.mjs";
 import { getValidAccessToken } from "./customer-oauth-store";
-import { listCustomerOrders, type LedgerOrder } from "./customer-orders-store";
+import { findCustomerOrders, type LedgerOrder } from "./customer-orders-store";
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { isChatOrderStatusEnabled, isShopifyCustomerSyncEnabled } from "./platform-flags.mjs";
 import { KPI_ORDER_STATUS_LOOKUP, recordKpiEvent } from "./kpi-events";
@@ -116,7 +116,9 @@ async function readLiveOrders(
 ): Promise<Map<string, LiveOrder>> {
   const found = new Map<string, LiveOrder>();
   if (!isShopifyConfigured()) return found;
-  const targets = orders.filter(wantsLiveRead).slice(0, MAX_LIVE_ENRICHMENTS);
+  const targets = orders
+    .filter((o) => wantsLiveRead(o) && /^\d+$/.test(o.shopifyOrderId))
+    .slice(0, MAX_LIVE_ENRICHMENTS);
   if (targets.length === 0) return found;
 
   const reads = Promise.all(
@@ -192,21 +194,27 @@ export async function lookupOrderStatus(
       outcome = "ledger_off";
       result = buildOrderStatusForModel({ status: "unavailable", ordersPageUrl });
     } else {
-      const { orders } = await listCustomerOrders(access.customerId, { limit: ORDERS_FOR_MATCH }, sql);
-      const selection = selectOrders(orders, input.orderRef ?? null);
-      const live =
-        selection.selected.length > 0
-          ? await readLiveOrders(selection.selected, access.shopifyCustomerId)
-          : new Map<string, LiveOrder>();
-      if (live.size > 0) source = "ledger+live";
-      outcome = selection.status;
-      result = buildOrderStatusForModel({
-        status: selection.status,
-        matched: selection.matched,
-        orders: selection.selected,
-        live,
-        ordersPageUrl,
-      });
+      const orders = await findCustomerOrders(access.customerId, { limit: ORDERS_FOR_MATCH }, sql);
+      if (!orders) {
+        // A database error must never read as "you have no orders".
+        outcome = "unavailable";
+        result = buildOrderStatusForModel({ status: "unavailable", ordersPageUrl });
+      } else {
+        const selection = selectOrders(orders, input.orderRef ?? null);
+        const live =
+          selection.selected.length > 0
+            ? await readLiveOrders(selection.selected, access.shopifyCustomerId)
+            : new Map<string, LiveOrder>();
+        if (live.size > 0) source = "ledger+live";
+        outcome = selection.status;
+        result = buildOrderStatusForModel({
+          status: selection.status,
+          matched: selection.matched,
+          orders: selection.selected,
+          live,
+          ordersPageUrl,
+        });
+      }
     }
   } catch (err) {
     reportError(err, { route: "lib/order-status", phase: "lookupOrderStatus" });
