@@ -367,7 +367,11 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
   - Dann standen der fremden Sitzung die Kontofunktionen offen: Gesprächsliste und -inhalte, **Datenexport (JSON)**, **Selbst-Löschung**, außerdem das Chat-Gedächtnis.
   - Ursache: Die Prüfung fragte nur, ob die verknüpfte Kundenakte ein Shopify-Konto und ein gültiges Token hat, nicht, ob **diese** Sitzung angemeldet wurde. Seit dem Kundenspiegel (§ 13) haben alle Shop-Kunden eine Shopify-Kennung.
 - **Behebung (03.10.2026).** Jede Sitzungsverknüpfung speichert jetzt ihren Nachweis (Migration 0071): eingetippte E-Mail, Anmeldung über das Kundenkonto oder über den Shop (App Proxy). Nur eine Anmeldung **in derselben Sitzung** zählt. Bestehende Anmeldungen wurden ungültig; die Betroffenen melden sich einmal neu an.
-- **Prüfung auf Ausnutzung.** Gezählt werden Anmeldungen, Exporte und Löschungen (pseudonyme KPI-Ereignisse) sowie die Zahl der Kundenkonten mit Anmelde-Token. Ergebnis: [vom Mandanten nach der Prüfung einzutragen].
+- **Prüfung auf Ausnutzung (Produktivdatenbank, 03.10.2026).** Ausgewertet wurden die pseudonymen KPI-Ereignisse zu Anmeldung, Export und Löschung, die Anmelde-Token und die Sitzungsverknüpfungen.
+  - Seit Einführung der Anmeldung im Chat gab es **22 Anmeldungen** (31.07.–03.10.2026); **21 Kundenkonten** haben ein Anmelde-Token. Das ist der Kreis möglicher Betroffener.
+  - Für die Lücke nötig war eine Chat-Sitzung, die über eine **eingetippte** E-Mail-Adresse mit einer Person verknüpft wurde, **nachdem** sich diese Person angemeldet hatte. **Eine solche Sitzung gibt es nicht** — weder bei den 21 Personen mit Token noch bei allen anderen, die sich je angemeldet haben (auch bei denen, die sich inzwischen abgemeldet haben). Die Lücke war im Betrieb damit **nie ausnutzbar**; folglich konnte auch kein lesender Zugriff (Gesprächsliste, Chat-Gedächtnis — beides wird nicht protokolliert) über sie stattfinden.
+  - Datenexporte: **keiner** seit Einführung der Funktion. Selbst-Löschungen: **eine** (04.09.2026, als zwei Ereignisse im Abstand von 91 ms erfasst) — ein Test des Mandanten mit seinem eigenen Konto.
+  - Verknüpfungen werden nicht durch Fristen gelöscht, nur durch die vollständige Löschung einer Person; gelöscht wurde nur das Testkonto.
 
 ### 15.2 Prüfbitte
 
@@ -385,7 +389,10 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
   - Bestehende Anmeldungen wurden ungültig.
   - Abmelden beendet jetzt alle Chat-Anmeldungen der Person, nicht nur die Tokens. Vorher blieb auf einem gemeinsam genutzten Rechner eine abgemeldete Sitzung verknüpft und wurde mit der nächsten Anmeldung der Person auf einem anderen Gerät wieder gültig.
 - **Folge für den Betrieb.** „Anmelden“ im Chat wirkt erst wieder, wenn das Chat-Fenster (Frontend) den Code einlöst. Bis dahin bleiben Anmelde-Funktionen aus. Es wird nichts falsch zugeordnet.
-- **Prüfung auf Ausnutzung.** Dieselbe Zählung wie in 15.1. Zusätzlich: Anmeldungen, deren Sitzung danach Exporte oder Löschungen auslöste, ohne dass in dieser Sitzung ein Chat stattfand. Ergebnis: [vom Mandanten nach der Prüfung einzutragen].
+- **Prüfung auf Ausnutzung (Produktivdatenbank, 03.10.2026).**
+  - **Alle 22 Anmeldungen waren sichtbare Anmeldungen**, keine einzige „stille“. Die verdeckte Form des Angriffs (präparierter Link, stille Anmeldung) hat damit **nie stattgefunden**.
+  - Die sichtbare Form hätte vorausgesetzt, dass eine Kundin einen fremden Link öffnet und sich dort selbst bei Shopify anmeldet. Auf keine Anmeldung folgte ein Export; die einzige Löschung war der Test des Mandanten (15.1).
+  - Nicht protokolliert werden das Abrufen der Gesprächsliste und das Chat-Gedächtnis. Ein lesender Zugriff über eine solche sichtbare Anmeldung lässt sich deshalb nicht vollständig ausschließen; Hinweise darauf gibt es keine.
 
 ### 15.4 Prüfbitte
 

@@ -14,7 +14,7 @@ Last updated: 2026-10-03.
 
 ## Done
 
-- [x] Migrations `0061`–`0069` run on production.
+- [x] Migrations `0061`–`0074` run on production (`0070`–`0074` on 03.10.).
 - [x] Shopify scopes (incl. `read_inventory`), app reinstalled.
 - [x] 13 webhooks registered by the app (each once); the hand-made admin webhooks deleted;
       `SHOPIFY_WEBHOOK_SECRET` removed from Vercel.
@@ -25,8 +25,10 @@ Last updated: 2026-10-03.
 
 ## 1 · Now
 
-- [ ] **1.6 Security fix: a typed e-mail must never count as a sign-in** — C built it 03.10.,
-  M runs the migration
+- [x] **1.6 Security fix: a typed e-mail must never count as a sign-in** — done 03.10.:
+  `0071` run; exposure check: **never exploitable** — no session was ever linked by a typed
+  e-mail to a person after their sign-in; no data export ever; the one deletion (04.09.) was
+  M's own test. Result in dossier § 15.1; L assesses F-31 with 3.2.
   - Found while preparing „order status in the chat“: a session where someone *typed* the
     e-mail of a customer who had used „Anmelden“ in the chat (and not logged out) resolved
     as that customer's signed-in session — `/api/account/export`, `…/conversations`,
@@ -99,8 +101,8 @@ Last updated: 2026-10-03.
     in Mo → Eingang → „E-Mails nicht zugeordnet“; one from a customer's address opens
     „E-Mail beantworten“ in the Eingang (C.10) with an AI draft.
 
-- [ ] **1.7 „Einplanen“ for campaigns (approve now, send later)** — C built it 03.10., M
-  switches it on
+- [ ] **1.7 „Einplanen“ for campaigns (approve now, send later)** — `0072` run 03.10.; **left: M
+  sets `CAMPAIGN_RELEASE_ENABLED=true`**
   - **M:** right after the merge pull main and run `npm run db:migrate` (applies `0072`).
     Until it has run the review desk and campaign sends fail (they read the new columns) —
     migrate right away.
@@ -110,8 +112,10 @@ Last updated: 2026-10-03.
     nächsten Lauf“ → within 10 minutes the mail is in „Gesendet“. Lawyer: dossier § 17 (F-33)
     → goes with 3.2.
 
-- [ ] **1.9 Security fix: a sign-in counts only for the chat that started it** — C built it
-  03.10., M runs the migration, F ships the widget step — *before the other frontend tasks*
+- [ ] **1.9 Security fix: a sign-in counts only for the chat that started it** — `0073` run and
+  exposure check done 03.10. (all 22 sign-ins visible, none silent; no foreign export or
+  deletion — dossier § 15.3). **Left: F ships the widget step (task 7)** — *before the other
+  frontend tasks*
   - Found by the review of „order status in the chat“ (still unmerged). The chat's
     „Anmelden“ took the chat session from the login link. A prepared link carrying a
     stranger's session id, opened by a customer who is logged in to the shop, signed the
@@ -146,8 +150,8 @@ Last updated: 2026-10-03.
     „Muster erzeugen“ shows three different people with their mails; „Testpostfach …“ with your
     own address delivers that mail (with a real code if the campaign has a discount).
 
-- [ ] **1.10 Letters as a campaign channel** — C built it 03.10. (C.12), M runs the migration and
-  tries it
+- [ ] **1.10 Letters as a campaign channel** — `0074` run 03.10.; **left: M sets up Pingen and
+  tries it** (below)
   - **M:** right after the merge pull main and run `npm run db:migrate` (applies `0074`). Until it
     has run, saving a campaign, the audience match (live count and refresh — fail closed, nobody
     matches) and every letter, Kunden → Brief included, fail, and the nightly retention run stops
