@@ -37,10 +37,11 @@ export const KPI_EMAIL_CAPTURE_DECLINED = "email_capture_declined";
 //
 // ALL widget-emitted through POST /api/kpi (the gate render and its taps are
 // UI moments the backend never observes directly; the accept ALSO reaches the
-// backend as POST /api/chat-marketing-opt-in or /api/account/marketing-opt-in).
-// Each event carries `data: { surface: "signin" | "chat" }` so the two gate
-// placements split out. These names REPLACE the retired `starter_shown` /
-// `starter_clicked` widget events. Shapes in docs/API_CONTRACT.md §5.
+// backend as POST /api/account/marketing-opt-in). Each event carries
+// `data: { surface: "signin" | "chat" }`. Since the widget of 2026-10-01 only
+// the signed-in gate (`signin`) is shown; the anonymous e-mail gate (`chat`,
+// POST /api/chat-marketing-opt-in) was replaced by the sign-in popup
+// (kpi-widget-events.mjs). Shapes in docs/API_CONTRACT.md §5.
 
 /** The consent gate was rendered (once per session per surface). */
 export const KPI_CONSENT_GATE_SHOWN = "consent_gate_shown";
@@ -76,6 +77,12 @@ export const KPI_CAMPAIGN_CHAT_STARTED = "campaign_chat_started";
 export const KPI_CONTACT_FORM_SUBMITTED = "contact_form_submitted";
 /** A Shopify customer-account sign-in completed (OAuth callback success). */
 export const KPI_ACCOUNT_SIGNIN_SUCCEEDED = "account_signin_succeeded";
+/** The chat redeemed the one-time sign-in code (POST /api/auth/link, 0073) —
+ * the sign-in now counts for that session. `data: {kind}` (customer_account | app_proxy). */
+export const KPI_ACCOUNT_SIGNIN_LINKED = "account_signin_linked";
+/** POST /api/auth/link refused a code. `data: {reason}` — invalid (expired, used,
+ * unknown) | session_mismatch (another session's code: a planted link or a widget bug). */
+export const KPI_ACCOUNT_SIGNIN_LINK_REFUSED = "account_signin_link_refused";
 /** A signed-in customer requested their GDPR data export. */
 export const KPI_ACCOUNT_EXPORT_REQUESTED = "account_export_requested";
 /** A signed-in customer completed self-service erasure. */
