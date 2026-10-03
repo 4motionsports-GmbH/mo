@@ -1,4 +1,4 @@
-// POST /api/admin/campaigns/audience-preview  { audience } → { spec, description, preview }
+// POST /api/admin/campaigns/audience-preview  { audience, letterMode? } → { spec, description, preview }
 //
 // The wizard's live count: how many customers WITH consent the spec matches,
 // how many talked to Mo, the language split and a few names. Pure DB.
@@ -16,14 +16,17 @@ export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
   if (blocked) return blocked;
   let raw: unknown;
+  let letterMode: "ohne_einwilligung" | "alle" | null = null;
   try {
-    raw = ((await req.json()) as { audience?: unknown }).audience;
+    const body = (await req.json()) as { audience?: unknown; letterMode?: unknown };
+    raw = body.audience;
+    if (body.letterMode === "ohne_einwilligung" || body.letterMode === "alle") letterMode = body.letterMode;
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
   try {
     const spec = normalizeAudienceSpec(raw);
-    const preview = await previewAudience(spec);
+    const preview = await previewAudience(spec, undefined, { letterMode });
     const description = describeAudienceSpec(spec, {
       personaLabel: (k: string) =>
         k === "unknown" ? "ohne Persona" : (ARCHETYPE_META[k as PersonaArchetype]?.label ?? k),

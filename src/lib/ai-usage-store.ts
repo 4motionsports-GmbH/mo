@@ -38,6 +38,9 @@ export type AiCallSite =
   // Campaign module (docs/CAMPAIGNS.md): the per-contact AI draft for the
   // Shopify-subscriber audience. Dashboard/admin-side spend (no conversation).
   | "campaign_draft"
+  // Letters as a campaign channel (0074): the per-recipient letter draft.
+  // Admin-side spend (no conversation).
+  | "campaign_letter"
   | "customer_profile"
   | "top_questions"
   // Admin conversation inspector: the per-conversation AI analysis pass

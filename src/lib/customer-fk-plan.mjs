@@ -22,6 +22,7 @@ export const CUSTOMER_FK_PLAN = {
   customer_oauth_tokens: { column: "customer_id", treatment: "keep_or_drop" },
   customer_session_links: { column: "customer_id", treatment: "repoint" },
   customer_link_grants: { column: "customer_id", treatment: "repoint" },
+  campaign_letters: { column: "customer_id", treatment: "repoint" },
   email_messages: { column: "customer_id", treatment: "repoint" },
   physical_letters: { column: "customer_id", treatment: "repoint" },
   campaign_contacts: { column: "customer_id", treatment: "repoint" },

@@ -122,3 +122,15 @@ test("validateCampaignInput: a chat button needs the Mo block", () => {
   assert.equal(validateCampaignInput({ moPromo: false }, { current: { ctaKind: "shop", moPromo: true } }).ok, true);
   assert.equal(validateCampaignInput({ name: "Neu" }, { current: { ctaKind: "mo_chat", moPromo: false } }).ok, true);
 });
+
+test("validateCampaignInput: letter mode and postage budget (0074)", () => {
+  const ok = validateCampaignInput({ letterMode: "ohne_einwilligung", letterBudgetCents: 25_000 });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.value.letterMode, "ohne_einwilligung");
+  assert.equal(ok.value.letterBudgetCents, 25_000);
+  assert.equal(validateCampaignInput({ letterBudgetCents: "" }).value.letterBudgetCents, null);
+  assert.equal(validateCampaignInput({ letterBudgetCents: null }).value.letterBudgetCents, null);
+  assert.equal(validateCampaignInput({ letterMode: "per_brief" }).ok, false);
+  assert.equal(validateCampaignInput({ letterBudgetCents: -1 }).ok, false);
+  assert.equal(validateCampaignInput({ letterBudgetCents: 10_000_001 }).ok, false);
+});

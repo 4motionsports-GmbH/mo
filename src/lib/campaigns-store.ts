@@ -24,6 +24,7 @@
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import { matchAudience, AUDIENCE_MAX_MEMBERS, type AudienceSpec } from "./audience-store";
+import { refreshCampaignLetters, type LetterRefreshResult } from "./campaign-letters-store";
 import { normalizeAudienceSpec } from "./audience-spec.mjs";
 import { canTransition, slugifyCampaignName, campaignPhase } from "./campaign-def.mjs";
 import { effectiveEmailLanguage } from "./campaign-language.mjs";
@@ -57,6 +58,10 @@ export interface Campaign {
   moPromo: boolean;
   ctaKind: "mo_chat" | "shop";
   ctaUrl: string | null;
+  /** Letters as a channel (0074): aus | ohne_einwilligung | alle. */
+  letterMode: "aus" | "ohne_einwilligung" | "alle";
+  /** Postage cap of the campaign in cents; null = none. */
+  letterBudgetCents: number | null;
   audienceRefreshedAt: string | null;
   startedAt: string | null;
   endedAt: string | null;
@@ -111,6 +116,8 @@ export function mapCampaign(r: Record<string, unknown>): Campaign {
     moPromo: r.mo_promo !== false,
     ctaKind: r.cta_kind === "shop" ? "shop" : "mo_chat",
     ctaUrl: (r.cta_url as string | null) ?? null,
+    letterMode: r.letter_mode === "ohne_einwilligung" || r.letter_mode === "alle" ? r.letter_mode : "aus",
+    letterBudgetCents: r.letter_budget_cents == null ? null : Number(r.letter_budget_cents),
     audienceRefreshedAt: iso(r.audience_refreshed_at),
     startedAt: iso(r.started_at),
     endedAt: iso(r.ended_at),
@@ -336,6 +343,8 @@ export interface CampaignInput {
   moPromo?: boolean;
   ctaKind?: "mo_chat" | "shop";
   ctaUrl?: string | null;
+  letterMode?: "aus" | "ohne_einwilligung" | "alle";
+  letterBudgetCents?: number | null;
 }
 
 /** Create a campaign (status entwurf). Returns the new id, or null. */
@@ -356,7 +365,8 @@ export async function createCampaign(
       INSERT INTO campaigns
         (name, slug, kind, status, brief, audience, audience_mode, priority, starts_at, ends_at,
          daily_target, auto_prepare_per_day, reentry_days, discount_percent, discount_scope,
-         discount_valid_until, design_key, hero_mode, text_mode, mo_promo, cta_kind, cta_url)
+         discount_valid_until, design_key, hero_mode, text_mode, mo_promo, cta_kind, cta_url,
+         letter_mode, letter_budget_cents)
       VALUES
         (${input.name}, ${slug}, ${input.kind}, 'entwurf', ${input.brief ?? null},
          ${JSON.stringify(input.audience ?? { v: 1 })}::jsonb, ${input.audienceMode ?? "fest"},
@@ -364,7 +374,8 @@ export async function createCampaign(
          ${input.dailyTarget ?? null}, ${input.autoPreparePerDay ?? 0}, ${input.reentryDays ?? null},
          ${input.discountPercent ?? 0}, ${input.discountScope ?? "all"}, ${input.discountValidUntil ?? null},
          ${input.designKey ?? null}, ${input.heroMode ?? "default"}, ${input.textMode ?? null},
-         ${input.moPromo ?? true}, ${input.ctaKind ?? "mo_chat"}, ${input.ctaUrl ?? null})
+         ${input.moPromo ?? true}, ${input.ctaKind ?? "mo_chat"}, ${input.ctaUrl ?? null},
+         ${input.letterMode ?? "aus"}, ${input.letterBudgetCents ?? null})
       RETURNING id
     `) as Array<{ id: number }>;
     return rows[0] ? Number(rows[0].id) : null;
@@ -408,6 +419,10 @@ export async function updateCampaign(id: number, patch: CampaignInput, sql: Sql 
         mo_promo             = CASE WHEN ${has("moPromo")} THEN ${patch.moPromo ?? true} ELSE mo_promo END,
         cta_kind             = CASE WHEN ${has("ctaKind")} THEN ${patch.ctaKind ?? "mo_chat"} ELSE cta_kind END,
         cta_url              = CASE WHEN ${has("ctaUrl")} THEN ${patch.ctaUrl ?? null} ELSE cta_url END,
+        letter_mode          = CASE WHEN ${has("letterMode")} AND kind <> 'einzel'
+                                    THEN ${patch.letterMode ?? "aus"} ELSE letter_mode END,
+        letter_budget_cents  = CASE WHEN ${has("letterBudgetCents")}
+                                    THEN ${patch.letterBudgetCents ?? null}::int ELSE letter_budget_cents END,
         updated_at           = now()
        WHERE id = ${id}
       RETURNING id
@@ -484,6 +499,8 @@ export interface AudienceRefreshResult {
   excluded: number;
   /** Set when the refresh was skipped on purpose (German, for the UI). */
   note?: string;
+  /** Letter recipients (letter_mode ≠ aus, 0074). */
+  letters?: LetterRefreshResult;
 }
 
 const REFRESH_CHUNK = 1000;
@@ -638,6 +655,11 @@ export async function refreshCampaignAudience(
       `) as Array<{ n: number }>;
       result.excluded = Number(exc[0]?.n ?? 0);
     }
+
+    // The letter channel follows the same audience (its own rules: completed
+    // order, no objection; mode ohne_einwilligung = only people without the
+    // e-mail consent).
+    if (campaign.letterMode !== "aus") result.letters = await refreshCampaignLetters(campaign, sql);
 
     await sql`UPDATE campaigns SET audience_refreshed_at = now() WHERE id = ${campaignId}`;
     return result;

@@ -184,6 +184,15 @@ export function validateCampaignInput(raw, opts = {}) {
     else if (r.textMode === "detailed" || r.textMode === "compact" || r.textMode === "minimal") value.textMode = r.textMode;
     else errors.textMode = "Textlänge wählen.";
   }
+  if (has("letterMode")) {
+    if (r.letterMode === "aus" || r.letterMode === "ohne_einwilligung" || r.letterMode === "alle") value.letterMode = r.letterMode;
+    else errors.letterMode = "Brief-Modus wählen.";
+  }
+  if (has("letterBudgetCents")) {
+    const v = r.letterBudgetCents == null || r.letterBudgetCents === "" ? null : intIn(r.letterBudgetCents, 0, 10_000_000);
+    if (v === undefined) errors.letterBudgetCents = "Porto-Budget 0–100.000 € oder leer.";
+    else value.letterBudgetCents = v;
+  }
   if (has("moPromo")) value.moPromo = r.moPromo === true;
   if (has("ctaKind")) {
     if (CTA_KINDS.includes(/** @type {any} */ (r.ctaKind))) value.ctaKind = r.ctaKind;

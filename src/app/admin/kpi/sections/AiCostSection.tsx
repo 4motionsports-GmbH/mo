@@ -17,6 +17,7 @@ const CALL_SITE_LABELS: Record<string, string> = {
   summary_download: "Zusammenfassung (Download)",
   marketing_draft: "Marketing-Entwürfe",
   campaign_draft: "Kampagnen-Entwürfe",
+  campaign_letter: "Kampagnen-Briefe",
   customer_profile: "Kundenprofile",
   top_questions: "Top-Fragen (Personas)",
   conversation_analysis: "Gesprächsanalyse",

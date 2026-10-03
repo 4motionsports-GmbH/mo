@@ -20,6 +20,7 @@ export const ERASURE_PLAN = {
   customer_session_links: { treatment: "cascade", why: "Session ↔ customer links (FK customers)." },
   customer_auth_pending: { treatment: "delete", why: "Pending sign-in state of the person's sessions." },
   customer_link_grants: { treatment: "cascade", why: "One-time sign-in link codes (FK customers, 0073)." },
+  campaign_letters: { treatment: "cascade", why: "Campaign letter recipients and their texts (FK customers, 0074)." },
   customer_merge_conflicts: { treatment: "delete", why: "Identity-merge audit rows naming the person." },
   conversations: { treatment: "delete", why: "Every chat of the person (all devices)." },
   messages: { treatment: "cascade", why: "Chat transcripts (FK conversations)." },

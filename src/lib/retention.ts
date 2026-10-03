@@ -372,6 +372,16 @@ export async function runRetention(
       )
       SELECT count(*)::int AS n FROM del
     `) as Array<{ n: number }>;
+    // Campaign letter recipients (0074) leave on the same window and count
+    // with the recipients; the posted letters keep their own window
+    // (physical_letters, step 5c).
+    const deletedLetters = (await sql`
+      WITH del AS (
+        DELETE FROM campaign_letters WHERE updated_at < ${campaignCutoff} RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+    deletedCampaignContacts = [{ n: (deletedCampaignContacts[0]?.n ?? 0) + (deletedLetters[0]?.n ?? 0) }];
   }
 
   // 5h. Purge the DERIVED analytics caches — they were previously never purged
