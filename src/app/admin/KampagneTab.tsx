@@ -118,7 +118,10 @@ async function Overview({
   presetAudience?: Record<string, unknown> | null;
   notFound?: boolean;
 }) {
-  const catalog = await loadProductCatalog().catch(() => []);
+  const [catalog, costs] = await Promise.all([
+    loadProductCatalog().catch(() => []),
+    estimateCampaignCosts(),
+  ]);
   const categories = [...new Set(catalog.map((p) => p.category).filter((c): c is string => Boolean(c)))].sort((a, b) =>
     a.localeCompare(b, "de")
   );
@@ -137,6 +140,7 @@ async function Overview({
         categories,
         maxDiscountPercent: DISCOUNT_PERCENT_MAX,
         autoPrepareBudget: campaignAutoPrepareConfig().count,
+        costs,
       }}
     />
   );

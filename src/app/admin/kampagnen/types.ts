@@ -75,6 +75,8 @@ export interface CampaignEditorOptions {
   categories: string[];
   maxDiscountPercent: number;
   autoPrepareBudget: number;
+  /** Recorded average cost of a draft / a per-contact AI hero, EUR (null = none yet). */
+  costs: { draftEur: number | null; heroEur: number | null };
 }
 
 export interface CampaignsOverviewProps {

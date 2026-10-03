@@ -1,8 +1,9 @@
 "use client";
 
-// The campaign editor (Neue Kampagne / Bearbeiten) — one sheet, six sections:
+// The campaign editor (Neue Kampagne / Bearbeiten) — one sheet, seven sections:
 // Grundlagen, Briefing, Zielgruppe (builder + „beschreiben“ via KI + live
-// count), Angebot, Gestaltung, Automatik. Everything is validated again on the
+// count), Angebot, Gestaltung, Automatik, Prüfen & testen (estimate + sample
+// mails, CampaignCheckSection). Everything is validated again on the
 // server (campaign-def.validateCampaignInput); the audience spec is normalised
 // there (audience-spec.mjs). The live count always means „with consent“ — the
 // e-mail channel never reaches anyone without it. docs/CAMPAIGNS.md §2.2.
@@ -27,6 +28,7 @@ import {
   toast,
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
+import { CampaignCheckSection, type SampleConfig } from "./CampaignCheckSection";
 import type { AudienceSpecProps, CampaignCardProps, CampaignEditorOptions } from "./types";
 
 type Kind = "laufend" | "aktion";
@@ -104,6 +106,24 @@ function toLocalInput(iso: string | null): string {
 }
 const fromLocalInput = (v: string): string | null => (v ? new Date(v).toISOString() : null);
 const intOrNull = (v: string): number | null => (v.trim() === "" ? null : Math.round(Number(v)));
+
+/** The settings a sample mail depends on, as the sample route validates them. */
+function sampleConfigOf(f: FormState): SampleConfig {
+  return {
+    name: f.name,
+    kind: f.kind,
+    brief: f.brief,
+    endsAt: fromLocalInput(f.endsAt),
+    discountPercent: Math.round(Number(f.discountPercent) || 0),
+    discountScope: f.discountScope,
+    discountValidUntil: f.kind === "aktion" ? fromLocalInput(f.discountValidUntil) : null,
+    designKey: f.designKey || null,
+    textMode: f.textMode || null,
+    moPromo: f.moPromo,
+    ctaKind: f.ctaKind,
+    ctaUrl: f.ctaUrl,
+  };
+}
 
 function initialState(c: CampaignCardProps | null, presetAudience: Record<string, unknown> | null = null): FormState {
   return {
@@ -339,6 +359,13 @@ export function CampaignEditor({
       setSaving(false);
     }
   };
+
+  const sampleConfig = React.useMemo(() => sampleConfigOf(form), [form]);
+  const sampleKey = JSON.stringify(sampleConfig);
+  const savedSampleKey = React.useMemo(
+    () => (campaign ? JSON.stringify(sampleConfigOf(initialState(campaign))) : null),
+    [campaign]
+  );
 
   const a = form.audience;
   const otherCampaigns = campaigns.filter((c) => c.id !== campaign?.id && c.kind !== "einzel");
@@ -693,7 +720,7 @@ export function CampaignEditor({
 
         {/* Automatik */}
         <section className="flex flex-col gap-3">
-          <SectionTitle info={`Nächtliche Vorbereitung: Entwürfe pro Tag aus dem gemeinsamen Kontingent (CAMPAIGN_AUTO_PREPARE_COUNT = ${num(options.autoPrepareBudget)}). Gesendet wird nie automatisch.`}>
+          <SectionTitle info={`Nächtliche Vorbereitung: Entwürfe pro Tag aus dem gemeinsamen Kontingent (CAMPAIGN_AUTO_PREPARE_COUNT = ${num(options.autoPrepareBudget)}). Gesendet wird nur, was jemand im Prüftisch freigegeben hat — mit „Senden“ sofort oder mit „Einplanen“ zur gewählten Zeit.`}>
             Automatik
           </SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -708,6 +735,24 @@ export function CampaignEditor({
             </Field>
           </div>
         </section>
+
+        {!isEinzel && (
+          <CampaignCheckSection
+            campaignId={campaign?.id ?? null}
+            audience={form.audience}
+            config={sampleConfig}
+            configKey={sampleKey}
+            dirty={savedSampleKey !== null && savedSampleKey !== sampleKey}
+            recipients={preview ? preview.preview.total : null}
+            counting={previewLoading}
+            heroMode={form.heroMode}
+            dailyTarget={intOrNull(form.dailyTarget)}
+            autoPreparePerDay={Math.round(Number(form.autoPreparePerDay) || 0)}
+            startsAt={fromLocalInput(form.startsAt)}
+            endsAt={fromLocalInput(form.endsAt)}
+            options={options}
+          />
+        )}
       </div>
     </Sheet>
   );
