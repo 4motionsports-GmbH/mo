@@ -25,6 +25,25 @@ Last updated: 2026-10-03.
 
 ## 1 · Now
 
+- [ ] **1.6 Security fix: a typed e-mail must never count as a sign-in** — C built it 03.10.,
+  M runs the migration
+  - Found while preparing „order status in the chat“: a session where someone *typed* the
+    e-mail of a customer who had used „Anmelden“ in the chat (and not logged out) resolved
+    as that customer's signed-in session — `/api/account/export`, `…/conversations`,
+    `…/erase`, `/api/auth/me` and the chat memory. Since the customer mirror every shop
+    customer qualifies on the Shopify-id side; the token is per customer, not per session.
+  - Fix: migration `0071_session_link_kind` records how each session was linked; only a
+    sign-in in that session (Customer Account OAuth or the App Proxy) counts. Existing
+    signed-in sessions become `legacy` → those customers sign in once more.
+  - **M:** right after the merge pull main and run `npm run db:migrate` (until then sign-in
+    and the account features fail closed — nobody sees foreign data, but signing in fails).
+  - **M (exposure check), Neon → SQL Editor:**
+    `SELECT count(*) FROM customer_oauth_tokens;` — customers who could have been affected;
+    `SELECT event, count(*), min(created_at), max(created_at) FROM kpi_events WHERE event IN
+    ('account_signin_succeeded','account_export_requested','account_erased') GROUP BY event;`
+    — exports/erasures without a matching number of sign-ins would be suspicious. If anything
+    looks wrong: tell L the same day (Art. 33 DSGVO: 72 h to notify the authority).
+
 - [x] **1.1 Consent write-back on** — M — done 02.10.: 0 offen · 5 erledigt
   - Vercel → project `mo` → Settings → Environment Variables: `SHOPIFY_CONSENT_WRITEBACK`
     = `true` (Production only) → Deployments → latest → ⋯ → Redeploy.
@@ -249,7 +268,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       (prospect + Korrespondenz + item); the team mail is unchanged. Filter: „Alle Arten“ →
       „E-Mail beantworten“. Lawyer: dossier § 14 (F-30) → goes with 3.2.
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
-      index the lookup (migration `0071`) — low priority.
+      index the lookup (next free migration number; `0071` went to the session-link fix) —
+      low priority.
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
       of UTC — low priority.
 - [ ] **C.5** Keep this file current after every step.

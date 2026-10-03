@@ -1,7 +1,7 @@
 # Rechtsdossier „Mo“ — KI-Verkaufsberater auf motionsports.de
 
 **Zweck:** Vollständige, aktuelle Beschreibung des Systems für die externe anwaltliche Prüfung (Datenschutz, Wettbewerbs-/Lauterkeitsrecht, KI-Regulierung, Verbraucherrecht) — als Grundlage für Ihr Feedback und Ihre Handlungsempfehlungen.
-**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30).
+**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstelle in der Anmelde-Zuordnung (§ 15, F-31).
 **Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`archive/LEGAL_READINESS_REPORT.md`](./archive/LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
 **Verantwortlicher:** motion sports [genaue Firmierung, Anschrift, Geschäftsführung, ggf. DSB — vom Mandanten zu ergänzen]. Betrieben wird der Onlineshop motionsports.de (Shopify) für Sport- und Fitnessgeräte (B2C, Studios/Physiotherapie, öffentliche Auftraggeber).
 
@@ -353,6 +353,23 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 ### 14.2 Neue Prüfbitte
 
 - **F-30 — Kontaktanfragen und eingehende Mails in Mo:** Bitte bestätigen, dass die Speicherung der Kontaktanfrage in der Kundenakte (einschließlich Anlage eines Interessenten ohne Einwilligung) und die KI-gestützte Zusammenfassung mit Antwortentwurf auf Art. 6 (1) b (Anfrage/Vertragsanbahnung) bzw. f (effiziente Bearbeitung) gestützt werden können, und welche Ergänzung der Datenschutzerklärung (Kontaktformular, KI-Unterstützung bei der Beantwortung, Anthropic als Auftragsverarbeiter) nötig ist. Einschätzung der Entwicklung: keine automatisierte Entscheidung im Sinne von Art. 22 — jede Antwort sendet ein Mensch.
+
+---
+
+## 15. Nachtrag 03.10.2026 — Schwachstelle in der Anmelde-Zuordnung (behoben)
+
+### 15.1 Tatsachen
+
+- **Was möglich war.** Eine Chat-Sitzung, in der jemand lediglich die E-Mail-Adresse einer anderen Person **eingetippt** hatte (Formular „Zusammenfassung per E-Mail“ / Newsletter-Anmeldung im Chat, ohne Nachweis, dass ihm das Postfach gehört), wurde als **angemeldete** Sitzung dieser Person behandelt.
+  - Voraussetzung: Die Person hatte sich irgendwann über „Anmelden“ (Shopify-Kundenkonto) im Chat angemeldet und sich nicht abgemeldet, ihr Anmelde-Token war also noch gültig.
+  - Dann standen der fremden Sitzung die Kontofunktionen offen: Gesprächsliste und -inhalte, **Datenexport (JSON)**, **Selbst-Löschung**, außerdem das Chat-Gedächtnis.
+  - Ursache: Die Prüfung fragte nur, ob die verknüpfte Kundenakte ein Shopify-Konto und ein gültiges Token hat, nicht, ob **diese** Sitzung angemeldet wurde. Seit dem Kundenspiegel (§ 13) haben alle Shop-Kunden eine Shopify-Kennung.
+- **Behebung (03.10.2026).** Jede Sitzungsverknüpfung speichert jetzt ihren Nachweis (Migration 0071): eingetippte E-Mail, Anmeldung über das Kundenkonto oder über den Shop (App Proxy). Nur eine Anmeldung **in derselben Sitzung** zählt. Bestehende Anmeldungen wurden ungültig; die Betroffenen melden sich einmal neu an.
+- **Prüfung auf Ausnutzung.** Gezählt werden Anmeldungen, Exporte und Löschungen (pseudonyme KPI-Ereignisse) sowie die Zahl der Kundenkonten mit Anmelde-Token. Ergebnis: [vom Mandanten nach der Prüfung einzutragen].
+
+### 15.2 Prüfbitte
+
+- **F-31 — Meldepflicht (Art. 33/34 DSGVO):** Bitte bewerten Sie anhand des Prüfergebnisses, ob eine Verletzung des Schutzes personenbezogener Daten vorliegt, die der Aufsichtsbehörde binnen 72 Stunden zu melden bzw. den Betroffenen mitzuteilen ist, und wie der Vorgang zu dokumentieren ist (Art. 33 (5)).
 
 ---
 
