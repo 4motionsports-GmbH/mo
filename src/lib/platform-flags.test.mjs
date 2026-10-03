@@ -5,6 +5,7 @@ import {
   isShopifyConsentWritebackEnabled,
   isShopifyErasureSyncEnabled,
   isShopifyInsightsWritebackEnabled,
+  isChatOrderStatusEnabled,
   aiProfileScope,
   shopifyConsentTextVersion,
   erasureAlertPerHour,
@@ -26,6 +27,16 @@ test("Shopify write switches are off unless explicitly enabled", () => {
   assert.equal(isShopifyCustomerSyncEnabled({ SHOPIFY_CUSTOMER_SYNC_ENABLED: "true" }), true);
   assert.equal(isShopifyConsentWritebackEnabled({ SHOPIFY_CONSENT_WRITEBACK: " YES " }), true);
   assert.equal(isShopifyErasureSyncEnabled({ SHOPIFY_ERASURE_SYNC: "1" }), true);
+});
+
+test("the order status in the chat is off unless explicitly enabled (fail closed)", () => {
+  assert.equal(isChatOrderStatusEnabled({}), false);
+  for (const raw of ["", "0", "false", "no", "off", "maybe", "enabled"]) {
+    assert.equal(isChatOrderStatusEnabled({ CHAT_ORDER_STATUS_ENABLED: raw }), false, raw);
+  }
+  for (const raw of ["1", "true", "yes", "on", " TRUE ", "On"]) {
+    assert.equal(isChatOrderStatusEnabled({ CHAT_ORDER_STATUS_ENABLED: raw }), true, raw);
+  }
 });
 
 test("the AI profile scope is 'consented' unless set to 'all'", () => {
