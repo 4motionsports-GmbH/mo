@@ -56,6 +56,7 @@
  * @property {number | null} subtotalCents
  * @property {number} totalCents
  * @property {number} refundedCents
+ * @property {string | null} lastRefundAt  newest refund that moved money (ISO), null when none or unknown
  * @property {string[]} discountCodes
  * @property {string | null} sourceName
  * @property {string | null} updatedAt
@@ -296,17 +297,31 @@ export function mapShopifyOrder(node, lineItems) {
 
   // REST carries the refunds as an array of refund objects with transactions;
   // total_refunded is not a top-level field, so sum the refund transactions.
+  // GraphQL has the total plus refunds { createdAt totalRefundedSet }. The
+  // newest refund that moved money dates the Eingang rule „Unzufriedenheit“
+  // (a restock-only refund does not count).
   let refundedCents = 0;
+  let lastRefundAt = null;
+  const noteRefund = (at, amountCents) => {
+    const when = amountCents > 0 ? iso(at) : null;
+    if (when && (!lastRefundAt || when > lastRefundAt)) lastRefundAt = when;
+  };
   if (isRest) {
     for (const r of Array.isArray(node.refunds) ? node.refunds : []) {
+      let refundCents = 0;
       for (const t of Array.isArray(r?.transactions) ? r.transactions : []) {
         if (String(t?.kind ?? "").toLowerCase() === "refund" && String(t?.status ?? "success") === "success") {
-          refundedCents += cents(t.amount) ?? 0;
+          refundCents += cents(t.amount) ?? 0;
         }
       }
+      refundedCents += refundCents;
+      noteRefund(r?.created_at ?? r?.processed_at, refundCents);
     }
   } else {
     refundedCents = cents(moneyAmount(node.totalRefundedSet)) ?? 0;
+    for (const r of Array.isArray(node.refunds) ? node.refunds : []) {
+      noteRefund(r?.createdAt, cents(moneyAmount(r?.totalRefundedSet)) ?? 0);
+    }
   }
 
   return {
@@ -322,6 +337,7 @@ export function mapShopifyOrder(node, lineItems) {
     totalCents:
       cents(isRest ? node.current_total_price ?? node.total_price : moneyAmount(node.currentTotalPriceSet)) ?? 0,
     refundedCents,
+    lastRefundAt,
     discountCodes,
     sourceName: text(isRest ? node.source_name : node.sourceName, 60),
     updatedAt: iso(isRest ? node.updated_at : node.updatedAt),

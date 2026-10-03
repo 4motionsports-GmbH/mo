@@ -45,6 +45,7 @@ const ORDER_FIELDS = `
   subtotalPriceSet { shopMoney { amount } }
   currentTotalPriceSet { shopMoney { amount } }
   totalRefundedSet { shopMoney { amount } }
+  refunds { createdAt totalRefundedSet { shopMoney { amount } } }
   discountCodes sourceName
   customer { id }
 `;

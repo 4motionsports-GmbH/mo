@@ -12,6 +12,7 @@ import {
   bounceSignal,
   capSignals,
   dissatisfiedSignal,
+  isNotableRefund,
   offerExpiringSignal,
   signalsForCustomer,
 } from "./customer-signals.mjs";
@@ -129,13 +130,14 @@ async function eventSignals(sql: Sql, now: Date): Promise<InboxItemInput[]> {
        LIMIT 500
     `,
     sql`
-      SELECT co.customer_id, co.order_name, (co.cancelled_at IS NOT NULL) AS cancelled, co.refunded_cents,
-             COALESCE(co.cancelled_at, co.shopify_updated_at, co.processed_at) AS at
+      SELECT co.customer_id, co.order_name, (co.cancelled_at > now() - interval '14 days') AS cancelled,
+             co.refunded_cents, co.total_cents,
+             CASE WHEN co.cancelled_at > now() - interval '14 days' THEN co.cancelled_at ELSE co.last_refund_at END AS at
         FROM customer_orders co
         JOIN customer_overview o ON o.customer_id = co.customer_id
        WHERE NOT o.blocked
          AND (co.cancelled_at > now() - interval '14 days'
-              OR (co.refunded_cents > 0 AND co.shopify_updated_at > now() - interval '14 days'))
+              OR (co.refunded_cents > 0 AND co.last_refund_at > now() - interval '14 days'))
        LIMIT 500
     `,
     sql`
@@ -163,12 +165,16 @@ async function eventSignals(sql: Sql, now: Date): Promise<InboxItemInput[]> {
     );
   }
   for (const r of refunds) {
+    const cancelled = r.cancelled === true;
+    const amounts = { refundedCents: Number(r.refunded_cents ?? 0), totalCents: Number(r.total_cents ?? 0) };
+    // A small refund (shipping, goodwill) is no sign of dissatisfaction.
+    if (!cancelled && !isNotableRefund(amounts)) continue;
     out.push(
       dissatisfiedSignal({
         customerId: Number(r.customer_id),
         orderName: (r.order_name as string | null) ?? null,
-        cancelled: r.cancelled === true,
-        refundedCents: Number(r.refunded_cents ?? 0),
+        cancelled,
+        ...amounts,
         at: iso(r.at) ?? now.toISOString(),
       }) as InboxItemInput
     );
