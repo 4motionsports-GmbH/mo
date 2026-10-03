@@ -199,7 +199,9 @@ export function purchaseBlock(summary: CampaignPurchaseSummary | null, language:
       const items = o.items
         .map((i) => `${i.quantity}× ${i.title ?? "?"}`)
         .join(", ");
-      return `- ${date} (${o.name}): ${items}`;
+      // No order name/number — the date is enough context (dossier § 7.1:
+      // order numbers never go to an AI model).
+      return `- ${date}: ${items}`;
     })
     .join("\n");
 }
