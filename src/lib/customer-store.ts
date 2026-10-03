@@ -287,7 +287,9 @@ export async function linkCustomerOnEmailCapture(
       `;
       // Record the DIRECT session → customer link (migration 0019) so identity
       // resolution never depends on a conversation row existing.
-      await linkSessionToCustomer(sql, sessionId, customerId);
+      // A typed e-mail proves nothing about mailbox ownership: the link is
+      // 'email' and never resolves as signed in (0071).
+      await linkSessionToCustomer(sql, sessionId, customerId, "email");
     }
     return customerId;
   } catch (err) {
@@ -406,6 +408,11 @@ export interface BindShopifyIdentityInput {
   idTokenSub?: string | null;
   /** Widget thread to attach to this identity. */
   sessionId: string | null;
+  /**
+   * The proof behind this sign-in, recorded on the session link (migration
+   * 0071): the Customer Account OAuth callback or the shop's App Proxy.
+   */
+  linkKind: "customer_account" | "app_proxy";
 }
 
 export interface BindShopifyIdentityResult {
@@ -502,7 +509,9 @@ async function bindShopifyIdentityOnce(
     // Persisting the DIRECT session → customer link here (migration 0019) is
     // what lets /api/auth/me and /api/account/* resolve this session back to
     // the signed-in customer regardless of whether a conversation exists yet.
-    await linkSessionToCustomer(sql, sessionId, customerId);
+    // The link records the sign-in proof (0071) — only such links count as
+    // signed in; a typed e-mail link never does.
+    await linkSessionToCustomer(sql, sessionId, customerId, input.linkKind);
   }
 
   // Record the id_token subject on the token row later (saveCustomerTokens);

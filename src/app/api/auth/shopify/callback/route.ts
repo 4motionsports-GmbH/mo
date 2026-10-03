@@ -114,6 +114,7 @@ export async function GET(req: Request) {
       email: identity.email,
       idTokenSub,
       sessionId: pending.sessionId,
+      linkKind: "customer_account",
     });
     if (!bind) {
       // Identity couldn't be stored (no DB) — still send the user back; the
