@@ -420,7 +420,7 @@ data: [DONE]
 | `tool-input-start` | `toolCallId`, `toolName` | open a tool part keyed by `toolCallId` (render nothing yet) |
 | `tool-input-delta` | `toolCallId`, `inputTextDelta` | streaming JSON of the args; safe to ignore |
 | `tool-input-available` | `toolCallId`, `toolName`, `input` | args complete → **render the card now** (dispatch on `toolName`, read `input`) |
-| `tool-output-available` | `toolCallId`, `output` | tool result → for `offer_email_summary` this carries the load-bearing `output.consentCopy`; the other tools return `{ ok: true }` |
+| `tool-output-available` | `toolCallId`, `output` | tool result → for `offer_email_summary` this carries the load-bearing `output.consentCopy`; `search_products` and `get_order_status` return data for the model only (ignore it — see "Tools the widget MUST NOT render"); the other tools return `{ ok: true }` |
 | `error` | `errorText` | show the friendly retry message |
 | `finish` | — | finalize the message, re-enable input |
 | `[DONE]` (literal, not JSON) | — | stream end |
@@ -441,6 +441,10 @@ Assembly rules:
   a second card.
 - Ignore unknown chunk types (e.g. `reasoning-*`, `tool-output-error`)
   defensively — the vocabulary can grow with SDK upgrades.
+- **A tool part whose `toolName` the widget does not know → render
+  nothing** (no card, no placeholder, no error), and consume its chunks
+  silently. New background tools are added this way without a widget
+  release (additive rule, 2026-10).
 - The route's `maxDuration` is 300 s — a long consultation can stream
   for minutes; don't impose a short client-side timeout.
 
@@ -756,10 +760,26 @@ These are background tools — skip their chunks when `toolName` matches:
   result to decide which `show_product` / `compare_products` calls to
   make. Its `tool-output-available` chunk streams the search result
   (`{ totalMatched, products: [...] }`) — ignore it.
+- `get_order_status` (2026-10, behind `CHAT_ORDER_STATUS_ENABLED`, default
+  off) — the signed-in customer's order status, for the model to answer
+  „Wo ist meine Bestellung?“ in its text. Input
+  `{ orderRef?: string; topic: "status" | "shipping" | "return" |
+  "cancellation" | "refund" }`; its `tool-output-available` chunk carries
+  `{ status, matched?, orders: [...], ordersPageUrl }` (order date, items and
+  states — no order numbers, amounts or tracking numbers). Render nothing:
+  no card, and never show or store the output outside the conversation
+  history the widget already keeps. The answer the customer reads is the
+  assistant text. On a shared device the stored history can contain it —
+  see [`frontend-handoff/CHAT_ORDER_STATUS.md`](./frontend-handoff/CHAT_ORDER_STATUS.md)
+  (clear the stored history on logout).
 
-Both tools still appear in the stream (the full
+These tools still appear in the stream (the full
 `tool-input-start → … → tool-output-available` chunk sequence) and the
-widget must consume them without rendering anything.
+widget must consume them without rendering anything. The same holds for
+any tool name the widget does not know (see the assembly rules above).
+The backend never trusts a replayed `get_order_status` output: when the
+history is sent back, its output is replaced by `{ replayed: true }`
+before it reaches the model.
 
 ### Rate-limit response (429)
 
@@ -1120,9 +1140,11 @@ them:
 | `account_signin_succeeded` | `GET /api/auth/shopify/callback` (success) | `{ silent }` — `prompt=none` re-detects flagged. Session-keyed. |
 | `account_export_requested` | `GET /api/account/export` | `{}`, session `NULL` (pure volume counter) |
 | `account_erased`           | `POST /api/account/erase` | `{}`, session `NULL` (pure volume counter) |
+| `order_status_lookup`      | `POST /api/chat` — one per `get_order_status` call (2026-10, `CHAT_ORDER_STATUS_ENABLED`) | `{ outcome, topic, source, orders }` — `outcome` `ok` \| `no_orders` \| `not_found` \| `sign_in_required` \| `unavailable` \| `disabled` \| `ledger_off`; `topic` as the tool input; `source` `ledger` \| `ledger+live`; `orders` = number of orders in the answer. Never an order number, amount or id. Session-keyed. |
 
 They feed the Kampagnen-Funnel, Bundle and Kundenkonto/Self-Service sections
-of the admin KPI tab (see `ADMIN_DASHBOARD.md` §5.9/§5.10/§5.15).
+of the admin KPI tab (see `ADMIN_DASHBOARD.md` §5.9/§5.10/§5.15);
+`order_status_lookup` has no KPI section yet (raw event breakdown only).
 
 ### Success response
 

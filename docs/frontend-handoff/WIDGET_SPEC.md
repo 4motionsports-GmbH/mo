@@ -886,7 +886,8 @@ conversation; the email ask stays where it is (§6a, after value).
       innerHTML on untrusted strings).
 - [ ] Renders all five tool cards per `BEHAVIOR_REFERENCE`, keyed by
       `toolCallId`, with the render-nothing guards; silently consumes
-      `search_products` + `update_customer_profile`.
+      `search_products` + `update_customer_profile` + `get_order_status`
+      (and any tool name it does not know).
 - [ ] Hydrates products via `GET /api/products`; the add-to-cart checkout
       button links to the response's **top-level `cartUrl`** (the
       multi-product cart permalink), degrading to product-page links when

@@ -78,16 +78,22 @@ when its `tool-output-available` chunk flips the part to
 
 ### Tools that render nothing (consume silently)
 
-Two tools always appear in the stream but **must not produce any visible
+These tools appear in the stream but **must not produce any visible
 card** in production:
 
 - `update_customer_profile` — persona bookkeeping.
 - `search_products` — internal RAG; the assistant uses its result to
   decide which visible tools to call.
+- `get_order_status` (2026-10, behind `CHAT_ORDER_STATUS_ENABLED`) — the
+  signed-in customer's order status for Mo's text answer
+  ([`CHAT_ORDER_STATUS.md`](./CHAT_ORDER_STATUS.md)).
+
+The same goes for **any tool name the widget does not know**: render
+nothing, consume its chunks silently.
 
 (The old UI had a hidden `?debug=1` mode that dumped these as small
 monospace blocks. That is a dev affordance only; the production widget
-should ignore both tools entirely.)
+should ignore these tools entirely.)
 
 ---
 
