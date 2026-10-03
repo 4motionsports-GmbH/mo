@@ -33,8 +33,11 @@ test("toLatin1Safe preserves German letters but neutralises non-Latin-1 code poi
   // The whole point: ä ö ü Ä Ö Ü ß are all <= 0xFF, so they survive intact —
   // a German letter must never be mangled.
   assert.equal(toLatin1Safe("Schöne Grüße, äöü ÄÖÜ ß"), "Schöne Grüße, äöü ÄÖÜ ß");
-  // The Euro sign (U+20AC) is > 0xFF and is coerced to '?' (documented behaviour).
-  assert.equal(toLatin1Safe("5 €"), "5 ?");
+  // Typographic characters WinAnsi has become its byte (they print as themselves).
+  assert.equal(toLatin1Safe("5 €"), "5 \x80");
+  assert.equal(toLatin1Safe("„Hallo“ – so … — ok"), "\x84Hallo\x93 \x96 so \x85 \x97 ok");
+  // C1 control code points never pass through.
+  assert.equal(toLatin1Safe("a\u0085b"), "a?b");
   // Emoji (astral plane) iterate as a single code point > 0xFF -> single '?'.
   assert.equal(toLatin1Safe("hi 😀"), "hi ?");
   // Pure ASCII is unchanged.
