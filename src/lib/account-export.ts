@@ -34,8 +34,12 @@ export interface CustomerDataExport {
   orders: Array<Record<string, unknown>>;
   /** The computed figures (0063) — lifecycle, value tier, churn risk, … */
   facts: Record<string, unknown> | null;
-  /** Campaign participation (0066) and the campaign mails sent. */
-  campaign: { contacts: Array<Record<string, unknown>>; sends: Array<Record<string, unknown>> };
+  /** Campaign participation (0066), the campaign mails sent and the campaign letters (0074, also unsent drafts). */
+  campaign: {
+    contacts: Array<Record<string, unknown>>;
+    sends: Array<Record<string, unknown>>;
+    letters: Array<Record<string, unknown>>;
+  };
   suppression: { marketing: Array<Record<string, unknown>> };
 }
 
@@ -155,6 +159,15 @@ export async function buildCustomerDataExport(
        ORDER BY s.sent_at DESC LIMIT ${MAX_ROWS}
     `) as Array<Record<string, unknown>>;
 
+    const campaignLetters = (await sql`
+      SELECT k.name AS campaign, l.status, l.excluded_reason, l.subject, l.body, l.edited,
+             l.drafted_at, l.approved_at, l.sent_at, l.added_at
+        FROM campaign_letters l
+        LEFT JOIN campaigns k ON k.id = l.campaign_id
+       WHERE l.customer_id = ${customerId}
+       ORDER BY l.added_at DESC LIMIT ${MAX_ROWS}
+    `) as Array<Record<string, unknown>>;
+
     const suppMarketing = (await sql`
       SELECT email, reason, added_at FROM suppression_list WHERE email = ${email}
     `) as Array<Record<string, unknown>>;
@@ -174,7 +187,7 @@ export async function buildCustomerDataExport(
       consentEvents,
       orders,
       facts: factsRows[0] ?? null,
-      campaign: { contacts: campaignContacts, sends: campaignSends },
+      campaign: { contacts: campaignContacts, sends: campaignSends, letters: campaignLetters },
       suppression: { marketing: suppMarketing },
     };
   } catch (err) {
