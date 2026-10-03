@@ -8,7 +8,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "./cn";
-import { useFocusTrap } from "./focus";
+import { useFocusTrap, useOverlayLayer } from "./focus";
 import { getPortalContainer } from "./portal";
 
 export interface SheetProps {
@@ -46,12 +46,13 @@ export function Sheet({
   const titleId = React.useId();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
-  useFocusTrap(panelRef, open && mounted);
+  const isTop = useOverlayLayer(open && mounted);
+  useFocusTrap(panelRef, open && mounted, isTop);
 
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false);
+      if (e.key === "Escape" && isTop()) onOpenChange(false);
     };
     document.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
@@ -60,7 +61,7 @@ export function Sheet({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onOpenChange]);
+  }, [open, onOpenChange, isTop]);
 
   const container = getPortalContainer();
   if (!mounted || !open || !container) return null;

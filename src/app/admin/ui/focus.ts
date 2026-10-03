@@ -6,6 +6,36 @@
 
 import * as React from "react";
 
+// Open overlays, innermost last. A Dialog opened from inside a Sheet (the
+// campaign editor's mail preview, a confirmation) must take Escape and Tab
+// alone — both register document listeners, so without the stack one Escape
+// closed both and the two focus traps fought over Tab.
+const overlayStack: number[] = [];
+let overlaySeq = 0;
+
+/**
+ * Register an open overlay while `active`; the returned function tells
+ * whether it is the innermost one (the only one that handles Escape/Tab).
+ */
+export function useOverlayLayer(active: boolean): () => boolean {
+  const idRef = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    if (!active) return;
+    const id = ++overlaySeq;
+    overlayStack.push(id);
+    idRef.current = id;
+    return () => {
+      const i = overlayStack.lastIndexOf(id);
+      if (i >= 0) overlayStack.splice(i, 1);
+      idRef.current = null;
+    };
+  }, [active]);
+  return React.useCallback(
+    () => idRef.current !== null && overlayStack[overlayStack.length - 1] === idRef.current,
+    []
+  );
+}
+
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
   'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -23,7 +53,12 @@ export function getFocusable(root: HTMLElement): HTMLElement[] {
  * focused element. The panel should carry `tabIndex={-1}` so it can hold focus
  * when it has no focusable children.
  */
-export function useFocusTrap(ref: React.RefObject<HTMLElement | null>, active: boolean): void {
+export function useFocusTrap(
+  ref: React.RefObject<HTMLElement | null>,
+  active: boolean,
+  /** From useOverlayLayer: only the innermost overlay traps Tab. */
+  isTop?: () => boolean
+): void {
   React.useEffect(() => {
     if (!active) return;
     const root = ref.current;
@@ -38,6 +73,7 @@ export function useFocusTrap(ref: React.RefObject<HTMLElement | null>, active: b
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
+      if (isTop && !isTop()) return;
       const items = getFocusable(root);
       if (items.length === 0) {
         e.preventDefault();
@@ -62,5 +98,5 @@ export function useFocusTrap(ref: React.RefObject<HTMLElement | null>, active: b
       document.removeEventListener("keydown", onKey);
       if (previous && document.contains(previous)) previous.focus({ preventScroll: true });
     };
-  }, [ref, active]);
+  }, [ref, active, isTop]);
 }
