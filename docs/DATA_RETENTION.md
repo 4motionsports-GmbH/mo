@@ -35,6 +35,18 @@ is **pseudonymous**: keyed by a client-generated `session_id`, never an email.
 do not solicit it, and the retention window below bounds how long any such text
 survives. Do not log message content to third parties.
 
+**Order status in the chat (2026-10, `CHAT_ORDER_STATUS_ENABLED`, default
+off).** For a customer signed in via the Customer Account in the same session,
+Mo can state the state of their own orders (order date, items, shipping /
+payment state, carrier name, delivery day — never order numbers, amounts,
+tracking numbers or addresses). That answer is part of Mo's message text, so
+the stored `messages` of such a conversation may contain it; it follows the
+same **180-day** window (`RETENTION_DAYS`) and the same erasure as every
+transcript. The tool's result itself is not stored (only the call's
+`{ topic, orderRef? }` input, like every tool call), and `kpi_events` gets one
+`order_status_lookup` row without ids. Legal review: `docs/ANWALTSDOSSIER.md`
+§16 (F-32).
+
 ### Retention windows (Cluster A)
 
 | Data                          | Default window | Env var               | Action on expiry            |

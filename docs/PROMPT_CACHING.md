@@ -32,7 +32,10 @@ Three breakpoints (Anthropic allows max 4 per request):
    *always-active* tool; `offer_email_summary` can be withheld via
    `activeTools`, so a marker there would disappear with it). The tool
    definitions are byte-stable per locale → this prefix also hits **across
-   turns, sessions and users**.
+   turns, sessions and users**. `get_order_status` sits *before* the marker:
+   it is present or withheld per deployment (`CHAT_ORDER_STATUS_ENABLED`,
+   which also picks the `show_contact_form` copy variant), never per turn or
+   per session — so the tools prefix stays one per deployment and locale.
 2. **System prompt** (`src/app/api/chat/route.ts` — the system prompt travels
    as a leading `role: "system"` message because the AI SDK's `system` string
    option cannot carry `providerOptions`). The system prompt embeds per-turn
