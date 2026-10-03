@@ -96,7 +96,8 @@ Last updated: 2026-10-03.
 
 ## 3 · This week — Shopify and legal
 
-- [ ] **3.1 Double opt-in in Shopify** — M
+- [x] **3.1 Double opt-in in Shopify** — M — done 03.10.: „Customer marketing confirmation“ was
+  already on for new email (and SMS) subscribers.
   - Shopify admin → Settings → search „double opt-in“ (marketing / customer notification
     settings) → turn it on.
   - Only affects new sign-ups in the shop. Without it, shop sign-ups count as single
@@ -229,10 +230,10 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       instead of the order's last change; refunds below 10 % of the order value are ignored.
       The old false items close by themselves („erledigt von selbst“) on the next hourly run.
       **M runs `0070` before the merge** (below, C.9a).
-  - [ ] **C.9a** — M — run migration `0070` on production the same way as `0061`–`0069`
-        (`npm run db:migrate` against the production database), or paste
-        `migrations/0070_order_refund_date.sql` into Neon → SQL Editor (idempotent: one column,
-        one index; safe while the app runs). Then tell C, who merges.
+  - [ ] **C.9a** — M — right after the merge (03.10.): pull main and run `npm run db:migrate`
+        against production (applies `0070`: one column, one index). Until it has run, order
+        updates fail to save for those few minutes; the nightly reconcile re-reads every order
+        changed since its last run, so nothing is lost.
         Done when: C has merged and the Eingang shows no old „Unzufriedenheit“ items after
         the next full hour.
 - [x] **C.10** **E-Mails im Eingang** — built 02.10. (no migration): every incoming mail of
