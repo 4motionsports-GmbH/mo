@@ -54,6 +54,17 @@ export function isShopifyInsightsWritebackEnabled(env = process.env) {
 }
 
 /**
+ * Order status in the chat (CHAT_ORDER_STATUS_ENABLED): a customer signed in
+ * with the Customer Account IN THE SAME chat session can ask Mo about their
+ * own orders (get_order_status). Default off — while off the tool is withheld
+ * from the model and the prompt is byte-identical to before the feature.
+ * docs/ANWALTSDOSSIER.md §16 (F-32).
+ */
+export function isChatOrderStatusEnabled(env = process.env) {
+  return parseFlag(env.CHAT_ORDER_STATUS_ENABLED);
+}
+
+/**
  * Whom the AI profile may be built for (CUSTOMER_AI_PROFILE_SCOPE):
  *   "consented" — only customers with an e-mail-marketing consent (default)
  *   "all"       — every customer; non-consented ones are flagged in the admin
