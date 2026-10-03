@@ -19,6 +19,8 @@ import {
   parseLiveOrder,
   selectOrders,
   wantsLiveRead,
+  confirmLedgerAnswer,
+  withoutForeignOrders,
 } from "./order-status-core.mjs";
 
 const URL_ = "https://www.motionsports.de/account";
@@ -178,6 +180,24 @@ test("normalizeOrderState: live fulfillments refine the order-level status", () 
   assert.equal(st([{ status: "ERROR" }], "UNFULFILLED"), "not_shipped");
   assert.equal(st([{ status: "SUCCESS", displayStatus: "LABEL_VOIDED" }], "IN_PROGRESS"), "being_prepared");
   assert.equal(st([], "ON_HOLD"), "on_hold");
+});
+
+test("normalizeOrderState: a delivered parcel never overrides an order that is not finished", () => {
+  const st = (fulfillments, fulfillmentStatus) =>
+    normalizeOrderState({ fulfillmentStatus, cancelledAt: null, fulfillments });
+  const delivered = [{ status: "SUCCESS", displayStatus: "DELIVERED" }];
+  const moving = [{ status: "SUCCESS", displayStatus: "IN_TRANSIT" }];
+  assert.equal(st(delivered, "ON_HOLD"), "on_hold");
+  assert.equal(st(delivered, "RESTOCKED"), "on_hold");
+  assert.equal(st(delivered, "IN_PROGRESS"), "partially_shipped");
+  assert.equal(st(delivered, "UNFULFILLED"), "partially_shipped");
+  assert.equal(st(moving, "UNFULFILLED"), "partially_shipped");
+  // A label printed for a not-yet-finished order is still preparation.
+  assert.equal(st([{ status: "SUCCESS", displayStatus: "LABEL_PRINTED" }], "IN_PROGRESS"), "being_prepared");
+  // A delivery problem still shows whatever the order level says.
+  assert.equal(st([{ status: "SUCCESS", displayStatus: "FAILURE" }], "ON_HOLD"), "delivery_problem");
+  // FULFILLED is refined as before.
+  assert.equal(st(delivered, "FULFILLED"), "delivered");
 });
 
 test("normalizeOrderState only ever returns a documented state", () => {
@@ -477,4 +497,26 @@ test("normalizeTopic defaults to status", () => {
   assert.equal(normalizeTopic("shipping"), "shipping");
   assert.equal(normalizeTopic("other"), "status");
   assert.equal(normalizeTopic(undefined), "status");
+});
+
+test("confirmLedgerAnswer: 'no orders' / 'not found' only when a live read confirms it", () => {
+  const ok = (orderIds) => ({ ok: true, orderIds });
+  // Other statuses pass untouched, even without a live read.
+  assert.equal(confirmLedgerAnswer({ status: "ok", ledgerOrderIds: ["1"], live: null }), "ok");
+  // Confirmed: Shopify has no order the ledger lacks.
+  assert.equal(confirmLedgerAnswer({ status: "no_orders", ledgerOrderIds: [], live: ok([]) }), "no_orders");
+  assert.equal(confirmLedgerAnswer({ status: "not_found", ledgerOrderIds: ["1", "2"], live: ok(["2", "1"]) }), "not_found");
+  // The ledger is behind (late webhook, order before the mirror) → unavailable.
+  assert.equal(confirmLedgerAnswer({ status: "no_orders", ledgerOrderIds: [], live: ok(["9"]) }), "unavailable");
+  assert.equal(confirmLedgerAnswer({ status: "not_found", ledgerOrderIds: ["1"], live: ok(["9", "1"]) }), "unavailable");
+  // No confirmation possible → never claim "no orders".
+  assert.equal(confirmLedgerAnswer({ status: "no_orders", ledgerOrderIds: [], live: { ok: false, orderIds: [] } }), "unavailable");
+  assert.equal(confirmLedgerAnswer({ status: "not_found", ledgerOrderIds: ["1"], live: null }), "unavailable");
+});
+
+test("withoutForeignOrders drops orders Shopify reports for another customer", () => {
+  const orders = [{ shopifyOrderId: "1" }, { shopifyOrderId: "2" }, { shopifyOrderId: "3" }];
+  assert.deepEqual(withoutForeignOrders(orders, new Set(["2"])).map((o) => o.shopifyOrderId), ["1", "3"]);
+  assert.equal(withoutForeignOrders(orders, []).length, 3);
+  assert.deepEqual(withoutForeignOrders(null, ["1"]), []);
 });

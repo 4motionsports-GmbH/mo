@@ -233,10 +233,11 @@ function fulfillmentState(f) {
 
 /**
  * The order's state. `cancelledAt` wins. Without live fulfillments the
- * order-level status decides; with them, the shipments refine it: any delivery
- * problem shows, a partially fulfilled order stays partially_shipped, else the
- * LEAST advanced shipment decides (one parcel delivered, one under way → in
- * transit).
+ * order-level status decides; with them, any delivery problem shows, and only
+ * a FULFILLED order is refined by its shipments — the LEAST advanced one
+ * decides (one parcel delivered, one under way → in transit). An order on
+ * hold stays on_hold; one not finished but with a parcel under way is
+ * partially_shipped.
  *
  * @param {{
  *   fulfillmentStatus?: unknown,
@@ -253,7 +254,15 @@ export function normalizeOrderState({ fulfillmentStatus, cancelledAt, fulfillmen
   const states = fulfillments.map(fulfillmentState).filter((s) => s != null);
   if (states.length === 0) return orderLevel;
   if (states.includes("delivery_problem")) return "delivery_problem";
-  if (orderLevel === "partially_shipped") return "partially_shipped";
+  // Shipments refine only a FULFILLED order. One delivered parcel must not
+  // make an order on hold — or one Shopify still reports as not finished —
+  // read as delivered: on_hold stays on_hold (contact form), anything else
+  // with a parcel under way is partially shipped.
+  if (orderLevel !== "shipped") {
+    if (orderLevel === "on_hold" || orderLevel === "partially_shipped") return orderLevel;
+    const underWay = states.some((s) => SHIPMENT_PROGRESS[s] >= SHIPMENT_PROGRESS.shipped);
+    return underWay ? "partially_shipped" : orderLevel;
+  }
   let least = "delivered";
   for (const s of states) {
     if (SHIPMENT_PROGRESS[s] < SHIPMENT_PROGRESS[least]) least = s;
@@ -495,4 +504,48 @@ export function buildOrderStatusForModel({ status, matched, orders = [], live, o
   );
   out.ordersPageUrl = ordersPageUrl;
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Trusting the ledger
+// ---------------------------------------------------------------------------
+
+/** Distinct lookups one chat request may make (repeats are served from cache). */
+export const LOOKUPS_PER_REQUEST = 3;
+
+/** Newest live orders read to confirm "no orders" / "not found". */
+export const LIVE_CONFIRM_ORDERS = 5;
+
+/**
+ * The ledger is never trusted on its own to say "you have no orders" or "that
+ * number is not yours": an order whose webhook is late, or arrived before the
+ * customer was mirrored, would be missing. For those two answers a short live
+ * read of the customer's newest orders must confirm it — any live order the
+ * ledger does not hold (or a failed read) makes the answer "unavailable"
+ * (Mo then points to the account page / the contact form). Every other status
+ * passes unchanged.
+ *
+ * @param {{ status: string, ledgerOrderIds: string[], live: { ok: boolean, orderIds: string[] } | null }} input
+ * @returns {string}
+ */
+export function confirmLedgerAnswer({ status, ledgerOrderIds, live }) {
+  if (status !== "no_orders" && status !== "not_found") return status;
+  if (!live || !live.ok) return "unavailable";
+  const known = new Set((ledgerOrderIds ?? []).map(String));
+  return (live.orderIds ?? []).some((id) => !known.has(String(id))) ? "unavailable" : status;
+}
+
+/**
+ * Orders the live ownership check reported for another Shopify customer are
+ * never shown — not even with their ledger facts.
+ *
+ * @template {{ shopifyOrderId: string }} O
+ * @param {O[]} orders
+ * @param {Iterable<string>} foreignIds
+ * @returns {O[]}
+ */
+export function withoutForeignOrders(orders, foreignIds) {
+  const foreign = new Set([...(foreignIds ?? [])].map(String));
+  if (foreign.size === 0) return Array.isArray(orders) ? orders : [];
+  return (Array.isArray(orders) ? orders : []).filter((o) => !foreign.has(String(o.shopifyOrderId)));
 }
