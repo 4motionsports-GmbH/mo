@@ -8,6 +8,7 @@
 // Recital 47 DSGVO); an Art. 21 objection recorded here stops them for good.
 
 import * as React from "react";
+import { fetchPdf } from "../../lib/fetch-pdf";
 import { Eye, Mailbox, Save, Send, Sparkles } from "lucide-react";
 import type { CustomerDetail } from "@/lib/customer-detail";
 import type { PhysicalLetterRow } from "@/lib/physical-letters-store";
@@ -45,27 +46,13 @@ const STATUS_META: Record<PhysicalLetterRow["status"], { label: string; tone: St
   undeliverable: { label: "Unzustellbar", tone: "destructive" },
 };
 
-/** POST for a binary response (the letter PDF) with the JSON error envelope. */
-async function fetchPdf(path: string, payload: unknown): Promise<Blob> {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(json?.error?.message ?? `Fehler (${res.status})`);
-  }
-  return res.blob();
-}
-
 export function BriefTab({ customer }: { customer: CustomerDetail }) {
   const { refresh } = useCustomerActions();
   const { confirm, confirmDialog } = useConfirm();
   const [instructions, setInstructions] = React.useState("");
   const [subject, setSubject] = React.useState(customer.letterDraftSubject ?? "");
   const [body, setBody] = React.useState(customer.letterDraftBody ?? "");
-  const [busy, setBusy] = React.useState<null | "gen" | "save" | "send" | "preview">(null);
+  const [busy, setBusy] = React.useState<null | "gen" | "save" | "send" | "preview" | "address">(null);
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const hasDraft = body.trim().length > 0;
   const letters = customer.physicalLetters;
@@ -164,6 +151,29 @@ export function BriefTab({ customer }: { customer: CustomerDetail }) {
       : null;
   const sent = letters.filter((l) => l.status !== "pending" && l.status !== "failed");
   const totalCents = sent.reduce((sum, l) => sum + (l.costCents ?? DEFAULT_LETTER_COST_CENTS), 0);
+
+  async function fetchAddress() {
+    setBusy("address");
+    try {
+      const r = await adminFetch<{ filled: number; unchanged: number; noOrder: number; noAddress: number }>(
+        "/api/admin/customers/letter-address",
+        { body: { customerId: customer.id } }
+      );
+      toast(
+        r.filled > 0 || r.unchanged > 0
+          ? { variant: "success", title: "Adresse aus der letzten Bestellung übernommen" }
+          : {
+              variant: "warning",
+              title: r.noOrder > 0 ? "Keine abgeschlossene Bestellung" : "Die letzte Bestellung hat keine vollständige Lieferadresse",
+            }
+      );
+      refresh();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function toggleObjection() {
     const objected = !customer.postalObjectionAt;
@@ -294,6 +304,13 @@ export function BriefTab({ customer }: { customer: CustomerDetail }) {
 
       {!hasDraft && sendDisabledReason && customer.physicalEligible === false && (
         <p className="text-xs text-muted-foreground">{sendDisabledReason}</p>
+      )}
+      {["no_address", "incomplete_address", "not_purchase_address"].includes(customer.physicalReasonCode ?? "") && (
+        <div>
+          <Button size="xs" variant="outline" onClick={() => void fetchAddress()} loading={busy === "address"} disabled={disabled}>
+            Adresse aus letzter Bestellung holen
+          </Button>
+        </div>
       )}
 
       <div className="border-t border-border pt-3">

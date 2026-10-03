@@ -72,3 +72,20 @@ export function chooseLawfulAddress(input) {
   if (fromProfile) return { address: fromProfile, source: "consented_capture" };
   return null;
 }
+
+/**
+ * Whether to fetch the shipping address of a customer's latest completed order
+ * (address fill for letters, 0074). Fetch when no purchase address is stored,
+ * or it came from an OLDER order (the person may have moved). Skip when the
+ * stored purchase address already is this order's — also when that address
+ * came back undeliverable (only a newer order can fix it).
+ *
+ * @param {{ latestOrderId: string | null, storedOrderId?: string | null,
+ *           storedSource?: string | null, hasAddress?: boolean }} p
+ * @returns {"fetch" | "skip" | "no_order"}
+ */
+export function decideAddressRefresh(p) {
+  if (!p.latestOrderId) return "no_order";
+  if (p.hasAddress && p.storedSource === "purchase" && p.storedOrderId === p.latestOrderId) return "skip";
+  return "fetch";
+}

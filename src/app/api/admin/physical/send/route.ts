@@ -19,9 +19,12 @@ export const maxDuration = 30;
 const STATUS_BY_REASON: Record<string, number> = {
   not_found: 404,
   no_draft: 409,
+  objection: 409,
   flag_off: 403,
   no_address: 409,
   incomplete_address: 409,
+  not_purchase_address: 409,
+  address_invalid: 409,
   pingen_not_configured: 503,
   submit_failed: 502,
   store_failed: 500,

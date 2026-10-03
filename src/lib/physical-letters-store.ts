@@ -35,6 +35,8 @@ export interface RecipientAddress {
 export interface CreatePhysicalLetterInput {
   customerId: number | null;
   marketingSendId?: number | null;
+  /** The campaign this letter belongs to (0074) — postage per campaign. */
+  campaignId?: number | null;
   recipient: RecipientAddress;
   /** The letter content we printed (snapshot) — feeds the audit + the KB (§3). */
   subject?: string | null;
@@ -52,12 +54,12 @@ export async function createPhysicalLetter(
     const r = input.recipient;
     const rows = (await sql`
       INSERT INTO physical_letters
-        (customer_id, marketing_send_id, provider, status,
+        (customer_id, marketing_send_id, campaign_id, provider, status,
          recipient_name, recipient_company, recipient_address_line1,
          recipient_address_line2, recipient_postal_code, recipient_city,
          recipient_country, subject, body)
       VALUES
-        (${input.customerId}, ${input.marketingSendId ?? null}, 'pingen', 'pending',
+        (${input.customerId}, ${input.marketingSendId ?? null}, ${input.campaignId ?? null}, 'pingen', 'pending',
          ${r.name}, ${r.company}, ${r.addressLine1}, ${r.addressLine2},
          ${r.postalCode}, ${r.city}, ${r.country},
          ${input.subject ?? null}, ${input.body ?? null})
@@ -218,6 +220,21 @@ export async function updatePhysicalLetterStatusByProviderId(
        WHERE provider_letter_id = ${providerLetterId}
       RETURNING id
     `) as Array<{ id: number }>;
+    if (rows.length > 0 && status === "undeliverable") {
+      // The address did not work (0074): no further letter to it until a newer
+      // completed order brings another one. Only when it still IS the address
+      // this letter went to.
+      await sql`
+        UPDATE customers c
+           SET postal_address_invalid_at = COALESCE(c.postal_address_invalid_at, now())
+          FROM physical_letters p
+         WHERE p.provider_letter_id = ${providerLetterId}
+           AND c.id = p.customer_id
+           AND c.postal_address IS NOT NULL
+           AND c.postal_address->>'address_line_1' IS NOT DISTINCT FROM p.recipient_address_line1
+           AND c.postal_address->>'postal_code' IS NOT DISTINCT FROM p.recipient_postal_code
+      `;
+    }
     return rows.length > 0;
   } catch (err) {
     reportError(err, {

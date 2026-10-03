@@ -146,21 +146,40 @@ export function interpretWebhookEvent(event) {
   const data = e.data && typeof e.data === "object" ? e.data : {};
   const attrs = data.attributes && typeof data.attributes === "object" ? data.attributes : {};
 
+  // A JSON:API event (`data.type` "webhook_*") references its letter through
+  // `data.relationships.letter.data.id`; the letter itself may come along in
+  // `included[]` with its own status and price.
+  const rel = data.relationships && typeof data.relationships === "object" ? data.relationships : {};
+  const relLetterId =
+    rel.letter && typeof rel.letter === "object" && rel.letter.data && typeof rel.letter.data === "object"
+      ? rel.letter.data.id
+      : null;
+  const included = Array.isArray(e.included) ? e.included : [];
+  const incLetter =
+    included.find((x) => x && typeof x === "object" && x.type === "letters" && (relLetterId == null || x.id === relLetterId)) ??
+    null;
+  const incAttrs = incLetter && typeof incLetter.attributes === "object" && incLetter.attributes ? incLetter.attributes : {};
+
   // The letter id: prefer an explicit letter reference, else the data object id.
   const providerLetterId =
     firstString([
       attrs.letter_id,
       e.letter_id,
       data.letter_id,
+      relLetterId,
       // A webhook whose primary resource IS the letter.
       data.type === "letters" ? data.id : null,
+      incLetter?.id,
       attrs.id,
     ]) ?? null;
 
-  const rawStatus = firstString([attrs.status, e.status, data.status]);
+  const rawStatus = firstString([attrs.status, e.status, data.status, incAttrs.status]);
   const status = rawStatus != null ? normalizePingenStatus(rawStatus) : null;
 
-  const costCents = parseCostCents(attrs.price ?? attrs.cost ?? e.price);
+  // Pingen v2 reports `price_value` (+ `price_currency`); older shapes `price` / `cost`.
+  const costCents = parseCostCents(
+    attrs.price_value ?? attrs.price ?? attrs.cost ?? incAttrs.price_value ?? incAttrs.price ?? e.price
+  );
 
   return { providerLetterId, status, costCents };
 }

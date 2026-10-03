@@ -84,9 +84,17 @@ export function validateFullAddress(address) {
  *   4. flag not approved            → legal/DPA sign-off (PHYSICAL_MAIL_SENDS_APPROVED)
  * When every check passes, `address` is the normalised recipient to post to.
  *
+ * With `addressSource` given (every production caller), only an address
+ * taken from a completed order (`purchase`) counts — the dossier rule (§ 6.4);
+ * any other or unknown source is refused (`not_purchase_address`). With
+ * `addressInvalidAt` set (a letter came back undeliverable, 0074) the address
+ * is refused too (`address_invalid`).
+ *
  * @param {{ flagApproved: boolean, pingenConfigured: boolean,
  *           address: Record<string, unknown> | null | undefined,
- *           postalObjectionAt?: string | null }} input
+ *           postalObjectionAt?: string | null,
+ *           addressSource?: string | null,
+ *           addressInvalidAt?: string | null }} input
  * @returns {{ eligible: boolean, reasonCode: string | null,
  *             reason: string | null,
  *             address: ReturnType<typeof validateFullAddress> extends { ok: true }
@@ -129,6 +137,27 @@ export function decidePhysicalEligibility(input) {
             ") — wird nicht teilweise ergänzt.",
           address: null,
         };
+  }
+
+  if ("addressSource" in input && input.addressSource !== "purchase") {
+    return {
+      eligible: false,
+      reasonCode: "not_purchase_address",
+      reason:
+        "Die Postadresse stammt nicht aus einer abgeschlossenen Bestellung — für Werbebriefe " +
+        "zählt nur die Lieferadresse einer Bestellung („Adresse aus letzter Bestellung holen“).",
+      address: null,
+    };
+  }
+  if (input.addressInvalidAt) {
+    return {
+      eligible: false,
+      reasonCode: "address_invalid",
+      reason:
+        "Ein Brief an diese Adresse kam als unzustellbar zurück — erst nach einer neuen " +
+        "Bestellung mit anderer Lieferadresse wieder.",
+      address: null,
+    };
   }
 
   if (!pingenConfigured) {

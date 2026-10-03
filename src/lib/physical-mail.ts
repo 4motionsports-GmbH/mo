@@ -24,7 +24,7 @@ import {
   markPhysicalLetterSubmitted,
   type RecipientAddress,
 } from "./physical-letters-store";
-import { buildLetterPdf } from "./letter-pdf.mjs";
+import { buildLetterPdf, letterPageCount } from "./letter-pdf.mjs";
 import { isPingenConfigured, uploadAndCreate } from "./pingen";
 import { isPhysicalMailSendsApproved } from "./pingen-flag.mjs";
 import type { Customer } from "./customer-store";
@@ -45,13 +45,18 @@ export interface PhysicalEligibility {
  * refusal below. Reads the lawful address store + the flag + Pingen config.
  */
 export function physicalEligibilityForCustomer(
-  customer: Pick<Customer, "id" | "postalAddress"> & { postalObjectionAt?: string | null }
+  customer: Pick<Customer, "id" | "postalAddress" | "postalAddressSource" | "postalAddressInvalidAt"> & {
+    postalObjectionAt?: string | null;
+  }
 ): PhysicalEligibility {
   return decidePhysicalEligibility({
     flagApproved: isPhysicalMailSendsApproved(),
     pingenConfigured: isPingenConfigured(),
     address: customer.postalAddress ?? null,
     postalObjectionAt: customer.postalObjectionAt ?? null,
+    // Only the shipping address of a completed order counts (dossier § 6.4).
+    addressSource: customer.postalAddressSource ?? null,
+    addressInvalidAt: customer.postalAddressInvalidAt ?? null,
   }) as PhysicalEligibility;
 }
 
@@ -66,6 +71,8 @@ export type SendPhysicalLetterResult =
         | "flag_off"
         | "no_address"
         | "incomplete_address"
+        | "not_purchase_address"
+        | "address_invalid"
         | "pingen_not_configured"
         | "submit_failed"
         | "store_failed";
@@ -91,6 +98,8 @@ export async function sendPhysicalLetter(customerId: number): Promise<SendPhysic
         | "flag_off"
         | "no_address"
         | "incomplete_address"
+        | "not_purchase_address"
+        | "address_invalid"
         | "pingen_not_configured";
       return { ok: false, reason, message: eligibility.reason ?? "Nicht versandfähig." };
     }
@@ -106,56 +115,68 @@ export async function sendPhysicalLetter(customerId: number): Promise<SendPhysic
       };
     }
 
-    // GATE 3 — render the letter-optimised draft to a PDF with the address block
-    // where Pingen reads it (address_position 'left').
-    const pdf = buildLetterPdf({
-      recipient,
-      subject: customer.letterDraftSubject,
-      body,
-    });
-
-    // Create the audit row FIRST so its id seeds a stable Idempotency-Key. Snapshot
-    // the printed content (subject + body) onto the row for the audit + the KB (§3).
-    const letterId = await createPhysicalLetter({
+    return await submitLetter({
       customerId: customer.id,
-      marketingSendId: null,
       recipient,
       subject: customer.letterDraftSubject,
       body,
     });
-    if (letterId == null) {
-      return { ok: false, reason: "store_failed", message: "Brief konnte nicht angelegt werden (DB)." };
-    }
-
-    // GATE 4 — Pingen uploadAndCreate (auto_send). Idempotency-Key keyed by the row.
-    const result = await uploadAndCreate({
-      pdf,
-      fileOriginalName: `brief-${letterId}.pdf`,
-      idempotencyKey: `physical-letter-${letterId}`,
-      autoSend: true,
-      options: { addressPosition: "left", deliveryProduct: "fast", printSpectrum: "grayscale" },
-    });
-
-    if (!result.ok) {
-      await markPhysicalLetterFailed(letterId, result.message);
-      return { ok: false, reason: "submit_failed", message: `Pingen: ${result.message}` };
-    }
-
-    await markPhysicalLetterSubmitted(
-      letterId,
-      result.letter.id,
-      result.letter.status,
-      result.letter.costCents
-    );
-
-    return {
-      ok: true,
-      letterId,
-      providerLetterId: result.letter.id,
-      status: result.letter.status,
-    };
   } catch (err) {
     reportError(err, { route: "lib/physical-mail", phase: "sendPhysicalLetter" });
     return { ok: false, reason: "submit_failed", message: "Unerwarteter Fehler beim Versand." };
   }
+}
+
+export type SubmitLetterResult =
+  | { ok: true; letterId: number; providerLetterId: string; status: string; pageCount: number }
+  | { ok: false; reason: "store_failed" | "submit_failed"; message: string; letterId: number | null };
+
+/**
+ * The ONE place a letter is handed to Pingen (Kunden → Brief and the campaign
+ * channel) — called only AFTER the caller's gates passed. Renders the PDF
+ * (address block where Pingen reads it, the deterministic Art. 21 notice and
+ * company footer on every page), creates the audit row FIRST (its id seeds the
+ * Idempotency-Key, so a retry never prints twice), lets the caller attach that
+ * row (`onCreated`) before the submission, then submits with auto_send.
+ */
+export async function submitLetter(input: {
+  customerId: number;
+  recipient: RecipientAddress;
+  subject: string | null;
+  body: string;
+  campaignId?: number | null;
+  onCreated?: (letterId: number) => Promise<boolean>;
+}): Promise<SubmitLetterResult> {
+  const pdf = buildLetterPdf({ recipient: input.recipient, subject: input.subject, body: input.body });
+  const pageCount = letterPageCount(input.body);
+  const letterId = await createPhysicalLetter({
+    customerId: input.customerId,
+    marketingSendId: null,
+    campaignId: input.campaignId ?? null,
+    recipient: input.recipient,
+    subject: input.subject,
+    body: input.body,
+  });
+  if (letterId == null) {
+    return { ok: false, reason: "store_failed", message: "Brief konnte nicht angelegt werden (DB).", letterId: null };
+  }
+  if (input.onCreated && !(await input.onCreated(letterId))) {
+    await markPhysicalLetterFailed(letterId, "not attached — not submitted");
+    return { ok: false, reason: "store_failed", message: "Brief konnte nicht zugeordnet werden (DB).", letterId };
+  }
+
+  // Pingen uploadAndCreate (auto_send). Idempotency-Key keyed by the row.
+  const result = await uploadAndCreate({
+    pdf,
+    fileOriginalName: `brief-${letterId}.pdf`,
+    idempotencyKey: `physical-letter-${letterId}`,
+    autoSend: true,
+    options: { addressPosition: "left", deliveryProduct: "fast", printSpectrum: "grayscale" },
+  });
+  if (!result.ok) {
+    await markPhysicalLetterFailed(letterId, result.message);
+    return { ok: false, reason: "submit_failed", message: `Pingen: ${result.message}`, letterId };
+  }
+  await markPhysicalLetterSubmitted(letterId, result.letter.id, result.letter.status, result.letter.costCents);
+  return { ok: true, letterId, providerLetterId: result.letter.id, status: result.letter.status, pageCount };
 }

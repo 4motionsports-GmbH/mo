@@ -153,6 +153,8 @@ export interface CustomerDetail {
   correspondence: CorrespondenceMessage[];
   physicalEligible: boolean;
   physicalReason: string | null;
+  /** physical-address.decidePhysicalEligibility reasonCode (no_address, not_purchase_address, …). */
+  physicalReasonCode: string | null;
   physicalLetters: PhysicalLetterRow[];
   letterDraftSubject: string | null;
   letterDraftBody: string | null;
@@ -316,6 +318,7 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
     correspondence,
     physicalEligible: physical.eligible,
     physicalReason: physical.reason,
+    physicalReasonCode: physical.reasonCode,
     physicalLetters,
     letterDraftSubject: c.letterDraftSubject,
     letterDraftBody: c.letterDraftBody,

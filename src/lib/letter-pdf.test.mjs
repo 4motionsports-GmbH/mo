@@ -177,3 +177,19 @@ test("buildLetterPdf: a full 6-line address still fits inside the Address Area",
   assert.ok(country.y >= ADDR_Y_BOTTOM, `last line y=${country.y} not below the area`);
 });
 
+
+test("letterPageCount follows the PDF's pagination; letterDate is Berlin time", async () => {
+  const { letterPageCount, letterDate, buildLetterPdf } = await import("./letter-pdf.mjs");
+  assert.equal(letterPageCount("Hallo,\n\nkurz."), 1);
+  const long = Array.from({ length: 120 }, (_, i) => `Zeile ${i} mit etwas Text, damit der Brief länger wird.`).join("\n");
+  const pages = letterPageCount(long);
+  assert.ok(pages >= 2, `long body → ${pages} pages`);
+  const pdf = buildLetterPdf({
+    recipient: { name: "Erika Mustermann", addressLine1: "Heidestraße 17", postalCode: "51147", city: "Köln", country: "DE" },
+    subject: "Test",
+    body: long,
+  }).toString("latin1");
+  assert.equal((pdf.match(/\/Type \/Page\b/g) ?? []).length, pages);
+  // 23:30 UTC on 31 Dec is already 1 Jan in Berlin.
+  assert.equal(letterDate(new Date("2026-12-31T23:30:00Z")), "01.01.2027");
+});

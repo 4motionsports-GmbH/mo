@@ -112,3 +112,25 @@ test("interpretWebhookEvent: shapeless event → nulls (route acks, no update)",
   assert.equal(r.status, null);
   assert.equal(r.costCents, null);
 });
+
+test("interpretWebhookEvent: JSON:API event with the letter in relationships + included, price_value", () => {
+  const event = {
+    data: {
+      id: "evt-1",
+      type: "webhook_issues",
+      attributes: { reason: "undeliverable", created_at: "2026-11-20T10:00:00Z" },
+      relationships: { letter: { data: { id: "ltr-42", type: "letters" } } },
+    },
+    included: [
+      { id: "ltr-42", type: "letters", attributes: { status: "undeliverable", price_value: 1.06, price_currency: "EUR" } },
+    ],
+  };
+  const r = interpretWebhookEvent(event);
+  assert.equal(r.providerLetterId, "ltr-42");
+  assert.equal(r.status, "undeliverable");
+  assert.equal(r.costCents, 106);
+  // price_value directly on the letter attributes.
+  const flat = interpretWebhookEvent({ data: { id: "ltr-7", type: "letters", attributes: { status: "sent", price_value: "0.95" } } });
+  assert.equal(flat.providerLetterId, "ltr-7");
+  assert.equal(flat.costCents, 95);
+});
