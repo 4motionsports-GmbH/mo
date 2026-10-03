@@ -72,6 +72,11 @@ interface BuildPromptOpts {
   // Storefront-selected language. Default German — every legacy caller and the
   // German output stay byte-identical; "en" switches Mo to English.
   locale?: Locale;
+  // get_order_status is offered (CHAT_ORDER_STATUS_ENABLED): routes order-
+  // STATE questions to the tool, adds the "Bestellstatus" rules and the
+  // "order data only from get_order_status" exception. Absent/false → the
+  // prompt is byte-identical to before the feature.
+  orderStatus?: boolean;
 }
 
 // Lightweight in-conversation note used when the user opens the product
