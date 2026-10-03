@@ -1287,7 +1287,8 @@ instances. All pure-DB sections are live.
 | Filtered by the period | Period-independent (lifetime / cohort) |
 | --- | --- |
 | **Core metrics** (§5.1) — `conversations` / `kpi_events` on `created_at` | Persona-insights (§5.2) |
-| **Consent-Gate-Funnel** (§5.7) — `kpi_events` on `created_at` | Recommendation → purchase loop (§5.3) |
+| **Anmelde-Popup** (§5.7a) — `kpi_events` on `created_at` | Recommendation → purchase loop (§5.3) |
+| **Einwilligung nach der Anmeldung** (§5.7) — `kpi_events` on `created_at` | |
 | **E-Mail-Capture-Funnel** (§5.8) — `kpi_events` on `created_at` | Marketing funnel (§5.4), Postversand |
 | **Umsatz über Mo-Rabatt­codes** (§5.5) — order `created_at` | Kundenbasis (§5.17) — current state of `customer_overview` |
 | **Kampagnen-Funnel** (§5.9) — `campaign_sends` on `sent_at` | Mo-Effekt (§5.19) — current state of `customer_overview` |
@@ -1437,11 +1438,16 @@ per-model token counts. Scoped to the **selected window** via the
   a write-heavy pattern — reported honestly. See
   [`PROMPT_CACHING.md`](./PROMPT_CACHING.md).
 
-### 5.7 Consent-Gate-Funnel — [`getConsentGateFunnel()`](../src/lib/kpi-store.ts)
+### 5.7 Einwilligung nach der Anmeldung — [`getConsentGateFunnel()`](../src/lib/kpi-store.ts)
 
-The v4 button-consent marketing surfaces (the in-chat **consent gate** and the
-**at-sign-in opt-in card**) measured as **angezeigt → akzeptiert**, with the
-decline/dismiss split and a per-surface breakdown (`chat` vs `signin`). Built
+The consent popup the widget shows a **signed-in** customer who has not decided
+yet (`surface: "signin"` — since the widget of 2026-10-01 the main marketing ask
+for signed-in customers; the inline card after a mid-conversation sign-in sends
+the same events) measured as **angezeigt → akzeptiert**, with the
+decline/dismiss split. Kept apart from the other opt-in sources (e-mail capture,
+the shop). The anonymous chat gate (`surface: "chat"`) is no longer shown by the
+widget — the sign-in popup (§5.7a) replaced it; its older events appear in a
+sub-block „Chat-Gate (anonym) — eingestellt“ while they fall in the period. Built
 from the four **widget-emitted** `kpi_events` (`consent_gate_shown` /
 `_accepted` / `_declined` / `_dismissed`, each carrying
 `data.surface`) — see [`API_CONTRACT.md`](./API_CONTRACT.md) §5. Scoped to the
@@ -1454,7 +1460,25 @@ selected window (`kpi_events.created_at`).
 > `trigger: chat_gate|signin_optin` → `email_capture_marketing_confirmed`).
 > Events without a `surface` payload count in the totals but in neither
 > surface split. The retired `starter_shown` / `starter_clicked` widget events
-> are no longer aggregated anywhere (raw breakdown only).
+> are no longer aggregated anywhere; in the raw event breakdown (§5.1) they carry
+> the badge „eingestellt“ (`kpi-widget-events.mjs` `DISCONTINUED_WIDGET_EVENTS`), so
+> their drop to zero never reads as an outage.
+
+### 5.7a Anmelde-Popup — [`getLoginGateFunnel()`](../src/lib/kpi-store.ts)
+
+The widget's sign-in ask for **anonymous** visitors (2026-10-01: after the first
+answered message, once per browser session, never in voice mode), counted per
+**session**: **Angezeigt** (`login_gate_shown`) → **„Anmelden“ geklickt**
+(`login_gate_signin_clicked`) → **Bei Shopify angemeldet** (server
+`account_signin_succeeded` in the same session after the click) → **Im Chat
+angemeldet** (server `account_signin_linked` — the chat redeemed the one-time
+code, 0073; only this sign-in counts). Plus „Später“ (`login_gate_declined`,
+snoozed 24 h on the device) and „Weggeklickt“ (`login_gate_dismissed`) with their
+share of the shown sessions, and **Anmeldestarts nach Herkunft** from the widget's
+`account_signin_started` (`data.source: "login_gate"` = popup; absent = welcome
+card or header button). A note appears when sessions signed in at Shopify but not
+in the chat — the widget is not redeeming the code (frontend task 1). Rates in
+the tested `kpi-widget-events.mjs` (`loginGateRates`).
 
 ### 5.8 E-Mail-Capture-Funnel — [`getEmailCaptureFunnel()`](../src/lib/kpi-store.ts)
 
@@ -1546,7 +1570,10 @@ GROUP BY — no identity value is read.
 ### 5.15 Kundenkonto & Self-Service — [`getAccountActivity()`](../src/lib/kpi-store.ts)
 
 Adoption + GDPR self-service volume, windowed: completed **sign-ins**
-(`account_signin_succeeded`, with the `prompt=none` silent-detect share),
+(`account_signin_succeeded`, with the `prompt=none` silent-detect share; the hint
+also says how many the chat completed — `account_signin_linked`, written by
+`POST /api/auth/link` — and how many codes it refused,
+`account_signin_link_refused` with `reason` `invalid` | `session_mismatch`),
 **data exports** (`account_export_requested`), **erasures** (`account_erased`),
 **contact-form submissions** (`contact_form_submitted` — comparable against the
 `show_contact_form` tool-fires in the Gespräche tab), and summary deliveries
