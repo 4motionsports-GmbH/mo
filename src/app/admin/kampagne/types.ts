@@ -8,7 +8,18 @@ import type { DiscountScope } from "@/lib/discount-scope.mjs";
 import type { CampaignRecommendationView } from "@/lib/campaign-recommendation-view";
 
 /** The three views of the screen (`?view=`, campaign-desk-core.mjs). */
-export type DeskView = "pruefen" | "liste" | "gesendet";
+export type DeskView = "pruefen" | "liste" | "eingeplant" | "gesendet";
+
+/** One mail approved for later sending („Einplanen“, view „Eingeplant“). */
+export interface ScheduledItemProps {
+  contactId: number;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  subject: string;
+  approvedAt: string | null;
+  releaseAt: string | null;
+}
 
 /** Queue filter chip key (`?filter=`, campaign-desk-core.mjs QUEUE_FILTERS). */
 export type QueueFilter = string;
@@ -258,6 +269,10 @@ export interface CampaignDeskProps {
   initialContactId: number | null;
   initialView: DeskView;
   initialFilter: QueueFilter;
+  /** „Einplanen“ is switched on (CAMPAIGN_RELEASE_ENABLED). */
+  releaseEnabled: boolean;
+  /** The campaign's approved, not yet sent mails. */
+  scheduled: ScheduledItemProps[];
 }
 
 /** Sizes offered by the Vorbereiten popover; the middle one is the default. */

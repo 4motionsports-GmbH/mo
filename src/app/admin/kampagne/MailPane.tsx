@@ -8,6 +8,7 @@
 
 import * as React from "react";
 import {
+  CalendarClock,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -29,6 +30,7 @@ import { OptInBadge, SegmentBadge } from "./badges";
 import { contactName, type CampaignQueueItemProps, type CardBusy } from "./types";
 import { useRenderedPreview } from "./useRenderedPreview";
 import type { CampaignActions, ReviewCheck, ReviewVerdict } from "./useCampaignActions";
+import type { ReleaseActions } from "./useReleaseActions";
 
 /** Base viewport of the render — the 600 px mail on its background. */
 const RENDER_WIDTH = 640;
@@ -147,6 +149,7 @@ export function MailPane({
   position,
   total,
   actions,
+  release,
   focusMode,
   subjectRef,
   onShortcuts,
@@ -156,6 +159,7 @@ export function MailPane({
   position: number;
   total: number;
   actions: CampaignActions;
+  release: ReleaseActions;
   focusMode: boolean;
   subjectRef: React.RefObject<HTMLInputElement | null>;
   onShortcuts: () => void;
@@ -356,6 +360,21 @@ export function MailPane({
               },
             ]}
           />
+          {release.enabled && !item.isTest && (
+            <Tooltip content={blockedReason} disabled={!sendBlocked && !busy}>
+              <span className="inline-flex">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label="Einplanen (A)"
+                  onClick={() => release.open(item.contactId)}
+                  disabled={sendBlocked || busy !== null}
+                >
+                  <CalendarClock /> <span className="hidden 2xl:inline">Einplanen</span> <Kbd>A</Kbd>
+                </Button>
+              </span>
+            </Tooltip>
+          )}
           <Tooltip content={blockedReason} disabled={!sendBlocked && !busy}>
             <span className="inline-flex">
               <Button size="sm" onClick={() => actions.send(item.contactId)} disabled={sendBlocked || busy !== null}>

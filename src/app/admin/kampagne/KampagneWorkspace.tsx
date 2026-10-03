@@ -28,11 +28,14 @@ import { SentHistory } from "./SentHistory";
 import { TestContactsSheet } from "./TestContactsSheet";
 import type { CampaignDeskProps } from "./types";
 import { useCampaignActions } from "./useCampaignActions";
+import { useReleaseActions } from "./useReleaseActions";
+import { ScheduleDialog, ScheduledList } from "./ScheduledViews";
 import { usePrefetchPreview } from "./useRenderedPreview";
 
 const SHORTCUTS: Array<[string, string]> = [
   ["N / P", "Nächster / vorheriger Entwurf (auch J / K)"],
   ["S", "Senden und weiter (nur wenn nicht blockiert)"],
+  ["A", "Einplanen — später senden (wenn eingeschaltet)"],
   ["X", "Überspringen und weiter (rückgängig über „Übersprungen“)"],
   ["E / Esc", "Betreff und Text bearbeiten / zurück zur Ansicht"],
   ["R", "Neu generieren mit den aktuellen Einstellungen"],
@@ -64,6 +67,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
     sentSummary,
   } = props;
   const a = useCampaignActions(props);
+  const release = useReleaseActions({ enabled: props.releaseEnabled, scheduled: props.scheduled, actions: a });
   const { current, visibleItems, items, view, focusMode, editMode } = a;
   const [prepareOpen, setPrepareOpen] = React.useState(false);
   const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
@@ -76,6 +80,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
 
   // ---- keyboard shortcuts (capture phase: the desk owns `/` here) ----------
   const { next, prev, send, skip, regenerate, previewItem, copy, setEditMode, setFocusMode, setView } = a;
+  const openSchedule = release.open;
   const currentId = current?.contactId ?? null;
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -113,6 +118,9 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
       } else if (lower === "s" && currentId !== null) {
         e.preventDefault();
         send(currentId);
+      } else if (lower === "a" && currentId !== null) {
+        e.preventDefault();
+        openSchedule(currentId);
       } else if (lower === "x" && currentId !== null) {
         e.preventDefault();
         void skip(currentId);
@@ -143,7 +151,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
     }
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [view, currentId, editMode, focusMode, next, prev, send, skip, regenerate, previewItem, copy, setEditMode, setFocusMode, setView]);
+  }, [view, currentId, editMode, focusMode, next, prev, send, openSchedule, skip, regenerate, previewItem, copy, setEditMode, setFocusMode, setView]);
 
   const focusSubject = React.useCallback(() => {
     subjectRef.current?.focus();
@@ -202,6 +210,8 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
         visibleSize={visibleItems.length}
         view={view}
         onView={setView}
+        scheduledCount={release.list.length}
+        releaseEnabled={props.releaseEnabled}
         sendsApproved={props.sendsApproved}
         allowSingleOptIn={props.allowSingleOptIn}
         shopifyConfigured={shopifyConfigured}
@@ -222,7 +232,9 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
         onTestContacts={() => setTestOpen(true)}
       />
 
-      {view === "gesendet" ? (
+      {view === "eingeplant" ? (
+        <ScheduledList release={release} />
+      ) : view === "gesendet" ? (
         <SentHistory campaignId={props.campaign.id} initialTotal={a.counts.sentTotal} summary={sentSummary} viewBusy={a.emailViewBusy} onView={a.viewSent} />
       ) : view === "liste" ? (
         <ListView
@@ -276,6 +288,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
                 position={a.currentIndex + 1}
                 total={visibleItems.length}
                 actions={a}
+                release={release}
                 focusMode={focusMode}
                 subjectRef={subjectRef}
                 onShortcuts={() => setShortcutsOpen(true)}
@@ -329,6 +342,11 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
       />
 
       <EmailViewerDialog view={a.emailView} onClose={a.closeEmailView} />
+
+      <ScheduleDialog
+        release={release}
+        item={items.find((it) => it.contactId === release.scheduleId) ?? null}
+      />
 
       {current && (
         <ContactHistorySheet

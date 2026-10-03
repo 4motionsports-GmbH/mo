@@ -19,6 +19,7 @@ import {
   getCampaignCounts,
   getCampaignDeliverySummary,
   listDraftedQueue,
+  listApprovedQueue,
   listSkippedContacts,
   listSuppressedEmails,
 } from "@/lib/campaign-store";
@@ -31,7 +32,7 @@ import {
 } from "@/lib/campaigns-store";
 import { campaignPhase } from "@/lib/campaign-def.mjs";
 import { describeAudienceSpec, normalizeAudienceSpec } from "@/lib/audience-spec.mjs";
-import { campaignAutoPrepareConfig } from "@/lib/campaign-flags.mjs";
+import { campaignAutoPrepareConfig, isCampaignReleaseEnabled } from "@/lib/campaign-flags.mjs";
 import { DISCOUNT_PERCENT_MAX } from "@/lib/discount-validation.mjs";
 import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
@@ -189,13 +190,14 @@ export async function KampagneTab({
   const campaignId = campaign.id;
 
   const shopifyConfigured = isShopifyConfigured();
-  const [counts, queue, skipped, design, costs, sentSummary] = await Promise.all([
+  const [counts, queue, skipped, design, costs, sentSummary, scheduled] = await Promise.all([
     getCampaignCounts(campaignId, { windowed: campaign.kind === "laufend" }),
     listDraftedQueue(campaignId),
     listSkippedContacts(campaignId),
     campaign.designKey ? getEmailDesignForKey(campaign.designKey, "campaign") : getCachedEmailDesignForKind("campaign"),
     estimateCampaignCosts(),
     getCampaignDeliverySummary(30, campaignId),
+    listApprovedQueue(campaignId),
   ]);
 
   // Resolve the recommended products once for the whole queue (name, link,
@@ -263,6 +265,8 @@ export async function KampagneTab({
       draftUpdatedAt: q.draft.updatedAt ?? q.draft.createdAt,
       isTest: q.contact.isTest,
       suppressed: suppressedEmails.has(q.contact.email),
+      // Why the release job held an approved mail back („Einplanen“, 0072).
+      sendError: q.contact.releaseError,
     };
   });
 
@@ -330,6 +334,8 @@ export async function KampagneTab({
       initialContactId={initialContactId}
       initialView={parseDeskView(initialView)}
       initialFilter={parseQueueFilter(initialFilter)}
+      releaseEnabled={isCampaignReleaseEnabled()}
+      scheduled={scheduled}
     />
   );
 }
