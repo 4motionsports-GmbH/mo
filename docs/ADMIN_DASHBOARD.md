@@ -529,10 +529,11 @@ verwenden“, §3.3) the new campaign's Zielgruppe starts from that spec.
 | Angebot | Rabatt, Gilt für Alles / Empfehlungen / Set, „Codes gültig bis“ (Aktion) — starting values for Vorbereiten; codes are minted at send |
 | Gestaltung | Design (blank = the Einstellungen choice), Titelbild (kein / Standard / KI A/B / KI für alle), Textlänge, „Button führt zu“ Mo-Chat / Shop (+ https link), „Mo-Hinweis anhängen“ — the chat button lives in the Mo hint, so Mo-Chat without the hint is refused („Der Button zu Mo steht im Mo-Hinweis — …“) |
 | Automatik | „Automatisch vorbereiten“ n Entwürfe / Nacht (from the shared `CAMPAIGN_AUTO_PREPARE_COUNT` budget, higher priority first; cron `prepare-campaign-drafts`), Tagesziel (display only — shown in the desk header) |
+| Prüfen & testen | ([`CampaignCheckSection.tsx`](../src/app/admin/kampagnen/CampaignCheckSection.tsx), not for the Einzelansprache) **Estimate** from the live count and the recorded cost averages (`estimateCampaignCosts`, `campaignPlanEstimate` in [`campaign-sample-core.mjs`](../src/lib/campaign-sample-core.mjs)): Empfänger:innen, KI-Texte ≈ €, KI-Titelbilder ≈ € (A/B = half, „für alle“ = everyone), Prüfzeit (recipients ÷ Tagesziel, 100 / Tag without one), Zeitraum (days left), Vorbereitung (nights of the nightly run, else „im Prüftisch“); a warning when the review or the nightly preparation does not fit the window. **„Muster erzeugen“** picks three recipients who differ most (language, Mo chat, Lebenszyklus, orders) and writes their mails with the form's current settings, saved or not — stored nowhere, only the AI call is counted. Each card: name + badges, subject, the start of the text, „ohne KI-Profil“ / „Empfehlungen unsicher“, „Einstellungen geändert“ once the form moved on; **Ansehen** (the rendered mail with the placeholder code and inert links; Escape closes only the preview), **Testpostfach …** (a Testkontakt of the saved campaign with exactly this text, sent through the normal send path — real code, tracking, unsubscribe; refused while the form has unsaved changes or the sample was made under other settings; the address is remembered in this browser), **Neu schreiben** |
 
 Saving an active campaign with a changed audience re-matches it right away
-(`campaigns/update`). For the Einzelansprache the editor hides Zielgruppe and
-the schedule.
+(`campaigns/update`). For the Einzelansprache the editor hides Zielgruppe, the
+schedule and „Prüfen & testen“.
 
 #### Desk — one campaign (`?campaign=<slug|id>`)
 
@@ -1780,7 +1781,7 @@ anomaly is logged server-side.
 
 ## 11. Admin API routes
 
-All under `/api/admin/*` — 96 route files —, gated by the Edge proxy **and**
+All under `/api/admin/*` — 100 route files —, gated by the Edge proxy **and**
 `guardAdminPost(req)` / `guardAdminGet()` in the handler (§1); JSON envelope
 `{ error: { code, message } }` on failure. Grouped by the screen that calls
 them. Actions that read or act on one person's data write the admin access log
@@ -1801,6 +1802,7 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST campaigns/status { id, status }` | Starten / Pausieren / Fortsetzen / Beenden / Archivieren (`canTransition`; starting materialises the audience) |
 | | `POST campaigns/audience-preview { audience }` | the editor's live count with consent (total, with Mo, DE / EN as window aggregates, 8 sample names, plain-German description) plus `withoutConsent { total, letterReach }` — the same spec without the consent (the only match that skips it; nothing is materialised) and how many of those a letter could reach (postal address, no objection) |
 | | `POST campaigns/assist { action: audience \| brief, … }` | AI help in the editor: „Filter setzen“ from a sentence, „Briefing vorschlagen“ (proposals only) |
+| | `POST campaigns/sample { action: pick \| generate \| send_test, … }` | „Prüfen & testen“: `pick { audience }` → three varied recipients; `generate { campaignId?, config, customerId, language }` → a sample mail (subject, body, html; consent + block list checked, nothing stored); `send_test { campaignId, to, sample }` → Testkontakt + `approveAndSendCampaign` (409 `stale_sample` when the saved settings differ from the sample's) |
 | | `POST campaigns/refresh { campaignId }` | „Zielgruppe aktualisieren“ on the desk |
 | Kampagnen, Kunden | `POST campaigns/add-recipient { customerId, campaignId?, adminNote?, conversationId?, draft? }` | put one person into a campaign — without `campaignId` into the Einzelansprache; needs consent and no block; `draft: true` writes the draft (access log `campaign.add_recipient`) |
 | Kunden | `POST campaigns/add-recipients { customerIds, campaignId?, adminNote? }` | „Zur Kampagne…“ for a selection (≤ 200 ids, else 400): `addRecipient` per person — without consent or with a block counted and skipped, never added; nothing drafted or sent → `{ campaignId, campaignSlug, added, alreadyIn, noConsent, blocked, notFound, failed }`; 404 / 409 `campaign_closed` for an ended or archived campaign (access log `campaign.add_recipients` with counts) |
