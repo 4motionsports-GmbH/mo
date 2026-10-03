@@ -135,3 +135,39 @@ export async function resolveSignedInCustomerRow(sql, sessionId) {
     shopifyCustomerId: String(r.shopify_customer_id),
   };
 }
+
+/**
+ * Like resolveSignedInCustomerRow, but also returns HOW the session signed in,
+ * read explicitly from the link. Callers that need a stronger proof than "some
+ * sign-in in this session" check `linkKind` themselves — the order status in
+ * the chat (lib/order-status.ts) only accepts 'customer_account' (the Customer
+ * Account OAuth sign-in, backed by a live token). Same fail-closed rules: null
+ * for a blank/unlinked session, a typed e-mail, a legacy or unknown kind, or a
+ * customer without shopify_customer_id.
+ *
+ * @param {*} sql               tagged-template sql client (or null)
+ * @param {unknown} sessionId   the widget's localStorage session id
+ * @returns {Promise<{ customerId: number, shopifyCustomerId: string, linkKind: "customer_account" | "app_proxy" } | null>}
+ */
+export async function resolveSignedInLink(sql, sessionId) {
+  const sid = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!sql || !sid) return null;
+  const rows = await sql`
+    SELECT c.id, c.shopify_customer_id, l.link_kind
+      FROM customer_session_links l
+      JOIN customers c ON c.id = l.customer_id
+     WHERE l.session_id = ${sid}
+       AND l.link_kind IN ('customer_account', 'app_proxy')
+       AND c.shopify_customer_id IS NOT NULL
+     LIMIT 1
+  `;
+  const r = rows && rows[0];
+  if (!r || r.shopify_customer_id == null || !isSignedInLinkKind(r.link_kind)) return null;
+  const customerId = Number(r.id);
+  if (!Number.isFinite(customerId)) return null;
+  return {
+    customerId,
+    shopifyCustomerId: String(r.shopify_customer_id),
+    linkKind: r.link_kind,
+  };
+}

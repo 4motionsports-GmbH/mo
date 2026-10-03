@@ -5,6 +5,7 @@ import {
   linkSessionToCustomer,
   resolveLinkedCustomerId,
   resolveSignedInCustomerRow,
+  resolveSignedInLink,
 } from "./customer-session-link.mjs";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,7 @@ function makeSql({ customers = {} } = {}) {
           id: link.customerId,
           shopify_customer_id: cust.shopify_customer_id,
           identity_tier: cust.identity_tier ?? 3,
+          link_kind: link.kind,
         },
       ]);
     }
@@ -199,4 +201,50 @@ test("a signed-in customer typing their OWN e-mail stays signed in; another cust
   assert.deepEqual(await resolveSignedInCustomerRow(sql, "sess-1"), { customerId: 42, shopifyCustomerId: "9988" });
   await linkSessionToCustomer(sql, "sess-1", 43, "email"); // someone else's address
   assert.equal(await resolveSignedInCustomerRow(sql, "sess-1"), null);
+});
+
+// ---------------------------------------------------------------------------
+// resolveSignedInLink — the signed-in link WITH its kind (order status gate)
+// ---------------------------------------------------------------------------
+
+test("resolveSignedInLink returns the customer and HOW the session signed in", async () => {
+  const sql = makeSql({ customers: { 42: { shopify_customer_id: "9988", identity_tier: 3 } } });
+  await linkSessionToCustomer(sql, "sess-oauth", 42, "customer_account");
+  await linkSessionToCustomer(sql, "sess-proxy", 42, "app_proxy");
+  assert.deepEqual(await resolveSignedInLink(sql, " sess-oauth "), {
+    customerId: 42,
+    shopifyCustomerId: "9988",
+    linkKind: "customer_account",
+  });
+  assert.deepEqual(await resolveSignedInLink(sql, "sess-proxy"), {
+    customerId: 42,
+    shopifyCustomerId: "9988",
+    linkKind: "app_proxy",
+  });
+});
+
+test("resolveSignedInLink fails closed exactly like resolveSignedInCustomerRow", async () => {
+  const sql = makeSql({
+    customers: {
+      7: { shopify_customer_id: null, identity_tier: 2 },
+      42: { shopify_customer_id: "9988", identity_tier: 3 },
+    },
+  });
+  await linkSessionToCustomer(sql, "sess-email", 42, "email"); // typed e-mail of a shop customer
+  await linkSessionToCustomer(sql, "sess-no-shop", 7, "customer_account");
+  sql._links.set("sess-legacy", { customerId: 42, kind: "legacy" });
+
+  assert.equal(await resolveSignedInLink(null, "sess-email"), null);
+  assert.equal(await resolveSignedInLink(sql, ""), null);
+  assert.equal(await resolveSignedInLink(sql, undefined), null);
+  assert.equal(await resolveSignedInLink(sql, "sess-unknown"), null);
+  assert.equal(await resolveSignedInLink(sql, "sess-email"), null);
+  assert.equal(await resolveSignedInLink(sql, "sess-no-shop"), null);
+  assert.equal(await resolveSignedInLink(sql, "sess-legacy"), null);
+});
+
+test("resolveSignedInLink rejects a row whose kind is not a signed-in kind (defence in depth)", async () => {
+  // Even if a query ever returned a weaker kind, the helper must not pass it on.
+  const sql = () => Promise.resolve([{ id: 42, shopify_customer_id: "9988", link_kind: "email" }]);
+  assert.equal(await resolveSignedInLink(sql, "sess-1"), null);
 });
