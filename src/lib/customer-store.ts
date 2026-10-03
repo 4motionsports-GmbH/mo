@@ -441,24 +441,32 @@ async function bindShopifyIdentityOnce(
     ? { id: Number(byShopifyRows[0].id), email: (byShopifyRows[0].email as string | null) ?? null }
     : null;
 
-  let rowByEmail: { id: number; email: string | null } | null = null;
+  let rowByEmail: { id: number; email: string | null; shopifyCustomerId: string | null } | null = null;
   if (email) {
     const byEmailRows = (await sql`
-      SELECT id, email FROM customers WHERE email = ${email}
+      SELECT id, email, shopify_customer_id FROM customers WHERE email = ${email}
     `) as Array<Record<string, unknown>>;
     rowByEmail = byEmailRows[0]
-      ? { id: Number(byEmailRows[0].id), email: (byEmailRows[0].email as string | null) ?? null }
+      ? {
+          id: Number(byEmailRows[0].id),
+          email: (byEmailRows[0].email as string | null) ?? null,
+          shopifyCustomerId:
+            byEmailRows[0].shopify_customer_id != null ? String(byEmailRows[0].shopify_customer_id) : null,
+        }
       : null;
   }
 
-  const decision = decideMerge({ rowByShopifyId, rowByEmail, shopifyEmail: email });
+  const decision = decideMerge({ rowByShopifyId, rowByEmail, shopifyEmail: email, shopifyCustomerId: shopifyId });
 
   let customerId: number;
   if (decision.action === "create") {
     // No existing row → create a fresh tier-3 customer. If we have no verified
     // email we still need a unique key; fall back to a synthetic placeholder
     // keyed by the Shopify id (kept normalised + unique).
-    const insertEmail = email || `shopify:${shopifyId}`;
+    // The verified address belongs to another Shopify customer's row
+    // (decideMerge syntheticEmail): the person gets their own row under the
+    // synthetic key; the collision is logged below.
+    const insertEmail = email && !decision.syntheticEmail ? email : `shopify:${shopifyId}`;
     const rows = (await sql`
       INSERT INTO customers
         (email, shopify_customer_id, shopify_customer_gid, shopify_linked_at, identity_tier, source)
