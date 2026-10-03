@@ -171,7 +171,8 @@ Last updated: 2026-10-03.
 
 - [ ] **3.2 Lawyer dossier** — M → L
   - Send `docs/ANWALTSDOSSIER.md` (focus §13 to §17, questions F-22 to F-34; F-31 and F-34
-    — the two sign-in flaws of 03.10. — are the urgent ones).
+    — the two sign-in flaws of 03.10. — are the urgent ones; F-32 = order status in the chat,
+    blocks 6.6).
   - Mention the deadline: Black Friday is **27 Nov 2026**; the campaign send gate (6.5)
     needs the sign-off by **~18 Nov** so mails can go out from 20 Nov.
   - Done when: L has it and has given a date.
@@ -181,7 +182,8 @@ Last updated: 2026-10-03.
   - Add: customer and order data from the shop are processed in Mo; AI customer profiles
     (and the right to object); one shared e-mail consent and one deletion with Shopify;
     advertising letters with the right to object; AI suggestions in the Eingang; contact
-    requests stored in Mo and AI-assisted replies to incoming mails (F-30); the
+    requests stored in Mo and AI-assisted replies to incoming mails (F-30); once 6.6 is
+    on, Mo answering signed-in customers' questions about their own orders (F-32); the
     retention periods (`docs/DATA_RETENTION.md`).
 
 - [ ] **3.4 One consent text** (F-29) — M (L approves)
@@ -270,6 +272,26 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
   F-25 (single opt-in, now one switch for all marketing mail) and F-27 (letters, Robinson
   list) is still worth having; switch a gate off in Vercel if the answer says so.
 
+- [ ] **6.6 Order status in the chat** (F-32) — M (FE first, C checks)
+  - Signed-in customers ask „Wo ist meine Bestellung?“ and Mo answers from the order ledger
+    plus a short live Shopify read (`get_order_status`, `docs/ANWALTSDOSSIER.md` §16).
+    Built 03.10., switch `CHAT_ORDER_STATUS_ENABLED` is **off**.
+  - Before: the lawyer's answer on F-32 (and the privacy-policy sentence it asks for); FE
+    confirms the live widget renders nothing for `get_order_status` and clears the stored
+    chat history on logout (`docs/frontend-handoff/CHAT_ORDER_STATUS.md`, frontend prompt
+    task 7). `SHOPIFY_CUSTOMER_SYNC_ENABLED` stays on (it is — the answer needs the ledger).
+  - Optional: `SHOPIFY_ACCOUNT_ORDERS_URL` if „Meine Bestellungen“ should open another page
+    than `https://www.motionsports.de/account`.
+  - Test on a Preview deployment first (`CHAT_ORDER_STATUS_ENABLED=true` for Preview only):
+    sign in with „Anmelden“ in the chat, ask „Wo ist meine Bestellung?“ → Mo names date, items
+    and state, no order number or amount; the widget shows no card or error for the tool;
+    without signing in Mo explains „Anmelden“ and offers the contact form; „Ich möchte das
+    zurückschicken“ → contact form.
+  - Then `CHAT_ORDER_STATUS_ENABLED=true` (Production) → Redeploy.
+  - Done when: Neon → `SELECT data->>'outcome', count(*) FROM kpi_events WHERE event =
+    'order_status_lookup' GROUP BY 1;` shows `ok` rows, and Gespräche shows the tool label
+    „Bestellung“.
+
 ## 7 · Optional tuning
 
 - [ ] **7.1** `INBOX_AI_DAILY_LIMIT` (AI suggestions in the Eingang per day, ≈ $0.01 each,
@@ -315,6 +337,12 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       Interessent anlegen“ next to „Zuordnen“. The contact form now also lands in Mo
       (prospect + Korrespondenz + item); the team mail is unchanged. Filter: „Alle Arten“ →
       „E-Mail beantworten“. Lawyer: dossier § 14 (F-30) → goes with 3.2.
+- [x] **C.11** **Bestellstatus im Chat** — built 03.10. (no migration, switch off): a customer
+      signed in via „Anmelden“ in the same chat session asks about their orders and Mo answers
+      from the ledger plus a short live Shopify read — date, items, shipping/payment state,
+      carrier, delivery day; never order number, amount, tracking number or address.
+      Returns, cancellations and complaints stay with the contact form. Turning it on: 6.6.
+      Lawyer: dossier § 16 (F-32) → goes with 3.2.
 - [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
       index the lookup (next free migration number; `0071` went to the session-link fix) —
       low priority.
