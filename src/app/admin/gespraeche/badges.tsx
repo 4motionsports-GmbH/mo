@@ -25,6 +25,7 @@ export const TOOL_LABELS: Record<string, string> = {
   suggest_showroom: "Showroom",
   show_contact_form: "Kontakt",
   offer_email_summary: "E-Mail",
+  get_order_status: "Bestellung",
 };
 
 const TIER_TONE: Record<AdminTier, StatusTone> = {

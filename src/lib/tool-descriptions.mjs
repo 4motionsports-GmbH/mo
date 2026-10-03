@@ -86,6 +86,22 @@ Nutze die treffendste reason. Die Nachricht sollte einladend erklären, dass sic
   fieldContactProductIds:
     "Produkte die im Gespräch relevant sind, werden im Formular vorausgefüllt.",
 
+  orderStatusDesc: `Schlägt den Stand der EIGENEN Bestellungen des Kunden nach: Status, Versand/Sendungsverfolgung, Zustellung, Stornierung, Erstattung. Das Backend prüft selbst, ob der Kunde in DIESEM Chat über „Anmelden" mit seinem Kundenkonto angemeldet ist — frage NIE nach E-Mail-Adresse, Name, Adresse oder Bestellbetrag, um jemanden zu identifizieren.
+
+Rufe es auf, sobald der Kunde nach dem Stand seiner Bestellung fragt („Wo ist meine Bestellung?", „Wann kommt mein Paket?", „Ist meine Erstattung durch?", „Wurde meine Stornierung bearbeitet?"). Nennt er eine Bestellnummer, gib sie in orderRef mit; sonst lass orderRef weg — dann kommen seine letzten Bestellungen.
+
+Das Ergebnis enthält keine Bestellnummern, Beträge oder Sendungsnummern. Bestellungen heißen A, B, … und werden über Bestelldatum (placedOn) und Artikel beschrieben.
+- status: ok | no_orders (keine Bestellungen im Konto) | not_found (die Nummer passt zu keiner seiner Bestellungen — die letzten Bestellungen stehen dabei) | sign_in_required (nicht angemeldet) | unavailable (gerade nicht abrufbar)
+- state: not_shipped (noch nicht versendet) | being_prepared (wird vorbereitet) | partially_shipped (teilweise versendet) | shipped (versendet) | in_transit (unterwegs) | out_for_delivery (in der Zustellung) | delivered (zugestellt) | delivery_problem (Zustellproblem) | on_hold (angehalten bzw. braucht das Team) | cancelled (storniert)
+- payment: paid (bezahlt bzw. autorisiert) | pending (Zahlung ausstehend) | refunded_partial (teilweise erstattet) | refunded_full (vollständig erstattet) | voided (Zahlung storniert)
+- carrier, estimatedDelivery, deliveredOn nur, wenn bekannt.
+
+Retouren, Stornierungen und Reklamationen kannst du damit NICHT auslösen — dafür show_contact_form mit reason="order_support".`,
+  fieldOrderRef:
+    "Die Bestellnummer, wenn der Kunde eine nennt (z.B. '#1234'). Sonst weglassen — niemals raten.",
+  fieldOrderTopic:
+    "Worum es geht: status=allgemeiner Stand; shipping=Versand, Sendungsverfolgung, Zustellung; return=Rückgabe/Retoure; cancellation=Stornierung; refund=Erstattung.",
+
   offerDesc: `Bietet dem Kunden an, eine Zusammenfassung dieses Gesprächs samt vorausgefülltem Warenkorb per E-Mail zu erhalten. Der Aufruf blendet im Widget ein DSGVO-konformes Erfassungsformular ein (E-Mail-Feld + zwei GETRENNTE Einwilligungs-Checkboxen: Zusammenfassung jetzt vs. optionales Marketing).
 
 WANN aufrufen (wertgetriggert):
@@ -177,6 +193,22 @@ Use the most fitting reason. The message should invitingly explain that the team
   fieldContactProductIds:
     "Products relevant in the conversation are prefilled in the form.",
 
+  orderStatusDesc: `Looks up the state of the customer's OWN orders: status, shipping/tracking, delivery, cancellation, refund. The backend itself checks whether the customer signed in with their customer account via "Sign in" in THIS chat — NEVER ask for an email address, name, address or order amount to identify anyone.
+
+Call it as soon as the customer asks about the state of their order ("Where is my order?", "When will my parcel arrive?", "Has my refund gone through?", "Was my cancellation processed?"). If they give an order number, pass it in orderRef; otherwise leave orderRef out — then their most recent orders come back.
+
+The result contains no order numbers, amounts or tracking numbers. Orders are called A, B, … and are described by order date (placedOn) and items.
+- status: ok | no_orders (no orders in the account) | not_found (the number matches none of their orders — the most recent orders are included) | sign_in_required (not signed in) | unavailable (cannot be fetched right now)
+- state: not_shipped (not shipped yet) | being_prepared (being prepared) | partially_shipped (partly shipped) | shipped (shipped) | in_transit (on its way) | out_for_delivery (out for delivery) | delivered (delivered) | delivery_problem (delivery problem) | on_hold (on hold or needs the team) | cancelled (cancelled)
+- payment: paid (paid or authorised) | pending (payment outstanding) | refunded_partial (partly refunded) | refunded_full (fully refunded) | voided (payment voided)
+- carrier, estimatedDelivery, deliveredOn only when known.
+
+You can NOT start returns, cancellations or complaints with it — for those use show_contact_form with reason="order_support".`,
+  fieldOrderRef:
+    "The order number, if the customer gives one (e.g. '#1234'). Otherwise leave it out — never guess.",
+  fieldOrderTopic:
+    "What it is about: status=general state; shipping=shipping, tracking, delivery; return=return; cancellation=cancellation; refund=refund.",
+
   offerDesc: `Offers the customer a summary of this conversation along with a prefilled cart by email. The call shows a GDPR-compliant capture form in the widget (email field + two SEPARATE consent checkboxes: summary now vs optional marketing).
 
 WHEN to call (value-triggered):
@@ -194,3 +226,29 @@ The actual sending + the consents happen via the form and /api/capture-email. Th
   fieldOfferProductIds:
     "The product ids discussed in the conversation (for the cart preview in the form). Optional/advisory — the backend determines the actual products server-side.",
 };
+
+// While get_order_status is offered (CHAT_ORDER_STATUS_ENABLED), the
+// contact-form copy sends questions about the STATE of an order to that tool
+// first; the actions (return, cancellation, complaint) and whatever the tool
+// cannot resolve stay with the form. Derived from the base copy by replacing
+// exactly one passage of the order_support bullet, so the two never drift
+// apart elsewhere — and the base copy (switch off) stays byte-identical.
+// tool-descriptions.test.mjs asserts the passage was found.
+/**
+ * @param {string} desc @param {string} from @param {string} to
+ */
+function withOrderStatusRouting(desc, from, to) {
+  return desc.includes(from) ? desc.replace(from, to) : desc;
+}
+
+DE.contactDescOrderStatus = withOrderStatusRouting(
+  DE.contactDesc,
+  "Bestellstatus/Sendungsverfolgung, eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, oder wenn der Kunde ausdrücklich einen Menschen / das Team erreichen möchte.",
+  "eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, ein Bestellproblem, das get_order_status nicht klären kann (Zustellproblem, angehaltene Bestellung, Kunde nicht angemeldet, Daten nicht abrufbar), oder wenn der Kunde ausdrücklich einen Menschen / das Team erreichen möchte. Fragen zum STAND einer Bestellung (Status, Versand/Sendungsverfolgung, Zustellung, Erstattungsstand) beantwortest du zuerst mit get_order_status."
+);
+
+EN.contactDescOrderStatus = withOrderStatusRouting(
+  EN.contactDesc,
+  "order status/tracking, starting a return/refund, cancelling an order, a complaint, or when the customer explicitly wants to reach a human / the team.",
+  "starting a return/refund, cancelling an order, a complaint, an order problem get_order_status cannot resolve (delivery problem, order on hold, customer not signed in, data not available), or when the customer explicitly wants to reach a human / the team. Questions about the STATE of an order (status, shipping/tracking, delivery, refund state) you answer first with get_order_status."
+);

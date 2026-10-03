@@ -19,6 +19,7 @@ import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
 import { anthropicOptionsFor, modelFor } from "@/lib/ai-models.mjs";
 import { sanitizeToolParts } from "@/lib/chat-message-sanitize.mjs";
+import { isChatOrderStatusEnabled } from "@/lib/platform-flags.mjs";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
 import { getCachedGeneralQa } from "@/lib/qa-store";
@@ -434,11 +435,17 @@ export async function POST(req: Request) {
     // `activeTools` once the ask cap is reached or the email was captured —
     // an inactive tool is filtered out before the provider call, so "never a
     // third ask" stays a server-side guarantee, not a prompt instruction.
-    const tools = buildChatTools(profile, locale);
-    const defaultActiveTools = (
-      allowEmailSummaryOffer
-        ? Object.keys(tools)
-        : Object.keys(tools).filter((name) => name !== "offer_email_summary")
+    // get_order_status is withheld the same way while CHAT_ORDER_STATUS_ENABLED
+    // is off (default) — the tool list and the prompt are then exactly as
+    // before the feature. It is NOT withheld per session: an anonymous visitor
+    // asking about an order gets "sign_in_required" from the tool itself, and
+    // the cached tools prefix stays one per deployment.
+    const orderStatusEnabled = isChatOrderStatusEnabled();
+    const tools = buildChatTools(profile, locale, { sessionId, orderStatusEnabled });
+    const defaultActiveTools = Object.keys(tools).filter(
+      (name) =>
+        (allowEmailSummaryOffer || name !== "offer_email_summary") &&
+        (orderStatusEnabled || name !== "get_order_status")
     ) as Array<keyof typeof tools>;
 
     // PROMPT CACHING (see docs/PROMPT_CACHING.md). Anthropic bills cached
@@ -491,6 +498,7 @@ export async function POST(req: Request) {
             generalQa,
             directives,
             locale,
+            orderStatus: orderStatusEnabled,
           }),
           providerOptions: cacheEphemeral,
         },
