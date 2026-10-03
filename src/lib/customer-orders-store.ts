@@ -204,6 +204,25 @@ export async function linkOrphanOrders(sql: Sql | null = getSql()): Promise<numb
   }
 }
 
+async function queryCustomerOrders(
+  sql: Sql,
+  customerId: number,
+  opts: { limit?: number; offset?: number }
+): Promise<{ orders: LedgerOrder[]; total: number }> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 500));
+  const offset = Math.max(0, opts.offset ?? 0);
+  const rows = (await sql`
+    SELECT id, shopify_order_id, order_name, processed_at, financial_status, fulfillment_status,
+           cancelled_at, currency, total_cents, refunded_cents, discount_codes, line_items,
+           count(*) OVER () AS total
+      FROM customer_orders
+     WHERE customer_id = ${customerId}
+     ORDER BY processed_at DESC, id DESC
+     LIMIT ${limit} OFFSET ${offset}
+  `) as Array<Record<string, unknown>>;
+  return { orders: rows.map(mapOrder), total: rows.length > 0 ? Number(rows[0].total) : 0 };
+}
+
 /** A customer's orders, newest first (Käufe tab, facts job). */
 export async function listCustomerOrders(
   customerId: number,
@@ -211,22 +230,30 @@ export async function listCustomerOrders(
   sql: Sql | null = getSql()
 ): Promise<{ orders: LedgerOrder[]; total: number }> {
   if (!sql) return { orders: [], total: 0 };
-  const limit = Math.max(1, Math.min(opts.limit ?? 50, 500));
-  const offset = Math.max(0, opts.offset ?? 0);
   try {
-    const rows = (await sql`
-      SELECT id, shopify_order_id, order_name, processed_at, financial_status, fulfillment_status,
-             cancelled_at, currency, total_cents, refunded_cents, discount_codes, line_items,
-             count(*) OVER () AS total
-        FROM customer_orders
-       WHERE customer_id = ${customerId}
-       ORDER BY processed_at DESC, id DESC
-       LIMIT ${limit} OFFSET ${offset}
-    `) as Array<Record<string, unknown>>;
-    return { orders: rows.map(mapOrder), total: rows.length > 0 ? Number(rows[0].total) : 0 };
+    return await queryCustomerOrders(sql, customerId, opts);
   } catch (err) {
     reportError(err, { route: "lib/customer-orders-store", phase: "listCustomerOrders" });
     return { orders: [], total: 0 };
+  }
+}
+
+/**
+ * Like listCustomerOrders, but null without a database or on an error — for
+ * callers that must not mistake a failure for "no orders" (the order status
+ * in the chat answers "unavailable" then, never "you have no orders").
+ */
+export async function findCustomerOrders(
+  customerId: number,
+  opts: { limit?: number } = {},
+  sql: Sql | null = getSql()
+): Promise<LedgerOrder[] | null> {
+  if (!sql) return null;
+  try {
+    return (await queryCustomerOrders(sql, customerId, opts)).orders;
+  } catch (err) {
+    reportError(err, { route: "lib/customer-orders-store", phase: "findCustomerOrders" });
+    return null;
   }
 }
 
