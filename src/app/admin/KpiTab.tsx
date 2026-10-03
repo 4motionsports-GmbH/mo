@@ -16,6 +16,7 @@ import {
   getCoreMetrics,
   getEmailCaptureFunnel,
   getLocaleSplit,
+  getLoginGateFunnel,
 } from "@/lib/kpi-store";
 import { getPersonaInsights } from "@/lib/kpi-persona";
 import { getMoAttributionKpis } from "@/lib/mo-orders-store";
@@ -40,6 +41,7 @@ import { QaSection } from "./kpi/sections/QaSection";
 import { FeedbackSection } from "./kpi/sections/FeedbackSection";
 import { AccountSection } from "./kpi/sections/AccountSection";
 import { ConsentGateSection } from "./kpi/sections/ConsentGateSection";
+import { LoginGateSection } from "./kpi/sections/LoginGateSection";
 import { EmailCaptureSection } from "./kpi/sections/EmailCaptureSection";
 import { CampaignSection } from "./kpi/sections/CampaignSection";
 import { BundleSection } from "./kpi/sections/BundleSection";
@@ -93,6 +95,7 @@ export async function KpiTab({
     customerBase,
     inboxKpis,
     moEffect,
+    loginGate,
   ] = await Promise.all([
     getCoreMetrics(range),
     getMoAttributionKpis(range),
@@ -112,6 +115,7 @@ export async function KpiTab({
     getCustomerBaseKpis(),
     getInboxKpis(range),
     getMoEffectKpis(),
+    getLoginGateFunnel(range),
   ]);
 
   const [beratung, marketing, umsatz, kosten, gesamt] = KPI_GROUPS;
@@ -137,6 +141,7 @@ export async function KpiTab({
       </Group>
 
       <Group group={marketing}>
+        <LoginGateSection funnel={loginGate} />
         <ConsentGateSection funnel={gateFunnel} />
         <EmailCaptureSection funnel={captureFunnel} />
         <CampaignSection cached={shopify.campaign} />
