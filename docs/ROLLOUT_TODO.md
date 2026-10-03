@@ -110,6 +110,13 @@ Last updated: 2026-10-03.
     nächsten Lauf“ → within 10 minutes the mail is in „Gesendet“. Lawyer: dossier § 17 (F-33)
     → goes with 3.2.
 
+- [ ] **1.8 „Prüfen & testen“ in the campaign editor** — C built it 03.10., nothing to switch on
+  - No migration, no env var. Uses the campaign send path for the test mail, so
+    `CAMPAIGN_SENDS_APPROVED` must be on (it is).
+  - Done when: Kampagnen → a campaign → „Bearbeiten“ → „Prüfen & testen“ shows the estimate;
+    „Muster erzeugen“ shows three different people with their mails; „Testpostfach …“ with your
+    own address delivers that mail (with a real code if the campaign has a discount).
+
 ## 2 · Tomorrow morning
 
 - [x] **2.1 The first nightly run** — M (C checks with you) — done 03.10.: reconcile shows a

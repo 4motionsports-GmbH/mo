@@ -130,7 +130,7 @@ The Kampagnen overview (`?tab=kampagne`, alias `kampagnen`) shows one card per c
 phase, audience in plain German, recipients and send figures — with the scopes Aktuell / Alle /
 Archiv, „Öffnen“ (the campaign's desk, §5) and the status actions. „Neue Kampagne“ and „Bearbeiten“
 open the editor sheet (`?edit=new` / `?edit=<id>`;
-[`CampaignEditor.tsx`](../src/app/admin/kampagnen/CampaignEditor.tsx)) with six sections.
+[`CampaignEditor.tsx`](../src/app/admin/kampagnen/CampaignEditor.tsx)) with seven sections.
 Everything is validated again on the server (`validateCampaignInput`):
 
 | Section | Fields (column) |
@@ -141,6 +141,7 @@ Everything is validated again on the server (`validateCampaignInput`):
 | Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations / set), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them |
 | Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode`: `none` / `default` / `ai_ab` / `ai_all`), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
 | Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000 — no automation; shown as „Tagesziel n“ next to today's progress in the desk header) |
+| Prüfen & testen | Nothing stored — the estimate and sample mails below. Hidden for the Einzelansprache. |
 
 Defaults per kind (`campaignDefaults`): `laufend` → dynamisch, re-entry 180 days, hero `ai_ab`,
 priority 10; `aktion` → fest, no re-entry, hero `default`, priority 50.
@@ -191,6 +192,38 @@ site `campaign_assist`, `POST /api/admin/campaigns/assist`): „Filter setzen“
 
 A changed audience of an `aktiv` campaign is re-materialised on save
 (`POST /api/admin/campaigns/update`).
+
+**Prüfen & testen** ([`CampaignCheckSection.tsx`](../src/app/admin/kampagnen/CampaignCheckSection.tsx),
+[`campaign-sample.ts`](../src/lib/campaign-sample.ts), pure rules in
+[`campaign-sample-core.mjs`](../src/lib/campaign-sample-core.mjs), tested;
+`POST /api/admin/campaigns/sample`) — the last look before a campaign goes live:
+
+- **Estimate** (`campaignPlanEstimate`): KI-Texte = recipients × the average draft cost,
+  KI-Titelbilder = (A/B: half, „für alle“: every) recipient × the average hero pipeline
+  (`estimateCampaignCosts`, the same averages the Vorbereiten popover states; „unbekannt“
+  until something was recorded), Prüfzeit = recipients ÷ Tagesziel (100 per day without
+  one) against the days left between start (or today) and end, Vorbereitung = nights of the
+  nightly run (its per-campaign count, capped by `CAMPAIGN_AUTO_PREPARE_COUNT`). A Callout
+  warns when the review or the preparation does not fit the window, or the end has passed.
+- **Sample mails** (`action: "pick"` then `"generate"`): the matcher's 60 newest matches,
+  of which `pickSampleRecipients` takes the three that differ most (language and Mo chat
+  weigh double, then Lebenszyklus and orders). Each draft is written exactly like
+  `prepareDraftForContact` writes it — ledger purchase history, recommendations, AI profile
+  unless the person objected (Art. 21), the campaign's briefing, discount, scope and text
+  mode — but under the form's CURRENT values (validated like an update, laid over the saved
+  campaign), so a briefing can be tried before saving. The person must have the consent and
+  no block (fail-closed, `not_eligible`). Rendering (`renderCampaignSample`) uses the
+  campaign's design with the placeholder code, the design's own title image (AI heroes and
+  sets come only on the desk) and **inert** unsubscribe/erasure links. Nothing is stored —
+  no recipient row, no draft, no code; the AI call is metered (`ai_usage`, `campaign_draft`).
+- **Test send** (`action: "send_test"`): the sample becomes a Testkontakt (§5) of the SAVED
+  campaign at the operator's address — it borrows the sample person's purchase history, its
+  draft is exactly the sample's text and products — and goes through
+  `approveAndSendCampaign` like any test send (real `MK-` code, tracking, unsubscribe;
+  test sends ignore the consent, block list and cadence of the inbox, every other gate
+  applies). Each sample carries `sampleConfigFingerprint` of the settings it was made with;
+  the server refuses (409 `stale_sample`) when the saved campaign's fingerprint differs, and
+  the UI blocks the button while the form has unsaved changes.
 
 ### 2.3 Recipients and the audience refresh
 
@@ -281,6 +314,12 @@ the first failing gate is the refusal:
 | 3 | Opt-in level | `CAMPAIGN_ALLOW_SINGLE_OPT_IN` + `customers.email_consent_level` | **false** | Without `confirmed_opt_in` the send is refused (403, "Erneute Einwilligung erforderlich") while the flag is false; such recipients stay visible in the queue (Copy allowed). |
 | 4 | Suppression | `suppression_list` (`isSuppressed`) | — | Every reason blocks (unsubscribe, manual, bounce, complaint, erasure). Fail-closed: a DB error blocks the send. Also checked at refresh and prepare time. |
 | 5 | Frequency cap | `MARKETING_MIN_SEND_INTERVAL_DAYS` | 0 (off) | Spans **every** campaign (Einzelansprache included) **and** the Mo funnel: the newest send to the address across `campaign_sends` *and* `marketing_sends` (`lastCrossChannelSendAt`) must be older than the window (429 otherwise). |
+
+**Before every gate:** a draft without a discount whose text still contains the placeholder
+code `MO-XXXX` is refused (`discount_mismatch`, `discount-swap.hasStrayPlaceholder`, tested):
+the code swap only runs when a code is minted, so the customer would read an offer that does
+not exist. The same rule refuses it in the 1:1 marketing path, and the desk shows it as
+„Platzhalter-Code ohne Rabatt“ (blocked).
 
 Testkontakte (§5) skip gates 2, 4 and 5 — they are the operator's own inboxes. The **copy path**
 (`POST /api/admin/campaign/mark-done`) delivers nothing, so the master flag does not apply; it does
@@ -684,6 +723,7 @@ tombstone, so no audience, import or webhook brings the person back.
 | Status change (Starten, Pausieren, Fortsetzen, Beenden, Archivieren) | `POST /api/admin/campaigns/status` |
 | Live audience count + German description | `POST /api/admin/campaigns/audience-preview` |
 | AI help: audience from a sentence / Briefing draft | `POST /api/admin/campaigns/assist` (`action: "audience" \| "brief"`) |
+| Prüfen & testen: sample recipients, sample mail, test send | `POST /api/admin/campaigns/sample` (`action: "pick" \| "generate" \| "send_test"`) |
 | Zielgruppe aktualisieren | `POST /api/admin/campaigns/refresh` |
 | Add one person (Einzelansprache by default) | `POST /api/admin/campaigns/add-recipient` |
 | Add a Kunden selection (≤ 200, consent-gated, nothing drafted) | `POST /api/admin/campaigns/add-recipients` (`{ customerIds, campaignId?, adminNote? }`) |
@@ -709,8 +749,8 @@ tombstone, so no audience, import or webhook brings the person back.
 | Retained sent content (read-only, `text/html`) | `POST /api/admin/campaign/sent-email` |
 | Send history (paged, filtered) | `GET /api/admin/campaign/history?campaignId=&q=&from=&to=&delivery=&page=&pageSize=` |
 | Retired | `POST /api/admin/campaign/sync`, `GET/POST /api/cron/sync-campaign-audience` (§1) |
-| UI | `src/app/admin/KampagneTab.tsx` (overview or desk); overview + editor in `src/app/admin/kampagnen/` (`CampaignsOverview`, `CampaignEditor`); desk in `src/app/admin/kampagne/` (`KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `SentHistory`, `ContactHistorySheet`, `TestContactsSheet`, `useCampaignActions`, `useRenderedPreview`) |
-| Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist}.ts`, `campaign-{def,language,flags,gates,segments,draft-core,review-checks,desk-core}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs` |
+| UI | `src/app/admin/KampagneTab.tsx` (overview or desk); overview + editor in `src/app/admin/kampagnen/` (`CampaignsOverview`, `CampaignEditor`, `CampaignCheckSection`); desk in `src/app/admin/kampagne/` (`KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `SentHistory`, `ContactHistorySheet`, `TestContactsSheet`, `useCampaignActions`, `useRenderedPreview`) |
+| Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist,sample}.ts`, `campaign-{def,language,flags,gates,segments,draft-core,review-checks,desk-core,sample-core}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs` |
 
 All admin routes sit behind the existing proxy gate + `guardAdminPost` / `guardAdminGet`
 (auth + JSON-content-type CSRF defense). Everything fails closed: missing

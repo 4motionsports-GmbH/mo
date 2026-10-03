@@ -896,7 +896,9 @@ deterministic: code minting at send, scope resolution, set block, footer, unsubs
 4. **Inhalt** — Design, Hero mode, Textmodus, Sprache, Mo-Hinweis, CTA.
 5. **Ablauf** — Start/Ende, Tagesziel, Priorität, automatisch vorbereiten (n/Tag).
 6. **Prüfen & testen** — three sample recipients drafted for real and sent to test inboxes; cost and
-   time estimate (`estimateCampaignCosts`, per campaign).
+   time estimate (`estimateCampaignCosts`, per campaign). *As built (2026-10-03):* the editor's
+   seventh section — samples are written with the form's current settings and stored nowhere;
+   „Testpostfach …“ turns one into a Testkontakt of the saved campaign (CAMPAIGNS.md §2.2).
 
 „Kampagne starten“ (confirm) materialises the recipients.
 
