@@ -11,10 +11,10 @@ how marketing consent, sign-in and data deletion work. Shop and Mo now share **o
 marketing consent and **one** deletion: whoever subscribes or unsubscribes in the shop or in the
 chat is subscribed or unsubscribed in both, and a deletion in one deletes in both. The chat
 should lead people to sign in with their shop account (or give the marketing consent) instead of
-typing an e-mail address. Implement the seven changes below (task 7 is a security fix and comes first). The exact request and response
+typing an e-mail address. Implement the eight changes below (task 7 is a security fix and comes first). The exact request and response
 shapes are in the attached handoff files: `API_CONTRACT.md` (2026-10 change table at the top),
-`CONSENT_FLOW.md` §2–§4, `CUSTOMER_ACCOUNT.md` §2, §3, §4, §6 and §7.5. Where this prompt and
-those files disagree, the files win.
+`CONSENT_FLOW.md` §2–§4, `CUSTOMER_ACCOUNT.md` §2, §3, §4, §6 and §7.5, `CHAT_ORDER_STATUS.md`.
+Where this prompt and those files disagree, the files win.
 
 ## Rules that do not change (legally load-bearing)
 
@@ -124,6 +124,16 @@ otherwise plant their own session id in a login link). Implement `CUSTOMER_ACCOU
 Until this ships, „Anmelden“ in the chat returns to the shop but the chat stays signed out —
 nothing breaks, the account features are just off.
 
+## 8. Stay silent on `get_order_status`; clear the history on logout
+
+Signed-in customers can ask Mo about their orders. Mo looks them up with a new background tool,
+`get_order_status`, and answers in its text (`CHAT_ORDER_STATUS.md`). Render **nothing** for this
+tool — no card, no placeholder, no error — exactly like `search_products`, and in general render
+nothing for any tool name the widget does not know. Its output contains the customer's order
+status, so on logout (and after „Meine Daten löschen“) also remove the stored chat history of
+that session — the next person on a shared browser must not see it. The backend switch stays off
+until this is confirmed on the live widget.
+
 ## Acceptance checklist
 
 - [ ] Anonymous visitor, first message: the gate shows the sign-in block first; the e-mail block
@@ -144,5 +154,7 @@ nothing breaks, the account features are just off.
       `x-ms-session` before `/api/auth/me`; the address bar shows neither `ms_auth` nor `ms_code`
       afterwards; a second redeem of the same code answers 400. Opening a login link that was
       started with ANOTHER session id leaves the chat signed out.
+- [ ] A `get_order_status` tool part (and any unknown tool name) renders nothing — no card, no
+      error; after logout the stored chat history of that session is gone.
 - [ ] No new hard-coded legal text; no consent pre-selection; screenshots of the gate (both
       blocks), the opt-in card, the already-subscribed state and the erase dialog in DE and EN.
