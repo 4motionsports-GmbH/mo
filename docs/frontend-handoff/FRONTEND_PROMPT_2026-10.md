@@ -131,8 +131,10 @@ Signed-in customers can ask Mo about their orders. Mo looks them up with a new b
 tool — no card, no placeholder, no error — exactly like `search_products`, and in general render
 nothing for any tool name the widget does not know. Its output contains the customer's order
 status, so on logout (and after „Meine Daten löschen“) also remove the stored chat history of
-that session — the next person on a shared browser must not see it. The backend switch stays off
-until this is confirmed on the live widget.
+that session — the next person on a shared browser must not see it. Keep „Anmelden“ reachable
+for a visitor recognised through `/apps/chat/whoami` (task 6), e.g. in the account menu: the
+order status needs the chat sign-in once. The backend switch stays off until this is confirmed
+on the live widget.
 
 ## Acceptance checklist
 

@@ -32,7 +32,11 @@ path; Phase 3 marks each one as **verified** (by test / screenshot / manual run)
 > the same chat session can ask Mo about their own orders (`get_order_status`, behind `CHAT_ORDER_STATUS_ENABLED`,
 > default off) — rows: `POST /api/chat` (§2.1), `GES-26` (tool label „Bestellung“), env `CHAT_ORDER_STATUS_ENABLED`
 > and `SHOPIFY_ACCOUNT_ORDERS_URL` (§5); new tested core `order-status-core.mjs`; legal review `ANWALTSDOSSIER.md`
-> §16 (F-32).
+> §16 (F-32). Hardened after review: only ledger rows of the session's Shopify customer (incl. not-yet-linked
+> ones), a live-foreign order is never shown, „no orders“ / „not found“ only after a live confirmation
+> (`confirmLedgerAnswer`), `unavailable` before the first order import, ≤3 lookups per request, a delivered parcel
+> never overrides an unfinished order; the sign-in merge never re-stamps a row of another Shopify customer and
+> the ledger upsert follows a reassigned order.
 
 Language: the admin sections quote the German UI labels and are written in German (they mirror the screens the team
 uses); the API, cron, script and environment sections are in English like the rest of `docs/`.
