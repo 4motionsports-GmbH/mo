@@ -120,7 +120,7 @@ below 1024 px; a slim top bar with the screen title, its explanation behind an
 a cookie, applied on the server so there is no flash) and logout. Keyboard:
 digits `1…9`/`0` jump to the n-th screen, `/` focuses the Kunden search — both
 ignored while typing or with a modifier held. Screen-specific keys: Eingang
-`J K Enter E Z D Esc` (§3.1), Kampagnen desk `N P V C S X …` (§3.2), Wissen
+`J K Enter E Z D Esc` (§3.1), Kampagnen desk `N P V C S A X …` (§3.2), Wissen
 `j k Esc` (§3.4).
 
 ### 2.2 URL contract and deep links
@@ -144,7 +144,7 @@ Everything an operator can point a colleague at is in the URL:
 | Kampagnen | `?edit=<id\|new>` | the editor sheet on the overview (kept in sync while it is open) |
 | Kampagnen | `?edit=new&audience=<json>` | a new campaign whose Zielgruppe starts from this audience spec (set by Kunden → Überblick → „Ähnliche Kunden“ → „Als Zielgruppe verwenden“); normalised on the server (`normalizeAudienceSpec`), ignored when unparsable or longer than 4,000 characters |
 | Kampagnen | `?contact=<id>` | the card on the desk (kept in sync while reviewing; a sent/skipped id falls back to the first card). Alone, without `?campaign=`, it opens the desk of the campaign the recipient belongs to (legacy desk links) |
-| Kampagnen | `?view=liste\|gesendet` | the Liste or Gesendet view of the desk (absent = Prüfen) |
+| Kampagnen | `?view=liste\|eingeplant\|gesendet` | the Liste, Eingeplant („Einplanen“, shown when switched on or when mails are planned) or Gesendet view of the desk (absent = Prüfen) |
 | Kampagnen | `?filter=<chip>` | desk queue filter chip: `doi`, `soi`, `en`, `discount`, `set`, `hints`, `blocked` (absent = Alle) |
 | KPIs | `?kpiRange=7d\|30d\|90d\|custom`, `?kpiFrom=`, `?kpiTo=` | period (validated + clamped by [`kpi-range.mjs`](../src/lib/kpi-range.mjs)) |
 | KPIs | `?kpiFresh=<unix seconds>` | freshness floor for the Shopify cache — set by „Aktualisieren“ (§5.0) |
@@ -547,7 +547,7 @@ clearing 100–200 e-mails a day:
   „Pausiert“: nothing goes out and drafts can only be prepared once the
   campaign runs); today's progress („n gesendet · m zu prüfen“, plus „Tagesziel
   n“ when the campaign sets one, with a bar that ends at the day's queue), the view
-  switch Prüfen · Liste · Gesendet, status pills (Versand freigegeben/gesperrt,
+  switch Prüfen · Liste · Eingeplant · Gesendet, status pills (Versand freigegeben/gesperrt,
   Shopify, „Zielgruppe vor …“ = the last audience refresh — „Einzeln
   aufgenommen“ for the Einzelansprache —, failed drafts; the original texts sit
   in InfoTips), „Vorbereiten…“ (a popover with Anzahl, Rabatt, Gilt für,
@@ -574,7 +574,8 @@ clearing 100–200 e-mails a day:
   debounced) and prefetched for the next card — the in-place editor on `E`, side by side with the render at ≥ 1600 px, and the
   action bar: `P`/`N`, Überspringen `X`, Neu generieren `R`, Bearbeiten `E`,
   ⋯ (Vorschau `V`, Kopieren `C` → „Als erledigt markieren“, Verlauf,
-  Fokus-Modus `F`, Tastenkürzel `?`), Senden `S`). The *review column*:
+  Fokus-Modus `F`, Tastenkürzel `?`), Einplanen `A` (when `CAMPAIGN_RELEASE_ENABLED`, see
+  below), Senden `S`). The *review column*:
   Prüfpunkte (the verdict — bereit / Hinweise / blockiert — with one fix per
   check, computed by [`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs);
   the hero hint follows the campaign's hero mode — `ai_ab`: an A-group card
@@ -595,6 +596,21 @@ clearing 100–200 e-mails a day:
   confirm — neither shown for Testkontakte). Every rendered mail in the admin
   has inert recipient links (`adminEmailHtml`), so a click in a preview never
   unsubscribes anyone.
+- **Einplanen („approve now, send later“, migration 0072, off by default:
+  `CAMPAIGN_RELEASE_ENABLED`).** `A` / „Einplanen…“ on a reviewed card opens the
+  time choice (next run · today 18:00 · tomorrow 09:00 · tomorrow 18:00, Berlin);
+  the server checks every send gate now without sending and stamps the row
+  (`approved_at`, `release_at`, a fingerprint of the draft and the campaign's
+  render fields). The card leaves the queue; the view **Eingeplant** lists the
+  planned mails with „Zurücknehmen“. The job `/api/cron/release-campaign-mails`
+  (every 10 minutes) sends the due ones one at a time
+  (`CAMPAIGN_RELEASE_MAX_PER_RUN`, `CAMPAIGN_RELEASE_SPACING_MS`) through
+  `approveAndSendCampaign`, so every gate runs again; a mail whose draft or
+  campaign changed after planning, whose set expired, or that a gate now refuses
+  returns to the queue with the reason on the card („Nach der Freigabe
+  geändert …“) — never retried automatically. Every mail is still reviewed and
+  approved by a person, one at a time; there is no bulk approve. Test contacts
+  are sent directly. The job also recovers rows a timeout left in `sending`.
 - **Nothing blocks the next card.** `S` takes the card out of the queue at
   once and the server answers in the Postausgang; a refused send comes back to
   the top with the server's reason as a blocked Prüfpunkt and a retry. Offer
@@ -1794,6 +1810,8 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST campaign/email-preview` | render the on-screen draft as text/html |
 | | `POST campaign/send { contactId }` | approve & send through the system (`approveAndSendCampaign`); a refusal answers with its reason as the code — e.g. `campaign_closed` 409, `sends_not_approved` / `no_consent` / `opt_in_blocked` 403, `too_soon` 429 |
 | | `POST campaign/skip / unskip / mark-done` | review decisions; `mark-done` closes the copy workflow (consent + block checked) |
+| | `POST campaign/approve { contactId, releaseAt? }` | „Einplanen“: approve this reviewed mail for the release job from `releaseAt` (empty = next run, ≤ 30 days ahead); runs every send gate now without sending (`campaignSendPreflight`) plus the set-expired / placeholder blockers; refusals 409 with the reason (`release_disabled`, `blocked`, `no_consent`, …); audit `campaign.approve` |
+| | `POST campaign/unapprove { contactId }` | „Zurücknehmen“: the planned mail returns to the queue; audit `campaign.approve.revoke` |
 | | `POST campaign/reset-queue { campaignId }` | rebuild one campaign's review queue (destructive, behind confirm) |
 | | `POST campaign/contacts { query, campaignId? }` | contact search within a campaign's recipients |
 | | `GET campaign/test-contacts?campaignId=`, `POST campaign/test-contacts { action: create \| delete, campaignId, … }` | Testkontakte of one campaign: list, create (+ draft right away), delete |

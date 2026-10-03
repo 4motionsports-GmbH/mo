@@ -67,6 +67,12 @@ existing orders had no refund date, the reconcile re-reads the last 15 days of o
 then reopens the „Unzufriedenheit“ items the hourly job closed meanwhile; a reconcile whose
 writes fail now stays incomplete instead of moving its floor.
 
+**After the rollout (2026-10-03): „Einplanen“.** A reviewed campaign mail can be approved
+now and sent later (migration 0072, `CAMPAIGN_RELEASE_ENABLED`, default off): every mail is
+still reviewed and approved by a person, one at a time; a release job sends the due ones
+through `approveAndSendCampaign` (all gates again) and returns changed or refused ones to the
+queue. Serien-Mail (D-10) stays not built.
+
 **Not built:** the Verbesserung lane „Marketing“ (offers, segments, triggers as proposals) — it
 needs a proposal type that is not a prompt directive; letters as a campaign channel (batch letters
 with review and Pingen costs) — today letters are sent per customer; Serien-Mail (D-10); the

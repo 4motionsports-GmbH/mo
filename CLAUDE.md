@@ -120,4 +120,4 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
   screen at 1440 px and 1024 px in light and dark, and exercise the interactions you touched (the
   before/after sets of the 2026-09 redesign are under `docs/screenshots/`).
 - **Keep the German terminology** and the keyboard shortcuts (`1…9`/`0` screens, `/` search; Kampagne
-  `N P V C S X`; Wissen `j k Esc`; Eingang `J K Enter E Z D Esc`).
+  `N P V C S A X`; Wissen `j k Esc`; Eingang `J K Enter E Z D Esc`).
