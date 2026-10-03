@@ -31,6 +31,8 @@ export interface AudienceMember {
   /** customer_facts exist for this person (else the order figures are 0 only
    * because the nightly computation has not run yet). */
   factsComputed: boolean;
+  /** A postal address is stored (letters, 0074). */
+  hasPostalAddress: boolean;
 }
 
 export interface AudienceMatch {
@@ -43,6 +45,8 @@ export interface AudienceMatch {
   /** Only meaningful with `withoutConsent`: matches without the e-mail consent, and of those reachable by letter. */
   totalNoConsent: number;
   totalLetter: number;
+  /** Of the total: how many have a postal address stored (letters, 0074). */
+  totalWithAddress: number;
   members: AudienceMember[];
 }
 
@@ -59,21 +63,35 @@ const iso = (v: unknown) => (v ? new Date(String(v)).toISOString() : null);
  */
 export async function matchAudience(
   rawSpec: unknown,
-  opts: { limit?: number; now?: Date; withoutConsent?: boolean } = {},
+  opts: {
+    limit?: number;
+    now?: Date;
+    withoutConsent?: boolean;
+    /**
+     * The LETTER channel (0074) instead of e-mail: matches with a completed
+     * order, no objection to postal advertising and no hard block — for
+     * 'ohne_einwilligung' only people WITHOUT the e-mail consent, for 'alle'
+     * everyone. The e-mail-only filters (opt-in level, "keine Werbe-Mail in
+     * den letzten n Tagen") do not apply.
+     */
+    letterMode?: "ohne_einwilligung" | "alle" | null;
+  } = {},
   sql: Sql | null = getSql()
 ): Promise<AudienceMatch> {
-  if (!sql) return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalNoConsent: 0, totalLetter: 0, members: [] };
+  if (!sql) return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalNoConsent: 0, totalLetter: 0, totalWithAddress: 0, members: [] };
   const spec = normalizeAudienceSpec(rawSpec);
   const p = audienceQueryParams(spec, opts.now ?? new Date());
   const limit = Math.max(1, Math.min(opts.limit ?? 20, AUDIENCE_MAX_MEMBERS));
   // Only the preview's letter-reach count matches WITHOUT the consent; every
   // materialisation (the e-mail channel) requires it.
   const requireConsent = opts.withoutConsent !== true;
+  const letterMode = opts.letterMode === "ohne_einwilligung" || opts.letterMode === "alle" ? opts.letterMode : null;
   try {
     const rows = (await sql`
       WITH base AS (
         SELECT o.*,
                cu.first_name, cu.last_name,
+               (cu.postal_address IS NOT NULL AND cu.postal_address_source = 'purchase') AS has_purchase_address,
                CASE
                  WHEN o.language_override IN ('de', 'en') THEN o.language_override
                  WHEN NULLIF(btrim(o.locale), '') IS NOT NULL THEN
@@ -92,21 +110,30 @@ export async function matchAudience(
              ORDER BY cv.last_activity_at DESC
              LIMIT 1
           ) lc ON true
-         WHERE (${requireConsent}::boolean IS FALSE
-                OR (o.email_consent_state = 'subscribed' AND NOT o.blocked))
+         WHERE CASE
+                 WHEN ${letterMode}::text IS NULL THEN
+                   (${requireConsent}::boolean IS FALSE
+                    OR (o.email_consent_state = 'subscribed' AND NOT o.blocked))
+                 ELSE
+                   (o.postal_objection_at IS NULL AND NOT o.blocked AND COALESCE(o.orders_count, 0) > 0
+                    AND (${letterMode}::text = 'alle' OR o.email_consent_state IS DISTINCT FROM 'subscribed'))
+               END
       )
       SELECT b.customer_id, b.email, b.first_name, b.last_name, b.shopify_customer_id, b.lang,
              b.email_consent_level, b.email_consent_at, b.orders_count, b.total_spent_cents,
              b.last_order_at, b.lifecycle_segment, b.conversations_count, b.facts_computed_at,
+             b.has_postal_address,
              count(*) OVER () AS total,
              count(*) FILTER (WHERE b.conversations_count > 0) OVER () AS total_mo,
              count(*) FILTER (WHERE b.lang = 'en') OVER () AS total_en,
              -- Letter reach (D-7): no e-mail consent (or blocked), a postal address, no objection.
              count(*) FILTER (WHERE NOT (b.email_consent_state = 'subscribed' AND NOT b.blocked)) OVER () AS total_no_consent,
              count(*) FILTER (WHERE NOT (b.email_consent_state = 'subscribed' AND NOT b.blocked)
-                                AND b.has_postal_address AND b.postal_objection_at IS NULL) OVER () AS total_letter
+                                AND b.has_postal_address AND b.postal_objection_at IS NULL) OVER () AS total_letter,
+             count(*) FILTER (WHERE b.has_purchase_address) OVER () AS total_address
         FROM base b
        WHERE (${p.optInLevels}::text[] IS NULL
+              OR ${letterMode}::text IS NOT NULL
               OR COALESCE(b.email_consent_level, 'unknown') = ANY(${p.optInLevels}::text[]))
          AND (${p.lifecycle}::text[] IS NULL
               OR b.lifecycle_segment = ANY(${p.lifecycle}::text[])
@@ -131,6 +158,7 @@ export async function matchAudience(
          AND (${p.shopifyTags}::text[] IS NULL OR b.shopify_tags && ${p.shopifyTags}::text[])
          AND (${p.clickedAfter}::timestamptz IS NULL OR b.last_click_at >= ${p.clickedAfter}::timestamptz)
          AND (${p.notMailedAfter}::timestamptz IS NULL
+              OR ${letterMode}::text IS NOT NULL
               OR b.last_marketing_at IS NULL
               OR b.last_marketing_at < ${p.notMailedAfter}::timestamptz)
          AND (${p.excludeCampaignIds}::bigint[] IS NULL OR NOT EXISTS (
@@ -138,7 +166,12 @@ export async function matchAudience(
                 WHERE x.customer_id = b.customer_id
                   AND x.campaign_id = ANY(${p.excludeCampaignIds}::bigint[])
                   AND x.is_test = false
-                  AND x.status <> 'excluded'))
+                  AND x.status <> 'excluded')
+              AND NOT EXISTS (
+               SELECT 1 FROM campaign_letters y
+                WHERE y.customer_id = b.customer_id
+                  AND y.campaign_id = ANY(${p.excludeCampaignIds}::bigint[])
+                  AND y.status <> 'excluded'))
        ORDER BY b.last_activity_at DESC NULLS LAST, b.customer_id DESC
        LIMIT ${limit}
     `) as Array<Record<string, unknown>>;
@@ -149,6 +182,7 @@ export async function matchAudience(
       totalEnglish: rows.length > 0 ? Number(rows[0].total_en) : 0,
       totalNoConsent: rows.length > 0 ? Number(rows[0].total_no_consent) : 0,
       totalLetter: rows.length > 0 ? Number(rows[0].total_letter) : 0,
+      totalWithAddress: rows.length > 0 ? Number(rows[0].total_address) : 0,
       members: rows.map((r) => ({
         customerId: Number(r.customer_id),
         email: String(r.email),
@@ -164,11 +198,12 @@ export async function matchAudience(
         lifecycleSegment: (r.lifecycle_segment as string | null) ?? null,
         hasMoContact: Number(r.conversations_count ?? 0) > 0,
         factsComputed: r.facts_computed_at != null,
+        hasPostalAddress: r.has_postal_address === true,
       })),
     };
   } catch (err) {
     reportError(err, { route: "lib/audience-store", phase: "matchAudience" });
-    return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalNoConsent: 0, totalLetter: 0, members: [] };
+    return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalNoConsent: 0, totalLetter: 0, totalWithAddress: 0, members: [] };
   }
 }
 
@@ -179,16 +214,24 @@ export interface AudiencePreview {
   byLanguage: { de: number; en: number };
   /** The same spec WITHOUT the consent: how many more match, and how many of them a letter could reach. */
   withoutConsent: { total: number; letterReach: number };
+  /** With a letter mode (0074): the campaign's letter recipients and how many have an address stored. */
+  letters?: { total: number; withAddress: number };
   sample: Array<{ customerId: number; email: string; name: string | null }>;
 }
 
 /** Count + a small sample for the wizard ("1.240 Kunden passen") — the counts are window aggregates, only 8 rows travel. */
-export async function previewAudience(rawSpec: unknown, sql: Sql | null = getSql()): Promise<AudiencePreview> {
-  const [match, all] = await Promise.all([
+export async function previewAudience(
+  rawSpec: unknown,
+  sql: Sql | null = getSql(),
+  opts: { letterMode?: "ohne_einwilligung" | "alle" | null } = {}
+): Promise<AudiencePreview> {
+  const [match, all, letters] = await Promise.all([
     matchAudience(rawSpec, { limit: 8 }, sql),
     matchAudience(rawSpec, { limit: 1, withoutConsent: true }, sql),
+    opts.letterMode ? matchAudience(rawSpec, { limit: 1, letterMode: opts.letterMode }, sql) : Promise.resolve(null),
   ]);
   return {
+    ...(letters ? { letters: { total: letters.total, withAddress: letters.totalWithAddress } } : {}),
     total: match.total,
     withMo: match.totalWithMo,
     byLanguage: { de: match.total - match.totalEnglish, en: match.totalEnglish },

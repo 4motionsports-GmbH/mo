@@ -175,7 +175,7 @@ export interface GenerateCampaignDraftInput extends DraftDiscountInput {
 }
 
 /** The profile section of the prompt, or "" without a profile. */
-function profileSection(profile: GenerateCampaignDraftInput["customerProfile"]): string {
+export function profileSection(profile: GenerateCampaignDraftInput["customerProfile"]): string {
   const summary = profile?.summary?.trim();
   if (!summary) return "";
   const facts = profileFactsBlock(profile?.data ?? null, profile?.personaDisplay ?? null, "de");
@@ -187,7 +187,7 @@ function profileSection(profile: GenerateCampaignDraftInput["customerProfile"]):
   );
 }
 
-function purchaseBlock(summary: CampaignPurchaseSummary | null, language: "de" | "en"): string {
+export function purchaseBlock(summary: CampaignPurchaseSummary | null, language: "de" | "en"): string {
   if (!summary || summary.orders.length === 0) {
     return language === "en"
       ? "(no order details available — refer to them as a valued customer, do not invent purchases)"
@@ -392,7 +392,7 @@ function discountHint(input: DraftDiscountInput, language: "de" | "en"): string 
 }
 
 /** The campaign briefing + per-person note as a prompt section ("" = none). */
-function campaignSection(
+export function campaignSection(
   campaign: GenerateCampaignDraftInput["campaign"],
   adminNote: string | null
 ): string {
@@ -421,7 +421,7 @@ function campaignSection(
  * continues that thought; after a year the purchase is history and pretending
  * otherwise reads as surveillance rather than service.
  */
-function segmentIntroRule(
+export function segmentIntroRule(
   segmentKey: string | null | undefined,
   days: number | null | undefined,
   strategy: string | null | undefined
