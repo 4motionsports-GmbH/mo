@@ -9,7 +9,7 @@
 
 import * as React from "react";
 import { cn } from "./cn";
-import { useFocusTrap } from "./focus";
+import { useFocusTrap, useOverlayLayer } from "./focus";
 import { FloatingPanel, useFloatingPanel, type FloatingAlign, type FloatingSide } from "./info-tip";
 
 export interface PopoverProps {
@@ -44,7 +44,8 @@ export function Popover({
   const { triggerRef, panelRef, pos } = useFloatingPanel(open, side, align);
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
-  useFocusTrap(panelRef, open && mounted);
+  const isTop = useOverlayLayer(open && mounted);
+  useFocusTrap(panelRef, open && mounted, isTop);
 
   const close = React.useCallback(() => onOpenChange(false), [onOpenChange]);
 
