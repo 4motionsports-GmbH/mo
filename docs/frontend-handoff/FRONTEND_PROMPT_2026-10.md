@@ -11,7 +11,7 @@ how marketing consent, sign-in and data deletion work. Shop and Mo now share **o
 marketing consent and **one** deletion: whoever subscribes or unsubscribes in the shop or in the
 chat is subscribed or unsubscribed in both, and a deletion in one deletes in both. The chat
 should lead people to sign in with their shop account (or give the marketing consent) instead of
-typing an e-mail address. Implement the six changes below. The exact request and response
+typing an e-mail address. Implement the seven changes below (task 7 is a security fix and comes first). The exact request and response
 shapes are in the attached handoff files: `API_CONTRACT.md` (2026-10 change table at the top),
 `CONSENT_FLOW.md` §2–§4, `CUSTOMER_ACCOUNT.md` §2, §3, §4, §6 and §7.5. Where this prompt and
 those files disagree, the files win.
@@ -107,6 +107,23 @@ sign-in block of task 1. On anything else — 404, an HTML page, a network error
 Proxy is not set up yet, so today the call returns Shopify's 404 page; the fallback must
 make that invisible. Never send the answer anywhere else; never retry in a loop.
 
+## 7. Complete every sign-in with the one-time code (required — security fix of 03.10.2026)
+
+Since 03.10.2026 a sign-in no longer links the chat session on its own (a stranger could
+otherwise plant their own session id in a login link). Implement `CUSTOMER_ACCOUNT.md` §2a:
+
+- On the return from the sign-in, `?ms_auth=ok` comes with `?ms_code=<code>`. Before calling
+  `/api/auth/me`, send `POST {BASE_URL}/api/auth/link` with `{ "code": "<ms_code>" }` and the
+  usual widget headers, **including `x-ms-session` = the same session id the login used**.
+  Then strip `ms_auth` and `ms_code` from the address bar and continue as today.
+- When `/apps/chat/whoami` (task 6) answers `signedIn: true`, it carries `linkCode`: redeem it
+  the same way before using history, export or deletion.
+- `400` from `/api/auth/link` (expired, used, or another session): stay anonymous and show
+  „Anmelden“ again. Never retry with another session id.
+
+Until this ships, „Anmelden“ in the chat returns to the shop but the chat stays signed out —
+nothing breaks, the account features are just off.
+
 ## Acceptance checklist
 
 - [ ] Anonymous visitor, first message: the gate shows the sign-in block first; the e-mail block
@@ -123,5 +140,9 @@ make that invisible. Never send the answer anywhere else; never retry in a loop.
 - [ ] `/en` uses `?locale=en` everywhere; the old flows still work when a field is missing.
 - [ ] `/apps/chat/whoami` is called once per session on first open; while it returns
       Shopify's 404 page nothing visible changes (no error, no extra sign-in prompt).
+- [ ] After „Anmelden“ the widget redeems `ms_code` at `POST /api/auth/link` with its own
+      `x-ms-session` before `/api/auth/me`; the address bar shows neither `ms_auth` nor `ms_code`
+      afterwards; a second redeem of the same code answers 400. Opening a login link that was
+      started with ANOTHER session id leaves the chat signed out.
 - [ ] No new hard-coded legal text; no consent pre-selection; screenshots of the gate (both
       blocks), the opt-in card, the already-subscribed state and the erase dialog in DE and EN.

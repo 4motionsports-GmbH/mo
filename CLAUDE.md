@@ -61,6 +61,11 @@ compatible. Since the customer platform (`docs/CUSTOMER_PLATFORM_PLAN.md`) every
   e-mail-marketing consent; change it only through `applyConsentActs` (`src/lib/consent-store.ts`, rules
   in the tested `consent-core.mjs`) — Mo surfaces via `src/lib/consent-flows.ts`. Every change writes a
   `consent_events` row and, for Mo-side changes, a `shopify_outbox` row. Never write the columns directly.
+- **A sign-in links a session only through a redeemed one-time code.** Never link a session id
+  taken from a URL (`login?session=`, `whoami?session=`): the callback and the App Proxy mint a
+  grant (`session-link-grants.ts` over the tested `customer-link-grant.mjs`, migration 0073), and
+  `POST /api/auth/link` writes the link only for the session the grant names. Logout ends every
+  signed-in link of the customer.
 - **One deletion.** Erase a person only through `erasePerson` (`src/lib/customer-erasure.ts`): it writes
   the erasure tombstone and queues the Shopify side. Shopify flags (`SHOPIFY_CUSTOMER_SYNC_ENABLED`,
   `SHOPIFY_CONSENT_WRITEBACK`, `SHOPIFY_ERASURE_SYNC`) default to `false`.

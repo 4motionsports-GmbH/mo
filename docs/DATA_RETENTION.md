@@ -310,6 +310,7 @@ through the mirror's webhooks and reconcile, never the sign-in itself.
 | `customers` (tier-3 columns) | `shopify_customer_id`, `shopify_customer_gid`, `shopify_linked_at`, `identity_tier` | identity linkage; the email column stays the single email home |
 | `customer_oauth_tokens` | **encrypted** access + refresh tokens (AES-256-GCM, `TOKEN_ENC_KEY`), `id_token_sub`, scope, expiries | server-side only; **never** sent to the browser |
 | `customer_auth_pending` | short-lived CSRF `state` + PKCE `code_verifier` + `nonce` + `return_url` | transient; ~10-min TTL |
+| `customer_link_grants` | one-time sign-in link codes (0073): SHA-256 of the code, `session_id`, `customer_id`, kind, expiry, consumed time | transient; 10-min TTL, single use |
 | `customer_merge_conflicts` | sign-in merge conflicts for admin review (no tokens) | consent-provenance audit trail |
 
 ### Retention windows (tier 3)
@@ -318,6 +319,7 @@ through the mirror's webhooks and reconcile, never the sign-in itself.
 | --- | --- | --- | --- |
 | `customer_oauth_tokens` | follows the customer | — | **Cascade-deleted** with the customer (`ON DELETE CASCADE`). A GDPR erasure / customer purge removes the tokens in the same step. Access tokens also rotate/expire continuously (refresh-token rotation). |
 | `customer_auth_pending` | **~10 min** | `CUSTOMER_AUTH_PENDING_TTL_MINUTES` | Hard delete by the retention cron once past `expires_at`. |
+| `customer_link_grants` | **10 min** (+1 day) | — | Hard delete by the retention cron one day past `expires_at` (counted with the pending-auth rows); cascade-deleted with the customer. |
 | `customer_merge_conflicts` | kept until reviewed | — | Retained for consent auditability; cleared by an admin. |
 
 **Why tokens have no separate window:** they exist only to act for a *currently
@@ -475,7 +477,8 @@ step numbers below are the ones in the code. Each run:
    `COALESCE(processed_at, created_at)`) and `mo_attribution_tokens` older than
    the attribution window + 7 days.
 6. Purges expired `customer_auth_pending` rows (the short-lived sign-in
-   CSRF/PKCE state).
+   CSRF/PKCE state) and, a day past expiry, the one-time sign-in link codes
+   (`customer_link_grants`, 0073).
 7. Deletes Shopify sync bookkeeping past `SHOPIFY_SYNC_LOG_RETENTION_DAYS`
    (default **90 days**): `shopify_webhook_events` by `received_at`, finished
    `shopify_sync_runs` (done / failed / cancelled) by `started_at` — the newest

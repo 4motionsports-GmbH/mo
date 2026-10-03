@@ -58,12 +58,49 @@ to your `return_url`** with a marker query param:
 
 | `?ms_auth=` | Meaning | Suggested widget action |
 |---|---|---|
-| `ok` | Signed in; conversation re-linked | call `/api/auth/me`, show signed-in state |
+| `ok` (+ `ms_code`) | Shopify sign-in done — **not yet linked** to this session | redeem `ms_code` (§2a), then call `/api/auth/me`, show signed-in state |
 | `login_required` | `prompt=none` only: not logged in | show the one-click "Sign in" affordance |
 | `logged_out` | Returned from logout | clear signed-in UI |
 | `error` | Anything went wrong | stay anonymous; optionally offer "Sign in" |
 
-Strip `ms_auth` from the URL after reading it (e.g. `history.replaceState`).
+Strip `ms_auth` **and `ms_code`** from the URL after reading them (e.g.
+`history.replaceState`).
+
+### 2a. Completing the sign-in — redeem the one-time code (required since 2026-10-03)
+
+The backend no longer links the session named in the login URL by itself: that
+id is a URL parameter, so a stranger could have sent a logged-in shopper a login
+link carrying the **stranger's** session id, and the silent sign-in would have
+bound the shopper's account to it. Instead the return carries a one-time code
+(`ms_code`, 43 characters, valid **10 minutes**, usable **once**) that only this
+browser sees. The widget redeems it **with its own session**:
+
+```js
+const params = new URLSearchParams(location.search);
+if (params.get("ms_auth") === "ok" && params.get("ms_code")) {
+  await fetch(`${BASE_URL}/api/auth/link`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-ms-chat-key": CHAT_KEY,          // the usual widget guards
+      "x-ms-session": sessionId,          // the SAME session the login used
+    },
+    body: JSON.stringify({ code: params.get("ms_code") }),
+  });
+  // then strip ms_auth/ms_code and call /api/auth/me as before (§4)
+}
+```
+
+| Response | Meaning |
+|---|---|
+| `200 { ok: true, signedIn: true }` | linked — `/api/auth/me` now reports signed in |
+| `400 bad_request` „Anmeldung abgelaufen — bitte erneut anmelden.“ | unknown, expired, already used, or minted for **another** session → stay anonymous, offer „Anmelden“ |
+| `503 upstream_unavailable` | database problem → stay anonymous, retry later |
+
+The link is written only when `x-ms-session` is the session the login was started
+with; the code is used up on the first attempt either way. Without this call the
+sign-in has no effect (fail closed) — history, export, deletion and the signed-in
+chat stay off. The same call completes the shop-native detection (§3a, `linkCode`).
 
 ## 3. Already-signed-in check (shop-native **and** chatbot login)
 
@@ -99,7 +136,8 @@ Response (HTTP 200, `no-store`), shape compatible with `/api/auth/me` (§4):
   "tier": 3,                            // also nested at identity.tier
   "shopify_customer_id": "1234567890",
   "identity": { "name": "Max Mustermann", "tier": 3 },
-  "marketing": { "status": "none", "optInActionable": true }
+  "marketing": { "status": "none", "optInActionable": true },
+  "linkCode": "…43 characters…"         // redeem at POST /api/auth/link (§2a)
 }
 // logged out / unverifiable → fails closed
 { "signedIn": false }
@@ -108,9 +146,14 @@ Response (HTTP 200, `no-store`), shape compatible with `/api/auth/me` (§4):
 - **Fail-closed:** a bad/absent signature or a logged-out session (empty
   `logged_in_customer_id`) → `{ "signedIn": false }`. The id is **never** taken
   from a client-supplied value — only Shopify's signed one.
-- On `signedIn: true` the backend has **linked this `session_id`** to the customer,
-  so the history endpoints (§7) resolve for the **chatbot-token** path. For a pure
-  shop-native session (no chatbot OAuth token) see the note in §7.
+- On `signedIn: true` the name and opt-in state are for display right away, but the
+  session is **not linked yet**: redeem `linkCode` at `POST /api/auth/link` with the
+  same `x-ms-session` (§2a) — only then do the history endpoints (§7) resolve (for
+  the **chatbot-token** path; for a pure shop-native session without a chatbot
+  OAuth token see the note in §7). A `linkCode` of `null` (database problem) means:
+  display only, stay unlinked.
+- A signed request for a **logged-out** shop session (`{ "signedIn": false }`) also
+  ends this session's shop-native link: a shop logout signs the chat out.
 
 > **⚠️ Requires a one-time STORE + THEME action (Lucas), see `docs/CUSTOMER_ACCOUNT.md`
 > §2:** (1) add an **App Proxy** to the app (Shopify admin → app → *App proxy*):
@@ -200,8 +243,11 @@ session and bounces the browser back to the storefront with
 endpoint, the route degrades to a **local sign-out** (tokens dropped, same
 `?ms_auth=logged_out` bounce) — no widget change needed either way.
 
-The account/history linkage is **not** deleted — logging out ends the session,
-not the account (full erasure is §7.5). Same open-redirect rule as login:
+The return route also ends the **signed-in links**: the tokens are per customer,
+so every chatbot sign-in of that customer (other devices included) is signed out
+with them, and this session's shop-native link too. The customer and their
+history are **not** deleted — logging out ends the sessions, not the account (full
+erasure is §7.5). Same open-redirect rule as login:
 `return_url` must be an allow-listed storefront origin.
 
 ## 6. What does NOT change — and where the opt-in moves for tier 3

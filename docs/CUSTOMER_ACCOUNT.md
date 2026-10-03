@@ -81,10 +81,27 @@ re-registering the URLs there.
                                               verify id_token (jwks/nonce/aud/iss)
                                               GraphQL customer{ id } → shopify_customer_id
                                               merge (email↔shopify), encrypt+store tokens
-                       ←──────────────────  302 return_url?ms_auth=ok
+                                              mint one-time link code for the login's session
+                       ←──────────────────  302 return_url?ms_auth=ok&ms_code=…
  widget re-mounts, reads same session_id,
+ POST /api/auth/link { code } (x-ms-session) → link written only for that session
  GET /api/auth/me?session= → { name, tier }
 ```
+
+**Why the extra step (migration `0073`, 03.10.2026).** The login's `session` is a
+URL parameter, and so is whoami's (`/apps/chat/whoami?session=`). Until 0073 the
+callback and the App Proxy linked that id as signed in: a stranger could send a
+shopper who is logged in to the shop a link carrying the **stranger's** session id
+— the silent sign-in (`prompt=none`) or the whoami call then bound the shopper's
+account to the stranger's session, and with it `/api/account/*` (history, export,
+erasure) and the signed-in chat context. Now both only mint a grant
+(`customer_link_grants`: SHA-256 of a 43-character random code, the session id,
+the customer, the kind, 10 minutes, single use — `customer-link-grant.mjs`,
+tested). The code reaches only the browser that completed the sign-in (the
+redirect, or the same-origin whoami response); the widget redeems it with its own
+`x-ms-session`, and the link is written only when that is the grant's session. A
+redeem attempt from another session burns the code. Links written by the old flow
+were set to `legacy` by 0073 (those customers sign in once more).
 
 ### Endpoints (all under `/api/auth`)
 
@@ -92,9 +109,10 @@ re-registering the URLs there.
 |---|---|---|---|
 | `/api/auth/shopify/login` | GET | signed state + origin-allowlisted `return_url` | mint PKCE/state, store pending, 302 to Shopify |
 | `/api/auth/shopify/callback` | GET | signed state + single-use pending | exchange code, verify id_token, merge, store tokens, 302 back |
+| `/api/auth/link` | POST | origin allowlist + `x-ms-chat-key`, rate limit | redeem the one-time code for this `x-ms-session` → writes the signed-in link + attaches the session's chats (`200 { ok, signedIn }`; `400` unknown/expired/used/other session) |
 | `/api/auth/me` | GET | origin allowlist + `x-ms-chat-key` | identity re-hydration (`{ name, tier }`), fail-closed |
 | `/api/auth/shopify/logout` | GET | top-level navigation + return-url allowlist | server-INITIATE logout: build the OIDC `end_session` redirect from discovery, 302 to Shopify |
-| `/api/auth/shopify/logout/return` | GET | top-level navigation | drop tokens for the session, 302 back to storefront `?ms_auth=logged_out` |
+| `/api/auth/shopify/logout/return` | GET | top-level navigation | drop the customer's tokens and signed-in links (every `customer_account` link of the customer — the tokens are per customer — and this session's link), 302 back to storefront `?ms_auth=logged_out` |
 
 `login`, `callback`, `logout`, and `logout/return` are **top-level navigations**
 (like the email-clicked confirm/unsubscribe routes) — no CORS/secret guard. The
@@ -223,10 +241,11 @@ Implemented as a pure decision (`lib/customer-merge.mjs::decideMerge`, unit-test
    `customer_merge_conflicts` for **admin review** (consent provenance must stay
    auditable). We never overwrite the consent-anchored email on a mismatch.
 
-`linkCustomerOnEmailCapture` (tier 2) and `bindShopifyIdentity` (tier 3) are the
-two entry points of the generalised "identity bind"; both never weaken an
-existing tier (`GREATEST(identity_tier, …)`) and both persist the session →
-customer link **two** ways:
+`linkCustomerOnEmailCapture` (tier 2) and the sign-in (tier 3:
+`bindShopifyIdentity` for the customer row, then `redeemLinkGrant` for the
+session, 0073) are the two entry points of the generalised "identity bind"; both
+never weaken an existing tier (`GREATEST(identity_tier, …)`) and both persist the
+session → customer link **two** ways:
 
 1. a **direct** row in `customer_session_links` (`session_id` PK → `customer_id`,
    migration `0019`) — this is the **authoritative re-hydration link**, and
@@ -260,12 +279,21 @@ obtaining a **valid access token** (refreshing if needed) before reporting
 `signedIn: true`. Everything fails closed — a blank/unlinked session, or one
 linked only to a tier-1/2 customer (no `shopify_customer_id`), resolves to null.
 
-A successful round-trip: login (`?session={sid}`) → callback binds + writes
-`customer_session_links[sid]` → callback 302s back to `return_url` **with
-`?ms_auth=ok`** → widget reads/strips it and probes `/api/auth/me?session={sid}`
-→ `{ signedIn: true, identity: { name, tier: 3 } }`. The `sid` is **identical**
-at every hop (the widget's stable localStorage id — `?session=` on login,
-`x-ms-session`/`?session=` on `/api/auth/me`); the backend never mints its own.
+A successful round-trip: login (`?session={sid}`) → callback binds the customer
+and mints a code for `sid` → 302 back to `return_url` **with
+`?ms_auth=ok&ms_code={code}`** → widget reads/strips both, `POST /api/auth/link
+{ code }` with `x-ms-session: {sid}` writes `customer_session_links[sid]` → widget
+probes `/api/auth/me?session={sid}` → `{ signedIn: true, identity: { name, tier:
+3 } }`. The `sid` is **identical** at every hop (the widget's stable localStorage
+id — `?session=` on login, `x-ms-session` on the redeem, `x-ms-session`/`?session=`
+on `/api/auth/me`); the backend never mints its own.
+
+**Sign-out ends the links.** `logout/return` deletes the tokens and every
+`customer_account` link of the customer (the tokens are per customer, so another
+device's session would otherwise come back to life with the next sign-in
+anywhere) plus the session's own link; a revoked token seen by `/api/auth/me`
+does the same. A signed App Proxy request for a logged-out shop session deletes
+that session's `app_proxy` link.
 
 ## 5. Schema (migration `0014_customer_accounts.sql`)
 
@@ -319,8 +347,12 @@ switch to confidential), and (3) probes `prompt=none` (logged-out → expects
 5. **Sign in:** open
    `https://<PUBLIC_BASE_URL>/api/auth/shopify/login?session=<any-session-id>&return_url=https://www.motionsports.de/`
    in a browser, complete the Shopify login, and confirm the redirect lands on
-   `…?ms_auth=ok`.
-6. **Re-hydrate:** `GET https://<PUBLIC_BASE_URL>/api/auth/me?session=<same-id>`
+   `…?ms_auth=ok&ms_code=<code>`.
+6. **Link:** `POST https://<PUBLIC_BASE_URL>/api/auth/link` with `{ "code": "<code>" }`,
+   `Origin: https://www.motionsports.de`, `x-ms-chat-key: <secret>` and
+   `x-ms-session: <same-id>` → `{ "ok": true, "signedIn": true }` (any other session
+   id → `400`, and the code is used up).
+7. **Re-hydrate:** `GET https://<PUBLIC_BASE_URL>/api/auth/me?session=<same-id>`
    with `Origin: https://www.motionsports.de` + `x-ms-chat-key: <secret>` →
    expect `{ "signedIn": true, "identity": { "name": "…", "tier": 3 } }`.
 

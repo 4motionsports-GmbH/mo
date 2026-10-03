@@ -1,7 +1,7 @@
 # Rechtsdossier „Mo“ — KI-Verkaufsberater auf motionsports.de
 
 **Zweck:** Vollständige, aktuelle Beschreibung des Systems für die externe anwaltliche Prüfung (Datenschutz, Wettbewerbs-/Lauterkeitsrecht, KI-Regulierung, Verbraucherrecht) — als Grundlage für Ihr Feedback und Ihre Handlungsempfehlungen.
-**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstelle in der Anmelde-Zuordnung (§ 15, F-31).
+**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34).
 **Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`archive/LEGAL_READINESS_REPORT.md`](./archive/LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
 **Verantwortlicher:** motion sports [genaue Firmierung, Anschrift, Geschäftsführung, ggf. DSB — vom Mandanten zu ergänzen]. Betrieben wird der Onlineshop motionsports.de (Shopify) für Sport- und Fitnessgeräte (B2C, Studios/Physiotherapie, öffentliche Auftraggeber).
 
@@ -370,6 +370,24 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 ### 15.2 Prüfbitte
 
 - **F-31 — Meldepflicht (Art. 33/34 DSGVO):** Bitte bewerten Sie anhand des Prüfergebnisses, ob eine Verletzung des Schutzes personenbezogener Daten vorliegt, die der Aufsichtsbehörde binnen 72 Stunden zu melden bzw. den Betroffenen mitzuteilen ist, und wie der Vorgang zu dokumentieren ist (Art. 33 (5)).
+
+### 15.3 Zweite Schwachstelle derselben Art (behoben am selben Tag)
+
+- **Was möglich war.** Bei der Prüfung des Bestellstatus im Chat (§ 16) fiel eine zweite Lücke in der Anmelde-Zuordnung auf. Die Anmeldung über „Anmelden“ im Chat übernahm die Kennung der Chat-Sitzung **aus dem Link**, mit dem die Anmeldung startete. Diese Kennung kann jeder in einen Link schreiben.
+  - Ablauf eines Angriffs: Jemand schickt einer im Shop angemeldeten Kundin einen vorbereiteten Link mit **seiner eigenen** Sitzungskennung. Öffnet sie ihn, meldet Shopify sie ohne sichtbaren Schritt an („stille Anmeldung“), und die Anmeldung wird der Sitzung des Angreifers zugeordnet.
+  - Folge: Der Angreifer hätte in seiner Chat-Sitzung die Kontofunktionen der Kundin gehabt: Gesprächsliste und -inhalte, Datenexport, Selbst-Löschung, Chat-Gedächtnis.
+  - Dasselbe galt für die Erkennung über den Shop (App Proxy). Diese ist im Shop aber nicht eingerichtet (Stand 02.10.2026).
+- **Behebung (03.10.2026, Migration 0073).**
+  - Eine Anmeldung erzeugt nur noch einen **Einmal-Code**. Er ist 10 Minuten gültig, nur einmal verwendbar und als Prüfsumme gespeichert. Er gelangt nur in den Browser, in dem die Anmeldung stattfand.
+  - Erst wenn das Chat-Fenster **dieses Browsers** den Code mit seiner eigenen Sitzungskennung einlöst, wird die Sitzung als angemeldet verknüpft, und nur, wenn es dieselbe Sitzung ist, für die die Anmeldung gestartet wurde.
+  - Bestehende Anmeldungen wurden ungültig.
+  - Abmelden beendet jetzt alle Chat-Anmeldungen der Person, nicht nur die Tokens. Vorher blieb auf einem gemeinsam genutzten Rechner eine abgemeldete Sitzung verknüpft und wurde mit der nächsten Anmeldung der Person auf einem anderen Gerät wieder gültig.
+- **Folge für den Betrieb.** „Anmelden“ im Chat wirkt erst wieder, wenn das Chat-Fenster (Frontend) den Code einlöst. Bis dahin bleiben Anmelde-Funktionen aus. Es wird nichts falsch zugeordnet.
+- **Prüfung auf Ausnutzung.** Dieselbe Zählung wie in 15.1. Zusätzlich: Anmeldungen, deren Sitzung danach Exporte oder Löschungen auslöste, ohne dass in dieser Sitzung ein Chat stattfand. Ergebnis: [vom Mandanten nach der Prüfung einzutragen].
+
+### 15.4 Prüfbitte
+
+- **F-34 — Meldepflicht für die zweite Lücke (Art. 33/34 DSGVO):** Bitte bewerten Sie diese Lücke wie F-31. Hier war für eine Ausnutzung eine gezielte Täuschung nötig: Die Betroffene musste einen präparierten Link öffnen und im Shop angemeldet sein. Bitte bewerten Sie auch, ob beide Vorgänge gemeinsam zu dokumentieren sind (Art. 33 (5)).
 
 ---
 
