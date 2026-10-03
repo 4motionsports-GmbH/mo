@@ -387,7 +387,7 @@ the item (`erledigt`, decision `beantwortet`).
 | `antwort_offen` | E-Mail beantworten (every incoming mail of a known customer, see above) | Jetzt | — |
 | `nicht_zugeordnet` | E-Mail nicht zugeordnet (registered; unassigned mail is currently shown in its own block, not as items) | Jetzt | — |
 | `kaufabsicht` | Kaufabsicht ohne Kauf | Jetzt | yes |
-| `unzufrieden` | Unzufriedenheit (a cancellation, or a refund of at least 10 % of the order value, in the last 14 days — dated by the refund itself, `customer_orders.last_refund_at`, not by the order's last change) | Jetzt | — |
+| `unzufrieden` | Unzufriedenheit (a cancellation, or a refund of at least 10 % of the order value, in the last 14 days — dated by the cancellation or the refund itself, `customer_orders.last_refund_at`, never by the order's last change; a cancelled order is one case, its later refund raises nothing new; „vollständig erstattet“ from Shopify's financial status) | Jetzt | — |
 | `angebot_laeuft_ab` | Angebot läuft ab | Diese Woche | yes |
 | `klick_ohne_kauf` | Geklickt, nicht gekauft | Diese Woche | yes |
 | `zubehoer_fenster` | Zubehör-Fenster | Diese Woche | yes |

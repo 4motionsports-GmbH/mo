@@ -61,7 +61,11 @@ service reply, never advertising) and sends from the Eingang (`inbox-mail.ts`,
 `0070_order_refund_date` adds `customer_orders.last_refund_at` (the newest refund that moved
 money, from the webhook's `refunds[]` and GraphQL `refunds { createdAt totalRefundedSet }`); the
 rule uses it instead of the order's last change and ignores refunds below 10 % of the order
-value. Cancellations count as before.
+value (the column only takes such notable refunds, so a small follow-up never re-dates a case).
+Cancellations count as before; a cancelled order's later refund raises nothing new. Because
+existing orders had no refund date, the reconcile re-reads the last 15 days of orders once and
+then reopens the „Unzufriedenheit“ items the hourly job closed meanwhile; a reconcile whose
+writes fail now stays incomplete instead of moving its floor.
 
 **Not built:** the Verbesserung lane „Marketing“ (offers, segments, triggers as proposals) — it
 needs a proposal type that is not a prompt directive; letters as a campaign channel (batch letters
