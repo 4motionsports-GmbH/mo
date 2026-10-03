@@ -123,17 +123,25 @@ export function withParams(urlStr, params) {
  * widget reads + strips it, then probes /api/auth/me — so a missing or wrong
  * marker means it never re-probes and never flips to signed-in.
  *
+ * With `code` (a successful sign-in, migration 0073) it also carries
+ * `?ms_code=<one-time code>`: the widget redeems it at POST /api/auth/link with
+ * its own session — only then is the session signed in. A stale ms_code from
+ * an earlier round is always removed.
+ *
  * Returns the URL unchanged when it can't be parsed (the caller has already
  * allow-listed it; this is just defensive). Never throws.
  *
  * @param {string} returnUrl
  * @param {string} marker
+ * @param {string | null} [code]
  * @returns {string}
  */
-export function withAuthMarker(returnUrl, marker) {
+export function withAuthMarker(returnUrl, marker, code = null) {
   try {
     const u = new URL(returnUrl);
     u.searchParams.set("ms_auth", marker);
+    if (code) u.searchParams.set("ms_code", code);
+    else u.searchParams.delete("ms_code");
     return u.toString();
   } catch {
     return returnUrl;

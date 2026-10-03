@@ -15,6 +15,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { resolveSignedInCustomer } from "@/lib/customer-store";
 import { getValidAccessToken, deleteCustomerTokens } from "@/lib/customer-oauth-store";
+import { signOutSessionLinks } from "@/lib/session-link-grants";
 import { fetchCustomerIdentity } from "@/lib/shopify-customer-account";
 import { isRevokedTokenError } from "@/lib/customer-account-oauth.mjs";
 import { fetchAdminCustomerById } from "@/lib/shopify-orders";
@@ -68,6 +69,7 @@ export async function GET(req: Request) {
       // through to the Admin-API name fallback, which would mask the logout.
       if (isRevokedTokenError(err)) {
         await deleteCustomerTokens(resolved.customerId);
+        await signOutSessionLinks({ customerId: resolved.customerId, sessionId: sessionId ?? null });
         return json({ signedIn: false }, headers);
       }
       // Any other error (transient 5xx / network / CA schema drift): the token

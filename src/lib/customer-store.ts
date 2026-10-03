@@ -406,13 +406,14 @@ export interface BindShopifyIdentityInput {
   email: string | null;
   /** Optional id_token subject, recorded on the token row for cross-check. */
   idTokenSub?: string | null;
-  /** Widget thread to attach to this identity. */
-  sessionId: string | null;
   /**
-   * The proof behind this sign-in, recorded on the session link (migration
-   * 0071): the Customer Account OAuth callback or the shop's App Proxy.
+   * The widget session that started the sign-in — recorded on a merge
+   * conflict for the audit only. The bind never links it: the session is
+   * linked when that widget redeems the one-time code
+   * (session-link-grants.ts, migration 0073), because the session id came
+   * from a URL anyone could have prepared.
    */
-  linkKind: "customer_account" | "app_proxy";
+  sessionId: string | null;
 }
 
 export interface BindShopifyIdentityResult {
@@ -491,28 +492,9 @@ async function bindShopifyIdentityOnce(
     `;
   }
 
-  // Attach the current conversation to this identity (the generalised
-  // "identity bind" — same bridge linkCustomerOnEmailCapture uses).
-  //
-  // MATCH-UP (current-anonymous-session → signed-in): this attaches ONLY the
-  // chat that led to sign-in — the session in the signed `state`/pending
-  // record — by matching `session_id = THIS session`. It deliberately NEVER
-  // scoops other anonymous threads retroactively: a different browser/session
-  // id simply doesn't match, so its conversations stay pseudonymous.
-  if (sessionId) {
-    await sql`
-      UPDATE conversations SET customer_id = ${customerId} WHERE session_id = ${sessionId}
-    `;
-    // THE re-hydration link. The conversation attach above only fires when a
-    // chat row already exists for this session — which it often does NOT at
-    // sign-in (the prompt=none silent check / "Anmelden" before any message).
-    // Persisting the DIRECT session → customer link here (migration 0019) is
-    // what lets /api/auth/me and /api/account/* resolve this session back to
-    // the signed-in customer regardless of whether a conversation exists yet.
-    // The link records the sign-in proof (0071) — only such links count as
-    // signed in; a typed e-mail link never does.
-    await linkSessionToCustomer(sql, sessionId, customerId, input.linkKind);
-  }
+  // No session link and no conversation attach here: both happen when the
+  // widget that started the sign-in redeems its one-time code
+  // (customer-link-grant.redeemLinkGrant) — see BindShopifyIdentityInput.
 
   // Record the id_token subject on the token row later (saveCustomerTokens);
   // here we only persist identity. Conflicts are audit-logged.

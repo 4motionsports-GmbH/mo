@@ -83,6 +83,7 @@ test("evaluateAppProxyAuth: signed but logged OUT (empty id) → not_logged_in (
   assert.deepEqual(evaluateAppProxyAuth(signed, SECRET), {
     ok: false,
     reason: "not_logged_in",
+    sessionId: "sess-widget-1",
   });
 });
 
@@ -99,6 +100,7 @@ test("evaluateAppProxyAuth: a non-numeric (forged) id is rejected even if signed
   assert.deepEqual(evaluateAppProxyAuth(signed, SECRET), {
     ok: false,
     reason: "not_logged_in",
+    sessionId: null,
   });
 });
 
@@ -107,5 +109,6 @@ test("evaluateAppProxyAuth: a non-positive id (\"0\") is rejected — never bind
   assert.deepEqual(evaluateAppProxyAuth(signed, SECRET), {
     ok: false,
     reason: "not_logged_in",
+    sessionId: null,
   });
 });
