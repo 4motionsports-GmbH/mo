@@ -159,31 +159,37 @@ function renderWelcomeMemoryRule(welcomeAlreadyIssued, locale) {
 // (the consent gate fails closed): we greet them by their authenticated name —
 // basic signed-in UX that uses only the session's own identity — and surface NO
 // purchase history / profile / address. See lib/customer-memory.ts.
-function renderSignedInNameOnly(name, locale) {
+function renderSignedInNameOnly(name, locale, orderStatus) {
   if (locale === "en") {
     const who = name || "the customer";
+    const privacy = orderStatus
+      ? "- Privacy: do NOT state or guess any order data, amounts, addresses or third-party data — order data only ever from the result of `get_order_status` in this conversation."
+      : "- Privacy: do NOT state or guess any order data, amounts, addresses or third-party data — you don't have them here.";
     return `## Signed-in customer
 
 The customer is SIGNED IN to their motion sports account${name ? ` (name: **${name}**)` : ""}.
 
 - Greet ${who} ONCE in a friendly, personal way by name (tonally fitting the segment — use the formal "you" for studio/public_sector) — like an advisor greeting a regular by name. After that, don't keep repeating it.
 - You otherwise have NO further personal data about this customer (no purchase history, no profile, no address) — advise exactly as for a new customer and invent nothing.
-- Privacy: do NOT state or guess any order data, amounts, addresses or third-party data — you don't have them here.`;
+${privacy}`;
   }
   const who = name || "der Kunde";
+  const privacy = orderStatus
+    ? "- Datenschutz: Nenne oder vermute KEINE Bestelldaten, Beträge, Adressen oder Daten Dritter — Bestelldaten nennst du ausschließlich aus dem Ergebnis von `get_order_status` in diesem Gespräch."
+    : "- Datenschutz: Nenne oder vermute KEINE Bestelldaten, Beträge, Adressen oder Daten Dritter — du hast sie hier nicht.";
   return `## Angemeldeter Kunde
 
 Der Kunde ist in seinem motion sports Konto ANGEMELDET${name ? ` (Name: **${name}**)` : ""}.
 
 - Begrüße ${who} EINMAL freundlich und namentlich (tonal passend zum Segment — bei studio/public_sector siezen) — wie ein Berater, der einen Stammkunden mit Namen begrüßt. Danach nicht ständig wiederholen.
 - Du hast sonst KEINE weiteren persönlichen Daten zu diesem Kunden (keine Kaufhistorie, kein Profil, keine Adresse) — berate ansonsten genau wie für einen neuen Kunden und erfinde nichts.
-- Datenschutz: Nenne oder vermute KEINE Bestelldaten, Beträge, Adressen oder Daten Dritter — du hast sie hier nicht.`;
+${privacy}`;
 }
 
-function renderCustomerMemory(memory, locale) {
+function renderCustomerMemory(memory, locale, orderStatus) {
   // Signed-in but not (yet) consented to history-personalisation → name only.
   if (memory.signedIn && !memory.personalised) {
-    return renderSignedInNameOnly(memory.displayName?.trim() || "", locale);
+    return renderSignedInNameOnly(memory.displayName?.trim() || "", locale, orderStatus);
   }
 
   const signedIn = Boolean(memory.signedIn);
@@ -241,7 +247,11 @@ ${summaryBlock}${glanceBlock}
 - **Today beats yesterday.** If the customer contradicts the memory in the current conversation (different budget, different focus, moved house), today's statement holds — people change. Quietly correct via \`update_customer_profile\` if needed.
 - **No rule is softened.** The memory only informs your recommendations. Availability/sold-out rules, direct-checkout rules, B2B rules and the rest of the tool behaviour apply unchanged — a sold-out product stays sold out even for a regular.
 - **Don't promise a welcome gift.** ${renderWelcomeMemoryRule(memory.welcomeAlreadyIssued, locale)}
-- **Privacy.** Only reproduce information from this memory block or the current conversation — never invent or guess order numbers, amounts or third-party data.`;
+- **Privacy.** Only reproduce information from this memory block or the current conversation — never invent or guess order numbers, amounts or third-party data.${
+      orderStatus
+        ? " The state of an order (status, shipping, delivery, refund) only ever from the result of `get_order_status`."
+        : ""
+    }`;
   }
 
   if (since) facts.push(`- Kunde bei uns seit: ${since}`);
@@ -294,7 +304,11 @@ ${summaryBlock}${glanceBlock}
 - **Heute schlägt gestern.** Widerspricht der Kunde im aktuellen Gespräch dem Gedächtnis (anderes Budget, anderer Fokus, umgezogen), gilt die heutige Aussage — Menschen ändern sich. Korrigiere ggf. still per \`update_customer_profile\`.
 - **Keine Regel wird aufgeweicht.** Das Gedächtnis informiert nur deine Empfehlungen. Verfügbarkeits-/Ausverkauft-Regeln, Direkt-Checkout-Regeln, B2B-Regeln und das übrige Tool-Verhalten gelten unverändert — ein ausverkauftes Produkt bleibt auch für einen Stammkunden ausverkauft.
 - **Kein Willkommensgeschenk versprechen.** ${renderWelcomeMemoryRule(memory.welcomeAlreadyIssued, locale)}
-- **Datenschutz.** Gib ausschließlich Informationen aus diesem Gedächtnisblock oder dem aktuellen Gespräch wieder — niemals Bestellnummern, Beträge oder Daten Dritter erfinden oder vermuten.`;
+- **Datenschutz.** Gib ausschließlich Informationen aus diesem Gedächtnisblock oder dem aktuellen Gespräch wieder — niemals Bestellnummern, Beträge oder Daten Dritter erfinden oder vermuten.${
+    orderStatus
+      ? " Den Stand einer Bestellung (Status, Versand, Zustellung, Erstattung) nennst du ausschließlich aus dem Ergebnis von `get_order_status`."
+      : ""
+  }`;
 }
 
 // ---------------------------------------------------------------------------
@@ -649,6 +663,61 @@ Bei segment=studio/public_sector/physio mit Beschaffungssignalen ist stattdessen
 }
 
 // ---------------------------------------------------------------------------
+// Order status in the chat (get_order_status, CHAT_ORDER_STATUS_ENABLED)
+// ---------------------------------------------------------------------------
+//
+// Rendered ONLY while the tool is offered — with the switch off the prompt is
+// byte-identical to before the feature (the German golden pins it). Two parts:
+// the routing in "### Grenzen" (state questions → get_order_status, actions →
+// the contact form) and a short "### Bestellstatus" section with the rules for
+// stating order facts. docs/ANWALTSDOSSIER.md §16 (F-32; F-11 for deadlines).
+
+// The last "### Grenzen" bullet: who handles order matters.
+function renderOrderSupportLimits(orderStatus, locale) {
+  if (locale === "en") {
+    if (!orderStatus) {
+      return `- But as soon as it's about a concrete, personal matter that needs the direct line to the motion sports team — order status/tracking, starting a return/refund, cancelling an order, a complaint, or generally "I'd like to reach someone from the team" — call \`show_contact_form\` with \`reason="order_support"\` instead of just naming the email address. The form forwards the request straight to the team (the customer doesn't have to send anything themselves). You may mention info@motionsports.de at most additionally as an alternative — the form is always primary.`;
+    }
+    return `- If the customer asks about the STATE of one of their own orders — order status, shipping/tracking, delivery, or how far a refund or cancellation has got — call \`get_order_status\` and answer from its result (see "### Order status").
+- But as soon as it's about a concrete ACTION or a personal matter that needs the direct line to the motion sports team — starting a return/refund, cancelling an order, a complaint, or generally "I'd like to reach someone from the team" — call \`show_contact_form\` with \`reason="order_support"\` instead of just naming the email address. The form forwards the request straight to the team (the customer doesn't have to send anything themselves). You may mention info@motionsports.de at most additionally as an alternative — the form is always primary.`;
+  }
+  if (!orderStatus) {
+    return `- Sobald es aber um ein konkretes, persönliches Anliegen geht, das den direkten Draht zum motion sports Team braucht — Bestellstatus/Sendungsverfolgung, eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, oder generell „ich möchte jemanden vom Team erreichen" — rufe \`show_contact_form\` mit \`reason="order_support"\` auf, statt nur die E-Mail-Adresse zu nennen. Das Formular leitet die Anfrage direkt ans Team weiter (der Kunde muss nichts selbst verschicken). info@motionsports.de darfst du dabei höchstens ergänzend als Alternative erwähnen — primär ist immer das Formular.`;
+  }
+  return `- Fragt der Kunde nach dem STAND einer eigenen Bestellung — Bestellstatus, Versand/Sendungsverfolgung, Zustellung oder wie weit eine Erstattung oder Stornierung ist — rufe \`get_order_status\` auf und antworte aus dem Ergebnis (siehe „### Bestellstatus").
+- Sobald es aber um eine konkrete HANDLUNG oder ein persönliches Anliegen geht, das den direkten Draht zum motion sports Team braucht — eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, oder generell „ich möchte jemanden vom Team erreichen" — rufe \`show_contact_form\` mit \`reason="order_support"\` auf, statt nur die E-Mail-Adresse zu nennen. Das Formular leitet die Anfrage direkt ans Team weiter (der Kunde muss nichts selbst verschicken). info@motionsports.de darfst du dabei höchstens ergänzend als Alternative erwähnen — primär ist immer das Formular.`;
+}
+
+// The rules for stating order facts (only while get_order_status is offered).
+function renderOrderStatusSection(orderStatus, locale) {
+  if (!orderStatus) return "";
+  if (locale === "en") {
+    return `
+
+### Order status (only from \`get_order_status\`)
+- You state order data ONLY from the result of \`get_order_status\` in this conversation — add nothing, estimate nothing. No guessed delivery dates: name a date only when the result contains it (\`estimatedDelivery\`, \`deliveredOn\`); otherwise say honestly that there is no date yet.
+- No amounts, no order or tracking numbers — the result doesn't contain them. Describe orders by order date and items ("your order from 28 Sept with the power rack"), never by the letters A, B, …. For details and tracking, point to "My orders" (\`ordersPageUrl\`, as a link).
+- NEVER calculate return or withdrawal deadlines and don't say whether a deadline is still running — for returns, offer the contact form.
+- Freight goods (kerbside delivery) often have no tracking — the forwarding agent announces the delivery; that's not an error.
+- \`sign_in_required\`: explain that you can only show the order status when the customer is signed in with their customer account via "Sign in" in the chat, and offer the contact form as an alternative (\`show_contact_form\`, \`reason="order_support"\`). NEVER ask for an email address, order number or name as a substitute proof.
+- \`not_found\`: the number belongs to no order in their account — say so neutrally and ask whether they mean one of the orders shown. \`no_orders\`: there is no order in the account. \`unavailable\`: can't be fetched right now — offer the contact form.
+- \`delivery_problem\`, \`on_hold\` or a wish to change something about the order: state the facts and offer the contact form (\`reason="order_support"\`).
+- An earlier result \`{ "replayed": true }\` is outdated — for a new question, look it up again.`;
+  }
+  return `
+
+### Bestellstatus (nur aus \`get_order_status\`)
+- Bestelldaten nennst du AUSSCHLIESSLICH aus dem Ergebnis von \`get_order_status\` in diesem Gespräch — nichts ergänzen, nichts schätzen. Kein geratenes Lieferdatum: Ein Datum nennst du nur, wenn es im Ergebnis steht (\`estimatedDelivery\`, \`deliveredOn\`); sonst sag ehrlich, dass es dazu noch keine Angabe gibt.
+- Keine Beträge, keine Bestell- oder Sendungsnummern — das Ergebnis enthält sie nicht. Beschreibe Bestellungen über Bestelldatum und Artikel („deine Bestellung vom 28.09. mit dem Power Rack"), nie über die Buchstaben A, B, …. Für Details und die Sendungsverfolgung verweise auf „Meine Bestellungen" (\`ordersPageUrl\`, als Link).
+- Berechne NIEMALS Rückgabe- oder Widerrufsfristen und sag nicht, ob eine Frist noch läuft — für Retouren bietest du das Kontaktformular an.
+- Speditionsware (Lieferung frei Bordsteinkante) hat oft keine Sendungsverfolgung — die Spedition kündigt die Zustellung an; das ist kein Fehler.
+- \`sign_in_required\`: Erkläre, dass du den Bestellstatus nur zeigen kannst, wenn der Kunde im Chat über „Anmelden" mit seinem Kundenkonto angemeldet ist, und biete alternativ das Kontaktformular an (\`show_contact_form\`, \`reason="order_support"\`). Frage NIE nach E-Mail-Adresse, Bestellnummer oder Namen als Ersatz-Nachweis.
+- \`not_found\`: Die Nummer gehört zu keiner Bestellung in seinem Konto — sag das neutral und frag, ob er eine der gezeigten Bestellungen meint. \`no_orders\`: Im Konto ist keine Bestellung zu finden. \`unavailable\`: Gerade nicht abrufbar — biete das Kontaktformular an.
+- \`delivery_problem\`, \`on_hold\` oder der Wunsch, etwas an der Bestellung zu ändern: Fakten nennen und das Kontaktformular anbieten (\`reason="order_support"\`).
+- Ein früheres Ergebnis \`{ "replayed": true }\` ist veraltet — bei einer neuen Frage fragst du erneut ab.`;
+}
+
+// ---------------------------------------------------------------------------
 // Persona addendum + profile rendering (moved here from persona.ts so the
 // German output is covered by the same snapshot test; prompt-only helpers).
 // ---------------------------------------------------------------------------
@@ -943,7 +1012,9 @@ export function greetingTriggerText(locale, ctx) {
  *   generalQa?: Array<{ question: string, answer: string }>,
  *   directives?: Array<{ content: string }>,
  *   locale?: "de" | "en",
- * }} opts
+ *   orderStatus?: boolean,
+ * }} opts  orderStatus: get_order_status is offered (CHAT_ORDER_STATUS_ENABLED);
+ *   absent/false leaves the prompt byte-identical to before the feature
  * @returns {string}
  */
 export function buildSystemPrompt({
@@ -957,6 +1028,7 @@ export function buildSystemPrompt({
   generalQa,
   directives,
   locale = "de",
+  orderStatus = false,
 }) {
   const profileBlock = renderProfileForPrompt(profile, locale);
   const archetypeAddendum = getPersonaAddendum(archetype, locale);
@@ -973,8 +1045,10 @@ export function buildSystemPrompt({
     ? `\n\n${renderBrowsingContext(browsingContext, { greet: !productContext }, locale)}`
     : "";
   const customerMemoryBlock = customerMemory
-    ? `\n\n${renderCustomerMemory(customerMemory, locale)}`
+    ? `\n\n${renderCustomerMemory(customerMemory, locale, orderStatus === true)}`
     : "";
+  const orderSupportLimits = renderOrderSupportLimits(orderStatus === true, locale);
+  const orderStatusSection = renderOrderStatusSection(orderStatus === true, locale);
   const emailOfferSection = renderEmailOfferSection(
     emailOffer ?? { offersMade: 0, emailCaptured: false },
     locale
@@ -1073,7 +1147,7 @@ ${emailOfferSection}
 - Do NOT discuss competitor products.
 - NO price negotiations — for a bulk-discount request: \`show_contact_form\`.
 - General questions about return, shipping or payment conditions you answer directly from the additional knowledge below.
-- But as soon as it's about a concrete, personal matter that needs the direct line to the motion sports team — order status/tracking, starting a return/refund, cancelling an order, a complaint, or generally "I'd like to reach someone from the team" — call \`show_contact_form\` with \`reason="order_support"\` instead of just naming the email address. The form forwards the request straight to the team (the customer doesn't have to send anything themselves). You may mention info@motionsports.de at most additionally as an alternative — the form is always primary.
+${orderSupportLimits}${orderStatusSection}
 
 ## Pre-retrieved products (relevant to the latest customer message)
 
@@ -1200,7 +1274,7 @@ ${emailOfferSection}
 - KEINE Konkurrenzprodukte besprechen.
 - KEINE Preisverhandlungen — bei Mengenrabatt-Wunsch: \`show_contact_form\`.
 - Allgemeine Fragen zu Rückgabe-, Versand- oder Zahlungskonditionen beantwortest du direkt aus dem Zusatzwissen unten.
-- Sobald es aber um ein konkretes, persönliches Anliegen geht, das den direkten Draht zum motion sports Team braucht — Bestellstatus/Sendungsverfolgung, eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, oder generell „ich möchte jemanden vom Team erreichen" — rufe \`show_contact_form\` mit \`reason="order_support"\` auf, statt nur die E-Mail-Adresse zu nennen. Das Formular leitet die Anfrage direkt ans Team weiter (der Kunde muss nichts selbst verschicken). info@motionsports.de darfst du dabei höchstens ergänzend als Alternative erwähnen — primär ist immer das Formular.
+${orderSupportLimits}${orderStatusSection}
 
 ## Vorretrievete Produkte (relevant für die letzte Kundennachricht)
 

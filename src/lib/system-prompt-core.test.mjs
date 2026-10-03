@@ -394,3 +394,104 @@ test("customer memory shows the structured profile 'at a glance' when present", 
   const none = buildSystemPrompt({ ...base, customerMemory: { ...memory, profileData: null } });
   assert.doesNotMatch(none, /Profil auf einen Blick/);
 });
+
+// ---------------------------------------------------------------------------
+// Order status in the chat (get_order_status, CHAT_ORDER_STATUS_ENABLED)
+// ---------------------------------------------------------------------------
+
+const nameOnlyMemory = () => ({
+  signedIn: true,
+  personalised: false,
+  displayName: "Max",
+  firstSeenAt: null,
+  priorConversationCount: 0,
+  ownedItems: [],
+  lastPurchaseAt: null,
+  addressContext: null,
+  profileSummary: null,
+  welcomeAlreadyIssued: false,
+});
+
+const fullMemory = () => ({ ...nameOnlyMemory(), personalised: true, ownedItems: ["Power Rack"] });
+
+test("order status off (default / false): no get_order_status anywhere, prompt unchanged", () => {
+  for (const locale of ["de", "en"]) {
+    for (const customerMemory of [undefined, nameOnlyMemory(), fullMemory()]) {
+      const base = { profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], customerMemory, locale };
+      const off = buildSystemPrompt(base);
+      assert.equal(buildSystemPrompt({ ...base, orderStatus: false }), off);
+      assert.doesNotMatch(off, /get_order_status/);
+    }
+  }
+  // The name-only privacy line keeps its pre-feature wording.
+  const de = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    customerMemory: nameOnlyMemory(),
+  });
+  assert.match(de, /Daten Dritter — du hast sie hier nicht\./);
+  assert.match(de, /Bestellstatus\/Sendungsverfolgung, eine Retoure\/Rückgabe oder Erstattung anstoßen/);
+});
+
+test("order status on (DE): state questions → get_order_status, actions → contact form, rules section", () => {
+  const de = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    customerMemory: nameOnlyMemory(),
+    orderStatus: true,
+  });
+  // Routing split.
+  assert.match(de, /Fragt der Kunde nach dem STAND einer eigenen Bestellung[^\n]*rufe `get_order_status` auf/);
+  assert.match(
+    de,
+    /konkrete HANDLUNG[^\n]*eine Retoure\/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation[^\n]*`show_contact_form` mit `reason="order_support"`/
+  );
+  assert.doesNotMatch(de, /Bestellstatus\/Sendungsverfolgung, eine Retoure/);
+  // Privacy exception: order data only from the tool.
+  assert.match(de, /Bestelldaten nennst du ausschließlich aus dem Ergebnis von `get_order_status`/);
+  assert.doesNotMatch(de, /du hast sie hier nicht/);
+  // The rules section.
+  assert.match(de, /### Bestellstatus \(nur aus `get_order_status`\)/);
+  assert.match(de, /Kein geratenes Lieferdatum/);
+  assert.match(de, /Berechne NIEMALS Rückgabe- oder Widerrufsfristen/);
+  assert.match(de, /Keine Beträge, keine Bestell- oder Sendungsnummern/);
+  assert.match(de, /Speditionsware[^\n]*keine Sendungsverfolgung/);
+  assert.match(de, /`sign_in_required`: Erkläre[^\n]*„Anmelden"[^\n]*Kontaktformular/);
+  assert.match(de, /`\{ "replayed": true \}` ist veraltet/);
+  // The section closes "### Grenzen", before the product block.
+  assert.ok(de.indexOf("### Grenzen") < de.indexOf("### Bestellstatus"));
+  assert.ok(de.indexOf("### Bestellstatus") < de.indexOf("## Vorretrievete Produkte"));
+});
+
+test("order status on (EN) mirrors the German rules; full memory gets the exception too", () => {
+  const en = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    customerMemory: fullMemory(),
+    orderStatus: true,
+    locale: "en",
+  });
+  assert.match(en, /asks about the STATE of one of their own orders[^\n]*call `get_order_status`/);
+  assert.match(en, /concrete ACTION[^\n]*`show_contact_form` with `reason="order_support"`/);
+  assert.match(en, /### Order status \(only from `get_order_status`\)/);
+  assert.match(en, /NEVER calculate return or withdrawal deadlines/);
+  assert.match(
+    en,
+    /The state of an order \(status, shipping, delivery, refund\) only ever from the result of `get_order_status`\./
+  );
+  assert.doesNotMatch(en, /Bestellstatus|Anmelden/);
+  const de = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    customerMemory: fullMemory(),
+    orderStatus: true,
+  });
+  assert.match(
+    de,
+    /Den Stand einer Bestellung \(Status, Versand, Zustellung, Erstattung\) nennst du ausschließlich aus dem Ergebnis von `get_order_status`\./
+  );
+});
