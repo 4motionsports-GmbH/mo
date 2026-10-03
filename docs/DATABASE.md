@@ -167,8 +167,12 @@ conversation, and bumps `last_seen_at`) or a sign-in with the shop account
 (`bindShopifyIdentity`, see [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md)). Both
 also record the session in `customer_session_links`, with the proof behind it
 (`link_kind`: `email` for a typed address, `customer_account` / `app_proxy` for a
-sign-in in that session, `legacy` before migration 0071; only the sign-in kinds
-count as signed in). Sessions without either stay anonymous and unlinked. Multiple sessions under one person = the
+sign-in in that session, `legacy` before migration 0071 and for sign-in links
+written before 0073; only the sign-in kinds count as signed in). Since 0073 a
+sign-in writes its link only when the widget redeems the one-time code
+(`customer_link_grants`: `code_hash` (SHA-256, PK), `session_id`, `customer_id` FK
+cascade, `link_kind`, `created_at`, `expires_at` (+10 min), `consumed_at`) with the
+session the sign-in was started for; logout deletes the signed-in links. Sessions without either stay anonymous and unlinked. Multiple sessions under one person = the
 returning-customer case. The marketing consent is the one consent on
 `customers.email_consent_*` (migration 0064, shared with Shopify; history in
 `consent_events`); `email_captures` stays the audit-grade evidence for consents

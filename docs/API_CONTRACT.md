@@ -26,7 +26,8 @@ Endpoints:
 | GET/POST | `/api/erase-data`       | Mail-footer "Daten löschen" link: confirmation page (GET), erasure (POST). HTML. §11.1. |
 | GET    | `/api/r/{token}`          | Tracked mail link → 302 to cart / shop / Mo deep link. §11.2. |
 | GET    | `/api/auth/shopify/login` | Customer Account sign-in (top-level redirect). |
-| GET    | `/api/auth/shopify/callback` | OAuth callback (server-side PKCE exchange). |
+| GET    | `/api/auth/shopify/callback` | OAuth callback (server-side PKCE exchange); returns `?ms_auth=ok&ms_code=…`. |
+| POST   | `/api/auth/link`          | Completes a sign-in: redeems the one-time code (`ms_code` / whoami `linkCode`) for this `x-ms-session`. Required since 2026-10-03. |
 | GET    | `/api/auth/me`            | Signed-in identity re-hydration (`{ name, tier, marketing }`). |
 | GET    | `/api/auth/storefront`    | Shop-native already-signed-in detection via Shopify App Proxy (HMAC-signed). |
 | GET    | `/api/auth/shopify/logout/return` | Logout-return landing. |
@@ -42,7 +43,15 @@ Endpoints:
 > [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) (frontend contract:
 > `docs/frontend-handoff/CUSTOMER_ACCOUNT.md`). The `login` / `callback` /
 > `logout/return` routes are top-level navigations (signed `state`, no
-> CORS/secret); `/api/auth/me` is a guarded widget XHR. The **signed-in
+> CORS/secret); `/api/auth/me` and `/api/auth/link` are guarded widget XHRs.
+> **A sign-in links the session only when the widget redeems its one-time code**
+> (`POST /api/auth/link { code }` with its own `x-ms-session`; the code comes as
+> `?ms_code=` on the `?ms_auth=ok` return, or as `linkCode` in the App Proxy
+> whoami response; 10 minutes, single use, minted for exactly the session that
+> started the sign-in). Before 2026-10-03 the callback and whoami linked the
+> session id from their URL directly — a stranger could plant their own session
+> id in a link a logged-in shopper opened. A widget that does not redeem stays
+> signed out (fail closed). Details: `frontend-handoff/CUSTOMER_ACCOUNT.md` §2a. The **signed-in
 > conversation-history** endpoints (`/api/account/*`) are guarded widget XHRs
 > behind the CA-1 signed-in resolver (fail-closed for anonymous / email-only) —
 > see `CUSTOMER_ACCOUNT.md` §9. `/api/account/summary` (the **"Zusammenfassung

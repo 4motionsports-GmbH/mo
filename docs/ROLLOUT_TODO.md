@@ -110,6 +110,35 @@ Last updated: 2026-10-03.
     nächsten Lauf“ → within 10 minutes the mail is in „Gesendet“. Lawyer: dossier § 17 (F-33)
     → goes with 3.2.
 
+- [ ] **1.9 Security fix: a sign-in counts only for the chat that started it** — C built it
+  03.10., M runs the migration, F ships the widget step — *before the other frontend tasks*
+  - Found by the review of „order status in the chat“ (still unmerged). The chat's
+    „Anmelden“ took the chat session from the login link. A prepared link carrying a
+    stranger's session id, opened by a customer who is logged in to the shop, signed the
+    customer in silently — into the stranger's chat. That chat then had the customer's
+    history, data export, self-deletion and signed-in chat context. The App Proxy (whoami)
+    had the same flaw, but it isn't set up in the shop (1.4).
+  - Fix: migration `0073_session_link_grants`.
+    - A sign-in only yields a one-time code (10 min, single use).
+    - The chat of the same browser redeems it with its own session (`POST /api/auth/link`).
+    - Logout ends every chat sign-in of the person.
+    - Existing chat sign-ins end.
+  - **M:** right after the merge, pull main and run `npm run db:migrate` (applies `0073`).
+    Until it has run, every sign-in returns `ms_auth=error` (fail closed).
+  - **Consequence:** „Anmelden“ in the chat signs nobody in until the widget redeems the
+    code. Send F **task 7** of `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md` now (spec:
+    `frontend-handoff/CUSTOMER_ACCOUNT.md` §2a). Nothing breaks meanwhile; the account
+    features are off.
+  - **M (exposure check), Neon → SQL Editor.** Every session that signed in and then
+    exported or erased. A `silent = true` sign-in followed by an export/erasure with no chat
+    of its own is the pattern of this attack:
+    `SELECT s.session_id, min(s.created_at) AS signed_in, bool_or((s.data->>'silent')::boolean)
+    AS silent, string_agg(DISTINCT a.event, ', ') AS account_actions FROM kpi_events s JOIN
+    kpi_events a ON a.session_id = s.session_id AND a.event IN ('account_export_requested',
+    'account_erased') WHERE s.event = 'account_signin_succeeded' GROUP BY s.session_id ORDER BY 2;`
+    Send C the result. If a row looks wrong, tell L the same day (72 h, Art. 33 DSGVO).
+  - Lawyer: dossier § 15.3 (F-34) → goes with 3.2.
+
 - [ ] **1.8 „Prüfen & testen“ in the campaign editor** — C built it 03.10., nothing to switch on
   - No migration, no env var. Uses the campaign send path for the test mail, so
     `CAMPAIGN_SENDS_APPROVED` must be on (it is).
@@ -141,7 +170,8 @@ Last updated: 2026-10-03.
     opt-in and are only mailed with `CAMPAIGN_ALLOW_SINGLE_OPT_IN=true` (see 6.5).
 
 - [ ] **3.2 Lawyer dossier** — M → L
-  - Send `docs/ANWALTSDOSSIER.md` (focus §13 and §14, questions F-22 to F-30).
+  - Send `docs/ANWALTSDOSSIER.md` (focus §13 to §17, questions F-22 to F-34; F-31 and F-34
+    — the two sign-in flaws of 03.10. — are the urgent ones).
   - Mention the deadline: Black Friday is **27 Nov 2026**; the campaign send gate (6.5)
     needs the sign-off by **~18 Nov** so mails can go out from 20 Nov.
   - Done when: L has it and has given a date.
