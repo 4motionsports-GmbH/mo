@@ -12,7 +12,9 @@ const INFO = (
     <p>
       Pseudonyme Zähler (kpi_events bzw. KI-Verbrauchszeilen der Zusammenfassungen) — keine
       Personenbezüge. „Stille Erkennungen“ sind automatische Wieder-Anmeldungen bereits eingeloggter
-      Shopify-Kund:innen (<code>prompt=none</code>). Kontaktformular = akzeptierte Übermittlungen;
+      Shopify-Kund:innen (<code>prompt=none</code>). „Im Chat abgeschlossen“: seit dem 03.10.2026 zählt eine
+      Anmeldung im Chat erst, wenn das Widget den Einmal-Code einlöst; „Codes abgelehnt“ sind abgelaufene,
+      schon benutzte oder fremde Codes. Kontaktformular = akzeptierte Übermittlungen;
       vergleichbar mit den <code>show_contact_form</code>-Aufrufen im Gespräche-Tab.
     </p>
   </Explain>
@@ -22,6 +24,7 @@ export function AccountSection({ activity }: { activity: AccountActivity | null 
   const empty =
     !activity ||
     (activity.signins === 0 &&
+      activity.linkedSignins === 0 &&
       activity.exports === 0 &&
       activity.erasures === 0 &&
       activity.contactFormSubmissions === 0 &&
@@ -43,7 +46,15 @@ export function AccountSection({ activity }: { activity: AccountActivity | null 
           <Stat
             label="Anmeldungen"
             value={num(activity.signins)}
-            hint={activity.silentSignins > 0 ? `${num(activity.silentSignins)} stille Erkennungen` : undefined}
+            hint={
+              [
+                `${num(activity.linkedSignins)} im Chat abgeschlossen`,
+                activity.silentSignins > 0 && `${num(activity.silentSignins)} stille Erkennungen`,
+                activity.refusedLinks > 0 && `${num(activity.refusedLinks)} Codes abgelehnt`,
+              ]
+                .filter(Boolean)
+                .join(" · ") || undefined
+            }
           />
           <Stat label="Zusammenfassung per E-Mail" value={num(activity.summaryEmails)} />
           <Stat label="Zusammenfassung (Download)" value={num(activity.summaryDownloads)} />

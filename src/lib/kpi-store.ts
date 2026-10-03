@@ -28,6 +28,8 @@ import {
   KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED,
   KPI_EMAIL_CAPTURE_DECLINED,
   KPI_ACCOUNT_SIGNIN_SUCCEEDED,
+  KPI_ACCOUNT_SIGNIN_LINKED,
+  KPI_ACCOUNT_SIGNIN_LINK_REFUSED,
   KPI_ACCOUNT_EXPORT_REQUESTED,
   KPI_ACCOUNT_ERASED,
   KPI_CONTACT_FORM_SUBMITTED,
@@ -36,6 +38,15 @@ import {
 // and the Komplettanalyse (kpi-event-patterns.mjs) so the definition of a
 // "click" can never drift between surfaces.
 import { CTA_PATTERNS, CART_PATTERNS } from "./kpi-event-patterns.mjs";
+import {
+  ACCOUNT_SIGNIN_STARTED,
+  LOGIN_GATE_DECLINED,
+  LOGIN_GATE_DISMISSED,
+  LOGIN_GATE_SHOWN,
+  LOGIN_GATE_SIGNIN_CLICKED,
+  loginGateRates,
+  signinSource,
+} from "./kpi-widget-events.mjs";
 
 export interface DailyCount {
   /** ISO date (YYYY-MM-DD). */
@@ -230,9 +241,11 @@ export interface ConsentGateCounts {
 export interface ConsentGateFunnel {
   total: ConsentGateCounts;
   /**
-   * Split by the widget-reported `data.surface` ("chat" = the in-chat consent
-   * gate, "signin" = the at-sign-in opt-in card). Events without a surface (a
-   * misbehaving widget) land in neither split but still count in `total`.
+   * Split by the widget-reported `data.surface` ("signin" = the consent popup
+   * after a sign-in — the only one the widget shows since 2026-10-01; "chat" =
+   * the retired anonymous e-mail gate, kept for older events). Events without a
+   * surface (a misbehaving widget) land in neither split but still count in
+   * `total`.
    */
   bySurface: { chat: ConsentGateCounts; signin: ConsentGateCounts };
 }
@@ -292,6 +305,111 @@ export async function getConsentGateFunnel(
     return funnel;
   } catch (err) {
     reportError(err, { route: "lib/kpi-store", phase: "getConsentGateFunnel" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sign-in popup funnel — popup → „Anmelden“ → Shopify sign-in → chat sign-in
+// ---------------------------------------------------------------------------
+
+export interface LoginGateFunnel {
+  /** Sessions that saw the sign-in popup. */
+  shown: number;
+  /** Of those, sessions that clicked „Anmelden“. */
+  clicked: number;
+  /** Of those, sessions that clicked „Später“ (snoozed 24 h on the device). */
+  declined: number;
+  /** Of those, sessions that closed it with Esc / a backdrop click. */
+  dismissed: number;
+  /** Clicked AND a successful Shopify sign-in (account_signin_succeeded) in the same session afterwards. */
+  signedIn: number;
+  /** Clicked AND the chat redeemed the one-time code (account_signin_linked) — the sign-in that counts. */
+  linked: number;
+  rates: ReturnType<typeof loginGateRates>;
+  /** All sign-in starts in the window by origin: the popup or the welcome card / header button. */
+  startsBySource: { login_gate: number; other: number };
+}
+
+/**
+ * The sign-in popup for anonymous visitors (widget 2026-10-01), counted per
+ * SESSION: the four widget events, joined in the same session to the
+ * server-side sign-in events after the click. Starts by source come from the
+ * widget's account_signin_started (`data.source`). Returns null when no DB is
+ * configured or on a hard failure.
+ */
+export async function getLoginGateFunnel(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<LoginGateFunnel | null> {
+  if (!sql) return null;
+  try {
+    const [funnelRows, sourceRows] = await Promise.all([
+      sql`
+        WITH g AS (
+          SELECT session_id,
+                 bool_or(event = ${LOGIN_GATE_SHOWN}) AS shown,
+                 bool_or(event = ${LOGIN_GATE_SIGNIN_CLICKED}) AS clicked,
+                 bool_or(event = ${LOGIN_GATE_DECLINED}) AS declined,
+                 bool_or(event = ${LOGIN_GATE_DISMISSED}) AS dismissed,
+                 min(created_at) FILTER (WHERE event = ${LOGIN_GATE_SIGNIN_CLICKED}) AS clicked_at
+            FROM kpi_events
+           WHERE event IN (${LOGIN_GATE_SHOWN}, ${LOGIN_GATE_SIGNIN_CLICKED},
+                           ${LOGIN_GATE_DECLINED}, ${LOGIN_GATE_DISMISSED})
+             AND session_id IS NOT NULL
+             AND created_at >= ${range.from}::date
+             AND created_at < (${range.to}::date + 1)
+           GROUP BY session_id
+        ), h AS (
+          SELECT g.*,
+                 g.clicked_at IS NOT NULL AND EXISTS (
+                   SELECT 1 FROM kpi_events s
+                    WHERE s.session_id = g.session_id
+                      AND s.event = ${KPI_ACCOUNT_SIGNIN_SUCCEEDED}
+                      AND s.created_at >= g.clicked_at
+                 ) AS signed_in,
+                 g.clicked_at IS NOT NULL AND EXISTS (
+                   SELECT 1 FROM kpi_events s
+                    WHERE s.session_id = g.session_id
+                      AND s.event = ${KPI_ACCOUNT_SIGNIN_LINKED}
+                      AND s.created_at >= g.clicked_at
+                 ) AS linked
+            FROM g
+        )
+        SELECT count(*) FILTER (WHERE shown)::int AS shown,
+               count(*) FILTER (WHERE shown AND clicked)::int AS clicked,
+               count(*) FILTER (WHERE shown AND declined)::int AS declined,
+               count(*) FILTER (WHERE shown AND dismissed)::int AS dismissed,
+               count(*) FILTER (WHERE shown AND clicked AND signed_in)::int AS signed_in,
+               count(*) FILTER (WHERE shown AND clicked AND linked)::int AS linked
+          FROM h
+      `,
+      sql`
+        SELECT COALESCE(data->>'source', '') AS source, count(*)::int AS n
+          FROM kpi_events
+         WHERE event = ${ACCOUNT_SIGNIN_STARTED}
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY 1
+      `,
+    ]);
+    const r = ((funnelRows as Array<Record<string, unknown>>)[0] ?? {}) as Record<string, unknown>;
+    const n = (k: string) => Number(r[k] ?? 0);
+    const counts = {
+      shown: n("shown"),
+      clicked: n("clicked"),
+      declined: n("declined"),
+      dismissed: n("dismissed"),
+      signedIn: n("signed_in"),
+      linked: n("linked"),
+    };
+    const startsBySource = { login_gate: 0, other: 0 };
+    for (const row of sourceRows as Array<{ source: string; n: number }>) {
+      startsBySource[signinSource(row.source)] += Number(row.n);
+    }
+    return { ...counts, rates: loginGateRates(counts), startsBySource };
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-store", phase: "getLoginGateFunnel" });
     return null;
   }
 }
@@ -455,6 +573,10 @@ export interface AccountActivity {
   signins: number;
   /** Of those, prompt=none silent already-signed-in detections. */
   silentSignins: number;
+  /** Sign-ins the chat completed by redeeming the one-time code (0073) — the ones that count. */
+  linkedSignins: number;
+  /** Codes POST /api/auth/link refused (expired, used, another session's). */
+  refusedLinks: number;
   /** GDPR data exports downloaded (Art. 15/20 self-service). */
   exports: number;
   /** Full self-service erasures completed (Art. 17). */
@@ -485,7 +607,8 @@ export async function getAccountActivity(
                count(*)::int AS n,
                count(*) FILTER (WHERE data->>'silent' = 'true')::int AS silent
           FROM kpi_events
-         WHERE event IN (${KPI_ACCOUNT_SIGNIN_SUCCEEDED}, ${KPI_ACCOUNT_EXPORT_REQUESTED},
+         WHERE event IN (${KPI_ACCOUNT_SIGNIN_SUCCEEDED}, ${KPI_ACCOUNT_SIGNIN_LINKED},
+                         ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED}, ${KPI_ACCOUNT_EXPORT_REQUESTED},
                          ${KPI_ACCOUNT_ERASED}, ${KPI_CONTACT_FORM_SUBMITTED})
            AND created_at >= ${range.from}::date
            AND created_at < (${range.to}::date + 1)
@@ -504,6 +627,8 @@ export async function getAccountActivity(
     const activity: AccountActivity = {
       signins: 0,
       silentSignins: 0,
+      linkedSignins: 0,
+      refusedLinks: 0,
       exports: 0,
       erasures: 0,
       contactFormSubmissions: 0,
@@ -515,7 +640,9 @@ export async function getAccountActivity(
       if (r.event === KPI_ACCOUNT_SIGNIN_SUCCEEDED) {
         activity.signins = n;
         activity.silentSignins = Number(r.silent);
-      } else if (r.event === KPI_ACCOUNT_EXPORT_REQUESTED) activity.exports = n;
+      } else if (r.event === KPI_ACCOUNT_SIGNIN_LINKED) activity.linkedSignins = n;
+      else if (r.event === KPI_ACCOUNT_SIGNIN_LINK_REFUSED) activity.refusedLinks = n;
+      else if (r.event === KPI_ACCOUNT_EXPORT_REQUESTED) activity.exports = n;
       else if (r.event === KPI_ACCOUNT_ERASED) activity.erasures = n;
       else if (r.event === KPI_CONTACT_FORM_SUBMITTED) activity.contactFormSubmissions = n;
     }

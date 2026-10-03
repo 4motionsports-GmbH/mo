@@ -4,9 +4,13 @@
 import type { CoreMetrics } from "@/lib/kpi-store";
 import type { KpiRange } from "@/lib/kpi-range";
 import { num, ratio } from "@/lib/admin-format.mjs";
+import { ADMIN_DATE_PADDED, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { discontinuedWidgetEvent } from "@/lib/kpi-widget-events.mjs";
 import {
   Disclosure,
+  InfoTip,
   Stat,
+  StatusBadge,
   Table,
   TableBody,
   TableCell,
@@ -110,7 +114,7 @@ export function CoreSection({ core, range }: { core: CoreMetrics | null; range: 
                     {core.topEvents.map((e) => (
                       <TableRow key={e.event}>
                         <TableCell>
-                          <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{e.event}</code>
+                          <EventName event={e.event} />
                         </TableCell>
                         <TableCell align="right" className="tabular-nums">
                           {num(e.count)}
@@ -125,6 +129,27 @@ export function CoreSection({ core, range }: { core: CoreMetrics | null; range: 
         </>
       )}
     </KpiSection>
+  );
+}
+
+/** An event name; a retired widget event says so instead of reading as a drop. */
+function EventName({ event }: { event: string }) {
+  const retired = discontinuedWidgetEvent(event);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{event}</code>
+      {retired && (
+        <>
+          <StatusBadge tone="neutral" dot={false}>
+            eingestellt
+          </StatusBadge>
+          <InfoTip label={`Warum ${event} eingestellt ist`}>
+            Sendet das Widget seit dem {formatAdmin(`${retired.since}T12:00:00Z`, ADMIN_DATE_PADDED)} nicht mehr
+            ({retired.note}) — der Rückgang auf null ist gewollt.
+          </InfoTip>
+        </>
+      )}
+    </span>
   );
 }
 

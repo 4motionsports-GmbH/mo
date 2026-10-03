@@ -26,7 +26,7 @@ export const KPI_GROUPS: readonly KpiGroup[] = [
     key: "marketing",
     label: "Marketing & Kampagne",
     description:
-      "Consent-Gate, E-Mail-Capture, Kampagnen-Funnel mit Kampagnen-Vergleich, Eingang und Set-Angebote im gewählten Zeitraum.",
+      "Anmelde-Popup, Einwilligung nach der Anmeldung, E-Mail-Capture, Kampagnen-Funnel mit Kampagnen-Vergleich, Eingang und Set-Angebote im gewählten Zeitraum.",
     periodic: true,
   },
   {
