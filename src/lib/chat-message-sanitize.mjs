@@ -25,10 +25,11 @@
 // REPLAYED ORDER DATA: the output of `get_order_status` (the signed-in
 // customer's order status, lib/order-status.ts) is never replayed as sent by
 // the client. Its output is replaced with `{ replayed: true }` — so the model
-// re-queries for current facts instead of repeating stale ones, a shared
-// device's later visitor cannot read them back out of a resent history, and a
-// forged history cannot inject "order data" that looks like a real tool
-// result. The input is reduced to the schema's two fields.
+// re-queries for current facts (under the CURRENT sign-in — after a logout on
+// a shared device the next lookup says sign_in_required instead of the model
+// answering from an earlier result), and a forged history cannot inject
+// "order data" that looks like a real tool result. The input is reduced to
+// the schema's two fields.
 
 const INCOMPLETE_TOOL_STATES = new Set(["input-streaming", "input-available"]);
 
