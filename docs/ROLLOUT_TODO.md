@@ -274,8 +274,8 @@ Last updated: 2026-10-04.
 
 - [x] **5.1 Frontend task** — done 04.10.: the frontend agent built the customer-platform
   widget (theme PR #73 + `8d0a0c4` + `3e87341`), the owner uploaded it on 04.10.; the frontend
-  docs are in `docs/frontend/`. Live check: 1.11. Next widget tasks:
-  `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md`.
+  docs are in `docs/frontend/`. Live check: 1.11. Next widget tasks: the backlog in
+  `docs/frontend/07` §7 (C writes the next prompt from it).
 
 - [ ] **5.2 Compliance webhooks** — F adds M to the app's Dev Dashboard organisation,
   then M + C together (~10 min)
