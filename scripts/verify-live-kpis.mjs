@@ -143,6 +143,22 @@ table(
       GROUP BY 1, 2 ORDER BY 1, 2`
   )
 );
+console.log("Wer sich im Chat angemeldet hat — Einwilligungsstand (Popup nur bei marketing_status = none + echter E-Mail):");
+table(
+  await q(
+    `SELECT left(k.session_id, 8) AS sitzung, k.created_at, c.marketing_status, c.email_consent_state,
+            c.email NOT LIKE 'shopify:%' AS echte_email,
+            (c.marketing_status = 'none' AND c.email NOT LIKE 'shopify:%') AS popup_erwartet
+       FROM kpi_events k
+       LEFT JOIN customer_session_links l ON l.session_id = k.session_id
+       LEFT JOIN LATERAL (SELECT customer_id FROM conversations
+                           WHERE session_id = k.session_id AND customer_id IS NOT NULL LIMIT 1) cv ON true
+       LEFT JOIN customers c ON c.id = COALESCE(l.customer_id, cv.customer_id)
+      WHERE k.event = 'account_signin_linked' AND k.created_at >= ${SINCE}
+      ORDER BY k.created_at
+      LIMIT 25`
+  )
+);
 console.log("Opt-ins über /api/account/marketing-opt-in (trigger signin_optin), nach DOI-Status:");
 table(
   await q(
@@ -192,12 +208,14 @@ const dupes = await q(
 console.log(`Versände mit mehr als einem Chat-Start: ${dupes[0]?.doppelt ?? "?"} (erwartet 0, Migration 0075)`);
 
 // ---------------------------------------------------------------------------
-head("5 · Kontaktformular");
+head("5 · Kontaktformular (seit dem Widget-Upload 04.10. 21:33 Berlin mit Sitzung erwartet)");
 table(
   await q(
     `SELECT COALESCE(data->>'reason', '(ohne)') AS reason,
             count(*)::int AS events,
-            count(*) FILTER (WHERE session_id IS NOT NULL)::int AS mit_sitzung
+            count(*) FILTER (WHERE session_id IS NOT NULL)::int AS mit_sitzung,
+            max(created_at) FILTER (WHERE session_id IS NULL) AS letzte_ohne_sitzung,
+            max(created_at) FILTER (WHERE session_id IS NOT NULL) AS letzte_mit_sitzung
        FROM kpi_events
       WHERE event = 'contact_form_submitted' AND created_at >= ${SINCE}
       GROUP BY 1 ORDER BY 2 DESC`

@@ -10,7 +10,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-04.
+Last updated: 2026-10-04 (evening).
 
 ## Done
 
@@ -177,29 +177,36 @@ Last updated: 2026-10-04.
   - Production letters only after L's answer on F-35 (dossier § 18) → goes with 3.2.
 
 - [ ] **1.11 Live check after the widget upload of 04.10.** (live = theme `main` @ `3e87341`) —
-  C built the checks 04.10.; **M runs them** (C's container cannot reach the shop or the
-  production database)
-  - **M:** after the merge pull main and run `npm run db:migrate` (applies `0075`: one
-    „Chat gestartet“ per campaign send, duplicates removed). Safe before or after the deploy.
-  - Widget build: `npm run verify:widget` → „Theme main 3e87341 (2026-10-04, alle Fixes)“ —
-    or „8d0a0c4 oder main 3e87341 (minifiziert ausgeliefert)“ if Shopify serves the file
-    minified — and „OK: alle Prüfungen bestanden.“ Any ✘: the upload did not land or the
-    theme drifted (`docs/frontend/07` §6.4) — stop and tell C/FE before 5.4 or 6.6.
-  - Data: `npm run verify:live` (read-only; `-- --since 2026-10-05` for a later start). Check:
-    sign-in chain `account_signin_started → _succeeded → _return {result:"ok"} → _linked`;
-    the diagnosis has mostly „Im Chat angemeldet“; „Zwischen succeeded und linked
-    hängengeblieben“ is small (each row names its likely cause); popup funnel stages all > 0;
-    `consent_gate_*` with surface `signin`; opt-ins with `doi_status` `confirmed` are the
-    `alreadyConfirmed` answers; `account_erased` „vom_widget = true“ never appears;
-    „Versände mit mehr als einem Chat-Start: 0“; contact form rows have `mit_sitzung`.
-  - Campaign link: Kampagnen → a campaign whose button leads to Mo → „Bearbeiten“ → „Prüfen &
-    testen“ → „Testpostfach …“ (your address) → open the mail → the Mo button → write one
-    message → `npm run verify:live` shows `campaign_chat_started` with `test = true`, 1 event per
-    send. Click the button again and write again: still 1.
+  checks built and merged (#217, `0075` run 04.10.); **M runs them** (C's container cannot reach
+  the shop or the production database). `npm run verify:widget` and `npm run verify:live`
+  (read-only; `-- --since 2026-10-05` for a later start).
+  - **Verified 04.10. (M ran both):**
+    - [x] Widget build: 3e87341 live (Shopify serves it minified), head script, `/cart` style ✔.
+    - [x] Sign-in end to end: 3/3 Shopify sign-ins redeemed (`account_signin_linked
+      customer_account`) with `account_signin_return {result:"ok"}`; 0 stuck between succeeded
+      and linked; 0 refused codes; 1 sign-in cancelled at Shopify (not a bug).
+    - [x] Anmelde-Popup funnel fills every stage (3 shown → 2 „Anmelden“ → 2 Shopify → 2 chat,
+      1 „Später“).
+    - [x] No widget-sent `account_erased`; no duplicate chat start.
+    - [x] Contact form: the submission after the upload carries its session (the one before,
+      09:53, cannot).
+    - [x] No consent popup — correct: all three sign-ins were an already subscribed account
+      (`marketing_status = confirmed`); the popup only asks people who never decided.
+  - **Left — M:**
+    - [ ] Consent popup once with a never-subscribed account (optional, 5 min): sign out in the
+      chat → „Anmelden“ with e.g. `name+test1@…` (Shopify creates the customer) → write a
+      message → popup „Angebote aktivieren“ → accept → click the DOI mail → `verify:live` shows
+      `consent_gate_shown/_accepted` `surface = signin`, an opt-in with `doi_status = pending`
+      (→ confirmed after the click) and a `consent_events` row `mo_signin`; „popup_erwartet“
+      is true for that session.
+    - [ ] Campaign link: Kampagnen → a campaign whose button leads to Mo → „Bearbeiten“ →
+      „Prüfen & testen“ → „Testpostfach …“ (your address) → open the mail → the Mo button →
+      write one message → `verify:live` shows `campaign_chat_started` with `test = true`, 1 event
+      per send. Click the button again and write again: still 1.
+    - [ ] Then 6.6 (order status: test account, then on for everyone) and 5.4 (App Proxy).
   - KPI tab (30 days): „Änderungen im Zeitraum“ lists 01.10., 03.10., 04.10.; the
     Anmelde-Popup, Einwilligung, Kundenkonto and Kampagnen sections say „Erst ab dem
     04.10.2026 aussagekräftig“ — for clean numbers pick „Zeitraum…“ from 04.10.
-  - Done when: both scripts are clean and the first real sign-ins show „Im Chat angemeldet“.
 
 ## 2 · Tomorrow morning
 
@@ -451,6 +458,11 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       `CHAT_ORDER_STATUS_TEST_CUSTOMERS`; `npm run verify:widget` / `verify:live` (1.11).
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
       of UTC — low priority.
+- [ ] **C.15** Next frontend prompt (item 8 of the 04.10. request): rank the backlog
+      (`docs/frontend/07` §7, `05` gaps) for opt-ins, sign-ins, product clicks, add-to-cart and
+      attributed revenue; write the top items as tasks in the 07 §4 template (exact payloads,
+      KPI events, legal constraints, acceptance checklist) →
+      `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md`; plus any backend parts they need.
 - [ ] **C.5** Keep this file current after every step.
 
 ## Backlog — not built, decide later
