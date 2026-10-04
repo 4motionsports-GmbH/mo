@@ -197,8 +197,9 @@ Last updated: 2026-10-04 (evening).
     - [ ] Consent popup once with a never-subscribed account (optional, 5 min): sign out in the
       chat → „Anmelden“ with e.g. `name+test1@…` (Shopify creates the customer) → write a
       message → popup „Angebote aktivieren“ → accept → click the DOI mail → `verify:live` shows
-      `consent_gate_shown/_accepted` `surface = signin`, an opt-in with `doi_status = pending`
-      (→ confirmed after the click) and a `consent_events` row `mo_signin`; „popup_erwartet“
+      `consent_gate_shown/_accepted` `surface = signin`, an opt-in with `doi_status = pending`,
+      a `consent_events` row `mo_signin`, and after the click one
+      `email_capture_marketing_confirmed` (the opt-in row itself never changes); „popup_erwartet“
       is true for that session.
     - [ ] Campaign link: Kampagnen → a campaign whose button leads to Mo → „Bearbeiten“ →
       „Prüfen & testen“ → „Testpostfach …“ (your address) → open the mail → the Mo button →
@@ -296,7 +297,13 @@ Last updated: 2026-10-04 (evening).
     A data request → also look the person up in Mo → Kunden.
 
 - [ ] **5.4 Shop sign-in detection** (customers signed in to the shop are recognised in
-  the chat without „Anmelden“) — M (+ F for app access), C checks
+  the chat without „Anmelden“) — M (+ F for app access), C checks — **ON HOLD until C.17 (P0.3
+  Phase 1) is live. Do not set up the App Proxy before.** As the backend stands, a shop-native login
+  has no chat token, so the proxy would sign nobody in but would still link the session in the
+  background; on a shared browser one customer's chats could move into another customer's history
+  (`redeemLinkGrant` has no ownership check); signed proxy URLs never expire (replay). Details:
+  `docs/plans/2026-10-04/P0.3.md` §0. The steps below stay valid for afterwards; P0.3 §7 adds the
+  staged rollout (A measure only → B token holders → C after D-AP1 and the lawyer's F-36).
   - The widget side is live (PR #73: one whoami call per tab, the `linkCode` is redeemed
     before anyone counts as signed in). **First** `npm run verify:widget` must report the
     expected build — an older build (`presentLoginGate` without `redeemLinkCode`) would treat
@@ -459,11 +466,27 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       `CHAT_ORDER_STATUS_TEST_CUSTOMERS`; `npm run verify:widget` / `verify:live` (1.11).
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
       of UTC — low priority.
-- [ ] **C.15** Next frontend prompt (item 8 of the 04.10. request): rank the backlog
-      (`docs/frontend/07` §7, `05` gaps) for opt-ins, sign-ins, product clicks, add-to-cart and
-      attributed revenue; write the top items as tasks in the 07 §4 template (exact payloads,
-      KPI events, legal constraints, acceptance checklist) →
-      `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md`; plus any backend parts they need.
+- [x] **C.15** Next items planned (item 8 of the 04.10. request) — done 04.10.: five ranked,
+      verified plans in `docs/plans/2026-10-04/` (README = ranking, findings, decisions, order);
+      widget tasks in `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md` (send each only when its
+      backend row below is done).
+- [ ] **C.16** Fix OI1 F1 (opt-in loss): `upsertEmailCapture` keeps a `pending` DOI (status, token,
+      `doi_sent_at`) when a later submit has no marketing tick and the address is not suppressed;
+      test. M first runs the size check in `docs/plans/2026-10-04/README.md` (finding 2). Also F2
+      (suppressed address answered „already subscribed“) as a backend-only follow-up.
+- [ ] **C.17** P0.3 Phase 1 — App Proxy safety + measurement (kill switch, code only when
+      `/api/auth/me` will sign in, timestamp freshness, handover, ownership guard on the
+      conversation stamp, `account_shop_recognised`, renewals, dashboard split, drift alarm).
+      Unblocks 5.4. Phase 2 after D-AP1 + F-36 (dossier §19).
+- [ ] **C.18** OI1 PR 1 (no e-mail-summary ask for signed-in sessions) and PR 2 (opt-in `source` /
+      `outcome`, DOI by source, capture funnel = capture form only, consent gate per session).
+- [ ] **C.19** OI3 B1 (consent copy serves `benefits: []` + `variant`; opt-in POST takes `placement`
+      / `variant`) → then FE task 1. B2 after the lawyer signs off the bullets.
+- [ ] **C.20** A3 backend (`context.source`, softer page pivot note, `CHAT_PAGE_CONTEXT_ENABLED`
+      off, `page_context_applied/_answered`, KPI section) → then FE task 2.
+- [ ] **C.21** ATTR-TOKEN-LIFETIME (pre-checks P0–P6 by M first; migration `messages.session_id`,
+      `MO_ATTRIBUTION_SESSION_ANCHOR` off, `mo_order_marker_unresolved`) → then FE task 3; owner
+      decision + F-37 (dossier §20).
 - [ ] **C.5** Keep this file current after every step.
 
 ## Backlog — not built, decide later

@@ -56,7 +56,8 @@ export function countWidgetMarkers(js) {
 
 /**
  * The builds, newest first. `current` = the build live since 2026-10-04;
- * `acceptable` = the backend switches (App Proxy, order status) may be flipped.
+ * `acceptable` = the widget side is ready for the order status and the App Proxy
+ * (the App Proxy also needs the backend step C.17, docs/ROLLOUT_TODO.md 5.4).
  * @type {ReadonlyArray<{ key: string, commit: string, label: string, current: boolean, acceptable: boolean, consequence: string }>}
  */
 export const WIDGET_BUILDS = Object.freeze([
@@ -67,7 +68,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: true,
     acceptable: true,
     consequence:
-      "Erwarteter Live-Stand: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat. App Proxy und Bestellstatus dürfen eingeschaltet werden.",
+      "Erwarteter Live-Stand: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat. Bestellstatus darf eingeschaltet werden; der App Proxy erst nach dem Backend-Schritt C.17 (ROLLOUT 5.4).",
   },
   {
     key: "fixes-minified",
@@ -76,7 +77,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: true,
     acceptable: true,
     consequence:
-      "Alle Funktionen der Kundenplattform sind live; ob auch der Audio-Stopp bei „Neuer Chat“ (3e87341) dabei ist, lässt sich in der minifizierten Datei nicht erkennen — im Browser prüfen. App Proxy und Bestellstatus dürfen eingeschaltet werden.",
+      "Alle Funktionen der Kundenplattform sind live; ob auch der Audio-Stopp bei „Neuer Chat“ (3e87341) dabei ist, lässt sich in der minifizierten Datei nicht erkennen — im Browser prüfen. Bestellstatus darf eingeschaltet werden; der App Proxy erst nach dem Backend-Schritt C.17 (ROLLOUT 5.4).",
   },
   {
     key: "fixes-8d0a0c4",
@@ -85,7 +86,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Wie main, nur stoppt die Vorlesestimme bei „Neuer Chat“ nicht sofort — 3e87341 hochladen. App Proxy und Bestellstatus dürfen eingeschaltet werden.",
+      "Wie main, nur stoppt die Vorlesestimme bei „Neuer Chat“ nicht sofort — 3e87341 hochladen. Bestellstatus darf eingeschaltet werden; der App Proxy erst nach dem Backend-Schritt C.17 (ROLLOUT 5.4).",
   },
   {
     key: "pr73",
