@@ -1053,8 +1053,13 @@ per design — the e-mail type is switched inside the dialog), the per-type desi
 assignment (`email-designs/assign`; `null`/`classic` clears), the read-only send
 configuration (sender, inbound address, logo override), the **Shopify-Abgleich**
 card and the **Systemstatus** card (decision D-5): DB, Shopify, Resend send +
-webhook, Pingen, Anthropic and OpenAI keys, and the three legal gates — shown
-only as configured / not configured, never a value. Details:
+webhook, Pingen, Anthropic and OpenAI keys, the rate-limit store (Upstash KV), the
+three legal gates and — since 2026-10-03 — the group **Funktionen**: every feature
+switch as An / Aus (Kunden-Abgleich, Einwilligung → Shopify, Löschung → Shopify,
+Shopify-Tags, KI-Profile für alle, „Einplanen“, nächtliche Kampagnen-Entwürfe and
+KI-Vorschläge im Eingang with their per-night / per-day figure, Bestellstatus im
+Chat, Pingen Produktion vs. Testumgebung) — shown only as states, never a value
+(screenshots `docs/screenshots/systemstatus/`). Details:
 [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md).
 
 **Shopify-Abgleich**

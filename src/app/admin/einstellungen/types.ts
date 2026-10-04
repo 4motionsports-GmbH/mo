@@ -28,4 +28,19 @@ export interface SystemStatus {
   campaignSendsApproved: boolean;
   singleOptInAllowed: boolean;
   physicalMailApproved: boolean;
+  /** Upstash KV (rate limits; without it they fail open). */
+  kv: boolean;
+  /** Feature switches — what is live (flag readers, never values). */
+  features: {
+    customerSync: boolean;
+    consentWriteback: boolean;
+    erasureSync: boolean;
+    insightsWriteback: boolean;
+    campaignRelease: boolean;
+    chatOrderStatus: boolean;
+    aiProfilesAll: boolean;
+    inboxAiPerDay: number;
+    autoPreparePerNight: number;
+    pingenStaging: boolean;
+  };
 }

@@ -12,9 +12,23 @@ import { listEmailDesignSelections } from "@/lib/email-design-store";
 import { isEmailConfigured, senderAddress } from "@/lib/email";
 import { inboundEmailAddress, inboundWebhookSecret } from "@/lib/email-inbound";
 import { isShopifyConfigured } from "@/lib/shopify";
-import { isPingenConfigured } from "@/lib/pingen";
+import { isPingenConfigured, isPingenStaging } from "@/lib/pingen";
 import { isPhysicalMailSendsApproved } from "@/lib/pingen-flag.mjs";
-import { isCampaignSendsApproved, isSingleOptInAllowed } from "@/lib/campaign-flags.mjs";
+import {
+  campaignAutoPrepareConfig,
+  isCampaignReleaseEnabled,
+  isCampaignSendsApproved,
+  isSingleOptInAllowed,
+} from "@/lib/campaign-flags.mjs";
+import {
+  aiProfileScope,
+  inboxAiDailyLimit,
+  isChatOrderStatusEnabled,
+  isShopifyConsentWritebackEnabled,
+  isShopifyCustomerSyncEnabled,
+  isShopifyErasureSyncEnabled,
+  isShopifyInsightsWritebackEnabled,
+} from "@/lib/platform-flags.mjs";
 import { getSyncHealth, listSyncRuns } from "@/lib/shopify-sync";
 import { getOutboxStats } from "@/lib/shopify-outbox";
 import { shopifySyncFlags } from "@/lib/shopify-sync-flags";
@@ -46,6 +60,19 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
     campaignSendsApproved: isCampaignSendsApproved(),
     singleOptInAllowed: isSingleOptInAllowed(),
     physicalMailApproved: isPhysicalMailSendsApproved(),
+    kv: Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN),
+    features: {
+      customerSync: isShopifyCustomerSyncEnabled(),
+      consentWriteback: isShopifyConsentWritebackEnabled(),
+      erasureSync: isShopifyErasureSyncEnabled(),
+      insightsWriteback: isShopifyInsightsWritebackEnabled(),
+      campaignRelease: isCampaignReleaseEnabled(),
+      chatOrderStatus: isChatOrderStatusEnabled(),
+      aiProfilesAll: aiProfileScope() === "all",
+      inboxAiPerDay: inboxAiDailyLimit(),
+      autoPreparePerNight: campaignAutoPrepareConfig().count,
+      pingenStaging: isPingenStaging(),
+    },
   };
 
   return (
