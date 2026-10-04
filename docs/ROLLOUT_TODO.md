@@ -181,9 +181,10 @@ Last updated: 2026-10-04.
   production database)
   - **M:** after the merge pull main and run `npm run db:migrate` (applies `0075`: one
     „Chat gestartet“ per campaign send, duplicates removed). Safe before or after the deploy.
-  - Widget build: `npm run verify:widget` → must say „Theme main 3e87341 (2026-10-04, alle
-    Fixes)“ and „OK“. Anything else: the upload did not land or the theme drifted
-    (`docs/frontend/07` §6.4) — stop and tell C/FE before 5.4 or 6.6.
+  - Widget build: `npm run verify:widget` → „Theme main 3e87341 (2026-10-04, alle Fixes)“ —
+    or „8d0a0c4 oder main 3e87341 (minifiziert ausgeliefert)“ if Shopify serves the file
+    minified — and „OK: alle Prüfungen bestanden.“ Any ✘: the upload did not land or the
+    theme drifted (`docs/frontend/07` §6.4) — stop and tell C/FE before 5.4 or 6.6.
   - Data: `npm run verify:live` (read-only; `-- --since 2026-10-05` for a later start). Check:
     sign-in chain `account_signin_started → _succeeded → _return {result:"ok"} → _linked`;
     the diagnosis has mostly „Im Chat angemeldet“; „Zwischen succeeded und linked

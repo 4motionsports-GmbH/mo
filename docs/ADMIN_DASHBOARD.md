@@ -1550,8 +1550,9 @@ campaigns incl. the Einzelansprache (see [`CAMPAIGNS.md`](./CAMPAIGNS.md)) — a
   widget passes it back as `campaignToken` on `POST /api/chat`
   ([`API_CONTRACT.md`](./API_CONTRACT.md) §2), and
   `recordCampaignChatStarted` stores **one session-less** `kpi_events` row
-  `campaign_chat_started` (`data: { sendId, campaignId }`) per real send — the
-  pseudonymous chat is never tied to the person. Shop-CTA campaigns carry no
+  `campaign_chat_started` (`data: { sendId, campaignId }`) per send (test sends
+  carry `test: true` and are not counted) — the pseudonymous chat is never tied
+  to the person. Shop-CTA campaigns carry no
   `mo_c`. Until the widget sends the token the column stays at 0.
 
 The tables of this funnel label their rate **Button-Klickrate**: it counts the

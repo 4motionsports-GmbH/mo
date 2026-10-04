@@ -437,11 +437,12 @@ export async function POST(req: Request) {
     // third ask" stays a server-side guarantee, not a prompt instruction.
     // get_order_status is withheld the same way while CHAT_ORDER_STATUS_ENABLED
     // is off (default) — the tool list and the prompt are then exactly as
-    // before the feature. It is NOT withheld per session: an anonymous visitor
-    // asking about an order gets "sign_in_required" from the tool itself, and
-    // the cached tools prefix stays one per deployment.
-    // The switch for everyone — or, while it is off, only a signed-in test
-    // customer (CHAT_ORDER_STATUS_TEST_CUSTOMERS) for the live check.
+    // before the feature. Once on, it is NOT withheld per session: an anonymous
+    // visitor asking about an order gets "sign_in_required" from the tool
+    // itself, and the cached tools prefix stays one per deployment. The one
+    // per-session case: while the switch is off, a session signed in as one of
+    // CHAT_ORDER_STATUS_TEST_CUSTOMERS (the live check) gets tool and prompt —
+    // a second cached prefix for those sessions only (docs/PROMPT_CACHING.md).
     const orderStatusEnabled = await isOrderStatusEnabledFor(sessionId);
     const tools = buildChatTools(profile, locale, { sessionId, orderStatusEnabled });
     const defaultActiveTools = Object.keys(tools).filter(
