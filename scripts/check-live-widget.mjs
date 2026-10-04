@@ -93,6 +93,11 @@ try {
 }
 if (whoJson && typeof whoJson.signedIn === "boolean") {
   line(true, "App Proxy /apps/chat/whoami antwortet JSON", `signedIn=${whoJson.signedIn} (ohne Shop-Cookie erwartet: false)`);
+  if (counts.redeemLinkCode === 0) {
+    // A build without the one-time code treats a whoami answer as a sign-in (07 P0.3).
+    line(false, "App Proxy ist an, aber dieses Widget löst den linkCode nicht ein", "App Proxy sofort abschalten, bis der richtige Build live ist");
+    pass = false;
+  }
 } else {
   line(
     null,
