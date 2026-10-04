@@ -21,6 +21,8 @@ import {
 } from "../../ui";
 import { StageFunnelChart } from "../charts";
 import { Explain, FreshnessBadge, FunnelLayout, KpiSection } from "../KpiSection";
+import type { KpiRange } from "@/lib/kpi-range";
+import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
 
 const INFO = (
   <Explain>
@@ -43,7 +45,7 @@ const INFO = (
   </Explain>
 );
 
-export function CampaignSection({ cached }: { cached: Cached<CampaignKpis | null> }) {
+export function CampaignSection({ cached, range }: { cached: Cached<CampaignKpis | null>; range: KpiRange }) {
   const kpis = cached.value;
   const empty = !kpis
     ? "Noch keine Daten."
@@ -66,6 +68,7 @@ export function CampaignSection({ cached }: { cached: Cached<CampaignKpis | null
                 kpis.redemptionUnknown > 0 &&
                 `Bei ${num(kpis.redemptionUnknown)} Code(s) lieferte Shopify keine Antwort (nicht gezählt).`,
               kpis.sampled && `Einlösungsprüfung auf die ${CAMPAIGN_KPI_MAX_CODES} neuesten Codes begrenzt.`,
+              ...releaseNotesFor("campaign", range).map((n) => `„Chat gestartet“: ${n}`),
             ]
           : []
       }

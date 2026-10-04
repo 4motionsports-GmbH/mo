@@ -33,13 +33,16 @@ import {
   KPI_ACCOUNT_EXPORT_REQUESTED,
   KPI_ACCOUNT_ERASED,
   KPI_CONTACT_FORM_SUBMITTED,
+  KPI_ORDER_STATUS_LOOKUP,
 } from "./kpi-events";
 // The two headline click-signal shapes — shared with the Gespräche inspector
 // and the Komplettanalyse (kpi-event-patterns.mjs) so the definition of a
 // "click" can never drift between surfaces.
 import { CTA_PATTERNS, CART_PATTERNS } from "./kpi-event-patterns.mjs";
 import {
+  ACCOUNT_SIGNIN_RETURN,
   ACCOUNT_SIGNIN_STARTED,
+  classifySigninSession,
   LOGIN_GATE_DECLINED,
   LOGIN_GATE_DISMISSED,
   LOGIN_GATE_SHOWN,
@@ -85,11 +88,16 @@ export interface CoreMetrics {
   productCtaRatePerChat: number;
   /** addToCartClicks / totalChats. */
   addToCartRatePerChat: number;
-  /** Distinct sessions that produced ANY telemetry (a proxy for "opened"). */
+  /** Distinct sessions that produced ANY widget telemetry — reach (incl. the
+   * interaction-free launcher bounce), not opens. */
   sessionsWithTelemetry: number;
-  /** Conversations = a message was actually sent. */
+  /** Distinct sessions that opened the chat (`chat_opened`). */
+  openedSessions: number;
+  /** Distinct sessions in which the visitor wrote (`message_sent`). */
+  wroteSessions: number;
+  /** Conversations rows (incl. nudge greetings without a visitor message). */
   chatsWithMessages: number;
-  /** chatsWithMessages / sessionsWithTelemetry (engagement proxy; null if no telemetry). */
+  /** wroteSessions / openedSessions — open → message (null without opens). */
   engagementRate: number | null;
   /** Full event-name breakdown (top 20), so the raw telemetry is always visible. */
   topEvents: EventCount[];
@@ -166,7 +174,9 @@ export async function getCoreMetrics(
              AND created_at < (${to}::date + 1)
         `,
         sql`
-          SELECT count(DISTINCT session_id)::int AS sessions
+          SELECT count(DISTINCT session_id)::int AS sessions,
+                 count(DISTINCT session_id) FILTER (WHERE event = 'chat_opened')::int AS opened,
+                 count(DISTINCT session_id) FILTER (WHERE event = 'message_sent')::int AS wrote
             FROM kpi_events
            WHERE session_id IS NOT NULL
              AND created_at >= ${from}::date
@@ -196,6 +206,8 @@ export async function getCoreMetrics(
     const productCtaClicks = Number(clickRows[0]?.cta ?? 0);
     const addToCartClicks = Number(clickRows[0]?.cart ?? 0);
     const sessionsWithTelemetry = Number(telemetryRows[0]?.sessions ?? 0);
+    const openedSessions = Number(telemetryRows[0]?.opened ?? 0);
+    const wroteSessions = Number(telemetryRows[0]?.wrote ?? 0);
 
     return {
       totalChats,
@@ -212,9 +224,14 @@ export async function getCoreMetrics(
       productCtaRatePerChat: ratePerChat(productCtaClicks, totalChats),
       addToCartRatePerChat: ratePerChat(addToCartClicks, totalChats),
       sessionsWithTelemetry,
+      openedSessions,
+      wroteSessions,
       chatsWithMessages: totalChats,
-      engagementRate:
-        sessionsWithTelemetry > 0 ? totalChats / sessionsWithTelemetry : null,
+      // Open → message (docs/frontend/05 §12): the old ratio divided
+      // conversations by every session with telemetry, but the launcher bounce
+      // fires without an open and nudge greetings create rows without a
+      // visitor message.
+      engagementRate: openedSessions > 0 ? Math.min(1, wroteSessions / openedSessions) : null,
       topEvents: (eventRows as Array<{ event: string; n: number }>).map((r) => ({
         event: String(r.event),
         count: Number(r.n),
@@ -415,6 +432,161 @@ export async function getLoginGateFunnel(
 }
 
 // ---------------------------------------------------------------------------
+// Sign-in diagnosis — where each session's sign-in ended (docs/frontend/05 §12.1)
+// ---------------------------------------------------------------------------
+
+export interface SigninDiagnosis {
+  /** Sessions per outcome key (kpi-widget-events.mjs SIGNIN_DIAGNOSIS). */
+  byOutcome: Record<string, number>;
+  /** account_signin_return by `data.result` (widget truth). */
+  returnResults: Array<{ result: string; count: number }>;
+  /** Sessions considered (any sign-in event in the period). */
+  sessions: number;
+  /** True when more sessions than SIGNIN_DIAGNOSIS_MAX had events (the rest is not classified). */
+  truncated: boolean;
+}
+
+const SIGNIN_DIAGNOSIS_MAX = 20_000;
+
+/**
+ * Classify every session with a sign-in event in the period by where its
+ * sign-in ended (popup click → start → Shopify → return → code redeemed),
+ * joining the widget events and the server events of the same session.
+ * Returns null without a database or on a hard failure.
+ */
+export async function getSigninDiagnosis(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<SigninDiagnosis | null> {
+  if (!sql) return null;
+  try {
+    const [sessionRows, resultRows] = await Promise.all([
+      sql`
+        SELECT session_id,
+               bool_or(event = ${LOGIN_GATE_SIGNIN_CLICKED}) AS gate_clicked,
+               COALESCE(max(created_at) FILTER (WHERE event = ${LOGIN_GATE_DISMISSED})
+                        > min(created_at) FILTER (WHERE event = ${LOGIN_GATE_SIGNIN_CLICKED}), false) AS dismissed_after_click,
+               bool_or(event = ${ACCOUNT_SIGNIN_STARTED}) AS started,
+               bool_or(event = ${KPI_ACCOUNT_SIGNIN_SUCCEEDED}) AS succeeded,
+               bool_or(event = ${ACCOUNT_SIGNIN_RETURN} AND data->>'result' = 'ok') AS return_ok,
+               bool_or(event = ${ACCOUNT_SIGNIN_RETURN} AND data->>'result' = 'link_failed') AS return_link_failed,
+               bool_or(event = ${ACCOUNT_SIGNIN_RETURN}
+                       AND COALESCE(data->>'result', '') NOT IN ('ok', 'link_failed', 'logged_out')) AS return_other,
+               bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINKED}) AS linked,
+               bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINKED} AND data->>'kind' = 'app_proxy') AS linked_via_shop,
+               bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED} AND data->>'reason' = 'session_mismatch') AS refused_mismatch,
+               bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED} AND COALESCE(data->>'reason', '') <> 'session_mismatch') AS refused_invalid
+          FROM kpi_events
+         WHERE event IN (${LOGIN_GATE_SIGNIN_CLICKED}, ${LOGIN_GATE_DISMISSED}, ${ACCOUNT_SIGNIN_STARTED},
+                         ${KPI_ACCOUNT_SIGNIN_SUCCEEDED}, ${ACCOUNT_SIGNIN_RETURN}, ${KPI_ACCOUNT_SIGNIN_LINKED},
+                         ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED})
+           AND session_id IS NOT NULL
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY session_id
+        HAVING bool_or(event IN (${LOGIN_GATE_SIGNIN_CLICKED}, ${ACCOUNT_SIGNIN_STARTED}, ${KPI_ACCOUNT_SIGNIN_SUCCEEDED},
+                                 ${ACCOUNT_SIGNIN_RETURN}, ${KPI_ACCOUNT_SIGNIN_LINKED}, ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED}))
+         LIMIT ${SIGNIN_DIAGNOSIS_MAX + 1}
+      `,
+      sql`
+        SELECT COALESCE(NULLIF(data->>'result', ''), 'unbekannt') AS result, count(*)::int AS n
+          FROM kpi_events
+         WHERE event = ${ACCOUNT_SIGNIN_RETURN}
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY 1
+         ORDER BY 2 DESC
+      `,
+    ]);
+    const rows = sessionRows as Array<Record<string, unknown>>;
+    const truncated = rows.length > SIGNIN_DIAGNOSIS_MAX;
+    const byOutcome: Record<string, number> = {};
+    for (const r of rows.slice(0, SIGNIN_DIAGNOSIS_MAX)) {
+      const key = classifySigninSession({
+        gateClicked: r.gate_clicked === true,
+        dismissedAfterClick: r.dismissed_after_click === true,
+        started: r.started === true,
+        succeeded: r.succeeded === true,
+        returnOk: r.return_ok === true,
+        returnLinkFailed: r.return_link_failed === true,
+        returnOther: r.return_other === true,
+        linked: r.linked === true,
+        linkedViaShop: r.linked_via_shop === true,
+        refusedInvalid: r.refused_invalid === true,
+        refusedMismatch: r.refused_mismatch === true,
+      });
+      if (key !== "none") byOutcome[key] = (byOutcome[key] ?? 0) + 1;
+    }
+    return {
+      byOutcome,
+      returnResults: (resultRows as Array<{ result: string; n: number }>).map((r) => ({ result: String(r.result), count: Number(r.n) })),
+      sessions: Math.min(rows.length, SIGNIN_DIAGNOSIS_MAX),
+      truncated,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-store", phase: "getSigninDiagnosis" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Order status in the chat — get_order_status outcomes (order_status_lookup)
+// ---------------------------------------------------------------------------
+
+export interface OrderStatusKpis {
+  lookups: number;
+  sessions: number;
+  byOutcome: Array<{ outcome: string; count: number }>;
+  byTopic: Array<{ topic: string; count: number }>;
+  /** ledger | ledger+live — how often the answer needed the short live read. */
+  bySource: Array<{ source: string; count: number }>;
+}
+
+/** The server's order_status_lookup events in the period. Null without a DB or on failure. */
+export async function getOrderStatusKpis(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<OrderStatusKpis | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT COALESCE(NULLIF(data->>'outcome', ''), 'unknown') AS outcome,
+             COALESCE(NULLIF(data->>'topic', ''), 'unknown') AS topic,
+             COALESCE(NULLIF(data->>'source', ''), '–') AS source,
+             count(*)::int AS n,
+             count(DISTINCT session_id)::int AS sessions
+        FROM kpi_events
+       WHERE event = ${KPI_ORDER_STATUS_LOOKUP}
+         AND created_at >= ${range.from}::date
+         AND created_at < (${range.to}::date + 1)
+       GROUP BY 1, 2, 3
+    `) as Array<{ outcome: string; topic: string; source: string; n: number; sessions: number }>;
+    const sum = (key: "outcome" | "topic" | "source") => {
+      const m = new Map<string, number>();
+      for (const r of rows) m.set(r[key], (m.get(r[key]) ?? 0) + Number(r.n));
+      return [...m.entries()].sort((a, b) => b[1] - a[1]);
+    };
+    const [sessionRow] = (await sql`
+      SELECT count(DISTINCT session_id)::int AS n
+        FROM kpi_events
+       WHERE event = ${KPI_ORDER_STATUS_LOOKUP}
+         AND created_at >= ${range.from}::date
+         AND created_at < (${range.to}::date + 1)
+    `) as Array<{ n: number }>;
+    return {
+      lookups: rows.reduce((t, r) => t + Number(r.n), 0),
+      sessions: Number(sessionRow?.n ?? 0),
+      byOutcome: sum("outcome").map(([outcome, count]) => ({ outcome, count })),
+      byTopic: sum("topic").map(([topic, count]) => ({ topic, count })),
+      bySource: sum("source").filter(([s]) => s !== "–").map(([source, count]) => ({ source, count })),
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-store", phase: "getOrderStatusKpis" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Email-capture funnel — ask → submitted → marketing opt-in → DOI confirmed
 // ---------------------------------------------------------------------------
 
@@ -583,6 +755,10 @@ export interface AccountActivity {
   erasures: number;
   /** Contact-form submissions accepted (widget hand-over). */
   contactFormSubmissions: number;
+  /** Of those, the order support form (reason order_support). */
+  contactOrderSupport: number;
+  /** Of those, submissions keyed to a widget session (body sessionId / x-ms-session, widget since 2026-10-04). */
+  contactWithSession: number;
   /** Chat-summary PDFs downloaded by signed-in customers (ai_usage). */
   summaryDownloads: number;
   /** Chat-summary emails generated after a capture (ai_usage). */
@@ -605,7 +781,9 @@ export async function getAccountActivity(
       sql`
         SELECT event,
                count(*)::int AS n,
-               count(*) FILTER (WHERE data->>'silent' = 'true')::int AS silent
+               count(*) FILTER (WHERE data->>'silent' = 'true')::int AS silent,
+               count(*) FILTER (WHERE data->>'reason' = 'order_support')::int AS order_support,
+               count(*) FILTER (WHERE session_id IS NOT NULL)::int AS with_session
           FROM kpi_events
          WHERE event IN (${KPI_ACCOUNT_SIGNIN_SUCCEEDED}, ${KPI_ACCOUNT_SIGNIN_LINKED},
                          ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED}, ${KPI_ACCOUNT_EXPORT_REQUESTED},
@@ -632,10 +810,12 @@ export async function getAccountActivity(
       exports: 0,
       erasures: 0,
       contactFormSubmissions: 0,
+      contactOrderSupport: 0,
+      contactWithSession: 0,
       summaryDownloads: 0,
       summaryEmails: 0,
     };
-    for (const r of eventRows as Array<{ event: string; n: number; silent: number }>) {
+    for (const r of eventRows as Array<{ event: string; n: number; silent: number; order_support: number; with_session: number }>) {
       const n = Number(r.n);
       if (r.event === KPI_ACCOUNT_SIGNIN_SUCCEEDED) {
         activity.signins = n;
@@ -644,7 +824,11 @@ export async function getAccountActivity(
       else if (r.event === KPI_ACCOUNT_SIGNIN_LINK_REFUSED) activity.refusedLinks = n;
       else if (r.event === KPI_ACCOUNT_EXPORT_REQUESTED) activity.exports = n;
       else if (r.event === KPI_ACCOUNT_ERASED) activity.erasures = n;
-      else if (r.event === KPI_CONTACT_FORM_SUBMITTED) activity.contactFormSubmissions = n;
+      else if (r.event === KPI_CONTACT_FORM_SUBMITTED) {
+        activity.contactFormSubmissions = n;
+        activity.contactOrderSupport = Number(r.order_support);
+        activity.contactWithSession = Number(r.with_session);
+      }
     }
     for (const r of usageRows as Array<{ call_site: string; n: number }>) {
       if (r.call_site === "summary_download") activity.summaryDownloads = Number(r.n);

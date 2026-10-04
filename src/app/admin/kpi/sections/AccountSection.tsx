@@ -5,6 +5,8 @@ import type { AccountActivity } from "@/lib/kpi-store";
 import { num } from "@/lib/admin-format.mjs";
 import { Stat } from "../../ui";
 import { Explain, KpiSection, StatGrid } from "../KpiSection";
+import type { KpiRange } from "@/lib/kpi-range";
+import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
 
 const INFO = (
   <Explain>
@@ -14,13 +16,14 @@ const INFO = (
       Personenbezüge. „Stille Erkennungen“ sind automatische Wieder-Anmeldungen bereits eingeloggter
       Shopify-Kund:innen (<code>prompt=none</code>). „Im Chat abgeschlossen“: seit dem 03.10.2026 zählt eine
       Anmeldung im Chat erst, wenn das Widget den Einmal-Code einlöst; „Codes abgelehnt“ sind abgelaufene,
-      schon benutzte oder fremde Codes. Kontaktformular = akzeptierte Übermittlungen;
+      schon benutzte oder fremde Codes. Kontaktformular = akzeptierte Übermittlungen („Bestellung &
+      Service“ = Grund order_support; „mit Sitzung“ = einer Chat-Sitzung zugeordnet, seit dem 04.10.2026);
       vergleichbar mit den <code>show_contact_form</code>-Aufrufen im Gespräche-Tab.
     </p>
   </Explain>
 );
 
-export function AccountSection({ activity }: { activity: AccountActivity | null }) {
+export function AccountSection({ activity, range }: { activity: AccountActivity | null; range: KpiRange }) {
   const empty =
     !activity ||
     (activity.signins === 0 &&
@@ -35,6 +38,7 @@ export function AccountSection({ activity }: { activity: AccountActivity | null 
       id="konto"
       title="Kundenkonto & Self-Service"
       info={INFO}
+      notes={releaseNotesFor("konto", range)}
       empty={
         empty
           ? "Noch keine Konto-Aktivität im Zeitraum. Sign-in-, Export- und Lösch-Ereignisse werden ab dem Deploy dieser Version erfasst."
@@ -58,7 +62,15 @@ export function AccountSection({ activity }: { activity: AccountActivity | null 
           />
           <Stat label="Zusammenfassung per E-Mail" value={num(activity.summaryEmails)} />
           <Stat label="Zusammenfassung (Download)" value={num(activity.summaryDownloads)} />
-          <Stat label="Kontaktformular" value={num(activity.contactFormSubmissions)} />
+          <Stat
+            label="Kontaktformular"
+            value={num(activity.contactFormSubmissions)}
+            hint={
+              activity.contactFormSubmissions > 0
+                ? `${num(activity.contactOrderSupport)} Bestellung & Service · ${num(activity.contactWithSession)} mit Sitzung`
+                : undefined
+            }
+          />
           <Stat label="Datenexporte" value={num(activity.exports)} hint="Art. 15/20" />
           <Stat label="Löschungen" value={num(activity.erasures)} hint="Art. 17" />
         </StatGrid>

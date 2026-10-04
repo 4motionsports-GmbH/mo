@@ -6,6 +6,8 @@
 
 import type { ConsentGateCounts, ConsentGateFunnel } from "@/lib/kpi-store";
 import { RETIRED_CONSENT_GATE_SURFACES } from "@/lib/kpi-widget-events.mjs";
+import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
+import type { KpiRange } from "@/lib/kpi-range";
 import { formatAdmin, ADMIN_DATE_PADDED } from "@/lib/admin-datetime.mjs";
 import { num, ratio } from "@/lib/admin-format.mjs";
 import { Stat } from "../../ui";
@@ -31,7 +33,7 @@ const INFO = (
 
 const CHAT_RETIRED = formatAdmin(`${RETIRED_CONSENT_GATE_SURFACES.chat}T12:00:00Z`, ADMIN_DATE_PADDED);
 
-export function ConsentGateSection({ funnel }: { funnel: ConsentGateFunnel | null }) {
+export function ConsentGateSection({ funnel, range }: { funnel: ConsentGateFunnel | null; range: KpiRange }) {
   const signin = funnel?.bySurface.signin;
   const chat = funnel?.bySurface.chat;
   const acceptRate = signin && signin.shown > 0 ? signin.accepted / signin.shown : null;
@@ -47,7 +49,10 @@ export function ConsentGateSection({ funnel }: { funnel: ConsentGateFunnel | nul
       title="Einwilligung nach der Anmeldung (Marketing-Opt-in)"
       info={INFO}
       empty={empty}
-      notes={[withoutSurface > 0 && `${num(withoutSurface)} Anzeigen ohne surface-Angabe zählen in keiner Oberfläche.`]}
+      notes={[
+        ...releaseNotesFor("consent", range),
+        withoutSurface > 0 && `${num(withoutSurface)} Anzeigen ohne surface-Angabe zählen in keiner Oberfläche.`,
+      ]}
     >
       {funnel && signin && chat && (
         <>

@@ -19,14 +19,14 @@ export const KPI_GROUPS: readonly KpiGroup[] = [
     key: "beratung",
     label: "Beratung",
     description:
-      "Kern-Metriken der Beratungen, Sprachen, Gesprächsqualität, Wissens-Queue, Feedback und Kundenkonto — alle im gewählten Zeitraum.",
+      "Kern-Metriken der Beratungen, Sprachen, Gesprächsqualität, Wissens-Queue, Feedback, Kundenkonto und Bestellstatus im Chat — alle im gewählten Zeitraum.",
     periodic: true,
   },
   {
     key: "marketing",
     label: "Marketing & Kampagne",
     description:
-      "Anmelde-Popup, Einwilligung nach der Anmeldung, E-Mail-Capture, Kampagnen-Funnel mit Kampagnen-Vergleich, Eingang und Set-Angebote im gewählten Zeitraum.",
+      "Anmelde-Popup mit Anmelde-Diagnose, Einwilligung nach der Anmeldung, E-Mail-Capture, Kampagnen-Funnel mit Kampagnen-Vergleich, Eingang und Set-Angebote im gewählten Zeitraum.",
     periodic: true,
   },
   {
