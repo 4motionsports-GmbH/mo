@@ -1625,7 +1625,12 @@ export async function recordCampaignClick(
  * „Chat-Start“: the widget sends the `mo_c` token of the campaign link that
  * opened it (POST /api/chat `campaignToken`). Recorded once per send as a
  * session-LESS KPI event — the pseudonymous chat is never tied to the person.
- * Returns true when this was the first chat for the send. Never throws.
+ * A test send („Prüfen & testen“ → Testpostfach) is recorded too, marked
+ * `test: true`, so the chain can be checked end to end; the campaign funnel
+ * counts real sends only (is_test = false). Once per send: NOT EXISTS, and
+ * since migration 0075 a partial unique index (ON CONFLICT DO NOTHING is a
+ * no-op before it). Returns true when this was the first chat for the send.
+ * Never throws.
  */
 export async function recordCampaignChatStarted(token: string, sql: Sql | null = getSql()): Promise<boolean> {
   if (!sql) return false;
@@ -1634,14 +1639,19 @@ export async function recordCampaignChatStarted(token: string, sql: Sql | null =
   try {
     const rows = (await sql`
       INSERT INTO kpi_events (session_id, event, data)
-      SELECT NULL, ${KPI_CAMPAIGN_CHAT_STARTED}, jsonb_build_object('sendId', s.id, 'campaignId', s.campaign_id)
+      SELECT NULL, ${KPI_CAMPAIGN_CHAT_STARTED},
+             CASE WHEN s.is_test
+                  THEN jsonb_build_object('sendId', s.id, 'campaignId', s.campaign_id, 'test', true)
+                  ELSE jsonb_build_object('sendId', s.id, 'campaignId', s.campaign_id)
+             END
         FROM campaign_sends s
-       WHERE s.redirect_token = ${t} AND s.is_test = false
+       WHERE s.redirect_token = ${t}
          AND NOT EXISTS (
                SELECT 1 FROM kpi_events e
                 WHERE e.event = ${KPI_CAMPAIGN_CHAT_STARTED} AND e.data->>'sendId' = s.id::text
              )
        LIMIT 1
+      ON CONFLICT DO NOTHING
       RETURNING id
     `) as Array<{ id: number }>;
     return rows.length > 0;

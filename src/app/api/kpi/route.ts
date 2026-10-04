@@ -7,7 +7,8 @@
 //
 // Telemetry must never be noisy: validation errors return 400, but a missing
 // database or a write failure is swallowed and still acknowledged (202) so the
-// widget's fire-and-forget track() never has to care.
+// widget's fire-and-forget track() never has to care. Server-only event names
+// (kpi-widget-events.mjs SERVER_ONLY_EVENTS) are acknowledged and dropped.
 
 import {
   corsHeaders,
@@ -17,6 +18,7 @@ import {
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { recordKpiEvent } from "@/lib/kpi-events";
+import { isServerOnlyEvent } from "@/lib/kpi-widget-events.mjs";
 
 export const maxDuration = 10;
 
@@ -58,6 +60,16 @@ export async function POST(req: Request) {
     }
     if (event.length > MAX_EVENT_CHARS) {
       return errorResponse("bad_request", "event too long", 400, cors);
+    }
+
+    // Server-only names (API_CONTRACT §5 — sign-in linked, campaign chat
+    // started, erasure, …) are written by the backend routes alone. A copy from
+    // here would double-count or forge a funnel stage: acknowledge, never store.
+    if (isServerOnlyEvent(event)) {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 202,
+        headers: { "Content-Type": "application/json", ...cors },
+      });
     }
 
     const sessionId =
