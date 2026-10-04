@@ -10,7 +10,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-03.
+Last updated: 2026-10-04.
 
 ## Done
 
@@ -176,6 +176,30 @@ Last updated: 2026-10-03.
     objection notice in the footer and prints „ “ – € correctly.
   - Production letters only after L's answer on F-35 (dossier § 18) → goes with 3.2.
 
+- [ ] **1.11 Live check after the widget upload of 04.10.** (live = theme `main` @ `3e87341`) —
+  C built the checks 04.10.; **M runs them** (C's container cannot reach the shop or the
+  production database)
+  - **M:** after the merge pull main and run `npm run db:migrate` (applies `0075`: one
+    „Chat gestartet“ per campaign send, duplicates removed). Safe before or after the deploy.
+  - Widget build: `npm run verify:widget` → must say „Theme main 3e87341 (2026-10-04, alle
+    Fixes)“ and „OK“. Anything else: the upload did not land or the theme drifted
+    (`docs/frontend/07` §6.4) — stop and tell C/FE before 5.4 or 6.6.
+  - Data: `npm run verify:live` (read-only; `-- --since 2026-10-05` for a later start). Check:
+    sign-in chain `account_signin_started → _succeeded → _return {result:"ok"} → _linked`;
+    the diagnosis has mostly „Im Chat angemeldet“; „Zwischen succeeded und linked
+    hängengeblieben“ is small (each row names its likely cause); popup funnel stages all > 0;
+    `consent_gate_*` with surface `signin`; opt-ins with `doi_status` `confirmed` are the
+    `alreadyConfirmed` answers; `account_erased` „vom_widget = true“ never appears;
+    „Versände mit mehr als einem Chat-Start: 0“; contact form rows have `mit_sitzung`.
+  - Campaign link: Kampagnen → a campaign whose button leads to Mo → „Bearbeiten“ → „Prüfen &
+    testen“ → „Testpostfach …“ (your address) → open the mail → the Mo button → write one
+    message → `npm run verify:live` shows `campaign_chat_started` with `test = true`, 1 event per
+    send. Click the button again and write again: still 1.
+  - KPI tab (30 days): „Änderungen im Zeitraum“ lists 01.10., 03.10., 04.10.; the
+    Anmelde-Popup, Einwilligung, Kundenkonto and Kampagnen sections say „Erst ab dem
+    04.10.2026 aussagekräftig“ — for clean numbers pick „Zeitraum…“ from 04.10.
+  - Done when: both scripts are clean and the first real sign-ins show „Im Chat angemeldet“.
+
 ## 2 · Tomorrow morning
 
 - [x] **2.1 The first nightly run** — M (C checks with you) — done 03.10.: reconcile shows a
@@ -247,13 +271,10 @@ Last updated: 2026-10-03.
 
 ## 5 · Frontend and app access
 
-- [ ] **5.1 Frontend task** — M → FE, then C reviews
-  - Give the frontend agent `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md` (second
-    version, 03.10.: builds on the widget of 01.10.; answers its KPI note) plus all files in
-    `docs/frontend-handoff/`.
-  - Done when: its acceptance checklist is ticked; send C the screenshots (sign-in popup,
-    consent popup, „already subscribed“, erase dialog, DE + EN) and C checks them against
-    the contract.
+- [x] **5.1 Frontend task** — done 04.10.: the frontend agent built the customer-platform
+  widget (theme PR #73 + `8d0a0c4` + `3e87341`), the owner uploaded it on 04.10.; the frontend
+  docs are in `docs/frontend/`. Live check: 1.11. Next widget tasks:
+  `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md`.
 
 - [ ] **5.2 Compliance webhooks** — F adds M to the app's Dev Dashboard organisation,
   then M + C together (~10 min)
@@ -266,14 +287,39 @@ Last updated: 2026-10-03.
     A data request → also look the person up in Mo → Kunden.
 
 - [ ] **5.4 Shop sign-in detection** (customers signed in to the shop are recognised in
-  the chat without „Anmelden“) — M + C, FE
-  - In the 5.2 session: add the App Proxy to `shopify.app.toml` — `[app_proxy]`
-    `url = "https://mo.motionsports.de/api/auth/storefront"`, `subpath = "chat"`,
-    `prefix = "apps"` — and deploy.
-  - FE: task 5 of the frontend prompt (calls `/apps/chat/whoami`, falls back silently while
-    the proxy is missing — can ship before the proxy exists).
-  - Done when: `https://www.motionsports.de/apps/chat/whoami` shows `{"signedIn":true,…}`
-    while you are signed in to the shop, and the chat greets you by name without „Anmelden“.
+  the chat without „Anmelden“) — M (+ F for app access), C checks
+  - The widget side is live (PR #73: one whoami call per tab, the `linkCode` is redeemed
+    before anyone counts as signed in). **First** `npm run verify:widget` must report the
+    expected build — an older build (`presentLoginGate` without `redeemLinkCode`) would treat
+    the whoami answer as a sign-in without redeeming; then the proxy must stay off.
+  - Set up the App Proxy on the Shopify app (in the 5.2 session, same `shopify app config
+    link`):
+    1. In `shopify.app.toml` add `write_app_proxy` to `[access_scopes] scopes` (Shopify needs
+       this scope for an app proxy; keep the other scopes).
+    2. Add
+       ```toml
+       [app_proxy]
+       url = "https://mo.motionsports.de/api/auth/storefront"
+       prefix = "apps"
+       subpath = "chat"
+       ```
+    3. `shopify app deploy` (releases the new version). If the app is managed in the Dev
+       Dashboard instead of a toml: a new version with the same scope and App proxy fields.
+    4. Shopify admin → the app: accept the updated permissions (new scope).
+    5. Shopify admin → Settings → Apps → the app → „App proxy“: the URL must read
+       `/apps/chat` — prefix and subpath from the toml apply to new installs only, so on this
+       already-installed app use „Customize URL“ if it shows anything else.
+    6. Vercel: nothing new — the proxy signs with the app's client secret, which Mo already has
+       as `SHOPIFY_CLIENT_SECRET` (set `SHOPIFY_APP_PROXY_SECRET` only if the proxy lives on a
+       different app).
+  - Check: `npm run verify:widget` → „App Proxy /apps/chat/whoami antwortet JSON —
+    signedIn=false“ (no cookies). In a browser signed in to the shop (www.motionsports.de/account)
+    open `https://www.motionsports.de/apps/chat/whoami?session=check` → `{"signedIn":true, …,
+    "linkCode":"…"}`. If it stays `signedIn:false` while signed in, Shopify sends no
+    `logged_in_customer_id` for this store's account type — tell C.
+  - Done when: in a fresh tab signed in to the shop, the chat greets you by name without
+    „Anmelden“, and `npm run verify:live` / KPI → Anmelde-Popup → Diagnose shows „Vom Shop
+    erkannt“ (`account_signin_linked {kind:"app_proxy"}`).
 
 - [ ] **5.3 App ownership** (optional) — M + F
   - Move the Shopify app to an organisation owned by motionsports, or at least keep M as a
@@ -315,12 +361,18 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
     task 6). `SHOPIFY_CUSTOMER_SYNC_ENABLED` stays on (it is — the answer needs the ledger).
   - Optional: `SHOPIFY_ACCOUNT_ORDERS_URL` if „Meine Bestellungen“ should open another page
     than `https://www.motionsports.de/account`.
-  - Test on a Preview deployment first (`CHAT_ORDER_STATUS_ENABLED=true` for Preview only):
-    sign in with „Anmelden“ in the chat, ask „Wo ist meine Bestellung?“ → Mo names date, items
-    and state, no order number or amount; the widget shows no card or error for the tool;
-    without signing in Mo explains „Anmelden“ and offers the contact form; „Ich möchte das
-    zurückschicken“ → contact form.
-  - Then `CHAT_ORDER_STATUS_ENABLED=true` (Production) → Redeploy.
+  - Live check with your own account first (no Preview needed, 04.10.): Vercel Production
+    `CHAT_ORDER_STATUS_TEST_CUSTOMERS=<your Shopify customer id>` (digits from the customer's
+    admin URL) → Redeploy. On www.motionsports.de sign in with „Anmelden“ in the chat, ask „Wo
+    ist meine Bestellung?“ → Mo names date, items and state, no order number or amount; the
+    widget shows **no card, no error, no empty bubble** for the tool (unknown tools render
+    nothing, `docs/frontend/07` §6.3); „Ich möchte das zurückschicken“ → contact form with
+    „Kontakt zum motion sports Team“. Everyone else is unaffected. KPI → „Bestellstatus im
+    Chat“ shows the lookups.
+  - Then `CHAT_ORDER_STATUS_ENABLED=true` (Production), remove
+    `CHAT_ORDER_STATUS_TEST_CUSTOMERS` → Redeploy. Watch „Bestellstatus im Chat“: mostly
+    „Beantwortet“; „Nicht angemeldet“ means people ask without signing in (Mo offers
+    „Anmelden“); „Hauptbuch hinterher“ / „Import unvollständig“ point at the order sync.
   - Done when: Neon → `SELECT data->>'outcome', count(*) FROM kpi_events WHERE event =
     'order_status_lookup' GROUP BY 1;` shows `ok` rows, and Gespräche shows the tool label
     „Bestellung“.
@@ -390,9 +442,12 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       writes `account_signin_linked` / `account_signin_link_refused` at `POST /api/auth/link`),
       the consent section shows only the popup after sign-in, `starter_*` are marked
       „eingestellt“. The frontend prompt is rewritten on top of that widget (5.1).
-- [ ] **C.3** „Chat gestartet“ (chat started): make the once-per-send count race-safe and
-      index the lookup (next free migration number; `0071` went to the session-link fix) —
-      low priority.
+- [x] **C.3** „Chat gestartet“ (chat started) race-safe and indexed — `0075` (04.10.).
+- [x] **C.14** **Live check of the 04.10. widget** — built 04.10. (`0075`, no switch): KPI
+      release dates and notes, sign-in diagnosis per session, „Geöffnet → geschrieben“,
+      „Bestellstatus im Chat“, contact-form split; `/api/kpi` drops server-only events;
+      `/api/contact` session fallback; test sends count the chat start (`test:true`);
+      `CHAT_ORDER_STATUS_TEST_CUSTOMERS`; `npm run verify:widget` / `verify:live` (1.11).
 - [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
       of UTC — low priority.
 - [ ] **C.5** Keep this file current after every step.

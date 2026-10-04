@@ -467,6 +467,8 @@ Note: this causes one same-origin GET of `window.routes.cart_url` (`/cart.js`) o
 
 ## 12. How the admin KPI tab reads these events
 
+> **Backend status (2026-10-04, after this chapter was written):** „Engagement“ is now „Geöffnet → geschrieben“ (sessions with `message_sent` ÷ sessions with `chat_opened`); the old denominator is shown as „Reichweite (Sitzungen)“. The Anmelde-Popup section has a per-session diagnosis that applies §12.1 (`classifySigninSession` in `src/lib/kpi-widget-events.mjs`). `/api/contact` takes the session from `x-ms-session` when the body has none. `POST /api/kpi` drops server-only event names. Release dates annotate the KPI tab (`src/lib/kpi-releases.mjs`). Live checks: `npm run verify:widget`, `npm run verify:live` (backend `docs/ROLLOUT_TODO.md` 1.11).
+
 The backend dashboard (AD §5) consumes widget events as follows. These observations come from reading `src/lib/kpi-store.ts`, `src/lib/kpi-widget-events.mjs` and `src/lib/kpi-event-patterns.mjs` in the backend repo. The click patterns (`CTA_PATTERNS`, `CART_PATTERNS`) are defined once in `kpi-event-patterns.mjs` and imported by `kpi-store.ts` (KPI tab), `src/lib/admin-conversations.ts` (Gespräche inspector) and `src/lib/analytics-report-store.ts` (Komplettanalyse).
 
 | Dashboard figure | Reads | Fit with the widget today |
