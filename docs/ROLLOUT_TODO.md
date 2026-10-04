@@ -112,10 +112,10 @@ Last updated: 2026-10-04 (evening).
     nächsten Lauf“ → within 10 minutes the mail is in „Gesendet“. Lawyer: dossier § 17 (F-33)
     → goes with 3.2.
 
-- [ ] **1.9 Security fix: a sign-in counts only for the chat that started it** — `0073` run and
-  exposure check done 03.10. (all 22 sign-ins visible, none silent; no foreign export or
-  deletion — dossier § 15.3). **Left: F ships the widget step (task 1 of the frontend prompt)** — *before the other
-  frontend tasks*
+- [x] **1.9 Security fix: a sign-in counts only for the chat that started it** — done: `0073` run
+  and exposure check 03.10. (all 22 sign-ins visible, none silent; no foreign export or
+  deletion — dossier § 15.3); the widget redeems the code since the 04.10. upload, verified live
+  04.10. (1.11: 3/3 sign-ins redeemed, none stuck). Lawyer F-34 still goes with 3.2.
   - Found by the review of „order status in the chat“ (still unmerged). The chat's
     „Anmelden“ took the chat session from the login link. A prepared link carrying a
     stranger's session id, opened by a customer who is logged in to the shop, signed the
@@ -143,7 +143,8 @@ Last updated: 2026-10-04 (evening).
     Send C the result. If a row looks wrong, tell L the same day (72 h, Art. 33 DSGVO).
   - Lawyer: dossier § 15.3 (F-34) → goes with 3.2.
 
-- [ ] **1.8 „Prüfen & testen“ in the campaign editor** — C built it 03.10., nothing to switch on
+- [ ] **1.8 „Prüfen & testen“ in the campaign editor** — C built it 03.10., nothing to switch on;
+  tick it with the campaign-link test of 1.11 (same steps)
   - No migration, no env var. Uses the campaign send path for the test mail, so
     `CAMPAIGN_SENDS_APPROVED` must be on (it is).
   - Done when: Kampagnen → a campaign → „Bearbeiten“ → „Prüfen & testen“ shows the estimate;
