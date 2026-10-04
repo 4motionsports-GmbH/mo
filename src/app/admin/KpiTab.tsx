@@ -17,7 +17,10 @@ import {
   getEmailCaptureFunnel,
   getLocaleSplit,
   getLoginGateFunnel,
+  getOrderStatusKpis,
+  getSigninDiagnosis,
 } from "@/lib/kpi-store";
+import { germanDay, releasesInRange } from "@/lib/kpi-releases.mjs";
 import { getPersonaInsights } from "@/lib/kpi-persona";
 import { getMoAttributionKpis } from "@/lib/mo-orders-store";
 import { getBundleKpis } from "@/lib/bundle-offers-store";
@@ -55,6 +58,7 @@ import { LoopSection } from "./kpi/sections/LoopSection";
 import { KundenbasisSection } from "./kpi/sections/KundenbasisSection";
 import { MoEffektSection } from "./kpi/sections/MoEffektSection";
 import { EingangSection } from "./kpi/sections/EingangSection";
+import { OrderStatusSection } from "./kpi/sections/OrderStatusSection";
 
 export async function KpiTab({
   dbReady,
@@ -96,6 +100,8 @@ export async function KpiTab({
     inboxKpis,
     moEffect,
     loginGate,
+    signinDiagnosis,
+    orderStatus,
   ] = await Promise.all([
     getCoreMetrics(range),
     getMoAttributionKpis(range),
@@ -116,9 +122,12 @@ export async function KpiTab({
     getInboxKpis(range),
     getMoEffectKpis(),
     getLoginGateFunnel(range),
+    getSigninDiagnosis(range),
+    getOrderStatusKpis(range),
   ]);
 
   const [beratung, marketing, umsatz, kosten, gesamt] = KPI_GROUPS;
+  const releases = releasesInRange(range);
 
   return (
     <div className="-mt-6 flex flex-col gap-10">
@@ -131,20 +140,34 @@ export async function KpiTab({
         shopifyFromCache={shopify.fromCache}
       />
 
+      {releases.length > 0 && (
+        <Callout tone="neutral" compact title="Änderungen im Zeitraum">
+          <ul className="mt-1 flex flex-col gap-1">
+            {releases.map((r) => (
+              <li key={r.key}>
+                <span className="font-medium tabular-nums">{germanDay(r.date)}</span> · {r.title}{" "}
+                <InfoTip label={`Was sich am ${germanDay(r.date)} geändert hat`}>{r.detail}</InfoTip>
+              </li>
+            ))}
+          </ul>
+        </Callout>
+      )}
+
       <Group group={beratung}>
         <CoreSection core={core} range={range} />
         <LocaleSection locales={locales} />
         <QualitySection stats={quality} />
         <QaSection kpis={qa} />
         <FeedbackSection kpis={feedback} />
-        <AccountSection activity={account} />
+        <AccountSection activity={account} range={range} />
+        <OrderStatusSection kpis={orderStatus} />
       </Group>
 
       <Group group={marketing}>
-        <LoginGateSection funnel={loginGate} />
-        <ConsentGateSection funnel={gateFunnel} />
+        <LoginGateSection funnel={loginGate} diagnosis={signinDiagnosis} range={range} />
+        <ConsentGateSection funnel={gateFunnel} range={range} />
         <EmailCaptureSection funnel={captureFunnel} />
-        <CampaignSection cached={shopify.campaign} />
+        <CampaignSection cached={shopify.campaign} range={range} />
         <EingangSection kpis={inboxKpis} />
         <BundleSection kpis={bundles} />
       </Group>

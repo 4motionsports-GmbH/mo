@@ -61,9 +61,10 @@ export function CoreSection({ core, range }: { core: CoreMetrics | null; range: 
               hint="status='abandoned' (Beratung ohne Abschluss)"
             />
             <Stat
-              label="Engagement"
+              label="Geöffnet → geschrieben"
               value={ratio(core.engagementRate)}
-              hint="Chats mit Nachricht ÷ Sessions mit Telemetrie"
+              hint={`${num(core.wroteSessions)} von ${num(core.openedSessions)} Sitzungen mit geöffnetem Chat`}
+              info="Sitzungen, in denen die Person selbst geschrieben hat (message_sent), geteilt durch Sitzungen, die den Chat geöffnet haben (chat_opened). Bis 04.10.2026 stand hier „Chats ÷ alle Sitzungen mit Telemetrie“ — das zählte auch Geräte, die den Chat nie geöffnet hatten (die Launcher-Animation sendet ohne Öffnen), und Begrüßungen ohne Nachricht."
             />
           </StatGrid>
 
@@ -97,7 +98,11 @@ export function CoreSection({ core, range }: { core: CoreMetrics | null; range: 
               value={num(core.addToCartClicks)}
               hint={`${num(core.addToCartRatePerChat, 2)} pro Chat`}
             />
-            <Stat label="Sessions mit Telemetrie" value={num(core.sessionsWithTelemetry)} />
+            <Stat
+              label="Reichweite (Sitzungen)"
+              value={num(core.sessionsWithTelemetry)}
+              hint="mit irgendeinem Widget-Event — auch ohne Öffnen"
+            />
           </StatGrid>
 
           {core.topEvents.length > 0 && (
