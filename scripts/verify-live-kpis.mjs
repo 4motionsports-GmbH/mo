@@ -169,6 +169,15 @@ table(
       GROUP BY 1, 2 ORDER BY 1, 2`
   )
 );
+console.log("DOI-Bestätigungen (Klick auf den Link; das Opt-in-Event selbst ändert sich nie):");
+table(
+  await q(
+    `SELECT count(*)::int AS bestaetigt, min(created_at) AS first, max(created_at) AS last
+       FROM kpi_events
+      WHERE event = 'email_capture_marketing_confirmed' AND created_at >= ${SINCE}
+     HAVING count(*) > 0`
+  )
+);
 console.log("Einwilligungs-Ereignisse aus Mo (consent_events; mo_signin = Popup nach der Anmeldung):");
 table(
   await q(
