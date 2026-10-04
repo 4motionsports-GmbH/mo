@@ -34,8 +34,12 @@ Three breakpoints (Anthropic allows max 4 per request):
    definitions are byte-stable per locale → this prefix also hits **across
    turns, sessions and users**. `get_order_status` sits *before* the marker:
    it is present or withheld per deployment (`CHAT_ORDER_STATUS_ENABLED`,
-   which also picks the `show_contact_form` copy variant), never per turn or
-   per session — so the tools prefix stays one per deployment and locale.
+   which also picks the `show_contact_form` copy variant) — so the tools
+   prefix stays one per deployment and locale. The one exception: while the
+   switch is off, a session signed in as one of
+   `CHAT_ORDER_STATUS_TEST_CUSTOMERS` (the live check before the switch) gets
+   the order-status tool set and prompt, a second cached prefix for those few
+   sessions only.
 2. **System prompt** (`src/app/api/chat/route.ts` — the system prompt travels
    as a leading `role: "system"` message because the AI SDK's `system` string
    option cannot carry `providerOptions`). The system prompt embeds per-turn

@@ -713,10 +713,11 @@ The Mo deep link a campaign click lands on carries the send's redirect token as 
 reads it from the landing URL and sends it back as the optional, additive **`campaignToken`** on
 `POST /api/chat` (the first turn of the session the link opened; contract in
 [`API_CONTRACT.md`](./API_CONTRACT.md) §2). The server checks the shape (`/^[A-Za-z0-9_-]{16,64}$/`),
-looks the token up among real (non-test) `campaign_sends` and records **one** `kpi_events` row
-`campaign_chat_started` per send (`recordCampaignChatStarted` in `campaign-store.ts`) — with
-`session_id = NULL` and `data: { sendId, campaignId }`, so the pseudonymous chat is never tied to the
-person. Anything else is ignored; it never blocks or fails the chat. It shows as **„Chat gestartet“**
+looks the token up among the `campaign_sends` and records **one** `kpi_events` row
+`campaign_chat_started` per send (`recordCampaignChatStarted` in `campaign-store.ts`; a unique index,
+migration 0075, keeps it at one) — with `session_id = NULL` and `data: { sendId, campaignId }` (plus
+`test: true` for a test send, 2026-10-04), so the pseudonymous chat is never tied to the person. The
+funnel and the Komplettanalyse count real sends only (`is_test = false`). Anything else is ignored; it never blocks or fails the chat. It shows as **„Chat gestartet“**
 in „Kampagnen im Vergleich“ and in the Komplettanalyse chapter „Kampagnen“. Shop-CTA campaigns
 (`cta_kind = 'shop'`) redirect to the shop and carry no `mo_c`. The widget side (capture `mo_c` before
 the theme strips the URL parameters, send it once) is a frontend task; until it ships the column
@@ -1158,9 +1159,10 @@ verschickt wurde.
 - **Chat-Start** — der Redirect hängt den Send-Token als `mo_c` an den
   Mo-Deeplink; das Widget schickt ihn als `campaignToken` mit der ersten
   Chat-Anfrage zurück (`POST /api/chat`, additiv). Der Server prüft das Format,
-  sucht den echten (Nicht-Test-)Send und speichert je Send **einmal** ein
-  sitzungsloses KPI-Event `campaign_chat_started` (`data: { sendId,
-  campaignId }`) — der pseudonyme Chat wird nie mit der Person verknüpft.
+  sucht den Send und speichert je Send **einmal** ein sitzungsloses KPI-Event
+  `campaign_chat_started` (`data: { sendId, campaignId }`, bei einem Testversand
+  zusätzlich `test: true`; gezählt werden nur echte Sends) — der pseudonyme Chat
+  wird nie mit der Person verknüpft.
   Sichtbar als „Chat gestartet“ in „Kampagnen im Vergleich“ und in der
   Komplettanalyse. Die Widget-Seite (`mo_c` lesen und mitschicken) ist eine
   Frontend-Aufgabe; bis sie live ist, bleibt die Spalte bei 0.
