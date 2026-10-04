@@ -570,8 +570,11 @@ returns to the top of the queue. A test send works before the campaign starts (E
 Pausiert), not after it ended. Optionally a test contact borrows a real customer's purchase history
 and profile (`test_source_email` → `loadCampaignPersonalization`) so the generated mail is
 realistic. Everything else about a test send is real: MK- code, set block, tracked link,
-unsubscribe link, Resend delivery events. Test sends are stamped `campaign_sends.is_test` and left
-out of the Kampagnen-Funnel, the delivery strip, the campaign cards and the revenue KPI; the
+unsubscribe link, Resend delivery events — and, when the mail's button leads to Mo, the chat start:
+opening the chat from a test mail and writing a message records `campaign_chat_started` with
+`test: true` (2026-10-04), so the whole link can be checked. Test sends are stamped
+`campaign_sends.is_test` and left out of the Kampagnen-Funnel (including „Chat gestartet“), the
+delivery strip, the campaign cards and the revenue KPI; the
 „Gesendet“ view lists them with a „Test“ badge. „Vorbereiten“, the nightly cron, the audience
 refresh and „Warteschlange neu aufbauen“ never touch test contacts; counts in the header exclude
 them.

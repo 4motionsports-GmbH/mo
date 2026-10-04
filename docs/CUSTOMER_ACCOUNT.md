@@ -481,7 +481,11 @@ personalisation, so it does **not** need the marketing consent above
 (Art. 6 (1) b). Its gate is stricter than the resolver's:
 
 - `CHAT_ORDER_STATUS_ENABLED` is on (default off; while off the tool is
-  withheld and the prompt is unchanged);
+  withheld and the prompt is unchanged) — or, for the live check before the
+  switch, the session is signed in via the Customer Account as one of
+  `CHAT_ORDER_STATUS_TEST_CUSTOMERS` (Shopify customer ids; 2026-10-04,
+  `isOrderStatusEnabledFor` in `order-status.ts`): tool and prompt then change
+  for that session only;
 - the session's link is the **Customer Account sign-in in this session** —
   `resolveSignedInLink` (`customer-session-link.mjs`) reads `link_kind`
   explicitly and only `customer_account` counts; an App Proxy link

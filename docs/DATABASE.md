@@ -81,7 +81,12 @@ The schema is split into **two clusters** (see the separation rationale below).
   `(conversation_id, client_message_id, COALESCE(tool_name,''))`, so re-sent
   history never duplicates rows.
 - **Telemetry:** `/api/kpi` inserts pseudonymous `kpi_events` (the widget's
-  fail-silent `track()`), best-effort.
+  fail-silent `track()`), best-effort — never a server-only event name
+  (`SERVER_ONLY_EVENTS`, 2026-10-04). Migration **0075** removes duplicate
+  `campaign_chat_started` rows (keeps the oldest per `sendId`) and adds the
+  partial unique index `kpi_events_campaign_chat_started_send_uidx` on
+  `(data->>'sendId') WHERE event = 'campaign_chat_started'` — one chat start per
+  campaign send, also under concurrent first turns.
 - **AI cost (migration 0012):** every AI call records one `ai_usage` row — model
   id + provider-reported input/output token counts (`estimated` flags the rare
   case where they're estimated, e.g. an embeddings response with no usage field).

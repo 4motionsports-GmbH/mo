@@ -330,13 +330,15 @@ token appended as **`mo_c=<token>`**. The widget MAY send that value back:
 
 - **Server side:** the value is trimmed and must match
   `/^[A-Za-z0-9_-]{16,64}$/` (real tokens are 32 base64url characters); it
-  is looked up among real campaign sends and recorded **once per send** as a
+  is looked up among the campaign sends and recorded **once per send** as a
   session-less KPI event (`campaign_chat_started`, `data: { sendId,
-  campaignId }`). The chat's `x-ms-session` is never stored with it, so the
+  campaignId }`; a unique index enforces "once", migration 0075). A test
+  send („Prüfen & testen“) is recorded too, with `data.test: true`, so the
+  operator can check the link end to end; the KPI funnels count real sends
+  only. The chat's `x-ms-session` is never stored with it, so the
   pseudonymous chat is not tied to the recipient.
-- **Ignored gracefully:** a missing, malformed, unknown, test-send or
-  already-recorded token changes nothing — **no error**, no different
-  response. The recording is best-effort (it runs alongside the turn's other
+- **Ignored gracefully:** a missing, malformed, unknown or already-recorded
+  token changes nothing — **no error**, no different response. The recording is best-effort (it runs alongside the turn's other
   lookups and never fails the stream); the response shape is unchanged.
 - Only campaign mails whose button leads to Mo carry `mo_c`; a shop-button
   campaign redirects to the shop without it.
@@ -1017,12 +1019,13 @@ Same as `/api/chat`:
 - `reason` must be one of: `studio_consultation`, `public_sector_quote`,
   `physio_consultation`, `bulk_discount`, `leasing`, `maintenance`,
   `order_support`, `general`. Anything else is accepted but rendered
-  verbatim in the email subject.
+  verbatim in the email subject; the KPI event records it as `other`.
 - `email` is validated with `^[^@\s]+@[^@\s]+\.[^@\s]+$`.
 - `name` and `message` must be non-empty after trimming.
 - `sessionId` (optional) keys the pseudonymous `contact_form_submitted`
   KPI event (§5) so submissions can be compared against `show_contact_form`
-  tool-fires. It is telemetry-only — never stored alongside the submitted
+  tool-fires. Without it the `x-ms-session` header is used (widgets before
+  2026-10-04 b). It is telemetry-only — never stored alongside the submitted
   contact details.
 
 ### Success response
@@ -1153,25 +1156,29 @@ They feed the Consent-Gate funnel on the admin KPI tab
 
 These land in the same `kpi_events` stream but are emitted **exclusively
 server-side** (names in `src/lib/kpi-events.ts`) — the widget must never send
-them:
+them. Since 2026-10-04 `POST /api/kpi` answers `202` to any of these names
+but **does not store** them (`SERVER_ONLY_EVENTS` in
+`src/lib/kpi-widget-events.mjs`), so a misbehaving widget or a forged call
+cannot double-count or fake a funnel stage:
 
 | Event                      | Emitted by | `data` |
 | -------------------------- | ---------- | ------ |
 | `marketing_email_clicked`  | `GET /api/r/<token>` (marketing send) | `{ sendId, captureId, firstClick }`, session `NULL` |
 | `campaign_email_clicked`   | `GET /api/r/<token>` (campaign send, migration 0041) | `{ sendId, firstClick }`, session `NULL` |
-| `campaign_chat_started`    | `POST /api/chat` with a valid `campaignToken` (§2) — once per campaign send | `{ sendId, campaignId }`, session `NULL` (the widget sends the token, never this event) |
+| `campaign_chat_started`    | `POST /api/chat` with a valid `campaignToken` (§2) — once per campaign send (unique index, 0075) | `{ sendId, campaignId }`, plus `test: true` for a test send; session `NULL` (the widget sends the token, never this event) |
 | `bundle_offer_clicked`     | `GET /api/r/<token>` (bundle offer) | `{ offerId, status, expired }`, session `NULL` |
-| `contact_form_submitted`   | `POST /api/contact` (accepted submissions) | `{ reason, productCount }` — never the name/email/message. Session-keyed when the widget sends `sessionId` in the payload. |
+| `contact_form_submitted`   | `POST /api/contact` (accepted submissions) | `{ reason, productCount }` — `reason` one of the §4 reasons, else `other`; never the name/email/message. Session-keyed: the payload's `sessionId`, else the `x-ms-session` header. |
 | `account_signin_succeeded` | `GET /api/auth/shopify/callback` (success) | `{ silent }` — `prompt=none` re-detects flagged. Session-keyed (the session of `login?session=`). Since 0073 this alone does not sign the chat in. |
 | `account_signin_linked`    | `POST /api/auth/link` (code redeemed) | `{ kind }` — `customer_account` \| `app_proxy`. Session-keyed. The sign-in now counts for the chat. |
-| `account_signin_link_refused` | `POST /api/auth/link` (400) | `{ reason }` — `invalid` (expired, used, unknown) \| `session_mismatch` (another session's code). Session-keyed. |
+| `account_signin_link_refused` | `POST /api/auth/link` (400) | `{ reason }` — `invalid` (expired, used, unknown) \| `session_mismatch` (another session's code). Session-keyed. A 503 (database not reachable) records nothing. |
 | `account_export_requested` | `GET /api/account/export` | `{}`, session `NULL` (pure volume counter) |
 | `account_erased`           | `POST /api/account/erase` | `{}`, session `NULL` (pure volume counter) |
 | `order_status_lookup`      | `POST /api/chat` — one per `get_order_status` call (2026-10, `CHAT_ORDER_STATUS_ENABLED`) | `{ outcome, topic, source, orders }` — `outcome` `ok` \| `no_orders` \| `not_found` \| `sign_in_required` \| `unavailable` \| `disabled` \| `ledger_off` \| `ledger_incomplete` (first order import not finished) \| `ledger_behind` (a live read found an order the ledger lacks); `topic` as the tool input; `source` `ledger` \| `ledger+live`; `orders` = number of orders in the answer. Never an order number, amount or id. Session-keyed. |
 
 They feed the Kampagnen-Funnel, Bundle and Kundenkonto/Self-Service sections
 of the admin KPI tab (see `ADMIN_DASHBOARD.md` §5.9/§5.10/§5.15);
-`order_status_lookup` has no KPI section yet (raw event breakdown only).
+`order_status_lookup` feeds „Bestellstatus im Chat“ (§5.15a); the sign-in
+events also feed the per-session diagnosis of the Anmelde-Popup section (§5.7a).
 
 ### Success response
 

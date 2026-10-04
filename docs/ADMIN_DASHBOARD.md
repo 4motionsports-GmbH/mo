@@ -1304,12 +1304,25 @@ instances. All pure-DB sections are live.
 | **Gesprächsqualität** (§5.13) — `conversations` on `created_at` | |
 | **Sprachen DE/EN** (§5.14) — `conversations`/`email_captures` on `created_at` | |
 | **Kundenkonto & Self-Service** (§5.15) — `kpi_events`/`ai_usage` on `created_at` | |
+| **Bestellstatus im Chat** (§5.15a) — `kpi_events` on `created_at` | |
 | **KI-Kosten** (§5.6) — `ai_usage` on `created_at` | |
 | **Mo-zugeordneter Umsatz** (§5.16) — `mo_orders` on order date | |
 
 The lifetime sections sit in the „Gesamtwerte“ group of the toolbar navigation,
 each badged „Gesamt“, so an operator always knows which figures the period
-applies to. The Eingang's 30-day strip (§3.1) is a fixed trailing snapshot and
+applies to.
+
+**Release dates in the period** ([`lib/kpi-releases.mjs`](../src/lib/kpi-releases.mjs),
+tested). When the period contains a release that changes what a number means,
+„Änderungen im Zeitraum“ lists it under the toolbar (date + title, the detail in
+an InfoTip): 01.10.2026 widget update (sign-in popup, consent popup), 03.10.2026
+one-time sign-in code (backend), 04.10.2026 customer-platform widget live. The
+affected sections add a note when the period starts earlier: Anmelde-Popup,
+Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
+„erst ab dem 04.10.2026 aussagekräftig“; the first three also note the sign-in
+outage from 03.10. until the widget upload on 04.10. (no sign-in could complete
+in the chat), so a drop on those days is not a trend. A new release is one entry
+in `KPI_RELEASES` (+ `MEANINGFUL_FROM` if a section's data starts with it). The Eingang's 30-day strip (§3.1) is a fixed trailing snapshot and
 has no picker.
 
 ### 5.1 Core metrics — [`lib/kpi-store.ts`](../src/lib/kpi-store.ts)
@@ -1326,7 +1339,8 @@ indexes (migrations 0001 + 0027).
 | **Abgebrochen** | `count(status='abandoned')` and its share of all chats. | `status` is flipped to `abandoned` lazily by the retention cron after `ABANDON_AFTER_MINUTES` idle — not real-time. |
 | **Konvertiert** (status split) | `status='converted'`, set by the daily **conversion sweep** ([`lib/conversion-sweep.ts`](../src/lib/conversion-sweep.ts), runs with the retention cron): the unique `MS5-` code of the marketing email drafted from this conversation was redeemed in a real order (`wasDiscountCodeRedeemed`), bookkept via `marketing_sends.shopify_order_matched`. Attributed to the session's most-recently-active thread as of the send. | A **lower bound**: purchases without a Mo code are unattributable (same honesty rule as §5.5) and never flip a conversation. Campaign (MK-) sends carry no session and can't convert a conversation. Bounded to `CONVERSION_SWEEP_MAX_CODES` (default 25) checks/run; unmatched codes retry while their discount is still redeemable. |
 | **Produkt-/CTA-Klicks**, **Add-to-Cart-Klicks** | `kpi_events` counts, **pattern-matched** by event name: CTA = `event ILIKE '%product%click%' OR '%cta%click%'`; cart = `event ILIKE '%cart%' OR '%checkout%'`. Each also shown as a rate per chat. | The literal event names are owned by the **frontend** widget's `track()`. We match by shape (survives a rename) and additionally surface the **full event breakdown** so the raw truth is always visible. If the widget emits different names, adjust the patterns. |
-| **Engagement** | `chatsWithMessages ÷ sessionsWithTelemetry`, where `sessionsWithTelemetry = count(distinct session_id)` in `kpi_events`. | A proxy for "opened vs message-sent": a conversation row only exists once a message is sent, while any telemetry implies the widget was opened. Depends on the widget emitting telemetry on open. |
+| **Geöffnet → geschrieben** (engagement, since 2026-10-04) | Sessions with `message_sent` ÷ sessions with `chat_opened` in the window (both widget events, capped at 100 %). | Replaced `chats ÷ sessions with any telemetry`: the old denominator counted sessions that never opened the chat (nudge, popup and CTA impressions) and the old numerator counted greeting-only conversation rows (docs/frontend/05 §12, §14.3). Empty until the widget sends `chat_opened`. |
+| **Reichweite (Sitzungen)** | `count(distinct session_id)` in `kpi_events` — sessions with any widget event, opened or not. | Was „Sessions mit Telemetrie“; the denominator of nothing any more, shown as reach. |
 
 ### 5.2 Persona-group insights — [`lib/kpi-persona.ts`](../src/lib/kpi-persona.ts)
 
@@ -1482,8 +1496,22 @@ snoozed 24 h on the device) and „Weggeklickt“ (`login_gate_dismissed`) with 
 share of the shown sessions, and **Anmeldestarts nach Herkunft** from the widget's
 `account_signin_started` (`data.source: "login_gate"` = popup; absent = welcome
 card or header button). A note appears when sessions signed in at Shopify but not
-in the chat — the widget is not redeeming the code (frontend task 1). Rates in
-the tested `kpi-widget-events.mjs` (`loginGateRates`).
+in the chat. Rates in the tested `kpi-widget-events.mjs` (`loginGateRates`).
+
+**Diagnose: wo Anmeldungen enden** ([`getSigninDiagnosis()`](../src/lib/kpi-store.ts),
+classification in the tested `classifySigninSession`, docs/frontend/05 §12.1).
+Every session with a sign-in event in the period — whatever started it: popup,
+welcome card, header, or the shop's App Proxy — is classified by the point where
+its sign-in ended, from widget and server events of that session: Im Chat
+angemeldet (code redeemed, return `ok`), Vom Shop erkannt (`account_signin_linked
+{kind:"app_proxy"}` without a sign-in round trip), Angemeldet (zweiter Versuch),
+Code für andere Sitzung (`session_mismatch`), Code abgelaufen oder benutzt
+(`invalid`), Widget hat nicht eingelöst (return `link_failed` without a refusal —
+also a 503 at the redeem, which is not recorded), Altes Widget (return `ok`
+without a redeem), Keine Rückkehr gemeldet (Shopify sign-in, no return event),
+Rückkehr mit Fehler, Bei Shopify abgebrochen, Beim Warten geschlossen, Start
+nicht angekommen — each with its likely cause. Below the table the widget's
+`account_signin_return` results. At most 20,000 sessions per period (noted).
 
 ### 5.8 E-Mail-Capture-Funnel — [`getEmailCaptureFunnel()`](../src/lib/kpi-store.ts)
 
@@ -1581,10 +1609,24 @@ also says how many the chat completed — `account_signin_linked`, written by
 `account_signin_link_refused` with `reason` `invalid` | `session_mismatch`),
 **data exports** (`account_export_requested`), **erasures** (`account_erased`),
 **contact-form submissions** (`contact_form_submitted` — comparable against the
-`show_contact_form` tool-fires in the Gespräche tab), and summary deliveries
+`show_contact_form` tool-fires in the Gespräche tab; the hint splits out reason
+`order_support` („Bestellung & Service“) and submissions with a session, which
+the widget sends since 2026-10-04), and summary deliveries
 (`summary_email` / `summary_download` rows in `ai_usage` — one row per generated
 summary). All pseudonymous counters; export/erase events carry no session or
 customer key at all.
+
+### 5.15a Bestellstatus im Chat — [`getOrderStatusKpis()`](../src/lib/kpi-store.ts)
+
+The server's `order_status_lookup` events (one per `get_order_status` call,
+[`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) „Order status in the chat“) in the period: **Abfragen**, **Sitzungen**,
+**Beantwortet** (outcome `ok`, with its share), and three bar lists — **Ergebnis**
+(ok, no_orders, not_found, sign_in_required, unavailable, disabled, ledger_off,
+ledger_incomplete, ledger_behind, in German), **Thema** (status, shipping, return,
+cancellation, refund) and **Quelle der Antwort** (ledger only vs ledger + the short
+live read at Shopify). Empty until `CHAT_ORDER_STATUS_ENABLED=true` or a session
+of a `CHAT_ORDER_STATUS_TEST_CUSTOMERS` account asks. No order number, amount or
+address is ever in the event.
 
 ### 5.16 Mo-zugeordneter Umsatz (Bestell-Webhook) — [`getMoAttributionKpis()`](../src/lib/mo-orders-store.ts)
 

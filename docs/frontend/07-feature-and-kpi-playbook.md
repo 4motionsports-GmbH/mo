@@ -398,6 +398,8 @@ Facts from the commit message of `44a076b` ("Verified in headless Chromium again
 
 ### 6.4 Which widget build is live?
 
+> **Backend (2026-10-04):** `npm run verify:widget` in the backend repo does this check (fetch the storefront, find the asset, count the markers, classify — `src/lib/widget-fingerprint.mjs`, tested against the marker counts of `3e87341`, `8d0a0c4`, `a0df103`, `44a076b`, `beff918`, `e4b12f1`, `f7dc50a`), plus the head script, the `/cart` style and the App Proxy answer. `3e87341` adds one marker: the comment `stop any audio still queued` (and `endSpeaking()` 10× instead of 8×).
+
 `ms-chat-widget.js` has no version constant or version header (§1, §5 rule 2). Identify the live build by searching the **live** asset: view-source of any storefront page → the `ms-chat-widget.js` URL that `snippets/ms-chat-widget.liquid` emits via `asset_url` → search for these markers (marker counts checked against each commit's `assets/ms-chat-widget.js`):
 
 | Markers in the live JS | Build | Consequence |
@@ -420,6 +422,8 @@ Also check that the live `layout/theme.liquid` contains the `ms-chat-early-param
 Consolidated from `05` §13.4, `03` §20, `04` §17–§18, `06` §16 and `02` §21. Priority reflects KPI impact per effort and whether an item blocks others. "KPI" uses the owner's goals: **opt-ins, sign-ins, product clicks, add-to-cart / checkout, attributed revenue, campaign chats**, plus measurement quality.
 
 ### P0 — unblock and verify (do first)
+
+> **Backend status (2026-10-04):** P0.4's optional hardening (`x-ms-session` fallback in `/api/contact`) and P0.6 (engagement denominator) are done in the backend; P0.1's live checks are scripted (`npm run verify:widget`, `npm run verify:live`) and order status can be checked with one test account before the switch (`CHAT_ORDER_STATUS_TEST_CUSTOMERS`).
 
 | # | Item | KPI | Backend work | Frontend work | Effort | Legal / notes | Refs |
 | --- | --- | --- | --- | --- | --- | --- | --- |
