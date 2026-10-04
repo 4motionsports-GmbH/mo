@@ -65,6 +65,22 @@ export function isChatOrderStatusEnabled(env = process.env) {
 }
 
 /**
+ * CHAT_ORDER_STATUS_TEST_CUSTOMERS — Shopify customer ids (comma-separated)
+ * for whom the order status works while CHAT_ORDER_STATUS_ENABLED is still
+ * off: the live check of a test account before switching it on for everyone.
+ * Digits only; anything else is ignored. At most 20 ids.
+ * @returns {Set<string>}
+ */
+export function chatOrderStatusTestCustomers(env = process.env) {
+  const raw = typeof env.CHAT_ORDER_STATUS_TEST_CUSTOMERS === "string" ? env.CHAT_ORDER_STATUS_TEST_CUSTOMERS : "";
+  const ids = raw
+    .split(/[\s,;]+/)
+    .map((s) => s.trim().replace(/^gid:\/\/shopify\/Customer\//, ""))
+    .filter((s) => /^\d{1,20}$/.test(s));
+  return new Set(ids.slice(0, 20));
+}
+
+/**
  * Whom the AI profile may be built for (CUSTOMER_AI_PROFILE_SCOPE):
  *   "consented" — only customers with an e-mail-marketing consent (default)
  *   "all"       — every customer; non-consented ones are flagged in the admin

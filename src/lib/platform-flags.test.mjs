@@ -65,3 +65,15 @@ test("profiling respects the objection and the scope", () => {
   assert.equal(mayBuildAiProfile({ consentState: "not_subscribed", profileObjectionAt: null, scope: "all" }), true);
   assert.equal(mayBuildAiProfile({ consentState: "subscribed", profileObjectionAt: "2026-01-01", scope: "all" }), false);
 });
+
+test("chatOrderStatusTestCustomers: digits (or a Customer gid) only, max 20", async () => {
+  const { chatOrderStatusTestCustomers: t } = await import("./platform-flags.mjs");
+  assert.deepEqual([...t({})], []);
+  assert.deepEqual([...t({ CHAT_ORDER_STATUS_TEST_CUSTOMERS: "" })], []);
+  assert.deepEqual(
+    [...t({ CHAT_ORDER_STATUS_TEST_CUSTOMERS: " 7712345678901, gid://shopify/Customer/42 ;abc  99x 13 " })],
+    ["7712345678901", "42", "13"]
+  );
+  const many = Array.from({ length: 30 }, (_, i) => String(i + 1)).join(",");
+  assert.equal(t({ CHAT_ORDER_STATUS_TEST_CUSTOMERS: many }).size, 20);
+});
