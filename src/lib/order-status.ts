@@ -36,7 +36,11 @@ import { resolveSignedInLink } from "./customer-session-link.mjs";
 import { getValidAccessToken } from "./customer-oauth-store";
 import { findCustomerOrders, type LedgerOrder } from "./customer-orders-store";
 import { adminGraphql, isShopifyConfigured } from "./shopify";
-import { isChatOrderStatusEnabled, isShopifyCustomerSyncEnabled } from "./platform-flags.mjs";
+import {
+  chatOrderStatusTestCustomers,
+  isChatOrderStatusEnabled,
+  isShopifyCustomerSyncEnabled,
+} from "./platform-flags.mjs";
 import { isOrderImportDone } from "./shopify-sync";
 import { KPI_ORDER_STATUS_LOOKUP, recordKpiEvent } from "./kpi-events";
 import {
@@ -102,6 +106,37 @@ const LIVE_ORDER_QUERY = /* GraphQL */ `
 `;
 
 /**
+ * While CHAT_ORDER_STATUS_ENABLED is off: is this session signed in (Customer
+ * Account, this session) as one of CHAT_ORDER_STATUS_TEST_CUSTOMERS? Then the
+ * order status works for it alone — the live check before switching it on for
+ * everyone. False without a list, on any error, and for the shop-recognised
+ * (App Proxy) link, which never sees order data. Never throws.
+ */
+export async function isOrderStatusTestSession(
+  sessionId: string | null,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  const testers = chatOrderStatusTestCustomers();
+  const sid = sessionId?.trim() || null;
+  if (testers.size === 0 || !sid || !sql) return false;
+  try {
+    const link = await resolveSignedInLink(sql, sid);
+    return Boolean(link && link.linkKind === "customer_account" && testers.has(String(link.shopifyCustomerId)));
+  } catch (err) {
+    reportError(err, { route: "lib/order-status", phase: "isOrderStatusTestSession" });
+    return false;
+  }
+}
+
+/** The switch for everyone, or the test list for this session. */
+export async function isOrderStatusEnabledFor(
+  sessionId: string | null,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  return isChatOrderStatusEnabled() || (await isOrderStatusTestSession(sessionId, sql));
+}
+
+/**
  * Resolve whether this session may see order data. Never throws; the token
  * read (which may refresh and rotate the customer's tokens) runs only for a
  * Customer Account link.
@@ -110,7 +145,7 @@ export async function resolveOrderAccess(
   sessionId: string | null,
   sql: Sql | null = getSql()
 ): Promise<OrderAccess> {
-  const flagOn = isChatOrderStatusEnabled();
+  const flagOn = await isOrderStatusEnabledFor(sessionId, sql);
   if (!flagOn) return { access: "disabled" };
   const sid = sessionId?.trim() || null;
   if (!sid) return { access: "sign_in_required" };

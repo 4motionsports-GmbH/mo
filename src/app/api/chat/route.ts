@@ -19,7 +19,6 @@ import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
 import { anthropicOptionsFor, modelFor } from "@/lib/ai-models.mjs";
 import { sanitizeToolParts } from "@/lib/chat-message-sanitize.mjs";
-import { isChatOrderStatusEnabled } from "@/lib/platform-flags.mjs";
 import { deriveArchetype } from "@/lib/persona";
 import { retrieveForTurn } from "@/lib/retrieval";
 import { getCachedGeneralQa } from "@/lib/qa-store";
@@ -35,6 +34,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { persistTurn, ensureConversationStarted, type ToolInvocation } from "@/lib/conversation-store";
 import { recordCampaignChatStarted } from "@/lib/campaign-store";
+import { isOrderStatusEnabledFor } from "@/lib/order-status";
 import {
   KPI_EMAIL_CAPTURE_ASK_SHOWN,
   hasDeclinedEmailCapture,
@@ -440,7 +440,9 @@ export async function POST(req: Request) {
     // before the feature. It is NOT withheld per session: an anonymous visitor
     // asking about an order gets "sign_in_required" from the tool itself, and
     // the cached tools prefix stays one per deployment.
-    const orderStatusEnabled = isChatOrderStatusEnabled();
+    // The switch for everyone — or, while it is off, only a signed-in test
+    // customer (CHAT_ORDER_STATUS_TEST_CUSTOMERS) for the live check.
+    const orderStatusEnabled = await isOrderStatusEnabledFor(sessionId);
     const tools = buildChatTools(profile, locale, { sessionId, orderStatusEnabled });
     const defaultActiveTools = Object.keys(tools).filter(
       (name) =>
