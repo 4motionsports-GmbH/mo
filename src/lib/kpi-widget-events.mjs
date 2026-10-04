@@ -104,3 +104,91 @@ export function loginGateRates(c) {
     unlinked: Math.max(0, signedIn - linked),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Server-only events (API_CONTRACT §5) — POST /api/kpi drops them
+// ---------------------------------------------------------------------------
+
+/**
+ * Written only by backend routes. A copy arriving through POST /api/kpi (a
+ * misbehaving widget, or anyone on an allow-listed origin) would double-count
+ * or forge a funnel stage, so the ingestion route acknowledges it (202) but
+ * never stores it.
+ */
+export const SERVER_ONLY_EVENTS = Object.freeze([
+  "email_capture_ask_shown",
+  "email_capture_submitted",
+  "email_capture_marketing_opted_in",
+  "email_capture_marketing_confirmed",
+  "marketing_email_clicked",
+  "campaign_email_clicked",
+  "bundle_offer_clicked",
+  "campaign_chat_started",
+  "contact_form_submitted",
+  "account_signin_succeeded",
+  "account_signin_linked",
+  "account_signin_link_refused",
+  "account_export_requested",
+  "account_erased",
+  "order_status_lookup",
+]);
+
+const SERVER_ONLY = new Set(SERVER_ONLY_EVENTS);
+
+/** @param {unknown} event */
+export function isServerOnlyEvent(event) {
+  return typeof event === "string" && SERVER_ONLY.has(event.trim());
+}
+
+// ---------------------------------------------------------------------------
+// Sign-in diagnosis (docs/frontend/05-engagement-and-kpi.md §12.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where one session's sign-in ended, from its events. First match wins.
+ * Rows of 05 §12.1: complete (linked), complete_retry (row 7: linked without
+ * return ok — the silent retry), refused_* (row 6), link_failed_local (row 5:
+ * the widget never called /api/auth/link — or the redeem hit a 503, which
+ * /api/auth/link does not record), stale_widget (row 4a: return ok but
+ * no redeem — an old widget), no_return (row 4b: the widget did not mount on
+ * the return page or lost the code), abandoned (row 3: started, never
+ * succeeded at Shopify), dismissed_while_waiting (row 1), start_lost (row 2).
+ *
+ * @param {{ gateClicked?: boolean, dismissedAfterClick?: boolean, started?: boolean,
+ *           succeeded?: boolean, returnOk?: boolean, returnLinkFailed?: boolean,
+ *           returnOther?: boolean, linked?: boolean, linkedViaShop?: boolean,
+ *           refusedInvalid?: boolean, refusedMismatch?: boolean }} f
+ */
+export function classifySigninSession(f) {
+  if (f.linked) {
+    if (f.returnOk) return "complete";
+    // Only the App Proxy (whoami) link — no sign-in round trip at all.
+    if (f.linkedViaShop && !f.succeeded && !f.started) return "shop_recognised";
+    return "complete_retry";
+  }
+  if (f.refusedMismatch) return "refused_mismatch";
+  if (f.refusedInvalid) return "refused_invalid";
+  if (f.returnLinkFailed) return "link_failed_local";
+  if (f.succeeded && f.returnOk) return "stale_widget";
+  if (f.succeeded && !f.returnOk && !f.returnOther) return "no_return";
+  if (f.succeeded) return "returned_error";
+  if (f.started) return f.returnOther ? "returned_error" : "abandoned";
+  if (f.gateClicked) return f.dismissedAfterClick ? "dismissed_while_waiting" : "start_lost";
+  return "none";
+}
+
+/** Display order and German labels + the likely cause (05 §12.1). */
+export const SIGNIN_DIAGNOSIS = Object.freeze([
+  { key: "complete", label: "Im Chat angemeldet", cause: "Code eingelöst, Rückkehr gemeldet.", ok: true },
+  { key: "shop_recognised", label: "Vom Shop erkannt", cause: "Im Shop angemeldet, über die App Proxy (whoami) ohne Klick im Chat angemeldet.", ok: true },
+  { key: "complete_retry", label: "Angemeldet (zweiter Versuch)", cause: "Erster Einlöseversuch scheiterte (503/Netz), der stille zweite Versuch gelang.", ok: true },
+  { key: "refused_mismatch", label: "Code für andere Sitzung", cause: "Die Anmeldung endete in einer anderen Sitzung (anderes Gerät oder Tab) — oder ein fremder Link.", ok: false },
+  { key: "refused_invalid", label: "Code abgelaufen oder benutzt", cause: "Code älter als 10 Minuten, schon benutzt oder unbekannt.", ok: false },
+  { key: "link_failed_local", label: "Widget hat nicht eingelöst", cause: "Sitzungs-ID im Tab geändert, Code fehlte, localStorage nicht verfügbar — oder der Server war beim Einlösen gestört (503, wird nicht als Ablehnung gezählt).", ok: false },
+  { key: "stale_widget", label: "Altes Widget", cause: "Rückkehr „ok“ ohne Einlösen — ein Widget vor dem 04.10.2026 (zwischengespeichert oder zurückgesetzt).", ok: false },
+  { key: "no_return", label: "Keine Rückkehr gemeldet", cause: "Das Widget lief auf der Rückkehrseite nicht (ausgeschlossene Vorlage, Skriptfehler) oder der Code war älter als 10 Minuten.", ok: false },
+  { key: "returned_error", label: "Rückkehr mit Fehler", cause: "Shopify meldete einen Fehler oder „login_required“.", ok: false },
+  { key: "abandoned", label: "Bei Shopify abgebrochen", cause: "Anmeldung bei Shopify nicht abgeschlossen — oder die Rücksprungadresse wurde abgelehnt.", ok: false },
+  { key: "dismissed_while_waiting", label: "Beim Warten geschlossen", cause: "„Anmelden“ geklickt, das Popup aber geschlossen, bevor die Antwort fertig war.", ok: false },
+  { key: "start_lost", label: "Start nicht angekommen", cause: "Das Start-Event ging bei der Weiterleitung verloren oder die Weiterleitung schlug fehl.", ok: false },
+]);

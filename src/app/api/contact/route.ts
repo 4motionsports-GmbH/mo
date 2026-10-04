@@ -136,15 +136,17 @@ export async function POST(req: Request) {
     // submissions. Reason + product count only — never the name/email/message.
     // Best-effort (recordKpiEvent never throws) and BEFORE the delivery branch
     // so dev-fallback submissions count too.
+    // The session: the body's `sessionId` (widget since 2026-10-04), else the
+    // `x-ms-session` header every widget call carries. The reason only as one
+    // of the known values — never free text in a KPI row.
+    const bodySession = typeof payload.sessionId === "string" ? payload.sessionId.trim() : "";
+    const headerSession = (req.headers.get("x-ms-session") ?? "").trim();
     await recordKpiEvent({
-      sessionId:
-        typeof payload.sessionId === "string" && payload.sessionId.trim()
-          ? payload.sessionId.trim().slice(0, 128)
-          : null,
+      sessionId: (bodySession || headerSession).slice(0, 128) || null,
       event: KPI_CONTACT_FORM_SUBMITTED,
       data: {
-        reason: payload.reason,
-        productCount: (payload.productIds ?? []).length,
+        reason: Object.prototype.hasOwnProperty.call(REASON_LABELS, payload.reason) ? payload.reason : "other",
+        productCount: Array.isArray(payload.productIds) ? payload.productIds.length : 0,
       },
     });
 

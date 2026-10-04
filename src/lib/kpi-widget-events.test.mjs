@@ -88,3 +88,41 @@ test("loginGateRates: junk and impossible counts never break the funnel", () => 
   assert.equal(r.linkRate, 1); // capped
   assert.equal(r.unlinked, 0);
 });
+
+test("server-only events: the AC §5 server table, nothing the widget sends", async () => {
+  const { SERVER_ONLY_EVENTS, isServerOnlyEvent } = await import("./kpi-widget-events.mjs");
+  for (const e of ["account_signin_linked", "account_signin_link_refused", "account_signin_succeeded", "account_erased", "campaign_chat_started", "contact_form_submitted", "order_status_lookup", "email_capture_ask_shown"]) {
+    assert.equal(isServerOnlyEvent(e), true, e);
+  }
+  for (const e of [LOGIN_GATE_SHOWN, ACCOUNT_SIGNIN_STARTED, ACCOUNT_SIGNIN_RETURN, "consent_gate_accepted", "email_capture_declined", "account_export_started", "account_exported", "chat_opened", "product_cta_clicked", "add_to_cart_clicked"]) {
+    assert.equal(isServerOnlyEvent(e), false, e);
+  }
+  assert.equal(isServerOnlyEvent(" account_erased "), true);
+  assert.equal(isServerOnlyEvent(null), false);
+  assert.equal(new Set(SERVER_ONLY_EVENTS).size, SERVER_ONLY_EVENTS.length);
+});
+
+test("classifySigninSession follows docs 05 §12.1", async () => {
+  const { classifySigninSession: c, SIGNIN_DIAGNOSIS } = await import("./kpi-widget-events.mjs");
+  assert.equal(c({ gateClicked: true, started: true, succeeded: true, returnOk: true, linked: true }), "complete");
+  assert.equal(c({ started: true, succeeded: true, returnLinkFailed: true, linked: true }), "complete_retry"); // row 7
+  assert.equal(c({ started: true, succeeded: true, returnLinkFailed: true, refusedInvalid: true }), "refused_invalid"); // row 6
+  assert.equal(c({ started: true, succeeded: true, returnLinkFailed: true, refusedMismatch: true }), "refused_mismatch");
+  assert.equal(c({ started: true, succeeded: true, returnLinkFailed: true }), "link_failed_local"); // row 5
+  assert.equal(c({ started: true, succeeded: true, returnOk: true }), "stale_widget"); // row 4a
+  assert.equal(c({ started: true, succeeded: true }), "no_return"); // row 4b
+  assert.equal(c({ succeeded: true }), "no_return");
+  assert.equal(c({ started: true, succeeded: true, returnOther: true }), "returned_error");
+  assert.equal(c({ started: true }), "abandoned"); // row 3
+  assert.equal(c({ started: true, returnOther: true }), "returned_error");
+  assert.equal(c({ gateClicked: true, dismissedAfterClick: true }), "dismissed_while_waiting"); // row 1
+  assert.equal(c({ gateClicked: true }), "start_lost"); // row 2
+  assert.equal(c({}), "none");
+  assert.equal(c({ linked: true, linkedViaShop: true }), "shop_recognised");
+  assert.equal(c({ linked: true, linkedViaShop: true, started: true, succeeded: true }), "complete_retry");
+  // Every category has a label.
+  const keys = new Set(SIGNIN_DIAGNOSIS.map((d) => d.key));
+  for (const k of ["complete", "shop_recognised", "complete_retry", "refused_mismatch", "refused_invalid", "link_failed_local", "stale_widget", "no_return", "returned_error", "abandoned", "dismissed_while_waiting", "start_lost"]) {
+    assert.ok(keys.has(k), k);
+  }
+});
