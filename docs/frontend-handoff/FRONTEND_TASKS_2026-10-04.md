@@ -8,9 +8,12 @@ rankings: `docs/plans/2026-10-04/README.md`.
 |---|---|---|---|
 | [`tasks-2026-10-04/1-consent-benefits-variant.md`](./tasks-2026-10-04/1-consent-benefits-variant.md) | Consent popup renders served `benefits` (no widget text); `variant` + `placement` on the signed-in ask; copy cache per sid; no dismiss after an accept | opt-ins: accept rate and DOI per variant; compliance | OI3 B1 deployed (C.19) |
 | [`tasks-2026-10-04/2-page-context.md`](./tasks-2026-10-04/2-page-context.md) | First typed/spoken message on a PDP (and after a product change) carries the page's product (`context.source:"page"`); `source` on CTA/nudge context; `samePage` on `product_cta_clicked` | product clicks, add-to-cart (holdout-measured) | A3 backend deployed (C.20) |
-| [`tasks-2026-10-04/3-attribution-token-renewal.md`](./tasks-2026-10-04/3-attribution-token-renewal.md) | Renew the `_mo` token after a live consultation; blank the cart marker when the session ends or consent is withdrawn | attributed revenue | ATTR backend deployed (C.21) and the owner's decision |
+| [`tasks-2026-10-04/3-attribution-token-renewal.md`](./tasks-2026-10-04/3-attribution-token-renewal.md) | Renew the `_mo` token after a live consultation; blank the cart marker when the session ends or consent is withdrawn | attributed revenue | ATTR backend deployed (C.21) |
 
 P0.3 Appendix A (remove the bullets) is **not** needed: task 1 replaces it.
+
+**Preferred: send all three together** once C.19–C.21 are live, so the owner uploads the widget
+once (one MANIFEST entry, one fingerprint check). Each task is still complete on its own.
 
 ---
 

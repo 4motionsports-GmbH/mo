@@ -78,8 +78,13 @@ A1+D2 attribution hygiene, sign-in card at the order-status moment, D6 value-mom
 
 ## Order of work
 
-1. **C (backend, no widget):** OI1 F1 fix → P0.3 Phase 1 → OI1 PR 1 + PR 2 → OI3 B1 + A3 backend
-   counterpart (both no-ops for the live widget) → ATTR (migration, switch off).
+1. **C (backend, no widget)**, revised 05.10. after the completeness check: EN consent approved
+   (D-AP3, all three EN surfaces checked against the German text) → OI1 PR 1 (no summary ask when
+   signed in) → P0.3 Phase 1 → P0.3 Phase 2 (incl. order-status wording for shop-recognised
+   sessions, release entry for its deploy day) → OI1 PR 2 (F2 folded in) → OI3 B1 (bullets by C;
+   reuse OI1's `outcome`) → A3 backend → ATTR (migration `0076`; earlier if P3 shows the purge
+   cliff is close). `verify:live` sections: 7 = ATTR pre-checks (exists), then P0.3 = 8,
+   A3 = 9, ATTR live checks = 10. OI3 B4's migration becomes `0077`, run before its deploy.
 2. **FE:** the widget tasks in `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md` once the backend
    counterparts are deployed (each task file says what must be live first).
 3. **M + F:** App Proxy setup (ROLLOUT_TODO 5.4) after P0.3 Phase 1 is live; switches per the plans'
