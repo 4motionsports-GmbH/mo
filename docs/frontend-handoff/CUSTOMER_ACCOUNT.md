@@ -278,8 +278,11 @@ suppressed**, and the opt-in is surfaced **at sign-in** instead (§6.1).
   sign-in.
 - **Tiers 1–2 are unchanged.** Anonymous and email-only visitors still get the
   end-of-chat capture form exactly as today (the `offer_email_summary` tool flow
-  in [`API_CONTRACT.md`](./API_CONTRACT.md) §2/§7). This is purely a tier-3
-  frontend gate — the backend's capture flow is untouched.
+  in [`API_CONTRACT.md`](./API_CONTRACT.md) §2/§7). This is a tier-3 frontend
+  gate **and**, since 2026-10-05, the backend no longer offers
+  `offer_email_summary` (nor forces the checkout-moment ask) for a live tier-3
+  session; the capture flow for tiers 1–2 is unchanged; the 422
+  `no_verified_email` fallback still opens the form.
 
 ### 6.1 The at-sign-in marketing opt-in (button-consent since v4) — gated on `optInActionable`
 

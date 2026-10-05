@@ -87,9 +87,8 @@ body or `?locale=en` on GET endpoints. Omit it entirely for German — the Germa
 experience is byte-identical to today. On `en`, Mo replies in English and the
 transactional/DOI/unsubscribe emails + consent copy switch language.
 
-> ⚠️ The English **consent / legal / refund** copy is a translation that is
-> **not yet legally reviewed** (`enLegalReviewed: false` in the consent payload).
-> Gate the English consent flow on a legal sign-off. **Full contract +
+> The English **consent / legal / refund** copy is the approved translation of
+> the German (`enLegalReviewed: true` since 2026-10-05). **Full contract +
 > per-string coverage: [`LOCALE.md`](./LOCALE.md).**
 
 ---

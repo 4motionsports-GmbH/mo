@@ -1316,10 +1316,13 @@ applies to.
 tested). When the period contains a release that changes what a number means,
 „Änderungen im Zeitraum“ lists it under the toolbar (date + title, the detail in
 an InfoTip): 01.10.2026 widget update (sign-in popup, consent popup), 03.10.2026
-one-time sign-in code (backend), 04.10.2026 customer-platform widget live. The
+one-time sign-in code (backend), 04.10.2026 customer-platform widget live,
+05.10.2026 Bestell-Zuordnung (marked orders without attribution counted; window
+from the latest consultation — §5.16). The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
-„erst ab dem 04.10.2026 aussagekräftig“; the first three also note the sign-in
+„erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
+„Mo-zugeordneter Umsatz“ „erst ab dem 05.10.2026“; the first three also note the sign-in
 outage from 03.10. until the widget upload on 04.10. (no sign-in could complete
 in the chat), so a drop on those days is not a trend. A new release is one entry
 in `KPI_RELEASES` (+ `MEANINGFUL_FROM` if a section's data starts with it). The Eingang's 30-day strip (§3.1) is a fixed trailing snapshot and
@@ -1646,12 +1649,43 @@ calls, no caps, no sampling** — split into three honest tiers:
 
 Only realised money counts (PAID/PARTIALLY_REFUNDED — `kpi-revenue-core`
 policy); unpaid ingested orders are disclosed separately. Unmarked orders are
-never stored; ingestion starts at webhook registration (not retroactive), and
-the section shows an explicit empty state until the first delivery. The
-attribution window (`MO_ATTRIBUTION_WINDOW_DAYS`, default 30 days) and the
-cross-device blind spot are stated in the UI caveat. §5.5's code-only revenue
-KPI deliberately stays separate (exact definition preserved); orders can
-appear in both when a coded order also carries the cart marker.
+not recorded here (never stored in `mo_orders`; the order ledger stores them
+while the customer sync is on) — the InfoTip says „Unmarkierte Bestellungen
+werden hier nicht erfasst (nicht in der Mo-Zuordnung gespeichert)“.
+Ingestion starts at webhook registration (not retroactive), and the section
+shows an explicit empty state until the first marked order is seen —
+`ingestionSeen` is true once a row exists in `mo_orders` **or** a
+`mo_order_marker_unresolved` event exists, so a shop whose marked orders are
+all unresolved does not see the „Noch keine Bestellung über den Webhook
+erfasst“ callout.
+
+**Window anchor.** The attribution window (`MO_ATTRIBUTION_WINDOW_DAYS`,
+default 30 days) counts from the token's minting; with
+`MO_ATTRIBUTION_SESSION_ANCHOR` on (`sessionAnchor` in the result, ANWALTSDOSSIER
+§20) widget stamps count from the latest product consultation on the device
+(Produktkarte, Vergleich, Warenkorb-Karte, Showroom; written by the token's own
+session, never after the order), Mo links still from their creation. The
+InfoTip explains the rule of the active mode, plus the cross-device blind spot.
+
+**„Ohne Zuordnung“.** Marked orders no consultation could claim are counted as
+the server event `mo_order_marker_unresolved {reason, source?}` (orders/create
+only, dated by its arrival ≈ order time; `unresolvedOrders: { unknownToken,
+outsideWindow }`). When the range has any, a note says
+„{n} markierte Bestellung(en) im Zeitraum ohne Zuordnung: {a} mit unbekannter
+oder gelöschter Markierung, {b} außerhalb des Zuordnungsfensters — keiner
+Beratung zugeordnet (nicht in der Mo-Zuordnung gespeichert), nur gezählt.“
+They are not linked to a session and not in `mo_orders`.
+
+**Release notes.** The section takes `range` and shows
+`releaseNotesFor("attribution", range)`: releases `attribution-unresolved` and
+`attribution-window` (both 05.10.2026); for a period starting earlier the note
+„Erst ab dem 05.10.2026 aussagekräftig“ — „Beraten & gekauft“ and „Beraten,
+anderes gekauft“ count from the latest consultation since then („Direkt“
+unchanged).
+
+§5.5's code-only revenue KPI deliberately stays separate (exact definition
+preserved); orders can appear in both when a coded order also carries the cart
+marker.
 
 ### 5.17 Kundenbasis — [`getCustomerBaseKpis()`](../src/lib/customer-list-store.ts)
 

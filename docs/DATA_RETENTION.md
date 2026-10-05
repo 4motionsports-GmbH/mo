@@ -27,7 +27,7 @@ is **pseudonymous**: keyed by a client-generated `session_id`, never an email.
 | Table           | What's stored                                                                 | Contains PII?            |
 | --------------- | ----------------------------------------------------------------------------- | ------------------------ |
 | `conversations` | `session_id`, timestamps, derived persona label, message count, referenced product ids, status | No (pseudonymous)        |
-| `messages`      | role, message text, which tools fired                                          | Only if a user types it  |
+| `messages`      | role, message text, which tools fired; tool rows also the writing `session_id` (`0076`) | Only if a user types it  |
 | `kpi_events`    | event name, pseudonymous `session_id`, free-form jsonb `data`                  | No (telemetry)           |
 | `ai_usage`      | AI call site, model id, input/output token counts, optional `conversation_id`  | No (token counts only)   |
 
@@ -59,7 +59,8 @@ transcript. The tool's result itself is not stored (only the call's
 | Persona top-question cache (`kpi_persona_question_summaries`) | **180 days** by `generated_at` | `KPI_RETENTION_DAYS` | Hard delete (derived cache, regenerable on demand) |
 | Komplettanalyse reports (`analytics_reports`) | **365 days** by `created_at` | `ANALYTICS_REPORT_RETENTION_DAYS` | Hard delete — reports generated with per-customer profiles carry customer display names and must not live forever. 0 disables. |
 | Order-attribution rows (`mo_orders`) | **180 days** by `COALESCE(processed_at, created_at)` | `KPI_RETENTION_DAYS` | Hard delete (Cluster-A analytics like `kpi_events`; pseudonymous order facts only — see `docs/ORDER_ATTRIBUTION.md`) |
-| Attribution tokens (`mo_attribution_tokens`) | **window + 7 days** by `created_at` | `MO_ATTRIBUTION_WINDOW_DAYS` (window, default 30) | Hard delete — a token past the attribution window can never attribute again |
+| Attribution tokens (`mo_attribution_tokens`) | Switch off: **window + 7 days** by `created_at`. Switch on (session source `widget`): **window + 7 days after the token's own session's last product consultation**, never more than `KPI_RETENTION_DAYS` (default **180**; 180 when that window is 0) after minting. Link sources (`summary_email`, `marketing_email`, `bundle`): by `created_at` | `MO_ATTRIBUTION_WINDOW_DAYS` (window, default 30), `MO_ATTRIBUTION_SESSION_ANCHOR` (default off) | Hard delete — a token past the attribution window can never attribute again; deleted on erasure |
+| Writer session of product-tool rows (`messages.session_id`, `0076`) | follows the conversation | `RETENTION_DAYS` | Cascade-deleted with the conversation and on erasure; written only on tool marker rows (text rows stay NULL) — the attribution anchor counts only the token's own device |
 | Active → abandoned transition | **30 minutes** idle | `ABANDON_AFTER_MINUTES` | Status flip (not deletion) |
 
 Windows are measured from `last_activity_at` (conversations) and `created_at` /
@@ -507,7 +508,16 @@ step numbers below are the ones in the code. Each run:
    `KPI_RETENTION_DAYS` window.
 5i. Deletes `mo_orders` on the `KPI_RETENTION_DAYS` window (by
    `COALESCE(processed_at, created_at)`) and `mo_attribution_tokens` older than
-   the attribution window + 7 days.
+   the attribution window + 7 days. With `MO_ATTRIBUTION_SESSION_ANCHOR` on, a
+   `widget` token older than that stays only while its **own** session wrote a
+   product consultation (`show_product`, `compare_products`, `add_to_cart`,
+   `suggest_showroom`) inside the same window + 7 horizon, and never longer than
+   `attributionTokenMaxDays` = max(`KPI_RETENTION_DAYS`, or 180 when that is 0,
+   window + 7) after minting. Rows written before migration `0076`
+   (`messages.session_id` NULL) count for the thread's session until they leave
+   the 37-day horizon. The summary reports `keptActiveAttributionTokens`; the
+   response echoes `options.attributionSessionAnchor` and
+   `attributionTokenMaxDays`.
 6. Purges expired `customer_auth_pending` rows (the short-lived sign-in
    CSRF/PKCE state) and, a day past expiry, the one-time sign-in link codes
    (`customer_link_grants`, 0073).

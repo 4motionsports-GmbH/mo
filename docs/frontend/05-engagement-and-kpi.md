@@ -275,6 +275,7 @@ From AC §5. `/api/kpi` has no allowlist, so a widget that sent one of these wou
 | `account_signin_linked`, `account_signin_link_refused` | `/api/auth/link` | yes |
 | `account_export_requested`, `account_erased` | account endpoints | `NULL` |
 | `order_status_lookup` | `/api/chat` `get_order_status` (behind `CHAT_ORDER_STATUS_ENABLED`, currently off) | yes |
+| `mo_order_marker_unresolved` | `POST /api/webhooks/shopify` on `orders/create`: a `_mo`-marked order the backend could not attribute (`{reason: unknown_token \| outside_window, source?}`; since 2026-10-05) | `NULL` |
 
 The widget sends `account_export_started` / `account_exported` (UI) in addition to the server's `account_export_requested` (volume). These are different names and do not collide.
 
@@ -415,6 +416,8 @@ When planning campaign KPIs or a new landing parameter, decide whether `mo_new=1
 
 `ms-chat-widget.js → moAnalyticsAllowed()`, `moAttrLoad()`, `moAttrReset()`, `moStampCart()`, `moAttrEnsure(viaRender)`, `moAttrOnProductCard()`, `initAttribution()`. Backend: AC §10, `ORDER_ATTRIBUTION.md`, AD §5.16. Shipped in the 2026-08-12 widget session (MANIFEST.md, commit `e4b12f1`, on top of the Aug 12 live sync). It was not affected by that drift. The 2026-10-01 restore concerned PR #67/#62 (welcome/first-message gate, deep link), not attribution.
 
+> **Backend status (2026-10-05, after this chapter was written):** the attribution window counts from the token's minting; with the backend switch `MO_ATTRIBUTION_SESSION_ANCHOR` on (owner decision 2026-10-05, after migration 0076), a `widget` token's window counts from the device's latest product consultation (`show_product`, `compare_products`, `add_to_cart`, `suggest_showroom` written by that sid), and retention keeps the token while the device keeps consulting. A cached token therefore stays valid while the device keeps consulting: it is kept as long as the device consults at least every 37 days (at most 180 days after minting), and an order attributes if it comes within 30 days of the device's latest consultation. Orders with an unknown or out-of-window `_mo` are counted as `mo_order_marker_unresolved` (§5). No widget change is needed for this; the gaps that remain are in §10.3.
+
 ### 10.1 Invariants
 
 - **Consent-gated:** nothing runs unless `window.Shopify.customerPrivacy.analyticsProcessingAllowed() === true`, re-checked at every stamp.
@@ -444,6 +447,7 @@ The stamp is `fetch('/cart/update.js', {method:'POST', body: JSON.stringify({att
 - The theme's own add-to-cart (`product-form` in `assets/main.mjs`, which dispatches `document` `product:added-to-cart`) is **not** observed. Re-stamping after a completed checkout relies on the next page load.
 - Visitors who deny analytics consent are never stamped. **No event measures consent coverage**, so the share of consultations that can be attributed at all is unknown.
 - Purchases on another device stay invisible (stated residual in `ORDER_ATTRIBUTION.md`).
+- **Residual token cliff (backend, 2026-10-05).** Even with `MO_ATTRIBUTION_SESSION_ANCHOR` on, the backend deletes a widget token 37 days after the device's last product consultation, and at most 180 days (`KPI_RETENTION_DAYS`) after minting; erasure deletes it at once. The widget never re-mints while a token is cached (§10.2), so a device that keeps its sid (every signed-in customer) stamps the dead token until the sid rotates, and its orders count as `unknown_token`. Tokens purged before 2026-10-05 are not recoverable by the backend. The repair is the widget renewal: [`docs/frontend-handoff/tasks-2026-10-04/3-attribution-token-renewal.md`](../frontend-handoff/tasks-2026-10-04/3-attribution-token-renewal.md) (task 1 renews after a live product consultation; the endpoint already returns a new token after a purge, no contract change).
 
 ---
 
