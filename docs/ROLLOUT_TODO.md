@@ -13,7 +13,7 @@ widget).
 Mo's admin is German; English translations are in brackets.
 
 Last updated: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
-are one Dev Dashboard procedure M can do alone; C.26 = the open follow-ups of the archived plans;
+done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
 ## ▶ Open for M — the one list (05.10.2026, in this order)
@@ -256,7 +256,7 @@ the single list of what is still open for M. C's open items are at the end of �
       nothing: the widget hands the token over with the first message, in the tab the link
       opened.)
     - [x] 6.6 (order status) — on for everyone since 05.10.
-    - [ ] 5.4 (App Proxy) → open list item 4.
+    - [x] 5.4 (App Proxy) — done 05.10. (see „Done“ above).
   - KPI tab (30 days): „Änderungen im Zeitraum“ lists the release days (01.10., 03.10., 04.10.,
     05.10.); the Anmelde-Popup, Einwilligung, Kundenkonto and Kampagnen sections say „Erst ab dem
     04.10.2026 aussagekräftig“ (the attribution section: 05.10.) — for clean numbers pick
@@ -591,7 +591,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       renewals, kill switch, shop proof without a chat token (D-AP1, max age), anti-nag for the
       consent popup, proof note in the consent evidence, order-status wording for shop sessions,
       KPI „Shop-Login-Erkennung“ + „Nach Anmeldeweg“, `verify:live` section 8, dossier §19.
-      **M:** 5.4 (open list item 4).
+      **M:** 5.4 — done 05.10.
 - [x] **C.18** OI1 — PR 1 done 05.10. (no e-mail-summary offer and no forced checkout ask for
       signed-in sessions); PR 2 done 05.10. (opt-ins carry `source` / `outcome`, DOI confirmations
       their source; capture funnel = capture form only with „DOI-Mail fällig“ as the DOI base;

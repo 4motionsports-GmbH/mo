@@ -63,7 +63,7 @@ before any admin page or API route renders.
 3. **`src/proxy.ts`** matches `/admin/:path*` and `/api/admin/:path*`. For any
    request other than `/admin/login` it verifies the cookie:
    - valid → continue;
-   - invalid on a page → **302** redirect to `/admin/login`;
+   - invalid on a page → **307** redirect to `/admin/login` (`NextResponse.redirect` default);
    - invalid on an API route → **401** JSON.
 4. Each `/api/admin/*` handler additionally calls `guardAdminPost(req)` or
    `guardAdminGet()` (defense in depth). A POST re-verifies the cookie **and**
@@ -1292,7 +1292,9 @@ one-time sign-in code (backend), 04.10.2026 customer-platform widget, and on
 attribution counted; window from the latest consultation — §5.16), „Keine
 E-Mail-Zusammenfassung mehr für angemeldete Kund:innen“ (`signedin-offer-off`:
 „Angeboten“ in §5.8 drops and its rate rises — no change in customer
-behaviour) and „Opt-in-Messung nach Quelle und Ergebnis“ (§5.7, §5.8). The
+behaviour), „Shop-Anmeldung zählt im Chat (App Proxy)“ (`app-proxy-signin`:
+sign-ins, consent popups and Kundenkonto figures rise; §5.15 „Shop-Login-Erkennung“)
+and „Opt-in-Messung nach Quelle und Ergebnis“ (§5.7, §5.8) — eight entries in all. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
@@ -2073,7 +2075,7 @@ them. Actions that read or act on one person's data write the admin access log
 | | `GET campaign/test-contacts?campaignId=`, `POST campaign/test-contacts { action: create \| delete, campaignId, … }` | Testkontakte of one campaign: list, create (+ draft right away), delete |
 | | `GET campaign/history?campaignId=&q=&from=&to=&delivery=&page=&pageSize=` | paged „Gesendet“ view with delivery + redemption state and code/set expiry; `delivery` = delivered \| clicked \| bounced \| complained \| copy \| expiring (offer ends within 48 h) |
 | | `POST campaign/sent-email { sendId }` | retained content of one send |
-| | `POST campaigns/letters { action, campaignId \| id, … }` | the view „Briefe“ (0074, `CAMPAIGNS.md` §8): `list` (letters, counts, postage, budget, flags), the steps `fill_addresses` (50 purchase addresses), `draft` (5 AI drafts) and `send_step` (5 released letters, every gate again per letter), and per letter `redraft`, `save { subject, body }`, `approve`, `unapprove`, `skip`, `unskip`; 409 `letters_off` for the steps, `redraft` and `approve` while the campaign's mode is „Keine Briefe“, 409 `objection` for a draft or release after a postal objection; access log `campaign.letter_approve` (each release) and `campaign.letters_send` (each send step) |
+| | `POST campaigns/letters { action, campaignId \| id, … }` | the view „Briefe“ (0074, `CAMPAIGNS.md` §8): `list` (letters, counts, postage, budget, flags), the steps `fill_addresses` (50 purchase addresses), `draft` (5 AI drafts) and `send_step` (5 released letters, every gate again per letter), and per letter `redraft`, `save { subject, body }`, `approve`, `unapprove`, `skip`, `unskip`; 409 `letters_off` for the steps, `redraft` and `approve` while the campaign's mode is „Keine Briefe“, for `fill_addresses` 403 `flag_off` while `PHYSICAL_MAIL_SENDS_APPROVED` is off and 503 `shopify_not_configured`, 409 `objection` for a draft or release after a postal objection; access log `campaign.letter_approve` (each release) and `campaign.letters_send` (each send step) |
 | | `POST campaigns/letters/preview { id, subject?, body? }` | the letter as printed (`application/pdf`, read-only; unsaved text may be passed; a placeholder recipient while no purchase address is known) |
 | Kunden, Kampagnen | `POST customers/marketing-optout { customerId \| contactId, action: optout \| lift, confirm: true }` | manual opt-out on request / lift a mistaken unsubscribe (no e-mail, audit-logged; reaches Shopify through the outbox) |
 | | `POST customers/erase { customerId \| contactId, confirm: true }` | delete the person completely (`erasePerson`, audit-logged; queues the Shopify side) |

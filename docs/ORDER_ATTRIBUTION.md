@@ -37,8 +37,8 @@ Shopify's own cart is the carrier:
    carrying a Mo marker are ingested into `mo_orders`; unmarked orders are
    **never stored in `mo_orders`** (data minimisation). Separately, the order
    ledger (`customer_orders`, `docs/CUSTOMERS.md` „Kundenstamm“) stores every
-   order while `SHOPIFY_CUSTOMER_SYNC_ENABLED` is on (ANWALTSDOSSIER §13.1
-   item 1).
+   order of a Shopify customer (guest orders without a customer are not stored)
+   while `SHOPIFY_CUSTOMER_SYNC_ENABLED` is on (ANWALTSDOSSIER §13.1 item 1).
 
 The token is **opaque and server-minted** (`mo_attribution_tokens`): nothing
 visible in the Shopify admin can be joined back to a conversation without this
@@ -86,7 +86,8 @@ decision 2026-10-05: on after the migration, ANWALTSDOSSIER §20; turn on only
 * **Link sources** (`summary_email`, `marketing_email`, `bundle`) and unknown
   sources: always the minting.
 * A failed anchor query is a `db-error` (500, Shopify retries the idempotent
-  delivery); an invalid timestamp falls back to the minting.
+  delivery); an invalid consultation or order timestamp falls back to the minting, an invalid minting
+  timestamp gives no anchor (the order counts as outside the window).
 
 The switch moves the token cliff, it does not remove it: with it on, a
 `widget` token is still purged window + 7 days (37 by default) after the device's
@@ -123,9 +124,9 @@ Webhook line items carry no handle. Matching (`matchOrderLineItems`):
    from titles, and `normalizeHandle` strips exactly what Shopify strips
    (®, casing, separators).
 A variant-id match on a NON-default variant of a multi-variant product
-additionally stamps `ref` (`handle~variantId`,
-`docs/archive/PRODUCT_VARIANTS_PLAN.md`) on the matched item, so KPIs can tell which
-strength/weight/colour was bought; `handle` stays the product-level grouping
+additionally stamps `ref` (`handle~variantId`, `src/lib/product-ref.mjs`;
+[`CATALOG_SYNC.md`](./CATALOG_SYNC.md) "Product variants (variant-aware catalog)")
+on the matched item, so KPIs can tell which strength/weight/colour was bought; `handle` stays the product-level grouping
 key everywhere. Unmatched lines keep `handle: null` (never guessed) and
 simply can't contribute to the overlap check.
 
@@ -137,7 +138,8 @@ simply can't contribute to the overlap check.
 * **Data minimisation:** unmarked orders are never stored in `mo_orders`;
   unattributable marked orders are only counted (session-less event, see
   above). The order ledger (`customer_orders`) is a separate purpose and
-  stores every order while `SHOPIFY_CUSTOMER_SYNC_ENABLED` is on.
+  stores every order of a Shopify customer while `SHOPIFY_CUSTOMER_SYNC_ENABLED`
+  is on.
 * **Writer session on product-tool rows (`0076`):** `messages.session_id` is
   written only on tool marker rows — the same pseudonymous session id that is
   already on the conversation. It follows the conversation (`RETENTION_DAYS`,
@@ -179,8 +181,7 @@ simply can't contribute to the overlap check.
 * **Open lawyer check — F-37 (d)** (ANWALTSDOSSIER §20.3): the privacy policy should
   mention the purchase-attribution purpose, and the webhook's order topics may need
   Protected Customer Data approval in the Shopify Partner Dashboard (we discard the
-  protected fields, but the payload contains them). The widget stamp has been live
-  for real users since August 2026 (first widget tokens 24.08.2026, dossier §20.1).
+  protected fields, but the payload contains them).
 
 ## Operator setup
 

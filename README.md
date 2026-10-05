@@ -31,15 +31,15 @@ capability is listed in [`docs/FEATURE_INVENTORY.md`](docs/FEATURE_INVENTORY.md)
 | Route | Purpose | Guard |
 | --- | --- | --- |
 | `POST /api/chat` | Streaming chat (AI SDK `UIMessage[]` in, UI-message stream out): profile from tool history → persona → retrieval → Claude with the chat tools. | shared secret + origin, rate limit |
-| `GET /api/products?ids=` | Product hydration for the widget (≤ 10 ids, request order, `null` for unknown). | origin allowlist |
+| `GET /api/products?ids=` | Product hydration for the widget (≤ 10 ids, request order, `null` for unknown). | origin allowlist, rate limit |
 | `POST /api/contact` | Contact-form leads → e-mail to the team inbox via Resend (stdout fallback without a key). | secret + origin, rate limit |
-| `POST /api/kpi`, `/api/feedback`, `/api/newsletter-rating`, `/api/tts` | Widget telemetry, feedback, newsletter ratings, text-to-speech. | secret/origin, rate limit |
-| `/api/capture-email`, `/api/chat-marketing-opt-in`, `/api/confirm-marketing`, `/api/unsubscribe`, `/api/consent-copy` | Consent + double-opt-in flow ([`docs/CONSENT_FLOW.md`](docs/CONSENT_FLOW.md)). | per route |
+| `POST /api/kpi`, `POST /api/feedback`, `POST /api/tts`, `GET /api/newsletter-rating` | Widget telemetry, feedback, text-to-speech; the smiley rating link in e-mails. | secret + origin (`/api/kpi`: origin only; the rating link: none), rate limit |
+| `/api/capture-email`, `/api/chat-marketing-opt-in`, `/api/confirm-marketing`, `/api/unsubscribe`, `/api/erase-data`, `/api/consent-copy` | Consent + double-opt-in flow and the „Daten löschen“ mail link ([`docs/CONSENT_FLOW.md`](docs/CONSENT_FLOW.md)). | per route |
 | `/api/auth/*`, `/api/account/*` | Shopify Customer Account sign-in (tier 3), conversation history, export, erasure ([`docs/CUSTOMER_ACCOUNT.md`](docs/CUSTOMER_ACCOUNT.md)). | session / signed |
-| `/api/attribution/token`, `/api/r/<token>`, `/api/email-countdown/<token>`, `/api/email-hero-image/<file>` | Order-attribution token, tracked e-mail redirect, live countdown image, hero-image assets. | tokens |
+| `/api/attribution/token`, `/api/r/<token>`, `/api/email-countdown/<token>`, `/api/email-hero-image/<file>` | Order-attribution token, tracked e-mail redirect, live countdown image, hero-image assets. | `attribution/token`: secret + origin, rate limit; the mail links: the token in the URL (hero images: none) |
 | `/api/webhooks/shopify`, `/api/webhooks/resend`, `/api/inbound/resend`, `/api/webhooks/pingen` | Shopify: catalog changes, the customer mirror and order ledger, consent changes, compliance topics (erasure, data request), bulk-import completion, order attribution; Resend delivery events and inbound mail; letter status. | signature over the raw body |
-| `/api/cron/*` | `shopify-reconcile` 01:45 · `refresh-customers` 02:00 · `campaign-audiences` 02:30 · `sync-catalog` 03:00 · `retention` 03:30 · `prepare-campaign-drafts` 04:15 · `inbox` hourly · `shopify-sync` every 5 min · `expire-bundles` every 15 min ([`vercel.json`](vercel.json)). | `Authorization: Bearer CRON_SECRET` |
-| `/api/admin/*` (95 routes) | The dashboard's API ([`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md) §11). | Edge proxy + `guardAdmin*` |
+| `/api/cron/*` | `shopify-reconcile` 01:45 · `refresh-customers` 02:00 · `campaign-audiences` 02:30 · `sync-catalog` 03:00 · `retention` 03:30 · `prepare-campaign-drafts` 04:15 · `inbox` hourly · `release-campaign-mails` every 10 min · `shopify-sync` every 5 min · `expire-bundles` every 15 min (UTC, [`vercel.json`](vercel.json)). | `Authorization: Bearer CRON_SECRET` |
+| `/api/admin/*` (103 routes) | The dashboard's API ([`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md) §11). | Edge proxy + `guardAdmin*` |
 | `GET /` | Plain health string. | — |
 
 ## Run locally
@@ -67,11 +67,13 @@ curl -N -X POST http://localhost:3000/api/chat \
 ## Configuration
 
 [`.env.example`](.env.example) is the **canonical, complete** list — every
-variable the code reads, with its purpose and default (97 variables). Two rules
+runtime variable the code reads, with its purpose and default (113 variables;
+script-only and platform-injected names such as `ALLOW_DB_RESET` or `VERCEL_ENV`
+are listed in [`docs/FEATURE_INVENTORY.md`](docs/FEATURE_INVENTORY.md) part 5). Two rules
 hold everywhere: the legal send gates (`CAMPAIGN_SENDS_APPROVED`,
 `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `PHYSICAL_MAIL_SENDS_APPROVED`) default to
-`false` and are enabled only in production; every retention window treats `0`
-as „disabled“, never as „delete everything“.
+`false` in code (whether they are on in production: `docs/ROLLOUT_TODO.md` 6.5);
+every retention window treats `0` as „disabled“, never as „delete everything“.
 
 | Group | Variables |
 | --- | --- |
@@ -79,13 +81,14 @@ as „disabled“, never as „delete everything“.
 | Security, rate limiting, admin | `ALLOWED_ORIGINS`, `CHAT_SHARED_SECRET`, `KV_REST_API_URL`, `KV_REST_API_TOKEN`, `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`, `RETURNING_HINT_ENABLED` |
 | Database | `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `NEON_FETCH_ENDPOINT` (local dev only) |
 | E-mail (Resend, designs, hero images) | `RESEND_API_KEY`, `CONTACT_TO_EMAIL`, `CONTACT_FROM_EMAIL`, `PUBLIC_BASE_URL`, `UNSUBSCRIBE_SECRET`, `MARKETING_DOI_EXPIRY_DAYS`, `INBOUND_EMAIL_ADDRESS`, `RESEND_WEBHOOK_SECRET`, `RESEND_EVENTS_WEBHOOK_SECRET`, `EMAIL_LOGO_URL`, `EMAIL_MO_ICON_URL`, `EMAIL_HERO_DEFAULT_URL`, `EMAIL_HERO_IMAGE_MODEL`, `EMAIL_HERO_IMAGE_QUALITY`, `EMAIL_HERO_REFERENCES`, `EMAIL_HERO_QA`, `EMAIL_AI_LABEL_ICON_URL` |
-| Marketing + campaign | `MARKETING_DISCOUNT_EXPIRY_DAYS`, `MARKETING_ORDER_LOOKBACK_DAYS`, `MARKETING_MIN_SEND_INTERVAL_DAYS`, `CONVERSION_SWEEP_MAX_CODES`, `CAMPAIGN_SENDS_APPROVED`, `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `CAMPAIGN_MO_DEEPLINK_URL` |
-| Physical mail (Pingen) | `PINGEN_CLIENT_ID`, `PINGEN_CLIENT_SECRET`, `PINGEN_ORGANISATION_ID`, `PINGEN_STAGING`, `PINGEN_WEBHOOK_SECRET`, `PHYSICAL_MAIL_SENDS_APPROVED`, `PINGEN_LETTER_COST_CENTS` |
-| Shopify (Admin API, webhooks, Customer Account) | `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_API_VERSION`, `SHOPIFY_APP_PROXY_SECRET`, `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_ID`, `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_SECRET`, `SHOPIFY_STOREFRONT_DOMAIN`, `TOKEN_ENC_KEY`, `SHOPIFY_CUSTOMER_ACCOUNT_STATE_SECRET`, `CUSTOMER_AUTH_PENDING_TTL_MINUTES`, `CUSTOMER_REFRESH_BATCH`, `CUSTOMER_REFRESH_STALE_HOURS` |
-| Customer platform (all switches default off) | `SHOPIFY_CUSTOMER_SYNC_ENABLED`, `SHOPIFY_CONSENT_WRITEBACK`, `SHOPIFY_ERASURE_SYNC`, `SHOPIFY_CONSENT_TEXT_VERSION`, `SHOPIFY_ERASURE_ALERT_PER_HOUR`, `CUSTOMER_PROFILE_BATCH`, `CUSTOMER_PROFILE_LIGHT_BATCH`, `CUSTOMER_AI_PROFILE_SCOPE`, `INBOX_AI_DAILY_LIMIT`, `CAMPAIGN_AUTO_PREPARE_COUNT` (+ `_DISCOUNT`, `_TEXT_MODE`, `_DISCOUNT_SCOPE`) |
+| Marketing + campaign | `MARKETING_DISCOUNT_EXPIRY_DAYS`, `MARKETING_ORDER_LOOKBACK_DAYS`, `MARKETING_MIN_SEND_INTERVAL_DAYS`, `CONVERSION_SWEEP_MAX_CODES`, `CAMPAIGN_SENDS_APPROVED`, `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `CAMPAIGN_MO_DEEPLINK_URL`, `CAMPAIGN_RELEASE_ENABLED`, `CAMPAIGN_RELEASE_MAX_PER_RUN`, `CAMPAIGN_RELEASE_SPACING_MS` |
+| Physical mail (Pingen) | `PINGEN_CLIENT_ID`, `PINGEN_CLIENT_SECRET`, `PINGEN_ORGANISATION_ID`, `PINGEN_STAGING`, `PINGEN_WEBHOOK_SECRET`, `PHYSICAL_MAIL_SENDS_APPROVED`, `PINGEN_LETTER_COST_CENTS`, `LETTER_MIN_INTERVAL_DAYS`, `CAMPAIGN_LETTER_ADDRESS_NIGHTLY`, `CAMPAIGN_LETTER_SHOP_URL` |
+| Shopify (Admin API, webhooks, Customer Account, App Proxy) | `SHOPIFY_STORE_DOMAIN`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_API_VERSION`, `SHOPIFY_APP_PROXY_SECRET`, `APP_PROXY_SIGNIN_ENABLED`, `APP_PROXY_SIGNIN_MAX_AGE_HOURS`, `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_ID`, `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_SECRET`, `SHOPIFY_STOREFRONT_DOMAIN`, `TOKEN_ENC_KEY`, `SHOPIFY_CUSTOMER_ACCOUNT_STATE_SECRET`, `CUSTOMER_AUTH_PENDING_TTL_MINUTES`, `SHOPIFY_ACCOUNT_ORDERS_URL`, `CUSTOMER_REFRESH_BATCH`, `CUSTOMER_REFRESH_STALE_HOURS` |
+| Chat features | `CHAT_ORDER_STATUS_ENABLED`, `CHAT_ORDER_STATUS_TEST_CUSTOMERS`, `CHAT_PAGE_CONTEXT_ENABLED`, `CHAT_PAGE_CONTEXT_HOLDOUT_PCT`, `CONSENT_SIGNIN_VARIANTS` |
+| Customer platform (all switches default off) | `SHOPIFY_CUSTOMER_SYNC_ENABLED`, `SHOPIFY_CONSENT_WRITEBACK`, `SHOPIFY_ERASURE_SYNC`, `SHOPIFY_WRITEBACK_ENABLED`, `SHOPIFY_CONSENT_TEXT_VERSION`, `SHOPIFY_ERASURE_ALERT_PER_HOUR`, `CUSTOMER_PROFILE_BATCH`, `CUSTOMER_PROFILE_LIGHT_BATCH`, `CUSTOMER_AI_PROFILE_SCOPE`, `INBOX_AI_DAILY_LIMIT`, `CAMPAIGN_AUTO_PREPARE_COUNT` (+ `_DISCOUNT`, `_TEXT_MODE`, `_DISCOUNT_SCOPE`) |
 | Bundles | `BUNDLE_CREATION_MODE`, `BUNDLE_OFFER_EXPIRY_DAYS`, `BUNDLE_EXPIRED_REDIRECT_URL` |
 | Storage, crons, observability | `BLOB_READ_WRITE_TOKEN`, `CRON_SECRET`, `NEXT_PUBLIC_SENTRY_DSN` (errors only, no tracing, no source-map upload) |
-| Retention ([`docs/DATA_RETENTION.md`](docs/DATA_RETENTION.md)) | `RETENTION_DAYS`, `KPI_RETENTION_DAYS`, `ABANDON_AFTER_MINUTES`, `MO_ATTRIBUTION_WINDOW_DAYS`, `SUPPRESSED_CAPTURE_PURGE_DAYS`, `CORRESPONDENCE_RETENTION_DAYS`, `FEEDBACK_RETENTION_DAYS`, `CUSTOMER_INACTIVITY_RETENTION_DAYS`, `ADMIN_ACCESS_LOG_RETENTION_DAYS`, `CAMPAIGN_CONTACT_RETENTION_DAYS`, `ANALYTICS_REPORT_RETENTION_DAYS`, `PHYSICAL_LETTER_RETENTION_DAYS`, `SHOPIFY_SYNC_LOG_RETENTION_DAYS`, `INBOX_RETENTION_DAYS`, `ERASURE_TOMBSTONE_RETENTION_DAYS` |
+| Retention ([`docs/DATA_RETENTION.md`](docs/DATA_RETENTION.md)) | `RETENTION_DAYS`, `KPI_RETENTION_DAYS`, `ABANDON_AFTER_MINUTES`, `MO_ATTRIBUTION_WINDOW_DAYS`, `MO_ATTRIBUTION_SESSION_ANCHOR`, `SUPPRESSED_CAPTURE_PURGE_DAYS`, `CORRESPONDENCE_RETENTION_DAYS`, `FEEDBACK_RETENTION_DAYS`, `CUSTOMER_INACTIVITY_RETENTION_DAYS`, `ADMIN_ACCESS_LOG_RETENTION_DAYS`, `CAMPAIGN_CONTACT_RETENTION_DAYS`, `ANALYTICS_REPORT_RETENTION_DAYS`, `PHYSICAL_LETTER_RETENTION_DAYS`, `SHOPIFY_SYNC_LOG_RETENTION_DAYS`, `INBOX_RETENTION_DAYS`, `ERASURE_TOMBSTONE_RETENTION_DAYS` |
 
 ## Scripts
 
@@ -94,15 +97,16 @@ as „disabled“, never as „delete everything“.
 | `npm run dev` / `build` / `start` | Next.js dev server, production build, production server. |
 | `npm run lint`, `npx tsc --noEmit`, `npm test` | ESLint, type check, the `node --test` suite (`src/**/*.test.mjs`). |
 | `npm run db:migrate` | Apply pending SQL migrations from `migrations/` (forward-only, run manually). |
-| `npm run db:proxy`, `npm run db:seed`, `npm run db:reset` | Local Neon-protocol proxy, demo data, test-data reset (see `docs/DATABASE.md`). |
+| `npm run db:proxy`, `npm run db:seed`, `npm run db:reset` | Local Neon-protocol proxy, demo data, test-data reset (see `docs/DATABASE.md`; `db:reset` currently aborts on a database past migration 0031). |
 | `npm run verify:shopify` / `verify:pingen` / `verify:customer-account` | Check the respective credentials. |
+| `npm run verify:widget`, `npm run verify:live` | After a widget upload: which widget build the shop serves (public GETs) and the read-only live KPI checks against the database (`-- --since YYYY-MM-DD`); `docs/ROLLOUT_TODO.md` 1.11. |
 | `npm run shopify:webhooks` (`-- --apply`) | List (and create) the Shopify webhook subscriptions Mo needs; checks the app's scopes. |
 | `npm run profiles:backfill` | Build missing AI customer profiles in batches. |
 | `npm run diagnose:address` | Inspect the address capture for one customer. |
 | `npm run analyze:repurchase` | Repurchase analysis behind the lifecycle segments ([`docs/REPURCHASE_ANALYSIS.md`](docs/REPURCHASE_ANALYSIS.md)). |
 | `npm run convert-catalog`, `npm run index` | One-off catalog conversion and embedding build (the daily cron does this in production). |
 | `npm run hero:gradient`, `npm run hero:compare` | Hero-image tooling. |
-| `node scripts/preview-summary-email.mjs`, `node scripts/send-test-emails.mjs`, `node scripts/list-test-discounts.mjs` | Manual helpers: render the summary e-mail to a file, send test versions of the e-mails via Resend (**sends real mail** — read the header first), list/delete test discount codes. They import TypeScript directly; Node ≥ 22.18 runs them as is. |
+| `npx tsx scripts/preview-summary-email.mjs`, `npx tsx --env-file=.env scripts/send-test-emails.mjs`, `node --env-file=.env.local scripts/list-test-discounts.mjs` | Manual helpers: render the summary e-mail to a file, send test versions of the e-mails via Resend (**sends real mail** — read the header first), list/delete test discount codes. The first two import TypeScript modules with extensionless imports, which plain Node does not resolve — hence `tsx` (not a dependency; `npx` fetches it); the third is plain Node. |
 
 ## Architecture
 
@@ -111,10 +115,10 @@ src/
 ├── app/
 │   ├── api/                  # HTTP routes (thin: validate → lib → JSON envelope)
 │   │   ├── chat, products, contact, tts, kpi, feedback, newsletter-rating
-│   │   ├── capture-email, confirm-marketing, chat-marketing-opt-in, unsubscribe, consent-copy
+│   │   ├── capture-email, confirm-marketing, chat-marketing-opt-in, unsubscribe, erase-data, consent-copy
 │   │   ├── auth/, account/, attribution/, r/[token], email-countdown/, email-hero-image/
 │   │   ├── webhooks/{shopify,resend,pingen}, inbound/resend, cron/*
-│   │   └── admin/**          # 95 guarded dashboard routes
+│   │   └── admin/**          # 103 guarded dashboard routes
 │   ├── admin/                # the dashboard: page.tsx (one screen per request), AdminShell,
 │   │                         # <Screen>Tab.tsx + <screen>/ workspaces, ui/ primitives, lib/ helpers
 │   ├── icon.svg, layout.tsx, page.tsx
@@ -126,9 +130,10 @@ src/
 │   ├── shopify*, catalog-*, retrieval, system-prompt*, persona, tools   # the chat
 │   └── kpi-*, admin-*, retention*, rate-limit, security, observability
 └── proxy.ts                  # Edge gate for /admin and /api/admin
-migrations/                   # forward-only SQL, 0001 … 0069
+migrations/                   # forward-only SQL, 0001 … 0076
 scripts/                      # operational scripts (npm aliases above)
-docs/                         # living documentation; docs/archive/ = historical reports and spikes
+docs/                         # living documentation (map: docs/README.md); docs/frontend/ = the widget
+                              # contract + as-built widget chapters; docs/archive/ = history
 ```
 
 **A chat turn** (`/api/chat`): replay the `update_customer_profile` tool calls of
@@ -137,7 +142,9 @@ of the message history), derive the persona, retrieve products by embedding
 similarity (keyword fallback), then stream a Claude response with the persona-
 aware system prompt and the chat tools (`update_customer_profile`,
 `search_products`, `show_product`, `compare_products`, `add_to_cart`,
-`suggest_showroom`, `show_contact_form`). Live directives from the admin's
+`suggest_showroom`, `show_contact_form`, `offer_email_summary` — withheld for a
+signed-in session — and `get_order_status`, withheld unless
+`CHAT_ORDER_STATUS_ENABLED` or a test customer). Live directives from the admin's
 Verbesserung screen and published Q&A knowledge are injected into the prompt
 (cached ~5 minutes). Prompt caching: [`docs/PROMPT_CACHING.md`](docs/PROMPT_CACHING.md).
 

@@ -17,7 +17,7 @@ in [`docs/frontend/`](../frontend/README.md)), and the conventions are in the ro
 | [`COMPLETENESS_AUDIT.md`](./COMPLETENESS_AUDIT.md) | 2026-06-16 | "Is every intended feature wired?" audit over seven capability clusters. | `FEATURE_INVENTORY.md` |
 | [`BUNDLES_SPIKE.md`](./BUNDLES_SPIKE.md) | 2026-06-13 | Feasibility spike for personalised bundle offers (Shopify API research). | `BUNDLES.md` |
 | [`CUSTOMER_ACCOUNT_SPIKE.md`](./CUSTOMER_ACCOUNT_SPIKE.md) | 2026-06-14 | Feasibility spike for Shopify Customer Account sign-in (tier 3). | `CUSTOMER_ACCOUNT.md`, `frontend/ACCOUNT_CONTRACT.md` |
-| [`EMAIL_SUBSYSTEM_SPIKE.md`](./EMAIL_SUBSYSTEM_SPIKE.md) | 2026-06-14 | Feasibility spike for inbound mail, the per-customer mail store and physical letters. Code comments still cite its §4/§5. | `CAMPAIGNS.md`, `EMAIL_DESIGNS.md`, `DATA_RETENTION.md` |
+| [`EMAIL_SUBSYSTEM_SPIKE.md`](./EMAIL_SUBSYSTEM_SPIKE.md) | 2026-06-14 | Feasibility spike for inbound mail, the per-customer mail store and physical letters. Code comments and migrations still cite its §3–§5. | `CAMPAIGNS.md`, `EMAIL_DESIGNS.md`, `DATA_RETENTION.md` |
 | [`CATALOG_SYNC_DIAGNOSIS.md`](./CATALOG_SYNC_DIAGNOSIS.md) | 2026-06-18 | Incident diagnosis of the catalog-sync 503. | `CATALOG_SYNC.md` |
 | [`CHANGE_REPORT_10E-1.md`](./CHANGE_REPORT_10E-1.md) | 2026-06 | Change report: sign-in detection, lost-conversation fix, history performance, PDF summary. | — |
 | [`CHANGE_REPORT_I18N_EN.md`](./CHANGE_REPORT_I18N_EN.md) | 2026-06 | Change report: English language support. | `frontend/API_CONTRACT.md` §12 |

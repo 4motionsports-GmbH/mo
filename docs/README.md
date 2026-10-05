@@ -6,12 +6,13 @@ link to it. Three places, nothing else:
 | Place | What | Who reads it |
 | --- | --- | --- |
 | `docs/*.md` | The backend: how Mo works inside, how to operate it, what the lawyer reviews. | backend agents, the operator, the lawyer |
-| [`docs/frontend/`](./frontend/README.md) | Everything about the Shopify theme and the chat widget: the **widget contract** (what the widget sends, receives and renders), the as-built description of the live widget, and the current frontend tasks. | the frontend agent (contract + tasks), backend agents (all of it) |
+| [`docs/frontend/`](./frontend/README.md) | Everything about the Shopify theme and the chat widget: the **widget contract** (what the widget sends, receives and renders), the as-built description of the widget and theme (which build is live: `ROLLOUT_TODO.md`), and the current frontend tasks. | the frontend agent (contract + tasks), backend agents (all of it) |
 | [`docs/archive/`](./archive/README.md) | Past states: finished plans and hand-offs, audits, spikes, change reports. Never the current state. | context only |
 
 **Live status** — what is uploaded, migrated or switched on in production — is kept in one place
 only: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md). Every other document describes behaviour and code
-defaults („default off in code“), never what is currently live.
+defaults („default off in code“), never what is currently live. Screenshots referenced by these documents are in
+`docs/screenshots/`.
 
 ## Backend (`docs/`)
 
@@ -43,5 +44,5 @@ defaults („default off in code“), never what is currently live.
 | [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) | **The widget contract**: rules for every widget change (§0), every endpoint the widget calls, stream parts, KPI events (§5), consent endpoints (§7), locale (§12), changes since 2026-10-01. |
 | [`frontend/ACCOUNT_CONTRACT.md`](./frontend/ACCOUNT_CONTRACT.md) | Sign-in, App Proxy recognition, `/api/auth/me`, logout, conversation history, export, erase, the post-sign-in opt-in (gating §6.1, request §6.2). |
 | [`frontend/CONSENT_CONTRACT.md`](./frontend/CONSENT_CONTRACT.md) | How the widget shows and renders the consent surfaces. |
-| [`frontend/README.md`](./frontend/README.md) + `01`–`07` | The as-built description of the live theme and widget (written by the frontend agent, maintained here). |
+| [`frontend/README.md`](./frontend/README.md) + `01`–`07` | The as-built description of the theme and widget at the build named in `frontend/README.md` (written by the frontend agent, maintained here). |
 | [`frontend/tasks/`](./frontend/tasks/README.md) | The current frontend prompt and its tasks, with the exact list of files to attach. |

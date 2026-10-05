@@ -62,7 +62,7 @@ transcript. The tool's result itself is not stored (only the call's
 | Persona top-question cache (`kpi_persona_question_summaries`) | **180 days** by `generated_at` | `KPI_RETENTION_DAYS` | Hard delete (derived cache, regenerable on demand) |
 | Komplettanalyse reports (`analytics_reports`) | **365 days** by `created_at` | `ANALYTICS_REPORT_RETENTION_DAYS` | Hard delete — reports generated with per-customer profiles carry customer display names and must not live forever. 0 disables. |
 | Order-attribution rows (`mo_orders`) | **180 days** by `COALESCE(processed_at, created_at)` | `KPI_RETENTION_DAYS` | Hard delete (Cluster-A analytics like `kpi_events`; pseudonymous order facts only — see `docs/ORDER_ATTRIBUTION.md`) |
-| Attribution tokens (`mo_attribution_tokens`) | Switch off: **window + 7 days** by `created_at`. Switch on (session source `widget`): **window + 7 days after the token's own session's last product consultation**, never more than `KPI_RETENTION_DAYS` (default **180**; 180 when that window is 0) after minting. Link sources (`summary_email`, `marketing_email`, `bundle`): by `created_at` | `MO_ATTRIBUTION_WINDOW_DAYS` (window, default 30), `MO_ATTRIBUTION_SESSION_ANCHOR` (default off) | Hard delete — a token past the attribution window can never attribute again; deleted on erasure |
+| Attribution tokens (`mo_attribution_tokens`) | Switch off: **window + 7 days** by `created_at`. Switch on (session source `widget`): **window + 7 days after the token's own session's last product consultation**, never more than `KPI_RETENTION_DAYS` (default **180**; 180 when that window is 0; never less than window + 7) after minting. Link sources (`summary_email`, `marketing_email`, `bundle`): by `created_at` | `MO_ATTRIBUTION_WINDOW_DAYS` (window, default 30), `MO_ATTRIBUTION_SESSION_ANCHOR` (default off) | Hard delete — a token past the attribution window can never attribute again; deleted on erasure |
 | Writer session of product-tool rows (`messages.session_id`, `0076`) | follows the conversation | `RETENTION_DAYS` | Cascade-deleted with the conversation and on erasure; written only on tool marker rows (text rows stay NULL) — the attribution anchor counts only the token's own device |
 | Active → abandoned transition | **30 minutes** idle | `ABANDON_AFTER_MINUTES` | Status flip (not deletion) |
 
@@ -205,9 +205,9 @@ audiences and the Eingang need, minimised:
 | `shopify_webhook_events`, `shopify_sync_runs`, `shopify_outbox` (`0065`) | webhook dedupe (id, topic, outcome — no payload), import / reconcile runs, Mo's pending writes to Shopify (a customer create carries the email until it is done or dead; a `writeback` row carries only `mo-` tag names) | Operational bookkeeping |
 | `erasure_tombstones` (`0065`) | the Shopify id of every person erased in Mo, when, when Shopify confirmed | Keeps an erased person from being re-created by an import or webhook |
 
-**Mo's insights in Shopify (plan D-11, `SHOPIFY_WRITEBACK_ENABLED`, default
-off).** When switched on, the nightly `/api/cron/shopify-reconcile` queues
-derived figures for the Shopify customer as tags — `mo-segment-<segment>`,
+**Mo's insights in Shopify (D-11 in [`CUSTOMERS.md`](./CUSTOMERS.md) „Design decisions
+(customer platform, 2026-10)“, `SHOPIFY_WRITEBACK_ENABLED`, default off).** When
+switched on, the nightly `/api/cron/shopify-reconcile` queues derived figures for the Shopify customer as tags — `mo-segment-<segment>`,
 `mo-wert-<value tier>`, `mo-kontakt` (talked to Mo), `mo-abwanderung-hoch` —
 as `writeback` outbox rows, which `/api/cron/shopify-sync` sends (only `mo-`
 tags are added or removed, the shop's own tags are never touched) and mirrors
@@ -275,9 +275,9 @@ set's Shopify product (orders keep their own line items).
 ## Cluster B (cont.) — Korrespondenz (E-Mail)
 
 **Lawful basis: performance of a contract / legitimate interest (Art. 6(1)(b) /
-6(1)(f)) — NOT marketing consent.** `email_messages` (migration `0021`, see
-[`archive/EMAIL_SUBSYSTEM_SPIKE.md`](./archive/EMAIL_SUBSYSTEM_SPIKE.md)) is the **unified mail
-log**: every email we send (a mirror-write at each send site) and every reply we
+6(1)(f)) — NOT marketing consent.** `email_messages` (migration `0021`; the original
+design spike, historical: [`archive/EMAIL_SUBSYSTEM_SPIKE.md`](./archive/EMAIL_SUBSYSTEM_SPIKE.md))
+is the **unified mail log**: every email we send (a mirror-write at each send site) and every reply we
 receive (the Resend Inbound webhook `/api/inbound/resend`). Answering a customer
 who wrote to us rests on contract / legitimate interest, **independent** of
 `marketing_doi_status`. It is therefore its **own data category** and is **never
@@ -425,15 +425,10 @@ them — cascade with the customer row, plus an explicit delete by Shopify id.
 Shopify keeps its own orders for as long as the law requires; nothing in Mo
 holds them in its place.
 
-**The Shopify side** (only when the erasure started in Mo, trigger `mo`, and the
-person has a Shopify id): the outbox (`lib/shopify-outbox.ts`) gets a consent
-write (`unsubscribed`, sent while `SHOPIFY_CONSENT_WRITEBACK` is on) and a
-`data_erasure` row (sent while `SHOPIFY_ERASURE_SYNC` is on: consent off again,
-then Shopify's `customerRequestDataErasure`). An erasure Shopify started
-(`customers/redact`, `customers/delete`) runs here without asking Shopify again
-and stamps the tombstone as confirmed. Shopify's `customers/data_request` creates
-an Eingang item `datenauskunft` with a 30-day deadline; `shop/redact` only raises
-an alert and an Eingang item — Mo never mass-deletes on it.
+**The Shopify side** — the outbox rows of an erasure started in Mo and the switches
+that send them, an erasure Shopify started (tombstone stamped as confirmed),
+`customers/data_request` and `shop/redact` (never a mass deletion):
+[`CUSTOMERS.md`](./CUSTOMERS.md) „Retention / erasure“.
 
 The per-table decisions are `ERASURE_PLAN` in
 `lib/customer-erasure-core.mjs`; its test parses all migrations and **fails

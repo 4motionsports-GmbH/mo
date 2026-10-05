@@ -222,8 +222,8 @@ as signed in; scope: `/api/auth/me`, every `/api/account/*` including export, er
 the marketing opt-in, and Mo's memory) was decided by the owner on 05.10.2026 and,
 according to the owner, confirmed by the lawyer ([`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md)
 §19, F-36; the privacy-policy paragraph is still open there). Values decided for
-production: `APP_PROXY_SIGNIN_ENABLED=true`, `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`, set once
-the App Proxy is configured (ROLLOUT_TODO 5.4). The resolver behind all of it is
+production: `APP_PROXY_SIGNIN_ENABLED=true`, `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`; whether
+they are set: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) 5.4. The resolver behind all of it is
 `lib/signed-in-session.ts → resolveLiveSignedInCustomer` (§4). Order status stays
 Customer-Account-only (§8).
 
@@ -713,10 +713,9 @@ erasure path** `erasePerson` (`src/lib/customer-erasure.ts`) — the same as the
 `/api/erase-data`, the admin's „Löschen“ and Shopify's `customers/redact` /
 `customers/delete` webhooks. What it deletes, per table: [`DATA_RETENTION.md`](./DATA_RETENTION.md)
 „Complete erasure — one path for every way to delete“ (plan: `ERASURE_PLAN` in
-`customer-erasure-core.mjs`, tested). The Shopify side — the erasure tombstone and two
-outbox rows, `consent_update` (sent while `SHOPIFY_CONSENT_WRITEBACK`) and
-`data_erasure` (sent while `SHOPIFY_ERASURE_SYNC`), both default `false` in code — is
-owned by [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) „Erasure (one deletion with Shopify)“.
+`customer-erasure-core.mjs`, tested). The Shopify side (the erasure tombstone, the outbox
+rows and the switches that send them): [`CUSTOMERS.md`](./CUSTOMERS.md) „Retention / erasure“;
+the consent effect: [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) „Erasure (one deletion with Shopify)“.
 The widget's confirmation copy comes from `GET /api/consent-copy?surface=erase`
 (API_CONTRACT §7.4) and names the shop account only while `SHOPIFY_ERASURE_SYNC` is on.
 
@@ -766,11 +765,10 @@ linked to the customer, ending links resets it for those sessions: the backend l
 linked only by a typed e-mail stay linked); a handover drops the one session. An erasure
 deletes the events themselves.
 
-**Expired DOI.** `expirePendingConsents` (`consent-store.ts`), run first by the nightly
-`/api/cron/refresh-customers` (`0 2 * * *` UTC, `vercel.json`), resets a `pending`
-consent older than `MARKETING_DOI_EXPIRY_DAYS` (default 7) + 1 grace day to
-`not_subscribed` (local only, with a `consent_events` row), so `status` reads `none`
-and the ask may come again.
+**Expired DOI.** A `pending` consent whose link was never clicked is reset to
+`not_subscribed` by the nightly `expirePendingConsents` (`consent-store.ts`; rule and timing:
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "The one consent (Shopify ⇄ Mo)"), so `status` reads
+`none` and the ask may come again.
 
 ### The submit — `POST /api/account/marketing-opt-in` (internals)
 

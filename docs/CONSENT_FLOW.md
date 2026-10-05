@@ -111,7 +111,7 @@ Relevant columns of `email_captures` (one row per address):
 spans every consent surface; the verbatim text tells which surface a record came from. The route sets
 the stamp only when the echoed `consentTextShown` is byte-identical to the canonical text it currently
 serves for that surface and locale (`resolveConsentCopyVersion`), and `NULL` otherwise — an honest
-"unattested" (e.g. a copy cached across a deploy boundary, at most 60 s); the verbatim text stays
+"unattested" (e.g. a copy cached across a deploy boundary); the verbatim text stays
 authoritative. The stamp always follows the text it describes (updated together or not at all). The
 stored values:
 
@@ -151,7 +151,9 @@ e.g. `/api/auth/me`. Admin labels (`consentLabel` in `src/lib/consent-core.mjs`)
 **One decision function.** Every change from either side goes through `resolveEmailConsent`
 (`src/lib/consent-core.mjs`, pure, tested) and is written by `applyConsentActs`
 (`src/lib/consent-store.ts`) in one transaction — state, history event, suppression rows, outbox rows.
-Nothing else writes the consent. The rules:
+Nothing else writes the consent, with one exception in the same file: the DOI expiry
+(`expirePendingConsents`, table below) resets an expired `pending` directly, with its own history row.
+The rules:
 
 1. **Hard blocks win.** A spam complaint refuses any automatic re-subscribe. An erasure refuses every
    subscribe that is not a new act newer than the erasure (a person who deleted their data and later
@@ -198,7 +200,8 @@ failure and turns `dead` after the last attempt (shown in Einstellungen → Shop
 `consent_update` (`customerEmailMarketingConsentUpdate`; a newer one supersedes an open older one of the
 same person), `customer_create` (`customerCreate` with e-mail, name and consent — the Mo-only subscriber
 becomes a Shopify customer, one subscriber list), `data_erasure` (see "Erasure") and `writeback` (Mo's
-`mo-…` customer tags, not consent — plan D-11, `SHOPIFY_WRITEBACK_ENABLED`, see
+`mo-…` customer tags, not consent — D-11 in [`CUSTOMERS.md`](./CUSTOMERS.md) "Design decisions
+(customer platform, 2026-10)", `SHOPIFY_WRITEBACK_ENABLED`, see
 [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.10; an Art. 21 objection to profiling queues the
 removal of every `mo-` tag). Consent rows (`consent_update`, `customer_create`) are sent only while
 **`SHOPIFY_CONSENT_WRITEBACK=true`** (default `false` in code); while off they wait and are flushed when
@@ -349,17 +352,17 @@ optimisation only — the lawful basis is unchanged (consent path B, a real doub
   `CONSENT_COPY_LAWYER_APPROVED && variant.lawyerApproved`. A variant is only ever deactivated, never
   removed (`SHIPPED_SIGNIN_VARIANT_IDS`, tested), so echoed ids stay known. While more than one is
   active, each session gets a stable variant (a hash of the active set and `x-ms-session`) and the copy
-  is served `private, no-store`; otherwise it is public for 60 s. Variant `a`'s registry flag stands for
+  is not cached (headers: API_CONTRACT §7.4). Variant `a`'s registry flag stands for
   its approved v4 headline and the owner's bullet decision (D-AP4) — the bullets themselves are an open
   legal item ("Lawyer sign-off status").
-- **Telemetry, not evidence:** the POST's optional `placement` (`popup` | `signin_return` |
-  `value_moment`) and `variant` are written only to the pseudonymous KPI events (unknown values are
-  dropped, never a `400`; `variantMismatch: true` when a test runs and the echo differs from the
-  session's assignment) — never to the consent record.
-- **When it is asked:** `marketing.optInActionable` on `/api/auth/me` — no consent decision on record, a
-  real address, not quiet under the per-customer anti-nag (`src/lib/consent-ask-policy.mjs`), fail
-  closed. Widget view: ACCOUNT_CONTRACT §6.1; backend computation: `CUSTOMER_ACCOUNT.md` §10
-  (`signed-in-identity.ts`).
+- **Telemetry, not evidence:** the POST's optional `placement` and `variant` (fields: ACCOUNT_CONTRACT
+  §6.2; event data: API_CONTRACT §5) are written only to the pseudonymous KPI events — never to the
+  consent record.
+- **When it is asked:** `marketing.optInActionable` on `/api/auth/me` — no consent decision on record
+  (a `pending` DOI counts as one until it expires; then the person may be asked again — "Mo surfaces →
+  the one consent"), a real address, not quiet under the per-customer anti-nag
+  (`src/lib/consent-ask-policy.mjs`), fail closed. Widget view: ACCOUNT_CONTRACT §6.1; backend
+  computation: `CUSTOMER_ACCOUNT.md` §10 (`signed-in-identity.ts`).
 - **No capture form for tier 3.** The widget does not render the capture form for a signed-in customer
   (ACCOUNT_CONTRACT §6.0), and the backend does not offer `offer_email_summary` (nor the forced
   checkout-moment ask) to a live signed-in session — fail-open on a lookup error, so the widget gate
@@ -443,25 +446,23 @@ Retention purges opted-out/suppressed captures after a grace period while keepin
 ## Erasure (one deletion with Shopify)
 
 An erasure ends the consent on both sides. `erasePerson` (`src/lib/customer-erasure.ts`, the one
-erasure path) deletes everything Mo holds about the person in one transaction — including every
-consent record (`email_captures`), the consent history (`consent_events`) and Mo's copy of the orders —
-and keeps the address on `suppression_list` with reason `erasure`, so it is never mailed or re-imported
-again. A later **new** subscribe act (newer than the erasure) lifts that block (resolver rule 1);
-nothing older can. What is deleted, de-identified or retained per table:
+erasure path) deletes every consent record (`email_captures`) and the consent history
+(`consent_events`) with the person and keeps the address on `suppression_list` with reason `erasure`,
+so it is never mailed or re-imported again. A later **new** subscribe act (newer than the erasure)
+lifts that block (resolver rule 1); nothing older can. On the Shopify side an erasure started in Mo
+first switches the person's consent off through the outbox (`consent_update` → `unsubscribed`, behind
+`SHOPIFY_CONSENT_WRITEBACK`), independently of whether the erasure request itself is passed on.
+
+Owners of the rest: the entry points, the erasure tombstone and the bidirectional table (who starts,
+what each side does, which switch sends which outbox row) — [`CUSTOMERS.md`](./CUSTOMERS.md)
+"Retention / erasure"; what is deleted, de-identified or retained per table —
 [`DATA_RETENTION.md`](./DATA_RETENTION.md) "Complete erasure" (`ERASURE_PLAN` in
 `src/lib/customer-erasure-core.mjs`, tested against the migrations).
-
-| Started in | Mo | Shopify |
-| --- | --- | --- |
-| Mo (widget „Meine Daten löschen“, the mail link `/api/erase-data`, admin „Löschen“), person with a Shopify id | deletes at once; writes an **erasure tombstone** for the Shopify id (no import, reconciliation or webhook re-creates the person) | two outbox rows: `consent_update` → `unsubscribed`, sent while `SHOPIFY_CONSENT_WRITEBACK=true` — so the write-back switch alone already ends Shopify-side mailing — and `data_erasure` (consent off again, then `customerRequestDataErasure`), sent only while `SHOPIFY_ERASURE_SYNC=true`. Both default `false` in code; a row whose switch is off waits. Shopify keeps its own orders as long as the law requires. |
-| Shopify (`customers/redact`, `customers/delete` webhooks) | the same deletion; the tombstone is stamped as confirmed | already erasing — not asked again |
-| Mo, person without a Shopify id (Interessent) | erased in Mo only | — |
 
 The served erase copy (`erasurePageCopy`, on `/api/erase-data` and
 `GET /api/consent-copy?surface=erase`) names the shop account in its `confirmBody` only while
 `SHOPIFY_ERASURE_SYNC` is on; likewise the admin's „Kunde vollständig löschen?“ confirm names the
-Shopify deletion only then (otherwise it says the shop-account deletion is queued). The entry points
-(widget, mail link, admin, Shopify webhooks): [`CUSTOMERS.md`](./CUSTOMERS.md) "Retention / erasure".
+Shopify deletion only then (otherwise it says the shop-account deletion is queued).
 
 ## Measurement (pseudonymous, Cluster A)
 
@@ -499,8 +500,9 @@ fresh review. The finished checklists (v2–v4, the capture form, the welcome di
 ### Customer platform (2026-10) — open, not yet recorded as reviewed
 
 The open items, with the matching question of the lawyer-facing dossier
-([`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md)) in brackets. The switches named default to `false` in code;
-which are on in production: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md).
+([`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md)) in brackets; `D-n` are the decisions in
+[`CUSTOMERS.md`](./CUSTOMERS.md) "Design decisions (customer platform, 2026-10)". The switches named
+default to `false` in code; which are on in production: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md).
 
 - [ ] **One consent across Shopify and Mo:** the shop's checkout / account / newsletter wording covers
       the same purpose as Mo's marketing label (incl. personalisation from past chats and purchases),
