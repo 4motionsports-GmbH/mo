@@ -19,8 +19,10 @@ import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { readSession } from "@/lib/account-guard";
-import { redeemSessionLinkGrant } from "@/lib/session-link-grants";
+import { downgradeDeadCustomerAccountLink, redeemSessionLinkGrant } from "@/lib/session-link-grants";
 import { recordKpiEvent, KPI_ACCOUNT_SIGNIN_LINKED, KPI_ACCOUNT_SIGNIN_LINK_REFUSED } from "@/lib/kpi-events";
+import { appProxyShopProofHours } from "@/lib/platform-flags.mjs";
+import { getValidAccessToken } from "@/lib/customer-oauth-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -46,13 +48,37 @@ export async function POST(req: Request) {
     }
     const sessionId = readSession(req);
     const result = await redeemSessionLinkGrant({ code, sessionId });
+    // A returning chat-signed-in customer whose Customer Account token died,
+    // re-proven by the shop (D-AP1 on): the dead 'customer_account' link would
+    // otherwise stay (it is never downgraded) and /api/auth/me would say
+    // signed-out. Turn it into a fresh App Proxy link.
+    if (
+      result.ok &&
+      result.kind === "app_proxy" &&
+      result.renewed &&
+      result.priorKind === "customer_account" &&
+      appProxyShopProofHours() > 0 &&
+      (await getValidAccessToken(result.customerId)) == null
+    ) {
+      await downgradeDeadCustomerAccountLink(sessionId, result.customerId);
+    }
     // Pseudonymous, session-keyed: the KPI tab's sign-in funnel ends here (a
     // Shopify sign-in only counts once the chat redeemed it), and refusals show
     // a widget that redeems wrongly — or a planted link (session_mismatch).
+    // `renewed`: the session was already signed in as this customer (a new tab
+    // confirming it, not a new sign-in).
     if (result.ok) {
-      await recordKpiEvent({ sessionId, event: KPI_ACCOUNT_SIGNIN_LINKED, data: { kind: result.kind } });
+      await recordKpiEvent({
+        sessionId,
+        event: KPI_ACCOUNT_SIGNIN_LINKED,
+        data: { kind: result.kind, renewed: result.renewed },
+      });
     } else if (result.reason !== "unavailable") {
-      await recordKpiEvent({ sessionId, event: KPI_ACCOUNT_SIGNIN_LINK_REFUSED, data: { reason: result.reason } });
+      await recordKpiEvent({
+        sessionId,
+        event: KPI_ACCOUNT_SIGNIN_LINK_REFUSED,
+        data: { reason: result.reason, ...(result.kind ? { kind: result.kind } : {}) },
+      });
     }
     if (!result.ok) {
       if (result.reason === "unavailable") {

@@ -29,7 +29,7 @@ export const KPI_RELEASES = Object.freeze([
     key: "customer-platform-widget",
     title: "Kundenplattform-Widget live",
     detail:
-      "Einmal-Code, Shop-Erkennung, Einwilligungsregeln, Lösch-Text, Kampagnen-Token (mo_c), stiller Bestellstatus, Verlauf löschen beim Abmelden; dazu Kontaktformular mit Sitzung, eigene Beschriftung für Bestellanfragen, Abbruch der Antwort bei neuem Chat und der Produktseiten-Knopf auf allen Produktvorlagen.",
+      "Einmal-Code, Shop-Erkennung vorbereitet (aktiv erst mit App Proxy), Einwilligungsregeln, Lösch-Text, Kampagnen-Token (mo_c), stiller Bestellstatus, Verlauf löschen beim Abmelden; dazu Kontaktformular mit Sitzung, eigene Beschriftung für Bestellanfragen, Abbruch der Antwort bei neuem Chat und der Produktseiten-Knopf auf allen Produktvorlagen.",
   },
   {
     date: "2026-10-05",

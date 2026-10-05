@@ -34,11 +34,10 @@ import {
   countPriorConversations,
   getCustomerByEmail,
   getCustomerById,
-  resolveSignedInCustomer,
   type Customer,
   type CustomerProfileData,
 } from "./customer-store";
-import { getValidAccessToken } from "./customer-oauth-store";
+import { resolveLiveSignedInCustomer } from "./signed-in-session";
 import { CONSENT_COPY_LAWYER_APPROVED } from "./consent-copy";
 import { canPersonaliseSignedIn } from "./customer-account-data.mjs";
 import { ARCHETYPE_META } from "./persona";
@@ -187,9 +186,10 @@ export async function resolveCustomerMemory(
 /**
  * Resolve memory for a SIGNED-IN (tier-3) customer. The authenticated session
  * IS the re-identification — no in-session email capture needed — but it must
- * still be live: we obtain a valid access token (refreshing if needed) before
- * surfacing anything, so a logged-out/expired session resolves to null (fail
- * closed), exactly like /api/auth/me.
+ * still be live: a valid access token (refreshed if needed) or a fresh shop
+ * proof (lib/signed-in-session) before surfacing anything, so a
+ * logged-out/expired session resolves to null (fail closed), exactly like
+ * /api/auth/me.
  *
  * The greeting-by-name uses ONLY the authenticated session's own identity, so it
  * is shown to any live signed-in customer. Using their PURCHASE HISTORY /
@@ -203,19 +203,18 @@ async function resolveSignedInMemory(sessionId: string | null): Promise<ChatIden
   // Set once the session is proven live; a failure after that still knows it.
   let signedIn = false;
   try {
-    const resolved = await resolveSignedInCustomer(sid);
-    if (!resolved) return { signedIn: false, memory: null };
-
-    // Prove the session is still live (authenticated re-identification).
-    const token = await getValidAccessToken(resolved.customerId);
-    if (!token) return { signedIn: false, memory: null };
+    // Prove the session is still live (authenticated re-identification): a
+    // live chat token, or the fresh shop proof (App Proxy) — the same rule as
+    // /api/auth/me, so the greeting and the UI agree.
+    const resolved = await resolveLiveSignedInCustomer(sid);
+    if ("fail" in resolved) return { signedIn: false, memory: null };
     signedIn = true;
 
     const customer = await getCustomerById(resolved.customerId);
     if (!customer) return { signedIn, memory: null };
 
     const displayName =
-      customer.shopifyAccountSummary?.displayName?.trim() || resolved.name || null;
+      customer.shopifyAccountSummary?.displayName?.trim() || null;
 
     // marketingStatus mirrors the ONE consent (Shopify or Mo — consent-store),
     // so a Shopify newsletter subscription counts without a separate lookup.

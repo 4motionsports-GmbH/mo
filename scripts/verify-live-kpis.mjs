@@ -10,7 +10,8 @@
 // Sections: 1 sign-in chain + diagnosis, 3 consent + no widget-sent erasures,
 // 4 campaign chat starts (once per send), 5 contact form, 6 order status,
 // 7 order attribution (pre-checks P1–P6; after migration 0076 the live
-// checks V0, V3, V4 and the kept tokens).
+// checks V0, V3, V4 and the kept tokens), 8 shop-login recognition (App
+// Proxy, P0.3). Manual whoami checks with session=livecheck-… never count.
 
 import { neon, neonConfig } from "@neondatabase/serverless";
 import { SIGNIN_DIAGNOSIS, classifySigninSession } from "../src/lib/kpi-widget-events.mjs";
@@ -68,15 +69,21 @@ const sessions = await q(
                   AND COALESCE(data->>'result', '') NOT IN ('ok', 'link_failed', 'logged_out')) AS return_other,
           bool_or(event = 'account_signin_linked') AS linked,
           bool_or(event = 'account_signin_linked' AND data->>'kind' = 'app_proxy') AS linked_via_shop,
+          bool_or(event = 'account_signin_linked' AND data->>'kind' = 'app_proxy'
+                  AND COALESCE(data->>'renewed', 'false') = 'false') AS linked_via_shop_new,
+          bool_or(event = 'account_shop_recognised' AND data->>'codeIssued' = 'true') AS shop_code_issued,
           bool_or(event = 'account_signin_link_refused' AND data->>'reason' = 'session_mismatch') AS refused_mismatch,
           bool_or(event = 'account_signin_link_refused' AND COALESCE(data->>'reason', '') <> 'session_mismatch') AS refused_invalid,
           min(created_at) AS first, max(created_at) AS last
      FROM kpi_events
     WHERE event IN ('login_gate_signin_clicked','login_gate_dismissed','account_signin_started','account_signin_succeeded',
-                    'account_signin_return','account_signin_linked','account_signin_link_refused')
+                    'account_signin_return','account_signin_linked','account_signin_link_refused','account_shop_recognised')
       AND session_id IS NOT NULL
+      AND session_id NOT LIKE 'livecheck-%'
       AND created_at >= ${SINCE}
-    GROUP BY session_id`
+    GROUP BY session_id
+   HAVING bool_or(event <> 'account_shop_recognised')
+       OR bool_or(event = 'account_shop_recognised' AND data->>'codeIssued' = 'true')`
 );
 const byOutcome = new Map();
 const stuck = [];
@@ -91,6 +98,8 @@ for (const r of sessions) {
     returnOther: r.return_other,
     linked: r.linked,
     linkedViaShop: r.linked_via_shop,
+    linkedViaShopNew: r.linked_via_shop_new,
+    shopCodeIssued: r.shop_code_issued,
     refusedInvalid: r.refused_invalid,
     refusedMismatch: r.refused_mismatch,
   });
@@ -127,7 +136,9 @@ table(
                  AND k.event = 'account_signin_succeeded' AND k.created_at >= s.clicked))::int AS bei_shopify,
             count(*) FILTER (WHERE s.clicked IS NOT NULL AND EXISTS (
               SELECT 1 FROM kpi_events k WHERE k.session_id = s.session_id
-                 AND k.event = 'account_signin_linked' AND k.created_at >= s.clicked))::int AS im_chat,
+                 AND k.event = 'account_signin_linked'
+                 AND COALESCE(k.data->>'kind', 'customer_account') = 'customer_account'
+                 AND k.created_at >= s.clicked))::int AS im_chat,
             count(*) FILTER (WHERE s.declined)::int AS spaeter,
             count(*) FILTER (WHERE s.dismissed)::int AS weggeklickt
        FROM s`
@@ -360,5 +371,61 @@ table(
     `SELECT source, count(*)::int AS tokens, min(created_at) AS aeltester
        FROM mo_attribution_tokens WHERE created_at < now() - interval '37 days'
       GROUP BY 1 ORDER BY 1`
+  )
+);
+
+// ---------------------------------------------------------------------------
+head("8 · Shop-Login-Erkennung (App Proxy, P0.3) — ohne livecheck-Sitzungen");
+console.log("Erkennungen nach Nachweis / Ergebnis (Sitzungen):");
+table(
+  await q(
+    `SELECT COALESCE(data->>'proof', '') AS nachweis, COALESCE(data->>'hasToken', '') AS chat_token,
+            COALESCE(data->>'alreadySignedIn', '') AS schon_angemeldet,
+            COALESCE(data->>'codeIssued', '') AS code, COALESCE(data->>'noCode', '') AS ohne_code_weil,
+            count(*)::int AS events, count(DISTINCT session_id)::int AS sitzungen
+       FROM kpi_events
+      WHERE event = 'account_shop_recognised' AND session_id NOT LIKE 'livecheck-%' AND created_at >= ${SINCE}
+      GROUP BY 1, 2, 3, 4, 5 ORDER BY 7 DESC`
+  )
+);
+console.log("Codes eingelöst (Ziel ≥ 80 %), davon neue Anmeldungen, abgelehnt:");
+table(
+  await q(
+    `WITH r AS (
+       SELECT session_id, min(created_at) AS at FROM kpi_events
+        WHERE event = 'account_shop_recognised' AND data->>'codeIssued' = 'true'
+          AND session_id NOT LIKE 'livecheck-%' AND created_at >= ${SINCE}
+        GROUP BY 1)
+     SELECT count(*)::int AS mit_code,
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM kpi_events l WHERE l.session_id = r.session_id
+                    AND l.event = 'account_signin_linked' AND l.data->>'kind' = 'app_proxy' AND l.created_at >= r.at))::int AS eingeloest,
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM kpi_events l WHERE l.session_id = r.session_id
+                    AND l.event = 'account_signin_linked' AND l.data->>'kind' = 'app_proxy'
+                    AND COALESCE(l.data->>'renewed','false') = 'false' AND l.created_at >= r.at))::int AS davon_neu,
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM kpi_events l WHERE l.session_id = r.session_id
+                    AND l.event = 'account_signin_link_refused' AND l.data->>'kind' = 'app_proxy' AND l.created_at >= r.at))::int AS abgelehnt
+       FROM r`
+  )
+);
+console.log("Manuelle Prüfung (whoami?session=livecheck-manual) — letzte Zeilen:");
+table(
+  await q0(
+    `SELECT created_at, data FROM kpi_events
+      WHERE event = 'account_shop_recognised' AND session_id LIKE 'livecheck-%'
+      ORDER BY created_at DESC LIMIT 3`
+  )
+);
+console.log("Einwilligungs-Popup je Kunde in 30 Tagen (Deckel 3 Sitzungen; ueber_deckel erwartet 0):");
+table(
+  await q0(
+    `WITH per AS (
+       SELECT l.customer_id, count(DISTINCT k.session_id) AS sitzungen
+         FROM kpi_events k JOIN customer_session_links l ON l.session_id = k.session_id
+        WHERE k.event = 'consent_gate_shown' AND k.data->>'surface' = 'signin'
+          AND k.created_at >= now() - interval '30 days'
+        GROUP BY 1)
+     SELECT count(*)::int AS kunden, COALESCE(max(sitzungen), 0)::int AS max_sitzungen,
+            count(*) FILTER (WHERE sitzungen > 3)::int AS ueber_deckel
+       FROM per`
   )
 );

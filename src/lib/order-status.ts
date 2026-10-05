@@ -69,7 +69,8 @@ type LiveOrder = NonNullable<ReturnType<typeof parseLiveOrder>>;
 /** The outcome of the access gate, resolved once per chat request. */
 export type OrderAccess =
   | { access: "ok"; customerId: number; shopifyCustomerId: string }
-  | { access: "disabled" | "sign_in_required" | "unavailable" | "ledger_off" };
+  | { access: "sign_in_required"; shopSignedIn?: boolean }
+  | { access: "disabled" | "unavailable" | "ledger_off" };
 
 /** The access step (link + token refresh) may not stall the chat stream. */
 const ACCESS_TIMEOUT_MS = 5000;
@@ -172,6 +173,10 @@ async function resolveSignedInAccess(sql: Sql, sid: string, flagOn: boolean): Pr
     const token =
       link && linkKind === "customer_account" ? await getValidAccessToken(link.customerId, sql) : null;
     const decision = decideOrderAccess({ flagOn, sessionId: sid, linkKind, hasToken: Boolean(token) });
+    // Signed in through the shop login only (App Proxy): the chat shows the
+    // customer as signed in, so Mo must not say „not signed in“ — order data
+    // still needs the chat's own sign-in (F-32).
+    if (decision === "sign_in_required" && linkKind === "app_proxy") return { access: "sign_in_required", shopSignedIn: true };
     if (decision !== "ok" || !link) return { access: decision === "ok" ? "sign_in_required" : decision };
     return { access: "ok", customerId: link.customerId, shopifyCustomerId: link.shopifyCustomerId };
   } catch (err) {
@@ -297,6 +302,7 @@ export async function lookupOrderStatus(
       result = buildOrderStatusForModel({
         status: access.access === "sign_in_required" ? "sign_in_required" : "unavailable",
         ordersPageUrl,
+        shopSignedIn: access.access === "sign_in_required" && access.shopSignedIn === true,
       });
     } else if ((await isOrderImportDone(sql)) !== true) {
       // Before the first order import the ledger can be empty for someone who

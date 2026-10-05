@@ -6,15 +6,18 @@
 // allowlist + shared secret like the other widget endpoints.
 //
 // Fail-closed: anything we can't positively prove returns { signedIn: false }.
-// Tokens NEVER appear in the response — only the resolved name + tier. The name
-// is read LIVE from Shopify (authoritative) via the server-held access token, so
-// we don't cache customer PII names locally for tier 3 in CA-1.
+// Tokens NEVER appear in the response — only the resolved name + tier. With a
+// chat sign-in (token proof) the name is read LIVE from Shopify via the
+// server-held access token; with the shop proof (App Proxy, D-AP1 — no token)
+// it comes from the cached account summary or the Admin API
+// (lib/signed-in-session).
 
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
-import { resolveSignedInCustomer } from "@/lib/customer-store";
-import { getValidAccessToken, deleteCustomerTokens } from "@/lib/customer-oauth-store";
+import { getCustomerById } from "@/lib/customer-store";
+import { deleteCustomerTokens } from "@/lib/customer-oauth-store";
+import { resolveLiveSignedInCustomer } from "@/lib/signed-in-session";
 import { signOutSessionLinks } from "@/lib/session-link-grants";
 import { fetchCustomerIdentity } from "@/lib/shopify-customer-account";
 import { isRevokedTokenError } from "@/lib/customer-account-oauth.mjs";
@@ -48,34 +51,42 @@ export async function GET(req: Request) {
     const sessionId =
       (url.searchParams.get("session") ?? "").trim() || req.headers.get("x-ms-session");
 
-    const resolved = await resolveSignedInCustomer(sessionId ?? null);
-    if (!resolved) return json({ signedIn: false }, headers);
-
-    // Prove the session is still live by obtaining a valid access token
-    // (refreshing if needed). No valid token → fail closed (re-auth required).
-    const token = await getValidAccessToken(resolved.customerId);
-    if (!token) return json({ signedIn: false }, headers);
+    // Prove the session is still live: a valid access token (refreshed if
+    // needed) for a chat sign-in, or a fresh shop proof (App Proxy). Nothing
+    // proven → fail closed (re-auth required).
+    const resolved = await resolveLiveSignedInCustomer(sessionId ?? null);
+    if ("fail" in resolved) return json({ signedIn: false }, headers);
+    const token = resolved.accessToken;
 
     let name: string | null = null;
-    try {
-      const identity = await fetchCustomerIdentity(token);
-      if (identity) name = displayNameOf(identity);
-    } catch (err) {
-      // A 401 here means the access token is revoked/invalid — the customer
-      // logged out of Shopify OUT-OF-BAND (our own widget logout deletes the
-      // tokens, but a logout on Shopify directly never reaches us). That is an
-      // authoritative "signed out": drop the dead tokens so the next call fails
-      // closed at getValidAccessToken, and report signed-out NOW — do NOT fall
-      // through to the Admin-API name fallback, which would mask the logout.
-      if (isRevokedTokenError(err)) {
-        await deleteCustomerTokens(resolved.customerId);
-        await signOutSessionLinks({ customerId: resolved.customerId, sessionId: sessionId ?? null });
-        return json({ signedIn: false }, headers);
+    if (resolved.proof === "shop") {
+      try {
+        const cached = await getCustomerById(resolved.customerId);
+        name = cached?.shopifyAccountSummary?.displayName?.trim() || null;
+      } catch (err) {
+        reportError(err, { route: "api/auth/me", phase: "cachedName" });
       }
-      // Any other error (transient 5xx / network / CA schema drift): the token
-      // is still valid, so keep the user signed in with a degraded name rather
-      // than logging them out over a hiccup.
-      reportError(err, { route: "api/auth/me", phase: "fetchIdentity" });
+    } else if (token) {
+      try {
+        const identity = await fetchCustomerIdentity(token);
+        if (identity) name = displayNameOf(identity);
+      } catch (err) {
+        // A 401 here means the access token is revoked/invalid — the customer
+        // logged out of Shopify OUT-OF-BAND (our own widget logout deletes the
+        // tokens, but a logout on Shopify directly never reaches us). That is an
+        // authoritative "signed out": drop the dead tokens so the next call fails
+        // closed at getValidAccessToken, and report signed-out NOW — do NOT fall
+        // through to the Admin-API name fallback, which would mask the logout.
+        if (isRevokedTokenError(err)) {
+          await deleteCustomerTokens(resolved.customerId);
+          await signOutSessionLinks({ customerId: resolved.customerId, sessionId: sessionId ?? null });
+          return json({ signedIn: false }, headers);
+        }
+        // Any other error (transient 5xx / network / CA schema drift): the token
+        // is still valid, so keep the user signed in with a degraded name rather
+        // than logging them out over a hiccup.
+        reportError(err, { route: "api/auth/me", phase: "fetchIdentity" });
+      }
     }
 
     // Name fallback via the Admin API (read_customers): if the Customer-Account
@@ -99,7 +110,7 @@ export async function GET(req: Request) {
     return json(
       {
         signedIn: true,
-        identity: { name, tier: resolved.tier },
+        identity: { name, tier: 3 },
         marketing,
       },
       headers
