@@ -1,5 +1,5 @@
 // The Eingang rules (pure, tested): which customer needs us today, why, and
-// how urgent — docs/CUSTOMER_PLATFORM_PLAN.md §11.3. Dedupe keys name the
+// how urgent — docs/archive/CUSTOMER_PLATFORM_PLAN.md §11.3. Dedupe keys name the
 // EPISODE (the order, chat, click or mail that triggered the rule), never a
 // calendar window: while the condition holds the key stays the same, so a
 // snoozed or dismissed item is not recreated next week. The job

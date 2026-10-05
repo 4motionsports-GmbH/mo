@@ -36,7 +36,7 @@
 
 - **Stufe 1 — anonym:** Nur eine vom Browser erzeugte Session-ID (pseudonym). Chats werden gespeichert, aber keiner Person zugeordnet.
 - **Stufe 2 — E-Mail erfasst:** Der Nutzer hat im Chat seine E-Mail-Adresse mit Einwilligung angegeben (Beratungs-Zusammenfassung und/oder Marketing).
-- **Stufe 3 — eingeloggt:** Der Nutzer hat sich über sein Shopify-Kundenkonto (OAuth/PKCE) angemeldet; nur hier gibt es Self-Service für Auskunft/Export und Löschung.
+- **Stufe 3 — eingeloggt:** Der Nutzer hat sich über sein Shopify-Kundenkonto (OAuth/PKCE) angemeldet; nur hier gibt es Self-Service für Auskunft/Export; Self-Service-Löschung hier und seit 09/2026 auch über den Link „Daten löschen“ in jeder Werbe-Mail (§ 8). Seit § 19 kann auch eine frische Shop-Anmeldung als Anmeldung gelten.
 
 Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Chat-/Nutzungsdaten, berechtigtes Interesse) und **Cluster B** (identifizierte Daten mit Einwilligungs-Nachweis). E-Mail-Adressen gelangen nie in Cluster A und nie in KI-Prompts.
 
@@ -54,15 +54,17 @@ Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Ch
 
 **Sprachausgabe:** Auf Wunsch wird die Mo-Antwort per OpenAI-TTS vorgelesen (Antworttext geht an OpenAI; keine Identifikatoren).
 
-**E-Mail-Erfassung im Chat:** Mo darf höchstens **zweimal pro Gespräch** die Zusammenfassung per E-Mail anbieten (serverseitig erzwungen), nie erneut nach Ablehnung. Zwei getrennte, nie vorangekreuzte Einwilligungen (§ 5). Zusätzlich existiert ein einmal pro Session gezeigtes „Consent-Gate“ (nur Marketing, Button-Consent, v4).
+**E-Mail-Erfassung im Chat:** Mo darf höchstens **zweimal pro Gespräch** die Zusammenfassung per E-Mail anbieten (serverseitig erzwungen), nie erneut nach Ablehnung. Zwei getrennte, nie vorangekreuzte Einwilligungen (§ 5). Das frühere, einmal pro Session gezeigte „Consent-Gate“ (nur Marketing, Button-Consent, v4) zeigt das Widget seit 01.10.2026 nicht mehr; anonyme Besucher sehen stattdessen ein Anmelde-Popup, die Werbe-Einwilligung wird danach als Popup nach der Anmeldung erfragt (§ 5, § 19.1). Der Endpunkt des Gates bleibt aus Kompatibilitätsgründen bestehen.
 
-**Kundenkonto (Stufe 3):** Eigene Gespräarchivliste über alle Geräte, Transkript lesen/umbenennen/einzeln löschen, PDF-Zusammenfassung, **Daten-Export als JSON** (Art. 15/20), **vollständige Selbst-Löschung** (Art. 17), Marketing-Opt-in ohne erneute E-Mail-Eingabe (voller DOI).
+**Kundenkonto (Stufe 3):** Eigene Gesprächsarchivliste über alle Geräte, Transkript lesen/umbenennen/einzeln löschen, PDF-Zusammenfassung, **Daten-Export als JSON** (Art. 15/20), **vollständige Selbst-Löschung** (Art. 17), Marketing-Opt-in ohne erneute E-Mail-Eingabe (voller DOI).
 
 **Kontaktformular:** Name, E-Mail, Telefon, Organisation, Nachricht + Anliegen (8 Kategorien inkl. Bestellsupport). Wird per Resend an das interne Postfach weitergeleitet und **seit 02.10.2026 zusätzlich in der Systemdatenbank gespeichert** (Korrespondenz der Person; unbekannte Absender werden als Interessent ohne Einwilligung angelegt, → § 14).
 
 **Feedback:** Freitextfeld (optional mit E-Mail); Speicherung 365 Tage; nur lesend im Admin sichtbar.
 
 ### 2.2 Admin-Dashboard (interner Betrieb, `/admin`)
+
+> **Seit 01.10.2026 teilweise überholt (§ 13, § 14):** Heute hat das Dashboard zehn Bereiche: Eingang, Kampagnen, Kunden, Wissen, KPIs, Gespräche, Feedback, Analyse, Verbesserung, Einstellungen. „Kunden“ umfasst alle gespiegelten Shop-Kunden, nicht nur Personen mit Einwilligungs-Erfassung (§ 13.1 Nr. 1); „Kampagnen“ schreibt Personen mit der einen Werbe-Einwilligung an (§ 13.1 Nr. 2, 5); das KI-Kundenprofil gibt es in zwei Tiefen (Vollprofil Opus, Kaufprofil Sonnet, § 13.1 Nr. 4); den Eingang beschreiben § 13.1 Nr. 6 und § 14. „Verbesserung“ erzeugt per KI (Anthropic Sonnet) Vorschläge aus einer abgeschlossenen Komplettanalyse (aggregierte, pseudonyme Abschnitte, keine Identität); vom Team übernommene „Team-Anweisungen“ wirken live in Mos Systemprompt (`docs/IMPROVEMENT_LOOP.md`) — in diesem Dossier bisher nicht gesondert beschrieben. Die Tabelle zeigt den Stand 08/2026.
 
 | Tab | Funktion | KI-Einsatz |
 |---|---|---|
@@ -71,12 +73,12 @@ Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Ch
 | **Gespräche** | Volltextsuche und Inspektion aller Chat-Transkripte; Kategorisierung/Qualitätsbewertung | KI-Analyse einzeln oder als Bulk (Haiku-Modell; ohne E-Mail/Identität im Prompt); aggregierte „Insights“ |
 | **Wissen (Q&A)** | KI erkennt Wissenslücken aus realen Gesprächen, formuliert eine Kundenfrage; ein Mensch beantwortet; Veröffentlichung auf Produktseiten (Shopify-Metafeld) und in Mos Wissensbasis; automatische EN-Übersetzung; jederzeit zurückziehbar | Ja (Extraktion + Übersetzung) |
 | **KPIs** | Pseudonyme Kennzahlen, Funnels (Capture, Consent-Gate, Kampagne), Mo-attribuierter Umsatz über Rabattcode-Einlösung, KI-Kosten | Nur auf Knopfdruck: „Top-Fragen“-Zusammenfassung |
-| **Analyse** | „Komplettanalyse“: großer KI-Bericht über einen Zeitraum, mit Kostenvorschau; optional **personenbezogene Abschnitte mit Klarnamen** (eigene Löschfrist 365 T; bei Konto-Löschung manuelle Nacharbeit nötig, → F-10) | Ja (mehrphasig) |
+| **Analyse** | „Komplettanalyse“: großer KI-Bericht über einen Zeitraum, mit Kostenvorschau; optional **personenbezogene Abschnitte mit Klarnamen** (eigene Löschfrist 365 T; bei vollständiger Löschung einer Person wird ihr Abschnitt seit 09/2026 automatisch entfernt, § 3.2) | Ja (mehrphasig) |
 | **Feedback** | Nur-Lese-Liste | Nein |
 
 **Zugriffsprotokoll:** Jeder Admin-Zugriff auf Kundendaten (Profil, Transkript, Korrespondenz, Q&A, Analyse) wird protokolliert (`admin_access_log`: Aktion, Kunden-ID, IP, Cookie-Fingerprint; 730 Tage). Einschränkung: Es gibt nur **ein geteiltes Admin-Passwort**, daher keine namentliche Zuordnung (→ F-15).
 
-**Automatische Hintergrund-Jobs (täglich, per Secret abgesichert):** Shopify-Kundendaten-Refresh (Bestellungen/Adressen, 25 Kunden/Lauf), Kampagnen-Zielgruppen-Sync, Katalog-Sync mit Embeddings, **Lösch-/Aufbewahrungslauf** (§ 3.2), Ablauf von Set-Angeboten.
+**Automatische Hintergrund-Jobs (per Secret abgesichert):** täglich Shopify-Kundendaten-Refresh (Bestellungen/Adressen, 25 Kunden/Lauf), Aktualisierung der Kampagnen-Zielgruppen (seit § 13 aus dem Kundenstamm statt Sync der Shopify-Abonnenten), Katalog-Sync mit Embeddings, **Lösch-/Aufbewahrungslauf** (§ 3.2); alle 15 Minuten Ablauf von Set-Angeboten. Seit § 13 kommen der nächtliche Shopify-Abgleich, die Warteschlange an Shopify (alle 5 Minuten), der Eingang (stündlich) und die nächtliche Vorbereitung von Kampagnen-Entwürfen per KI hinzu (standardmäßig aus, `CAMPAIGN_AUTO_PREPARE_COUNT` = 0; versendet wird nichts), seit § 17 der Versand-Job (alle 10 Minuten).
 
 ---
 
@@ -92,11 +94,11 @@ Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Ch
 | D-04 | **Einwilligungs-Nachweis** (`email_captures`) | E-Mail, beide Consent-Flags, DOI-Status/-Token, **wortlautgetreuer Einwilligungstext + Versionsstempel**, Abmeldezeitpunkt | Aktive Einwilligung: unbefristet (Art.-7-Nachweis); nach Abmeldung: PII-Löschung nach 30 T Karenz |
 | D-05 | **Sperrliste** (`suppression_list`) | E-Mail, Grund, Zeitpunkt | **Unbefristet** (damit Opt-outs dauerhaft greifen) |
 | D-06 | Marketing-Sendehistorie | Entwurfstext, Betreff, Rabattcode, Klick-Zeitpunkt | Fällt mit dem Einwilligungs-Datensatz weg; keine eigene Frist (→ F-10) |
-| D-07 | **Kundenakte** (`customers`) — seit Migration 0059 für **jede** Person (Chat, Shopify-Login **und** Kampagnen-Kontakt), mit Herkunft | E-Mail, Consent-Spiegel, **KI-Profil (Text + strukturierte Merkmale: Persona, Niveau, Budget-Signal, Ziele, Besitz, Interessen, nächste Schritte)**, Bestellhistorien-Cache, Shopify-Identität, ggf. Postadresse (nur kaufbasiert, nur bei aktivem Briefkanal), Admin-Notizen, Briefentwurf | Solange Einwilligung aktiv (Chat-DOI oder aktives Shopify-Newsletter-Abo); **inaktive Kunden ohne aktive Einwilligung: 1095 T (3 J.)**; Löschung auf Antrag/Self-Service |
+| D-07 | **Kundenakte** (`customers`) — seit Migration 0059 für **jede** Person (Chat, Shopify-Login **und** Kampagnen-Kontakt), mit Herkunft | E-Mail, Consent-Spiegel, **KI-Profil (Text + strukturierte Merkmale: Persona, Niveau, Budget-Signal, Ziele, Besitz, Interessen, nächste Schritte)**, Bestellhistorien-Cache, Shopify-Identität, ggf. Postadresse (nur kaufbasiert, nur bei aktivem Briefkanal), Admin-Notizen, Briefentwurf | Solange Einwilligung aktiv (Chat-DOI oder aktives Shopify-Newsletter-Abo); **inaktive Kunden ohne aktive Einwilligung: 1095 T (3 J.)**; Löschung auf Antrag/Self-Service — *seit 01.10.2026: Akte für jeden Shop-Kunden, Shop-Kunden von der Inaktivitäts-Löschung ausgenommen, → § 13.1 Nr. 1, 10* |
 | D-08 | OAuth-Tokens (Stufe 3) | Access-/Refresh-Token, **AES-256-GCM-verschlüsselt** | Mit Kundenakte; Login-Zwischenzustände ~10 min |
 | D-09 | **E-Mail-Korrespondenz** | Vollständige Texte ein- und ausgehender Mails (inkl. unbekannter Absender), Anhänge nur als Metadaten | **365 T** |
 | D-10 | **Physische Briefe** | Empfängeradresse (Snapshot), Briefinhalt, Pingen-Status, Kosten | **365 T** |
-| D-11 | Kampagnen-Kontakte + -Versand | Shopify-Abonnenten: E-Mail, Name, Sprache, Opt-in-Level, Bestellzahl/Umsatz; versendete Mail im Wortlaut | **365 T** |
+| D-11 | Kampagnen-Kontakte + -Versand | Shopify-Abonnenten: E-Mail, Name, Sprache, Opt-in-Level, Bestellzahl/Umsatz; versendete Mail im Wortlaut — *seit 01.10.2026: Empfänger aus dem Kundenstamm mit der einen Einwilligung, → § 13.1 Nr. 5; Kampagnen-Briefe → § 18* | **365 T** |
 | D-12 | Feedback | Freitext, optionale E-Mail, Session/Seite | **365 T** |
 | D-13 | Set-Angebote (Bundles) | Komponenten, Preise, Kundenverknüpfung (wird bei Löschung getrennt) | Angebot 7 T gültig; Datensatz ohne eigene Frist |
 | D-14 | Q&A-Wissenseinträge | Aus Gesprächen abgeleitete Frage + menschliche Antwort (keine Identität) | Unbefristet (redaktioneller Inhalt), jederzeit zurückziehbar |
@@ -146,7 +148,7 @@ Ein täglicher, abgesicherter Lösch-Lauf setzt alle Fristen automatisch durch. 
 - **Double-Opt-in** für Marketing: 256-Bit-Token, 7 Tage gültig; vor Bestätigung keine einzige Marketing-Mail.
 - **Wortlautgetreuer Nachweis:** Der angezeigte Einwilligungstext wird verbatim gespeichert; ein Versionsstempel (v4, seit 05.10.2026 v5 — § 21) wird nur vergeben, wenn der zurückgemeldete Text byte-identisch mit dem Serverstand ist.
 - **Widerruf:** signierter 1-Klick-Abmeldelink in jeder Marketing-/Kampagnen-Mail + `List-Unsubscribe`-Header; ohne funktionierenden Abmeldelink wird der Versand verweigert; Sperrliste dauerhaft, fail-closed.
-- **Drei Einwilligungs-Oberflächen:** (1) Capture-Formular im Chat (2 Checkboxen), (2) Opt-in beim Login (Button-Consent, hinterlegte Adresse), (3) Chat-Consent-Gate (Button-Consent, getippte Adresse, nur Marketing, max. 1× pro Session).
+- **Drei Einwilligungs-Oberflächen:** (1) Capture-Formular im Chat (2 Checkboxen), (2) Opt-in beim Login (Button-Consent, hinterlegte Adresse; seit 01.10.2026 vor allem als Popup nach der Anmeldung), (3) Chat-Consent-Gate (Button-Consent, getippte Adresse, nur Marketing, max. 1× pro Session) — **seit 01.10.2026 vom Widget nicht mehr angezeigt** (ersetzt durch das Anmelde-Popup für anonyme Besucher); der Endpunkt und der freigegebene Text bleiben aus Kompatibilitätsgründen bestehen, im Betrieb sind damit (1) und (2) aktiv.
 
 **Verbatim-Texte (deutsch, v4 — laut Code-Vermerk anwaltlich freigegeben Juni/Juli 2026):**
 
@@ -155,7 +157,7 @@ Ein täglicher, abgesicherter Lösch-Lauf setzt alle Fristen automatisch durch. 
 | Zusammenfassung | „Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl. Direkt-Link zur Kasse).“ |
 | Marketing | „Ja, ich möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten. Jederzeit abbestellbar.“ |
 | Login-Opt-in | „Ja, schickt mir an meine hinterlegte E-Mail-Adresse exklusive Angebote und Aktionen — nur für Abonnenten. Jederzeit abbestellbar.“ |
-| Chat-Gate | „Ja, schickt mir persönliche Angebote und exklusive Rabatt-Aktionen an diese E-Mail-Adresse — nur für Abonnenten. Jederzeit abbestellbar.“ |
+| Chat-Gate (seit 01.10.2026 nicht angezeigt) | „Ja, schickt mir persönliche Angebote und exklusive Rabatt-Aktionen an diese E-Mail-Adresse — nur für Abonnenten. Jederzeit abbestellbar.“ |
 | Fußzeile (Teil des Nachweistexts) | „Verarbeitung durch motion sports gemäß Datenschutzerklärung; Widerruf jederzeit möglich.“ |
 
 **Englische Fassung:** Der Shop läuft auch auf `/en`. Die englischen Consent-Texte sind im Code ausdrücklich als **nicht rechtlich geprüft** markiert (`CONSENT_COPY_EN_LEGAL_REVIEWED = false`) und werden dennoch ausgeliefert (→ F-12). *Nachtrag 05.10.2026:* Der Mandant hat die englischen Texte als getreue Übersetzung der freigegebenen deutschen Fassung freigegeben (`CONSENT_COPY_EN_LEGAL_REVIEWED = true`); Satz für Satz gegen das Deutsche geprüft (Erfassungsformular, Opt-in nach der Anmeldung, Chat-Einwilligung, DOI-Mail), kein Wortlaut geändert.
@@ -176,7 +178,7 @@ Empfänger: Chat-Nutzer mit bestätigtem DOI. Versandvoraussetzungen (alle serve
 
 Empfänger: Shopify-Kunden mit `marketingState = SUBSCRIBED` (Einwilligung stammt aus der Shopify-Checkbox, **nicht** aus unserem DOI-Flow). Shopify liefert die Consent-Qualität mit (`CONFIRMED_OPT_IN` / `SINGLE_OPT_IN` / `UNKNOWN`).
 
-- Zwei getrennte Freigabe-Schalter, beide fail-closed: **Master-Gate** `CAMPAIGN_SENDS_APPROVED` und **Opt-in-Level-Gate** `CAMPAIGN_ALLOW_SINGLE_OPT_IN`. Laut Code-Vermerk wurden **beide am 21.07.2026 anwaltlich freigegeben** und sind in den dokumentierten Defaults aktiv — d. h. derzeit dürfen auch Kontakte **ohne nachweisbares Double-Opt-in** angeschrieben werden (→ F-06, bitte ausdrücklich bestätigen).
+- Zwei getrennte Freigabe-Schalter, beide fail-closed: **Master-Gate** `CAMPAIGN_SENDS_APPROVED` und **Opt-in-Level-Gate** `CAMPAIGN_ALLOW_SINGLE_OPT_IN`. Beide stehen im Code standardmäßig auf **aus** (`false`). Laut Code-Vermerk (Kommentar in `.env.example`) wurden **beide am 21.07.2026 anwaltlich freigegeben** und werden in der Produktion eingeschaltet (Betriebsstand: `docs/ROLLOUT_TODO.md`) — d. h. dann dürfen auch Kontakte **ohne nachweisbares Double-Opt-in** angeschrieben werden (→ F-06, bitte ausdrücklich bestätigen).
 - Lokale Abmeldungen überschreiben Shopify („ein lokales Opt-out kann kein Sync rückgängig machen“); Shopify-seitige Abmeldungen werden beim täglichen Sync übernommen.
 - **Frequenz-Deckel** (`MARKETING_MIN_SEND_INTERVAL_DAYS`) wirkt kanalübergreifend in beide Richtungen, steht aber standardmäßig auf **0 = aus** (→ F-13).
 - Inhalt pro Mail: persönliche Anrede, Bezug auf Kaufhistorie, 2–3 Empfehlungen, optional Rabatt (`MK-`) oder Set-Angebot, Mo-Werbeblock mit Deep-Link, Abmelde-Footer und — getrennt davon — ein Link „Daten löschen“ (Bestätigungsseite, dann vollständige Löschung).
@@ -200,18 +202,20 @@ KI-gestützt entworfene, menschlich freigegebene Briefe; Versand über Pingen (S
 |---|---|---|
 | Live-Chat | Anthropic `claude-sonnet-5-5` | Gesprächsverlauf verbatim; abgeleitetes Bedarfsprofil; bei berechtigtem „Wiedererkennen“ (s. u.): Profiltext, gekaufte Artikel (nur Titel/Menge), Vorname, Stadt/Land. **Nur bei eingeschaltetem Bestellstatus (§ 16) und Anmeldung über das Kundenkonto in derselben Chat-Sitzung, auf Frage des Kunden:** Stand der eigenen Bestellungen — Bestelldatum, Artikel (Titel/Variante/Menge), Versand- und Zahlungsstatus, Name des Versanddienstleisters, angekündigter bzw. erfolgter Zustelltag; **ohne** Bestellnummer, Beträge, Sendungsnummer/-link, Adresse, E-Mail oder interne Kennungen |
 | Zusammenfassungs-Mail | dito | Transkript des Gesprächs |
-| Kundenprofil (jede Nacht für Kunden mit neuer Aktivität) | Anthropic `claude-opus-5-5` | Alle verknüpften Transkripte, Kaufhistorie, Korrespondenz-Texte, Kampagnen-Historie (Abo-Status, gesendete Mails, Klicks), Name, Stadt/Land |
+| Kundenprofil (jede Nacht für Kunden mit neuer Aktivität) | Anthropic `claude-opus-5-5` (Vollprofil); seit § 13 das Kaufprofil (nur Käufe und Kampagnen-Reaktionen) mit `claude-sonnet-5-5` | Alle verknüpften Transkripte, Kaufhistorie, Korrespondenz-Texte, Kampagnen-Historie (Abo-Status, gesendete Mails, Klicks), Name, Stadt/Land |
 | Antwortentwurf auf eingehende E-Mails (Eingang, seit 02.10.2026) | Anthropic Sonnet | Name, die letzten 12 Mails der Korrespondenz (eingehend und ausgehend, ohne Zitate), die letzten 3 Bestellungen (Datum, Status, Artikel — **ohne** Bestellnummer und Beträge), Profiltext (nicht nach Widerspruch). Der Inhalt der Mails selbst kann beliebige Angaben der Person enthalten |
 | Gesprächsanalyse/Q&A-Übersetzung | Anthropic `claude-haiku-4-5`; Insights-Rollup und Q&A-Entwürfe `claude-sonnet-5-5` | Einzeltranskripte bzw. deren Zusammenfassungen — **ohne** E-Mail/Identität |
 | Marketing-/Kampagnen-/Brief-Entwürfe, Zusammenfassungs-Mail (wiederkehrende Kunden), Hero-Bilder, Set-Vorschläge | Anthropic Sonnet (Hero-Bild: OpenAI, nur verdichteter Kontext) | Profil, Kaufhistorie, Name (Brief), Operator-Anweisungen |
 | Produktsuche | OpenAI `text-embedding-3-small` | **Jede Nutzernachricht** wird zur Suche eingebettet (keine Identifikatoren) |
 | Sprachausgabe | OpenAI `gpt-4o-mini-tts` | Mo-Antworttext |
 
+Weitere KI-Einsätze seit 10/2026, jeweils Anthropic `claude-sonnet-5-5`: Vorschläge im Eingang (§ 13.1 Nr. 6), „Frag Mo“ (§ 13.1 Nr. 8), Antwortentwürfe (§ 14, Zeile oben), Werbebrief-Entwürfe (§ 18). Modell je Einsatz im Code: `docs/AI_MODELS.md`.
+
 **Bewusst nie an KI-Modelle übermittelt:** E-Mail-Adressen, vollständige Straßenadressen (nur Stadt/Land; beim Brief nur der Name), Bestellnummern und -summen (auch nicht beim Bestellstatus, § 16 — technisch durch eine feste Feldliste und einen automatischen Test abgesichert), Roh-Transkripte früherer Sitzungen (nur der verdichtete Profiltext). Nennt der Kunde selbst eine Bestellnummer im Chat, steht sie — wie jede eigene Angabe — im Gesprächsverlauf. **Korrektur 03.10.2026:** Bis zu diesem Tag enthielten die Kaufzeilen der Kampagnen-Mail-Entwürfe je Bestellung die Bestellbezeichnung des Shops (z. B. „#1042“) — entgegen dieser Aussage. Das ist behoben (seit 03.10.2026 nur Datum und Artikel); Beträge waren nie enthalten. Auf dem Chat-Pfad ist Anthropic-**Prompt-Caching** aktiv (kurzlebiger serverseitiger Cache bei Anthropic; bei den Vertragsprüfungen zu berücksichtigen, → F-03).
 
 ### 7.2 Personalisierungs-Gate („Wiedererkennen“)
 
-Fail-closed, zwei Wege: Stufe 2 nur, wenn die E-Mail **in derselben Session** eingegeben wurde und der Server die Capture-Zuordnung bestätigt (Schutz geteilter Geräte); Stufe 3 nur mit gültigem Login-Token **und** entweder bestätigtem Marketing-DOI **oder** aktivem Shopify-Newsletter-Abo des verknüpften Kampagnen-Kontakts (neu 09/2026, → F-20) — ohne eines von beiden nur Begrüßung mit Namen, kein Verlauf.
+Fail-closed, zwei Wege: Stufe 2 nur, wenn die E-Mail **in derselben Session** eingegeben wurde und der Server die Capture-Zuordnung bestätigt (Schutz geteilter Geräte); Stufe 3 nur mit gültigem Login-Token **und** entweder bestätigtem Marketing-DOI **oder** aktivem Shopify-Newsletter-Abo des verknüpften Kampagnen-Kontakts (neu 09/2026, → F-20) — ohne eines von beiden nur Begrüßung mit Namen, kein Verlauf. *Seit § 13 prüft das Gate die eine Werbe-Einwilligung (Shopify oder Mo, § 13.1 Nr. 2) statt DOI bzw. Abo des Kampagnen-Kontakts; seit § 19 genügt bei eingeschalteter Höchstdauer auch eine frische Shop-Anmeldung als Anmeldung (Personalisierung weiterhin nur mit Werbe-Einwilligung).*
 
 ### 7.3 Regulatorische Einordnung (zur Prüfung)
 
@@ -317,7 +321,7 @@ Fail-closed, zwei Wege: Stufe 2 nur, wenn die E-Mail **in derselben Session** ei
 
 ## 13. Nachtrag 01.10.2026 — Kundenplattform: eine Einwilligung, eine Löschung, alle Shop-Kunden
 
-Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle Shopify-Schalter stehen im Code standardmäßig auf **aus**; eingeschaltet werden sie erst nach Ihrer Freigabe.
+Grundlage: `docs/CUSTOMERS.md` „Design decisions (customer platform, 2026-10)“ (Entscheidungen D-1 bis D-12; der ursprüngliche Plan liegt in `docs/archive/CUSTOMER_PLATFORM_PLAN.md`). Alle Shopify-Schalter stehen im Code standardmäßig auf **aus**; eingeschaltet werden sie erst nach Ihrer Freigabe.
 
 ### 13.1 Was sich geändert hat (Tatsachen)
 
@@ -499,7 +503,7 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 
 ## 19. Nachtrag 05.10.2026 — Erkennung der Shop-Anmeldung im Chat (App Proxy)
 
-Grundlage: `docs/CUSTOMER_ACCOUNT.md` § 2 („Already-signed-in detection“), `docs/plans/2026-10-04/P0.3.md`. § 15.3 bleibt als Chronik unverändert; sein Stand „nicht eingerichtet (02.10.2026)“ wird hier fortgeschrieben.
+Grundlage (Ist-Stand): `docs/CUSTOMER_ACCOUNT.md` § 2 („Already-signed-in detection“), Widget-Vertrag `docs/frontend/ACCOUNT_CONTRACT.md` § 3a; Planungsstand (historisch): `docs/archive/plans-2026-10-04/P0.3.md`. § 15.3 bleibt als Chronik unverändert; sein Stand „nicht eingerichtet (02.10.2026)“ wird hier fortgeschrieben.
 
 ### 19.1 Tatsachen
 
@@ -531,7 +535,7 @@ Der Mandant hat D-AP1 am 05.10.2026 entschieden: Eine frische Shop-Anmeldung zä
 
 ## 20. Nachtrag 05.10.2026 — Bestell-Zuordnung: Fenster ab der letzten Beratung
 
-Grundlage: `docs/ORDER_ATTRIBUTION.md`, `docs/plans/2026-10-04/ATTR-TOKEN-LIFETIME.md`. Die Bestell-Zuordnung (D-20) misst, ob eine Bestellung auf eine Mo-Beratung zurückgeht: Das Widget setzt mit Analyse-Einwilligung eine opake Markierung (`_mo`) an den Shopify-Warenkorb; Mo-Links in Mails und Set-Angeboten tragen sie im Link. Bisher wird eine Bestellung mit Markierung pseudonym gespeichert, wenn sie innerhalb von 30 Tagen (`MO_ATTRIBUTION_WINDOW_DAYS`) nach Erstellung der Markierung eingeht oder einen Mo-Rabattcode trägt.
+Grundlage (Ist-Stand): `docs/ORDER_ATTRIBUTION.md`, Speicherfristen `docs/DATA_RETENTION.md` (Schritt 5i); Planungsstand (historisch): `docs/archive/plans-2026-10-04/ATTR-TOKEN-LIFETIME.md`. Die Bestell-Zuordnung (D-20) misst, ob eine Bestellung auf eine Mo-Beratung zurückgeht: Das Widget setzt mit Analyse-Einwilligung eine opake Markierung (`_mo`) an den Shopify-Warenkorb; Mo-Links in Mails und Set-Angeboten tragen sie im Link. Bisher wird eine Bestellung mit Markierung pseudonym gespeichert, wenn sie innerhalb von 30 Tagen (`MO_ATTRIBUTION_WINDOW_DAYS`) nach Erstellung der Markierung eingeht oder einen Mo-Rabattcode trägt.
 
 ### 20.1 Tatsachen
 
@@ -544,7 +548,7 @@ Grundlage: `docs/ORDER_ATTRIBUTION.md`, `docs/plans/2026-10-04/ATTR-TOKEN-LIFETI
 - **Verlängerung unabhängig von der Einwilligung.** Das Backend sieht die Analyse-Einwilligung beim Chat nicht. Eine Produktberatung auf demselben Gerät **nach** dem Widerruf der Einwilligung verlängert daher das Fenster einer Markierung, die unter Einwilligung erstellt wurde.
 - **Markierung bleibt am Warenkorb.** Die `_mo`-Markierung am Shopify-Warenkorb wird bei Abmelden, Sitzungswechsel oder Widerruf nicht entfernt. Auf einem geteilten Browser kann eine spätere Bestellung dadurch länger als bisher (30 Tage ab Erstellung) dieser Sitzung zugeordnet werden — und über deren Gespräche der Akte eines angemeldeten Kunden. Abhilfe: Eine Widget-Aufgabe leert die Markierung beim Abmelden, Löschen und Widerruf; sie ist noch nicht live.
 - **Zähler ohne Bestellbezug.** Eine markierte Bestellung, die keiner Beratung zugeordnet werden kann (Markierung unbekannt oder gelöscht, Beratung außerhalb des Fensters), wird weder einer Sitzung zugeordnet noch in der Mo-Zuordnung gespeichert. Gezählt wird nur ein Ereignis ohne Sitzung mit Grund und ggf. Quelle der Markierung (D-03) — **nie** Bestellnummer, Markierung, Betrag oder Kundendaten.
-- **Klarstellung.** „Nicht markierte Bestellungen werden nicht gespeichert“ gilt nur für die Mo-Zuordnung (`mo_orders`). Die Bestellkopie (§ 13.1 Nr. 1) speichert bei eingeschaltetem Kundenabgleich (`SHOPIFY_CUSTOMER_SYNC_ENABLED`) jede Bestellung. Der Text im Dashboard ist entsprechend korrigiert.
+- **Klarstellung.** „Nicht markierte Bestellungen werden nicht gespeichert“ gilt nur für die Mo-Zuordnung (`mo_orders`). Die Bestellkopie (§ 13.1 Nr. 1) speichert bei eingeschaltetem Kundenabgleich (`SHOPIFY_CUSTOMER_SYNC_ENABLED`) jede Bestellung eines Kundenkontos (Gastbestellungen ohne Kundenkonto nicht). Der Text im Dashboard ist entsprechend korrigiert.
 - **Schalter.** `MO_ATTRIBUTION_SESSION_ANCHOR`, im Code standardmäßig **aus**. Ausgeschaltet gilt die bisherige Regel für Fenster und Speicherfrist, ohne Code-Änderung. Eingeschaltet wird er erst nach der Migration.
 - **Umfang live (05.10.2026).** Widget-Markierungen werden seit 24.08.2026 erstellt (derzeit 208). Eine Bestellung ist zugeordnet. Die älteste Markierung stammt vom 29.08.2026; nach der bisherigen Regel würde sie ab 05.10.2026 gelöscht. Zwei bestehende Markierungen werden mit der neuen Regel sofort wieder wirksam.
 
@@ -564,7 +568,7 @@ Der Mandant hat die Wahl an die Entwicklung (KI-Assistent Claude) übertragen. E
 
 ## 21. Nachtrag 05.10.2026 — Vorteile im Einwilligungs-Popup, Seitenkontext
 
-Grundlage: `docs/CONSENT_FLOW.md` („At-sign-in marketing opt-in“, v5), `docs/API_CONTRACT.md` § 2 und § 5, `docs/plans/2026-10-04/OI3.md`, `A3.md`.
+Grundlage (Ist-Stand): `docs/CONSENT_FLOW.md` („At-sign-in marketing opt-in“, v5), Widget-Verträge `docs/frontend/CONSENT_CONTRACT.md` § 3.1 und `docs/frontend/API_CONTRACT.md` § 2 und § 5; Planungsstand (historisch): `docs/archive/plans-2026-10-04/OI3.md`, `A3.md`.
 
 ### 21.1 Tatsachen
 
@@ -585,10 +589,10 @@ Grundlage: `docs/CONSENT_FLOW.md` („At-sign-in marketing opt-in“, v5), `docs
 
 | Datum | Gegenstand | Code-Vermerk |
 |---|---|---|
-| Juni 2026 | Deutsche Consent-Texte v3 (Capture-Formular, DOI-/Abmelde-Texte) | `CONSENT_COPY_LAWYER_APPROVED = true` |
-| 14.06.2026 | Physischer Briefversand über Pingen (inkl. AVV-/CH-Drittland-Auflage) | `PHYSICAL_MAIL_SENDS_APPROVED=true` |
+| Juni 2026 | Deutsche Consent-Texte v3 (Capture-Formular, DOI-/Abmelde-Texte) | `CONSENT_COPY_LAWYER_APPROVED = true` (`src/lib/consent-copy.ts`) |
+| 14.06.2026 | Physischer Briefversand über Pingen (inkl. AVV-/CH-Drittland-Auflage) | Kommentar zu `PHYSICAL_MAIL_SENDS_APPROVED` in `.env.example` (im Code standardmäßig `false`; der Kommentar vermerkt Freigabe und Einschalten in Produktion) |
 | 16.06.2026 | Entscheidung des Mandanten: § 7 (3)-UWG-Feature ersatzlos entfernt | Addendum im Juni-Bericht |
-| 21.07.2026 | Kampagnen-Kanal (Shopify-Abonnenten) **inkl.** Single-Opt-in-Kontakten | `CAMPAIGN_SENDS_APPROVED=true`, `CAMPAIGN_ALLOW_SINGLE_OPT_IN=true` |
+| 21.07.2026 | Kampagnen-Kanal (Shopify-Abonnenten) **inkl.** Single-Opt-in-Kontakten | Kommentare zu `CAMPAIGN_SENDS_APPROVED` und `CAMPAIGN_ALLOW_SINGLE_OPT_IN` in `.env.example` (im Code standardmäßig `false`; die Kommentare vermerken Freigabe und Einschalten in Produktion) |
 | Juli 2026 | Consent-Texte v4 (Chat-Consent-Gate, Benefit-Headlines) | Kommentar in `consent-copy-core.mjs` |
 | 05.10.2026 | Erkennung der Shop-Anmeldung im Chat, Umfang D-AP1, 24 Stunden (§ 19, F-36; Bestätigung laut Mandant) | `.env.example`: `APP_PROXY_SIGNIN_ENABLED`, `APP_PROXY_SIGNIN_MAX_AGE_HOURS` |
 

@@ -1,4 +1,5 @@
-// Page context on typed product-page messages (A3, docs/plans/2026-10-04/A3.md).
+// Page context on typed product-page messages (A3; widget contract
+// docs/frontend/API_CONTRACT.md §2 „Optional `context`“, KPI docs/ADMIN_DASHBOARD.md §5.1a).
 // Pure, tested.
 //
 // The widget may attach the open page's facts to a typed or spoken message

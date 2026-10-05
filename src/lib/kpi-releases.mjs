@@ -54,6 +54,13 @@ export const KPI_RELEASES = Object.freeze([
   },
   {
     date: "2026-10-05",
+    key: "app-proxy-signin",
+    title: "Shop-Anmeldung zählt im Chat (App Proxy)",
+    detail:
+      "Wer im Shop angemeldet ist, wird im Chat ohne „Anmelden“ erkannt: Name, Verlauf und Einwilligungs-Popup wie nach einer Anmeldung im Chat. Anmeldungen, Einwilligungs-Popups und Kundenkonto-Zahlen steigen dadurch; „Shop-Login-Erkennung“ unter Kundenkonto zeigt den Anteil.",
+  },
+  {
+    date: "2026-10-05",
     key: "optin-measurement",
     title: "Opt-in-Messung nach Quelle und Ergebnis",
     detail:

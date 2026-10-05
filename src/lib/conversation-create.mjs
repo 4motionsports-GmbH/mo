@@ -1,6 +1,7 @@
 // Eager conversation creation — the durability half of the lost-conversation fix.
 //
-// THE BUG (docs/CUSTOMER_ACCOUNT.md §7.6 / data-integrity): a signed-in customer
+// THE BUG (docs/frontend/ACCOUNT_CONTRACT.md §7.6; backend docs/CUSTOMER_ACCOUNT.md §9
+// „Eager create“ / data-integrity): a signed-in customer
 // clicked "Neue Beratung", which mints a fresh conversationKey. The conversation
 // row was only ever written LAZILY in persistTurn, which runs in /api/chat's
 // onFinish — AFTER the model stream completes — and the INSERT never set

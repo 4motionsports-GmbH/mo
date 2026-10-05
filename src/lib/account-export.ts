@@ -1,6 +1,7 @@
 // Structured data export for a signed-in (tier-3) customer — the machine-
 // readable Art. 15 (access) / Art. 20 (portability) companion to the PDF summary
-// (LEGAL_READINESS_REPORT §8 OQ-11). Gathers EVERYTHING this system holds about
+// (docs/archive/LEGAL_READINESS_REPORT.md §8 OQ-11; widget contract
+// docs/frontend/ACCOUNT_CONTRACT.md §7.7). Gathers EVERYTHING this system holds about
 // one customer into a single JSON document.
 //
 // Scoped strictly to the resolved customer id / their email (the route gates on

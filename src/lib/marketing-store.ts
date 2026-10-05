@@ -133,7 +133,8 @@ export async function getSendById(
 /**
  * The most recent SENT timestamp for this capture (one capture == one email,
  * since email_captures.email is unique), excluding `excludeSendId`. Backs the
- * per-recipient send-frequency cap (LEGAL_READINESS_REPORT §8 OQ-16). Returns
+ * per-recipient send-frequency cap (docs/archive/LEGAL_READINESS_REPORT.md §8
+ * OQ-16). Returns
  * null when there is no prior send / no DB / on error (fail-open: the cap never
  * blocks a send because of an outage — the eligibility gates are the hard ones).
  */

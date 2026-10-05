@@ -1,5 +1,5 @@
 // The initial alignment of the one consent with Shopify („Erstabgleich“,
-// docs/CUSTOMER_PLATFORM_PLAN.md §7.7). Migration 0064 translated today's
+// docs/archive/CUSTOMER_PLATFORM_PLAN.md §7.7). Migration 0064 translated today's
 // three stores into customers.email_consent_*, and the first Shopify import
 // runs every Shopify customer through the resolver — where Mo holds the newer
 // act, that already queues a consent write for Shopify. What no act ever

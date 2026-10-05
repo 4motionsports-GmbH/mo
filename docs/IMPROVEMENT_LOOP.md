@@ -12,13 +12,14 @@ Komplettanalyse (Analyse tab)          Mo's self-snapshot
               \                          /
                ▼                        ▼
         ┌─────────────────────────────────────┐
-        │  IMPROVEMENT RUN (2 model passes)   │
+        │  IMPROVEMENT RUN (2–3 model passes) │
         │  1. Wirkungs-Check  — did the       │
         │     accepted/implemented measures   │◄── prior suggestions + KPI
         │     move the KPIs? (honest, no      │    delta vs. previous run
-        │     causality claims)               │
-        │  2. Vorschläge — evidence-based     │
-        │     suggestions in two lanes        │
+        │     causality claims; optional)     │
+        │  2. Vorschläge Shop  ─┐ evidence-   │
+        │  3. Vorschläge Mo    ─┘ based, one  │
+        │     pass per lane                   │
         └─────────────────────────────────────┘
                           │
                           ▼
@@ -131,13 +132,15 @@ connection in the admin). The step route runs with `maxDuration = 300` for
 headroom; a legacy `vorschlaege` phase value (pre-split runs) resumes as the
 shop pass. Orchestrator:
 [`lib/improvement-generate.ts`](../src/lib/improvement-generate.ts). All
-passes use **Sonnet** (`claude-sonnet-5-5`, analyst tier — adaptive thinking at
-`medium`, see `docs/AI_MODELS.md`) and record into `ai_usage` under
-the new call site `improvement`.
+passes run on the **analyst** tier (model and thinking settings:
+[`AI_MODELS.md`](./AI_MODELS.md)) and record into `ai_usage` under the call
+site `improvement`.
 
 **Structured output.** The suggestion passes use `generateObject` with a zod
-schema (the marketing/campaign-draft pattern) — the model fills a forced tool
-call, so the payload is valid JSON by construction. Free-text JSON proved
+schema (the marketing/campaign-draft pattern) — the provider's native
+structured output (`output_config.format`; the 5.5 models reject forced tool
+use, see [`AI_MODELS.md`](./AI_MODELS.md)), so the payload is valid JSON by
+construction. Free-text JSON proved
 fragile in production (literal newlines inside strings, truncation →
 `invalid_json` run failures). `normalizeSuggestionsPayload` in
 improvement-core still hardens every item (lane filter, category fallback,
@@ -158,7 +161,7 @@ never wedge a run.
 
 The `wirkung` phase runs only when there is BOTH a previous completed run (a
 baseline to diff against) and at least one prior accepted/implemented
-suggestion; otherwise the run starts straight at `vorschlaege`.
+suggestion; otherwise the run starts straight at `vorschlaege_shop`.
 
 ## KPI baseline + honest measurement
 
@@ -185,7 +188,6 @@ envelopes like every other admin route:
 | `POST /api/admin/improve/delete` | delete run (+ suggestions, CASCADE) |
 | `POST /api/admin/improve/suggestion` | set suggestion status (+ note) |
 | `POST /api/admin/improve/adopt` | adopt a suggestion's directive text as a live directive (optional `content` = operator-edited text) |
-| `GET /api/admin/directives` | directive list + limits |
 | `POST /api/admin/directives/save` | create / edit (versioned) |
 | `POST /api/admin/directives/toggle` | activate / deactivate (versioned, capped) |
 | `GET /api/admin/directives/versions?id=` | one directive's append-only history |
@@ -194,7 +196,9 @@ envelopes like every other admin route:
 
 [`VerbesserungTab.tsx`](../src/app/admin/VerbesserungTab.tsx) (server) seeds
 [`verbesserung/VerbesserungWorkspace.tsx`](../src/app/admin/verbesserung/VerbesserungWorkspace.tsx)
-(client master–detail like the Analyse tab): run sidebar + new-run panel (pick
+(client master–detail like the Analyse tab; the server file also passes the
+directive list and its limits as props — there is no directive list route):
+run sidebar + new-run panel (pick
 a completed Komplettanalyse), the run driver with live phase labels, the
 Wirkungs-Check card (delta table + narrative), suggestion cards grouped
 Mo/Shop with the status workflow and the adopt button
@@ -207,12 +211,17 @@ and the two standing cards:
 
 ## Cost & retention
 
-A run is 1–2 Sonnet calls (typically well under €0.50; the exact figure is
+A run is 2–3 analyst-tier calls (typically well under €0.50; the exact figure is
 priced from the stored usage and shown per run and in the KI-Kosten KPI under
 call site `improvement`). All improvement data is pseudonymous derived text
-(Cluster A discipline — no identity values), operator-managed (delete per run),
-and not part of the automatic retention sweeps — same policy as the stored
-Komplettanalysen.
+(Cluster A discipline — no identity values) and operator-managed (delete per
+run, suggestions cascade). It has **no retention window**: the retention cron
+never touches `improvement_runs` / `improvement_suggestions` /
+`mo_directives` / `mo_directive_versions`, and a run outlives its source
+report (`report_id … ON DELETE SET NULL`) — unlike the Komplettanalyse itself,
+which leaves after `ANALYTICS_REPORT_RETENTION_DAYS` (365 days, step 5h,
+[`DATA_RETENTION.md`](./DATA_RETENTION.md)). Whether runs need a window of
+their own (they embed report-derived text) is open.
 
 ## GDPR / legal
 

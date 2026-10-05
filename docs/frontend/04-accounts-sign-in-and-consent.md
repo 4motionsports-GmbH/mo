@@ -1,9 +1,8 @@
 # 04 — Customer accounts, sign-in and consent
 
 This chapter covers everything the Mo widget does about **who the visitor is** and **what they agreed to**. That includes the three identity tiers and how the widget picks one, every "Anmelden" entry point and the full sign-in round trip with the one-time code, shop recognition through `/apps/chat/whoami`, the signed-in account UI (history, export, erase, sign-out) with its cleanup rules, the anonymous sign-in popup, and every marketing-consent surface. For consent it also shows how the legal golden rules are enforced in code.
-It describes `main` at `8d0a0c4`: PR #73 "customer platform" (`a0df103`, merged) plus five follow-up fixes. **PR #73 is live since 2026-10-04**; the `8d0a0c4` fixes are not uploaded yet (see §16).
-Backend behaviour is not re-specified. Cross-references use these abbreviations (all paths are in the backend repo `4motionsports-gmbh/mo`):
-`API §n` = `docs/API_CONTRACT.md` · `CA §n` = `docs/frontend-handoff/CUSTOMER_ACCOUNT.md` · `CF §n` = `docs/frontend-handoff/CONSENT_FLOW.md` · `COS` = `docs/frontend-handoff/CHAT_ORDER_STATUS.md` · `FP task n` = `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md`.
+It describes the theme repo `ms_shopify_clone` at `main` `3e87341`: PR #73 "customer platform" (`a0df103`), the fixes of `8d0a0c4`, and `3e87341`, which adds only two `endSpeaking()` calls (queued voice audio stops on a thread switch). Which build the live shop serves: `07` §6.4 (`npm run verify:widget`); production status (uploads, App Proxy, backend switches) is tracked only in the backend's `docs/ROLLOUT_TODO.md`.
+Backend behaviour is not re-specified. Cross-references name the widget contract files in the backend's `docs/frontend/` directly — `API_CONTRACT §n`, `ACCOUNT_CONTRACT §n`, `CONSENT_CONTRACT §n` — and `AD §n` = `docs/ADMIN_DASHBOARD.md` (all paths in the backend repo `4motionsports-gmbh/mo`).
 Code locations are given as `ms-chat-widget.js → function / KEY`. Line numbers are left out on purpose because they drift. The widget file is `assets/ms-chat-widget.js` throughout.
 
 **Contents**
@@ -36,15 +35,14 @@ Code locations are given as `ms-chat-widget.js → function / KEY`. Line numbers
 |---|---|
 | Identity reference | The device's session id `sid` (`localStorage['ms-chat-sid']`) **is** the link to the signed-in customer. It is never rotated around sign-in. It is rotated on sign-out, on erase, when the server says a sign-in has ended, on anonymous "Neuen Chat starten", and by the campaign deep link `?mo=open&mo_new=1` when there is no sign-in hint (`handleMoDeepLink`; with a hint the sid is kept and only the local thread is dropped). |
 | Tokens | The widget never sees OAuth tokens, the customer's e-mail, address or orders. Identity comes only from `GET /api/auth/me` (name, tier, marketing state). |
-| Sign-in mechanic | Top-level redirect to `{apiBase}/api/auth/shopify/login?session=&return_url=`. The return carries `?ms_auth=ok&ms_code=…`, and the widget must redeem `ms_code` at `POST /api/auth/link` before the chat counts as signed in (since 2026-10-03, CA §2a). |
-| Shop recognition | Same-origin `GET /apps/chat/whoami?session=` runs **once per tab session** (sessionStorage) on first panel open. Its `linkCode` is redeemed the same way. The App Proxy is **not set up yet**, so today it is a silent no-op. Since PR #73 went live (2026-10-04) it may be set up; confirm first that live runs the PR #73 code (§16). |
+| Sign-in mechanic | Top-level redirect to `{apiBase}/api/auth/shopify/login?session=&return_url=`. The return carries `?ms_auth=ok&ms_code=…`, and the widget must redeem `ms_code` at `POST /api/auth/link` before the chat counts as signed in (ACCOUNT_CONTRACT §2a). |
+| Shop recognition | Same-origin `GET /apps/chat/whoami?session=` runs **once per tab session** (sessionStorage) on first panel open. Its `linkCode` is redeemed the same way. Without an App Proxy in the shop the path answers Shopify's HTML 404 page and the call is a silent no-op; with one, the backend issues a code only behind `APP_PROXY_SIGNIN_ENABLED` (default off in code, §5.4). Whether the proxy is set up: `docs/ROLLOUT_TODO.md` 5.4. |
 | Anonymous ask | One **sign-in popup** per tab session, decided ~0.7 s after a send while the reply is still streaming (§9.1). "Später" snoozes it for 24 h. There is no anonymous e-mail consent gate any more. |
 | Signed-in ask | One **marketing consent popup** (served `surface=signin` copy, button-consent), or the **inline opt-in card** after a mid-conversation sign-in. Shown only when `/api/auth/me` says `marketing.optInActionable === true`. A decline is remembered for 30 days on the device, a dismissal for the tab session. |
 | Anonymous / email-only capture | The two-checkbox capture form (`offer_email_summary` tool card or the header "Per E-Mail teilen"). It is suppressed for signed-in customers. |
 | Consent text | Always backend-served and rendered verbatim. `consentTextShown` is echoed byte-for-byte. Nothing is pre-selected, and decline is as reachable as accept. |
-| Current live status | PR #73 is merged and was uploaded to the live theme on 2026-10-04, so sign-in in the live chat **works again** (the live widget now redeems `ms_code`), pending a real check on live by the backend. Between the backend change of 2026-10-03 and that upload, live sign-ins were never linked. See §16. |
 
-**"Session" in this chapter.** Every "once per session" rule below is stored in `sessionStorage` (`ssGet` / `ssSet`), which is **per top-level tab**, not per browser session. The `sid` lives in localStorage and is shared by all tabs of the device. So a new tab starts with empty flags: it runs whoami again (today one more storefront 404 fetch) and can show the sign-in or consent popup again under the **same sid**. One `sid` can therefore carry several `login_gate_shown` / `consent_gate_shown` events (see also `05-engagement-and-kpi.md` §3.2).
+**"Session" in this chapter.** Every "once per session" rule below is stored in `sessionStorage` (`ssGet` / `ssSet`), which is **per top-level tab**, not per browser session. The `sid` lives in localStorage and is shared by all tabs of the device. So a new tab starts with empty flags: it runs whoami again (one more storefront request; Shopify's 404 page while no App Proxy is set up) and can show the sign-in or consent popup again under the **same sid**. One `sid` can therefore carry several `login_gate_shown` / `consent_gate_shown` events (see also `05-engagement-and-kpi.md` §3.2).
 
 ---
 
@@ -55,10 +53,10 @@ Code locations are given as `ms-chat-widget.js → function / KEY`. Line numbers
 | Tier | How a visitor gets there | What the widget holds | What it changes |
 |---|---|---|---|
 | **1 — anonymous** | Default. | `sid` only. | Welcome sign-in card, header "Anmelden", sign-in popup, capture form allowed. |
-| **2 — email-only** | Successful `POST /api/capture-email` in **this page view** (`buildCaptureCard` → `capturedEmail = email`). | `capturedEmail` **in memory only**. A navigation, reload, sign-out or erase drops it (`dropSessionHistory`). | `/api/chat` body gets `customer: { email }` (returning-customer memory, API §2). Feedback gets `tier: 'email'` + `email`. Otherwise the UI is the same as tier 1 (the auth UI does not know about tier 2). |
+| **2 — email-only** | Successful `POST /api/capture-email` in **this page view** (`buildCaptureCard` → `capturedEmail = email`). | `capturedEmail` **in memory only**. A navigation, reload, sign-out or erase drops it (`dropSessionHistory`). | `/api/chat` body gets `customer: { email }` (returning-customer memory, API_CONTRACT §2). Feedback gets `tier: 'email'` + `email`. Otherwise the UI is the same as tier 1 (the auth UI does not know about tier 2). |
 | **3 — signed in** | `/api/auth/me` answers `signedIn: true` after a redeemed code (chat sign-in or whoami). | `auth = { settled, signedIn, name, tier, marketing, optInActionable }` + device hints (§12). | Name pill, history drawer, summary download, export / erase, `conversationKey` on `/api/chat`, consent popup / inline card. The capture form and "Per E-Mail teilen" are suppressed. |
 
-The widget does **not** gate tier-3 behaviour on `auth.tier === 3`. Everything keys off `auth.signedIn` (`applyAuth` stores `identity.tier` or defaults to `3`, but nothing reads it). In practice that is the same thing (CA §6.0).
+The widget does **not** gate tier-3 behaviour on `auth.tier === 3`. Everything keys off `auth.signedIn` (`applyAuth` stores `identity.tier` or defaults to `3`, but nothing reads it). In practice that is the same thing: `tier` is always `3` when signed in (ACCOUNT_CONTRACT §4), and ACCOUNT_CONTRACT §6.0 gates the capture form on it.
 
 **Edge case: a signed-in customer with a typed e-mail.** `buildCaptureCard` sets `capturedEmail = email` on any 2xx without checking `auth.signedIn`. A signed-in customer reaches that form through the 422 `no_verified_email` fallback (`presentConsentGate` / `buildMarketingOptInCard` → `openCaptureForm()`) or the public hook `window.MS_CHAT.openEmailSummary`. After such a submit, the **typed** address is sent to `/api/capture-email` and, for the rest of the page view, also as `customer.email` on every `/api/chat` and as `email` on `/api/feedback` (with `tier: 'signed-in'`, because `feedbackTier()` checks `auth.signedIn` first). The account e-mail itself is never sent.
 
@@ -71,7 +69,7 @@ The widget does **not** gate tier-3 behaviour on `auth.tier === 3`. Everything k
 | `name` | `identity.name`. | Can be `null`. The pill then shows "Konto" / "Account". |
 | `tier` | `identity.tier` or `3`. | Informational only. |
 | `marketing` | `/api/auth/me` → `marketing` object. | Kept verbatim. |
-| `optInActionable` | `marketing.optInActionable === true`. | Trusted verbatim, never re-derived from `status` (CA §4). |
+| `optInActionable` | `marketing.optInActionable === true`. | Trusted verbatim, never re-derived from `status` (ACCOUNT_CONTRACT §4). |
 
 `applyAuth(data, transient)` always calls `reflectAuthState()` (header, share button, welcome slot, account-menu sign-in link, closes the drawer when not signed in) and `flushAutoHistory()`.
 
@@ -89,7 +87,7 @@ The widget does **not** gate tier-3 behaviour on `auth.tier === 3`. Everything k
 
 `shouldProbeAuth()` is true when `localStorage['ms-chat-signed-in'] === '1'` (set by any earlier signed-in answer on this device) **or** `ShopifyAnalytics.meta.page.customerId` is present (the shop's own login, a best-effort hint only). A pure anonymous visitor with no hint makes **no** `/api/auth/me` call. It becomes "settled anonymous" right after whoami resolves.
 
-Consequence: for every visitor, the welcome sign-in card and the "Anmelden" pill appear only after the whoami round trip on first open. Today that round trip fetches Shopify's full 404 HTML page (§5.4).
+Consequence: for every visitor, the welcome sign-in card and the "Anmelden" pill appear only after the whoami round trip on first open. While no App Proxy is set up, that round trip fetches Shopify's full 404 HTML page (§5.4).
 
 ### 2.4 `detectSignedIn(force)` decision order
 
@@ -127,7 +125,7 @@ All of them call `initiateLogin(source)`. Only the popup passes a `source`.
 The welcome card copy (UI chrome, `ACCOUNT_COPY`) is:
 "Hol mehr aus deiner Beratung" / "Mit deinem motion sports Konto wird Mo zu deinem persönlichen Berater:" / bullets "An frühere Beratungen anknüpfen", "Bestellungen & Adresse einbeziehen", "Persönliche Angebote & Aktionen zuerst sehen" / button "Jetzt anmelden" / hint "Kein Konto? Einfach lostippen — Mo hilft dir sofort."
 
-KPI limitation: `source` is set **only** for the popup (the code comment cites API §5: "source only when it came from the popup"). The welcome card, header, account menu and notice cannot be told apart in the KPI data. See §17.
+KPI limitation: `source` is set **only** for the popup (the code comment cites API_CONTRACT §5: "source only when it came from the popup"). The welcome card, header, account menu and notice cannot be told apart in the KPI data. See §17.
 
 ---
 
@@ -165,9 +163,9 @@ sequenceDiagram
 3. `sessionStorage['ms-chat-login-sid'] = sid` **pins the sid** this login used.
 4. `window.location.assign(apiBase + '/api/auth/shopify/login?session=<sid>&return_url=<window.location.href>')`. This is a top-level navigation: no popup window, no XHR, no `prompt=none`.
 
-The KPI `sessionId`, the `session` URL parameter and the later `x-ms-session` on `/api/auth/link` are the same `sid`. The admin "Anmelde-Popup" funnel joins on it (API §5).
+The KPI `sessionId`, the `session` URL parameter and the later `x-ms-session` on `/api/auth/link` are the same `sid`. The admin "Anmelde-Popup" funnel joins on it (API_CONTRACT §5).
 
-`return_url` is the full current URL (`window.location.href`), including any query string still present. `ms_auth`, `ms_code` and `mo_c` are always stripped by then (head script, `readAuthReturn`, `captureCampaignToken`). `mo`, `mo_new` and `mo_view` are stripped only together with `mo=open` / `#mo-open` (`handleMoDeepLink` returns early otherwise). Any other query parameters (`utm_*` etc.) stay in `return_url`. The backend only accepts allow-listed storefront origins (CA §2).
+`return_url` is the full current URL (`window.location.href`), including any query string still present. `ms_auth`, `ms_code` and `mo_c` are always stripped by then (head script, `readAuthReturn`, `captureCampaignToken`). `mo`, `mo_new` and `mo_view` are stripped only together with `mo=open` / `#mo-open` (`handleMoDeepLink` returns early otherwise). Any other query parameters (`utm_*` etc.) stay in `return_url`. The backend only accepts allow-listed storefront origins (ACCOUNT_CONTRACT §2).
 
 ### 4.3 Getting the code off the address bar
 
@@ -202,17 +200,17 @@ Notice copy (`showLinkFailedNotice`), widget chrome:
 
 ### 4.5 Redeem rules (`redeemLinkCode(code, kind)`)
 
-`POST {apiBase}/api/auth/link`, body `{ "code": "<code>" }`, headers `x-ms-chat-key`, `x-ms-session: sid`, `x-ms-locale`, `Content-Type: application/json` (CA §2a).
+`POST {apiBase}/api/auth/link`, body `{ "code": "<code>" }`, headers `x-ms-chat-key`, `x-ms-session: sid`, `x-ms-locale`, `Content-Type: application/json` (ACCOUNT_CONTRACT §2a).
 
 | Response | Result | Effect |
 |---|---|---|
 | 200 with body `signedIn !== false` | `'ok'` | `setAuthVia(kind)` stores `'chat'` or `'shop'` |
-| 200 with body `signedIn: false` | `'refused'` | — |
+| 200 with body `signedIn: false` | `'refused'` | Defensive only: the backend answers every 200 as `{ok:true, signedIn:true}` (ACCOUNT_CONTRACT §2a) |
 | 400 / other 4xx | `'refused'` | Never retried, never with another sid |
 | 503, 429, other 5xx, network error | `'unavailable'` | Kept for one retry (§4.6) |
 | `code` missing / empty | `'refused'` | `ms_auth=ok` without `ms_code` = `link_failed` |
 
-The function never rejects. The backend writes `account_signin_linked` / `account_signin_link_refused` itself (API §5). The widget never sends them.
+The function never rejects. The backend writes `account_signin_linked` / `account_signin_link_refused` itself (API_CONTRACT §5). The widget never sends them.
 
 ### 4.6 One retry after a 503 (`retryPendingLink`)
 
@@ -223,7 +221,7 @@ The function never rejects. The backend writes `account_signin_linked` / `accoun
 
 ### 4.7 Login-sid mismatch
 
-If another tab rotated the device's `sid` while this tab was at Shopify (sign-out, erase, anonymous new chat), the returning tab's `sid` no longer equals `ms-chat-login-sid`. The code is **not** redeemed. The result is `link_failed` with the "abgelaufen" notice. The backend would refuse a mismatched session anyway (`session_mismatch`, API §5). If `ms-chat-login-sid` is missing (for example the return landed in a different tab), the widget redeems with its current `sid` and the backend decides.
+If another tab rotated the device's `sid` while this tab was at Shopify (sign-out, erase, anonymous new chat), the returning tab's `sid` no longer equals `ms-chat-login-sid`. The code is **not** redeemed. The result is `link_failed` with the "abgelaufen" notice. The backend would refuse a mismatched session anyway (`session_mismatch`, API_CONTRACT §5). If `ms-chat-login-sid` is missing (for example the return landed in a different tab), the widget redeems with its current `sid` and the backend decides.
 
 ### 4.8 `authLinkInflight`
 
@@ -235,7 +233,7 @@ While a redeem + probe chain runs, `resolveAuthOnOpen` waits for it instead of s
 
 ### 5.1 Purpose
 
-This recognises a customer who logged in with the **shop's own** account icon (`sections/header.liquid` → `routes.account_url`). `/api/auth/me` alone can never see that login. Contract: CA §3a, FP task 5.
+This recognises a customer who logged in with the **shop's own** account icon (`sections/header.liquid` → `routes.account_url`). `/api/auth/me` alone can never see that login. Contract: ACCOUNT_CONTRACT §3a.
 
 ### 5.2 Request (`detectViaStorefront`)
 
@@ -249,7 +247,7 @@ This recognises a customer who logged in with the **shop's own** account icon (`
 |---|---|
 | Non-2xx, or a `content-type` that is not JSON (Shopify's storefront 404 page), non-JSON body, network error | `false`, silent fallback to `/api/auth/me` with hint / anonymous |
 | JSON `signedIn !== true` | `false` |
-| `signedIn: true` but `linkCode` missing / `null` | `false`. This is **deliberately stricter than CA §3a** ("display only, stay unlinked"): an unlinked session would show a name while every `/api/account/*` call returns 401. Since 2026-10-05 the backend never sends it: `signedIn: true` always carries a code (CA §3a). |
+| `signedIn: true` but `linkCode` missing / `null` | `false`, as ACCOUNT_CONTRACT §3a requires (an unlinked session would show a name while every `/api/account/*` call returns 401). The backend always sends a code with `signedIn: true`. |
 | `sid` rotated while waiting | `false` (never redeem with another id) |
 | `linkCode` → redeem `'ok'` | `probeAuth(true)`, then `auth.signedIn`. Records `auth-via = 'shop'`. |
 | `linkCode` → redeem `'unavailable'` | Kept for one retry (`kind: 'shop'`), `false` |
@@ -257,34 +255,34 @@ This recognises a customer who logged in with the **shop's own** account icon (`
 
 The whoami body (name, `shopify_customer_id`, marketing) is **never displayed, logged or forwarded**. Only `linkCode` is used. The displayed name always comes from `/api/auth/me`.
 
-### 5.4 Current state
+### 5.4 Without and with the App Proxy
 
-The App Proxy is **not configured** in Shopify, so the path returns Shopify's 404 HTML page. The widget treats that as "not signed in". Each tab session pays one storefront 404 page fetch on first open (a new tab pays again), and the anonymous sign-in affordances wait for it (§2.3).
+**Without an App Proxy** in the shop, `/apps/chat/whoami` returns Shopify's 404 HTML page. The widget treats that as "not signed in". Each tab session pays one storefront 404 page fetch on first open (a new tab pays again), and the anonymous sign-in affordances wait for it (§2.3). Whether the proxy is set up, and the operator steps: `docs/ROLLOUT_TODO.md` 5.4.
 
-**The proxy may now be set up**, because PR #73 has been live since 2026-10-04. First confirm that the live `assets/ms-chat-widget.js` really is the PR #73 version (it contains `redeemLinkCode`; see the drift check in §16). Historical note: the pre-PR #73 widget (`44a076b → detectViaStorefront(force)`) applied a whoami `signedIn: true` answer directly as identity (`applyAuth(data)`) and never redeemed `linkCode`. Under that widget a proxy would have produced a signed-in UI whose `/api/account/*` calls all return 401. A live-editor revert to that version would bring the problem back.
+**With the App Proxy** the backend decides; the contract is ACCOUNT_CONTRACT §3a (backend as-built: `docs/CUSTOMER_ACCOUNT.md` §2 „Already-signed-in detection“). In short, whoami answers `signedIn: true` + `linkCode` only when the session will really be signed in after the redeem, everything else is `{signedIn:false}`:
 
-**Backend state (2026-10-05, P0.3, no widget change needed).** whoami answers `signedIn: true` + `linkCode` only when the session will really be signed in after the redeem; everything else is `{signedIn:false}` (CA §3a):
-
-- the signature must be fresh (Shopify `timestamp` within ±300 s, no replay);
+- the signature must be fresh (Shopify `timestamp` within ±300 s, which limits a replayed URL to that window);
 - **handover:** a sid signed in as **another** shop customer loses that sign-in and gets no code; the widget's `/api/auth/me` probe then reads `signedIn:false` and `endedSignInCleanup()` wipes and rotates (§2.5);
-- `APP_PROXY_SIGNIN_ENABLED` (kill switch, default off) must be on;
-- a proof: a live chat token of the customer, or — with `APP_PROXY_SIGNIN_MAX_AGE_HOURS` > 0 (D-AP1, decided 05.10.2026) — the shop login itself.
+- the kill switch `APP_PROXY_SIGNIN_ENABLED` (default off in code) must be on;
+- a proof: a live chat token of the customer, or — with `APP_PROXY_SIGNIN_MAX_AGE_HOURS` > 0 (default `0` in code, max 720; owner decision D-AP1) — the shop login itself.
 
-Both switches are off by default; the owner sets `APP_PROXY_SIGNIN_ENABLED=true` and `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24` after configuring the proxy. Every recognised request records the server-only `account_shop_recognised` (§14). Whether Shopify sends `logged_in_customer_id` for this store's account type is answered by the manual check `whoami?session=livecheck-manual` (`07` §8).
+Every recognised request records the server-only `account_shop_recognised` (API_CONTRACT §5), also while the switch is off. Whether Shopify sends `logged_in_customer_id` for this store's account type is answered by the manual check `whoami?session=livecheck-manual` (`07` §8).
+
+**Drift risk (described here once).** Only a widget that redeems `linkCode` is safe with the proxy on. The builds before PR #73 (`44a076b → detectViaStorefront(force)`) applied a whoami `signedIn: true` answer directly as identity (`applyAuth(data)`) and never redeemed the code: under such a build a shop-recognised visitor would see a signed-in name while every `/api/account/*` call returns 401. A live-editor revert to such a build brings that back. Detection: `npm run verify:widget` (`07` §6.4) and the drift alarm in AD §5.15 „Shop-Login-Erkennung“ (codes issued but not redeemed); `APP_PROXY_SIGNIN_ENABLED=false` stops all codes.
 
 ### 5.5 `auth-via` and why it matters
 
 `localStorage['ms-chat-auth-via:<sid>']` is `'chat'` (the chat's own "Anmelden" redeemed `ms_code`) or `'shop'` (recognised through whoami only). `setAuthVia` never downgrades `'chat'` to `'shop'`.
 
-The backend serves **order status (`get_order_status`) only to the `'chat'` kind** (COS). So a `'shop'` visitor keeps **"Mit Kundenkonto anmelden"** in the account menu (§3 #4) to do the chat sign-in once; when asked, Mo says the customer is recognised but order status needs one „Anmelden“ in the chat, and links „Meine Bestellungen“ (`sign_in_required` with `signedInViaShop: true`). A `'shop'` visitor is signed in, so they never see the anonymous sign-in popup. They get the consent popup instead (§10), within `optInActionable`.
+The backend serves **order status (`get_order_status`) only to the `'chat'` kind** (ACCOUNT_CONTRACT §3a „Order status needs the chat's own Anmelden“). So a `'shop'` visitor keeps **"Mit Kundenkonto anmelden"** in the account menu (§3 #4) to do the chat sign-in once; when asked, Mo says the customer is recognised but order status needs one „Anmelden“ in the chat, and links „Meine Bestellungen“ (`sign_in_required` with `signedInViaShop: true`). A `'shop'` visitor is signed in, so they never see the anonymous sign-in popup. They get the consent popup instead (§10), within `optInActionable`.
 
-Since 2026-10-05 a `'shop'` visitor exists only when the backend will sign the session in: with `APP_PROXY_SIGNIN_MAX_AGE_HOURS` at 0 that is a customer with a live chat token (who used „Anmelden“ before); with the D-AP1 value (24) every shop-logged-in visitor. **Dead-token repair:** a returning chat-signed-in customer whose token died is re-proven by the shop; the backend turns the dead `customer_account` link into a fresh `app_proxy` link (max age > 0), so `/api/auth/me` stays `signedIn: true` and nothing is wiped. Residual: if that repair fails (database error), `/api/auth/me` answers false once and a device with `ms-chat-signed-in='1'` runs `endedSignInCleanup()` (local wipe, new sid) before the next tab re-links.
+A `'shop'` visitor exists only when the backend will sign the session in: with `APP_PROXY_SIGNIN_MAX_AGE_HOURS` at 0 (the default in code) that is a customer with a live chat token (who used „Anmelden“ before); with a max age > 0 (D-AP1) every shop-logged-in visitor. **Dead-token repair:** a returning chat-signed-in customer whose token died is re-proven by the shop; the backend turns the dead `customer_account` link into a fresh `app_proxy` link (max age > 0), so `/api/auth/me` stays `signedIn: true` and nothing is wiped. Residual: if that repair fails (database error), `/api/auth/me` answers false once and a device with `ms-chat-signed-in='1'` runs `endedSignInCleanup()` (local wipe, new sid) before the next tab re-links.
 
 `auth-via` is device-local. If localStorage is cleared, the record is missing and the menu link stays hidden. The backend keeps its own record.
 
 ### 5.6 Limits
 
-- A shop **logout** during the same tab session is not noticed. whoami is not asked again, and the backend ends a shop-native link only when it receives a signed whoami request for a logged-out shop session (CA §3a). Under D-AP1 the shop proof also expires `APP_PROXY_SIGNIN_MAX_AGE_HOURS` after the last redeem: a tab kept open longer, without a new tab, then gets `signedIn: false` / 401 and runs the ended-sign-in cleanup (`05` §3.3).
+- A shop **logout** during the same tab session is not noticed. whoami is not asked again, and the backend ends a shop-native link only when it receives a signed whoami request for a logged-out shop session (ACCOUNT_CONTRACT §3a). With a max age > 0 (D-AP1) the shop proof also expires `APP_PROXY_SIGNIN_MAX_AGE_HOURS` after the last redeem: a tab kept open longer, without a new tab, then gets `signedIn: false` / 401 and runs the ended-sign-in cleanup (`05` §3.3).
 - A shop **login** in another tab is not noticed by an already-open tab either (that tab has asked whoami already; a newly opened tab does ask). The `visibilitychange` re-check uses `/api/auth/me` only, and the `ShopifyAnalytics` hint is static per page load.
 - After sign-out / erase / a server-confirmed end of sign-in / a rotation in another tab (when this tab was signed in), the whoami-done flag is set, so the shop cannot silently re-link the fresh sid in that tab session. The flag is per tab: `onSidChangedElsewhere` sets it in each signed-in tab that receives the `storage` event, but a tab opened later starts without it, so whoami runs there and (once the proxy exists) can link the fresh sid if the shop session is still logged in.
 
@@ -335,7 +333,7 @@ stateDiagram-v2
 | "Zusammenfassung" (download icon) | `.ms-chat-download--visible` | shown when `activeConversationKey` is set **and** messages exist | hidden |
 | ↻ "Neuen Chat starten" (refresh icon) → `startNewChat()` | `.ms-chat-iconbtn` with aria-label "Neuen Chat starten" | keeps `sid`, clears local messages, mints a fresh `conversationKey`. **No KPI**, no optimistic history row. | rotates `sid` (`rotateSession`), local history deleted, no thread key. No KPI. |
 
-Both branches of `startNewChat()` first cancel a reply that is still streaming (`abortActiveStream()` + `removeTyping()`, added in `8d0a0c4`, not live yet, §18 item 1).
+Both branches of `startNewChat()` first cancel a reply that is still streaming and stop its queued voice audio (`abortActiveStream()` + `endSpeaking()` + `removeTyping()`, §18 item 1).
 
 ### 7.2 Welcome state and auto-opened history
 
@@ -344,13 +342,13 @@ Both branches of `startNewChat()` first cancel a reply that is still streaming (
 
 ### 7.3 History drawer (`buildHistoryDrawer`, `.ms-chat-history`)
 
-| Element | Behaviour | Endpoint (CA §7) | KPI |
+| Element | Behaviour | Endpoint (ACCOUNT_CONTRACT §7) | KPI |
 |---|---|---|---|
 | Title | "Hallo <name>" or "Deine Beratungen" | — | — |
 | Open | `openHistory()` (name pill or auto-open), only when signed in | `GET /api/account/conversations` | `account_history_opened` (also on auto-open) |
 | List | Server list (most recent first), plus at most one **optimistic** "Neue Beratung" row (`addOptimisticConversation`), reconciled by `conversationKey`. Skeleton rows only on the first load. A network or JSON-parse failure (`loadConversations` → `.catch`) shows "Verlauf konnte nicht geladen werden." only if nothing else can be shown, and otherwise keeps the rows already on screen. An HTTP error other than 401 (e.g. 503, 403, 404) is **treated as an empty list** (`r.ok ? r.json() : null` → `historyServerList = []`): it clears the previously loaded server rows and shows "Noch keine gespeicherten Beratungen." (or only the optimistic row, if there is one). See §18. Meta line: "N Nachrichten · dd.mm.yyyy". | — | — |
-| "Neue Beratung" | `startNewChat()` (signed-in branch: **keeps sid**, mints a fresh `conversationKey`, clears local messages), then adds the optimistic row and closes the drawer. Since `8d0a0c4`, `startNewChat()` first cancels a reply that is still streaming (`abortActiveStream()` + `removeTyping()`, in both branches), so that reply is never drawn into or saved with the new thread. | — | `account_new_consultation` |
-| Open a row | `openConversation(id)`: once the GET has returned a conversation, it first cancels a reply that is still streaming (`abortActiveStream()` + `removeTyping()`, since `8d0a0c4`; a failed open leaves the stream running), then loads the transcript into the local view (**text bubbles only**; product cards / tool parts are not restored because the endpoint returns readable turns only, CA §7.2), last 40 kept. Adopts `conversationKey`. Error: "Diese Beratung konnte nicht geöffnet werden." | `GET /api/account/conversations/{id}` | `conversation_opened` |
+| "Neue Beratung" | `startNewChat()` (signed-in branch: **keeps sid**, mints a fresh `conversationKey`, clears local messages), then adds the optimistic row and closes the drawer. `startNewChat()` first cancels a reply that is still streaming and its queued voice audio (`abortActiveStream()` + `endSpeaking()` + `removeTyping()`, in both branches), so that reply is never drawn into or saved with the new thread. | — | `account_new_consultation` |
+| Open a row | `openConversation(id)`: once the GET has returned a conversation, it first cancels a reply that is still streaming and its queued voice audio (`abortActiveStream()` + `endSpeaking()` + `removeTyping()`; a failed open leaves the stream running), then loads the transcript into the local view (**text bubbles only**; product cards / tool parts are not restored because the endpoint returns readable turns only, ACCOUNT_CONTRACT §7.2), last 40 kept. Adopts `conversationKey`. Error: "Diese Beratung konnte nicht geöffnet werden." | `GET /api/account/conversations/{id}` | `conversation_opened` |
 | Rename (pencil) | Inline form, `maxlength=80`. Shows the server's echoed title. A 404 / 5xx closes the form silently; a network error re-enables "Speichern" (no message either way). | `PATCH …/{id}` `{title}` | `conversation_renamed` |
 | Delete (trash) | Two-step inline confirm "Dieser Chat wird gelöscht." → "Löschen". If it was the active thread, the local view is cleared. A non-`deleted` answer just closes the confirm. | `DELETE …/{id}` | `conversation_deleted` |
 | Footer: "Mit Kundenkonto anmelden" | Only for `auth-via = 'shop'` (§5.5) | login redirect | `account_signin_started {}` |
@@ -360,13 +358,13 @@ Both branches of `startNewChat()` first cancel a reply that is still streaming (
 
 All `/api/account/*` calls use `accountHeaders()` = `x-ms-chat-key`, `x-ms-session`, `x-ms-locale` (the opt-in POSTs build the same headers inline). A **401** on the list, open, rename, delete, summary, export and marketing-opt-in calls goes to `accountUnauthorized()` (§8). An erase POST 401 goes to `clearAfterErase` (the same cleanup, §7.7). A 401 on the erase-copy GET (`fetchEraseCopy`) is treated like any other failure: it only shows "Die Löschung kann gerade nicht vorbereitet werden.", with no sign-out cleanup.
 
-### 7.4 Threads (`conversationKey`, API §2, CA §7.6)
+### 7.4 Threads (`conversationKey`, API_CONTRACT §2, ACCOUNT_CONTRACT §7.6)
 
 - Sent on `/api/chat` **only** when `auth.signedIn && activeConversationKey`. Anonymous and email-only visitors never send it.
 - It is minted (`maybeMintConversationKey`) only on the **first turn of a fresh thread** while signed in, or by `startNewChat()` while signed in. `startNewChat()` has three callers: the drawer's "Neue Beratung", the header ↻ "Neuen Chat starten" (`buildShell`) and the `payload_too_large` notice button "Neuen Chat starten" (`handleChatHttpError`). All three keep the sid and mint a fresh key, but only "Neue Beratung" sends `account_new_consultation` and adds the optimistic history row (`addOptimisticConversation`). A thread that started before a mid-conversation sign-in keeps **no key**. It stays the legacy per-session thread, and **the summary download button does not appear** for it.
 - Persisted in `localStorage['ms-chat-convkey:<sid>']`.
 
-### 7.5 Summary download (`downloadSummary`, CA §8)
+### 7.5 Summary download (`downloadSummary`, ACCOUNT_CONTRACT §8)
 
 `GET /api/account/summary?conversationKey=<key>` returns a Blob saved as `motionsports-zusammenfassung.pdf`. 404 shows "Für diese Beratung gibt es noch keine Zusammenfassung."; other errors show "Zusammenfassung konnte gerade nicht erstellt werden — bitte später erneut versuchen."; 401 drops to anonymous. KPIs: `summary_download_started`, `summary_downloaded`. There is no client timeout.
 
@@ -384,23 +382,23 @@ All `/api/account/*` calls use `accountHeaders()` = `x-ms-chat-key`, `x-ms-sessi
    - 401 → same cleanup, with no done dialog.
    - 503 → the served `failedBody` (falls back to the chrome text "Löschen gerade nicht möglich — bitte später erneut versuchen." if absent), retry possible.
    - Other → the chrome error, retry possible.
-5. The widget does **not** send the customer through the Shopify logout afterwards (CA §7.5 says "consider").
+5. The widget does **not** send the customer through the Shopify logout afterwards (ACCOUNT_CONTRACT §7.5 makes it optional).
 
 ### 7.8 Sign-out (`signOut`)
 
-This is **local only**: there is no call to `/api/auth/shopify/logout` (CA §5).
+This is **local only**: there is no call to `/api/auth/shopify/logout` (ACCOUNT_CONTRACT §5).
 1. `track('account_signout')` under the old sid.
 2. Sets the whoami-done flag, so the shop can't re-link in this tab session.
 3. `closeHistory`, `applyAuth(null)` (definitive: deletes `ms-chat-signed-in` and `auth-via`).
 4. `dropSessionHistory()` wipes the local transcript and continues on a **fresh sid**.
 
-Effects: the old sid's server-side link **still resolves** (the backend is never told), which is why the stale-reply guards exist (§8). The Shopify session and the shop login stay alive. Other devices stay signed in.
+Effects: the old sid's server-side link **still resolves** (the backend is never told) until its proof runs out — a chat sign-in while the backend holds a live access token of the customer (refreshed server-side), a shop-login link `APP_PROXY_SIGNIN_MAX_AGE_HOURS` after its last redeem and only while `APP_PROXY_SIGNIN_ENABLED` is on (ACCOUNT_CONTRACT §4, §5). That is why the stale-reply guards exist (§8). The Shopify session and the shop login stay alive. Other devices stay signed in.
 
 ---
 
 ## 8. Cleanup and safety rules
 
-The local transcript can hold order status (`get_order_status` output and Mo's text, COS). So every way a sign-in ends wipes it.
+The local transcript can hold order status (`get_order_status` output and Mo's text, ACCOUNT_CONTRACT §5.1). So every way a sign-in ends wipes it.
 
 | Trigger | Function | What happens |
 |---|---|---|
@@ -417,7 +415,7 @@ Guards against late answers:
 - **Not guarded:** the marketing-opt-in POST (popup `presentConsentGate` and card `buildMarketingOptInCard`) and the erase POST (`openEraseConfirm`). A late opt-in 2xx after a sign-out or rotation still runs `recordMktDecision('accepted')` and `markOptInDone()`, and sends `consent_gate_accepted` under the **new** sid (`track()` reads the current `sid`).
 - `sidIsCurrent()`: `saveHistory` / `saveConvKey` write only while this tab's sid is still the device's.
 - `startStream` captures `streamSid`. A late reply is not persisted into a different session.
-- Within the same sid, `startNewChat()` and `openConversation()` cancel the running stream (`abortActiveStream()`) before switching threads (since `8d0a0c4`, §18 item 1), so a reply is never saved into another thread of the same customer.
+- Within the same sid, `startNewChat()` and `openConversation()` cancel the running stream (`abortActiveStream()`, plus `endSpeaking()` for its queued audio) before switching threads (§18 item 1), so a reply is never saved into another thread of the same customer.
 - `probeAuth` ignores a successful answer if the sid changed meanwhile. A late network / parse failure is not checked and still applies a transient anonymous state (§2.5).
 
 ---
@@ -450,7 +448,7 @@ If auth has not settled yet, it polls every 500 ms, up to 10 times (≈ 5 s), re
 
 In practice the popup appears ~0.7 s after the **first send** of a tab session that was not rolled back by then, once auth is known (§9.1). The reply keeps streaming behind it.
 
-### 9.3 Content (UI chrome, allowed to live in the widget, FP "Rules")
+### 9.3 Content (UI chrome, allowed to live in the widget, API_CONTRACT §0 rule 11)
 
 Dialog `.ms-chat-gate` (role dialog, aria-modal, aria-label "Anmelden") with the brand orb, headline **"Hol mehr aus deiner Beratung"**, intro **"Mit deinem motion sports Konto wird Mo zu deinem persönlichen Berater:"**, the same three bullets as the welcome card, primary **"Anmelden"**, an equally sized secondary **"Später"**, and the hint **"Dein bisheriger Chat bleibt nach der Anmeldung erhalten."** The copy is reused from `ACCOUNT_COPY`, so the popup and the welcome card always say the same thing.
 
@@ -480,11 +478,11 @@ Because the login popup consumes the session's one popup, **a visitor who signs 
 | **Capture form** (`buildCaptureCard`) | Anonymous / email-only (suppressed when signed in) | `GET /api/consent-copy?locale=` (or the 60 s memory cache, which a tool output `consentCopy` can seed for later cards, see below) | Two **unchecked** checkboxes + e-mail field | `POST /api/capture-email` | `email_capture_declined` only (others are server-side) |
 | ~~Anonymous chat consent gate~~ (`surface=chat`, `/api/chat-marketing-opt-in`) | — | — | **Removed from the widget 2026-10-01**, replaced by the sign-in popup | — | — |
 
-Copy caches (`fetchConsentCopy`, `fetchSignInConsentCopy`): in memory, **60 s TTL** (matching the endpoint's `Cache-Control`), de-duplicated in-flight, never persisted. The capture-copy validator needs `transactionalLabel`, `marketingLabel` and `consentTextShown`. The signin validator needs `marketingLabel` and `consentTextShown`. These GETs send only `x-ms-session` (no shared secret, API §7.4). The erase copy uses the full account headers.
+Copy caches (`fetchConsentCopy`, `fetchSignInConsentCopy`): in memory, **60 s TTL** (matching the endpoint's `Cache-Control`), de-duplicated in-flight, never persisted. The capture-copy validator needs `transactionalLabel`, `marketingLabel` and `consentTextShown`. The signin validator needs `marketingLabel` and `consentTextShown`. These GETs send only `x-ms-session` (no shared secret, API_CONTRACT §7.4). The erase copy uses the full account headers.
 
 **Seed timing.** A tool-triggered capture card is built at `tool-input-available` (`feedCanonical → renderPartIntoCtx → buildToolCard → buildCaptureCard → loadConsent → fetchConsentCopy()`, all synchronous). `seedConsentCopy(ev.output.consentCopy)` runs only later, at `tool-output-available`. So the GET for that card normally goes out **before** its tool output arrives (unless the cache is still warm), and the seed only warms the 60 s cache for later cards. A capture card restored from local history (`init → renderAllMessages`) also triggers the GET on page load.
 
-**HTTP caching.** The backend answers every `/api/consent-copy` surface with `Cache-Control: public, max-age=60, stale-while-revalidate=300` and no `Vary` (`src/app/api/consent-copy/route.ts`). The widget uses a plain `fetch` (default cache mode) with the same URL for every session, so the browser may answer from its HTTP cache without a request. The in-memory caches are keyed by time only, not by sid. The served `version` field is never read by the widget.
+**HTTP caching.** The backend answers `/api/consent-copy` with `Cache-Control: public, max-age=60, stale-while-revalidate=300` and no `Vary`; only `surface=signin`, while more than one framing variant is active (`CONSENT_SIGNIN_VARIANTS`, default `a` only), is answered `private, no-store` with the variant assigned per `x-ms-session` (`src/app/api/consent-copy/route.ts`, CONSENT_CONTRACT §3.1). The widget uses a plain `fetch` (default cache mode) with the same URL for every session, so with the public answer the browser may reuse a cached response without a request. The in-memory caches are keyed by time only, not by sid (keying the signin cache by sid is task 1 item 3). The served `version`, `benefits` and `variant` fields are never read by this build.
 
 ### 10.2 Signed-in consent popup (`maybeShowConsentGate` → `presentConsentGate`)
 
@@ -496,7 +494,7 @@ Copy caches (`fetchConsentCopy`, `fetchSignInConsentCopy`): in memory, **60 s TT
 - `optInActionable()` = `auth.optInActionable === true` **and** not answered/dismissed this session (`ms-chat-optin-done`) **and** no device decline within 30 days (`mktDecisionQuiet`).
 - In addition the served copy must have **`lawyerApproved === true`**. Missing copy or a fetch error means **no popup** (fail closed, silent).
 
-**Content:** the served `headline` (benefit framing, not part of `consentTextShown`), then **widget-authored** bullets "Persönliche Empfehlungen, passend zu deiner Beratung" and "Exklusive Angebote & Rabattaktionen zuerst erfahren", then the served `marketingLabel` (fully visible), the served `consentFooter`, the Impressum / Datenschutz links (served `imprintUrl` / `privacyUrl`, labels from the widget), primary **"Ja, Angebote aktivieren"** and an equally sized secondary **"Nein, danke"**. The widget-authored bullets (`GATE_COPY.benefits`) conflict with FP "Rules that do not change" ("the consent popup's text may not" live in the widget) and with CF §1, which places benefit framing in the served `headline` (§11, §18).
+**Content:** the served `headline` (benefit framing, not part of `consentTextShown`), then **widget-authored** bullets "Persönliche Empfehlungen, passend zu deiner Beratung" and "Exklusive Angebote & Rabattaktionen zuerst erfahren", then the served `marketingLabel` (fully visible), the served `consentFooter`, the Impressum / Datenschutz links (served `imprintUrl` / `privacyUrl`, labels from the widget), primary **"Ja, Angebote aktivieren"** and an equally sized secondary **"Nein, danke"**. The widget-authored bullets (`GATE_COPY.benefits`) break API_CONTRACT §0 rule 11 and CONSENT_CONTRACT §1 (benefit framing only in served copy). Since copy v5 the backend serves `benefits` (three bullets, owner decision D-AP4) and `variant` on `surface=signin`; this build ignores both, and sends neither `placement` nor `variant` in the opt-in POST or the `consent_gate_*` data (the backend accepts both as optional telemetry, ACCOUNT_CONTRACT §6.2, API_CONTRACT §5). Rendering the served bullets, deleting `GATE_COPY.benefits` and echoing `variant` / `placement` is frontend task 1 ([`tasks/1-consent-benefits-variant.md`](tasks/1-consent-benefits-variant.md); §11, §18 item 17).
 
 **Actions:**
 
@@ -543,8 +541,8 @@ Copy caches (`fetchConsentCopy`, `fetchSignInConsentCopy`): in memory, **60 s TT
 | Signs in from the **welcome card / header** with an empty chat, no popup yet this session | not yet shown | Back on the page: history drawer auto-opens, no card (welcome on screen). The **consent popup** is decided ~0.7 s after the first send (§9.1). |
 | Signs in from the **header pill, the account-menu link or the link-failed notice** mid-conversation (the welcome card is only on screen in an empty chat, so it always falls under row 1) | not yet shown | **Inline card** right after the return. The popup stays quiet this session once the card was shown (`ms-chat-optin-ask-shown`). |
 | Signs in from the **login popup** (always mid-conversation) | already used by the login popup | **Inline card** only. |
-| Recognised by **whoami** | not yet shown | Consent popup ~0.7 s after the next send (§9.1), if `optInActionable`. No card. Since 2026-10-05 only visitors the backend signs in are recognised: chat-token holders, and every shop-logged-in visitor once the D-AP1 switches are set (§5.4). |
-| `optInActionable: false` (already decided in Mo or subscribed in the shop; since 2026-10-05 also the backend anti-nag: the customer declined the popup in any of their sessions in the last 30 days, or saw it in 3 sessions within 30 days — on every device) | — | Nothing. |
+| Recognised by **whoami** | not yet shown | Consent popup ~0.7 s after the next send (§9.1), if `optInActionable`. No card. Only visitors the backend signs in are recognised: chat-token holders, and with `APP_PROXY_SIGNIN_MAX_AGE_HOURS` > 0 every shop-logged-in visitor (§5.4). |
+| `optInActionable: false` (already decided in Mo or subscribed in the shop; also the backend anti-nag, ACCOUNT_CONTRACT §6.1: the customer declined the popup in any of their sessions in the last 30 days, or saw it in 3 sessions within 30 days — on every device) | — | Nothing. |
 | Declined on this device within 30 days (any customer) | — | Nothing. |
 
 ### 10.5 Anonymous / email-only capture form (`buildCaptureCard`)
@@ -581,7 +579,7 @@ Copy caches (`fetchConsentCopy`, `fetchSignInConsentCopy`): in memory, **60 s TT
 
 The form stays filled for a retry.
 
-**Decline:** `email_capture_declined` with `{trigger}` (or `{}` from the header entry point; `askNumber` is never sent). The card collapses to "Alles klar! Du findest die Option jederzeit oben unter „Per E-Mail teilen“.". There is **no device memory** for a capture decline: how often the capture is offered is the backend's choice (`offer_email_summary` triggers, API §2/§5). The widget sends no "submitted" event because the server records it.
+**Decline:** `email_capture_declined` with `{trigger}` (or `{}` from the header entry point; `askNumber` is never sent). The card collapses to "Alles klar! Du findest die Option jederzeit oben unter „Per E-Mail teilen“.". There is **no device memory** for a capture decline: how often the capture is offered is the backend's choice (`offer_email_summary` triggers, API_CONTRACT §2/§5). The widget sends no "submitted" event because the server records it.
 
 ### 10.6 Response classification (`marketingOutcome`)
 
@@ -601,11 +599,11 @@ Used by all three surfaces on a 2xx `marketing` object:
 | Login popup "Später" | `ms-chat-login-gate-snooze` | localStorage, device-wide | 24 h |
 | Marketing ask answered or dismissed | `ms-chat-optin-done` | sessionStorage | tab session |
 | Marketing ask shown (popup or card), so `consent_gate_shown` counts once | `ms-chat-optin-ask-shown` | sessionStorage | tab session |
-| Marketing decline | `ms-chat-mkt-decision = {state:'declined', at}` | localStorage, **device-wide, not per customer** (since 2026-10-05 the backend also quiets `optInActionable` per customer, CA §6.1) | 30 days (`MKT_DECLINE_SNOOZE_MS`) |
-| Marketing accept | `ms-chat-mkt-decision = {state:'accepted', at}` | localStorage | Has **no** quieting effect (`mktDecisionQuiet` reads only `declined`). It overwrites an earlier decline. The backend's `optInActionable: false` is what stops re-asking, and it turns true again when a DOI link expires unconfirmed (API §7). |
+| Marketing decline | `ms-chat-mkt-decision = {state:'declined', at}` | localStorage, **device-wide, not per customer** (the backend also quiets `optInActionable` per customer, ACCOUNT_CONTRACT §6.1) | 30 days (`MKT_DECLINE_SNOOZE_MS`) |
+| Marketing accept | `ms-chat-mkt-decision = {state:'accepted', at}` | localStorage | Has **no** quieting effect (`mktDecisionQuiet` reads only `declined`). It overwrites an earlier decline. The backend's `optInActionable: false` is what stops re-asking, and it turns true again when a DOI link expires unconfirmed (ACCOUNT_CONTRACT §6.1). |
 | Capture decline | none | — | — |
 
-### 10.8 Tier-3 suppression of the capture card (CA §6.0)
+### 10.8 Tier-3 suppression of the capture card (ACCOUNT_CONTRACT §6.0)
 
 - `buildToolCard('offer_email_summary')` returns nothing when `auth.signedIn`.
 - `updateShareBtn` hides "Per E-Mail teilen" when signed in.
@@ -616,29 +614,19 @@ Used by all three surfaces on a 2xx `marketing` object:
 
 ### 10.9 Running an A/B test on consent surfaces
 
-**What the server can vary without a widget release:**
-- `surface=signin` copy: `headline`, `marketingLabel`, `consentFooter` (each variant must be `lawyerApproved: true`, otherwise popup and card render nothing).
-- Capture copy: `transactionalLabel`, `marketingLabel`, `consentFooter`, `returningHint`.
-- `marketing.optInActionable` on `/api/auth/me` (who is asked at all).
-- When and how often `offer_email_summary` fires, and its `message` / `trigger`.
+The backend side is built: `surface=signin` serves `benefits` and `variant` per locale, `CONSENT_SIGNIN_VARIANTS` (default `a`) activates more variants, which are assigned per `x-ms-session` and answered `private, no-store` while more than one is active (CONSENT_CONTRACT §3.1, API_CONTRACT §7.4); the opt-in POST and the `consent_gate_*` data accept `placement` / `variant` (ACCOUNT_CONTRACT §6.2, API_CONTRACT §5); the dashboard reads them in „Nach Variante und Platzierung“ (AD §5.7). The widget part — render the served bullets, echo `variant` / `placement`, key the copy cache by sid, no dismiss after an accept — is frontend task 1 ([`tasks/1-consent-benefits-variant.md`](tasks/1-consent-benefits-variant.md)). Every variant must be `lawyerApproved`; whether the pseudonymous sid may assign a variant is an open legal question (`07` §8).
 
-**What needs a widget release:** popup timing (+700 ms after send), the popup's benefit bullets (which should not be in the widget at all, §11), all button labels and error texts, the one-popup-per-tab budget, the 30-day device decline, the 24 h login snooze, the choice popup vs inline card.
-
-**Assignment.** Bucket deterministically by `sid` (it is the KPI `sessionId` and the `x-ms-session` header on the consent-copy GET). Caveats:
-- The consent-copy URL is the same for every session and is served `public, max-age=60, stale-while-revalidate=300` without `Vary` (§10.1). The browser may reuse a cached answer without a request, and the widget's 60 s memory cache is not keyed by sid. Per-session variants on that URL therefore need `Cache-Control: private, no-store` on the backend (or a variant parameter in the URL, which is a widget change). Whether Vercel's CDN also stores the `public` response is not verified here.
-- The `offer_email_summary` tool output (`output.consentCopy`) is per turn and not HTTP-cached, but it is **not a reliable way to vary the capture card that same tool call shows**: that card has already requested `/api/consent-copy` by the time the tool output arrives (§10.1 "Seed timing"). The seed only affects later cards within 60 s. Varying capture copy per session therefore also needs the GET to be uncacheable.
-
-**Measuring exposure.** KPI events carry no variant, and popup and inline card both send `consent_gate_* {surface:'signin'}`. Join exposure server-side by `sessionId` (the sid that fetched the copy), or at submit time by the echoed `consentTextShown`. The `headline` is **not** part of `consentTextShown`, so a headline-only variant needs the sessionId join. The widget ignores the served `version` field.
-
-**Contamination.** The decline memory is device-wide for 30 days (any customer, any variant). One sid spans many tab sessions (`05-engagement-and-kpi.md` §3.2), so a sid can see the ask in several tabs. Popup budget and inline card interact (§10.4).
-
-**Traffic today.** Signed-in traffic on live starts with the PR #73 upload of 2026-10-04 (§16). Before that date live had no linked sign-ins, so `surface=signin` exposure data exists only from 2026-10-04. Until the App Proxy is set up, it comes only from chat sign-ins (no whoami recognition), so expect low volumes at first.
+Widget-side limits that stay after task 1:
+- **Needs a widget release:** popup timing (+700 ms after send), all button labels and error texts, the one-popup-per-tab budget, the 30-day device decline, the 24 h login snooze, the choice popup vs inline card (§9, §10.4, §10.7).
+- **Capture copy** cannot vary per session through the `offer_email_summary` tool output: the card a tool call shows has already requested `/api/consent-copy` when the output arrives (§10.1 "Seed timing"), and the default surface is publicly cacheable.
+- **Exposure joins:** popup and inline card both send `consent_gate_* {surface:'signin'}` (they differ only by `placement`, once sent); `headline` and `benefits` are not part of `consentTextShown`, so a framing-only variant is joined by `sessionId` or the echoed `variant`.
+- **Contamination:** the decline memory is device-wide for 30 days (any customer, any variant), one sid spans many tab sessions (`05-engagement-and-kpi.md` §3.2), and popup budget and inline card interact (§10.4).
 
 ---
 
 ## 11. Legal golden rules as enforced in code
 
-Rules: CF §1, FP "Rules that do not change".
+The rules are the contract's: API_CONTRACT §0 rules 8–11 and CONSENT_CONTRACT §1. This section maps them to the code of this build.
 
 | Rule | Where enforced | Notes |
 |---|---|---|
@@ -649,18 +637,18 @@ Rules: CF §1, FP "Rules that do not change".
 | Decline equally reachable | Popup: "Nein, danke" is a full `.ms-chat-btn--secondary` directly under accept. Card: same. Login popup "Später": same. Capture: a text-style decline button below the form. | The capture decline is a quieter button (`.ms-chat-capture-decline`), which is allowed for the capture form (it has no button-consent mechanic). |
 | Label + footer fully visible | Rendered as plain blocks, no truncation / "read more". | |
 | Imprint + privacy next to consent | All three surfaces render the served URLs through `safeHref`. | Link labels "Impressum" / "Datenschutz" are widget chrome. |
-| `lawyerApproved` gating | **`surface=signin` only** (popup + card render nothing unless `=== true`). | The capture form does **not** check `lawyerApproved` (API §7.4 calls it informational there). Erase copy has no such field. |
+| `lawyerApproved` gating | **`surface=signin` only** (popup + card render nothing unless `=== true`). | The capture validator does **not** check `lawyerApproved` — the contract recommends it there but does not require it (API_CONTRACT §0 rule 10; the backend serves `true` on every surface, `CONSENT_COPY_LAWYER_APPROVED`; §18 item 8). Erase copy has no such field. |
 | Locale | All consent-copy GETs send `?locale=`. The submits carry `locale`. | Served per locale, never translated by the widget. |
-| `enLegalReviewed` | **Not checked.** The widget never reads the field. | Since 2026-10-05 the backend serves `enLegalReviewed: true` (English approved as the translation of the German, `CONSENT_COPY_EN_LEGAL_REVIEWED` in `consent-copy-core.mjs`), so ignoring it is no longer a gap. Only `lawyerApproved` gates the signin surface. |
-| The sign-in popup is UI, not consent | `presentLoginGate` uses only `ACCOUNT_COPY` / `GATE_COPY`. | FP: "its text may live in the widget". |
+| `enLegalReviewed` | **Not checked.** The widget never reads the field. | The backend serves `enLegalReviewed: true` for both locales (English approved as the translation of the German, `CONSENT_COPY_EN_LEGAL_REVIEWED` in `consent-copy-core.mjs`, API_CONTRACT §12.3), so ignoring it is not a gap. Only `lawyerApproved` gates the signin surface. |
+| The sign-in popup is UI, not consent | `presentLoginGate` uses only `ACCOUNT_COPY` / `GATE_COPY`. | API_CONTRACT §0 rule 11: its text may live in the widget. |
 
 **Widget-authored text (UI chrome) vs served text:**
 
 | Widget may word it (in `ms-chat-widget.js`) | Must come from the backend |
 |---|---|
-| `ACCOUNT_COPY` (welcome card, header, history, export / erase chrome), `GATE_COPY` (login popup; consent-popup accept / decline labels, success / errors), `OPTIN_COPY`, `CONSENT_COPY` (capture title, intro, field label, submit, **privacy caption**, errors, decline), `MKT_RESULT_COPY`, link-failed notices, `DOWNLOAD_COPY`, "Impressum" / "Datenschutz" link labels | `transactionalLabel`, `marketingLabel`, `consentFooter`, `consentTextShown`, `headline` (signin), `returningHint.text`, `imprintUrl`, `privacyUrl`, `lawyerApproved`; erase `confirmHeading`, `confirmBody`, `confirmButton`, `doneHeading`, `doneBody`, `failedBody`. Served but **ignored** by the widget: `enLegalReviewed` (see the rules table), `version`. |
+| `ACCOUNT_COPY` (welcome card, header, history, export / erase chrome), `GATE_COPY` (login popup; consent-popup accept / decline labels, success / errors), `OPTIN_COPY`, `CONSENT_COPY` (capture title, intro, field label, submit, **privacy caption**, errors, decline), `MKT_RESULT_COPY`, link-failed notices, `DOWNLOAD_COPY`, "Impressum" / "Datenschutz" link labels | `transactionalLabel`, `marketingLabel`, `consentFooter`, `consentTextShown`, `headline` (signin), `benefits` and `variant` (signin, copy v5), `returningHint.text`, `imprintUrl`, `privacyUrl`, `lawyerApproved`; erase `confirmHeading`, `confirmBody`, `confirmButton`, `doneHeading`, `doneBody`, `failedBody`. Served but **ignored** by this build: `enLegalReviewed` (see the rules table), `version`, `benefits`, `variant` (the last two: task 1). |
 
-**Not allowed in the widget, but there today:** the consent popup's benefit bullets (`GATE_COPY.benefits`: "Persönliche Empfehlungen, passend zu deiner Beratung", "Exklusive Angebote & Rabattaktionen zuerst erfahren"). `presentConsentGate` renders them between the served `headline` and the served `marketingLabel`. FP "Rules that do not change" says the sign-in popup's text may live in the widget, but "the consent popup's text may not", and CF §1 allows benefit framing only in the served `headline`. This is a compliance risk (§18). The fix is to remove the bullets or serve them from the backend (e.g. inside `headline` or a new served field).
+**Not allowed in the widget, but in this build:** the consent popup's benefit bullets (`GATE_COPY.benefits`: "Persönliche Empfehlungen, passend zu deiner Beratung", "Exklusive Angebote & Rabattaktionen zuerst erfahren"). `presentConsentGate` renders them between the served `headline` and the served `marketingLabel`. API_CONTRACT §0 rule 11 lets the sign-in popup's text live in the widget, but not the consent popup's, and CONSENT_CONTRACT §1 allows benefit framing only in served copy. The backend serves the replacement (`benefits`, copy v5, owner decision D-AP4); deleting the widget's bullets and rendering the served ones is task 1 (§18 item 17). The build with task 1 no longer contains the string `Rabattaktionen zuerst erfahren`, which is how `npm run verify:widget` recognises it (`07` §6.4).
 
 One more widget-authored string sits right next to consent text and might deserve a legal look (§19): the capture caption about the double opt-in.
 
@@ -668,30 +656,18 @@ One more widget-authored string sits right next to consent text and might deserv
 
 ## 12. Storage keys in scope
 
-| Key | Store | Content | Set by | Cleared by |
-|---|---|---|---|---|
-| `ms-chat-sid` | localStorage | session id (UUID) | `getSid`, `rotateSession` | never deleted; replaced on rotation |
-| `ms-chat-history:<sid>` | localStorage | last 40 messages (can contain order status) | `saveHistory` | `rotateSession`, `startNewChat`, delete-active, `dropSessionHistory`, `handleMoDeepLink` (`mo_new=1`) |
-| `ms-chat-convkey:<sid>` | localStorage | active `conversationKey` | `saveConvKey` | `clearConvKey` (incl. via `handleMoDeepLink` with `mo_new=1` and a sign-in hint) |
-| `ms-chat-signed-in` | localStorage | `'1'` = "worth re-probing `/api/auth/me`" (no identity) | `applyAuth` (signed in) | `applyAuth` definitive not-signed-in |
-| `ms-chat-auth-via:<sid>` | localStorage | `'chat'` / `'shop'` | `redeemLinkCode → setAuthVia` | `applyAuth` definitive not-signed-in |
-| `ms-chat-mkt-decision` | localStorage | `{state, at}` with state `'accepted'` or `'declined'` | consent surfaces, capture with marketing ticked | never |
-| `ms-chat-login-gate-snooze` | localStorage | timestamp of "Später" | `presentLoginGate` | never (expires logically after 24 h) |
-| `ms-chat-early-params` | sessionStorage | `{at, ms_auth?, ms_code?, mo_c?}` | `theme.liquid` head script | `earlyParam` (on read) |
-| `ms-chat-auth-return` | sessionStorage | `'1'` = re-open the panel on return | `initiateLogin` | `handleAuthReturn` |
-| `ms-chat-login-sid` | sessionStorage | the sid pinned for this login | `initiateLogin` | `handleAuthReturn` (`ok`) |
-| `ms-chat-link-retry` | sessionStorage | `{code, sid, at, kind?}` after a 503 | `handleAuthReturn`, `detectViaStorefront` | `retryPendingLink` (on read), and any return that carries an `ms_auth` marker (`handleAuthReturn`) |
-| `ms-chat-whoami-done` | sessionStorage | `'1'` = whoami already asked / must not be asked | `detectViaStorefront`, `signOut`, `endedSignInCleanup`, `clearAfterErase`, `handleAuthReturn(logged_out)`, `onSidChangedElsewhere` (when signed in) | never |
-| `ms-chat-gate-shown` | sessionStorage | one first-message popup used | `presentLoginGate`, `presentConsentGate` | never |
-| `ms-chat-optin-done` | sessionStorage | marketing ask answered / dismissed | `markOptInDone` | never |
-| `ms-chat-optin-ask-shown` | sessionStorage | marketing ask shown | popup / card | never |
-| `ms_mo_c` | sessionStorage | campaign token (adjacent; it rides on the first `/api/chat`) | `captureCampaignToken` | `startStream` on `res.ok` |
+The keys this chapter's flows use — store, value, writer, clearer and lifetime of each: `02-widget-architecture.md` §6 (owner, the one complete list).
 
-`capturedEmail` and the `auth` object are **memory only**. When localStorage / sessionStorage throw, `lsGet/lsSet` / `ssGet/ssSet` fall back to in-memory maps, so "per tab session" degrades to "per page load". All sessionStorage keys above are per tab: a new tab starts without them. The full key list is in `02-widget-architecture.md` §6.
+- localStorage: `ms-chat-sid`, `ms-chat-history:<sid>` (can contain order status), `ms-chat-convkey:<sid>`, `ms-chat-signed-in` (a re-probe hint, no identity), `ms-chat-auth-via:<sid>` (§5.5), `ms-chat-mkt-decision` (§10.7), `ms-chat-login-gate-snooze` (§9.2).
+- sessionStorage: `ms-chat-early-params` (§4.3), `ms-chat-auth-return`, `ms-chat-login-sid` (§4.2, §4.7), `ms-chat-link-retry` (§4.6), `ms-chat-whoami-done` (§5.2), `ms-chat-gate-shown`, `ms-chat-optin-done`, `ms-chat-optin-ask-shown` (§10.7), and the adjacent campaign token `ms_mo_c`.
+
+`capturedEmail` and the `auth` object are **memory only**. When localStorage / sessionStorage throw, `lsGet/lsSet` / `ssGet/ssSet` fall back to in-memory maps, so "per tab session" degrades to "per page load". All sessionStorage keys above are per tab: a new tab starts without them.
 
 ---
 
 ## 13. Network calls and data leaving the browser
+
+In-scope view; the complete network surface is `02-widget-architecture.md` §9.
 
 | Call | Headers | Sends | Trigger |
 |---|---|---|---|
@@ -720,32 +696,9 @@ Notes:
 
 ## 14. KPI events in scope
 
-All are sent by `track()` (fire-and-forget, `keepalive`, API §5).
+The widget events of this chapter — `account_signin_started` / `_return`, `login_gate_*`, `consent_gate_*`, `email_capture_declined`, `account_signout`, `account_history_opened`, `account_new_consultation`, `conversation_opened` / `_renamed` / `_deleted`, `summary_download_started` / `summary_downloaded`, `account_export_started` / `account_exported` — are catalogued with their `data`, triggers and guards in `05-engagement-and-kpi.md` §4.5–§4.8, the one widget-side event index. Names, `data` keys and the server-only list are the contract in API_CONTRACT §5. Chapter-specific detail: §9.4 (popup actions), §10.2 (a dismiss after an accept), §7.3–§7.7 (account UI).
 
-| Event | `data` | Fired when |
-|---|---|---|
-| `account_signin_started` | `{}` or `{source:'login_gate'}` | before every login redirect |
-| `account_signin_return` | `{result}`: `'ok'`, `'link_failed'`, `'login_required'` or `'error'` | on return, after the redeem decided (none for `logged_out`, none for the silent 503 retry) |
-| `login_gate_shown` / `_signin_clicked` / `_declined` / `_dismissed` | `{}` | §9.4 |
-| `consent_gate_shown` | `{surface:'signin'}` | once per tab session, popup or card |
-| `consent_gate_accepted` | `{surface:'signin'}` | after a 2xx opt-in |
-| `consent_gate_declined` | `{surface:'signin'}` | "Nein, danke" (popup or card) |
-| `consent_gate_dismissed` | `{surface:'signin'}` | popup Esc / backdrop, **including** on the success view after an accept and while the accept POST is in flight (§10.2) |
-| `email_capture_declined` | `{trigger}` or `{}` | capture decline |
-| `account_signout` | `{}` | "Abmelden" |
-| `account_history_opened` | `{}` | drawer opened (**including the automatic open**) |
-| `account_new_consultation` | `{}` | "Neue Beratung" in the drawer only (not the header ↻ or the `payload_too_large` button, §7.4) |
-| `conversation_opened` / `_renamed` / `_deleted` | `{}` | drawer actions |
-| `summary_download_started` / `summary_downloaded` | `{}` | §7.5 |
-| `account_export_started` / `account_exported` | `{}` | §7.6 |
-
-Per-tab budgets mean one `sessionId` can carry several `login_gate_shown` / `consent_gate_shown` events (one per tab session). Both can also belong to a turn that failed after the popup was decided (§9.1).
-
-Server-only (the widget never sends them): `account_signin_succeeded`, `account_signin_linked` (`{kind, renewed}` since 2026-10-05), `account_signin_link_refused` (`{reason, kind?}`), `account_shop_recognised` (whoami, 2026-10-05), `email_capture_ask_shown/_submitted/_marketing_opted_in/_marketing_confirmed`, `account_export_requested`, `account_erased`. Retired: `starter_shown/_clicked`, `consent_gate_* {surface:'chat'}`.
-
-**The signed-in opt-in is counted twice.** Every 2xx `POST /api/account/marketing-opt-in` (popup or inline card) also records server-side `email_capture_submitted {marketingConsent:true, trigger:'signin_optin'}` and `email_capture_marketing_opted_in {doiStatus, trigger:'signin_optin'}` (backend `src/app/api/account/marketing-opt-in/route.ts`; API §5; `05-engagement-and-kpi.md` §4.6). So `consent_gate_accepted` (widget, the tap) and these server events count the same act. The effective subscription is `email_capture_marketing_confirmed` (after the DOI click).
-
-> **Backend status (2026-10-05, OI1):** the dashboard now counts the sign-in opt-in **once**, in „Einwilligung nach der Anmeldung“ (AD §5.7), per **session** with its final state; the „E-Mail-Capture-Funnel“ no longer contains it (server `source:'mo_signin'`, older rows by `trigger`). The server events also carry `outcome`, `alreadyConfirmed`, `doiRequired` and — once the widget sends them — `placement` / `variant`.
+**The signed-in opt-in is counted twice.** Every 2xx `POST /api/account/marketing-opt-in` (popup or inline card) also records the server-only `email_capture_submitted {marketingConsent:true, trigger:'signin_optin', source:'mo_signin', …}` and `email_capture_marketing_opted_in {doiStatus, trigger:'signin_optin', source:'mo_signin', …}` (ACCOUNT_CONTRACT §6.2, API_CONTRACT §5). So `consent_gate_accepted` (widget, the tap) and these server events count the same act; the effective subscription is `email_capture_marketing_confirmed` (after the DOI click). The dashboard counts it once: „Einwilligung nach der Anmeldung“ per session with its final state (AD §5.7); the „E-Mail-Capture-Funnel“ leaves it out (AD §5.8).
 
 ---
 
@@ -771,56 +724,50 @@ Server-only (the widget never sends them): `account_signin_succeeded`, `account_
 
 ## 16. Operational status and dependencies
 
-| Item | Status (2026-10-04) | Consequence |
-|---|---|---|
-| PR #73 (`a0df103`) | **Merged to `main`, live since 2026-10-04** (owner upload of `assets/ms-chat-widget.js`, `assets/ms-chat-widget.css`, `layout/theme.liquid`; uploaded together with `snippets/product-qa.liquid`, `sections/header.liquid` and `snippets/product-detail-accordions.liquid` from the 2026-10-01 round) | Chat sign-in works again on live (the widget redeems `ms_code`), **pending a real check on live by the backend** (one full sign-in with `account_signin_linked` in `kpi_events`). History, export, erase, the consent popup / inline card and the login gate now get real traffic. **KPI data for tier 3, the consent popup and the login-gate funnel is meaningful only from 2026-10-04.** Historical (2026-10-03 until the upload): the pre-PR #73 widget (`44a076b → handleAuthReturn`) never redeemed `ms_code`, so chat sign-ins were never linked, and it sent `account_signin_return {result:'ok'}` on every `ms_auth=ok` return before any redeem. Its "ok" counts for that window are inflated; use the server's `account_signin_linked` instead. That widget also stripped only `ms_auth` from the URL, and the old `layout/theme.liquid` had no early-param head script, so `ms_code` (and any `mo_c`) could reach Shopify analytics / web pixels and copied URLs. |
-| `main` `8d0a0c4` (five follow-up fixes) | **Merged, not uploaded yet.** The owner will upload `assets/ms-chat-widget.js`, `snippets/ms-chat-widget.liquid` and three product templates (MANIFEST 2026-10-04 b) | In scope here: `startNewChat()` / `openConversation()` cancel a reply that is still streaming (§7.3, §18 item 1). Until the upload, live still has that bug. The other fixes (contact-form `sessionId`, `order_support` label, CTA hiding, CTA on three more templates) are in chapters 05 and 06. |
-| Shopify App Proxy `/apps/chat/whoami` | **Not set up** (Shopify 404 page) | Shop-login recognition is a silent no-op. Setup steps: CA §3a (subpath `apps/chat` → `https://mo.motionsports.de/api/auth/storefront`, env `SHOPIFY_APP_PROXY_SECRET`). **It may now be set up**, because PR #73 is live. First confirm that the live widget is the PR #73 version (it contains `redeemLinkCode`). Historical note: the pre-PR #73 widget (`44a076b → detectViaStorefront(force)`) applied a whoami `signedIn: true` answer directly as identity (`applyAuth(data)`) without redeeming `linkCode`, so under that widget a proxy would have shown a signed-in UI with 401s on every `/api/account/*` call. A live-editor revert to that widget would bring the problem back. Backend side built 2026-10-05 (§5.4); the kill switch `APP_PROXY_SIGNIN_ENABLED=false` stops all codes if drift reappears. |
-| `CHAT_ORDER_STATUS_ENABLED` (backend) | off | May now be turned on, because PR #73 (silent `get_order_status` rendering + history wipe on sign-out) is live. First verify on live that a `get_order_status` part renders nothing in the chat. |
-| Deployment | Manual copy into the Shopify code editor | Live-editor drift has reverted widget work before (Aug 12 2026 sync overwrote PR #67 / #62, restored 2026-10-01). After any re-sync, verify that `presentLoginGate`, `redeemLinkCode` and the head script are present in the live files. |
+Moved out of this chapter. Production status — which theme build is uploaded, whether the App Proxy is set up, which backend switches are on (all default off in code, e.g. `CHAT_ORDER_STATUS_ENABLED`, `APP_PROXY_SIGNIN_ENABLED`) — is tracked only in `docs/ROLLOUT_TODO.md`. Which widget build the live shop serves: `07` §6.4 (`npm run verify:widget`). Deploy model and live-editor drift: `01-storefront-theme.md` §16; the App Proxy drift risk: §5.4. The dated status table of 2026-10-04: `docs/archive/FRONTEND_STATUS_2026-10-04.md`.
 
 ---
 
 ## 17. Implications for backend decisions and KPI work
 
-- **Measure entry points.** Only the popup tags `source`. Adding values like `welcome_card`, `header`, `account_menu`, `link_failed_notice` is a small frontend task. The backend has no event allowlist, so nothing changes server-side except dashboard grouping.
-- **The popup and the consent ask compete.** One popup per tab session is shared. Anyone who signs in via the login popup is offered marketing only through the inline card (no popup). If the consent popup converts better than the card, consider letting a fresh sign-in reopen the popup budget. That is a frontend rule change in `gateBaseEligible`, and it must stay within the legal anti-nag rules.
-- **Sign-in affordances wait for whoami.** Until the App Proxy exists, the anonymous welcome card / pill appear only after a storefront 404 page fetch on first open (`detectSignedIn` always awaits `detectViaStorefront` first, and `updateWelcomeAuth` / `reflectAuthState` show the card and pill only once `auth.settled`). Only making the widget skip whoami when there is no `ShopifyAnalytics` customer hint would remove that latency for anonymous visitors. Setting up the proxy keeps the round trip (a proxied JSON answer from `/api/auth/storefront` instead of the 404 page; for shop-logged-in customers followed by `POST /api/auth/link` and `GET /api/auth/me`), but it turns shop-logged-in visitors into signed-in chat users with **no click**, which is the cheapest lever for sign-in KPIs. That holds for **every** shop-logged-in visitor only with D-AP1 decided (05.10.2026) and its switches set (`APP_PROXY_SIGNIN_ENABLED=true`, `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`); with the max age at 0 it reaches only customers who already hold a chat token (§5.4, §5.5). Since PR #73 went live on 2026-10-04, the App Proxy may be set up; confirm first that the live widget is the PR #73 version (the pre-PR #73 widget applied a whoami `signedIn: true` answer as identity without redeeming `linkCode`, §5.4, §16).
+- **Measure entry points.** Only the popup tags `source`. Adding values like `welcome_card`, `header`, `account_menu`, `link_failed_notice` is a small frontend task. `/api/kpi` stores any widget event name (only server-only names are dropped, API_CONTRACT §5); server-side, `SIGNIN_SOURCES` / `signinSource()` in `src/lib/kpi-widget-events.mjs` (today `login_gate` vs `other`) and the dashboard grouping change (backlog `07` B2).
+- **The popup and the consent ask compete.** One popup per tab session is shared. Anyone who signs in via the login popup is offered marketing only through the inline card (no popup). If the consent popup converts better than the card, consider letting a fresh sign-in reopen the popup budget. That is a frontend rule change in `gateBaseEligible`, and it must stay within the legal anti-nag rules (backlog `07` D7).
+- **Sign-in affordances wait for whoami.** Without an App Proxy, the anonymous welcome card / pill appear only after a storefront 404 page fetch on first open (`detectSignedIn` always awaits `detectViaStorefront` first, and `updateWelcomeAuth` / `reflectAuthState` show the card and pill only once `auth.settled`). Only making the widget skip whoami when there is no `ShopifyAnalytics` customer hint would remove that latency for anonymous visitors. Setting up the proxy keeps the round trip (a proxied JSON answer from `/api/auth/storefront` instead of the 404 page; for shop-logged-in customers followed by `POST /api/auth/link` and `GET /api/auth/me`), but it turns shop-logged-in visitors into signed-in chat users with **no click**, which is the cheapest lever for sign-in KPIs. That holds for **every** shop-logged-in visitor only with `APP_PROXY_SIGNIN_ENABLED` on and `APP_PROXY_SIGNIN_MAX_AGE_HOURS` > 0 (both default off in code; D-AP1); with the max age at 0 it reaches only customers who already hold a chat token (§5.4, §5.5). Setup and live state: `docs/ROLLOUT_TODO.md` 5.4; backlog `07` P0.3.
 - **Shop-recognised ≠ order status.** `'shop'` sessions need one chat sign-in for `get_order_status`. Mo can answer `sign_in_required` and point at "Mit Kundenkonto anmelden" in the account menu. That link is the only `'shop'`-specific entry point (there is no popup for them).
-- **Decline memory is per device, not per customer.** On a shared device, one customer's "Nein" silences the ask for anyone for 30 days. Since 2026-10-05 the backend adds a per-customer rule on top (CA §6.1): `optInActionable` is false after a `consent_gate_declined` in any of the customer's sessions in 30 days, or after 3 sessions with `consent_gate_shown`.
+- **Decline memory is per device, not per customer.** On a shared device, one customer's "Nein" silences the ask for anyone for 30 days. The backend adds a per-customer rule on top (ACCOUNT_CONTRACT §6.1): `optInActionable` is false after a `consent_gate_declined` in any of the customer's sessions in 30 days, or after 3 sessions with `consent_gate_shown`.
 - **`optInActionable` is the master switch.** Any server-side change to when it is true (e.g. re-ask after an expired DOI) takes effect immediately with no widget release. The same goes for all served copy (headline, labels, erase body, returning hint), which ships as a backend deploy.
-- **Reopened past conversations lose product cards.** Transcripts are text-only (CA §7.2). Product clicks and add-to-cart from history are therefore impossible. Returning tool parts in the transcript would need a contract + widget change.
-- **Signed-in threads that started anonymously have no `conversationKey`.** So no summary download until "Neue Beratung" (code-verified: `updateDownloadBtn` / `downloadSummary` need `activeConversationKey`). Whether that legacy thread (key defaults to `session_id` server-side, API §2) appears as a row in `GET /api/account/conversations` is backend behaviour and not documented (CA §7.1 does not say); treat it as uncertain.
+- **Reopened past conversations lose product cards.** Transcripts are text-only (ACCOUNT_CONTRACT §7.2). Product clicks and add-to-cart from history are therefore impossible. Returning tool parts in the transcript would need a contract + widget change (backlog `07` D10).
+- **Signed-in threads that started anonymously have no `conversationKey`.** So no summary download until "Neue Beratung" (code-verified: `updateDownloadBtn` / `downloadSummary` need `activeConversationKey`). That legacy thread (key = the `session_id`, API_CONTRACT §2) is listed in `GET /api/account/conversations`: the redeem joins the session's conversations to the customer (`src/lib/customer-link-grant.mjs`), and the list returns every conversation of the customer (`src/lib/account-history.ts`). Opening it from the drawer adopts its key, and the summary download appears.
 - **A/B tests on consent surfaces** have caching and measurement constraints; see §10.9 before designing one.
 - **`account_new_consultation` undercounts new signed-in threads.** It fires only for the drawer's "Neue Beratung". The header ↻ and the `payload_too_large` notice button also start a fresh signed-in thread (new `conversationKey`, §7.4) without any KPI, and a `mo_new=1` deep link starts one via the first-turn mint. Count new threads server-side by distinct `conversationKey` instead.
 - **`account_history_opened` is inflated** by the automatic open on an empty signed-in chat. Don't read it as intent.
-- **Sign-out is local.** The backend never learns about it, and the old sid stays linked server-side until expiry or a backend logout. If server-side session hygiene matters (e.g. for order-status exposure), the widget could call `/api/auth/shopify/logout` (CA §5). That is a top-level redirect and a product decision.
+- **Sign-out is local.** The backend never learns about it, and the old sid stays linked server-side until expiry or a backend logout. If server-side session hygiene matters (e.g. for order-status exposure), the widget could call `/api/auth/shopify/logout` (ACCOUNT_CONTRACT §5). That is a top-level redirect and a product decision (backlog `07` E4).
 - **The 422 `no_verified_email` path** sends a signed-in customer into the typed-e-mail capture form without a KPI. That conversion is invisible in the consent-gate funnel (it shows up as a server-side capture with no trigger). Contrast the accepted opt-in itself, which the server records as `email_capture_submitted` / `email_capture_marketing_opted_in` with `trigger:'signin_optin'` (§14).
-- **Consent funnel: dedupe accept and dismiss.** One session can carry both `consent_gate_accepted` and `consent_gate_dismissed` (Esc / backdrop on the success view or during the POST, §10.2). Count `accepted` as the final state, or count the server's `signin_optin` events instead. **Backend status (2026-10-05, OI1):** done on the dashboard — sessions with the final state (accepted > declined > dismissed); the widget-side fix (no dismiss after an accept) is frontend task 1 §4.
+- **Consent funnel: dedupe accept and dismiss.** One session can carry both `consent_gate_accepted` and `consent_gate_dismissed` (Esc / backdrop on the success view or during the POST, §10.2). Count `accepted` as the final state, or count the server's `signin_optin` events instead. The dashboard does the former (AD §5.7: sessions with the final state, accepted > declined > dismissed); the widget-side fix (no dismiss after an accept) is task 1 item 4.
 
 ---
 
 ## 18. Known issues and risks found while documenting
 
-Not fixed unless marked **Fixed in `8d0a0c4`** (merged to `main`, not uploaded to live yet, §16). The verdict is from reading the code, not a runtime test.
+Open in this build unless marked **Fixed** or **Resolved**. The verdict is from reading the code, not a runtime test. The prioritised fixes are in `07` §7.
 
-1. **Fixed in `8d0a0c4`: opening a past conversation or "Neue Beratung" while a reply is streaming.** `startNewChat()` (both branches) and `openConversation()` (after a successful GET) now call `abortActiveStream()` + `removeTyping()` first. The cancelled turn's `finalizeStream` is then a no-op (`cancelStream` sets `finished`), so the old reply is never drawn into or saved with the new thread. The header ↻ and the `payload_too_large` button go through `startNewChat()` too. Before the fix (and on live until the upload), the signed-in branches appended the old thread's reply to the newly loaded thread's local history (`sid === streamSid`), and it then rode along in `messages` on the next `/api/chat` turn. In the anonymous branch the reply was not saved (the sid rotates), but `ensureCtx()` could still draw it into the fresh view.
+1. **Fixed (`8d0a0c4`; `3e87341` also stops the queued voice audio): opening a past conversation or "Neue Beratung" while a reply is streaming.** `startNewChat()` (both branches) and `openConversation()` (after a successful GET) call `abortActiveStream()` + `endSpeaking()` + `removeTyping()` first. The cancelled turn's `finalizeStream` is then a no-op (`cancelStream` sets `finished`), so the old reply is never drawn into or saved with the new thread. The header ↻ and the `payload_too_large` button go through `startNewChat()` too. Before the fix, the signed-in branches appended the old thread's reply to the newly loaded thread's local history (`sid === streamSid`), and it then rode along in `messages` on the next `/api/chat` turn. In the anonymous branch the reply was not saved (the sid rotates), but `ensureCtx()` could still draw it into the fresh view.
 2. **Restored `offer_email_summary` renders a capture card for signed-in customers on reload.** `init → renderAllMessages` runs before auth settles, and `reflectAuthState` doesn't re-render messages. This happens when the offer was made before a mid-conversation sign-in.
 3. **A transient `/api/auth/me` failure makes a signed-in customer look anonymous** for that page view. The "Anmelden" pill shows and the **sign-in popup is eligible** (`loginGateEligible` only checks `!auth.signedIn`). A click would run a fresh login, which is harmless but confusing.
 4. **`account_signin_return: ok` is sent before `/api/auth/me` confirms.** If that probe fails, "ok" is counted while the UI shows anonymous.
 5. **Stale / contradictory comments around the marketing memory.** The anti-nag header says "an ACCEPT is remembered forever", and the `optInActionable()` comment says "mktDecisionQuiet: accepted, or declined…", but `mktDecisionQuiet()` deliberately ignores `accepted`. The behaviour follows the backend (correct). The comments mislead.
 6. **Stale comments in `handleAuthReturn` / `openPanel`.** "The welcome state renders it [the opt-in] in its own auth slot" is no longer true: the signed-in welcome is orb-only. "No network for pure-anonymous visitors" on open is also outdated: whoami runs for everyone once per tab session. Several code comments also say "per browser session" for what is per tab (sessionStorage).
 7. **422 paths differ slightly.** The consent popup's 422 closes the popup and opens the capture form directly, without marking the opt-in done. The inline card's 422 shows a button; only a click on "E-Mail-Adresse eingeben" marks it done. Neither sends a KPI.
-8. **The capture form does not check `lawyerApproved`.** That is consistent with API §7.4 ("informational"), but differs from the signin surface. If the backend ever flips capture copy to `lawyerApproved: false`, the form still renders.
+8. **The capture form does not check `lawyerApproved`.** The contract requires `lawyerApproved === true` only on the signed-in surfaces and recommends it on the capture form (API_CONTRACT §0 rule 10, CONSENT_CONTRACT §1). Harmless while the backend serves `lawyerApproved: true` on every surface; if it ever flips the capture copy to `false`, the form still renders.
 9. **Rename / delete failures are silent** (404 / 5xx just re-enable or close). No user feedback.
-10. **Confusing naming, not a bug:** the feedback payload's `conversationId` carries the thread key (`activeConversationKey`), while the history API uses `conversationId` for the numeric id. API §9 defines feedback `conversationId` as "the conversationKey/thread the comment is about", so the widget follows the contract.
+10. **Confusing naming, not a bug:** the feedback payload's `conversationId` carries the thread key (`activeConversationKey`), while the history API uses `conversationId` for the numeric id. API_CONTRACT §9 defines feedback `conversationId` as "the conversationKey/thread the comment is about", so the widget follows the contract.
 11. **`logged_out` and `login_required` branches are unreachable** from this widget: it never starts the backend logout or `prompt=none`.
 12. **Shop logout / login during a tab session is not reflected** (whoami runs once per tab session, §5.6).
 13. **The header "Per E-Mail teilen" reuses a submitted card.** `openCaptureForm` reuses `lastCaptureRow` whenever it is still in the list (the comment says "not-yet-submitted"). It is reset only on decline, so after a successful share-button capture another click just scrolls to the success message.
-14. **`capturedEmail` survives an anonymous "Neuen Chat starten"** (`startNewChat` → `rotateSession` does not clear it). It then rides on the new sid's `/api/chat` as `customer.email`. The backend ignores it (the capture belongs to the old sid, API §2), so this is harmless but untidy.
+14. **`capturedEmail` survives an anonymous "Neuen Chat starten"** (`startNewChat` → `rotateSession` does not clear it). It then rides on the new sid's `/api/chat` as `customer.email`. The backend ignores it (the capture belongs to the old sid, API_CONTRACT §2), so this is harmless but untidy.
 15. **Consent popup sends `consent_gate_dismissed` after an accept.** Esc / backdrop on the success view, or during the in-flight accept POST, still runs the `onDefer` handler (§10.2). A dismiss during the POST also leaves the later 2xx to record `accepted` and send `consent_gate_accepted` on a detached card the customer never sees.
 16. **History list: HTTP errors look like "no conversations".** `loadConversations` turns any non-401 error status into an empty list, clears the loaded server rows and shows "Noch keine gespeicherten Beratungen." (§7.3). Only network / parse failures show the load error.
-17. **Consent popup benefit bullets live in the widget** (`GATE_COPY.benefits`, §11). This conflicts with FP "Rules that do not change" (the consent popup's text may not live in the widget) and CF §1 (benefit framing in the served `headline`). Compliance risk until the bullets are removed or served.
+17. **Consent popup benefit bullets live in the widget** (`GATE_COPY.benefits`, §11), against API_CONTRACT §0 rule 11 and CONSENT_CONTRACT §1. The backend serves the replacement (`benefits`, copy v5); removing the widget's own bullets is task 1. A compliance risk while a build without task 1 is live.
 18. ~~**`enLegalReviewed` is ignored.**~~ Resolved on the backend 2026-10-05: the English copy is approved as the translation and served with `enLegalReviewed: true` (§11).
 19. **`error` / `login_required` return de-authenticates an already signed-in sid in the UI** (§4.4). It deletes `ms-chat-signed-in` and `auth-via`, keeps the local history, and is not re-probed in that tab without the `ShopifyAnalytics` hint, although the server link still resolves.
 
@@ -828,9 +775,7 @@ Not fixed unless marked **Fixed in `8d0a0c4`** (merged to `main`, not uploaded t
 
 ## 19. Open questions / uncertainties
 
-- **Shopify account type.** The theme has classic `templates/customers/*.json`, while the backend sign-in uses the Customer Account API (new customer accounts). It is not determinable from this repo whether a shop login and the chat's Shopify login share a session (i.e. whether a customer logged into the shop gets a one-click return at `/api/auth/shopify/login`). CA §3a also warns that `logged_in_customer_id` was historically empty for new customer accounts. Re-verify once the proxy exists: the manual check `/apps/chat/whoami?session=livecheck-manual` while logged in to the shop answers it — an `account_shop_recognised` row means the id arrives, no row means it does not (`07` §8).
-- **Legal status of widget-authored text near consent.** The consent popup's benefit bullets are already a conflict with FP's rules (§11, §18), whatever the sign-off says. Still open: the capture caption about the double opt-in, which is written in the widget, not served. The backend root doc `docs/CONSENT_FLOW.md` (not the frontend-handoff file `CF`) has the section "Customer platform (2026-10) — open, not yet recorded as reviewed". Whether that widget string is covered by the sign-off is unknown.
+- **Shopify account type.** The theme has classic `templates/customers/*.json`, while the backend sign-in uses the Customer Account API (new customer accounts). It is not determinable from this repo whether a shop login and the chat's Shopify login share a session (i.e. whether a customer logged into the shop gets a one-click return at `/api/auth/shopify/login`). Without `logged_in_customer_id` every whoami answer is `signedIn: false` (ACCOUNT_CONTRACT §3a). Once the proxy exists, the manual check `/apps/chat/whoami?session=livecheck-manual` while logged in to the shop answers it — an `account_shop_recognised` row means the id arrives, no row means it does not (`07` §8).
+- **Legal status of widget-authored text near consent.** The consent popup's own benefit bullets break API_CONTRACT §0 rule 11 whatever the sign-off says (§11, §18 item 17; task 1). Still open: the capture caption about the double opt-in, which is written in the widget, not served. The backend doc `docs/CONSENT_FLOW.md` „Lawyer sign-off status“ → „Customer platform (2026-10) — open, not yet recorded as reviewed“ lists what is not yet recorded; whether that widget string is covered by the sign-off is unknown.
 - **Return in a different tab.** If Shopify's login flow ever finishes in a new tab (e.g. a mail-based login link), `ms-chat-login-sid` / `ms-chat-auth-return` (sessionStorage) are missing there. The widget then redeems with that tab's sid (localStorage, normally the same device sid). If that succeeds, the panel still opens, because the ok branch opens on `wantsOpen || auth.signedIn`. Only a failed redeem (`link_failed`), or a successful redeem whose `/api/auth/me` probe fails, leaves the panel closed; in the `link_failed` case the notice is then shown in a closed panel. Whether Shopify's hosted login can produce this was not verified.
-- **Server-side expiry of a locally signed-out sid.** Sign-out leaves the old sid linked on the server. How long it stays resolvable is backend behaviour and is not in the handoff docs.
-- **`/api/auth/link` 200 body.** The widget treats `signedIn: false` in a 200 body as refused. Whether the backend ever sends that is not documented (CA §2a lists only `200 {ok:true, signedIn:true}`).
-- **Runtime verification.** Nothing in this chapter was tested in a browser. All behaviour is from reading `main` at `8d0a0c4`. Whether live really runs the PR #73 files uploaded on 2026-10-04 (and not an editor-reverted copy) still needs one real sign-in on live (§16).
+- **Runtime verification.** Nothing in this chapter was tested in a browser. All behaviour is from reading `main` at `3e87341`, which differs from `8d0a0c4` only by the two `endSpeaking()` calls (§7.1, §18 item 1). Which build runs on live: `07` §6.4.

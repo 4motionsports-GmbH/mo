@@ -6,16 +6,17 @@ created automatically by the backend, kept **UNLISTED** (purchasable by direct
 link, hidden from storefront browsing), linked from a marketing email, and
 **deleted from Shopify when it ends** (timer at 0 or removed manually).
 
-This is the S10 build of the feasibility spike in
-[`archive/BUNDLES_SPIKE.md`](./archive/BUNDLES_SPIKE.md). The spike's **"Probe results (S9b,
-2026-06-13)"** section is the source of truth — every step below was verified
-live against the store, including the click-through-to-checkout.
+Every step below was verified live against the store on 2026-06-13, including
+the click-through to checkout (history of the feasibility spike and its probe:
+[`archive/BUNDLES_SPIKE.md`](./archive/BUNDLES_SPIKE.md)).
 
 > [!IMPORTANT]
 > ## Required Shopify scopes
 >
-> The bundle path needs **17** scopes — the **2** publication scopes below in
-> **addition** to the 15 the rest of the backend already holds:
+> The bundle path needs the scopes below — the two **publication** scopes on top
+> of the product scopes. The authoritative list of every scope the app needs is
+> `REQUIRED_SCOPES` in `scripts/register-shopify-webhooks.mjs`; `npm run
+> shopify:webhooks` prints which of them the installed app holds.
 >
 > | Scope                 | Needed for                                              |
 > | --------------------- | ------------------------------------------------------- |
@@ -24,11 +25,10 @@ live against the store, including the click-through-to-checkout.
 > | **`read_publications`**  | finding the Online Store publication (`publications`)   |
 > | **`write_publications`** | publishing the bundle (`publishablePublish`)            |
 >
-> The spike body (§1, §6, follow-up #3) claimed `write_products` alone was
-> enough. The **probe disproved that**: create + price + `UNLISTED` work with
-> `write_products`, but **publishing** returned `ACCESS_DENIED: read_publications`
-> until both publication scopes were granted. **Both the native and the fallback
-> path** publish via the same `publishablePublish`, so **both** need these scopes.
+> `write_products` alone is **not** enough: create + price + `UNLISTED` work
+> with it, but **publishing** returns `ACCESS_DENIED: read_publications` until
+> both publication scopes are granted. **Both the native and the fallback path**
+> publish via the same `publishablePublish`, so **both** need these scopes.
 >
 > Client-credentials tokens only carry the scopes granted **at install**, so the
 > app must be **(re)installed on the store after any scope change**. At runtime
@@ -142,11 +142,11 @@ cron every 15 min  /api/cron/expire-bundles  (vercel.json, */15)
                         (manual end whose delete failed; sets archived before 0060)
                         → productDelete → shopify_deleted_at = now   (25 per run)
 
-archiveBundleOffer(id)   manual end (S11 UI, replacing a campaign set) — same delete + expired
+archiveBundleOffer(id)   manual end („Entfernen“, removing a campaign set) — same delete + expired
+deleteDraftBundleOffer(id)  deletes a never-published draft (pending / failed) row; anything else → 409
 ```
 
-**Ended sets are DELETED from Shopify** (maintainer decision 2026-10, replacing
-the spike's §5 "archive, never delete"): an ended set has no further use in the
+**Ended sets are DELETED from Shopify** (maintainer decision 2026-10): an ended set has no further use in the
 Shopify admin and would otherwise pile up as archived products. Placed orders
 keep their own line-item snapshot (title, price, SKUs); for a native fixed
 bundle only the parent product is deleted, the component products are
@@ -201,52 +201,75 @@ business already runs with.
 
 ## Service & admin API
 
-- `createBundleOffer(customerId, components[], { bundlePriceOverride?, title?, expiryDays = 7, marketingSendId? })`
-  — `src/lib/bundle-offers.ts`. Returns `{ ok, offer, redirectUrl }` or a typed
-  refusal (`sold_out` with offenders, `unknown_products`, `bad_price`, …).
-- `archiveBundleOffer(id)` — manual end for the S11 UI (deletes the Shopify product, row → `expired`).
+- `createBundleOffer(customerId | null, components[], { bundlePriceOverride?, title?, expiryDays?, marketingSendId?, campaignContactId? })`
+  — `src/lib/bundle-offers.ts`. `customerId` may be `null` (ad-hoc offer);
+  `expiryDays` defaults to `BUNDLE_OFFER_EXPIRY_DAYS` (7). Returns
+  `{ ok, offer, redirectUrl }` or a typed refusal (`sold_out` with offenders,
+  `unknown_products`, `variant_not_found`, `bad_price`, `create_failed`, …).
+- `archiveBundleOffer(id)` — manual end of an **active** offer (deletes the Shopify product, row → `expired`).
+- `deleteDraftBundleOffer(id)` — deletes a never-published draft row (`pending` / `failed`; a Shopify product it already minted is deleted first). Any other status → `not_deletable`.
 - `expireBundleOffers()` — the cron sweep entry.
 
 Admin endpoints (behind the existing admin auth + CSRF via `guardAdminPost`):
 
 | Endpoint                        | Body                                                            |
 | ------------------------------- | -------------------------------------------------------------- |
-| `POST /api/admin/bundles/create`  | `{ customerId?, components:[{productId,variantId?,quantity?}], bundlePriceOverride?, title?, expiryDays?, marketingSendId? }` |
-| `POST /api/admin/bundles/archive` | `{ id }` → `{ offer }`                                         |
+| `POST /api/admin/bundles/create`  | `{ customerId?, components:[{productId,variantId?,quantity?}], bundlePriceOverride?, title?, expiryDays?, marketingSendId?, campaignContactId? }` → `{ offer, redirectUrl }`; refusals: 409 `sold_out` / `variant_not_found`, 400 `bad_price` / `unknown_products`, 502 `create_failed`, 503 `not_configured` |
+| `POST /api/admin/bundles/archive` | `{ id }` → `{ offer }` (active offers)                         |
+| `POST /api/admin/bundles/delete`  | `{ id }` → `{ offer }`; only `pending` / `failed` rows, otherwise 409 `not_deletable` |
 | `POST /api/admin/bundles/suggest` | `{ customerId }` → `{ title, components, componentsSum }` (AI) |
 | `POST /api/admin/catalog/search`  | `{ query }` → `{ products }` (name search for "add product")   |
 
-### Admin workflow (S11) — the marketing dashboard's "Kunden" tab
+### Admin workflow (S11) — the Kampagne card and the former Kunden path
 
-A **bundle block** sits above the free-text "special additions" field in the
-personalized-email flow (`CustomerProfileCard`):
+Sets are created in two places:
 
-1. **Bundle vorschlagen** (`/bundles/suggest`) — an AI pass over the customer's
+- **Kampagne card** (every campaign, including the 1:1 campaign
+  „Einzelansprache“) — the per-recipient set section
+  (`src/app/admin/kampagne/sections/BundleSection.tsx`, rendered by
+  `ReviewColumn.tsx`, actions in `kampagne/useCampaignActions.ts`) creates a set
+  from the card's recommended products (optional price override) with
+  `campaignContactId` and no customer id, and removes it via `/bundles/archive`;
+  either way the draft text is regenerated. The campaign mail's set block and
+  `discount_scope = set` are described in [`CAMPAIGNS.md`](./CAMPAIGNS.md).
+- **Kunden → customer detail → „Marketing“ → disclosure „Persönliche E-Mail
+  (bisheriger Weg) — offener Entwurf“** — shown only while the person has an
+  open draft of the former 1:1 marketing path (`marketing_sends`) and a sendable
+  consent. Inside it sits the disclosure „Set-Angebot (Bundle)“
+  (`src/app/admin/kunden/BundleComposer.tsx`, rendered by
+  `kunden/tabs/MarketingTab.tsx`):
+
+1. **„Set vorschlagen“** (`/bundles/suggest`) — an AI pass over the customer's
    "current understanding" profile, full conversation history and purchase
-   history proposes ONE bundle of **2–5** in-stock, **not-owned** products (sold
-   out is never offered — S10 refuses it anyway), each with a one-sentence
-   rationale. Structured output (`generateObject`); token usage recorded under
-   the `bundle_suggestions` call site (S6).
+   history proposes ONE set of **2–5** in-stock, **not-owned** products (sold
+   out is never offered — the create step refuses it anyway), each with a
+   one-sentence rationale. Structured output (`generateObject`); token usage
+   recorded under the `bundle_suggestions` call site.
 2. **Editable composition** — remove suggested products / add by name search
-   (`/catalog/search`) over the synced catalog, set the **count** of each item
-   (1–10×); the live component sum (unit price × count) is shown.
-3. **Price** (default = component sum; admin-set, validated `> 0`; a price above
-   the sum only **warns** — no "statt" line per S10's rule), **title** (default
-   "Dein persönliches Set"), **expiry days** (default 7).
-4. **Bundle erstellen** (`/bundles/create`) → the S10 service; creation errors
-   (sold-out offenders, lost-publication-scope) surface inline.
-5. **Email integration** — a created, still-active bundle is **attached** to the
-   send (`marketing_send_id`). The personalized email then carries a
+   (the shared catalog picker over `/catalog/search`, with a variant chooser;
+   sold-out products and variants cannot be added), set the **count** of each
+   item (1–10×); the live „Komponentensumme“ (unit price × count) is shown.
+3. **„Set-Preis (€)“** (default = component sum; must be valid and `> 0`; a
+   price above the sum only **warns** — no "statt" line), **„Titel“** (default
+   „Dein persönliches Set“), **„Gültig (Tage)“** (default 7).
+4. **„Set erstellen“** (`/bundles/create`) → the service above, with the open
+   draft's id (`marketingSendId`); creation errors (sold-out offenders, missing
+   publication scope) surface inline.
+5. **Email integration** — the draft's personalised email then carries a
    SPECIAL-OFFER block (title, the set's contents as a **bullet list with the
-   count of each item** — "2× Kettlebell – 16 kg" — the bundle price and — only when `bundle_price < components_sum` — a
-   PAngV "statt €<sum>" line) with a "Zum Angebot" CTA on the **tracked**
-   `/api/r/<token>` link. The drafting prompt is extended minimally so the prose
-   references the set; the rest of the send path (unsubscribe, suppression,
-   confirmed-consent, tracked links, discount minting) is **unchanged**.
-6. **Coexistence** — a send may carry a discount code, a bundle, both or neither.
-   The per-customer bundle list shows each offer's status (active / sent /
-   expired), a "Klick erfasst" signal when the tracked link reported a click, and
-   a manual **Entfernen** action (`/bundles/archive`, deletes the Shopify product).
+   count of each item** — "2× Kettlebell – 16 kg" — the bundle price and — only
+   when `bundle_price < components_sum` — a PAngV "statt €<sum>" line) with a
+   "Zum Angebot" CTA on the **tracked** `/api/r/<token>` link. The drafting
+   prompt is extended minimally so the prose references the set; the rest of
+   the send path (unsubscribe, suppression, confirmed-consent, tracked links,
+   discount minting) is **unchanged**.
+6. **Coexistence + list** — a send may carry a discount code, a set, both or
+   neither. The list „Sets für <e-mail>“ shows each offer's status („Wird
+   erstellt…“, „Aktiv“, „Versendet“, „Abgelaufen“, „Fehlgeschlagen“), „Klick
+   erfasst“ when the tracked link reported a click, „Angebots-Link“ for an
+   active offer, **„Entfernen“** for an active offer (`/bundles/archive`,
+   deletes the Shopify product) and **„Löschen“** for a `pending` / `failed`
+   draft (`/bundles/delete`). Both ask for confirmation.
 
 ---
 
@@ -263,7 +286,7 @@ items with the same name are merged and their counts added):
   `bundleDescriptionHtml`), written on both creation paths, so the set's
   product page lists the contents. A generated title carries the count where it
   is above one ("Set: 2× A + B"). Checkout shows Shopify's own line items.
-- **Admin** — the per-customer set list, the Kampagne set row and its tooltip.
+- **Admin** — the Kampagne set row and its tooltip, and the set list of the former Kunden path.
 
 ---
 
@@ -286,8 +309,9 @@ window.
 The probe confirmed the path end-to-end on 2026-06-13. To re-verify after deploy:
 
 1. **Scopes** — `POST /api/admin/bundles/create` with two in-stock components;
-   if it 503s with a scope message, grant `read_publications` +
-   `write_publications` and **reinstall** the app.
+   if it fails with 502 `create_failed` and a message naming
+   `read_publications` / `write_publications`, grant both and **reinstall** the
+   app (`npm run shopify:webhooks` lists the granted scopes).
 2. **Permalink (incognito)** — open the returned `cart_url` (or the
    `redirectUrl` `/api/r/<token>`) in a private window → it adds the bundle and
    reaches Shopify checkout.

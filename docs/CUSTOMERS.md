@@ -6,10 +6,13 @@ every person who reached Mo has one; since `0061` (the customer mirror)
 **every Shopify customer is a `customers` row too**, whether or not they ever
 chatted. The customer is the central entity: consent, orders, facts, profile,
 conversations, mails, letters and Eingang items all hang off it. This
-documents the identity model, the Shopify mirror, the facts, the profile tiers
-and objections, erasure, and the GDPR sign-off. The one marketing consent is in
+documents the identity model, the Shopify mirror and its webhooks, the facts,
+the profile tiers and objections, the in-chat memory, erasure with Shopify, and
+the design decisions of the customer platform. The one marketing consent is in
 [`CONSENT_FLOW.md`](./CONSENT_FLOW.md); the admin screens (Kunden, Eingang,
-Kampagnen) in [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md).
+Kampagnen) in [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md); column detail in
+[`DATABASE.md`](./DATABASE.md); windows and the erasure inventory in
+[`DATA_RETENTION.md`](./DATA_RETENTION.md).
 
 ## Identity model
 
@@ -22,8 +25,18 @@ Kampagnen) in [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md).
   never enriched. Sessions without an e-mail or sign-in stay anonymous and
   unlinked.
 - **One `customers` row per person, whatever the channel.** A row is created by
-  the Shopify mirror (below), by an e-mail capture in the widget (capture form,
-  chat consent gate), or by a Customer Account sign-in.
+  the Shopify mirror (below), by an e-mail capture (capture form, signed-in
+  opt-in, the chat opt-in route — "Linking rule"), by a Customer Account
+  sign-in, or as an Interessent without consent for someone who wrote to the
+  shop (contact form, „Als Interessent anlegen“ in the Eingang —
+  `findOrCreateProspect`).
+- **How a session is linked** (`customer_session_links`): a typed e-mail writes
+  `link_kind = 'email'` and never counts as signed in; a sign-in
+  (`customer_account`, `app_proxy`) links a session only when that widget
+  redeems a one-time code (`customer_link_grants`, migration `0073`), never a
+  session id taken from a URL; logout ends every signed-in link of the
+  customer. Details: [`DATABASE.md`](./DATABASE.md) „The customer entity“ and
+  [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §4 „The signed-in resolver“.
 - `customers.source` records where the person first came from (migration
   `0061`):
 
@@ -32,18 +45,20 @@ Kampagnen) in [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md).
   | `shopify` | Already a shop customer when Mo first saw them (mirror, sign-in). The legacy values `shopify_account` (sign-in) and `kampagne` (old newsletter sync) were folded into it. |
   | `chat` | First seen in Mo (e-mail capture). A `chat` person who later buys keeps `chat` — the basis for "über Mo gewonnen". |
 
-  The legacy values stay allowed by the CHECK constraint until the
-  legacy-drop migration.
+  The legacy values stay allowed by the CHECK constraint (the legacy-drop
+  migration is not built).
 - **What the admin shows** (derived, not stored):
 
   | Label | Rule |
   | --- | --- |
   | Shopify-Kunde | Has a `shopify_customer_id`. |
-  | **Interessent** | A Mo contact **without** a Shopify account: chatted with Mo and left an e-mail, no Shopify id (Kunden filter "Interessenten"). |
+  | **Interessent** | A Mo contact **without** a Shopify account: left an e-mail with Mo or wrote to the shop, no Shopify id (Kunden filter "Interessenten"). |
   | Mit Mo gesprochen | Has at least one conversation (Shopify-Kunde or Interessent). |
 
-  `identity_tier` (1 anonymous / 2 e-mail / 3 signed-in) remains a **session**
-  concept for the widget ([`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md)).
+  `customers.identity_tier` (1 anonymous / 2 e-mail / 3 signed-in) records the
+  strongest identification seen and never goes down; whether a **session**
+  counts as signed in is decided per session by its link
+  ([`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §1).
 - **Two rows, one person.** When Shopify reports an e-mail change onto an
   address an Interessent already uses, or the import finds a Shopify customer
   and an e-mail-only row for the same person, `mergeCustomers`
@@ -64,9 +79,9 @@ created date — no addresses, no phone numbers) and their orders:
 
 | Path | When | Gate |
 | --- | --- | --- |
-| Bulk import (Shopify bulk operation, resumable step loop) | Einstellungen → Shopify-Abgleich ("Kundenstamm übernehmen"); `/api/cron/shopify-sync` (every 5 min) continues a started import | `SHOPIFY_CUSTOMER_SYNC_ENABLED` |
-| Webhooks `customers/create`, `customers/update`, `customers_email_marketing_consent/update`, `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled` | live | `SHOPIFY_CUSTOMER_SYNC_ENABLED` — while off they are acknowledged without writing (`ignored:sync-off` / `ledger:sync-off`; the order attribution of `orders/create|paid` keeps working). `customers/delete` and the compliance topics are always handled |
-| Reconciliation `/api/cron/shopify-reconcile` | nightly 01:45 UTC: customers and orders changed since the last run, then the facts | `SHOPIFY_CUSTOMER_SYNC_ENABLED` (the facts run always) |
+| Bulk import (Shopify bulk operation, resumable step loop) | Einstellungen → Shopify-Abgleich („Kundenstamm übernehmen“); `/api/cron/shopify-sync` (every 5 min) continues a started import | `SHOPIFY_CUSTOMER_SYNC_ENABLED` (default `false`) |
+| Webhooks (customer, consent and order topics — see "Shopify webhook topics" below) | live | `SHOPIFY_CUSTOMER_SYNC_ENABLED` for the mirror and ledger writes; erasure and compliance topics are never gated |
+| Reconciliation `/api/cron/shopify-reconcile` | nightly 01:45 UTC: customers and orders changed since the last complete run, then the facts | `SHOPIFY_CUSTOMER_SYNC_ENABLED` (the facts run always) |
 
 Rules of the one write path (`upsertMirrorCustomers`):
 
@@ -82,24 +97,55 @@ Rules of the one write path (`upsertMirrorCustomers`):
    consent").
 
 **Order ledger** (`customer_orders`, migration `0062`): every Shopify order of a
-mirrored customer, minimised — ids, dates, statuses, money, discount codes and
-line items (handle, variant, title, quantity, unit price). No addresses,
-payment data, notes or contact fields. Rows live as long as the customer
+mirrored customer, minimised — ids, dates, statuses, money, discount codes,
+line items (handle, variant, title, quantity, unit price) and the date of the
+last notable refund (`last_refund_at`, `0070`). No addresses, payment data,
+notes or contact fields. Rows live as long as the customer
 (`ON DELETE CASCADE`). The pseudonymous attribution facts in `mo_orders`
-(`ORDER_ATTRIBUTION.md`) are separate.
+([`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)) are separate.
 
-**A Mo-only subscriber becomes a Shopify customer.** When an Interessent
-confirms the DOI (or the operator confirms the Erstabgleich), the outbox
-creates a Shopify customer with that consent — one subscriber list — while
-`SHOPIFY_CONSENT_WRITEBACK=true` ([`CONSENT_FLOW.md`](./CONSENT_FLOW.md)).
+Mo-only subscribers become Shopify customers through the outbox (D-3 below;
+mechanics and the Erstabgleich: [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "The one
+consent"). The former Shopify newsletter sync into `campaign_contacts` is
+retired: [`CAMPAIGNS.md`](./CAMPAIGNS.md) §1, history in
+[`archive/CAMPAIGNS_HISTORY_2026-10.md`](./archive/CAMPAIGNS_HISTORY_2026-10.md).
 
-> ⚠️ **Retired** (replaced by the mirror + campaign audiences over
-> `customer_overview`): `src/lib/campaign-sync.ts`, `campaign-sync-core.mjs`,
-> `/api/cron/sync-campaign-audience`, `POST /api/admin/campaign/sync`,
-> `src/lib/shopify-customers.ts` (the newsletter-subscriber pull) and the
-> audience link `linkCampaignContactsToCustomers`. Shopify newsletter
-> subscribers are no longer synced into `campaign_contacts`; their consent is
-> the one consent on `customers`.
+### Shopify webhook topics (`POST /api/webhooks/shopify`)
+
+Shopify → backend only; the widget never calls this route
+([`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §11.3 points here). The
+`X-Shopify-Hmac-SHA256` signature is verified over the **raw body before it is
+parsed** (`verifyShopifyWebhook`, `src/lib/shopify-webhook.mjs`) against
+`SHOPIFY_WEBHOOK_SECRET` (subscriptions made in the Shopify admin) or
+`SHOPIFY_CLIENT_SECRET` (subscriptions made by the app, including the
+compliance topics). No secret configured → `503`; bad or missing signature →
+`401`, body never used. Registration (script, compliance topics, signing keys):
+[`CATALOG_SYNC.md`](./CATALOG_SYNC.md) "Shopify-side registration (setup step)";
+the catalog path (targeted refresh, backpressure): [`CATALOG_SYNC.md`](./CATALOG_SYNC.md)
+"Real-time stock webhook".
+
+| Topic (`X-Shopify-Topic`) | Effect |
+| --- | --- |
+| `products/*`, `inventory_levels/*` | Targeted single-product catalog refresh ([`CATALOG_SYNC.md`](./CATALOG_SYNC.md)). |
+| `customers/create`, `customers/update` | Upsert the customer mirror; the embedded e-mail-marketing consent goes through the consent resolver. |
+| `customers_email_marketing_consent/update` | Consent resolver only (Shopify-side subscribe / unsubscribe). Unknown customers are left to the reconciliation. |
+| `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled` | Order ledger (`customer_orders`). `orders/create` and `orders/paid` also feed the pseudonymous order attribution (`mo_orders`, [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)); a marked order that cannot be attributed is counted on `orders/create` as the session-less event `mo_order_marker_unresolved`. Other `orders/*` topics are acknowledged and ignored. |
+| `customers/delete`, `customers/redact` | The one erasure in Mo (trigger `shopify`: Shopify is not asked again). More than `SHOPIFY_ERASURE_ALERT_PER_HOUR` (default 20, `0` off) in an hour raises an alert and an Eingang item. |
+| `customers/data_request` | An Eingang item `datenauskunft` (deadline 30 days), see "Retention / erasure". |
+| `shop/redact` | Alert + Eingang item only — never an automatic mass deletion (procedure below). |
+| `bulk_operations/finish` | Acknowledged; the import's next step polls the bulk operation itself. |
+
+The compliance topics (`customers/redact`, `customers/data_request`,
+`shop/redact`) arrive only once the app configuration subscribes them — see
+"Retention / erasure". While `SHOPIFY_CUSTOMER_SYNC_ENABLED` is off, the
+customer, consent and order-ledger topics are acknowledged without writing
+(`ignored:sync-off` / `ledger:sync-off`); the attribution of
+`orders/create|paid` and the erasure and compliance topics are not gated. All
+customer, consent, order, erasure, compliance and bulk topics are
+de-duplicated by `X-Shopify-Webhook-Id` (a Shopify retry answers
+`{ "ok": true, "duplicate": true }`). A processing failure answers `500` and
+forgets the delivery id, so Shopify's retry is applied. The nightly
+`/api/cron/shopify-reconcile` catches whatever a webhook missed.
 
 ## Linking rule (e-mail capture)
 
@@ -110,12 +156,13 @@ On every e-mail capture (`/api/capture-email`, `/api/chat-marketing-opt-in`,
 1. **Find-or-create** the customer for the normalised email. An existing
    customer — including a mirrored Shopify customer with that address — means a
    returning visit: `last_seen_at` is bumped, `first_seen_at` stays.
-2. **Attach the current conversation** (`conversations.customer_id`) and the
-   session (`customer_session_links`).
+2. **Attach** the capture (`email_captures.customer_id`), the current
+   conversation (`conversations.customer_id`) and the session
+   (`customer_session_links`, `link_kind = 'email'`).
 3. **Mirror the transactional consent** (the summary request) from
-   `email_captures`. The marketing consent is **not** copied from the capture
-   any more: the opt-in is reported to the one consent (`src/lib/consent-flows.ts`
-   — `pending` until the DOI click), and `email_captures` stays the Art. 7
+   `email_captures`. The marketing consent is **not** copied from the capture:
+   the opt-in is reported to the one consent (`src/lib/consent-flows.ts` —
+   `pending` until the DOI click), and `email_captures` stays the Art. 7
    evidence.
 
 Linking is best-effort: a failure never blocks the capture/summary/DOI flow.
@@ -147,11 +194,12 @@ pass (`generateCustomerProfile` in `src/lib/customer-profile.ts`):
 | `profile_depth` | `voll` or `kauf` — which tier wrote it (below). |
 | `profile_checked_at` | When upkeep last looked at the customer (also set when there was nothing to profile). |
 
-**Profile tiers** ("Profiltiefe", migration `0061`):
+**Profile tiers** ("Profiltiefe", migration `0061`; the Kunden badge reads
+„Vollprofil“ / „Kaufprofil“):
 
 | Tier | Who | Inputs | Model | Nightly batch |
 | --- | --- | --- | --- | --- |
-| **Vollprofil** | People with a Mo chat or correspondence | Chat transcripts, purchases, correspondence, campaign history | deep tier | `CUSTOMER_PROFILE_BATCH` (default 30, `0` off) |
+| **Vollprofil** | People with a Mo chat or correspondence | Chat transcripts, purchases, correspondence, campaign history | deep tier ([`AI_MODELS.md`](./AI_MODELS.md)) | `CUSTOMER_PROFILE_BATCH` (default 30, `0` off) |
 | **Kaufprofil** | Shopify customers with orders but no chat | Purchases + campaign reactions | writer tier (cheaper) | `CUSTOMER_PROFILE_LIGHT_BATCH` (default `0` = off) |
 | (no AI profile) | Everyone else, and anyone the scope or an objection excludes | the facts above only | none | — |
 
@@ -162,7 +210,7 @@ in `src/lib/customer-orders-store.ts`), else from the cached per-e-mail
 **Who gets a profile** (`mayBuildAiProfile` in `src/lib/platform-flags.mjs`):
 `CUSTOMER_AI_PROFILE_SCOPE` = `consented` (default — only people whose one
 consent is `subscribed`) or `all` (everyone). The maintainer decided `all` for
-this shop (lawyer to confirm, `CONSENT_FLOW.md` sign-off list; the code
+this shop (D-1; lawyer to confirm, `CONSENT_FLOW.md` sign-off list; the code
 default stays `consented`): profiles of people without consent are built but
 **flagged** in Kunden ("Keine Einwilligung für E-Mail-Werbung — nur ansehen"),
 and every marketing action on them stays blocked by the send gates.
@@ -172,58 +220,58 @@ us (`POST /api/admin/customers/objection`, `setCustomerObjection`):
 
 | Column | Effect | Where |
 | --- | --- | --- |
-| `profile_objection_at` | The stored profile is deleted at once and none is built or used again — it always wins over the scope. | Kunden → Überblick ("Widerspruch gegen Profilbildung") |
+| `profile_objection_at` | The stored profile is deleted at once and none is built or used again — it always wins over the scope. The `mo-` insight tags in Shopify are removed too (D-11). | Kunden → Überblick ("Widerspruch gegen Profilbildung") |
 | `postal_objection_at` | No advertising letters; the letter draft is cleared. Campaign letters of the person are excluded at the next audience refresh and refused at send (`CAMPAIGNS.md` §8); the stored address is kept. | Kunden → Brief |
 
 **One path writes it:** `regenerateCustomerProfile(customerId)` — used by the
-nightly upkeep, the "Neu generieren" button (`POST /api/admin/customers/profile`)
-and the Analyse report. The profile is regenerated fresh each time, never
-merged mechanically — contradictions resolve toward the newer statement.
+nightly upkeep, the Kunden button („Kundenverständnis generieren“ / „Neu
+generieren“, `POST /api/admin/customers/profile`) and the Analyse report. The
+profile is regenerated fresh each time, never merged mechanically —
+contradictions resolve toward the newer statement.
 
-**Kept current automatically.** `/api/cron/refresh-customers` (daily 02:00)
+**Kept current automatically.** `/api/cron/refresh-customers` (daily 02:00 UTC)
 first refreshes the per-e-mail Shopify data of people the mirror does not
 cover, then runs `runProfileUpkeep` per tier: customers whose last activity
 (chat, correspondence, campaign send, order) is newer than their profile — or
 who have never been checked — are regenerated within the batch sizes above.
 Customers with nothing to profile are only marked checked, so they cost
-nothing. For the first fill run `npm run profiles:backfill` (loops the
-deployed cron with `?only=profiles` until nothing is left).
+nothing. To fill many profiles at once run `npm run profiles:backfill` (loops
+the deployed cron with `?only=profiles` until nothing is left).
 
 **Who reads it** (`profileForPrompt` / `profileFactsBlock` in the core,
 `customerProfileForPrompt` in TS):
 
 | Component | Use |
 | --- | --- |
-| Live chat (`customer-memory.ts` → system prompt) | "Profil auf einen Blick" block + readable profile for a re-identified, consented customer. |
+| Live chat (`customer-memory.ts` → system prompt) | "Profil auf einen Blick" block + readable profile for a re-identified customer (gate: "Customer memory in the live chat"). |
 | Kampagne drafts (`campaign-draft.ts`) | "Kundenverständnis" section: the text speaks to the person's goals and level instead of generic purchase lists. |
 | Kampagne recommendations (`campaign-recommendations.ts`) | Similarity picks are ranked 60 % purchase + 40 % profile similarity; winback picks and contacts without a purchase signal are ranked by the profile alone (accessory picks unchanged). |
 | Summary mail (`summary-email.ts`) | Returning customers' mailed summary builds on the profile. |
 | Marketing / Kampagne hero images (`email-hero.ts`) | Profile as art-direction context. |
 | Bundle suggestions, letter drafts, marketing drafts | `profileSummary` in the generator prompt. |
+| Eingang suggestions (`inbox-suggest.ts`), e-mail reply drafts (`inbox-mail.ts`), „Frag Mo“ (`customer-ask.ts`) | Profile as context; left out while a profile objection stands. |
 | Admin | Kunden → Überblick (facts + profile text, depth badge), persona filter/badges. |
 
 `purchase_summary` (+`_updated_at`) stays the per-e-mail Shopify order-history
 cache (`fetchOrderHistoryByEmail`, or the Customer Account API for signed-in
-customers) for people the mirror does not cover; `refresh-customers` no longer
-refreshes it for mirrored customers.
+customers) for people the mirror does not cover; `refresh-customers` does not
+refresh it for mirrored customers.
 
-## Welcome discount (historical, recorded here) — ⚠️ feature retired
+## Welcome discount (retired)
 
-The automatic welcome-discount feature was **retired pre-launch** (client
-decision: too exploitable via alias emails — codes are issued manually via the
-dashboard instead). The minting/issuance code and the `WELCOME_DISCOUNT_*` env
-flags are gone; the migration `0009_welcome_discount.sql` columns
+The automatic welcome discount was retired before launch (client decision: too
+exploitable via alias e-mails); no code mints welcome codes and the
+`WELCOME_DISCOUNT_*` flags are gone. The migration `0009` columns
 (`welcome_code`, `welcome_code_gid`, `welcome_code_expires_at`,
-`welcome_issued_at`) are **retained as READ-ONLY historical data** — never
-written again — and back the dashboard's historical view of codes that were
-issued while the feature was live. GDPR erasure of the customer row removes
-this historical welcome record with it (the suppression list keeps honouring
-opt-outs as before).
+`welcome_issued_at`) stay on `customers`, read-only and never written; the only
+reader is the chat memory (`welcome_issued_at` set → Mo is told to promise no
+welcome discount). No admin view shows them. They go with the customer row on
+erasure. Discount codes today: [`DISCOUNTS.md`](./DISCOUNTS.md).
 
 ## Customer memory in the live chat (in-session re-identification ONLY)
 
-Since the customer-memory feature, Mo can use a returning customer's history
-to tailor the **live consultation** — under a strict privacy gate
+Mo can use a returning customer's history to tailor the **live consultation**
+— under a strict privacy gate
 ([`src/lib/customer-memory.ts`](../src/lib/customer-memory.ts)):
 
 > **A returning customer opens a new chat as ANONYMOUS.** The localStorage
@@ -231,77 +279,87 @@ to tailor the **live consultation** — under a strict privacy gate
 > device it can carry someone else's past capture. So no past history is ever
 > surfaced at chat start, and the session id alone never unlocks memory.
 
-Memory is injected into the system prompt only when **both** hold:
+For an e-mail-identified (tier-2) customer, memory is injected into the system
+prompt only when **both** hold:
 
 1. **In-session claim** — the widget attaches `customer.email` to `/api/chat`
-   only after a successful `/api/capture-email` (or chat-gate opt-in) **in the
-   current chat session**, keeping that state in memory only
-   (`API_CONTRACT.md` §2).
-2. **Server-side verification** — `resolveCustomerMemory()` checks the email's
-   consent record was captured **from this very session id**
+   only after a successful `/api/capture-email` (or `/api/chat-marketing-opt-in`)
+   **in the current chat session**, keeping that state in memory only
+   ([`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §2).
+2. **Server-side verification** — `resolveCustomerMemory()` checks that a
+   capture of this e-mail was recorded **from this very session id**
    (`wasEmailCapturedFromSession`, fail-closed). A forged request body naming
-   someone else's address resolves nothing.
+   someone else's address resolves nothing. The check is the capture itself
+   (a summary-only capture counts); there is no separate marketing-consent
+   check on this path.
 
 What gets injected (compact, never raw transcripts): the structured profile
 facts ("Profil auf einen Blick"), the cached `profile_summary` ("current
-understanding"), owned items + quantities from the
-cached `purchase_summary`, the prior-consultation count, and first-seen date.
-The prompt block instructs Mo to acknowledge the return lightly (once, warm,
-never exhaustive), not to re-recommend owned products (suggest complements
-instead), to let today's statements override the memory, and that **no
-existing rule is weakened** — sold-out, checkout, B2B, and tool behaviour all
-apply unchanged.
+understanding"), owned items + quantities (from `loadPurchaseHistory`: the
+order ledger for mirrored people, else the cached `purchase_summary`), the
+prior-consultation count, and first-seen date. The prompt block instructs Mo
+to acknowledge the return lightly (once, warm, never exhaustive), not to
+re-recommend owned products (suggest complements instead), to let today's
+statements override the memory, and that **no existing rule is weakened** —
+sold-out, checkout, B2B, and tool behaviour all apply unchanged.
 
 A **new email** (customer just created, no prior conversations, no cached
 summaries) resolves to no memory — the chat behaves exactly as before. Another
 customer's data is unreachable by construction: the lookup is keyed strictly
 by the email the user just provided in this session. Signed-in (tier-3)
-customers are re-identified by their authenticated session instead
-([`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §8).
+customers are re-identified by their live authenticated session instead, and
+their history, profile and address are used only when `canPersonaliseSignedIn`
+holds (the one consent `subscribed`; otherwise the greeting by name only —
+[`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §8).
 
 ## Retention / erasure
 
 **One erasure path for every way to delete:** `erasePerson()` in
-[`src/lib/customer-erasure.ts`](../src/lib/customer-erasure.ts). It is used by
+[`src/lib/customer-erasure.ts`](../src/lib/customer-erasure.ts) — the widget
+button „Meine Daten löschen“ (`/api/account/erase`), the mail-footer link
+„Daten löschen“ (`/api/erase-data`: GET shows a confirmation page, POST
+erases), the admin „Löschen“ in Kunden and Kampagne
+(`POST /api/admin/customers/erase`), and the Shopify webhooks
+`customers/delete` / `customers/redact` (trigger `shopify`). It removes the
+person in **one transaction**. The entry points in detail, the table-by-table
+inventory (deleted, kept de-identified, retained on purpose) and every window
+are in [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Complete erasure“ and
+„Kundenstamm“. The per-table plan is `ERASURE_PLAN` in
+`src/lib/customer-erasure-core.mjs`; its test parses every migration and
+**fails when a table with personal data has no erasure decision**.
 
-- the **widget button** "Meine Daten löschen" (signed-in customer,
-  `/api/account/erase` → `eraseSignedInCustomer`),
-- the **mail-footer link** "Daten löschen" in every marketing and Kampagne mail
-  (`/api/erase-data?token=…`: GET shows a confirmation page, POST erases — so
-  link scanners never delete anything; the token is purpose-bound and cannot
-  be swapped with an unsubscribe token),
-- the admin **"Löschen"** button in Kunden (customer) and Kampagne (contact)
-  (`POST /api/admin/customers/erase`, confirmed, audit-logged as
-  `customer.erase` with the numeric id only),
-- **Shopify**: the webhooks `customers/redact` and `customers/delete` (trigger
-  `shopify` — Shopify is not asked again).
+For the customer entity this means: Mo's copy of the person's Shopify orders
+(`customer_orders`) is deleted with them (cascade, plus an explicit delete by
+Shopify id for rows not yet linked), while `mo_orders` keeps its pseudonymous
+rows without session id and token. The address goes on the **suppression list
+with reason `erasure`**: it is never mailed again, no import re-creates the
+person from that e-mail (mirror rule 1), and only a newer consent act lifts the
+block ([`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "Erasure").
 
-It resolves every address, Kampagne contact, conversation and session of the
-person and removes them in **one transaction**: customer + profile, all chats
-(all devices), consent records and the consent history (`consent_events`),
-marketing + Kampagne drafts and sends, the Kampagne contacts, correspondence,
-letters (posted letters and campaign letters, `campaign_letters`), feedback, KPI events, attribution tokens, sign-in state, usage rows,
-Eingang items, the facts and the person's section in stored Analyse reports.
-**Mo's copy of the person's Shopify orders (`customer_orders`) is deleted with
-them** (cascade, plus an explicit delete by Shopify id for rows not yet linked);
-only the pseudonymous attribution rows in `mo_orders` stay for the revenue
-KPIs, with session id and token removed. Open Shopify outbox rows for the
-person are dropped. The hero images in Blob storage are deleted afterwards.
-The address is put on the **suppression list with reason `erasure`**, so it is
-never mailed again and no import re-creates it from Shopify.
-
-**Bidirectional with Shopify** (migration `0065`):
+**Bidirectional with Shopify** (migration `0065`, decision D-5):
 
 | Started in | Mo | Shopify |
 | --- | --- | --- |
-| Mo (widget, mail link, admin) | deletes at once; writes an **erasure tombstone** for the Shopify id (no import, reconciliation or webhook re-creates the person) | one `data_erasure` outbox row: consent off, then `customerRequestDataErasure` — sent only while `SHOPIFY_ERASURE_SYNC=true` (default `false`; the row waits). Shopify keeps its own orders as long as the law requires. |
-| Shopify (`customers/redact`, `customers/delete`) | the same deletion; tombstone confirmed | already erasing — not asked again |
-| Shopify `customers/data_request` | an Eingang item `datenauskunft` (deadline 30 days); answer with the data export | — |
+| Mo (widget, mail link, admin) | deletes at once; for a person with a Shopify id writes an **erasure tombstone** (no import, reconciliation or webhook re-creates the person) | two outbox rows: `consent_update` → `unsubscribed`, sent while `SHOPIFY_CONSENT_WRITEBACK=true`; `data_erasure` (consent off again, then `customerRequestDataErasure`), sent while `SHOPIFY_ERASURE_SYNC=true`. Both switches default to `false`; a row whose switch is off waits. Shopify keeps its own orders as long as the law requires. |
+| Shopify (`customers/delete`, `customers/redact`) | the same deletion; the tombstone is stamped confirmed (`shopify_confirmed_at`) | already erasing — not asked again |
+| Shopify `customers/data_request` | an Eingang item „Datenauskunft angefordert (Shopify)“ (`datenauskunft`, deadline 30 days); its action „Daten bereitstellen“ opens the person in Kunden | — |
 
 A person without a Shopify id (an Interessent) is erased in Mo only. More than
 `SHOPIFY_ERASURE_ALERT_PER_HOUR` (default 20) Shopify-started erasures in an
-hour raise an error report and an Eingang item — processing continues. The
-erasure tombstones currently have no purge step.
+hour raise an error report and an Eingang item — the erasures are carried out
+regardless. Confirmed tombstones are removed `ERASURE_TOMBSTONE_RETENTION_DAYS`
+(default 30) after Shopify's confirmation; unconfirmed ones stay
+([`DATA_RETENTION.md`](./DATA_RETENTION.md) step 9).
+
+**Compliance topics.** `customers/redact`, `customers/data_request` and
+`shop/redact` reach Mo only once the app configuration subscribes them; the
+registration script cannot ([`CATALOG_SYNC.md`](./CATALOG_SYNC.md) "Compliance
+topics"; status: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) 5.2 / 5.4).
+`customers/delete` is registered by the script. **Manual rule while the
+compliance topics are not configured:** delete a person in Shopify with
+„Delete customer“ (Mo follows through `customers/delete`); after Shopify's
+„Erase personal data“, also „Löschen“ the person in Mo → Kunden; for a data
+request, also look the person up in Mo → Kunden.
 
 **`shop/redact`** (Shopify requests deletion of all shop data; it arrives
 about 48 hours after the app is uninstalled) **never** triggers an automatic
@@ -315,79 +373,88 @@ shop/redact" (priority 100) that points here. Manual procedure:
    deleting the shop's data in Mo. There is deliberately no automatic or
    one-click path for this.
 
-The table-by-table plan is `ERASURE_PLAN` in
-`src/lib/customer-erasure-core.mjs`. Its test parses every migration and
-**fails when a table with personal data has no erasure decision** — a new
-table cannot silently escape deletion.
-
-The customer's data export (`/api/account/export`) contains the profile,
-consent records and the consent history, conversations, correspondence,
-letters, marketing sends, bundle offers, feedback, the order ledger, the facts,
-campaign participation, sends and letters (also unsent letter drafts, 0074), and the suppression
-status.
+**Data export.** A signed-in customer's `/api/account/export`
+([`frontend/ACCOUNT_CONTRACT.md`](./frontend/ACCOUNT_CONTRACT.md) §7.7) contains
+the profile, consent records and the consent history, conversations,
+correspondence, letters, marketing sends, bundle offers, feedback, the order
+ledger, the facts, campaign participation, sends and letters (also unsent
+letter drafts, 0074), and the suppression status. Eingang items are not part of
+it. There is no admin-side export: a Shopify data request is answered from
+Kunden.
 
 **Retention:** the job ([`src/lib/retention.ts`](../src/lib/retention.ts))
-purges opted-out customer rows after the capture grace period and inactive
-customer rows whose one consent is neither `subscribed` nor `pending` — but
-**never a Shopify customer** (a row with a `shopify_customer_id`: the mirror
-follows Shopify, and Shopify's own deletion removes them via
-`customers/redact`). See [`DATA_RETENTION.md`](./DATA_RETENTION.md).
+purges opted-out customer rows after the capture grace period (step 5) and
+inactive customer rows whose one consent is neither `subscribed` nor `pending`
+(step 5e) — but **never a Shopify customer** (a row with a
+`shopify_customer_id`: the mirror follows Shopify, and only the complete
+erasure removes it). Windows: [`DATA_RETENTION.md`](./DATA_RETENTION.md).
 
 ## ✅ GDPR: profile building — LAWYER-APPROVED
 
-> **Lawyer-approved (June 2026); `CONSENT_COPY_LAWYER_APPROVED = true`.**
-> Personalisation is live. Building a **durable customer profile from past chat
-> interactions and Shopify purchase history** was reviewed against the consent
-> copy + privacy policy and signed off. Recorded here for the audit trail:
->
-> - [x] The **privacy policy** explicitly covers "profile building from past
->       interactions and purchases" (purpose, lawful basis, storage duration,
->       right to object/erasure).
-> - [x] The **marketing consent checkbox text**
->       (`MARKETING_CHECKBOX_LABEL` in `src/lib/consent-copy.ts`) covers
->       personalisation based on **past** conversations and **purchase history**,
->       not only the current chat.
-> - [x] Linking the Shopify **order history** (a separate data source) into the
->       chat-derived profile is disclosed.
-> - [x] Whether the regenerated profile constitutes **profiling** under
->       Art. 22 / requires a DPIA entry — assessed during the review.
-> - [x] **Customer memory in the live chat** (section above): prior chat
->       interactions + purchase history shape the **live consultation** for a
->       re-identified returning customer. This personalisation purpose is within
->       the lawyer-approved consent scope / privacy policy.
-> - [x] **Signed-in (tier-3) customers** (see
->       [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §8): for a signed-in
->       customer the **name, addresses and full order history** are pulled from
->       the Shopify **Customer Account API** and feed the profile + live chat via
->       this same mechanism. Re-identification is the authenticated session, but
->       the **personalisation consent requirement is unchanged**: history /
->       profile / address are gated on `canPersonaliseSignedIn`
->       (`CONSENT_COPY_LAWYER_APPROVED` **and** the one consent —
->       `marketing_status = 'confirmed'`, i.e. `email_consent_state =
->       'subscribed'`, given in Mo or in the shop),
->       so a non-consented signed-in user gets **only** the authenticated
->       greeting-by-name and no personalised data. This gate matches the
->       intended lawful basis.
->
-> With the sign-off in place, the Kunden tab's profile generation AND the
-> in-chat customer memory (tier 2 **and** tier 3) are live for real users
-> (`CONSENT_COPY_LAWYER_APPROVED` in `src/lib/consent-copy.ts` is `true`). The
-> runtime gate still fail-closes per user: no personalised chat data unless that
-> user's one consent is `subscribed`. Cross-referenced in the lawyer checklist
-> in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
->
-> **Open (2026-10, not yet recorded as reviewed):** AI profiles for customers
-> **without** consent (`CUSTOMER_AI_PROFILE_SCOPE=all`, Art. 6(1)(f) with the
-> right to object above), the mirror of all Shopify customers with their order
-> ledger, and the bidirectional consent and erasure — listed in
-> [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "Customer platform (2026-10)".
+`CONSENT_COPY_LAWYER_APPROVED = true` (`src/lib/consent-copy.ts`; the German
+copy was approved in June 2026): building a durable profile from past chats and
+Shopify purchases, the in-chat customer memory (tier 2 and tier 3) and the
+signed-in personalisation were reviewed against the consent copy and the
+privacy policy. What the code enforces per person:
+
+- **Profiles** — `mayBuildAiProfile` (scope + Art. 21 objection, "Who gets a
+  profile" above).
+- **Tier-2 memory** — the in-session capture check ("Customer memory in the
+  live chat").
+- **Tier 3** — history, profile and address only when `canPersonaliseSignedIn`
+  (`src/lib/customer-account-data.mjs`) holds: `CONSENT_COPY_LAWYER_APPROVED`
+  and the one consent `subscribed` (its compatibility mirror
+  `marketing_status = 'confirmed'`); otherwise the greeting by name only
+  ([`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §8 „The consent gate“).
+
+The open lawyer items of the customer platform (AI profiles without consent,
+the mirror with its order ledger, bidirectional consent and erasure, insight
+tags) are in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "Customer platform
+(2026-10)". The approval checklist as recorded in June 2026:
+[`archive/CUSTOMERS_HISTORY_2026-10.md`](./archive/CUSTOMERS_HISTORY_2026-10.md).
 
 ## What deliberately did NOT change
 
 - `email_captures` remains the Art. 7 evidence for consents given on Mo's
-  surfaces. The **state** of the marketing consent is no longer split between
-  Mo and Shopify: it is the one consent on `customers` (+ `consent_events`),
-  shared with Shopify in both directions.
-- Anonymous (no-email) sessions remain exactly as pseudonymous and unlinked as
-  before.
+  surfaces. The **state** of the marketing consent is the one consent on
+  `customers` (+ `consent_events`), shared with Shopify in both directions.
+- Anonymous (no-email) sessions remain pseudonymous and unlinked.
 - Signing in establishes identity, never marketing consent.
+
+## Design decisions (customer platform, 2026-10)
+
+The decisions taken for the customer platform (built 2026-10-01; the plan with
+the original questions and recommendations is archived:
+[`archive/CUSTOMER_PLATFORM_PLAN.md`](./archive/CUSTOMER_PLATFORM_PLAN.md) §4,
+decision record §0). Each row states the decision as built, checked against the
+code on 2026-10-05; **Differs** marks where the build is not what the decision
+text said. Every Shopify switch defaults to `false` in code; which ones are on
+is recorded only in [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md). The lawyer's view:
+[`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) §13 (F-22 … F-29) and
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "Customer platform (2026-10)".
+
+| # | Decision | As built |
+| --- | --- | --- |
+| D-1 | AI profiles for customers without marketing consent: „all, flagged“. | `CUSTOMER_AI_PROFILE_SCOPE` = `consented` (code default) or `all` (decided for this shop, lawyer to confirm). With `all`, people without consent get a profile, flagged in Kunden, every marketing action blocked; an Art. 21 objection deletes the profile and always wins (`mayBuildAiProfile`). See "The central customer profile". |
+| D-2 | Shopify is the record for the consent **state**; Mo keeps the evidence of consents given on its surfaces. | One state on `customers.email_consent_*`, mirrored from Shopify and written to it through the outbox; `email_captures` stays the Art. 7 evidence. **Differs:** neither side is master — the newer act wins (`consent-core.mjs` rule 2), and a Shopify value that loses against a newer Mo state is answered by pushing Mo's state back. See [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "The one consent". |
+| D-3 | Mo-only subscribers get a Shopify customer record. | A confirmed Mo DOI queues `customer_create` with the consent (sent while `SHOPIFY_CONSENT_WRITEBACK`); earlier Mo-only subscribers are queued by the Erstabgleich (Einstellungen → Shopify-Abgleich, after the first import, behind a confirm; `POST /api/admin/shopify/align`). |
+| D-4 | One opt-in-level switch for every marketing e-mail. | `CAMPAIGN_ALLOW_SINGLE_OPT_IN` (default `false`) decides whether single-opt-in consents are mailable on the campaign path, the Einzelansprache included. **Differs:** the legacy 1:1 path (`approveAndSend`, only for drafts opened before the switch to the Einzelansprache) keeps its own gate, a confirmed Mo DOI on the capture. Shopify's own double-opt-in setting is a shop setting, not code. |
+| D-5 | An erasure on either side erases on both. | Mo-started: tombstone + `consent_update` (`SHOPIFY_CONSENT_WRITEBACK`) + `data_erasure` (`SHOPIFY_ERASURE_SYNC`) — with only the write-back switch on, the erasure still switches the Shopify consent off. Shopify-started (`customers/delete`, `customers/redact`): the same deletion, Shopify not asked again. See "Retention / erasure". |
+| D-6 | Mirror all Shopify customers, store all their orders (minimised), compute facts for everyone. | `SHOPIFY_CUSTOMER_SYNC_ENABLED` gates the import, the reconciliation and the customer / consent / order-ledger webhooks; the facts job runs regardless (it also covers chat-only people). See "Kundenstamm", "Facts for everyone". |
+| D-7 | Advertising letters (opt-out model) for customers without e-mail consent, with an objection flag. | Per-customer channel (Kunden → Brief) and, since migration `0074`, a campaign channel (`campaigns.letter_mode`), both behind `PHYSICAL_MAIL_SENDS_APPROVED` (default `false`) and the per-customer `postal_objection_at`; every advertising letter carries the Art. 21 notice (`letter-pdf.mjs`); Eingang suggestions may propose a letter; the campaign editor shows the letter reach („per Brief erreichbar“). See [`CAMPAIGNS.md`](./CAMPAIGNS.md) §8. |
+| D-8 | One send pipeline: the 1:1 marketing e-mail is the built-in campaign „Einzelansprache“. | Campaign kind `einzel` (slug `einzelansprache`, one row from migration `0066`), always active, no audience; recipients come from Kunden and the Eingang and are drafted, reviewed and sent like any campaign mail (`MK-` codes). **Differs:** `marketing_sends` and `approveAndSend` remain for drafts opened before the switch (legacy drop not built, below). |
+| D-9 | Übersicht becomes the **Eingang**, the landing screen. | Screen 1 (`?tab=eingang`, the default screen of `/admin`, key `1`; the legacy `?tab=overview` resolves to it). **Differs:** unmatched incoming mails are a block at the top of the Eingang, not an item kind. See [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.1. |
+| D-10 | Serien-Mail (one approved master text, batch send) only after a decision. | Not built; every campaign mail is reviewed and approved one at a time. „Einplanen“ (migration `0072`, `CAMPAIGN_RELEASE_ENABLED`) only defers the send of an approved mail. |
+| D-11 | Mo's insights back to Shopify, off by default. | `mo-…` customer tags (`mo-segment-…`, `mo-wert-…`, `mo-kontakt`, `mo-abwanderung-hoch`), queued nightly as `writeback` outbox rows, `SHOPIFY_WRITEBACK_ENABLED` (default `false`); an Art. 21 profile objection removes them. **Differs:** tags only, no metafields. See [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Kundenstamm“. |
+| D-12 | Names: Eingang, Kampagnen, Einzelansprache, Profiltiefe (Fakten / Kaufprofil / Vollprofil), Mo-Kontakt. | Eingang, Kampagnen (the screen key stays `kampagne`), Einzelansprache, Interessent, badges „Vollprofil“ / „Kaufprofil“. **Differs:** „Profiltiefe“ and „Fakten“ are not UI labels, and the UI says „Mit Mo gesprochen“ (Kunden filter, KPIs, campaign audience) — „Mo-Kontakt“ appears only in the tag `mo-kontakt` and its InfoTip. |
+
+**Not built** (planned for the customer platform, not in the code):
+
+- Serien-Mail (D-10).
+- The legacy drop: `marketing_sends` → Einzelansprache, removal of `customers.marketing_status` and `purchase_summary`, the legacy `source` values.
+- The Verbesserung lane „Marketing“ (offers, segments, triggers as proposals) — the lanes are `shop` and `mo`.
+- One shared eligibility gate (`marketing-eligibility.mjs`): `campaign-gates.mjs` gates the campaign path, `approveAndSend` keeps its own gates and a marketing-only frequency cap.
+- A window for dormant AI profiles (`CUSTOMER_PROFILE_DORMANT_DAYS`).
+- An own 365-day window for `marketing_sends` (they follow their capture, [`DATA_RETENTION.md`](./DATA_RETENTION.md)).
+- Eingang items in the customer's data export.
+- The npm scripts `shopify:import` and `consent:align` — the import and the Erstabgleich are Einstellungen buttons, continued by `/api/cron/shopify-sync`.

@@ -1,17 +1,20 @@
 # CLAUDE.md — conventions for working in this repository
 
-Read this before changing anything. It is short on purpose; the living design docs are in `docs/`
-(start with `docs/README`-level files: `ADMIN_DASHBOARD.md`, `CUSTOMER_PLATFORM_PLAN.md`, `CAMPAIGNS.md`, `API_CONTRACT.md`,
-`DATABASE.md`, `DATA_RETENTION.md`, `EMAIL_DESIGNS.md`). `docs/FEATURE_INVENTORY.md` lists every
-capability; do not remove one without an explicit decision by the maintainer. `docs/archive/` holds
-historical audits, spikes and change reports — context only, never the current state.
+Read this before changing anything. It is short on purpose; the living docs are in `docs/` — start
+with `docs/README.md` (the map): backend docs in `docs/*.md`, everything about the widget and theme in
+`docs/frontend/` (the widget contract `API_CONTRACT.md` + `ACCOUNT_CONTRACT.md` + `CONSENT_CONTRACT.md`,
+the as-built chapters, the current frontend tasks). Each fact is written down once — link to its owner
+instead of repeating it; live production status lives only in `docs/ROLLOUT_TODO.md`.
+`docs/FEATURE_INVENTORY.md` lists every capability; do not remove one without an explicit decision by
+the maintainer. `docs/archive/` holds finished plans, hand-offs, audits, spikes and change reports —
+context only, never the current state.
 
 ## What this is
 Next.js 16 App Router on Vercel (`fra1`), Neon Postgres, TypeScript + a set of pure `.mjs` cores.
 Three products in one repo: the chat API for the external Shopify widget (`/api/chat` and friends),
 the German admin dashboard (`/admin`), and the e-mail subsystem (marketing, campaign, transactional,
-inbound, physical letters). The widget is **not** in this repo — keep `docs/API_CONTRACT.md` backward
-compatible. Since the customer platform (`docs/CUSTOMER_PLATFORM_PLAN.md`) every Shopify customer is a
+inbound, physical letters). The widget is **not** in this repo — keep `docs/frontend/API_CONTRACT.md` backward
+compatible. Since the customer platform (`docs/CUSTOMERS.md`) every Shopify customer is a
 `customers` row with a local order ledger and nightly facts; the chat is one data source among several.
 
 ## Hard rules
@@ -90,7 +93,7 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
 - `src/lib/shopify-sync.ts`, `customer-mirror-store.ts`, `customer-orders-store.ts`, `customer-facts.ts`,
   `shopify-outbox.ts` — the Shopify customer mirror, order ledger, nightly facts and write-back queue;
   `campaigns-store.ts` + `audience-*.{mjs,ts}` — many campaigns and their audiences; `customer-signals.mjs`
-  + `inbox-*.ts` — the Eingang rules, items and AI suggestions (docs/CUSTOMER_PLATFORM_PLAN.md).
+  + `inbox-*.ts` — the Eingang rules, items and AI suggestions (`docs/ADMIN_DASHBOARD.md` §3.1).
 - `src/app/admin/` — the dashboard: `page.tsx` (one screen per request), `AdminShell.tsx` (sidebar,
   shortcuts, theme), the screen registry `src/lib/admin-tabs.mjs` + `tabs.tsx` (icons), `lazy.tsx`
   (per-screen chunks), `<Screen>Tab.tsx` (server queries → props) with its client workspace in

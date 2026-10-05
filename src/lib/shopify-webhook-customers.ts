@@ -10,7 +10,7 @@
 //   customers/data_request                  → Eingang item with the export
 //   shop/redact                             → alert only, never a mass deletion
 //
-// docs/CUSTOMER_PLATFORM_PLAN.md §6.2, §8.3.
+// docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.2, §8.3.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";

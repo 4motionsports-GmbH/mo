@@ -2,7 +2,7 @@
 // and turn it into the nullable parameter tuple of the ONE audience query
 // (lib/audience-store.ts — predicates written once, never composed). An
 // audience is defined over the whole customer base; the e-mail channel always
-// adds consent + "not blocked" on top (docs/CUSTOMER_PLATFORM_PLAN.md §10.4).
+// adds consent + "not blocked" on top (docs/archive/CUSTOMER_PLATFORM_PLAN.md §10.4).
 //
 // Spec v1 (every field optional; absent = no restriction):
 //   optInLevels      ["confirmed_opt_in", "single_opt_in", "unknown"]

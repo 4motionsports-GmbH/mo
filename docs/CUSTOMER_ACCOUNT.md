@@ -1,22 +1,18 @@
 # Customer Account sign-in (tier-3 identity)
 
-> **Status:** CA-1 shipped — auth + identity model + token handling. **CA-2/CA-3
-> shipped** — the signed-in customer's Customer Account data (name, addresses,
-> full order history) is now pulled and fed into the internal profile **and** the
-> live chat via the existing customer-memory mechanism, under the same consent
-> gate and data-minimisation (see [§8](#8-signed-in-data-in-the-profile--live-chat-ca-2--ca-3)).
-> **Signed-in conversation history** (list / fetch / rename / delete + full
-> "delete my data") is documented in [§9](#9-signed-in-conversation-history-tier-3).
-> **CA-4** (at-sign-in marketing opt-in) is in [§10](#10-at-sign-in-marketing-opt-in--the-match-up-ca-4),
-> which also pins the **tier-3 suppression contract** (the end-of-chat capture
-> widget is suppressed for signed-in customers — since 2026-10-05 the backend
-> withholds the offer for them too; the opt-in moves to sign-in) and
-> the `marketing.optInActionable` state. The signed-in **conversation summary
-> download** (the S5 summary email reused as a downloadable HTML document) is in
-> [§11](#11-conversation-summary-download-signed-in-s5-structure-reused).
-> The authoritative feasibility report is
-> [`archive/CUSTOMER_ACCOUNT_SPIKE.md`](./archive/CUSTOMER_ACCOUNT_SPIKE.md); this document
-> describes what was built.
+> **What this file owns.** The backend internals of sign-in and the signed-in account: the PKCE
+> flow, the one-time link grants, the App Proxy shop recognition (decision order, switches), token
+> handling, the merge rule, the signed-in resolver, the tables of migration `0014`, the verify gate
+> and the live sign-in test, signed-in data in the profile and the chat (personalisation and
+> order-status gates), the history storage, the opt-in state and the summary download.
+> **Not here:** request/response shapes, statuses and widget behaviour of every `/api/auth/*` and
+> `/api/account/*` route → [`frontend/ACCOUNT_CONTRACT.md`](./frontend/ACCOUNT_CONTRACT.md) (the
+> only place for those shapes); consent law and the DOI → [`CONSENT_FLOW.md`](./CONSENT_FLOW.md);
+> retention windows and the erasure inventory → [`DATA_RETENTION.md`](./DATA_RETENTION.md); operator
+> steps and live production status → [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md). The feasibility spike
+> [`archive/CUSTOMER_ACCOUNT_SPIKE.md`](./archive/CUSTOMER_ACCOUNT_SPIKE.md) is historical; earlier
+> versions of this file: [`archive/CUSTOMER_ACCOUNT_HISTORY_2026-10.md`](./archive/CUSTOMER_ACCOUNT_HISTORY_2026-10.md).
+> If this file and the code disagree, the code wins.
 
 This adds a **third identity tier** to the chat: a *signed-in Shopify customer*.
 It is built on the Shopify **Customer Account API** with an OAuth 2.0
@@ -30,7 +26,7 @@ PKCE code exchange and holds both tokens server-side, encrypted.
 |---|---|---|---|
 | 1 — Anonymous | `session_id` (localStorage thread id) | every visit | nothing (pseudonymous) |
 | 2 — Identified | normalised **email** | `/api/capture-email` / `/api/chat-marketing-opt-in` (consent + DOI) | our Art. 7 consent evidence |
-| **3 — Signed-in** | **`shopify_customer_id`** (GID numeric) | Customer Account sign-in | **Shopify**: name, email, addresses, orders |
+| **3 — Signed-in** | **`shopify_customer_id`** (GID numeric) | Customer Account sign-in in the chat, or the shop login recognised through the App Proxy (§2) | **Shopify**: name, email, addresses, orders |
 
 The tiers describe the **session** (what the widget may show). The person
 behind it is always one `customers` row; since migration `0061` every Shopify
@@ -63,7 +59,7 @@ re-identification fails closed. Tier 3 is **added**, never a weakening of 1–2.
 
 ## 2. The PKCE authorization-code flow
 
-All redirect/callback URLs are built from `PUBLIC_BASE_URL` (never hardcoded) —
+All redirect/callback URLs are built from `PUBLIC_BASE_URL` (`getBaseUrl`; never hardcoded) —
 production: `https://mo.motionsports.de`, registered in the Shopify admin (Headless →
 Customer Account API → Application setup). A domain change is an env flip plus
 re-registering the URLs there.
@@ -86,48 +82,60 @@ re-registering the URLs there.
                        ←──────────────────  302 return_url?ms_auth=ok&ms_code=…
  widget re-mounts, reads same session_id,
  POST /api/auth/link { code } (x-ms-session) → link written only for that session
- GET /api/auth/me?session= → { name, tier }
+ GET /api/auth/me?session= → signed in + identity + marketing (ACCOUNT_CONTRACT §4)
 ```
 
-**Why the extra step (migration `0073`, 03.10.2026).** The login's `session` is a
-URL parameter, and so is whoami's (`/apps/chat/whoami?session=`). Until 0073 the
-callback and the App Proxy linked that id as signed in: a stranger could send a
-shopper who is logged in to the shop a link carrying the **stranger's** session id
-— the silent sign-in (`prompt=none`) or the whoami call then bound the shopper's
-account to the stranger's session, and with it `/api/account/*` (history, export,
-erasure) and the signed-in chat context. Now both only mint a grant
-(`customer_link_grants`: SHA-256 of a 43-character random code, the session id,
-the customer, the kind, 10 minutes, single use — `customer-link-grant.mjs`,
-tested). The code reaches only the browser that completed the sign-in (the
-redirect, or the same-origin whoami response); the widget redeems it with its own
-`x-ms-session`, and the link is written only when that is the grant's session. A
-redeem attempt from another session burns the code. Links written by the old flow
-were set to `legacy` by 0073 (those customers sign in once more).
+**Why the one-time code (migration `0073`).** The session id of a sign-in is a URL
+parameter (`login?session=`, `/apps/chat/whoami?session=`) that anyone can prepare —
+a stranger could send a shopper who is logged in to the shop a link carrying the
+**stranger's** session id. So neither the callback nor the App Proxy links the session
+they were given: both mint a grant (`customer_link_grants`: SHA-256 of a 43-character
+random code, the session id, the customer, the kind, 10 minutes, single use —
+`customer-link-grant.mjs`, tested; I/O wrappers `session-link-grants.ts`, which fail
+closed on a database error). The code reaches only the browser that completed the
+sign-in (the redirect, or the same-origin whoami response); the widget redeems it with
+its own `x-ms-session`, and `redeemLinkGrant` writes the link only when that is the
+grant's session. A redeem attempt from another session burns the code. Links from
+before `0073` are `legacy` and never count (those customers sign in once more).
 
-### Endpoints (all under `/api/auth`)
+### Routes (all under `/api/auth`)
 
-| Route | Method | Guard | Purpose |
-|---|---|---|---|
-| `/api/auth/shopify/login` | GET | signed state + origin-allowlisted `return_url` | mint PKCE/state, store pending, 302 to Shopify |
-| `/api/auth/shopify/callback` | GET | signed state + single-use pending | exchange code, verify id_token, merge, store tokens, 302 back |
-| `/api/auth/link` | POST | origin allowlist + `x-ms-chat-key`, rate limit | redeem the one-time code for this `x-ms-session` → writes the signed-in link + attaches the session's chats that have no customer or the same one (`200 { ok, signedIn }`; `400` unknown/expired/used/other session) |
-| `/api/auth/me` | GET | origin allowlist + `x-ms-chat-key` | identity re-hydration (`{ name, tier }`), fail-closed |
-| `/api/auth/shopify/logout` | GET | top-level navigation + return-url allowlist | server-INITIATE logout: build the OIDC `end_session` redirect from discovery, 302 to Shopify |
-| `/api/auth/shopify/logout/return` | GET | top-level navigation | drop the customer's tokens and signed-in links (every `customer_account` and `app_proxy` link of the customer on every session, and this session's link), 302 back to storefront `?ms_auth=logged_out` |
+`shopify/login`, `shopify/callback`, `link`, `me`, `shopify/logout`,
+`shopify/logout/return`, and `storefront` + `storefront/whoami` (the App Proxy, below).
+Request/response shapes, statuses, the `?ms_auth=` markers and what the widget does with
+them: [ACCOUNT_CONTRACT](./frontend/ACCOUNT_CONTRACT.md) §1.1 (guards and errors), §2
+(login), §2a (redeem), §3a (whoami), §3b (`prompt=none`), §4 (`/api/auth/me`), §5
+(logout). Internals:
 
-`login`, `callback`, `logout`, and `logout/return` are **top-level navigations**
-(like the email-clicked confirm/unsubscribe routes) — no CORS/secret guard. The
-auth pair is protected by the **signed `state`** + the **server-side pending
-record**; the logout pair by the **return-url origin allowlist** (logout is
-server-initiated — it builds the OIDC `end_session` redirect from discovery,
-since the widget can't, and degrades to a local token-drop sign-out when the
-store advertises no `end_session_endpoint`).
-`/api/auth/me` is a widget **XHR**, so it carries the origin allowlist + shared
-secret like `/api/chat`.
+- `login`, `callback`, `logout` and `logout/return` are **top-level navigations**
+  (like the email-clicked confirm/unsubscribe routes) — no CORS/secret guard. The
+  auth pair is protected by the **signed `state`** (`SHOPIFY_CUSTOMER_ACCOUNT_STATE_SECRET`,
+  falling back to `CHAT_SHARED_SECRET`) + the **server-side pending record**
+  (`customer_auth_pending`, `CUSTOMER_AUTH_PENDING_TTL_MINUTES`, default 10); `return_url`
+  is checked against the storefront origin allow-list (`safeReturnUrl`) by login and both
+  logout routes (the callback uses the one stored at login).
+- The **callback**, in order: verify the state and consume the pending record (single use);
+  map an OAuth `error` (`login_required` → `?ms_auth=login_required`, else `error`); exchange
+  the code server-side; verify the `id_token`; read `customer { id }`; merge (§4); store the
+  encrypted tokens; mint the `customer_account` grant for the pending record's session; record
+  the server-only KPI event `account_signin_succeeded { silent }`; warm the tier-3 cache (§8,
+  best-effort); 302 back with `?ms_auth=ok&ms_code=…`. Any failure → `?ms_auth=error`; the
+  user is never stranded on a backend page.
+- `link` and `me` are widget **XHRs** with the origin allow-list + shared secret
+  (`guardRequest`) and the chat rate-limit bucket. `link` records `account_signin_linked
+  { kind, renewed }` or `account_signin_link_refused { reason, kind? }`
+  ([API_CONTRACT](./frontend/API_CONTRACT.md) §5).
+- **Logout is server-initiated**: `shopify/logout` builds the OIDC `end_session` redirect from
+  discovery (the widget can't) with `post_logout_redirect_uri = …/logout/return?session=&return_url=`,
+  and degrades to a local sign-out (straight to `logout/return`) when the store advertises no
+  `end_session_endpoint` or anything fails. `logout/return` resolves the session's signed-in
+  customer, deletes their tokens and their signed-in links (§4), and bounces back with
+  `?ms_auth=logged_out`.
 
 ### Discovery is the source of truth
 
-Endpoints are resolved at runtime from the storefront domain and cached for 1h:
+Endpoints are resolved at runtime from the storefront domain and cached for 1h
+(the JWKS too):
 
 - `GET https://<SHOPIFY_STOREFRONT_DOMAIN>/.well-known/openid-configuration`
   → `issuer`, `authorization_endpoint`, `token_endpoint`, `end_session_endpoint`,
@@ -144,108 +152,97 @@ a single origin.
 storefront account icon), then opens the chat, must be recognised too — not only
 the chatbot's "Anmelden" OAuth. The widget is in the theme (`motionsports.de`); the
 backend is cross-origin on Vercel, so it **cannot read the storefront session
-cookie**, and the spike flagged `logged_in_customer_id` / the Liquid `customer`
-object as **unreliable on new customer accounts** (and a client-supplied id is
-forgeable). The original CA-3 detection (`/api/auth/me` + a deferred `prompt=none`)
-therefore only ever recognised the **chatbot-OAuth** path.
+cookie**, and a client-supplied customer id is forgeable (the spike also flagged
+`logged_in_customer_id` / the Liquid `customer` object as possibly unreliable on new
+customer accounts — re-checked on the live store before switch-on, ROLLOUT_TODO 5.4).
 
 **The mechanism — a Shopify App Proxy.** An App Proxy is the one channel where
 Shopify itself vouches the logged-in customer to a cross-origin backend: the
-storefront calls a **same-origin** path (`/apps/{proxy}/whoami`), Shopify forwards
+storefront calls a **same-origin** path (`/apps/chat/whoami`), Shopify forwards
 it to our backend **adding** `logged_in_customer_id` (the LIVE storefront session's
-customer) and an HMAC `signature` over all params. `GET /api/auth/storefront`
-verifies the signature (`lib/shopify-app-proxy.verifyAppProxySignature`), trusts
-**only** Shopify's `logged_in_customer_id`, and — now that **`read_customers`** is
-granted — enriches the **name/email via the Admin API**
-(`lib/shopify-orders.fetchAdminCustomerById`), with **no customer OAuth token**.
-Detection therefore only establishes **IDENTITY**; the Admin API supplies the rest,
-so it **does not matter how the customer logged in**. It then find-or-creates the
-customer (the same `bindShopifyIdentity` merge as the OAuth callback) and mints a
-one-time code for the widget `session_id` (kind `app_proxy`, 0073); the widget
-redeems it at `POST /api/auth/link`. Response:
-`{ signedIn: true, name, tier: 3, shopify_customer_id, identity:{name,tier}, marketing:{…}, linkCode }`.
-**Fail-closed:** bad/absent signature or a logged-out (empty id) session →
-`{ signedIn: false }`; no Admin/DB work happens until the signature verifies.
+customer), a `timestamp` and an HMAC `signature` over all params. Shopify appends the
+sub-path to the proxy URL `…/api/auth/storefront`, so the request lands on
+`/api/auth/storefront/whoami`, which re-exports the same handler. The route verifies the
+signature (`shopify-app-proxy.mjs`, tested; secret `SHOPIFY_APP_PROXY_SECRET`, falling back
+to `SHOPIFY_CLIENT_SECRET`), trusts **only** Shopify's `logged_in_customer_id`, and
+enriches the **name/email via the Admin API** (`read_customers`,
+`lib/shopify-orders.fetchAdminCustomerById`), with **no customer OAuth token**. It then
+find-or-creates the customer (the same `bindShopifyIdentity` merge as the OAuth callback,
+§4) and mints a one-time code for the widget `session_id` (kind `app_proxy`); the widget
+redeems it at `POST /api/auth/link`. Response shape: ACCOUNT_CONTRACT §3a. **Fail-closed:**
+anything not positively proven answers `{ signedIn: false }`; no Admin/DB work happens
+until the signature verifies.
 
-**When whoami issues a code (P0.3, 05.10.2026).** `signedIn: true` now **always**
-comes with a `linkCode`, and only when the session will really count as signed in;
-every other case is `{ signedIn: false }` (shape unchanged). In order:
+**When whoami issues a code (P0.3).** `signedIn: true` **always** comes with a
+`linkCode`, and only when the session will really count as signed in. In order:
 
 1. **Fresh signature.** Shopify's signed `timestamp` must lie within ±300 s
-   (`appProxyFailureKind`, `shopify-app-proxy.mjs`, tested) — a signed URL cannot
-   be replayed. A stale, mismatched or unsigned request answers `{signedIn:false}`
-   and never ends or creates a link. `no_secret` / `mismatch` / `stale` are
-   reported (`reportError`, phase = the kind, at most once per kind per instance
-   every 10 minutes, never the URL or query); `unsigned` (a direct hit) is silent.
-2. `not_logged_in` ends the session's `app_proxy` link (unchanged).
+   (`appProxyFailureKind`, `shopify-app-proxy.mjs`, tested); this limits a replayed
+   URL to that window. A stale, mismatched or unsigned request answers
+   `{signedIn:false}` and never ends or creates a link. `no_secret` / `mismatch` /
+   `stale` are reported (`reportError`, phase = the kind, at most once per kind per
+   instance every 10 minutes, never the URL or query); `unsigned` (a direct hit) is
+   silent.
+2. **Logged out.** A valid request without `logged_in_customer_id` (`not_logged_in`)
+   ends the session's `app_proxy` link (`endAppProxySessionLink`) — a shop logout
+   signs a shop-recognised chat out; a chat sign-in (`customer_account`) stays.
+   Then: the chat rate-limit bucket (keyed by the session, else `cid:<customer>`);
+   no session → `{signedIn:false}`.
 3. **Handover.** The session is signed in as **another** shop customer (shared
    browser): that session's signed-in link ends (`unlinkSessionSignedIn`, this
    session only — the previous person's other devices stay signed in), no code.
-   The widget's `/api/auth/me` probe then reads signed-out, it wipes its
-   transcript and rotates the session; the next tab links the new person.
+   The widget's `/api/auth/me` probe then reads signed-out and it starts over on a
+   new session (ACCOUNT_CONTRACT §5.1).
 4. **Kill switch.** `APP_PROXY_SIGNIN_ENABLED` off (default) → no code.
-5. **Proof.** A live chat (Customer Account) token of the customer, or — with
-   `APP_PROXY_SIGNIN_MAX_AGE_HOURS > 0` — the shop login itself. Neither → no code.
-6. Otherwise Admin API → bind → mint; a failed mint → `{signedIn:false}`.
+5. **Proof.** With `APP_PROXY_SIGNIN_MAX_AGE_HOURS > 0` the shop login itself;
+   otherwise a live chat (Customer Account) token of the customer (refreshed only
+   when it would decide a code). Neither → no code.
+6. Otherwise Admin API → bind → mint; a failed bind or mint → `{signedIn:false}`.
 
-Every recognised request (signed, fresh, logged in, with a session) records the
-server-only KPI event `account_shop_recognised { proof, hasToken, alreadySignedIn,
-codeIssued, noCode? }` (`noCode` `flag_off` | `no_proof` | `handover` | `failed`;
-`API_CONTRACT.md` §5) — with the switch off whoami only measures. Pure rules:
+Steps 1–3 run whatever the switch says: with the kill switch off whoami issues **no
+code**, but handover and a shop logout still end links. Every recognised request
+(signed, fresh, logged in, with a session) records the server-only KPI event
+`account_shop_recognised { proof, hasToken, alreadySignedIn, codeIssued, noCode? }`
+(`noCode` `flag_off` | `no_proof` | `handover` | `failed`; API_CONTRACT §5);
+`livecheck-%` sessions never count in the KPIs. Pure rules:
 `signed-in-proof.mjs → decideShopRecognition` (tested).
 
-> **⚠️ REQUIRES A ONE-TIME STORE + THEME ACTION (Lucas) before it can fire:**
-> 1. **Add an App Proxy** to the app — Shopify admin → the app → *App proxy*:
->    **Subpath prefix** `apps`, **Subpath** `chat`, **Proxy URL**
->    `https://mo.motionsports.de/api/auth/storefront` (Shopify appends the sub-path:
->    `/apps/chat/whoami` arrives at `/api/auth/storefront/whoami`, which answers the
->    same).
-> 2. **Theme** calls the proxied same-origin path `/apps/chat/whoami?session={sid}`
->    on first panel open (see `frontend-handoff/CUSTOMER_ACCOUNT.md` §3a).
-> 3. **Backend env** `SHOPIFY_APP_PROXY_SECRET` = the app's API secret key (falls
->    back to `SHOPIFY_CLIENT_SECRET`).
-> 4. **Re-verify on the live store** that App-Proxy `logged_in_customer_id` is
->    populated for this store's customer-accounts mode (the spike's "unreliable"
->    finding predates Shopify's fixes). The endpoint fails closed regardless, and
->    the chatbot "Anmelden" remains the fallback — so this is never a security risk.
->    The check: open `/apps/chat/whoami?session=livecheck-manual` while logged in
->    to the shop and look for its `account_shop_recognised` row (`verify:live`
->    section 8; `livecheck-%` sessions never count in the KPIs). No row = Shopify
->    sends no `logged_in_customer_id` for this account type.
+Setup in Shopify, the live check of `logged_in_customer_id` and the switch-on:
+[`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) 5.4.
 
-**The two switches (D-AP1).** `APP_PROXY_SIGNIN_ENABLED` (default `false`) is the
-kill switch: off, whoami issues no code and answers `{signedIn:false}` but still
-measures. `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (default `0`, clamped to 720): with a
-value > 0 an `app_proxy` link counts as signed in **without** a chat token for
-that many hours after its last redeem — every new tab session renews it through
-whoami. While the kill switch is off the effective shop-proof hours are 0
-(`appProxyShopProofHours`, `platform-flags.mjs`). With 0, only customers with a
-live chat token (who used „Anmelden“ in the chat before) are recognised. D-AP1
-(shop proof counts as signed in, scope: `/api/auth/me`, every `/api/account/*`
-including export, erase and the marketing opt-in, and Mo's memory) was decided
-by the owner on 05.10.2026; the lawyer confirmed it (`ANWALTSDOSSIER.md` §19,
-F-36). Recommended production values, set by the owner once the App Proxy is
-configured in Shopify: `APP_PROXY_SIGNIN_ENABLED=true`,
-`APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`. The resolver behind all of it is
-`lib/signed-in-session.ts → resolveLiveSignedInCustomer` (§4). Order status
-stays Customer-Account-only (§8).
+**The two switches (D-AP1).** `APP_PROXY_SIGNIN_ENABLED` (default `false` in code) is the
+kill switch: off, whoami issues no code and answers `{signedIn:false}`, but still
+measures and still ends links (steps 2–3). `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (default `0`,
+clamped to 720): with a value > 0 an `app_proxy` link counts as signed in **without** a
+chat token for that many hours after its last redeem — every new tab session renews it
+through whoami. While the kill switch is off the effective shop-proof hours are 0
+(`appProxyShopProofHours`, `platform-flags.mjs`). With 0, only customers with a live chat
+token (who used „Anmelden“ in the chat before) are recognised. D-AP1 (shop proof counts
+as signed in; scope: `/api/auth/me`, every `/api/account/*` including export, erase and
+the marketing opt-in, and Mo's memory) was decided by the owner on 05.10.2026 and,
+according to the owner, confirmed by the lawyer ([`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md)
+§19, F-36; the privacy-policy paragraph is still open there). Values decided for
+production: `APP_PROXY_SIGNIN_ENABLED=true`, `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`; whether
+they are set: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) 5.4. The resolver behind all of it is
+`lib/signed-in-session.ts → resolveLiveSignedInCustomer` (§4). Order status stays
+Customer-Account-only (§8).
 
 ### `prompt=none` silent detection (alternative)
 
 `/api/auth/shopify/login?...&prompt=none` runs the same OAuth flow with
-`prompt=none`. When a storefront session exists Shopify returns a `code` with **no
-UI**; when logged out it returns `error=login_required` → a
-`return_url?ms_auth=login_required` bounce. It is authoritative but a full-page
-redirect (the theme deferred it, see `archive/CUSTOMER_ACCOUNT_THEME_NOTES.md`); it remains
-available where the App Proxy isn't configured.
+`prompt=none` (stored as `prompt_none` on the pending record). When a storefront
+session exists Shopify returns a `code` with **no UI**; when logged out it returns
+`error=login_required` → a `return_url?ms_auth=login_required` bounce. It is
+authoritative but a full-page redirect; widget side: ACCOUNT_CONTRACT §3b.
 
 ## 3. Token handling, rotation, encryption
 
 - **Client posture:** PUBLIC client, **no secret** (confirmed setup). The token
   exchange is attempted as a public client (`client_id` + PKCE `code_verifier`).
-  Discovery advertises `client_secret_basic` and not `none`, so this is verified
-  **empirically** by `npm run verify:customer-account` (see §5). If the token
-  endpoint rejects the public exchange for missing client authentication, set
+  Whether the token endpoint accepts that cannot be read from discovery, so it is
+  verified **empirically** by `npm run verify:customer-account` (§6), which also
+  prints `token_endpoint_auth_methods_supported`. If the token endpoint rejects the
+  public exchange for missing client authentication, set
   `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_SECRET` after switching the client to
   *Confidential* in Shopify admin — the backend then uses `client_secret_basic`
   automatically. **No code change**, just an env flip.
@@ -259,10 +256,10 @@ available where the App Proxy isn't configured.
 - **Encrypted at rest:** access + refresh tokens are AES-256-GCM encrypted under
   `TOKEN_ENC_KEY` (`lib/token-crypto.ts`) and stored in `customer_oauth_tokens`.
   They are **never** sent to the browser.
-- **id_token verification:** signature checked against `jwks_uri` (RS256 only —
-  `alg:none` and HMAC are rejected), plus `iss` / `aud` / `nonce` / `exp`. The
-  `sub` is recorded for cross-checking; we key the DB on the **GraphQL
-  `customer.id` GID's numeric**.
+- **id_token verification:** signature checked against `jwks_uri` (RSA only —
+  RS256/RS384/RS512; `alg:none` and HMAC are rejected), plus `iss` / `aud` /
+  `nonce` / `exp`. The `sub` is recorded for cross-checking; we key the DB on the
+  **GraphQL `customer.id` GID's numeric**.
 - The Customer Account GraphQL call sends the access token **directly** in the
   `Authorization` header (no `Bearer ` prefix), per Shopify.
 
@@ -279,104 +276,118 @@ Implemented as a pure decision (`lib/customer-merge.mjs::decideMerge`, unit-test
    has the address on a different shop customer — e-mail changed in Shopify,
    mirror lag): then it is never re-stamped (the person would inherit someone
    else's orders and history); a new row is created under `shopify:<id>` and the
-   `row_collision` is logged for review (03.10.2026).
-3. **(c)** Else **create** a fresh tier-3 row.
+   `row_collision` is logged for review.
+3. **(c)** Else **create** a fresh tier-3 row (`source = 'shopify'`; without a
+   verified e-mail under the placeholder `shopify:<id>`).
 4. **(d) Conflict** — either the linked row's email differs from Shopify's
    verified email (`email_mismatch`), or an email-row and a shopify-id-row
    collide (`row_collision`): we **prefer Shopify's verified email as the
    authoritative identity** but **do not silently fuse consent records**. The
    established Shopify-linked row is used and a row is written to
-   `customer_merge_conflicts` for **admin review** (consent provenance must stay
-   auditable). We never overwrite the consent-anchored email on a mismatch.
+   `customer_merge_conflicts` (consent provenance must stay auditable). We never
+   overwrite the consent-anchored email on a mismatch.
 
-`linkCustomerOnEmailCapture` (tier 2) and the sign-in (tier 3:
-`bindShopifyIdentity` for the customer row, then `redeemLinkGrant` for the
-session, 0073) are the two entry points of the generalised "identity bind"; both
-never weaken an existing tier (`GREATEST(identity_tier, …)`) and both persist the
-session → customer link **two** ways:
+The bind writes **only identity columns** and never links the session: the
+`sessionId` it receives is recorded on a merge conflict only.
+`linkCustomerOnEmailCapture` (tier 2) and the sign-in (tier 3: `bindShopifyIdentity`
+for the customer row, then `redeemLinkGrant` for the session, 0073) are the two
+entry points of the "identity bind"; both never weaken an existing tier
+(`GREATEST(identity_tier, …)`) and both persist the session → customer link
+**two** ways:
 
 1. a **direct** row in `customer_session_links` (`session_id` PK → `customer_id`,
-   migration `0019`) — this is the **authoritative re-hydration link**, and
-2. the legacy `conversations.customer_id` stamp (`WHERE session_id = …`) — which
-   carries the chat into the customer's **history**.
+   migration `0019`; `link_kind` + `authenticated_at`, migration `0071`) — the
+   **authoritative re-hydration link**, written even when the session has no
+   conversation row yet (signing in before the first message), and
+2. the `conversations.customer_id` stamp (`WHERE session_id = …`) — which
+   carries the chat into the customer's **history**. On the redeem it runs only
+   `WHERE customer_id IS NULL OR customer_id = <this customer>`, so on a shared
+   browser a session's earlier chats stay with whoever they belong to.
 
-The direct link exists because the conversation stamp alone is **not** a reliable
-identity link: at sign-in there is frequently **no conversation row yet** for the
-session (the `prompt=none` silent check on first widget open, or clicking
-"Anmelden" before sending any message), so the `UPDATE … WHERE session_id` matches
-zero rows and the link is silently lost. Writing `customer_session_links`
-unconditionally fixes that — identity resolves even with no chat history.
+`linkSessionToCustomer` (`customer-session-link.mjs`, tested) upserts the direct
+link: a typed e-mail of the **same** customer never weakens a signed-in link (a
+signed-in customer asking for the summary mail stays signed in), an App Proxy
+redeem never weakens a Customer Account link of the same customer (order status
+needs the latter), and a link to **another** customer always takes the new kind —
+typing someone else's e-mail drops the sign-in (fail closed). A redeem for a
+session already signed in as the same customer is a **renewal** (recorded as
+`renewed: true`); an `app_proxy` redeem on an `app_proxy` link refreshes
+`authenticated_at`, the shop-proof clock.
 
 ### The signed-in resolver
 
-`resolveSignedInCustomer(sessionId)` maps the opaque widget session reference →
-the linked customer (must have a `shopify_customer_id`). It reads **only** the
-direct `customer_session_links` row, and only when that link was proven by a
-sign-in **in this session** (`link_kind` `customer_account` or `app_proxy`,
-migration `0071`). A typed e-mail writes `link_kind = 'email'` and never resolves
-as signed in; links from before `0071` are `legacy` and fail closed (the
-customer signs in once more). Why: since the customer mirror every shop customer
-has a `shopify_customer_id`, and the token is kept per customer, so "the linked
-customer is a Shopify customer with a live token" no longer proved that *this*
-session signed in — typing the e-mail of a signed-in customer in another
-browser resolved as their session (fixed 03.10.2026). The old fallback via
-`conversations.customer_id` is gone for the same reason. A signed-in customer who
-types their **own** e-mail (summary mail) stays signed in; typing **another**
-customer's e-mail re-points the link as `email` and drops the sign-in. `/api/auth/me` then proves the session is still live
-(`lib/signed-in-session.ts → resolveLiveSignedInCustomer`, 05.10.2026, the one
-resolver behind `/api/auth/me`, `lib/account-guard.ts` and Mo's memory): a
-`customer_account` link needs a **valid access token** (refreshing if needed);
-an `app_proxy` link counts on the **shop proof** while its last redeem is within
-`APP_PROXY_SIGNIN_MAX_AGE_HOURS` (no token, no refresh), otherwise it needs a
-token too (§2, the two switches). Everything fails closed — a blank/unlinked session, or one
-linked only to a tier-1/2 customer (no `shopify_customer_id`), resolves to null.
-`resolveSignedInLink` (same module, same rules) additionally returns the
-`linkKind`, for callers that accept only one way of signing in — the order
-status in the chat accepts only `customer_account` (§8).
+`resolveSignedInLink` / `resolveSignedInLinkWithProof` (`customer-session-link.mjs`,
+tested) map the opaque widget session reference → the linked customer. They read
+**only** the direct `customer_session_links` row, and only when that link was proven by
+a sign-in **in this session** (`link_kind` `customer_account` or `app_proxy`) and the
+customer has a `shopify_customer_id`. A typed e-mail writes `link_kind = 'email'` and
+never resolves as signed in — every shop customer has a `shopify_customer_id` since the
+mirror, so "the linked customer is a Shopify customer" proves nothing about this
+session; `legacy` links fail closed. `resolveSignedInCustomer` (`customer-store.ts`) is
+the same lookup for `logout/return`.
 
-A successful round-trip: login (`?session={sid}`) → callback binds the customer
-and mints a code for `sid` → 302 back to `return_url` **with
-`?ms_auth=ok&ms_code={code}`** → widget reads/strips both, `POST /api/auth/link
-{ code }` with `x-ms-session: {sid}` writes `customer_session_links[sid]` → widget
-probes `/api/auth/me?session={sid}` → `{ signedIn: true, identity: { name, tier:
-3 } }`. The `sid` is **identical** at every hop (the widget's stable localStorage
-id — `?session=` on login, `x-ms-session` on the redeem, `x-ms-session`/`?session=`
-on `/api/auth/me`); the backend never mints its own.
+`lib/signed-in-session.ts → resolveLiveSignedInCustomer` is the one resolver behind
+`/api/auth/me`, `lib/account-guard.ts` (every `/api/account/*`) and Mo's memory (§8). On
+top of the link it proves the session is still live, with the pure rule
+`signedInProofFor` (`signed-in-proof.mjs`, tested):
 
-**Sign-out ends the links.** `logout/return` deletes the tokens and every
-`customer_account` **and `app_proxy`** link of the customer on every session
-(the tokens are per customer, and a shop-proof link counts without one, so
-another device's session would otherwise come back to life) plus the session's
-own link; a revoked token seen by `/api/auth/me` does the same. A signed App
-Proxy request for a logged-out shop session deletes that session's `app_proxy`
-link. **Redeem never moves another customer's chats:** the conversation stamp
-runs only `WHERE customer_id IS NULL OR customer_id = <this customer>`, so on a
-shared browser a session's earlier chats stay with whoever they belong to. A dead
-Customer Account link that the shop re-proves (grant kind `app_proxy`, same
-customer, no valid token, max age > 0) is downgraded to `app_proxy` instead of
-staying dead.
+- a `customer_account` link → proof `token`: needs a **valid access token**
+  (refreshing if needed), else `expired`;
+- an `app_proxy` link → proof `shop` while its `authenticated_at` is within
+  `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (at most 60 s in the future; no token, no refresh),
+  otherwise it needs a token too (§2, the two switches).
 
-## 5. Schema (migration `0014_customer_accounts.sql`)
+Everything fails closed — a blank/unlinked session, an `email`/`legacy` link, or a
+customer without `shopify_customer_id` resolves to `unlinked`; a database error too.
+`resolveSignedInLink` additionally returns the `linkKind`, for callers that accept only
+one way of signing in — the order status in the chat accepts only `customer_account`
+(§8).
 
-- `customers` += `shopify_customer_id TEXT` (unique partial index),
-  `shopify_customer_gid TEXT`, `shopify_linked_at TIMESTAMPTZ`,
-  `identity_tier SMALLINT NOT NULL DEFAULT 1` (existing rows backfilled to 2).
-- `customer_oauth_tokens` (one row per customer, `ON DELETE CASCADE`): encrypted
-  access/refresh (`BYTEA`), `id_token_sub`, `scope`, `access_expires_at`,
-  `refresh_expires_at`, `updated_at`.
+A successful round-trip (the `sid` is **identical** at every hop — the widget's stable
+localStorage id; the backend never mints its own): login (`?session={sid}`) → callback
+binds the customer and mints a code for `sid` → 302 back with
+`?ms_auth=ok&ms_code={code}` → `POST /api/auth/link { code }` with `x-ms-session: {sid}`
+writes `customer_session_links[sid]` → `/api/auth/me?session={sid}` answers signed in.
+
+**How links end.**
+
+| Event | What is deleted | Code |
+|---|---|---|
+| Logout (`logout/return`) or a revoked token seen by `/api/auth/me` | the customer's tokens and **every** `customer_account` and `app_proxy` link of the customer on every session, plus the session's own signed-in link (the tokens are per customer, and a shop-proof link counts without one, so another device's session would otherwise come back to life); `email` links stay | `signOutSessionLinks` → `unlinkSignedInSessions` |
+| Handover in whoami (§2 step 3) | this session's signed-in link only | `endSessionSignedInLink` → `unlinkSessionSignedIn` |
+| Shop logout seen by whoami (§2 step 2) | this session's `app_proxy` link only | `endAppProxySessionLink` → `unlinkAppProxySession` |
+| Erasure (§9) | the customer row; links and tokens cascade | `erasePerson` |
+
+A dead Customer Account link that the shop re-proves (grant kind `app_proxy`, same
+customer, `renewed`, no valid token, effective shop-proof hours > 0) is downgraded to
+`app_proxy` at the redeem (`downgradeDeadCustomerAccountLink`) instead of staying dead.
+
+## 5. Schema
+
+Owned here (the [`DATABASE.md`](./DATABASE.md) table index points to this section) — the
+tables of migration `0014_customer_accounts.sql`:
+
+- `customer_oauth_tokens` (`customer_id` PK → `customers`, `ON DELETE CASCADE` — one row
+  per customer): `access_token_enc`, `refresh_token_enc` (`BYTEA`, AES-256-GCM, §3),
+  `id_token_sub`, `scope`, `access_expires_at`, `refresh_expires_at` (nullable),
+  `updated_at`.
 - `customer_auth_pending` (`state` PK): `session_id`, `code_verifier`, `nonce`,
-  `return_url`, `prompt_none`, `created_at`, `expires_at` (~10-min TTL).
-- `customer_merge_conflicts`: the admin-review audit log for case (d).
-- `customer_session_links` (`session_id` PK → `customer_id`, `ON DELETE CASCADE`,
-  migration `0019`): the **direct, durable re-hydration link** written on every
-  identity bind, read by `resolveSignedInCustomer`. `link_kind` (`email` |
-  `customer_account` | `app_proxy` | `legacy`) and `authenticated_at` (migration
-  `0071`) record the proof behind the link; only the two sign-in kinds count.
+  `return_url`, `prompt_none`, `created_at`, `expires_at` (indexed; TTL
+  `CUSTOMER_AUTH_PENDING_TTL_MINUTES`, default 10).
+- `customer_merge_conflicts`: `id`, `shopify_customer_id`, `shopify_customer_gid`,
+  `shopify_email`, `email_row_customer_id`, `email_row_email`,
+  `shopify_row_customer_id`, `conflict_kind` (`row_collision` | `email_mismatch`),
+  `resolved_customer_id`, `session_id`, `created_at`, `resolved_at` — the audit log of
+  case (d) in §4.
 
-Retention: `customer_auth_pending` is purged past expiry by the retention cron;
-`customer_oauth_tokens` and `customer_session_links` cascade with the customer (so
-a GDPR erasure / customer purge removes them). See
-[`DATA_RETENTION.md`](./DATA_RETENTION.md).
+Elsewhere: the tier-3 columns of `customers` (`shopify_customer_id` with a unique partial
+index, `shopify_customer_gid`, `shopify_linked_at`, `identity_tier`; migration `0015`
+`shopify_account_summary` + `_updated_at`, §8) → `DATABASE.md` `customers`;
+`customer_session_links` (`0019`, `0071`) and `customer_link_grants` (`0073`) →
+`DATABASE.md` „The customer entity“; what each table holds and how long →
+[`DATA_RETENTION.md`](./DATA_RETENTION.md) „Cluster B (cont.) — Signed-in customers (tier 3)“
+and „Retention windows (tier 3)“ (the retention cron purges pending records past expiry and
+grants a day past expiry).
 
 ## 6. Verify gate — run it before relying on the flow
 
@@ -391,31 +402,33 @@ It (1) fetches discovery and compares to the confirmed live values, (2)
 **empirically** probes token-endpoint client auth (public exchange with a
 throwaway code → `invalid_grant` means PROCEED public; `invalid_client` means
 switch to confidential), and (3) probes `prompt=none` (logged-out → expects
-`error=login_required`). Token lifetimes must be read from a real exchange.
+`error=login_required`). It is read-only (no sign-in is completed). Token lifetimes
+must be read from a real exchange.
 
 ## 7. How to run a live sign-in test
 
-1. **Shopify admin (Lucas):** Headless channel → Customer Account API client
-   (PUBLIC), register the URLs (built from `PUBLIC_BASE_URL`):
-   - Callback: `https://<PUBLIC_BASE_URL>/api/auth/shopify/callback`
+1. **Shopify admin:** Headless channel → Customer Account API client
+   (PUBLIC), register the URLs (built from `PUBLIC_BASE_URL`, which includes the scheme):
+   - Callback: `<PUBLIC_BASE_URL>/api/auth/shopify/callback`
    - JavaScript origins: `https://www.motionsports.de`, `https://motionsports.de`
-   - Logout URI: `https://<PUBLIC_BASE_URL>/api/auth/shopify/logout/return`
+   - Logout URI: `<PUBLIC_BASE_URL>/api/auth/shopify/logout/return`
 2. **Env:** set `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_ID`, `PUBLIC_BASE_URL`,
    `TOKEN_ENC_KEY` (`openssl rand -hex 32`), `SHOPIFY_STOREFRONT_DOMAIN`, and a
-   DB. Leave `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_SECRET` empty (public).
-3. **Migrate:** `npm run db:migrate`.
+   DB (optional: `SHOPIFY_CUSTOMER_ACCOUNT_STATE_SECRET`). Leave
+   `SHOPIFY_CUSTOMER_ACCOUNT_CLIENT_SECRET` empty (public).
+3. **Migrate:** `npm run db:migrate` (run by the maintainer).
 4. **Gate:** `npm run verify:customer-account` (from an egress-capable host).
 5. **Sign in:** open
-   `https://<PUBLIC_BASE_URL>/api/auth/shopify/login?session=<any-session-id>&return_url=https://www.motionsports.de/`
+   `<PUBLIC_BASE_URL>/api/auth/shopify/login?session=<any-session-id>&return_url=https://www.motionsports.de/`
    in a browser, complete the Shopify login, and confirm the redirect lands on
    `…?ms_auth=ok&ms_code=<code>`.
-6. **Link:** `POST https://<PUBLIC_BASE_URL>/api/auth/link` with `{ "code": "<code>" }`,
+6. **Link:** `POST <PUBLIC_BASE_URL>/api/auth/link` with `{ "code": "<code>" }`,
    `Origin: https://www.motionsports.de`, `x-ms-chat-key: <secret>` and
    `x-ms-session: <same-id>` → `{ "ok": true, "signedIn": true }` (any other session
    id → `400`, and the code is used up).
-7. **Re-hydrate:** `GET https://<PUBLIC_BASE_URL>/api/auth/me?session=<same-id>`
+7. **Re-hydrate:** `GET <PUBLIC_BASE_URL>/api/auth/me?session=<same-id>`
    with `Origin: https://www.motionsports.de` + `x-ms-chat-key: <secret>` →
-   expect `{ "signedIn": true, "identity": { "name": "…", "tier": 3 } }`.
+   `signedIn: true` with `identity.name` and `tier: 3` (full shape: ACCOUNT_CONTRACT §4).
 
 ## 8. Signed-in data in the profile + live chat (CA-2 / CA-3)
 
@@ -423,13 +436,13 @@ For a **signed-in (tier-3)** customer we pull the interesting Customer Account
 data and feed it into the **internal marketing profile** and the **live chat**,
 reusing the **existing customer-memory mechanism** and its consent gate. This is
 **profile + live-chat personalisation only** — it does **not** touch the
-marketing CONSENT model (CA-4): signing in still establishes identity, never
+marketing CONSENT model (§10): signing in still establishes identity, never
 marketing consent.
 
 ### What we fetch — and from where
 
-Via the **Customer Account API GraphQL** endpoint
-(`account.motionsports.de/customer/api/<version>/graphql`) with the customer's
+Via the **Customer Account API GraphQL** endpoint (from discovery,
+`account.motionsports.de/customer/api/<version>/graphql`) with the customer's
 own server-held access token (sent **directly** in `Authorization`, no `Bearer`
 prefix), `fetchSignedInCustomerData` reads (signed-in customer only): **name**,
 **addresses**, and **full order history with line items**
@@ -445,60 +458,66 @@ prefix), `fetchSignedInCustomerData` reads (signed-in customer only): **name**,
 > richer read is **fault-isolated** from the identity read and **fails soft**:
 > any residual shape drift degrades to "name only", never an error.
 
-For tier 3 this **REPLACES** the email-keyed Admin-API order fetch
-(`fetchOrderHistoryByEmail`) as the source of the cached `purchase_summary`.
-Since the order ledger (migration `0062`), profile generation and campaign
-drafts read a mirrored customer's orders from `customer_orders`
-(`loadPurchaseHistory`); `purchase_summary` stays the cache the live-chat
-memory reads.
-
-### Where it's cached — keyed by `shopify_customer_id`
+### Where it's cached — keyed by the customer row
 
 The normalisation (`lib/customer-account-data.mjs`, unit-tested) maps the
-Customer Account response into the shapes the rest of the app **already**
-consumes, so nothing downstream changes:
+Customer Account response into the shapes the rest of the app already consumes;
+`refreshSignedInCustomerCache(customerId)` (`lib/customer-account-cache.ts`) ties
+token → fetch → cache:
 
-- **Order history → `customers.purchase_summary`** (migration 0008) — the same
-  blob the live-chat memory, profile generation, marketing draft and bundle
-  suggestion already read.
+- **Order history → `customers.purchase_summary`** (migration 0008), replacing the
+  email-keyed Admin-API fetch (`fetchOrderHistoryByEmail`) as its source for tier 3.
+  Since the order ledger (migration `0062`) the live-chat memory, profile generation
+  and campaign drafts read `loadPurchaseHistory` (`customer-orders-store.ts`):
+  `customer_orders` first, `purchase_summary` only for a customer without ledger
+  rows who was never synced. The admin's per-customer marketing draft, letter draft
+  and bundle suggestion still read `purchase_summary` directly.
 - **Name + a DATA-MINIMISED address context (city + country code only) →
   `customers.shopify_account_summary`** (migration **0015**) — for the greeting
   and the profile. We never cache the raw street, phone, or order totals here.
+  (While the letters channel is on, `PHYSICAL_MAIL_SENDS_APPROVED`, a complete
+  address from the account is stored separately as the lawful postal address — never
+  in this summary and never fed to the profile model.)
 
-`refreshSignedInCustomerCache(customerId)` (`lib/customer-account-cache.ts`) ties
-token → fetch → cache. It runs **on sign-in** (the callback, best-effort) and
-when an admin clicks **"Käufe aktualisieren"** (for a tier-3 customer the
-purchases route uses the Customer Account API instead of the email path).
+It runs **on sign-in** (the callback, best-effort), when an admin clicks **„Käufe
+aktualisieren“** and for stale customers in the nightly `refresh-customers` cron — the
+last two through `refreshCustomerData` (`customer-refresh.ts`), which prefers the
+Customer Account API while the customer has a live token and falls back to the Admin
+API by e-mail.
 
 ### How it reaches the chat — same mechanism, same minimisation
 
-`resolveChatMemory({ sessionId, email })` (`lib/customer-memory.ts`) is the
-single entry point the chat route uses. **Signed-in identity takes precedence**
-(it's the authenticated session), falling back to the tier-2 email path:
+`resolveChatIdentity({ sessionId, email })` (`lib/customer-memory.ts`; returns
+`{ signedIn, memory }`, `resolveChatMemory` is its memory-only form) is the single
+entry point the chat route uses. **Signed-in identity takes precedence** (it's the
+authenticated session), falling back to the tier-2 email path:
 
 - **Re-identification** for a signed-in user is the **authenticated session
-  itself** — `resolveSignedInMemory` requires a **live access token** (refreshing
-  if needed) before surfacing anything, so a logged-out/expired session resolves
-  to nothing (fail-closed), exactly like `/api/auth/me`.
+  itself** — `resolveSignedInMemory` requires `resolveLiveSignedInCustomer` (§4: a
+  live chat token, refreshed if needed, or the fresh shop proof) before surfacing
+  anything, so a logged-out/expired session resolves to nothing (fail-closed),
+  exactly like `/api/auth/me`. The chat route also uses this signed-in result to
+  withhold the e-mail summary offer (§10).
 - **Greeting (CA goal 2):** the chat greets the returning signed-in customer by
-  **name, tier-appropriately** (du / — for studio & public_sector — Sie). The
-  greeting uses only the **session's own authenticated identity**, so it is shown
-  to any live signed-in customer.
+  **name** (from `shopify_account_summary`), tonally fitting the segment (formal
+  „Sie“ for `studio` / `public_sector`). The greeting uses only the **session's own
+  authenticated identity**, so it is shown to any live signed-in customer.
 - **Personalisation (CA goal 1):** the **current-understanding summary + owned
   items + address context** are injected via the **same** customer-memory block,
   with the **same data minimisation** — a compact summary, owned-item titles +
   quantities, counts; **never** raw transcripts, order totals, or the email in
   the prompt.
 - **Profile (CA goal 3):** for tier 3 the richer Shopify data flows into the
-  existing personalized-email + bundle-suggestion flows automatically (they read
-  `purchase_summary` / `profile_summary`); the profile generation additionally
-  receives the data-minimised location context.
+  existing profile generation (orders via `loadPurchaseHistory`, plus the
+  data-minimised location context).
 
 ### The consent gate (unchanged personalisation requirement)
 
 History-personalisation stays gated on the **same** consent as tier 2 —
 `CONSENT_COPY_LAWYER_APPROVED` **and** the personalisation purpose being covered
-— enforced by `canPersonaliseSignedIn({ lawyerApproved, marketingStatus })`:
+— enforced by `canPersonaliseSignedIn({ lawyerApproved, marketingStatus,
+shopifySubscribed? })` (the chat passes the first two; `marketingStatus` already mirrors
+the one consent):
 
 | Visitor | Greeting by name | History / profile / address personalisation |
 |---|---|---|
@@ -510,8 +529,8 @@ The gate is two hard conditions, both fail-closed:
 
 1. **`CONSENT_COPY_LAWYER_APPROVED`** — the consent/privacy copy that covers
    "profile building from past interactions and purchases" must be legally signed
-   off. It is **`true`** (lawyer-approved June 2026), so this condition is
-   satisfied; personalisation then depends on condition 2 below, per user.
+   off. It is a code constant, **`true`** (lawyer-approved June 2026), so this
+   condition is satisfied; personalisation then depends on condition 2 below, per user.
 2. **Marketing consent on record (`marketing_status = 'confirmed'`)** — the
    mirror of the one consent `email_consent_state = 'subscribed'`, given in Mo
    with a double opt-in **or** on a Shopify surface (the consent text covers
@@ -524,28 +543,27 @@ or address in the prompt — the consent gate governs personalisation exactly as
 for tier 2; only the signed-in name greeting (the session's own identity) is
 added on top.
 
-### Order status in the chat (`get_order_status`, 2026-10, default off)
+### Order status in the chat (`get_order_status`, default off in code)
 
 Separate from personalisation: a signed-in customer may ask Mo about the **state
 of their own orders** (status, shipping, delivery, refund) and Mo answers from
 the order ledger plus a short live Admin API read (`lib/order-status.ts`, pure
-rules in `order-status-core.mjs`). This is customer service, not
+rules in `order-status-core.mjs`, tested). This is customer service, not
 personalisation, so it does **not** need the marketing consent above
-(Art. 6 (1) b). Its gate is stricter than the resolver's:
+(Art. 6 (1) b). Live state of the switch: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) 6.6. Its
+gate is stricter than the resolver's:
 
-- `CHAT_ORDER_STATUS_ENABLED` is on (default off; while off the tool is
-  withheld and the prompt is unchanged) — or, for the live check before the
-  switch, the session is signed in via the Customer Account as one of
-  `CHAT_ORDER_STATUS_TEST_CUSTOMERS` (Shopify customer ids; 2026-10-04,
-  `isOrderStatusEnabledFor` in `order-status.ts`): tool and prompt then change
-  for that session only;
+- `CHAT_ORDER_STATUS_ENABLED` is on (default `false` in code; while off the tool is
+  withheld and the prompt is unchanged) — or, for a live check, the session is signed
+  in via the Customer Account as one of `CHAT_ORDER_STATUS_TEST_CUSTOMERS` (Shopify
+  customer ids; `isOrderStatusEnabledFor` in `order-status.ts`): tool and prompt then
+  change for that session only;
 - the session's link is the **Customer Account sign-in in this session** —
-  `resolveSignedInLink` (`customer-session-link.mjs`) reads `link_kind`
-  explicitly and only `customer_account` counts; an App Proxy link
-  (`app_proxy`), a typed e-mail or a `legacy` link get `sign_in_required`
-  (for an `app_proxy` session with `signedInViaShop: true`: Mo says the
-  customer is recognised, but order status needs one „Anmelden“ in the chat,
-  and links „Meine Bestellungen“);
+  `resolveSignedInLink` reads `link_kind` explicitly and only `customer_account`
+  counts; an App Proxy link (`app_proxy`), a typed e-mail or a `legacy` link get
+  `sign_in_required` (for an `app_proxy` session with `signedInViaShop: true`: Mo says
+  the customer is recognised, but order status needs one „Anmelden“ in the chat, and
+  links „Meine Bestellungen“);
 - `getValidAccessToken(customerId)` returns a **live token** (refreshing if
   needed) — signed out or expired → `sign_in_required`. The access gate is
   resolved once per chat request, so parallel tool calls never refresh the
@@ -568,17 +586,19 @@ tracking numbers or links, addresses, ids or the e-mail. A live order whose
 answered only when a live read of the customer's five newest orders confirms
 the ledger is not behind (`confirmLedgerAnswer`); otherwise `unavailable`. At
 most three distinct lookups per chat request (repeats come from the request's
-cache). Returns, cancellations and complaints stay with the contact form. See
-`docs/ANWALTSDOSSIER.md` §16 (F-32) and `docs/API_CONTRACT.md` §2.
+cache). Returns, cancellations and complaints stay with the contact form. Legal:
+[`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) §16 (F-32); tool shape and „render nothing“:
+[API_CONTRACT](./frontend/API_CONTRACT.md) §2; widget side of `signedInViaShop`:
+ACCOUNT_CONTRACT §3a.
 
 ## 9. Signed-in conversation history (tier 3)
 
 A signed-in customer can browse, open, rename and delete their own **past
-conversations** — and erase all of their data. These endpoints live under
-`/api/account/*` and are the contract CA-3-THEME builds against (precise
-request/response shapes: [`frontend-handoff/CUSTOMER_ACCOUNT.md`](./frontend-handoff/CUSTOMER_ACCOUNT.md) §7).
+conversations**, download a summary (§11) or all their data, and erase everything.
+Shapes, statuses and widget behaviour: ACCOUNT_CONTRACT §7 (§7.1–§7.7) and §8. This
+section holds the internals.
 
-### The gate (fail-closed, behind the CA-1 resolver)
+### The gate (fail-closed, behind the signed-in resolver)
 
 Every `/api/account/*` request runs the same gate (`lib/account-guard.ts ::
 requireSignedInCustomer`), in this order:
@@ -586,17 +606,17 @@ requireSignedInCustomer`), in this order:
 1. **`guardRequest`** — origin allowlist + shared secret (`x-ms-chat-key`),
    like `/api/chat`. Widget XHR, with a CORS preflight.
 2. **Rate limit** — the chat bucket.
-3. **`resolveLiveSignedInCustomer(session)`** (`lib/signed-in-session.ts`) — the
-   session must link to a customer with a `shopify_customer_id` **through a
-   sign-in proven in this session** (`link_kind` `customer_account` /
-   `app_proxy`, migration `0071`). **Anonymous** (no customer), **email-only** (a
-   typed address, `link_kind = 'email'` — even for a Shopify customer) and
-   pre-0071 (`legacy`) sessions → **401 „Nicht angemeldet“, fail closed**,
-   before any history is read.
+3. **`resolveLiveSignedInCustomer(session)`** (§4; session from `?session=`, else
+   `x-ms-session` — `readSession`) — the session must link to a customer with a
+   `shopify_customer_id` **through a sign-in proven in this session** (`link_kind`
+   `customer_account` / `app_proxy`). **Anonymous**, **email-only** (even for a
+   Shopify customer) and `legacy` sessions → **401 „Nicht angemeldet“**, before any
+   history is read.
 4. **Still live**, exactly like `/api/auth/me`: a valid access token (refreshing
    if needed), or for an `app_proxy` link the fresh shop proof under
    `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (§2). A proof that ran out → 401 „Sitzung
-   abgelaufen“. The guard returns the proof (`token` | `shop`).
+   abgelaufen“. The guard returns the proof (`token` | `shop`), which the opt-in
+   records (§10).
 
 **Resolved across devices.** All of a signed-in customer's sessions — on every
 device — link to the **same** `customers` row (keyed by `shopify_customer_id`),
@@ -606,22 +626,25 @@ operation additionally constrains `customer_id = <self>`, so a conversation the
 caller doesn't own is **indistinguishable from a missing one** (404 — no
 enumeration leak).
 
-### Endpoints (all under `/api/account`)
+### Routes and handlers (all under `/api/account`)
 
-| Route | Method | Purpose |
-|---|---|---|
-| `/api/account/conversations` | GET | LIST the customer's past conversations (across devices), each with a TITLE, timestamps, message count. |
-| `/api/account/conversations/{id}` | GET | FETCH one conversation's transcript (must belong to this customer). |
-| `/api/account/conversations/{id}` | PATCH | RENAME the conversation title (`{ title }`). |
-| `/api/account/conversations/{id}` | DELETE | HARD-delete this one transcript. |
-| `/api/account/erase` | POST | Full "delete my data" — erase the customer (distinct from single-chat delete). |
+Shapes: ACCOUNT_CONTRACT §6.2, §7.1–§7.7, §8.
+
+| Route | Handler (lib) |
+|---|---|
+| `GET conversations` | `listCustomerConversations` (`account-history.ts`) |
+| `GET` / `PATCH` / `DELETE conversations/{id}` | `getCustomerConversationTranscript` / `renameCustomerConversation` (`sanitizeTitleInput`) / `deleteCustomerConversation` |
+| `GET summary?conversationKey=` | `loadCustomerConversationForSummary` → `buildSummaryDocument` → `buildSummaryPdf` (§11) |
+| `GET export` | `buildCustomerDataExport` (`account-export.ts`); KPI `account_export_requested` |
+| `POST erase` | `eraseSignedInCustomer` → `erasePerson` (below) |
+| `POST marketing-opt-in` | §10 |
 
 ### Multiple threads per session (migration 0018)
 
-`session_id` is the identity link and must not rotate while signed in, so it can
-no longer also be the *thread* key. `conversations.conversation_key` (a stable,
-client-generated value the widget sends on `/api/chat`) is now the uniqueness key;
-`session_id` stays on the row (no longer unique) as the match-up/summary bridge.
+`session_id` is the identity link and must not rotate while signed in, so it is
+not the *thread* key. `conversations.conversation_key` (a stable, client-generated
+value the widget sends on `/api/chat`) is the uniqueness key; `session_id` stays on
+the row (not unique) as the match-up/summary bridge.
 
 - A session can host **many** conversations — "Neue Beratung" sends a fresh
   `conversationKey`, creating a new history row instead of growing one thread.
@@ -629,276 +652,202 @@ client-generated value the widget sends on `/api/chat`) is now the uniqueness ke
   **resume** a thread (send it back on `/api/chat`), even across devices — the
   upsert never rewrites a row's `session_id`.
 - **Backward-compatible:** a client that sends no key defaults
-  `conversation_key = session_id` (the legacy one-thread-per-session behaviour).
-- Session-keyed reads that assume a single thread now take the **most recently
+  `conversation_key = session_id` (one thread per session).
+- Session-keyed reads that assume a single thread take the **most recently
   active** thread of the session (`loadConversationForSummary`,
-  `getConversationIdBySession`); the match-up/capture attach still uses
-  `WHERE session_id`, so it links **all** of the signing-in session's threads to
-  the customer (and never another session's).
+  `getConversationIdBySession`); the capture attach and the sign-in redeem use
+  `WHERE session_id`, so they link **all** of the session's threads to the customer
+  (the redeem only those without a customer or of the same one, §4) and never
+  another session's.
 
-### Eager create + customer-link at creation (no lost threads — migration 0026)
+### Eager create + customer-link at creation (migration 0026)
 
-A started conversation must persist and list **exactly like ChatGPT/Claude** —
-every started thread is durable, even before the assistant answers. Two defects
-broke that and are now fixed:
-
-- **Orphaned by a missing customer link.** The conversation row was written only
-  in `persistTurn` (the chat `onFinish`, *after* the stream) and that `INSERT`
-  **never set `customer_id`** — the customer link was stamped only at sign-in /
-  email-capture (`UPDATE conversations … WHERE session_id`), which had already run
-  *before* a later "Neue Beratung" row existed. So a new signed-in thread was
-  created with `customer_id = NULL` and never appeared in the list (which filters
-  `WHERE customer_id = <self>`). **Lost.**
-- **Flushed too late.** Persisting only in `onFinish` meant a thread whose answer
-  never landed (reload / switch first) was never written at all.
-
-The fix (`lib/conversation-create :: ensureConversationStarted`, called from
-`/api/chat` **before** the stream, concurrently with retrieval):
+Every started thread is durable and listed, even before the assistant answers:
+`lib/conversation-create.mjs :: ensureConversationStarted`, called from `/api/chat`
+**before** the stream (concurrently with retrieval):
 
 - **Eager:** the conversation row + the first user message are written at the
   **first send**, before the model answers — so the thread lists immediately and
   survives a reload.
 - **Customer-linked at creation:** the row is stamped with the session's linked
-  `customer_id` (resolved from `customer_session_links`, migration 0019) the moment
-  it is created. `persistTurn` is the backstop — it now resolves + stamps
+  `customer_id` (resolved from `customer_session_links`, `resolveLinkedCustomerId`)
+  the moment it is created. `persistTurn` is the backstop — it resolves + stamps
   `customer_id` too, `COALESCE`-ing so it never NULLs an existing link or
   re-clobbers a thread that signed in mid-way.
 
-Anonymous sessions still create pseudonymous rows (`customer_id` stays NULL),
-unchanged.
+Anonymous sessions create pseudonymous rows (`customer_id` stays NULL). (The defects
+this replaced: archive history file.)
 
 ### Titles are cheap — cached on the row, no model call per render
 
-The list TITLE is either the customer's **custom title** (set via RENAME, stored in
-`conversations.title`, migration `0016`) or, when unset, a **derived** label: the
-first user message, whitespace-collapsed and trimmed to 80 chars
-(`lib/conversation-title.mjs :: deriveConversationTitle`). **No Anthropic call** runs
-per list render — it never did. As of migration **0026** the derived label is also
-**cached on the row** (`conversations.title_auto`, written at creation), so the list
-no longer runs a per-row `LATERAL` sub-select to fetch each conversation's first
-message — it reads the title straight off the row.
+The list TITLE is the customer's **custom title** (set via RENAME, stored in
+`conversations.title`, migration `0016`), else the **derived** label cached on the row
+at creation (`conversations.title_auto`, migration `0026`): the first user message,
+whitespace-collapsed and trimmed to 80 chars (`lib/conversation-title.mjs ::
+deriveConversationTitle`), else „Beratung“. No model call runs per list render.
 
 **List performance (migration 0026).** The list query
 (`listCustomerConversations`) is `WHERE customer_id = <self> ORDER BY
-last_activity_at DESC, id DESC`. The pre-existing `conversations(customer_id)` index
-(migration 0008) covered the filter but **not** the ordering, so a long history
-still paid a sort. The new composite **partial** index
-`conversations(customer_id, last_activity_at DESC, id DESC) WHERE customer_id IS NOT
-NULL` serves filter **and** order in one indexed walk — a snappy list (well under a
-second for a normal history). `messageCount` (readable user/assistant turns, tool
-rows excluded) remains a single indexed `COUNT` per row over
+last_activity_at DESC, id DESC LIMIT 100`, served in one indexed walk by the composite
+**partial** index `conversations(customer_id, last_activity_at DESC, id DESC) WHERE
+customer_id IS NOT NULL`. `messageCount` (readable user/assistant turns, tool rows
+and empty turns excluded) is a single indexed `COUNT` per row over
 `messages_conversation_idx`.
 
 ### Deletion semantics — single-chat delete vs. the durable profile
 
-This is the subtle part, and it follows the two-cluster lawful-basis split
-([`DATA_RETENTION.md`](./DATA_RETENTION.md)):
-
-- **`DELETE /api/account/conversations/{id}` HARD-deletes that one transcript**
-  — the `conversations` row plus its `messages` and chat `ai_usage` (FK
-  `ON DELETE CASCADE`). It is gone immediately and irreversibly.
-- **The durable "current understanding" profile is a SEPARATE aggregate under a
-  different lawful basis** (`customers.profile_summary`, regenerated on demand —
-  see [`CUSTOMERS.md`](./CUSTOMERS.md)). Deleting a source conversation means a
-  **future profile regeneration no longer sees it** — but **profile text already
-  derived persists** until the profile is regenerated **or** the customer is
-  erased. Single-chat delete deliberately does **not** reach into the profile
-  aggregate; that would conflate two lawful bases. The honest contract for the
-  customer: "this chat is gone; what we already learned is cleared when you
-  regenerate your profile or delete all your data."
+`DELETE /api/account/conversations/{id}` **hard-deletes that one transcript** — the
+`conversations` row plus its `messages` and chat `ai_usage` (FK `ON DELETE CASCADE`),
+immediately and irreversibly. The durable "current understanding" profile
+(`customers.profile_summary`) is a **separate aggregate under a different lawful
+basis**: a future regeneration no longer sees the deleted chat, but text already
+derived persists until the profile is regenerated or the customer is erased. Owner of
+this rule and its lawful-basis reasoning: [`DATA_RETENTION.md`](./DATA_RETENTION.md)
+„Signed-in conversation history — single-chat delete vs. the durable profile“.
 
 ### The distinct full "delete my data" path
 
-`POST /api/account/erase` (`lib/account-history.ts :: eraseSignedInCustomer`) is
-a **GDPR erasure of the person**, separate from the single-chat delete. It calls
-**the one erasure path** `erasePerson` (`src/lib/customer-erasure.ts`) — the same
-as the mail link `/api/erase-data` and the admin's "Löschen" — which, in one
-transaction:
+`POST /api/account/erase` (`lib/account-history.ts :: eraseSignedInCustomer`) is a
+**GDPR erasure of the person**, separate from the single-chat delete. It calls **the one
+erasure path** `erasePerson` (`src/lib/customer-erasure.ts`) — the same as the mail link
+`/api/erase-data`, the admin's „Löschen“ and Shopify's `customers/redact` /
+`customers/delete` webhooks. What it deletes, per table: [`DATA_RETENTION.md`](./DATA_RETENTION.md)
+„Complete erasure — one path for every way to delete“ (plan: `ERASURE_PLAN` in
+`customer-erasure-core.mjs`, tested). The Shopify side (the erasure tombstone, the outbox
+rows and the switches that send them): [`CUSTOMERS.md`](./CUSTOMERS.md) „Retention / erasure“;
+the consent effect: [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) „Erasure (one deletion with Shopify)“.
+The widget's confirmation copy comes from `GET /api/consent-copy?surface=erase`
+(API_CONTRACT §7.4) and names the shop account only while `SHOPIFY_ERASURE_SYNC` is on.
 
-1. **Purges every linked conversation** — all transcripts + messages + chat
-   `ai_usage` cascade, on every device (not merely unlinked: the customer's own
-   transcripts are gone).
-2. **Suppresses + purges the consent records** — adds the (real) email to
-   `suppression_list` (reason `erasure`, so it is never mailed and no import
-   re-creates it) and deletes its `email_captures`; the `consent_events`
-   history cascades with the row. Skipped for the synthetic `shopify:<id>`
-   placeholder email.
-3. **Deletes everything else about the person** — marketing and campaign mails
-   and drafts, correspondence, letters, feedback, sign-in state, and Mo's copy
-   of the person's Shopify orders (`customer_orders`).
-4. **Deletes the `customers` row** — which **clears the profile + all cached
-   summaries** (they live on the row), **revokes the OAuth tokens**
-   (`customer_oauth_tokens` `ON DELETE CASCADE`), and de-identifies the
-   remaining aggregate refs (`bundle_offers`, `mo_orders` — kept for
-   accounting, no PII).
-
-**The Shopify side.** For a signed-in customer (always a Shopify id) the same
-call writes an **erasure tombstone** for the Shopify id — no import,
-reconciliation or webhook brings the person back — and queues one
-`data_erasure` outbox row: consent off in Shopify, then Shopify's own
-`customerRequestDataErasure`. It is sent only while `SHOPIFY_ERASURE_SYNC=true`
-(default `false`; the row waits until then). Shopify keeps its own orders as
-long as the law requires; Mo's copy is gone. The widget's confirmation copy
-comes from `GET /api/consent-copy?surface=erase` and names the shop account
-when the flag is on. The reverse direction — an erasure started in Shopify
-(`customers/redact`, `customers/delete`) — runs the same deletion in Mo.
-
-The response is unchanged (`{ ok, erased, deletedConversations }`). After
-erasure the session no longer resolves to a customer, so every subsequent
-`/api/account/*` call (and `/api/auth/me`) fails closed. Note this drops the
-stored tokens server-side; the customer may additionally log out of Shopify
-itself (the `end_session_endpoint`, §5 frontend doc).
-
-> ℹ️ **Retired:** the second suppression list for the §7(3) existing-customer
-> basis (`bestandskunden_suppression_list`) was dropped with that feature
-> (migration `0029`, 2026-06-16). The `suppression_list` row with reason
-> `erasure` is the only block an erasure leaves.
+After erasure the customer row, its tokens and every session link are gone, so every
+subsequent `/api/account/*` call (and `/api/auth/me`) for those sessions fails closed.
+Ending the Shopify session itself is the separate logout (ACCOUNT_CONTRACT §5, §7.5).
 
 ## 10. At-sign-in marketing opt-in + the match-up (CA-4)
 
-CA-1 established that **signing in is identity, not marketing consent** (§1). CA-4
-**keeps that rule** and adds a *presentation-maximised but fully lawful* way for a
-**signed-in** customer to opt into marketing — see
-[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "At-sign-in marketing opt-in".
+Signing in is **identity, not marketing consent** (§1). A signed-in customer may opt
+in with one explicit act and the existing double opt-in. Owners elsewhere: the legal
+reasoning and DOI mechanics → [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "At-sign-in
+marketing opt-in"; when the widget asks (`optInActionable`, anti-nag, expired DOI) →
+ACCOUNT_CONTRACT §6.1; the submit shape and answers → ACCOUNT_CONTRACT §6.2; the copy
+payload → API_CONTRACT §7.4 and its rendering → [`CONSENT_CONTRACT.md`](./frontend/CONSENT_CONTRACT.md)
+§3. The ask appears as a popup right after a sign-in and as an inline card after a
+sign-in mid-conversation; the anonymous chat consent gate (`surface=chat`,
+`POST /api/chat-marketing-opt-in`) is retired in the widget and still served for
+compatibility (CONSENT_CONTRACT §2).
 
-- **Endpoint:** `POST /api/account/marketing-opt-in` (the standard signed-in
-  guard: origin + secret + a **live** sign-in — a chat token or the fresh shop
-  proof, §9). The `consent_events` row of the opt-in records which proof stood
-  behind it in its `note`: „Anmeldenachweis: Kundenkonto-Anmeldung im Chat“ or
-  „Anmeldenachweis: Shop-Login (App Proxy)“ (`signInProofNote`). It requires an explicit
-  `marketingConsent: true` (no auto-enrol), uses the customer's **verified**
-  `customers.email` (refusing the synthetic `shopify:<id>` placeholder), and runs
-  the **existing DOI** via `upsertEmailCapture` — `'pending'` + confirmation
-  email, `'confirmed'` only after the link click. The copy is served by
-  `signInMarketingConsentCopy()` (`GET /api/consent-copy?surface=signin`, v3).
-- **One consent, DOI on Mo's surfaces.** Sign-in itself never writes a
-  consent. On Mo's surfaces the *only* path to `confirmed` is the double opt-in;
-  a subscription the customer gave in the shop reaches the same consent through
-  the customer mirror. The opt-in is a **separate, explicit act** the customer
-  chooses. A customer already subscribed gets no second DOI mail (response
-  `confirmed`, `alreadyConfirmed: true`, `doiEmailSent: false`).
-- **Reached from the chat gate.** The anonymous chat consent gate now **leads
-  with sign-in** (`signIn` in `GET /api/consent-copy?surface=chat`, `loginPath`
-  `/api/auth/shopify/login`); after the round-trip this card asks for the
-  consent in one tap — or, for a customer already subscribed, nothing is asked.
-  The typed-e-mail opt-in stays the alternative for people without an account
-  ([`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "Chat consent gate").
+### The opt-in state — `resolveMarketingOptInState`
+
+`lib/signed-in-identity.ts → resolveMarketingOptInState(customerId, route)` is the one
+function behind the `marketing` object of `/api/auth/me` and of whoami (§2), so the two
+detection paths cannot diverge:
+
+- `status` = `customers.marketing_status`, the legacy mirror of the one consent
+  (`legacyMarketingStatus`: `subscribed` → `confirmed`, `pending` → `pending`,
+  `unsubscribed` → `unsubscribed`, `not_subscribed` → `none`). Sign-in imports no
+  consent, but the row already carries whatever the one consent holds — a prior DOI
+  under the verified e-mail (carried forward by the §4 stamp branch) or a shop
+  newsletter subscription (once the customer mirror has the person).
+- `optInActionable` = a real e-mail (contains `@`, not the `shopify:` placeholder)
+  **and** `status === 'none'` **and** not `consentAskQuiet`.
+- No customer row, a read error or no database → `{ status: 'none', optInActionable:
+  false }` (fail closed; errors reported with phase `marketingState`).
+
+**Anti-nag (`consentAskQuiet`).** One query joins `customer_session_links` (all links of
+the customer, any kind) with `kpi_events` of the last 30 days, counting **distinct
+sessions** with `consent_gate_declined` / `consent_gate_shown` whose
+`data->>'surface' = 'signin'`; the pure rule `isConsentAskQuiet`
+(`consent-ask-policy.mjs`, tested) is quiet at ≥ 1 declined session or ≥ 3 shown
+sessions (`CONSENT_ASK_MAX_SHOWN_SESSIONS`). Because it counts only sessions still
+linked to the customer, ending links resets it for those sessions: the backend logout
+(and a revoked token) deletes every signed-in link of the customer (§4), so the
+`consent_gate_*` events of those sessions **stop counting** after a logout (sessions
+linked only by a typed e-mail stay linked); a handover drops the one session. An erasure
+deletes the events themselves.
+
+**Expired DOI.** A `pending` consent whose link was never clicked is reset to
+`not_subscribed` by the nightly `expirePendingConsents` (`consent-store.ts`; rule and timing:
+[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "The one consent (Shopify ⇄ Mo)"), so `status` reads
+`none` and the ask may come again.
+
+### The submit — `POST /api/account/marketing-opt-in` (internals)
+
+1. The standard gate (§9) → the customer and the sign-in proof.
+2. `marketingConsent === true` required (no auto-enrol), else `400`.
+3. The address is `customers.email` — the verified one; the synthetic `shopify:<id>`
+   placeholder → `422 no_verified_email`; no customer → `404 not_found`.
+4. Version stamp: `resolveConsentCopyVersion` stamps `CONSENT_COPY_VERSION` (`v5`,
+   `consent-copy-version.mjs`) only when the echoed `consentTextShown` is byte-identical
+   to `signInMarketingConsentCopy(locale).consentTextShown`; anything else is stored
+   unattested (NULL).
+5. `isEmailAlreadySubscribed` → an address already subscribed (shop or earlier DOI)
+   gets no second DOI mail; then the same `upsertEmailCapture` as `/api/capture-email`.
+6. `linkCustomerOnEmailCapture({ email, sessionId })` attaches the session's chats; its
+   `email` link for the **same** customer never weakens the signed-in link (§4).
+7. `recordMoOptIn` (`consent-flows.ts`) reports a new DOI to the one consent as
+   `pending` (source `mo_signin`, through `applyConsentAct`); its `consent_events` row
+   notes the proof (`signInProofNote`: „Anmeldenachweis: Kundenkonto-Anmeldung im Chat“ /
+   „Anmeldenachweis: Shop-Login (App Proxy)“). When no new DOI is pending (address
+   already subscribed, or suppressed) it writes no act.
+8. Server-only KPI events `email_capture_submitted` + `email_capture_marketing_opted_in`
+   (`trigger: "signin_optin"`, known `placement` / `variant` only); the DOI mail goes
+   out only when newly pending.
 
 ### The match-up (consent carry-forward + session scope)
 
-Both cases are handled by the existing merge (`decideMerge` →
-`bindShopifyIdentity`, §4) — CA-4 pins and documents them:
-
-- **email-only → signed-in:** the **stamp** branch targets the tier-2 row matched
-  by the verified email and writes **only identity columns**, so a **prior DOI
-  consent under that email carries forward intact** (`email_captures` + the
-  one consent `email_consent_state = 'subscribed'`, mirrored as
-  `marketing_status = 'confirmed'`) — none invented, none silently revoked. A
-  collision/mismatch is logged to `customer_merge_conflicts` and **never
-  fuses** two consent records. (The customer mirror's own merge —
-  `mergeCustomers`, when Shopify reports an e-mail change onto an Interessent's
-  address — replays the dropped row's consent through the resolver; the newer
-  act wins. See [`CUSTOMERS.md`](./CUSTOMERS.md).)
-- **current-anonymous-session → signed-in:** only the **current** session's
-  conversation (the chat that led to sign-in, carried in the signed
-  `state`/pending record) is attached — `WHERE session_id = THIS session`. Other
-  anonymous threads are **never** retroactively scooped.
+- **email-only → signed-in:** the §4 stamp branch writes only identity columns, so a
+  prior DOI consent under that e-mail carries forward intact; collisions are logged,
+  never fused. Owner of the consent side (including the mirror's `mergeCustomers` for
+  two rows of one person): [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "Match-up on sign-in".
+- **current session → signed-in:** the session's conversations are attached when the
+  one-time code is **redeemed**, for the session the grant names — Customer Account and
+  App Proxy alike — and only those without a customer or of the same customer (§4).
+  Other sessions' anonymous threads are never scooped.
 
 ### §7(3) Bestandskunden — REMOVED
 
-> ℹ️ **Retired 2026-06-16** (client decision; never live, schema dropped in
-> migration `0029`). The `bestandskunde_eligible` audience and the
-> `BESTANDSKUNDE_SENDS_APPROVED` flag no longer exist — see
-> [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "§7 Abs. 3 UWG Bestandskunden —
-> REMOVED". Marketing mail rests on the one consent only.
+Retired 2026-06-16 (migration `0029`): [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "§7 Abs. 3
+UWG Bestandskunden — REMOVED".
 
 ### Where the opt-in is surfaced for tier 3 — and where it is NOT
 
-The tier-3 chat experience **moves** the marketing opt-in: the end-of-chat
-email-summary + marketing capture widget is **suppressed** for signed-in
-customers, and the opt-in is offered **at sign-in** instead (the CA-4 card). The
-two states the widget reads are both already in the backend; CA-4 just pins the
-contract.
-
-- **Suppression gate — tier.** `/api/auth/me` returns `identity.tier`. The widget
-  **suppresses** the end-of-chat capture/opt-in widget when `tier === 3` (a
-  signed-in customer): they don't need the "type your email + summary" capture —
-  the summary is downloadable (§11) and the opt-in lives at sign-in. **Tiers 1–2
-  are unchanged**: the end-of-chat capture form still shows for anonymous /
-  email-only visitors exactly as before. This is a **frontend gate on an existing
-  field**, and since 2026-10-05 the backend also withholds the offer (and the
-  forced checkout-moment ask) for a live tier-3 session; sign-in is still
-  identity, not consent.
-- **At-sign-in opt-in actionability — `marketing.optInActionable`.** `/api/auth/me`
-  now also returns `marketing: { status, optInActionable }`. The widget's
-  `optInActionable` flag reads this: the CA-4 card is shown to a signed-in
-  customer who has **not yet recorded a marketing decision**, and hidden once
-  they have. `optInActionable` is computed fail-closed as:
-
-  ```
-  optInActionable = signedIn
-                 && customer has a REAL verified email (not the shopify:<id> placeholder)
-                 && marketing_status === 'none'      // no consent decision on record yet (Mo or Shopify)
-                 && !consentAskQuiet                 // anti-nag, per customer (05.10.2026)
-  ```
-
-  **Anti-nag** (`src/lib/consent-ask-policy.mjs`, tested): `optInActionable` is
-  also `false` when the customer declined the consent popup (`consent_gate_declined`,
-  surface `signin`) in **any** of their sessions in the last 30 days, or the popup
-  was shown in **3** of their sessions in 30 days. It applies to chat sign-ins and
-  shop-login recognition alike; a read failure fails closed.
-
-  `marketing_status` is the compatibility mirror of the **one** consent
-  (`customers.email_consent_state`: `subscribed` → `confirmed`,
-  `not_subscribed` → `none`; `src/lib/signed-in-identity.ts`). Sign-in itself
-  imports no consent (§1), but the customer's row already carries whatever the
-  one consent holds: a prior DOI under their verified email (carried forward on
-  merge, §4 stamp branch) **or** a newsletter subscription given in the shop
-  (once the customer mirror has the person — import, `customers/*` webhook or
-  nightly reconciliation). Such a customer is `pending`/`confirmed`/`unsubscribed`
-  → **not actionable** (decided, never re-asked). Everyone else starts at
-  `'none'` → **actionable**. A synthetic-email tier-3 row (no real address to
-  DOI) is also **not actionable**. "Dismissed" (the customer closed the card
-  without ticking) is a **widget-local** state the backend does not track — once a
-  real decision is recorded via `POST /api/account/marketing-opt-in` the backend
-  flips `status` away from `'none'` and `optInActionable` becomes `false` on the
-  next `/api/auth/me`.
-
-The opt-in submit itself is unchanged (`POST /api/account/marketing-opt-in`,
-above): explicit `marketingConsent: true`, the existing DOI, our verified email.
+For a signed-in customer the end-of-chat e-mail-summary + marketing capture is
+suppressed and the ask moves to after the sign-in; the widget gate (`identity.tier ===
+3`) and the 422 fallback: ACCOUNT_CONTRACT §6.0. Backend side: `/api/chat` does not offer
+`offer_email_summary` (nor force the checkout-moment ask) when `resolveChatIdentity`
+reports the session signed in (§8) — fail-open: a failed sign-in lookup keeps the offer.
+Tiers 1–2 are unchanged.
 
 ## 11. Conversation summary download (signed-in, S5 structure reused)
 
 A signed-in (tier-3) customer can **download** a summary of any one of their
-threads from the widget's **"Zusammenfassung herunterladen"** button. It is the
-**same** S5 structured summary as the transactional summary **email** — AI prose
-→ chosen products → **Zur Kasse** → divider → **"Vielleicht auch interessant:"**
-alternatives — **assembled by the very same renderer** (`buildSummaryDocument`,
-`lib/summary-email.ts`), then rendered to PDF, not a second layout. The email and
-the download can therefore never drift apart in content.
+threads („Zusammenfassung herunterladen“). It is the **same** S5 structured summary as
+the transactional summary **email** — AI prose → chosen products → **Zur Kasse** →
+divider → **„Vielleicht auch interessant:“** alternatives — **assembled by the very
+same function** (`buildSummaryDocument`, `lib/summary-email.ts`), then rendered to PDF,
+not a second layout. The email and the download can therefore never drift apart in
+content. Endpoint shape, headers, filenames and the widget's Blob download:
+ACCOUNT_CONTRACT §8.
 
-### Format: PDF (10E-1, replacing the 10B-1 HTML)
+### Format: PDF
 
-The download is a **PDF** (`Content-Type: application/pdf`,
-`Content-Disposition: attachment`), produced by `lib/summary-pdf :: buildSummaryPdf`
-on the repo's **dependency-free** hand-written PDF stack (`lib/pdf-core`, shared
-with the physical-letter PDF — **no headless browser / PDF dependency** on Vercel).
-It renders the structured pieces `buildSummaryDocument` returns (`summary`,
-`chosen`, `cartUrl`, `alternatives`) into a branded document — letterhead + footer,
-the same sections as the email. The widget fetches the endpoint as a guarded XHR
-(so it can send the shared-secret + session headers), then saves the response body
-as a `Blob` behind the button.
+`lib/summary-pdf.mjs :: buildSummaryPdf` renders the structured pieces
+`buildSummaryDocument` returns (`summary`, `chosen`, `cartUrl`, `alternatives`) into a
+branded document — letterhead + footer, the same sections as the email — on the repo's
+**dependency-free** hand-written PDF stack (`lib/pdf-core.mjs`, shared with the
+physical-letter PDF — **no headless browser / PDF dependency** on Vercel).
 
-### Endpoint — `GET /api/account/summary?conversationKey=<key>`
+### Endpoint internals — `GET /api/account/summary?conversationKey=<key>`
 
-| | |
-|---|---|
-| **Guard** | the standard signed-in gate (`requireSignedInCustomer`): origin allowlist + `x-ms-chat-key` + a **live** access token. Anonymous / email-only / logged-out → **401**, fail closed. |
-| **Scope** | keyed by the thread's **`conversationKey`** (migration 0018). The thread must belong to the caller (`conversation_key + customer_id = self`); a foreign/unknown key is a clean **404** — indistinguishable from missing (no enumeration leak). |
-| **Body** | the branded **PDF** summary document (`application/pdf`). |
-| **Cost (S6)** | when it makes a model call (Anthropic summary prose), the token usage is recorded as the **`summary_download`** call site, **linked to the conversation** so it cascade-deletes with the transcript on single-chat delete / erasure. No model call (no API key / empty transcript) → nothing recorded; the document degrades to the plain transcript, exactly like the email. |
-
-The `conversationKey` is the per-thread key the history list / transcript already
-return (§9, migration 0018) and the widget already sends on `/api/chat`. The
-numeric `conversationId` keys the rename/delete routes; the **summary download
-keys on `conversationKey`** (the thread), matching the thread model.
+- **Gate:** the standard signed-in gate (§9) — a live chat token **or** the fresh shop
+  proof.
+- **Scope:** keyed by the thread's **`conversationKey`** (migration 0018), not the
+  numeric `conversationId` of the rename/delete routes.
+  `loadCustomerConversationForSummary` reads `conversation_key = <key> AND customer_id
+  = <self>` (at most 500 messages), so a foreign/unknown key is indistinguishable from a
+  missing one (404).
+- **Cost (S6):** when the prose needs a model call, the token usage is recorded as the
+  **`summary_download`** call site, **linked to the conversation**, so it cascade-deletes
+  with the transcript on single-chat delete / erasure. No model call (no API key / empty
+  transcript) → nothing recorded; the prose degrades to the plain transcript, exactly
+  like the email.

@@ -5,7 +5,7 @@
 // campaign mails, consent changes), renders them for the prompt within a
 // character budget (newest first), and maps the model's cited numbers back
 // to the sources — numbers that do not exist are dropped, never invented.
-// docs/CUSTOMER_PLATFORM_PLAN.md §9.5.
+// docs/archive/CUSTOMER_PLATFORM_PLAN.md §9.5.
 
 const KIND_LABELS = {
   order: "Bestellung",

@@ -2,7 +2,7 @@
 // person's record only, with the sources cited (writer tier). The record is
 // built by the pure core (lib/customer-ask-core.mjs); the AI profile is used
 // unless the person objected to profiling. Nothing is stored except the AI
-// usage row. docs/CUSTOMER_PLATFORM_PLAN.md §9.5.
+// usage row. docs/archive/CUSTOMER_PLATFORM_PLAN.md §9.5.
 
 import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";

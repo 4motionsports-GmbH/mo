@@ -15,7 +15,8 @@
 // this XHR (it carries the guard headers), then saves the bytes as a Blob behind
 // the "Zusammenfassung herunterladen" button.
 //
-// Gated by the CA-1 signed-in resolver (origin + secret + a LIVE access token);
+// Gated by the CA-1 signed-in resolver (origin + secret + a live sign-in: a
+// valid access token or the fresh shop proof, lib/account-guard);
 // the thread must belong to the caller (conversation_key + customer_id), so an
 // anonymous/tier-2/foreign request fails closed (401 / 404). If the summary
 // makes a model call, its token usage is recorded against the conversation as

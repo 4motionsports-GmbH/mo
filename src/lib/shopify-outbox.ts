@@ -9,7 +9,7 @@
 // row is shown in Einstellungen → Shopify-Abgleich and in the Eingang.
 //
 // Mutations (Admin GraphQL, scope write_customers — verify the input shapes
-// against the configured SHOPIFY_API_VERSION, docs/CUSTOMER_PLATFORM_PLAN.md
+// against the configured SHOPIFY_API_VERSION, docs/archive/CUSTOMER_PLATFORM_PLAN.md
 // §6.2):
 //   customerEmailMarketingConsentUpdate(input: { customerId, emailMarketingConsent })
 //   customerCreate(input: { email, firstName, lastName, emailMarketingConsent })

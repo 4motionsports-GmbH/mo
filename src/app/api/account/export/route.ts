@@ -6,9 +6,11 @@
 // correspondence, letters, marketing sends, bundle offers, feedback, suppression
 // status. Delivered as a downloadable attachment.
 //
-// Gated by the CA-1 signed-in resolver (origin + secret + a LIVE access token);
-// scoped strictly to the resolved customer id, so an anonymous / tier-2 / foreign
-// request fails closed (401). See LEGAL_READINESS_REPORT §8 OQ-11.
+// Gated by the CA-1 signed-in resolver (origin + secret + a live sign-in: a
+// valid access token or the fresh shop proof, lib/account-guard); scoped strictly
+// to the resolved customer id, so an anonymous / tier-2 / foreign request fails
+// closed (401). Widget contract: docs/frontend/ACCOUNT_CONTRACT.md §7.7; history:
+// docs/archive/LEGAL_READINESS_REPORT.md §8 OQ-11.
 
 import { preflightResponse } from "@/lib/security";
 import { errorResponse, reportError } from "@/lib/observability";

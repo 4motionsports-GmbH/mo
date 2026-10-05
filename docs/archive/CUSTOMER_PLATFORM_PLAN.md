@@ -1,5 +1,11 @@
 # Mo as the AI marketing layer — the customer-centric restructuring (plan)
 
+> **Archived 2026-10-05 — historical, not maintained.** The plan was built in 2026-10. Its decision
+> record D-1…D-12 and the list of what was not built are in [`CUSTOMERS.md`](../CUSTOMERS.md)
+> „Design decisions (customer platform, 2026-10)“; the as-built behaviour is in `CUSTOMERS.md`,
+> `CONSENT_FLOW.md`, `CAMPAIGNS.md` and `ADMIN_DASHBOARD.md`. Code comments still cite this plan's
+> sections as design rationale.
+
 Status: **built, 2026-10-01** (phases 1–7, see §0 „As built“). This document stays the design
 record: §1–§20 are the plan as agreed; where the build deviates, §0 says so and the code and the
 reference docs (`ADMIN_DASHBOARD.md`, `CAMPAIGNS.md`, `CONSENT_FLOW.md`, `CUSTOMERS.md`,
@@ -163,7 +169,7 @@ Principles every phase must respect:
 | P-6 | **A human approves every send; legal gates fail closed.** | Unchanged. A suggestion never sends anything. |
 | P-7 | **The chat is a feature.** | Chat data enriches the profile, the inbox and drafts. Nothing in the customer system requires a chat. |
 | P-8 | **House rules stay.** | Non-composable SQL, `getSql()` may be `null`, pure `.mjs` cores with tests, `guardAdmin*`, `admin-datetime`/`admin-format`, design tokens, one screen per request, German UI (see `CLAUDE.md`). |
-| P-9 | **The widget contract stays backward compatible.** | `docs/API_CONTRACT.md` changes are additive only. |
+| P-9 | **The widget contract stays backward compatible.** | `docs/frontend/API_CONTRACT.md` changes are additive only. |
 | P-10 | **Forward-only, stoppable phases.** | Each phase ends in a consistent state. Legacy tables are dropped one release after the last reader is gone. |
 
 ---

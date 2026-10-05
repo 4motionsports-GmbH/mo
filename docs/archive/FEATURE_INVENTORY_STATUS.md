@@ -1,6 +1,6 @@
 # Feature inventory — verification status (Phase 3)
 
-Date: 2026-09-09 · Baseline: [`FEATURE_INVENTORY.md`](./FEATURE_INVENTORY.md) (`main` @ `9c6b551`, 398 admin
+Date: 2026-09-09 · Baseline: [`FEATURE_INVENTORY.md`](../FEATURE_INVENTORY.md) (`main` @ `9c6b551`, 398 admin
 items SHL/LOG/UEB/KUN/KAM/KPI/FEE/GES/WIS/ANA/VER/EIN) · Verified against `main` @ `09e4284` (after the twelve
 slices of the redesign, see [`CLEANUP_AUDIT.md`](./CLEANUP_AUDIT.md) §0).
 
@@ -8,8 +8,8 @@ slices of the redesign, see [`CLEANUP_AUDIT.md`](./CLEANUP_AUDIT.md) §0).
 was located in the redesigned source (`src/app/admin/**`); renamed labels are noted. (2) Playwright interaction
 tests per screen against the production build with the seeded local database (login, navigation, shortcuts, filters,
 dialogs, mutations against the guarded routes). (3) Screenshots of every screen in light and dark, plus tablet
-width for the four wide screens: [`screenshots/before/`](./screenshots/before/) vs
-[`screenshots/after/`](./screenshots/after/) (same file names, `index.json` in each folder).
+width for the four wide screens: [`screenshots/before/`](../screenshots/before/) vs
+[`screenshots/after/`](../screenshots/after/) (same file names, `index.json` in each folder).
 
 Legend: ✅ kept — same capability, same or equivalent control · 🔁 kept, changed form — capability intact, the
 control, placement or wording changed (what) · ➕ new · ❌ removed (with the decision reference). No item was
@@ -34,9 +34,9 @@ decision D-9.
 ### Update 2026-10-01 — customer platform
 
 Verified against `main` @ `943a313` (migrations 0061–0068, plan
-[`CUSTOMER_PLATFORM_PLAN.md`](./CUSTOMER_PLATFORM_PLAN.md)). (1) Code check of every touched row and every new route
+[`CUSTOMER_PLATFORM_PLAN.md`](CUSTOMER_PLATFORM_PLAN.md)). (1) Code check of every touched row and every new route
 against `git diff d48ad77..HEAD`; (2) `npm test` 1016 green (116 files); (3) screenshots of the changed screens at 1440 and 1024 px
-in light and dark: [`screenshots/customer-platform/`](./screenshots/customer-platform/). Touched rows below are
+in light and dark: [`screenshots/customer-platform/`](../screenshots/customer-platform/). Touched rows below are
 updated in place and marked **2026-10**; new items carry the new IDs of the inventory (`EIG-…`, `KUN-113…`,
 `KAM-96…`, `KPI-71…`, `EIN-07…`, `GES-43`). In this update ❌ means **retired with a named replacement**; „Plan D-n“ is a
 decision of the plan. One retirement had no replacement at first: the Kunden bulk-draft bar (plan §18 maps it to
@@ -75,10 +75,10 @@ from the store; `npm test` 1027 green (118 files).
 ### Addition 2026-10-03 — letters as a campaign channel (migration 0074)
 
 A campaign can also write advertising letters (Pingen) to its audience, each one drafted, reviewed and released by
-hand on the desk ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §8; legal: [`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) § 18, F-35).
+hand on the desk ([`CAMPAIGNS.md`](../CAMPAIGNS.md) §8; legal: [`ANWALTSDOSSIER.md`](../ANWALTSDOSSIER.md) § 18, F-35).
 Code check of the touched rows and the three new routes against the change set of migration `0074`; screenshots of
 the new view, the send dialog and the editor section at 1440 and 1024 px in light and dark, plus the printed PDF:
-[`screenshots/kampagne-briefe/`](./screenshots/kampagne-briefe/). Rows below are marked **2026-10-03**. Nothing was
+[`screenshots/kampagne-briefe/`](../screenshots/kampagne-briefe/). Rows below are marked **2026-10-03**. Nothing was
 removed.
 
 | Screen | Touched | 🔁 | ➕ (new) | Notes |
@@ -413,14 +413,14 @@ updates `?gid=`. Kampagne → Kunden remains no link (campaign contacts are Shop
 ## 14. Documented-but-not-found
 
 Both discrepancies (server-side tab switching claim, missing Einstellungen) are resolved by the rewritten
-[`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md).
+[`ADMIN_DASHBOARD.md`](../ADMIN_DASHBOARD.md).
 
 ---
 
 ## HTTP API, crons, scripts, environment, database (inventory parts 2–6)
 
 - **Public / widget / account / auth / webhook / cron routes:** unchanged (the widget contract
-  [`API_CONTRACT.md`](./API_CONTRACT.md) was not touched). `/api/kpi` writes through `recordKpiEvent()` (same
+  [`API_CONTRACT.md`](../frontend/API_CONTRACT.md) was not touched). `/api/kpi` writes through `recordKpiEvent()` (same
   behaviour, TECH-C7).
 - **Admin routes:** ❌ removed with D-9 — `GET directives`, `GET email-designs`, `POST bundles/list`,
   `POST marketing/draft`, `POST qa/draft` (no caller). ➕ `GET customers/detail?id=` (on-demand customer detail),
@@ -519,12 +519,12 @@ Both discrepancies (server-side tab switching claim, missing Einstellungen) are 
 plus `login-light.png`. `before-empty/` holds the baseline empty states. Both `index.json` files list viewport,
 theme, render time and page height per shot.
 
-2026-10-01: [`screenshots/customer-platform/`](./screenshots/customer-platform/) — `<screen>-<light|dark>-<1440|1024>.png`
+2026-10-01: [`screenshots/customer-platform/`](../screenshots/customer-platform/) — `<screen>-<light|dark>-<1440|1024>.png`
 for `eingang`, `kampagnen`, `kampagne-editor`, `kampagne-desk`, `kampagne-blackfriday`, `kunden`, `kunden-ohne-mo`,
 `kunden-detail-{ueberblick,aktivitaet,kaeufe,marketing}`, `kpi`, `kpi-kundenbasis`, `einstellungen`, plus
 `einzelansprache-desk-light-1440.png`.
 
-2026-10-03: [`screenshots/kampagne-briefe/`](./screenshots/kampagne-briefe/) — the view „Briefe“
+2026-10-03: [`screenshots/kampagne-briefe/`](../screenshots/kampagne-briefe/) — the view „Briefe“
 (`briefe-{light,dark}.png`, `briefe-{light,dark}-1024.png`, sent letters `briefe-versendet-{light,dark}.png`), the send
 dialog (`senden-dialog-{light,dark}.png`), the editor section „Brief“ (`editor-brief-{light,dark}.png`,
 `editor-brief-{light,dark}-1024.png`) and the printed letter (`brief-pdf.png`).

@@ -22,7 +22,7 @@
 // removed afterwards (fail-soft — an orphaned image is unreachable once no row
 // points at it, but we still try to delete it).
 //
-// ONE deletion with Shopify (docs/CUSTOMER_PLATFORM_PLAN.md §8): an erasure
+// ONE deletion with Shopify (docs/archive/CUSTOMER_PLATFORM_PLAN.md §8): an erasure
 // started in Mo writes an erasure tombstone for the Shopify id (no import,
 // reconciliation or webhook brings the person back) and enqueues the Shopify
 // side — consent off at once, then Shopify's own data erasure

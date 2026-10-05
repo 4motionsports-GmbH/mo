@@ -4,7 +4,7 @@
 // suggestions. Kept in plain .mjs so the part with legal consequences is
 // unit-tested in isolation.
 //
-// Since the one consent (docs/CUSTOMER_PLATFORM_PLAN.md §7) the person's
+// Since the one consent (docs/archive/CUSTOMER_PLATFORM_PLAN.md §7) the person's
 // consent STATE comes from customers.email_consent_state (shared with Shopify),
 // the opt-in LEVEL from customers.email_consent_level — read fresh at send time.
 //

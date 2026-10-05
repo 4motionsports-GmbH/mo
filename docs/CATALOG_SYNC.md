@@ -1,12 +1,10 @@
 # Catalog sync
 
-The chat backend's product catalog and its embeddings used to be committed
-files (`src/data/product-catalog.json`, `src/data/product-embeddings.json`).
-That coupled every catalog change to a redeploy.
-
-This document describes the new flow: a scheduled cron pulls the live catalog
-from Shopify and writes both files to Vercel Blob, where the runtime picks
-them up on the next warm invocation.
+A scheduled cron pulls the live catalog from Shopify, embeds it and writes the
+catalog and its embeddings to Vercel Blob, where the runtime picks them up
+without a redeploy; a Shopify webhook keeps single products current in between.
+The committed files (`src/data/product-catalog.json`,
+`src/data/product-embeddings.json`) remain only as the fallback.
 
 ## Files in play
 
@@ -23,8 +21,10 @@ them up on the next warm invocation.
 | `src/lib/catalog-merge.mjs` + `catalog-mutate.ts` | Targeted single-product update for the stock webhook. |
 | `src/lib/shopify-webhook.mjs`                 | Shopify webhook HMAC verify + topic routing.            |
 | `src/lib/availability.mjs`                    | Recommendation-time availability guard (Part F).        |
+| `src/lib/shopify-backpressure.mjs` + `shopify-throttle-gate.ts` | Webhook throttle backpressure (shared Redis gate + coalescing queue). |
 | `src/app/api/cron/sync-catalog/route.ts`      | Cron handler. Fetch → filter → map → embed → write Blob.|
-| `src/app/api/webhooks/shopify/route.ts`       | Real-time stock webhook (inventory + product changes).  |
+| `src/app/api/webhooks/shopify/route.ts`       | Real-time stock webhook (inventory + product changes); the same endpoint takes the order and customer topics ([`CUSTOMERS.md`](./CUSTOMERS.md) "Shopify webhook topics"). |
+| `scripts/register-shopify-webhooks.mjs`       | Registers the webhook subscriptions (`npm run shopify:webhooks`). |
 | `vercel.json`                                 | `regions: ["fra1"]` + cron schedule (`0 3 * * *`, i.e. 03:00 UTC daily). |
 
 ## Shopify auth (Jan-2026 model)
@@ -57,7 +57,7 @@ SHOPIFY_STORE_DOMAIN     # e.g. motion-sports.myshopify.com (NOT motionsports.de
 SHOPIFY_CLIENT_ID
 SHOPIFY_CLIENT_SECRET    # shpss_…
 SHOPIFY_API_VERSION      # e.g. 2026-04
-SHOPIFY_WEBHOOK_SECRET   # signs the real-time stock webhook (see "Real-time stock webhook")
+SHOPIFY_WEBHOOK_SECRET   # only for webhooks made in the Shopify admin; app-made ones are signed with SHOPIFY_CLIENT_SECRET
 BLOB_READ_WRITE_TOKEN    # @vercel/blob token (also picked up automatically on Vercel)
 CRON_SECRET              # protects /api/cron/sync-catalog
 OPENAI_API_KEY           # used to regenerate embeddings
@@ -207,7 +207,7 @@ The sync captures each product's stock status from the Shopify Admin API
 
 These are written to the catalog Blob alongside every other field and surfaced
 on `GET /api/products` (`inStock` is what the widget uses for an "Ausverkauft"
-badge — see `docs/API_CONTRACT.md`).
+badge — contract: [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §3).
 
 > **Freshness — near-real-time, with a daily baseline.** Stock is refreshed two
 > ways: the **real-time webhook** (below) flips a single product's availability
@@ -223,13 +223,17 @@ filters out currently-unavailable items via `isAvailable` (`availability.mjs`,
 the rule: unavailable only when `inStock === false`):
 
 - **Chat product tool / retrieval** (`retrieval.ts`) — sold-out products are
-  **hard-filtered** out of the candidate set before ranking (replacing the old
-  soft ranking penalty), so Mo never sees them to recommend.
+  **hard-filtered** out of the candidate set before ranking, so Mo never sees
+  them to recommend. The chat's product cards (`recommended-products.mjs`) drop
+  sold-out products and sold-out variants too.
 - **Bundle composition** (`bundle-suggestion-core.mjs`, `bundle-offer-core.mjs`)
-  — already refuse sold-out components at compose time.
-- **Marketing drafts** (`admin/marketing/draft`, `admin/customers/marketing-draft`)
-  — the prose only recommends available products; the cart link keeps its own
-  send-time `excludeSoldOut` guard.
+  — refuse sold-out components at compose time.
+- **Campaign recommendations** (`campaign-recommendations.ts`,
+  `campaign-complement.mjs`) — only available products are candidates.
+- **Marketing drafts of the 1:1 path** (`admin/customers/marketing-draft`) — the
+  prose only recommends available products.
+- **Cart links** in marketing and summary mails keep their own send-time
+  `excludeSoldOut` guard (`cart.ts`).
 
 A restocked item becomes recommendable again automatically the moment its
 `inStock` flips back (via the webhook or the next sync).
@@ -240,9 +244,11 @@ Keeps availability near-real-time between daily syncs. Shopify POSTs an inventor
 or product change; the route:
 
 1. **Verifies** the `X-Shopify-Hmac-SHA256` signature over the **raw** body before
-   parsing — `base64(HMAC-SHA256(rawBody, SHOPIFY_WEBHOOK_SECRET))`, constant-time
-   (same HMAC-first discipline as the Resend/Pingen webhooks). No secret ⇒ **503**
-   (fail closed); bad signature ⇒ **401**.
+   parsing — constant-time, valid under `SHOPIFY_WEBHOOK_SECRET` or
+   `SHOPIFY_CLIENT_SECRET` (same HMAC-first discipline as the Resend/Pingen
+   webhooks). No secret ⇒ **503** (fail closed); bad signature ⇒ **401**. The
+   route-level contract for every topic (dedupe, sync switch, failure answers):
+   [`CUSTOMERS.md`](./CUSTOMERS.md) "Shopify webhook topics".
 2. **Routes by `X-Shopify-Topic`** to a **targeted single-product update** (never a
    full resync): it re-fetches just that product from Shopify (same fields +
    mapping as the sync, so `inStock` is computed identically), then upserts it into
@@ -260,24 +266,22 @@ or product change; the route:
    `shopify-throttle-gate.ts`): a bulk change in Shopify (ERP stock sync, an app
    re-saving all products) fires hundreds of deliveries in minutes, whose
    concurrent Admin API calls drain the shop's cost-based leaky bucket together —
-   per-invocation retries can't win against that, and 500ing made Shopify
-   *redeliver* into the storm. Now the first `THROTTLED` response trips a shared,
+   per-invocation retries can't win against that, and a 500 would make Shopify
+   *redeliver* into the storm. So the first `THROTTLED` response trips a shared,
    short-lived Redis gate; while it holds, deliveries skip Shopify entirely — the
    product/inventory-item GID is queued in a Redis **set** (which coalesces
    duplicates) and the delivery is acked `200 {deferred:true}`. Later successful
    deliveries drain a few queued targets each (a refresh always re-fetches
    current truth, so deferral/coalescing is lossless); the daily sync reconciles
-   whatever remains. Without KV this degrades to the old behavior (in-function
-   retries, then `503` so Shopify's spaced redelivery acts as the queue).
+   whatever remains. Without KV it falls back to in-function retries, then
+   `503` so Shopify's spaced redelivery acts as the queue.
    Persistent throttling is logged as a warning, not a Sentry error — it is
    self-healing backpressure, not a bug.
 
 ### Shopify-side registration (setup step)
 
-Set `SHOPIFY_WEBHOOK_SECRET` (the webhook subscription's signing secret; for
-webhooks created via the app config / Admin API this is the app's API secret key),
-then register these topics against `https://<deployment>/api/webhooks/shopify`
-(Admin API `2026-04`):
+All topics go to `https://<deployment>/api/webhooks/shopify` (Admin API
+`2026-04`). The catalog topics:
 
 - `products/update` — primary signal (fires on stock, price, status, publish
   changes; carries the full product incl. handle).
@@ -289,14 +293,13 @@ then register these topics against `https://<deployment>/api/webhooks/shopify`
   subscription („You cannot create a webhook subscription with the specified
   topic“). Not the admin's „Inventory item update“ (`inventory_items/update`),
   which Mo ignores.
-- `orders/create` + `orders/paid` — NOT a catalog concern: the same endpoint
-  routes verified order payloads to the order-attribution ingest
-  ([`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)); register them here so
-  the Mo-attributed-revenue KPI fills.
 
-The customer platform adds `orders/updated`, `orders/cancelled`,
-`customers/create|update|delete`, `customers_email_marketing_consent/update` and
-`bulk_operations/finish` on the same endpoint (`docs/CUSTOMER_PLATFORM_PLAN.md` §6).
+The same endpoint takes the order topics (order ledger and the order
+attribution, [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)), the customer,
+consent and erasure topics and `bulk_operations/finish` — the full list with
+what each does: [`CUSTOMERS.md`](./CUSTOMERS.md) "Shopify webhook topics". The
+script registers all of them (`TOPICS` in `scripts/register-shopify-webhooks.mjs`,
+each with the scope Shopify requires) except the compliance topics.
 
 Register with `npm run shopify:webhooks` (dry run: lists the granted scopes, how
 many subscriptions each topic has at the endpoint — a duplicate delivers every
@@ -311,10 +314,12 @@ Shopify Admin (Settings → Notifications → Webhooks) still works, but those a
 invisible to the script and signed with the store key.
 
 **Compliance topics** (`customers/data_request`, `customers/redact`, `shop/redact`)
-cannot be subscribed through the API, and the Dev Dashboard has no field for them.
-Someone with access to the app runs `shopify app config link` (writes the app's
-current `shopify.app.toml` — check the scopes and the app proxy are in it, a deploy
-replaces the whole configuration), adds
+cannot be subscribed through the API, and the Dev Dashboard version form has no
+compliance section; they are set with the Shopify CLI
+([`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) 5.4b, which also tracks whether they are
+configured). Someone with access to the app runs `shopify app config link`
+(writes the app's current `shopify.app.toml` — check the scopes and the app proxy
+are in it, a deploy replaces the whole configuration), adds
 
 ```toml
 [webhooks]
@@ -328,34 +333,33 @@ uri = "https://<deployment>/api/webhooks/shopify"
 (only the subscription block if `[webhooks]` exists; never the other topics — the
 script registers those, a second copy doubles every event) and runs `shopify app
 deploy`. No reinstall (it would delete the script's subscriptions). They are
-optional for a custom app. **While they are missing:** delete a person in Shopify
-with „Delete customer“ (the `customers/delete` webhook erases them in Mo too) — after
-Shopify's „Erase personal data“, also „Löschen“ the person in Mo → Kunden; for a data
-request, also look the person up in Mo → Kunden.
+optional for a custom app. What each topic does, and the manual deletion /
+data-request rule while they are missing: [`CUSTOMERS.md`](./CUSTOMERS.md)
+"Retention / erasure".
 
 Signing: app-made subscriptions (script, app configuration, compliance topics)
-are signed with the app's client secret, admin-made ones with the store key
-shown in Settings → Notifications. The route accepts a signature valid under
-`SHOPIFY_WEBHOOK_SECRET` or `SHOPIFY_CLIENT_SECRET`. Verify deliveries are
+are signed with the app's client secret (`SHOPIFY_CLIENT_SECRET`), admin-made
+ones with the store key shown in Settings → Notifications (put it in
+`SHOPIFY_WEBHOOK_SECRET`). The route accepts either. Verify deliveries are
 `2xx`-acked in the Shopify webhook dashboard.
 
 ## How the runtime reads the catalog
 
 `src/lib/catalog-store.ts`:
 
-1. If `BLOB_READ_WRITE_TOKEN` is set, list Blob for the stable keys
-   `catalog/product-catalog.json` and `catalog/product-embeddings.json`
-   and load whichever exist.
-2. Otherwise (or if either key is missing), fall back to the JSON committed
-   in `src/data/`.
-3. Cache the parsed result in module memory. Across a warm Lambda the read
-   is amortized to a single fetch.
+1. If `BLOB_READ_WRITE_TOKEN` is set, read the stable keys
+   `catalog/product-catalog.json` and `catalog/product-embeddings.json` from
+   the **private** Blob store through the SDK (`get`, `access: "private"`,
+   CDN cache bypassed) — never through a public URL.
+2. Otherwise (or if a key is missing or unreadable), fall back to the JSON
+   committed in `src/data/`.
+3. Cache the parsed result in module memory for 60 seconds
+   (`CACHE_TTL_MS`), so a re-sync is visible within about a minute.
 
 `src/lib/retrieval.ts` calls `loadProductCatalog()` / `loadEmbeddings()` on
-every chat turn, so a fresh deploy + a successful cron run is enough to swap
-the catalog without redeploying code. If embeddings are empty (e.g. OpenAI
-key was absent at sync time), the existing keyword-search fallback in
-`retrieve()` still works.
+every chat turn, so a successful sync (or webhook update) swaps the catalog
+without redeploying code. If embeddings are empty (e.g. OpenAI key was absent
+at sync time), the keyword-search fallback in `retrieve()` still works.
 
 ## Embedding document — what gets embedded (the quality lever)
 
@@ -369,31 +373,39 @@ solves and WHO it's for, in the language a customer uses in chat, so a product's
 vector lands in the same need-space as the user's described problem (better
 recall). Order:
 
-1. **Identity** — name, category, brand (+ series, price incl. sale).
+1. **Identity** — name, category, brand (+ series, price incl. sale; a price
+   range „ab … bis …“ for products with variants).
 2. **Wofür / für wen** — derived use-case / benefit phrases from the product's
    signals (category, footprint, noise, rehab flag, target group, tags, specs),
    e.g. *"kniefreundliches, gelenkschonendes Low-Impact-Cardio"*, *"kompaktes,
    platzsparendes Heim-Gym für kleine Wohnungen"*, *"progressiver, verstellbarer
-   Widerstand für Kraft- und Cardio-Einsteiger"*. This is the new, highest-leverage
-   section. The derivation is deterministic (`deriveUseCases`), so a product
-   always yields the same doc.
-3. **Beschreibung** — the **full** detailed description, clipped to a sane bound
-   (~1200 chars) instead of the old 240-char clip that dropped most of the signal.
-4. **Eigenschaften** — *all* meaningful features (no hard 12 cap; up to ~40).
-5. **Technische Daten** — specs (Material, Maße, Gewicht, Farbe, Zertifizierung…).
-6. **Zielgruppe / Tags** + persona flags (Reha-geeignet, Lautstärke, Stellfläche).
+   Widerstand für Kraft- und Cardio-Einsteiger"*. The highest-leverage section.
+   The derivation is deterministic (`deriveUseCases`), so a product always
+   yields the same doc.
+3. **Beschreibung** — the **full** detailed description, clipped at 1200 chars.
+4. **Eigenschaften** — all meaningful features (up to 40).
+5. **Technische Daten** — specs (Material, Maße, Gewicht, Farbe, Zertifizierung…),
+   up to 40.
+6. **Varianten** — only for products with more than one named variant: one line
+   per variant with its price, or one summary line above 15 variants.
+7. **Kundenfragen & Antworten** — up to 10 published Q&A pairs of the product
+   (the Wissen feature, [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md)); products without
+   Q&A get no section, so their doc stays byte-identical.
+8. **Zielgruppe / Tags** + persona flags (Reha-geeignet, Lautstärke, Stellfläche).
 
 The whole doc is clamped to ~6000 chars (well under the 8192-token per-input cap).
 
 ### Re-embed on doc change — `EMBEDDING_DOC_VERSION`
 
 The embeddings blob stores `docVersion` (the `EMBEDDING_DOC_VERSION` the vectors
-were built with) and a per-item `docHash` (hash of the embedded text). Because
-this doc composition changed, the marker was bumped to **v2** — so on the next
-sync **every product is re-embedded** (the carry-forward fallback refuses to
-reuse a vector whose `docVersion`/`docHash` no longer matches; see below). Bump
-the constant whenever `buildEmbeddingDoc`'s output changes in a way that should
-force a full re-embed.
+were built with) and a per-item `docHash` (hash of the embedded text). The
+current version is **3** (v1 the old short doc, v2 the problem-oriented doc, v3
+variant-aware). When the version changes, the next sync **re-embeds every
+product** (the carry-forward fallback refuses to reuse a vector whose
+`docVersion`/`docHash` no longer matches; see below). Bump the constant whenever
+`buildEmbeddingDoc`'s output changes in a way that should force a full
+re-embed; a per-product text change (e.g. a new Q&A pair) only changes that
+product's `docHash`.
 
 ## Reliability — resilient + atomic sync
 
@@ -421,9 +433,9 @@ Two structural fixes (see `docs/archive/CATALOG_SYNC_DIAGNOSIS.md`):
 ## Region — data residency + latency (`fra1`)
 
 `vercel.json` pins `"regions": ["fra1"]` (Frankfurt, EU) for **all** functions
-incl. crons. This addresses the EU data-residency flag (esp. the personal-data
-crons `refresh-customers` / `retention`, which previously ran in the US default
-`iad1`) and cuts the EU↔US latency that inflated this sync's wall-time.
+incl. crons — EU data residency (esp. the personal-data crons such as
+`refresh-customers` and `retention`) and no EU↔US latency in this sync's
+wall-time.
 
 > **NOTE — OpenAI egress.** The embeddings calls still egress to OpenAI in the
 > **US** (`api.openai.com`). That is the documented SCC transfer path and is
@@ -469,8 +481,8 @@ catches the error, switches into `mode: "fallback-bundle"`, and uses the
 committed JSON as the source of truth — embeddings are still regenerated
 from it. This keeps the deployment healthy even when Shopify is degraded.
 
-If the auth flow itself cannot be made to work at all, see
-`docs/SHOPIFY_AUTH_BLOCKER.md` (created lazily when first hit).
+If the auth flow itself fails, `npm run verify:shopify` ("Verifying auth works"
+above) prints the HTTP status, Shopify's error body and the most likely cause.
 
 ## Product variants (variant-aware catalog)
 
@@ -485,8 +497,7 @@ ALL variants, not only `variants[0]`:
   keep their default-variant semantics — full back-compat; variant-granular
   consumers resolve through `src/lib/product-ref.mjs`.
 * The embedding doc (v3) states the price range and a `Varianten:` section,
-  so variant-level queries ("Kettlebell 16 kg") retrieve correctly. The
-  version bump forces a one-time full re-embed on the next sync.
+  so variant-level queries ("Kettlebell 16 kg") retrieve correctly.
 * The CSV fallback (`convert-catalog.mjs`) builds variants from the
   `Option1-3` columns; variant ids are null there (no numeric id in the
   export), so cart links degrade exactly as the fallback always has.

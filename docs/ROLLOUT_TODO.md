@@ -1,16 +1,20 @@
 # Customer platform rollout — open todos
 
-The single list of what is left after the customer platform went live (PR #197 and
-the follow-ups #198–#200). Work through it top to bottom; the order is deliberate.
-Each item says who does it, how, and how to tell it is done. Ticked items stay in the
-list until the next clean-up so the history is visible.
+The owner's living to-do list since the customer platform went live (PR #197 and the
+follow-ups #198–#200), and **the one place for live production status**: which migrations ran,
+which switches are on in Vercel, what is uploaded to the theme or set up in Shopify. Every other
+doc describes behaviour and defaults („default off in code“) and points here for the live state.
+Work through it top to bottom; the order is deliberate. Each item says who does it, how, and how
+to tell it is done. Ticked items stay in the list until the next clean-up so the history is visible.
 
 **Owners:** **M** = Marcel · **C** = Claude (code, docs, checks) · **F** = the freelancer
 who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (theme +
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top).
+Last updated: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
+doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
 ## ▶ Open for M — the one list (05.10.2026, in this order)
 
@@ -20,36 +24,44 @@ the single list of what is still open for M. C's open items are at the end of �
 1. **Attribution switch (today, 5 min).** `git pull` → `npm run db:migrate` (applies `0076`) →
    Vercel → Production → `MO_ATTRIBUTION_SESSION_ANCHOR=true` → Redeploy. Tomorrow:
    `npm run verify:live -- --since 2026-10-05` → section 7b „V0“ `ohne_sitzung_danach` = 0.
-   (Details C.21; the purge of old widget tokens started 05.10.)
-2. **Frontend prompt (today).** Send `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md` (the
-   „Prompt“ part) with the files it lists to the frontend agent. When its PR is merged: upload the
-   files it names to the theme → `npm run verify:widget` must report „Widget mit den Aufgaben vom
-   05.10.“ → send C that output and the agent's reply (MANIFEST entry, fingerprint).
+   (Details C.21; the purge of old widget tokens started 05.10.) If the switch goes on later than
+   05.10., tell C the day: the KPI release „Bestell-Zuordnung: Fenster ab der letzten Beratung“ and
+   the „aussagekräftig ab“ date of the attribution section are dated 05.10. (`src/lib/kpi-releases.mjs`).
+2. **Frontend prompt (when C hands it over, 05.10.).** The prompt is the „Prompt“ part of `docs/frontend/tasks/README.md`;
+   send it to the frontend agent with exactly the files that README lists as attachments (the list
+   is kept there, not here). When its PR is merged: upload the files it names to the theme →
+   `npm run verify:widget` must report „Widget mit den Aufgaben vom 05.10. …“ → send C that output
+   and the agent's reply (MANIFEST entry, fingerprint) — C.22.
 3. **Page context on (2–3 days after the upload in 2).** `npm run verify:live -- --since <upload day>`
    → section 9 shows `page_context_applied` rows with `erkannt = true` → Vercel
    `CHAT_PAGE_CONTEXT_ENABLED=true` → Redeploy → tell C the day (release note; the control group
    comes later, C prepares it). **Not before the upload** — until then the switch does nothing.
-4. **Freelancer session: compliance webhooks + App Proxy (5.2 + 5.4, ~20 min together).** Follow
-   5.4 steps 1–10 below (one `shopify app deploy` for both), then switch on
-   `APP_PROXY_SIGNIN_ENABLED=true` + `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`. Until 5.2 is done: the
-   manual deletion/data-request rule in 5.2.
-5. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
+4. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
    recommend a cheap product, click „Zur Kasse“ on the card, complete the order (cancel/refund it
    afterwards). Shopify admin → the order → „Zusätzliche Details“: is there an `_mo` entry? Tell C
    yes/no (decides the next attribution task, A2).
-6. **Optional checks when convenient:** consent popup once with a never-subscribed account (1.11);
+5. **Optional checks when convenient:** consent popup once with a never-subscribed account (1.11);
    order status once with an account that has orders (6.6); one „Einplanen“ campaign card (1.7);
-   one letter on Pingen staging (1.10).
-7. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
+   one letter on Pingen staging (1.10); „Unzufriedenheit“ in the Eingang once (C.9b).
+6. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
    Shopify, AI profiles for everyone, Shopify tags) and 7.1/7.2 (tuning, Claude GitHub App);
-   Black Friday (4.x) when you bring it up; app ownership (5.3).
-8. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
+   Black Friday (4.x) when you bring it up; app ownership (5.3); the decision in C.27 (should an
+   unsubscribed address stop the post-sign-in ask?); with C, optional: the App Proxy handover and
+   shop-logout tests (C.26). Tell F once: run `shopify app config link` before F's next
+   `shopify app deploy` (5.4 step 15).
+7. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
    (attribution window, F-37), §21 (consent bullets + page context, F-38); privacy-policy sentences
    F-05/F-28 for shop-login recognition and purchase attribution.
 
 ## Done
 
-- [x] Migrations `0061`–`0074` run on production (`0070`–`0074` on 03.10.).
+- [x] 5.2 + 5.4 App Proxy + compliance webhooks (05.10., M): new app version in the Dev Dashboard
+  (scope `write_app_proxy`, App proxy `apps/chat`), compliance webhooks with the Shopify CLI (5.4b),
+  checks passed, `APP_PROXY_SIGNIN_ENABLED=true` + `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24` in Production.
+  Visitors logged in to the shop are recognised in the chat; the manual deletion rule of 5.2 is no
+  longer needed.
+- [x] Migrations `0061`–`0075` run on production (`0070`–`0074` on 03.10., `0075` on 04.10.);
+      `0076` → open list item 1.
 - [x] Shopify scopes (incl. `read_inventory`), app reinstalled.
 - [x] 13 webhooks registered by the app (each once); the hand-made admin webhooks deleted;
       `SHOPIFY_WEBHOOK_SECRET` removed from Vercel.
@@ -166,9 +178,9 @@ the single list of what is still open for M. C's open items are at the end of �
   - **M:** right after the merge, pull main and run `npm run db:migrate` (applies `0073`).
     Until it has run, every sign-in returns `ms_auth=error` (fail closed).
   - **Consequence:** „Anmelden“ in the chat signs nobody in until the widget redeems the
-    code. Send F `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md` (second version, 03.10.) now — **task 1** first (spec:
-    `frontend-handoff/CUSTOMER_ACCOUNT.md` §2a). Nothing breaks meanwhile; the account
-    features are off.
+    code. Send FE the frontend prompt of 03.10. (second version; now
+    `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md`) — **task 1** first (spec: today
+    `docs/frontend/ACCOUNT_CONTRACT.md` §2a). Nothing breaks meanwhile; the account features are off.
   - **M (exposure check), Neon → SQL Editor.** Every session that signed in and then
     exported or erased. A `silent = true` sign-in followed by an export/erasure with no chat
     of its own is the pattern of this attack:
@@ -233,19 +245,22 @@ the single list of what is still open for M. C's open items are at the end of �
   - **Left — M:**
     - [ ] Consent popup once with a never-subscribed account (optional, 5 min): sign out in the
       chat → „Anmelden“ with e.g. `name+test1@…` (Shopify creates the customer) → write a
-      message → popup „Angebote aktivieren“ → accept → click the DOI mail → `verify:live` shows
-      `consent_gate_shown/_accepted` `surface = signin`, an opt-in with `doi_status = pending`,
-      a `consent_events` row `mo_signin`, and after the click one
-      `email_capture_marketing_confirmed` (the opt-in row itself never changes); „popup_erwartet“
+      message → popup „Angebote aktivieren“ → accept → click the DOI mail → `verify:live` section 3
+      shows `consent_gate_shown/_accepted` `surface = signin`, an opt-in row `quelle = mo_signin`,
+      `ergebnis = doi_required` (after the next widget upload also `variante = a`,
+      `platzierung = popup`), a `consent_events` row `mo_signin`, and after the click one DOI
+      confirmation with `quelle = mo_signin` (the opt-in row itself never changes); „popup_erwartet“
       is true for that session.
     - [x] Campaign link — verified 05.10.: test mail → Mo button → one message →
       `campaign_chat_started` with `test = true`, 1 event. (Opening the chat alone records
       nothing: the widget hands the token over with the first message, in the tab the link
       opened.)
-    - [ ] Then 6.6 (order status: test account, then on for everyone) and 5.4 (App Proxy).
-  - KPI tab (30 days): „Änderungen im Zeitraum“ lists 01.10., 03.10., 04.10.; the
-    Anmelde-Popup, Einwilligung, Kundenkonto and Kampagnen sections say „Erst ab dem
-    04.10.2026 aussagekräftig“ — for clean numbers pick „Zeitraum…“ from 04.10.
+    - [x] 6.6 (order status) — on for everyone since 05.10.
+    - [x] 5.4 (App Proxy) — done 05.10. (see „Done“ above).
+  - KPI tab (30 days): „Änderungen im Zeitraum“ lists the release days (01.10., 03.10., 04.10.,
+    05.10.); the Anmelde-Popup, Einwilligung, Kundenkonto and Kampagnen sections say „Erst ab dem
+    04.10.2026 aussagekräftig“ (the attribution section: 05.10.) — for clean numbers pick
+    „Zeitraum…“ from that day.
 
 ## 2 · Tomorrow morning
 
@@ -272,8 +287,8 @@ the single list of what is still open for M. C's open items are at the end of �
 
 - [x] **3.2 Lawyer dossier** — M → L — M keeps it current as features ship (05.10.); D-AP1
   (App Proxy sign-in without a chat token) confirmed by L 05.10. C adds a Nachtrag per new
-  feature (§19 App Proxy sign-in, §20 attribution window).
-  - Send `docs/ANWALTSDOSSIER.md` (focus §13 to §18, questions F-22 to F-35; F-31 and F-34
+  feature (§19 App Proxy sign-in, §20 attribution window, §21 consent bullets + page context).
+  - Send `docs/ANWALTSDOSSIER.md` (focus §13 to §21, questions F-22 to F-38; F-31 and F-34
     — the two sign-in flaws of 03.10. — are the urgent ones; F-32 = order status in the chat,
     blocks 6.6; F-35 = advertising letters from campaigns, before production letters, 1.10).
   - Mention the deadline: Black Friday is **27 Nov 2026**; the campaign send gate (6.5)
@@ -325,76 +340,110 @@ the single list of what is still open for M. C's open items are at the end of �
 
 - [x] **5.1 Frontend task** — done 04.10.: the frontend agent built the customer-platform
   widget (theme PR #73 + `8d0a0c4` + `3e87341`), the owner uploaded it on 04.10.; the frontend
-  docs are in `docs/frontend/`. Live check: 1.11. Next widget tasks: the backlog in
-  `docs/frontend/07` §7 (C writes the next prompt from it).
+  docs are in `docs/frontend/`. Live check: 1.11. The next widget tasks (from the backlog in
+  `docs/frontend/07` §7) are written: `docs/frontend/tasks/README.md` → open list item 2.
 
-- [ ] **5.2 Compliance webhooks** — do it in **one session with F together with 5.4** (one
-  `shopify app deploy` for both; the App Proxy safety step is live since 05.10.). F adds M to the
-  app's Dev Dashboard organisation (or does the steps while M watches), then M + C (~20 min for both)
-  - `shopify app config link` → check the toml (20 scopes) → add the `compliance_topics` block
-    (`customers/data_request`, `customers/redact`, `shop/redact` →
-    `https://mo.motionsports.de/api/webhooks/shopify`) — the exact toml is in 5.4 step 2 →
-    `shopify app deploy`. No other webhook topics in the toml, no reinstall.
-  - **Until then:** a deletion request → „Delete customer“ in Shopify (Mo follows); if you
-    use „Erase personal data“ instead, also „Löschen“ (delete) the person in Mo → Kunden.
+- [x] **5.2 Compliance webhooks** (done 05.10.) — now part of 5.4 (steps 5 and 11; fallback 5.4b): the same new
+  app version in the Dev Dashboard carries the App Proxy and the compliance webhooks, and M can do it
+  alone (Dev Dashboard access since 05.10.).
+  - **Until 5.4 step 11 has passed:** a deletion request → „Delete customer“ in Shopify (Mo follows);
+    if you use „Erase personal data“ instead, also „Löschen“ (delete) the person in Mo → Kunden.
     A data request → also look the person up in Mo → Kunden.
 
-- [ ] **5.4 Shop sign-in detection (App Proxy)** — M + F (app access), C checks with you —
-  **ready since 05.10.** (backend P0.3 Phase 1+2: fresh signatures only, no code without proof,
-  handover on shared browsers, renewals not counted as sign-ins, kill switch; D-AP1 decided: a
-  visitor logged in to the shop counts as signed in to the chat). Result: whoever is logged in to
-  the shop is greeted by name in the chat without clicking „Anmelden“, sees their chat history and
-  gets the consent popup (if they never decided). Order status still needs one „Anmelden“ in the
-  chat — Mo says so and links „Meine Bestellungen“.
-  1. **With F (same session as 5.2):** in the app's project folder run `shopify app config link`
-     and pick the motionsports app.
-  2. Edit `shopify.app.toml`:
-     - `[access_scopes]` → `scopes = "…all existing scopes…,write_app_proxy"` (add only
-       `write_app_proxy`, keep every scope that is there);
-     - add
-       ```toml
-       [app_proxy]
-       url = "https://mo.motionsports.de/api/auth/storefront"
-       prefix = "apps"
-       subpath = "chat"
+- [x] **5.4 Shop sign-in detection (App Proxy) + compliance webhooks** (done 05.10.) — M alone in the Shopify Dev
+  Dashboard (~30 min), C checks with you — **ready since 05.10.** (backend P0.3 Phase 1+2: fresh
+  signatures only, no code without proof, handover on shared browsers, renewals not counted as
+  sign-ins, kill switch; D-AP1 decided: a visitor logged in to the shop counts as signed in to the
+  chat). Result: whoever is logged in to the shop is greeted by name in the chat without clicking
+  „Anmelden“, sees their chat history and gets the consent popup (if they never decided). Order
+  status still needs one „Anmelden“ in the chat — Mo says so and links „Meine Bestellungen“.
 
-       [webhooks]
-       api_version = "2026-04"
+  **A · New app version (Dev Dashboard, dev.shopify.com)**
+  1. Apps → the app (its Client ID is Mo's `SHOPIFY_CLIENT_ID` in Vercel) → Versions → note the
+     active version — the way back if anything goes wrong.
+  2. „Create a version“ → check that the form is pre-filled with the active version's values (app
+     URL, redirect URLs, scopes, webhooks API version). Empty or different → stop and tell C: a
+     release replaces the app's whole configuration.
+  3. Scopes: add `write_app_proxy`; keep every scope that is there.
+  4. App proxy: subpath prefix `apps`, subpath `chat`, proxy URL
+     `https://mo.motionsports.de/api/auth/storefront`.
+  5. Compliance webhooks: the version form has **no** such section (seen 05.10.) → release anyway
+     (step 6) and do 5.4b afterwards.
+  6. Release. **Never rotate the client secret:** Mo's Admin API access, every webhook signature and
+     the App Proxy signature use it (Vercel `SHOPIFY_CLIENT_SECRET`); a new secret breaks all three
+     until Vercel has it.
 
-         [[webhooks.subscriptions]]
-         compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
-         uri = "https://mo.motionsports.de/api/webhooks/shopify"
-       ```
-       (if the toml already has a `[webhooks]` block, add only the `[[webhooks.subscriptions]]`
-       part under it and keep its `api_version`).
-  3. `shopify app deploy` → confirm the new version.
-  4. Shopify admin → Apps → the app: accept the updated permissions (new scope).
-  5. Shopify admin → Settings → Apps and sales channels → the app → „App proxy“: the URL must read
-     `https://www.motionsports.de/apps/chat` → if it shows anything else, „Customize URL“ →
-     prefix `apps`, subpath `chat` → Save. (The toml's prefix/subpath only apply to new installs.)
-  6. Vercel: nothing yet (the proxy signs with `SHOPIFY_CLIENT_SECRET`, which Mo has).
-  7. **Check (switches still off, nothing changes for visitors):**
-     - `npm run verify:widget` → „App Proxy /apps/chat/whoami antwortet JSON — signedIn=false“.
-     - In a browser logged in to the shop (www.motionsports.de/account) open
-       `https://www.motionsports.de/apps/chat/whoami?session=livecheck-manual` → `{"signedIn":false}`.
-     - `npm run verify:live` → section 8 „Manuelle Prüfung“ shows one row with
-       `"noCode":"flag_off"`. **No row** → Shopify sends no logged-in customer for this store's
-       account type: stop and tell C.
-  8. **Switch on:** Vercel → Production → `APP_PROXY_SIGNIN_ENABLED=true` and
-     `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24` → Redeploy.
-  9. **Test:** private window → log in at www.motionsports.de/account → open any shop page → open
-     the chat: your name shows, no „Anmelden“, the history drawer works. `npm run verify:live` →
-     section 8 shows a code issued and redeemed; section 1 „Vom Shop erkannt“. Tell C the date
-     (C adds the KPI release note).
-  10. **Kill switch** (any time, e.g. a theme re-sync brings back an old widget — `verify:widget`
+  **B · Shopify admin**
+  7. Apps → the app: accept the updated permissions (new scope).
+  8. Settings → Apps and sales channels → the app → „App proxy“: the URL must read
+     `https://www.motionsports.de/apps/chat` → if it shows anything else, „Customize URL“ → prefix
+     `apps`, subpath `chat` → Save (a version's prefix/subpath only apply to new installs). Vercel:
+     nothing (the proxy signs with `SHOPIFY_CLIENT_SECRET`, which Mo has).
+
+  **C · Checks (switches still off, nothing changes for visitors)**
+  9. `npm run verify:widget` → „✔ App Proxy /apps/chat/whoami antwortet JSON — signedIn=false (ohne
+     Shop-Cookie erwartet: false)“.
+  10. In a browser logged in to the shop (www.motionsports.de/account) open
+      `https://www.motionsports.de/apps/chat/whoami?session=livecheck-manual` → `{"signedIn":false}`.
+      Then `npm run verify:live` → section 8 „Manuelle Prüfung“ shows one row whose `data` has
+      `"noCode":"flag_off"`. **No row** → Shopify sends no logged-in customer for this store's
+      account type: do not switch on (skip D) and tell C.
+  11. **Compliance test** (after step 5 or 5.4b): Shopify admin → Customers → your own customer →
+      More actions → „Request customer data“ → Mo → Eingang shows „Datenauskunft angefordert
+      (Shopify)“ → „Erledigt“. From then on the manual rule in 5.2 is no longer needed. **Never test
+      with „Erase personal data“** — it really deletes the person in Shopify and in Mo.
+
+  **D · Switch on**
+  12. Vercel → Production → `APP_PROXY_SIGNIN_ENABLED=true` and `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`
+      → Redeploy.
+  13. **Test** in a private window: log in at www.motionsports.de/account → open any shop page → open
+      the chat: your name shows, no „Anmelden“, the history drawer works. `npm run verify:live` →
+      section 8 shows a code issued and redeemed; section 1 „Vom Shop erkannt“. Tell C the date (C
+      adds the KPI release note). Optional, with C: the handover and shop-logout tests (C.26).
+  14. **Kill switch** (any time, e.g. a theme re-sync brings back an old widget — `verify:widget`
       fails): `APP_PROXY_SIGNIN_ENABLED=false` → Redeploy. Visitors are then simply not recognised.
-  - Watch: KPI → Beratung → „Kundenkonto & Self-Service“ → „Shop-Login-Erkennung“ (a warning
-    appears if the widget leaves codes unredeemed) and „Einwilligung nach der Anmeldung“ →
-    „Nach Anmeldeweg“.
+  15. **Tell F:** run `shopify app config link` before the next `shopify app deploy`, so F's
+      `shopify.app.toml` keeps the new scope, the App proxy and the compliance webhooks (a deploy
+      from an old toml replaces the whole configuration and removes them).
+  - Watch: KPI → Beratung → „Kundenkonto & Self-Service“ → „Shop-Login-Erkennung (App Proxy)“ (a
+    warning appears if the widget leaves codes unredeemed); KPI → Marketing & Kampagne →
+    „Einwilligung nach der Anmeldung (Marketing-Opt-in)“ → „Nach Anmeldeweg“.
+
+  **5.4b · Compliance webhooks with the Shopify CLI** (the Dev Dashboard version form has no
+  compliance section — confirmed 05.10.) — F in F's project folder (~5 min), or M alone; then step 11.
+  - (0) M alone, no project folder yet: `npm install -g @shopify/cli@latest`; in an empty folder
+    `shopify app init --client-id <Client ID>` (Dev Dashboard → App settings; = Vercel
+    `SHOPIFY_CLIENT_ID`; if asked for a template, take the extension-only one) → `cd` into the new
+    folder.
+  - (a) In the app's project folder: `shopify app config link` → pick the app (writes the
+    configuration released in step 6, incl. scope and App proxy, into `shopify.app.toml`).
+  - (b) Check `shopify.app.toml`: `[access_scopes]` `scopes` contains `write_app_proxy` and every
+    other scope of the active version, and the `[app_proxy]` block below is there (add what is
+    missing). Then add the `[webhooks]` part below:
+    ```toml
+    [app_proxy]
+    url = "https://mo.motionsports.de/api/auth/storefront"
+    prefix = "apps"
+    subpath = "chat"
+
+    [webhooks]
+    api_version = "2026-04"
+
+      [[webhooks.subscriptions]]
+      compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+      uri = "https://mo.motionsports.de/api/webhooks/shopify"
+    ```
+    (if the toml already has a `[webhooks]` block, add only the `[[webhooks.subscriptions]]` part
+    under it and keep its `api_version`). No other webhook topics in the toml — `npm run
+    shopify:webhooks` registers those, and a second copy doubles every event.
+  - (c) `shopify app deploy` → **read the summary before confirming**: the only new thing must be
+    the compliance webhooks. If it says an extension would be removed, or scopes / URLs change →
+    answer no and tell C. No reinstall (it would delete the subscriptions the script registered).
 
 - [ ] **5.3 App ownership** (optional) — M + F
-  - Move the Shopify app to an organisation owned by motionsports, or at least keep M as a
-    member, so scopes, secret and configuration no longer depend on one freelancer.
+  - M has Dev Dashboard access to the app since 05.10. (5.4 needs nobody else). Left, optional: move
+    the app to an organisation owned by motionsports, so scopes, secret and configuration no longer
+    depend on the freelancer's organisation.
 
 ## 6 · After the lawyer's answer
 
@@ -432,8 +481,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
     Built 03.10.
   - Before: the lawyer's answer on F-32 (and the privacy-policy sentence it asks for); FE
     confirms the live widget renders nothing for `get_order_status` and clears the stored
-    chat history on logout (`docs/frontend-handoff/CHAT_ORDER_STATUS.md`, frontend prompt
-    task 6). `SHOPIFY_CUSTOMER_SYNC_ENABLED` stays on (it is — the answer needs the ledger).
+    chat history on logout (frontend prompt task 6; contract today: `docs/frontend/API_CONTRACT.md`
+    §2 and `docs/frontend/ACCOUNT_CONTRACT.md` §3a/§5). `SHOPIFY_CUSTOMER_SYNC_ENABLED` stays on (it is — the answer needs the ledger).
   - Optional: `SHOPIFY_ACCOUNT_ORDERS_URL` if „Meine Bestellungen“ should open another page
     than `https://www.motionsports.de/account`.
   - Live check with your own account first (no Preview needed, 04.10.): Vercel Production
@@ -465,7 +514,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 
 - [x] **C.1** Correct the compliance-webhook hint in `scripts/register-shopify-webhooks.mjs`
       and `docs/CATALOG_SYNC.md` (no Dev Dashboard field; `shopify.app.toml` + CLI; the
-      manual rule from 5.2 while it is missing).
+      manual rule from 5.2 while it is missing). Since 05.10. 5.4 tries the Dev Dashboard version
+      form first; the CLI route is the fallback 5.4b.
 - [x] **C.2** Domain in the docs and the `base-url.ts` fallback → `mo.motionsports.de`.
 - [x] **C.6** `/api/auth/storefront/whoami` answers like `/api/auth/storefront` (the App
       Proxy appends `/whoami` to the proxy URL).
@@ -483,10 +533,11 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       Shopify sync therefore re-reads the orders of the last 15 days once and then reopens the
       items the job closed by itself; the next Eingang run closes only the false ones again.
   - [x] **C.9a** — M — `0070` run on production right after the merge (03.10.).
-  - [ ] **C.9b** — M — after C's follow-up merge: Vercel → project `mo` → Settings → Cron Jobs →
-        `/api/cron/shopify-reconcile` → **Run** (otherwise it happens tonight at 03:45 by itself),
-        then Mo → Eingang → **„Jetzt prüfen“**.
-        Done when: Einstellungen → Shopify-Abgleich shows a new „Nächtlicher Abgleich“ time and
+  - [ ] **C.9b** — M — only a check now: the follow-up is merged (03.10.) and the nightly
+        reconcile (01:45 UTC = 03:45 Berlin summer time) runs the one-off look-back by itself; a manual run (Vercel →
+        project `mo` → Settings → Cron Jobs → `/api/cron/shopify-reconcile` → **Run**, then Mo →
+        Eingang → **„Jetzt prüfen“**) is no longer needed.
+        Done when: Einstellungen → Shopify-Abgleich lists a run „Erstattungsdaten nachgelesen“ and
         the Eingang shows „Unzufriedenheit“ only for refunds and cancellations of the last 14 days.
 - [x] **C.10** **E-Mails im Eingang** — built 02.10. (no migration): every incoming mail of
       a known customer opens „E-Mail beantworten“ in the Eingang at once (later mails join
@@ -526,21 +577,21 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [x] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
       of UTC — done 05.10. (every range query of the report runs midnight to midnight Berlin time).
 - [x] **C.15** Next items planned (item 8 of the 04.10. request) — done 04.10.: five ranked,
-      verified plans in `docs/plans/2026-10-04/` (README = ranking, findings, decisions, order);
-      widget tasks in `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md` (send each only when its
-      backend row below is done).
+      verified plans, all built 05.10. (C.16–C.21) and archived in `docs/archive/plans-2026-10-04/`
+      (README = ranking, findings, decisions, order; open follow-ups → C.26); widget tasks in
+      `docs/frontend/tasks/` → open list item 2.
 - [x] **C.16** OI1 F1 (opt-in loss) fixed 05.10.: a submit without the marketing tick keeps a
       `pending` DOI (status, token, `doi_sent_at`, marketing flag) unless the address is
       suppressed, so the link in the inbox keeps working; rules in the tested
-      `email-capture-core.mjs`. Already lost links are not restored — M's size check
-      (`docs/plans/2026-10-04/README.md`, finding 2) shows how many; those people can opt in
-      again. **Left:** F2 (a suppressed address answered „already subscribed“), backend-only.
+      `email-capture-core.mjs`. Already lost links are not restored — M's size check of 05.10.
+      found none (F1 and F2 both 0). F2 (a suppressed address answered „already subscribed“) is
+      fixed in C.18.
 - [x] **C.17** P0.3 Phase 1 + 2 — built 05.10. (no migration, both switches off in code):
       fresh App Proxy signatures, code only with a proof, handover on shared browsers, stamp guard,
       renewals, kill switch, shop proof without a chat token (D-AP1, max age), anti-nag for the
       consent popup, proof note in the consent evidence, order-status wording for shop sessions,
       KPI „Shop-Login-Erkennung“ + „Nach Anmeldeweg“, `verify:live` section 8, dossier §19.
-      **M:** 5.2 + 5.4 with F.
+      **M:** 5.4 — done 05.10.
 - [x] **C.18** OI1 — PR 1 done 05.10. (no e-mail-summary offer and no forced checkout ask for
       signed-in sessions); PR 2 done 05.10. (opt-ins carry `source` / `outcome`, DOI confirmations
       their source; capture funnel = capture form only with „DOI-Mail fällig“ as the DOI base;
@@ -548,28 +599,87 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       subscribed“). No migration.
 - [x] **C.19** OI3 — done 05.10.: `surface=signin` serves three benefit bullets (C's wording,
       D-AP4) and `variant: "a"` (copy version `v5`); the opt-in POST takes `placement` /
-      `variant`; KPI „Nach Variante und Platzierung“. FE task 1 ready (item 2 of the open list).
+      `variant`; KPI „Nach Variante und Platzierung“. FE task 1:
+      `docs/frontend/tasks/1-consent-benefits-variant.md` (sent with open list item 2).
 - [x] **C.20** A3 backend — done 05.10.: `context.source`, softer page notes,
       `CHAT_PAGE_CONTEXT_ENABLED` / `_HOLDOUT_PCT` off, `page_context_applied/_answered`, KPI
       „Seitenkontext auf Produktseiten“, `verify:live` section 9, fingerprint row for the next
-      upload. FE task 2 ready (item 2 of the open list).
+      upload. FE task 2: `docs/frontend/tasks/2-page-context.md` (sent with open list item 2).
 - [x] **C.21** ATTR-TOKEN-LIFETIME — built 05.10. (pre-checks by M: webhooks once each, widget
       tokens since 24.08., purge cliff reached 05.10. 08:40 UTC). Migration `0076`
       (`messages.session_id`; the code works before and after it), `MO_ATTRIBUTION_SESSION_ANCHOR`
       (off in code), `mo_order_marker_unresolved`, KPI notes, `verify:live` 7b, dossier §20 (F-37).
-      **M:** run `npm run db:migrate`, then set the switch (see 8.1). Then FE task 3.
+      **M:** run `npm run db:migrate`, then set the switch (open list item 1). FE task 3:
+      `docs/frontend/tasks/3-attribution-token-renewal.md` (sent with open list item 2).
 - [ ] **C.5** Keep this file current after every step.
 - [ ] **C.22** After the widget upload (open list item 2, M sends C the `verify:widget` output):
       mark the row `tasks-2026-10-05` current in `widget-fingerprint.mjs`, add the release notes
       („Einwilligungs-Popup: Vorteile vom Server, Variante und Platzierung“, „Seitenkontext bei
-      getippten Fragen“), refresh `docs/frontend/04`/`05`/`07` from the widget agent's reply.
+      getippten Fragen“), refresh `docs/frontend/04`/`05`/`07` from the widget agent's reply, then
+      move the finished tasks (`docs/frontend/tasks/`) to `docs/archive/`.
 - [ ] **C.23** Page context: once the switch is on and 2–3 days of base rate are in, pre-register
       the control-group experiment (`PAGE_CONTEXT_EXPERIMENT`, target size per arm) and tell M
       the `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` value; read the result once the target is reached.
-- [ ] **C.24** Attribution: remove the legacy fallback (rows without `messages.session_id`) after
-      11.11.2026 (migration day + 37); A2 (`_mo` on the „Zur Kasse“ link) after M's test order (P0.2).
+- [ ] **C.24** Attribution: remove the legacy fallback (rows without `messages.session_id`) 37 days
+      after `0076` ran on production (11.11.2026 if it runs on 05.10.); A2 (`_mo` on the „Zur Kasse“
+      link) after M's test order (P0.2).
 - [ ] **C.25** Backlog, no deadline: D14 sanitize, B2 sign-in entry points, B6 handle mapping,
       E6 widget version header (`docs/frontend/07` §7).
+- [ ] **C.26** Open follow-ups of the built 04.10. plans (not built; detail in
+      `docs/archive/plans-2026-10-04/<plan>`):
+  - **P0.3** — after 5.4 step 12, with M: the shop-logout token test (does a shop logout end the
+    chat's Customer-Account sign-in?) and the handover test (two test customers in one browser →
+    `noCode:'handover'`, the earlier person's chat sign-in ends) — not part of 5.4, which goes from
+    „switches off“ straight to `true`/`24` (P0.3.md §8 „Stage A“). SIGNIN-ORDER: order status for
+    shop-recognised sessions — today `customer_account` links only (`order-status-core.mjs`), needs
+    L (dossier §16.1, F-32) (P0.3.md §11 step 8). O1b, optional: refuse a second use of an App Proxy
+    signature within its 5 minutes (KV, fails open) (P0.3.md §3.5, §10). `KPI_RELEASES` entries with
+    per-section notes (`sections` / `sectionNote`) — only if the App Proxy release should annotate
+    the Anmelde-Popup / Einwilligung / Kundenkonto sections (P0.3.md §3.11).
+  - **OI1 F3** — record that the DOI mail was actually sent: „DOI-Mail fällig“ counts
+    `doiEmailRequired`, and the opt-in event is written before the send, so failed or skipped sends
+    count too (OI1.md §1 F3, §13).
+  - **OI3 B4** — a second consent-popup variant only after L's answer on F-38 (b); if the shown
+    variant must be on the consent record: migration `0077` (`email_captures.consent_variant`),
+    written by the opt-in route before the second variant is activated (OI3.md „B4“).
+  - **A3**, data-dependent (after the page-context switch, item 3): many `en` sessions with
+    `resolved: false` → a backend fallback over the `/en` translated handle; over-pivoting on order
+    or shipping questions → tighten `pagePivotNote()`; suppress repeated cards of the open product
+    only together with an attribution replacement (A3.md §9 step 7).
+  - **ATTR** — V2/V2b (no old widget token survived without a same-session consultation; the
+    180-day cap holds) after the first nightly retention run with `MO_ATTRIBUTION_SESSION_ANCHOR`
+    on — not in `verify:live` (ATTR-TOKEN-LIFETIME.md §4.11, §6). §9.1: a reused mail-link token
+    keeps its old `created_at` (`mintAttributionToken`), so a mail sent 31–37 days after the
+    token was minted carries a link that is already outside the window. §9.2: the overlap check reads only the session's latest thread
+    (`loadConversationForSummary`). §9.5: anchor on the consent-gated token renewal instead of chat
+    rows — decide with F-37 (b). §4.9, optional: dedupe `mo_order_marker_unresolved` by
+    `X-Shopify-Event-Id`. Release date: move `attribution-window` / `MEANINGFUL_FROM.attribution`
+    (`kpi-releases.mjs`) if the switch goes on after 05.10. (open list item 1).
+- [ ] **C.27** Code findings of the docs audit of 05.10. (the docs now describe the code as it is;
+      these are code changes, none urgent):
+  - **Bug:** a signed-in customer without a verified e-mail who types someone else's address into
+    the capture form ends their sign-in (correct) **and** `linkCustomerOnEmailCapture` moves all
+    conversations of the session to that address's customer row (`customer-store.ts`) — only the
+    sign-in link should change.
+  - **Decide (M):** an accept for a suppressed (unsubscribed) address writes no consent act, so the
+    post-sign-in ask can come back until the anti-nag stops it — should suppression make
+    `optInActionable` false?
+  - Copy: `marketing_consent_required` (`api-messages.mjs`) mentions a checkbox on the button-consent
+    surface; `/api/contact`'s delivery-failure message is German on `/en`; `/api/r/{token}` links and
+    1:1 marketing unsubscribe links carry no `locale`.
+  - `npm run db:reset` aborts on any database past migration 0031 (`scripts/reset-test-data.mjs`
+    `DATA_TABLES` stops there) — documented in `docs/DATABASE.md`, script still to fix.
+  - Retention gaps to decide: `shopify_outbox` rows with status `skipped` are never purged;
+    `customer_merge_conflicts` and `improvement_runs` / `improvement_suggestions` have no window.
+  - Admin texts that contradict the code: popup timing in `LoginGateSection` and the
+    `widget-popups` release note (the widget decides ~0.7 s after a send, once per tab session);
+    `RevenueSection` InfoTips name only MS5- codes (the query includes MK-); `AiCostSection` has no
+    label for 6 call sites; `SystemStatusCard` does not show the 05.10. switches
+    (`CHAT_PAGE_CONTEXT_ENABLED`, `APP_PROXY_SIGNIN_ENABLED`, `MO_ATTRIBUTION_SESSION_ANCHOR`,
+    `CONSENT_SIGNIN_VARIANTS`); `email-theme.mjs` labels the campaign audience „Shopify-Abonnenten“.
+  - Comment sweep: stale code comments listed in the audit reports (consent stamp versions in the
+    opt-in routes, `consent-copy` route header, `retention.ts` header, `kpi-events.ts` link data,
+    `seed-dev.mjs`, `shopify-discounts.ts` WELCOME prefix, a few more).
 
 ## Backlog — not built, decide later
 

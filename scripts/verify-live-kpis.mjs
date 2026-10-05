@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Read-only live checks after a widget release, straight from kpi_events and
-// consent_events — the queries behind docs/ROLLOUT_TODO.md „Live-Check nach
-// dem Widget-Upload“. Only SELECTs; no names, e-mail addresses or message text
+// consent_events — the queries behind docs/ROLLOUT_TODO.md 1.11 (live check
+// after a widget upload). Only SELECTs; no names, e-mail addresses or message text
 // are printed (session ids are shortened).
 //
 //   npm run verify:live                       (since 2026-10-04, Europe/Berlin)
@@ -268,7 +268,7 @@ table(
 );
 
 // ---------------------------------------------------------------------------
-// Before C.21 (docs/plans/2026-10-04/ATTR-TOKEN-LIFETIME.md §2): counts and
+// Before C.21 (docs/archive/plans-2026-10-04/ATTR-TOKEN-LIFETIME.md §2): counts and
 // dates only, no session ids. Independent of --since.
 head("7 · Bestell-Zuordnung — Vorab-Checks P1–P6 (ATTR)");
 const q0 = (text) => sql.query(text, []);

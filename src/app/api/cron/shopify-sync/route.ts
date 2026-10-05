@@ -2,7 +2,7 @@
 // Shopify customers for Mo-only subscribers, erasure requests) and — while an
 // import runs — one more bounded import step, so a started import finishes
 // even when nobody keeps the Einstellungen card open.
-// docs/CUSTOMER_PLATFORM_PLAN.md §6.4 / §7.5.
+// docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.4 / §7.5.
 //
 // Each part is gated by its own flag (SHOPIFY_CONSENT_WRITEBACK,
 // SHOPIFY_ERASURE_SYNC, SHOPIFY_CUSTOMER_SYNC_ENABLED); with all off this is

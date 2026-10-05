@@ -1,15 +1,8 @@
-# Frontend task: serve the consent-popup benefits from the backend and add variant/placement to the signed-in ask (2026-10-04, backend live 2026-10-05)
+# Frontend task 1: serve the consent-popup benefits from the backend and add variant/placement to the signed-in ask (backend deployed 2026-10-05)
 
-Paste this into the frontend agent that owns `ms_shopify_clone`. Attach these files, in the versions updated by the backend PR in "Backend counterpart" below:
-- `docs/API_CONTRACT.md`. This is the canonical contract and the only place AC §5 and AC §7.4 live. `docs/frontend-handoff/API_CONTRACT.md` is only a pointer plus an "Additive changes" table. You may attach it too, for that table.
-- `docs/frontend-handoff/CONSENT_FLOW.md`
-- `docs/frontend-handoff/CUSTOMER_ACCOUNT.md`
-- `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md`, for its "Rules that do not change"
-- `docs/frontend-handoff/LOCALE.md`
+For the frontend agent that owns `ms_shopify_clone`. Attachments: see the prompt. The contract is `API_CONTRACT.md`, `ACCOUNT_CONTRACT.md` and `CONSENT_CONTRACT.md`; where this task and a contract file disagree, the contract file wins.
 
-If this prompt and the attached files disagree, the attached files win.
-
-Some references below are marked "(background: `docs/frontend/0N` §…)". They point to the backend's code-verified description of your widget. Those chapters are **not attached**. Every fact this task needs from them is written out here. In your own repo, the code is the source of truth.
+References marked "(background: …)" point into the backend repo; its chapters `docs/frontend/01`–`07` are the backend's code-verified description of your widget. They are background in the backend repo, not attached — everything needed is written out here. In your own repo, the code is the source of truth.
 
 ## Baseline
 This task builds on widget `main` at `3e87341` (MANIFEST 2026-10-04 b), live since 2026-10-04. How it behaves today:
@@ -20,7 +13,7 @@ This task builds on widget `main` at `3e87341` (MANIFEST 2026-10-04 b), live sin
   3. the served `marketingLabel`, the served `consentFooter`, and the Impressum / Datenschutz links;
   4. the buttons „Ja, Angebote aktivieren“ / „Nein, danke“.
 
-  The bullets break two rules. FP "Rules that do not change" says "the consent popup's text may not" live in the widget. CF §1 allows benefit framing only in served copy. (background: `docs/frontend/04` §10.2, §11, §18 item 17)
+  The bullets break two rules: API_CONTRACT §0 rule 11 (the popup's and the card's headline and benefit bullets are served; the widget adds no consent-surface text of its own) and CONSENT_CONTRACT §1 (benefit framing only in served copy). (background: `docs/frontend/04` §10.2, §11, §18 item 17)
 - **Inline card.** `presentSignInOptIn() → buildMarketingOptInCard()` shows the served headline, label and footer. It has no bullets.
 - **KPI events.** Both surfaces send `consent_gate_shown/_accepted/_declined{/_dismissed} {surface:'signin'}`. No variant, no placement.
 - **Copy cache.** `fetchSignInConsentCopy()` keeps the served copy in memory for 60 s (`signInConsentCache` plus an in-flight promise). The cache is keyed by time only, not by sid.
@@ -36,25 +29,24 @@ This task builds on widget `main` at `3e87341` (MANIFEST 2026-10-04 b), live sin
 **What changes for measurement:** every signed-in ask carries a served `variant` id and a `placement`. The backend can then test headline and bullet variants with a backend deploy only, with no theme upload.
 
 **KPIs:**
-1. **Accept rate** of the signed-in ask, per variant and placement. Formula: sessions with `consent_gate_shown` **and** `consent_gate_accepted` ÷ sessions with `consent_gate_shown`. Accepts with no `shown` in the same session, variant and placement are reported separately as a diagnostic („akzeptiert ohne Anzeige“).
+1. **Accept rate** of the signed-in ask, per variant and placement. Formula: sessions with `consent_gate_shown` **and** `consent_gate_accepted` ÷ sessions with `consent_gate_shown`. Accepts with no `shown` in the same session, variant and placement are reported separately as a diagnostic („Akzeptiert ohne Anzeige“).
 2. **DOI-confirmed opt-ins** per variant. The server event `email_capture_marketing_opted_in {trigger:'signin_optin', variant}` is joined by session to `email_capture_marketing_confirmed`.
-   - „bereits angemeldet“ counts opt-ins the server answered with `alreadyConfirmed:true`.
-   - The DOI-Quote counts only opt-ins that required a DOI mail.
+   - „Bereits angemeldet“ counts opt-ins the server answered with `alreadyConfirmed:true`.
+   - The „DOI-Quote“ counts only opt-ins that required a DOI mail.
 3. **Compliance.** No consent-popup text is left in the widget. This protects the main signed-in opt-in surface, whose volume grows with the App Proxy.
 
-**Dashboard:** KPI tab → „Einwilligung nach der Anmeldung (Marketing-Opt-in)“ → new block „Nach Variante und Platzierung“. For each variant × placement it shows: Sitzungen angezeigt → akzeptiert → Opt-ins (Server) → DOI bestätigt.
+**Dashboard (backend):** KPI tab → „Einwilligung nach der Anmeldung (Marketing-Opt-in)“ → block „Nach Variante und Platzierung“. One row per variant × placement, with the columns „Angezeigt“, „Akzeptiert“, „Akzeptanzrate“, „Abgelehnt“, „Akzeptiert ohne Anzeige“, „Opt-ins (Server)“, „Bereits angemeldet“ and „DOI-Quote“; rates are compared from 100 sessions per row. A missing `variant` shows as „ohne (älteres Widget)“, a missing `placement` as „ohne“, an unknown value as „unbekannt“.
 
 ## Contract references
-- **CF §1**, golden rules. Benefit framing is allowed only in served copy: `headline`, and from now on `benefits`. No countdowns, no urgency, no discount amounts.
-- **CF §3.1**, `GET /api/consent-copy?surface=signin`: new optional fields `benefits` and `variant`.
-- **CF §3.2** and **CA §6.1**, `POST /api/account/marketing-opt-in`: new optional body fields `placement` and `variant`.
-- **AC §7.4** (in `docs/API_CONTRACT.md`): the consent-copy payload, and the `Cache-Control` rule while more than one variant runs.
-- **AC §5**: `consent_gate_*` data is `{surface, placement?, variant?}`. The server-only table is unchanged.
-- **FP "Rules that do not change".**
-- Background for the backend, not attached: `docs/frontend/07` §5 rule 1 (additive only), rule 4 (no-op if the widget ships later) and rule 7 (the signin required keys stay `marketingLabel`, `consentTextShown` and `lawyerApproved === true`).
+- **CONSENT_CONTRACT §1**, golden rules. Benefit framing is allowed only in served copy: `headline`, and on `surface=signin` `benefits`. No countdowns, no urgency, no discount amounts.
+- **API_CONTRACT §7.4**, `GET /api/consent-copy?surface=signin`: the optional fields `benefits` and `variant`, and the `Cache-Control` rule while more than one variant runs. How to render them: **CONSENT_CONTRACT §3.1**.
+- **ACCOUNT_CONTRACT §6.2**, `POST /api/account/marketing-opt-in`: the optional body fields `placement` and `variant`, the answers and the error codes. Submit rules: **CONSENT_CONTRACT §3.2**. When the ask is shown at all (`optInActionable`, backend anti-nag): **ACCOUNT_CONTRACT §6.1**.
+- **API_CONTRACT §5** "Consent-gate events": `consent_gate_*` data is `{surface, placement?, variant?}`; "Sign-in opt-in extras" lists what the server adds to its own events. This task adds no event name.
+- **API_CONTRACT §0**: rule 3 (additive only; no-op if the widget ships later), rules 8–11 (served consent copy; nothing pre-selected; fail closed — the signin required keys stay `marketingLabel`, `consentTextShown` and `lawyerApproved === true`; served framing vs widget chrome), rule 4 (no new request header), rules 13–14 (KPI data, server-only events).
+- **API_CONTRACT §12**: the copy is fetched and submitted in the same locale.
 
 ## Backend state
-**Deployed on 2026-10-05** (Backend counterpart B1 + B2, `main`):
+**Deployed on 2026-10-05** (backend `main`):
 
 **`GET /api/consent-copy?surface=signin&locale=de|en`** additionally returns `"variant": "a"` and `"benefits": [...]`, three strings, and `"version": "v5"` (the widget ignores `version`):
 - **DE:** „Angebote, die zu deiner Beratung passen“, „Exklusive Rabatt-Aktionen nur für Abonnenten“, „Jederzeit mit einem Klick abbestellbar“.
@@ -64,31 +56,27 @@ This task builds on widget `main` at `3e87341` (MANIFEST 2026-10-04 b), live sin
 **`POST /api/account/marketing-opt-in`** accepts optional `placement` and `variant`.
 - Unknown or invalid values are ignored, never answered with a 400.
 - Both values are copied into the server events `email_capture_submitted` and `email_capture_marketing_opted_in` `{trigger:'signin_optin', source:'mo_signin', placement, variant}`.
-- The server also adds `outcome`, `alreadyConfirmed` and `doiRequired` to those server-only events. The widget sends none of them.
+- The server also adds `outcome`, `alreadyConfirmed`, `doiRequired` and, only while more than one variant is active, `variantMismatch` to those server-only events (API_CONTRACT §5 "Sign-in opt-in extras"). The widget sends none of them.
 
 **Switches:**
-- `CONSENT_SIGNIN_VARIANTS=a` (default). Only variant `a` is served, nothing is bucketed by sid, and `Cache-Control` stays `public, max-age=60, stale-while-revalidate=300`.
+- `CONSENT_SIGNIN_VARIANTS` (default in code `a`). With only `a`, nothing is bucketed by sid, and `Cache-Control` stays `public, max-age=60, stale-while-revalidate=300`.
   - It moves to e.g. `a,b` only after this upload is verified on live and a second variant is approved.
-  - While more than one variant is active, the endpoint answers `Cache-Control: private, no-store`.
+  - While more than one variant is active, the endpoint assigns the variant per `x-ms-session` and answers `Cache-Control: private, no-store`.
 
-**No-op if the widget ships later.** The live `3e87341` widget ignores the extra keys and keeps rendering its own two bullets until this upload. It sends no `placement` or `variant`, and the backend records nothing extra.
+**No-op if the widget ships later.** The `3e87341` widget ignores the extra keys and renders its own two bullets. It sends no `placement` or `variant`, and the backend records nothing extra.
 
 ## Rules that do not change
-- Consent text comes only from `GET {BASE_URL}/api/consent-copy`. Never hard-code it. This now includes the popup's benefit bullets.
-- Render `marketingLabel` and `consentFooter` fully visible. Nothing is pre-selected. Decline is as easy to reach as accept.
-- Echo `consentTextShown` verbatim in the POST. Never compose it client-side.
-- The marketing POST fires only on the explicit accept tap (`marketingConsent: true`).
-- Popup and card render nothing unless the served copy has `lawyerApproved === true`, `marketingLabel` and `consentTextShown`. Fail closed, silently.
-- Render served strings with `textContent` only. Never apply `L()` to served copy.
-- KPI events carry ids and enums only: no message text, names, e-mails, product names, URLs, tokens or codes.
-- The widget never sends server-only events. These are the AC §5 server table:
-  - `marketing_email_clicked`, `campaign_email_clicked`, `campaign_chat_started`
-  - `bundle_offer_clicked`, `contact_form_submitted`
-  - `account_signin_succeeded`, `account_signin_linked`, `account_signin_link_refused`
-  - `account_export_requested`, `account_erased`, `order_status_lookup`
-  - `email_capture_ask_shown`, `_submitted`, `_marketing_opted_in`, `_marketing_confirmed`
-- Every backend call keeps today's headers. **Do not add a request header.** The backend's CORS allow-list is exactly `Content-Type, x-ms-chat-key, x-ms-session, x-ms-locale`. So `variant` and `placement` travel only in the JSON body and in KPI `data`. Do not change the `fetch` cache mode of the consent-copy GET either.
-- The sign-in (login) popup is UI chrome. Its `ACCOUNT_COPY` bullets stay in the widget, and this task does not touch them.
+API_CONTRACT §0 applies in full; for this task that means:
+- Consent text comes only from `GET {BASE_URL}/api/consent-copy`. Never hard-code it. This now includes the popup's benefit bullets (rules 8, 11).
+- Render `marketingLabel` and `consentFooter` fully visible. Nothing is pre-selected. Decline is as easy to reach as accept (rule 9).
+- Echo `consentTextShown` verbatim in the POST. Never compose it client-side (rule 8).
+- The marketing POST fires only on the explicit accept tap (`marketingConsent: true`) (rule 9).
+- Popup and card render nothing unless the served copy has `lawyerApproved === true`, `marketingLabel` and `consentTextShown`. Fail closed, silently (rule 10).
+- Render served strings with `textContent` only. Never apply `L()` to served copy (rule 8).
+- KPI events carry ids and enums only: no message text, names, e-mails, product names, URLs, tokens or codes (rule 13).
+- The widget never sends a server-only event (rule 14). The names are listed in API_CONTRACT §5: the "Server-emitted lifecycle events" table and the four server-side e-mail-capture funnel events.
+- Every backend call keeps today's headers. **Do not add a request header** (rule 4). The backend's CORS allow-list is exactly `Content-Type, x-ms-chat-key, x-ms-session, x-ms-locale`. So `variant` and `placement` travel only in the JSON body and in KPI `data`. Do not change the `fetch` cache mode of the consent-copy GET either.
+- The sign-in (login) popup is UI chrome (rule 11). Its `ACCOUNT_COPY` bullets stay in the widget, and this task does not touch them.
 
 ## Tasks (in order)
 
@@ -106,7 +94,7 @@ This task builds on widget `main` at `3e87341` (MANIFEST 2026-10-04 b), live sin
 
 **Request:** unchanged. `GET {BASE_URL}/api/consent-copy?surface=signin&locale=<de|en>`, with only the header `x-ms-session: <sid>`.
 
-**Response (200),** DE (live since 2026-10-05):
+**Response (200),** DE (served since 2026-10-05):
 ```json
 {
   "version": "v5",
@@ -160,7 +148,7 @@ For `locale=en` the response carries the three English bullets listed under "Bac
 - *Signed in vs anonymous:* only signed-in customers see either surface. The anonymous login popup (`presentLoginGate()`) is unchanged.
 - *Streaming:* the popup can still appear while the reply streams (unchanged).
 - *Voice mode:* never shown (unchanged).
-- */en:* render whatever is served, verbatim. Never translate it and never use `L()`. With today's backend `/en` shows the three English bullets.
+- */en:* render whatever is served, verbatim. Never translate it and never use `L()`. With the backend of 2026-10-05, `/en` shows the three English bullets.
 - *Older backend* (no `benefits`): no list.
 
 ### 2. Echo `variant` and `placement` in the KPI events and the opt-in POST (required)
@@ -168,7 +156,7 @@ For `locale=en` the response carries the three English bullets listed under "Bac
 **Where**
 - `presentConsentGate()` uses `placement:'popup'`.
 - `buildMarketingOptInCard()`, as called from `presentSignInOptIn()`, uses `placement:'signin_return'`.
-- If the value-moment ask (backlog D6) is built in this same round, its call of `buildMarketingOptInCard()` uses `placement:'value_moment'`. Otherwise never send `'value_moment'`.
+- `'value_moment'` is reserved for a later value-moment ask, which is not part of this round: never send it (CONSENT_CONTRACT §3.2).
 - Pass `placement` into `buildMarketingOptInCard(…)` as a parameter.
 
 **Trigger and timing**
@@ -196,7 +184,7 @@ x-ms-chat-key: <key>   x-ms-session: <sid>   x-ms-locale: <de|en>   Content-Type
 | 422 `no_verified_email` | popup: close → `openCaptureForm()`, except after a dismiss (Task 4); card: „Für dein Konto ist keine bestätigte E-Mail-Adresse hinterlegt.“ + „E-Mail-Adresse eingeben“ (unchanged) | none |
 | 429 | „Zu viele Anfragen — bitte kurz warten.“; accept re-enabled after `Retry-After` (default 30 s) | none |
 | 502 / 503 / network | popup „Gerade nicht möglich — bitte versuch es später erneut.“ / card „Anmeldung gerade nicht möglich — bitte später erneut versuchen.“ | none |
-| other (400 `bad_request`, 403, 404, 500) | popup: server `error.message` or „Das hat leider nicht geklappt. Bitte versuch es erneut.“; card: server `error.message` or „Anmeldung fehlgeschlagen. Bitte versuch es erneut.“ (unchanged) | none |
+| other (400 `bad_request`, 403, 404, 500) | popup: server `error.message` or „Das hat leider nicht geklappt. Bitte versuch es erneut.“; card: server `error.message` or „Anmeldung fehlgeschlagen. Bitte versuch es erneut.“ (unchanged; CONSENT_CONTRACT §3.2 groups `500` with `503` as "not possible right now", and ACCOUNT_CONTRACT §6.2 makes treating `404 not_found` like a sign-out optional — neither change is required by this task) | none |
 
 The backend never answers 400 because of `placement` or `variant`.
 
@@ -216,7 +204,7 @@ The backend never answers 400 because of `placement` or `variant`.
 
 **Edge cases**
 - *Late 2xx after a sid change* (sign-out, a "Neuen Chat starten" rotation, or adopting another tab's sid): no `consent_gate_accepted` is sent. Otherwise the previous customer's act would land on the next session, which on a shared device may be another person. The server's `signin_optin` events remain the record of the opt-in. Device memory behaves as today.
-- *Older backend:* no `variant`, so send `placement` only. The old route ignores unknown body keys; its `OptInPayload` reads only `marketingConsent`, `consentTextShown` and `locale`.
+- *Older backend:* no `variant`, so send `placement` only. An older backend ignores unknown body keys; it reads only `marketingConsent`, `consentTextShown` and `locale`.
 - */en:* same keys. Variant ids are strings that do not depend on the locale.
 
 ### 3. Key the signin consent-copy memory cache by sid (required)
@@ -276,15 +264,16 @@ The backend never answers 400 because of `placement` or `variant`.
 
 ## Legal constraints
 - **Approval.** The backend serves `benefits` as approved served copy (owner decision 2026-10-05), and every later variant only with its own approval. The widget never decides this. It renders only what is served with `lawyerApproved === true`.
-- **Framing only.** `benefits` is benefit framing, like `headline`: no discount amounts, no countdowns, no urgency (CF §1). The widget renders the bullets verbatim, all or nothing.
+- **Framing only.** `benefits` is benefit framing, like `headline`: no discount amounts, no countdowns, no urgency (CONSENT_CONTRACT §1). The widget renders the bullets verbatim, all or nothing.
 - **Tone rule for variants.** Every variant's `headline` and `benefits` are static strings per locale. They contain no placeholders, are never filled in per visitor, and never refer to the visitor's behaviour or chat content. Something like „Angebote zu den Produkten, die du dir angesehen hast“ is not allowed. The widget never fills in served copy.
 - **Audit string.** `consentTextShown` is still byte-for-byte the served string. It covers label + footer only, unless the backend changes that after legal advice. Then the served string changes and the widget still just echoes it.
 - **Equal choice.** Nothing is pre-selected. „Nein, danke“ stays the same size, directly under accept. `marketingConsent: true` comes only from the accept click.
 - **/en.** English copy is approved as the translation of the German and served with `enLegalReviewed: true`, bullets included. This task adds **no** widget check of `enLegalReviewed`.
 - **§ 25 TDDDG.** KPI telemetry is sent today without checking the shop's privacy consent. Whether that is acceptable is an open lawyer question.
   - (a) This task adds **no** new interaction-free event. `consent_gate_shown` keeps its timing; only id/enum fields are added to it.
-  - (b) Assigning variants per sid is a **new analytics purpose** for the pseudonymous sid. AC §7.4 documents `x-ms-session` on this GET for rate-limit keying only. With the default (one variant), nothing is bucketed. Before a second variant is activated, the backend lists this purpose under the open § 25 TDDDG question and in the privacy-policy / Cluster A wording.
+  - (b) Assigning variants per sid is a **new analytics purpose** for the pseudonymous sid. API_CONTRACT §7.4 documents `x-ms-session` on this GET for rate-limit keying and, while more than one variant is active, for the variant assignment. With the default (one variant), nothing is bucketed. Before a second variant is activated, the backend lists this purpose under the open § 25 TDDDG question and in the privacy-policy wording (background: `docs/ANWALTSDOSSIER.md` F-38 (b)).
   - (c) If the lawyer requires gating, gate `consent_gate_shown`, `_accepted`, `_declined` and `_dismissed` **together** on `window.Shopify.customerPrivacy.analyticsProcessingAllowed()`, so the rates stay unbiased. Never gate `shown` alone. Opt-in counts then come from the server's `signin_optin` events. That would be a separate widget task, not part of this one.
+  - Until then, do not gate these events: `consent_gate_shown` and `consent_gate_declined` with `surface: "signin"` also feed the backend anti-nag (ACCOUNT_CONTRACT §6.1), which would weaken if they were gated. API_CONTRACT §0 asks for analytics consent only for attribution (rule 7).
 - **Proof of which framing was shown (Art. 7).** While only variant `a` runs, the copy version implies the framing. Before a second variant runs, the lawyer decides whether the shown variant must be stored on the consent record. The backend handles this. The widget only echoes the served `variant` in the POST.
 - **Pseudonymous only.** Variant assignment uses only the pseudonymous sid, on the server. `variant` and `placement` are ids/enums. No e-mail, name, headline or bullet text ever goes into KPI data.
 - **Data that must not leave the browser:** nothing new. No new request headers.
@@ -292,8 +281,8 @@ The backend never answers 400 because of `placement` or `variant`.
 ## Deployment
 - **Files to upload:** `assets/ms-chat-widget.js` and `assets/ms-chat-widget.css` (the new `.ms-chat-optin-benefits` rule).
 - **Shared files to hand-edit in the live editor:** none.
-- **MANIFEST:** an entry is required. If D6 is done in the same round, use one entry and one upload for both.
-- **Fingerprint counts.** In the PR, report the merged commit hash and the counts of these strings in the new `assets/ms-chat-widget.js`, as committed. The backend uses them for its fingerprint (`npm run verify:widget`) and re-measures the minified variants itself.
+- **MANIFEST:** one entry, shared with tasks 2 and 3 (one upload).
+- **Fingerprint counts.** In the PR, report the merged commit hash and the counts of these strings in the new `assets/ms-chat-widget.js`, as committed. The backend uses them for its fingerprint (`npm run verify:widget`) and re-measures the minified variants itself. The markers the prompt lists under "keep" must stay present.
   - `ms-chat-optin-benefits`: expected ≥ 1. Positive marker, a complete string literal.
   - `Rabattaktionen zuerst erfahren`: expected 0. Negative marker.
   - `Empfehlungen, passend zu deiner Beratung`: expected 0.
@@ -303,7 +292,7 @@ The backend never answers 400 because of `placement` or `variant`.
 ## Acceptance checklist
 - [ ] `GATE_COPY` has no `benefits` key, in the DE object or in the EN overlay. The new `assets/ms-chat-widget.js` contains `Rabattaktionen zuerst erfahren` 0 times, `Empfehlungen, passend zu deiner Beratung` 0 times, and each reported EN bullet string 0 times. It contains `ms-chat-optin-benefits` at least once.
 - [ ] No widget-authored string sits between the served headline and the served `marketingLabel`, in either the popup or the card.
-- [ ] Served `benefits` (the three live items, and a mocked 2-item list) render verbatim in `.ms-chat-gate-benefits` (popup) and `.ms-chat-optin-benefits` (card), in DE and EN, against the real backend too.
+- [ ] Served `benefits` (the three items the backend serves, and a mocked 2-item list) render verbatim in `.ms-chat-gate-benefits` (popup) and `.ms-chat-optin-benefits` (card), in DE and EN, against the real backend too.
 - [ ] With `benefits` absent, `[]`, 5 items, or containing `""` or a number: no list. Popup and card still render headline, label, footer, links and both buttons.
 - [ ] Headers and bodies:
   - `GET /api/consent-copy?surface=signin&locale=…` carries only `x-ms-session`. No new header, no changed cache mode.
@@ -312,7 +301,7 @@ The backend never answers 400 because of `placement` or `variant`.
 - [ ] KPI payloads:
   - `consent_gate_shown/_accepted/_declined/_dismissed` carry `surface:'signin'`, the right `placement` (`popup` from the popup, `signin_return` from the card after a chat sign-in) and the served `variant`.
   - Their `sessionId` equals the `x-ms-session` of the copy GET and of the POST.
-  - The test session shows up on the admin KPI tab under „Einwilligung nach der Anmeldung“ → „Nach Variante und Platzierung“.
+  - After the upload, the backend finds the test session on the admin KPI tab under „Einwilligung nach der Anmeldung (Marketing-Opt-in)“ → „Nach Variante und Platzierung“ (report the test sid's first 8 characters in the PR).
 - [ ] Mock `variant:'b'`: `b` is echoed in all four events and in the POST. Mock `variant:'B!'` or `'x'.repeat(33)`: the key is omitted everywhere and nothing else changes.
 - [ ] Older backend (mock without `benefits` / `variant`): popup and card without bullets, events and POST without `variant`. Everything else behaves exactly like `3e87341`.
 - [ ] Negative cases unchanged:
@@ -329,6 +318,4 @@ The backend never answers 400 because of `placement` or `variant`.
   - no unmocked requests.
 - [ ] No console errors, no new hard-coded legal text, no pre-selection, no server-only events.
 - [ ] Screenshots in DE and EN, at desktop 1280 and mobile 390, of: the consent popup with served bullets, the popup without bullets, and the inline card with served bullets.
-
----
 

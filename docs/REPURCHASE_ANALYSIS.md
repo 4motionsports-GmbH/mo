@@ -1,9 +1,14 @@
 # Wiederkauf-Analyse — Datengrundlage für die Lifecycle-Segmentierung
 
-Bevor die geplante Segmentierung der Kampagnen-Mails („Ausbauen" /
-„Weiterentwickeln" / „Zurückholen" / „Ruhen lassen") gebaut wird, misst dieses
-Skript, ob die Annahmen dahinter überhaupt stimmen — und ersetzt die geschätzten
-Monatsgrenzen durch das tatsächliche Kaufverhalten des Shops.
+Dieses Skript misst das Kaufverhalten des Shops, auf dem die
+Lifecycle-Segmentierung der Kampagnen-Mails beruht (Segmente, Zeitgrenzen,
+Empfehlungs-Strategie je Segment). Die Segmentierung ist gebaut (Migration
+`0052`, `src/lib/campaign-segments.mjs`; je Kunde nächtlich in
+`customer_facts.lifecycle_segment` seit `0063`); die gemessenen Zahlen und die
+daraus abgeleiteten Grenzen stehen in [`CAMPAIGNS.md`](./CAMPAIGNS.md)
+„Lifecycle-Segmentierung“. Die Grenzen stehen im Code und ändern sich nur durch
+ein Release — ein neuer Lauf dient dazu, sie zu überprüfen; das Ergebnis
+schlägt vor, ein Mensch entscheidet.
 
 ```bash
 npm run analyze:repurchase
@@ -58,23 +63,20 @@ ist der Anteil hoch, war genau das der Grund für unplausible Rohzahlen.
 
 **1 · Wiederkaufsrate je Wertstufe.** Von den Kunden, deren *erste* Bestellung
 ein Kleinteil / eine Komponente / ein Großgerät war: wie viele haben je wieder
-gekauft? Das ist die **Obergrenze des gesamten Features** — bessere
-E-Mail-Zeitpunkte erzeugen keine Wiederkäufer, die es nicht gibt. Liegt die Rate
-im niedrigen einstelligen Bereich, lohnt der Aufwand nicht.
+gekauft? Das ist die **Obergrenze der Lifecycle-Mails** — bessere
+E-Mail-Zeitpunkte erzeugen keine Wiederkäufer, die es nicht gibt.
 
 **2 · Abstand zwischen aufeinanderfolgenden Bestellungen je Wertstufe.**
-Median und p75 ersetzen die geschätzten 3/6/12-Monats-Grenzen. Die Erwartung
-hinter dem Entwurf: Kleinteile-Käufer kommen deutlich schneller zurück als
-Großgeräte-Käufer. Falls sich die Stufen kaum unterscheiden, ist die
-Wertskalierung überflüssig und eine einzige Grenze reicht.
+Median und p75 setzen die Zeitgrenzen der Segmente. Unterscheiden sich die
+Stufen kaum, braucht es keine Wertskalierung, sondern eine Zeitschiene für alle
+(so der Befund des Laufs, auf dem die heutigen Segmente beruhen — CAMPAIGNS.md).
 
 **3 · Zubehör-Folgekauf.** Wenn jemand zurückkommt: kauft er Zubehör
 (`Product.compatibleWith`, „Ergänzende Produkte") zu etwas, das er schon besitzt?
-Das ist der direkte Test der „Ausbauen"-Idee. Der heutige Empfehler
-(`pickCampaignRecommendations`) bewertet **Embedding-Ähnlichkeit** zum Besitz und
-schlägt damit *Ersatz* statt *Ergänzung* vor — wer ein Rack gekauft hat, bekommt
-ein weiteres Rack empfohlen. Ein hoher Lift in dieser Tabelle ist der Beleg, dass
-die Zubehör-Empfehlung das schlägt.
+Das ist der direkte Test der „Ausbauen"-Segmente: ein hoher Lift in dieser
+Tabelle belegt, dass Zubehör zum Besitz (Strategie `complement`) die reine
+Embedding-Ähnlichkeit (`similarity`) schlägt — die Strategien je Segment stehen
+in CAMPAIGNS.md „Empfehlungs-Strategien“.
 
 > Die Spalte **Zufall** ist die erwartete Trefferquote, wenn die Folgebestellung
 > zufällig aus dem Katalog käme (`1 − (1 − a/N)^k`). Der **Lift** ist
@@ -105,8 +107,9 @@ Einzelartikel ist das bessere Maß für die Verbindlichkeit des Kaufs.
 ## Aufbau
 
 Die Statistik liegt in [`src/lib/repurchase-analysis.mjs`](../src/lib/repurchase-analysis.mjs)
-— pur, ohne I/O, unit-getestet, und **bewusst dasselbe Modul, das die spätere
-Segmentierung importieren wird**, damit Analyse und Produktion nie
+— pur, ohne I/O, unit-getestet, und **bewusst dasselbe Modul, das die
+Produktion importiert** (`campaign-segments.mjs`, `customer-facts-core.mjs`,
+`campaign-recommendations.ts`), damit Analyse und Produktion nie
 auseinanderlaufen können, was „Großgerät" bedeutet.
 [`scripts/analyze-repurchase.mjs`](../scripts/analyze-repurchase.mjs) macht nur
 I/O, Paginierung, Throttling und Formatierung.

@@ -1,10 +1,9 @@
 # 02 — Mo widget architecture
 
 This chapter explains how the Mo chat widget is built and how it starts on the motionsports.de storefront. It covers the load path from the theme layout to the running script, every configuration field, the internal layout of `assets/ms-chat-widget.js`, the global state, **every** browser-storage key, the session-id lifecycle, multi-tab behaviour, layout modes, stacking against the theme, CSS, i18n, accessibility, browser support, performance and error-handling conventions. It ends with the constraints for future changes and a list of risks and open questions.
-Backend behaviour is not re-specified here. It is cross-referenced to the backend repo's `docs/API_CONTRACT.md` (§n) and `docs/frontend-handoff/*.md`.
-**Reference convention:** `API_CONTRACT §n` (also "AC §n") always means the full contract `docs/API_CONTRACT.md`, not the 33-line stub `docs/frontend-handoff/API_CONTRACT.md`. `CUSTOMER_ACCOUNT.md`, `CONSENT_FLOW.md`, `CHAT_ORDER_STATUS.md`, `LOCALE.md` and `WIDGET_SPEC.md` always mean `docs/frontend-handoff/<file>`. The same names in `docs/` (for example `docs/CUSTOMER_ACCOUNT.md`) use different section numbers. `ORDER_ATTRIBUTION.md` exists only as `docs/ORDER_ATTRIBUTION.md`.
+Backend behaviour is not re-specified here. It is cross-referenced to the widget contract in this folder: `API_CONTRACT.md` ("API_CONTRACT §n" or "AC §n"), `ACCOUNT_CONTRACT.md` (ACCT §n) and `CONSENT_CONTRACT.md` (CONS §n); `ORDER_ATTRIBUTION.md` (OA) is the backend's `docs/ORDER_ATTRIBUTION.md`. Aliases: README §1.
 All code locations are given as `file → function / selector / key`. Line numbers are left out on purpose because they drift.
-**Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `8d0a0c4`. PR #73 "customer platform" (`a0df103`) is merged and **live since 2026-10-04**. `8d0a0c4` adds five fixes that are **not uploaded yet** (§1.1).
+**Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `3e87341` (PR #73 "customer platform" `a0df103` + the fixes `8d0a0c4` + `3e87341`; README). Production state: README §4. Data recorded before 2026-10-04 comes from an older widget (§1.1).
 
 **Contents**
 
@@ -41,28 +40,17 @@ All code locations are given as `file → function / selector / key`. Line numbe
 | Files | `assets/ms-chat-widget.js` (~6,300 lines, ~316 KB raw / ~92 KB gzip), `assets/ms-chat-widget.css` (~1,780 lines, ~70 KB raw / ~18.5 KB gzip), `snippets/ms-chat-widget.liquid` (render gate and config), an inline `<head>` script in `layout/theme.liquid`, the "AI Advisor" section in `config/settings_schema.json`. |
 | DOM | Everything is built at runtime under a single `<div class="ms-chat-root">` appended to `<body>` (`buildShell()`). There is no Shadow DOM. Isolation comes from the `.ms-chat-` class prefix. |
 | Exceptions outside the root | Classes on `<html>` (`ms-chat-page-shift`, `ms-chat-page-anim`, `ms-chat-mobile-open`), server-rendered `.ms-chat-product-cta` buttons in product templates, writes to the theme's cart badges (`#CartBubble`, `[data-fh-cart-bubble]`), `<cart-modal>.reloadContent()`, the `.section-main-cart` section, and the live Shopify cart (`/cart/update.js`). |
-| Backend | `https://mo.motionsports.de` (Next.js on Vercel). Contract: backend `docs/API_CONTRACT.md`. The widget's own spec: `docs/frontend-handoff/WIDGET_SPEC.md`. |
+| Backend | `https://mo.motionsports.de` (Next.js on Vercel). Contract: `API_CONTRACT.md`, `ACCOUNT_CONTRACT.md`, `CONSENT_CONTRACT.md` (this folder); the rules every widget change keeps: AC §0. |
 | Public JS API | `window.MS_CHAT.openWithProduct(id, title)` and `window.MS_CHAT.openEmailSummary()`, set in `init()`. |
 | Deployment | Manual. The owner copies changed files into the Shopify code editor. `MANIFEST.md` lists the files to upload for each session (see §20). |
 
-### 1.1 Rollout state: what is live, and what is not uploaded yet
+### 1.1 History: data recorded before 2026-10-04
 
-PR #73 ("customer platform", `a0df103`) is merged to `main` and **live**: on 2026-10-04 the owner uploaded `assets/ms-chat-widget.js`, `assets/ms-chat-widget.css` and `layout/theme.liquid` from it (plus `snippets/product-qa.liquid`, `sections/header.liquid`, `snippets/product-detail-accordions.liquid` from the 2026-10-01 round). Rows tagged **[PR #73]** in later sections are therefore live; the tag only marks what changed in PR #73, which matters when reading data recorded **before 2026-10-04**.
-
-**Not uploaded yet — `8d0a0c4` delta (live = PR #73 until the owner uploads `assets/ms-chat-widget.js`, `snippets/ms-chat-widget.liquid`, `templates/product.produkt-new.json`, `product.produktnew.json`, `product.produkte-im-set.json`).** Rows tagged **[8d0a0c4]** in later sections are not live yet.
-
-| Topic | Live today (PR #73) | `main` (`8d0a0c4`) |
-| --- | --- | --- |
-| New chat / open conversation while a reply streams | the reply is not cancelled; signed in it lands in (and is saved with) the new or opened thread (§21 item 1) | `startNewChat()` and `openConversation()` call `abortActiveStream()` + `removeTyping()` first |
-| Contact form KPI join | `POST /api/contact` body has no `sessionId`, so `contact_form_submitted` rows have `sessionId: null` | body carries `sessionId: sid` (header `x-ms-session` too) |
-| `order_support` contact reason | falls back to „Persönliche Beratung“ + generic placeholder | own title / sub-line and placeholder „Bestellnummer + kurz dein Anliegen…“ (03 §8.5) |
-| Empty shared secret | snippet still loads config + CSS + JS; the JS mount guard stops it | snippet loads nothing (§2.3) |
-| Product CTA where the widget does not render (excluded template, empty secret) | dead button (§3.3) | hidden by a `<style>` from the snippet's else-branch (§2.3) |
-| CTA on `product.produkt-new` / `produktnew` / `produkte-im-set` | none | "MO only" block (`custom_liquid_AErEyg`) |
+The widget described here went live in two uploads on 2026-10-04: first PR #73 (`a0df103`: `assets/ms-chat-widget.js`, `assets/ms-chat-widget.css`, `layout/theme.liquid`, together with `snippets/product-qa.liquid`, `sections/header.liquid` and `snippets/product-detail-accordions.liquid` from the 2026-10-01 round), then the follow-up fixes (`8d0a0c4` + `3e87341`: the JS again, `snippets/ms-chat-widget.liquid` and three product templates). Rows tagged **[PR #73]** in later sections mark what PR #73 changed; that matters only when reading data recorded **before 2026-10-04**. Which build is live now: README §4.
 
 **Historical: pre-PR #73 widget (`44a076b`, live until 2026-10-04).** Use this table only to interpret KPI or session data recorded before the upload.
 
-| Topic | Pre-PR #73 (`44a076b`, live until 2026-10-04) | PR #73 (live since 2026-10-04) |
+| Topic | Pre-PR #73 (`44a076b`, live until 2026-10-04) | PR #73 (from 2026-10-04) |
 | --- | --- | --- |
 | `<head>` stash (§2.2) | none. `layout/theme.liquid` has no `ms-chat-early-params` script, so `ms_auth` (and any `ms_code` / `mo_c`) stayed in the URL that Shopify analytics recorded | `ms-chat-early-params` stash, stripped before `content_for_header` |
 | Sign-in return | `handleAuthReturn()` strips only `ms_auth`, then calls `probeAuth(true)`. There is no `ms_code` redeem and no `POST /api/auth/link`. The backend has required the redeem since 2026-10-03, so **sign-in did not complete on live from 2026-10-03 until the 2026-10-04 upload** | `readAuthReturn()` + `redeemLinkCode()` (`POST /api/auth/link`), `ms-chat-login-sid`, 503 retry (`ms-chat-link-retry`, `retryPendingLink()`) |
@@ -75,7 +63,7 @@ PR #73 ("customer platform", `a0df103`) is merged to `main` and **live**: on 202
 | Silent tools | `SILENT_TOOLS = ['update_customer_profile', 'search_products']`. A `get_order_status` part was **not** silent (harmless because `CHAT_ORDER_STATUS_ENABLED` was off) | adds `get_order_status` |
 | Other keys missing before PR #73 | `ms-chat-auth-via:<sid>`, `ms-chat-optin-ask-shown` | §6 |
 
-**App Proxy:** the Shopify App Proxy for `/apps/chat/whoami` is still **not set up**, and it **may now be set up**, because the live PR #73 widget uses a whoami answer only to redeem its `linkCode`. Historical note: the pre-PR #73 widget (`44a076b`, `detectViaStorefront()`) trusted a whoami `signedIn:true` answer directly as identity without a code, so the proxy had to wait until PR #73 was live.
+**The follow-up fixes (`8d0a0c4`, `3e87341`), from their upload on 2026-10-04:** `contact_form_submitted` carries the session (rows before have `sessionId: null`; the backend also falls back to `x-ms-session`, AC §4); the `order_support` contact reason has its own label; the CTA is on three more product templates (`product_cta_opened` volumes are not comparable across that day) and hidden where the widget does not render; an empty shared secret loads nothing; new chat / open conversation cancel a streaming reply and stop queued speech (§21 items 1, 3, 18, 19).
 
 ---
 
@@ -89,8 +77,8 @@ layout/theme.liquid
  ├─ <head>: main.mjs (theme bundle, type=module defer), then {{ content_for_header }}  (Shopify analytics / web pixels)
  └─ end of <body>: {% render 'ms-chat-widget' %}
        snippets/ms-chat-widget.liquid
-        ├─ gate: setting on, not cart/checkout, shared secret set [8d0a0c4], not an excluded template
-        │    └─ gate fails (setting on): <style> hiding .ms-chat-product-advisor / .ms-chat-product-cta [8d0a0c4]
+        ├─ gate: setting on, not cart/checkout, shared secret set, not an excluded template
+        │    └─ gate fails (setting on): <style> hiding .ms-chat-product-advisor / .ms-chat-product-cta
         ├─ <link rel=stylesheet> ms-chat-widget.css
         ├─ <script> window.MS_CHAT_CONFIG = {...} </script>
         └─ <script src=ms-chat-widget.js defer>
@@ -100,7 +88,7 @@ layout/theme.liquid
 
 ### 2.2 The `<head>` stash script (`layout/theme.liquid`) [PR #73]
 
-Added by PR #73, **live since 2026-10-04** (§1.1). The pre-PR #73 `layout/theme.liquid` (`44a076b`) had no such script.
+Added by PR #73 (2026-10-04). The pre-PR #73 `layout/theme.liquid` (`44a076b`) had no such script (§1.1).
 
 - **Where:** inside `{%- if settings.ai_advisor_enabled -%}`, directly after `<meta charset="utf-8">` and **before** `{{ content_for_header }}`.
 - **Why:** Shopify analytics and Customer Events web pixels run from `content_for_header` and record the page URL. The deferred widget script runs too late to strip secrets from the URL first. This script removes them before any of that runs.
@@ -113,15 +101,9 @@ Added by PR #73, **live since 2026-10-04** (§1.1). The pre-PR #73 `layout/theme
 
 ### 2.3 Render gate (`snippets/ms-chat-widget.liquid`)
 
-The widget renders only when all of these hold:
+The widget renders only when the setting `ai_advisor_enabled` is on, the page is neither a cart page (a substring test on the template name) nor checkout, the shared secret is not blank, and the template is not listed in `ai_advisor_excluded_templates`. The exact conditions and the pages they leave: `01` §5.1 (owner).
 
-1. `settings.ai_advisor_enabled` is true.
-2. `template` does not contain `'cart'` and `request.page_type != 'cart'`. This is a hard exclusion. Because it is a substring test, any template name containing "cart" is excluded.
-3. `request.page_type != 'checkout'`. Checkout is not a theme template on most plans anyway.
-4. **[8d0a0c4]** `settings.ms_chat_shared_secret` is not blank. Before `8d0a0c4` (and on live until the upload) an empty secret still passed the snippet gate; the JS mount guard (§2.4) then stopped the widget after CSS and JS had loaded.
-5. The template is not in `settings.ai_advisor_excluded_templates`. That setting is a list separated by commas or newlines. Spaces are removed and entries are lower-cased. Each entry is compared to both `template` (full, for example `page.contact`) and `template.name` (for example `page`).
-
-**[8d0a0c4] When the gate fails** (setting on, but any of 2–5 fails), the snippet's `{%- else -%}` branch emits only `<style>.ms-chat-product-advisor, .ms-chat-product-cta { display: none !important; }</style>`, so the product-page CTA (§3.3) is hidden instead of dead. With the setting off, nothing is emitted (the CTA blocks are off too).
+When the setting is on but the gate fails, the snippet's `{%- else -%}` branch emits only `<style>.ms-chat-product-advisor, .ms-chat-product-cta { display: none !important; }</style>`, so the product-page CTA (§3.3) is hidden instead of dead. With the setting off, nothing is emitted (the CTA blocks are off too).
 
 When the gate passes, the snippet emits, in this order:
 
@@ -138,7 +120,7 @@ These steps run in source order, before `init()`:
 1. `CFG = window.MS_CHAT_CONFIG || {}` is read. Then `API_BASE` (trailing slashes stripped), `CHAT_KEY` and `SHOWROOM_URL` are derived.
 2. **Locale resolution:** `LOCALE = msNormLocale(CFG.locale)`, with a default of `'de'`. If the URL path starts with `/en`, the locale is forced to `'en'` (see §14).
 3. The copy tables are built: `CONSENT_COPY`, `MKT_RESULT_COPY`, `FEEDBACK_COPY`. `CONSENT_COPY` and `FEEDBACK_COPY` get an English overlay via `Object.assign` when `LOCALE === 'en'`. `MKT_RESULT_COPY` is built with inline `L(de, en)` calls instead.
-4. **Mount guard 1:** if `CHAT_KEY` is empty, the script logs `console.warn('[ms-chat] ms_chat_shared_secret is empty; …')` and returns. Nothing is mounted. Since `8d0a0c4` the snippet does not load the script with an empty secret (§2.3), so this guard is only a backstop; on the live snippet (before that upload) it is still the guard that fires, after the CSS has loaded (harmless).
+4. **Mount guard 1:** if `CHAT_KEY` is empty, the script logs `console.warn('[ms-chat] ms_chat_shared_secret is empty; …')` and returns. Nothing is mounted. The snippet does not load the script with an empty secret (§2.3), so this guard is only a backstop.
 5. **Mount guard 2:** if `window.__msChatMounted` is set, the script returns. Otherwise it sets the flag, so a double include cannot mount the widget twice.
 6. **Storage probe:** `hasLS` writes and removes `__ms_chat_probe__`. The helpers `lsGet/lsSet/lsDel` (localStorage, or the in-memory `memStore`) and `ssGet/ssSet/ssDel` (sessionStorage, or the in-memory `memSession`) are defined.
 7. **Session id:** `sid = getSid()`. This reads `ms-chat-sid` or mints a UUID and persists it (see §7). It happens on every page view where the widget mounts, even if the visitor never opens the chat.
@@ -193,26 +175,21 @@ This matters for load and for KPI interpretation.
 
 ### 3.1 Theme settings (`config/settings_schema.json` → section "AI Advisor")
 
-These are edited in **Customize → Theme settings → AI Advisor**. Live values are in `config/settings_data.json`.
-
-| Setting id | Type | Default | Effect |
-| --- | --- | --- | --- |
-| `ai_advisor_enabled` | checkbox | `false` (the live value is `true`) | Master switch. It gates the snippet render **and** the `<head>` stash script. It also gates the product-page CTA blocks in `templates/product*.json`; it is the only condition those blocks check themselves, but since `8d0a0c4` the snippet hides them wherever the widget does not render (§3.3). |
-| `ai_advisor_backend_url` | text | `https://mo.motionsports.de` | Becomes `MS_CHAT_CONFIG.apiBase`. The JS falls back to the same URL. |
-| `ms_chat_shared_secret` | text | — (set live) | Becomes `chatKey`, which is sent as `x-ms-chat-key`. If it is empty, the widget does not mount; **[8d0a0c4]** the snippet then loads no config and no JS and hides the product CTA (§2.3). It is visible in page source **by design**: protection comes from the backend's origin allowlist and rate limits (API_CONTRACT §1 "Security model"). The value is committed in `settings_data.json`. |
-| `ai_advisor_excluded_templates` | textarea | `cart` | Extra templates to hide the widget on, separated by commas or newlines. |
+Four settings in **Customize → Theme settings → AI Advisor**: `ai_advisor_enabled` (master switch for the snippet, the `<head>` stash script and the CTA blocks), `ai_advisor_backend_url` (→ `apiBase`), `ms_chat_shared_secret` (→ `chatKey`, sent as `x-ms-chat-key`; empty → no mount) and `ai_advisor_excluded_templates`. Types, defaults, current values and effects: `01` §12.1 (owner).
 
 ### 3.2 `window.MS_CHAT_CONFIG` (emitted by `snippets/ms-chat-widget.liquid`)
+
+This table is the one description of the config and the page-context fields (`01` §6.7, §12.2, `03` §4.1–§4.2 and `06` §2.1–§2.2 point here). Page facts only, never user data.
 
 | Field | Source | Default in the JS when missing | Used by | Effect |
 | --- | --- | --- | --- | --- |
 | `apiBase` | `settings.ai_advisor_backend_url`, default `'https://mo.motionsports.de'` | `'https://mo.motionsports.de'` | `API_BASE` | Origin for every backend call. Trailing `/` is stripped. |
 | `chatKey` | `settings.ms_chat_shared_secret` | `''`, which means no mount | `CHAT_KEY` | `x-ms-chat-key` on guarded calls (§9). |
 | `showroomUrl` | **hard-coded** in the snippet: `https://motionsports.de/pages/showroom-munchen-grobenzell` | same URL | `SHOWROOM_URL` → `buildShowroom()` | Target of the showroom card button. It is not a theme setting. |
-| `allowedFromTheme` | hard-coded `true` | — | **Nothing.** The JS never reads it. It is a leftover from WIDGET_SPEC §2's example. |
+| `allowedFromTheme` | hard-coded `true` | — | **Nothing.** The JS never reads it. It is a leftover from the pre-build widget spec. |
 | `locale` | `localization.language.iso_code`, falling back to `request.locale.iso_code` | `'de'` | `LOCALE` | `'en'` if it starts with "en" (case-insensitive), otherwise `'de'`. A `/en` path prefix forces `'en'` (§14). |
 | `pageContext.pageType` | `request.page_type` | `''` | `PAGE_CTX.type` | Mapped to `'product'`, `'collection'`, `'cart'`, `'home'` (from `index`) or `'other'`. |
-| `pageContext.productId` | `product.id` (product pages only) | `null` | `PAGE_CTX.productId` | Numeric Shopify id. Guard in `openWithProduct()` (the handle is used only when the CTA's id matches the page product), fallback id in `recordTrail()` and in the nudge-click context greeting. The `product_cta_opened` KPI uses the CTA's own `data-ms-chat-product-id` (normally the same value). |
+| `pageContext.productId` | `product.id` (product pages only) | `null` | `PAGE_CTX.productId` | Numeric Shopify id (stringified in `PAGE_CTX`). Guard in `openWithProduct()` (the handle is used only when the CTA's id matches the page product), fallback id in `recordTrail()` and in the nudge-click context greeting. The `product_cta_opened` KPI uses the CTA's own `data-ms-chat-product-id` (normally the same value). |
 | `pageContext.productHandle` | `product.handle` | `null` | `PAGE_CTX.productHandle` | The slug. This is the id form the backend catalog uses (API_CONTRACT §3). Sent as `context.productId`. |
 | `pageContext.productTitle` | `product.title` | `null` | `PAGE_CTX.productName` | Nudge copy, context greeting, trail. |
 | `pageContext.productType` | `product.type` | `null` | `PAGE_CTX.category` | The product's "category" for the trail, nudge streaks and `recentlyViewed`. |
@@ -222,12 +199,13 @@ These are edited in **Customize → Theme settings → AI Advisor**. Live values
 
 There is no other `CFG.*` read. This was checked with `grep CFG\.` and covers `apiBase`, `chatKey`, `showroomUrl`, `locale`, `pageContext`, `whoamiPath`.
 
+The widget sends page facts only inside the `context` of a CTA turn or a nudge greeting (`03` §2, §4.3); typed turns carry none. The contract also defines page facts for typed turns (AC §2 "Optional `context`", `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/2-page-context.md`.
+
 ### 3.3 Server-rendered entry points outside the snippet
 
-- **Product-page CTA:** a `custom_liquid` block in `templates/product.json` (`custom_liquid_AErEyg`, editor name "MO only", enabled; its Liquid comment reads "AI Advisor (Mo) – Produktberatung"). **[8d0a0c4]** The same block (same id, byte-identical settings) was added to `templates/product.produkt-new.json` (after the Kurzinfo "USPs" block `custom_liquid_BGU8Mt`), `product.produktnew.json` and `product.produkte-im-set.json` (both after the SKU + Garantie block `custom_liquid_dy3Byf`). `product.produkte-im-set` still has no Q&A tab. Inside a `<div class="ms-chat-product-advisor">` wrapper it renders `<button class="ms-chat-product-cta" data-ms-chat-product-id="{{ product.id }}" data-ms-chat-product-title="…">` with an empty `.ms-chat-logo` span and the German label „Detaillierte Beratung zu diesem Produkt“.
-  - A second, older variant (`custom_liquid_BGU8Mt`) has the editor name "USPs mit MO" in `product.json`, where it is **disabled**, and "USPs" in `templates/product.produktdesign-02.json`, where it is **enabled**. It renders the same CTA button inside `.product-kurzinfo`, appended after the `custom.kurzinfo` metafield. When that metafield is blank, it renders its own `.product-kurzinfo` div holding only the button (the `elsif` branch).
-  - Both blocks are owned by the live editor (see §20). The click is handled by `bindProductCtas()` → `openWithProduct()`. Details are in the product-page chapter.
-  - **Gating:** the CTA blocks themselves check **only** `settings.ai_advisor_enabled`. **[8d0a0c4] fixed:** wherever the snippet does not render the widget (excluded product template, empty shared secret), its else-branch `<style>` hides `.ms-chat-product-advisor` / `.ms-chat-product-cta` (§2.3). On live until that upload, the CTA on an excluded product template, or with an empty secret, still renders dead: no click handler (`bindProductCtas()` runs only in `init()`) and an empty orb span (no orb hydration; on an excluded template also no `ms-chat-widget.css`). **Remaining edge:** if `ms-chat-widget.js` fails to load, or a shopper clicks before the deferred script has booted (`init()` → `bindProductCtas()`), the visible button does nothing.
+- **Product-page CTA:** the "MO only" `custom_liquid` block (`custom_liquid_AErEyg`, editor name "MO only"; its Liquid comment reads "AI Advisor (Mo) – Produktberatung") in `templates/product.json`, `product.produkt-new.json`, `product.produktnew.json` and `product.produkte-im-set.json`, plus the older Kurzinfo variant `custom_liquid_BGU8Mt` ("USPs mit MO", disabled in `product.json`; "USPs", enabled in `product.produktdesign-02.json`). Both render `<button class="ms-chat-product-cta" data-ms-chat-product-id="{{ product.id }}" data-ms-chat-product-title="…">` with an empty `.ms-chat-logo` span. Markup contract, placement, styling and click path (`bindProductCtas()` → `openWithProduct()`): `06` §3 (owner); template coverage: `01` §6.6 (owner).
+  - Both blocks are owned by the live editor (see §20).
+  - **Gating:** the CTA blocks themselves check **only** `settings.ai_advisor_enabled`. Wherever the snippet does not render the widget (excluded product template, empty shared secret), its else-branch `<style>` hides `.ms-chat-product-advisor` / `.ms-chat-product-cta` (§2.3). **Remaining edge:** if `ms-chat-widget.js` fails to load, or a shopper clicks before the deferred script has booted (`init()` → `bindProductCtas()`), the visible button does nothing.
 
 ---
 
@@ -284,7 +262,7 @@ The file is one IIFE. Sections are separated by `// ----` banner comments. This 
 
 - Tool cards return `Promise<Element|null>`. `null` means "render nothing" (render-nothing guards).
 - Every comment that says "do not change" or "INVARIANTS" marks a legal or privacy rule. Examples: consent-copy handling, the capture-form legal invariants, the trail privacy posture, the attribution invariants, the in-memory-only `capturedEmail`.
-- Comments reference `docs/ai-advisor/*.md`. That folder does **not** exist in this repo. The same documents live in the backend repo under `docs/frontend-handoff/` (and `docs/API_CONTRACT.md`).
+- Comments reference `docs/ai-advisor/*.md`. That folder does **not** exist in this repo. The contract lives in the backend repo under `docs/frontend/` (`API_CONTRACT.md`, `ACCOUNT_CONTRACT.md`, `CONSENT_CONTRACT.md`).
 
 ---
 
@@ -306,7 +284,7 @@ All state is held in closure variables of the IIFE. Nothing is put on `window` a
 `{ settled, signedIn, name, tier, marketing, optInActionable }`. It is written **only** by `applyAuth(data, transient)`.
 
 - `settled`: becomes `true` after the first detection result. Many surfaces wait for it: the sign-in card, the header „Anmelden“ pill and the first-message gates.
-- `signedIn`, `name`, `tier`, `marketing`, `optInActionable` mirror `/api/auth/me` (CUSTOMER_ACCOUNT.md §4). `optInActionable` is taken verbatim from `marketing.optInActionable === true`.
+- `signedIn`, `name`, `tier`, `marketing`, `optInActionable` mirror `/api/auth/me` (ACCT §4). `optInActionable` is taken verbatim from `marketing.optInActionable === true`.
 - The state fails closed: any error or non-200 means not signed in. A *transient* failure (network, 429, 5xx) keeps the device hints (`ms-chat-signed-in`, `ms-chat-auth-via:<sid>`). A *definitive* answer (200 `signedIn:false`, 401/403) deletes them.
 - Each change calls `reflectAuthState()` (header pills, share/download buttons, welcome card, account-menu sign-in, and closes the history drawer when the result is not signed in: `if (!auth.signedIn) closeHistory()`) and `flushAutoHistory()`.
 
@@ -322,7 +300,7 @@ All state is held in closure variables of the IIFE. Nothing is put on `window` a
 | Variable(s) | Purpose |
 | --- | --- |
 | `sid` | The current session id (mirrors `ms-chat-sid` while this tab is current). |
-| `activeConversationKey` | The signed-in thread key (CUSTOMER_ACCOUNT.md §7.6). It is `null` for anonymous and email-only visitors, and then **omitted** from `/api/chat`. |
+| `activeConversationKey` | The signed-in thread key (ACCT §7.6). It is `null` for anonymous and email-only visitors, and then **omitted** from `/api/chat`. |
 | `activeConversationId` | The loaded server conversation (used only for list highlighting). |
 | `capturedEmail` | The email captured in **this page's** chat (privacy gate: memory only, reset on navigation). It is sent as `customer.email` on `/api/chat`. |
 | `productCache` | id → product, or `null` for an id the backend confirmed is unknown. Lives for the page. |
@@ -345,7 +323,7 @@ This list was enumerated with `grep` over every `lsGet/lsSet/lsDel/ssGet/ssSet/s
 
 **Fallback:** if localStorage is unavailable (the `hasLS` probe fails), every `ls*` key lives in the in-memory `memStore`. That means a **new sid on every page load** and no persistence. If sessionStorage throws, `ss*` keys fall back to `memSession`, so "once per session" degrades to "once per page load".
 
-Keys and clearers tagged **[PR #73]** were added by PR #73 (live since 2026-10-04). They do not exist in the pre-PR #73 widget (`44a076b`), so data recorded before 2026-10-04 has none of them (§1.1).
+This is the one complete list of the widget's storage keys; other chapters (`01` §14, `04` §12, README §7) point here. Keys and clearers tagged **[PR #73]** were added by PR #73 (2026-10-04); the pre-PR #73 widget (`44a076b`) has none of them, so data recorded before 2026-10-04 has none either (§1.1).
 
 ### 6.1 localStorage
 
@@ -391,15 +369,15 @@ Device-global keys (`trail`, `view-mode`, `nudge-dismissed`, `mkt-decision`, `lo
 
 ## 7. Session id lifecycle
 
-The session id (`sid`) is the browser's pseudonymous key. It is sent as `x-ms-session` on almost every backend call, and it is the backend's rate-limit key (API_CONTRACT §6).
+The session id (`sid`) is the browser's pseudonymous key. It is sent as `x-ms-session` on almost every backend call, and it is the backend's rate-limit key (AC §6).
 
-For **signed-in** customers it is also **the link to the identity**: the server maps sid → customer after the one-time code was redeemed (CUSTOMER_ACCOUNT.md §1, §2a). That is why signed-in flows avoid rotating it, and why sign-out rotates it on purpose.
+For **signed-in** customers it is also **the link to the identity**: the server maps sid → customer after the one-time code was redeemed (ACCT §1, §2a). That is why signed-in flows avoid rotating it, and why sign-out rotates it on purpose.
 
 ### 7.1 Creation
 
 `getSid()` runs at script parse time on every page where the widget mounts. If `ms-chat-sid` is missing, it calls `uuid()` (`crypto.randomUUID`, or a `Math.random` v4 fallback) and stores the result. A sid therefore exists for every visitor who sees the widget, chat or no chat.
 
-Contract: API_CONTRACT §6 "Session lifecycle" (rate limiting keyed on `sid:<uuid>`; 40-message cap per session). Note: AC §6's sentence that the backend persists nothing chat-related per session id predates the customer platform. Conversations and the sign-in link ARE keyed by the sid (CUSTOMER_ACCOUNT.md §1, §7.6). That is why `startNewChat()` never rotates a signed-in sid on the `payload_too_large` „Neuen Chat starten“ path (it only clears the active thread); it rotates only for anonymous / email-only visitors.
+Contract: AC §6 "Session lifecycle" (what the backend keys by the sid: rate limits, conversations, the sign-in link, KPI rows). Because conversations and the sign-in link are keyed by the sid (ACCT §1, §7.6), `startNewChat()` never rotates a signed-in sid on the `payload_too_large` „Neuen Chat starten“ path (it only clears the active thread); it rotates only for anonymous / email-only visitors.
 
 ### 7.2 Rotation primitives
 
@@ -421,13 +399,13 @@ Contract: API_CONTRACT §6 "Session lifecycle" (rate limiting keyed on `sid:<uui
 | Deep link `?mo=open&mo_new=1` | `handleMoDeepLink()`. Branches on the **local hint** `shouldProbeAuth()`, not on the auth tier (auth is not settled at init). The columns here mean "hint absent" / "hint present". | **No hint:** `rotateSession()` → new sid. This also applies to a truly signed-in visitor whose hint is missing, and then severs the sign-in link. | **Hint present** (`ms-chat-signed-in === '1'` or a shop customer id via `storefrontCustomerHint()`): sid kept, local history and thread key cleared. This also applies to a chat-anonymous visitor who is logged into the shop. A new key is minted on the first turn only if auth has settled signed-in by then (`maybeMintConversationKey()` checks `auth.signedIn`). |
 | Sign-out („Abmelden“ in the drawer) [PR #73] | `signOut()` → `track('account_signout')` → `applyAuth(null)` → `dropSessionHistory()` | — | **new sid**. Sign-out is local; the old sid's server link is simply abandoned. **Before 2026-10-04 (pre-PR #73) the sid was kept** (`signOut()` only tracked, `applyAuth(null)`, `closeHistory()`). |
 | Erase („Alle meine Daten löschen“) succeeded (200 `erased:true`) or answered 401 [PR #73] | `openEraseConfirm()` → `clearAfterErase()` → `dropSessionHistory()` | — | new sid. The done dialog (`showEraseDone()`) shows only on 200. 503 and other errors keep the confirmation and do not rotate. **Before 2026-10-04 (pre-PR #73) the sid was kept.** |
-| [PR #73] Server says a previously signed-in session has ended (`/api/auth/me` 200 `signedIn:false` or 401/403; any `/api/account/*` 401). Since 2026-10-05 the backend also ends a sign-in on **shop-proof expiry** (a shop-login-only session older than `APP_PROXY_SIGNIN_MAX_AGE_HOURS` since its last whoami redeem; every new tab renews it) and on a whoami **handover** (another shop customer on this sid, CA §3a) | `probeAuth()` / `accountUnauthorized()` → `endedSignInCleanup()` → `dropSessionHistory()` | — (applies only if the device had been signed in: `wasSignedIn`) | new sid, no KPI event |
+| [PR #73] Server says a previously signed-in session has ended (`/api/auth/me` 200 `signedIn:false` or 401/403; any `/api/account/*` 401). The backend ends a sign-in also on a whoami **handover** (another shop customer on this sid) and, for a shop-login sign-in (only with `APP_PROXY_SIGNIN_ENABLED`, default off in code), when its **shop proof** expires (`APP_PROXY_SIGNIN_MAX_AGE_HOURS` after the last whoami redeem; every new tab renews it) — ACCT §3a | `probeAuth()` / `accountUnauthorized()` → `endedSignInCleanup()` → `dropSessionHistory()` | — (applies only if the device had been signed in: `wasSignedIn`) | new sid, no KPI event |
 | `?ms_auth=logged_out` return | `handleAuthReturn()` → `probeAuth(true)` | no change by itself (the marker proves nothing) | rotation happens only if `/api/auth/me` confirms the end (row above) |
 | [PR #73] Another tab changed `ms-chat-sid` | `onSidChangedElsewhere()` (window `storage` event) | adopts the other tab's sid | adopts it, drops to anonymous, closes any gate and the drawer |
 
 The sid is **never** rotated around sign-in. It survives the OAuth redirect unchanged, and `initiateLogin()` pins it in `ms-chat-login-sid`.
 
-**[8d0a0c4]** `startNewChat()` (the three new-chat rows above) and `openConversation()` first cancel a reply that is still streaming (`abortActiveStream()` + `removeTyping()`), whether or not the sid rotates (§21 item 1).
+`startNewChat()` (the three new-chat rows above) and `openConversation()` first cancel a reply that is still streaming (`abortActiveStream()` + `endSpeaking()` + `removeTyping()`), whether or not the sid rotates (§21 item 1).
 
 ### 7.4 Conversation key (signed-in threads)
 
@@ -442,7 +420,7 @@ The sid is **never** rotated around sign-in. It survives the OAuth redirect unch
 
 localStorage is shared across tabs. Each tab's in-memory `sid`, `messages` and `auth` are not.
 
-**[PR #73]:** the rotation-following, the `sidIsCurrent()` write guard and the once-per-tab whoami below are live since 2026-10-04. The pre-PR #73 widget (`44a076b`, §1.1) had no `storage` listener, so before that date a tab kept its old sid in memory after another tab rotated it.
+**[PR #73]:** the rotation-following, the `sidIsCurrent()` write guard and the once-per-tab whoami below came with PR #73. The pre-PR #73 widget (`44a076b`, §1.1) had no `storage` listener, so before 2026-10-04 a tab kept its old sid in memory after another tab rotated it.
 
 - **Rotation is followed.** `onSidChangedElsewhere(e)` runs only for `e.key === 'ms-chat-sid'` with a new, different value. It closes the gate and the drawer, applies anonymous, and calls `dropSessionHistory(e.newValue)`. If this tab was signed in, it also sets `ms-chat-whoami-done`, so the shop login cannot silently re-link the new sid.
 - **Orphan writes are prevented.** `saveHistory()` and `saveConvKey()` write only while `sidIsCurrent()`, meaning the stored `ms-chat-sid` still equals this tab's `sid`.
@@ -455,40 +433,40 @@ localStorage is shared across tabs. Each tab's in-memory `sid`, `messages` and `
 
 ## 9. Network surface and what leaves the browser
 
-Endpoint semantics belong to the backend contract. This table only lists what the widget sends and when. "Guarded" means the headers `x-ms-chat-key`, `x-ms-session` and `x-ms-locale` (`accountHeaders()` or the equivalent inline headers).
+This is the one list of the widget's calls (README §7 points here). It lists only what the widget sends and when; what each endpoint accepts and answers, its guard, rate-limit bucket and limits are in the contract (AC §1 "Endpoints" and the cited sections). "Guarded" means the widget sends the headers `x-ms-chat-key`, `x-ms-session` and `x-ms-locale` (`accountHeaders()` or the equivalent inline headers).
 
 | Call | Headers | Trigger | Contract |
 | --- | --- | --- | --- |
-| `POST /api/chat` (SSE via `fetch` + `getReader`, not `EventSource`) | guarded + `Content-Type` | user send, product CTA, nudge click (context greeting with `messages: []`), voice transcript | §2. Body: `messages` (full history), `locale`, optional `context`, `conversationKey` (signed-in), `customer.email` (captured in this page), `campaignToken` (first turn of the tab session) |
-| `GET /api/products?ids=` | `x-ms-session` only | card hydration (batches of 10), also for restored history on every page load (§2.6); `add_to_cart` makes its own uncached call to get `cartUrl`. `buildAddToCart()` does **not** chunk: all deduplicated `productIds` go in one request. AC §3 caps requests at 10 ids (400 `payload_too_large`), and on a non-OK response the checkout card silently renders nothing (§21). | §3 |
-| `POST /api/kpi` | `Content-Type`, `x-ms-session` (no secret) | `track()`: fire-and-forget, `keepalive:true`. If `fetch` is missing it falls back to `sendBeacon`. | §5 |
-| `GET /api/consent-copy?locale=` / `?surface=signin&locale=` | `x-ms-session` | capture form / signed-in opt-in (60 s cache) | §7.4 |
-| `GET /api/consent-copy?surface=erase&locale=` | guarded | each opening of the erase confirmation | §7.4, §11.1 |
-| `POST /api/capture-email` | guarded | capture-form submit | §7.1 |
-| `POST /api/contact` | guarded | contact-card submit. **[8d0a0c4]** the body also carries `sessionId` (live today: header only, so `contact_form_submitted` rows have `sessionId: null`) | §4 |
-| `POST /api/feedback` | guarded | feedback-card submit | §9 |
-| `POST /api/tts` | guarded | voice mode only (`{text}` or `{text, stream:true, seq}`) | §8 |
-| `POST /api/attribution/token` | `x-ms-chat-key`, `x-ms-session` | first rendered `show_product` card (`buildShowProduct()` → `moAttrOnProductCard()`; compare, showroom and add-to-cart cards do not count), the Mo „Zur Kasse“ click (`moAttrEnsure(false)`), or a later `visitorConsentCollected` event after a `show_product` card; **only with analytics consent** | §10 |
-| `GET /api/auth/me?session=` | guarded | panel open (lazy), `?ms_auth=ok` return, visibility re-check; `?ms_auth=logged_out` return and `link_failed` return (both only with a local sign-in hint, `shouldProbeAuth()`); after a successful `retryPendingLink()` or whoami-`linkCode` redeem (`probeAuth(true)`) | CUSTOMER_ACCOUNT.md §4 |
-| `POST /api/auth/link {code}` | guarded + `Content-Type` | `ms_auth=ok` return, whoami `linkCode`, 503 retry | CUSTOMER_ACCOUNT.md §2a |
-| Top-level navigation `GET /api/auth/shopify/login?session=&return_url=` | — | „Anmelden“ / „Jetzt anmelden“ / popup / account-menu sign-in / link-failed notice „Anmelden“ (`showLinkFailedNotice()`, expired-code case) | CUSTOMER_ACCOUNT.md §2 |
-| `GET /api/account/conversations[/{id}]`, `PATCH`, `DELETE` | guarded | history drawer | CUSTOMER_ACCOUNT.md §7 |
-| `GET /api/account/summary?conversationKey=` | guarded | download button | CUSTOMER_ACCOUNT.md §8 |
-| `GET /api/account/export`, `POST /api/account/erase` | guarded | drawer footer | export: API_CONTRACT §1 endpoint table; erase: §11.1, CUSTOMER_ACCOUNT.md §7.5 |
-| `POST /api/account/marketing-opt-in` | guarded | signed-in opt-in card or popup accept | CONSENT_FLOW.md, CUSTOMER_ACCOUNT.md §6.1 |
-| **Same origin** `GET /apps/chat/whoami?session=` | `Accept: application/json`, `credentials:'include'` | first `detectSignedIn()` per tab session | CUSTOMER_ACCOUNT.md §3a. The **App Proxy is not set up yet**: Shopify returns its HTML 404 page, the widget sees a non-JSON or non-OK answer and falls back silently. Now that PR #73 is live the proxy **may** be set up (the widget only redeems the `linkCode`). Historical: the pre-PR #73 widget (`44a076b`) applied `signedIn:true` directly as identity without a code (§1.1). |
+| `POST /api/chat` (SSE via `fetch` + `getReader`, not `EventSource`) | guarded + `Content-Type` | user send, product CTA, nudge click (context greeting with `messages: []`), voice transcript | AC §2. Body: `messages` (full history), `locale`, optional `context`, `conversationKey` (signed-in), `customer.email` (captured in this page), `campaignToken` (first turn of the tab session); when each is present: `03` §3.2 |
+| `GET /api/products?ids=` | `x-ms-session` only | card hydration (batches of 10), also for restored history on every page load (§2.6); `add_to_cart` makes its own uncached call to get `cartUrl`. `buildAddToCart()` does **not** chunk: all deduplicated `productIds` go in one request, so more ids than the AC §3 cap give a 400 and the checkout card silently renders nothing (§21 item 15). | AC §3 |
+| `POST /api/kpi` | `Content-Type`, `x-ms-session` (no secret) | `track()`: fire-and-forget, `keepalive:true`. If `fetch` is missing it falls back to `sendBeacon`. | AC §5 |
+| `GET /api/consent-copy?locale=` / `?surface=signin&locale=` | `x-ms-session` | capture form / signed-in opt-in (60 s cache) | AC §7.4 |
+| `GET /api/consent-copy?surface=erase&locale=` | guarded | each opening of the erase confirmation (the backend checks only the origin on every `consent-copy` surface, AC §1) | AC §7.4; ACCT §7.5 |
+| `POST /api/capture-email` | guarded | capture-form submit | AC §7.1 |
+| `POST /api/contact` | guarded | contact-card submit; the body also carries `sessionId` (the backend keys `contact_form_submitted` on it, else on the header) | AC §4 |
+| `POST /api/feedback` | guarded | feedback-card submit | AC §9 |
+| `POST /api/tts` | guarded | voice mode only (`{text}` or `{text, stream:true, seq}`) | AC §8 |
+| `POST /api/attribution/token` | `x-ms-chat-key`, `x-ms-session` | first rendered `show_product` card (`buildShowProduct()` → `moAttrOnProductCard()`; compare, showroom and add-to-cart cards do not count), the Mo „Zur Kasse“ click (`moAttrEnsure(false)`), or a later `visitorConsentCollected` event after a `show_product` card; **only with analytics consent** | AC §10 |
+| `GET /api/auth/me?session=` | guarded | panel open (lazy), `?ms_auth=ok` return, visibility re-check; `?ms_auth=logged_out` return and `link_failed` return (both only with a local sign-in hint, `shouldProbeAuth()`); after a successful `retryPendingLink()` or whoami-`linkCode` redeem (`probeAuth(true)`) | ACCT §4 |
+| `POST /api/auth/link {code}` | guarded + `Content-Type` | `ms_auth=ok` return, whoami `linkCode`, 503 retry | ACCT §2a |
+| Top-level navigation `GET /api/auth/shopify/login?session=&return_url=` | — | „Anmelden“ / „Jetzt anmelden“ / popup / account-menu sign-in / link-failed notice „Anmelden“ (`showLinkFailedNotice()`, expired-code case) | ACCT §2 |
+| `GET /api/account/conversations[/{id}]`, `PATCH`, `DELETE` | guarded | history drawer | ACCT §7.1–§7.4 |
+| `GET /api/account/summary?conversationKey=` | guarded | download button | ACCT §8 |
+| `GET /api/account/export`, `POST /api/account/erase` | guarded | drawer footer | export: ACCT §7.7; erase: ACCT §7.5 |
+| `POST /api/account/marketing-opt-in` | guarded | signed-in opt-in card or popup accept | ACCT §6.2 (shape), §6.1 (when to ask); CONS §3.2 (submit rules) |
+| **Same origin** `GET /apps/chat/whoami?session=` | `Accept: application/json`, `credentials:'include'` | first `detectSignedIn()` per tab session | ACCT §3a (backend switches and setup there). The widget uses an answer only to redeem its `linkCode`; a non-JSON or non-OK answer (an unconfigured proxy returns Shopify's HTML 404 page) means "no detection" and is silent. The pre-PR #73 widget applied `signedIn:true` as identity without a code (§1.1). |
 | **Same origin** `GET /cart.js` (`window.routes.cart_url`) | — | `pageshow` (every load), window `focus`, `visibilitychange` to visible, the poll after checkout | display-only cart sync |
 | **Same origin** `GET <path>?section_id=…` | — | cart page only, when the item count changed | Section Rendering API |
-| **Same origin** `POST /cart/update.js {attributes}` | `keepalive:true` | attribution stamp (consent re-checked on each call) | ORDER_ATTRIBUTION.md |
+| **Same origin** `POST /cart/update.js {attributes}` | `keepalive:true` | attribution stamp (consent re-checked on each call) | OA; AC §10 |
 
 **What data leaves the browser (privacy summary)**
 
 - **KPI:** the event name, `sessionId` (the sid), an ISO timestamp, and small `data` objects: product ids, `pageType`, `contextual`, `trigger`, `surface`, `source`, `result`. Never message text, emails or product names.
   - KPI is **not** consent-gated. Only the order attribution checks Shopify's Customer Privacy API.
 - **Browsing trail:** it never leaves the browser on its own. A shortened form (3 products + 2 categories: id and name) goes out only inside a user-started `/api/chat` request as `context.recentlyViewed` (product CTA, nudge click). Plain typed messages carry no `context`.
-- **Chat:** the full in-memory history goes out on every turn, including silent tool parts and their outputs. The widget does NOT trim what it sends: `toWire()` maps the whole in-memory `messages` array, which grows freely during a page view. Only storage is capped (last 40 in `ms-chat-history:<sid>`, `loadHistory()` / `saveHistory()`). The backend rejects more than 40 messages with 400 `payload_too_large`, which the widget turns into the „Neuen Chat starten“ notice (in practice around the 21st user message; after a reload of a 40-message history the very next send fails). See 03 §3.3. For a signed-in customer that can include `get_order_status` output, which comes back from the backend.
+- **Chat:** the full in-memory history goes out on every turn, including silent tool parts and their outputs. The widget does NOT trim what it sends: `toWire()` maps the whole in-memory `messages` array, which grows freely during a page view. Only storage is capped (last 40 in `ms-chat-history:<sid>`, `loadHistory()` / `saveHistory()`). Over the per-request cap (AC §2, 40 messages) the backend answers 400 `payload_too_large`, which the widget turns into the „Neuen Chat starten“ notice (in practice around the 21st user message; after a reload of a 40-message history the very next send fails). See 03 §3.3. For a signed-in customer that can include `get_order_status` output, which comes back from the backend.
 - **Chat `context`** (product CTA, nudge click only): the product handle (or numeric id as fallback) and `productTitle`, plus `recentlyViewed` ids and names.
-- **Contact form** (`buildContactForm()` → `POST /api/contact`): `reason`, `name`, `email`, `organization`, `phone`, free-text `message`, optional `productIds`, and **[8d0a0c4]** `sessionId` (the sid).
+- **Contact form** (`buildContactForm()` → `POST /api/contact`): `reason`, `name`, `email`, `organization`, `phone`, free-text `message`, optional `productIds`, and `sessionId` (the sid).
 - **Email capture** (`buildCaptureCard()` → `POST /api/capture-email`): `sessionId`, `email`, `transactionalConsent`, `marketingConsent`, the echoed `consentTextShown`, `locale`, optional `trigger`.
 - **Feedback** (`POST /api/feedback`): free-text `message`, `sessionId`, `conversationId` (the `conversationKey`, signed-in only), coarse `tier`, `page` (`location.pathname` only, via `currentPagePath()`), and `email` = the in-page `capturedEmail` if any (`identifiedEmail()`).
 - **Login redirect** (`initiateLogin()`): `session=<sid>` and `return_url` = the full current `window.location.href`, including any query parameters, go to `/api/auth/shopify/login`.
@@ -622,9 +600,9 @@ The desktop **modal** mode keeps its very high z-index even under `body.no-scrol
 - The copy tables `CONSENT_COPY`, `FEEDBACK_COPY`, `ACCOUNT_COPY`, `OPTIN_COPY`, `GATE_COPY` and `DOWNLOAD_COPY` are German objects with an `Object.assign` English overlay when `LOCALE === 'en'`. Contact-form reason titles have DE and EN maps.
 - Formatting: `euro()` gives `1.234,5 €` (de-DE) or `€1,234.50` (en-GB). Conversation dates use `toLocaleDateString(L('de-DE','en-GB'))`.
 
-**Sending the locale to the backend** (LOCALE.md §1)
+**Sending the locale to the backend** (which endpoint reads it: AC §12.2)
 - Header `x-ms-locale` on all guarded calls.
-- Body `locale` on `/api/chat`, `/api/capture-email` (`buildCaptureCard()`) and `/api/account/marketing-opt-in` (`buildMarketingOptInCard()` and the consent popup's accept in `presentConsentGate()`). On the two consent POSTs it must match the locale the consent copy was served in (LOCALE.md §1).
+- Body `locale` on `/api/chat`, `/api/capture-email` (`buildCaptureCard()`) and `/api/account/marketing-opt-in` (`buildMarketingOptInCard()` and the consent popup's accept in `presentConsentGate()`). On the two consent POSTs it must match the locale the consent copy was served in (AC §12.3).
 - `?locale=` on the consent-copy GETs.
 - `/api/products`, `/api/kpi` and the whoami call carry no locale.
 
@@ -673,7 +651,7 @@ The desktop **modal** mode keeps its very high z-index even under `body.no-scrol
 - **Idle cost:** the launcher orb animates forever (blob rotate/morph with SVG Gaussian blur, up to `stdDeviation=100`, plus a box-shadow halo). The product-page CTA orb animates too. Under reduced motion all of it is frozen.
 - **Network at load:** see §2.6 (`/cart.js` on every `pageshow`; KPI once per session; possibly a cart attribute stamp). For a visitor with stored history, add the restored cards' re-fetches on **every** page view: `GET /api/products` per restored product / compare / showroom / contact / capture card (batches of 10) and one uncached call per restored `add_to_cart` card, `GET /api/consent-copy` per restored capture card, and possibly `POST /api/attribution/token` + `POST /cart/update.js` from a restored `show_product` card (consent-gated).
 - **Caches:** product hydration (per page), consent copy (60 s). Nothing is cached across pages except localStorage data.
-- **Chat payload:** each turn sends the full in-memory history, including tool inputs and outputs, uncapped on the client (storage keeps the last 40). The backend rejects more than 40 messages with `payload_too_large` (see §9 and 03 §3.3).
+- **Chat payload:** each turn sends the full in-memory history, including tool inputs and outputs, uncapped on the client (storage keeps the last 40). Over the per-request cap the backend answers `payload_too_large` (AC §2; see §9 and 03 §3.3).
 - **Hydration:** `/api/products` in batches of 10 ids. Unknown ids are cached as `null`. Failures cache nothing, so the request is retried on the next tool call.
 
 ---
@@ -686,8 +664,8 @@ The desktop **modal** mode keeps its very high z-index even under `body.no-scrol
 | **Fail-silent extras** | attribution, cart sync, whoami, deep link, campaign token, orb hydration | Wrapped in `try/catch` / `.catch(function(){})`. Shopping and chat never wait on them. Attribution gives up for the current page view after one failed mint. |
 | **Fail-closed auth** | `probeAuth()`, `applyAuth()`, `redeemLinkCode()`, `accountUnauthorized()` | Any error means not signed in. Transient errors keep the device hints. Definitive answers wipe them and, if the device was signed in, wipe the sid-bound history (`endedSignInCleanup()`). |
 | **Fail-closed legal copy** | consent and erase copy | No valid served copy means no consent UI and no erase. There is never fallback legal text. The signed-in popup also requires `lawyerApproved === true`. |
-| **Stale-reply guards** | `startStream()` (`streamSid`, `cancelled`; `cancelled` is set via `abortActiveStream` by `dropSessionHistory()` and, **[8d0a0c4]**, by `startNewChat()` / `openConversation()`), `accountReplyStale(reqSid)`, `probeAuth()` (`sid !== reqSid`), `detectViaStorefront()` (`askSid`) | An answer that arrives after a session change is dropped. |
-| **Chat HTTP errors** | `handleChatHttpError()` | 429 → roll back the optimistic user message, lock the input for `Retry-After` (default 30 s), warn notice. 401/403 → `console.error` with the probable cause (secret / `ALLOWED_ORIGINS`), shopper sees „Chat ist gerade nicht verfügbar.“. `payload_too_large` → notice with „Neuen Chat starten“. 5xx/`internal_error`/`upstream_unavailable` → `console.error('[ms-chat] chat error', status, code)` and „Es gab ein Problem…“. Any other 4xx (e.g. `bad_request`) → the same `console.error`, „Chat ist gerade nicht verfügbar.“. Every case rolls back and restores the typed text to the input. |
+| **Stale-reply guards** | `startStream()` (`streamSid`, `cancelled`; `cancelled` is set via `abortActiveStream` by `dropSessionHistory()`, `startNewChat()` and `openConversation()`), `accountReplyStale(reqSid)`, `probeAuth()` (`sid !== reqSid`), `detectViaStorefront()` (`askSid`) | An answer that arrives after a session change is dropped. |
+| **Chat HTTP errors** (codes: AC §1 "Error envelope") | `handleChatHttpError()` | 429 → roll back the optimistic user message, lock the input for `Retry-After` (default 30 s), warn notice. 401/403 → `console.error` with the probable cause (secret / `ALLOWED_ORIGINS`), shopper sees „Chat ist gerade nicht verfügbar.“. `payload_too_large` → notice with „Neuen Chat starten“. 5xx/`internal_error`/`upstream_unavailable` → `console.error('[ms-chat] chat error', status, code)` and „Es gab ein Problem…“. Any other 4xx (e.g. `bad_request`) → the same `console.error`, „Chat ist gerade nicht verfügbar.“. Every case rolls back and restores the typed text to the input. |
 | **Stream errors** | `startStream()` | An `error` SSE event only sets `streamErrored`. On the next `finish` / `[DONE]` / socket close, `finalizeStream()` keeps any partial answer and appends an error row. With no content, `finalizeStream()` does **not** roll back: the user message stays in `messages` and in `ms-chat-history:<sid>`, the typed text is not restored, and the next turn sends two consecutive user messages. A network / fetch failure (the fetch `.catch`) keeps partial content if any arrived. With no content it calls `rollback()` (removes the user message and restores the typed text). Unknown event types are logged with **type only** (never the body, which could hold order data). |
 | **Render-nothing guards** | tool cards | Unknown products, fewer than 2 compare items, or an empty `add_to_cart` render nothing. Unknown or silent tools are never rendered. |
 | **Console** | — | `console.warn` for the missing secret. `console.error` for chat failures, 401/403 and redirect failures. `console.debug` for unhandled stream event types. No PII is logged. |
@@ -696,7 +674,7 @@ The desktop **modal** mode keeps its very high z-index even under `body.no-scrol
 
 ## 19. KPI events emitted by the widget (index)
 
-Every `track()` call in the file (grep-complete). The payload shape is `{event, sessionId: sid, timestamp: ISO, data}` (API_CONTRACT §5). Event semantics are covered in the KPI chapter. This is the location index.
+Every `track()` call in the file (grep-complete). The payload shape is `{event, sessionId: sid, timestamp: ISO, data}` (AC §5). This is the location index only; the catalogue (`data`, triggers, meaning) is `05` §4.
 
 | Event | `data` | Emitted in |
 | --- | --- | --- |
@@ -720,7 +698,7 @@ Every `track()` call in the file (grep-complete). The payload shape is `{event, 
 | `login_gate_shown` / `_signin_clicked` / `_declined` / `_dismissed` | `{}` | `presentLoginGate()` |
 | `consent_gate_shown` / `_accepted` / `_declined` / `_dismissed` | `{surface:'signin'}` | `presentConsentGate()` and the inline opt-in card |
 
-The widget does **not** emit: any erase event (`account_erased` is server-only) [PR #73; **the pre-PR #73 widget, live until 2026-10-04, still emitted `track('account_erased', {})`** after a successful erase, §1.1], `email_capture_submitted` (server), a "widget impression" event, or a `contact_form_submitted` (server; session-keyed only once the [8d0a0c4] widget is live, §21 item 3).
+The widget does **not** emit: any erase event (`account_erased` is server-only) [PR #73; **the pre-PR #73 widget, live until 2026-10-04, still emitted `track('account_erased', {})`** after a successful erase, §1.1], `email_capture_submitted` (server), a "widget impression" event, or a `contact_form_submitted` (server-only; session keying: AC §4). Server-only list: AC §5.
 
 ---
 
@@ -733,19 +711,14 @@ The widget does **not** emit: any erase event (`account_erased` is server-only) 
 2. **Manual deployment.**
    - The owner copies changed files from `main` into the Shopify code editor.
    - Every change must add a dated section to the top of `MANIFEST.md` with a table of files and "Re-upload to Shopify?".
-   - Backend changes that need a widget change must stay compatible with the *currently uploaded* widget until the owner uploads the new one. Use flags such as `CHAT_ORDER_STATUS_ENABLED`: still off, and it may be turned on now that the PR #73 widget is live, once the backend has verified on live that a `get_order_status` part renders nothing.
+   - Backend changes that need a widget change must stay compatible with the *currently uploaded* widget until the owner uploads the new one (AC §0 rule 3). Keep such behaviour behind a backend switch that is default off in code (for example `CHAT_PAGE_CONTEXT_ENABLED`) until the new build is live and checked (README §4).
    - The install guide at the bottom of `MANIFEST.md` is partly outdated (see §21).
 3. **Two editors, risk of drift.**
    - The live theme is also edited in the Shopify theme editor by another person (sections, templates, app blocks).
    - Mo-relevant files touched there: `sections/header.liquid` (`#CartBubble`), `templates/product*.json` (the CTA `custom_liquid` blocks), `layout/theme.liquid` (head script + render line), `config/settings_data.json`.
    - The repo is periodically re-synced from a downloaded live snapshot with a three-way merge. A sync on 2026-08-12 (`f7dc50a`) silently replaced the widget JS with an older copy and reverted PR #67 / #62. This was fixed on 2026-10-01.
    - **Before and after every upload, diff the live files against the repo**, especially `ms-chat-widget.js` / `.css` and the two Liquid hooks.
-4. **Current rollout state (owner facts).**
-   - PR #73 ("customer platform": one-time code redeem; whoami changed to once per tab session + `credentials:'include'` + `linkCode` redeem; consent rules, `surface=erase` copy, `mo_c` campaign token, silent `get_order_status`, history wipe on sign-out) is **merged to `main` and live** since the owner's upload on 2026-10-04. Sign-in therefore works again on live (the backend has required the code redeem since 2026-10-03); a real live sign-in still has to be checked by the backend.
-   - `main` is at `8d0a0c4`, whose five fixes are **not uploaded yet** (files: `assets/ms-chat-widget.js`, `snippets/ms-chat-widget.liquid`, `templates/product.produkt-new.json`, `product.produktnew.json`, `product.produkte-im-set.json`; §1.1).
-   - The live widget calls whoami once per tab session and receives Shopify's HTML 404 page, because the Shopify **App Proxy** for `/apps/chat/whoami` is **not configured yet**. The widget silently falls back, so shop-login recognition is inactive.
-   - **The App Proxy may now be set up.** The live widget only redeems the whoami `linkCode`. Historical: the pre-PR #73 widget (`44a076b`, `detectViaStorefront()`) applied a whoami `signedIn:true` answer directly as identity (`applyAuth(data)`) without a code, which is why the proxy had to wait (§1.1).
-   - `CHAT_ORDER_STATUS_ENABLED` is still **off**. It may be turned on after the backend verifies on live that `get_order_status` renders nothing.
+4. **Rollout state:** not kept here — `docs/ROLLOUT_TODO.md` and `npm run verify:widget` (README §4). The owner facts written here on 2026-10-04 are archived in `docs/archive/FRONTEND_STATUS_2026-10-04.md`.
 5. **Design rules worth keeping:**
    - Additive tiers: anonymous and email-only behaviour stay byte-identical when signed-in features change.
    - Lazy network: no auth calls before the first open (which may be a no-click open, §2.6), apart from the sign-in-return and 503-retry paths.
@@ -757,11 +730,11 @@ The widget does **not** emit: any erase event (`account_erased` is server-only) 
 
 ## 21. Known issues and risks found while documenting
 
-Listed for triage. Items 1, 3 and 18 (and the `order_support` label, 03 §20 finding 2) are **fixed on `main` in `8d0a0c4` but not uploaded yet**, so they still apply to the live shop until the owner uploads. The others are open.
+Listed for triage. Items 1, 3, 18 and 19 (and the `order_support` label, 03 §20 finding 2) were fixed on 2026-10-04 (`8d0a0c4`, `3e87341`) and keep their numbers so references stay stable. The others are open.
 
-1. **[Fixed in `8d0a0c4`, not uploaded yet] New chat during a streaming reply (signed-in): the old reply leaks into the new thread.** Fix: `startNewChat()` and `openConversation()` now start with `if (abortActiveStream) { abortActiveStream(); abortActiveStream = null; }` + `endSpeaking()` + `removeTyping()`, so the old turn's `cancelled` flag makes its fetch, pump, events and `finalizeStream()` no-ops and any voice-mode audio queued for it stops (in `openConversation()` this runs once the transcript has loaded). *Live behaviour until the upload:* `startNewChat()` sets `state.streaming = false` but does not call `abortActiveStream`. For a signed-in user the sid does not rotate, so `finalizeStream()` passes the `sid === streamSid` check and pushes the old reply into the **new** `messages` array, then saves it. The orphan assistant message is sent as history on the next turn under the new `conversationKey`. For anonymous users the save is blocked (sid rotated), but if no visible part had arrived yet, `ensureCtx()` can still draw the late reply into the fresh welcome view. `openConversation()` has the same pattern on live: it resets `state.streaming` without aborting.
+1. **[Fixed 2026-10-04] New chat during a streaming reply.** `startNewChat()` and `openConversation()` start with `if (abortActiveStream) { abortActiveStream(); abortActiveStream = null; }` + `endSpeaking()` + `removeTyping()`, so the old turn's `cancelled` flag makes its fetch, pump, events and `finalizeStream()` no-ops and any voice-mode audio queued for it stops (in `openConversation()` this runs once the transcript has loaded). Before 2026-10-04 a signed-in user's late reply could land in, and be saved with, the new or opened thread, so threads saved before that day may contain such a reply.
 2. **[PR #73] The `<head>` stash also runs where the widget does not mount** (cart, excluded templates, empty secret). It removes `ms_auth` / `ms_code` / `mo_c` from the URL and leaves the stash for up to 10 minutes, to be consumed by the next page that mounts the widget. This is mostly harmless today because `return_url` is a page with the widget.
-3. **[Fixed in `8d0a0c4`, not uploaded yet] `contact_form_submitted` is never session-keyed.** The backend keys it on the **body** field `sessionId` (`src/app/api/contact/route.ts`, API_CONTRACT §4). `buildContactForm()` now adds `sessionId: sid` to the JSON body (the `x-ms-session` header stays). On live until the upload the body has no `sessionId`, so those rows have `sessionId: null` and cannot be joined to sessions or chats.
+3. **[Fixed 2026-10-04] `contact_form_submitted` session.** `buildContactForm()` adds `sessionId: sid` to the JSON body (the `x-ms-session` header stays). The backend keys the row on the body field, else on the header (`src/app/api/contact/route.ts`, AC §4). Rows from before the 2026-10-04 upload have `sessionId: null` and cannot be joined to sessions or chats.
 4. **No widget-impression KPI.** `launcher_attention_played` is the only passive signal, and it is skipped under reduced motion and capped at once per tab session. Funnels that need "sessions that saw Mo" are approximate.
 5. **KPI is not consent-gated** (only attribution checks Shopify's Customer Privacy API). The events are pseudonymous, but this should be a deliberate legal decision. Today it is implicit.
 6. **The device-level trail and decision keys survive sign-out and erase** (`ms-chat-trail`, `ms-chat-mkt-decision`, `ms-chat-login-gate-snooze`, `ms-chat-nudge-dismissed`, `ms-chat-view-mode`). The trail holds product handles and names of recently viewed pages. Check whether "Alle meine Daten löschen" should also clear it on the device.
@@ -770,14 +743,14 @@ Listed for triage. Items 1, 3 and 18 (and the `order_support` label, 03 §20 fin
 9. **`allowedFromTheme` config field is dead.** `CFG.whoamiPath` is an undocumented override. `showroomUrl` is hard-coded in the snippet rather than being a setting.
 10. **`window.MS_CHAT.openEmailSummary` → `openCaptureForm()` does not check `auth.signedIn`.** The header share button is hidden for signed-in users, but the public API (or a third-party caller) can still show the typed-email capture form to a signed-in customer, contrary to the tier-3 "no double-ask" rule. Note: `openCaptureForm()` is **intentionally** reachable for signed-in customers through the opt-in card's `no_verified_email` fallback (`buildMarketingOptInCard()` → the `OPTIN_COPY.noEmailBtn` button → `markOptInDone(); card.remove(); openCaptureForm();`). A fix should guard only the public-API path (for example a wrapper for `MS_CHAT.openEmailSummary` that checks `auth.signedIn`), not `openCaptureForm()` itself.
 11. **Multi-tab history clobbering** (§8): two tabs on the same sid overwrite each other's `ms-chat-history:<sid>`. The last writer wins.
-12. **Stale docs:** code comments point to `docs/ai-advisor/*.md`, which does not exist in this repo (backend `docs/frontend-handoff/`). The `MANIFEST.md` install guide still names `https://motionsports-chatbot.vercel.app` / `chat.motionsports.de` and describes a "black launcher" and "typing dots" (the current default is `https://mo.motionsports.de`, the orb launcher and the avatar animation). WIDGET_SPEC §1 *prefers* Shadow DOM; the widget uses prefix isolation only.
+12. **Stale docs:** code comments point to `docs/ai-advisor/*.md`, which does not exist in this repo (the contract is the backend's `docs/frontend/`). The `MANIFEST.md` install guide still names `https://motionsports-chatbot.vercel.app` / `chat.motionsports.de` and describes a "black launcher" and "typing dots" (the current default is `https://mo.motionsports.de`, the orb launcher and the avatar animation).
 13. **`GET /cart.js` on every page load** through the initial `pageshow`. This is cheap, but it is an extra request on every page view sitewide.
 14. **The cart exclusion is a substring test** (`template contains 'cart'`), so any future template whose name contains "cart" is also excluded.
-15. **`add_to_cart` with more than 10 products renders nothing.** `buildAddToCart()` sends all deduplicated `productIds` in one `GET /api/products?ids=` with no `chunk()`. AC §3 caps a request at 10 ids and answers 400 `payload_too_large`; `buildAddToCart()` then resolves `null` and the checkout card silently disappears. Either the backend caps `add_to_cart` at 10 ids, or the widget splits the request. The card needs one combined `cartUrl`, so a backend cap is simpler.
+15. **`add_to_cart` with more than 10 products renders nothing.** `buildAddToCart()` sends all deduplicated `productIds` in one `GET /api/products?ids=` with no `chunk()`. Over the AC §3 id cap (10) the backend answers 400 `payload_too_large`; `buildAddToCart()` then resolves `null` and the checkout card silently disappears. Either the backend caps `add_to_cart` at 10 ids, or the widget splits the request. The card needs one combined `cartUrl`, so a backend cap is simpler.
 16. **Restored history costs backend calls on every page view** (§2.6). Each stored product / compare / showroom / contact / capture / add-to-cart card is re-fetched at `init()`, even if the visitor never opens the panel. A restored `show_product` card can also mint an attribution token and stamp the cart without interaction. Backend dashboards that count `/api/products` or `/api/attribution/token` calls see this traffic as page views, not chat activity.
 17. **An `error` SSE event with no content leaves an unanswered user message in history** (§18). The next send carries two consecutive user messages.
-18. **[Fixed in `8d0a0c4`, not uploaded yet] Product-page CTA can render dead** (§3.3). The CTA `custom_liquid` blocks are gated only on `ai_advisor_enabled`. The snippet now also gates on a non-blank `ms_chat_shared_secret`, and where it does not render the widget it emits a `<style>` hiding `.ms-chat-product-advisor` / `.ms-chat-product-cta` (§2.3). On live until the upload, an excluded product template or an empty secret still shows a dead button with an empty orb span. **Remaining edge (not fixed):** if `ms-chat-widget.js` fails to load, or a shopper clicks before the deferred script has booted, the button still does nothing.
-19. **[Fixed in `8d0a0c4`, not uploaded yet] Three product templates had no CTA** (`product.produkt-new`, `product.produktnew`, `product.produkte-im-set`). `8d0a0c4` adds the "MO only" block there (§3.3). `product_cta_opened` volumes on live will rise after the upload for reasons unrelated to the widget code.
+18. **[Fixed 2026-10-04] Product-page CTA could render dead** (§3.3). The CTA `custom_liquid` blocks are gated only on `ai_advisor_enabled`; the snippet gates on a non-blank `ms_chat_shared_secret` too, and where it does not render the widget it emits a `<style>` hiding `.ms-chat-product-advisor` / `.ms-chat-product-cta` (§2.3). **Remaining edge (not fixed):** if `ms-chat-widget.js` fails to load, or a shopper clicks before the deferred script has booted, the button still does nothing.
+19. **[Fixed 2026-10-04] Three product templates had no CTA** (`product.produkt-new`, `product.produktnew`, `product.produkte-im-set`); they carry the "MO only" block since 2026-10-04 (§3.3), so `product_cta_opened` volumes are not comparable across that day for reasons unrelated to the widget code.
 
 ---
 
@@ -785,7 +758,6 @@ Listed for triage. Items 1, 3 and 18 (and the `order_support` label, 03 §20 fin
 
 - **`keepalive` + CORS preflight:** `track()` sends `Content-Type: application/json` and the custom `x-ms-session` header with `keepalive:true`, which needs a preflighted keepalive request. Browser support for preflighted keepalive fetches has historically been incomplete (older Chromium did not support it). Whether events fired right before a navigation (`account_signin_started`) are reliably delivered on all target browsers was **not verified**.
 - **sessionStorage in `noopener` tabs:** the claim that product tabs opened with `rel="noopener"` start with empty sessionStorage (so the per-session caps and a pending campaign token reset there) follows current HTML-spec behaviour. It was not tested on Safari or iOS.
-- **Theme preview / editor origin:** the backend allowlists only `https://www.motionsports.de` and `https://motionsports.de`. Whether the Shopify theme editor or a preview domain (`*.myshopify.com`) produces 403s (the widget then shows „Chat ist gerade nicht verfügbar.“) was not checked. The snippet does not special-case `request.design_mode`.
+- **Theme preview / editor origin:** the backend allowlists only `https://www.motionsports.de` and `https://motionsports.de` by default (`ALLOWED_ORIGINS`, AC §1). Whether the Shopify theme editor or a preview domain (`*.myshopify.com`) produces 403s (the widget then shows „Chat ist gerade nicht verfügbar.“) was not checked. The snippet does not special-case `request.design_mode`.
 - **History-drawer focus handling** was only skimmed. A full keyboard audit was not done.
-- **Live vs repo:** this chapter documents `main` at `8d0a0c4`. Live runs PR #73 (uploaded 2026-10-04) without the five `8d0a0c4` fixes until the owner uploads them; rows tagged [8d0a0c4] are not live (§1.1). Editor changes on live since the 2026-10-01 snapshot are not reflected.
-- **Live sign-in and order status:** that a real sign-in completes on live with the uploaded PR #73 widget, and that a `get_order_status` part renders nothing there, has not been verified yet (backend task before `CHAT_ORDER_STATUS_ENABLED` goes on).
+- **Live vs repo:** this chapter documents `main` at `3e87341`; which build the shop serves: README §4 (`npm run verify:widget`). Editor changes on live since the 2026-10-01 snapshot are not reflected.

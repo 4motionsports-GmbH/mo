@@ -4,7 +4,7 @@
 // link, the unsubscribe link and the admin opt-out all keep their own Art. 7
 // evidence (email_captures) and their lawyer-approved copy, and additionally
 // report their act to the shared consent (lib/consent-store.ts), which mirrors
-// it to Shopify through the outbox. docs/CUSTOMER_PLATFORM_PLAN.md §7.4.
+// it to Shopify through the outbox. docs/archive/CUSTOMER_PLATFORM_PLAN.md §7.4.
 //
 //   opt-in tap (pending)      → recordMoOptIn       → state pending (local only)
 //   DOI link clicked          → recordDoiConfirmed  → subscribed / confirmed_opt_in

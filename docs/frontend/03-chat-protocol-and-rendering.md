@@ -1,6 +1,6 @@
 # 03 — Chat protocol, tools and rendering
 
-> **Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `8d0a0c4`. PR #73 "customer platform" (`a0df103`) is merged and **live since 2026-10-04**; `8d0a0c4` adds five fixes that are **not uploaded yet** (marked **[8d0a0c4]** below; 02 §1.1). Every claim comes from reading `assets/ms-chat-widget.js` (and the Liquid that feeds it). Backend behaviour is cross-referenced to the backend repo's `docs/API_CONTRACT.md` (cited as **AC §n**) and `docs/frontend-handoff/*.md`. It is not re-specified here.
+> **Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `3e87341` (PR #73 "customer platform" `a0df103` + the fixes `8d0a0c4` + `3e87341`; README). Every claim comes from reading `assets/ms-chat-widget.js` (and the Liquid that feeds it). The contract is cited as **AC §n** (`API_CONTRACT.md`) and **ACCT §n** (`ACCOUNT_CONTRACT.md`): field lists, limits, status codes and server rules live there and are not re-specified here; this chapter describes what the widget does with them. Production state: README §4.
 > Code locations are given as `file → function / key / selector`. Line numbers are left out on purpose.
 
 This chapter covers one conversation turn from start to finish: what starts a turn, the exact `POST /api/chat` request, the page context and browsing trail, how the SSE stream is parsed and assembled, and how each tool is rendered (what data it fetches, which buttons it shows, which KPI events it fires, and its edge cases). It also covers Markdown rendering, streaming and typing states, errors, rate limits and rollback, local history persistence, "Neue Beratung" and `conversationKey` threads, the PDF summary download, voice input, hands-free voice mode with streaming TTS, and the feedback entry point. It closes with findings for backend decisions and open questions.
@@ -66,7 +66,7 @@ Key properties:
 - The **full in-memory history** goes to the backend on every turn (`toWire(messages)`). The backend is stateless per request apart from persistence (AC §2).
 - Rendering is **incremental and idempotent**. Text bubbles re-render from the accumulated string on each delta. Tool cards are keyed by `toolCallId` and never duplicated.
 - The reply is **never conditional on the gate/popup**. The popup overlays the panel while the reply streams behind it.
-- There is **no client-side timeout** and **no user-facing "stop generating" button**. The only cancellation is internal (`abortActiveStream`). `dropSessionHistory()` calls it on: sign-out, erase, session rotation in another tab (`onSidChangedElsewhere()`), and when the server says a previously signed-in session has ended (`endedSignInCleanup()`: a definitive not-signed-in answer from `/api/auth/me` in `probeAuth()`, or a 401 on any `/api/account/*` call via `accountUnauthorized()`, both only if the device was signed in). **[8d0a0c4]** `startNewChat()` ("Neuen Chat starten", "Neue Beratung") and `openConversation()` (opening a past conversation) call it too. On live until that upload they do **not** cancel a running reply (§13).
+- There is **no client-side timeout** and **no user-facing "stop generating" button**. The only cancellation is internal (`abortActiveStream`). `dropSessionHistory()` calls it on: sign-out, erase, session rotation in another tab (`onSidChangedElsewhere()`), and when the server says a previously signed-in session has ended (`endedSignInCleanup()`: a definitive not-signed-in answer from `/api/auth/me` in `probeAuth()`, or a 401 on any `/api/account/*` call via `accountUnauthorized()`, both only if the device was signed in). `startNewChat()` ("Neuen Chat starten", "Neue Beratung") and `openConversation()` (opening a past conversation) call it too (§13).
 
 ---
 
@@ -98,13 +98,13 @@ The CTA deliberately uses a primer *user* message instead of the `messages: []` 
 - Launcher click, header buttons, "Per E-Mail teilen", feedback card, tool-card buttons.
 - Product hydration and TTS calls go to other endpoints (§7, §17).
 
-> **Important for backend decisions:** a normally typed message carries **no page context at all**. Mo only knows the current product page if the visitor used the product CTA or clicked a nudge on that page. The trail and `PAGE_CTX` exist in the browser but are not attached to typed turns (§4.4, §20).
+> **Important for backend decisions:** a normally typed message carries **no page context at all**. Mo only knows the current product page if the visitor used the product CTA or clicked a nudge on that page. The trail and `PAGE_CTX` exist in the browser but are not attached to typed turns (§4.4, §20). The contract already defines page facts for typed turns (AC §2 "Optional `context`", `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/2-page-context.md`.
 
 ---
 
 ## 3. The `POST /api/chat` request
 
-Built in `startStream()`. URL: `{CFG.apiBase}/api/chat` (default `https://mo.motionsports.de`, setting `ai_advisor_backend_url`).
+Built in `startStream()`. URL: `{CFG.apiBase}/api/chat` (default `https://mo.motionsports.de`, setting `ai_advisor_backend_url`). Contract: AC §2 "Required request headers" and "Request body"; the tables below say what the widget sends and when.
 
 ### 3.1 Headers
 
@@ -114,7 +114,7 @@ Built in `startStream()`. URL: `{CFG.apiBase}/api/chat` (default `https://mo.mot
 | `x-ms-chat-key` | theme setting `ms_chat_shared_secret` (`CFG.chatKey`) | `CHAT_KEY`. If empty, the widget never mounts. |
 | `x-ms-session` | device session id (UUID, `localStorage['ms-chat-sid']`) | `sid` |
 | `x-ms-locale` | `"de"` or `"en"` | `LOCALE` (Liquid `localization.language.iso_code`, forced to `en` on `/en…` paths) |
-| `Origin` | set by the browser | must be in the backend `ALLOWED_ORIGINS` |
+| `Origin` | set by the browser | the backend's origin allow-list (AC §1 "Security model") |
 
 The request uses an `AbortController` signal when available (for internal cancellation only).
 
@@ -124,10 +124,10 @@ The request uses an `AbortController` signal when available (for internal cancel
 | --- | --- | --- |
 | `messages` | **always** | `toWire(messages)`: the full in-memory history (see §3.3). `[]` for the context greeting. |
 | `locale` | **always** | same as `x-ms-locale` |
-| `context` | only for the product CTA and the nudge greeting (§2) | see §4.3 |
+| `context` | only for the product CTA and the nudge greeting (§2) | see §4.3 (no `source` field; AC §2 defines it, `tasks/2-page-context.md` adds it) |
 | `conversationKey` | only if `auth.signedIn && activeConversationKey` | client-generated UUID of the active thread (§13). **Omitted** for anonymous and email-only visitors. **Also omitted for a signed-in visitor whose auth has not settled yet on this page load**, even when `activeConversationKey` (restored from `ms-chat-convkey:<sid>` by `loadConvKey()`) already exists. In practice this hits the product-page CTA, which sends right after `openPanel()` (§13 edge case, §20 finding 21). |
-| `customer` | only after a successful `POST /api/capture-email` **in this page load** | `{ "email": "<captured address>" }`. Held in the in-memory variable `capturedEmail` only. It is reset on navigation and on session drop (`dropSessionHistory()`), nowhere else. Never stored. AC §2 "customer". Attached whenever `capturedEmail` is set, **with no auth check**: if auth later settles as signed in during the same page view (e.g. `visibilitychange` re-detection after a shop login in another tab), the captured address still rides along. **It also survives `startNewChat()`**: the anonymous/email-only branch calls `rotateSession()`, which does not touch `capturedEmail`, so after "Neuen Chat starten" (header icon or the `payload_too_large` notice button) later turns send `customer.email` under the **new** sid. The backend only injects memory when the capture came from the same `x-ms-session` (AC §2), so memory silently stops working while the address keeps leaving the browser (§20 finding 19). |
-| `campaignToken` | while `sessionStorage['ms_mo_c']` holds a valid token | the `mo_c` value from a campaign landing URL, re-validated against `/^[A-Za-z0-9_-]{16,64}$/` on read. It is deleted only when a chat response comes back `res.ok`, so a failed first send retries it on the next turn. It rides on the first chat request of the **tab session**, which can be the greeting, a CTA turn or a typed message, even pages later. AC §2 "campaignToken". |
+| `customer` | only after a successful `POST /api/capture-email` **in this page load** | `{ "email": "<captured address>" }`. Held in the in-memory variable `capturedEmail` only. It is reset on navigation and on session drop (`dropSessionHistory()`), nowhere else. Never stored. AC §2 "Optional `customer`". Attached whenever `capturedEmail` is set, **with no auth check**: if auth later settles as signed in during the same page view (e.g. `visibilitychange` re-detection after a shop login in another tab), the captured address still rides along. **It also survives `startNewChat()`**: the anonymous/email-only branch calls `rotateSession()`, which does not touch `capturedEmail`, so after "Neuen Chat starten" (header icon or the `payload_too_large` notice button) later turns send `customer.email` under the **new** sid. The backend only injects memory when the capture came from the same `x-ms-session` (AC §2), so memory silently stops working while the address keeps leaving the browser (§20 finding 19). |
+| `campaignToken` | while `sessionStorage['ms_mo_c']` holds a valid token | the `mo_c` value from a campaign landing URL, re-validated against `/^[A-Za-z0-9_-]{16,64}$/` on read. It is deleted only when a chat response comes back `res.ok`, so a failed first send retries it on the next turn. It rides on the first chat request of the **tab session**, which can be the greeting, a CTA turn or a typed message, even pages later. AC §2 "Optional `campaignToken`". |
 
 Example (signed-in visitor, product CTA, campaign landing):
 
@@ -156,8 +156,8 @@ Example (signed-in visitor, product CTA, campaign landing):
 | Unknown tools | **not stored at all**, so never replayed |
 
 - Message ids: `u-<uuid>` (user), `a-<uuid>` (assistant), and `u-`/`a-` + uuid for transcripts loaded from the account history.
-- **History cap:** the widget does **not** cap what it sends. `loadHistory()` and `saveHistory()` keep the last 40 messages in storage, but the in-memory array grows freely during a page view. The backend rejects `messages.length > 40` with `400 payload_too_large` (AC §2), which the widget turns into a "start a new chat" notice (§11). The request fails once the in-memory array (including the new user message) exceeds 40. For a normal thread that is the **21st user message** (20 + 20 + 1 = 41), also when the thread started with a context greeting (1 + 20 + 20 + 1 = 42; the 20th send is exactly 40 and passes). Turns that store no assistant reply (an `error` chunk with no content, a cancelled reply) push the wall later. After a reload the stored 40 are restored, so the next send fails again.
-- The backend sanitises broken tool parts before model conversion and replaces replayed `get_order_status` outputs with `{ replayed: true }` (AC §2 "Tools the widget MUST NOT render"; backend `src/lib/chat-message-sanitize.mjs → sanitizeToolParts`, called from `src/app/api/chat/route.ts`). The filter drops only parts whose `state` is `input-streaming` or `input-available`, or whose `input` is not a plain object.
+- **History cap:** the widget does **not** cap what it sends. `loadHistory()` and `saveHistory()` keep the last 40 messages in storage, but the in-memory array grows freely during a page view. Over the per-request cap (AC §2: 40 messages) the backend answers `400 payload_too_large`, which the widget turns into a "start a new chat" notice (§11). The request fails once the in-memory array (including the new user message) exceeds 40. For a normal thread that is the **21st user message** (20 + 20 + 1 = 41), also when the thread started with a context greeting (1 + 20 + 20 + 1 = 42; the 20th send is exactly 40 and passes). Turns that store no assistant reply (an `error` chunk with no content, a cancelled reply) push the wall later. After a reload the stored 40 are restored, so the next send fails again.
+- The backend sanitises broken tool parts before model conversion and replaces replayed `get_order_status` outputs with `{ replayed: true }` (AC §2 "Request body" → "Replay the history as it streamed"; backend `src/lib/chat-message-sanitize.mjs → sanitizeToolParts`, called from `src/app/api/chat/route.ts`). The filter drops only parts whose `state` is `input-streaming` or `input-available`, or whose `input` is not a plain object.
 - **Output-less parts slip through that filter.** Because `accumulatePart()` labels a part `output-available` as soon as its input exists, a part that never got an output (after `tool-output-error`, a mid-tool `error` chunk, or a network drop after the input) is stored and replayed as `state: "output-available"` with no `output` key. The backend's incomplete-state check never matches such widget-made parts, so they reach `convertToModelMessages` without a result (`get_order_status` excepted, it is rebuilt with `{ replayed: true }`). Whether that breaks the provider call is **not verified** (§20 finding 14).
 
 ---
@@ -166,29 +166,11 @@ Example (signed-in visitor, product CTA, campaign landing):
 
 ### 4.1 Server-rendered page facts (`CFG.pageContext`)
 
-Injected by `snippets/ms-chat-widget.liquid` into `window.MS_CHAT_CONFIG.pageContext`:
-
-| Field | Liquid source | Only on |
-| --- | --- | --- |
-| `pageType` | `request.page_type` | always |
-| `productId` | `product.id` (numeric Shopify id) | product pages |
-| `productHandle` | `product.handle` | product pages |
-| `productTitle` | `product.title` | product pages |
-| `productType` | `product.type` | product pages |
-| `collectionTitle`, `collectionHandle` | `collection.title` / `.handle` | collection pages |
-
-The widget never renders on `/cart` or `/checkout` (snippet gate), nor on templates listed in the `ai_advisor_excluded_templates` setting, nor (**[8d0a0c4]**, snippet gate) with an empty `ms_chat_shared_secret`. In those cases the snippet hides the product-page CTA instead (01 §5.1).
+`snippets/ms-chat-widget.liquid` injects the server-rendered page facts as `window.MS_CHAT_CONFIG.pageContext`. Fields, Liquid sources, JS defaults and use: `02` §3.2 (owner). Where the widget does not render at all: `01` §5.1.
 
 ### 4.2 `PAGE_CTX` (normalised in the IIFE)
 
-| Key | Derivation |
-| --- | --- |
-| `type` | `product` / `collection` / `cart` kept as is; `index` → `home`; anything else → `other`. (`cart` cannot occur in practice because of the render gate.) |
-| `productId` | numeric id as a string. **Not used for KPI.** It is the fallback catalog id when no handle exists (trail entry in `recordTrail()`, nudge greeting context in `showNudge()`), and `openWithProduct()` compares it with the CTA's `data-ms-chat-product-id` to decide whether to swap in `productHandle`. `product_cta_opened` carries the CTA data-attribute id (also numeric), not this field. |
-| `productHandle` | the handle. Used as the catalog id in `context` and in the trail, because backend catalog ids are slug/handle-shaped (AC §3). |
-| `productName` | `productTitle` |
-| `collectionHandle` | collection handle |
-| `category` | `productType` on product pages, else `collectionTitle` |
+The widget normalises the page facts once into `PAGE_CTX` (`type`, `productId`, `productHandle`, `productName`, `collectionHandle`, `category`); derivation and every use: `02` §3.2. For the `context` it sends, `productHandle` is the catalog id (AC §3); the numeric `productId` is only a fallback id and the CTA comparison (§4.3), never a KPI field.
 
 ### 4.3 The `context` object sent to `/api/chat`
 
@@ -199,6 +181,8 @@ The widget never renders on `/cart` or `/checkout` (snippet gate), nor on templa
 | Nudge elsewhere | `browsingContext(null)` → `{ type:"browsing", recentlyViewed: [...] }`, or **no greeting at all** when the trail is empty |
 
 `productId` fallback: the CTA buttons carry `data-ms-chat-product-id="{{ product.id }}"` (numeric). The widget swaps in `PAGE_CTX.productHandle` when the CTA's id matches the page's product (or either id is missing). A numeric id would be dropped server-side as unknown, but the primer text still names the product.
+
+The widget sends no `source` field. AC §2 defines `source` (`page` | `cta` | `nudge`; absent = treated like `cta` / `nudge`) and the typed-turn shape; `tasks/2-page-context.md` adds it to the widget.
 
 `browsingContext(leadCategory)` also supports a leading category entry. It is only ever called with `null` in the current code; the "category starters" that used a lead category were removed.
 
@@ -211,13 +195,13 @@ The widget never renders on `/cart` or `/checkout` (snippet gate), nor on templa
 - **When it leaves the browser:** only inside the `context` of a product-CTA turn or a nudge greeting. It is never sent on typed turns, in KPI events or in a background call.
 - **Other local use:** `trailCategoryStreak()` (≥ 2 products of one category) picks the nudge copy "Du schaust dir ein paar Produkte aus „X“ an — soll ich beim Vergleich helfen?" (nudge details: 05 §7, 02 §11).
 - **Privacy posture** (code comment `PRIVACY POSTURE (do not change)` above `PAGE_CTX`): copy built from this data references the page or category, never the user's behaviour ("TONE RULE").
-- **Stale code comment:** the same comment still says the trail "is NEVER transmitted — no backend call carries it" and that context leaves the browser "only when the USER sends a chat message that carries it". Both are out of date. Since the `recentlyViewed` context (AC §2) was added, `recentlyViewedPayload()` (via `browsingContext()`, `openWithProduct()` and `showNudge()`) sends up to 3 products + 2 categories in `context` on product-CTA turns and on nudge greetings, and the nudge greeting has no user message at all. Treat the behaviour described in this section as the truth, and update the comment when the widget is next touched.
+- **Stale code comment:** the same comment still says the trail "is NEVER transmitted — no backend call carries it" and that context leaves the browser "only when the USER sends a chat message that carries it". Both are out of date. Since the `recentlyViewed` context (AC §2) was added, `recentlyViewedPayload()` (via `browsingContext()`, `openWithProduct()` and `showNudge()`) sends up to 3 products + 2 categories in `context` on product-CTA turns and on nudge greetings, and the nudge greeting has no user message at all. Treat the behaviour described in this section as the truth; `tasks/2-page-context.md` (item 5) corrects the comment.
 
 ---
 
 ## 5. Parsing the SSE stream
 
-`startStream()` → `pump()` / `processLine()` / `handleEvent()`. The widget uses `fetch` + `res.body.getReader()` + `TextDecoder`, never `EventSource`.
+`startStream()` → `pump()` / `processLine()` / `handleEvent()`. The widget uses `fetch` + `res.body.getReader()` + `TextDecoder`, never `EventSource`. The stream format and chunk vocabulary are the contract's (AC §2 "Response — SSE stream", "Chunk vocabulary"); this section is how the widget handles them.
 
 ### 5.1 Line framing (`processLine`)
 
@@ -262,7 +246,7 @@ The widget does not check the `x-vercel-ai-ui-message-stream` header.
 | `SILENT_TOOLS` | `update_customer_profile`, `search_products`, `get_order_status` | **stored in history (input + output) and replayed to the backend**, never rendered: no card, no placeholder, no row, and the generating indicator keeps running |
 | Unknown (`resolveToolName()` → `null`) | anything else | **dropped entirely**: not rendered, not stored, not replayed. Matching is exact (`type === 'tool-' + name`), so `show_product_xyz` does not render as `show_product`. |
 
-So a **new background tool** needs no widget release **only if the backend does not need it replayed** in later turns' history (it is dropped and never re-sent). If replay matters (as for `update_customer_profile`, whose profile the backend reconstructs from replayed history, AC §2), the name must be added to `SILENT_TOOLS` in a widget release. A **new visible tool** needs a widget release, and its history parts are not even replayed until the name is added to one of the two lists.
+So a **new background tool** needs no widget release **only if the backend does not need it replayed** in later turns' history (it is dropped and never re-sent). If replay matters (as for `update_customer_profile`, whose profile the backend reconstructs from replayed history, AC §2 "Request body"), the name must be added to `SILENT_TOOLS` in a widget release. A **new visible tool** needs a widget release, and its history parts are not even replayed until the name is added to one of the two lists.
 
 ### 6.2 `feedCanonical(part)` → history + DOM
 
@@ -294,13 +278,13 @@ So a **new background tool** needs no widget release **only if the backend does 
 
 | Aspect | Behaviour |
 | --- | --- |
-| Request | `GET {apiBase}/api/products?ids=<comma-joined, URI-encoded>`, header `x-ms-session` only (no chat key, no locale — AC §3/LOCALE §1). |
-| Batching | ids trimmed and deduplicated. Ids not yet cached are fetched in **batches of 10** (the server cap). |
+| Request | `GET {apiBase}/api/products?ids=<comma-joined, URI-encoded>`, header `x-ms-session` only (no chat key, no locale — AC §3, §12.2). |
+| Batching | ids trimmed and deduplicated. Ids not yet cached are fetched in **batches of 10** (the AC §3 id cap). |
 | Cache | `productCache` (in memory, per page load). Only a **successful** response is cached. `null` entries mean "unknown id" and are cached. A failed request (429, 5xx, network) caches nothing, so a later card retries. |
 | Result | array aligned to the requested ids; `null` for unknown or unfetched ids |
 | Variant refs | ids of the form `handle~<variantId>` (AC §3 "Product variants") are passed through unchanged. The widget renders the flat fields the server returns for the chosen variant. |
 
-**Product fields the widget actually reads:**
+**Product fields the widget actually reads** (the field definitions are AC §3):
 
 | Field | Used by |
 | --- | --- |
@@ -314,19 +298,19 @@ So a **new background tool** needs no widget release **only if the backend does 
 | `deliveryTime` | compare table row "Lieferzeit" |
 | top-level `cartUrl` | add_to_cart checkout button |
 
-**Ignored today:** `shortDescription`, `features`, `brand`, `category`, `series`, `tags`, `shopifyCartUrl`, `inventoryQuantity`, `anyVariantAvailable`, `sku`, `rating`, `ratingCount`, `qa`, `variants[]`, `selectedVariantId`, `priceMin`/`priceMax`, `currency` (EUR is assumed). The `show_product` input `reason` is also ignored (§8.1).
+**Ignored today:** every other `PublicProduct` field (AC §3), notably `shortDescription`, `features`, `brand`, `category`, `series`, `tags`, `slug`, `shopifyCartUrl`, `inventoryQuantity`, `anyVariantAvailable`, `sku`, `rating`, `ratingCount`, `qa`, `variants[]`, `selectedVariantId`, `priceMin`/`priceMax`, `currency` (EUR is assumed). The `show_product` input `reason` is also ignored (§8.1).
 
 ---
 
 ## 8. Visible tools, one by one
 
-Common card chrome: `.ms-chat-card` > `.ms-chat-card-body`, monochrome. All outbound links open in a **new tab** (`target="_blank" rel="noopener noreferrer"`), so the chat tab stays open.
+Each tool's input and output are the contract's (AC §2 "Tools the widget MUST render"; how a card looks is the widget's choice there). This section is how the widget renders them. Common card chrome: `.ms-chat-card` > `.ms-chat-card-body`, monochrome. All outbound links open in a **new tab** (`target="_blank" rel="noopener noreferrer"`), so the chat tab stays open.
 
 ### 8.1 `show_product` → compact product card (`buildShowProduct`)
 
 | | |
 | --- | --- |
-| Input read | `productId` only. `reason` is **not rendered** (contract AC §2 asks for it as an italic note; the compact card was a deliberate client direction). |
+| Input read | `productId` only. `reason` is **not rendered** (AC §2 leaves layout and `reason` to the widget; the compact card was a deliberate client direction). |
 | Data | `hydrate([productId])` |
 | Renders | one row: thumbnail (`images[0]`, if any) + name + price (sale/strike logic) + "Ausverkauft" badge when `inStock === false`. Below it, a primary pill button **"Zum Produkt"** + external icon → `shopifyUrl`. |
 | Buttons / KPI | "Zum Produkt" → `track('product_cta_clicked', { productId: <catalog id> })`. The thumbnail and name are not links. |
@@ -375,14 +359,14 @@ Common card chrome: `.ms-chat-card` > `.ms-chat-card-body`, monochrome. All outb
 | --- | --- |
 | Input read | `reason` (default `general`), `message?`, `productIds?` |
 | Heading / sub | from `REASON_LABELS[reason]` (DE/EN). The card text is `input.message` if present, else the reason's sub-line. |
-| Reasons with labels | `studio_consultation` "Persönliche Studio-Beratung", `public_sector_quote` "Formelles Angebot anfordern", `physio_consultation` "Physio- / Reha-Beratung", `bulk_discount` "Mengenrabatt anfragen", `leasing` "Leasing-Anfrage", `maintenance` "Wartungsvertrag", **[8d0a0c4]** `order_support` "Kontakt zum motion sports Team", `general` "Persönliche Beratung". Any other reason falls back to `general`. |
-| **`order_support`** | **[8d0a0c4]** own row in `REASON_LABELS` (per `CONTACT_FORM_ORDER_SUPPORT.md`). DE: title „Kontakt zum motion sports Team“, sub-line „Bestellstatus, Retoure/Rückgabe, Stornierung oder Reklamation — das Team kümmert sich.“ EN: "Contact the motion sports team" / "Order status, return, cancellation or complaint — the team will take care of it." Message placeholder for this reason only: „Bestellnummer + kurz dein Anliegen…“ / "Order number + briefly your request…". Organisation stays optional. *Live until the upload:* no row, so it falls back to `general` ("Persönliche Beratung", generic placeholder); the form still submits `reason:"order_support"` correctly. |
+| Reasons with labels | `studio_consultation` "Persönliche Studio-Beratung", `public_sector_quote` "Formelles Angebot anfordern", `physio_consultation` "Physio- / Reha-Beratung", `bulk_discount` "Mengenrabatt anfragen", `leasing` "Leasing-Anfrage", `maintenance` "Wartungsvertrag", `order_support` "Kontakt zum motion sports Team", `general` "Persönliche Beratung". Any other reason falls back to `general`. |
+| **`order_support`** | Own row in `REASON_LABELS` (the reason's meaning: AC §2 `show_contact_form`). DE: title „Kontakt zum motion sports Team“, sub-line „Bestellstatus, Retoure/Rückgabe, Stornierung oder Reklamation — das Team kümmert sich.“ EN: "Contact the motion sports team" / "Order status, return, cancellation or complaint — the team will take care of it." Message placeholder for this reason only: „Bestellnummer + kurz dein Anliegen…“ / "Order number + briefly your request…". Organisation stays optional. |
 | Product refs | if `productIds` is present: `hydrate()` → line "Im Bezug: <names>" (shown only if ≥ 1 resolves) |
 | Fields | `Name *` (text), `E-Mail *` (email), `Organisation` (**required only** for `studio_consultation` and `public_sector_quote`, label then "Organisation / Studio *"), `Telefon` (tel), `Nachricht *` (textarea, placeholder "Beschreibe kurz dein Anliegen…" / "Briefly describe your request…"; for `order_support` see above). Caption: "Wir melden uns innerhalb von 1-2 Werktagen. Deine Daten werden nur für die Bearbeitung deiner Anfrage verwendet." |
 | Client validation | name non-empty; email `^[^@\s]+@[^@\s]+\.[^@\s]+$`; organisation when required; message non-empty. Error lines via `L(de, en)`. |
-| Request | `POST {apiBase}/api/contact`, headers `Content-Type`, `x-ms-chat-key`, `x-ms-session`, `x-ms-locale`. Body: `{ reason, name, email, organization, phone, message, sessionId, productIds? }` (empty optional fields are sent as `""`). **[8d0a0c4]** `sessionId: sid` is in the body, so the backend's `contact_form_submitted` KPI row is session-keyed. *Live until the upload:* no `sessionId` in the body, the row has `sessionId: null` (§20 finding 1). AC §4. |
+| Request | `POST {apiBase}/api/contact`, headers `Content-Type`, `x-ms-chat-key`, `x-ms-session`, `x-ms-locale`. Body: `{ reason, name, email, organization, phone, message, sessionId, productIds? }` (empty optional fields are sent as `""`). `sessionId: sid` is in the body; the backend keys its `contact_form_submitted` KPI row on it, else on the `x-ms-session` header (AC §4). |
 | Success | body replaced by a check icon, "Vielen Dank!" and "Wir haben deine Anfrage erhalten und melden uns innerhalb von 1-2 Werktagen." |
-| Errors | 429 → "Zu viele Anfragen — bitte kurz warten.", submit locked for `Retry-After` (default 30 s). 502 / `upstream_unavailable` → "Senden gerade nicht möglich — bitte später erneut versuchen.". Other errors → the server's `error.message` verbatim, else "Senden fehlgeschlagen. Bitte versuch es erneut.". Network → upstream message. Form values are kept for retry. |
+| Errors (codes: AC §4) | 429 → "Zu viele Anfragen — bitte kurz warten.", submit locked for `Retry-After` (default 30 s). 502 / `upstream_unavailable` → "Senden gerade nicht möglich — bitte später erneut versuchen.". Other errors → the server's `error.message` verbatim, else "Senden fehlgeschlagen. Bitte versuch es erneut.". Network → upstream message. Form values are kept for retry. |
 | KPI | none client-side. The server records `contact_form_submitted` (AC §4/§5). |
 
 ### 8.6 `offer_email_summary` → email-capture form (`buildCaptureCard`)
@@ -391,7 +375,7 @@ The full consent rules (legal invariants, copy fetching, outcome copy) are in 04
 
 | | |
 | --- | --- |
-| Signed-in visitor | **suppressed only if `auth.signedIn` is already true when the card is built** (`buildToolCard` returns `null` in that case; the account already has the email). `var auth` starts with `signedIn: false` on every page load and is resolved only on the first panel open (`openPanel()` → `resolveAuthOnOpen()` → `detectSignedIn()` / `probeAuth()`, async). History restored at page load is rendered by `init()` → `renderAllMessages()` **before** auth settles, and nothing re-renders the messages after `applyAuth()` / `reflectAuthState()`. So a stored `offer_email_summary` part shows the typed-email capture form to a signed-in customer after every reload (and triggers a `GET /api/consent-copy`). The same happens for a live offer that arrives before the first auth probe resolves (see 04 §10 and 04 §18 item 2). |
+| Signed-in visitor | **suppressed only if `auth.signedIn` is already true when the card is built** (`buildToolCard` returns `null` in that case; the account already has the email). `var auth` starts with `signedIn: false` on every page load and is resolved only on the first panel open (`openPanel()` → `resolveAuthOnOpen()` → `detectSignedIn()` / `probeAuth()`, async). History restored at page load is rendered by `init()` → `renderAllMessages()` **before** auth settles, and nothing re-renders the messages after `applyAuth()` / `reflectAuthState()`. So a stored `offer_email_summary` part (for example one offered before the customer signed in) shows the typed-email capture form to a signed-in customer after every reload (and triggers a `GET /api/consent-copy`). A **live** offer no longer reaches a signed-in session: the backend does not offer the tool to a session it resolves as signed in (`src/app/api/chat/route.ts`; it keeps the offer only if that lookup fails), AC §2 `offer_email_summary`, ACCT §6.0. See 04 §10 and 04 §18 item 2. |
 | Input read | `message` (intro), `productIds?` (line "Im Warenkorb: <names>", advisory only), `trigger` (echoed back in the submit body and in the decline KPI) |
 | Consent copy | The card is built at `tool-input-available` (`buildToolCard()` → `buildCaptureCard()`) and immediately calls `loadConsent()` → `fetchConsentCopy()`. That returns the 60 s in-memory cache if it is fresh, else it calls `GET /api/consent-copy?locale=<de\|en>` (header `x-ms-session`). The `output.consentCopy` of this same tool call arrives later. `seedConsentCopy()` stores it in the cache, but it is **not** what this card shows (unless the cache was already fresh). It only serves cards built within the next 60 s (the header form, re-rendered cards). Submit stays disabled until valid served copy is rendered. A failed fetch shows an error with a retry button. No consent text is hard-coded in the widget. |
 | Form | email + two **unchecked**, separate checkboxes (transactional required, marketing optional and visually prominent) + served footer + Impressum/Datenschutz links + decline link "Nein danke, vielleicht später" |
@@ -428,7 +412,7 @@ The full consent rules (legal invariants, copy fetching, outcome copy) are in 04
 
 **Caveat for prompts — lists must be tight:** `renderBlocks()` skips a blank line as a paragraph break, and every new run of `1.`/`1)` lines opens a new `<ol>`. A loose list (`1. A\n\n2. B\n\n3. C`, common in model output) therefore renders as three separate lists, each item shown as "1.". An indented continuation line (no list marker) also ends the list and becomes a paragraph. The same splitting applies to `-` lists (several `<ul>`s, visually extra spacing). Prompts should ask for numbered lists with no blank lines between items and one line per item.
 
-**Contract divergence (harmless):** AC §2 "Rendering assistant text" lists only bold + links. The widget renders a superset. Backend prompts can rely on the table above.
+**Contract:** AC §2 "Rendering assistant text" sets the minimum (paragraphs and line breaks, bold, links, flat `-` / `1.` lists) and leaves more to the widget. This widget renders the superset above, so backend prompts can rely on this table (and on the two caveats).
 
 **Links in text are not tracked.** A Markdown link click fires no KPI event (unlike card buttons). See §20.
 
@@ -451,6 +435,8 @@ The send button is hidden while the textarea is empty (`autoGrow()` toggles `.ms
 
 ## 11. Errors, rate limit and rollback
 
+Status codes, the error envelope and `Retry-After` are the contract's (AC §1 "Error envelope", AC §2 "Rate-limit response (429)" and "Auth / origin errors"); this table is what the widget does with them.
+
 "Rollback" (`rollback()` inside `startStream`) removes the optimistic user message from `messages` and the DOM, removes the assistant scaffold, saves history, shows the welcome screen if the thread is empty, and **puts the typed text back into the composer**.
 
 | Situation | Detection | Rollback? | User-facing result (DE verbatim) |
@@ -464,7 +450,7 @@ The send button is hidden while the textarea is empty (`autoGrow()` toggles `.ms
 | Network failure / reader throws, **nothing rendered yet** | `.catch` | yes | "Es gab ein Problem. Bitte versuch es gleich nochmal." Voice mode loop restarts. |
 | Network failure **after partial content** | `.catch` with `gotContent` | **no**. The partial answer is kept and saved. | same line appended after the partial answer |
 | `error` chunk in the stream | `streamErrored` | **no** | same line appended at finalize, after whatever rendered. Note: if the error chunk came with **no** content, the user message stays in history with no assistant reply (unlike the HTTP paths). |
-| Internal cancel (sign-out, erase, sid rotated in another tab, or the server says a previously signed-in session ended: `endedSignInCleanup()` after a definitive not-signed-in `/api/auth/me` answer or a 401 on any `/api/account/*` call; **[8d0a0c4]** also new chat and opening a past conversation) | `abortActiveStream()` via `dropSessionHistory()`; **[8d0a0c4]** directly in `startNewChat()` / `openConversation()` | n/a | the late reply is never drawn or saved (`cancelled`, `streamSid` checks). All of these paths also stop queued speech (`endSpeaking()`). |
+| Internal cancel (sign-out, erase, sid rotated in another tab, or the server says a previously signed-in session ended: `endedSignInCleanup()` after a definitive not-signed-in `/api/auth/me` answer or a 401 on any `/api/account/*` call; also new chat and opening a past conversation) | `abortActiveStream()` via `dropSessionHistory()`; directly in `startNewChat()` / `openConversation()` | n/a | the late reply is never drawn or saved (`cancelled`, `streamSid` checks). All of these paths also stop queued speech (`endSpeaking()`). |
 
 **Voice mode after HTTP errors:** only the 429 path (via `lockRateLimit()`'s timer) and the network `.catch` call `restartVoiceLoop()`. On HTTP 400 (`payload_too_large`, `bad_request`), 401, 403 and 5xx the hands-free loop is **not re-armed**: voice mode stays on but stops listening until the user toggles it. `rollback()` also puts the spoken transcript into the composer.
 
@@ -481,7 +467,7 @@ Error lines are assistant-style rows in the message list. They are **not persist
 | Key | `localStorage['ms-chat-history:<sid>']`, a JSON array of `{id, role, parts}`. In-memory fallback if `localStorage` is unavailable (then nothing survives a reload). |
 | Cap | `loadHistory()` and `saveHistory()` keep the **last 40** messages. The in-memory array is uncapped (§3.3). |
 | Writes | after the user message is pushed, after each completed assistant message, on rollback, on conversation open. Only while this tab's `sid` is still the device's `ms-chat-sid` (`sidIsCurrent()`), so a tab never writes under an orphaned id. |
-| Content | user text, assistant text, **all known tool parts including outputs** (`search_products` results, `get_order_status` order data, consent copy). This is why sign-out and erase rotate the sid and delete the history (order data on shared devices, `CHAT_ORDER_STATUS.md`). |
+| Content | user text, assistant text, **all known tool parts including outputs** (`search_products` results, `get_order_status` order data, consent copy). This is why sign-out and erase rotate the sid and delete the history (order data on shared devices, ACCT §5.1). |
 | Quota errors | `lsSet()` swallows a `setItem` failure (it writes to a memory map that `lsGet()` never reads while `localStorage` works). A full storage therefore leaves the **previous** snapshot in place without notice. |
 | Restore render | `renderAllMessages()` on init: user bubbles and `renderRestoredAssistant()` for assistant messages. A message with no renderable part (only silent/unknown tools) is skipped entirely. Unknown part types are ignored. Text renders in full Markdown. |
 | Tool cards on restore | **re-built from scratch**: products are re-hydrated (new `GET /api/products` calls), `show_product` re-triggers the attribution stamp (once per load). **Form cards come back fresh and empty**: a submitted or declined `offer_email_summary` capture form and a submitted `show_contact_form` re-appear as new forms after every reload (all visitors, signed-in included: restore runs in `init()` before auth settles, so the `buildToolCard()` suppression does not apply, §8.6), and a decline there fires `email_capture_declined` again. |
@@ -502,17 +488,17 @@ Error lines are assistant-style rows in the message list. They are **not persist
 | **Signed in** | sid **kept** (it is the identity link). Local history key deleted, `messages = []`. A **fresh `conversationKey = uuid()`** is created immediately and stored in `ms-chat-convkey:<sid>`. Past threads stay server-side. |
 | **Anonymous / email-only** | `rotateSession()`: deletes history, mints a **new sid**, resets the attribution cache. `conversationKey` stays null (never sent). The old conversation is no longer reachable from this device. **`capturedEmail` is not cleared**: later turns still send `customer.email` (ignored by the backend because the sid no longer matches the capture) and feedback keeps `tier: "email"` + the address (§3.2, §16, §20 finding 19). |
 
-**[8d0a0c4] A reply still streaming is cancelled first.** `startNewChat()` now begins with `if (abortActiveStream) { abortActiveStream(); abortActiveStream = null; }`, `endSpeaking()` and `removeTyping()`, then `clearNotice()`. `openConversation()` does the same once the transcript has loaded (before `track('conversation_opened')`). The old turn's `cancelled` flag turns its fetch callbacks, reader loop, events and `finalizeStream()` into no-ops, so the late reply is never drawn into, saved with or replayed in the new (or opened) thread. Both also call `endSpeaking()`, so streaming-TTS audio already queued for the old reply stops at once (like `dropSessionHistory()`).
+**A reply still streaming is cancelled first.** `startNewChat()` begins with `if (abortActiveStream) { abortActiveStream(); abortActiveStream = null; }`, `endSpeaking()` and `removeTyping()`, then `clearNotice()`. `openConversation()` does the same once the transcript has loaded (before `track('conversation_opened')`). The old turn's `cancelled` flag turns its fetch callbacks, reader loop, events and `finalizeStream()` into no-ops, so the late reply is never drawn into, saved with or replayed in the new (or opened) thread. Both also call `endSpeaking()`, so streaming-TTS audio already queued for the old reply stops at once (like `dropSessionHistory()`).
 
 For both visitor types the rate lock and streaming flags are then cleared and the welcome screen (or the opened transcript) is shown. The header refresh icon and the drawer's "Neue Beratung" stay clickable while streaming (`updateInputState()` disables only textarea, send and mic); with the abort that is now harmless.
 
-*Live until the `8d0a0c4` upload (PR #73 widget):* neither function calls `abortActiveStream()` (`rotateSession()` does not either). Signed in, the sid is unchanged, so the old turn's `finalizeStream()` passes the `sid === streamSid` check and pushes the late reply into the **new** (or opened) thread's `messages`, saves it and replays it under that thread's `conversationKey`. Anonymous, the late reply is not saved (sid rotated), but if no visible part had arrived yet `ensureCtx()` can still draw it into the fresh welcome view. Because input is re-enabled at once, the old turn's `finalizeStream()` can also re-enable input in the middle of a new turn. Same finding in 02 §21 item 1 and §20 finding 15.
+Before 2026-10-04 neither function cancelled the stream, so a late reply could land in (and, signed in, be saved with) the new or opened thread (02 §21 item 1, §20 finding 15).
 
 **Thread key rules** (`activeConversationKey`, `localStorage['ms-chat-convkey:<sid>']`):
 
 - `maybeMintConversationKey(isFreshThread)` mints a key **only** when the visitor is signed in, has no key yet, and the thread is empty (first turn of a fresh thread, including the context greeting).
 - **Sent** on `/api/chat` only when `auth.signedIn` and a key exists. Also sent as `conversationId` in feedback (§16) and used for the summary download (§14).
-- **Opening a past conversation** (`openConversation(id)`): `GET /api/account/conversations/{id}` (account headers). **[8d0a0c4]** On success it first cancels a reply still streaming (see above). The transcript becomes text-only messages (`transcriptToMessages()`: **tool parts and cards are lost**), keeps the last 40, adopts the server's `conversationKey`, and saves locally. Further turns append to that thread.
+- **Opening a past conversation** (`openConversation(id)`): `GET /api/account/conversations/{id}` (account headers, ACCT §7.2). On success it first cancels a reply still streaming (see above). The transcript becomes text-only messages (`transcriptToMessages()`: **tool parts and cards are lost**), keeps the last 40, adopts the server's `conversationKey`, and saves locally. Further turns append to that thread.
 - **Deleting the active conversation** in the drawer clears the local view and the key.
 - **Edge case — auth not settled at first send:** if a visitor who is actually signed in sends before `auth.settled` (e.g. product CTA or deep link on a cold load), no key is minted (`auth.signedIn` is false at that moment). Later turns do not mint either, because the thread is no longer fresh. The thread then runs **without `conversationKey`** (server falls back to `session_id`, AC §2), and the summary download button stays hidden for it.
 - **Edge case — existing keyed thread, auth not settled yet on this page load:** auth is re-resolved lazily on every page load (first panel open: `openPanel()` → `resolveAuthOnOpen()`, async), while `activeConversationKey` is restored synchronously by `loadConvKey()`. `startStream()` attaches the key only `if (auth.signedIn && activeConversationKey)`, so any send before the probe resolves omits `conversationKey` even though the thread on screen already has one. In practice this is the product-page CTA: `openWithProduct()` calls `openPanel()` and then `sendMessage()` synchronously, so the first CTA turn of a page view goes out keyless. The backend then files that turn under the legacy `session_id` thread instead of the keyed one (`src/app/api/chat/route.ts` → `conversationKey` null; `src/lib/conversation-store.ts` falls back to `sessionId`), which can create a stray or duplicate history entry. A fix would send the stored key whenever one exists, or delay CTA sends until `auth.settled` (§20 finding 21).
@@ -526,7 +512,7 @@ The history drawer UI (list, rename, delete, export, erase) is covered in 04 §7
 | | |
 | --- | --- |
 | Button | header pill "Zusammenfassung" (download icon), visible only when `auth.signedIn && activeConversationKey && messages.length > 0` (`updateDownloadBtn()`) |
-| Request | `GET {apiBase}/api/account/summary?conversationKey=<key>` with account headers (`x-ms-chat-key`, `x-ms-session`, `x-ms-locale`). No client timeout (the backend may make an AI call). Button disabled with a busy class meanwhile. |
+| Request | `GET {apiBase}/api/account/summary?conversationKey=<key>` with account headers (`x-ms-chat-key`, `x-ms-session`, `x-ms-locale`); contract ACCT §8. No client timeout (the backend may make an AI call). Button disabled with a busy class meanwhile. |
 | Success | response Blob saved as `motionsports-zusammenfassung.pdf` via a temporary `<a download>` |
 | 401 | session no longer resolves → `accountUnauthorized()`: `applyAuth(null)`, close the drawer, and if the device was signed in `endedSignInCleanup()` → `dropSessionHistory()`: a running reply is aborted, local history and the `conversationKey` are deleted, the captured email is cleared and a new sid is minted (see 04 §8). The same applies to a 401 on every other `/api/account/*` call (conversation open/delete, export, opt-in). |
 | 404 | info notice "Für diese Beratung gibt es noch keine Zusammenfassung." |
@@ -552,7 +538,7 @@ The history drawer UI (list, rename, delete, export, erase) is covered in 04 §7
 | Entry | quiet footer link "Feedback geben" next to the disclaimer "KI-Fitnessberater – Antworten können Fehler enthalten". Always available, all tiers. `openFeedbackCard()` reuses an open card. |
 | Card | title "Dein Feedback", intro "Wie war deine Beratung? Erzähl uns kurz, was gut lief oder was wir verbessern können.", textarea (`maxlength` 4000, placeholder "Dein Feedback (optional anonym) …"), buttons "Abbrechen" / "Absenden" |
 | Validation | non-empty ("Bitte schreib uns kurz, was du uns mitteilen möchtest."), ≤ 4000 chars |
-| Body | `{ message, sessionId: sid, conversationId?: activeConversationKey (signed-in only), tier: "signed-in"\|"email"\|"anonymous", email?: capturedEmail, page: location.pathname }`. `email` is attached whenever `capturedEmail` is set (`identifiedEmail()` has no tier check), in practice for email-only visitors. The account email of a signed-in customer is never read or sent, but an address captured earlier in the same page view still is, even after auth settles as signed in (then with `tier: "signed-in"`). It also survives an anonymous "Neuen Chat starten" (§13). AC §9. |
+| Body | `{ message, sessionId: sid, conversationId?: activeConversationKey (signed-in only), tier: "signed-in"\|"email"\|"anonymous", email?: capturedEmail, page: location.pathname }`. `email` is attached whenever `capturedEmail` is set (`identifiedEmail()` has no tier check), in practice for email-only visitors. The account email of a signed-in customer is never read or sent, but an address captured earlier in the same page view still is, even after auth settles as signed in (then with `tier: "signed-in"`). It also survives an anonymous "Neuen Chat starten" (§13). Contract (fields, server limits, statuses): AC §9. |
 | Headers | `Content-Type`, `x-ms-chat-key`, `x-ms-session`, `x-ms-locale` |
 | Results | 200 → "Danke!" / "Dein Feedback ist angekommen — das hilft uns sehr.". 413/`payload_too_large` → length error. 429 → "Danke! Du hast gerade schon Feedback gesendet — bitte kurz warten." with buttons locked for `Retry-After` (default 30 s). Other errors → "Senden gerade nicht möglich — bitte später erneut versuchen." The text is kept for retry. |
 | KPI | none client-side. There is no rating or score field, only free text. |
@@ -586,37 +572,23 @@ Loop: listen → final transcript → `voiceSubmit()` → normal `sendMessage()`
 
 | Path | When | Requests | Fallback |
 | --- | --- | --- | --- |
-| **Streaming TTS** (default in voice mode) | starts on the first `text-delta` of a reply | `POST /api/tts` `{ text, stream:true, seq }` per chunk. Chunks come from `splitIntoTtsChunks()` (mirror of the backend splitter, AC §8): cut at sentence ends (`.`, `!`, `?`, `…`, newline; German abbreviations, decimals and `google.com`-style dots excepted), coalesced to ≥ **40** chars, force-cut at **220** chars at a clause or space. Requests fire **in parallel** without a concurrency cap. Clips play strictly in `seq` order. | any non-2xx, network or play error → the rest (unplayed clips + pending text) goes to `speakReply()` (single-shot path). A 429 first sets `ttsBackoffUntil`, so the remainder is then spoken locally (Local only row), with no further `/api/tts` request. |
-| **Single-shot** (`speakReply()`) | streaming path aborted, or backoff active at stream start | one `POST /api/tts { text }` with the whole remaining reply (server truncates at 2000 chars, AC §8), **only when no 429 backoff is active**. `speakReply()` checks `Date.now() < ttsBackoffUntil` first. After a 429 (streaming or single-shot), or with backoff active at stream start, the remainder goes straight to `speechSynthesis` (Local only row). In practice only non-429 streaming failures (502, network, play error) reach a real single-shot POST. | non-2xx / error → browser `speechSynthesis` (`de-DE`, first German voice) |
+| **Streaming TTS** (default in voice mode) | starts on the first `text-delta` of a reply | `POST /api/tts` `{ text, stream:true, seq }` per chunk (contract: AC §8 "Streaming voice mode"). Chunks come from `splitIntoTtsChunks()` (mirror of the backend splitter, AC §0 rule 24): cut at sentence ends (`.`, `!`, `?`, `…`, newline; German abbreviations, decimals and `google.com`-style dots excepted), coalesced to ≥ **40** chars, force-cut at **220** chars at a clause or space. Requests fire **in parallel** without a concurrency cap. Clips play strictly in `seq` order. | any non-2xx, network or play error → the rest (unplayed clips + pending text) goes to `speakReply()` (single-shot path). A 429 first sets `ttsBackoffUntil`, so the remainder is then spoken locally (Local only row), with no further `/api/tts` request. |
+| **Single-shot** (`speakReply()`) | streaming path aborted, or backoff active at stream start | one `POST /api/tts { text }` with the whole remaining reply (the server truncates at its text cap, AC §8), **only when no 429 backoff is active**. `speakReply()` checks `Date.now() < ttsBackoffUntil` first. After a 429 (streaming or single-shot), or with backoff active at stream start, the remainder goes straight to `speechSynthesis` (Local only row). In practice only non-429 streaming failures (502, network, play error) reach a real single-shot POST. | non-2xx / error → browser `speechSynthesis` (`de-DE`, first German voice) |
 | **Local only** | `Date.now() < ttsBackoffUntil` | none | `speechSynthesis` directly. If unavailable: notice "Sprachausgabe nicht verfügbar." once, loop continues input-only. |
 
 - **Tool-only reply:** not spoken at all. `voiceAfterReply()` finds no text (`plainTextFromParts()` reads text parts only), makes **no** TTS request and just calls `restartVoiceLoop()`, which re-arms the mic after 350 ms.
 - **429 on `/api/tts`** sets `ttsBackoffUntil = now + Retry-After` (default **300 s**). During that window the backend is skipped.
 - Headers: `Content-Type`, `x-ms-chat-key`, `x-ms-session`, `x-ms-locale`. The locale header is the only language signal. The local fallback voice is always German.
 - KPI: `voice_reply_played` normally once per spoken reply (on first clip play in `streamTtsPump()`, guarded by `s.tracked`; on single-shot play start in `playBlob()`; or on `speechSynthesis` start in `speakViaSynthesis()`). It can fire **twice** for one reply when streaming TTS falls back to the single-shot/local path after the first clip played, because the fallback's own play start fires it again (05 §4: treat the count as ≥ replies played). No transcript content in any event.
-- Server cost: each chunk records a TTS usage row (AC §8 "Cost attribution").
+- Server cost: each chunk records a TTS usage row (backend `../AI_MODELS.md` "Voice (TTS)").
 
 ---
 
 ## 18. KPI events fired in this chapter's scope
 
-All via `track(event, data)` → `POST {apiBase}/api/kpi` `{ event, sessionId, timestamp, data }` (fire-and-forget, `keepalive`). The full index is in 02 §19 and 05 §4.
+All via `track(event, data)` → `POST {apiBase}/api/kpi` `{ event, sessionId, timestamp, data }` (fire-and-forget, `keepalive`). In this chapter's scope: `message_sent` (§2), `product_cta_opened` (§2; numeric id, or whatever id `window.MS_CHAT.openWithProduct()` was given), `nudge_clicked` (§2), `product_cta_clicked`, `add_to_cart_clicked`, `showroom_clicked`, `email_capture_declined` (§8), `summary_download_started` / `summary_downloaded` (§14), `account_new_consultation`, `conversation_opened` (§13), `voice_mode_on` / `voice_mode_off` / `voice_reply_played` (§17). Their `data`, triggers and caveats: `05` §4 (owner); location index: `02` §19; contract: AC §5.
 
-| Event | Fired when | `data` |
-| --- | --- | --- |
-| `message_sent` | every user message (composer, voice, product CTA) | `{}` |
-| `product_cta_opened` | product-page CTA clicked (or `window.MS_CHAT.openWithProduct()` called) | `{ productId: <CTA data-ms-chat-product-id, numeric Shopify id; or the id passed to the public API> }` |
-| `nudge_clicked` | nudge bubble clicked (may start the greeting turn) | `{ pageType, contextual }` |
-| `product_cta_clicked` | "Zum Produkt" in show/compare cards or the add_to_cart fallback links | `{ productId: <catalog id / handle> }` |
-| `add_to_cart_clicked` | "Zur Kasse" clicked | `{ productId: <first>, productIds: [...] }` |
-| `showroom_clicked` | "Showroom ansehen" clicked | `{ productIds: [...] }` |
-| `email_capture_declined` | capture card "Nein danke, vielleicht später" | `{ trigger }` or `{}` |
-| `summary_download_started` / `summary_downloaded` | PDF download | `{}` |
-| `account_new_consultation` | drawer "Neue Beratung" | `{}` |
-| `conversation_opened` | past thread loaded | `{}` |
-| `voice_mode_on` / `voice_mode_off` / `voice_reply_played` | voice mode | `{}` |
-
-**Not fired by the widget** (server-side or absent): tool impressions (server knows the tool calls), `email_capture_ask_shown`/`_submitted`, `contact_form_submitted`, `campaign_chat_started`, feedback submitted, Markdown link clicks, compare-table views, stream errors and rate-limit hits.
+**Not fired by the widget:** tool impressions, `email_capture_ask_shown` / `_submitted`, `contact_form_submitted`, `campaign_chat_started` (all server-side, AC §5 server table), feedback submitted, Markdown link clicks, compare-table views, stream errors and rate-limit hits.
 
 ---
 
@@ -628,9 +600,9 @@ All via `track(event, data)` → `POST {apiBase}/api/kpi` `{ event, sessionId, t
 | `GET /api/products` | product ids + sid header |
 | `POST /api/capture-email` | the typed email, both consent booleans, `consentTextShown` verbatim, `locale`, `trigger` (tool cards only), `sessionId` in the body; headers chat key, sid, locale. The only place in this chapter where an email address the visitor typed is sent (§8.6). |
 | `GET /api/consent-copy?locale=` | locale (query) + sid header |
-| `POST /api/attribution/token` | sid + chat key (headers only, no body). One **successful** mint per sid (cached in `localStorage['ms-mo-attr']`, keyed to the sid; with the in-memory storage fallback it is re-minted every page load, the server is idempotent). `moAttrEnsure()` is triggered by a `show_product` render (live or restored), a "Zur Kasse" click, or `visitorConsentCollected` (`initAttribution()`) after a product card rendered in this page view without a token. `moAttrFailed` / `moAttrInflight` are per page view, so a failed mint (401/403/429/5xx/network, or a non-ok body) is retried on the next page view's trigger. Every attempt is consent-gated (`moAnalyticsAllowed()`). |
+| `POST /api/attribution/token` | sid + chat key (headers only, no body), consent-gated; triggers, caching and retries: `06` §8.2–§8.4 (owner) |
 | `GET /api/account/conversations/{id}` | conversation id (path) + account headers (chat key, sid, locale). Signed-in only. |
-| `POST /api/contact` | the form fields the visitor typed + `reason`, `productIds`, **[8d0a0c4]** `sessionId` in the body (sid also in the header) |
+| `POST /api/contact` | the form fields the visitor typed + `reason`, `productIds`, `sessionId` in the body (sid also in the header) |
 | `POST /api/feedback` | the comment + sid, tier, page path, conversation key (signed-in), captured email (whenever set in this page load, any tier, §16) |
 | `POST /api/tts` | reply text (chunks or whole), sid |
 | `GET /api/account/summary` | conversation key, sid |
@@ -642,12 +614,12 @@ All via `track(event, data)` → `POST {apiBase}/api/kpi` `{ event, sessionId, t
 
 ## 20. Findings for backend decisions (bugs, gaps, KPI levers)
 
-Found while documenting. Findings 1, 2 and 15 are **fixed on `main` in `8d0a0c4` but not uploaded yet**, so they still hold on live until the owner uploads `assets/ms-chat-widget.js`. The others are open.
+Found while documenting. Findings 1, 2 and 15 were fixed on 2026-10-04 (`8d0a0c4`, `3e87341`) and keep their numbers so references stay stable. The others are open.
 
 **Correctness / contract gaps**
 
-1. **[Fixed in `8d0a0c4`, not uploaded yet] `contact_form_submitted` is recorded without a session id.** The live widget sends `sessionId` only as the `x-ms-session` header. The backend `src/app/api/contact/route.ts` reads `payload.sessionId` from the **body** only, so the KPI row gets `sessionId: null`, and contact submissions cannot be joined to the conversation or tool fire. `8d0a0c4` adds `sessionId: sid` to the body (§8.5). Rows recorded before the upload stay session-less. A backend fallback to the `x-ms-session` header would also cover the live widget until the upload.
-2. **[Fixed in `8d0a0c4`, not uploaded yet] `order_support` had no label row** in `REASON_LABELS`. On live it renders as "Persönliche Beratung" with the generic placeholder. `8d0a0c4` implements the `CONTACT_FORM_ORDER_SUPPORT.md` copy (title, sub-line, order-number placeholder, DE + EN; §8.5). Relevant once `CHAT_ORDER_STATUS_ENABLED` is on.
+1. **[Fixed 2026-10-04] `contact_form_submitted` session.** The widget sends `sessionId: sid` in the body (§8.5), and the backend keys the row on it, else on the `x-ms-session` header (`src/app/api/contact/route.ts`, AC §4), so contact submissions join the conversation and the tool fire. Rows from before the 2026-10-04 upload have `sessionId: null`.
+2. **[Fixed 2026-10-04] `order_support` label row** in `REASON_LABELS`: own title, sub-line and order-number placeholder, DE + EN (§8.5). Before, the reason fell back to "Persönliche Beratung" with the generic placeholder.
 3. **Hard 40-message wall.** The in-memory history is not trimmed before sending, so the 21st user message fails with a "start a new chat" notice. For anonymous visitors that rotates the sid and loses the thread (and the attribution token context). Options: the backend accepts and windows longer histories, or the widget sends a trimmed window (it would then need to keep `update_customer_profile` replays).
 4. **`show_product.reason` is never shown**, and many product fields are ignored (`shortDescription`, `rating`, `qa`, `variants`, `priceMin/Max`). Backend copy in `reason` is invisible to shoppers. Multi-variant products show only the default/flat price, with no "ab" price range.
 5. **`email_capture_declined` lacks `askNumber`** (contract allows it as optional).
@@ -655,12 +627,12 @@ Found while documenting. Findings 1, 2 and 15 are **fixed on `main` in `8d0a0c4`
 7. **`error` chunk with no content keeps the user message** in history without a reply (HTTP error paths roll back instead). The next turn then sends two consecutive user messages.
 8. **`add_to_cart` with more than 10 ids** renders nothing (no chunking on that path).
 9. **Voice language:** recognition and the local TTS fallback are hard-coded `de-DE`, also on `/en`.
-10. **Resumed threads lose tool parts** (`transcriptToMessages()` is text-only). Cards are gone, and `update_customer_profile` replays are not sent on later turns of a resumed thread, unless the backend reconstructs the profile from its own store.
+10. **Resumed threads lose tool parts** (`transcriptToMessages()` is text-only). Cards are gone, and `update_customer_profile` replays are not sent on later turns of a resumed thread. The backend does **not** restore that profile from a store: it rebuilds it on every turn from the replayed history (`extractProfile()` in `src/app/api/chat/route.ts`, AC §2 "Request body"), so a resumed thread starts with an empty profile. A signed-in customer's memory comes separately (`resolveChatIdentity()`, `src/lib/customer-memory.ts`: the name, and with personalisation consent the customer record's profile summary and purchase history).
 11. **Signed-in but unsettled first send** → a thread without `conversationKey` and no PDF download for it (§13).
 12. **`product_cta_opened` uses the numeric Shopify id**, while `product_cta_clicked`/`add_to_cart_clicked` use catalog ids/handles. Joining these needs a mapping.
 13. **`add_to_cart_clicked.productIds` includes sold-out items** that are not in the checkout link.
 14. **Output-less tool parts are replayed as `output-available`** (§3.3). After `tool-output-error`, a mid-tool stream error or a network drop after the input, the widget stores the part with `state: "output-available"` and no `output`. `sanitizeToolParts` (`src/lib/chat-message-sanitize.mjs`) drops only `input-streaming`/`input-available` parts, so these reach `convertToModelMessages` without a result. Impact on the provider call not verified. Fix on either side: the widget keeps `state: "input-available"` until an output arrives (`accumulatePart()`), or `sanitizeToolParts` also drops parts whose `output` is undefined.
-15. **[Fixed in `8d0a0c4`, not uploaded yet] New chat / open conversation during a streaming reply** (§13, same as 02 §21 item 1). On live, signed in: the late reply is appended to the new or opened thread and saved. Anonymous: not saved, but it can still render into the fresh view. `8d0a0c4` calls `abortActiveStream()` + `endSpeaking()` + `removeTyping()` first in `startNewChat()` and `openConversation()`.
+15. **[Fixed 2026-10-04] New chat / open conversation during a streaming reply** (§13, same as 02 §21 item 1): `startNewChat()` and `openConversation()` call `abortActiveStream()` + `endSpeaking()` + `removeTyping()` first. Before, a signed-in user's late reply was appended to the new or opened thread and saved.
 16. **Consent copy displayed on a tool card comes from `GET /api/consent-copy`, not from the tool output** (§8.6). If the backend ever served different copy in `offer_email_summary`'s `output.consentCopy` than from `/api/consent-copy`, the GET copy is what is displayed and echoed as `consentTextShown`. Keep both sources identical (or drop the tool-output copy).
 17. **Hands-free voice mode stalls after HTTP 400/401/403/5xx** (§11): the mic is not re-armed and the transcript lands in the composer.
 18. **Streaming Markdown hold-back** (§9): a bare `[` or an unmatched `*`/`` ` `` in prose freezes the visible bubble until the run ends. A prompt-side rule avoids it. A widget-side fix would limit the hold-back to a trailing token.
@@ -671,19 +643,19 @@ Found while documenting. Findings 1, 2 and 15 are **fixed on `main` in `8d0a0c4`
 
 **KPI levers (frontend changes the backend could request)**
 
-- **Send page context on typed turns** (at least the first message of a session, or when the page changed since the last context). Today a shopper on a product page who types "Ist das leise?" gives Mo no product.
+- **Send page context on typed turns** (at least the first message of a session, or when the page changed since the last context). Today a shopper on a product page who types "Ist das leise?" gives Mo no product. → `tasks/2-page-context.md`; the backend side is built (AC §2 `source: "page"`, `CHAT_PAGE_CONTEXT_ENABLED` default off in code).
 - **Track Markdown link clicks** in assistant text (product links in prose are currently invisible to the KPI funnel).
 - **Make card thumbnails and names clickable** (same `product_cta_clicked`). Today only the button is a link.
 - **Add a checkout/add-to-cart action to `show_product` and `compare_products`.** Today a purchase click needs the model to call `add_to_cart`.
 - **Use `rating`/`ratingCount`, `priceMin/Max` "ab", and a variant selector** from `variants[]` (AC §3) on product cards.
-- **Order attribution for card checkouts:** the chat card's `cartUrl` comes from `/api/products` and is a bare permalink (AC §3, example `/cart/<variantId>:1,…`; AC §3 says nothing about `_mo`). Per `ORDER_ATTRIBUTION.md` only Mo-built email and bundle links (summary email, marketing email, bundle offers) carry `attributes[_mo]`, so the widget card relies on the live-cart stamp. The widget stamps the *current* cart via `/cart/update.js` before opening the permalink. Whether the stamp survives a cart-permalink checkout is not verified in this repo (see open questions). Appending `attributes[_mo]=<token>` to the permalink (as the email links do, `ORDER_ATTRIBUTION.md`) would make it explicit.
+- **Order attribution for card checkouts:** the chat card's `cartUrl` comes from `/api/products` and is a bare permalink (AC §3, example `/cart/<variantId>:1,…`; AC §3 says nothing about `_mo`). Per OA only Mo-built email and bundle links (summary email, marketing email, bundle offers) carry `attributes[_mo]`, so the widget card relies on the live-cart stamp. The widget stamps the *current* cart via `/cart/update.js` before opening the permalink. Whether the stamp survives a cart-permalink checkout is not verified in this repo (see open questions). Appending `attributes[_mo]=<token>` to the permalink (as the email links do, OA) would make it explicit.
 - **The first-message popup never shows in voice mode.** Voice users are never asked to sign in or opt in.
 - **Add a "stop generating" button.** None exists today.
 
 **Risks**
 
 - Silent tool outputs (`search_products`, `get_order_status`) are stored in `localStorage` and re-sent on every turn. This means bandwidth and storage use, and order data on shared devices (mitigated by sid rotation on sign-out/erase). A storage-quota failure silently keeps an older snapshot.
-- Streaming TTS fires all chunk requests in parallel, so long answers create bursts against the `tts-stream` bucket (120 / 5 min).
+- Streaming TTS fires all chunk requests in parallel, so long answers create bursts against the `tts-stream` rate-limit bucket (AC §1 "Rate limits").
 
 ---
 
@@ -692,6 +664,6 @@ Found while documenting. Findings 1, 2 and 15 are **fixed on `main` in `8d0a0c4`
 1. **Cart permalink + stamped attributes:** does Shopify's `/cart/<variant>:1` permalink (opened in a new tab) keep the cart attributes stamped by `/cart/update.js` in the chat tab, or does it build a fresh checkout without them? This decides whether "Zur Kasse" orders count as attributed. Not determinable from this repo. It needs a live test order.
 2. **Does the permalink replace or merge** with the shopper's existing cart contents? The widget code assumes it "populates the cart in the new tab". The exact Shopify behaviour is not documented here.
 3. **Variant-ref names:** for `handle~variantId` ids, whether the returned `name` includes the variant title (the widget shows only `name`) depends on the backend. Check `GET /api/products` output.
-4. **Live parity:** this describes `main` at `8d0a0c4`. Live runs the PR #73 widget (uploaded 2026-10-04) without the `8d0a0c4` fixes until the owner uploads them (items tagged [8d0a0c4]). Live-editor drift has reverted widget work before, so diff after each upload.
-5. **`get_order_status`** is documented as silent and works in code. PR #73 (silent handling, chat sign-in via one-time code) is live since 2026-10-04, but the tool can only fire once the backend switch `CHAT_ORDER_STATUS_ENABLED` is on. It is still off; the backend should first verify on live that a `get_order_status` part renders nothing and that a real sign-in completes.
-6. **Backend profile on resumed threads:** whether the backend restores the customer profile for a resumed thread whose replayed history has no `update_customer_profile` parts (finding 10) was not checked in the backend code.
+4. **Live parity:** this describes `main` at `3e87341`; which build the shop serves: README §4 (`npm run verify:widget`). Live-editor drift has reverted widget work before, so diff after each upload (`01` §16).
+5. *(answered)* **`get_order_status`** is silent in the widget (§6.1): stored and replayed, never rendered. The backend offers it only while `CHAT_ORDER_STATUS_ENABLED` is on (default off in code; while off, only the test accounts in `CHAT_ORDER_STATUS_TEST_CUSTOMERS` get it), and it answers only a chat sign-in; a session recognised only through the shop gets `sign_in_required` (AC §2 "Tools the widget MUST NOT render", ACCT §3a).
+6. *(answered)* **Backend profile on resumed threads:** not restored. The profile is rebuilt from the replayed history on every turn, so a resumed text-only thread starts empty; signed-in memory comes separately (finding 10).

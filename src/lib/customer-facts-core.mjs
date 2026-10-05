@@ -4,7 +4,7 @@
 // marketing and correspondence aggregates into the figures the Kunden list,
 // the audiences and the Eingang filter on (stored in customer_facts, 0063).
 // Most customers never chatted — these facts are what they are known by until
-// an AI profile exists (docs/CUSTOMER_PLATFORM_PLAN.md §6.4, §9.4).
+// an AI profile exists (docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.4, §9.4).
 //
 // Reuses the measured boundaries instead of inventing new ones:
 //   * lifecycle segment → campaign-segments.mjs (resolveCampaignSegment)

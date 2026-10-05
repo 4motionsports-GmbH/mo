@@ -27,7 +27,7 @@
 //      Queued targets are drained a few at a time after later successful
 //      mutations; the daily sync remains the reconciliation backstop.
 //
-// CUSTOMER PLATFORM (docs/CUSTOMER_PLATFORM_PLAN.md §6.2, §8.3): customers/*,
+// CUSTOMER PLATFORM (docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.2, §8.3): customers/*,
 // the e-mail-marketing consent topic, the order ledger (orders/create|updated|
 // paid|cancelled) and the GDPR compliance topics are routed to
 // lib/shopify-webhook-customers.ts — deduplicated by X-Shopify-Webhook-Id, so a

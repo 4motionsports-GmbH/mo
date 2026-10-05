@@ -11,7 +11,7 @@
 // The confirmation is reported to the ONE consent (lib/consent-flows.ts): the
 // person is subscribed with a provable double opt-in, in Mo and — through the
 // outbox — in Shopify (a Mo-only subscriber becomes a Shopify customer with
-// that consent). docs/CUSTOMER_PLATFORM_PLAN.md §7.4.
+// that consent). docs/archive/CUSTOMER_PLATFORM_PLAN.md §7.4.
 
 import { confirmMarketingByToken } from "@/lib/email-capture-store";
 import { recordDoiConfirmed } from "@/lib/consent-flows";

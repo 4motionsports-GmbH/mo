@@ -1,7 +1,7 @@
 // What a MERGE of two customer rows does with every table that points at a
 // customer (pure). Two rows become one person when Shopify reports an e-mail
 // change onto an address an Interessent already uses, or when a sign-in finds
-// both rows (docs/CUSTOMER_PLATFORM_PLAN.md §6.1). lib/customer-merge-store.ts
+// both rows (docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.1). lib/customer-merge-store.ts
 // executes this plan; customer-fk-plan.test.mjs parses migrations/*.sql and
 // FAILS when a column referencing customers(id) is missing here — a new
 // feature cannot add a customer link that a merge would silently orphan.

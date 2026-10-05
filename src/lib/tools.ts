@@ -221,7 +221,7 @@ export function buildChatTools(
     // marker below stays on the last always-active tool: this one is present
     // or withheld per deployment (CHAT_ORDER_STATUS_ENABLED), never per turn,
     // so the cached tools prefix stays byte-stable either way. The widget
-    // renders nothing for it (docs/API_CONTRACT.md §2).
+    // renders nothing for it (docs/frontend/API_CONTRACT.md §2).
     get_order_status: tool({
       description: c.orderStatusDesc,
       inputSchema: z.object({
@@ -288,7 +288,7 @@ export function buildChatTools(
       // /api/capture-email — the Art. 7 audit record can never drift from what
       // was displayed, and lawyer copy changes need no widget release. The
       // locale picks the consent language so an /en chat captures /en consent.
-      // See src/lib/consent-copy.ts and API_CONTRACT.md §7.4.
+      // See src/lib/consent-copy.ts and docs/frontend/API_CONTRACT.md §7.4.
       execute: async () => ({ ok: true, consentCopy: captureConsentCopy(locale) }),
     }),
   };

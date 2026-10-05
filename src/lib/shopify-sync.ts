@@ -11,7 +11,7 @@
 //
 // Both write through the same stores as the webhooks
 // (customer-mirror-store, customer-orders-store). Gated by
-// SHOPIFY_CUSTOMER_SYNC_ENABLED. docs/CUSTOMER_PLATFORM_PLAN.md §6.2.
+// SHOPIFY_CUSTOMER_SYNC_ENABLED. docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.2.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";

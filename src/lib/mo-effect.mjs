@@ -1,5 +1,5 @@
 // Mo-Effekt (pure, tested) — do customers who talked to Mo buy differently
-// from comparable customers who never did? docs/CUSTOMER_PLATFORM_PLAN.md §12.3.
+// from comparable customers who never did? docs/archive/CUSTOMER_PLATFORM_PLAN.md §12.3.
 //
 // Input: one row per (value tier × group) with sums from customer_overview —
 // only customers with at least one order. "Comparable" = the same value-tier
