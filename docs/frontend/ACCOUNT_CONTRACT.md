@@ -259,10 +259,10 @@ Response (`200`, `Cache-Control: no-store`):
 { "signedIn": false }
 ```
 
-- **Statuses.** `200` for every answer the backend can prove or disprove; `401` / `403` / `429` /
-  `500` as in §1.1. A `429` or `5xx` says nothing about the sign-in. The route also answers
-  `signedIn: false` when it cannot reach its database (fail closed), so a database outage looks
-  like a sign-out.
+- **Statuses.** `200` for every answer the backend can prove or disprove; `401` / `403` / `429` as
+  in §1.1. A `429` or `5xx` says nothing about the sign-in. The route also answers
+  `signedIn: false` when it cannot reach its database or hits an unexpected error (fail closed;
+  it never answers `500`), so a database outage looks like a sign-out.
 - **Signed in** means: the session has a signed-in link (a chat sign-in, §2a, or a shop-login
   link, §3a) **and** the customer holds a live chat access token (refreshed server-side when
   needed) — or, for a shop-login link, its shop proof is fresh (§3a). A typed e-mail never signs a
@@ -358,9 +358,10 @@ A signed-in customer is offered a one-tap marketing opt-in that skips typing the
 backend holds the verified address). It is the **same double opt-in**, nothing is pre-selected,
 and it is a separate, explicit act.
 
-**Where:** a **popup right after the sign-in** (`placement: "popup"`), and an inline card after a
-sign-in in the middle of a conversation (`placement: "signin_return"`). Rendering, echo and decline
-rules: CONSENT_CONTRACT §3.
+**Where:** a **popup** in the signed-in session (`placement: "popup"`; the widget decides it
+shortly after a sent message, once per tab session), and an inline card right after a chat sign-in
+in the middle of a conversation (`placement: "signin_return"`). Rendering, echo and decline rules:
+CONSENT_CONTRACT §3.
 
 **When:** only when `/api/auth/me` (§4) answers `signedIn: true` **and**
 `marketing.optInActionable === true` — i.e. after the code of §2a was redeemed. The backend

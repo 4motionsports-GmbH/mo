@@ -19,7 +19,7 @@ what the backend stores. One copy version (`v5`) spans every surface; the widget
 | Surface | Who sees it | E-mail field | Mechanic | Copy | Submit |
 |---|---|---|---|---|---|
 | **In-chat capture form** (§4) | anonymous and e-mail-only visitors; a signed-in customer only through the `422` fallback (ACCOUNT_CONTRACT §6.0) | **yes** (typed) | two checkboxes, both unchecked | `offer_email_summary` tool output or `GET /api/consent-copy` | `POST /api/capture-email` |
-| **Marketing ask after sign-in** (§3): a popup right after the sign-in, an inline card after a sign-in mid-conversation | a signed-in customer with `marketing.optInActionable === true` (ACCOUNT_CONTRACT §6.1) | **no** (the backend holds the verified address) | button-consent | `GET /api/consent-copy?surface=signin` | `POST /api/account/marketing-opt-in` |
+| **Marketing ask after sign-in** (§3): a popup in the signed-in session, an inline card right after a sign-in mid-conversation | a signed-in customer with `marketing.optInActionable === true` (ACCOUNT_CONTRACT §6.1) | **no** (the backend holds the verified address) | button-consent | `GET /api/consent-copy?surface=signin` | `POST /api/account/marketing-opt-in` |
 | ~~Chat consent gate~~ (§2) | retired in the widget | — | — | (`surface=chat`) | (`POST /api/chat-marketing-opt-in`) |
 
 **Every surface is the same double opt-in.** Accepting only sends a confirmation e-mail; marketing
@@ -87,9 +87,10 @@ do not build on them. The `consent_gate_*` events carry `surface: "signin"` only
 
 **Who and when:** ACCOUNT_CONTRACT §6.1 — only when `/api/auth/me` answers `signedIn: true` and
 `marketing.optInActionable === true`, i.e. after the one-time code was redeemed
-(ACCOUNT_CONTRACT §2a). Two placements: a **popup right after the sign-in** and the **inline
-card** after a chat sign-in in the middle of a conversation. The account removes only the "type
-your e-mail" step: the customer is signed in, so the backend holds their verified address.
+(ACCOUNT_CONTRACT §2a). Two placements: a **popup** in the signed-in session (decided shortly after
+a sent message, once per tab session) and the **inline card** right after a chat sign-in in the
+middle of a conversation. The account removes only the "type your e-mail" step: the customer is
+signed in, so the backend holds their verified address.
 
 ### 3.1 What to render from `GET /api/consent-copy?surface=signin`
 
@@ -121,8 +122,8 @@ Shape, answers and error codes: ACCOUNT_CONTRACT §6.2. Rules for the widget:
 - POST **only** on the accept tap, with `marketingConsent: true`.
 - `consentTextShown`: the rendered copy's string, byte for byte. `locale`: the language the copy
   was fetched in.
-- `placement`: `"popup"` from the popup after the sign-in, `"signin_return"` from the inline card
-  after a chat sign-in. `"value_moment"` is reserved for an ask at a value moment — never send it
+- `placement`: `"popup"` from the popup, `"signin_return"` from the inline card after a chat
+  sign-in. `"value_moment"` is reserved for an ask at a value moment — never send it
   unless a task introduces that ask.
 - `variant`: the rendered copy's `variant` when it is valid (§3.1), else omit it.
 - Send the same `placement` and `variant` in the `consent_gate_*` KPI data
@@ -140,10 +141,10 @@ Shape, answers and error codes: ACCOUNT_CONTRACT §6.2. Rules for the widget:
 ### 3.3 Confirmation + withdrawal
 
 The DOI confirmation link (`GET /api/confirm-marketing`, API_CONTRACT §7.2) and the unsubscribe
-link in every marketing e-mail (§7.3) are the **same** for all surfaces — nothing widget-side to
-build. Consent is withdrawable any time through that link or in the shop; both sides stay in step.
-An unconfirmed DOI expires (`MARKETING_DOI_EXPIRY_DAYS`, default 7); the ask may then come back
-(ACCOUNT_CONTRACT §6.1).
+link in every marketing e-mail (API_CONTRACT §7.3) are the **same** for all surfaces — nothing
+widget-side to build. Consent is withdrawable any time through that link or in the shop; both
+sides stay in step. An unconfirmed DOI expires (`MARKETING_DOI_EXPIRY_DAYS`, default 7); the ask
+may then come back (ACCOUNT_CONTRACT §6.1).
 
 ---
 

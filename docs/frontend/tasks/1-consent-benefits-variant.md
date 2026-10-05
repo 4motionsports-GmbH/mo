@@ -184,7 +184,7 @@ x-ms-chat-key: <key>   x-ms-session: <sid>   x-ms-locale: <de|en>   Content-Type
 | 422 `no_verified_email` | popup: close → `openCaptureForm()`, except after a dismiss (Task 4); card: „Für dein Konto ist keine bestätigte E-Mail-Adresse hinterlegt.“ + „E-Mail-Adresse eingeben“ (unchanged) | none |
 | 429 | „Zu viele Anfragen — bitte kurz warten.“; accept re-enabled after `Retry-After` (default 30 s) | none |
 | 502 / 503 / network | popup „Gerade nicht möglich — bitte versuch es später erneut.“ / card „Anmeldung gerade nicht möglich — bitte später erneut versuchen.“ | none |
-| other (400 `bad_request`, 403, 404, 500) | popup: server `error.message` or „Das hat leider nicht geklappt. Bitte versuch es erneut.“; card: server `error.message` or „Anmeldung fehlgeschlagen. Bitte versuch es erneut.“ (unchanged; ACCOUNT_CONTRACT §6.2 recommends treating `404 not_found` like a sign-out — not required by this task) | none |
+| other (400 `bad_request`, 403, 404, 500) | popup: server `error.message` or „Das hat leider nicht geklappt. Bitte versuch es erneut.“; card: server `error.message` or „Anmeldung fehlgeschlagen. Bitte versuch es erneut.“ (unchanged; CONSENT_CONTRACT §3.2 groups `500` with `503` as "not possible right now", and ACCOUNT_CONTRACT §6.2 makes treating `404 not_found` like a sign-out optional — neither change is required by this task) | none |
 
 The backend never answers 400 because of `placement` or `variant`.
 

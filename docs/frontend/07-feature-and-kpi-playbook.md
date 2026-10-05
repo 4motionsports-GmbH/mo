@@ -74,7 +74,7 @@ flowchart TD
 | „Frag Mo“ link at the end of the product Q&A tab | **Theme change** in `snippets/product-qa.liquid` (Mo-owned) | CTA contract markup (`06` §3.2) | Normal frontend task and upload (`06` T9). |
 | Translate the PDP CTA label | **Theme change** (editor-owned `templates/product.json`; the same block also sits in `product.produkt-new`, `product.produktnew`, `product.produkte-im-set`) | German literal in template JSON (`01` §6.2) | Owner + live editor, or a locale key. |
 | Hide Mo on a template / kill switch | **Ops (theme editor)** | `ai_advisor_enabled`, `ai_advisor_excluded_templates` (`01` §12) | A person in Customize. The snippet hides the CTA on an excluded template (`06` §3.4). |
-| Silent shop-login recognition | **Ops** (done, P0.3) | App Proxy config in the Shopify app (`06` §9.1) | No theme change. Backend: whoami issues a code only when the session will really be signed in (fresh signature, handover, a proof), behind the switches `APP_PROXY_SIGNIN_ENABLED` and `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (default off in code; D-AP1). Steps: `docs/ROLLOUT_TODO.md` 5.4; drift risk `04` §5.4. |
+| Silent shop-login recognition | **Ops** (P0.3) | App Proxy config in the Shopify app (`06` §9.1) | No theme change. Backend: whoami issues a code only when the session will really be signed in (fresh signature, handover, a proof), behind the switches `APP_PROXY_SIGNIN_ENABLED` and `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (default off in code; D-AP1). Steps and state: `docs/ROLLOUT_TODO.md` 5.4; drift risk `04` §5.4. |
 | PDP Q&A content | **Backend-only** | `metafieldsSet` on `custom.qa` (`06` §4) | Keep ≤ 20 entries and the sanitiser. |
 
 ---
@@ -184,7 +184,7 @@ It opens the panel, fires `product_cta_opened {productId: <numeric>}`, and sends
 | Dead CTA | CTA blocks are gated only by `settings.ai_advisor_enabled`. `snippets/ms-chat-widget.liquid` outputs `<style>.ms-chat-product-advisor, .ms-chat-product-cta { display: none !important; }</style>` wherever it does not render the widget (excluded template, cart/checkout, empty `settings.ms_chat_shared_secret`), so any placement that uses `.ms-chat-product-cta` (or sits in a `.ms-chat-product-advisor` wrapper) is hidden there automatically. That style is only emitted while `ai_advisor_enabled` is on, so a new placement must still be gated on `ai_advisor_enabled` itself. **Still open:** if `ms-chat-widget.js` fails to load, or the visitor clicks before the deferred JS has booted, the button does nothing (fix: the widget adds a class on `<html>` at `init()` and the CTA is shown only under it — a widget change). |
 | Measurement | `chat_opened` has no source. Ask for a `source` on the new entry point (backlog B1). |
 | Language | Template literals are German on `/en`; use a locale key (`| t`) if the placement must be bilingual. |
-| Coverage | All five product templates carry the CTA: the "MO only" block (`custom_liquid_AErEyg`, identical to `templates/product.json`) is also in `product.produkt-new` (after the Kurzinfo/USPs block `custom_liquid_BGU8Mt`), `product.produktnew` and `product.produkte-im-set` (after the SKU + Garantie block `custom_liquid_dy3Byf`), added with `8d0a0c4`. `product.produkte-im-set` still has no Q&A tab (`01` §6.6). |
+| Coverage | All five product templates carry the CTA, and `product.produkte-im-set` has no Q&A tab: `01` §6.6 (owner); placement in each template: `06` §3.1. |
 
 ### 3.7 New account / self-service feature (signed-in)
 
@@ -429,7 +429,7 @@ Consolidated from `05` §13.4, `03` §20, `04` §17–§18, `06` §16 and `02` �
 
 ### P0 — unblock and verify (do first)
 
-P0.1 and P0.3–P0.7 are done (list at the end of this section).
+P0.1 and P0.3–P0.7 are closed (list „Done“ at the end of this section; production state: `docs/ROLLOUT_TODO.md`).
 
 | # | Item | KPI | Backend work | Frontend work | Effort | Legal / notes | Refs |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -501,7 +501,7 @@ Kept for the ids other docs cite.
 | # | Item | Closed by |
 | --- | --- | --- |
 | P0.1 | Merge and upload PR #73 and verify it live; then the order-status switch | Upload and live check on 2026-10-04 (`docs/ROLLOUT_TODO.md` 1.11); the switch is ROLLOUT 6.6 |
-| P0.3 | Set up the App Proxy `/apps/chat/whoami` (silent shop-login recognition) | Backend: P0.3 Phase 1 + 2 — fresh signature, handover, code only with a proof, `account_shop_recognised`, shop proof under D-AP1, anti-nag, dashboard block AD §5.15 (contract ACCOUNT_CONTRACT.md §3a). Ops: `docs/ROLLOUT_TODO.md` 5.4 (done 05.10.). What stays: only a build that redeems `linkCode` is safe, so re-check §6.4 after every re-sync (drift risk `04` §5.4; drift alarm AD §5.15; kill switch `APP_PROXY_SIGNIN_ENABLED=false` + redeploy) |
+| P0.3 | Set up the App Proxy `/apps/chat/whoami` (silent shop-login recognition) | Backend: P0.3 Phase 1 + 2 — fresh signature, handover, code only with a proof, `account_shop_recognised`, shop proof under D-AP1, anti-nag, dashboard block AD §5.15 (contract ACCOUNT_CONTRACT.md §3a). Ops: `docs/ROLLOUT_TODO.md` 5.4 (steps and state). What stays: only a build that redeems `linkCode` is safe, so re-check §6.4 after every re-sync (drift risk `04` §5.4; drift alarm AD §5.15; kill switch `APP_PROXY_SIGNIN_ENABLED=false` + redeploy) |
 | P0.4 | `contact_form_submitted` session join | Widget `8d0a0c4` (body `sessionId`) plus the backend fallback to `x-ms-session` (`src/app/api/contact/route.ts`, API_CONTRACT.md §4) |
 | P0.5 | Abort the stream on new chat / open conversation | Widget `8d0a0c4`; `3e87341` also stops the queued audio (`04` §18 item 1) |
 | P0.6 | Dashboard "Engagement" denominator | Backend: „Geöffnet → geschrieben“ = sessions with `message_sent` ÷ sessions with `chat_opened`, reach shown separately (AD §5.1, `src/lib/kpi-store.ts`) |

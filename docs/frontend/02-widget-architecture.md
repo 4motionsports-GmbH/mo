@@ -179,7 +179,7 @@ Four settings in **Customize → Theme settings → AI Advisor**: `ai_advisor_en
 
 ### 3.2 `window.MS_CHAT_CONFIG` (emitted by `snippets/ms-chat-widget.liquid`)
 
-This table is the one description of the config and the page-context fields (`01` §6.7, §12.2 and `03` §4.1–§4.2 point here). Page facts only, never user data.
+This table is the one description of the config and the page-context fields (`01` §6.7, §12.2, `03` §4.1–§4.2 and `06` §2.1–§2.2 point here). Page facts only, never user data.
 
 | Field | Source | Default in the JS when missing | Used by | Effect |
 | --- | --- | --- | --- | --- |
@@ -189,7 +189,7 @@ This table is the one description of the config and the page-context fields (`01
 | `allowedFromTheme` | hard-coded `true` | — | **Nothing.** The JS never reads it. It is a leftover from the pre-build widget spec. |
 | `locale` | `localization.language.iso_code`, falling back to `request.locale.iso_code` | `'de'` | `LOCALE` | `'en'` if it starts with "en" (case-insensitive), otherwise `'de'`. A `/en` path prefix forces `'en'` (§14). |
 | `pageContext.pageType` | `request.page_type` | `''` | `PAGE_CTX.type` | Mapped to `'product'`, `'collection'`, `'cart'`, `'home'` (from `index`) or `'other'`. |
-| `pageContext.productId` | `product.id` (product pages only) | `null` | `PAGE_CTX.productId` | Numeric Shopify id. Guard in `openWithProduct()` (the handle is used only when the CTA's id matches the page product), fallback id in `recordTrail()` and in the nudge-click context greeting. The `product_cta_opened` KPI uses the CTA's own `data-ms-chat-product-id` (normally the same value). |
+| `pageContext.productId` | `product.id` (product pages only) | `null` | `PAGE_CTX.productId` | Numeric Shopify id (stringified in `PAGE_CTX`). Guard in `openWithProduct()` (the handle is used only when the CTA's id matches the page product), fallback id in `recordTrail()` and in the nudge-click context greeting. The `product_cta_opened` KPI uses the CTA's own `data-ms-chat-product-id` (normally the same value). |
 | `pageContext.productHandle` | `product.handle` | `null` | `PAGE_CTX.productHandle` | The slug. This is the id form the backend catalog uses (API_CONTRACT §3). Sent as `context.productId`. |
 | `pageContext.productTitle` | `product.title` | `null` | `PAGE_CTX.productName` | Nudge copy, context greeting, trail. |
 | `pageContext.productType` | `product.type` | `null` | `PAGE_CTX.category` | The product's "category" for the trail, nudge streaks and `recentlyViewed`. |
@@ -203,7 +203,7 @@ The widget sends page facts only inside the `context` of a CTA turn or a nudge g
 
 ### 3.3 Server-rendered entry points outside the snippet
 
-- **Product-page CTA:** the "MO only" `custom_liquid` block (`custom_liquid_AErEyg`, editor name "MO only"; its Liquid comment reads "AI Advisor (Mo) – Produktberatung") in `templates/product.json`, `product.produkt-new.json`, `product.produktnew.json` and `product.produkte-im-set.json`, plus the older Kurzinfo variant `custom_liquid_BGU8Mt` ("USPs mit MO", disabled in `product.json`; "USPs", enabled in `product.produktdesign-02.json`). Both render `<button class="ms-chat-product-cta" data-ms-chat-product-id="{{ product.id }}" data-ms-chat-product-title="…">` with an empty `.ms-chat-logo` span. Markup contract, placement, styling, click path (`bindProductCtas()` → `openWithProduct()`) and template coverage: `06` §3 (owner); templates: `01` §6.6.
+- **Product-page CTA:** the "MO only" `custom_liquid` block (`custom_liquid_AErEyg`, editor name "MO only"; its Liquid comment reads "AI Advisor (Mo) – Produktberatung") in `templates/product.json`, `product.produkt-new.json`, `product.produktnew.json` and `product.produkte-im-set.json`, plus the older Kurzinfo variant `custom_liquid_BGU8Mt` ("USPs mit MO", disabled in `product.json`; "USPs", enabled in `product.produktdesign-02.json`). Both render `<button class="ms-chat-product-cta" data-ms-chat-product-id="{{ product.id }}" data-ms-chat-product-title="…">` with an empty `.ms-chat-logo` span. Markup contract, placement, styling and click path (`bindProductCtas()` → `openWithProduct()`): `06` §3 (owner); template coverage: `01` §6.6 (owner).
   - Both blocks are owned by the live editor (see §20).
   - **Gating:** the CTA blocks themselves check **only** `settings.ai_advisor_enabled`. Wherever the snippet does not render the widget (excluded product template, empty shared secret), its else-branch `<style>` hides `.ms-chat-product-advisor` / `.ms-chat-product-cta` (§2.3). **Remaining edge:** if `ms-chat-widget.js` fails to load, or a shopper clicks before the deferred script has booted (`init()` → `bindProductCtas()`), the visible button does nothing.
 
@@ -323,7 +323,7 @@ This list was enumerated with `grep` over every `lsGet/lsSet/lsDel/ssGet/ssSet/s
 
 **Fallback:** if localStorage is unavailable (the `hasLS` probe fails), every `ls*` key lives in the in-memory `memStore`. That means a **new sid on every page load** and no persistence. If sessionStorage throws, `ss*` keys fall back to `memSession`, so "once per session" degrades to "once per page load".
 
-This is the one complete list of the widget's storage keys; other chapters (`01` §14, README §7) point here. Keys and clearers tagged **[PR #73]** were added by PR #73 (2026-10-04); the pre-PR #73 widget (`44a076b`) has none of them, so data recorded before 2026-10-04 has none either (§1.1).
+This is the one complete list of the widget's storage keys; other chapters (`01` §14, `04` §12, README §7) point here. Keys and clearers tagged **[PR #73]** were added by PR #73 (2026-10-04); the pre-PR #73 widget (`44a076b`) has none of them, so data recorded before 2026-10-04 has none either (§1.1).
 
 ### 6.1 localStorage
 

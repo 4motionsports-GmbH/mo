@@ -298,7 +298,7 @@ So a **new background tool** needs no widget release **only if the backend does 
 | `deliveryTime` | compare table row "Lieferzeit" |
 | top-level `cartUrl` | add_to_cart checkout button |
 
-**Ignored today:** every other `PublicProduct` field (AC §3), notably `shortDescription`, `features`, `brand`, `category`, `series`, `tags`, `shopifyCartUrl`, `inventoryQuantity`, `anyVariantAvailable`, `sku`, `rating`, `ratingCount`, `qa`, `variants[]`, `selectedVariantId`, `priceMin`/`priceMax`, `currency` (EUR is assumed). The `show_product` input `reason` is also ignored (§8.1).
+**Ignored today:** every other `PublicProduct` field (AC §3), notably `shortDescription`, `features`, `brand`, `category`, `series`, `tags`, `slug`, `shopifyCartUrl`, `inventoryQuantity`, `anyVariantAvailable`, `sku`, `rating`, `ratingCount`, `qa`, `variants[]`, `selectedVariantId`, `priceMin`/`priceMax`, `currency` (EUR is assumed). The `show_product` input `reason` is also ignored (§8.1).
 
 ---
 
@@ -600,7 +600,7 @@ All via `track(event, data)` → `POST {apiBase}/api/kpi` `{ event, sessionId, t
 | `GET /api/products` | product ids + sid header |
 | `POST /api/capture-email` | the typed email, both consent booleans, `consentTextShown` verbatim, `locale`, `trigger` (tool cards only), `sessionId` in the body; headers chat key, sid, locale. The only place in this chapter where an email address the visitor typed is sent (§8.6). |
 | `GET /api/consent-copy?locale=` | locale (query) + sid header |
-| `POST /api/attribution/token` | sid + chat key (headers only, no body). One **successful** mint per sid (cached in `localStorage['ms-mo-attr']`, keyed to the sid; with the in-memory storage fallback it is re-minted every page load, the server is idempotent). `moAttrEnsure()` is triggered by a `show_product` render (live or restored), a "Zur Kasse" click, or `visitorConsentCollected` (`initAttribution()`) after a product card rendered in this page view without a token. `moAttrFailed` / `moAttrInflight` are per page view, so a failed mint (401/403/429/5xx/network, or a non-ok body) is retried on the next page view's trigger. Every attempt is consent-gated (`moAnalyticsAllowed()`). |
+| `POST /api/attribution/token` | sid + chat key (headers only, no body), consent-gated; triggers, caching and retries: `06` §8.2–§8.4 (owner) |
 | `GET /api/account/conversations/{id}` | conversation id (path) + account headers (chat key, sid, locale). Signed-in only. |
 | `POST /api/contact` | the form fields the visitor typed + `reason`, `productIds`, `sessionId` in the body (sid also in the header) |
 | `POST /api/feedback` | the comment + sid, tier, page path, conversation key (signed-in), captured email (whenever set in this page load, any tier, §16) |

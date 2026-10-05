@@ -67,7 +67,7 @@ How the comparison works (full methodology: background `docs/ADMIN_DASHBOARD.md`
 ## Backend state
 **Deployed on 2026-10-05** (backend `main`, „Seitenkontext auf Produktseiten“):
 - `context.source` is accepted.
-- With the switch on (below), a `source: "page"` context with a non-empty `messages` gets a softer pivot note. In effect it says: „the user is writing from product page X; if the question is about a product and they name no other, they probably mean this one; for anything else ignore the note; never comment on the page“.
+- With the switch on (below), a `source: "page"` context on a request with a user message gets a softer pivot note. In effect it says: „the user is writing from product page X; if the question is about a product and they name no other, they probably mean this one; for anything else ignore the note; never comment on the page“.
 - `cta`, `nudge` and absent sources keep today's behaviour, including today's stronger CTA pivot note.
 - For `source: "page"`, `type: "product"` ignores `recentlyViewed`. A `type: "browsing"` context is used only with exactly one category entry; every other trail is dropped.
 
@@ -337,7 +337,7 @@ API_CONTRACT §0 applies in full; for this task that means:
   - Off a PDP it is always `false`.
   - The add-to-cart fallback links behave the same.
   - `timestamp` is an ISO string as in every `track()` call.
-- [ ] **Backend live check** (run by the backend after the upload, not in the harness; report the test sid's first 8 characters in the PR): `npm run verify:live -- --since <upload day> --session <first 8 chars of the test sid>`, section „9 · Seitenkontext auf Produktseiten“, lists for that sid:
+- [ ] **Backend live check** (run by the backend after the upload, not in the harness; report the test sid's first 8 characters in the PR): `npm run verify:live -- --since <upload day> --session <first 8 chars of the test sid>`, section „9 · Seitenkontext auf Produktseiten (A3)“, lists for that sid:
   - `page_context_applied` with `applied`, `kind`, `resolved`, `locale`, `pct` (`pct: 100` while the switch is off);
   - `page_context_answered` with `productCards` and `otherCards`;
   - the widget's `product_cta_clicked` with `samePage`.

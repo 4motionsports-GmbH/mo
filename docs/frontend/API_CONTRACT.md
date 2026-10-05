@@ -1195,17 +1195,18 @@ a `suppressed` address is answered `marketing.status: "none"`, `alreadyConfirmed
 capture session's latest opt-in that needed a DOI mail, else the surface of the latest pending consent
 row, else `mo`.
 
-**Sign-in opt-in extras.** Both `signin_optin` events additionally carry `alreadyConfirmed` and
-`doiRequired` (booleans, the same values as the response), `placement?` and `variant?` (the validated
-echo of the opt-in POST, ACCOUNT_CONTRACT.md §6.2; left out when unknown) and, only while more than one
-consent-popup variant is active, `variantMismatch: true` when the echoed variant is not the one this
+**Sign-in opt-in extras.** Both `signin_optin` events additionally carry `alreadyConfirmed`
+(boolean, the same value as the response), `doiRequired` (boolean: a DOI mail was due, even when its
+send failed), `placement?` and `variant?` (the validated echo of the opt-in POST,
+ACCOUNT_CONTRACT.md §6.2; left out when unknown) and, only while more than one consent-popup variant
+is active, `variantMismatch: true` when the echoed variant is not the one this
 session is assigned (§7.4).
 
 ### Sign-in popup events (widget 2026-10-01)
 
-When the widget asks an anonymous visitor to sign in (the live widget: shortly after the first sent
-message, once per tab session, never in voice mode), it sends these **widget** events (names in
-`src/lib/kpi-widget-events.mjs`):
+When the widget asks an anonymous visitor to sign in (the widget since 2026-10-01: shortly after the
+first sent message, once per tab session, never in voice mode), it sends these **widget** events
+(names in `src/lib/kpi-widget-events.mjs`):
 
 | Event                       | `data`                    | When |
 | --------------------------- | ------------------------- | ---- |
@@ -1223,9 +1224,9 @@ the session the login used (`login?session=`).
 
 ### Consent-gate events (canonical names)
 
-The marketing consent ask for **signed-in** customers (a popup after sign-in, plus the inline card
-after a mid-conversation sign-in; when to show it: ACCOUNT_CONTRACT.md §6.1) is measured through four
-**widget** events (names in `src/lib/kpi-events.ts`; the backend observes the accept only as the
+The marketing consent ask for **signed-in** customers (a popup in the signed-in session, plus the
+inline card right after a mid-conversation sign-in; when to show it: ACCOUNT_CONTRACT.md §6.1) is
+measured through four **widget** events (names in `src/lib/kpi-events.ts`; the backend observes the accept only as the
 opt-in POST). Each carries `data: { surface: "signin", placement?, variant? }`:
 
 - `surface` — `"signin"`. (`"chat"` was the anonymous e-mail gate, not used by the widget since
@@ -1442,10 +1443,10 @@ HTTP/1.1 200 OK
 }
 ```
 
-The widget shows: „Wir haben dir die Zusammenfassung geschickt.“ and, when
-`marketing.status === "pending"`, „Bitte bestätige noch die Anmeldung über den Link in der E-Mail.“
-`pending` is also answered to a submit **without** the marketing tick when an earlier opt-in of the
-address is still unconfirmed: the pending DOI and its link stay valid (since 2026-10-05).
+What the widget shows for each answer: CONSENT_CONTRACT.md §4 and its answer table (the „bitte
+bestätigen“ line only for `pending` with `doiEmailSent: true`, and only when the marketing box was
+ticked). `pending` is also answered to a submit **without** the marketing tick when an earlier
+opt-in of the address is still unconfirmed: the pending DOI and its link stay valid (since 2026-10-05).
 `transactional.summarySent: true` is also returned when no mail provider is configured (local
 development: the send is skipped); in production an actual delivery failure returns `502`.
 

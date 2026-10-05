@@ -52,28 +52,13 @@ The widget never adds to the cart through the AJAX cart API, never listens to th
 
 ### 2.1 Server-rendered page facts (`snippets/ms-chat-widget.liquid → pageContext`)
 
-The snippet runs on every page where the widget renders (see `01-storefront-theme.md §5.1` for the render gate). It writes only page facts, never user data.
-
-| `pageContext` field | Liquid source | Present when |
-|---|---|---|
-| `pageType` | `request.page_type` | always |
-| `productId` | `product.id` (numeric Shopify product id, emitted as a JSON number) | `request.page_type == 'product'` |
-| `productHandle` | `product.handle` | product pages |
-| `productTitle` | `product.title` | product pages |
-| `productType` | `product.type` | product pages |
-| `collectionTitle` | `collection.title` | `request.page_type == 'collection'` |
-| `collectionHandle` | `collection.handle` | collection pages |
+The snippet runs on every page where the widget renders (see `01-storefront-theme.md §5.1` for the render gate). It writes only page facts, never user data. The fields (`pageType`, `productId`, `productHandle`, `productTitle`, `productType`, `collectionTitle`, `collectionHandle`), their Liquid sources and JS defaults: `02` §3.2 (owner).
 
 Not emitted: the selected **variant** (id, title, price, availability), price, vendor, tags, SKU, collections of the product, cart contents, or any customer flag.
 
 ### 2.2 Normalisation in the widget (`ms-chat-widget.js → PAGE_CTX`)
 
-`PAGE_CTX` is built once at script parse time:
-
-- `type`: `product`, `collection`, `cart` kept as-is; `index` becomes `home`; everything else becomes `other`.
-- `productId`: `String(pageContext.productId)` (numeric, as a string).
-- `productHandle`, `productName` (from `productTitle`), `collectionHandle`: strings or `null`.
-- `category`: the product's `productType` on product pages, otherwise the `collectionTitle` on collection pages.
+`PAGE_CTX` is built once at script parse time; the mapping of each field (`type`, `productId`, `productHandle`, `productName`, `collectionHandle`, `category`) and its use: `02` §3.2 (owner).
 
 `PAGE_CTX` is read only from the snippet. The widget does **not** scrape the DOM, read `window.ShopifyAnalytics.meta.product`, the URL's `?variant=`, or the theme's variant picker.
 
@@ -177,17 +162,7 @@ It deliberately does **not** use the `messages: []` greeting path: the primer ca
 
 ### 3.7 Template coverage
 
-| Product template | Mo CTA | Q&A tab (`tabs-cards` with `show_qa_tab`) |
-|---|---|---|
-| `product.json` (default) | yes ("MO only") | yes (`show_qa_tab: true`) |
-| `product.produktdesign-02.json` | yes ("USPs" = kurzinfo + CTA) | yes (setting absent → schema default `true`) |
-| `product.produkt-new.json` | yes ("MO only") | yes (default) |
-| `product.produktnew.json` | yes ("MO only") | yes (default) |
-| `product.produkte-im-set.json` | yes ("MO only") | **no** `tabs-cards` section |
-
-The last three rows got the "MO only" block with `8d0a0c4` (MANIFEST 2026-10-04 b). These files are live-editor owned, so check them after every sync (`07` §6.3). `product.produkte-im-set` still has no Q&A tab.
-
-Which products use which template is set per product in Shopify admin (`template_suffix`) and cannot be read from the repo.
+CTA and Q&A tab per product template: `01` §6.6 (owner). In short, all five product templates carry the CTA (the three alternates since `8d0a0c4`, placement §3.1) and only `product.produkte-im-set` has no Q&A tab. These files are live-editor owned, so check them after every sync (`07` §6.3).
 
 ---
 
@@ -280,19 +255,13 @@ No `x-ms-chat-key` is sent (the endpoint is origin-allowlisted only, `API_CONTRA
 
 ### 5.2 Fields the widget uses
 
-| Field | Used in | Behaviour |
-|---|---|---|
-| `id` | KPI events | Catalog handle. Always the base product handle, also for an entry requested as a variant ref `handle~variantId` (`toPublic()` → `id: source.id`); the variant is only in `selectedVariantId` (ignored). |
-| `name` | all cards | Plain text. |
-| `price`, `salePrice` | `priceNode()` | If `salePrice != null && salePrice !== price`: sale price + struck-through price; else the regular price. No check that `salePrice < price`. |
-| `images[0]` | product card, checkout rows, compare header | `loading="lazy"`, Shopify CDN URL. |
-| `inStock === false` | product card badge „Ausverkauft“ / "Sold out"; checkout row note „Ausverkauft — nicht im Warenkorb“ / "Sold out — not in cart" | Sync-fresh (daily sync + webhook refresh), not live. |
-| `shopifyUrl` | "Zum Produkt" buttons; fallback links in the add-to-cart card | If missing, `productButton()` falls back to `href="#"`, which opens a second copy of the current page in a new tab (full reload, widget included) and still fires `product_cta_clicked`. |
-| `specifications` | compare rows | Keys present in ≥ 2 products (all keys when exactly 2 products). |
-| `deliveryTime` | compare row "Lieferzeit" | `—` when empty. |
-| top-level `cartUrl` | add-to-cart checkout button | See §7.1. |
+Which `/api/products` fields the widget reads, where, and which it ignores: `03` §7 (owner; definitions AC §3). Commerce-relevant details:
 
-Ignored today: `currency`, `brand`, `category`, `series`, `shortDescription`, `features`, `tags`, `slug`, `shopifyCartUrl`, `inventoryQuantity`, `anyVariantAvailable`, `sku`, `rating`, `ratingCount`, `qa`, `variants[]`, `selectedVariantId`, `priceMin`, `priceMax`.
+- `id` is always the base product handle, also for an entry requested as a variant ref (§2.3); the variant is only in `selectedVariantId`, which the widget ignores.
+- `price` / `salePrice`: there is no check that `salePrice < price`.
+- `inStock` is sync-fresh (daily sync + webhook refresh), not live.
+- A missing `shopifyUrl` makes `productButton()` fall back to `href="#"` (F11).
+- The top-level `cartUrl` drives the checkout button (§7.1).
 
 Consequences:
 
@@ -575,7 +544,7 @@ Complements `01-storefront-theme.md §17`.
 | Lever | Effect on the storefront | Notes |
 |---|---|---|
 | `custom.qa` via `metafieldsSet` | Q&A tab rows + FAQPage JSON-LD; `[]` hides the tab | §4. `a_html` is raw HTML on the PDP. |
-| `/api/products` response | Every chat card: names, prices, images, stock badges, links, `cartUrl` | Only fields in §5.2 render. Changing `shopifyUrl` (e.g. adding `/en` or `?variant=`) changes where "Zum Produkt" goes, with no widget change. |
+| `/api/products` response | Every chat card: names, prices, images, stock badges, links, `cartUrl` | Only the fields of `03` §7 render (§5.2). Changing `shopifyUrl` (e.g. adding `/en` or `?variant=`) changes where "Zum Produkt" goes, with no widget change. |
 | `cartUrl` content | What „Zur Kasse“ buys and carries | Could carry `attributes[_mo]` / `ref=mo` / a `discount=` code — but `/api/products` is public, session-less and cacheable 60 s, so a per-session token cannot be put there safely. A per-session marker needs a widget change (§16, T1). |
 | `cartAttributes` from `/api/attribution/token` | Keys/values stamped on the cart and the order | Must stay a flat object. |
 | Product `template_suffix` (Admin API) | Moves a product to another PDP layout; every product template of this build carries the Mo CTA (§3.7), only `product.produkte-im-set` lacks the Q&A tab | Changes the whole PDP layout. Owner decision. |

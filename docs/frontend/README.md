@@ -58,8 +58,7 @@ The frontend agent gets the three contract files and the task files, not `README
   | **CONS §n** | [`CONSENT_CONTRACT.md`](CONSENT_CONTRACT.md) |
   | **AD §n** | [`../ADMIN_DASHBOARD.md`](../ADMIN_DASHBOARD.md) |
   | **OA** | [`../ORDER_ATTRIBUTION.md`](../ORDER_ATTRIBUTION.md) |
-
-  Older aliases still found in some chapters map as follows: **CA §n** = ACCT §n and **CF §n** = CONS §n (same section numbers); **LOC** = AC §12; **WS** / **BR** (the pre-build widget spec and the old React behaviour reference, both archived) = AC §0 (rules) and AC §2 (rendering); **COS** = AC §2 "Tools the widget MUST NOT render" + ACCT §3a, §5.1; **CFOS** = AC §2 `show_contact_form` + AC §4; **CMP** = [`../CAMPAIGNS.md`](../CAMPAIGNS.md); **FP** = `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md` (history only — its rules are in AC §0).
+  | **CMP §n** | [`../CAMPAIGNS.md`](../CAMPAIGNS.md) |
 - German UI strings are quoted verbatim. Everything marked "unverified" or "open question" is exactly that: the chapters describe the source, not tests against the live shop.
 
 ---
@@ -204,6 +203,7 @@ The one canonical list is **AC §0** (25 rules, cited as "§0 rule n"). It binds
 | --- | --- | --- |
 | 1–2 form factor, delivery | one ES5 IIFE, `MANIFEST.md` entry per change | `02` §1, §16, §20; `01` §16 |
 | 3 additive contract changes | the widget sends no version header | `07` §5 |
+| 4–5 no new request header, the shared secret is not authentication | only `x-ms-chat-key`, `x-ms-session`, `x-ms-locale` are sent; `CHAT_KEY` comes from the theme setting and is public in the page | `07` §1, §5 rule 2; `01` §12.1 |
 | 6 one session id | `getSid()`, the rotation list, `onSidChangedElsewhere()` | `02` §7, §8; `05` §3 |
 | 7 raw sid never in a cart attribute or shop URL | `moStampCart()` (the sid does go to the backend as `?session=` on login, `/api/auth/me` and same-origin whoami) | `06` §8 |
 | 8–11 served consent copy, nothing pre-selected, fail closed, served vs chrome | `presentConsentGate()`, `buildMarketingOptInCard()` (need `lawyerApproved === true`), `buildCaptureCard()` (no `lawyerApproved` check), served strings via `textContent` | `04` §10, §11 |

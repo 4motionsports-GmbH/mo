@@ -637,7 +637,7 @@ The rules are the contract's: API_CONTRACT §0 rules 8–11 and CONSENT_CONTRACT
 | Decline equally reachable | Popup: "Nein, danke" is a full `.ms-chat-btn--secondary` directly under accept. Card: same. Login popup "Später": same. Capture: a text-style decline button below the form. | The capture decline is a quieter button (`.ms-chat-capture-decline`), which is allowed for the capture form (it has no button-consent mechanic). |
 | Label + footer fully visible | Rendered as plain blocks, no truncation / "read more". | |
 | Imprint + privacy next to consent | All three surfaces render the served URLs through `safeHref`. | Link labels "Impressum" / "Datenschutz" are widget chrome. |
-| `lawyerApproved` gating | **`surface=signin` only** (popup + card render nothing unless `=== true`). | The capture validator does **not** check `lawyerApproved` (the backend serves `true` on every surface, `CONSENT_COPY_LAWYER_APPROVED`; §18 item 8). Erase copy has no such field. |
+| `lawyerApproved` gating | **`surface=signin` only** (popup + card render nothing unless `=== true`). | The capture validator does **not** check `lawyerApproved`, although CONSENT_CONTRACT §1 asks for it there too (the backend serves `true` on every surface, `CONSENT_COPY_LAWYER_APPROVED`; §18 item 8). Erase copy has no such field. |
 | Locale | All consent-copy GETs send `?locale=`. The submits carry `locale`. | Served per locale, never translated by the widget. |
 | `enLegalReviewed` | **Not checked.** The widget never reads the field. | The backend serves `enLegalReviewed: true` for both locales (English approved as the translation of the German, `CONSENT_COPY_EN_LEGAL_REVIEWED` in `consent-copy-core.mjs`, API_CONTRACT §12.3), so ignoring it is not a gap. Only `lawyerApproved` gates the signin surface. |
 | The sign-in popup is UI, not consent | `presentLoginGate` uses only `ACCOUNT_COPY` / `GATE_COPY`. | API_CONTRACT §0 rule 11: its text may live in the widget. |
@@ -656,26 +656,12 @@ One more widget-authored string sits right next to consent text and might deserv
 
 ## 12. Storage keys in scope
 
-| Key | Store | Content | Set by | Cleared by |
-|---|---|---|---|---|
-| `ms-chat-sid` | localStorage | session id (UUID) | `getSid`, `rotateSession` | never deleted; replaced on rotation |
-| `ms-chat-history:<sid>` | localStorage | last 40 messages (can contain order status) | `saveHistory` | `rotateSession`, `startNewChat`, delete-active, `dropSessionHistory`, `handleMoDeepLink` (`mo_new=1`) |
-| `ms-chat-convkey:<sid>` | localStorage | active `conversationKey` | `saveConvKey` | `clearConvKey` (incl. via `handleMoDeepLink` with `mo_new=1` and a sign-in hint) |
-| `ms-chat-signed-in` | localStorage | `'1'` = "worth re-probing `/api/auth/me`" (no identity) | `applyAuth` (signed in) | `applyAuth` definitive not-signed-in |
-| `ms-chat-auth-via:<sid>` | localStorage | `'chat'` / `'shop'` | `redeemLinkCode → setAuthVia` | `applyAuth` definitive not-signed-in |
-| `ms-chat-mkt-decision` | localStorage | `{state, at}` with state `'accepted'` or `'declined'` | consent surfaces, capture with marketing ticked | never |
-| `ms-chat-login-gate-snooze` | localStorage | timestamp of "Später" | `presentLoginGate` | never (expires logically after 24 h) |
-| `ms-chat-early-params` | sessionStorage | `{at, ms_auth?, ms_code?, mo_c?}` | `theme.liquid` head script | `earlyParam` (on read) |
-| `ms-chat-auth-return` | sessionStorage | `'1'` = re-open the panel on return | `initiateLogin` | `handleAuthReturn` |
-| `ms-chat-login-sid` | sessionStorage | the sid pinned for this login | `initiateLogin` | `handleAuthReturn` (`ok`) |
-| `ms-chat-link-retry` | sessionStorage | `{code, sid, at, kind?}` after a 503 | `handleAuthReturn`, `detectViaStorefront` | `retryPendingLink` (on read), and any return that carries an `ms_auth` marker (`handleAuthReturn`) |
-| `ms-chat-whoami-done` | sessionStorage | `'1'` = whoami already asked / must not be asked | `detectViaStorefront`, `signOut`, `endedSignInCleanup`, `clearAfterErase`, `handleAuthReturn(logged_out)`, `onSidChangedElsewhere` (when signed in) | never |
-| `ms-chat-gate-shown` | sessionStorage | one first-message popup used | `presentLoginGate`, `presentConsentGate` | never |
-| `ms-chat-optin-done` | sessionStorage | marketing ask answered / dismissed | `markOptInDone` | never |
-| `ms-chat-optin-ask-shown` | sessionStorage | marketing ask shown | popup / card | never |
-| `ms_mo_c` | sessionStorage | campaign token (adjacent; it rides on the first `/api/chat`) | `captureCampaignToken` | `startStream` on `res.ok` |
+The keys this chapter's flows use — store, value, writer, clearer and lifetime of each: `02-widget-architecture.md` §6 (owner, the one complete list).
 
-`capturedEmail` and the `auth` object are **memory only**. When localStorage / sessionStorage throw, `lsGet/lsSet` / `ssGet/ssSet` fall back to in-memory maps, so "per tab session" degrades to "per page load". All sessionStorage keys above are per tab: a new tab starts without them. The full key list is in `02-widget-architecture.md` §6.
+- localStorage: `ms-chat-sid`, `ms-chat-history:<sid>` (can contain order status), `ms-chat-convkey:<sid>`, `ms-chat-signed-in` (a re-probe hint, no identity), `ms-chat-auth-via:<sid>` (§5.5), `ms-chat-mkt-decision` (§10.7), `ms-chat-login-gate-snooze` (§9.2).
+- sessionStorage: `ms-chat-early-params` (§4.3), `ms-chat-auth-return`, `ms-chat-login-sid` (§4.2, §4.7), `ms-chat-link-retry` (§4.6), `ms-chat-whoami-done` (§5.2), `ms-chat-gate-shown`, `ms-chat-optin-done`, `ms-chat-optin-ask-shown` (§10.7), and the adjacent campaign token `ms_mo_c`.
+
+`capturedEmail` and the `auth` object are **memory only**. When localStorage / sessionStorage throw, `lsGet/lsSet` / `ssGet/ssSet` fall back to in-memory maps, so "per tab session" degrades to "per page load". All sessionStorage keys above are per tab: a new tab starts without them.
 
 ---
 
@@ -772,7 +758,7 @@ Open in this build unless marked **Fixed** or **Resolved**. The verdict is from 
 5. **Stale / contradictory comments around the marketing memory.** The anti-nag header says "an ACCEPT is remembered forever", and the `optInActionable()` comment says "mktDecisionQuiet: accepted, or declined…", but `mktDecisionQuiet()` deliberately ignores `accepted`. The behaviour follows the backend (correct). The comments mislead.
 6. **Stale comments in `handleAuthReturn` / `openPanel`.** "The welcome state renders it [the opt-in] in its own auth slot" is no longer true: the signed-in welcome is orb-only. "No network for pure-anonymous visitors" on open is also outdated: whoami runs for everyone once per tab session. Several code comments also say "per browser session" for what is per tab (sessionStorage).
 7. **422 paths differ slightly.** The consent popup's 422 closes the popup and opens the capture form directly, without marking the opt-in done. The inline card's 422 shows a button; only a click on "E-Mail-Adresse eingeben" marks it done. Neither sends a KPI.
-8. **The capture form does not check `lawyerApproved`.** That is consistent with API_CONTRACT §7.4 ("informational"), but differs from the signin surface. If the backend ever flips capture copy to `lawyerApproved: false`, the form still renders.
+8. **The capture form does not check `lawyerApproved`.** API_CONTRACT §0 rule 10 names `lawyerApproved === true` only for the signed-in surfaces, but CONSENT_CONTRACT §1 („Fail closed“) lists it for the capture form too („the capture form additionally `transactionalLabel`“), so this is a gap against the consent contract, and it differs from the signin surface. Harmless while the backend serves `lawyerApproved: true` on every surface; if it ever flips the capture copy to `false`, the form still renders.
 9. **Rename / delete failures are silent** (404 / 5xx just re-enable or close). No user feedback.
 10. **Confusing naming, not a bug:** the feedback payload's `conversationId` carries the thread key (`activeConversationKey`), while the history API uses `conversationId` for the numeric id. API_CONTRACT §9 defines feedback `conversationId` as "the conversationKey/thread the comment is about", so the widget follows the contract.
 11. **`logged_out` and `login_required` branches are unreachable** from this widget: it never starts the backend logout or `prompt=none`.
@@ -792,4 +778,4 @@ Open in this build unless marked **Fixed** or **Resolved**. The verdict is from 
 - **Shopify account type.** The theme has classic `templates/customers/*.json`, while the backend sign-in uses the Customer Account API (new customer accounts). It is not determinable from this repo whether a shop login and the chat's Shopify login share a session (i.e. whether a customer logged into the shop gets a one-click return at `/api/auth/shopify/login`). Without `logged_in_customer_id` every whoami answer is `signedIn: false` (ACCOUNT_CONTRACT §3a). Once the proxy exists, the manual check `/apps/chat/whoami?session=livecheck-manual` while logged in to the shop answers it — an `account_shop_recognised` row means the id arrives, no row means it does not (`07` §8).
 - **Legal status of widget-authored text near consent.** The consent popup's own benefit bullets break API_CONTRACT §0 rule 11 whatever the sign-off says (§11, §18 item 17; task 1). Still open: the capture caption about the double opt-in, which is written in the widget, not served. The backend doc `docs/CONSENT_FLOW.md` „Lawyer sign-off status“ → „Customer platform (2026-10) — open, not yet recorded as reviewed“ lists what is not yet recorded; whether that widget string is covered by the sign-off is unknown.
 - **Return in a different tab.** If Shopify's login flow ever finishes in a new tab (e.g. a mail-based login link), `ms-chat-login-sid` / `ms-chat-auth-return` (sessionStorage) are missing there. The widget then redeems with that tab's sid (localStorage, normally the same device sid). If that succeeds, the panel still opens, because the ok branch opens on `wantsOpen || auth.signedIn`. Only a failed redeem (`link_failed`), or a successful redeem whose `/api/auth/me` probe fails, leaves the panel closed; in the `link_failed` case the notice is then shown in a closed panel. Whether Shopify's hosted login can produce this was not verified.
-- **Runtime verification.** Nothing in this chapter was tested in a browser. All behaviour is from reading `main` at `8d0a0c4`; `3e87341` differs only by the two `endSpeaking()` calls (§7.1, §18 item 1). Which build runs on live: `07` §6.4.
+- **Runtime verification.** Nothing in this chapter was tested in a browser. All behaviour is from reading `main` at `3e87341`, which differs from `8d0a0c4` only by the two `endSpeaking()` calls (§7.1, §18 item 1). Which build runs on live: `07` §6.4.

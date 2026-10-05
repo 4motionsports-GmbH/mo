@@ -338,11 +338,11 @@ On click: `nudge_clicked` → `removeNudge()` → `openPanel()` (`chat_opened`).
 
 ## 8. Engagement mechanic: product-page CTA
 
-Placement, markup contract, gating, click behaviour and template coverage are owned by `06-commerce-and-storefront-integration.md` §3 (§3.1 placement, §3.4 gating and the CTA-hiding style, §3.5 click behaviour, §3.7 coverage); the template map is `01` §6. This section keeps the KPI side.
+Placement, markup contract, gating, click behaviour and template coverage are owned by `06-commerce-and-storefront-integration.md` §3 (§3.1 placement, §3.4 gating and the CTA-hiding style, §3.5 click behaviour); template coverage is `01` §6.6. This section keeps the KPI side.
 
 ### 8.1 Where it is rendered
 
-Every product template of this build carries the CTA (`06` §3.7). Which product uses which template is set per product in Shopify admin, and the blocks are live-editor owned, so the share of PDPs with a CTA cannot be read from the repo (`07` §8).
+Every product template of this build carries the CTA (`01` §6.6). Which product uses which template is set per product in Shopify admin, and the blocks are live-editor owned, so the share of PDPs with a CTA cannot be read from the repo (`07` §8).
 
 ### 8.2 Behaviour
 
@@ -508,7 +508,7 @@ Note: `account_signin_return` and `_linked` are keyed by the sid **at return tim
 | --- | --- | --- |
 | Nudge | `nudge_shown` (by `trigger`, `pageType`, `contextual`) → `nudge_clicked` / `nudge_dismissed` / ignored (= shown without either) → `message_sent` | Per-trigger click rate needs a join on session. Multiple tab sessions per sid. |
 | Open → message | sessions with `chat_opened` → sessions with `message_sent` | No source, and auth-return re-opens inflate opens. Use `message_sent` (not `conversations` rows) for "visitor wrote": nudge greetings create conversation rows without a visitor message (§14.3). |
-| Storefront CTA | `product_cta_opened` → `message_sent` → `product_cta_clicked` / `add_to_cart_clicked` | Numeric vs catalog ids. Template coverage grew with the upload of 2026-10-04 (three more templates, `06` §3.7): compare periods across that date with care. |
+| Storefront CTA | `product_cta_opened` → `message_sent` → `product_cta_clicked` / `add_to_cart_clicked` | Numeric vs catalog ids. Template coverage grew with the upload of 2026-10-04 (three more templates, `01` §6.6): compare periods across that date with care. |
 | Recommendation → click | server tool calls (`show_product`, `compare_products`, `add_to_cart`; `recommended_product_ids`) → `product_cta_clicked` / `add_to_cart_clicked` | Server tool calls ≠ rendered cards. |
 | Click → order | `add_to_cart_clicked` / `product_cta_clicked` → `mo_orders` tier by session/token | Permalink and consent coverage (§10.3). |
 | Sign-in popup | `login_gate_shown` → `_signin_clicked` → `account_signin_started{source}` → server `succeeded` → `linked`, plus `account_signin_return.result` | On the dashboard (AD §5.7a). Meaningful from 2026-10-04 (AD §5.0); between 2026-10-03 and the upload of that day sign-ins were not linked and the widget's `return{ok}` was inflated (§12.1 row 4a). |
@@ -535,7 +535,7 @@ Consolidated — with priorities, effort (same S / M / L scale) and the backend 
 | KPI | Backlog items (`07` §7) |
 | --- | --- |
 | Opt-in rate (marketing consent) | B8 (`askNumber` on `email_capture_declined`), task 1 (served bullets, `variant` / `placement`; backend built), D6 (ask at a value moment), D7 (popup timing test). DOI completion per surface is measured server-side (`source`, API_CONTRACT §5). |
-| Sign-in rate | B2 (tag every sign-in start), D7 (popup timing), E9 (contextual sign-in card for order status); silent shop recognition is done (P0.3) |
+| Sign-in rate | B2 (tag every sign-in start), D7 (popup timing), E9 (contextual sign-in card for order status); silent shop recognition: P0.3 (closed; setup state `docs/ROLLOUT_TODO.md` 5.4) |
 | Product CTR | B3 (card impressions, `surface` on `product_cta_clicked`), B4 (Markdown shop links), C2 (larger hit area), E10 (same-tab product pages on mobile) |
 | Add-to-cart / checkout | D1 (in-chat add via `/cart/add.js`), D2 (theme `product:added-to-cart`), D9 (error telemetry) |
 | Attributed revenue | A1 (consulted on every product card), A2 (`_mo` on the permalink, after P0.2), A5 (token renewal, task 3), D2, D9 (coverage flag) |
