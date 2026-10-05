@@ -1,7 +1,7 @@
 # 01 — Storefront & Shopify theme overview
 
 > **Audience:** backend coding agents of Mo (`4motionsports-gmbh/mo`). They cannot see the theme repo.
-> **Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `8d0a0c4`. PR #73 "customer platform" (`a0df103`) is merged and has been **live since 2026-10-04**; `8d0a0c4` adds five fixes on top that are **not uploaded yet** (§16.4). Every claim below comes from reading that tree. Endpoint behaviour lives in the backend's `docs/API_CONTRACT.md` and `docs/frontend-handoff/*.md`, and this chapter points to their sections instead of repeating them.
+> **Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `8d0a0c4`. PR #73 "customer platform" (`a0df103`) is merged and has been **live since 2026-10-04**; `8d0a0c4` adds five fixes on top that are **not uploaded yet** (§16.4). Every claim below comes from reading that tree. Endpoint behaviour lives in the backend's `docs/frontend/API_CONTRACT.md` and `docs/frontend-handoff/*.md`, and this chapter points to their sections instead of repeating them.
 
 This chapter describes the whole motionsports.de storefront around Mo. It covers which theme it is and who edits it, where everything lives, how the page skeleton and the product page are built, and how the header, cart drawer and add-to-cart flows work. It also covers the third-party apps, consent, locales, the Mo theme settings, the metafields the theme reads, the URL parameters a storefront page reacts to, and how changes reach the live shop. It ends with what the backend can change without a theme deploy and what needs one. The widget's internals (UI states, tool cards, KPI events, sign-in and consent flows) are covered in the other chapters of `docs/frontend/`.
 

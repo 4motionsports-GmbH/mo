@@ -53,7 +53,7 @@ Rules baked into the code:
   without transactional consent with `400` and the documented error code
   **`transactional_consent_required`** (the form's only purpose is the
   summary, so a no-transactional submit is invalid — see
-  `src/lib/capture-validation.mjs` and [`API_CONTRACT.md`](./API_CONTRACT.md)
+  `src/lib/capture-validation.mjs` and [`API_CONTRACT.md`](./frontend/API_CONTRACT.md)
   §7.1).
 - The marketing consent is a **separate**, **never-pre-selected** affirmative
   act with its own explicit text. **Documented decision**
@@ -107,7 +107,7 @@ Rules baked into the code:
   and the pre-composed `consentTextShown` audit string) are served by the
   backend — attached to every `offer_email_summary` tool result and available
   via `GET /api/consent-copy` for capture forms not triggered by the tool (see
-  [`API_CONTRACT.md`](./API_CONTRACT.md) §2 + §7.4). The widget renders them
+  [`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §2 + §7.4). The widget renders them
   verbatim and echoes `consentTextShown` back unchanged, so the stored audit
   text can never diverge from what was displayed, and a lawyer copy change
   ships as a backend deploy with no widget release.
@@ -339,7 +339,7 @@ Later, every marketing email carries:
 > KPI events, never to the consent record and never a reason for a 400. The
 > attestation of `consentTextShown` is unchanged (label + footer, one string
 > for every variant). Render contract:
-> [`frontend-handoff/CONSENT_FLOW.md`](./frontend-handoff/CONSENT_FLOW.md) §1, §3.1–§3.2.
+> [`frontend-handoff/CONSENT_FLOW.md`](./frontend/CONSENT_CONTRACT.md) §1, §3.1–§3.2.
 
 A **signed-in** Shopify customer can opt into marketing **without re-typing their
 email**. This is a *presentation* optimisation only — the lawful basis is
@@ -408,7 +408,7 @@ the end-of-chat capture unchanged. See
 [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §10–§11.
 
 The widget render contract is in
-[`frontend-handoff/CONSENT_FLOW.md`](./frontend-handoff/CONSENT_FLOW.md) §3.
+[`frontend-handoff/CONSENT_FLOW.md`](./frontend/CONSENT_CONTRACT.md) §3.
 
 ## Chat consent gate (anonymous, marketing-only) — copy v4
 
@@ -611,7 +611,7 @@ surfaces additionally emit the widget-side `consent_gate_shown` /
 `_accepted` / `_declined` / `_dismissed` events (payload
 `{ surface: "signin" | "chat" }`), shown as their own funnel on the KPI tab.
 **No email address ever appears in an event** — see `src/lib/kpi-events.ts`
-and [`API_CONTRACT.md`](./API_CONTRACT.md) §5. The optional `trigger` echoed
+and [`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §5. The optional `trigger` echoed
 to `/api/capture-email` / `/api/chat-marketing-opt-in` is telemetry-only and
 is never stored on the consent record (the capture form's echo reaches the
 KPI events only when it is one of the tool's trigger values). Since

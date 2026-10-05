@@ -40,8 +40,8 @@ Endpoints:
 | POST   | `/api/webhooks/shopify`   | Shopify → backend only (never the widget). HMAC-verified. §11.3. |
 
 > **Customer Account sign-in (tier 3)** is documented in full in
-> [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) (frontend contract:
-> `docs/frontend-handoff/CUSTOMER_ACCOUNT.md`). The `login` / `callback` /
+> [`CUSTOMER_ACCOUNT.md`](../CUSTOMER_ACCOUNT.md) (frontend contract:
+> `docs/frontend/ACCOUNT_CONTRACT.md`). The `login` / `callback` /
 > `logout/return` routes are top-level navigations (signed `state`, no
 > CORS/secret); `/api/auth/me` and `/api/auth/link` are guarded widget XHRs.
 > **A sign-in links the session only when the widget redeems its one-time code**
@@ -773,7 +773,7 @@ dismissal itself. Do NOT emit "shown"/"submitted" events from the widget;
 those are recorded server-side.
 
 > ✅ The checkbox labels are lawyer-approved copy (`lawyerApproved: true`) — see
-> [`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
+> [`CONSENT_FLOW.md`](../CONSENT_FLOW.md).
 
 #### Tools the widget MUST NOT render
 
@@ -795,7 +795,7 @@ These are background tools — skip their chunks when `toolName` matches:
   no card, and never show or store the output outside the conversation
   history the widget already keeps. The answer the customer reads is the
   assistant text. On a shared device the stored history can contain it —
-  see [`frontend-handoff/CHAT_ORDER_STATUS.md`](./frontend-handoff/CHAT_ORDER_STATUS.md)
+  see [`frontend-handoff/CHAT_ORDER_STATUS.md`](../archive/frontend-handoff/CHAT_ORDER_STATUS.md)
   (clear the stored history on logout).
 
 These tools still appear in the stream (the full
@@ -1161,7 +1161,7 @@ DOI mail, else the surface of the latest pending consent row, else `mo`.
 **Sign-in opt-in extras (additive 2026-10-05).** Both `signin_optin` events
 additionally carry `alreadyConfirmed` and `doiRequired` (booleans, the same
 values as the response), `placement?` and `variant?` (the validated echo of
-the POST body, §7.4 / [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §3.2; left out
+the POST body, §7.4 / [`CONSENT_FLOW.md`](../CONSENT_FLOW.md) §3.2; left out
 when unknown) and, only while more than one consent-popup variant is active,
 `variantMismatch: true` when the echoed variant is not the one this session
 is assigned.
@@ -1324,7 +1324,7 @@ This is the only flow that handles an email address. The capture form
 collects two **separate** consents — transactional (the summary) and
 marketing — and a marketing opt-in on a Mo surface requires a **double
 opt-in**. The full legal rationale, the data model, and the sign-off status
-are in [`CONSENT_FLOW.md`](./CONSENT_FLOW.md). The checkbox/email copy is
+are in [`CONSENT_FLOW.md`](../CONSENT_FLOW.md). The checkbox/email copy is
 lawyer-approved (`lawyerApproved: true`, `src/lib/consent-copy.ts`).
 
 **One marketing consent, shared with Shopify.** The marketing consent is one
@@ -1515,7 +1515,7 @@ Mo's or Shopify's, writes it) blocks every marketing send. Campaign mails
 (including Einzelansprache) additionally require the one consent `subscribed`
 with a provable double opt-in (`src/lib/campaign-gates.mjs`); the legacy 1:1
 marketing path requires a confirmed Mo DOI (`canSendMarketing`). See
-[`CONSENT_FLOW.md`](./CONSENT_FLOW.md).
+[`CONSENT_FLOW.md`](../CONSENT_FLOW.md).
 
 ### 7.4 `GET /api/consent-copy`
 
@@ -2042,7 +2042,7 @@ Content-Type: application/json
 Mints (or returns the existing) **order-attribution token** for the widget's
 session — the opaque marker the widget stamps onto the live storefront cart so
 a later purchase can be attributed to the consultation (tiered, honest
-attribution; full design in [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)).
+attribution; full design in [`ORDER_ATTRIBUTION.md`](../ORDER_ATTRIBUTION.md)).
 
 **Consent gate lives in the widget:** call this (and stamp the cart) only when
 the storefront's Shopify Customer Privacy state allows analytics processing.

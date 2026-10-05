@@ -1,4 +1,4 @@
-// Page context on typed product-page messages (A3, docs/plans/2026-10-04/A3.md).
+// Page context on typed product-page messages (A3, docs/archive/plans-2026-10-04/A3.md).
 // Pure, tested.
 //
 // The widget may attach the open page's facts to a typed or spoken message

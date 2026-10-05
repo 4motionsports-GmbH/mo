@@ -1,6 +1,6 @@
 # Frontend task — Renew the attribution token after a live consultation; blank the cart marker when the session ends (2026-10, after the backend PR for ATTR-TOKEN-LIFETIME)
 
-Paste into the frontend agent that owns `ms_shopify_clone`. Attach: `docs/API_CONTRACT.md` (§10, §5 server-only table), `docs/ORDER_ATTRIBUTION.md` (§Widget), `docs/frontend-handoff/WIDGET_SPEC.md`.
+Paste into the frontend agent that owns `ms_shopify_clone`. Attach: `docs/frontend/API_CONTRACT.md` (§10, §5 server-only table), `docs/ORDER_ATTRIBUTION.md` (§Widget), `docs/archive/frontend-handoff/WIDGET_SPEC.md`.
 Where this prompt and the attached files disagree, the files win.
 
 ## Baseline

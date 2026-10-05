@@ -1,7 +1,7 @@
 // Widget-emitted KPI events the dashboard reads BY NAME (the storefront widget
 // sends them through POST /api/kpi, which accepts any name), the ones the
 // widget no longer sends, and the arithmetic of the sign-in popup funnel.
-// Shapes in docs/API_CONTRACT.md §5. Server-emitted names live in
+// Shapes in docs/frontend/API_CONTRACT.md §5. Server-emitted names live in
 // kpi-events.ts.
 
 // ---------------------------------------------------------------------------

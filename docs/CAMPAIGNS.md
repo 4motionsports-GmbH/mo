@@ -488,7 +488,7 @@ recipient ids); `ai_all` — for every prepared card (§5).
 ## 5. Review workflow (Kampagnen screen)
 
 Each campaign has its own **review desk** (Prüftisch) at `?tab=kampagne&campaign=<slug|id>` (layout
-and rationale in [`KAMPAGNE_REDESIGN.md`](./KAMPAGNE_REDESIGN.md); screen description in
+and rationale in [`KAMPAGNE_REDESIGN.md`](./archive/KAMPAGNE_REDESIGN.md); screen description in
 [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2): a rail with the queue, the rendered e-mail in
 the middle, the review column on the right. The header strip carries the campaign switcher (every
 non-archived campaign with its open drafts, „Alle Kampagnen“ back to the overview), the phase, the
@@ -712,7 +712,7 @@ history count **any** click — the button or the set link (`clicked_at` or `bun
 The Mo deep link a campaign click lands on carries the send's redirect token as `mo_c`. The widget
 reads it from the landing URL and sends it back as the optional, additive **`campaignToken`** on
 `POST /api/chat` (the first turn of the session the link opened; contract in
-[`API_CONTRACT.md`](./API_CONTRACT.md) §2). The server checks the shape (`/^[A-Za-z0-9_-]{16,64}$/`),
+[`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §2). The server checks the shape (`/^[A-Za-z0-9_-]{16,64}$/`),
 looks the token up among the `campaign_sends` and records **one** `kpi_events` row
 `campaign_chat_started` per send (`recordCampaignChatStarted` in `campaign-store.ts`; a unique index,
 migration 0075, keeps it at one) — with `session_id = NULL` and `data: { sendId, campaignId }` (plus

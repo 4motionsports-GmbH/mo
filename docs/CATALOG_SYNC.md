@@ -207,7 +207,7 @@ The sync captures each product's stock status from the Shopify Admin API
 
 These are written to the catalog Blob alongside every other field and surfaced
 on `GET /api/products` (`inStock` is what the widget uses for an "Ausverkauft"
-badge — see `docs/API_CONTRACT.md`).
+badge — see `docs/frontend/API_CONTRACT.md`).
 
 > **Freshness — near-real-time, with a daily baseline.** Stock is refreshed two
 > ways: the **real-time webhook** (below) flips a single product's availability

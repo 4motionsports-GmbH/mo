@@ -17,7 +17,7 @@ import { eventSource } from "./capture-funnel.mjs";
 // along in `data`). The first four are emitted server-side; DECLINED can only
 // be seen by the widget (the backend never observes a dismissal of the capture
 // card), so the widget emits it through POST /api/kpi using this exact name.
-// Shapes are documented in docs/API_CONTRACT.md §5.
+// Shapes are documented in docs/frontend/API_CONTRACT.md §5.
 
 /** Mo made the email-summary offer (one event per offer_email_summary call). */
 export const KPI_EMAIL_CAPTURE_ASK_SHOWN = "email_capture_ask_shown";
@@ -42,7 +42,7 @@ export const KPI_EMAIL_CAPTURE_DECLINED = "email_capture_declined";
 // `data: { surface: "signin" | "chat" }`. Since the widget of 2026-10-01 only
 // the signed-in gate (`signin`) is shown; the anonymous e-mail gate (`chat`,
 // POST /api/chat-marketing-opt-in) was replaced by the sign-in popup
-// (kpi-widget-events.mjs). Shapes in docs/API_CONTRACT.md §5.
+// (kpi-widget-events.mjs). Shapes in docs/frontend/API_CONTRACT.md §5.
 
 /** The consent gate was rendered (once per session per surface). */
 export const KPI_CONSENT_GATE_SHOWN = "consent_gate_shown";
@@ -70,7 +70,7 @@ export const KPI_CAMPAIGN_CHAT_STARTED = "campaign_chat_started";
 //
 // All pseudonymous: session-keyed where the caller has a widget session,
 // NULL-session otherwise; `data` never carries an email or another direct
-// identifier. Shapes in docs/API_CONTRACT.md §5.
+// identifier. Shapes in docs/frontend/API_CONTRACT.md §5.
 
 /** A storefront contact-form submission was accepted (before delivery — the
  * form is the outcome the `show_contact_form` tool asks for, so tool-fires vs

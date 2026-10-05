@@ -487,7 +487,7 @@ same fail-closed gates at send time — campaign live → `CAMPAIGN_SENDS_APPROV
 suppression → cross-channel cadence (`campaign-gates.mjs`) — and gets an `MK-`
 code minted at send. The module (kinds, audience spec, crons, gates) is
 documented in [`CAMPAIGNS.md`](./CAMPAIGNS.md), the desk's design decisions in
-[`KAMPAGNE_REDESIGN.md`](./KAMPAGNE_REDESIGN.md). Server file
+[`KAMPAGNE_REDESIGN.md`](./archive/KAMPAGNE_REDESIGN.md). Server file
 [`KampagneTab.tsx`](../src/app/admin/KampagneTab.tsx): without `?campaign=`
 the **overview** (`?edit=` opens the **editor**), with it the **desk** of that
 campaign. Since migration 0074 a campaign can also write **letters** (Pingen)
@@ -1556,7 +1556,7 @@ widget — the sign-in popup (§5.7a) replaced it; its older events appear in a
 sub-block „Chat-Gate (anonym) — eingestellt“ while they fall in the period. Built
 from the four **widget-emitted** `kpi_events` (`consent_gate_shown` /
 `_accepted` / `_declined` / `_dismissed`, each carrying
-`data.surface`) — see [`API_CONTRACT.md`](./API_CONTRACT.md) §5. Scoped to the
+`data.surface`) — see [`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §5. Scoped to the
 selected window (`kpi_events.created_at`).
 
 **Sessions, not clicks (2026-10-05, OI1).** The `signin` funnel and its stats
@@ -1712,7 +1712,7 @@ campaigns incl. the Einzelansprache (see [`CAMPAIGNS.md`](./CAMPAIGNS.md)) — a
 - **Chat gestartet** („Chat-Start“) — sends whose Mo link opened a chat: the
   tracked redirect appends the send's token as `mo_c` to the Mo deep link, the
   widget passes it back as `campaignToken` on `POST /api/chat`
-  ([`API_CONTRACT.md`](./API_CONTRACT.md) §2), and
+  ([`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §2), and
   `recordCampaignChatStarted` stores **one session-less** `kpi_events` row
   `campaign_chat_started` (`data: { sendId, campaignId }`) per send (test sends
   carry `test: true` and are not counted) — the pseudonymous chat is never tied
@@ -1787,7 +1787,7 @@ customer key at all.
 
 **Shop-Login-Erkennung (App Proxy)** — shown once a session was recognised or
 linked through the shop login. From the server-only `account_shop_recognised`
-(whoami, [`API_CONTRACT.md`](./API_CONTRACT.md) §5) joined per session to the
+(whoami, [`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §5) joined per session to the
 link events: **Erkannt** (sessions not yet signed in; hint „+N bereits
 angemeldet“), **Angemeldet** (new shop-login sign-ins; hint the share of issued
 codes that were redeemed), **Mit Chat-Token** (recognised customers who signed in

@@ -3,7 +3,7 @@
 This chapter covers everything the Mo widget does about **who the visitor is** and **what they agreed to**. That includes the three identity tiers and how the widget picks one, every "Anmelden" entry point and the full sign-in round trip with the one-time code, shop recognition through `/apps/chat/whoami`, the signed-in account UI (history, export, erase, sign-out) with its cleanup rules, the anonymous sign-in popup, and every marketing-consent surface. For consent it also shows how the legal golden rules are enforced in code.
 It describes `main` at `8d0a0c4`: PR #73 "customer platform" (`a0df103`, merged) plus five follow-up fixes. **PR #73 is live since 2026-10-04**; the `8d0a0c4` fixes are not uploaded yet (see §16).
 Backend behaviour is not re-specified. Cross-references use these abbreviations (all paths are in the backend repo `4motionsports-gmbh/mo`):
-`API §n` = `docs/API_CONTRACT.md` · `CA §n` = `docs/frontend-handoff/CUSTOMER_ACCOUNT.md` · `CF §n` = `docs/frontend-handoff/CONSENT_FLOW.md` · `COS` = `docs/frontend-handoff/CHAT_ORDER_STATUS.md` · `FP task n` = `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md`.
+`API §n` = `docs/frontend/API_CONTRACT.md` · `CA §n` = `docs/frontend/ACCOUNT_CONTRACT.md` · `CF §n` = `docs/frontend/CONSENT_CONTRACT.md` · `COS` = `docs/archive/frontend-handoff/CHAT_ORDER_STATUS.md` · `FP task n` = `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md`.
 Code locations are given as `ms-chat-widget.js → function / KEY`. Line numbers are left out on purpose because they drift. The widget file is `assets/ms-chat-widget.js` throughout.
 
 **Contents**

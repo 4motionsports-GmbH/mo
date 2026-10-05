@@ -268,7 +268,7 @@ table(
 );
 
 // ---------------------------------------------------------------------------
-// Before C.21 (docs/plans/2026-10-04/ATTR-TOKEN-LIFETIME.md §2): counts and
+// Before C.21 (docs/archive/plans-2026-10-04/ATTR-TOKEN-LIFETIME.md §2): counts and
 // dates only, no session ids. Independent of --since.
 head("7 · Bestell-Zuordnung — Vorab-Checks P1–P6 (ATTR)");
 const q0 = (text) => sql.query(text, []);

@@ -19,7 +19,7 @@
 // only to establish IDENTITY; the Admin API supplies the rest.
 //
 // ⚠️ REQUIRES A STORE / THEME ACTION (Lucas) before it can fire — see the report
-// and docs/frontend-handoff/CUSTOMER_ACCOUNT.md §3a:
+// and docs/frontend/ACCOUNT_CONTRACT.md §3a:
 //   1. Add an App Proxy to the app (Shopify admin → app → App proxy):
 //        Subpath prefix: apps   Subpath: chat   URL: https://mo.motionsports.de/api/auth/storefront
 //      (Shopify appends the sub-path, so /apps/chat/whoami lands on ./whoami — same handler)
@@ -36,7 +36,7 @@
 // signed URL cannot be replayed. Fail-closed: anything we can't positively
 // prove returns { signedIn: false }. Tokens never appear here.
 //
-// P0.3 (docs/plans/2026-10-04/P0.3.md): a code is issued only when the session
+// P0.3 (docs/archive/plans-2026-10-04/P0.3.md): a code is issued only when the session
 // will really count as signed in — APP_PROXY_SIGNIN_ENABLED (kill switch) and a
 // proof (a live chat token, or the shop proof under
 // APP_PROXY_SIGNIN_MAX_AGE_HOURS). If the session is signed in as ANOTHER shop

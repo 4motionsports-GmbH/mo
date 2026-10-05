@@ -1,11 +1,11 @@
 # Frontend task: serve the consent-popup benefits from the backend and add variant/placement to the signed-in ask (2026-10-04, backend live 2026-10-05)
 
 Paste this into the frontend agent that owns `ms_shopify_clone`. Attach these files, in the versions updated by the backend PR in "Backend counterpart" below:
-- `docs/API_CONTRACT.md`. This is the canonical contract and the only place AC §5 and AC §7.4 live. `docs/frontend-handoff/API_CONTRACT.md` is only a pointer plus an "Additive changes" table. You may attach it too, for that table.
-- `docs/frontend-handoff/CONSENT_FLOW.md`
-- `docs/frontend-handoff/CUSTOMER_ACCOUNT.md`
-- `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md`, for its "Rules that do not change"
-- `docs/frontend-handoff/LOCALE.md`
+- `docs/frontend/API_CONTRACT.md`. This is the canonical contract and the only place AC §5 and AC §7.4 live. `docs/frontend-handoff/API_CONTRACT.md` is only a pointer plus an "Additive changes" table. You may attach it too, for that table.
+- `docs/frontend/CONSENT_CONTRACT.md`
+- `docs/frontend/ACCOUNT_CONTRACT.md`
+- `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md`, for its "Rules that do not change"
+- `docs/archive/frontend-handoff/LOCALE.md`
 
 If this prompt and the attached files disagree, the attached files win.
 
@@ -48,7 +48,7 @@ This task builds on widget `main` at `3e87341` (MANIFEST 2026-10-04 b), live sin
 - **CF §1**, golden rules. Benefit framing is allowed only in served copy: `headline`, and from now on `benefits`. No countdowns, no urgency, no discount amounts.
 - **CF §3.1**, `GET /api/consent-copy?surface=signin`: new optional fields `benefits` and `variant`.
 - **CF §3.2** and **CA §6.1**, `POST /api/account/marketing-opt-in`: new optional body fields `placement` and `variant`.
-- **AC §7.4** (in `docs/API_CONTRACT.md`): the consent-copy payload, and the `Cache-Control` rule while more than one variant runs.
+- **AC §7.4** (in `docs/frontend/API_CONTRACT.md`): the consent-copy payload, and the `Cache-Control` rule while more than one variant runs.
 - **AC §5**: `consent_gate_*` data is `{surface, placement?, variant?}`. The server-only table is unchanged.
 - **FP "Rules that do not change".**
 - Background for the backend, not attached: `docs/frontend/07` §5 rule 1 (additive only), rule 4 (no-op if the widget ships later) and rule 7 (the signin required keys stay `marketingLabel`, `consentTextShown` and `lawyerApproved === true`).

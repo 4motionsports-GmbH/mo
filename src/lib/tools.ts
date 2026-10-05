@@ -221,7 +221,7 @@ export function buildChatTools(
     // marker below stays on the last always-active tool: this one is present
     // or withheld per deployment (CHAT_ORDER_STATUS_ENABLED), never per turn,
     // so the cached tools prefix stays byte-stable either way. The widget
-    // renders nothing for it (docs/API_CONTRACT.md §2).
+    // renders nothing for it (docs/frontend/API_CONTRACT.md §2).
     get_order_status: tool({
       description: c.orderStatusDesc,
       inputSchema: z.object({

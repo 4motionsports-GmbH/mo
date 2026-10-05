@@ -499,7 +499,7 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 
 ## 19. Nachtrag 05.10.2026 — Erkennung der Shop-Anmeldung im Chat (App Proxy)
 
-Grundlage: `docs/CUSTOMER_ACCOUNT.md` § 2 („Already-signed-in detection“), `docs/plans/2026-10-04/P0.3.md`. § 15.3 bleibt als Chronik unverändert; sein Stand „nicht eingerichtet (02.10.2026)“ wird hier fortgeschrieben.
+Grundlage: `docs/CUSTOMER_ACCOUNT.md` § 2 („Already-signed-in detection“), `docs/archive/plans-2026-10-04/P0.3.md`. § 15.3 bleibt als Chronik unverändert; sein Stand „nicht eingerichtet (02.10.2026)“ wird hier fortgeschrieben.
 
 ### 19.1 Tatsachen
 
@@ -531,7 +531,7 @@ Der Mandant hat D-AP1 am 05.10.2026 entschieden: Eine frische Shop-Anmeldung zä
 
 ## 20. Nachtrag 05.10.2026 — Bestell-Zuordnung: Fenster ab der letzten Beratung
 
-Grundlage: `docs/ORDER_ATTRIBUTION.md`, `docs/plans/2026-10-04/ATTR-TOKEN-LIFETIME.md`. Die Bestell-Zuordnung (D-20) misst, ob eine Bestellung auf eine Mo-Beratung zurückgeht: Das Widget setzt mit Analyse-Einwilligung eine opake Markierung (`_mo`) an den Shopify-Warenkorb; Mo-Links in Mails und Set-Angeboten tragen sie im Link. Bisher wird eine Bestellung mit Markierung pseudonym gespeichert, wenn sie innerhalb von 30 Tagen (`MO_ATTRIBUTION_WINDOW_DAYS`) nach Erstellung der Markierung eingeht oder einen Mo-Rabattcode trägt.
+Grundlage: `docs/ORDER_ATTRIBUTION.md`, `docs/archive/plans-2026-10-04/ATTR-TOKEN-LIFETIME.md`. Die Bestell-Zuordnung (D-20) misst, ob eine Bestellung auf eine Mo-Beratung zurückgeht: Das Widget setzt mit Analyse-Einwilligung eine opake Markierung (`_mo`) an den Shopify-Warenkorb; Mo-Links in Mails und Set-Angeboten tragen sie im Link. Bisher wird eine Bestellung mit Markierung pseudonym gespeichert, wenn sie innerhalb von 30 Tagen (`MO_ATTRIBUTION_WINDOW_DAYS`) nach Erstellung der Markierung eingeht oder einen Mo-Rabattcode trägt.
 
 ### 20.1 Tatsachen
 
@@ -564,7 +564,7 @@ Der Mandant hat die Wahl an die Entwicklung (KI-Assistent Claude) übertragen. E
 
 ## 21. Nachtrag 05.10.2026 — Vorteile im Einwilligungs-Popup, Seitenkontext
 
-Grundlage: `docs/CONSENT_FLOW.md` („At-sign-in marketing opt-in“, v5), `docs/API_CONTRACT.md` § 2 und § 5, `docs/plans/2026-10-04/OI3.md`, `A3.md`.
+Grundlage: `docs/CONSENT_FLOW.md` („At-sign-in marketing opt-in“, v5), `docs/frontend/API_CONTRACT.md` § 2 und § 5, `docs/archive/plans-2026-10-04/OI3.md`, `A3.md`.
 
 ### 21.1 Tatsachen
 

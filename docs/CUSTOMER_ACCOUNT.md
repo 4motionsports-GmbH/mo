@@ -569,14 +569,14 @@ answered only when a live read of the customer's five newest orders confirms
 the ledger is not behind (`confirmLedgerAnswer`); otherwise `unavailable`. At
 most three distinct lookups per chat request (repeats come from the request's
 cache). Returns, cancellations and complaints stay with the contact form. See
-`docs/ANWALTSDOSSIER.md` §16 (F-32) and `docs/API_CONTRACT.md` §2.
+`docs/ANWALTSDOSSIER.md` §16 (F-32) and `docs/frontend/API_CONTRACT.md` §2.
 
 ## 9. Signed-in conversation history (tier 3)
 
 A signed-in customer can browse, open, rename and delete their own **past
 conversations** — and erase all of their data. These endpoints live under
 `/api/account/*` and are the contract CA-3-THEME builds against (precise
-request/response shapes: [`frontend-handoff/CUSTOMER_ACCOUNT.md`](./frontend-handoff/CUSTOMER_ACCOUNT.md) §7).
+request/response shapes: [`frontend-handoff/CUSTOMER_ACCOUNT.md`](./frontend/ACCOUNT_CONTRACT.md) §7).
 
 ### The gate (fail-closed, behind the CA-1 resolver)
 

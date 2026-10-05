@@ -163,7 +163,7 @@ Principles every phase must respect:
 | P-6 | **A human approves every send; legal gates fail closed.** | Unchanged. A suggestion never sends anything. |
 | P-7 | **The chat is a feature.** | Chat data enriches the profile, the inbox and drafts. Nothing in the customer system requires a chat. |
 | P-8 | **House rules stay.** | Non-composable SQL, `getSql()` may be `null`, pure `.mjs` cores with tests, `guardAdmin*`, `admin-datetime`/`admin-format`, design tokens, one screen per request, German UI (see `CLAUDE.md`). |
-| P-9 | **The widget contract stays backward compatible.** | `docs/API_CONTRACT.md` changes are additive only. |
+| P-9 | **The widget contract stays backward compatible.** | `docs/frontend/API_CONTRACT.md` changes are additive only. |
 | P-10 | **Forward-only, stoppable phases.** | Each phase ends in a consistent state. Legacy tables are dropped one release after the last reader is gone. |
 
 ---

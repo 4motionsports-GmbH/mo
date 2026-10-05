@@ -1,10 +1,10 @@
 # Frontend task: page context on typed product-page messages (2026-10-04)
 
 Paste this into the frontend agent that owns `ms_shopify_clone`. Attach these files:
-- `docs/API_CONTRACT.md`: §2 "Request body" and "Optional `context`", §5
-- `docs/frontend-handoff/WIDGET_SPEC.md`: §9b Telemetry, §9c "Privacy posture" and "Page context + browsing trail"
-- `docs/frontend-handoff/BEHAVIOR_REFERENCE.md`
-- `docs/frontend-handoff/LOCALE.md`: §1
+- `docs/frontend/API_CONTRACT.md`: §2 "Request body" and "Optional `context`", §5
+- `docs/archive/frontend-handoff/WIDGET_SPEC.md`: §9b Telemetry, §9c "Privacy posture" and "Page context + browsing trail"
+- `docs/archive/frontend-handoff/BEHAVIOR_REFERENCE.md`
+- `docs/archive/frontend-handoff/LOCALE.md`: §1
 
 Where this prompt and the attached files disagree, the files win.
 

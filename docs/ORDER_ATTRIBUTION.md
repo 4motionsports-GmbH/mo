@@ -86,7 +86,7 @@ token is still purged 37 days after the device's last product consultation
 (at most `KPI_RETENTION_DAYS` after minting); with it off, 37 days after
 minting. A device that keeps its session id
 stamps the purged token until the widget renews it (frontend task
-`docs/frontend-handoff/tasks-2026-10-04/3-attribution-token-renewal.md`);
+`docs/frontend/tasks/3-attribution-token-renewal.md`);
 tokens purged before 2026-10-05 are not recoverable by the backend.
 
 **Unattributed marked orders.** A marked order whose token is unknown

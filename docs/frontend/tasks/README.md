@@ -2,13 +2,13 @@
 
 **Ready to send (2026-10-05):** all three backend counterparts are deployed (C.19–C.21 in
 `docs/ROLLOUT_TODO.md`). Send the three tasks together in one prompt, so the owner uploads the
-widget once. Plans and rankings: `docs/plans/2026-10-04/README.md`.
+widget once. Plans and rankings: `docs/archive/plans-2026-10-04/README.md`.
 
 | Task file | What | KPI | Send when |
 |---|---|---|---|
-| [`tasks-2026-10-04/1-consent-benefits-variant.md`](./tasks-2026-10-04/1-consent-benefits-variant.md) | Consent popup renders served `benefits` (no widget text); `variant` + `placement` on the signed-in ask; copy cache per sid; no dismiss after an accept | opt-ins: accept rate and DOI per variant; compliance | ✔ deployed 05.10. (C.19) |
-| [`tasks-2026-10-04/2-page-context.md`](./tasks-2026-10-04/2-page-context.md) | First typed/spoken message on a PDP (and after a product change) carries the page's product (`context.source:"page"`); `source` on CTA/nudge context; `samePage` on `product_cta_clicked` | product clicks, add-to-cart (holdout-measured) | ✔ deployed 05.10. (C.20) |
-| [`tasks-2026-10-04/3-attribution-token-renewal.md`](./tasks-2026-10-04/3-attribution-token-renewal.md) | Renew the `_mo` token after a live consultation; blank the cart marker when the session ends or consent is withdrawn | attributed revenue | ✔ deployed 05.10. (C.21) |
+| [`tasks-2026-10-04/1-consent-benefits-variant.md`](./1-consent-benefits-variant.md) | Consent popup renders served `benefits` (no widget text); `variant` + `placement` on the signed-in ask; copy cache per sid; no dismiss after an accept | opt-ins: accept rate and DOI per variant; compliance | ✔ deployed 05.10. (C.19) |
+| [`tasks-2026-10-04/2-page-context.md`](./2-page-context.md) | First typed/spoken message on a PDP (and after a product change) carries the page's product (`context.source:"page"`); `source` on CTA/nudge context; `samePage` on `product_cta_clicked` | product clicks, add-to-cart (holdout-measured) | ✔ deployed 05.10. (C.20) |
+| [`tasks-2026-10-04/3-attribution-token-renewal.md`](./3-attribution-token-renewal.md) | Renew the `_mo` token after a live consultation; blank the cart marker when the session ends or consent is withdrawn | attributed revenue | ✔ deployed 05.10. (C.21) |
 
 P0.3 Appendix A (remove the bullets) is **not** needed: task 1 replaces it.
 
@@ -17,10 +17,10 @@ fingerprint check). Each task is still complete on its own. The backend already 
 combined build (`src/lib/widget-fingerprint.mjs`, row `tasks-2026-10-05`: `ms-chat-ctx-last` and
 `ms-chat-optin-benefits` present, `Rabattaktionen zuerst erfahren` absent).
 
-**Files to attach** (current `main` of the backend repo): the three task files, `docs/API_CONTRACT.md`,
-`docs/frontend-handoff/API_CONTRACT.md`, `docs/frontend-handoff/CONSENT_FLOW.md`,
-`docs/frontend-handoff/CUSTOMER_ACCOUNT.md`, `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md`,
-`docs/frontend-handoff/LOCALE.md`, `docs/frontend-handoff/WIDGET_SPEC.md`, `docs/ORDER_ATTRIBUTION.md`.
+**Files to attach** (current `main` of the backend repo): the three task files, `docs/frontend/API_CONTRACT.md`,
+`docs/frontend-handoff/API_CONTRACT.md`, `docs/frontend/CONSENT_CONTRACT.md`,
+`docs/frontend/ACCOUNT_CONTRACT.md`, `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md`,
+`docs/archive/frontend-handoff/LOCALE.md`, `docs/archive/frontend-handoff/WIDGET_SPEC.md`, `docs/ORDER_ATTRIBUTION.md`.
 
 ---
 

@@ -7,7 +7,7 @@ repository:
 1. **The chat API for the Shopify storefront widget** — `/api/chat` and the
    routes around it (products, consent, account, telemetry). The widget itself
    lives in the Shopify theme and is **not** in this repo;
-   [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) is the contract it targets and
+   [`docs/frontend/API_CONTRACT.md`](docs/frontend/API_CONTRACT.md) is the contract it targets and
    must stay backward compatible.
 2. **The admin dashboard** at `/admin` (German) — the Eingang (operator inbox
    with AI suggestions), Kampagnen (many campaigns over the whole customer base),

@@ -1,8 +1,8 @@
 # 02 — Mo widget architecture
 
 This chapter explains how the Mo chat widget is built and how it starts on the motionsports.de storefront. It covers the load path from the theme layout to the running script, every configuration field, the internal layout of `assets/ms-chat-widget.js`, the global state, **every** browser-storage key, the session-id lifecycle, multi-tab behaviour, layout modes, stacking against the theme, CSS, i18n, accessibility, browser support, performance and error-handling conventions. It ends with the constraints for future changes and a list of risks and open questions.
-Backend behaviour is not re-specified here. It is cross-referenced to the backend repo's `docs/API_CONTRACT.md` (§n) and `docs/frontend-handoff/*.md`.
-**Reference convention:** `API_CONTRACT §n` (also "AC §n") always means the full contract `docs/API_CONTRACT.md`, not the 33-line stub `docs/frontend-handoff/API_CONTRACT.md`. `CUSTOMER_ACCOUNT.md`, `CONSENT_FLOW.md`, `CHAT_ORDER_STATUS.md`, `LOCALE.md` and `WIDGET_SPEC.md` always mean `docs/frontend-handoff/<file>`. The same names in `docs/` (for example `docs/CUSTOMER_ACCOUNT.md`) use different section numbers. `ORDER_ATTRIBUTION.md` exists only as `docs/ORDER_ATTRIBUTION.md`.
+Backend behaviour is not re-specified here. It is cross-referenced to the backend repo's `docs/frontend/API_CONTRACT.md` (§n) and `docs/frontend-handoff/*.md`.
+**Reference convention:** `API_CONTRACT §n` (also "AC §n") always means the full contract `docs/frontend/API_CONTRACT.md`, not the 33-line stub `docs/frontend-handoff/API_CONTRACT.md`. `CUSTOMER_ACCOUNT.md`, `CONSENT_FLOW.md`, `CHAT_ORDER_STATUS.md`, `LOCALE.md` and `WIDGET_SPEC.md` always mean `docs/frontend-handoff/<file>`. The same names in `docs/` (for example `docs/CUSTOMER_ACCOUNT.md`) use different section numbers. `ORDER_ATTRIBUTION.md` exists only as `docs/ORDER_ATTRIBUTION.md`.
 All code locations are given as `file → function / selector / key`. Line numbers are left out on purpose because they drift.
 **Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `8d0a0c4`. PR #73 "customer platform" (`a0df103`) is merged and **live since 2026-10-04**. `8d0a0c4` adds five fixes that are **not uploaded yet** (§1.1).
 
@@ -41,7 +41,7 @@ All code locations are given as `file → function / selector / key`. Line numbe
 | Files | `assets/ms-chat-widget.js` (~6,300 lines, ~316 KB raw / ~92 KB gzip), `assets/ms-chat-widget.css` (~1,780 lines, ~70 KB raw / ~18.5 KB gzip), `snippets/ms-chat-widget.liquid` (render gate and config), an inline `<head>` script in `layout/theme.liquid`, the "AI Advisor" section in `config/settings_schema.json`. |
 | DOM | Everything is built at runtime under a single `<div class="ms-chat-root">` appended to `<body>` (`buildShell()`). There is no Shadow DOM. Isolation comes from the `.ms-chat-` class prefix. |
 | Exceptions outside the root | Classes on `<html>` (`ms-chat-page-shift`, `ms-chat-page-anim`, `ms-chat-mobile-open`), server-rendered `.ms-chat-product-cta` buttons in product templates, writes to the theme's cart badges (`#CartBubble`, `[data-fh-cart-bubble]`), `<cart-modal>.reloadContent()`, the `.section-main-cart` section, and the live Shopify cart (`/cart/update.js`). |
-| Backend | `https://mo.motionsports.de` (Next.js on Vercel). Contract: backend `docs/API_CONTRACT.md`. The widget's own spec: `docs/frontend-handoff/WIDGET_SPEC.md`. |
+| Backend | `https://mo.motionsports.de` (Next.js on Vercel). Contract: backend `docs/frontend/API_CONTRACT.md`. The widget's own spec: `docs/archive/frontend-handoff/WIDGET_SPEC.md`. |
 | Public JS API | `window.MS_CHAT.openWithProduct(id, title)` and `window.MS_CHAT.openEmailSummary()`, set in `init()`. |
 | Deployment | Manual. The owner copies changed files into the Shopify code editor. `MANIFEST.md` lists the files to upload for each session (see §20). |
 
@@ -284,7 +284,7 @@ The file is one IIFE. Sections are separated by `// ----` banner comments. This 
 
 - Tool cards return `Promise<Element|null>`. `null` means "render nothing" (render-nothing guards).
 - Every comment that says "do not change" or "INVARIANTS" marks a legal or privacy rule. Examples: consent-copy handling, the capture-form legal invariants, the trail privacy posture, the attribution invariants, the in-memory-only `capturedEmail`.
-- Comments reference `docs/ai-advisor/*.md`. That folder does **not** exist in this repo. The same documents live in the backend repo under `docs/frontend-handoff/` (and `docs/API_CONTRACT.md`).
+- Comments reference `docs/ai-advisor/*.md`. That folder does **not** exist in this repo. The same documents live in the backend repo under `docs/frontend-handoff/` (and `docs/frontend/API_CONTRACT.md`).
 
 ---
 

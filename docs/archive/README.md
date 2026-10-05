@@ -5,7 +5,7 @@ audits, feasibility spikes, change reports and hand-off notes. They are kept for
 context (decisions, evidence, rollback maps) and are **not maintained**. Do not
 treat anything here as the current behaviour — the living documentation is one
 level up in [`docs/`](../) (start with [`ADMIN_DASHBOARD.md`](../ADMIN_DASHBOARD.md),
-[`CAMPAIGNS.md`](../CAMPAIGNS.md), [`API_CONTRACT.md`](../API_CONTRACT.md),
+[`CAMPAIGNS.md`](../CAMPAIGNS.md), [`API_CONTRACT.md`](../frontend/API_CONTRACT.md),
 [`DATABASE.md`](../DATABASE.md), [`DATA_RETENTION.md`](../DATA_RETENTION.md)) and
 in the root [`CLAUDE.md`](../../CLAUDE.md).
 

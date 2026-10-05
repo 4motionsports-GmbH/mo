@@ -303,7 +303,7 @@ suppressed**, and the opt-in is surfaced **at sign-in** instead (§6.1).
   sign-in.
 - **Tiers 1–2 are unchanged.** Anonymous and email-only visitors still get the
   end-of-chat capture form exactly as today (the `offer_email_summary` tool flow
-  in [`API_CONTRACT.md`](./API_CONTRACT.md) §2/§7). This is a tier-3 frontend
+  in [`API_CONTRACT.md`](../frontend-handoff/API_CONTRACT.md) §2/§7). This is a tier-3 frontend
   gate **and**, since 2026-10-05, the backend no longer offers
   `offer_email_summary` (nor forces the checkout-moment ask) for a live tier-3
   session; the capture flow for tiers 1–2 is unchanged; the 422
@@ -339,7 +339,7 @@ locally (30 days on the device) and a dismissal at least for the session. The
 **backend** truth for "ask or not" is `optInActionable`.
 
 Render contract (copy + submit endpoint) is in
-[`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §3 (`GET /api/consent-copy?surface=signin`
+[`CONSENT_FLOW.md`](./CONSENT_CONTRACT.md) §3 (`GET /api/consent-copy?surface=signin`
 → "Ja, Angebote aktivieren" → `POST /api/account/marketing-opt-in`). Never
 pre-select it. After a successful opt-in, the next `/api/auth/me` reports
 `optInActionable: false`. An already-subscribed address is answered with
@@ -347,7 +347,7 @@ pre-select it. After a successful opt-in, the next `/api/auth/me` reports
 Since 2026-10-05 the served copy also carries `benefits` (render verbatim, all
 or nothing) and `variant`, and the opt-in POST takes optional `placement`
 (`popup` | `signin_return` | `value_moment`) and `variant` (telemetry only,
-never a 400) — [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §3.1–§3.2.
+never a 400) — [`CONSENT_FLOW.md`](./CONSENT_CONTRACT.md) §3.1–§3.2.
 
 ## 7. Signed-in conversation history (CA-3-THEME contract)
 
@@ -528,7 +528,7 @@ After it returns:
 The history list can now hold **multiple threads** for a customer because the
 widget keys each conversation with a **`conversationKey`** (a stable,
 client-generated string) sent on `/api/chat`, while `session_id` stays the
-unchanging identity link. See [`API_CONTRACT.md`](./API_CONTRACT.md) §2
+unchanging identity link. See [`API_CONTRACT.md`](../frontend-handoff/API_CONTRACT.md) §2
 ("Optional `conversationKey`") for the full rules. In short:
 
 - **"Neue Beratung"** → keep `session_id`, generate a **fresh** `conversationKey`,

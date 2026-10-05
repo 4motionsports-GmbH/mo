@@ -10,7 +10,7 @@ historical audits, spikes and change reports — context only, never the current
 Next.js 16 App Router on Vercel (`fra1`), Neon Postgres, TypeScript + a set of pure `.mjs` cores.
 Three products in one repo: the chat API for the external Shopify widget (`/api/chat` and friends),
 the German admin dashboard (`/admin`), and the e-mail subsystem (marketing, campaign, transactional,
-inbound, physical letters). The widget is **not** in this repo — keep `docs/API_CONTRACT.md` backward
+inbound, physical letters). The widget is **not** in this repo — keep `docs/frontend/API_CONTRACT.md` backward
 compatible. Since the customer platform (`docs/CUSTOMER_PLATFORM_PLAN.md`) every Shopify customer is a
 `customers` row with a local order ledger and nightly facts; the chat is one data source among several.
 

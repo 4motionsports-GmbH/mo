@@ -21,7 +21,7 @@ the single list of what is still open for M. C's open items are at the end of �
    Vercel → Production → `MO_ATTRIBUTION_SESSION_ANCHOR=true` → Redeploy. Tomorrow:
    `npm run verify:live -- --since 2026-10-05` → section 7b „V0“ `ohne_sitzung_danach` = 0.
    (Details C.21; the purge of old widget tokens started 05.10.)
-2. **Frontend prompt (today).** Send `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md` (the
+2. **Frontend prompt (today).** Send `docs/frontend/tasks/README.md` (the
    „Prompt“ part) with the files it lists to the frontend agent. When its PR is merged: upload the
    files it names to the theme → `npm run verify:widget` must report „Widget mit den Aufgaben vom
    05.10.“ → send C that output and the agent's reply (MANIFEST entry, fingerprint).
@@ -166,7 +166,7 @@ the single list of what is still open for M. C's open items are at the end of �
   - **M:** right after the merge, pull main and run `npm run db:migrate` (applies `0073`).
     Until it has run, every sign-in returns `ms_auth=error` (fail closed).
   - **Consequence:** „Anmelden“ in the chat signs nobody in until the widget redeems the
-    code. Send F `docs/frontend-handoff/FRONTEND_PROMPT_2026-10.md` (second version, 03.10.) now — **task 1** first (spec:
+    code. Send F `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md` (second version, 03.10.) now — **task 1** first (spec:
     `frontend-handoff/CUSTOMER_ACCOUNT.md` §2a). Nothing breaks meanwhile; the account
     features are off.
   - **M (exposure check), Neon → SQL Editor.** Every session that signed in and then
@@ -432,7 +432,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
     Built 03.10.
   - Before: the lawyer's answer on F-32 (and the privacy-policy sentence it asks for); FE
     confirms the live widget renders nothing for `get_order_status` and clears the stored
-    chat history on logout (`docs/frontend-handoff/CHAT_ORDER_STATUS.md`, frontend prompt
+    chat history on logout (`docs/archive/frontend-handoff/CHAT_ORDER_STATUS.md`, frontend prompt
     task 6). `SHOPIFY_CUSTOMER_SYNC_ENABLED` stays on (it is — the answer needs the ledger).
   - Optional: `SHOPIFY_ACCOUNT_ORDERS_URL` if „Meine Bestellungen“ should open another page
     than `https://www.motionsports.de/account`.
@@ -526,14 +526,14 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [x] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
       of UTC — done 05.10. (every range query of the report runs midnight to midnight Berlin time).
 - [x] **C.15** Next items planned (item 8 of the 04.10. request) — done 04.10.: five ranked,
-      verified plans in `docs/plans/2026-10-04/` (README = ranking, findings, decisions, order);
-      widget tasks in `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md` (send each only when its
+      verified plans in `docs/archive/plans-2026-10-04/` (README = ranking, findings, decisions, order);
+      widget tasks in `docs/frontend/tasks/README.md` (send each only when its
       backend row below is done).
 - [x] **C.16** OI1 F1 (opt-in loss) fixed 05.10.: a submit without the marketing tick keeps a
       `pending` DOI (status, token, `doi_sent_at`, marketing flag) unless the address is
       suppressed, so the link in the inbox keeps working; rules in the tested
       `email-capture-core.mjs`. Already lost links are not restored — M's size check
-      (`docs/plans/2026-10-04/README.md`, finding 2) shows how many; those people can opt in
+      (`docs/archive/plans-2026-10-04/README.md`, finding 2) shows how many; those people can opt in
       again. **Left:** F2 (a suppressed address answered „already subscribed“), backend-only.
 - [x] **C.17** P0.3 Phase 1 + 2 — built 05.10. (no migration, both switches off in code):
       fresh App Proxy signatures, code only with a proof, handover on shared browsers, stamp guard,

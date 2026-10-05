@@ -113,7 +113,7 @@ Render, when `signIn.preferred` is `true`:
 1. **First** the sign-in block: `signIn.headline`, `signIn.body` and a button
    `signIn.buttonLabel` that starts the Customer Account sign-in as a
    **top-level redirect** to `{BASE_URL}{signIn.loginPath}?session={session_id}&return_url={current storefront URL}`
-   (exactly the login of [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §2).
+   (exactly the login of [`CUSTOMER_ACCOUNT.md`](./ACCOUNT_CONTRACT.md) §2).
    After the return (`?ms_auth=ok`) call `/api/auth/me`: show the at-sign-in
    card (§3) only when `marketing.optInActionable === true` — a customer who
    is already subscribed (Shopify or Mo) is **not** asked again.
@@ -202,7 +202,7 @@ signed-in welcome screen no longer shows the card) and still the inline card
 after a mid-conversation sign-in. Show either **only** when
 `/api/auth/me` answers `signedIn: true` **and** `marketing.optInActionable: true`
 — after the sign-in was completed with the one-time code
-([`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §2a). KPI events
+([`CUSTOMER_ACCOUNT.md`](./ACCOUNT_CONTRACT.md) §2a). KPI events
 `consent_gate_*` with `{ surface: "signin" }`.
 
 The account removes **only** the "type your email" step: the customer is signed
@@ -283,7 +283,7 @@ customer subscribed to the shop's newsletter reads `"confirmed"` and
 is also `false` after a `consent_gate_declined` in any of the customer's
 sessions in the last 30 days, or after the popup was shown in 3 of their
 sessions within 30 days (backend anti-nag, per customer, on every device —
-[`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §6.1); keep the widget's own
+[`CUSTOMER_ACCOUNT.md`](./ACCOUNT_CONTRACT.md) §6.1); keep the widget's own
 device memory as is. Should the POST arrive for an
 already-subscribed address anyway, it sends no email and answers
 `confirmed` / `alreadyConfirmed: true`.
@@ -306,7 +306,7 @@ render **unchecked**, its audit string covers both consents, and a submit
 without the transactional tick is rejected `400 transactional_consent_required`.
 With the marketing box ticked on an already-subscribed address the response is
 `marketing.status: "confirmed"`, `alreadyConfirmed: true`, no DOI email (the
-summary email is sent as usual). See [`API_CONTRACT.md`](./API_CONTRACT.md) §7
+summary email is sent as usual). See [`API_CONTRACT.md`](../frontend-handoff/API_CONTRACT.md) §7
 for the full capture contract.
 
 ---

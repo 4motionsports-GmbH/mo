@@ -1,8 +1,8 @@
 # Cleanup audit — UX and technical findings
 
 Status: **implemented** — Phase 1 findings of the project clean-up; the per-finding outcome is in §0 below. Companion documents:
-[`FEATURE_INVENTORY.md`](./FEATURE_INVENTORY.md) (the checklist we verify against at the end)
-and the screenshots under [`screenshots/`](./screenshots/).
+[`FEATURE_INVENTORY.md`](../FEATURE_INVENTORY.md) (the checklist we verify against at the end)
+and the screenshots under [`screenshots/`](../screenshots/).
 
 Baseline measured on `main` @ `9c6b551`: lint 0 errors / 1 warning, `tsc` clean,
 813 unit tests green, `next build` 41 s, 108 routes.
