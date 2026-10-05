@@ -10,7 +10,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-05.
+Last updated: 2026-10-05 (decisions of M).
 
 ## Done
 
@@ -101,8 +101,9 @@ Last updated: 2026-10-05.
     in Mo → Eingang → „E-Mails nicht zugeordnet“; one from a customer's address opens
     „E-Mail beantworten“ in the Eingang (C.10) with an AI draft.
 
-- [ ] **1.7 „Einplanen“ for campaigns (approve now, send later)** — `0072` run 03.10.; **left: M
-  sets `CAMPAIGN_RELEASE_ENABLED=true`**
+- [x] **1.7 „Einplanen“ for campaigns (approve now, send later)** — done 05.10.: `0072` run
+  03.10., `CAMPAIGN_RELEASE_ENABLED=true` set by M. Check once when convenient: a card →
+  „Einplanen“ → within 10 minutes in „Gesendet“.
   - **M:** right after the merge pull main and run `npm run db:migrate` (applies `0072`).
     Until it has run the review desk and campaign sends fail (they read the new columns) —
     migrate right away.
@@ -151,8 +152,8 @@ Last updated: 2026-10-05.
     „Muster erzeugen“ shows three different people with their mails; „Testpostfach …“ with your
     own address delivers that mail (with a real code if the campaign has a discount).
 
-- [ ] **1.10 Letters as a campaign channel** — `0074` run 03.10.; **left: M sets up Pingen and
-  tries it** (below)
+- [x] **1.10 Letters as a campaign channel** — done 05.10.: `0074` run 03.10., Pingen set up by M.
+  Optional: one test letter on Pingen's staging (below).
   - **M:** right after the merge pull main and run `npm run db:migrate` (applies `0074`). Until it
     has run, saving a campaign, the audience match (live count and refresh — fail closed, nobody
     matches) and every letter, Kunden → Brief included, fail, and the nightly retention run stops
@@ -177,7 +178,8 @@ Last updated: 2026-10-05.
     objection notice in the footer and prints „ “ – € correctly.
   - Production letters only after L's answer on F-35 (dossier § 18) → goes with 3.2.
 
-- [ ] **1.11 Live check after the widget upload of 04.10.** (live = theme `main` @ `3e87341`) —
+- [x] **1.11 Live check after the widget upload of 04.10.** (live = theme `main` @ `3e87341`) —
+  done 05.10. (only the optional consent-popup test with a never-subscribed account is left) —
   checks built and merged (#217, `0075` run 04.10.); **M runs them** (C's container cannot reach
   the shop or the production database). `npm run verify:widget` and `npm run verify:live`
   (read-only; `-- --since 2026-10-05` for a later start).
@@ -233,7 +235,9 @@ Last updated: 2026-10-05.
   - Only affects new sign-ups in the shop. Without it, shop sign-ups count as single
     opt-in and are only mailed with `CAMPAIGN_ALLOW_SINGLE_OPT_IN=true` (see 6.5).
 
-- [ ] **3.2 Lawyer dossier** — M → L
+- [x] **3.2 Lawyer dossier** — M → L — M keeps it current as features ship (05.10.); D-AP1
+  (App Proxy sign-in without a chat token) confirmed by L 05.10. C adds a Nachtrag per new
+  feature (§19 App Proxy sign-in, §20 attribution window).
   - Send `docs/ANWALTSDOSSIER.md` (focus §13 to §18, questions F-22 to F-35; F-31 and F-34
     — the two sign-in flaws of 03.10. — are the urgent ones; F-32 = order status in the chat,
     blocks 6.6; F-35 = advertising letters from campaigns, before production letters, 1.10).
@@ -241,8 +245,7 @@ Last updated: 2026-10-05.
     needs the sign-off by **~18 Nov** so mails can go out from 20 Nov.
   - Done when: L has it and has given a date.
 
-- [ ] **3.3 Privacy policy** (F-28) — M (L reviews) — *urgent, customer data already
-  flows into Mo*
+- [x] **3.3 Privacy policy** (F-28) — M (L reviews) — M handles it as features ship (05.10.)
   - Add: customer and order data from the shop are processed in Mo; AI customer profiles
     (and the right to object); one shared e-mail consent and one deletion with Shopify;
     advertising letters with the right to object — also from campaigns, AI-drafted, sent via
@@ -251,7 +254,8 @@ Last updated: 2026-10-05.
     on, Mo answering signed-in customers' questions about their own orders (F-32); the
     retention periods (`docs/DATA_RETENTION.md`).
 
-- [ ] **3.4 One consent text** (F-29) — M (L approves)
+- [x] **3.4 One consent text** (F-29) — M (L approves) — M handles it (05.10.); the English Mo
+  consent text is a translation of the German one and approved as such (D-AP3, 05.10.)
   - The newsletter checkbox text in the shop (checkout, account, footer) and Mo's consent
     text must say the same thing (personalised offers by e-mail, analysis of purchases and
     chats).
@@ -259,6 +263,8 @@ Last updated: 2026-10-05.
     `shopify-2026-11`) and redeploy.
 
 ## 4 · Black Friday
+
+*Deferred by M (05.10.) — not before M brings it up again.*
 
 - [ ] **4.1 Decide: per-mail review or „Serien-Mail“** (D-10) — M
   - Today every campaign mail is drafted and reviewed one by one (realistic ≈ 200 per
@@ -298,7 +304,9 @@ Last updated: 2026-10-05.
 
 - [ ] **5.4 Shop sign-in detection** (customers signed in to the shop are recognised in
   the chat without „Anmelden“) — M (+ F for app access), C checks — **ON HOLD until C.17 (P0.3
-  Phase 1) is live. Do not set up the App Proxy before.** As the backend stands, a shop-native login
+  Phase 1) is live. Do not set up the App Proxy before.** Decided 05.10. (M, lawyer confirmed):
+  a visitor logged in to the shop counts as signed in to the chat (D-AP1) — C builds Phase 2
+  with Phase 1. As the backend stands, a shop-native login
   has no chat token, so the proxy would sign nobody in but would still link the session in the
   background; on a shared browser one customer's chats could move into another customer's history
   (`redeemLinkGrant` has no ownership check); signed proxy URLs never expire (replay). Details:
@@ -482,17 +490,20 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       again. **Left:** F2 (a suppressed address answered „already subscribed“), backend-only.
 - [ ] **C.17** P0.3 Phase 1 — App Proxy safety + measurement (kill switch, code only when
       `/api/auth/me` will sign in, timestamp freshness, handover, ownership guard on the
-      conversation stamp, `account_shop_recognised`, renewals, dashboard split, drift alarm).
-      Unblocks 5.4. Phase 2 after D-AP1 + F-36 (dossier §19).
+      conversation stamp, `account_shop_recognised`, renewals, dashboard split, drift alarm)
+      **and Phase 2** (shop-logged-in visitors signed in without a chat token — D-AP1 decided
+      05.10., lawyer confirmed). Unblocks 5.4. Dossier Nachtrag §19.
 - [ ] **C.18** OI1 PR 1 (no e-mail-summary ask for signed-in sessions) and PR 2 (opt-in `source` /
       `outcome`, DOI by source, capture funnel = capture form only, consent gate per session).
-- [ ] **C.19** OI3 B1 (consent copy serves `benefits: []` + `variant`; opt-in POST takes `placement`
-      / `variant`) → then FE task 1. B2 after the lawyer signs off the bullets.
+- [ ] **C.19** OI3 B1 (consent copy serves `benefits` + `variant`; opt-in POST takes `placement`
+      / `variant`) → then FE task 1. The bullet wording is C's (D-AP4, 05.10.: attractive, honest,
+      within the served-copy rules); EN is served as approved (D-AP3).
 - [ ] **C.20** A3 backend (`context.source`, softer page pivot note, `CHAT_PAGE_CONTEXT_ENABLED`
       off, `page_context_applied/_answered`, KPI section) → then FE task 2.
 - [ ] **C.21** ATTR-TOKEN-LIFETIME (pre-checks P0–P6 by M first; migration `messages.session_id`,
-      `MO_ATTRIBUTION_SESSION_ANCHOR` off, `mo_order_marker_unresolved`) → then FE task 3; owner
-      decision + F-37 (dossier §20).
+      `MO_ATTRIBUTION_SESSION_ANCHOR` ships off, `mo_order_marker_unresolved`) → then FE task 3.
+      Decided by C (M delegated, 05.10.): anchor the 30 days on the device's latest product
+      consultation — switch on after the live checks. Dossier Nachtrag §20.
 - [ ] **C.5** Keep this file current after every step.
 
 ## Backlog — not built, decide later
