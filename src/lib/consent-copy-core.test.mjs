@@ -72,8 +72,17 @@ test("English consent strings are present, in English, and distinct from German"
   assert.match(en.unsubscribeConfirmedHeading, /unsubscribed/i);
 });
 
-test("English consent copy is flagged NOT legally reviewed (pending human/legal eye)", () => {
-  assert.equal(CONSENT_COPY_EN_LEGAL_REVIEWED, false);
+test("English consent copy is approved as a translation of the German (D-AP3)", () => {
+  assert.equal(CONSENT_COPY_EN_LEGAL_REVIEWED, true);
+});
+
+test("the approved English consent strings are pinned (a change is a new review and a version bump)", () => {
+  const en = consentStrings("en");
+  assert.equal(en.marketingLabel, "Yes, I'd like to receive exclusive offers and promotions — subscribers only. Unsubscribe any time.");
+  assert.equal(en.consentFooter, "Processing by motion sports in accordance with the privacy policy; withdrawal possible at any time.");
+  assert.equal(en.signinLabel, "Yes, send exclusive offers and promotions to my stored email address — subscribers only. Unsubscribe any time.");
+  assert.equal(en.chatGateLabel, "Yes, send personalised offers and exclusive discount promotions to this email address — subscribers only. Unsubscribe any time.");
+  assert.equal(en.transactionalLabel, "Yes, send me my consultation summary by email (incl. a direct link to checkout).");
 });
 
 test("an unsupported locale falls back to the German copy", () => {

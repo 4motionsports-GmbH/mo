@@ -8,25 +8,26 @@
 // offers headlines, plus the button-consent mechanic) were approved July 2026.
 // Any wording change is a new legal review.
 //
-// ENGLISH (en): ⚠️ NOT YET LEGALLY REVIEWED. CONSENT_COPY_EN_LEGAL_REVIEWED is
-// false. The English consent / DOI / refund / unsubscribe copy below is a
-// faithful translation of the approved German, provided so the /en storefront is
-// functional — but it MUST get a human/legal review (English-market GDPR/UWG
-// equivalents, refund-period wording) before it is relied upon. The flag is
-// surfaced in the served payload (consentCopy.enLegalReviewed) so the widget /
-// legal can gate on it.
+// ENGLISH (en): APPROVED AS A TRANSLATION (05.10.2026, owner decision D-AP3):
+// the English consent / DOI / refund / unsubscribe copy below is a faithful
+// translation of the approved German and is approved as such — checked string
+// by string against the German on all three surfaces (capture form, sign-in
+// opt-in, chat consent gate) and the DOI mail; no wording changed, so the
+// served version and every consentTextShown stay the same. A wording change in
+// either language is a new review. The flag rides in the served payload
+// (consentCopy.enLegalReviewed).
 
 /**
- * Whether the ENGLISH consent/legal copy has been legally reviewed. German is
- * approved (CONSENT_COPY_LAWYER_APPROVED in consent-copy.ts); English is NOT —
- * deliberately surfaced so nothing relies on unreviewed legal text silently.
+ * Whether the ENGLISH consent/legal copy is approved. German is lawyer-approved
+ * (CONSENT_COPY_LAWYER_APPROVED in consent-copy.ts); English is approved as a
+ * faithful translation of it (D-AP3, 05.10.2026).
  */
-export const CONSENT_COPY_EN_LEGAL_REVIEWED = false;
+export const CONSENT_COPY_EN_LEGAL_REVIEWED = true;
 
 /**
  * All the standalone consent/DOI/unsubscribe display strings for one locale.
  * The German values are verbatim the lawyer-approved copy; English is the
- * (not-yet-reviewed) translation.
+ * approved translation (D-AP3).
  *
  * @param {"de" | "en"} locale
  */
