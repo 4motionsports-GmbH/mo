@@ -3,45 +3,78 @@
 Single source of truth in code: [`src/lib/ai-models.mjs`](../src/lib/ai-models.mjs)
 (tested). Every Anthropic call site takes its model id and provider options
 (thinking, effort, refusal fallback) from a **tier** there; prices live in
-[`src/lib/ai-pricing.mjs`](../src/lib/ai-pricing.mjs). Evaluated 2026-09.
+[`src/lib/ai-pricing.mjs`](../src/lib/ai-pricing.mjs). Evaluated 2026-09. Other
+docs name the tier and link here instead of repeating model ids.
 
 ## Anthropic tiers
 
 | Tier | Model | Thinking / effort | Call sites |
 |---|---|---|---|
 | `chat` | `claude-sonnet-5-5` | `between_tools` (no up-front thinking), effort `high` | `/api/chat` |
-| `writer` | `claude-sonnet-5-5` | adaptive, effort `low` | marketing + campaign drafts, bundle suggestion, hero prompt, summary e-mail, persona top-questions (KPI + report), Q&A answer drafts |
+| `writer` | `claude-sonnet-5-5` | adaptive, effort `low` | operator-reviewed and short generation: campaign drafts (`campaign-draft.ts`), campaign letter drafts (`campaign-letter-draft.ts`), campaign assist — audience and brief (`campaign-assist.ts`), marketing drafts and the Kunden → Brief letter draft of the 1:1 path (`marketing-draft.ts`), bundle suggestion, hero prompt (`email-hero.ts`), summary e-mail and summary download (`summary-email.ts`), persona top-questions (KPI + report), Q&A answer drafts (`qa-draft.ts`), „Frag Mo“ (`customer-ask.ts`), Eingang suggestions (`inbox-suggest.ts`), e-mail reply drafts in the Eingang (`inbox-mail.ts`), the **Kaufprofil** (`customer-profile.ts`) |
 | `analyst` | `claude-sonnet-5-5` | adaptive, effort `medium` | Verbesserung (Wirkungs-Check + Vorschläge), insights rollup, report customer synthesis, hero image check (vision) |
-| `deep` | `claude-opus-5-5` | adaptive (always on), effort `medium` | central customer profile — nightly upkeep, "Neu generieren", report (structured output: summary + persona, level, budget, goals, owned, interests, next steps) |
+| `deep` | `claude-opus-5-5` | adaptive (always on), effort `medium` | the **Vollprofil** of the central customer profile — nightly upkeep, the Kunden button, the Analyse report (structured output: summary + persona, level, budget, goals, owned, interests, next steps) |
 | `bulk` | `claude-haiku-4-5` | none | per-conversation analysis, Q&A translation |
+
+The profile depth decides the tier: people with a Mo chat or correspondence get
+the Vollprofil (deep), Shopify customers with orders only the Kaufprofil
+(writer). Nightly counts: `CUSTOMER_PROFILE_BATCH` (Vollprofil, default 30) and
+`CUSTOMER_PROFILE_LIGHT_BATCH` (Kaufprofil, default `0` = off); `0` disables
+either ([`CUSTOMERS.md`](./CUSTOMERS.md) "The central customer profile").
 
 Every tier on a 5.x model sends `fallbacks: "default"` (Anthropic server-side
 refusal fallback): a false-positive safety decline is re-run on the fallback
 model inside the same call instead of failing the request.
 
+### Prices
+
+USD per million tokens, the defaults in `ai-pricing.mjs` (list prices checked
+2026-09). The prompt-cache columns are the provider-wide multipliers on the
+input price (`CACHE_READ_INPUT_MULTIPLIER` 0.1×, `CACHE_WRITE_INPUT_MULTIPLIER`
+1.25× for the 5-minute TTL); only `/api/chat` sets cache breakpoints
+([`PROMPT_CACHING.md`](./PROMPT_CACHING.md)).
+
+| Model | Input | Output | Cache read | Cache write (5 min) |
+|---|---|---|---|---|
+| `claude-sonnet-5-5` (and its refusal fallback `claude-sonnet-5`) | $2 | $10 | $0.20 | $2.50 |
+| `claude-opus-5-5` | $4 | $20 | $0.40 | $5.00 |
+| `claude-haiku-4-5` | $1 | $5 | $0.10 | $1.25 |
+| `text-embedding-3-small` | $0.02 | — | — | — |
+| `gpt-image-2` (text input / image output tokens) | $5 | $30 | — | — |
+| `gpt-image-1.5` (text input / image output tokens) | $5 | $32 | — | — |
+| `gpt-4o-mini-tts` (per million **characters**) | $15.90 | — | — | — |
+
+Older model ids stay in the table so historical `ai_usage` rows keep their
+price; an unknown model is priced at 0. `MODEL_PRICES_JSON` overrides any entry
+at runtime, `USD_EUR_RATE` (default 0.92) converts for the dashboard's
+„KI-Kosten“ ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §5.6).
+
 ### Why
 
 - **Sonnet 5.5 replaces Sonnet 4.6** everywhere: the stronger model at a lower
-  price ($2 / $10 per MTok vs $3 / $15; cache reads $0.20). Its tokenizer counts
-  up to ~1.35× the tokens of Sonnet 4.6 for the same text, so the net saving per
-  call is roughly 0–33 % — with a better model.
+  price ($2 / $10 per MTok vs $3 / $15). Its tokenizer counts up to ~1.35× the
+  tokens of Sonnet 4.6 for the same text, so the net saving per call is roughly
+  0–33 % — with a better model.
 - **Chat stays thinking-free** (`between_tools`): the storefront chat is
   latency-sensitive and streams; `between_tools` is Sonnet 5.5's lowest thinking
   setting and keeps time-to-first-token where it was. Effort `high` (the highest
   level `between_tools` accepts) buys more thorough tool use and answers for
   somewhat more output tokens.
-- **Opus 5.5 replaces Opus 4.8** for the customer profile: better and cheaper
+- **Opus 5.5 replaces Opus 4.8** for the Vollprofil: better and cheaper
   ($4 / $20 vs $5 / $25). The profile is the input every other generator reads
   (chat, Kampagne, mails, recommendations — see [`CUSTOMERS.md`](./CUSTOMERS.md)),
-  so it gets the strongest model; upkeep only regenerates customers with new
-  activity (≈ $0.10 each, `CUSTOMER_PROFILE_BATCH` per night). It always thinks; the output caps carry thinking
-  headroom (`maxOutputTokensFor`) so answers are not truncated.
+  so the full profile gets the strongest model; upkeep only regenerates
+  customers with new activity (estimate ≈ $0.10 each). It always thinks; the
+  output caps carry thinking headroom (`maxOutputTokensFor`) so answers are not
+  truncated. The Kaufprofil reads only purchases and campaign reactions — short
+  input, one perspective — so it runs on the cheaper writer tier.
 - **Haiku 4.5 stays** for high-volume, per-item work — still the current Haiku
   and the cheapest model that does these tasks well. The one-off insights rollup
   moved up to Sonnet 5.5 (one synthesis over hundreds of summaries, low volume),
   and so did the Q&A drafts: they become published, customer-facing answers, so
   draft quality saves operator editing. A scan request is capped at 15
-  conversations so the sequential Sonnet passes fit the route's 300 s.
+  conversations (default 10) so the sequential Sonnet passes fit the route's
+  300 s.
 
 ### Things the 5.5 models change (handled in code)
 
@@ -60,18 +93,19 @@ model inside the same call instead of failing the request.
   which needs `@ai-sdk/anthropic` ≥ 3.0.125 (older versions fell back to a forced
   `json` tool, which the 5.5 models reject).
 
-## OpenAI (unchanged, re-evaluated)
+## OpenAI
 
-| Use | Model | Verdict |
-|---|---|---|
-| Hero images | `gpt-image-2`, quality `high`, fallback `gpt-image-1.5` | Current best; keep. |
-| Product search embeddings | `text-embedding-3-small` | No successor; `-large` is +2 MTEB points at 6.5× the price and 2× the vector file — not worth it. |
-| Voice (TTS) | `gpt-4o-mini-tts`, voice via `TTS_VOICE` | Still OpenAI's current TTS model. `marin` / `cedar` are newer voices worth a listening test (env only). |
+| Use | Model | Override | Verdict |
+|---|---|---|---|
+| Hero images | `gpt-image-2` (native 1536×720, retried in 3:2), fallback `gpt-image-1.5`; quality `high` (`heroImageAttempts`, `email-hero-variants.mjs`) | `EMAIL_HERO_IMAGE_MODEL` (primary model), `EMAIL_HERO_IMAGE_QUALITY` (`low` \| `medium` \| `high`) | Current best; keep. Pipeline (reference photos, check, cost): [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Hero images“. |
+| Product search embeddings | `text-embedding-3-small` (catalog sync, the stock webhook's re-embed, the query at retrieval) | — | No successor; `-large` is +2 MTEB points at 6.5× the price and 2× the vector file — not worth it. |
+| Voice (TTS) | `gpt-4o-mini-tts`, voice `coral` | `TTS_MODEL`, `TTS_VOICE` (below) | Still OpenAI's current TTS model. `marin` / `cedar` are newer voices worth a listening test (env only). |
 
 ### Voice (TTS)
 
-`POST /api/tts` (`src/app/api/tts/route.ts`; widget contract: `docs/frontend/API_CONTRACT.md` §8).
-Moved here from the widget contract — nothing the widget sends changes these.
+`POST /api/tts` (`src/app/api/tts/route.ts`). The widget contract is
+[`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §8; model, voice, tone
+and speed are server configuration — nothing the widget sends changes them.
 
 | Var | Default (code and `.env.example`) | Notes |
 | --- | --- | --- |
