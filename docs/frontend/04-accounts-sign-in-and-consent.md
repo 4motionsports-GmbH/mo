@@ -738,7 +738,7 @@ The widget events of this chapter — `account_signin_started` / `_return`, `log
 
 ## 16. Operational status and dependencies
 
-Moved out of this chapter. Production status — which theme build is uploaded, whether the App Proxy is set up, which backend switches are on (all default off in code, e.g. `CHAT_ORDER_STATUS_ENABLED`, `APP_PROXY_SIGNIN_ENABLED`) — is tracked only in `docs/ROLLOUT_TODO.md`. Which widget build the live shop serves: `07` §6.4 (`npm run verify:widget`). Deploy model and live-editor drift: `01-storefront-theme.md` §16; the App Proxy drift risk: §5.4. The dated status table of 2026-10-04: `docs/archive/FRONTEND_CHAPTERS_STATUS_2026-10-04.md`.
+Moved out of this chapter. Production status — which theme build is uploaded, whether the App Proxy is set up, which backend switches are on (all default off in code, e.g. `CHAT_ORDER_STATUS_ENABLED`, `APP_PROXY_SIGNIN_ENABLED`) — is tracked only in `docs/ROLLOUT_TODO.md`. Which widget build the live shop serves: `07` §6.4 (`npm run verify:widget`). Deploy model and live-editor drift: `01-storefront-theme.md` §16; the App Proxy drift risk: §5.4. The dated status table of 2026-10-04: `docs/archive/FRONTEND_STATUS_2026-10-04.md`.
 
 ---
 

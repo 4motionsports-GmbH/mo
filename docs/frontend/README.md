@@ -59,7 +59,7 @@ The frontend agent gets the three contract files and the task files, not `README
   | **AD §n** | [`../ADMIN_DASHBOARD.md`](../ADMIN_DASHBOARD.md) |
   | **OA** | [`../ORDER_ATTRIBUTION.md`](../ORDER_ATTRIBUTION.md) |
 
-  Older aliases still found in some chapters map as follows: **CA §n** = ACCT §n and **CF §n** = CONS §n (same section numbers); **LOC** = AC §12; **WS** / **BR** (the pre-build widget spec and the old React behaviour reference, both archived) = AC §0 (rules) and AC §2 (rendering); **COS** = AC §2 „Tools the widget MUST NOT render“ + ACCT §3a, §5.1; **CFOS** = AC §2 `show_contact_form` + AC §4; **CMP** = [`../CAMPAIGNS.md`](../CAMPAIGNS.md); **FP** = `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md` (history only — its rules are in AC §0).
+  Older aliases still found in some chapters map as follows: **CA §n** = ACCT §n and **CF §n** = CONS §n (same section numbers); **LOC** = AC §12; **WS** / **BR** (the pre-build widget spec and the old React behaviour reference, both archived) = AC §0 (rules) and AC §2 (rendering); **COS** = AC §2 "Tools the widget MUST NOT render" + ACCT §3a, §5.1; **CFOS** = AC §2 `show_contact_form` + AC §4; **CMP** = [`../CAMPAIGNS.md`](../CAMPAIGNS.md); **FP** = `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md` (history only — its rules are in AC §0).
 - German UI strings are quoted verbatim. Everything marked "unverified" or "open question" is exactly that: the chapters describe the source, not tests against the live shop.
 
 ---
@@ -166,7 +166,7 @@ These docs describe behaviour, never production state ("what is uploaded", "what
 | Which build the shop is serving right now | `npm run verify:widget` (`scripts/check-live-widget.mjs`) over [`src/lib/widget-fingerprint.mjs`](../../src/lib/widget-fingerprint.mjs) (`WIDGET_BUILDS`: markers per build, the `current` row, what each build means for the backend) — build truth; how to read it: `07` §6.4 |
 | How to read KPI data recorded before a widget release | `02` §1.1 (the pre-PR #73 widget, live until 2026-10-04); release dates the KPI tab annotates: `src/lib/kpi-releases.mjs` (`05` §12.1) |
 
-Backend switches that change what the widget sees are documented with their default in code (`.env.example`), all `false` / `0` by default: `CHAT_ORDER_STATUS_ENABLED` (AC §2), `APP_PROXY_SIGNIN_ENABLED` and `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (ACCT §3a), `CHAT_PAGE_CONTEXT_ENABLED` (AC §2 „Optional `context`“), `MO_ATTRIBUTION_SESSION_ANCHOR` (OA). The status snapshot these chapters carried on 2026-10-04 is archived: [`docs/archive/FRONTEND_ROLLOUT_STATE_2026-10-04.md`](../archive/FRONTEND_ROLLOUT_STATE_2026-10-04.md).
+Backend switches that change what the widget sees are documented with their default in code (`.env.example`), all `false` / `0` by default: `CHAT_ORDER_STATUS_ENABLED` (AC §2), `APP_PROXY_SIGNIN_ENABLED` and `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (ACCT §3a), `CHAT_PAGE_CONTEXT_ENABLED` (AC §2 "Optional `context`"), `MO_ATTRIBUTION_SESSION_ANCHOR` (OA). The status snapshot these chapters carried on 2026-10-04 is archived: [`docs/archive/FRONTEND_STATUS_2026-10-04.md`](../archive/FRONTEND_STATUS_2026-10-04.md).
 
 ### Known open items (index of the chapters' findings)
 
@@ -185,7 +185,7 @@ Widget bugs and gaps of `3e87341`, one line each; the detail is in the cited cha
 11. **`add_to_cart` with more than 10 ids renders nothing** (no chunking). `03` §8.3.
 12. **Widget ignores `enLegalReviewed`** (no reference in `ms-chat-widget.js`) — harmless: the English copy is approved as the translation and served with `enLegalReviewed: true` (AC §12.3). Voice recognition and the local TTS fallback are hard-coded `de-DE`.
 13. **KPI telemetry is not consent-gated**, and the sid is written for every visitor on first load. Open legal question (§ 25 TDDDG). `05` §13.3.
-14. **Output-less tool parts are replayed as `output-available`.** `accumulatePart()` sets `state: 'output-available'` as soon as `input` is present, so a tool part with no output is replayed as complete without `output`; the backend drops only `input-streaming` / `input-available` parts (AC §2 „Request body“). Provider impact unverified. `03` §20.14.
+14. **Output-less tool parts are replayed as `output-available`.** `accumulatePart()` sets `state: 'output-available'` as soon as `input` is present, so a tool part with no output is replayed as complete without `output`; the backend drops only `input-streaming` / `input-available` parts (AC §2 "Request body"). Provider impact unverified. `03` §20.14.
 15. **An `error` SSE chunk with no content keeps the user message** in history without a reply. The next send carries two consecutive user messages. `03` §20.7, `02` §21.17.
 16. **Restored history costs backend calls on every page view** (`/api/products` re-fetches, and a restored `show_product` card can mint/stamp the attribution token without interaction). Dashboards counting those calls see page views, not chat activity. `02` §21.16.
 17. **Stale `_mo` after a sid rotation.** `moAttrReset()` clears only the local cache, not the cart attribute. `06` F8. → `tasks/3-attribution-token-renewal.md` (blank the marker, AC §10).
@@ -259,10 +259,10 @@ Not a widget rule but read every count with it: a "session" (sid) is not a visit
 | **Hydration** | Fetching product data for card ids via `GET /api/products` (batches of 10, cached per page). |
 | **Catalog id vs numeric id** | The backend catalog's product id is the handle (slug), optionally a variant ref `handle~<variantId>`. The theme's `product.id` is the numeric Shopify id. |
 | **Cart permalink** | `https://motionsports.de/cart/<variant>:1,…`, the `cartUrl` that "Zur Kasse" opens in a new tab. Built by the backend; no `_mo`. |
-| **`_mo` stamp / attribution token** | Opaque server token written as a cart attribute so the order webhook can attribute the order. The widget's stamp (token source `widget`) yields only „Beraten & gekauft“ (`assisted`) or „Beraten, anderes gekauft“ (`influenced`). „Direkt“ comes from Mo codes (MS5-/MK-) or Mo-built email/bundle cart links. Window: `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) from the token mint; with `MO_ATTRIBUTION_SESSION_ANCHOR` (default off in code) for `widget` tokens from the device's latest product consultation. The backend purges the token 37 days after that anchor (at most 180 days after minting); after a purge the endpoint mints a new one, but the `3e87341` widget keeps stamping its cached token (renewal: `tasks/3-attribution-token-renewal.md`, AC §10). Details: OA, `05` §10, `06` §8. |
+| **`_mo` stamp / attribution token** | Opaque server token written as a cart attribute so the order webhook can attribute the order. The widget's stamp (token source `widget`) yields only „Beraten & gekauft“ (`assisted`) or „Beraten, anderes gekauft“ (`influenced`). „Direkt“ comes from Mo codes (MS5-/MK-) or Mo-built email/bundle cart links. Window: `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) from the token mint; with `MO_ATTRIBUTION_SESSION_ANCHOR` (default off in code) for `widget` tokens from the session's latest product consultation. Retention purges a token window + 7 days (default 37) after that anchor, and with the switch at most `KPI_RETENTION_DAYS` (default 180) after minting; after a purge the endpoint mints a new one, but the `3e87341` widget keeps stamping its cached token (renewal: `tasks/3-attribution-token-renewal.md`, AC §10). Details: OA, `05` §10, `06` §8. |
 | **Consulted** | Widget state that allows minting the attribution token. Set only when a `show_product` card renders. |
 | **Deep link** | `?mo=open` or `#mo-open` (+ `mo_new=1`, `mo_view=fullscreen`): opens the panel on load. Sends no chat message and does not change the greeting. It behaves exactly like a launcher click: `chat_opened` (no source field, so deep-link opens can't be told apart) plus the normal open-time auth detection (`openPanel()` → `resolveAuthOnOpen()`). |
-| **Campaign token (`mo_c`)** | Per-send token appended by `/api/r/<token>` to a campaign deep link; sent once as `campaignToken`; recorded server-side as session-less `campaign_chat_started` (AC §2 „Optional `campaignToken`“, CMP). |
+| **Campaign token (`mo_c`)** | Per-send token appended by `/api/r/<token>` to a campaign deep link; sent once as `campaignToken`; recorded server-side as session-less `campaign_chat_started` (AC §2 "Optional `campaignToken`", CMP). |
 | **Head stash script** | Inline script at the top of `<head>` (PR #73) that moves `ms_auth`, `ms_code`, `mo_c` from the URL into `sessionStorage['ms-chat-early-params']` before Shopify analytics reads the URL. |
 | **Trail** | Local browsing trail (`localStorage['ms-chat-trail']`, ≤ 5 entries, 3-day TTL). Sent only inside a CTA or nudge context as `recentlyViewed`. |
 | **pageContext / `PAGE_CTX`** | Server-rendered page facts in `MS_CHAT_CONFIG.pageContext` (page type, product id/handle/title/type, collection) and the widget's normalised copy (`02` §3.2). |
@@ -270,7 +270,7 @@ Not a widget rule but read every count with it: a "session" (sid) is not a visit
 | **Re-sync / three-way merge** | Downloading the live theme and merging it into the repo with the previous snapshot as merge base (`01` §16.3). |
 | **MANIFEST** | `MANIFEST.md` in the theme repo: dated changelog and per-session upload list with test checklists. |
 | **Drift** | The live theme and the repo diverging (editor edits, missed uploads, bad syncs). |
-| **`CHAT_ORDER_STATUS_ENABLED`** | Backend switch for the silent `get_order_status` tool, default off in code. The widget renders nothing for the tool part and keeps it for replay (`03` §6; AC §2 „Tools the widget MUST NOT render“). |
+| **`CHAT_ORDER_STATUS_ENABLED`** | Backend switch for the silent `get_order_status` tool, default off in code (while off, only the test accounts in `CHAT_ORDER_STATUS_TEST_CUSTOMERS` get it). The widget renders nothing for the tool part and keeps it for replay (`03` §6; AC §2 "Tools the widget MUST NOT render"). |
 
 ---
 
@@ -280,10 +280,10 @@ Each list has one owner; this section only points there.
 
 | What | Complete list | Contract |
 | --- | --- | --- |
-| Endpoints the widget calls: headers sent, triggers, what leaves the browser | `02` §9 | AC §1 „Endpoints“ (guard and bucket per route) |
+| Endpoints the widget calls: headers sent, triggers, what leaves the browser | `02` §9 | AC §1 "Endpoints" (guard and bucket per route) |
 | KPI events: names, `data`, trigger, function | `05` §4 (location index: `02` §19) | AC §5 |
 | Browser storage keys | `02` §6 | — |
-| URL parameters a storefront page reacts to | `01` §15 (deep link and campaign detail: `05` §9) | AC §2 „Optional `campaignToken`“, ACCT §2 |
+| URL parameters a storefront page reacts to | `01` §15 (deep link and campaign detail: `05` §9) | AC §2 "Optional `campaignToken`", ACCT §2 |
 | Theme hooks and globals the widget depends on | `06` §12 | — |
-| Visible and silent tools | `03` §6, §8 | AC §2 „Tools the widget MUST render“ / „MUST NOT render“ |
-| Page-context fields | `02` §3.2 | AC §2 „Optional `context`“ |
+| Visible and silent tools | `03` §6, §8 | AC §2 "Tools the widget MUST render" / „MUST NOT render“ |
+| Page-context fields | `02` §3.2 | AC §2 "Optional `context`" |

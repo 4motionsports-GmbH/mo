@@ -357,7 +357,7 @@ Problem it solves (MANIFEST 2026-06-21): the permalink fills the cart in the **o
 
 ### 7.4 Why `id="CartBubble"` matters (2026-10 fix)
 
-The theme bundle `assets/main.mjs` updates the badge after every theme add-to-cart with `qe()`: `document.getElementById("CartBubble").classList…` with no null check. The live header redesign (synced 2026-07-25) dropped the id. After that `qe()` threw on every add, the product form swallowed the error, and **the cart drawer never opened** after Add-to-cart (quick-add did not refresh it either). The 2026-10-01 session put `id="CartBubble"` back on the mobile-icons badge and added the mirror observer (MANIFEST 2026-10-01, comment in `sections/header.liquid`). The owner uploaded that `sections/header.liquid` to the live theme on 2026-10-04, so the fix is live from that date. Rule: exactly **one** element must carry `id="CartBubble"`, and it must always render. The widget also reads it.
+The theme bundle `assets/main.mjs` updates the badge after every theme add-to-cart with `qe()`: `document.getElementById("CartBubble").classList…` with no null check. The live header redesign (synced 2026-07-25) dropped the id. After that `qe()` threw on every add, the product form swallowed the error, and **the cart drawer never opened** after Add-to-cart (quick-add did not refresh it either). The 2026-10-01 session put `id="CartBubble"` back on the mobile-icons badge and added the mirror observer (MANIFEST 2026-10-01, comment in `sections/header.liquid`). It is in `sections/header.liquid` of this build. Rule: exactly **one** element must carry `id="CartBubble"`, and it must always render. The widget also reads it.
 
 ### 7.5 Drawer refresh (`<cart-modal>.reloadContent()`)
 
@@ -406,7 +406,7 @@ True only if `window.Shopify.customerPrivacy.analyticsProcessingAllowed() === tr
 
 - `POST {apiBase}/api/attribution/token`, headers `x-ms-chat-key` + `x-ms-session`, **no body**, no `Content-Type`, no locale.
 - Accepted response: `{ ok: true, token: <non-empty string>, cartAttributes: <plain object> }` (`moAttrValid()`). Anything else, or 401/403/429/5xx/network, sets `moAttrFailed` and gives up **for this page view**.
-- Single-flight (`moAttrInflight`). Idempotent server-side: the same token per session while it exists; after a backend purge (retention) or erasure, a new one (AC §10).
+- Single-flight (`moAttrInflight`). Idempotent server-side: the same token per session while it exists; after a backend purge (retention) or erasure, a new one (`API_CONTRACT.md §10`).
 - Cache: memory `moAttr` + `localStorage['ms-mo-attr']` = `{ sid, token, cartAttributes }`. `moAttrLoad()` discards an entry whose `sid` is not the current session id.
 - When is a session "consulted" (mint allowed)? Only when a **`show_product` card renders** (`buildShowProduct → moAttrOnProductCard()`), including product cards re-rendered from restored history on page load. Compare tables, the showroom card and the add-to-cart card do **not** mark the session consulted; the add-to-cart **click** mints directly (`moAttrEnsure(false)`).
 
@@ -479,7 +479,7 @@ Uncertain: whether a Mo sign-in also leaves the shopper logged in to the Online 
 - **Without it** (not configured in the shop): `/apps/chat/whoami` returns Shopify's HTML 404 page. The widget rejects it (`!r.ok`, or a content type without `application/json`) and silently continues anonymously. Side effect: each tab session downloads that 404 page once on the first panel open in that tab (including tabs opened from Mo's product links), and the sign-in affordance appears only after that round trip.
 - **With it**: Shopify signs the request and forwards it to the backend's `/api/auth/storefront/whoami`, adding the logged-in customer id; the backend checks the signature with `SHOPIFY_APP_PROXY_SECRET` (falls back to `SHOPIFY_CLIENT_SECRET`). While `APP_PROXY_SIGNIN_ENABLED` is off (default off in code) it answers `{"signedIn":false}` but still records `account_shop_recognised` for a logged-in shop customer (`noCode: "flag_off"`); with the switch on it issues a code under the rules summarised in `04` §5.4. Contract: ACCOUNT_CONTRACT.md §3a; backend as-built: `docs/CUSTOMER_ACCOUNT.md` §2 „Already-signed-in detection“. The manual check `https://www.motionsports.de/apps/chat/whoami?session=livecheck-manual` while logged in to the shop, read with `npm run verify:live` section 8, shows whether `logged_in_customer_id` arrives for this store's account mode.
 - **Drift risk**: only a widget build that redeems `linkCode` is safe with the proxy on (`04` §5.4).
-- **Setup steps and live state**: `docs/ROLLOUT_TODO.md` 5.4 (the Dev Dashboard app version; CLI fallback 5.4b).
+- **Setup steps and live state**: `docs/ROLLOUT_TODO.md` 5.4 (App Proxy in a new Dev Dashboard app version; 5.4b holds the CLI / `shopify.app.toml` route).
 - **No theme change needed**: the path default is `CFG.whoamiPath || '/apps/chat/whoami'`. The snippet does not set `whoamiPath`, so a different proxy path would need a snippet change.
 
 ---

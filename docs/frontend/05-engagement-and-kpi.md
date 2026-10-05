@@ -37,7 +37,7 @@ This chapter is the complete reference for what the widget measures and how it t
 | Distinct events | 35 names / 45 call sites. Grouped in §4: open, nudge, conversation, products & commerce, sign-in, consent, capture, account/self-service, voice. **There are no feedback events and no error events.** |
 | Engagement mechanics | Launcher bounce (once per tab session), contextual nudge (once per tab session, never again after ×), product-page CTA, campaign deep link `?mo=open` / `#mo-open` with `mo_new`, `mo_view`, `mo_c`. |
 | Commerce glue | Consent-gated `_mo` cart stamp (`/api/attribution/token` + `/cart/update.js`). Display-only cart refresh (`/cart.js`) after the "Zur Kasse" quick checkout. |
-| Data windows | Which KPI sections are meaningful from which date — tier 3, the consent popup and the login-gate funnel only from 2026-10-04 (no chat sign-in could complete between 2026-10-03 and the widget upload of that day), opt-in `source` / `outcome` from 2026-10-05 — is shown under the dashboard toolbar (AD §5.0, `src/lib/kpi-releases.mjs`). |
+| Data windows | Which KPI sections are meaningful from which date — tier 3, the consent popup and the login-gate funnel only from 2026-10-04 (no chat sign-in could complete between 2026-10-03 and the widget upload of that day), opt-in `source` / `outcome` from 2026-10-05, and the release „Shop-Anmeldung zählt im Chat (App Proxy)“ of 2026-10-05 raises sign-in, consent-popup and account counts — is shown under the dashboard toolbar (AD §5.0, `src/lib/kpi-releases.mjs`). |
 | Biggest gaps | No source on `chat_opened`, no card impressions, no launcher/widget-load event, no error telemetry, no deep-link event. The "Zur Kasse" permalink probably does not carry `_mo`. „Reichweite (Sitzungen)“ on the dashboard is inflated by interaction-free events (`launcher_attention_played`, `nudge_shown`). Details in §12–§13. |
 
 ---
@@ -535,7 +535,7 @@ Consolidated — with priorities, effort (same S / M / L scale) and the backend 
 | KPI | Backlog items (`07` §7) |
 | --- | --- |
 | Opt-in rate (marketing consent) | B8 (`askNumber` on `email_capture_declined`), task 1 (served bullets, `variant` / `placement`; backend built), D6 (ask at a value moment), D7 (popup timing test). DOI completion per surface is measured server-side (`source`, API_CONTRACT §5). |
-| Sign-in rate | B2 (tag every sign-in start), D7 (popup timing), P0.3 (silent shop recognition, Ops), E9 (contextual sign-in card for order status) |
+| Sign-in rate | B2 (tag every sign-in start), D7 (popup timing), E9 (contextual sign-in card for order status); silent shop recognition is done (P0.3) |
 | Product CTR | B3 (card impressions, `surface` on `product_cta_clicked`), B4 (Markdown shop links), C2 (larger hit area), E10 (same-tab product pages on mobile) |
 | Add-to-cart / checkout | D1 (in-chat add via `/cart/add.js`), D2 (theme `product:added-to-cart`), D9 (error telemetry) |
 | Attributed revenue | A1 (consulted on every product card), A2 (`_mo` on the permalink, after P0.2), A5 (token renewal, task 3), D2, D9 (coverage flag) |

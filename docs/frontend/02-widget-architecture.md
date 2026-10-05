@@ -179,7 +179,7 @@ Four settings in **Customize → Theme settings → AI Advisor**: `ai_advisor_en
 
 ### 3.2 `window.MS_CHAT_CONFIG` (emitted by `snippets/ms-chat-widget.liquid`)
 
-This table is the one description of the config and the page-context fields (`01` §6.7, §12.2, `03` §4.1–§4.2 and `06` §2 point here). Page facts only, never user data.
+This table is the one description of the config and the page-context fields (`01` §6.7, §12.2 and `03` §4.1–§4.2 point here). Page facts only, never user data.
 
 | Field | Source | Default in the JS when missing | Used by | Effect |
 | --- | --- | --- | --- | --- |
@@ -199,7 +199,7 @@ This table is the one description of the config and the page-context fields (`01
 
 There is no other `CFG.*` read. This was checked with `grep CFG\.` and covers `apiBase`, `chatKey`, `showroomUrl`, `locale`, `pageContext`, `whoamiPath`.
 
-The widget sends page facts only inside the `context` of a CTA turn or a nudge greeting (`03` §2, §4.3); typed turns carry none. The contract also defines page facts for typed turns (AC §2 „Optional `context`“, `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/2-page-context.md`.
+The widget sends page facts only inside the `context` of a CTA turn or a nudge greeting (`03` §2, §4.3); typed turns carry none. The contract also defines page facts for typed turns (AC §2 "Optional `context`", `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/2-page-context.md`.
 
 ### 3.3 Server-rendered entry points outside the snippet
 
@@ -323,7 +323,7 @@ This list was enumerated with `grep` over every `lsGet/lsSet/lsDel/ssGet/ssSet/s
 
 **Fallback:** if localStorage is unavailable (the `hasLS` probe fails), every `ls*` key lives in the in-memory `memStore`. That means a **new sid on every page load** and no persistence. If sessionStorage throws, `ss*` keys fall back to `memSession`, so "once per session" degrades to "once per page load".
 
-This is the one complete list of the widget's storage keys; `01` §14, `04` §12 and the README point here. Keys and clearers tagged **[PR #73]** were added by PR #73 (2026-10-04); the pre-PR #73 widget (`44a076b`) has none of them, so data recorded before 2026-10-04 has none either (§1.1).
+This is the one complete list of the widget's storage keys; other chapters (`01` §14, README §7) point here. Keys and clearers tagged **[PR #73]** were added by PR #73 (2026-10-04); the pre-PR #73 widget (`44a076b`) has none of them, so data recorded before 2026-10-04 has none either (§1.1).
 
 ### 6.1 localStorage
 
@@ -433,7 +433,7 @@ localStorage is shared across tabs. Each tab's in-memory `sid`, `messages` and `
 
 ## 9. Network surface and what leaves the browser
 
-This is the one list of the widget's calls (README §7 and `04` §13 point here). It lists only what the widget sends and when; what each endpoint accepts and answers, its guard, rate-limit bucket and limits are in the contract (AC §1 "Endpoints" and the cited sections). "Guarded" means the widget sends the headers `x-ms-chat-key`, `x-ms-session` and `x-ms-locale` (`accountHeaders()` or the equivalent inline headers).
+This is the one list of the widget's calls (README §7 points here). It lists only what the widget sends and when; what each endpoint accepts and answers, its guard, rate-limit bucket and limits are in the contract (AC §1 "Endpoints" and the cited sections). "Guarded" means the widget sends the headers `x-ms-chat-key`, `x-ms-session` and `x-ms-locale` (`accountHeaders()` or the equivalent inline headers).
 
 | Call | Headers | Trigger | Contract |
 | --- | --- | --- | --- |
@@ -718,7 +718,7 @@ The widget does **not** emit: any erase event (`account_erased` is server-only) 
    - Mo-relevant files touched there: `sections/header.liquid` (`#CartBubble`), `templates/product*.json` (the CTA `custom_liquid` blocks), `layout/theme.liquid` (head script + render line), `config/settings_data.json`.
    - The repo is periodically re-synced from a downloaded live snapshot with a three-way merge. A sync on 2026-08-12 (`f7dc50a`) silently replaced the widget JS with an older copy and reverted PR #67 / #62. This was fixed on 2026-10-01.
    - **Before and after every upload, diff the live files against the repo**, especially `ms-chat-widget.js` / `.css` and the two Liquid hooks.
-4. **Rollout state:** not kept here — `docs/ROLLOUT_TODO.md` and `npm run verify:widget` (README §4). The owner facts written here on 2026-10-04 are archived in `docs/archive/FRONTEND_ROLLOUT_STATE_2026-10-04.md`.
+4. **Rollout state:** not kept here — `docs/ROLLOUT_TODO.md` and `npm run verify:widget` (README §4). The owner facts written here on 2026-10-04 are archived in `docs/archive/FRONTEND_STATUS_2026-10-04.md`.
 5. **Design rules worth keeping:**
    - Additive tiers: anonymous and email-only behaviour stay byte-identical when signed-in features change.
    - Lazy network: no auth calls before the first open (which may be a no-click open, §2.6), apart from the sign-in-return and 503-retry paths.
@@ -732,7 +732,7 @@ The widget does **not** emit: any erase event (`account_erased` is server-only) 
 
 Listed for triage. Items 1, 3, 18 and 19 (and the `order_support` label, 03 §20 finding 2) were fixed on 2026-10-04 (`8d0a0c4`, `3e87341`) and keep their numbers so references stay stable. The others are open.
 
-1. **[Fixed 2026-10-04] New chat during a streaming reply.** `startNewChat()` and `openConversation()` start with `if (abortActiveStream) { abortActiveStream(); abortActiveStream = null; }` + `endSpeaking()` + `removeTyping()`, so the old turn's `cancelled` flag makes its fetch, pump, events and `finalizeStream()` no-ops and any voice-mode audio queued for it stops (in `openConversation()` this runs once the transcript has loaded). Before 2026-10-04 a signed-in user's late reply could land in, and be saved with, the new or opened thread (stray history entries in data from before that day).
+1. **[Fixed 2026-10-04] New chat during a streaming reply.** `startNewChat()` and `openConversation()` start with `if (abortActiveStream) { abortActiveStream(); abortActiveStream = null; }` + `endSpeaking()` + `removeTyping()`, so the old turn's `cancelled` flag makes its fetch, pump, events and `finalizeStream()` no-ops and any voice-mode audio queued for it stops (in `openConversation()` this runs once the transcript has loaded). Before 2026-10-04 a signed-in user's late reply could land in, and be saved with, the new or opened thread, so threads saved before that day may contain such a reply.
 2. **[PR #73] The `<head>` stash also runs where the widget does not mount** (cart, excluded templates, empty secret). It removes `ms_auth` / `ms_code` / `mo_c` from the URL and leaves the stash for up to 10 minutes, to be consumed by the next page that mounts the widget. This is mostly harmless today because `return_url` is a page with the widget.
 3. **[Fixed 2026-10-04] `contact_form_submitted` session.** `buildContactForm()` adds `sessionId: sid` to the JSON body (the `x-ms-session` header stays). The backend keys the row on the body field, else on the header (`src/app/api/contact/route.ts`, AC §4). Rows from before the 2026-10-04 upload have `sessionId: null` and cannot be joined to sessions or chats.
 4. **No widget-impression KPI.** `launcher_attention_played` is the only passive signal, and it is skipped under reduced motion and capped at once per tab session. Funnels that need "sessions that saw Mo" are approximate.
