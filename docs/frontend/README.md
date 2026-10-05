@@ -77,7 +77,7 @@ The frontend agent gets the three contract files and the task files, not `README
 | Which browser storage keys exist, what do they hold and when are they cleared? | `02` §6 (complete list) |
 | When does the session id change, and what does that do to KPI joins? | `02` §7; `05` §3 |
 | Exactly what is in a `POST /api/chat` body, and when? | `03` §3 (contract: AC §2) |
-| Does Mo know which product page the visitor is on? | `03` §2, §4; `06` §2.4 (only via CTA or nudge click; typed turns: AC §2 `context.source: "page"`, widget side = `tasks/2-page-context.md`) |
+| Does Mo know which product page the visitor is on? | `03` §2, §4; `06` §2.4 (only via CTA or nudge click; typed turns: AC §2 `context.source: "page"`, widget side = `tasks/TASKS.md` task 2) |
 | What happens to a new tool name I add? | `03` §6; `07` §3.1–§3.2 |
 | Which product fields render, which are ignored? | `03` §7 (contract: AC §3) |
 | What does the widget do with each HTTP error code from `/api/chat`? | `03` §11; `02` §18 |
@@ -175,7 +175,7 @@ Widget bugs and gaps of `3e87341`, one line each; the detail is in the cited cha
 2. *(fixed 2026-10-04)* `contact_form_submitted` is session-keyed: the widget sends `sessionId` in the `POST /api/contact` body, and the backend falls back to `x-ms-session` (AC §4). Rows from before the 2026-10-04 upload have `sessionId: null`. `03` §20.1.
 3. **The 21st user message fails** with `payload_too_large`: the widget sends the uncapped in-memory history; storage keeps 40, so it fails again after reload. `03` §3.3.
 4. **"Zur Kasse" permalink carries no `_mo`**, and only `show_product` cards mark a session "consulted". `05` §10.3, `06` F1/F2.
-5. **Typed messages carry no page context**, even on a PDP. `03` §2, `06` F3. → `tasks/2-page-context.md`; the backend side is built (AC §2 `context.source: "page"`, `CHAT_PAGE_CONTEXT_ENABLED` default off in code).
+5. **Typed messages carry no page context**, even on a PDP. `03` §2, `06` F3. → `tasks/TASKS.md` task 2; the backend side is built (AC §2 `context.source: "page"`, `CHAT_PAGE_CONTEXT_ENABLED` default off in code).
 6. *(fixed 2026-10-04)* `order_support` has its own contact-form label and order-number placeholder. `03` §8.5.
 7. **Dashboard "Engagement" ratio is skewed** by interaction-free `launcher_attention_played` / `nudge_shown`. `05` §12.
 8. **Two product id spaces in KPIs** (`product_cta_opened` numeric, other product events catalog handles). `05` §4.4.
@@ -187,7 +187,7 @@ Widget bugs and gaps of `3e87341`, one line each; the detail is in the cited cha
 14. **Output-less tool parts are replayed as `output-available`.** `accumulatePart()` sets `state: 'output-available'` as soon as `input` is present, so a tool part with no output is replayed as complete without `output`; the backend drops only `input-streaming` / `input-available` parts (AC §2 "Request body"). Provider impact unverified. `03` §20.14.
 15. **An `error` SSE chunk with no content keeps the user message** in history without a reply. The next send carries two consecutive user messages. `03` §20.7, `02` §21.17.
 16. **Restored history costs backend calls on every page view** (`/api/products` re-fetches, and a restored `show_product` card can mint/stamp the attribution token without interaction). Dashboards counting those calls see page views, not chat activity. `02` §21.16.
-17. **Stale `_mo` after a sid rotation.** `moAttrReset()` clears only the local cache, not the cart attribute. `06` F8. → `tasks/3-attribution-token-renewal.md` (blank the marker, AC §10).
+17. **Stale `_mo` after a sid rotation.** `moAttrReset()` clears only the local cache, not the cart attribute. `06` F8. → `tasks/TASKS.md` task 3 (blank the marker, AC §10).
 18. **`capturedEmail` survives an anonymous "Neuen Chat starten"** and is still sent as `customer.email` under the new sid. `03` §20.19, `04` §18.14.
 19. **`account_signin_return {result:'ok'}` is sent before `/api/auth/me` confirms.** If the probe fails, "ok" is counted while the UI shows anonymous. `04` §18.4.
 
@@ -259,7 +259,7 @@ Not a widget rule but read every count with it: a "session" (sid) is not a visit
 | **Hydration** | Fetching product data for card ids via `GET /api/products` (batches of 10, cached per page). |
 | **Catalog id vs numeric id** | The backend catalog's product id is the handle (slug), optionally a variant ref `handle~<variantId>`. The theme's `product.id` is the numeric Shopify id. |
 | **Cart permalink** | `https://motionsports.de/cart/<variant>:1,…`, the `cartUrl` that "Zur Kasse" opens in a new tab. Built by the backend; no `_mo`. |
-| **`_mo` stamp / attribution token** | Opaque server token written as a cart attribute so the order webhook can attribute the order. The widget's stamp (token source `widget`) yields only „Beraten & gekauft“ (`assisted`) or „Beraten, anderes gekauft“ (`influenced`). „Direkt“ comes from Mo codes (MS5-/MK-) or Mo-built email/bundle cart links. Window: `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) from the token mint; with `MO_ATTRIBUTION_SESSION_ANCHOR` (default off in code) for `widget` tokens from the session's latest product consultation. Retention purges a token window + 7 days (default 37) after that anchor, and with the switch at most `KPI_RETENTION_DAYS` (default 180) after minting; after a purge the endpoint mints a new one, but the `3e87341` widget keeps stamping its cached token (renewal: `tasks/3-attribution-token-renewal.md`, AC §10). Details: OA, `05` §10, `06` §8. |
+| **`_mo` stamp / attribution token** | Opaque server token written as a cart attribute so the order webhook can attribute the order. The widget's stamp (token source `widget`) yields only „Beraten & gekauft“ (`assisted`) or „Beraten, anderes gekauft“ (`influenced`). „Direkt“ comes from Mo codes (MS5-/MK-) or Mo-built email/bundle cart links. Window: `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) from the token mint; with `MO_ATTRIBUTION_SESSION_ANCHOR` (default off in code) for `widget` tokens from the session's latest product consultation. Retention purges a token window + 7 days (default 37) after that anchor, and with the switch at most `KPI_RETENTION_DAYS` (default 180) after minting; after a purge the endpoint mints a new one, but the `3e87341` widget keeps stamping its cached token (renewal: `tasks/TASKS.md` task 3, AC §10). Details: OA, `05` §10, `06` §8. |
 | **Consulted** | Widget state that allows minting the attribution token. Set only when a `show_product` card renders. |
 | **Deep link** | `?mo=open` or `#mo-open` (+ `mo_new=1`, `mo_view=fullscreen`): opens the panel on load. Sends no chat message and does not change the greeting. It behaves exactly like a launcher click: `chat_opened` (no source field, so deep-link opens can't be told apart) plus the normal open-time auth detection (`openPanel()` → `resolveAuthOnOpen()`). |
 | **Campaign token (`mo_c`)** | Per-send token appended by `/api/r/<token>` to a campaign deep link; sent once as `campaignToken`; recorded server-side as session-less `campaign_chat_started` (AC §2 "Optional `campaignToken`", CMP). |

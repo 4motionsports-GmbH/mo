@@ -199,7 +199,7 @@ This table is the one description of the config and the page-context fields (`01
 
 There is no other `CFG.*` read. This was checked with `grep CFG\.` and covers `apiBase`, `chatKey`, `showroomUrl`, `locale`, `pageContext`, `whoamiPath`.
 
-The widget sends page facts only inside the `context` of a CTA turn or a nudge greeting (`03` §2, §4.3); typed turns carry none. The contract also defines page facts for typed turns (AC §2 "Optional `context`", `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/2-page-context.md`.
+The widget sends page facts only inside the `context` of a CTA turn or a nudge greeting (`03` §2, §4.3); typed turns carry none. The contract also defines page facts for typed turns (AC §2 "Optional `context`", `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/TASKS.md` task 2.
 
 ### 3.3 Server-rendered entry points outside the snippet
 
