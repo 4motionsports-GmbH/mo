@@ -6,10 +6,11 @@
 > wins.**
 
 This is what the storefront widget needs to render the marketing-consent
-surfaces. There are **three** of them, all on **consent copy v4**, all serving
-their strings from the backend so the widget **never hard-codes** consent text
-(the served `consentTextShown` IS the Art. 7 audit record — a hard-coded snapshot
-would silently drift from what we store).
+surfaces. There are **three** of them, all on the **v4 mechanic** (copy version
+stamp **v5** since 2026-10-05: the at-sign-in popup's benefit bullets are now
+served, §3.1), all serving their strings from the backend so the widget
+**never hard-codes** consent text (the served `consentTextShown` IS the Art. 7
+audit record — a hard-coded snapshot would silently drift from what we store).
 
 | Surface | Who sees it | Email field? | Mechanic | Submit endpoint |
 |---|---|---|---|---|
@@ -47,10 +48,14 @@ for the widget to do.
   the affirmative act; **decline must be equally reachable** (no visual
   burying). `marketingConsent: true` is **only sent on the accept tap** —
   never on dismiss, never automatically.
-- **Benefit framing is allowed in the `headline`** (personalised offers +
-  exclusive discount promotions — this wording is lawyer-approved), but still
-  **no dark patterns**: no countdowns, no fake urgency, no concrete discount
-  amount. The `headline` is NOT part of `consentTextShown`.
+- **Benefit framing is allowed in the served `headline` and, on
+  `surface=signin`, in the served `benefits` bullets** (personalised offers +
+  exclusive discount promotions — the headline wording is lawyer-approved; the
+  bullets were chosen under the owner's decision of 2026-10-05), and **only
+  there** — never in widget-authored text. Still **no dark patterns**: no
+  countdowns, no fake urgency, no concrete discount amount. Framing is static
+  per locale (no placeholders, nothing about the visitor's behaviour). Neither
+  the `headline` nor the `benefits` are part of `consentTextShown`.
 - **Show the imprint + privacy links** (`imprintUrl`, `privacyUrl`) next to the
   consent block.
 - **`lawyerApproved`** in the payload is **`true`** — the v4 copy and the
@@ -184,7 +189,8 @@ with `{ surface: "chat" }`) and don't show the gate again this session.
 
 The gate emits `consent_gate_shown` / `_accepted` / `_declined` /
 `_dismissed` via `POST /api/kpi`, payload `{ surface: "signin" | "chat" }` —
-since 2026-10-01 only `signin` (§3). The `starter_shown` / `starter_clicked`
+since 2026-10-01 only `signin` (§3), which since 2026-10-05 may add
+`placement` and `variant` (§3.2). The `starter_shown` / `starter_clicked`
 events are **retired**.
 
 ---
@@ -207,7 +213,50 @@ for it again. Everything else is identical to the chat gate.
 
 Same payload shape as `surface=chat` — only the strings differ (v4 headline:
 "Persönliche Angebote und exklusive Rabatt-Aktionen — direkt an deine
-hinterlegte E-Mail-Adresse."; the label still references the stored address).
+hinterlegte E-Mail-Adresse."; the label still references the stored address)
+— plus two optional fields since 2026-10-05 (v5):
+
+```jsonc
+// 200 OK  (Cache-Control: public, max-age=60, stale-while-revalidate=300 — or private, no-store, see below)
+{
+  "version": "v5",
+  "locale": "de",
+  "variant": "a",                                       // framing variant id — echo it (§3.2, KPI data)
+  "headline": "Persönliche Angebote und exklusive Rabatt-Aktionen — direkt an deine hinterlegte E-Mail-Adresse.",
+  "benefits": [                                         // framing — NOT consent text, never in consentTextShown
+    "Angebote, die zu deiner Beratung passen",
+    "Exklusive Rabatt-Aktionen nur für Abonnenten",
+    "Jederzeit mit einem Klick abbestellbar"
+  ],
+  "marketingLabel": "Ja, schickt mir an meine hinterlegte E-Mail-Adresse exklusive Angebote und Aktionen — nur für Abonnenten. Jederzeit abbestellbar.",
+  "consentFooter": "Verarbeitung durch motion sports gemäß Datenschutzerklärung; Widerruf jederzeit möglich.",
+  "consentTextShown": "Ja, schickt mir an meine hinterlegte … | Verarbeitung durch motion sports …",  // label + footer only
+  "imprintUrl": "https://motionsports.de/pages/impressum",
+  "privacyUrl": "https://motionsports.de/policies/privacy-policy",
+  "lawyerApproved": true,
+  "enLegalReviewed": true
+}
+```
+
+On `/en` (`?locale=en`) the bullets are "Offers that match your consultation",
+"Exclusive discount promotions for subscribers only", "Unsubscribe any time
+with one click" (the approved translation).
+
+- **`benefits` — all or nothing.** Render a list (popup and inline card, under
+  the headline, `textContent`) only when `benefits` is an array of 1–4 strings,
+  each non-empty after trim and at most 200 characters. Otherwise render **no**
+  list — never a subset, and never bullets of the widget's own. `benefits` is
+  not a required key: a missing or invalid value never hides the popup or the
+  card (the required keys stay `marketingLabel`, `consentTextShown` and
+  `lawyerApproved === true`).
+- **`variant`** — take it from the copy object that was rendered and echo it
+  when it matches `^[a-z0-9_-]{1,32}$`; otherwise leave it out.
+- **Cache rule.** By default only variant `a` is served and the response is
+  cached publicly for 60 s. While the backend runs a framing test (more than
+  one variant active, `CONSENT_SIGNIN_VARIANTS`), the variant is assigned per
+  session from the `x-ms-session` header and the response is
+  `Cache-Control: private, no-store` — keep any in-memory copy keyed by the
+  session id. Add no request header.
 
 ### 3.2 Submit the accept — `POST /api/account/marketing-opt-in`
 
@@ -215,10 +264,16 @@ Unchanged from v3 except the mechanic: the POST now fires on the
 **"Ja, Angebote aktivieren"** tap instead of a checkbox tick. Same guards as
 `/api/auth/me` (origin allowlist + shared secret + session; fail-closed
 **401** for anonymous/logged-out sessions). Body:
-`{ "marketingConsent": true, "consentTextShown": "<served surface=signin string, verbatim>" }`.
+`{ "marketingConsent": true, "consentTextShown": "<served surface=signin string, verbatim>", "locale": "de", "placement": "popup", "variant": "a" }`.
+`placement` (`popup` | `signin_return` | `value_moment`) and `variant` (the
+served id, §3.1) are **optional** since 2026-10-05: telemetry only, unknown
+values are ignored and never answered with a 400. Send the same two values
+in the `consent_gate_*` KPI data (`{ surface: "signin", placement, variant? }`).
 Same response shape and errors as before (`400 marketing_consent_required`,
 `422 no_verified_email` → fall back to the typed-email surface,
-`503 upstream_unavailable`).
+`503 upstream_unavailable`). Since 2026-10-05 a suppressed address is answered
+`marketing.status: "none"`, `alreadyConfirmed: false` (neutral thank-you,
+never „already subscribed“).
 
 Only show this surface once `/api/auth/me` reports `signedIn: true` **and**
 `marketing.optInActionable === true`. Emit the same four KPI events with

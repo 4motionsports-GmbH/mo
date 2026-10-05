@@ -747,7 +747,9 @@ clicks); errors are swallowed and the response is never read
 (`navigator.sendBeacon` remains only as a last-resort fallback — it can set
 neither the content type nor the session header). It sends
 **event names + ids only — never message text**. Events: `chat_opened`,
-`chat_closed`, `message_sent`, `product_cta_clicked` (`productId`),
+`chat_closed`, `message_sent`, `product_cta_clicked` (`productId`,
+`samePage` — `true` when the clicked product is the open product page's
+product, computed at click time; always `false` off a product page),
 `add_to_cart_clicked` (`productId`), `showroom_clicked` (`productIds`),
 `product_cta_opened` (`productId`). The engagement layer (§9c) adds:
 `nudge_shown` (`pageType`, `contextual` true/false, `trigger`
@@ -756,15 +758,17 @@ dwell/scroll/exit), `nudge_dismissed` (`pageType`, `contextual`),
 (**Retired:** `starter_shown` / `starter_clicked` are no longer sent.)
 The v4 consent-gate surfaces emit `consent_gate_shown` /
 `consent_gate_accepted` / `consent_gate_declined` /
-`consent_gate_dismissed`, each with `{ surface: "signin" | "chat" }`
-(`API_CONTRACT.md` §5). The capture form
+`consent_gate_dismissed`, each with `{ surface: "signin" | "chat" }` plus,
+on `signin`, `placement` and the served `variant`
+(`API_CONTRACT.md` §5, `CONSENT_FLOW.md` §3.2). The capture form
 additionally emits `email_capture_declined` (`trigger` only) when its
 decline link is clicked — the one capture-funnel event the contract assigns
 to the widget (`API_CONTRACT.md` §5; shown/submitted/opted-in/confirmed are
-all recorded server-side and MUST NOT be duplicated). All are
-session-keyed and carry **no personal data and no browsed product names**
-(page type + variant flags only). This is pseudonymous analytics keyed
-by the random session id.
+all recorded server-side and MUST NOT be duplicated; so are
+`page_context_applied` / `page_context_answered`). All are session-keyed and
+carry **ids, enums and booleans only** (clicked product id, `pageType`,
+`samePage`); never product names, the browsing trail, message text, URLs or
+tokens. This is pseudonymous analytics keyed by the random session id.
 
 ## 9c. Context-aware engagement layer (BE-NUDGE client side)
 
@@ -776,17 +780,21 @@ injects into `window.MS_CHAT_CONFIG`.
 **Privacy posture (load-bearing):** everything is gathered client-side and
 used only in-session. The browsing trail lives **only** in the user's
 `localStorage`, is capped and pruned, and is **never transmitted in the
-background** — KPI events carry page type + variant flags only, never
-browsed product names, never message text. Context (product and/or the
-trail as `context.recentlyViewed`, `API_CONTRACT.md` §2) leaves the
-browser **only inside a chat request the user initiates** — opening the
-chat via the nudge, tapping a starter, or the product CTA — as
-conversation input, never as a per-turn heartbeat. The wire shape is the
-contract's: `{ type: "product" | "browsing", productId?, productTitle?,
-recentlyViewed?: [{ type: "product", id, name } | { type: "category",
-id?, name }] }`, pre-capped client-side to the server's own cap
-(3 products + 2 categories); the backend validates everything against the
-catalog and drops mismatches gracefully.
+background** — KPI events carry ids, enums and booleans only (clicked
+product id, `pageType`, `samePage`); never product names, the browsing
+trail, message text, URLs or tokens. Context leaves the browser **only
+inside a `/api/chat` request the user starts**: the product CTA (product +
+trail, `source: "cta"`), a nudge click (greeting; product or trail,
+`source: "nudge"`), and — **page facts only, no trail** — the first typed
+or spoken message of a thread on a product (or collection) page and the
+first one after the page's product changed (`source: "page"`). Never in
+background calls, never as a per-turn heartbeat. The wire shape is the
+contract's (`API_CONTRACT.md` §2): `{ type: "product" | "browsing",
+productId?, productTitle?, recentlyViewed?: [{ type: "product", id, name }
+| { type: "category", id?, name }], source? }`, the trail pre-capped
+client-side to the server's own cap (3 products + 2 categories); the
+backend validates everything against the catalog and drops mismatches
+gracefully.
 
 **Tone rule:** copy references the **page/category** ("Fragen zum Produkt
 …?"), never the user's behavior ("ich habe gesehen, dass du …"). Helpful
@@ -805,7 +813,23 @@ conversation; the email ask stays where it is (§6a, after value).
 - A lightweight **browsing trail** in `localStorage` (`ms-chat-trail`):
   the last **5** products/collections viewed as
   `{ id, name, type, category, ts }`, deduped per page, entries pruned
-  after ~3 days. Recorded on init of product/collection pages.
+  after ~3 days. Recorded on init of product/collection pages. Sent only
+  inside a CTA or nudge context.
+- **Page facts on typed turns** (tasks of 2026-10-05; `source: "page"`): on a
+  product page the first message a user types or speaks in a thread — and
+  the first after moving to another product page — carries
+  `{ type: "product", productId: <handle>, productTitle?, source: "page" }`,
+  never `recentlyViewed`. Optional on a collection page:
+  `{ type: "browsing", recentlyViewed: [{ type: "category", id: <collection
+  handle>, name: <collection title> }], source: "page" }` — exactly one
+  category entry. Once a turn with context finished with content, the widget
+  remembers `<sid>|p:<handle>` (or `c:<collection handle>`) in
+  `sessionStorage['ms-chat-ctx-last']` (chat-functional, written only inside
+  a send the user started) and sends no context again on that page; a failed,
+  empty or cancelled turn writes nothing, so the next send carries it again.
+  CTA and nudge contexts add `source: "cta"` / `"nudge"`. The backend may
+  ignore a `page` context (switched off or control group) without any change
+  to the response — the widget never tries to detect that.
 
 ### Contextual proactive nudge
 
@@ -835,6 +859,10 @@ conversation; the email ask stays where it is (§6a, after value).
   the history. With existing history (or no context) it just opens.
 
 ### Context-seeded starter prompts (welcome state)
+
+> **Retired 2026-10-01** (starter prompts removed; `starter_*` events no
+> longer sent). Kept as history; the typed first message on a product page
+> carries the page facts instead (above).
 
 - The welcome state shows **3 tappable starters** (`.ms-chat-starter`)
   beneath the orb, seeded in priority order: **current/last product**
