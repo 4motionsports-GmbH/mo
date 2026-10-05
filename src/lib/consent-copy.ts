@@ -7,11 +7,9 @@
 // 2026), so CONSENT_COPY_LAWYER_APPROVED is true. Treat the German strings as
 // approved: any wording change is a new legal review.
 //
-// ⚠️ ENGLISH IS NOT YET LEGALLY REVIEWED (CONSENT_COPY_EN_LEGAL_REVIEWED=false).
-// The English consent / DOI / refund / unsubscribe copy (added for the /en
-// storefront) is a faithful translation of the approved German, but it MUST get
-// a human/legal review before being relied upon. The flag rides in the served
-// payload so the widget / legal can gate on it. The plain strings live in
+// ENGLISH is approved as a faithful translation of the German
+// (CONSENT_COPY_EN_LEGAL_REVIEWED=true, D-AP3, 05.10.2026). The flag rides in
+// the served payload (enLegalReviewed). The plain strings live in
 // consent-copy-core.mjs (locale-switched, unit-tested); this file assembles the
 // emails + payloads around them.
 //
@@ -107,8 +105,8 @@ export interface CaptureConsentCopy {
   /** Mirrors CONSENT_COPY_LAWYER_APPROVED (German lawyer-approved June 2026). */
   lawyerApproved: boolean;
   /**
-   * Whether the SERVED locale's copy is legally reviewed: true for German,
-   * false for English (⚠️ pending review). The widget / legal can gate on it.
+   * Whether the SERVED locale's copy is approved: German lawyer-approved,
+   * English approved as its translation (D-AP3, 05.10.2026).
    */
   enLegalReviewed: boolean;
   /** Returning-customer hint, rendered near the email input (NOT consent). */
