@@ -1212,6 +1212,11 @@ never as their own row:
 They feed the Consent-Gate funnel on the admin KPI tab
 (`getConsentGateFunnel`, `src/lib/kpi-store.ts`).
 
+> ⚠️ **Retired:** the widget no longer sends `starter_shown` /
+> `starter_clicked` (starter prompts removed, 2026-10-01). The endpoint (which
+> accepts any event name) doesn't reject them; the raw event breakdown marks them
+> „eingestellt“ and nothing alerts on the drop.
+
 ### Product clicks (widget)
 
 `product_cta_clicked` `{ productId, samePage? }` — „Zum Produkt“ in a product
@@ -1222,11 +1227,6 @@ product page, `false` otherwise (always `false` off a product page). The
 name still matches the dashboard's product-click pattern; „Seitenkontext auf
 Produktseiten“ counts only clicks whose `samePage` is not `true` as „andere
 Produkte geklickt“.
-
-> ⚠️ **Retired:** the widget no longer sends `starter_shown` /
-> `starter_clicked` (starter prompts removed, 2026-10-01). The endpoint (which
-> accepts any event name) doesn't reject them; the raw event breakdown marks them
-> „eingestellt“ and nothing alerts on the drop.
 
 ### Server-emitted lifecycle events (canonical names)
 
@@ -1530,7 +1530,8 @@ are the Art. 7 audit text.
 
 Like `/api/products`: **no shared secret** (the strings are public form copy),
 origin allowlist + rate limit only (shares the products bucket, 60 req /
-60 s). Send `x-ms-session` for rate-limit keying.
+60 s). Send `x-ms-session` for rate-limit keying — on `surface=signin` it also
+assigns the framing variant while more than one is active (below).
 
 #### Request
 

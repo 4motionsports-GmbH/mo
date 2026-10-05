@@ -1353,6 +1353,82 @@ indexes (migrations 0001 + 0027).
 | **Geöffnet → geschrieben** (engagement, since 2026-10-04) | Sessions with `message_sent` ÷ sessions with `chat_opened` in the window (both widget events, capped at 100 %). | Replaced `chats ÷ sessions with any telemetry`: the old denominator counted sessions that never opened the chat (nudge, popup and CTA impressions) and the old numerator counted greeting-only conversation rows (docs/frontend/05 §12, §14.3). Empty until the widget sends `chat_opened`. |
 | **Reichweite (Sitzungen)** | `count(distinct session_id)` in `kpi_events` — sessions with any widget event, opened or not. | Was „Sessions mit Telemetrie“; the denominator of nothing any more, shown as reach. |
 
+### 5.1a Seitenkontext auf Produktseiten — [`getPageContextKpis()`](../src/lib/kpi-store.ts), [`page-context.mjs`](../src/lib/page-context.mjs)
+
+Section in the „Beratung“ group after the core metrics (anchor `seitenkontext`,
+2026-10-05, A3). It measures questions **typed or spoken on a product page**
+that carry the page's product (`context.source: "page"`, API_CONTRACT §2) —
+whether Mo gets the product, and, while a control group runs, whether using it
+changes what shoppers click. Pure DB (`kpi_events`, `mo_orders`), never cached.
+
+**Events.** Two server-only events written by `/api/chat`:
+`page_context_applied {applied, kind, resolved, locale, pct}` when a
+`source: "page"` request arrives (the **arm**, intention-to-treat) and
+`page_context_answered {kind, productCards, otherCards}` when that turn
+finished (counts only, no product id). `applied:false` means the context was
+deliberately ignored: switched off (`CHAT_PAGE_CONTEXT_ENABLED`, recorded as
+`pct: 100`) or the session is in the control group
+(`CHAT_PAGE_CONTEXT_HOLDOUT_PCT`, 0–50 %, stable per session id). Collection
+pages (`kind: "collection"`) are never held out and only counted for coverage.
+
+**Population.** „Sitzungen mit getippter Frage auf einer Produktseite“ =
+sessions with a `page_context_applied {kind:"product"}` in the period; the
+session's first such turn in the period (`first_at`) starts every window.
+Chats that started elsewhere and later moved to a product page count too.
+
+**Stats.** Sessions; „Produkt erkannt“ (share with `resolved`, hint DE/EN);
+„Kontrollgruppe“ read **from the data** (`pct` of the rows, not from the env):
+„n %“, „keine“, „Seitenkontext aus“ (100) or „gemischt“; „Kategorieseiten“
+(sessions, hint how many were recognised). A Callout „Keine Kontrollgruppe in
+diesem Zeitraum — nur Abdeckung messbar.“ when no session has `0 < pct < 100`;
+a warning when a control group runs but no experiment is pre-registered.
+
+**Comparison (only with a pre-registered experiment).** Arms: „Mit
+Seitenkontext“ (every product turn of the session `applied`) vs.
+„Kontrollgruppe“ (none applied); sessions with both are „gemischt“. Compared
+are only sessions that are in an arm, carry **one constant share equal to the
+experiment's** (`0 < pct < 100`), have a recognised product, were **not primed** (no
+`product_cta_opened` / `nudge_clicked` in the 24 h before the first question)
+and whose 24-hour window has closed. Everything else is listed as
+„Ausgeschlossen“ with its reason (anderer Zeitraum oder Anteil · gemischt ·
+Produkt nicht erkannt · Klick davor · Zeitfenster offen). The selected period
+must start on or after the experiment's start (rows carry no date of their
+own); an earlier start puts every session under „anderer Zeitraum oder
+Anteil“.
+
+| Figure (per arm, share of sessions) | Definition | Window |
+| --- | --- | --- |
+| **Andere Produkte geklickt** (primary) | a product click (`CTA_PATTERNS`) whose `samePage` is not `true` | 24 h from `first_at` |
+| Produkt geklickt | any product click | 24 h |
+| Warenkorb | an add-to-cart click (`CART_PATTERNS`) | 24 h |
+| Ohne beendete Antwort | no `page_context_answered` (attrition) | 24 h |
+| Bestellt (7 T.) | an attributed order of the session (`mo_orders.processed_at`), share of sessions whose 7-day window has closed (also „Beraten & gekauft“ in the getter) | 7 days |
+
+The getter also returns first answer with any card / with another card and
+the storefront CTA opened after the first question (descriptive). Only the
+primary figure gets a verdict: `compareArms()` (difference with a Wald 95 %
+interval) and `experimentProgress()` against the pre-registered target per
+arm — „läuft (n / Ziel)“ until both arms reach it, then „belastbar“ with the
+interval and „Unterschied gesichert“ / „kein gesicherter Unterschied“. Read it
+once, at the target.
+
+**Pre-registration.** `PAGE_CONTEXT_EXPERIMENT` in `page-context.mjs` is
+`null` until the holdout starts; the commit that sets
+`CHAT_PAGE_CONTEXT_HOLDOUT_PCT` > 0 also sets it (`from`, `pct`, primary
+`clicked_other`, 24 h, `targetPerArm` from `requiredSampleSize()` on the
+observed base rate). Without it no comparison is shown.
+
+> ⚠️ Caveats (the InfoTip names the population, windows, exclusions, `samePage`,
+> the target size and the 95 % interval): a session id spans visits (docs/frontend/05
+> §3.2), so a session is not a visit; grounded answers are longer, so
+> attrition can differ by arm — judged on assignment rows, attrition shown per
+> arm; `productCards` counts card tool calls, not rendered cards; `/en`
+> handles the catalog does not know show up as „nicht erkannt“; `samePage` and
+> the page context exist only from the widget upload with the tasks of
+> 2026-10-05 — before it the section is empty („Noch keine Daten — das Widget
+> schickt den Seitenkontext erst nach dem Upload.“). Live check: `npm run
+> verify:live -- --session <prefix>` section 9.
+
 ### 5.2 Persona-group insights — [`lib/kpi-persona.ts`](../src/lib/kpi-persona.ts)
 
 Grouped by `COALESCE(persona_label, 'unknown')`.
@@ -1483,6 +1559,15 @@ from the four **widget-emitted** `kpi_events` (`consent_gate_shown` /
 `data.surface`) — see [`API_CONTRACT.md`](./API_CONTRACT.md) §5. Scoped to the
 selected window (`kpi_events.created_at`).
 
+**Sessions, not clicks (2026-10-05, OI1).** The `signin` funnel and its stats
+count **sessions with their final state**: accepted beats declined beats
+dismissed, so an accept followed by Esc on the success view (or during the
+POST) counts once, as accepted; several tabs of one session count once (once
+per variant and placement: a session shown both popup and card counts once
+for each). Before
+05.10.2026 the section counted events — the release note says so for a period
+starting earlier. The retired `chat` block still counts events.
+
 **Nach Anmeldeweg** (2026-10-05, P0.3): a table of the `signin` popup per
 **session** by how the session signed in — „Über „Anmelden““ (an
 `account_signin_linked {kind:"customer_account"}` of the session), „Über
@@ -1496,11 +1581,36 @@ limited to the period, so a renewal of an older chat sign-in still reads „Übe
 in 3 sessions within 30 days (anti-nag, `consent-ask-policy.mjs`) — expect
 slightly fewer „Angezeigt“.
 
+**Nach Variante und Platzierung** (2026-10-05, OI3): a table per framing
+variant (served `variant` of the sign-in copy) × placement (Popup / Nach
+Anmeldung im Chat / Wertmoment), per **session** — Angezeigt · Akzeptiert ·
+Akzeptanzrate (akzeptiert ÷ angezeigt; „(zu wenige Sitzungen)“ below 100 shown
+sessions per row) · Abgelehnt · Akzeptiert ohne Anzeige (diagnostic only:
+shown before the period, an older widget) · Opt-ins (Server)
+(`email_capture_marketing_opted_in {trigger:"signin_optin"}` with the same
+variant/placement) · Bereits angemeldet (`alreadyConfirmed`) · DOI-Quote
+(`email_capture_marketing_confirmed` of the session at or after the opt-in ÷
+opt-ins with `doiRequired`; already-subscribed answers are not in the
+denominator). Values outside the known variants and placements are merged into
+„unbekannt“, missing ones into „ohne (älteres Widget)“ / „ohne“ (bounded in
+SQL and in the tested `normalizeConsentVariantRows`, `kpi-widget-events.mjs`),
+so arbitrary strings posted to `/api/kpi` never get their own row. The block
+appears only once a known variant arrives — i.e. after the widget upload with
+the served bullets; the live widget `3e87341` sends neither field.
+`variantMismatch` (echoed variant ≠ the session's assignment while more than
+one variant runs) is counted for the live check.
+
+**Already subscribed vs. suppressed (F2, 2026-10-05).** A suppressed address
+is answered `status: "none"`, `alreadyConfirmed: false` by every opt-in route,
+so „Bereits angemeldet“ never includes a blocked address.
+
 > ⚠️ **Measures the UI, not the DOI.** An "Akzeptiert" is the gate tap; the
 > consent only becomes an effective marketing subscription after the
-> double-opt-in link is clicked (that outcome is the email-capture funnel in
-> the event breakdown: `email_capture_marketing_opted_in` with
-> `trigger: chat_gate|signin_optin` → `email_capture_marketing_confirmed`).
+> double-opt-in link is clicked. The DOI outcome of the sign-in opt-in is the
+> „DOI-Quote“ of „Nach Variante und Platzierung“ and `npm run verify:live`
+> section 3 (opt-ins by source / outcome / variant / placement, confirmations
+> by source); since 2026-10-05 the E-Mail-Capture-Funnel (§5.8) no longer
+> contains it.
 > Events without a `surface` payload count in the totals but in neither
 > surface split. The retired `starter_shown` / `starter_clicked` widget events
 > are no longer aggregated anywhere; in the raw event breakdown (§5.1) they carry
@@ -1556,8 +1666,26 @@ rendered as a dedicated funnel: **angeboten → Formular gesendet → Marketing-
 DOI bestätigt**, plus the widget-reported declines and an **asks-by-trigger** split
 (the `offer_email_summary` trigger enum). Windowed on `kpi_events.created_at`.
 
+**Capture form only (2026-10-05, OI1).** Submits, opt-ins and confirmations
+count only the in-chat capture form (`source: "mo_capture_form"`, AC §5); the
+popup after a sign-in is §5.7, the retired chat gate is left out. Rows from
+before 05.10.2026 (no `source`) are told apart by their server-set trigger
+(`signin_optin` / `chat_gate` are excluded); a confirmation without `source`
+counts unless its session has a sign-in or chat-gate opt-in.
+
+| Figure | Definition |
+| --- | --- |
+| **Marketing-Haken** | opt-ins of the form; hint „n DOI-Mail fällig · n bereits abonniert · n gesperrt“ from `outcome` (`doi_required` / `already_confirmed` + `already_subscribed` / `suppressed`; older rows by `doiStatus` pending / confirmed, „gesperrt“ only from 05.10.) |
+| **DOI bestätigt** | `email_capture_marketing_confirmed` with `source: "mo_capture_form"` (older rows by session, above); hint „% der fälligen DOI-Mails“ |
+| **DOI-Quote** | DOI bestätigt ÷ „DOI-Mail fällig“ (capped at 100 %). Already subscribed and suppressed addresses get no DOI mail and are not in the denominator; a failed or skipped send still counts as „fällig“ (the event is written before the send). Was ÷ all opt-ins. |
+| **Formular gesendet** | hint „% der Angebote“ (submits ÷ asks, capped at 100 %) |
+| **Abgelehnt** | widget `email_capture_declined`, **once per session and trigger** (a stored offer can be declined again after every reload) |
+| **Angebote nach Auslöser** | asks by trigger, bounded: the tool's five values and `unspecified`; an empty trigger reads „Ohne Auslöser“, anything else „Anderer Wert“ |
+
 > ⚠️ Event counting, not per-session chaining: a DOI click confirming yesterday's
-> opt-in counts in the window of the click. Stated in the UI caveat.
+> opt-in counts in the window of the click. Stated in the UI caveat. A period
+> starting before 05.10.2026 carries the release note that source and outcome
+> are approximated before that day and the figures are not directly comparable.
 
 ### 5.9 Kampagnen-Funnel — [`getCampaignKpis()`](../src/lib/campaign-store.ts)
 

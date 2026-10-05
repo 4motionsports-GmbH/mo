@@ -745,6 +745,8 @@ Server-only (the widget never sends them): `account_signin_succeeded`, `account_
 
 **The signed-in opt-in is counted twice.** Every 2xx `POST /api/account/marketing-opt-in` (popup or inline card) also records server-side `email_capture_submitted {marketingConsent:true, trigger:'signin_optin'}` and `email_capture_marketing_opted_in {doiStatus, trigger:'signin_optin'}` (backend `src/app/api/account/marketing-opt-in/route.ts`; API §5; `05-engagement-and-kpi.md` §4.6). So `consent_gate_accepted` (widget, the tap) and these server events count the same act. The effective subscription is `email_capture_marketing_confirmed` (after the DOI click).
 
+> **Backend status (2026-10-05, OI1):** the dashboard now counts the sign-in opt-in **once**, in „Einwilligung nach der Anmeldung“ (AD §5.7), per **session** with its final state; the „E-Mail-Capture-Funnel“ no longer contains it (server `source:'mo_signin'`, older rows by `trigger`). The server events also carry `outcome`, `alreadyConfirmed`, `doiRequired` and — once the widget sends them — `placement` / `variant`.
+
 ---
 
 ## 15. DOM hooks
@@ -794,7 +796,7 @@ Server-only (the widget never sends them): `account_signin_succeeded`, `account_
 - **`account_history_opened` is inflated** by the automatic open on an empty signed-in chat. Don't read it as intent.
 - **Sign-out is local.** The backend never learns about it, and the old sid stays linked server-side until expiry or a backend logout. If server-side session hygiene matters (e.g. for order-status exposure), the widget could call `/api/auth/shopify/logout` (CA §5). That is a top-level redirect and a product decision.
 - **The 422 `no_verified_email` path** sends a signed-in customer into the typed-e-mail capture form without a KPI. That conversion is invisible in the consent-gate funnel (it shows up as a server-side capture with no trigger). Contrast the accepted opt-in itself, which the server records as `email_capture_submitted` / `email_capture_marketing_opted_in` with `trigger:'signin_optin'` (§14).
-- **Consent funnel: dedupe accept and dismiss.** One session can carry both `consent_gate_accepted` and `consent_gate_dismissed` (Esc / backdrop on the success view or during the POST, §10.2). Count `accepted` as the final state, or count the server's `signin_optin` events instead.
+- **Consent funnel: dedupe accept and dismiss.** One session can carry both `consent_gate_accepted` and `consent_gate_dismissed` (Esc / backdrop on the success view or during the POST, §10.2). Count `accepted` as the final state, or count the server's `signin_optin` events instead. **Backend status (2026-10-05, OI1):** done on the dashboard — sessions with the final state (accepted > declined > dismissed); the widget-side fix (no dismiss after an accept) is frontend task 1 §4.
 
 ---
 
