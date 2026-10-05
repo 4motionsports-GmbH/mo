@@ -62,9 +62,11 @@ On the capture form the marketing line is shown only when the marketing box was 
   discount amount. Framing is static per locale (no placeholders, nothing about the visitor's
   behaviour). Neither is part of `consentTextShown`.
 - **Show the imprint + privacy links** (`imprintUrl`, `privacyUrl`) next to the consent block.
-- **Fail closed.** Render a surface only when its served copy loaded and is valid: sign-in
-  surfaces need `marketingLabel`, `consentTextShown` and `lawyerApproved === true`; the capture
-  form additionally `transactionalLabel`. Otherwise render nothing — there is no fallback text.
+- **Fail closed.** Render a surface only when its served copy loaded and is valid: its labels
+  (`marketingLabel`; the capture form also `transactionalLabel`) and `consentTextShown` are
+  present, and on the sign-in surfaces also `lawyerApproved === true` (API_CONTRACT §0 rule 10;
+  checking `lawyerApproved` on the capture form is recommended, not required). Otherwise render
+  nothing — there is no fallback text.
   `lawyerApproved` is `true` in the served copy (German lawyer-approved; English approved as its
   translation, `enLegalReviewed: true`).
 - **One language end to end.** Fetch the copy in the storefront language (`?locale=en` on `/en`,
