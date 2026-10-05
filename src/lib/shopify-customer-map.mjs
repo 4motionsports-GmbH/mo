@@ -9,7 +9,7 @@
 //
 // Minimisation is enforced HERE: only the fields listed in the typedefs leave
 // this module. Addresses (beyond the country code), phone numbers, notes and
-// payment details are dropped. See docs/CUSTOMER_PLATFORM_PLAN.md §6.2–§6.3.
+// payment details are dropped. See docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.2–§6.3.
 
 import { REFUND_MIN_SHARE } from "./customer-signals.mjs";
 

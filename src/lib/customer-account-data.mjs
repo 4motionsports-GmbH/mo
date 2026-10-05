@@ -130,7 +130,7 @@ export function buildAccountSummary(customerNode) {
  *   2. The customer holds the ONE e-mail-marketing consent (marketing_status
  *      = 'confirmed', the legacy mirror of customers.email_consent_state =
  *      'subscribed' — given in Mo with a double opt-in or on a Shopify
- *      surface, docs/CUSTOMER_PLATFORM_PLAN.md §7). `shopifySubscribed` is
+ *      surface, docs/archive/CUSTOMER_PLATFORM_PLAN.md §7). `shopifySubscribed` is
  *      kept for callers that know a live Shopify subscription separately.
  *      Signing in establishes IDENTITY, never this consent.
  *

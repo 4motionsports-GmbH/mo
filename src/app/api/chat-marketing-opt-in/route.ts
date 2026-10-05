@@ -150,7 +150,7 @@ export async function POST(req: Request) {
     // so an existing transactional consent is never downgraded. The session id
     // is recorded on the capture, which is what the /api/chat returning-
     // customer memory gate verifies (wasEmailCapturedFromSession).
-    // ONE consent (docs/CUSTOMER_PLATFORM_PLAN.md §7): an address already
+    // ONE consent (docs/archive/CUSTOMER_PLATFORM_PLAN.md §7): an address already
     // subscribed — via Shopify or an earlier DOI — gets no second DOI mail.
     const alreadySubscribed = await isEmailAlreadySubscribed(email);
 

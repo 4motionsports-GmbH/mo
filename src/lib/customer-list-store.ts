@@ -4,7 +4,7 @@
 // is a nullable parameter (lib/admin-customer-filter.mjs builds the tuple), so
 // the query is never composed from fragments (CLAUDE.md hard rule). The total
 // comes from the same query (count(*) OVER ()), so list and count can never
-// disagree. Pure DB, no Shopify call. docs/CUSTOMER_PLATFORM_PLAN.md §9.2.
+// disagree. Pure DB, no Shopify call. docs/archive/CUSTOMER_PLATFORM_PLAN.md §9.2.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";

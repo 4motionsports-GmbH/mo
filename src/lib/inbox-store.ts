@@ -3,7 +3,7 @@
 // Items are created by the signals job (lib/inbox-signals.ts, nightly + on
 // events) and by system events (Shopify data requests, sync alerts). The
 // operator lists, decides (erledigt / zurückstellen / verwerfen) and acts on
-// them; nothing here sends. docs/CUSTOMER_PLATFORM_PLAN.md §11.
+// them; nothing here sends. docs/archive/CUSTOMER_PLATFORM_PLAN.md §11.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";

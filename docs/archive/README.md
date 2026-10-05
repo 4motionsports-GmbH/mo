@@ -40,7 +40,11 @@ in [`docs/frontend/`](../frontend/README.md)), and the conventions are in the ro
 | [`BACKEND_REFERENCE_HISTORY_2026-10.md`](./BACKEND_REFERENCE_HISTORY_2026-10.md) | Retired notes from DATA_RETENTION, DISCOUNTS, BUNDLES, REPURCHASE_ANALYSIS and CUSTOMERS. | those docs |
 | [`CAMPAIGNS_HISTORY_2026-10.md`](./CAMPAIGNS_HISTORY_2026-10.md) | Retired campaign paths (newsletter sync, the single-campaign era). | `CAMPAIGNS.md` |
 | [`EMAIL_DESIGNS_HISTORY_2026-10.md`](./EMAIL_DESIGNS_HISTORY_2026-10.md) | Design history notes and the original default-hero prompt. | `EMAIL_DESIGNS.md` |
-| [`CONSENT_SIGNOFF_HISTORY.md`](./CONSENT_SIGNOFF_HISTORY.md) | The finished lawyer sign-off checklists of the consent copy versions v2–v4, the §7(3) UWG removal and the welcome-discount note. | `CONSENT_FLOW.md`, `ANWALTSDOSSIER.md` |
+| [`CONSENT_SIGNOFF_HISTORY.md`](./CONSENT_SIGNOFF_HISTORY.md) | The finished lawyer sign-off checklists of the consent copy versions v2–v4, the §7(3) UWG removal, the welcome-discount note and the retired descriptions of the at-sign-in and chat-gate surfaces. | `CONSENT_FLOW.md`, `ANWALTSDOSSIER.md` |
+| [`CUSTOMERS_HISTORY_2026-10.md`](./CUSTOMERS_HISTORY_2026-10.md) | Retired passages of the customer doc (old GDPR box, welcome discount, pre-platform notes). | `CUSTOMERS.md` |
+| [`CUSTOMER_ACCOUNT_HISTORY_2026-10.md`](./CUSTOMER_ACCOUNT_HISTORY_2026-10.md) | Retired sign-in passages (old store-setup box, live-token-only rules, old endpoint tables). | `CUSTOMER_ACCOUNT.md`, `frontend/ACCOUNT_CONTRACT.md` |
+| [`ORDER_ATTRIBUTION_HISTORY_2026-10.md`](./ORDER_ATTRIBUTION_HISTORY_2026-10.md) | Retired attribution passages (manual webhook setup, the old widget section). | `ORDER_ATTRIBUTION.md`, `frontend/API_CONTRACT.md` §10 |
+| [`FRONTEND_STATUS_2026-10-04.md`](./FRONTEND_STATUS_2026-10-04.md) | The dated status notes of the as-built widget chapters (README, 01–07) as of 04./05.10. | `ROLLOUT_TODO.md`, `npm run verify:widget`, `frontend/01`–`07` |
 
 ## Finished frontend hand-offs — [`frontend-handoff/`](./frontend-handoff/)
 

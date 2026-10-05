@@ -15,7 +15,7 @@
 //   5. the embedded emailMarketingConsent goes through the consent resolver
 //      (lib/consent-store.ts) — never written directly.
 //
-// docs/CUSTOMER_PLATFORM_PLAN.md §6.1–§6.2.
+// docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.1–§6.2.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";

@@ -210,7 +210,7 @@ export function signInVariantsActive(locale: Locale = "de"): boolean {
 /**
  * The sign-in-first path of the chat consent gate (UI chrome, NOT consent
  * text — never part of consentTextShown). Since the one consent
- * (docs/CUSTOMER_PLATFORM_PLAN.md §7), the gate leads with "sign in with your
+ * (docs/archive/CUSTOMER_PLATFORM_PLAN.md §7), the gate leads with "sign in with your
  * shop account": the person is then the Shopify customer, Mo knows their
  * orders, and the at-sign-in card (surface=signin) asks for the consent in one
  * tap — or they are already subscribed and are never asked. The typed-e-mail

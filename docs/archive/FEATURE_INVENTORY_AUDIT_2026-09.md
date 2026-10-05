@@ -20,7 +20,7 @@ path; Phase 3 marks each one as **verified** (by test / screenshot / manual run)
 > baseline and no longer match the redesigned tree (see `ADMIN_DASHBOARD.md` §2.3 for the new one).
 >
 > **Update (2026-10-01, customer platform, migrations 0061–0068, `main` @ `943a313`):** the capabilities of the
-> customer platform ([`CUSTOMER_PLATFORM_PLAN.md`](../CUSTOMER_PLATFORM_PLAN.md) — written before the build; where it
+> customer platform ([`CUSTOMER_PLATFORM_PLAN.md`](CUSTOMER_PLATFORM_PLAN.md) — written before the build; where it
 > and the code differ, this inventory follows the code) are added under new IDs (`EIG-…` Eingang, `KUN-113…`,
 > `KAM-96…`, `KPI-71…`, `EIN-07…`, `GES-43`) and in the API, cron, script, environment and database parts. Capabilities that
 > were replaced are kept and marked **❌ abgelöst / retired → replacement**; nothing was removed from this list.

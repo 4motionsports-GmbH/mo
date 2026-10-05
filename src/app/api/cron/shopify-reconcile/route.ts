@@ -2,7 +2,7 @@
 // Shopify customer and order changed since the last complete run — and then
 // recompute the customer facts (lifecycle, value, churn, …) the Kunden list
 // and the campaign audiences read. Replaces the old subscriber-only audience
-// sync. docs/CUSTOMER_PLATFORM_PLAN.md §6.3.
+// sync. docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.3.
 //
 // Reconcile is gated by SHOPIFY_CUSTOMER_SYNC_ENABLED; the facts run always
 // (they also cover chat-only people). With SHOPIFY_WRITEBACK_ENABLED the fresh

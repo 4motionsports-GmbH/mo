@@ -132,7 +132,7 @@ export function webhookNeedsCustomerSync(routeKind) {
 
 /**
  * Which handler a (verified) delivery belongs to. The catalog topics keep the
- * existing path; the customer-platform topics (docs/CUSTOMER_PLATFORM_PLAN.md
+ * existing path; the customer-platform topics (docs/archive/CUSTOMER_PLATFORM_PLAN.md
  * §6.2, §8) are deduplicated by X-Shopify-Webhook-Id and routed to
  * lib/shopify-webhook-customers.ts.
  *

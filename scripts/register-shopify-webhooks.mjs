@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Register the Shopify webhook subscriptions Mo needs, idempotently, and check
-// the app's scopes for the customer platform (docs/CUSTOMER_PLATFORM_PLAN.md
+// the app's scopes for the customer platform (docs/archive/CUSTOMER_PLATFORM_PLAN.md
 // Phase 0, docs/CATALOG_SYNC.md "Shopify-side registration").
 //
 //   npm run shopify:webhooks                       # dry run: what exists, what is missing

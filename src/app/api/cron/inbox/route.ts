@@ -2,7 +2,7 @@
 // events → inbox items (upsert by dedupe key, close what stopped firing,
 // expire), the 14-day outcomes of decided items, and AI suggestions within
 // INBOX_AI_DAILY_LIMIT (0 = none). Never sends anything.
-// docs/CUSTOMER_PLATFORM_PLAN.md §11.4. Protected by CRON_SECRET.
+// docs/archive/CUSTOMER_PLATFORM_PLAN.md §11.4. Protected by CRON_SECRET.
 
 import { NextResponse } from "next/server";
 import { requireCronAuth } from "@/lib/cron-auth";

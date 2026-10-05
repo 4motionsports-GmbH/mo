@@ -3,7 +3,7 @@
 // the ones whose rule stopped firing, expire old ones, fill the 14-day
 // outcome of decided items and — within INBOX_AI_DAILY_LIMIT — write AI
 // suggestions for the newest customer items. Runs hourly from
-// /api/cron/inbox; never sends anything. docs/CUSTOMER_PLATFORM_PLAN.md §11.4.
+// /api/cron/inbox; never sends anything. docs/archive/CUSTOMER_PLATFORM_PLAN.md §11.4.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";

@@ -4,7 +4,7 @@
 // is told what is NOT allowed (no e-mail advertising without consent, no
 // letter after an objection) and the answer is re-checked here before it is
 // stored — a suggestion can never widen what the gates allow. Nothing is
-// sent or minted. docs/CUSTOMER_PLATFORM_PLAN.md §11.4.
+// sent or minted. docs/archive/CUSTOMER_PLATFORM_PLAN.md §11.4.
 
 import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";

@@ -7,7 +7,7 @@
 // transaction (the plan is enforced by customer-fk-plan.test.mjs); profile,
 // drafts and other per-person fields fill the survivor's gaps; the dropped
 // row's consent is then replayed through the consent resolver, so the newer
-// decision wins. See docs/CUSTOMER_PLATFORM_PLAN.md §6.1.
+// decision wins. See docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.1.
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";

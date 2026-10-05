@@ -36,7 +36,7 @@ Shopify's own cart is the carrier:
    webhook, before parsing). Orders
    carrying a Mo marker are ingested into `mo_orders`; unmarked orders are
    **never stored in `mo_orders`** (data minimisation). Separately, the order
-   ledger (`customer_orders`, `docs/CUSTOMER_PLATFORM_PLAN.md`) stores every
+   ledger (`customer_orders`, `docs/CUSTOMERS.md` „Kundenstamm“) stores every
    order while `SHOPIFY_CUSTOMER_SYNC_ENABLED` is on (ANWALTSDOSSIER §13.1
    item 1).
 

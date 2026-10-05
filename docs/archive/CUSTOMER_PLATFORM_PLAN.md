@@ -1,5 +1,11 @@
 # Mo as the AI marketing layer — the customer-centric restructuring (plan)
 
+> **Archived 2026-10-05 — historical, not maintained.** The plan was built in 2026-10. Its decision
+> record D-1…D-12 and the list of what was not built are in [`CUSTOMERS.md`](../CUSTOMERS.md)
+> „Design decisions (customer platform, 2026-10)“; the as-built behaviour is in `CUSTOMERS.md`,
+> `CONSENT_FLOW.md`, `CAMPAIGNS.md` and `ADMIN_DASHBOARD.md`. Code comments still cite this plan's
+> sections as design rationale.
+
 Status: **built, 2026-10-01** (phases 1–7, see §0 „As built“). This document stays the design
 record: §1–§20 are the plan as agreed; where the build deviates, §0 says so and the code and the
 reference docs (`ADMIN_DASHBOARD.md`, `CAMPAIGNS.md`, `CONSENT_FLOW.md`, `CUSTOMERS.md`,

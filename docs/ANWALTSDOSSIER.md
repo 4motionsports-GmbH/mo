@@ -321,7 +321,7 @@ Fail-closed, zwei Wege: Stufe 2 nur, wenn die E-Mail **in derselben Session** ei
 
 ## 13. Nachtrag 01.10.2026 — Kundenplattform: eine Einwilligung, eine Löschung, alle Shop-Kunden
 
-Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle Shopify-Schalter stehen im Code standardmäßig auf **aus**; eingeschaltet werden sie erst nach Ihrer Freigabe.
+Grundlage: `docs/CUSTOMERS.md` „Design decisions (customer platform, 2026-10)“ (Entscheidungen D-1 bis D-12; der ursprüngliche Plan liegt in `docs/archive/CUSTOMER_PLATFORM_PLAN.md`). Alle Shopify-Schalter stehen im Code standardmäßig auf **aus**; eingeschaltet werden sie erst nach Ihrer Freigabe.
 
 ### 13.1 Was sich geändert hat (Tatsachen)
 

@@ -74,7 +74,7 @@ export type AiCallSite =
   // Dashboard/admin-side spend (no conversation FK).
   | "inbox_suggestion"
   // Kunden → Aktivität „Frag Mo“: a question answered from one customer's
-  // record (docs/CUSTOMER_PLATFORM_PLAN.md §9.5). Admin-side spend.
+  // record (docs/archive/CUSTOMER_PLATFORM_PLAN.md §9.5). Admin-side spend.
   | "customer_ask"
   // Eingang „E-Mail beantworten“: summary + reply draft for an incoming mail
   // (lib/inbox-mail.ts). Admin-side spend.

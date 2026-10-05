@@ -15,7 +15,7 @@ repository:
    AI profile), KPIs, the conversation inspector, the knowledge queue, analyses,
    the improvement loop and settings incl. the Shopify sync.
    [`docs/ADMIN_DASHBOARD.md`](docs/ADMIN_DASHBOARD.md),
-   [`docs/CUSTOMER_PLATFORM_PLAN.md`](docs/CUSTOMER_PLATFORM_PLAN.md).
+   [`docs/CUSTOMERS.md`](docs/CUSTOMERS.md).
 3. **The e-mail subsystem** — transactional mail (summary, double opt-in),
    campaign mail to everyone holding the one marketing consent shared with
    Shopify (`MK-` codes; the 1:1 mail is the campaign „Einzelansprache“), inbound
@@ -176,10 +176,11 @@ the customer entity above both. [`docs/DATABASE.md`](docs/DATABASE.md),
    "fallback-bundle"` means the Shopify credentials are wrong
    (`npm run verify:shopify`).
 7. **Register the webhooks**: Shopify with `npm run shopify:webhooks -- --apply`
-   (plus the compliance topics in the app configuration), Resend →
+   (plus the compliance topics in the app configuration with the Shopify CLI —
+   `docs/ROLLOUT_TODO.md` 5.4b), Resend →
    `/api/webhooks/resend` and `/api/inbound/resend`, Pingen →
    `/api/webhooks/pingen`, with the secrets from step 2. Then switch on the
-   customer platform in order (`docs/CUSTOMER_PLATFORM_PLAN.md`): sync →
+   customer platform in order (`docs/CUSTOMERS.md`, `docs/ROLLOUT_TODO.md`): sync →
    import (Einstellungen → Shopify-Abgleich) → consent write-back → erasure sync.
 8. **Set hard monthly spend caps** in the Anthropic and OpenAI consoles.
 9. **Smoke-test** the deployed chat endpoint (the `curl` above against the

@@ -9,7 +9,7 @@
 //   suppression_list (opt-out rows added / lifted, hard blocks),
 //   shopify_outbox (Mo-side changes pushed to Shopify, drift healed).
 //
-// See docs/CUSTOMER_PLATFORM_PLAN.md §7 and docs/CONSENT_FLOW.md. Best-effort
+// See docs/archive/CUSTOMER_PLATFORM_PLAN.md §7 and docs/CONSENT_FLOW.md. Best-effort
 // like every store: no DB → null; failures are reported, never thrown.
 
 import { getSql, type Sql } from "./db";
@@ -250,7 +250,7 @@ export async function applyConsentActs(
         consentUpdates.push({ customer_id: id, shopify_customer_id: row.shopifyCustomerId, payload: target });
       } else if (row.consent.state === "subscribed" && isRealEmail(row.email)) {
         // Mo-only subscriber → one subscriber list: create the Shopify customer
-        // with the consent (docs/CUSTOMER_PLATFORM_PLAN.md D-3).
+        // with the consent (docs/archive/CUSTOMER_PLATFORM_PLAN.md D-3).
         creates.push({
           customer_id: id,
           payload: { ...target, email: row.email, firstName: row.firstName, lastName: row.lastName },

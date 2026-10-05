@@ -34,7 +34,7 @@ decision D-9.
 ### Update 2026-10-01 — customer platform
 
 Verified against `main` @ `943a313` (migrations 0061–0068, plan
-[`CUSTOMER_PLATFORM_PLAN.md`](../CUSTOMER_PLATFORM_PLAN.md)). (1) Code check of every touched row and every new route
+[`CUSTOMER_PLATFORM_PLAN.md`](CUSTOMER_PLATFORM_PLAN.md)). (1) Code check of every touched row and every new route
 against `git diff d48ad77..HEAD`; (2) `npm test` 1016 green (116 files); (3) screenshots of the changed screens at 1440 and 1024 px
 in light and dark: [`screenshots/customer-platform/`](../screenshots/customer-platform/). Touched rows below are
 updated in place and marked **2026-10**; new items carry the new IDs of the inventory (`EIG-…`, `KUN-113…`,

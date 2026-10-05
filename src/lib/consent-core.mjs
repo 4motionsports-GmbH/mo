@@ -1,6 +1,6 @@
 // THE merge rule for the one e-mail-marketing consent (pure, no I/O).
 //
-// Mo and Shopify share one consent per person (docs/CUSTOMER_PLATFORM_PLAN.md
+// Mo and Shopify share one consent per person (docs/archive/CUSTOMER_PLATFORM_PLAN.md
 // §7). Changes arrive from both sides — Mo's surfaces (DOI confirm, unsubscribe
 // link, admin opt-out) and Shopify's (checkout checkbox, account, Shopify Email
 // footer, admin edits, delivered by webhook or the nightly reconciliation). Every

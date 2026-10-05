@@ -2,7 +2,7 @@
 // to Shopify or widens what Mo does with personal data defaults to the
 // conservative value for an absent, empty or unrecognised setting — the
 // deployment turns it on deliberately (documented in .env.example).
-// docs/CUSTOMER_PLATFORM_PLAN.md §4, §15.
+// docs/archive/CUSTOMER_PLATFORM_PLAN.md §4, §15.
 
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 
