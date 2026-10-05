@@ -31,6 +31,20 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Einmal-Code, Shop-Erkennung, Einwilligungsregeln, Lösch-Text, Kampagnen-Token (mo_c), stiller Bestellstatus, Verlauf löschen beim Abmelden; dazu Kontaktformular mit Sitzung, eigene Beschriftung für Bestellanfragen, Abbruch der Antwort bei neuem Chat und der Produktseiten-Knopf auf allen Produktvorlagen.",
   },
+  {
+    date: "2026-10-05",
+    key: "attribution-unresolved",
+    title: "Bestell-Zuordnung: markierte Bestellungen ohne Zuordnung",
+    detail:
+      "Markierte Bestellungen, die keiner Beratung zugeordnet werden können (Markierung unbekannt oder gelöscht, Beratung außerhalb des Zuordnungsfensters), werden seitdem gezählt.",
+  },
+  {
+    date: "2026-10-05",
+    key: "attribution-window",
+    title: "Bestell-Zuordnung: Fenster ab der letzten Beratung",
+    detail:
+      "Widget-Markierungen zählen ab der letzten Produktberatung auf dem Gerät statt ab der ersten. Vorher wurden Bestellungen 30 Tage nach der ersten Beratung nicht mehr zugeordnet (Markierung nach 37 Tagen gelöscht). „Direkt“ unverändert.",
+  },
 ]);
 
 /** First day whose data a section can be read for — earlier days are not comparable. */
@@ -50,6 +64,10 @@ const MEANINGFUL_FROM = Object.freeze({
   campaign: {
     date: "2026-10-04",
     why: "„Chat gestartet“ zählt erst, seit das Widget den Kampagnen-Token (mo_c) mitschickt",
+  },
+  attribution: {
+    date: "2026-10-05",
+    why: "„Beraten & gekauft“ und „Beraten, anderes gekauft“ zählen erst seitdem ab der letzten Produktberatung auf dem Gerät statt ab der ersten („Direkt“ unverändert)",
   },
 });
 
@@ -74,7 +92,7 @@ function isYmd(v) {
  * before the section's data is meaningful, one when it covers the sign-in
  * outage. Empty when the period is entirely after both.
  *
- * @param {string} section "anmelde-popup" | "consent" | "konto" | "campaign"
+ * @param {string} section "anmelde-popup" | "consent" | "konto" | "campaign" | "attribution"
  * @param {{ from: string, to: string }} range
  * @returns {string[]}
  */

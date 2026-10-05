@@ -294,3 +294,96 @@ export function isWithinAttributionWindow(orderAt, tokenCreatedAt, windowDays) {
   // Small negative tolerance for clock skew between Shopify and our DB.
   return ageMs >= -3_600_000 && ageMs <= windowDays * 86_400_000;
 }
+
+// ---------------------------------------------------------------------------
+// Window anchor (ATTR-TOKEN-LIFETIME, MO_ATTRIBUTION_SESSION_ANCHOR)
+// ---------------------------------------------------------------------------
+
+/** Token sources tied to a live widget session: with MO_ATTRIBUTION_SESSION_ANCHOR
+ * the window counts from that session's latest product consultation. */
+export const SESSION_ANCHORED_SOURCES = Object.freeze(["widget"]);
+
+/** messages.tool_name values that count as a product consultation (the product
+ * subset of PRODUCT_CARD_TOOLS — no contact form, no e-mail summary). */
+export const CONSULTATION_ANCHOR_TOOLS = Object.freeze([
+  "show_product",
+  "compare_products",
+  "add_to_cart",
+  "suggest_showroom",
+]);
+
+/** Why a Mo-marked order stays unattributed (server event enum, AC §5). */
+export const UNRESOLVED_MARKER_REASONS = Object.freeze(["unknown_token", "outside_window"]);
+
+const KNOWN_TOKEN_SOURCES = new Set(["widget", "summary_email", "marketing_email", "bundle"]);
+
+/** @param {unknown} source */
+export function isSessionAnchoredSource(source) {
+  return SESSION_ANCHORED_SOURCES.includes(String(source ?? ""));
+}
+
+/** @param {unknown} v @returns {number} */
+function toMs(v) {
+  if (v instanceof Date) return v.getTime();
+  if (typeof v !== "string" || v.trim() === "") return Number.NaN;
+  return Date.parse(v);
+}
+
+/**
+ * The instant the attribution window is measured from. Session sources: the
+ * later of the token mint and the last consultation at or before the order —
+ * a consultation after `orderAt` is ignored (the anchor never moves past the
+ * order; no skew: chat rows are stamped by our own DB). Link and unknown
+ * sources, or `lastConsultedAt` null (switch off): the mint.
+ * Invalid mint → null (fail closed: isWithinAttributionWindow(…, null, …) === false).
+ *
+ * @param {{ source: unknown, tokenCreatedAt: unknown, lastConsultedAt?: unknown, orderAt: unknown }} input
+ * @returns {Date | null}
+ */
+export function attributionAnchor({ source, tokenCreatedAt, lastConsultedAt, orderAt }) {
+  const minted = toMs(tokenCreatedAt);
+  if (!Number.isFinite(minted)) return null;
+  if (!isSessionAnchoredSource(source)) return new Date(minted);
+  const consulted = toMs(lastConsultedAt);
+  const order = toMs(orderAt);
+  if (!Number.isFinite(consulted) || !Number.isFinite(order)) return new Date(minted);
+  if (consulted > order || consulted <= minted) return new Date(minted);
+  return new Date(consulted);
+}
+
+/**
+ * The payload of the server event `mo_order_marker_unresolved` for one ingest
+ * result, or null. Only `orders/create` counts (a later orders/paid of the
+ * same order must not count twice); the reason must be in the enum; `source`
+ * only for outside_window and only from the known sources.
+ *
+ * @param {string} topic
+ * @param {{ action?: string, reason?: string, tokenSource?: string } | null | undefined} result
+ * @returns {{ reason: string, source?: string } | null}
+ */
+export function unresolvedMarkerEvent(topic, result) {
+  if (topic !== "orders/create" || !result || result.action !== "ignored") return null;
+  const reason = String(result.reason ?? "");
+  if (!UNRESOLVED_MARKER_REASONS.includes(reason)) return null;
+  if (reason === "outside_window" && KNOWN_TOKEN_SOURCES.has(String(result.tokenSource ?? ""))) {
+    return { reason, source: String(result.tokenSource) };
+  }
+  return { reason };
+}
+
+/**
+ * Tally kpi_events rows `{reason, n}` into the two counters; unknown reasons
+ * are ignored.
+ * @param {Array<{ reason: unknown, n: unknown }> | null | undefined} rows
+ * @returns {{ unknownToken: number, outsideWindow: number }}
+ */
+export function countUnresolvedMarkers(rows) {
+  const out = { unknownToken: 0, outsideWindow: 0 };
+  for (const row of rows ?? []) {
+    const n = Number(row?.n);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    if (row.reason === "unknown_token") out.unknownToken += n;
+    else if (row.reason === "outside_window") out.outsideWindow += n;
+  }
+  return out;
+}

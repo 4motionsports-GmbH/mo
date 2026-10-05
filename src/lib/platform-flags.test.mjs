@@ -6,6 +6,7 @@ import {
   isShopifyErasureSyncEnabled,
   isShopifyInsightsWritebackEnabled,
   isChatOrderStatusEnabled,
+  isAttributionSessionAnchorEnabled,
   aiProfileScope,
   shopifyConsentTextVersion,
   erasureAlertPerHour,
@@ -76,4 +77,12 @@ test("chatOrderStatusTestCustomers: digits (or a Customer gid) only, max 20", as
   );
   const many = Array.from({ length: 30 }, (_, i) => String(i + 1)).join(",");
   assert.equal(t({ CHAT_ORDER_STATUS_TEST_CUSTOMERS: many }).size, 20);
+});
+
+test("the attribution session anchor is off unless explicitly enabled", () => {
+  for (const v of [undefined, "", "0", "false", "off"]) {
+    assert.equal(isAttributionSessionAnchorEnabled({ MO_ATTRIBUTION_SESSION_ANCHOR: v }), false, String(v));
+  }
+  assert.equal(isAttributionSessionAnchorEnabled({ MO_ATTRIBUTION_SESSION_ANCHOR: "true" }), true);
+  assert.equal(isAttributionSessionAnchorEnabled({ MO_ATTRIBUTION_SESSION_ANCHOR: "1" }), true);
 });

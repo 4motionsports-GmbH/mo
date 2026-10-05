@@ -174,7 +174,7 @@ export async function KpiTab({
 
       <Group group={umsatz}>
         <RevenueSection cached={shopify.revenue} />
-        <AttributionSection attribution={attribution} />
+        <AttributionSection attribution={attribution} range={range} />
       </Group>
 
       <Group group={kosten}>

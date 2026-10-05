@@ -30,7 +30,14 @@ import {
   matchOrderLineItems,
   classifyAttributionTier,
   isWithinAttributionWindow,
+  attributionAnchor,
+  isSessionAnchoredSource,
+  unresolvedMarkerEvent,
+  countUnresolvedMarkers,
+  CONSULTATION_ANCHOR_TOOLS,
 } from "./order-attribution.mjs";
+import { isAttributionSessionAnchorEnabled } from "./platform-flags.mjs";
+import { recordKpiEvent, KPI_MO_ORDER_MARKER_UNRESOLVED } from "./kpi-events";
 import { reportError } from "./observability";
 import { parseIntEnv } from "./env-num";
 import type { KpiRange } from "./kpi-range";
@@ -48,9 +55,11 @@ export type AttributionSource =
   | "marketing_email"
   | "bundle";
 
-/** Attribution window (days) between token minting and the order. Orders
- * older than this relative to their token are NOT attributed (honesty:
- * a months-old consultation shouldn't claim an unrelated purchase). */
+/** Attribution window (days) between the anchor and the order: the token's
+ * minting, or — MO_ATTRIBUTION_SESSION_ANCHOR on, widget tokens — the device's
+ * latest product consultation before the order. Orders older than this
+ * relative to their anchor are NOT attributed (honesty: a months-old
+ * consultation shouldn't claim an unrelated purchase). */
 export function attributionWindowDays(): number {
   return parseIntEnv("MO_ATTRIBUTION_WINDOW_DAYS", 30, 1);
 }
@@ -116,10 +125,46 @@ export async function mintAttributionToken(
 
 export interface IngestOrderResult {
   ok: boolean;
-  /** What happened: stored | updated | ignored (+ reason) | failed. */
+  /** What happened: stored | updated | ignored (+ reason) | failed. A marked
+   * order that cannot be attributed is ignored with reason 'unknown_token'
+   * (token not in the table: purged, erased, forged) or 'outside_window'. */
   action: "stored" | "updated" | "ignored" | "failed";
   reason?: string;
   tier?: string | null;
+  /** Source of a token that resolved but fell outside the window. */
+  tokenSource?: string;
+}
+
+/**
+ * The latest product consultation written by `sessionId` at or before the
+ * order (ATTR-TOKEN-LIFETIME). Rows since 0076 carry their writer
+ * (messages.session_id); older rows (NULL) fall back to the thread's session
+ * until they leave the 37-day horizon. Throws — a failed lookup must reach the
+ * ingest's db-error path so Shopify retries instead of losing the order.
+ */
+async function lastConsultationAt(
+  sessionId: string,
+  orderAt: string,
+  sql: Sql
+): Promise<string | Date | null> {
+  const tools = [...CONSULTATION_ANCHOR_TOOLS];
+  const rows = (await sql`
+    SELECT GREATEST(
+      (SELECT max(m.created_at)
+         FROM messages m
+        WHERE m.session_id = ${sessionId}
+          AND m.tool_name = ANY(${tools}::text[])
+          AND m.created_at <= ${orderAt}::timestamptz),
+      (SELECT max(m.created_at)
+         FROM conversations c
+         JOIN messages m ON m.conversation_id = c.id
+        WHERE c.session_id = ${sessionId}
+          AND m.session_id IS NULL
+          AND m.tool_name = ANY(${tools}::text[])
+          AND m.created_at <= ${orderAt}::timestamptz)
+    ) AS last_consulted
+  `) as Array<{ last_consulted: string | Date | null }>;
+  return rows[0]?.last_consulted ?? null;
 }
 
 /**
@@ -158,32 +203,61 @@ export async function ingestShopifyOrder(payload: unknown): Promise<IngestOrderR
       return { ok: true, action: "updated" };
     }
 
-    // Resolve the token → (session, source, minted-at). An unknown token (e.g.
-    // aged out by retention) contributes nothing.
+    // Resolve the token → (session, source, anchor). An unknown token (aged
+    // out by retention, erased, forged) or one outside the window contributes
+    // nothing; the reason is returned for the unresolved-marker counter.
     let tokenSource: string | null = null;
     let sessionId: string | null = null;
+    let unresolved: "unknown_token" | "outside_window" | null = null;
+    let unresolvedSource: string | undefined;
     if (parsed.moToken) {
       const rows = (await sql`
         SELECT session_id, source, created_at
           FROM mo_attribution_tokens WHERE token = ${parsed.moToken} LIMIT 1
       `) as Array<{ session_id: string | null; source: string; created_at: string | Date }>;
-      if (
-        rows[0] &&
-        isWithinAttributionWindow(
-          parsed.processedAt,
-          rows[0].created_at,
-          attributionWindowDays()
-        )
-      ) {
-        tokenSource = String(rows[0].source);
-        sessionId = rows[0].session_id ? String(rows[0].session_id) : null;
+      const row = rows[0];
+      if (!row) {
+        unresolved = "unknown_token";
+      } else {
+        const sid = row.session_id ? String(row.session_id) : null;
+        const source = String(row.source);
+        const orderAt = parsed.processedAt;
+        let lastConsultedAt: string | Date | null = null;
+        if (
+          isAttributionSessionAnchorEnabled() &&
+          isSessionAnchoredSource(source) &&
+          sid &&
+          orderAt &&
+          Number.isFinite(Date.parse(orderAt))
+        ) {
+          lastConsultedAt = await lastConsultationAt(sid, orderAt, sql);
+        }
+        const anchor = attributionAnchor({
+          source,
+          tokenCreatedAt: row.created_at,
+          lastConsultedAt,
+          orderAt,
+        });
+        if (isWithinAttributionWindow(orderAt, anchor, attributionWindowDays())) {
+          tokenSource = source;
+          sessionId = sid;
+        } else {
+          unresolved = "outside_window";
+          unresolvedSource = source;
+        }
       }
     }
 
     const hasMoCode = parsed.discountCodes.some(isMoDiscountCode);
     if (!hasMoCode && !tokenSource) {
-      // Marker present but unresolvable/expired → honestly unattributable.
-      return { ok: true, action: "ignored", reason: "marker-expired-or-unknown" };
+      // Marker present but unresolvable or outside the window → honestly
+      // unattributable; counted (without the order) by noteUnresolvedMarker.
+      return {
+        ok: true,
+        action: "ignored",
+        reason: unresolved ?? "outside_window",
+        ...(unresolved === "outside_window" && unresolvedSource ? { tokenSource: unresolvedSource } : {}),
+      };
     }
 
     // Map line items to catalog handles (variant id, then normalised title).
@@ -226,6 +300,19 @@ export async function ingestShopifyOrder(payload: unknown): Promise<IngestOrderR
     reportError(err, { route: "lib/mo-orders-store", phase: "ingestShopifyOrder" });
     return { ok: false, action: "failed", reason: "db-error" };
   }
+}
+
+/**
+ * Count a Mo-marked order that could not be attributed — the server event
+ * `mo_order_marker_unresolved {reason, source?}`, session NULL, never an order
+ * id, token or amount. orders/create only (the filter is in the pure core), so
+ * the orders/paid delivery of the same order does not count it again. Call it
+ * after the webhook delivery was recorded as done. Never throws.
+ */
+export async function noteUnresolvedMarker(topic: string, result: IngestOrderResult): Promise<void> {
+  const data = unresolvedMarkerEvent(topic, result);
+  if (!data) return;
+  await recordKpiEvent({ sessionId: null, event: KPI_MO_ORDER_MARKER_UNRESOLVED, data });
 }
 
 /**
@@ -273,10 +360,16 @@ export interface MoAttributionKpis {
   currency: string;
   /** Total ingested Mo-marked orders in the window (all tiers, all statuses). */
   totalOrders: number;
-  /** True once at least one order was EVER ingested — before that the section
-   * shows the "webhook not registered yet?" empty state. */
+  /** True once at least one marked order was EVER seen (stored, or counted as
+   * unresolved) — before that the section shows the "webhook not registered
+   * yet?" empty state. */
   ingestionSeen: boolean;
   attributionWindowDays: number;
+  /** Marked orders in the range that no consultation could claim, by reason
+   * (event `mo_order_marker_unresolved`, dated by the orders/create arrival). */
+  unresolvedOrders: { unknownToken: number; outsideWindow: number };
+  /** MO_ATTRIBUTION_SESSION_ANCHOR — which window rule the InfoTip explains. */
+  sessionAnchor: boolean;
   range: { from: string; to: string; days: number; label: string };
 }
 
@@ -307,6 +400,17 @@ export async function getMoAttributionKpis(
     const seenRows = (await sql`
       SELECT 1 FROM mo_orders LIMIT 1
     `) as Array<Record<string, unknown>>;
+    const unresolvedRows = (await sql`
+      SELECT COALESCE(data->>'reason', '') AS reason, count(*)::int AS n
+        FROM kpi_events
+       WHERE event = ${KPI_MO_ORDER_MARKER_UNRESOLVED}
+         AND created_at >= ${range.from}::date
+         AND created_at < (${range.to}::date + 1)
+       GROUP BY 1
+    `) as Array<{ reason: string; n: number }>;
+    const unresolvedSeen = (await sql`
+      SELECT 1 FROM kpi_events WHERE event = ${KPI_MO_ORDER_MARKER_UNRESOLVED} LIMIT 1
+    `) as Array<Record<string, unknown>>;
 
     const tiers: Record<"direct" | "assisted" | "influenced", MoAttributionTierStats> = {
       direct: { ...EMPTY_TIER },
@@ -335,8 +439,10 @@ export async function getMoAttributionKpis(
       unrealisedOrders,
       currency,
       totalOrders: rows.length,
-      ingestionSeen: seenRows.length > 0,
+      ingestionSeen: seenRows.length > 0 || unresolvedSeen.length > 0,
       attributionWindowDays: attributionWindowDays(),
+      unresolvedOrders: countUnresolvedMarkers(unresolvedRows),
+      sessionAnchor: isAttributionSessionAnchorEnabled(),
       range: { from: range.from, to: range.to, days: range.days, label: range.label },
     };
   } catch (err) {

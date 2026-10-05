@@ -8,7 +8,9 @@
 //   npm run verify:live -- --since 2026-10-05
 //
 // Sections: 1 sign-in chain + diagnosis, 3 consent + no widget-sent erasures,
-// 4 campaign chat starts (once per send), 5 contact form, 6 order status.
+// 4 campaign chat starts (once per send), 5 contact form, 6 order status,
+// 7 order attribution (pre-checks P1–P6; after migration 0076 the live
+// checks V0, V3, V4 and the kept tokens).
 
 import { neon, neonConfig } from "@neondatabase/serverless";
 import { SIGNIN_DIAGNOSIS, classifySigninSession } from "../src/lib/kpi-widget-events.mjs";
@@ -308,5 +310,55 @@ table(
                           AND c.last_activity_at >= now() - interval '37 days'
                           AND m.created_at >= now() - interval '37 days'
                           AND m.tool_name IN ('show_product','compare_products','add_to_cart','suggest_showroom'))) AS p6_behalten_statt_geloescht`
+  )
+);
+
+console.log("\n7b · Nach Migration 0076 und Deploy (Zuordnungsfenster ab der letzten Beratung):");
+try {
+  console.log("V0 · Produkt-Zeilen mit schreibender Sitzung (ohne_sitzung_danach muss 0 sein):");
+  table(
+    await q(
+      `WITH first_stamped AS (
+         SELECT min(created_at) AS at FROM messages WHERE tool_name IS NOT NULL AND session_id IS NOT NULL
+       )
+       SELECT (SELECT at FROM first_stamped) AS erste_mit_sitzung,
+              count(*) FILTER (WHERE m.session_id IS NOT NULL)::int AS mit_sitzung,
+              count(*) FILTER (WHERE m.session_id IS NULL
+                                 AND m.created_at > (SELECT at FROM first_stamped))::int AS ohne_sitzung_danach
+         FROM messages m
+        WHERE m.tool_name IS NOT NULL AND m.created_at >= ${SINCE}`
+    )
+  );
+} catch (err) {
+  console.log(`  Migration 0076 fehlt noch (messages.session_id): ${err?.message ?? err}`);
+}
+console.log("V3 · Markierte Bestellungen ohne Zuordnung (immer ohne Sitzung; nur die Schlüssel reason/source):");
+table(
+  await q(
+    `SELECT data->>'reason' AS reason, COALESCE(data->>'source', '') AS source, count(*)::int AS events,
+            bool_and(session_id IS NULL) AS alle_ohne_sitzung,
+            bool_and((SELECT count(*) FROM jsonb_object_keys(data) k WHERE k NOT IN ('reason','source')) = 0
+                     AND data ? 'reason') AS nur_erlaubte_felder
+       FROM kpi_events
+      WHERE event = 'mo_order_marker_unresolved' AND created_at >= ${SINCE}
+      GROUP BY 1, 2 ORDER BY 1, 2`
+  )
+);
+console.log("V4 · Vom neuen Fenster gerettete Bestellungen (mehr als 30 Tage nach dem Token zugeordnet):");
+table(
+  await q(
+    `SELECT count(*)::int AS bestellungen, COALESCE(sum(o.total_price), 0)::numeric AS umsatz
+       FROM mo_orders o JOIN mo_attribution_tokens t ON t.token = o.attribution_token
+      WHERE o.attribution_source = 'widget'
+        AND o.created_at >= ${SINCE}
+        AND o.processed_at > t.created_at + interval '30 days'`
+  )
+);
+console.log("Token älter als 37 Tage (mit Schalter: behalten, weil das Gerät weiter berät; ohne Schalter 0 nach dem Nachtlauf):");
+table(
+  await q0(
+    `SELECT source, count(*)::int AS tokens, min(created_at) AS aeltester
+       FROM mo_attribution_tokens WHERE created_at < now() - interval '37 days'
+      GROUP BY 1 ORDER BY 1`
   )
 );

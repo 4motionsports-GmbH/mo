@@ -8,6 +8,12 @@ import {
   matchOrderLineItems,
   classifyAttributionTier,
   isWithinAttributionWindow,
+  attributionAnchor,
+  unresolvedMarkerEvent,
+  countUnresolvedMarkers,
+  SESSION_ANCHORED_SOURCES,
+  CONSULTATION_ANCHOR_TOOLS,
+  UNRESOLVED_MARKER_REASONS,
 } from "./order-attribution.mjs";
 
 // ---------------------------------------------------------------------------
@@ -285,4 +291,113 @@ test("matchOrderLineItems matches NON-default variants by id and reports the ref
   assert.equal(items[0].ref, "atx-kettlebell~222");
   assert.equal(items[1].handle, "atx-kettlebell");
   assert.equal(items[1].ref, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// attributionAnchor / unresolved markers (ATTR-TOKEN-LIFETIME)
+// ---------------------------------------------------------------------------
+
+const DAY = 86_400_000;
+const MINT = "2026-08-01T00:00:00.000Z";
+const at = (days) => new Date(Date.parse(MINT) + days * DAY).toISOString();
+
+test("attributionAnchor: link sources keep the mint even after a later consultation", () => {
+  for (const source of ["summary_email", "marketing_email", "bundle"]) {
+    const a = attributionAnchor({ source, tokenCreatedAt: MINT, lastConsultedAt: at(25), orderAt: at(32) });
+    assert.equal(a?.toISOString(), MINT, source);
+  }
+});
+
+test("attributionAnchor: the widget anchors on the latest consultation", () => {
+  const a = attributionAnchor({ source: "widget", tokenCreatedAt: MINT, lastConsultedAt: at(25), orderAt: at(32) });
+  assert.equal(a?.toISOString(), at(25));
+  assert.equal(isWithinAttributionWindow(at(32), a, 30), true);
+  const late = attributionAnchor({ source: "widget", tokenCreatedAt: MINT, lastConsultedAt: at(25), orderAt: at(56) });
+  assert.equal(isWithinAttributionWindow(at(56), late, 30), false);
+  // Without the anchor the day-32 order is outside — what the switch changes.
+  assert.equal(isWithinAttributionWindow(at(32), MINT, 30), false);
+});
+
+test("attributionAnchor: a consultation before the mint keeps the mint", () => {
+  const a = attributionAnchor({ source: "widget", tokenCreatedAt: MINT, lastConsultedAt: at(-3), orderAt: at(10) });
+  assert.equal(a?.toISOString(), MINT);
+});
+
+test("attributionAnchor never moves past the order", () => {
+  const order = at(40);
+  const after = new Date(Date.parse(order) + 60_000).toISOString();
+  assert.equal(
+    attributionAnchor({ source: "widget", tokenCreatedAt: MINT, lastConsultedAt: after, orderAt: order })?.toISOString(),
+    MINT
+  );
+  assert.equal(
+    attributionAnchor({ source: "widget", tokenCreatedAt: MINT, lastConsultedAt: order, orderAt: order })?.toISOString(),
+    order
+  );
+});
+
+test("attributionAnchor: switch off (no consultation) → the mint", () => {
+  const a = attributionAnchor({ source: "widget", tokenCreatedAt: MINT, lastConsultedAt: null, orderAt: at(5) });
+  assert.equal(a?.toISOString(), MINT);
+});
+
+test("attributionAnchor fails closed on a bad mint, falls back to the mint on bad other input", () => {
+  assert.equal(attributionAnchor({ source: "widget", tokenCreatedAt: null, lastConsultedAt: at(2), orderAt: at(3) }), null);
+  assert.equal(attributionAnchor({ source: "widget", tokenCreatedAt: "nope", lastConsultedAt: at(2), orderAt: at(3) }), null);
+  assert.equal(isWithinAttributionWindow(at(3), null, 30), false);
+  assert.equal(
+    attributionAnchor({ source: "widget", tokenCreatedAt: MINT, lastConsultedAt: "garbage", orderAt: at(3) })?.toISOString(),
+    MINT
+  );
+  assert.equal(
+    attributionAnchor({ source: "widget", tokenCreatedAt: MINT, lastConsultedAt: at(2), orderAt: "garbage" })?.toISOString(),
+    MINT
+  );
+  assert.equal(
+    attributionAnchor({ source: "widget", tokenCreatedAt: new Date(MINT), lastConsultedAt: new Date(at(2)), orderAt: new Date(at(3)) })?.toISOString(),
+    at(2)
+  );
+});
+
+test("attributionAnchor: unknown sources keep the mint (conservative)", () => {
+  const a = attributionAnchor({ source: "foo", tokenCreatedAt: MINT, lastConsultedAt: at(25), orderAt: at(32) });
+  assert.equal(a?.toISOString(), MINT);
+});
+
+test("unresolvedMarkerEvent: orders/create only, enum reasons only, source only for outside_window", () => {
+  assert.equal(unresolvedMarkerEvent("orders/paid", { action: "ignored", reason: "unknown_token" }), null);
+  assert.deepEqual(unresolvedMarkerEvent("orders/create", { action: "ignored", reason: "unknown_token", tokenSource: "widget" }), {
+    reason: "unknown_token",
+  });
+  assert.deepEqual(unresolvedMarkerEvent("orders/create", { action: "ignored", reason: "outside_window", tokenSource: "widget" }), {
+    reason: "outside_window",
+    source: "widget",
+  });
+  assert.deepEqual(unresolvedMarkerEvent("orders/create", { action: "ignored", reason: "outside_window", tokenSource: "evil<script>" }), {
+    reason: "outside_window",
+  });
+  for (const reason of ["no-mo-marker", "unclassifiable", "db-error", "no-db", undefined]) {
+    assert.equal(unresolvedMarkerEvent("orders/create", { action: "ignored", reason }), null, String(reason));
+  }
+  assert.equal(unresolvedMarkerEvent("orders/create", { action: "stored" }), null);
+  assert.equal(unresolvedMarkerEvent("orders/create", null), null);
+});
+
+test("countUnresolvedMarkers ignores unknown reasons and empty input", () => {
+  assert.deepEqual(countUnresolvedMarkers(null), { unknownToken: 0, outsideWindow: 0 });
+  assert.deepEqual(
+    countUnresolvedMarkers([
+      { reason: "unknown_token", n: 3 },
+      { reason: "outside_window", n: "2" },
+      { reason: "other", n: 9 },
+      { reason: "", n: 1 },
+    ]),
+    { unknownToken: 3, outsideWindow: 2 }
+  );
+});
+
+test("anchor constants are pinned", () => {
+  assert.deepEqual([...SESSION_ANCHORED_SOURCES], ["widget"]);
+  assert.deepEqual([...CONSULTATION_ANCHOR_TOOLS].sort(), ["add_to_cart", "compare_products", "show_product", "suggest_showroom"]);
+  assert.deepEqual([...UNRESOLVED_MARKER_REASONS], ["unknown_token", "outside_window"]);
 });
