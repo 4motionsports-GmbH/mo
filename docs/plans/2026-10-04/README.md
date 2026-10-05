@@ -64,6 +64,18 @@ A1+D2 attribution hygiene, sign-in card at the order-status moment, D6 value-mom
 | ATTR (L: F-37, dossier §20) | Count the 30 days from the device's latest product consultation (`MO_ATTRIBUTION_SESSION_ANCHOR`) | Owner decision + lawyer note; switch ships off. Pre-checks P0–P6 first (ATTR §2). |
 | A3 | Page context on typed PDP turns; 20 % holdout | Switch on after the upload's live check and 2–3 days of observation; pre-register the experiment. |
 
+### Decided 05.10. (M)
+
+- **D-AP1 yes** — a visitor logged in to the shop counts as signed in to the chat; the lawyer
+  confirmed (F-36 answered). P0.3 Phase 2 is built together with Phase 1.
+- **D-AP3** — the English sign-in consent text is a valid translation of the German one and is
+  served as approved.
+- **D-AP4 / OI3** — C chooses the benefit-bullet wording (attractive, honest, no urgency or
+  discount amounts, served copy only).
+- **ATTR** — C decides: the 30-day window counts from the device's latest product consultation
+  (`MO_ATTRIBUTION_SESSION_ANCHOR=true` after the live checks).
+- F1 and F2 size checks: both 0 (nobody affected; F1 fixed in #223, F2 stays a small follow-up).
+
 ## Order of work
 
 1. **C (backend, no widget):** OI1 F1 fix → P0.3 Phase 1 → OI1 PR 1 + PR 2 → OI3 B1 + A3 backend
