@@ -1361,7 +1361,10 @@ HTTP/1.1 200 OK
 
 The widget should show: "Wir haben dir die Zusammenfassung geschickt." and, when
 `marketing.status === "pending"`, "Bitte bestätige noch die Anmeldung über den
-Link in der E-Mail."
+Link in der E-Mail." Since 2026-10-05 `pending` is also answered to a submit
+**without** the marketing tick when an earlier opt-in of the address is still
+unconfirmed: the pending DOI and its link stay valid (before, such a submit
+reset it to `none` and the link in the inbox stopped working).
 
 > **Local-dev note:** `transactional.summarySent: true` is also returned when
 > no email provider (Resend) is configured — the send is then *skipped*, not

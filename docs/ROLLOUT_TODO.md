@@ -367,10 +367,14 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
   list) and F-35 (letters from campaigns, 1.10) is still worth having; switch a gate off in
   Vercel if the answer says so.
 
-- [ ] **6.6 Order status in the chat** (F-32) — M (FE first, C checks)
+- [x] **6.6 Order status in the chat** (F-32) — done 05.10.: `CHAT_ORDER_STATUS_ENABLED=true`
+  in Production (M); verified live: signed in without orders → lookup `no_orders`, Mo says so in
+  words with „Meine Bestellungen“ and asks before opening the contact form; signed out → Mo
+  explains „Anmelden“ and asks (wording fixed in #221/#222). Still to see once: an account with
+  orders (date, items, state; no number or amount). Watch KPI → „Bestellstatus im Chat“.
   - Signed-in customers ask „Wo ist meine Bestellung?“ and Mo answers from the order ledger
     plus a short live Shopify read (`get_order_status`, `docs/ANWALTSDOSSIER.md` §16).
-    Built 03.10., switch `CHAT_ORDER_STATUS_ENABLED` is **off**.
+    Built 03.10.
   - Before: the lawyer's answer on F-32 (and the privacy-policy sentence it asks for); FE
     confirms the live widget renders nothing for `get_order_status` and clears the stored
     chat history on logout (`docs/frontend-handoff/CHAT_ORDER_STATUS.md`, frontend prompt
@@ -470,10 +474,12 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       verified plans in `docs/plans/2026-10-04/` (README = ranking, findings, decisions, order);
       widget tasks in `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md` (send each only when its
       backend row below is done).
-- [ ] **C.16** Fix OI1 F1 (opt-in loss): `upsertEmailCapture` keeps a `pending` DOI (status, token,
-      `doi_sent_at`) when a later submit has no marketing tick and the address is not suppressed;
-      test. M first runs the size check in `docs/plans/2026-10-04/README.md` (finding 2). Also F2
-      (suppressed address answered „already subscribed“) as a backend-only follow-up.
+- [x] **C.16** OI1 F1 (opt-in loss) fixed 05.10.: a submit without the marketing tick keeps a
+      `pending` DOI (status, token, `doi_sent_at`, marketing flag) unless the address is
+      suppressed, so the link in the inbox keeps working; rules in the tested
+      `email-capture-core.mjs`. Already lost links are not restored — M's size check
+      (`docs/plans/2026-10-04/README.md`, finding 2) shows how many; those people can opt in
+      again. **Left:** F2 (a suppressed address answered „already subscribed“), backend-only.
 - [ ] **C.17** P0.3 Phase 1 — App Proxy safety + measurement (kill switch, code only when
       `/api/auth/me` will sign in, timestamp freshness, handover, ownership guard on the
       conversation stamp, `account_shop_recognised`, renewals, dashboard split, drift alarm).

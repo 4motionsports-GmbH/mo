@@ -17,6 +17,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getSql, type Sql } from "./db";
 import { isValidEmail } from "./capture-validation.mjs";
+import { decideCaptureDoi } from "./email-capture-core.mjs";
 import { normalizeLocale } from "./locale.mjs";
 import type { Locale } from "./locale";
 import { parseIntEnv } from "./env-num";
@@ -182,7 +183,9 @@ export interface UpsertCaptureResult {
  *   - marketing ticked, not yet confirmed, not suppressed → 'pending' + new
  *     token + doiEmailRequired=true.
  *   - marketing not ticked (or address suppressed) → no new DOI; an existing
- *     'confirmed' is preserved, otherwise 'none'.
+ *     'confirmed' is preserved, a 'pending' one too unless the address is
+ *     suppressed (its link stays valid), otherwise 'none'.
+ * Rules and tests: email-capture-core.mjs.
  */
 export async function upsertEmailCapture(
   input: UpsertCaptureInput,
@@ -195,48 +198,45 @@ export async function upsertEmailCapture(
 
   // Read existing state to decide the marketing transition.
   const existingRows = await sql`
-    SELECT id, marketing_doi_status, doi_token, unsubscribed_at
+    SELECT id, marketing_doi_status, doi_token, doi_sent_at, unsubscribed_at
       FROM email_captures WHERE email = ${email}
   `;
   const existing = existingRows[0] as
-    | { marketing_doi_status: MarketingDoiStatus; doi_token: string | null; unsubscribed_at: string | null }
+    | {
+        marketing_doi_status: MarketingDoiStatus;
+        doi_token: string | null;
+        doi_sent_at: string | Date | null;
+        unsubscribed_at: string | null;
+      }
     | undefined;
 
   const suppressed = await isSuppressed(email, sql);
 
-  let status: MarketingDoiStatus = "none";
-  let doiToken: string | null = null;
-  let doiSentAt: string | null = null;
-  let doiEmailRequired = false;
-
-  const alreadyConfirmed = existing?.marketing_doi_status === "confirmed";
-
-  if (input.marketingConsent && !suppressed && input.alreadySubscribed && !alreadyConfirmed) {
-    // Subscribed elsewhere already (one consent): keep the record's own DOI
-    // state, issue no token, send no DOI mail.
-    status = existing?.marketing_doi_status === "pending" ? "pending" : "none";
-    doiToken = existing?.doi_token ?? null;
-  } else if (input.marketingConsent && !suppressed) {
-    if (alreadyConfirmed) {
-      // Keep the existing confirmation; don't re-send a DOI.
-      status = "confirmed";
-      doiToken = existing?.doi_token ?? null;
-    } else {
-      status = "pending";
-      doiToken = generateDoiToken();
-      doiSentAt = new Date().toISOString();
-      doiEmailRequired = true;
-    }
-  } else {
-    // Marketing not granted now (or suppressed). Preserve a prior confirmed
-    // consent — only an explicit unsubscribe revokes it — otherwise 'none'.
-    if (alreadyConfirmed) {
-      status = "confirmed";
-      doiToken = existing?.doi_token ?? null;
-    }
-  }
-
-  const marketingConsentColumn = input.marketingConsent || alreadyConfirmed;
+  // The transition rules live in the tested core (email-capture-core.mjs).
+  const decided = decideCaptureDoi({
+    marketingConsent: input.marketingConsent,
+    alreadySubscribed: input.alreadySubscribed,
+    suppressed,
+    existing: existing
+      ? {
+          status: existing.marketing_doi_status,
+          token: existing.doi_token,
+          sentAt:
+            existing.doi_sent_at == null
+              ? null
+              : existing.doi_sent_at instanceof Date
+                ? existing.doi_sent_at.toISOString()
+                : String(existing.doi_sent_at),
+        }
+      : null,
+    newToken: generateDoiToken,
+    now: new Date().toISOString(),
+  });
+  const status: MarketingDoiStatus = decided.status;
+  const doiToken = decided.doiToken;
+  const doiSentAt = decided.doiSentAt;
+  const doiEmailRequired = decided.doiEmailRequired;
+  const marketingConsentColumn = decided.marketingConsentColumn;
 
   const rows = await sql`
     INSERT INTO email_captures
