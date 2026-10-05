@@ -600,17 +600,17 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [x] **C.19** OI3 — done 05.10.: `surface=signin` serves three benefit bullets (C's wording,
       D-AP4) and `variant: "a"` (copy version `v5`); the opt-in POST takes `placement` /
       `variant`; KPI „Nach Variante und Platzierung“. FE task 1:
-      `docs/frontend/tasks/1-consent-benefits-variant.md` (sent with open list item 2).
+      `docs/frontend/tasks/TASKS.md` task 1 (sent with open list item 2).
 - [x] **C.20** A3 backend — done 05.10.: `context.source`, softer page notes,
       `CHAT_PAGE_CONTEXT_ENABLED` / `_HOLDOUT_PCT` off, `page_context_applied/_answered`, KPI
       „Seitenkontext auf Produktseiten“, `verify:live` section 9, fingerprint row for the next
-      upload. FE task 2: `docs/frontend/tasks/2-page-context.md` (sent with open list item 2).
+      upload. FE task 2: `docs/frontend/tasks/TASKS.md` task 2 (sent with open list item 2).
 - [x] **C.21** ATTR-TOKEN-LIFETIME — built 05.10. (pre-checks by M: webhooks once each, widget
       tokens since 24.08., purge cliff reached 05.10. 08:40 UTC). Migration `0076`
       (`messages.session_id`; the code works before and after it), `MO_ATTRIBUTION_SESSION_ANCHOR`
       (off in code), `mo_order_marker_unresolved`, KPI notes, `verify:live` 7b, dossier §20 (F-37).
       **M:** run `npm run db:migrate`, then set the switch (open list item 1). FE task 3:
-      `docs/frontend/tasks/3-attribution-token-renewal.md` (sent with open list item 2).
+      `docs/frontend/tasks/TASKS.md` task 3 (sent with open list item 2).
 - [ ] **C.5** Keep this file current after every step.
 - [ ] **C.22** After the widget upload (open list item 2, M sends C the `verify:widget` output):
       mark the row `tasks-2026-10-05` current in `widget-fingerprint.mjs`, add the release notes

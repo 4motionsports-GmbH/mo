@@ -8,20 +8,18 @@ folder to `docs/archive/`) are tracked only in `docs/ROLLOUT_TODO.md`. The plans
 history only (`docs/archive/plans-2026-10-04/`); the as-built facts are in the contract files and in
 `docs/frontend/01`–`07`.
 
-| Task file | What changes in the widget | KPI | Backend |
+| Task (in [`TASKS.md`](./TASKS.md)) | What changes in the widget | KPI | Backend |
 |---|---|---|---|
-| [`1-consent-benefits-variant.md`](./1-consent-benefits-variant.md) | Consent popup and inline card render the served `benefits` (no widget bullets; replaces Appendix A of the archived P0.3 plan); `variant` + `placement` on the signed-in ask; copy cache per sid; no dismiss after an accept | opt-ins: accept rate and DOI per variant; compliance | C.19 |
-| [`2-page-context.md`](./2-page-context.md) | First typed/spoken message on a PDP (and after a product change) carries the page's product (`context.source: "page"`); `source` on CTA/nudge context; `samePage` on `product_cta_clicked` | product clicks, add-to-cart (holdout-measured) | C.20 |
-| [`3-attribution-token-renewal.md`](./3-attribution-token-renewal.md) | Renew the `_mo` token after a live consultation; blank the cart marker when the session ends or analytics consent is withdrawn | attributed revenue | C.21 |
+| [Task 1](./TASKS.md#task-1--serve-the-consent-popup-benefits-from-the-backend-and-add-variantplacement-to-the-signed-in-ask-backend-deployed-2026-10-05) | Consent popup and inline card render the served `benefits` (no widget bullets; replaces Appendix A of the archived P0.3 plan); `variant` + `placement` on the signed-in ask; copy cache per sid; no dismiss after an accept | opt-ins: accept rate and DOI per variant; compliance | C.19 |
+| [Task 2](./TASKS.md#task-2--page-context-on-typed-product-page-messages-backend-deployed-2026-10-05) | First typed/spoken message on a PDP (and after a product change) carries the page's product (`context.source: "page"`); `source` on CTA/nudge context; `samePage` on `product_cta_clicked` | product clicks, add-to-cart (holdout-measured) | C.20 |
+| [Task 3](./TASKS.md#task-3--renew-the-attribution-token-after-a-live-consultation-blank-the-cart-marker-when-the-session-ends-backend-deployed-2026-10-05) | Renew the `_mo` token after a live consultation; blank the cart marker when the session ends or analytics consent is withdrawn | attributed revenue | C.21 |
 
-**Attachments — exactly these six files** (current `main` of the backend repo), nothing else:
+**Attachments — exactly these four files** (current `main` of the backend repo), nothing else:
 
 1. `docs/frontend/API_CONTRACT.md`
 2. `docs/frontend/ACCOUNT_CONTRACT.md`
 3. `docs/frontend/CONSENT_CONTRACT.md`
-4. `docs/frontend/tasks/1-consent-benefits-variant.md`
-5. `docs/frontend/tasks/2-page-context.md`
-6. `docs/frontend/tasks/3-attribution-token-renewal.md`
+4. `docs/frontend/tasks/TASKS.md` (the three tasks)
 
 Every other reference in the tasks (`docs/frontend/01`–`07`, backend docs, backend source files) is
 marked as background, and what the agent needs from it is written out in the task.
@@ -40,13 +38,12 @@ You own the motion sports chat widget in `ms_shopify_clone`. Build on `main` @ `
 2026-10-04).
 
 **Attached** (from the backend repo, `docs/frontend/`): the widget contract — `API_CONTRACT.md`,
-`ACCOUNT_CONTRACT.md`, `CONSENT_CONTRACT.md` — and three task files — `tasks/1-consent-benefits-variant.md`,
-`tasks/2-page-context.md`, `tasks/3-attribution-token-renewal.md`. Nothing else is needed: a reference a
-task marks as "background" points into the backend repo, is not attached, and what it holds is written
-out in the task.
+`ACCOUNT_CONTRACT.md`, `CONSENT_CONTRACT.md` — and `TASKS.md` with the three tasks. Nothing else is
+needed: a reference a task marks as "background" points into the backend repo, is not attached, and
+what it holds is written out in the task.
 
-**Do** the three tasks **in this order** — 1-consent-benefits-variant, 2-page-context,
-3-attribution-token-renewal — in **one PR**, so the owner uploads the widget once. Each task is complete
+**Do** the three tasks in `TASKS.md` **in this order** — Task 1 (consent-popup benefits and variant),
+Task 2 (page context), Task 3 (attribution token renewal) — in **one PR**, so the owner uploads the widget once. Each task is complete
 in itself: baseline, goal and KPI, contract references, backend state, rules, steps with exact payloads,
 legal constraints, deployment, acceptance checklist. The backend for all three has been live since
 2026-10-05; test against it as well as against mocks (including an older-backend mock).

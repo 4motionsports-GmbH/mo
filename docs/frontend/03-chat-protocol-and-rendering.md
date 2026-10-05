@@ -98,7 +98,7 @@ The CTA deliberately uses a primer *user* message instead of the `messages: []` 
 - Launcher click, header buttons, "Per E-Mail teilen", feedback card, tool-card buttons.
 - Product hydration and TTS calls go to other endpoints (§7, §17).
 
-> **Important for backend decisions:** a normally typed message carries **no page context at all**. Mo only knows the current product page if the visitor used the product CTA or clicked a nudge on that page. The trail and `PAGE_CTX` exist in the browser but are not attached to typed turns (§4.4, §20). The contract already defines page facts for typed turns (AC §2 "Optional `context`", `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/2-page-context.md`.
+> **Important for backend decisions:** a normally typed message carries **no page context at all**. Mo only knows the current product page if the visitor used the product CTA or clicked a nudge on that page. The trail and `PAGE_CTX` exist in the browser but are not attached to typed turns (§4.4, §20). The contract already defines page facts for typed turns (AC §2 "Optional `context`", `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/TASKS.md` task 2.
 
 ---
 
@@ -124,7 +124,7 @@ The request uses an `AbortController` signal when available (for internal cancel
 | --- | --- | --- |
 | `messages` | **always** | `toWire(messages)`: the full in-memory history (see §3.3). `[]` for the context greeting. |
 | `locale` | **always** | same as `x-ms-locale` |
-| `context` | only for the product CTA and the nudge greeting (§2) | see §4.3 (no `source` field; AC §2 defines it, `tasks/2-page-context.md` adds it) |
+| `context` | only for the product CTA and the nudge greeting (§2) | see §4.3 (no `source` field; AC §2 defines it, `tasks/TASKS.md` task 2 adds it) |
 | `conversationKey` | only if `auth.signedIn && activeConversationKey` | client-generated UUID of the active thread (§13). **Omitted** for anonymous and email-only visitors. **Also omitted for a signed-in visitor whose auth has not settled yet on this page load**, even when `activeConversationKey` (restored from `ms-chat-convkey:<sid>` by `loadConvKey()`) already exists. In practice this hits the product-page CTA, which sends right after `openPanel()` (§13 edge case, §20 finding 21). |
 | `customer` | only after a successful `POST /api/capture-email` **in this page load** | `{ "email": "<captured address>" }`. Held in the in-memory variable `capturedEmail` only. It is reset on navigation and on session drop (`dropSessionHistory()`), nowhere else. Never stored. AC §2 "Optional `customer`". Attached whenever `capturedEmail` is set, **with no auth check**: if auth later settles as signed in during the same page view (e.g. `visibilitychange` re-detection after a shop login in another tab), the captured address still rides along. **It also survives `startNewChat()`**: the anonymous/email-only branch calls `rotateSession()`, which does not touch `capturedEmail`, so after "Neuen Chat starten" (header icon or the `payload_too_large` notice button) later turns send `customer.email` under the **new** sid. The backend only injects memory when the capture came from the same `x-ms-session` (AC §2), so memory silently stops working while the address keeps leaving the browser (§20 finding 19). |
 | `campaignToken` | while `sessionStorage['ms_mo_c']` holds a valid token | the `mo_c` value from a campaign landing URL, re-validated against `/^[A-Za-z0-9_-]{16,64}$/` on read. It is deleted only when a chat response comes back `res.ok`, so a failed first send retries it on the next turn. It rides on the first chat request of the **tab session**, which can be the greeting, a CTA turn or a typed message, even pages later. AC §2 "Optional `campaignToken`". |
@@ -182,7 +182,7 @@ The widget normalises the page facts once into `PAGE_CTX` (`type`, `productId`, 
 
 `productId` fallback: the CTA buttons carry `data-ms-chat-product-id="{{ product.id }}"` (numeric). The widget swaps in `PAGE_CTX.productHandle` when the CTA's id matches the page's product (or either id is missing). A numeric id would be dropped server-side as unknown, but the primer text still names the product.
 
-The widget sends no `source` field. AC §2 defines `source` (`page` | `cta` | `nudge`; absent = treated like `cta` / `nudge`) and the typed-turn shape; `tasks/2-page-context.md` adds it to the widget.
+The widget sends no `source` field. AC §2 defines `source` (`page` | `cta` | `nudge`; absent = treated like `cta` / `nudge`) and the typed-turn shape; `tasks/TASKS.md` task 2 adds it to the widget.
 
 `browsingContext(leadCategory)` also supports a leading category entry. It is only ever called with `null` in the current code; the "category starters" that used a lead category were removed.
 
@@ -195,7 +195,7 @@ The widget sends no `source` field. AC §2 defines `source` (`page` | `cta` | `n
 - **When it leaves the browser:** only inside the `context` of a product-CTA turn or a nudge greeting. It is never sent on typed turns, in KPI events or in a background call.
 - **Other local use:** `trailCategoryStreak()` (≥ 2 products of one category) picks the nudge copy "Du schaust dir ein paar Produkte aus „X“ an — soll ich beim Vergleich helfen?" (nudge details: 05 §7, 02 §11).
 - **Privacy posture** (code comment `PRIVACY POSTURE (do not change)` above `PAGE_CTX`): copy built from this data references the page or category, never the user's behaviour ("TONE RULE").
-- **Stale code comment:** the same comment still says the trail "is NEVER transmitted — no backend call carries it" and that context leaves the browser "only when the USER sends a chat message that carries it". Both are out of date. Since the `recentlyViewed` context (AC §2) was added, `recentlyViewedPayload()` (via `browsingContext()`, `openWithProduct()` and `showNudge()`) sends up to 3 products + 2 categories in `context` on product-CTA turns and on nudge greetings, and the nudge greeting has no user message at all. Treat the behaviour described in this section as the truth; `tasks/2-page-context.md` (item 5) corrects the comment.
+- **Stale code comment:** the same comment still says the trail "is NEVER transmitted — no backend call carries it" and that context leaves the browser "only when the USER sends a chat message that carries it". Both are out of date. Since the `recentlyViewed` context (AC §2) was added, `recentlyViewedPayload()` (via `browsingContext()`, `openWithProduct()` and `showNudge()`) sends up to 3 products + 2 categories in `context` on product-CTA turns and on nudge greetings, and the nudge greeting has no user message at all. Treat the behaviour described in this section as the truth; `tasks/TASKS.md` task 2 (item 5) corrects the comment.
 
 ---
 
@@ -643,7 +643,7 @@ Found while documenting. Findings 1, 2 and 15 were fixed on 2026-10-04 (`8d0a0c4
 
 **KPI levers (frontend changes the backend could request)**
 
-- **Send page context on typed turns** (at least the first message of a session, or when the page changed since the last context). Today a shopper on a product page who types "Ist das leise?" gives Mo no product. → `tasks/2-page-context.md`; the backend side is built (AC §2 `source: "page"`, `CHAT_PAGE_CONTEXT_ENABLED` default off in code).
+- **Send page context on typed turns** (at least the first message of a session, or when the page changed since the last context). Today a shopper on a product page who types "Ist das leise?" gives Mo no product. → `tasks/TASKS.md` task 2; the backend side is built (AC §2 `source: "page"`, `CHAT_PAGE_CONTEXT_ENABLED` default off in code).
 - **Track Markdown link clicks** in assistant text (product links in prose are currently invisible to the KPI funnel).
 - **Make card thumbnails and names clickable** (same `product_cta_clicked`). Today only the button is a link.
 - **Add a checkout/add-to-cart action to `show_product` and `compare_products`.** Today a purchase click needs the model to call `add_to_cart`.
