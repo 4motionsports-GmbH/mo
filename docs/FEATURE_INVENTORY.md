@@ -44,7 +44,7 @@ uses); the other parts are in English like the rest of `docs/`.
 | 2026-10-01 | Customer platform (`main` @ `943a313`): Eingang, the Shopify customer mirror with order ledger and nightly facts, the one consent, many campaigns, one erasure | 0061–0068 | `EIG-…`, `KUN-113…132`, `KAM-96…106`, `KPI-71…`, `EIN-07…11`, `GES-43`; parts 2–6 |
 | 2026-10-01 | Follow-up (`6327b0f` … `b55f248`): „Zur Kampagne…“, „Ähnliche Kunden“, Analyse chapters, Mo's insight tags in Shopify; hand-added recipients stay in a dynamic campaign | 0069 | `KUN-133`, `KUN-134`, `ANA-15`, `EIN-12` |
 | 2026-10-02 | „E-Mails im Eingang“: every incoming mail of a known person opens „E-Mail beantworten“ with an AI reply draft; the contact form lands in the Eingang | – | `EIG-14…18` |
-| 2026-10-03 | „Unzufrieden“ dated by the refund itself; a typed e-mail never signs a session in (`link_kind`) | 0070, 0071 | `EIG-13`, §2.3 |
+| 2026-10-03 | „Unzufrieden“ dated by the refund itself; a typed e-mail never signs a session in (`link_kind`) | 0070, 0071 | `EIG-13`, §6.1 |
 | 2026-10-03 | „Einplanen“ (approve now, the release job sends later) and „Prüfen & testen“ (sample mails, plan estimate) | 0072 | `KAM-107…113`, §2.8, §3 1.12, §5 |
 | 2026-10-03 | One-time sign-in code: a session is linked only through a redeemed code | 0073 | §2.3, `KPI-47`, `KPI-75` |
 | 2026-10-03 | Order status in the chat | – | `PLT-01`, `GES-26`, `KPI-81` |
@@ -87,12 +87,12 @@ that own the details.
 
 # 1. Admin dashboard
 
-Stand: 2026-09-08 · Zweck: Vollständiges Inventar aller Bedienelemente, Anzeigen, Hilfetexte, persistierten Zustände und Datenflüsse des deutschsprachigen Admin-Dashboards, damit nach dem Redesign verifiziert werden kann, dass nichts verloren ging.
+Stand: Basis 2026-09-08, fortgeschrieben bis 2026-10-05 · Zweck: Vollständiges Inventar aller Bedienelemente, Anzeigen, Hilfetexte, persistierten Zustände und Datenflüsse des deutschsprachigen Admin-Dashboards, damit nach dem Redesign verifiziert werden kann, dass nichts verloren ging.
 
 Konventionen:
 - IDs sind pro Tab sequenziell und stabil (SHL = Shell/global, LOG = Login, UEB = Übersicht (abgelöst), EIG = Eingang (seit 2026-10), KUN = Kunden, KAM = Kampagne(n), KPI = KPIs, FEE = Feedback, GES = Gespräche, WIS = Wissen, ANA = Analyse, VER = Verbesserung, EIN = Einstellungen).
 - "Calls": API-Route (`POST /api/admin/...`), Server Action, `server-render` (Daten kommen aus der Server-Komponente) oder `client-only` (nur lokaler State).
-- Alle Pfade relativ zu `src/app/admin/` sofern nicht anders angegeben. Zeilennummern beziehen sich auf den Stand am Inventar-Datum.
+- Alle Pfade relativ zu `src/app/admin/` sofern nicht anders angegeben (`lib/…` = `src/lib/…`). Die Spalte „File“ nennt die Datei, in der das Element heute liegt — bei aufgeteilten Komponenten den Ordner (`kampagne/*`, `kpi/*`, …); ohne Zeilennummern. Die Werte vom 2026-09-08 stehen im Archiv ([`archive/FEATURE_INVENTORY_AUDIT_2026-09.md`](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.5).
 - "Hilfetext" = jeder erklärende Untertitel, Caption, Hinweis-Absatz, Placeholder mit Erklärcharakter, Tooltip/`title`, Leer-/Fehlerzustand mit Informationsgehalt.
 
 ---
@@ -105,10 +105,10 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §2.1 (ein
 **Stand 2026-10-01 (Kundenplattform):** `page.tsx` rendert genau einen Bildschirm (`renderScreen`). Erster Bildschirm ist der **Eingang** (`/admin` = `?tab=eingang`, Taste `1`, Abschnitt 2a); die Übersicht ist abgelöst (Abschnitt 2). Der Tab „Kampagne“ heißt „Kampagnen“ (Key bleibt `kampagne`). Tab-Registry `src/lib/admin-tabs.mjs`: Aliase `overview`→`eingang`, `customers`/`marketing`→`kunden`, `kampagnen`→`kampagne`; unbekannte Werte → Eingang. Seitenleisten-Badges (`loadBadges`): Eingang = offene Hinweise mit Priorität ≥ 80 (`getInboxCounts`), Kampagnen = Entwürfe über alle aktiven Kampagnen (`getCampaignQueueTotals`), Wissen = offene Fragen; das frühere Kunden-Badge (nicht zugeordnete Mails, `countUnmatchedInbound`) entfällt — die Mails stehen als Karte im Eingang (EIG-12). Neue URL-Parameter: Eingang `?item=`, `?status=`; Kunden `?kq= ?kview= ?kmo= ?kconsent= ?kseg= ?kvalue= ?kpersona= ?kshop= ?kchurn= ?ksort= ?kpage=`; Kampagnen `?campaign=`, `?edit=`. **Nachtrag 2026-10:** `countUnmatchedInbound` ist zurück (`email-messages-store.ts`) und zählt jetzt im **Eingang**-Badge mit (Priorität ≥ 80 + nicht zugeordnete Mails); `getInboxCounts` schreibt nicht mehr (fällige Zurückstellungen zählen als offen). Neu `?edit=new&audience=<json>` (Kampagnen); alte Kunden-`?filter=`-Presets landen auf einer Ansicht (SHL-14).
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
-| SHL-01 | „Admin-Dashboard" | display (h1) | Seitentitel | client-only | AdminShell.tsx |
-| SHL-02 | Tab-Untertitel (TAB_SUBTITLE) | display | Wechselnder Untertitel je aktivem Tab (10 Texte, siehe Hilfetexte) | client-only | lib/admin-tabs.mjs (`description`), AdminShell.tsx |
+| SHL-01 | „Admin-Dashboard" | display (h1) | Seitentitel. **2026-09 (Redesign):** das h1 der oberen Leiste ist der Name des Bildschirms (`meta.label`); „Admin-Dashboard“ entfällt | client-only | AdminShell.tsx |
+| SHL-02 | Tab-Untertitel (TAB_SUBTITLE) | display | Wechselnder Untertitel je aktivem Tab (10 Texte, siehe Hilfetexte). **2026-09 (Redesign):** als InfoTip „Was ist „<Name>“?“ neben dem Titel; Text = `description` in `lib/admin-tabs.mjs` | client-only | lib/admin-tabs.mjs (`description`), AdminShell.tsx |
 | SHL-03 | Theme-Toggle (Sonne/Mond-Icon) | toggle (button) | Schaltet Light/Dark, setzt Cookie `ms_admin_theme` (path=/admin, 1 Jahr, SameSite=Lax), togglet `.dark` auf `#admin-root`; aria-label „Dunkles Design aktivieren"/„Helles Design aktivieren", title „Dunkles Design"/„Helles Design" | client-only (Cookie) | ThemeToggle.tsx |
 | SHL-04 | „Abmelden" | button (form submit) | Server Action `logoutAction`: löscht Admin-Cookie (`ADMIN_COOKIE_NAME`), redirect `/admin/login` | Server Action `logoutAction` | AdminShell.tsx, page.tsx |
 | SHL-05 | Tab-Leiste (10 Tabs: Übersicht, Kunden, Kampagne, KPIs, Feedback, Gespräche, Wissen, Analyse, Verbesserung, Einstellungen) | sub-tab (role=tablist) | Wechselt den sichtbaren Body; URL wird per `replaceState` auf `/admin` (Übersicht) bzw. `/admin?tab=<id>` gesetzt. Deferred Tabs (Übersicht/KPI wenn nicht initial gerendert) → `window.location.assign`. **2026-10:** Eingang statt Übersicht, Label „Kampagnen“, Badges Eingang/Kampagnen/Wissen (s. Stand oben). **Nachtrag 2026-10:** Eingang-Badge = offene Hinweise mit Priorität ≥ 80 (fällige Zurückstellungen zählen als offen, der Badge-Pfad schreibt nichts) **plus** nicht zugeordnete eingehende Mails (`countUnmatchedInbound`). **Nachtrag 2026-10:** ein Bildschirm pro Anfrage — jeder Wechsel ist eine Navigation per `next/link` (`forceMount` und die deferred-Ausnahme entfallen); gruppierte Seitenleiste Arbeit · Einblicke · System (ADMIN_DASHBOARD §2.1) | client-only / Navigation | AdminShell.tsx |
@@ -141,7 +141,7 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §2.1 (ein
 Stand 2026-10-01 (`admin-tabs.mjs` `description`): Nr. 1 → „Eingang · Wer braucht uns heute, warum und was ist der beste nächste Schritt — Kundensignale, offene Antworten und Systemhinweise.“; Nr. 3 → „Kampagnen · Kampagnen planen und personalisierte E-Mails an Kund:innen mit Einwilligung prüfen, anpassen, senden.“
 
 ### Persistenter Zustand (Shell)
-- URL: `?tab=` (replaceState bei Client-Wechsel; echte Navigation bei deferred Tabs), plus alle oben genannten Tab-spezifischen Params.
+- URL: `?tab=` (jeder Bildschirmwechsel ist eine Navigation, ADMIN_DASHBOARD §2.2), plus alle oben genannten Tab-spezifischen Params.
 - Cookie `ms_admin_theme` (light|dark; path=/admin; max-age 1 Jahr) — ThemeToggle.tsx, theme-config.ts.
 - Cookie Admin-Session (`ADMIN_COOKIE_NAME`, HTTP-only, aus `@/lib/admin-auth`) — page.tsx, login/page.tsx.
 - Kein localStorage in der Shell.
@@ -154,12 +154,12 @@ Stand 2026-10-01 (`admin-tabs.mjs` `description`): Nr. 1 → „Eingang · Wer b
 Einzige unauthentifizierte Admin-Seite. Server Component mit Server Action `loginAction`: prüft `password` aus FormData via `isAdminPasswordValid`, erzeugt Session-Token via `createAdminSessionToken`, setzt Cookie `ADMIN_COOKIE_NAME` mit `sessionCookieOptions()`, redirect `/admin` (bzw. `?next=`). Bei Fehler redirect `/admin/login?error=invalid` bzw. `?error=config`. **2026-09 (D-7):** höchstens 10 Versuche je 10 Minuten und IP (Bucket `admin-login`, `checkRateLimitKeyed`), sonst `?error=ratelimited`; ohne KV oder bei einem Limiter-Fehler läuft der Login weiter (fail-open, Fehler wird gemeldet). `?next=` (nur Pfade unter `/admin`) führt nach dem Login zurück zum vorherigen Bildschirm. `isAdminAuthConfigured()` steuert eine Warnung, wenn ADMIN_PASSWORD/ADMIN_SESSION_SECRET fehlen.
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | LOG-01 | „motion sports — Admin" (**2026-09:** „motion sports“ mit Logo „M“) | display (CardTitle) | Titel | server-render | login/page.tsx |
 | LOG-02 | „Marketing-Dashboard. Bitte anmelden." (**2026-09:** „Admin · Mo — bitte anmelden.“) | display (CardDescription) | Untertitel | server-render | login/page.tsx |
 | LOG-03 | Warn-Box „ADMIN_PASSWORD / ADMIN_SESSION_SECRET sind nicht gesetzt — Login ist deaktiviert." | display (warning) | Nur wenn `!configured` | server-render | login/page.tsx |
-| LOG-04 | Fehler-Box („Falsches Passwort." / „Server nicht konfiguriert (ADMIN_SESSION_SECRET fehlt)." / **2026-09 (D-7):** „Zu viele Anmeldeversuche — bitte in zehn Minuten erneut versuchen.“) | display (error) | Aus `?error=invalid|config|ratelimited` | server-render (URL) | login/page.tsx |
+| LOG-04 | Fehler-Box („Falsches Passwort." / „Server nicht konfiguriert (ADMIN_SESSION_SECRET fehlt)." / **2026-09 (D-7):** „Zu viele Anmeldeversuche — bitte in zehn Minuten erneut versuchen.“) | display (error) | Aus `?error=invalid\|config\|ratelimited` | server-render (URL) | login/page.tsx |
 | LOG-05 | „Passwort" | input (type=password, required, autoFocus, autoComplete=current-password) | Passwortfeld | – | login/page.tsx |
 | LOG-06 | „Anmelden" | button (submit) | Führt `loginAction` aus | Server Action `loginAction` | login/page.tsx |
 | LOG-07 | URL-Param `?error=` | URL param | `invalid` / `config` → Fehlermeldung | server-render | login/page.tsx |
@@ -195,10 +195,10 @@ Einzige unauthentifizierte Admin-Seite. Server Component mit Server Action `logi
 > | UEB-13…15 „Zuletzt gesendet“ / „Zuletzt bestätigt (DOI)“ | je Person im Kunden-Tab „Aktivität“ (KUN-123); EIG-02 „neu angemeldet“ |
 
 ### Beschreibung
-Abgelöst; die Beschreibung des Tabs vom 2026-09-08 steht im Archiv (§B.1). Die Zeilen UEB-01…15 bleiben als Nachweis.
+Abgelöst; die Beschreibung des Tabs vom 2026-09-08 steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1). Die Zeilen UEB-01…15 bleiben als Nachweis.
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | UEB-01 | Banner „Keine Datenbank konfiguriert (DATABASE_URL) — die Übersicht kann nicht berechnet werden." | display (warn) | Zustand ohne DB | server-render | entfernt 2026-10-01 |
 | UEB-02 | Section „Überblick" | display (Section) | Gruppe Kennzahlen, Untertitel | server-render | entfernt 2026-10-01 |
@@ -244,7 +244,7 @@ Abgelöst; die Beschreibung des Tabs vom 2026-09-08 steht im Archiv (§B.1). Die
 Erster Bildschirm (`/admin`, `?tab=eingang`, Taste `1`, Plan D-9). `EingangTab` (Server) öffnet zuerst fällige Zurückstellungen wieder (`reopenDueSnoozed`, Nachtrag 2026-10) und lädt dann parallel `listInboxItems({status, limit:300})`, `getInboxCounts()`, `listCampaigns()`, `getEingangSystemSnapshot({windowDays:30})`, `listUnmatchedInbound()`, `getSyncHealth()` + `getOutboxStats()` (→ `describeSyncProblems`). `EingangWorkspace` (Client, über `lazy.tsx`) zeigt oben die Systemleiste und die nicht zugeordneten Mails, darunter eine `SplitPane`: links die Hinweise gruppiert „Jetzt / Diese Woche / Später“, rechts der gewählte Hinweis mit Begründung, Kunden-Minikarte, KI-Vorschlag und Entscheidung. Die Hinweise entstehen aus den deterministischen Regeln in `src/lib/customer-signals.mjs` (rein, getestet) über den stündlichen Job `/api/cron/inbox` (`src/lib/inbox-signals.ts`); KI-Vorschläge `src/lib/inbox-suggest.ts` (writer tier). Hier wird nie etwas gesendet: „Entwurf übernehmen“ legt eine Einzelansprache für den Prüftisch an. Tabelle `inbox_items` (Migration 0067), Store `src/lib/inbox-store.ts`.
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | EIG-01 | Callout „Keine Datenbank konfiguriert (DATABASE_URL) — der Eingang kann nicht geladen werden." | display (warn) | Zustand ohne DB | server-render | EingangTab.tsx |
 | EIG-02 | Systemleiste: „n Entwürfe zur Prüfung“ mit Link je aktiver Kampagne (`?tab=kampagne&campaign=<slug>`, sonst „Zu den Kampagnen“); „n offene Wissensfragen“ (→ Wissen) + „Analyse läuft · Verbesserungslauf läuft“; Streifen „letzte 30 Tage“: Gespräche · Kampagnen-Mails · neu angemeldet (Personen mit einer Anmeldung zur einen Einwilligung im Zeitraum, jede Oberfläche, ohne Import) + „Alle KPIs“; Callout „Shopify-Abgleich braucht Aufmerksamkeit“ + „Einstellungen“ | display + links | Ersetzt die Übersicht-Karten | server-render (`listCampaigns`, `getEingangSystemSnapshot`, `describeSyncProblems`) | eingang/EingangWorkspace.tsx (SystemStrip), lib/admin-overview-store.ts |
@@ -275,12 +275,12 @@ Erster Bildschirm (`/admin`, `?tab=eingang`, Taste `1`, Plan D-9). `EingangTab` 
 ### Beschreibung
 **Stand 2026-10-01 (Kundenplattform):** Die Liste umfasst den ganzen Kundenstamm — jede Shopify-Kund:in (Spiegel, Migration 0061) und jede Person aus Mo — und ist **serverseitig**: `KundenTab` liest den Filter aus der URL (`parseCustomerFilter`, `src/lib/admin-customer-filter.mjs`, rein, getestet) und lädt eine Seite à 50 über die View `customer_overview` (0068) mit `listCustomers` + `getCustomerBaseSummary` (`src/lib/customer-list-store.ts`); jede Filteränderung ist ein `router.push`. Die Detailansicht hat sieben Reiter: Überblick · Aktivität · Käufe · Gespräche · Marketing · Korrespondenz · Brief (`kunden/tabs/*`, Daten über `GET customers/detail`, `src/lib/customer-detail.ts`). Der Posteingang (KUN-01…04) ist in den Eingang gewandert (EIG-12); die Sammel-Entwurf-Leiste (KUN-13, 16, 25…29) ist abgelöst — **Nachtrag 2026-10:** durch „Auswählen“ → „Zur Kampagne…“ (KUN-133). Neue Fähigkeiten: KUN-113…134.
 
-Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.3. Die Beschreibung vom 2026-09-08 (Client-Liste, `CustomerProfileCard` mit sechs Reitern, Sammel-Entwurf-Leiste) steht im Archiv (§B.1); die Zeilen KUN-01…107 nennen in der Dateispalte, wo das Element heute liegt.
+Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.3. Die Beschreibung vom 2026-09-08 (Client-Liste, `CustomerProfileCard` mit sechs Reitern, Sammel-Entwurf-Leiste) steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1); die Zeilen KUN-01…107 nennen in der Dateispalte, wo das Element heute liegt.
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
-| **Nicht zugeordneter Posteingang (global, nur sichtbar wenn ≥1 Nachricht)** — ❌ abgelöst 2026-10: `kunden/UnmatchedInboundQueue.tsx` → `eingang/UnmatchedInbound.tsx` im Eingang (EIG-12) ||||||
+| **Nicht zugeordneter Posteingang (global, nur sichtbar wenn ≥1 Nachricht)** — ❌ abgelöst 2026-10: `UnmatchedInboundQueue.tsx` → `eingang/UnmatchedInbound.tsx` im Eingang (EIG-12) ||||||
 | KUN-01 | Karte „Nicht zugeordneter Posteingang" + Zähler-Badge | display (warn card) | Eingegangene Mails ohne Kundenzuordnung (customer_id NULL) | server-render (`listUnmatchedInbound`) | eingang/UnmatchedInbound.tsx |
 | KUN-02 | Absender-Badge, Betreff („(kein Betreff)"), 📎 Anzahl Anhänge, Datum/Zeit, Snippet (2 Zeilen) | display | Metadaten je unzugeordneter Nachricht | server-render | eingang/UnmatchedInbound.tsx |
 | KUN-03 | Select „Kunde wählen…" (Option-Suffix „(passende Adresse)" bei E-Mail-Match, vorausgewählt) | select | Zielkunde für Zuordnung; Vorschlag = Kunde mit gleicher E-Mail | client-only | eingang/UnmatchedInbound.tsx |
@@ -513,10 +513,10 @@ PhysicalLetterPanel (heute `kunden/tabs/BriefTab.tsx`):
 
 Die Zeilen **KAM-01…69** beschreiben die Elemente vor dem Desk (eine Datei `KampagneWorkspace.tsx`, Stand 2026-09-08). Jedes hat auf dem Desk einen Platz — die Zuordnung steht in [`archive/KAMPAGNE_REDESIGN.md`](./archive/KAMPAGNE_REDESIGN.md) §8 (kein Element entfernt); die Dateispalte nennt deshalb `kampagne/*`. Neue Fähigkeiten des Desks: KAM-70…91.
 
-Die Beschreibung vor dem Desk (Stand 2026-09-08: eine Karte je Kontakt der Shopify-Newsletter-Abonnent:innen, Tasten `N/P/V/C/S/X`, mehrere Aktionen mit `window.location.reload()`) steht im Archiv (§B.1). Heute: Empfänger:innen sind Kund:innen mit Einwilligung je Kampagne; Desk-Tasten `N P V C S A X` (dazu `J/K`, `E`, `Esc`, `R`, `F`, `/`, `?` — §13); keine Aktion lädt die Seite neu (ADMIN_DASHBOARD §3.2).
+Die Beschreibung vor dem Desk (Stand 2026-09-08: eine Karte je Kontakt der Shopify-Newsletter-Abonnent:innen, Tasten `N/P/V/C/S/X`, mehrere Aktionen mit `window.location.reload()`) steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1). Heute: Empfänger:innen sind Kund:innen mit Einwilligung je Kampagne; Desk-Tasten `N P V C S A X` (dazu `J/K`, `E`, `Esc`, `R`, `F`, `/`, `?` — §13); keine Aktion lädt die Seite neu (ADMIN_DASHBOARD §3.2).
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | KAM-01 | Banner „Keine Datenbank konfiguriert (DATABASE_URL) — das Kampagnen-Modul kann keine Kontakte laden." | display (warn) | – | server-render | KampagneTab.tsx |
 | KAM-02 | Warnbox „Versand gesperrt: Die anwaltliche Freigabe … CAMPAIGN_SENDS_APPROVED=false …" | display (warn) | Senden deaktiviert | server flag | kampagne/* |
@@ -554,7 +554,7 @@ Die Beschreibung vor dem Desk (Stand 2026-09-08: eine Karte je Kontakt der Shopi
 | KAM-29 | Name („(kein Name)") + E-Mail | display | – | server-render | kampagne/* |
 | KAM-30 | LanguageToggle „DE"/„EN" (+ „✎" bei Override; title erklärt Ableitung) | toggle | Setzt Sprach-Override, dann Regenerate | POST /api/admin/campaign/language `{contactId, language}` + /draft | kampagne/* |
 | KAM-31 | EmailTextModeToggle (Ausführlich/Kompakt/Minimal) | toggle (shared) | Wechselt Modus + Regenerate | POST /api/admin/campaign/draft `{…, textMode}` | kampagne/* |
-| KAM-32 | OptInBadge „Double-Opt-in" (success) / „Single-Opt-in|Unbekannt · Senden blockiert" (warning) | badge | – | – | kampagne/* |
+| KAM-32 | OptInBadge „Double-Opt-in" (success) / „Single-Opt-in\|Unbekannt · Senden blockiert" (warning) | badge | – | – | kampagne/* |
 | KAM-33 | SegmentBadge (Label aus `campaignSegmentByKey`, „· vor N T.", title = Grund) | badge | Lifecycle-Segment | – | kampagne/* |
 | KAM-34 | AbGroupBadge „A/B: mit KI-Hero" / „A/B: ohne Hero" (title erklärt gerade/ungerade IDs) | badge | Hero-A/B-Hinweis | – | kampagne/* |
 | KAM-35 | Badge „⚠ Empfehlungen unsicher" | badge | lowConfidence | – | kampagne/* |
@@ -711,14 +711,14 @@ Die Beschreibung vor dem Desk (Stand 2026-09-08: eine Karte je Kontakt der Shopi
 ## 5. KPIs (`KpiTab.tsx`, `kpi/*`)
 
 ### Beschreibung
-Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.5 und §5 (KPI-Definitionen). Die Beschreibung vom 2026-09-08 steht im Archiv (§B.1).
+Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.5 und §5 (KPI-Definitionen). Die Beschreibung vom 2026-09-08 steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1).
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | KPI-01 | Banner „Keine Datenbank konfiguriert (DATABASE_URL) — es können keine KPIs berechnet werden." | display (warn) | – | server-render | kpi/* |
 | **Zeitraum-Picker** ||||||
-| KPI-02 | „Zeitraum:" Preset-Buttons „7 Tage" / „30 Tage" / „90 Tage" | button (filter) | `router.push('/admin?tab=kpi&kpiRange=<7d|30d|90d>')` | Navigation (URL) | kpi/KpiToolbar.tsx |
+| KPI-02 | „Zeitraum:" Preset-Buttons „7 Tage" / „30 Tage" / „90 Tage" | button (filter) | `router.push('/admin?tab=kpi&kpiRange=<7d\|30d\|90d>')` | Navigation (URL) | kpi/KpiToolbar.tsx |
 | KPI-03 | „Benutzerdefiniert" (aria-expanded) | button (toggle) | Zeigt Von/Bis | client-only | kpi/KpiToolbar.tsx |
 | KPI-04 | Aktiver Zeitraum-Label (aria-live) | display | `range.label` vom Server | server-render | kpi/KpiToolbar.tsx |
 | KPI-05 | „Von" / „Bis" (type=date, max heute, Von ≤ Bis) | input (date) | Benutzerdefiniert | client-only | kpi/KpiToolbar.tsx |
@@ -793,7 +793,7 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.5 und 
 | **12a Bestellstatus im Chat** — Nachtrag 2026-10-04 ||||||
 | KPI-81 | Abschnitt „Bestellstatus im Chat“ (Gruppe Beratung, InfoTip): Stats „Abfragen“, „Sitzungen“, „Beantwortet“ (hint „% der Abfragen“); BarLists „Ergebnis“ (Beantwortet, Keine Bestellungen, Bestellnummer nicht gefunden, Nicht angemeldet, Nicht verfügbar, Abgeschaltet, Bestellabgleich aus, Import unvollständig, Hauptbuch hinterher), „Thema“, „Quelle der Antwort“ (Nur Hauptbuch / Hauptbuch + Live); Leer „Noch keine Daten.“ / „Keine Bestellstatus-Abfragen im Zeitraum.“ | display | `getOrderStatusKpis` (`order_status_lookup`) | – | kpi/sections/OrderStatusSection.tsx |
 | **Releases im Zeitraum** — Nachtrag 2026-10-04 ||||||
-| KPI-79 | Callout „Änderungen im Zeitraum“ unter der Werkzeugleiste (Datum · Titel, Details im InfoTip) für jedes Release im gewählten Zeitraum (01.10. Widget-Update, 03.10. Einmal-Code, 04.10. Kundenplattform-Widget); Hinweise in Anmelde-Popup, Einwilligung, Kundenkonto und Kampagnen-Funnel („Chat gestartet“): „Erst ab dem 04.10.2026 aussagekräftig: …“ und (die ersten drei) der Anmelde-Ausfall 03.10.–04.10. **Nachtrag 2026-10-05:** + Releases `attribution-unresolved` und `attribution-window` (05.10.), Hinweis im Abschnitt „Mo-zugeordneter Umsatz“ (KPI-82); Detail des 04.10.: „Shop-Erkennung vorbereitet (aktiv erst mit App Proxy)“. **Nachtrag 2026-10-05 (2):** + Release `optin-measurement` „Opt-in-Messung nach Quelle und Ergebnis“ (05.10.); Hinweis in „Einwilligung nach der Anmeldung“ und „E-Mail-Capture-Funnel“ bei Zeitraumbeginn vor dem 05.10.2026 („Ergebnis und Quelle der Opt-ins erst ab dem 05.10.2026; ältere Events sind aus dem DOI-Status und dem Auslöser genähert …“, `OPTIN_MEASUREMENT_FROM`); „Seitenkontext auf Produktseiten“ ruft `releaseNotesFor("seitenkontext")` (noch ohne Eintrag). **Nachtrag 2026-10-05 (3):** + Releases `app-proxy-signin` „Shop-Anmeldung zählt im Chat (App Proxy)“ (PLT-03) und `signedin-offer-off` „Keine E-Mail-Zusammenfassung mehr für angemeldete Kund:innen“ (PLT-08) — `KPI_RELEASES` hat damit neun Einträge | display | `releasesInRange`, `releaseNotesFor` (`kpi-releases.mjs`, getestet) | – | KpiTab.tsx, kpi/sections/* |
+| KPI-79 | Callout „Änderungen im Zeitraum“ unter der Werkzeugleiste (Datum · Titel, Details im InfoTip) für jedes Release im gewählten Zeitraum (01.10. Widget-Update, 03.10. Einmal-Code, 04.10. Kundenplattform-Widget); Hinweise in Anmelde-Popup, Einwilligung, Kundenkonto und Kampagnen-Funnel („Chat gestartet“): „Erst ab dem 04.10.2026 aussagekräftig: …“ und (die ersten drei) der Anmelde-Ausfall 03.10.–04.10. **Nachtrag 2026-10-05:** + Releases `attribution-unresolved` und `attribution-window` (05.10.), Hinweis im Abschnitt „Mo-zugeordneter Umsatz“ (KPI-82); Detail des 04.10.: „Shop-Erkennung vorbereitet (aktiv erst mit App Proxy)“. **Nachtrag 2026-10-05 (2):** + Release `optin-measurement` „Opt-in-Messung nach Quelle und Ergebnis“ (05.10.); Hinweis in „Einwilligung nach der Anmeldung“ und „E-Mail-Capture-Funnel“ bei Zeitraumbeginn vor dem 05.10.2026 („Ergebnis und Quelle der Opt-ins erst ab dem 05.10.2026; ältere Events sind aus dem DOI-Status und dem Auslöser genähert …“, `OPTIN_MEASUREMENT_FROM`); „Seitenkontext auf Produktseiten“ ruft `releaseNotesFor("seitenkontext")` (noch ohne Eintrag). **Nachtrag 2026-10-05 (3):** + Releases `app-proxy-signin` „Shop-Anmeldung zählt im Chat (App Proxy)“ (PLT-03) und `signedin-offer-off` „Keine E-Mail-Zusammenfassung mehr für angemeldete Kund:innen“ (PLT-08) — `KPI_RELEASES` hat damit acht Einträge | display | `releasesInRange`, `releaseNotesFor` (`kpi-releases.mjs`, getestet) | – | KpiTab.tsx, kpi/sections/* |
 | **13 KI-Kosten** ||||||
 | KPI-49 | „ab <Datum> erfasst · enthält geschätzte Werte" | display | `getAiCostMetrics` | – | kpi/* |
 | KPI-50 | Stats „Ø Kosten / Beratung" (hint „N Beratungen mit Token-Erfassung"), „Median / Beratung", „Gesamtausgaben" (hint „alle KI-Aufrufe im Zeitraum") | display | – | – | kpi/* |
@@ -821,7 +821,7 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.5 und 
 | KPI-67 | Headline-Prozent + „der Käufer:innen mit E-Mail-Angabe kauften ein zuvor empfohlenes Produkt" | display | – | – | kpi/* |
 | KPI-68 | StageFunnelChart Kontakte geprüft → mit Empfehlung → mit Kauf → Kauf = Empfehlung + gleichnamige Stats | chart + display | – | – | kpi/* |
 | KPI-69 | Caveat „⚠️ Aussagekraft begrenzt…" (+ purchaseUnknown, sampled 100); Leer „Noch keine Daten."; Warn „Shopify ist nicht konfiguriert — die Kauf-Zuordnung kann nicht berechnet werden." | display | – | – | kpi/* |
-| **Charts (KpiCharts.tsx, gemeinsam)** ||||||
+| **Charts (KpiCharts.tsx, gemeinsam; heute `kpi/charts.tsx`)** ||||||
 | KPI-70 | ChartFrame Skeleton bis Client-Mount; ChartTooltip (themed Popover, de-DE-Zahlen) | display (loading/tooltip) | – | – | kpi/charts.tsx |
 | **Kundenplattform (ab 2026-10-01)** ||||||
 | KPI-71 | Tabelle „Kampagnen im Vergleich“ (InfoTip „Derselbe Funnel je Kampagne (Lebenszyklus, Aktionen, Einzelansprache) — welche Kampagne bringt was?“; Spalten wie KPI-37, erste Spalte „Kampagne“) im Kampagnen-Funnel. **Nachtrag 2026-10:** Spalte „Chat gestartet“ — Sends, deren Mo-Link einen Chat geöffnet hat (`campaign_chat_started`, sitzungslos, einmal je Send; das Widget meldet den `mo_c`-Token als `campaignToken`) | table | `kpis.byCampaign` | `getCampaignKpis` (gecacht) | kpi/sections/CampaignSection.tsx |
@@ -896,7 +896,7 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.5 und 
 64. Subtitle „Shopify-Anmeldungen, DSGVO-Self-Service und Zusammenfassungen — Zeitraum: …" / Hints „n stille Erkennungen", „Art. 15/20", „Art. 17" —
 65. Info „Noch keine Konto-Aktivität im Zeitraum. Sign-in-, Export- und Lösch-Ereignisse werden ab dem Deploy dieser Version erfasst."
 66. Caveat „Pseudonyme Zähler (kpi_events bzw. KI-Verbrauchszeilen der Zusammenfassungen) — keine Personenbezüge. „Stille Erkennungen" sind automatische Wieder-Anmeldungen bereits eingeloggter Shopify-Kund:innen (prompt=none). Kontaktformular = akzeptierte Übermittlungen; vergleichbar mit den show_contact_form-Aufrufen im Gespräche-Tab." — . **Nachtrag 2026-10-05:** der InfoTip erklärt jetzt „Im Chat angemeldet“ (Sitzungen; „über „Anmelden““, „über Shop-Login“ nur neue Anmeldungen, „bereits angemeldet (bestätigt)“), „Shopify-Anmeldungen“ / „still“ (prompt=none) und „Codes abgelehnt“; neu der InfoTip von „Shop-Login-Erkennung (App Proxy)“ (KPI-83) und von „Nach Anmeldeweg“ (KPI-84); der Einwilligungs-InfoTip nennt die Anti-Nag-Regel — AccountSection.tsx, ConsentGateSection.tsx
-(+ Leerzustände „Noch keine Daten." in fast jeder Sektion und die Divider-Beschriftung „Gesamtwerte (vom Zeitraum unabhängig)" :182.)
+(+ Leerzustände „Noch keine Daten." in fast jeder Sektion und die Divider-Beschriftung „Gesamtwerte (vom Zeitraum unabhängig)".)
 
 ### Persistenter Zustand (KPIs)
 - URL: `?tab=kpi&kpiRange=7d|30d|90d|custom[&kpiFrom=YYYY-MM-DD&kpiTo=YYYY-MM-DD]` (kpi/KpiToolbar.tsx; page.tsx). Kein localStorage/Cookie.
@@ -907,10 +907,10 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.5 und 
 ## 6. Feedback (`FeedbackTab.tsx`, `feedback/FeedbackList.tsx`)
 
 ### Beschreibung
-Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.7. Die Beschreibung vom 2026-09-08 steht im Archiv (§B.1).
+Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.7. Die Beschreibung vom 2026-09-08 steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1).
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | FEE-01 | Banner „Keine Datenbank konfiguriert (DATABASE_URL) — es kann kein Feedback geladen werden." | display (warn) | – | server-render | FeedbackTab.tsx |
 | FEE-02 | Banner „Noch kein Feedback. Sobald Nutzer:innen über das Widget eine Rückmeldung senden, erscheint sie hier — neueste zuerst." | display (info) | Leerzustand | server-render | FeedbackTab.tsx |
@@ -935,56 +935,56 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.7. Die
 ## 7. Gespräche (`GespraecheTab.tsx`, `gespraeche/*`)
 
 ### Beschreibung
-Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.6. Die Beschreibung vom 2026-09-08 steht im Archiv (§B.1).
+Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.6. Die Beschreibung vom 2026-09-08 steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1).
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | GES-01 | Banner „Keine Datenbank konfiguriert (DATABASE_URL) — es können keine Gespräche geladen werden." | display (warn) | – | server-render | GespraecheTab.tsx |
 | **Filterleiste** ||||||
-| GES-02 | Suchfeld (type=search, Placeholder „Alle Gespräche durchsuchen — Wörter, Namen, IDs, E-Mail, Tags …", Enter = Suchen) | input (search) | Setzt `gq`, Seite 1; Zeitraum wird ignoriert | Navigation (URL `gq`) | gespraeche/* |
-| GES-03 | „🔍 Suchen" | button | Übernimmt Suchentwurf | Navigation | gespraeche/* |
-| GES-04 | „✕ Zurücksetzen" (nur bei aktiver Suche) | button | Löscht `gq` | Navigation | gespraeche/* |
-| GES-05 | Hinweis „Suche nach „…" über alle Gespräche — der Zeitraum wird ignoriert." | display | – | – | gespraeche/* |
-| GES-06 | „Zeitraum:" „7 Tage" / „30 Tage" / „90 Tage" | button (filter) | `grange` | Navigation | gespraeche/* |
-| GES-07 | „Benutzerdefiniert" (aria-expanded) | button (toggle) | Zeigt Von/Bis | client-only | gespraeche/* |
-| GES-08 | „Tier:" Select (Alle / Anonym / E-Mail / Angemeldet) | select (filter) | `gtier` | Navigation | gespraeche/* |
-| GES-09 | „Kategorie:" Select (Alle + CATEGORY_LABELS aus conversation-analysis-core) | select (filter) | `gcat` | Navigation | gespraeche/* |
-| GES-10 | „Qualität:" Select (Alle + QUALITY_LABELS) | select (filter) | `gqual` | Navigation | gespraeche/* |
-| GES-11 | Checkbox „nur ohne Bot-Antwort" | checkbox (filter) | `gerr=1` | Navigation | gespraeche/* |
-| GES-12 | Zeitraum-Label (aria-live) | display | `filter.label` | – | gespraeche/* |
-| GES-13 | „Von" / „Bis" (date) + „Anwenden" | input + button | `grange=custom&gfrom&gto` | Navigation | gespraeche/* |
+| GES-02 | Suchfeld (type=search, Placeholder „Alle Gespräche durchsuchen — Wörter, Namen, IDs, E-Mail, Tags …", Enter = Suchen) | input (search) | Setzt `gq`, Seite 1; Zeitraum wird ignoriert | Navigation (URL `gq`) | gespraeche/ConversationFilters.tsx |
+| GES-03 | „🔍 Suchen" | button | Übernimmt Suchentwurf | Navigation | gespraeche/ConversationFilters.tsx |
+| GES-04 | „✕ Zurücksetzen" (nur bei aktiver Suche) | button | Löscht `gq` | Navigation | gespraeche/ConversationFilters.tsx |
+| GES-05 | Hinweis „Suche nach „…" über alle Gespräche — der Zeitraum wird ignoriert." | display | – | – | gespraeche/ConversationFilters.tsx |
+| GES-06 | „Zeitraum:" „7 Tage" / „30 Tage" / „90 Tage" | button (filter) | `grange` | Navigation | gespraeche/ConversationFilters.tsx |
+| GES-07 | „Benutzerdefiniert" (aria-expanded) | button (toggle) | Zeigt Von/Bis | client-only | gespraeche/ConversationFilters.tsx |
+| GES-08 | „Tier:" Select (Alle / Anonym / E-Mail / Angemeldet) | select (filter) | `gtier` | Navigation | gespraeche/ConversationFilters.tsx |
+| GES-09 | „Kategorie:" Select (Alle + CATEGORY_LABELS aus conversation-analysis-core) | select (filter) | `gcat` | Navigation | gespraeche/ConversationFilters.tsx |
+| GES-10 | „Qualität:" Select (Alle + QUALITY_LABELS) | select (filter) | `gqual` | Navigation | gespraeche/ConversationFilters.tsx |
+| GES-11 | Checkbox „nur ohne Bot-Antwort" | checkbox (filter) | `gerr=1` | Navigation | gespraeche/ConversationFilters.tsx |
+| GES-12 | Zeitraum-Label (aria-live) | display | `filter.label` | – | gespraeche/ConversationFilters.tsx |
+| GES-13 | „Von" / „Bis" (date) + „Anwenden" | input + button | `grange=custom&gfrom&gto` | Navigation | gespraeche/ConversationFilters.tsx |
 | **Stats-Panel (GespraecheStatsPanel)** ||||||
-| GES-14 | „📊 Auswertung · <from> – <to>" | display | – | – | gespraeche/ReportPanel.tsx |
-| GES-15 | „N Gespräch(e) · M analysiert" | display | `stats` | – | gespraeche/ReportPanel.tsx |
-| GES-16 | „Alle auswerten (N)" / „Alle ausgewertet" (disabled bei 0) | button → dialog | Öffnet Bestätigung | client-only | gespraeche/ReportPanel.tsx |
-| GES-17 | Dialog „Alle nicht analysierten Gespräche auswerten?" (Kosten-Schätzung; „Abbrechen" / „Auswerten" / „Läuft…") | dialog (confirm) | Bulk-Analyse; Live-Toast „Sammelanalyse läuft…" → Ergebnis „N analysiert, k fehlgeschlagen · Kosten · noch M offen (erneut ausführen)"; refresh | POST /api/admin/conversations/analyze-bulk `{from, to, confirm:true}` | gespraeche/ReportPanel.tsx |
-| GES-18 | Verteilung „Kategorien" (klickbare Balken; aktiv hervorgehoben; title „Liste auf „X" filtern — zeigt ALLE passenden Gespräche" / „Filter entfernen") | chart (bar list, filter) | Setzt/entfernt `gcat` | Navigation | gespraeche/ReportPanel.tsx |
-| GES-19 | Verteilung „Qualität" (klickbar) | chart (bar list, filter) | Setzt/entfernt `gqual` | Navigation | gespraeche/ReportPanel.tsx |
-| GES-20 | Leer „— noch keine Daten" | display | – | – | gespraeche/ReportPanel.tsx |
-| GES-21 | Hinweis „Klick auf einen Balken filtert die Gesprächsliste darunter auf ALLE passenden (analysierten) Gespräche…" | display | – | – | gespraeche/ReportPanel.tsx |
+| GES-14 | „📊 Auswertung · <from> – <to>" | display | – | – | gespraeche/StatsPanel.tsx |
+| GES-15 | „N Gespräch(e) · M analysiert" | display | `stats` | – | gespraeche/StatsPanel.tsx |
+| GES-16 | „Alle auswerten (N)" / „Alle ausgewertet" (disabled bei 0) | button → dialog | Öffnet Bestätigung | client-only | gespraeche/StatsPanel.tsx |
+| GES-17 | Dialog „Alle nicht analysierten Gespräche auswerten?" (Kosten-Schätzung; „Abbrechen" / „Auswerten" / „Läuft…") | dialog (confirm) | Bulk-Analyse; Live-Toast „Sammelanalyse läuft…" → Ergebnis „N analysiert, k fehlgeschlagen · Kosten · noch M offen (erneut ausführen)"; refresh | POST /api/admin/conversations/analyze-bulk `{from, to, confirm:true}` | gespraeche/StatsPanel.tsx |
+| GES-18 | Verteilung „Kategorien" (klickbare Balken; aktiv hervorgehoben; title „Liste auf „X" filtern — zeigt ALLE passenden Gespräche" / „Filter entfernen") | chart (bar list, filter) | Setzt/entfernt `gcat` | Navigation | gespraeche/StatsPanel.tsx |
+| GES-19 | Verteilung „Qualität" (klickbar) | chart (bar list, filter) | Setzt/entfernt `gqual` | Navigation | gespraeche/StatsPanel.tsx |
+| GES-20 | Leer „— noch keine Daten" | display | – | – | gespraeche/StatsPanel.tsx |
+| GES-21 | Hinweis „Klick auf einen Balken filtert die Gesprächsliste darunter auf ALLE passenden (analysierten) Gespräche…" | display | – | – | gespraeche/StatsPanel.tsx |
 | **Liste (links)** ||||||
-| GES-22 | „N Gespräch(e)/Treffer · Seite p/N" / „Keine Treffer" / „Keine Gespräche" | display | – | – | gespraeche/* |
-| GES-23 | „‹" / „›" (aria „Vorherige Seite"/„Nächste Seite") | button (pagination) | `gpage` | Navigation | gespraeche/* |
-| GES-24 | Leer „Keine Gespräche gefunden für „q"." / „Keine Gespräche für diesen Zeitraum/Filter." | display | – | – | gespraeche/* |
-| GES-25 | Zeile (role=button): Datum/Zeit, TierBadge (TIER_LABELS), „N Nachricht(en)", Persona-Kurzlabel | list item | Wählt Gespräch | client-only | gespraeche/* |
-| GES-26 | OutcomeChips: „⚠ keine Antwort" (destructive), „🛒 Cart genutzt" (success), „🛒 Cart angeboten" (outline), „✉ E-Mail" (info), „🔧 N Tool(s)" (title = Tool-Labels Profil/Suche/Produkt/Vergleich/Warenkorb/Showroom/Kontakt/E-Mail; **Nachtrag 2026-10-03:** + „Bestellung“ für `get_order_status`, `gespraeche/badges.tsx` `TOOL_LABELS`) | badge | Signale | – | gespraeche/* |
-| GES-27 | CategoryBadge (accent) + Qualitäts-Badge (warning wenn negativ) + Kurz-Summary (2 Zeilen, title=voll) / „nicht analysiert" | badge + display | Analyse-Status | – | gespraeche/* |
+| GES-22 | „N Gespräch(e)/Treffer · Seite p/N" / „Keine Treffer" / „Keine Gespräche" | display | – | – | gespraeche/ConversationList.tsx |
+| GES-23 | „‹" / „›" (aria „Vorherige Seite"/„Nächste Seite") | button (pagination) | `gpage` | Navigation | gespraeche/ConversationList.tsx |
+| GES-24 | Leer „Keine Gespräche gefunden für „q"." / „Keine Gespräche für diesen Zeitraum/Filter." | display | – | – | gespraeche/ConversationList.tsx |
+| GES-25 | Zeile (role=button): Datum/Zeit, TierBadge (TIER_LABELS), „N Nachricht(en)", Persona-Kurzlabel | list item | Wählt Gespräch | client-only | gespraeche/ConversationList.tsx |
+| GES-26 | OutcomeChips: „⚠ keine Antwort" (destructive), „🛒 Cart genutzt" (success), „🛒 Cart angeboten" (outline), „✉ E-Mail" (info), „🔧 N Tool(s)" (title = Tool-Labels Profil/Suche/Produkt/Vergleich/Warenkorb/Showroom/Kontakt/E-Mail; **Nachtrag 2026-10-03:** + „Bestellung“ für `get_order_status`, `gespraeche/badges.tsx` `TOOL_LABELS`) | badge | Signale | – | gespraeche/ConversationList.tsx |
+| GES-27 | CategoryBadge (accent) + Qualitäts-Badge (warning wenn negativ) + Kurz-Summary (2 Zeilen, title=voll) / „nicht analysiert" | badge + display | Analyse-Status | – | gespraeche/ConversationList.tsx |
 | **Detail (rechts, ConversationDetail)** ||||||
-| GES-28 | Platzhalter „Wähle links ein Gespräch, um Transkript und Analyse zu sehen." | display | – | – | gespraeche/* |
-| GES-29 | Skeleton beim Laden; Fehler „Gespräch konnte nicht geladen werden." / „Netzwerkfehler — bitte erneut versuchen." / „Nicht gefunden." | display (loading/error) | Detail-Fetch | POST /api/admin/conversations/detail `{conversationId}` | gespraeche/* |
-| GES-30 | Kopf: TierBadge, Persona-Badge, „<Datum> · N Nachricht(en) · <status>"; OutcomeChips (md) | display | – | – | gespraeche/* |
-| GES-31 | „KI-Analyse" + „✨ Analysieren" / „Neu analysieren" / „Analysiere…" | button (KI-Lauf) | Einzelanalyse (Haiku, gecacht); Toast „Gespräch analysiert" / „Hinweis"; refresh | POST /api/admin/conversations/analyze `{conversationId, force}` | gespraeche/* |
-| GES-32 | Analyse-Ergebnis: CategoryBadge, Summary, Tag-Badges, „Stand: … · <model> · ~<EUR> · letzter Lauf: n / m Tokens" | display | – | – | gespraeche/* |
-| GES-33 | „Noch nicht analysiert. Ein Klick startet einen günstigen KI-Durchlauf (Haiku) und speichert das Ergebnis — erneutes Öffnen kostet nichts." | display | – | – | gespraeche/* |
-| GES-34 | „✓ Transkript": Turns „Kunde"/„Berater" + Uhrzeit (Berater-Turns als Markdown) / „Kein lesbares Transkript." | display | – | – | gespraeche/* |
+| GES-28 | Platzhalter „Wähle links ein Gespräch, um Transkript und Analyse zu sehen." | display | – | – | gespraeche/ConversationDetail.tsx |
+| GES-29 | Skeleton beim Laden; Fehler „Gespräch konnte nicht geladen werden." / „Netzwerkfehler — bitte erneut versuchen." / „Nicht gefunden." | display (loading/error) | Detail-Fetch | POST /api/admin/conversations/detail `{conversationId}` | gespraeche/ConversationDetail.tsx |
+| GES-30 | Kopf: TierBadge, Persona-Badge, „<Datum> · N Nachricht(en) · <status>"; OutcomeChips (md) | display | – | – | gespraeche/ConversationDetail.tsx |
+| GES-31 | „KI-Analyse" + „✨ Analysieren" / „Neu analysieren" / „Analysiere…" | button (KI-Lauf) | Einzelanalyse (Haiku, gecacht); Toast „Gespräch analysiert" / „Hinweis"; refresh | POST /api/admin/conversations/analyze `{conversationId, force}` | gespraeche/ConversationDetail.tsx |
+| GES-32 | Analyse-Ergebnis: CategoryBadge, Summary, Tag-Badges, „Stand: … · <model> · ~<EUR> · letzter Lauf: n / m Tokens" | display | – | – | gespraeche/ConversationDetail.tsx |
+| GES-33 | „Noch nicht analysiert. Ein Klick startet einen günstigen KI-Durchlauf (Haiku) und speichert das Ergebnis — erneutes Öffnen kostet nichts." | display | – | – | gespraeche/ConversationDetail.tsx |
+| GES-34 | „✓ Transkript": Turns „Kunde"/„Berater" + Uhrzeit (Berater-Turns als Markdown) / „Kein lesbares Transkript." | display | – | – | gespraeche/ConversationDetail.tsx |
 | **Insights-Report (GespraecheReportPanel, unten)** ||||||
 | GES-35 | „✨ Aggregierter Insights-Report" + Meta „N Zusammenfassung(en) · zwischengespeichert/frisch generiert · <Zeit> · ~<EUR>" | display | `getCachedInsights` | – | gespraeche/ReportPanel.tsx |
 | GES-36 | „Report anzeigen" / „Einklappen" (aria-expanded; nur wenn Report existiert; eingeklappt per Default) | button (collapse) | – | client-only | gespraeche/ReportPanel.tsx |
 | GES-37 | „✨ Insights generieren" / „Neu generieren" / „Wird erstellt…" (disabled ohne analysierte) | button (KI-Lauf) | Rollup über gecachte Summaries; öffnet Report | POST /api/admin/conversations/insights `{from, to, force}` | gespraeche/ReportPanel.tsx |
 | GES-38 | Hinweis „⚠️ KI-Pass über die bereits zwischengespeicherten Zusammenfassungen (nicht über Transkripte)… [Zuerst Gespräche analysieren.]" | display | – | – | gespraeche/ReportPanel.tsx |
 | GES-39 | Fehlertext / Skeleton / Report (Markdown) | display | – | – | gespraeche/ReportPanel.tsx |
-| GES-40 | „Belege": `<details>` je Abschnitt (Top-Themen & Fragen / Wo Beratungen stocken oder scheitern / Häufige unerfüllte Bedürfnisse / Vorschläge zur Verfeinerung) mit Badge „Beleg-Gespräche (N)" und Buttons „Gespräch #id öffnen — <Grund>" | disclosure + button (deep link) | Öffnet Gespräch im Detail-Panel (scrollIntoView) | POST …/detail | gespraeche/ReportPanel.tsx, gespraeche/* |
+| GES-40 | „Belege": `<details>` je Abschnitt (Top-Themen & Fragen / Wo Beratungen stocken oder scheitern / Häufige unerfüllte Bedürfnisse / Vorschläge zur Verfeinerung) mit Badge „Beleg-Gespräche (N)" und Buttons „Gespräch #id öffnen — <Grund>" | disclosure + button (deep link) | Öffnet Gespräch im Detail-Panel (scrollIntoView) | POST …/detail | gespraeche/ReportPanel.tsx |
 | GES-41 | Hinweis „Kuratierte Beispiele je Abschnitt. Vollständige Listen: Kategorie-/Qualitäts-Balken oben anklicken." | display | – | – | gespraeche/ReportPanel.tsx |
 | GES-42 | „Neu generieren, um verlinkte Beleg-Gespräche zu erhalten." (alter Cache ohne Referenzen) / „Modell: <model>" | display | – | – | gespraeche/ReportPanel.tsx |
 | GES-43 | „Kunde öffnen“ (seit 2026-10) im Gesprächskopf, nur bei identifizierten Gesprächen | link | Sprung zur Person `?tab=kunden&customer=<id>`; die Liste bleibt pseudonym (kein Name) | GET conversation detail (`customerId`) | gespraeche/ConversationDetail.tsx, lib/admin-conversations.ts |
@@ -1002,7 +1002,7 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.6. Die
 10. „Stand: … · model · ~€ · letzter Lauf: n / m Tokens"
 11. „Noch nicht analysiert. Ein Klick startet einen günstigen KI-Durchlauf (Haiku) und speichert das Ergebnis — erneutes Öffnen kostet nichts." —
 12. „Kein lesbares Transkript."
-13. „— noch keine Daten" — gespraeche/ReportPanel.tsx
+13. „— noch keine Daten" — gespraeche/StatsPanel.tsx, gespraeche/ReportPanel.tsx
 14. title „Filter entfernen" / „Liste auf „X" filtern — zeigt ALLE passenden Gespräche" —
 15. „N Gespräch(e) · M analysiert"
 16. „Klick auf einen Balken filtert die Gesprächsliste darunter auf ALLE passenden (analysierten) Gespräche — jedes mit seiner Kurz-Erklärung. Erneuter Klick hebt den Filter auf." —
@@ -1014,7 +1014,7 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.6. Die
 22. „Neu generieren, um verlinkte Beleg-Gespräche zu erhalten." / „Modell: …" / Fehler „Insights konnten nicht erstellt werden."
 
 ### Persistenter Zustand (Gespräche)
-- URL: `?tab=gespraeche&grange=7d|30d|90d|custom[&gfrom&gto][&gtier=anonymous|email-only|signed-in][&gerr=1][&gcat=<key>][&gqual=<key>][&gq=<text>][&gpage=N]` (gespraeche/*; page.tsx).
+- URL: `?tab=gespraeche&grange=7d|30d|90d|custom[&gfrom&gto][&gtier=anonymous|email-only|signed-in][&gerr=1][&gcat=<key>][&gqual=<key>][&gq=<text>][&gpage=N]` (gespraeche/ReportPanel.tsx; page.tsx).
 - Ausgewähltes Gespräch (selectedId) und Report auf/zu sind flüchtig. Kein localStorage.
 - Serverseitig gecacht: Einzelanalysen (am Datensatz), Insights-Rollup je Zeitraum.
 
@@ -1023,10 +1023,10 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.6. Die
 ## 8. Wissen (`WissenTab.tsx`, `wissen/*`)
 
 ### Beschreibung
-Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.4. Die Beschreibung vom 2026-09-08 steht im Archiv (§B.1).
+Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.4. Die Beschreibung vom 2026-09-08 steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1).
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | WIS-01 | „✨ Gespräche scannen (k von N)" / „Scanne …" / „Keine neuen Gespräche zu scannen" | button | Entwirft bis zu 10 neue Q&A-Einträge aus geeigneten, noch nicht gescannten Gesprächen; Toast mit scanned/created/noGap/duplicates/errors; danach reload | POST /api/admin/qa/scan `{limit:10}` → GET /api/admin/qa/list | wissen/* |
 | WIS-02 | Reload-Icon (title „Neu laden", KEIN aria-label) | icon button | Lädt Einträge/Zähler neu | GET /api/admin/qa/list | wissen/* |
@@ -1066,10 +1066,10 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.4. Die
 ## 9. Analyse (`AnalyseTab.tsx`, `analytics/*`)
 
 ### Beschreibung
-Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.8. Die Beschreibung vom 2026-09-08 steht im Archiv (§B.1).
+Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.8. Die Beschreibung vom 2026-09-08 steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1).
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | ANA-01 | Sidebar „+ Neue Komplettanalyse" (aktiv hervorgehoben) | button | Zurück zum Generator | client-only | analytics/AnalyseWorkspace.tsx |
 | ANA-02 | Sidebar-Liste „Gespeichert (N)": Titel, Status-Pill (läuft/Fehler/fertig), Datum, Kosten | list buttons | Bericht auswählen → Detail laden | GET /api/admin/analytics/[id] | analytics/AnalyseWorkspace.tsx |
@@ -1108,10 +1108,10 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.8. Die
 ## 10. Verbesserung (`VerbesserungTab.tsx`, `verbesserung/*`)
 
 ### Beschreibung
-Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.9. Die Beschreibung vom 2026-09-08 steht im Archiv (§B.1).
+Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.9. Die Beschreibung vom 2026-09-08 steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1).
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | VER-01 | Sidebar „+ Neuer Verbesserungslauf" | button | Zum Neuer-Lauf-Panel | client-only | verbesserung/* |
 | VER-02 | Sidebar-Liste „Läufe (N)": Titel, Badge läuft/Fehler/fertig, Datum, „N Vorschläge" | list buttons | Lauf auswählen → Detail | GET /api/admin/improve/[id] | verbesserung/* |
@@ -1164,14 +1164,14 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.9. Die
 ## 11. Einstellungen (`EinstellungenTab.tsx`, `einstellungen/*`)
 
 ### Beschreibung
-Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.10. Die Beschreibung vom 2026-09-08 steht im Archiv (§B.1).
+Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.10. Die Beschreibung vom 2026-09-08 steht im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.1).
 
 ### Controls & actions
-| ID | Element | Type | What it does | Calls | File:line |
+| ID | Element | Type | What it does | Calls | File |
 |---|---|---|---|---|---|
 | EIN-01 | Design-Karte: Name, Badge „Standard", Beschreibung, „Hinzugefügt am <Datum>", Badges „Aktiv: Zusammenfassung/Anmelde-Bestätigung (DOI)/Marketing (Kunden)/Kampagne (Shopify-Abonnenten)" bzw. „Nicht in Verwendung" | display | Registry-Metadaten + effektive Zuordnung | server-render | einstellungen/EmailSettingsWorkspace.tsx |
 | EIN-02 | Vorschau-Buttons je Typ pro Design („👁 Zusammenfassung", „Anmelde-Bestätigung (DOI)", „Marketing (Kunden)", „Kampagne (Shopify-Abonnenten)") → Dialog mit `EmailPreviewFrame` (Desktop/Mobil) | button + dialog | Beispiel-E-Mail dieses Typs im Design | POST /api/admin/email-designs/preview `{designKey, kind}` | einstellungen/EmailSettingsWorkspace.tsx, EmailPreviewButton.tsx |
-| EIN-03 | Select „Design für <Typ>" je E-Mail-Typ (Optionen = Designs, die den Typ unterstützen; „Klassisch (Standard)" = null) | select | Zuordnung sofort speichern; Toast „Design zugeordnet — <Typ> verwendet ab sofort „<Name>"" | POST /api/admin/email-designs/assign `{kind, designKey|null}` | einstellungen/EmailSettingsWorkspace.tsx |
+| EIN-03 | Select „Design für <Typ>" je E-Mail-Typ (Optionen = Designs, die den Typ unterstützen; „Klassisch (Standard)" = null) | select | Zuordnung sofort speichern; Toast „Design zugeordnet — <Typ> verwendet ab sofort „<Name>"" | POST /api/admin/email-designs/assign `{kind, designKey\|null}` | einstellungen/EmailSettingsWorkspace.tsx |
 | EIN-04 | „👁 Vorschau" je Typ (aktuell aktives Design) | button + dialog | Vorschau des effektiven Designs | POST /api/admin/email-designs/preview `{designKey: effective, kind}` | einstellungen/EmailSettingsWorkspace.tsx |
 | EIN-05 | Warnbox „Keine Datenbank konfiguriert (DATABASE_URL) — die Auswahl kann nicht gespeichert werden…" (+ Selects disabled) | display/state | – | – | einstellungen/EmailSettingsWorkspace.tsx |
 | EIN-06 | Versand-Konfiguration: „E-Mail-Versand" Badge Konfiguriert/Nicht konfiguriert, „Absender-Adresse", „Antwort-/Eingangsadresse", „Logo-Override (EMAIL_LOGO_URL)" | display (dl) | Env-Werte read-only | server-render | einstellungen/EmailSettingsWorkspace.tsx |
@@ -1227,11 +1227,11 @@ von“ steht im Archiv, §B.2):
 
 ## 14. Dokumentiert, aber nicht im Code gefunden (docs/ADMIN_DASHBOARD.md)
 
-Befund vom 2026-09-08, erledigt (ADMIN_DASHBOARD.md wurde nach dem Redesign neu geschrieben) — Text im Archiv (§B.4).
+Befund vom 2026-09-08, erledigt (ADMIN_DASHBOARD.md wurde nach dem Redesign neu geschrieben) — Text im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.4).
 
 ## 15. Zeilenzahlen (src/app/admin)
 
-Momentaufnahme vom 2026-09-08 — im Archiv (§B.4).
+Momentaufnahme vom 2026-09-08 — im Archiv ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §B.4).
 
 ---
 
@@ -1657,7 +1657,7 @@ Idempotent: yes (pure cache refresh; re-running writes the same data). Side effe
 > (`/api/cron/campaign-audiences` — 1.9). Shopify-side unsubscribes now reach Mo through the consent webhook and the
 > reconcile into the one consent, and the send gate reads that consent fresh. 
 
-The description of the retired job is archived (§D.3); the retired newsletter sync is also recorded in
+The description of the retired job is archived ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §D.3); the retired newsletter sync is also recorded in
 [`CAMPAIGNS.md`](./CAMPAIGNS.md) §1 („Retired“) and [`archive/CAMPAIGNS_HISTORY_2026-10.md`](./archive/CAMPAIGNS_HISTORY_2026-10.md).
 
 ### 1.4 `/api/cron/sync-catalog` — `src/app/api/cron/sync-catalog/route.ts`
@@ -1821,9 +1821,9 @@ without a database; `{ok, …result}`. Owner: [`CAMPAIGNS.md`](./CAMPAIGNS.md) �
 | Mechanism | Where | What it does | Bounds / risks |
 |---|---|---|---|
 | **Next `after()`** (post-response background work) — **❌ removed 2026-09 (TECH-E3)** | formerly `src/app/admin/page.tsx` on every `/admin` render | The address auto-capture runs only in the nightly `/api/cron/refresh-customers` (1.2, 12 customers per run, gated by `PHYSICAL_MAIL_SENDS_APPROVED`); `src/` has no `after()` call left. | – |
-| **Client-driven stepping loop — Komplettanalyse** | `src/app/admin/analytics/ReportProgressDriver.tsx` → `POST /api/admin/analytics/step` (`src/app/api/admin/analytics/step/route.ts`, maxDuration 60) → `stepReport(id)` (`src/lib/analytics-report-generate.ts-…`). | Tight `while` loop with no delay: each response advances one phase chunk (analyze → insights → personas → customer_synthesis → customer_profiles → assemble). Stops on `done`, on non-2xx, or when the component unmounts (`pausedRef`). Pause/resume buttons. | No server-side claim: two tabs stepping the same report concurrently would both do model work (the improvement loop fixed exactly this with migration 0045; the report stepper did not get the same fix). Report stays `running` server-side if the tab closes — resumable, nothing cleans up abandoned `running` reports except `ANALYTICS_REPORT_RETENTION_DAYS`. |
-| **Client-driven stepping loop — Verbesserung (improvement run)** | `src/app/admin/verbesserung/VerbesserungWorkspace.tsx` (`RunDriver`) → `POST /api/admin/improve/step` (`src/app/api/admin/improve/step/route.ts`, maxDuration **300**) → `stepImprovementRun(id)` (`src/lib/improvement-generate.ts`). | `for(;;)` loop; network errors retried every 5 s up to 60 times (~5 min); server returns `busy:true` when another step holds the per-run claim (`claimRunStep`, `src/lib/improvement-store.ts`, migration 0045, `STEP_CLAIM_TTL_MINUTES = 6` at) and the client polls every 5 s. | Each step is ONE Sonnet call; the run is created by `POST /api/admin/improve/run`. An abandoned run stays `running`; the claim goes stale after 6 min so a later "Fortsetzen" click resumes it. |
-| **Batch-until-empty admin actions (manual re-click, no loop)** | `POST /api/admin/conversations/analyze-bulk` (`route.ts` maxDuration 60, `BULK_ANALYZE_LIMIT` per call, response reports `remaining`; UI `GespraecheInsights.tsx` shows "noch N offen (erneut ausführen)"); `POST /api/admin/qa/scan` (`route.ts` maxDuration 300, `limit` ≤15 per call; UI `WissenWorkspace.tsx`); `POST /api/admin/campaign/prepare` (`route.ts` maxDuration 300, ≤50 per request; header comment: "deliberately no cron"). | All explicitly human-triggered because they spend model tokens. | None are scheduled. The desk's „Vorbereiten…“ (`kampagne/useCampaignActions.ts`) is the one client-side chunk loop: `/prepare` in chunks of `PREPARE_CHUNK` (5) up to the chosen count (default `PREPARE_TOTAL` = 50) until `exhausted`, then the optional hero step — no page reload. |
+| **Client-driven stepping loop — Komplettanalyse** | `src/app/admin/analytics/ReportProgressDriver.tsx` (`useStepLoop`, `src/app/admin/lib/use-step-loop.ts`) → `POST /api/admin/analytics/step` (`src/app/api/admin/analytics/step/route.ts`, maxDuration 60) → `stepReport(id)` (`src/lib/analytics-report-generate.ts`). | One step after another until `done`; each response advances one phase chunk (analyze → insights → personas → customer_synthesis → customer_profiles → assemble). `useStepLoop`: network failures retried every 5 s up to 60 times in a row („reconnecting“), a non-2xx answer stops with the server's message and offers a manual resume, pause/resume, unmounting stops (the report stays resumable). | No server-side claim: two tabs stepping the same report concurrently would both do model work (the improvement loop fixed exactly this with migration 0045; the report stepper did not get the same fix). Report stays `running` server-side if the tab closes — resumable, nothing cleans up abandoned `running` reports except `ANALYTICS_REPORT_RETENTION_DAYS`. |
+| **Client-driven stepping loop — Verbesserung (improvement run)** | `src/app/admin/verbesserung/RunView.tsx` (`RunDriver`, `useStepLoop`) → `POST /api/admin/improve/step` (`src/app/api/admin/improve/step/route.ts`, maxDuration **300**) → `stepImprovementRun(id)` (`src/lib/improvement-generate.ts`). | The same `useStepLoop`: network errors retried every 5 s up to 60 times (~5 min); server returns `busy:true` when another step holds the per-run claim (`claimRunStep`, `src/lib/improvement-store.ts`, migration 0045, `STEP_CLAIM_TTL_MINUTES = 6` at) and the client polls every 5 s. | Each step is ONE Sonnet call; the run is created by `POST /api/admin/improve/run`. An abandoned run stays `running`; the claim goes stale after 6 min so a later "Fortsetzen" click resumes it. |
+| **Batch-until-empty admin actions (manual re-click, no loop)** | `POST /api/admin/conversations/analyze-bulk` (`route.ts` maxDuration 60, `BULK_ANALYZE_LIMIT` per call, response reports `remaining`; UI `gespraeche/StatsPanel.tsx` shows "noch N offen (erneut ausführen)"); `POST /api/admin/qa/scan` (`route.ts` maxDuration 300, `limit` ≤15 per call; UI `wissen/useQaQueue.ts`); `POST /api/admin/campaign/prepare` (`route.ts` maxDuration 300, ≤50 per request; header comment: "deliberately no cron"). | All explicitly human-triggered because they spend model tokens. | None are scheduled. The desk's „Vorbereiten…“ (`kampagne/useCampaignActions.ts`) is the one client-side chunk loop: `/prepare` in chunks of `PREPARE_CHUNK` (5) up to the chosen count (default `PREPARE_TOTAL` = 50) until `exhausted`, then the optional hero step — no page reload. |
 | **Debounced autosave timers** | `kampagne/useCampaignActions.ts` (`saveTimers`), `analytics/GenerateReportPanel.tsx`, `ui/product-picker.tsx` — plain `setTimeout` debounces, not background jobs. | — | — |
 | **Long-running single requests (not loops)** | `POST /api/admin/conversations/insights` (maxDuration 300, two Sonnet passes), `POST /api/admin/campaign/sync` (300; same `syncCampaignAudience` as cron 2 — **❌ retired 2026-10**), `POST /api/admin/email-hero/generate` (300), `/api/chat` (300). **2026-10:** `POST /api/admin/campaigns/status\|update\|refresh` (120; audience materialisation), `POST /api/admin/campaigns/add-recipient` and `POST /api/admin/inbox/accept` (120; one draft). | Manual only. | — |
 | **Client-driven stepping loop — Shopify import (2026-10)** | `einstellungen/ShopifySyncCard.tsx` (`useStepLoop`, 4-s poll while Shopify prepares) → `POST /api/admin/shopify/import {action:"step"}` (90-s deadline) → `runCustomerImportStep` (`src/lib/shopify-sync.ts`). | Bulk operations for customers, then orders; JSONL read in 4 MB chunks from a stored byte offset (`shopify-bulk-core.mjs`), resumable. | The 5-minute cron `/api/cron/shopify-sync` continues a started import when the page is closed. |
@@ -1839,7 +1839,7 @@ event-driven, not scheduled, and are out of scope for this section.
 # 4. Scripts (`scripts/*.mjs`, 23 files)
 
 Legend — **Prod impact**: what the script can do to shared/production state when run with production env.
-"Local files only" = writes inside the repo checkout / cwd, nothing remote. Node in this sandbox: see footnote on `tsx`.
+"Local files only" = writes inside the repo checkout / cwd, nothing remote. (†) see the footnote below the table.
 
 | Script | Purpose | Invocation | Required env (direct) | Prod impact | Docs that name it | package.json entry |
 |---|---|---|---|---|---|---|
@@ -1852,9 +1852,9 @@ Legend — **Prod impact**: what the script can do to shared/production state wh
 | `diagnose-address.mjs` | For ONE e-mail: shows exactly what Shopify returns (defaultAddress + completed orders' shippingAddress) and what `lib/postal-address` would store. Note: carries a **local copy** of the completed-purchase status check because it cannot import the TS helper — drift risk vs `src/lib/shopify-orders.ts`. | `npm run diagnose:address -- someone@example.com` | `SHOPIFY_*` four vars | **Read-only** Shopify (customer + orders by e-mail → PII printed to the terminal); no DB. | README.md | `diagnose:address` |
 | `gen-prompt-golden.mjs` | Regenerates `src/lib/system-prompt-core.de.golden.txt` from the shared fixtures after an intentional German prompt change (guards `system-prompt-core.test.mjs`). | `node scripts/gen-prompt-golden.mjs` | none | Local file only | none | **none** |
 | `hero-gradient.mjs` | Applies the Performance-hero legibility gradient (`email-hero-gradient.mjs`) to any picture — for preparing `public/email-hero-default.jpg`. | `npm run hero:gradient -- <in> <out.png>` | none | Local files only | EMAIL_DESIGNS.md, README.md | `hero:gradient` |
-| `hero-quality-compare.mjs` | Renders stored hero prompts in several variants (quality level, ±catalogue reference photos) through the production pipeline and writes a side-by-side HTML sheet to `./hero-compare*/` (git-ignored). `--dry-run` skips API calls. | `npm run hero:compare [-- --count N \| --prompts f \| --variants … \| --out dir \| --dry-run]` | `OPENAI_API_KEY`, `DATABASE_URL` unless `--prompts`; `ANTHROPIC_API_KEY` optional (QA check via `heroQaEnabled(process.env)`) | **DB read-only** (`SELECT … FROM campaign_contacts / marketing_sends`,, includes `purchase_summary` PII in memory); **spends OpenAI image + Anthropic credits** (real cost is printed); writes local files only. | EMAIL_DESIGNS.md, README.md | `hero:compare` |
-| `list-test-discounts.mjs` | Lists all Shopify discount codes minted by the app (prefix `MS5-`); `--delete` deletes them after an interactive confirmation (`discountCodeDelete`,). | `node --env-file=.env.local scripts/list-test-discounts.mjs [--delete]` (header uses `.env.local`, every other script says `.env`) | `SHOPIFY_*` four vars | Default read-only; **`--delete` deletes live Shopify discount codes** (`write_discounts`). A customer holding an un-redeemed MS5- code from a real marketing send would lose it. | README.md | **none** |
-| `migrate.mjs` | Forward-only SQL migration runner (see §4.3). | `npm run db:migrate` / `DATABASE_URL=… node scripts/migrate.mjs` | one of `DATABASE_URL_UNPOOLED`, `POSTGRES_URL_NON_POOLING`, `DATABASE_URL`, `POSTGRES_URL` | **DDL on the target DB** + `INSERT INTO _migrations`. | ADMIN_DASHBOARD.md, CUSTOMER_ACCOUNT.md, DATABASE.md, ORDER_ATTRIBUTION.md, ROLLOUT_TODO.md, README.md | `db:migrate` |
+| `hero-quality-compare.mjs` | Renders stored hero prompts in several variants (quality level, ±catalogue reference photos) through the production pipeline and writes a side-by-side HTML sheet to `./hero-compare*/` (git-ignored). `--dry-run` skips API calls. | `npm run hero:compare [-- --count N \| --prompts f \| --variants … \| --out dir \| --dry-run]` | `OPENAI_API_KEY`, `DATABASE_URL` unless `--prompts`; `ANTHROPIC_API_KEY` optional (QA check via `heroQaEnabled(process.env)`) | **DB read-only** (`SELECT … FROM campaign_contacts / marketing_sends`, includes `purchase_summary` PII in memory); **spends OpenAI image + Anthropic credits** (real cost is printed); writes local files only. | EMAIL_DESIGNS.md, README.md | `hero:compare` |
+| `list-test-discounts.mjs` | Lists all Shopify discount codes minted by the app (prefix `MS5-`); `--delete` deletes them after an interactive confirmation (`discountCodeDelete`). | `node --env-file=.env.local scripts/list-test-discounts.mjs [--delete]` (header uses `.env.local`, every other script says `.env`) | `SHOPIFY_*` four vars | Default read-only; **`--delete` deletes live Shopify discount codes** (`write_discounts`). A customer holding an un-redeemed MS5- code from a real marketing send would lose it. | README.md | **none** |
+| `migrate.mjs` | Forward-only SQL migration runner (part 6, „4.2 Migrations“). | `npm run db:migrate` / `DATABASE_URL=… node scripts/migrate.mjs` | one of `DATABASE_URL_UNPOOLED`, `POSTGRES_URL_NON_POOLING`, `DATABASE_URL`, `POSTGRES_URL` | **DDL on the target DB** + `INSERT INTO _migrations`. | ADMIN_DASHBOARD.md, CUSTOMER_ACCOUNT.md, DATABASE.md, ORDER_ATTRIBUTION.md, ROLLOUT_TODO.md, README.md | `db:migrate` |
 | `preview-summary-email.mjs` | Renders the consultation-summary e-mail with 2 real catalog products to `preview-summary-email.{html,txt}` in the repo root (git-ignored). | `npx tsx scripts/preview-summary-email.mjs` — imports `../src/lib/summary-email.ts` (†) | none | Local files only | README.md | **none** |
 | `probe-bundle.mjs` — **❌ removed 2026-09 (D-9)** | Throwaway verification probe of the bundle spike (created and archived one disposable Shopify bundle product). Results kept in `archive/BUNDLES_SPIKE.md`. | – | – | – | – | – |
 | `reset-test-data.mjs` | `TRUNCATE … RESTART IDENTITY CASCADE` of every data table; prints host/db first; completeness guard cross-checks `DATA_TABLES` against `information_schema` and **aborts** if the live DB has an unlisted table. | `ALLOW_DB_RESET=true npm run db:reset` | `ALLOW_DB_RESET=true` gate, DB URL (same 4-way fallback as migrate) | **Destroys all data in the target DB.** `_migrations` preserved. **Currently unusable against a fully-migrated DB**: `DATA_TABLES` is "current through migration 0031" — every table added by 0032–0055 (analytics_reports, campaign_contacts, campaign_sends, qa_entries, mo_orders, mo_attribution_tokens, improvement_runs/…, email_templates, email_design_selections, email_hero_images, …) is unlisted, so the guard exits 1. Safe failure mode, but the script is dead until the list is updated. | DATABASE.md, ROLLOUT_TODO.md, README.md | `db:reset` |
@@ -1875,7 +1875,7 @@ Legend — **Prod impact**: what the script can do to shared/production state wh
 `build-countdown-sprite.mjs` (named in `EMAIL_DESIGNS.md`), `gen-prompt-golden.mjs` (named only in its header and in
 `system-prompt-core.test.mjs`), `list-test-discounts.mjs`, `preview-summary-email.mjs` and `send-test-emails.mjs`
 (the three manual helpers in README → Scripts), `setup-qa-metafield.mjs` (one-time Shopify setup for Wissen; named
-only in its header). The 2026-09-08 orphan findings are archived (§D.6).
+only in its header). The 2026-09-08 orphan findings are archived ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §D.6).
 
 ### 2.2 Scripts that touch production data (summary)
 
@@ -1886,6 +1886,7 @@ only in its header). The 2026-09-08 orphan findings are archived (§D.6).
 | Shopify writes | `setup-qa-metafield.mjs` (metafield definition), `list-test-discounts.mjs --delete` (delete discount codes), `register-shopify-webhooks.mjs --apply` (webhook subscriptions, 2026-10) |
 | Shopify reads incl. customer PII | `diagnose-address.mjs`, `analyze-repurchase.mjs` (ids only), `verify-shopify-auth.mjs`, `hero-quality-compare.mjs` (product images) |
 | E-mail sends | `send-test-emails.mjs` (Resend, 4 mails to one recipient) |
+| Public HTTP reads | `check-live-widget.mjs` (storefront HTML and the widget script; no secrets, no cookies) |
 | Paid AI calls | `build-embeddings.mjs` (OpenAI), `hero-quality-compare.mjs` (OpenAI images + optional Anthropic), `backfill-customer-profiles.mjs` (through the production cron) |
 | Local only | `build-countdown-sprite.mjs`, `convert-catalog.mjs`, `dev-neon-proxy.mjs`, `gen-prompt-golden.mjs`, `hero-gradient.mjs`, `preview-summary-email.mjs`, `seed-dev.mjs` (refuses a non-local database), `verify-pingen.mjs`, `verify-customer-account.mjs` |
 
@@ -1903,21 +1904,21 @@ collected from `process.env.X`, the indirect readers (`parseIntEnv("X", …)`, t
 the scripts' `REQUIRED` arrays.
 
 Additions since the baseline:
-**2026-10-01:** +11 names for the customer platform, all read through `src/lib/platform-flags.mjs` (`env = process.env`
+- **2026-10-01:** +11 names for the customer platform, all read through `src/lib/platform-flags.mjs` (`env = process.env`
 parameter, tested) or `src/lib/retention-options.mjs`, all documented in `.env.example`; every switch that writes to
 Shopify or widens what Mo does with personal data defaults to off / the conservative value (rows marked 2026-10).
-**2026-10 follow-up:** +1 — `SHOPIFY_WRITEBACK_ENABLED` (plan D-11), in `.env.example` with `false`.
-**2026-10-03 (order status in the chat):** +2 — `CHAT_ORDER_STATUS_ENABLED` (default `false`) and
+- **2026-10 follow-up:** +1 — `SHOPIFY_WRITEBACK_ENABLED` (plan D-11), in `.env.example` with `false`.
+- **2026-10-03 (order status in the chat):** +2 — `CHAT_ORDER_STATUS_ENABLED` (default `false`) and
 `SHOPIFY_ACCOUNT_ORDERS_URL` (default the shop's account page), both in `.env.example`.
-**2026-10-03 („Einplanen“, 0072):** +3 — `CAMPAIGN_RELEASE_ENABLED` (default `false`), `CAMPAIGN_RELEASE_MAX_PER_RUN` (30),
+- **2026-10-03 („Einplanen“, 0072):** +3 — `CAMPAIGN_RELEASE_ENABLED` (default `false`), `CAMPAIGN_RELEASE_MAX_PER_RUN` (30),
 `CAMPAIGN_RELEASE_SPACING_MS` (1500), all in `.env.example`.
-**2026-10-03 (letters as a campaign channel, 0074):** +3 — `LETTER_MIN_INTERVAL_DAYS` (60),
+- **2026-10-03 (letters as a campaign channel, 0074):** +3 — `LETTER_MIN_INTERVAL_DAYS` (60),
 `CAMPAIGN_LETTER_ADDRESS_NIGHTLY` (200), `CAMPAIGN_LETTER_SHOP_URL` (empty → first allowed origin's host), all in
 `.env.example`; the letter gate stays `PHYSICAL_MAIL_SENDS_APPROVED`.
-**2026-10-05 (order attribution, 0076):** +1 — `MO_ATTRIBUTION_SESSION_ANCHOR` (default `false`), in `.env.example`.
-**2026-10-05 (shop-login recognition, P0.3):** +2 — `APP_PROXY_SIGNIN_ENABLED` (default `false`) and
+- **2026-10-05 (order attribution, 0076):** +1 — `MO_ATTRIBUTION_SESSION_ANCHOR` (default `false`), in `.env.example`.
+- **2026-10-05 (shop-login recognition, P0.3):** +2 — `APP_PROXY_SIGNIN_ENABLED` (default `false`) and
 `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (default `0`), both in `.env.example`.
-**2026-10-05 (consent framing, page context):** +3 — `CONSENT_SIGNIN_VARIANTS` (default `a`),
+- **2026-10-05 (consent framing, page context):** +3 — `CONSENT_SIGNIN_VARIANTS` (default `a`),
 `CHAT_PAGE_CONTEXT_ENABLED` (default `false`) and `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` (default `0`), all in `.env.example`.
 
 Columns: **.env.ex** = present as an active key in `.env.example`, with the shipped value in brackets (`c` = only
@@ -1926,13 +1927,13 @@ code default, P platform-injected (Vercel/Neon/Upstash), S script/CLI-only.
 
 | Variable | Used in | .env.ex | Default / fallback in code | Req | Notes |
 |---|---|---|---|---|---|
-| `ABANDON_AFTER_MINUTES` | `src/lib/retention.ts` | yes (30) | 30 (min 0) | O | retention cron |
-| `ADMIN_ACCESS_LOG_RETENTION_DAYS` | `retention.ts` | yes (730) | 730; 0 disables | O | |
+| `ABANDON_AFTER_MINUTES` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (30) | 30 (min 0) | O | retention cron |
+| `ADMIN_ACCESS_LOG_RETENTION_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (730) | 730; 0 disables | O | |
 | `ADMIN_PASSWORD` | `src/lib/admin-auth.ts` | yes (empty) | none → admin login disabled (fails closed) | R (admin) |  |
 | `ADMIN_SESSION_SECRET` | `admin-auth.ts` | yes (empty) | falls back to `CHAT_SHARED_SECRET` | O | |
 | `ALLOWED_ORIGINS` | `src/lib/security.ts` | yes | `https://www.motionsports.de,https://motionsports.de` (`security.ts`) | O | |
 | `ALLOW_DB_RESET` | `scripts/reset-test-data.mjs` | no | must be literally `true` | S | safety gate |
-| `ANALYTICS_REPORT_RETENTION_DAYS` | `retention.ts` | yes (365) | 365; 0 disables | O |  |
+| `ANALYTICS_REPORT_RETENTION_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (365) | 365; 0 disables | O |  |
 | `APP_PROXY_SIGNIN_ENABLED` (2026-10-05) | `platform-flags.mjs` `isAppProxySigninEnabled` → `api/auth/storefront/route.ts`, `signed-in-session.ts` | yes (false) | false | O (kill switch) | off: whoami issues no code and answers `{signedIn:false}`, still records `account_shop_recognised`; also zeroes the shop proof. Recommended `true` once the App Proxy is configured (D-AP1) |
 | `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (2026-10-05) | `platform-flags.mjs` `appProxySigninMaxAgeHours` / `appProxyShopProofHours` → storefront route, `signed-in-session.ts`, `api/auth/link` | yes (0) | 0 (invalid → 0, clamped 720) | O | > 0: an `app_proxy` link counts as signed in without a chat token for that many hours after its last redeem (every new tab renews); effective 0 while `APP_PROXY_SIGNIN_ENABLED` is off. Recommended 24 (D-AP1, 05.10.2026) |
 | `ANTHROPIC_API_KEY` | 16 sites: `analytics-report-generate.ts`, `bundle-suggestion.ts`, `campaign-draft.ts`, `conversation-analysis.ts`, `conversation-insights.ts`, `customer-profile.ts`, `email-hero.ts`, `email-hero-qa.mjs`, `improvement-generate.ts`, `kpi-top-questions.ts`, `marketing-draft.ts`, `qa-draft.ts`, `qa-translate.ts`, `summary-email.ts`; `/api/chat` via `@ai-sdk/anthropic` implicitly | yes (empty) | none; most callers degrade to a fallback draft / `unconfigured` | R (chat) | |
@@ -1942,7 +1943,7 @@ code default, P platform-injected (Vercel/Neon/Upstash), S script/CLI-only.
 | `BUNDLE_OFFER_EXPIRY_DAYS` | `bundle-offers.ts` | yes (7) | 7 | O | |
 | `CAMPAIGN_AUTO_PREPARE_COUNT` / `CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `CAMPAIGN_AUTO_PREPARE_TEXT_MODE` / `CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE` | `campaign-flags.mjs` `campaignAutoPrepareConfig` → `/api/cron/prepare-campaign-drafts` | yes (0 / 0 / compact / all) | 0 (cron skips) / 0 % / `compact` / `all` | O (costs API money) | nightly draft budget across live campaigns; the other three apply to the Lebenszyklus fallback (§2.5) |
 | `CAMPAIGN_ALLOW_SINGLE_OPT_IN` | `campaign-flags.mjs` | yes (**false**) | false (fail-closed; only 1/true/yes/on) | O (legal gate) | legal gate; `.env.example` ships `false` like the code (D-8) |
-| `CAMPAIGN_CONTACT_RETENTION_DAYS` | `retention.ts` | yes (365) | 365; 0 disables | O | 2026-10: campaign recipients by last audience refresh / creation (`last_synced_at` is refreshed by `campaign-audiences`). 2026-10-03: also `campaign_letters` by `updated_at` (counted with the recipients). |
+| `CAMPAIGN_CONTACT_RETENTION_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (365) | 365; 0 disables | O | 2026-10: campaign recipients by last audience refresh / creation (`last_synced_at` is refreshed by `campaign-audiences`). 2026-10-03: also `campaign_letters` by `updated_at` (counted with the recipients). |
 | `CAMPAIGN_LETTER_ADDRESS_NIGHTLY` (2026-10-03) | `campaign-letter-core.mjs` `letterAddressNightly` → `campaign-letters.ts` (`nightlyLetterAddresses`, cron `campaign-audiences`) | yes (200) | 200; max 2000; 0 = off (only the desk's „Adressen holen“) | O | purchase addresses fetched per night for open campaign letters |
 | `CAMPAIGN_LETTER_SHOP_URL` (2026-10-03) | `campaign-letter-draft.ts` `shopUrlForLetters` | yes (empty) | host of the first `ALLOWED_ORIGINS` entry, else `www.motionsports.de` | O | shop address the AI letter draft may name as plain text |
 | `CAMPAIGN_MO_DEEPLINK_URL` | `campaign-flags.mjs` | yes | `https://motionsports.de/?mo=open&mo_new=1&mo_view=fullscreen&utm_source=campaign&utm_medium=email` | O | identical default in code and example |
@@ -1958,11 +1959,11 @@ code default, P platform-injected (Vercel/Neon/Upstash), S script/CLI-only.
 | `CONTACT_FROM_EMAIL` | `email.ts`, `api/contact/route.ts` | yes (empty) | none → `isEmailConfigured()` false → all mail (summary/DOI/marketing/campaign/correspondence) disabled | R (e-mail) |  |
 | `CONTACT_TO_EMAIL` | `api/contact/route.ts` | yes (empty) | none → contact form logs to stdout | O | |
 | `CONVERSION_SWEEP_MAX_CODES` | `conversion-sweep.ts` | yes (25) | 25; 0 disables | O | retention cron sub-step |
-| `CORRESPONDENCE_RETENTION_DAYS` | `retention.ts` | yes (365) | 365 | O | |
-| `CRON_SECRET` | `cron-auth.ts` | yes (empty) | none → all 5 crons return 401 (fail closed) | R (crons) | ten crons (`vercel.json`, §3 1.1); the `.env.example` comment names nine — `/api/cron/release-campaign-mails` is missing there |
+| `CORRESPONDENCE_RETENTION_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (365) | 365 | O | |
+| `CRON_SECRET` | `cron-auth.ts` | yes (empty) | none → every cron returns 401 (fail closed) | R (crons) | ten crons (`vercel.json`, §3 1.1); the `.env.example` comment names nine — `/api/cron/release-campaign-mails` is missing there |
 | `CUSTOMER_AI_PROFILE_SCOPE` (2026-10) | `platform-flags.mjs` `aiProfileScope` → `customer-profile.ts`, `customer-store.ts`, `customer-detail.ts` | yes (consented) | `consented`; only `all` widens | O (legal, Plan D-1) | `all`: profiles for people without consent are built but flagged, marketing actions stay blocked; an Art. 21 objection always wins (`mayBuildAiProfile`). The example notes the maintainer's decision `all` (lawyer to confirm) |
 | `CUSTOMER_AUTH_PENDING_TTL_MINUTES` | `shopify-customer-account.ts` | yes (10) | 10 | O | |
-| `CUSTOMER_INACTIVITY_RETENTION_DAYS` | `retention.ts` | yes (1095) | 1095; 0 disables | O | |
+| `CUSTOMER_INACTIVITY_RETENTION_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (1095) | 1095; 0 disables | O | |
 | `CUSTOMER_PROFILE_BATCH` | `cron/refresh-customers/route.ts` (`?batch=` overrides) | yes (30) | 30; 0 disables | O | Vollprofile per night (deep tier, ≈ $0.10 each) |
 | `CUSTOMER_PROFILE_LIGHT_BATCH` (2026-10) | `platform-flags.mjs` `customerProfileLightBatch` (max 2000) → `cron/refresh-customers` | yes (0) | 0 = off | O | Kaufprofile per night (writer tier, ≈ $0.01 each) |
 | `CUSTOMER_REFRESH_BATCH` | `cron/refresh-customers/route.ts` | yes (25) | 25 (min 1) | O | |
@@ -1978,13 +1979,13 @@ code default, P platform-injected (Vercel/Neon/Upstash), S script/CLI-only.
 | `EMAIL_LOGO_URL` | `email-template.ts`, `src/app/admin/EinstellungenTab.tsx` | yes (empty) | theme logo → env → hard-coded Shopify CDN URL | O | shown in Einstellungen as the logo override |
 | `EMAIL_MO_ICON_URL` | `email-template.ts` | yes (empty) | `<base>/moorb.gif` | O |  |
 | `ERASURE_TOMBSTONE_RETENTION_DAYS` (2026-10) | `retention-options.mjs` | yes (30) | 30; 0 disables | O | retention step 9 — tombstones only after Shopify confirmed the redaction |
-| `FEEDBACK_RETENTION_DAYS` | `retention.ts` | yes (365) | 365; 0 disables | O | |
+| `FEEDBACK_RETENTION_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (365) | 365; 0 disables | O | |
 | `INBOUND_EMAIL_ADDRESS` | `email-inbound.ts` | yes (empty) | none → outbound mail has no Reply-To | O | |
 | `INBOX_AI_DAILY_LIMIT` (2026-10) | `platform-flags.mjs` `inboxAiDailyLimit` (max 500) → `inbox-signals.ts`, `inbox-suggest.ts` | yes (0) | 0 = off | O | AI suggestions per Berlin day by `/api/cron/inbox`; per-item requests count towards it |
 | `INBOX_RETENTION_DAYS` (2026-10) | `retention-options.mjs` | yes (180) | 180; 0 disables | O | decided Eingang items: content cleared, marker kept up to two years (retention step 8) |
 | `INPUT` / `OUTPUT` | `scripts/convert-catalog.mjs` | no | `src/data/products_export_1.csv` / `src/data/product-catalog.json` | S | |
 | `KEEP_PROBE` | `scripts/probe-bundle.mjs` (removed) | no | unset (= archive after probe) | S | **❌ removed 2026-09** with `probe-bundle.mjs` (D-9) |
-| `KPI_RETENTION_DAYS` | `retention.ts` | yes (180) | 180 | O | also governs ai_usage, insights, persona summaries, mo_orders |
+| `KPI_RETENTION_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (180) | 180 | O | also governs ai_usage, insights, persona summaries, mo_orders |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | `src/lib/redis.ts`; `rate-limit.ts` via `getRedis()` | yes | none → `getRedis()` **throws** (`redis.ts`); `rate-limit.ts` uses the throwing variant | R (P) | `/api/chat`, `/api/products`, `/api/kpi`, `/api/tts`, `/api/feedback`, `/api/capture-email`, `/api/contact` all rate-limit → every one of them 500s without Redis; the admin login fails open (§2.9) |
 | `LETTER_MIN_INTERVAL_DAYS` (2026-10-03) | `campaign-letter-core.mjs` `letterMinIntervalDays` → `campaign-letters.ts` (send gate + desk checks) | yes (60) | 60; 0 = no cadence check; invalid or > 3650 → 60 | O | days between two advertising letters to one person — counts every posted letter, 1:1 included |
 | `MARKETING_DISCOUNT_EXPIRY_DAYS` | `shopify-discounts.ts` | yes (7) | 7 | O | |
@@ -1993,24 +1994,24 @@ code default, P platform-injected (Vercel/Neon/Upstash), S script/CLI-only.
 | `MARKETING_ORDER_LOOKBACK_DAYS` | `shopify-orders.ts` | yes (180) | 180 | O | |
 | `MODEL_PRICES_JSON` | `ai-pricing.mjs` | yes (empty) | built-in `DEFAULT_MODEL_PRICES` | O | |
 | `MO_ATTRIBUTION_SESSION_ANCHOR` (2026-10-05) | `platform-flags.mjs` `isAttributionSessionAnchorEnabled` → `mo-orders-store.ts` (`ingestShopifyOrder` window anchor, `getMoAttributionKpis` `sessionAnchor`), `retention-options.mjs` (`attributionSessionAnchor`, `attributionTokenMaxDays`) → `retention.ts` step 5i | yes (false) | false (only 1/true/yes/on) | O (longer token life) | widget tokens: window from the device's latest product consultation, retention keeps the token while it consults (cap `KPI_RETENTION_DAYS`). Needs migration 0076 first. Owner decision 2026-10-05 (ANWALTSDOSSIER §20, F-37) |
-| `MO_ATTRIBUTION_WINDOW_DAYS` | `mo-orders-store.ts`, `retention.ts` | yes (30) | 30 (min 1) | O | **2026-10-05:** days from the anchor (minting, or with `MO_ATTRIBUTION_SESSION_ANCHOR` the latest product consultation for widget tokens) |
+| `MO_ATTRIBUTION_WINDOW_DAYS` | `mo-orders-store.ts`, `retention-options.mjs` | yes (30) | 30 (min 1) | O | **2026-10-05:** days from the anchor (minting, or with `MO_ATTRIBUTION_SESSION_ANCHOR` the latest product consultation for widget tokens) |
 | `NEON_FETCH_ENDPOINT` | `src/lib/db.ts`; `scripts/migrate.mjs`, `seed-dev.mjs`, `verify-live-kpis.mjs` | yes (empty) | unset → Neon default endpoint | O (local dev only) | local development: points the Neon HTTP driver at `npm run db:proxy` ([`DATABASE.md`](./DATABASE.md) „Local database“) |
 | `NEXT_PUBLIC_SENTRY_DSN` | `observability.ts` | yes (empty) | none → Sentry skipped, one-time warning | O (P) | |
 | `NODE_ENV` | `admin-auth.ts` (cookie `secure`), `observability.ts` | no | — | P | |
 | `OPENAI_API_KEY` | `retrieval.ts`, `catalog-mutate.ts`, `email-hero.ts`, `api/tts/route.ts`, `cron/sync-catalog/route.ts`; `scripts/build-embeddings.mjs`, `hero-quality-compare.mjs` | yes (empty) | none → keyword-only retrieval, no TTS, no embeddings sync, no hero images | R (retrieval quality) | embeddings (retrieval, catalog sync, Q&A answers), TTS, hero images |
-| `PHYSICAL_LETTER_RETENTION_DAYS` | `retention.ts` | yes (365) | 365 | O | |
+| `PHYSICAL_LETTER_RETENTION_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (365) | 365 | O | |
 | `PHYSICAL_MAIL_SENDS_APPROVED` | `pingen-flag.mjs` (used by `physical-mail.ts`, `customer-refresh.ts`, `address-capture.ts`, `verify-pingen.mjs`) | yes (**false**) | false (fail-closed) | O (legal gate) | also gates postal-address *collection*. 2026-10-03: also the campaign letters (send gate 1, `postal-address-fill.ts`, `campaign-letters.ts` — no purchase address is fetched while off) |
 | `PINGEN_CLIENT_ID` / `PINGEN_CLIENT_SECRET` / `PINGEN_ORGANISATION_ID` | `pingen.ts`; `scripts/verify-pingen.mjs` | yes | none → `isPingenConfigured()` false | R (letters) | |
 | `PINGEN_LETTER_COST_CENTS` | `physical-letters-store.ts` | yes (106) | 106 | O | 2026-10-03: also `campaign-letters-store.ts` `letterCostCents` — postage estimate and spent budget of campaign letters where Pingen reported no price |
 | `PINGEN_STAGING` | `pingen.ts`; `verify-pingen.mjs` | yes (true) | false = production | O | `.env.example` ships staging ON. 2026-10-03: `isPingenStaging()` → Callout „Pingen-Testumgebung“ in the view „Briefe“ |
 | `PINGEN_WEBHOOK_SECRET` | `api/webhooks/pingen/route.ts`; `verify-pingen.mjs` | yes (empty) | none → webhook 503 (fail closed); comma-separated list | R (letter status) | |
-| `POSTGRES_URL` / `POSTGRES_URL_NON_POOLING` | `db.ts`; `migrate.mjs`; `reset-test-data.mjs` | no | legacy fallbacks | P | |
+| `POSTGRES_URL` / `POSTGRES_URL_NON_POOLING` | `db.ts`; `migrate.mjs`; `reset-test-data.mjs` | c (comment only) | legacy fallbacks | P | |
 | `PORT` / `PROXY_LOG` | `scripts/dev-neon-proxy.mjs` | no | 4444 / unset | S | local proxy only |
 | `PUBLIC_BASE_URL` | `base-url.ts`; `scripts/verify-customer-account.mjs` | yes (empty) | → `VERCEL_PROJECT_PRODUCTION_URL` → `VERCEL_URL` → request origin → `https://mo.motionsports.de` (`base-url.ts`; `chat.` until 2026-10-02) | R (correct links in e-mails / OAuth redirect) |  |
 | `RESEND_API_KEY` | `email.ts`, `email-webhook.mjs` (placeholder), `api/contact/route.ts`, `api/inbound/resend/route.ts`, `api/admin/correspondence/message/route.ts` | yes (empty) | none → all e-mail disabled | R (e-mail) | |
 | `RESEND_EVENTS_WEBHOOK_SECRET` | `api/webhooks/resend/route.ts` | yes (empty) | falls back to `RESEND_WEBHOOK_SECRET`; none → 503 | O | new in #186 |
 | `RESEND_WEBHOOK_SECRET` | `email-inbound.ts`, `api/webhooks/resend/route.ts` | yes (empty) | none → `/api/inbound/resend` 503 | R (inbound mail) | |
-| `RETENTION_DAYS` | `retention.ts` | yes (180) | 180 | O | |
+| `RETENTION_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (180) | 180 | O | |
 | `RETURNING_HINT_ENABLED` | `consent-copy.ts` | yes (true) | true; `0/false/no/off` disables | O | |
 | `SHOPIFY_ACCOUNT_ORDERS_URL` (2026-10-03) | `order-status-core.mjs` `accountOrdersUrl` → `order-status.ts` | yes (empty) | `https://www.motionsports.de/account`; https only, anything else → default | O | the generic „Meine Bestellungen“ link in Mo's order status answer (`ordersPageUrl`) |
 | `SHOPIFY_API_VERSION` | `shopify.ts`; 5 scripts | yes (2026-04) | none → `isShopifyConfigured()` false; `env()` throws if called | R (Shopify) | |
@@ -2029,7 +2030,7 @@ code default, P platform-injected (Vercel/Neon/Upstash), S script/CLI-only.
 | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` (2026-10) | `retention-options.mjs` | yes (90) | 90; 0 disables | O | retention step 7 (webhook dedupe rows, finished sync runs, done/dead outbox rows) |
 | `SHOPIFY_WEBHOOK_SECRET` | `api/webhooks/shopify/route.ts` | yes (empty) | none → webhook 503 (fail closed) | R (stock + order webhooks) | a signature under `SHOPIFY_CLIENT_SECRET` is accepted too (app-made subscriptions, compliance topics); 503 only when neither is set |
 | `SHOPIFY_WRITEBACK_ENABLED` (2026-10 follow-up) | `platform-flags.mjs` `isShopifyInsightsWritebackEnabled` → `shopify-insights.ts` (nightly queue), `shopify-outbox.ts` (`writeback`), `shopify-sync-flags.ts` (Einstellungen) | yes (false) | false | O (writes to Shopify) | Mo's `mo-…` customer tags (segment, value tier, Mo contact, high churn) via the outbox; the shop's own tags are never touched |
-| `SUPPRESSED_CAPTURE_PURGE_DAYS` | `retention.ts` | yes (30) | 30 | O | |
+| `SUPPRESSED_CAPTURE_PURGE_DAYS` | `retention-options.mjs` (via `retentionOptionsFromEnv` in `retention.ts`) | yes (30) | 30 | O | |
 | `TOKEN_ENC_KEY` | `token-crypto.ts` | yes (empty) | none → **throws** when a token must be stored (sign-in callback fails closed) | R (tier-3 sign-in) | |
 | `TTS_INSTRUCTIONS` / `TTS_MODEL` / `TTS_SPEED` / `TTS_VOICE` | `api/tts/route.ts` | yes | German instruction / `gpt-4o-mini-tts` / 1.1 (clamped 0.25–4) / `coral` | O | |
 | `TZ` | `admin-datetime.test.mjs`, `store-datetime.test.mjs` only | no | — | test-only | set by the tests themselves |
@@ -2039,17 +2040,17 @@ code default, P platform-injected (Vercel/Neon/Upstash), S script/CLI-only.
 
 ### 3.a Used in code but missing from `.env.example`
 
-Resolved: every runtime variable the code reads is in `.env.example`. The 2026-09-08 list is archived (§D.8).
+Resolved: every runtime variable the code reads is in `.env.example`. The 2026-09-08 list is archived ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §D.8).
 
 ### 3.b In `.env.example` but never read by code (stale)
 
 Resolved: `SHOPIFY_CUSTOMER_ACCOUNT_API_VERSION` is gone; the Sentry build variables appear only in a comment that says
 they are not read (no `withSentryConfig`); `CONSENT_COPY_LAWYER_APPROVED` is a code constant (`src/lib/consent-copy.ts`).
-2026-09-08 findings archived (§D.8).
+2026-09-08 findings archived ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §D.8).
 
 ### 3.c README ↔ `.env.example` inconsistencies
 
-README → Configuration names `.env.example` as the canonical list; the 2026-09-08 findings are archived (§D.8). Open:
+README → Configuration names `.env.example` as the canonical list; the 2026-09-08 findings are archived ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §D.8). Open:
 the `CRON_SECRET` comment in `.env.example` names nine crons and omits `/api/cron/release-campaign-mails`.
 
 ---
@@ -2188,9 +2189,9 @@ No table created by a migration is unreferenced; the dropped ones (`bestandskund
 `.mjs` core in `src/lib` has a sibling test except `email-rating.mjs`, `kpi-event-patterns.mjs` and `openai-error.mjs`
 (and the fixtures file `system-prompt-core.fixtures.mjs`). TypeScript modules are not unit-tested (tests cannot import
 TS); their pure logic lives in the `.mjs` cores by convention. The test counts recorded per milestone since the
-baseline are archived (§D.9).
+baseline are archived ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §D.9).
 
 ## 6.3 Docs map
 
 The map of the documentation is [`docs/README.md`](./README.md); the history in [`archive/README.md`](./archive/README.md).
-The 2026-09-08 docs map is archived (§D.10).
+The 2026-09-08 docs map is archived ([archive](./archive/FEATURE_INVENTORY_AUDIT_2026-09.md) §D.10).

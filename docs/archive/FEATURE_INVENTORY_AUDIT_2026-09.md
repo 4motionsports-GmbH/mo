@@ -2,11 +2,11 @@
 
 Archived 2026-10-05 from docs/FEATURE_INVENTORY.md — historical, not maintained.
 
-What this holds: the parts of [`FEATURE_INVENTORY.md`](../FEATURE_INVENTORY.md) that described the state of 2026-09-08 (`main` @ `9c6b551`) or recorded findings of that audit pass rather than capabilities — the dated notes that opened the file, the baseline screen descriptions, every `File:line` value of part 1, the per-route audit tables of part 2, the baseline cron/script/env material of parts 3–5 and the 2026-09 findings (routes without a caller, duplicated routes, env findings, docs map). Text is copied verbatim as it stood at `bb8866a` (2026-10-05); file names and line numbers refer to the tree of their date. Superseded by: `FEATURE_INVENTORY.md` (capabilities), `ADMIN_DASHBOARD.md` §2–§3 and §11 (screens, admin routes), `frontend/API_CONTRACT.md` / `frontend/ACCOUNT_CONTRACT.md` (widget routes), `.env.example` (variables), `DATA_RETENTION.md` (windows), `docs/README.md` (docs map).
+What this holds: the parts of [`FEATURE_INVENTORY.md`](../FEATURE_INVENTORY.md) that described the state of 2026-09-08 (`main` @ `9c6b551`) or recorded findings of that audit pass rather than capabilities — the dated notes that opened the file, the baseline screen descriptions, every `File:line` value of part 1, the per-route audit tables of part 2, the baseline cron/script/env material of parts 3–5 and the 2026-09 findings (routes without a caller, duplicated routes, env findings, docs map). Text is copied verbatim as it stood on 2026-10-05 before this restructure (`b438a59`; headings demoted, relative links adjusted to this folder); file names and line numbers refer to the tree of their date. Superseded by: `FEATURE_INVENTORY.md` (capabilities), `ADMIN_DASHBOARD.md` §2–§3 and §11 (screens, admin routes), `frontend/API_CONTRACT.md` / `frontend/ACCOUNT_CONTRACT.md` (widget routes), `.env.example` (variables), `DATA_RETENTION.md` (windows), `docs/README.md` (docs map).
 
 ## A. The opening notes of the inventory (2026-09-09 … 2026-10-05)
 
-# Feature inventory — the capability checklist for the clean-up
+#### Feature inventory — the capability checklist for the clean-up
 
 Purpose: an exhaustive list of everything the admin dashboard, the API surface, the scheduled jobs, the scripts and the
 configuration can do **today** (baseline `main` @ `9c6b551`, 2026-09-08). It is the checklist both of us use at the end of
@@ -15,12 +15,12 @@ path; Phase 3 marks each one as **verified** (by test / screenshot / manual run)
 (with your approval), in `FEATURE_INVENTORY_STATUS.md`.
 
 > **Status (2026-09-09):** Phase 3 is complete — every item is marked in
-> [`FEATURE_INVENTORY_STATUS.md`](./archive/FEATURE_INVENTORY_STATUS.md); the after-screenshots are in
-> [`screenshots/after/`](./screenshots/after/). File names and line numbers in this inventory describe the
+> [`FEATURE_INVENTORY_STATUS.md`](./FEATURE_INVENTORY_STATUS.md); the after-screenshots are in
+> [`screenshots/after/`](../screenshots/after/). File names and line numbers in this inventory describe the
 > baseline and no longer match the redesigned tree (see `ADMIN_DASHBOARD.md` §2.3 for the new one).
 >
 > **Update (2026-10-01, customer platform, migrations 0061–0068, `main` @ `943a313`):** the capabilities of the
-> customer platform ([`CUSTOMER_PLATFORM_PLAN.md`](./CUSTOMER_PLATFORM_PLAN.md) — written before the build; where it
+> customer platform ([`CUSTOMER_PLATFORM_PLAN.md`](../CUSTOMER_PLATFORM_PLAN.md) — written before the build; where it
 > and the code differ, this inventory follows the code) are added under new IDs (`EIG-…` Eingang, `KUN-113…`,
 > `KAM-96…`, `KPI-71…`, `EIN-07…`, `GES-43`) and in the API, cron, script, environment and database parts. Capabilities that
 > were replaced are kept and marked **❌ abgelöst / retired → replacement**; nothing was removed from this list.
@@ -47,7 +47,7 @@ path; Phase 3 marks each one as **verified** (by test / screenshot / manual run)
 > the ledger upsert follows a reassigned order.
 >
 > **Addition (2026-10-05, migration 0076): order attribution — window from the latest consultation, unresolved
-> marked orders counted** ([`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md), ATTR-TOKEN-LIFETIME). With
+> marked orders counted** ([`ORDER_ATTRIBUTION.md`](../ORDER_ATTRIBUTION.md), ATTR-TOKEN-LIFETIME). With
 > `MO_ATTRIBUTION_SESSION_ANCHOR` (default off) a widget token's window counts from the device's latest product
 > consultation (`messages.session_id` on tool marker rows, 0076) and retention keeps the token while that device keeps
 > consulting (cap `KPI_RETENTION_DAYS` after minting); marked orders that cannot be attributed are counted as the
@@ -94,7 +94,7 @@ path; Phase 3 marks each one as **verified** (by test / screenshot / manual run)
 > **Addition (2026-10-03, migration `0074`): letters as a campaign channel.** A campaign can also write advertising
 > letters (Pingen) to its audience — mode „Keine Briefe“ (default) / „An alle ohne E-Mail-Einwilligung“ / „An alle
 > (auch mit Einwilligung)“, postage budget, purchase address only, AI draft, release per letter, every gate again per
-> letter at send ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §8). New IDs `KAM-114…120` (editor section „Brief“, letter
+> letter at send ([`CAMPAIGNS.md`](../CAMPAIGNS.md) §8). New IDs `KAM-114…120` (editor section „Brief“, letter
 > recipients, view „Briefe“, addresses, drafts, letter detail, sending) and `KUN-135` (Kunden → Brief „Adresse aus
 > letzter Bestellung holen“; the 1:1 letter now accepts only a purchase address); touched: `KPI-52` (call site
 > „Kampagnen-Briefe“). API: +3 admin routes (`campaigns/letters`, `campaigns/letters/preview`,
@@ -125,6 +125,10 @@ Contents
 
 Datenladen (in `page.tsx` für den Kunden-Tab, `KundenTab`-Funktion): `listCustomersWithSessions()`, pro Kunde `getLatestSendForEmail`, `listBundleOffersWithSignalsForCustomer`, `listCustomerMessages`, `listCustomerLetters`, `physicalEligibilityForCustomer`, `buildBundleRedirectUrl`; global `listUnmatchedInbound()`; Hintergrund `after(() => autoCaptureMissingAddresses({limit:12}))` (Adress-Autoerfassung aus Shopify nach Antwort). Übersicht: `listMarketingTargets()` nur wenn Overview gerendert wird.
 
+### B.1 §0 Globale Shell — Zeile SHL-06 (2026-09-08)
+
+| SHL-06 | Tastenkürzel `1`–`9`/`0`? (tatsächlich `1`-`9`, begrenzt auf TAB_ORDER.length=10 → `1`–`9`) | keyboard shortcut | Springt zum n-ten Tab (1=Übersicht … 9=Verbesserung; Einstellungen (10) ist per Ziffer NICHT erreichbar, da nur `^[1-9]$`). Ignoriert, wenn Fokus in INPUT/TEXTAREA/SELECT/contentEditable oder Modifier gedrückt | client-only | AdminShell.tsx, lib/admin-tabs.mjs (`shortcut`) |
+
 ### B.1 §2 Übersicht — Beschreibung (2026-09-08)
 
 Read-only Landing-Tab (Server Component, async). Wird NUR gerendert, wenn `?tab` fehlt/`overview` ist (deferred sonst). Lädt parallel: `getCoreMetrics(resolveKpiRange({kpiRange:"30d"}))` (kpi-store), `getAiCostMetrics()` (ai-usage-store, all-time), `getMarketingActivity({windowDays:30, limit:5})` (marketing-store); erhält `targets` (= `listMarketingTargets()` aus page.tsx) und aggregiert per `summarizeMarketingTargets` / `recentConfirmedContacts` (`@/lib/admin-overview.mjs`). Feste 30-Tage-Sicht (kein Datepicker hier). Enthält Kennzahl-Karten, Schnellzugriffs-Deep-Links in andere Tabs (mit vorbelegtem Kunden-Filter) und zwei Aktivitätslisten. Nichts hier mutiert Daten.
@@ -143,37 +147,37 @@ Master-Detail-Workspace für alles Kundenbezogene (alter Kunden- + Marketing-Tab
 _Beschreibung vor dem Desk:_
 Review-Warteschlange für personalisierte E-Mails an Shopify-Marketing-Abonnent:innen (docs/CAMPAIGNS.md). `KampagneTab` (Server) lädt parallel `getCampaignCounts()`, `listDraftedQueue()`, `listCampaignSendHistory()`, `listSkippedContacts()` (campaign-store), löst empfohlene Produkte via `resolveProductSelections`, holt aktive Bundles per `listActiveBundlesForCampaignContacts`, prüft Rabattcode-Einlösung via `wasDiscountCodeRedeemed` (max. 30 Codes, nur wenn Shopify konfiguriert) und reicht Flags `isCampaignSendsApproved()`, `isSingleOptInAllowed()`, `isShopifyConfigured()` durch. `KampagneWorkspace` (Client) zeigt EINE Karte pro Kontakt (links Kontext: Sprache, Textmodus, Opt-in, Segment, A/B, Kaufhistorie mit Empfehlungsbasis, Empfehlungen, Rabatt, Set-Angebot; rechts editierbarer Betreff/Text mit debounced Autosave, Hero-Panel, Aktionen). Sub-Views „Warteschlange"/„Gesendet", Opt-in-Filter, linke Rail mit globaler Kontaktsuche, Warteschlangen-Liste und „Übersprungen". Tastenkürzel N/P/V/C/S/X. Mehrere Aktionen laden die Seite komplett neu (`window.location.reload()`).
 
-### B.1 5. KPIs — Beschreibung (2026-09-08)
+### B.1 §5 KPIs — Beschreibung (2026-09-08)
 
 Reiner Analytics-Tab, Server Component (nur gerendert, wenn `?tab=kpi`; sonst deferred → echte Navigation). ALLE Aggregation läuft server-seitig in `Promise.all` über: `getCoreMetrics(range)`, `getMoRevenue(range)`, `getMoAttributionKpis(range)`, `getAiCostMetrics(range)`, `getPersonaInsights(5)`, `getRecommendationLoop()`, `getMarketingFunnel()`, `getConsentGateFunnel(range)`, `getEmailCaptureFunnel(range)`, `getCampaignKpis(range)`, `getBundleKpis(range)`, `getQaKpis(range)`, `getFeedbackKpis(range)`, `getConversationStats(from,to)`, `getLocaleSplit(range)`, `getAccountActivity(range)`, `getCachedTopQuestionsMap()`, `getPhysicalLetterStats()`. Der Zeitraum kommt aus `?kpiRange=7d|30d|90d|custom` (+`kpiFrom`/`kpiTo`), validiert via `resolveKpiRange`. Drei Client-Inseln: `KpiDateRangePicker` (schreibt nur die URL, `router.push`), `KpiCharts` (Recharts, Skeleton bis Mount, Token-Farben) und `KpiTopQuestions` (einzige Mutation: On-Demand-KI-Lauf). 13 zeitraumabhängige Sektionen, dann Trenner „Gesamtwerte", dann 4 zeitraumunabhängige. Jede Sektion trägt eine „Caveat"-Ehrlichkeitsnotiz.
 
-### B.1 6. Feedback — Beschreibung (2026-09-08)
+### B.1 §6 Feedback — Beschreibung (2026-09-08)
 
 Read-only Liste der Widget-Rückmeldungen. `FeedbackTab` (Server) lädt `listFeedback()` (feedback-store) einmal und reicht die Zeilen an `FeedbackList` (Client), die ausschließlich lokal sucht/filtert/sortiert. Keine Mutation, keine API-Route.
 
-### B.1 7. Gespräche — Beschreibung (2026-09-08)
+### B.1 §7 Gespräche — Beschreibung (2026-09-08)
 
 Konversations-Inspektor (Master-Detail). `GespraecheTab` (Server) liest aus `@/lib/admin-conversations`: `listAdminConversations(filter)` (paginiert, PAGE_SIZE), `getConversationStats(from,to)`, `getCachedInsights(from,to)`, `countUnanalyzedInRange(from,to)` und berechnet die Bulk-Kostenschätzung (`estimateAnalysisCostUsd` × `usdToEur`). NULL Modell-Aufrufe beim Rendern. Sämtliche Filter + Seite leben in der URL (`g*`-Params): Änderungen → `router.push('/admin?tab=gespraeche&grange=…')` → Server rendert neu. Oben Filterleiste (Volltextsuche über ALLE Chats, Zeitraum-Presets/custom, Tier, Kategorie, Qualität, „nur ohne Bot-Antwort"), dann Stats-Panel mit klickbaren Verteilungsbalken + Sammelanalyse, dann Liste (links) + Detail (rechts; lazy `POST /api/admin/conversations/detail`), unten der einklappbare aggregierte Insights-Report.
 
-### B.1 8. Wissen — Beschreibung (2026-09-08)
+### B.1 §8 Wissen — Beschreibung (2026-09-08)
 
 Q&A-Warteschlange zur Wissensanreicherung. Server (`WissenTab`) lädt einmal `listQaEntries(null)`, `getQaCounts()`, `countScanCandidates()` und übergibt an den Client-Workspace. Der Client hält Einträge/Zähler im State und lädt nach jeder Mutation per `GET /api/admin/qa/list` neu. Pro Eintrag: KI-Entwurf {Wissenslücke, Frage, Produkt?} → Operator editiert Frage/Produkt-Handle/Antwort (+ optionale englische Version) → Speichern (answered) → Veröffentlichen (Shopify-Metafeld `custom.qa` bei Produktbezug, sonst Mos allgemeine Wissensbasis) → Zurückziehen/Verwerfen/Wiederherstellen. „Gespräche scannen" ist der einzige Token-Spend (explizit).
 
-### B.1 9. Analyse — Beschreibung (2026-09-08)
+### B.1 §9 Analyse — Beschreibung (2026-09-08)
 
 Master–Detail für gespeicherte Komplettanalysen. Server (`AnalyseTab`) lädt die Berichtsliste (`listAnalyticsReports`, ohne `sections`). Client: Sidebar (Liste + „Neue Komplettanalyse"), Hauptbereich = Generator (Zeitraum-Presets/benutzerdefiniert, 2 Optionen, Live-Kostenschätzung, debounced 350 ms) ODER ausgewählter Bericht (Detail per `GET /api/admin/analytics/[id]`; laufend → `ReportProgressDriver` steppt `POST /step` bis done; fertig → `ReportView`; fehlgeschlagen → Fehlerbox). Aktionen: PDF (GET-Link), Löschen (Dialog).
 
-### B.1 10. Verbesserung — Beschreibung (2026-09-08)
+### B.1 §10 Verbesserung — Beschreibung (2026-09-08)
 
 Geschlossener Verbesserungs-Loop (docs/IMPROVEMENT_LOOP.md). Server lädt Läufe (`listImprovementRuns`), fertige Komplettanalysen (`listAnalyticsReports` → complete), Anweisungen (`listDirectives`) und Mos Selbstbild (`buildMoSelfSnapshot`: gerenderter System-Prompt + Hash). Client: Sidebar (Läufe + „Neuer Verbesserungslauf"), Hauptbereich = Neuer-Lauf-Panel ODER Lauf-Detail (`GET /api/admin/improve/[id]`; laufend → `RunDriver` steppt `POST /step` mit Reconnect-Logik; fertig → Wirkungs-Check (Delta-Tabelle + Markdown) + Vorschlagskarten in zwei Lanes (Mo / Shop)). Darunter zwei einklappbare Tool-Sections: „Anweisungen an Mo" (DirectivesCard) und „Mos Selbstbild" (SelfSnapshotCard).
 
-### B.1 11. Einstellungen — Beschreibung (2026-09-08)
+### B.1 §11 Einstellungen — Beschreibung (2026-09-08)
 
 E-Mail-Design-Verwaltung. Server lädt `listEmailDesignMeta()` (Code-Registry), `listEmailDesignSelections()` (DB, nur wenn dbReady), Versandkonfiguration aus Env (`isEmailConfigured`, `senderAddress`, `inboundEmailAddress`, `EMAIL_LOGO_URL`). Client: drei Karten — Design-Bibliothek (je Design: Name, Standard-Badge, Beschreibung, „Hinzugefügt am", Badges „Aktiv: <Typ>"/„Nicht in Verwendung", je unterstütztem Typ ein Vorschau-Button), Aktives Design je E-Mail-Typ (Select + Vorschau je Typ; Änderung sofort per API), Versand-Konfiguration (read-only Definitionsliste).
 
 ### B.2 §12 Gemeinsame Komponenten & Primitives (2026-09-08, mit Nachträgen)
 
-## 12. Gemeinsame Komponenten & Primitives
+##### 12. Gemeinsame Komponenten & Primitives
 
 | Datei | Zweck | Verwendet von |
 |---|---|---|
@@ -207,17 +211,13 @@ E-Mail-Design-Verwaltung. Server lädt `listEmailDesignMeta()` (Code-Registry), 
 
 ### B.4 §14 Dokumentiert, aber nicht im Code gefunden / §15 Zeilenzahlen (2026-09-08)
 
-## 14. Dokumentiert, aber nicht im Code gefunden (docs/ADMIN_DASHBOARD.md)
+##### 14. Dokumentiert, aber nicht im Code gefunden (docs/ADMIN_DASHBOARD.md)
 - Behauptung „Tabs are switched server-side via ?tab= — no client router" (Intro) — veraltet: Shell ist ein Client-Tab-Switch mit `history.replaceState`; nur Übersicht/KPIs navigieren serverseitig.
 - Intro nennt neun Tabs ohne „Einstellungen" — der Tab existiert.
 - (Weitere Abgleiche im Doku-Slice; ADMIN_DASHBOARD.md wird nach dem Redesign neu geschrieben.)
 
-## 15. Zeilenzahlen (src/app/admin)
+##### 15. Zeilenzahlen (src/app/admin)
 Siehe `find src/app/admin -type f | xargs wc -l` (Stand Inventar): KampagneWorkspace 2338 (client), KpiTab 1758 (server), CustomerProfileCard 1521 (client), GespraecheWorkspace 841 (client), verbesserung/VerbesserungWorkspace 804 (client), WissenWorkspace 589 (client), KundenWorkspace 546 (client), GespraecheInsights 508 (client), KorrespondenzPanel 442 (client), HeroImagePanel 373 (client), ui/markdown 361, verbesserung/DirectivesCard 342 (client), EmailSettingsWorkspace 336 (client), PhysicalLetterPanel 326 (client), KpiCharts 324 (client), verbesserung/SuggestionCard 319 (client), page.tsx 318 (server), ui/product-picker 293 (client), analytics/ReportView 274 (server-renderable), analytics/GenerateReportPanel 272 (client), AdminShell 262 (client), OverviewTab 247 (server), analytics/ReportProgressDriver 241 (client), analytics/AnalyseWorkspace 236 (client), FeedbackList 188 (client), KampagneTab 180 (server), UnmatchedInboundQueue 167 (client), ui/dialog 161 (client), analytics/ReportSidebar 137 (client), KpiDateRangePicker 136 (client), customer-filter 130, ui/toast 128 (client), ui/tabs 125 (client), EmailPreviewFrame 117 (client), EmailPreviewButton 117 (client), login/page 103 (server), KpiTopQuestions 103 (client), analytics/ReportActions 99 (client), GespraecheTab 86 (server), ui/table 81, ui/stat 75, ui/card 63, ui/button 62, verbesserung/SelfSnapshotCard 58 (client), ThemeToggle 54 (client), ui/index 53, FeedbackTab 53 (server), EmailTextModeToggle 50 (client), VerbesserungTab 48 (server), layout 45 (server), ui/badge 44, ui/checkbox 43, WissenTab 39 (server), AnalyseTab 33 (server), ui/select 32, ui/cn 32, EinstellungenTab 31 (server), theme-config 25, ui/input 22, ui/textarea 21, ui/label 19, ui/skeleton 16, ui/portal 8.
-
-### B.1 §0 SHL-06 row (2026-09-08)
-
-| SHL-06 | Tastenkürzel `1`–`9`/`0`? (tatsächlich `1`-`9`, begrenzt auf TAB_ORDER.length=10 → `1`–`9`) | keyboard shortcut | Springt zum n-ten Tab (1=Übersicht … 9=Verbesserung; Einstellungen (10) ist per Ziffer NICHT erreichbar, da nur `^[1-9]$`). Ignoriert, wenn Fokus in INPUT/TEXTAREA/SELECT/contentEditable oder Modifier gedrückt | client-only | AdminShell.tsx, lib/admin-tabs.mjs (`shortcut`) |
 
 ### B.5 Baseline `File:line` column of part 1 (2026-09-08; KAM-01…69 before the desk)
 
@@ -903,7 +903,7 @@ The value each row carried in its „File:line“ column before the column was c
 
 ### C.1 Part 2 intro — legend, rate limits, runtime (2026-09-08, with 2026-10 notes)
 
-# 2. HTTP API routes
+#### 2. HTTP API routes
 
 Generated 2026-09-08 from a read-only pass over every `route.ts` under `src/app/api/**` (112 files), `src/proxy.ts`, `src/app/page.tsx`, `src/app/admin/**` pages. All file paths are relative to `/home/user/mo`. Line numbers are `file:line`.
 
@@ -923,7 +923,7 @@ Runtime: no route sets `runtime = "edge"`; all run on Node. Routes that export `
 
 ### C.2 §2.1–§2.4 widget, account, auth and attribution routes — the full rows (2026-09-08, with 2026-10 notes)
 
-## 1. Chat / widget public routes (cross-origin XHR from the Shopify theme widget)
+##### 1. Chat / widget public routes (cross-origin XHR from the Shopify theme widget)
 
 Caller for all of these is the external vanilla-JS Shopify widget (contract: `docs/frontend/API_CONTRACT.md`, handoff: `docs/frontend-handoff/`). The widget source is NOT in this repo.
 
@@ -941,7 +941,7 @@ Caller for all of these is the external vanilla-JS Shopify widget (contract: `do
 | `GET /api/confirm-marketing` (`src/app/api/confirm-marketing/route.ts`) | GET | DOI confirmation link: `confirmMarketingByToken(token)` flips `marketing_doi_status` to `confirmed`, `syncCustomerConsent(email)` (**2026-10:** → `recordDoiConfirmed` — the one consent becomes `subscribed`/`confirmed_opt_in`; via the outbox a `consent_update`, or a `customer_create` for a Mo-only subscriber), KPI `MARKETING_CONFIRMED` (once), renders an HTML result page (`renderResultPage`). | email link click (top-level navigation from the DOI mail sent by capture-email / chat-marketing-opt-in / account/marketing-opt-in) | opaque DOI token in `?token=` (see "Token-based links") | none | `maxDuration = 30` | token non-empty | HTML page: 200 confirmed, 400 invalid, 410 expired, 500 | No CORS (intended). No rate limit on token probing — relies on token entropy. **2026-10-05 (OI1):** `email_capture_marketing_confirmed` carries `{source}` — the session's latest DOI opt-in (`latestDoiOptInSource`), else the pending consent row's surface (`recordDoiConfirmed` now returns it), else `mo` (`confirmationSource`, `capture-funnel.mjs`). |
 | `GET /api/newsletter-rating` (`src/app/api/newsletter-rating/route.ts`) | GET | Anonymous 1–5 smiley rating row in image-first emails: `parseEmailRating(r)`, `parseEmailThemeKind(k)` → `insertFeedback({page:"email:<kind>", rating, emailKind})`; HTML thank-you page. | email link click | none (anonymous by design — no recipient identity in the link) | `feedback` (keyed by IP; no session header on a nav) | `maxDuration = 10` | `r` ∈ 1..5, `k` parsed with fallback `"email"` | HTML 200 / 400 / 429 | Fail-soft: a DB error still renders 200 "Danke". GET with a side effect — mail-client link prefetchers / SafeLinks scanners can create phantom ratings; the only abuse cap is 5/5min per IP. Referenced only from `src/lib/email-theme.mjs` (link builder). |
 
-## 2. Customer account routes (`/api/account/*`, tier-3 signed-in customers)
+##### 2. Customer account routes (`/api/account/*`, tier-3 signed-in customers)
 
 All use `requireSignedInCustomer` (`src/lib/account-guard.ts`) which itself performs guardRequest + `chat` rate limit + signed-in resolution + live-token check (2026-10-05: or the fresh shop proof, D-AP1). Session id from `?session=` or `x-ms-session` (`readSession`). Caller: external widget (signed-in history panel; documented in `docs/CUSTOMER_ACCOUNT.md`, `docs/frontend/ACCOUNT_CONTRACT.md`).
 
@@ -954,7 +954,7 @@ All use `requireSignedInCustomer` (`src/lib/account-guard.ts`) which itself perf
 | `POST /api/account/marketing-opt-in` (`src/app/api/account/marketing-opt-in/route.ts`) | POST, OPTIONS | At-sign-in marketing DOI: `getCustomerById` → verified email (refuses synthetic `shopify:` placeholder) → `upsertEmailCapture(transactional:false, marketing:true)` → `linkCustomerOnEmailCapture` → KPI ×2 → DOI email (duplicated block). | widget (sign-in opt-in card, copy from `/api/consent-copy?surface=signin`) | requireSignedInCustomer | `chat` | `maxDuration = 30` (no `runtime` export — the only `/api/account` route without it) | JSON body; `marketingConsent === true` required | `{ok, marketing:{status, doiEmailSent, alreadyConfirmed}}`; 400 `marketing_consent_required`; 404 `not_found`; 422 `no_verified_email`; 503 | Third copy of the DOI send block. Unlike the other two opt-in routes it does NOT apply the `capture-recipient` per-email cap (the signed-in guard makes that acceptable, but note the asymmetry). **2026-10 (one consent):** `isEmailAlreadySubscribed` first — an address already subscribed (Shopify or an earlier DOI) and not suppressed gets no DOI token/mail and the response says `status:"confirmed"`, `alreadyConfirmed:true` (`subscribedElsewhere`); after the upsert `recordMoOptIn` (`src/lib/consent-flows.ts`) reports the act to `customers.email_consent_*` + `consent_events` — `pending` until the DOI link is clicked, nothing goes to Shopify before that. **2026-10-05:** also on the shop proof (D-AP1); the `consent_events` row's `note` records the sign-in proof — „Anmeldenachweis: Kundenkonto-Anmeldung im Chat“ / „Anmeldenachweis: Shop-Login (App Proxy)“ (`signInProofNote`, `signed-in-proof.mjs`). **2026-10-05 (OI1 + OI3):** body takes optional `placement` / `variant` (validated, telemetry only, never a 400); both KPI events carry `source: mo_signin`, `outcome`, `alreadyConfirmed`, `doiRequired`, `placement?`, `variant?`, `variantMismatch?` (only while > 1 variant is active); suppressed → `status: none`, `alreadyConfirmed: false` (F2). |
 | `GET /api/account/summary?conversationKey=` (`src/app/api/account/summary/route.ts`) | GET, OPTIONS | `loadCustomerConversationForSummary(customerId, key)` → `buildSummaryDocument` (may call the model; usage recorded as `summary_download`) → `buildSummaryPdf` → PDF attachment. | widget ("Zusammenfassung herunterladen") | requireSignedInCustomer | `chat` | `runtime="nodejs"`, `maxDuration = 30` | `conversationKey` non-empty | `application/pdf` attachment 200; 400; 404 (code `bad_request`); 500 | 404 again uses `bad_request` code. |
 
-## 3. Auth / Shopify Customer Account routes
+##### 3. Auth / Shopify Customer Account routes
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -966,7 +966,7 @@ All use `requireSignedInCustomer` (`src/lib/account-guard.ts`) which itself perf
 | `GET /api/auth/shopify/logout/return` (`src/app/api/auth/shopify/logout/return/route.ts`) | GET | Registered Logout URI: `resolveSignedInCustomer(session)` → `deleteCustomerTokens(customerId)` + `signOutSessionLinks` (every `customer_account` link of the customer and the session's link, 0073; **2026-10-05:** also every `app_proxy` link of the customer); 302 `?ms_auth=logged_out`. | Shopify redirect (or direct from logout route) | none | none | `runtime="nodejs"`, `maxDuration = 15` | `return_url` allowlisted | 302 | Anyone who knows an opaque widget session id can revoke that session's tokens (low impact: forces re-login). |
 | `GET /api/auth/storefront` (`src/app/api/auth/storefront/route.ts`) | GET | Shop-native signed-in detection via Shopify **App Proxy**: `evaluateAppProxyAuth(searchParams, SHOPIFY_APP_PROXY_SECRET ?? SHOPIFY_CLIENT_SECRET)` (HMAC over query params; trusts `logged_in_customer_id`) → `fetchAdminCustomerById` → `bindShopifyIdentity` (customer row only) → `mintSessionLinkGrant` (`linkCode` in the response, 0073 — the session is linked only on redeem) → `resolveMarketingOptInState`; a signed logged-out request ends the session's `app_proxy` link. **2026-10-05 (P0.3):** the signature must be fresh (`appProxyFailureKind`: Shopify `timestamp` within ±300 s; `no_secret` / `mismatch` / `stale` reported, throttled 10 min per kind, never the URL; `unsigned` silent; any failure → `{signedIn:false}`, never ends or creates a link); then `decideShopRecognition` (`signed-in-proof.mjs`, tested): **handover** (session signed in as another shop customer → that session's signed-in link ends, no code), `APP_PROXY_SIGNIN_ENABLED` off → no code, no proof (no live chat token and `APP_PROXY_SIGNIN_MAX_AGE_HOURS` 0) → no code, mint failure → `{signedIn:false}`; `signedIn:true` always carries a `linkCode`. Every recognised request records `account_shop_recognised {proof, hasToken, alreadySignedIn, codeIssued, noCode?}` (server-only). | Shopify App Proxy (server-to-server; theme calls `/apps/chat/whoami?session=`) | Shopify App Proxy HMAC `signature` (see "Webhook verification" — app-proxy note) | `chat` keyed on a synthetic `x-ms-session` = widget session or `cid:<shopifyCustomerId>` | `runtime="nodejs"`, `maxDuration = 15` | signature + `logged_in_customer_id` | always 200: `{signedIn:false}` or `{signedIn:true, name, tier:3, shopify_customer_id, identity:{name,tier:3}, marketing, linkCode}` | No CORS headers (same-origin through the proxy). Depends on store-side App Proxy configuration per header comment ("REQUIRES A STORE / THEME ACTION") — may be dormant in production. |
 
-## 4. Attribution
+##### 4. Attribution
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -974,7 +974,7 @@ All use `requireSignedInCustomer` (`src/lib/account-guard.ts`) which itself perf
 
 ### C.3 §2.5 cron routes — the full rows (2026-09-08, with 2026-10 notes)
 
-## 5. Cron routes (`/api/cron/*`, scheduled in `vercel.json`)
+##### 5. Cron routes (`/api/cron/*`, scheduled in `vercel.json`)
 
 All six accept **GET and POST** (same `handle()`), all call `requireCronAuth(req)` first (`Authorization: Bearer <CRON_SECRET>`, constant-time, fails closed when `CRON_SECRET` unset), none rate-limit, none read a body, all use `NextResponse.json` with an ad-hoc `{ok, ...}` envelope (NOT the `{error:{code,message}}` envelope used elsewhere; the 401 is `{error:"Unauthorized"}`). Schedules (UTC): refresh-customers 02:00, sync-campaign-audience 02:30, sync-catalog 03:00, retention 03:30, expire-bundles 03:45.
 
@@ -995,7 +995,7 @@ All six accept **GET and POST** (same `handle()`), all call `requireCronAuth(req
 
 ### C.4 §2.8 admin routes — the per-route audit table (2026-09-08, with notes up to 2026-10-03)
 
-## 8. Admin routes (`/api/admin/*`, German back-office dashboard)
+##### 8. Admin routes (`/api/admin/*`, German back-office dashboard)
 
 Common facts for all 76 admin routes (verified by grep over every `src/app/api/admin/**/route.ts`):
 
@@ -1014,7 +1014,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 - Two routes have **no `maxDuration`** export: `conversations/detail`, `correspondence/assign`. One exports `runtime="nodejs"`: `analytics/[id]/pdf`.
 - **No try/catch at all** (a thrown DB error surfaces as a framework 500, not the JSON envelope): `email-designs/route.ts` (GET), `email-hero/route.ts` (GET), `analytics/estimate`, and every `qa/*` route except `qa/scan` (which only guards its inner loop).
 
-### 8.1 analytics ("Komplettanalyse" reports)
+###### 8.1 analytics ("Komplettanalyse" reports)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1026,7 +1026,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `GET /api/admin/analytics/[id]` | GET | `getAnalyticsReport(id)` full detail incl. `sections`. | `analytics/AnalyseWorkspace.tsx:71` | proxy + guardAdminGet | none | `maxDuration = 15` | path id positive int | `{report}`; 400; 404; 503 | — |
 | `GET /api/admin/analytics/[id]/pdf` | GET | `buildAnalyticsReportPdf` (dependency-free `lib/pdf-core`) → PDF attachment; only `status === "complete"`. | `analytics/ReportActions.tsx:65` (plain `<a href>` download) | proxy + guardAdminGet | none | `runtime="nodejs"`, `maxDuration = 30` | path id | `application/pdf` attachment; 409 `not_ready`; 404; 503 | — |
 
-### 8.2 bundles (personalised bundle offers, Shopify product bundles)
+###### 8.2 bundles (personalised bundle offers, Shopify product bundles)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1036,7 +1036,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/bundles/list` | POST | `listBundleOffersForCustomer(customerId)`. | **none in `src/`** — only `docs/BUNDLES.md:198`; `src/app/admin/page.tsx` loads offers server-side via `listBundleOffersWithSignalsForCustomer` | proxy + guardAdminPost | none | `maxDuration = 15` | `customerId` | `{offers}` | **Dead-route candidate** (see §12). |
 | `POST /api/admin/bundles/suggest` | POST | AI bundle proposal: `getCustomerById`, `loadCustomerSessions` (all transcripts), `loadProductCatalog` → `suggestBundle` (Anthropic, usage recorded as `bundle_suggestions`). | `CustomerProfileCard.tsx:1138` | proxy + guardAdminPost | none | `maxDuration = 60` | `customerId` | `{title, components, componentsSum}`; `no_candidates` 409 / `empty` 422 / `ai_unavailable` 503; 404 | Reads all customer transcripts + spends tokens but has **no `recordAdminAccess`** (unlike `customers/profile`). |
 
-### 8.3 campaign (Shopify-audience campaign review queue — since 2026-10 the review desk of ONE campaign; see 8.3a)
+###### 8.3 campaign (Shopify-audience campaign review queue — since 2026-10 the review desk of ONE campaign; see 8.3a)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1058,7 +1058,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `GET /api/admin/campaign/history?q=&from=&to=&delivery=&campaignId=&page=&pageSize=` | GET | `searchCampaignSendHistory` — the paged, searchable „Gesendet“ view; redemption looked up in Shopify for the page's codes only. **2026-10:** `campaignId` scopes it to one campaign. | `kampagne/SentHistory.tsx`, `kampagne/ContactHistorySheet.tsx` | proxy + guardAdminGet | none | `dynamic = "force-dynamic"` | params parsed (`parseDeliveryFilter`, `/^\d+$/`) | `{rows, total, page, pageSize, …}` with redemption | — |
 | `GET/POST /api/admin/campaign/test-contacts` | GET, POST | Testkontakte (0057): GET list, POST `create` (+ immediate draft, optionally borrowing a customer's purchase history) / `delete`. **2026-10:** `campaignId` required (GET query, POST create) — test contacts belong to one campaign and see its briefing and offer. | `kampagne/TestContactsSheet.tsx` | proxy + guardAdminGet / guardAdminPost | none | `maxDuration = 60` | e-mail regex, `parseDiscountPercent`, `parseEmailTextMode`; 400 `campaignId required` | `{contacts}` / `{contact, drafted}` / `{ok}` | Test sends are real (MK- code, set, link) but excluded from KPIs. |
 
-### 8.3a campaigns (Kampagnen: definitions, audiences, Einzelansprache — new 2026-10)
+###### 8.3a campaigns (Kampagnen: definitions, audiences, Einzelansprache — new 2026-10)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1073,13 +1073,13 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/campaigns/letters` (2026-10-03, 0074) | POST | The desk view „Briefe“ (KAM-116…120, `CAMPAIGNS.md` §8): `list` → `letterDeskData` (letters with the person read fresh, review checks, counts, postage, budget, flags); steps `fill_addresses` (`fillCampaignLetterAddresses`, 50), `draft` (`draftCampaignLetters`, 5 AI drafts), `send_step` (`sendCampaignLetterStep`, 5 released letters, every gate per letter); per letter `redraft`, `save`, `approve`, `unapprove`, `skip`, `unskip`. | `kampagne/LettersView.tsx` | proxy + guardAdminPost | none | `maxDuration = 300` | `action` enum; `campaignId` or `id` positive int; `save`: subject ≤ 200, body ≤ 8,000 (trimmed, non-empty) | step results `{…, remaining}`; 400; 404; 409 `letters_off` (steps, `redraft` and `approve` while the mode is „aus“; `list`, `save`, `skip` still answer), 409 `objection` (redraft / approve after a postal objection), 409 `conflict` (wrong status); 403 `flag_off` / 503 `shopify_not_configured` for `fill_addresses`; 503 `no_database` | Token-spending (`draft`, `redraft`) and posting (`send_step`). Audit-logged: each release (`campaign.letter_approve`, customer id) and each send step that sent or refused something (`campaign.letters_send`, counts only). |
 | `POST /api/admin/campaigns/letters/preview` (2026-10-03, 0074) | POST | The letter as printed: the stored purchase address (or a placeholder recipient), the text (unsaved edits may be passed), `buildLetterPdf` with the objection notice and footer. Read-only. | `kampagne/LettersView.tsx` (`fetchPdf`) | proxy + guardAdminPost | none | `maxDuration = 30` | `id` positive int; `subject?`, `body?` strings | `application/pdf`; 404; 409 `no_text` | — |
 
-### 8.4 catalog
+###### 8.4 catalog
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | `POST /api/admin/catalog/search` | POST | `loadProductCatalog()` + `searchCatalogByName(catalog, query, MAX_SEARCH_RESULTS)` → picker shape incl. variants. | `admin/ui/product-picker.tsx:86` (bundle composer, campaign recommendations, Wissen "Produkt verlinken") | proxy + guardAdminPost | none | `maxDuration = 15` | `query` non-empty | `{products:[{productId, title, imageUrl, unitPrice, currency, inStock, url, priceMin, priceMax, variants[]}]}` | Read-only POST. |
 
-### 8.5 conversations (Gespräche inspector)
+###### 8.5 conversations (Gespräche inspector)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1088,7 +1088,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/conversations/detail` | POST | `getAdminConversationDetail(id)` — transcript + signals + cached analysis (pure read). | `GespraecheWorkspace.tsx:655` | proxy + guardAdminPost | none | **no `maxDuration`** (default) | `conversationId` | `{detail}`; 404; 503 | audit-logged (`conversation.view`). |
 | `POST /api/admin/conversations/insights` | POST | `getCachedInsights(from,to)` or `generateConversationInsights` (two model passes over cached summaries). | `GespraecheInsights.tsx:399` | proxy + guardAdminPost | none | `maxDuration = 300` | dates, `force` | `{insights}` | audit-logged when generating. |
 
-### 8.6 correspondence (Korrespondenz panel / unmatched inbound queue)
+###### 8.6 correspondence (Korrespondenz panel / unmatched inbound queue)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1097,7 +1097,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/correspondence/message` | POST | `getMessageById(id)`; if no stored body and `providerEmailId`: lazy `resend.emails.receiving.get` + `saveFetchedBody`. | `KorrespondenzPanel.tsx:219` | proxy + guardAdminPost | none | `maxDuration = 30` | `id` | `{bodyText, bodyHtml, attachments}`; 404 | audit-logged (`correspondence.read`). Local `fetchFullMessage` helper (lines 90-105) **duplicates** `fetchFullInboundMessage` in `src/app/api/inbound/resend/route.ts:143-158` byte-for-byte in logic. |
 | `POST /api/admin/correspondence/send` | POST | Compose/reply: `getMessageHeaders(parent)` for threading → `sendEmail({kind:"correspondence", messageId, replyTo, inReplyTo, references})` → `recordSentMessage`. | `KorrespondenzPanel.tsx:353` | proxy + guardAdminPost | none | `maxDuration = 30` | `customerId`, body non-empty (sliced 20 000), subject sliced 300, `inReplyToMessageId` int; parent must belong to the customer (400) | `{ok, sentTo, threaded}`; `email_not_configured` 503; `send_failed` 502; 404 | Sends arbitrary operator text; **no suppression check by design** (correspondence ≠ marketing). Not audit-logged. |
 
-### 8.7 customers (Kunden workspace)
+###### 8.7 customers (Kunden workspace)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1115,7 +1115,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/customers/ask` (new 2026-10) | POST | „Frag Mo“: `askAboutCustomer(customerId, question)` — builds the person's record (`buildAskSources`, `customer-ask-core.mjs`), one writer-tier call, answer with cited sources; the AI profile only without an objection. | `kunden/tabs/AktivitaetTab.tsx` | proxy + guardAdminPost | none | `maxDuration = 60` | `customerId`; `question` string (`normalizeAskQuestion`) | `{answer, confident, citations, sourcesTotal, sourcesUsed}`; 400; 404; `upstream_unavailable` 503 (no key) / 502 (model failed) | Reads the whole record + spends tokens; not audit-logged. **2026-10 follow-up:** audit-logged after a successful answer (`customer.ask`). |
 | `GET /api/admin/customers/similar?id=` (2026-10 follow-up) | GET | „Ähnliche Kunden“ (KUN-134): `listSimilarCustomers(id)` — same `value_tier`, overlapping `bought_categories`, ranked by shared categories, then same lifecycle segment, persona, revenue (≤ 8), each with `consented`; plus `audience {v:1, valueTier:[tier], categories:[≤ 6]}`. | `kunden/tabs/UeberblickTab.tsx` | proxy + guardAdminGet | none | default | `id` positive int | `{items, audience}` (`audience: null` without tier or categories); 400; 500 | Pure DB, deterministic. Audit-logged (`customer.similar`, the person's id + the number shown) — it returns other customers' names and e-mails. |
 
-### 8.8 directives (team directives injected into Mo's system prompt)
+###### 8.8 directives (team directives injected into Mo's system prompt)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1124,7 +1124,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/directives/toggle` | POST | `setDirectiveActive(id, active)`. | `verbesserung/DirectivesCard.tsx:211` | proxy + guardAdminPost | none | `maxDuration = 15` | `id`, `active` boolean | `{directive}`; 400; 404 | audit-logged. |
 | `GET /api/admin/directives/versions?id=` | GET | `listDirectiveVersions(id)`. | `verbesserung/DirectivesCard.tsx:245` | proxy + guardAdminGet | none | `maxDuration = 15` | `id` query int | `{versions}` (`[]` without DB) | — |
 
-### 8.9 email-designs (Einstellungen: design per email type)
+###### 8.9 email-designs (Einstellungen: design per email type)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1132,7 +1132,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/email-designs/assign` | POST | `setEmailDesignSelection(kind, designKey\|null)`. | `EmailSettingsWorkspace.tsx:100` | proxy + guardAdminPost | none | `maxDuration = 15` | `kind` via `parseEmailThemeKind`, `designKey` string\|null | `{ok}`; 404 `unknown_design`; 400 `unsupported_kind`; 503 | audit-logged. |
 | `POST /api/admin/email-designs/preview` | POST | `resolveEmailDesignForKind` + `renderEmailDesignPreview(kind, design)` with fake data → HTML. | `EmailSettingsWorkspace.tsx:201,278` | proxy + guardAdminPost | none | `maxDuration = 15` | `kind` enum; `designKey` must be `isKnownEmailDesign` (404) and `designSupportsKind` (400) | `text/html` | Fourth email-preview route (§13). |
 
-### 8.10 email-hero (AI hero image per draft)
+###### 8.10 email-hero (AI hero image per draft)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1142,7 +1142,7 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/email-hero/remove` | POST | `setEmailHero(kind, id, null, null)` (blob kept). | `HeroImagePanel.tsx:208` | proxy + guardAdminPost | none | `maxDuration = 15` | `kind`, numeric `id` | `{ok}`; 404 | audit-logged. |
 | `POST /api/admin/email-hero/suggest` | POST | `suggestHeroPrompt(kind, id)` — one AI pass. | `HeroImagePanel.tsx:86` | proxy + guardAdminPost | none | `maxDuration = 30` | `kind`, numeric `id` | `{prompt, headline}`; 400 | audit-logged; the only email-hero route without an `isDbConfigured` pre-check. |
 
-### 8.11 improve (Verbesserung: improvement runs + suggestions)
+###### 8.11 improve (Verbesserung: improvement runs + suggestions)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1154,13 +1154,13 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/improve/step` | POST | `stepImprovementRun(id)` — exactly one Sonnet call. | `verbesserung/VerbesserungWorkspace.tsx:681` | proxy + guardAdminPost | none | `maxDuration = 300` | `id` | `{status, phase, costEur, done, busy, error}`; 404 | — |
 | `POST /api/admin/improve/suggestion` | POST | `updateSuggestionStatus(suggestionId, status ∈ SUGGESTION_STATUSES, note≤500)`. | `verbesserung/SuggestionCard.tsx:97` | proxy + guardAdminPost | none | `maxDuration = 15` | enum check | `{suggestion}`; 404 | audit-logged. |
 
-### 8.12 kpi
+###### 8.12 kpi
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | `POST /api/admin/kpi/top-questions` | POST | `getCachedTopQuestions(persona)` or `generateTopQuestions(persona)` (Anthropic). | `KpiTopQuestions.tsx:47` | proxy + guardAdminPost | none | `maxDuration = 30` | `personaLabel` ∈ `ARCHETYPE_META` keys + `unknown`; `force` | `{summary}`; 503 `unavailable`; 500 | Token-spending, not audit-logged. |
 
-### 8.13 marketing (per-capture marketing sends — older flow)
+###### 8.13 marketing (per-capture marketing sends — older flow)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1170,13 +1170,13 @@ Common facts for all 76 admin routes (verified by grep over every `src/app/api/a
 | `POST /api/admin/marketing/send` | POST | `approveAndSend(sendId)` (`lib/marketing-email`: DOI + suppression, unsubscribe link, MS5- code mint, tracked link, status `sent`). | `CustomerProfileCard.tsx:789` | proxy + guardAdminPost | none | `maxDuration = 30` | `sendId` | `{ok, sentTo}`; `STATUS_BY_REASON` (`too_soon` 429, `discount_failed`/`send_failed` 502, `no_unsubscribe`/`email_not_configured` 503, ...) | — |
 | `POST /api/admin/marketing/update` | POST | `updateDraftText(sendId, subject≤300, body≤20000)`. | `CustomerProfileCard.tsx:744,788` | proxy + guardAdminPost | none | `maxDuration = 10` | caps + non-empty body | `{send}`; `not_editable` 409 | — |
 
-### 8.14 physical (Pingen letters)
+###### 8.14 physical (Pingen letters)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | `POST /api/admin/physical/send` | POST | `sendPhysicalLetter(customerId)` (`lib/physical-mail`: `PHYSICAL_MAIL_SENDS_APPROVED` flag, complete lawful address, letter draft, Pingen `uploadAndCreate` with Idempotency-Key). | `PhysicalLetterPanel.tsx:188` | proxy + guardAdminPost | none | `maxDuration = 30` | `customerId` | `{ok, letterId, providerLetterId, status}`; `flag_off` 403, `no_draft`/`no_address`/`incomplete_address` 409, `pingen_not_configured` 503, `submit_failed` 502, `store_failed` 500 | Sends a physical letter (PII to a third-party processor) with no `recordAdminAccess`. **2026-10-03 (0074):** only a purchase address counts — 409 `not_purchase_address` for any other source, 409 `address_invalid` after an undeliverable letter, 409 `objection`; the hand-over is `submitLetter`, shared with the campaign letters (KAM-120). |
 
-### 8.15 qa (Wissen: customer Q&A knowledge base)
+###### 8.15 qa (Wissen: customer Q&A knowledge base)
 
 All eight routes check `isDbConfigured()` right after the guard and — except `scan` — have **no try/catch** (DB/Shopify exceptions escape as framework 500s).
 
@@ -1191,7 +1191,7 @@ All eight routes check `isDbConfigured()` right after the guard and — except `
 | `POST /api/admin/qa/scan` | POST | `listScanCandidates(limit 1..15, default 10)` → loop `draftQaForConversation`. | `WissenWorkspace.tsx:119` | proxy + guardAdminPost | none | `maxDuration = 300` | `limit` clamped | `{scanned, created, noGap, duplicates, errors}` | audit-logged; only qa route with (inner-loop) try/catch. |
 | `POST /api/admin/qa/unpublish` | POST | product-linked: `unpublishQaFromProduct` (metafield removal + catalog refresh); `markQaUnpublished`; cache invalidation. | `WissenWorkspace.tsx:321` | proxy + guardAdminPost | none | `maxDuration = 60` | `id` | `{entry, removed, catalogRefreshed}`; 409 `not_published`; 503; `unpublish_<reason>` 502; 500 `unavailable` | audit-logged. |
 
-### 8.16 inbox (Eingang — new 2026-10)
+###### 8.16 inbox (Eingang — new 2026-10)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1202,7 +1202,7 @@ All eight routes check `isDbConfigured()` right after the guard and — except `
 | `POST /api/admin/inbox/accept` | POST | „Entwurf übernehmen“: `addRecipient` into the Einzelansprache with the item + suggestion as operator note (≤ 1500), draft with the suggested discount (else the campaign's), item → `erledigt` (action `einzelansprache`). | `eingang/EingangWorkspace.tsx` | proxy + guardAdminPost | none | `maxDuration = 120` | `id` | `{contactId, campaignId, drafted}`; 409 `no_consent` / `blocked`; 404 | Nothing is sent. **2026-10 follow-up:** audit-logged (`inbox.accept`). |
 | `POST /api/admin/inbox/run` | POST | `runInboxSignals({suggest:false})` — „Jetzt prüfen“. | `eingang/EingangWorkspace.tsx` | proxy + guardAdminPost | none | `maxDuration = 120` | body ignored | `{candidates, created, closed, expired, outcomes, suggested}` | Manual twin of `/api/cron/inbox` without AI suggestions. |
 
-### 8.17 shopify (Einstellungen → Shopify-Abgleich — new 2026-10)
+###### 8.17 shopify (Einstellungen → Shopify-Abgleich — new 2026-10)
 
 | Path | Methods | Purpose | Caller | Auth | Rate limit | Runtime / config | Input validation | Response | Notes |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1215,7 +1215,7 @@ All eight routes check `isDbConfigured()` right after the guard and — except `
 
 ### C.5 §2.12 routes without a caller, §2.13 duplicated routes, §2.14 contract surface (2026-09-08, with 2026-10 notes)
 
-## 12. Routes without any caller in this repository
+##### 12. Routes without any caller in this repository
 
 Expected (external callers): all `/api/chat|contact|products|capture-email|consent-copy|tts|kpi|feedback|chat-marketing-opt-in|auth/*|account/*|attribution/token` (widget), `/api/cron/*` (Vercel), `/api/inbound/resend`, `/api/webhooks/*` (providers), `/api/unsubscribe|confirm-marketing|r/[token]|email-countdown|email-hero-image|newsletter-rating` (mail clients).
 
@@ -1228,7 +1228,7 @@ Expected (external callers): all `/api/chat|contact|products|capture-email|conse
 | `GET /api/admin/campaigns` (2026-10) | no `fetch` in `src/app/admin` (the Kampagnen screen renders server-side; only the POST is used) | Read twin for tooling. |
 | `GET /api/admin/shopify/status` (2026-10) | no `fetch` in `src/app/admin` (Einstellungen renders server-side) | Read twin for tooling. |
 
-## 13. Duplicated or overlapping routes
+##### 13. Duplicated or overlapping routes
 - Four HTML e-mail preview routes (`marketing/email-preview`, `campaign/email-preview`, `correspondence/email-preview`, `email-designs/preview`) render different composers; they share the `EmailPreviewButton` client and the same fetch→blob pattern. Keep the routes; share the response helper.
 - `/api/inbound/resend` and `/api/webhooks/resend` both apply delivery events (documented overlap; one or two Resend webhooks).
 - `/api/admin/customers/marketing-draft` (per customer) vs `/api/admin/marketing/draft` (per capture) — the latter is the legacy path (see §12).
@@ -1237,7 +1237,7 @@ Expected (external callers): all `/api/chat|contact|products|capture-email|conse
 - 2026-10, manual twins of crons (intended): `POST /api/admin/campaigns/refresh` ↔ `/api/cron/campaign-audiences` (one campaign vs. all); `POST /api/admin/inbox/run` ↔ `/api/cron/inbox` (without AI suggestions); `POST /api/admin/shopify/import` (`step`) ↔ `/api/cron/shopify-sync` (continues a started import). The former twin `POST /api/admin/campaign/sync` ↔ `/api/cron/sync-campaign-audience` is retired.
 - 2026-10: `/api/admin/customers/marketing-draft` + `/api/admin/marketing/*` remain only for open drafts of the former 1:1 path; new 1:1 mails go through the Einzelansprache campaign (`campaigns/add-recipient` → `campaign/*`, Plan D-8).
 
-## 14. Chat API contract surface (docs/frontend/API_CONTRACT.md)
+##### 14. Chat API contract surface (docs/frontend/API_CONTRACT.md)
 The contract covers `/api/chat` (UI-message stream parts, tools, headers `x-ms-chat-key`, `x-ms-session`, `x-ms-locale`), `/api/contact`, `/api/products`, `/api/capture-email`, `/api/chat-marketing-opt-in`, `/api/consent-copy`, `/api/feedback`, `/api/tts`, `/api/kpi`, `/api/attribution/token`, `/api/auth/*` and `/api/account/*`. The route table above was derived from the code; a line-by-line contract re-verification is scheduled for the docs slice (no widget-visible change is planned in this project, so the contract stays as is). **2026-10 (additive):** the three opt-in routes answer `status:"confirmed"`, `alreadyConfirmed:true` for an address that is already subscribed (no second DOI mail); `GET /api/consent-copy?surface=chat` carries `signIn`; `?surface=erase` is new. **2026-10 follow-up (additive):** `POST /api/chat` accepts an optional `campaignToken` (the `mo_c` value of a campaign link; „Chat-Start“, `API_CONTRACT.md` §2); the „already subscribed“ answer is given only for an address that is not suppressed.
 
 ### C.6 Generation note of part 2 (2026-09-08)
@@ -1351,7 +1351,7 @@ Idempotent: yes (upsert on `shopify_customer_id`; suppress step is a set operati
 
 ### D.6 Part 4 scripts — the table, the orphan list and the production-impact classes (2026-09-08, with 2026-10 rows)
 
-# 4. Scripts (`scripts/*.mjs`, 18 files)
+#### 4. Scripts (`scripts/*.mjs`, 18 files)
 
 Legend — **Prod impact**: what the script can do to shared/production state when run with production env.
 "Local files only" = writes inside the repo checkout / cwd, nothing remote. Node in this sandbox: see footnote on `tsx`.
@@ -1387,7 +1387,7 @@ downloads tsx ad hoc), `probe-bundle.mjs` documents plain `node --env-file=.env`
 `src/lib/shopify.ts`'s extensionless imports even with Node's type stripping. Neither `package.json` nor `node_modules`
 contains `tsx` (checked 2026-09-08). All other scripts import only `.mjs` cores and run under plain Node.
 
-### 2.1 Scripts with NO package.json entry AND NO docs/README reference (orphans)
+###### 2.1 Scripts with NO package.json entry AND NO docs/README reference (orphans)
 
 | Script | Note |
 |---|---|
@@ -1403,7 +1403,7 @@ Scripts with a package.json entry but no doc reference at all: `db:reset` (`rese
 Scripts referenced in docs but with no package.json entry: `build-countdown-sprite.mjs` (docs/EMAIL_DESIGNS.md),
 `probe-bundle.mjs` (docs/archive/BUNDLES_SPIKE.md — historical).
 
-### 2.2 Scripts that touch production data (summary)
+###### 2.2 Scripts that touch production data (summary)
 
 | Class | Scripts |
 |---|---|
@@ -1417,7 +1417,7 @@ Scripts referenced in docs but with no package.json entry: `build-countdown-spri
 
 ### D.7 Part 5 environment variables — method notes and the table with the 2026-09 `.env.ex` / README columns
 
-# 5. Environment variables
+#### 5. Environment variables
 
 Method: `rg -oI 'process\.env\.[A-Z0-9_]+' src scripts | sort | uniq -c` **plus** the indirect readers, which the plain
 grep misses and which account for ~35 of the variables: `parseIntEnv("X", default, min)` (`src/lib/env-num.ts:12`),
@@ -1556,7 +1556,7 @@ O optional with a code default, P platform-injected (Vercel/Neon/Upstash), S scr
 
 ### D.8 Part 5 findings 3.a–3.c (2026-09-08, with 2026-10 notes)
 
-### 3.a Used in code but missing from `.env.example`
+###### 3.a Used in code but missing from `.env.example`
 
 | Variable | Where | Severity |
 |---|---|---|
@@ -1568,7 +1568,7 @@ O optional with a code default, P platform-injected (Vercel/Neon/Upstash), S scr
 | `NEON_FETCH_ENDPOINT` | `src/lib/db.ts:24-25` | just added by the current cleanup session (local-dev only); document alongside the local-DB setup |
 | Platform / script-only (no action): `NODE_ENV`, `VERCEL_ENV`, `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL`, `POSTGRES_URL`, `POSTGRES_URL_NON_POOLING` (legacy, comment-only in `.env.example:394,398`), `ALLOW_DB_RESET`, `KEEP_PROBE`, `INPUT`, `OUTPUT`, `TZ` | | |
 
-### 3.b In `.env.example` but never read by code (stale)
+###### 3.b In `.env.example` but never read by code (stale)
 
 | Variable | `.env.example` line | Finding |
 |---|---|---|
@@ -1581,7 +1581,7 @@ Every other active key in `.env.example` (75 of 76) is read by code, and all num
 bundle 7, USD 0.92, retention 180/180/30/30/365/365/365/1095/730/365, attribution 30, pending-TTL 10, TTS model/voice/speed,
 storefront domain, deep-link URL, hero model `gpt-image-2` / quality `high`, bundle mode).
 
-### 3.c README ↔ `.env.example` inconsistencies
+###### 3.c README ↔ `.env.example` inconsistencies
 
 1. **Scope claim.** README:87 "Every env var the production deploy needs" — the README table has 21 names; `.env.example`
    has 76 active keys and code reads 79. Missing from README but required for live features: `ADMIN_PASSWORD`,
@@ -1614,12 +1614,12 @@ storefront domain, deep-link URL, hero model `gpt-image-2` / quality `high`, bun
 
 No table created by a migration is unreferenced (the two dropped ones — bestandskunden_suppression_list, email_templates/_assignments — are gone from the schema). 68 indexes exist; index coverage of the hot admin queries is reviewed in the technical audit.
 
-## 6.2 Tests
+##### 6.2 Tests
 87 `*.test.mjs` files, 813 tests, all green (`node --test`, 3.6 s). **2026-10-01 (`eb1816d`):** 116 files, 1016 tests, all green — new cores with tests: `audience-spec`, `campaign-def`, `consent-core`, `customer-ask-core`, `customer-facts-core`, `customer-fk-plan`, `customer-signals`, `customer-timeline`, `mo-effect`, `outbox-core`, `platform-flags`, `shopify-bulk-core`, `shopify-customer-map`; removed with their code: `campaign-sync-core.test.mjs`, `admin-overview.test.mjs`. **2026-10 follow-up (`6327b0f`):** 117 files, 1024 tests, all green — new core `shopify-insight-tags` (+ test); new cases in `admin-customer-filter` (old `?filter=` presets), `campaign-def` (chat button needs the Mo block), `campaign-review-checks` (hero mode, send window), `platform-flags` (`SHOPIFY_WRITEBACK_ENABLED`), `analytics-report-pdf` (Kundenbasis / Kampagnen chapters), `customer-timeline` (amounts through `admin-format`). No migration. Every `.mjs` core has a sibling test except: `campaign-flags.mjs`, `email-rating.mjs`, `kpi-event-patterns.mjs`, `openai-error.mjs` (and the fixtures file `system-prompt-core.fixtures.mjs`). TypeScript modules are not unit-tested (tests cannot import TS); their pure logic lives in the `.mjs` cores by convention. **2026-10-05:** new cores with tests `consent-variants`, `capture-funnel`, `page-context`; extended `consent-copy-version`, `kpi-releases`, `kpi-widget-events`, `platform-flags`, `system-prompt-core`, `widget-fingerprint`.
 
 ### D.10 §6.3 Docs map (2026-09-08)
 
-## 6.3 Docs map
+##### 6.3 Docs map
 | File | Lines | Last change | Class | Note |
 |---|---|---|---|---|
 | ADMIN_DASHBOARD.md | 959 | 2026-08-31 | LIVING | describes tabs/flows; partly stale (claims server-side tab switch; omits Einstellungen) — rewrite after redesign |
