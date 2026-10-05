@@ -1,7 +1,7 @@
 # Rechtsdossier „Mo“ — KI-Verkaufsberater auf motionsports.de
 
 **Zweck:** Vollständige, aktuelle Beschreibung des Systems für die externe anwaltliche Prüfung (Datenschutz, Wettbewerbs-/Lauterkeitsrecht, KI-Regulierung, Verbraucherrecht) — als Grundlage für Ihr Feedback und Ihre Handlungsempfehlungen.
-**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34). **Nachtrag 03.10.2026 (2):** Bestellstatus im Chat — standardmäßig aus (§ 16, F-32); „Einplanen“ geprüfter Kampagnen-Mails (§ 17, F-33). **Nachtrag 03.10.2026 (3):** Werbebriefe als Kampagnen-Kanal (§ 18, F-35). **Nachtrag 05.10.2026:** Bestell-Zuordnung — Fenster ab der letzten Beratung; Entscheidung des Mandanten: Schalter an nach der Migration (§ 20, F-37).
+**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34). **Nachtrag 03.10.2026 (2):** Bestellstatus im Chat — standardmäßig aus (§ 16, F-32); „Einplanen“ geprüfter Kampagnen-Mails (§ 17, F-33). **Nachtrag 03.10.2026 (3):** Werbebriefe als Kampagnen-Kanal (§ 18, F-35). **Nachtrag 05.10.2026:** Bestell-Zuordnung — Fenster ab der letzten Beratung; Entscheidung des Mandanten: Schalter an nach der Migration (§ 20, F-37). **Nachtrag 05.10.2026 (2):** Erkennung der Shop-Anmeldung im Chat (App Proxy); Entscheidung des Mandanten, nach seiner Angabe von Ihnen bestätigt (§ 19, F-36 beantwortet).
 **Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`archive/LEGAL_READINESS_REPORT.md`](./archive/LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
 **Verantwortlicher:** motion sports [genaue Firmierung, Anschrift, Geschäftsführung, ggf. DSB — vom Mandanten zu ergänzen]. Betrieben wird der Onlineshop motionsports.de (Shopify) für Sport- und Fitnessgeräte (B2C, Studios/Physiotherapie, öffentliche Auftraggeber).
 
@@ -497,6 +497,38 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
 
 ---
 
+## 19. Nachtrag 05.10.2026 — Erkennung der Shop-Anmeldung im Chat (App Proxy)
+
+Grundlage: `docs/CUSTOMER_ACCOUNT.md` § 2 („Already-signed-in detection“), `docs/plans/2026-10-04/P0.3.md`. § 15.3 bleibt als Chronik unverändert; sein Stand „nicht eingerichtet (02.10.2026)“ wird hier fortgeschrieben.
+
+### 19.1 Tatsachen
+
+- **Was neu ist (stille Erkennung).** Öffnet eine im Shop angemeldete Person den Chat, fragt das Chat-Fenster einmal je Tab über einen Pfad des Shops (Shopify App Proxy, `/apps/chat/whoami`), ob jemand angemeldet ist — ohne Klick im Chat. Shopify leitet die Anfrage mit der Kundennummer der laufenden Shop-Anmeldung und einer Signatur an Mo weiter. Es zählt nur diese von Shopify signierte Kennung, nie ein Wert aus dem Browser.
+- **Verknüpfung und frühere Gespräche.** Darf die Sitzung angemeldet werden (siehe Schalter), erhält der Browser einen Einmal-Code, den sein Chat-Fenster einlöst (Verfahren wie § 15.3). Danach ist die Chat-Sitzung mit dem Kundenkonto verknüpft, und die **früheren anonymen Gespräche dieses Browsers** (derselben Chat-Sitzung) werden dem Kundenkonto zugeordnet: Sie erscheinen in Gesprächsliste und Export.
+- **Keine Übernahme fremder Gespräche.** Zugeordnet werden nur Gespräche, die noch keiner Person oder bereits derselben Person gehören. Gespräche einer anderen Person wandern auf einem geteilten Browser nie in ein fremdes Konto. Das gilt seit demselben Tag auch für „Anmelden“ im Chat.
+- **Personenwechsel im selben Browser.** Ist die Chat-Sitzung als eine **andere** Shop-Person angemeldet, endet diese Anmeldung (nur in dieser Sitzung; die anderen Geräte der vorigen Person bleiben angemeldet), und es wird kein Code ausgegeben. Das Chat-Fenster löscht daraufhin seinen lokalen Verlauf und beginnt eine neue Sitzung; der nächste Tab meldet die neue Person an. Die Daten der vorigen Person bleiben bei ihr.
+- **Frische der Signatur.** Shopifys signierter Zeitstempel darf höchstens 5 Minuten abweichen. Ein mitgeschnittener oder weitergegebener Link wirkt danach nicht mehr. Fehlerhafte und veraltete Signaturen werden gedrosselt gemeldet (ohne URL und ohne Kundendaten) und beenden oder erzeugen nie eine Anmeldung. Restrisiko: eine Wiederverwendung innerhalb von 5 Minuten durch jemanden mit Zugriff auf die Server-Protokolle.
+- **Abmelden.** Eine Abmeldung im Shop beendet die Shop-Anmeldung der Sitzung, sobald der Chat in einem neuen Tab geöffnet wird; ein bereits offener Tab bemerkt sie nicht — gilt die Anmeldung dort allein über den Shop-Nachweis, endet sie spätestens mit der Höchstdauer (s. Schalter). Die serverseitige Abmeldung (Abmelde-Rücksprung von Shopify oder ein widerrufenes Anmelde-Token) beendet jetzt alle Chat-Anmeldungen der Person auf allen Geräten, auch die über den Shop.
+- **Schalter.**
+  - `APP_PROXY_SIGNIN_ENABLED`, standardmäßig **aus**: Notschalter. Aus heißt: Die Erkennung wird nur gezählt, es wird kein Code ausgegeben, niemand wird angemeldet. Das Ausschalten wirkt mit einem Neu-Deploy, ohne Zugang zu Shopify.
+  - `APP_PROXY_SIGNIN_MAX_AGE_HOURS`, standardmäßig **0**: So viele Stunden nach dem letzten Einlösen gilt eine Shop-Anmeldung **ohne** Anmelde-Token des Chats als angemeldet; jeder neue Tab erneuert sie; höchstens 720. Bei 0 werden nur Personen erkannt, die sich früher schon im Chat über „Anmelden“ angemeldet haben und ein gültiges Token haben. Bei ausgeschaltetem Notschalter gilt immer 0.
+  - Empfohlene Werte für den Betrieb: `true` und `24`. Der Mandant setzt sie, sobald die App Proxy in Shopify eingerichtet ist; bis dahin ist der Pfad im Shop nicht erreichbar.
+- **Umfang der Shop-Anmeldung (D-AP1).** Bei einer Höchstdauer über 0 gilt die frische Shop-Anmeldung als Anmeldung für: Namensanzeige, Gesprächsliste und -inhalte, **Datenexport**, **Selbst-Löschung**, die **Werbe-Einwilligung nach der Anmeldung** (Double-Opt-in an die Adresse des Kundenkontos, unverändert) und das Chat-Gedächtnis (Begrüßung mit Namen; Personalisierung weiterhin nur mit Werbe-Einwilligung, § 7.2).
+- **Bestellstatus ausgenommen.** Der Bestellstatus im Chat (§ 16.1) bleibt der Anmeldung über das Kundenkonto in derselben Sitzung vorbehalten. Bei einer reinen Shop-Anmeldung sagt Mo, dass die Person erkannt ist, der Bestellstatus im Chat aber einmal „Anmelden“ im Chat braucht, und verweist auf „Meine Bestellungen“ im Shop.
+- **Nicht wiederholt fragen.** Das Einwilligungs-Popup nach der Anmeldung wird einer Person nicht mehr angeboten, wenn sie es in einer ihrer Sitzungen in den letzten 30 Tagen abgelehnt oder es in 3 Sitzungen innerhalb von 30 Tagen gesehen hat — geräteübergreifend und auch nach „Anmelden“ im Chat. Grundlage sind die pseudonymen Popup-Ereignisse ihrer angemeldeten Sitzungen.
+- **Nachweis in der Einwilligung.** Jede Werbe-Einwilligung nach der Anmeldung vermerkt im Einwilligungsprotokoll, welche Anmeldung dahinterstand: „Anmeldenachweis: Kundenkonto-Anmeldung im Chat“ oder „Anmeldenachweis: Shop-Login (App Proxy)“ (Art. 7 (1)).
+- **Messung.** Je Erkennung zählt der Server ein pseudonymes Ereignis der Sitzung (Art des Nachweises, Token vorhanden, schon angemeldet, Code ausgegeben bzw. Grund ohne Code) — nie Kundennummer, Name, E-Mail, Code oder URL (D-03).
+
+### 19.2 Entscheidung des Mandanten (05.10.2026)
+
+Der Mandant hat D-AP1 am 05.10.2026 entschieden: Eine frische Shop-Anmeldung zählt im Chat als Anmeldung, im Umfang von 19.1 einschließlich Export, Löschung und Werbe-Einwilligung, mit einer Höchstdauer von 24 Stunden. **Nach Angabe des Mandanten haben Sie dies bestätigt** (F-36). Eingeschaltet wird mit `APP_PROXY_SIGNIN_ENABLED=true` und `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`, sobald die App Proxy eingerichtet ist. Zugleich entschieden: Die englischen Einwilligungstexte gelten als freigegebene Übersetzung (§ 5), `/en` wird nicht gesondert gesperrt; die Vorteilspunkte im Einwilligungs-Popup wählt die Entwicklung (KI-Assistent Claude), künftig liefert sie das Backend aus statt des Widgets.
+
+### 19.3 Prüfbitte
+
+- **F-36 — Erkennung der Shop-Anmeldung im Chat: beantwortet (05.10.2026, laut Mandant: ja).** Gefragt war nach der stillen Erkennung beim Öffnen des Chats (§ 25 TDDDG, neben F-14), der Zuordnung früherer Gespräche des Browsers, dem Umfang D-AP1 einschließlich Export, Löschung und Werbe-Einwilligung auf Grundlage der Shop-Anmeldung (24 Stunden), dem Personenwechsel auf geteilten Browsern und der Regel „nicht wiederholt fragen“. **Offen bleibt die Datenschutzerklärung** (mit F-05 / F-28): ein Absatz, dass der Chat beim Öffnen die Shop-Anmeldung abfragt, die Chat-Sitzung und frühere Gespräche dieses Browsers mit dem Kundenkonto verknüpft und Kontofunktionen (Verlauf, Export, Löschung, Werbe-Einwilligung) dann ohne eigene Anmeldung im Chat bereitstehen.
+
+---
+
 ## 20. Nachtrag 05.10.2026 — Bestell-Zuordnung: Fenster ab der letzten Beratung
 
 Grundlage: `docs/ORDER_ATTRIBUTION.md`, `docs/plans/2026-10-04/ATTR-TOKEN-LIFETIME.md`. Die Bestell-Zuordnung (D-20) misst, ob eine Bestellung auf eine Mo-Beratung zurückgeht: Das Widget setzt mit Analyse-Einwilligung eine opake Markierung (`_mo`) an den Shopify-Warenkorb; Mo-Links in Mails und Set-Angeboten tragen sie im Link. Bisher wird eine Bestellung mit Markierung pseudonym gespeichert, wenn sie innerhalb von 30 Tagen (`MO_ATTRIBUTION_WINDOW_DAYS`) nach Erstellung der Markierung eingeht oder einen Mo-Rabattcode trägt.
@@ -540,6 +572,7 @@ Der Mandant hat die Wahl an die Entwicklung (KI-Assistent Claude) übertragen. E
 | 16.06.2026 | Entscheidung des Mandanten: § 7 (3)-UWG-Feature ersatzlos entfernt | Addendum im Juni-Bericht |
 | 21.07.2026 | Kampagnen-Kanal (Shopify-Abonnenten) **inkl.** Single-Opt-in-Kontakten | `CAMPAIGN_SENDS_APPROVED=true`, `CAMPAIGN_ALLOW_SINGLE_OPT_IN=true` |
 | Juli 2026 | Consent-Texte v4 (Chat-Consent-Gate, Benefit-Headlines) | Kommentar in `consent-copy-core.mjs` |
+| 05.10.2026 | Erkennung der Shop-Anmeldung im Chat, Umfang D-AP1, 24 Stunden (§ 19, F-36; Bestätigung laut Mandant) | `.env.example`: `APP_PROXY_SIGNIN_ENABLED`, `APP_PROXY_SIGNIN_MAX_AGE_HOURS` |
 
 ## Anhang B — Glossar
 

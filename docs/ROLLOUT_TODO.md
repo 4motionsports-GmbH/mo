@@ -293,60 +293,69 @@ Last updated: 2026-10-05 (decisions of M).
   docs are in `docs/frontend/`. Live check: 1.11. Next widget tasks: the backlog in
   `docs/frontend/07` §7 (C writes the next prompt from it).
 
-- [ ] **5.2 Compliance webhooks** — do it as soon as F gives access; **without** the App Proxy
-  block/scope unless C has said the App Proxy safety step is live (5.4) — otherwise a second
-  `shopify app deploy` later (keep M as org member, 5.3). F adds M to the app's Dev Dashboard organisation,
-  then M + C together (~10 min)
-  - `shopify app config link` → check the toml (20 scopes, app proxy) → add the
-    `compliance_topics` block (`customers/data_request`, `customers/redact`, `shop/redact`
-    → `https://mo.motionsports.de/api/webhooks/shopify`) → `shopify app deploy`. No
-    other topics in the toml, no reinstall.
+- [ ] **5.2 Compliance webhooks** — do it in **one session with F together with 5.4** (one
+  `shopify app deploy` for both; the App Proxy safety step is live since 05.10.). F adds M to the
+  app's Dev Dashboard organisation (or does the steps while M watches), then M + C (~20 min for both)
+  - `shopify app config link` → check the toml (20 scopes) → add the `compliance_topics` block
+    (`customers/data_request`, `customers/redact`, `shop/redact` →
+    `https://mo.motionsports.de/api/webhooks/shopify`) — the exact toml is in 5.4 step 2 →
+    `shopify app deploy`. No other webhook topics in the toml, no reinstall.
   - **Until then:** a deletion request → „Delete customer“ in Shopify (Mo follows); if you
     use „Erase personal data“ instead, also „Löschen“ (delete) the person in Mo → Kunden.
     A data request → also look the person up in Mo → Kunden.
 
-- [ ] **5.4 Shop sign-in detection** (customers signed in to the shop are recognised in
-  the chat without „Anmelden“) — M (+ F for app access), C checks — **ON HOLD until C.17 (P0.3
-  Phase 1) is live. Do not set up the App Proxy before.** Decided 05.10. (M, lawyer confirmed):
-  a visitor logged in to the shop counts as signed in to the chat (D-AP1) — C builds Phase 2
-  with Phase 1. As the backend stands, a shop-native login
-  has no chat token, so the proxy would sign nobody in but would still link the session in the
-  background; on a shared browser one customer's chats could move into another customer's history
-  (`redeemLinkGrant` has no ownership check); signed proxy URLs never expire (replay). Details:
-  `docs/plans/2026-10-04/P0.3.md` §0. The steps below stay valid for afterwards; P0.3 §7 adds the
-  staged rollout (A measure only → B token holders → C after D-AP1 and the lawyer's F-36).
-  - The widget side is live (PR #73: one whoami call per tab, the `linkCode` is redeemed
-    before anyone counts as signed in). **First** `npm run verify:widget` must report the
-    expected build — an older build (`presentLoginGate` without `redeemLinkCode`) would treat
-    the whoami answer as a sign-in without redeeming; then the proxy must stay off.
-  - Set up the App Proxy on the Shopify app (in the 5.2 session, same `shopify app config
-    link`):
-    1. In `shopify.app.toml` add `write_app_proxy` to `[access_scopes] scopes` (Shopify needs
-       this scope for an app proxy; keep the other scopes).
-    2. Add
+- [ ] **5.4 Shop sign-in detection (App Proxy)** — M + F (app access), C checks with you —
+  **ready since 05.10.** (backend P0.3 Phase 1+2: fresh signatures only, no code without proof,
+  handover on shared browsers, renewals not counted as sign-ins, kill switch; D-AP1 decided: a
+  visitor logged in to the shop counts as signed in to the chat). Result: whoever is logged in to
+  the shop is greeted by name in the chat without clicking „Anmelden“, sees their chat history and
+  gets the consent popup (if they never decided). Order status still needs one „Anmelden“ in the
+  chat — Mo says so and links „Meine Bestellungen“.
+  1. **With F (same session as 5.2):** in the app's project folder run `shopify app config link`
+     and pick the motionsports app.
+  2. Edit `shopify.app.toml`:
+     - `[access_scopes]` → `scopes = "…all existing scopes…,write_app_proxy"` (add only
+       `write_app_proxy`, keep every scope that is there);
+     - add
        ```toml
        [app_proxy]
        url = "https://mo.motionsports.de/api/auth/storefront"
        prefix = "apps"
        subpath = "chat"
+
+       [webhooks]
+       api_version = "2026-04"
+
+         [[webhooks.subscriptions]]
+         compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+         uri = "https://mo.motionsports.de/api/webhooks/shopify"
        ```
-    3. `shopify app deploy` (releases the new version). If the app is managed in the Dev
-       Dashboard instead of a toml: a new version with the same scope and App proxy fields.
-    4. Shopify admin → the app: accept the updated permissions (new scope).
-    5. Shopify admin → Settings → Apps → the app → „App proxy“: the URL must read
-       `/apps/chat` — prefix and subpath from the toml apply to new installs only, so on this
-       already-installed app use „Customize URL“ if it shows anything else.
-    6. Vercel: nothing new — the proxy signs with the app's client secret, which Mo already has
-       as `SHOPIFY_CLIENT_SECRET` (set `SHOPIFY_APP_PROXY_SECRET` only if the proxy lives on a
-       different app).
-  - Check: `npm run verify:widget` → „App Proxy /apps/chat/whoami antwortet JSON —
-    signedIn=false“ (no cookies). In a browser signed in to the shop (www.motionsports.de/account)
-    open `https://www.motionsports.de/apps/chat/whoami?session=check` → `{"signedIn":true, …,
-    "linkCode":"…"}`. If it stays `signedIn:false` while signed in, Shopify sends no
-    `logged_in_customer_id` for this store's account type — tell C.
-  - Done when: in a fresh tab signed in to the shop, the chat greets you by name without
-    „Anmelden“, and `npm run verify:live` / KPI → Anmelde-Popup → Diagnose shows „Vom Shop
-    erkannt“ (`account_signin_linked {kind:"app_proxy"}`).
+       (if the toml already has a `[webhooks]` block, add only the `[[webhooks.subscriptions]]`
+       part under it and keep its `api_version`).
+  3. `shopify app deploy` → confirm the new version.
+  4. Shopify admin → Apps → the app: accept the updated permissions (new scope).
+  5. Shopify admin → Settings → Apps and sales channels → the app → „App proxy“: the URL must read
+     `https://www.motionsports.de/apps/chat` → if it shows anything else, „Customize URL“ →
+     prefix `apps`, subpath `chat` → Save. (The toml's prefix/subpath only apply to new installs.)
+  6. Vercel: nothing yet (the proxy signs with `SHOPIFY_CLIENT_SECRET`, which Mo has).
+  7. **Check (switches still off, nothing changes for visitors):**
+     - `npm run verify:widget` → „App Proxy /apps/chat/whoami antwortet JSON — signedIn=false“.
+     - In a browser logged in to the shop (www.motionsports.de/account) open
+       `https://www.motionsports.de/apps/chat/whoami?session=livecheck-manual` → `{"signedIn":false}`.
+     - `npm run verify:live` → section 8 „Manuelle Prüfung“ shows one row with
+       `"noCode":"flag_off"`. **No row** → Shopify sends no logged-in customer for this store's
+       account type: stop and tell C.
+  8. **Switch on:** Vercel → Production → `APP_PROXY_SIGNIN_ENABLED=true` and
+     `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24` → Redeploy.
+  9. **Test:** private window → log in at www.motionsports.de/account → open any shop page → open
+     the chat: your name shows, no „Anmelden“, the history drawer works. `npm run verify:live` →
+     section 8 shows a code issued and redeemed; section 1 „Vom Shop erkannt“. Tell C the date
+     (C adds the KPI release note).
+  10. **Kill switch** (any time, e.g. a theme re-sync brings back an old widget — `verify:widget`
+      fails): `APP_PROXY_SIGNIN_ENABLED=false` → Redeploy. Visitors are then simply not recognised.
+  - Watch: KPI → Beratung → „Kundenkonto & Self-Service“ → „Shop-Login-Erkennung“ (a warning
+    appears if the widget leaves codes unredeemed) and „Einwilligung nach der Anmeldung“ →
+    „Nach Anmeldeweg“.
 
 - [ ] **5.3 App ownership** (optional) — M + F
   - Move the Shopify app to an organisation owned by motionsports, or at least keep M as a
@@ -491,11 +500,12 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       `email-capture-core.mjs`. Already lost links are not restored — M's size check
       (`docs/plans/2026-10-04/README.md`, finding 2) shows how many; those people can opt in
       again. **Left:** F2 (a suppressed address answered „already subscribed“), backend-only.
-- [ ] **C.17** P0.3 Phase 1 — App Proxy safety + measurement (kill switch, code only when
-      `/api/auth/me` will sign in, timestamp freshness, handover, ownership guard on the
-      conversation stamp, `account_shop_recognised`, renewals, dashboard split, drift alarm)
-      **and Phase 2** (shop-logged-in visitors signed in without a chat token — D-AP1 decided
-      05.10., lawyer confirmed). Unblocks 5.4. Dossier Nachtrag §19.
+- [x] **C.17** P0.3 Phase 1 + 2 — built 05.10. (no migration, both switches off in code):
+      fresh App Proxy signatures, code only with a proof, handover on shared browsers, stamp guard,
+      renewals, kill switch, shop proof without a chat token (D-AP1, max age), anti-nag for the
+      consent popup, proof note in the consent evidence, order-status wording for shop sessions,
+      KPI „Shop-Login-Erkennung“ + „Nach Anmeldeweg“, `verify:live` section 8, dossier §19.
+      **M:** 5.2 + 5.4 with F.
 - [ ] **C.18** OI1 — **PR 1 done 05.10.** (no e-mail-summary offer and no forced checkout ask for
       signed-in sessions; the prompt sends them to the PDF download / contact form). PR 2 open
       (opt-in `source` / `outcome`, DOI by source, capture funnel = capture form only, consent

@@ -366,7 +366,13 @@ email). `marketing_status` mirrors the **one** consent
 (`src/lib/signed-in-identity.ts`), so a customer subscribed in Shopify reads
 `confirmed` and is not asked again — once the mirror holds that customer
 (import, `customers/*` webhook or nightly reconciliation; sign-in itself still
-imports no consent). For tier-3 customers the **end-of-chat** email-summary +
+imports no consent). **Anti-nag (2026-10-05):** `optInActionable` is also
+`false` when the customer declined the consent popup (`consent_gate_declined`,
+surface `signin`) in any of their sessions in the last 30 days, or saw it in 3
+sessions within 30 days (`src/lib/consent-ask-policy.mjs`, tested) — for chat
+sign-ins and shop-login recognition (App Proxy) alike. The opt-in's
+`consent_events` row notes the sign-in proof behind it („Anmeldenachweis:
+Kundenkonto-Anmeldung im Chat“ / „Anmeldenachweis: Shop-Login (App Proxy)“). For tier-3 customers the **end-of-chat** email-summary +
 opt-in capture widget is **suppressed** (the widget gates that off
 `identity.tier === 3`); the opt-in lives here at sign-in instead. Tiers 1–2 keep
 the end-of-chat capture unchanged. See

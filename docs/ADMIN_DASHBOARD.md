@@ -1475,6 +1475,19 @@ from the four **widget-emitted** `kpi_events` (`consent_gate_shown` /
 `data.surface`) — see [`API_CONTRACT.md`](./API_CONTRACT.md) §5. Scoped to the
 selected window (`kpi_events.created_at`).
 
+**Nach Anmeldeweg** (2026-10-05, P0.3): a table of the `signin` popup per
+**session** by how the session signed in — „Über „Anmelden““ (an
+`account_signin_linked {kind:"customer_account"}` of the session), „Über
+Shop-Login erkannt“ (`kind:"app_proxy"`), „Ohne Anmelde-Event“ (only when > 0) —
+with Angezeigt | Akzeptiert | Akzeptanzrate | Opt-in (Server)
+(`email_capture_marketing_opted_in {trigger:"signin_optin"}` in the same session).
+An accept followed by a dismiss counts once, as accepted. The link lookup is not
+limited to the period, so a renewal of an older chat sign-in still reads „Über
+„Anmelden““. Since the same day the backend stops offering the popup
+(`optInActionable:false`) to a customer who declined it in any session or saw it
+in 3 sessions within 30 days (anti-nag, `consent-ask-policy.mjs`) — expect
+slightly fewer „Angezeigt“.
+
 > ⚠️ **Measures the UI, not the DOI.** An "Akzeptiert" is the gate tap; the
 > consent only becomes an effective marketing subscription after the
 > double-opt-in link is clicked (that outcome is the email-capture funnel in
@@ -1493,8 +1506,10 @@ answered message, once per browser session, never in voice mode), counted per
 **session**: **Angezeigt** (`login_gate_shown`) → **„Anmelden“ geklickt**
 (`login_gate_signin_clicked`) → **Bei Shopify angemeldet** (server
 `account_signin_succeeded` in the same session after the click) → **Im Chat
-angemeldet** (server `account_signin_linked` — the chat redeemed the one-time
-code, 0073; only this sign-in counts). Plus „Später“ (`login_gate_declined`,
+angemeldet** (server `account_signin_linked {kind:"customer_account"}` — the chat
+redeemed the one-time code, 0073; only this sign-in counts; since 2026-10-05 a
+shop-login link of the same session, `kind:"app_proxy"`, no longer counts as a
+popup conversion). Plus „Später“ (`login_gate_declined`,
 snoozed 24 h on the device) and „Weggeklickt“ (`login_gate_dismissed`) with their
 share of the shown sessions, and **Anmeldestarts nach Herkunft** from the widget's
 `account_signin_started` (`data.source: "login_gate"` = popup; absent = welcome
@@ -1507,14 +1522,24 @@ Every session with a sign-in event in the period — whatever started it: popup,
 welcome card, header, or the shop's App Proxy — is classified by the point where
 its sign-in ended, from widget and server events of that session: Im Chat
 angemeldet (code redeemed, return `ok`), Vom Shop erkannt (`account_signin_linked
-{kind:"app_proxy"}` without a sign-in round trip), Angemeldet (zweiter Versuch),
+{kind:"app_proxy", renewed:false}` without a sign-in round trip — a new sign-in of
+the session), Bereits angemeldet, vom Shop bestätigt (`shop_renewed`: every
+App Proxy link of the session was `renewed:true`, a new tab confirming an
+existing sign-in), Angemeldet (zweiter Versuch),
 Code für andere Sitzung (`session_mismatch`), Code abgelaufen oder benutzt
 (`invalid`), Widget hat nicht eingelöst (return `link_failed` without a refusal —
 also a 503 at the redeem, which is not recorded), Altes Widget (return `ok`
 without a redeem), Keine Rückkehr gemeldet (Shopify sign-in, no return event),
 Rückkehr mit Fehler, Bei Shopify abgebrochen, Beim Warten geschlossen, Start
-nicht angekommen — each with its likely cause. Below the table the widget's
-`account_signin_return` results. At most 20,000 sessions per period (noted).
+nicht angekommen, Shop-Code nicht eingelöst (`shop_not_redeemed`: whoami issued a
+code, `account_shop_recognised {codeIssued:true}`, but the session has no link —
+an old widget without code redemption, a session change during the request, or a
+redeem failure; checked last, so any chat sign-in outcome wins) — each with its
+likely cause. Sessions the shop only **recognised** without a code stay out of
+the diagnosis (they appear in §5.15 „Shop-Login-Erkennung“). Below the table the
+widget's `account_signin_return` results. At most 20,000 sessions per period,
+newest first (`ORDER BY max(created_at) DESC` before the limit; noted).
+Manual-check sessions (`livecheck-%`) never count.
 
 ### 5.8 E-Mail-Capture-Funnel — [`getEmailCaptureFunnel()`](../src/lib/kpi-store.ts)
 
@@ -1606,11 +1631,15 @@ GROUP BY — no identity value is read.
 
 ### 5.15 Kundenkonto & Self-Service — [`getAccountActivity()`](../src/lib/kpi-store.ts)
 
-Adoption + GDPR self-service volume, windowed: completed **sign-ins**
-(`account_signin_succeeded`, with the `prompt=none` silent-detect share; the hint
-also says how many the chat completed — `account_signin_linked`, written by
-`POST /api/auth/link` — and how many codes it refused,
-`account_signin_link_refused` with `reason` `invalid` | `session_mismatch`),
+Adoption + GDPR self-service volume, windowed. The first stat is **Im Chat
+angemeldet** (2026-10-05, P0.3) — **sessions**, not events, from
+`account_signin_linked` (written by `POST /api/auth/link`): „über „Anmelden““
+(any `kind:"customer_account"` redeem), „über Shop-Login“ (`kind:"app_proxy"`
+with `renewed=false` only — a new sign-in) and, in the hint, „bereits angemeldet
+(bestätigt)“ (sessions whose only link was a renewal). The hint also gives the
+Shopify sign-ins (`account_signin_succeeded`, with the `prompt=none` „still“
+share) and the refused codes (`account_signin_link_refused` with `reason`
+`invalid` | `session_mismatch`). Then
 **data exports** (`account_export_requested`), **erasures** (`account_erased`),
 **contact-form submissions** (`contact_form_submitted` — comparable against the
 `show_contact_form` tool-fires in the Gespräche tab; the hint splits out reason
@@ -1619,6 +1648,23 @@ the widget sends since 2026-10-04), and summary deliveries
 (`summary_email` / `summary_download` rows in `ai_usage` — one row per generated
 summary). All pseudonymous counters; export/erase events carry no session or
 customer key at all.
+
+**Shop-Login-Erkennung (App Proxy)** — shown once a session was recognised or
+linked through the shop login. From the server-only `account_shop_recognised`
+(whoami, [`API_CONTRACT.md`](./API_CONTRACT.md) §5) joined per session to the
+link events: **Erkannt** (sessions not yet signed in; hint „+N bereits
+angemeldet“), **Angemeldet** (new shop-login sign-ins; hint the share of issued
+codes that were redeemed), **Mit Chat-Token** (recognised customers who signed in
+through „Anmelden“ before; hint share of the recognised) and **Ohne Code** (hint
+„X Regel aus · Y ohne Nachweis · Z Personenwechsel · W Fehler“ — `noCode`
+`flag_off` / `no_proof` / `handover` / `failed`). **Drift alarm:** a warning
+Callout when at least 20 sessions got a code and more than 20 % of them were not
+redeemed (`shopRecognitionRates`, `SHOP_REDEEM_ALARM` in the tested
+`kpi-widget-events.mjs`) — typically an old widget: run `npm run verify:widget`;
+if it reports no acceptable build with code redemption, set
+`APP_PROXY_SIGNIN_ENABLED=false` and redeploy. Redeem rate and alarm count all
+codes, renewals included. Every query excludes `livecheck-%` sessions; the same
+numbers are in `npm run verify:live` section 8 „Shop-Login-Erkennung“.
 
 ### 5.15a Bestellstatus im Chat — [`getOrderStatusKpis()`](../src/lib/kpi-store.ts)
 

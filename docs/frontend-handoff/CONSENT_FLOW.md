@@ -224,7 +224,12 @@ Only show this surface once `/api/auth/me` reports `signedIn: true` **and**
 `marketing.optInActionable === true`. Emit the same four KPI events with
 `{ surface: "signin" }`. `marketing.status` reflects the **one** consent, so a
 customer subscribed to the shop's newsletter reads `"confirmed"` and
-`optInActionable: false` — don't ask them. Should the POST arrive for an
+`optInActionable: false` — don't ask them. Since 2026-10-05 `optInActionable`
+is also `false` after a `consent_gate_declined` in any of the customer's
+sessions in the last 30 days, or after the popup was shown in 3 of their
+sessions within 30 days (backend anti-nag, per customer, on every device —
+[`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §6.1); keep the widget's own
+device memory as is. Should the POST arrive for an
 already-subscribed address anyway, it sends no email and answers
 `confirmed` / `alreadyConfirmed: true`.
 
