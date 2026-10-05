@@ -1,6 +1,8 @@
 // E-Mail-Capture-Funnel — Angebot → Formular → Marketing-Haken → DOI-Klick.
 
 import type { EmailCaptureFunnel } from "@/lib/kpi-store";
+import type { KpiRange } from "@/lib/kpi-range";
+import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
 import { num, ratio } from "@/lib/admin-format.mjs";
 import { BarList, Stat } from "../../ui";
 
@@ -17,31 +19,35 @@ const TRIGGER_LABELS: Record<string, string> = {
   buying_intent: "Kaufabsicht",
   checkout_intent: "Checkout-Absicht",
   unspecified: "Ohne Angabe",
-  unknown: "Ohne Trigger",
+  none: "Ohne Auslöser",
+  other: "Anderer Wert",
 };
 
 const INFO = (
   <Explain>
     <p>
       Mo bietet die Chat-Zusammenfassung per E-Mail an: angeboten → Formular gesendet → Marketing-Haken
-      gesetzt → Double-Opt-in bestätigt.
+      gesetzt → Double-Opt-in bestätigt. Nur das Formular — das Popup nach der Anmeldung steht unter
+      „Einwilligung nach der Anmeldung“ (seit dem 05.10.2026 getrennt; ältere Events über ihren Auslöser).
     </p>
     <p>
       Ereigniszählung im Zeitraum (nicht pro Sitzung verkettet): ein DOI-Klick, der ein Opt-in vom
-      Vortag bestätigt, zählt im Zeitraum des Klicks. „Abgelehnt“ (Karte weggeklickt) wird vom Widget
-      gemeldet. Wirksam wird die Marketing-Einwilligung erst mit dem DOI-Klick.
+      Vortag bestätigt, zählt im Zeitraum des Klicks. DOI-Quote = bestätigt ÷ „DOI-Mail fällig“ — wer schon
+      abonniert ist oder gesperrt ist, bekommt keine DOI-Mail und zählt nicht im Nenner; ein fehlgeschlagener
+      Versand zählt mit. „Abgelehnt“ (Karte weggeklickt) meldet das Widget, einmal je Sitzung und Auslöser.
+      Wirksam wird die Marketing-Einwilligung erst mit dem DOI-Klick.
     </p>
   </Explain>
 );
 
-export function EmailCaptureSection({ funnel }: { funnel: EmailCaptureFunnel | null }) {
+export function EmailCaptureSection({ funnel, range }: { funnel: EmailCaptureFunnel | null; range: KpiRange }) {
   const empty = !funnel
     ? "Noch keine Daten."
     : funnel.askShown === 0 && funnel.submitted === 0
       ? "Noch keine Capture-Events im Zeitraum."
       : null;
   return (
-    <KpiSection id="capture" title="E-Mail-Capture-Funnel" info={INFO} empty={empty}>
+    <KpiSection id="capture" title="E-Mail-Capture-Funnel" info={INFO} empty={empty} notes={releaseNotesFor("capture", range)}>
       {funnel && (
         <>
           <FunnelLayout
@@ -62,11 +68,19 @@ export function EmailCaptureSection({ funnel }: { funnel: EmailCaptureFunnel | n
               value={num(funnel.submitted)}
               hint={funnel.submitRate == null ? undefined : `${ratio(funnel.submitRate)} der Angebote`}
             />
-            <Stat label="Marketing-Haken" value={num(funnel.marketingOptedIn)} />
+            <Stat
+              label="Marketing-Haken"
+              value={num(funnel.marketingOptedIn)}
+              hint={
+                funnel.marketingOptedIn > 0
+                  ? `${num(funnel.doiRequired)} DOI-Mail fällig · ${num(funnel.alreadySubscribed)} bereits abonniert${funnel.suppressed > 0 ? ` · ${num(funnel.suppressed)} gesperrt` : ""}`
+                  : undefined
+              }
+            />
             <Stat
               label="DOI bestätigt"
               value={num(funnel.confirmed)}
-              hint={funnel.doiRate == null ? undefined : `${ratio(funnel.doiRate)} der Opt-ins`}
+              hint={funnel.doiRate == null ? undefined : `${ratio(funnel.doiRate)} der fälligen DOI-Mails`}
             />
             <Stat label="Abgelehnt" value={num(funnel.declined)} hint="Karte weggeklickt (Widget)" />
           </FunnelLayout>

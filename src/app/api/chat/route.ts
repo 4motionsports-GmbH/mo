@@ -9,9 +9,21 @@ import {
   browsingPivotNote,
   buildSystemPrompt,
   greetingTriggerText,
+  pageCategoryPivotNote,
+  pagePivotNote,
   productPivotNote,
   type ProductContext,
 } from "@/lib/system-prompt";
+import {
+  contextSource,
+  countOtherCards,
+  countProductCards,
+  isPageContextHeldOut,
+  pageContextKind,
+  planPageContext,
+} from "@/lib/page-context.mjs";
+import { pageContextHoldoutPct } from "@/lib/page-context";
+import { isChatPageContextEnabled } from "@/lib/platform-flags.mjs";
 import { resolveLocale } from "@/lib/locale";
 import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-context";
 import { resolveChatIdentity } from "@/lib/customer-memory";
@@ -37,6 +49,8 @@ import { recordCampaignChatStarted } from "@/lib/campaign-store";
 import { isOrderStatusEnabledFor } from "@/lib/order-status";
 import {
   KPI_EMAIL_CAPTURE_ASK_SHOWN,
+  KPI_PAGE_CONTEXT_ANSWERED,
+  KPI_PAGE_CONTEXT_APPLIED,
   hasDeclinedEmailCapture,
   recordKpiEvent,
 } from "@/lib/kpi-events";
@@ -160,6 +174,8 @@ interface ChatRequestContext {
   productId?: unknown;
   productTitle?: unknown;
   recentlyViewed?: unknown;
+  /** "page" (facts of the open page on a typed turn), "cta", "nudge"; absent = today's behaviour (A3). */
+  source?: unknown;
 }
 
 // Optional re-identification the widget attaches ONLY after a successful
@@ -372,13 +388,45 @@ export async function POST(req: Request) {
     // browsing context (small recently-viewed trail brought along by the
     // user). Both validated against the catalog; unknown/absent ids leave
     // everything unchanged.
-    const productContext = await resolveProductContext(body.context);
-    const browsingContext =
-      body.context?.type === "product" || body.context?.type === "browsing"
-        ? await resolveBrowsingContext(body.context.recentlyViewed, {
-            excludeProductId: productContext?.id,
-          })
-        : undefined;
+    // A3: `source: "page"` = the facts of the open page on a TYPED turn (the
+    // product, or one category; never the trail). Used only behind
+    // CHAT_PAGE_CONTEXT_ENABLED and outside the control group; resolved in
+    // every arm so the measurement compares like with like. Any other source
+    // (CTA, nudge, older widgets without one) takes today's path.
+    const ctxSource = contextSource(body.context?.source);
+    const pageKind = ctxSource === "page" ? pageContextKind(body.context) : null;
+    const hasUserMessage = messages.some((m) => m.role === "user");
+    const pageCtxEnabled = isChatPageContextEnabled();
+    const pageCtxPct = pageContextHoldoutPct();
+    const pageCtxHeldOut =
+      pageCtxEnabled && pageKind === "product" && hasUserMessage && isPageContextHeldOut(sessionId, pageCtxPct);
+    let resolvedProduct: ProductContext | undefined;
+    let resolvedBrowsing: BrowsingContext | undefined;
+    if (ctxSource !== "page") {
+      resolvedProduct = await resolveProductContext(body.context);
+      resolvedBrowsing =
+        body.context?.type === "product" || body.context?.type === "browsing"
+          ? await resolveBrowsingContext(body.context.recentlyViewed, {
+              excludeProductId: resolvedProduct?.id,
+            })
+          : undefined;
+    } else if (hasUserMessage && pageKind === "product") {
+      resolvedProduct = await resolveProductContext(body.context);
+    } else if (hasUserMessage && pageKind === "collection") {
+      resolvedBrowsing = await resolveBrowsingContext(body.context?.recentlyViewed);
+    }
+    const pagePlan = planPageContext({
+      source: ctxSource,
+      kind: pageKind,
+      hasUserMessage,
+      enabled: pageCtxEnabled,
+      heldOut: pageCtxHeldOut,
+      pct: pageCtxPct,
+      productResolved: Boolean(resolvedProduct),
+      categoryResolved: Boolean(resolvedBrowsing?.categories.length),
+    });
+    const productContext = pagePlan.ground ? resolvedProduct : undefined;
+    const browsingContext = pagePlan.ground ? resolvedBrowsing : undefined;
 
     // Ground the context products in the pre-retrieved block so a contextual
     // first message ("Ist das gut für Zuhause?" sent from a product page) gets
@@ -430,12 +478,26 @@ export async function POST(req: Request) {
         }),
       });
     } else {
-      // Existing conversation (including a starter prompt sent as the first
-      // message): pivot via lightweight in-conversation notes appended to the
-      // latest user turn, leaving prior history intact — never wiped.
-      if (productContext) appendPivotNote(modelMessages, productPivotNote(productContext, locale));
-      if (browsingContext) appendPivotNote(modelMessages, browsingPivotNote(browsingContext, locale));
+      // Existing conversation (including a typed first message): pivot via
+      // lightweight in-conversation notes appended to the latest user turn,
+      // leaving prior history intact — never wiped. A page context (A3) gets
+      // the softer page note; held-out / switched-off / unresolved: none.
+      if (pagePlan.noteStyle === "page") {
+        if (productContext) appendPivotNote(modelMessages, pagePivotNote(productContext, locale));
+        else if (browsingContext?.categories[0])
+          appendPivotNote(modelMessages, pageCategoryPivotNote(browsingContext.categories[0], locale));
+      } else if (pagePlan.noteStyle === "default") {
+        if (productContext) appendPivotNote(modelMessages, productPivotNote(productContext, locale));
+        if (browsingContext) appendPivotNote(modelMessages, browsingPivotNote(browsingContext, locale));
+      }
     }
+
+    // A3 assignment, at request time (intention-to-treat): which arm this
+    // page-context turn is in. Not awaited before streaming; never throws.
+    const pageCtxAssignment =
+      pagePlan.event && sessionId
+        ? recordKpiEvent({ sessionId, event: KPI_PAGE_CONTEXT_APPLIED, data: { ...pagePlan.event, locale } })
+        : null;
 
     // The full tool set is always built (stable type for the forced-offer
     // prepareStep below); offer_email_summary is withheld from the model via
@@ -633,6 +695,20 @@ export async function POST(req: Request) {
               cacheWriteTokens: totalUsage?.inputTokenDetails?.cacheWriteTokens ?? 0,
             },
           });
+
+          // A3 outcome of a page-context turn: card counts only, never an id.
+          if (pageCtxAssignment && pagePlan.event) {
+            await pageCtxAssignment;
+            await recordKpiEvent({
+              sessionId,
+              event: KPI_PAGE_CONTEXT_ANSWERED,
+              data: {
+                kind: pagePlan.event.kind,
+                productCards: countProductCards(toolCalls),
+                otherCards: countOtherCards(toolCalls, resolvedProduct?.id),
+              },
+            });
+          }
 
           // Funnel telemetry: one pseudonymous event per email-summary offer
           // made in this turn, carrying the value moment that triggered it and

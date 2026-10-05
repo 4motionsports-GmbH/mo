@@ -80,20 +80,23 @@ async function pendingSurface(customerId: number): Promise<ConsentSource> {
  * opt-in. Pushed to Shopify at once (best-effort inline; the outbox cron
  * retries) — a Mo-only subscriber becomes a Shopify customer with the consent.
  */
-export async function recordDoiConfirmed(input: { email: string; captureId?: number | null }): Promise<void> {
+export async function recordDoiConfirmed(input: { email: string; captureId?: number | null }): Promise<ConsentSource | null> {
   const customerId = await customerIdForEmail(input.email);
-  if (!customerId) return;
+  if (!customerId) return null;
+  // The surface of the pending act, read BEFORE the subscribe act.
+  const source = await pendingSurface(customerId);
   const res = await applyConsentAct({
     customerId,
     incoming: {
       state: "subscribed",
       level: "confirmed_opt_in",
       at: new Date().toISOString(),
-      source: await pendingSurface(customerId),
+      source,
     },
     originRef: input.captureId ? `email_capture:${input.captureId}` : "doi",
   });
   if (res) await runOutboxInline(res.outboxIds);
+  return source;
 }
 
 /**

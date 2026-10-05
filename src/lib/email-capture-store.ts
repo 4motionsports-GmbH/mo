@@ -18,6 +18,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getSql, type Sql } from "./db";
 import { isValidEmail } from "./capture-validation.mjs";
 import { decideCaptureDoi } from "./email-capture-core.mjs";
+import { optInOutcome } from "./capture-funnel.mjs";
 import { normalizeLocale } from "./locale.mjs";
 import type { Locale } from "./locale";
 import { parseIntEnv } from "./env-num";
@@ -171,6 +172,10 @@ export interface UpsertCaptureResult {
    * no DOI mail.
    */
   subscribedElsewhere: boolean;
+  /** The address is on the suppression list (unsubscribed / bounced / complained). */
+  suppressed: boolean;
+  /** What a ticked marketing box led to (capture-funnel.mjs), null when not ticked. */
+  optInOutcome: "doi_required" | "already_confirmed" | "already_subscribed" | "suppressed" | null;
   /** The stored language for this address ("de" default). */
   locale: Locale;
 }
@@ -268,13 +273,22 @@ export async function upsertEmailCapture(
   const id = rows[0]?.id as number | undefined;
   if (id == null) return null;
 
+  const subscribedElsewhere = Boolean(input.marketingConsent && !suppressed && input.alreadySubscribed);
   return {
     id,
     email,
     marketingDoiStatus: status,
     doiToken,
     doiEmailRequired,
-    subscribedElsewhere: Boolean(input.marketingConsent && !suppressed && input.alreadySubscribed),
+    subscribedElsewhere,
+    suppressed,
+    optInOutcome: optInOutcome({
+      marketingConsent: Boolean(input.marketingConsent),
+      suppressed,
+      doiEmailRequired,
+      marketingDoiStatus: status,
+      subscribedElsewhere,
+    }),
     locale,
   };
 }

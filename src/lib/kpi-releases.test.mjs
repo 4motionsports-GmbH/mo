@@ -10,7 +10,7 @@ test("release keys are unique and dates ascend", () => {
 });
 
 test("releases are ordered and dated as documented", () => {
-  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05"]);
+  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05"]);
   assert.deepEqual(SIGNIN_OUTAGE, { from: "2026-10-03", to: "2026-10-04" });
   assert.equal(germanDay("2026-10-04"), "04.10.2026");
 });
@@ -21,7 +21,9 @@ test("a 30-day period across the releases annotates every affected section", () 
   assert.equal(popup.length, 2);
   assert.match(popup[0], /^Erst ab dem 04\.10\.2026 aussagekräftig/);
   assert.match(popup[1], /Vom 03\.10\.2026 bis zum Widget-Upload am 04\.10\.2026/);
-  assert.equal(releaseNotesFor("consent", range).length, 2);
+  assert.equal(releaseNotesFor("consent", range).length, 3);
+  assert.match(releaseNotesFor("consent", range)[1], /Ergebnis und Quelle der Opt-ins erst ab dem 05\.10\.2026/);
+  assert.equal(releaseNotesFor("capture", range).length, 1);
   assert.equal(releaseNotesFor("konto", range).length, 2);
   // Campaigns: only the mo_c note, no sign-in outage.
   const campaign = releaseNotesFor("campaign", range);
@@ -36,7 +38,7 @@ test("a period starting on the upload day needs no 'meaningful from' note, but s
 });
 
 test("a period entirely after the releases has no notes", () => {
-  for (const s of ["anmelde-popup", "consent", "konto", "campaign", "attribution"]) {
+  for (const s of ["anmelde-popup", "consent", "konto", "campaign", "attribution", "capture"]) {
     assert.deepEqual(releaseNotesFor(s, { from: "2026-10-05", to: "2026-11-03" }), []);
   }
 });
@@ -61,6 +63,7 @@ test("releasesInRange is inclusive on both ends", () => {
     "attribution-unresolved",
     "attribution-window",
     "signedin-offer-off",
+    "optin-measurement",
   ]);
   assert.deepEqual(releasesInRange({ from: "2026-10-06", to: "2026-10-30" }), []);
   assert.deepEqual(releasesInRange({ from: "bad", to: "2026-10-30" }), []);

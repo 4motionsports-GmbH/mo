@@ -6,12 +6,15 @@
 //
 //   npm run verify:live                       (since 2026-10-04, Europe/Berlin)
 //   npm run verify:live -- --since 2026-10-05
+//   npm run verify:live -- --since 2026-10-05 --session <sid prefix>   (section 9)
 //
 // Sections: 1 sign-in chain + diagnosis, 3 consent + no widget-sent erasures,
 // 4 campaign chat starts (once per send), 5 contact form, 6 order status,
 // 7 order attribution (pre-checks P1–P6; after migration 0076 the live
 // checks V0, V3, V4 and the kept tokens), 8 shop-login recognition (App
-// Proxy, P0.3). Manual whoami checks with session=livecheck-… never count.
+// Proxy, P0.3; manual whoami checks with session=livecheck-… never count),
+// 9 page context on typed product-page messages (A3; `--session <prefix>`
+// lists one session's rows).
 
 import { neon, neonConfig } from "@neondatabase/serverless";
 import { SIGNIN_DIAGNOSIS, classifySigninSession } from "../src/lib/kpi-widget-events.mjs";
@@ -172,23 +175,30 @@ table(
       LIMIT 25`
   )
 );
-console.log("Opt-ins über /api/account/marketing-opt-in (trigger signin_optin), nach DOI-Status:");
+console.log("Opt-ins nach Quelle und Ergebnis (seit 05.10.: source/outcome; ältere über trigger/doiStatus genähert):");
 table(
   await q(
-    `SELECT event, COALESCE(data->>'doiStatus', '–') AS doi_status, count(*)::int AS events
+    `SELECT COALESCE(data->>'source',
+                     CASE data->>'trigger' WHEN 'signin_optin' THEN 'mo_signin' WHEN 'chat_gate' THEN 'mo_chat_gate'
+                                           ELSE 'mo_capture_form' END) AS quelle,
+            COALESCE(data->>'outcome',
+                     CASE data->>'doiStatus' WHEN 'pending' THEN 'doi_required (genähert)'
+                                             WHEN 'confirmed' THEN 'already_confirmed (genähert)' ELSE 'unbekannt' END) AS ergebnis,
+            COALESCE(data->>'variant', '') AS variante, COALESCE(data->>'placement', '') AS platzierung,
+            count(*)::int AS events, count(DISTINCT session_id)::int AS sitzungen
        FROM kpi_events
-      WHERE event IN ('email_capture_submitted', 'email_capture_marketing_opted_in')
-        AND data->>'trigger' = 'signin_optin' AND created_at >= ${SINCE}
-      GROUP BY 1, 2 ORDER BY 1, 2`
+      WHERE event = 'email_capture_marketing_opted_in' AND created_at >= ${SINCE}
+      GROUP BY 1, 2, 3, 4 ORDER BY 1, 2`
   )
 );
-console.log("DOI-Bestätigungen (Klick auf den Link; das Opt-in-Event selbst ändert sich nie):");
+console.log("DOI-Bestätigungen nach Quelle (Klick auf den Link; das Opt-in-Event selbst ändert sich nie):");
 table(
   await q(
-    `SELECT count(*)::int AS bestaetigt, min(created_at) AS first, max(created_at) AS last
+    `SELECT COALESCE(data->>'source', '(vor 05.10.)') AS quelle, count(*)::int AS bestaetigt,
+            min(created_at) AS first, max(created_at) AS last
        FROM kpi_events
       WHERE event = 'email_capture_marketing_confirmed' AND created_at >= ${SINCE}
-     HAVING count(*) > 0`
+      GROUP BY 1 ORDER BY 1`
   )
 );
 console.log("Einwilligungs-Ereignisse aus Mo (consent_events; mo_signin = Popup nach der Anmeldung):");
@@ -429,3 +439,34 @@ table(
        FROM per`
   )
 );
+
+// ---------------------------------------------------------------------------
+head("9 · Seitenkontext auf Produktseiten (A3)");
+const sessionArg = args.includes("--session") ? String(args[args.indexOf("--session") + 1] ?? "") : "";
+console.log("page_context_applied nach Art / Gruppe / erkannt / Sprache / Anteil:");
+table(
+  await q(
+    `SELECT data->>'kind' AS art, data->>'applied' AS angewendet, data->>'resolved' AS erkannt,
+            COALESCE(data->>'locale', '') AS sprache, data->>'pct' AS anteil,
+            count(*)::int AS events, count(DISTINCT session_id)::int AS sitzungen
+       FROM kpi_events WHERE event = 'page_context_applied' AND created_at >= ${SINCE}
+      GROUP BY 1, 2, 3, 4, 5 ORDER BY 7 DESC`
+  )
+);
+if (/^[A-Za-z0-9_-]{4,64}$/.test(sessionArg)) {
+  console.log(`Sitzung ${sessionArg}… — Seitenkontext, Antworten, Produkt-Klicks:`);
+  const rows = await q(
+    `SELECT session_id, event, created_at,
+            CASE WHEN event = 'page_context_applied'
+                 THEN jsonb_build_object('applied', data->'applied', 'kind', data->'kind', 'resolved', data->'resolved', 'locale', data->'locale', 'pct', data->'pct')
+                 WHEN event = 'page_context_answered'
+                 THEN jsonb_build_object('productCards', data->'productCards', 'otherCards', data->'otherCards')
+                 ELSE jsonb_build_object('samePage', data->'samePage') END AS daten
+       FROM kpi_events
+      WHERE event IN ('page_context_applied', 'page_context_answered', 'product_cta_clicked')
+        AND session_id LIKE $2 || '%' AND created_at >= ${SINCE}
+      ORDER BY created_at LIMIT 50`,
+    [sessionArg]
+  );
+  table(rows.map((r) => ({ sitzung: short(r.session_id), event: r.event, zeit: r.created_at, daten: JSON.stringify(r.daten) })));
+}
