@@ -6,6 +6,7 @@
 
 import { getSql } from "./db";
 import { reportError } from "./observability";
+import { eventSource } from "./capture-funnel.mjs";
 
 // ---------------------------------------------------------------------------
 // Email-capture funnel (value-triggered capture experiment)
@@ -112,6 +113,18 @@ export const KPI_ORDER_STATUS_LOOKUP = "order_status_lookup";
  * was recorded — never an order id, token or amount. */
 export const KPI_MO_ORDER_MARKER_UNRESOLVED = "mo_order_marker_unresolved";
 
+// ---------------------------------------------------------------------------
+// Page context on typed product-page messages (A3, server-emitted, /api/chat)
+// ---------------------------------------------------------------------------
+
+/** One per `context.source: "page"` request, written when it arrives (the arm).
+ * `data: {applied, kind: product|collection, resolved, locale, pct}` — pct is
+ * the control-group share in force (100 while the switch is off, 0 for
+ * collections). Session-keyed, no product id. */
+export const KPI_PAGE_CONTEXT_APPLIED = "page_context_applied";
+/** When that turn finished: `{kind, productCards, otherCards}` — counts only. */
+export const KPI_PAGE_CONTEXT_ANSWERED = "page_context_answered";
+
 /**
  * Record one pseudonymous KPI event from server code. Same table and shape as
  * the widget's fail-silent track() → POST /api/kpi path, so dashboard
@@ -131,6 +144,34 @@ export async function recordKpiEvent(opts: {
     `;
   } catch (err) {
     reportError(err, { route: "lib/kpi-events", phase: "insert", event: opts.event });
+  }
+}
+
+/**
+ * The source of the session's latest opt-in that needed a DOI mail (OI1 §4):
+ * the surface a DOI click in that session confirms. Legacy rows (no `source`)
+ * map through their trigger. Null on no row, no DB or an error.
+ */
+export async function latestDoiOptInSource(sessionId: string | null): Promise<string | null> {
+  if (!sessionId) return null;
+  const sql = getSql();
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT COALESCE(data->>'source', '') AS source, COALESCE(data->>'trigger', '') AS trigger
+        FROM kpi_events
+       WHERE session_id = ${sessionId}
+         AND event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+         AND (data->>'outcome' = 'doi_required'
+              OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending'))
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+    `) as Array<{ source: string; trigger: string }>;
+    const r = rows[0];
+    return r ? eventSource(r.source, r.trigger) : null;
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-events", phase: "latestDoiOptInSource" });
+    return null;
   }
 }
 

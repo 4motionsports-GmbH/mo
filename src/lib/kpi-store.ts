@@ -35,7 +35,10 @@ import {
   KPI_ACCOUNT_ERASED,
   KPI_CONTACT_FORM_SUBMITTED,
   KPI_ORDER_STATUS_LOOKUP,
+  KPI_PAGE_CONTEXT_APPLIED,
+  KPI_PAGE_CONTEXT_ANSWERED,
 } from "./kpi-events";
+import { PAGE_CONTEXT_EXPERIMENT, summarisePageContextRows } from "./page-context.mjs";
 // The two headline click-signal shapes — shared with the Gespräche inspector
 // and the Komplettanalyse (kpi-event-patterns.mjs) so the definition of a
 // "click" can never drift between surfaces.
@@ -51,7 +54,10 @@ import {
   loginGateRates,
   shopRecognitionRates,
   signinSource,
+  normalizeConsentVariantRows,
 } from "./kpi-widget-events.mjs";
+import { isKnownSigninVariant, normalizePlacement } from "./consent-variants.mjs";
+import { OFFER_TRIGGERS, normaliseTrigger } from "./capture-funnel.mjs";
 
 export interface DailyCount {
   /** ISO date (YYYY-MM-DD). */
@@ -275,6 +281,23 @@ export interface ConsentGateFunnel {
    * (email_capture_marketing_opted_in, trigger signin_optin) in the period.
    */
   signinByWay: Record<"signin" | "shop" | "unknown", { shown: number; accepted: number; declined: number; optedIn: number }>;
+  /** The popup after a sign-in by framing variant and placement (OI3), sessions; display keys normalised. */
+  byVariant: ConsentVariantRow[];
+}
+
+export interface ConsentVariantRow {
+  variant: string;
+  placement: string;
+  shown: number;
+  accepted: number;
+  declined: number;
+  dismissed: number;
+  acceptedWithoutShown: number;
+  optedIn: number;
+  alreadyConfirmed: number;
+  doiRequired: number;
+  doiConfirmed: number;
+  variantMismatch: number;
 }
 
 const EMPTY_GATE_COUNTS: ConsentGateCounts = {
@@ -298,7 +321,7 @@ export async function getConsentGateFunnel(
 ): Promise<ConsentGateFunnel | null> {
   if (!sql) return null;
   try {
-    const [rows, wayRows] = await Promise.all([
+    const [rows, wayRows, variantGateRows, variantOptInRows] = await Promise.all([
       sql`
         SELECT event,
                COALESCE(data->>'surface', '') AS surface,
@@ -344,6 +367,59 @@ export async function getConsentGateFunnel(
           FROM w
          GROUP BY 1
       `,
+      sql`
+        WITH gate AS (
+          SELECT session_id,
+                 CASE WHEN data->>'variant' ~ '^[a-z0-9_-]{1,32}$' THEN data->>'variant'
+                      WHEN data ? 'variant' THEN '?' ELSE '' END AS variant,
+                 CASE WHEN data->>'placement' ~ '^[a-z_]{1,32}$' THEN data->>'placement'
+                      WHEN data ? 'placement' THEN '?' ELSE '' END AS placement,
+                 bool_or(event = ${KPI_CONSENT_GATE_SHOWN}) AS shown,
+                 bool_or(event = ${KPI_CONSENT_GATE_ACCEPTED}) AS accepted,
+                 bool_or(event = ${KPI_CONSENT_GATE_DECLINED}) AS declined,
+                 bool_or(event = ${KPI_CONSENT_GATE_DISMISSED}) AS dismissed
+            FROM kpi_events
+           WHERE event IN (${KPI_CONSENT_GATE_SHOWN}, ${KPI_CONSENT_GATE_ACCEPTED},
+                           ${KPI_CONSENT_GATE_DECLINED}, ${KPI_CONSENT_GATE_DISMISSED})
+             AND data->>'surface' = 'signin' AND session_id IS NOT NULL
+             AND created_at >= ${range.from}::date AND created_at < (${range.to}::date + 1)
+           GROUP BY 1, 2, 3)
+        SELECT variant, placement,
+               count(*) FILTER (WHERE shown)::int AS shown,
+               count(*) FILTER (WHERE shown AND accepted)::int AS accepted,
+               count(*) FILTER (WHERE shown AND declined AND NOT accepted)::int AS declined,
+               count(*) FILTER (WHERE shown AND dismissed AND NOT accepted AND NOT declined)::int AS dismissed,
+               count(*) FILTER (WHERE accepted AND NOT shown)::int AS accepted_without_shown
+          FROM gate GROUP BY 1, 2
+      `,
+      sql`
+        WITH o AS (
+          SELECT session_id,
+                 CASE WHEN data->>'variant' ~ '^[a-z0-9_-]{1,32}$' THEN data->>'variant'
+                      WHEN data ? 'variant' THEN '?' ELSE '' END AS variant,
+                 CASE WHEN data->>'placement' ~ '^[a-z_]{1,32}$' THEN data->>'placement'
+                      WHEN data ? 'placement' THEN '?' ELSE '' END AS placement,
+                 min(created_at) AS at,
+                 bool_or(COALESCE((data->>'alreadyConfirmed')::boolean, data->>'doiStatus' = 'confirmed')) AS already_confirmed,
+                 bool_or(COALESCE((data->>'doiRequired')::boolean, data->>'doiStatus' = 'pending')) AS doi_required,
+                 bool_or(COALESCE((data->>'variantMismatch')::boolean, false)) AS variant_mismatch
+            FROM kpi_events
+           WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+             AND data->>'trigger' = 'signin_optin' AND session_id IS NOT NULL
+             AND created_at >= ${range.from}::date AND created_at < (${range.to}::date + 1)
+           GROUP BY 1, 2, 3)
+        SELECT variant, placement,
+               count(*)::int AS opted_in,
+               count(*) FILTER (WHERE already_confirmed)::int AS already_confirmed,
+               count(*) FILTER (WHERE doi_required)::int AS doi_required,
+               count(*) FILTER (WHERE doi_required AND EXISTS (
+                 SELECT 1 FROM kpi_events c
+                  WHERE c.session_id = o.session_id
+                    AND c.event = ${KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED}
+                    AND c.created_at >= o.at))::int AS doi_confirmed,
+               count(*) FILTER (WHERE variant_mismatch)::int AS variant_mismatch
+          FROM o GROUP BY 1, 2
+      `,
     ]);
 
     const emptyWay = () => ({ shown: 0, accepted: 0, declined: 0, optedIn: 0 });
@@ -351,6 +427,30 @@ export async function getConsentGateFunnel(
       total: { ...EMPTY_GATE_COUNTS },
       bySurface: { chat: { ...EMPTY_GATE_COUNTS }, signin: { ...EMPTY_GATE_COUNTS } },
       signinByWay: { signin: emptyWay(), shop: emptyWay(), unknown: emptyWay() },
+      byVariant: normalizeConsentVariantRows(
+        [
+          ...(variantGateRows as Array<Record<string, unknown>>).map((r) => ({
+            variant: r.variant,
+            placement: r.placement,
+            shown: r.shown,
+            accepted: r.accepted,
+            declined: r.declined,
+            dismissed: r.dismissed,
+            acceptedWithoutShown: r.accepted_without_shown,
+          })),
+          ...(variantOptInRows as Array<Record<string, unknown>>).map((r) => ({
+            variant: r.variant,
+            placement: r.placement,
+            optedIn: r.opted_in,
+            alreadyConfirmed: r.already_confirmed,
+            doiRequired: r.doi_required,
+            doiConfirmed: r.doi_confirmed,
+            variantMismatch: r.variant_mismatch,
+          })),
+        ],
+        (id: string) => isKnownSigninVariant(id),
+        (p: string) => normalizePlacement(p)
+      ) as unknown as ConsentVariantRow[],
     };
     for (const r of wayRows as Array<{ way: string; shown: number; accepted: number; declined: number; opted_in: number }>) {
       const way = r.way === "signin" || r.way === "shop" ? r.way : "unknown";
@@ -376,6 +476,21 @@ export async function getConsentGateFunnel(
         funnel.bySurface[r.surface][key] += n;
       }
     }
+    // The popup after a sign-in counts SESSIONS with their final state (OI1
+    // §6): accepted beats declined beats dismissed, so an accept followed by
+    // Esc on the success view counts once. Sums of the per-variant session rows.
+    const sessionCounts = { ...EMPTY_GATE_COUNTS };
+    for (const r of variantGateRows as Array<Record<string, unknown>>) {
+      sessionCounts.shown += Number(r.shown ?? 0);
+      sessionCounts.accepted += Number(r.accepted ?? 0);
+      sessionCounts.declined += Number(r.declined ?? 0);
+      sessionCounts.dismissed += Number(r.dismissed ?? 0);
+    }
+    funnel.total.shown += sessionCounts.shown - funnel.bySurface.signin.shown;
+    funnel.total.accepted += sessionCounts.accepted - funnel.bySurface.signin.accepted;
+    funnel.total.declined += sessionCounts.declined - funnel.bySurface.signin.declined;
+    funnel.total.dismissed += sessionCounts.dismissed - funnel.bySurface.signin.dismissed;
+    funnel.bySurface.signin = sessionCounts;
     return funnel;
   } catch (err) {
     reportError(err, { route: "lib/kpi-store", phase: "getConsentGateFunnel" });
@@ -659,30 +774,35 @@ export async function getOrderStatusKpis(
 export interface EmailCaptureFunnel {
   /** Mo made the email-summary offer (server-emitted, one per tool call). */
   askShown: number;
-  /** The user submitted the capture form (transactional consent). */
+  /** The capture FORM was submitted (transactional consent). Since OI1 the
+   * sign-in opt-in and the retired chat gate are left out (their own sections). */
   submitted: number;
-  /** The user also ticked the separate marketing checkbox (pre-DOI intent). */
+  /** The form's separate marketing box was ticked. */
   marketingOptedIn: number;
-  /** The user clicked the DOI link — marketing consent confirmed. */
+  /** Of those, a DOI mail was due („DOI-Mail fällig“; a failed send still counts). */
+  doiRequired: number;
+  /** Of those, the address was already subscribed (Mo DOI or Shopify) — no DOI. */
+  alreadySubscribed: number;
+  /** Of those, the address is suppressed (unsubscribed / bounced) — no DOI. */
+  suppressed: number;
+  /** DOI links clicked for capture-form opt-ins (source mo_capture_form; legacy rows by their session). */
   confirmed: number;
-  /** Widget-emitted: the capture card was dismissed/declined. */
+  /** Capture cards dismissed (widget), once per session and trigger. */
   declined: number;
   /** submitted / askShown — null when nothing was asked. */
   submitRate: number | null;
-  /** confirmed / marketingOptedIn — null when nobody opted in. */
+  /** confirmed / doiRequired — null when no DOI mail was due. */
   doiRate: number | null;
-  /** askShown split by the offer trigger (data.trigger from the tool call);
-   * events without a trigger land under "unknown". */
+  /** askShown by the offer trigger, bounded ('other' for unknown values). */
   asksByTrigger: Array<{ trigger: string; count: number }>;
 }
 
 /**
- * Aggregate the five canonical email-capture events (lib/kpi-events) over the
- * selected window. Counts are per-event, not per-session — each stage counts
- * events INSIDE the window, so a DOI click confirming yesterday's opt-in counts
- * in today's `confirmed` (documented in the UI caveat; the stages are close
- * enough in time that the funnel reads correctly at every practical window).
- * Returns null when no DB is configured or on a hard failure.
+ * The capture form's funnel over the selected window (OI1): offer → form →
+ * marketing box → DOI click. Event counts inside the window (a DOI click on
+ * yesterday's opt-in counts today). Only the capture form: opt-ins carry
+ * `source` since 05.10.2026; older rows are told apart by their server-set
+ * trigger (signin_optin / chat_gate). Returns null without a DB or on failure.
  */
 export async function getEmailCaptureFunnel(
   range: KpiRange,
@@ -690,9 +810,43 @@ export async function getEmailCaptureFunnel(
 ): Promise<EmailCaptureFunnel | null> {
   if (!sql) return null;
   try {
+    const knownTriggers = [...OFFER_TRIGGERS];
     const [countRows, triggerRows] = await Promise.all([
       sql`
-        SELECT event, count(*)::int AS n
+        SELECT
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_ASK_SHOWN})::int AS ask_shown,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_SUBMITTED}
+                             AND (data->>'source' = 'mo_capture_form'
+                                  OR (data->>'source' IS NULL
+                                      AND COALESCE(data->>'trigger', '') NOT IN ('signin_optin', 'chat_gate'))))::int AS submitted,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                             AND (data->>'source' = 'mo_capture_form'
+                                  OR (data->>'source' IS NULL
+                                      AND COALESCE(data->>'trigger', '') NOT IN ('signin_optin', 'chat_gate'))))::int AS opted_in,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                             AND (data->>'source' = 'mo_capture_form'
+                                  OR (data->>'source' IS NULL
+                                      AND COALESCE(data->>'trigger', '') NOT IN ('signin_optin', 'chat_gate')))
+                             AND (data->>'outcome' = 'doi_required'
+                                  OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending')))::int AS doi_required,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                             AND (data->>'source' = 'mo_capture_form'
+                                  OR (data->>'source' IS NULL
+                                      AND COALESCE(data->>'trigger', '') NOT IN ('signin_optin', 'chat_gate')))
+                             AND (data->>'outcome' IN ('already_confirmed', 'already_subscribed')
+                                  OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'confirmed')))::int AS already_subscribed,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                             AND data->>'source' = 'mo_capture_form'
+                             AND data->>'outcome' = 'suppressed')::int AS suppressed,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED}
+                             AND (data->>'source' = 'mo_capture_form'
+                                  OR (data->>'source' IS NULL AND NOT EXISTS (
+                                        SELECT 1 FROM kpi_events o
+                                         WHERE o.session_id = kpi_events.session_id
+                                           AND o.event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                                           AND o.data->>'trigger' IN ('signin_optin', 'chat_gate')))))::int AS confirmed,
+          count(DISTINCT COALESCE(session_id, '') || '|' || COALESCE(data->>'trigger', ''))
+            FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_DECLINED})::int AS declined
           FROM kpi_events
          WHERE event IN (${KPI_EMAIL_CAPTURE_ASK_SHOWN}, ${KPI_EMAIL_CAPTURE_SUBMITTED},
                          ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN},
@@ -700,10 +854,11 @@ export async function getEmailCaptureFunnel(
                          ${KPI_EMAIL_CAPTURE_DECLINED})
            AND created_at >= ${range.from}::date
            AND created_at < (${range.to}::date + 1)
-         GROUP BY event
       `,
       sql`
-        SELECT COALESCE(NULLIF(data->>'trigger', ''), 'unknown') AS trigger,
+        SELECT CASE WHEN COALESCE(data->>'trigger', '') = '' THEN 'none'
+                    WHEN data->>'trigger' = ANY(${knownTriggers}::text[]) THEN data->>'trigger'
+                    ELSE 'other' END AS trigger,
                count(*)::int AS n
           FROM kpi_events
          WHERE event = ${KPI_EMAIL_CAPTURE_ASK_SHOWN}
@@ -714,26 +869,26 @@ export async function getEmailCaptureFunnel(
       `,
     ]);
 
-    const byEvent: Record<string, number> = {};
-    for (const r of countRows as Array<{ event: string; n: number }>) {
-      byEvent[r.event] = Number(r.n);
-    }
-    const askShown = byEvent[KPI_EMAIL_CAPTURE_ASK_SHOWN] ?? 0;
-    const submitted = byEvent[KPI_EMAIL_CAPTURE_SUBMITTED] ?? 0;
-    const marketingOptedIn = byEvent[KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN] ?? 0;
-    const confirmed = byEvent[KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED] ?? 0;
-
+    const r = ((countRows as Array<Record<string, unknown>>)[0] ?? {}) as Record<string, unknown>;
+    const n = (k: string) => Number(r[k] ?? 0);
+    const askShown = n("ask_shown");
+    const submitted = n("submitted");
+    const doiRequired = n("doi_required");
+    const confirmed = n("confirmed");
     return {
       askShown,
       submitted,
-      marketingOptedIn,
+      marketingOptedIn: n("opted_in"),
+      doiRequired,
+      alreadySubscribed: n("already_subscribed"),
+      suppressed: n("suppressed"),
       confirmed,
-      declined: byEvent[KPI_EMAIL_CAPTURE_DECLINED] ?? 0,
-      submitRate: askShown > 0 ? submitted / askShown : null,
-      doiRate: marketingOptedIn > 0 ? confirmed / marketingOptedIn : null,
-      asksByTrigger: (triggerRows as Array<{ trigger: string; n: number }>).map((r) => ({
-        trigger: String(r.trigger),
-        count: Number(r.n),
+      declined: n("declined"),
+      submitRate: askShown > 0 ? Math.min(1, submitted / askShown) : null,
+      doiRate: doiRequired > 0 ? Math.min(1, confirmed / doiRequired) : null,
+      asksByTrigger: (triggerRows as Array<{ trigger: string; n: number }>).map((t) => ({
+        trigger: normaliseTrigger(String(t.trigger) === "none" ? "" : String(t.trigger)),
+        count: Number(t.n),
       })),
     } satisfies EmailCaptureFunnel;
   } catch (err) {
@@ -999,6 +1154,111 @@ export async function getAccountActivity(
     return activity;
   } catch (err) {
     reportError(err, { route: "lib/kpi-store", phase: "getAccountActivity" });
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Page context on typed product-page messages (A3) — coverage and, while a
+// control group runs, the pre-registered comparison. Pure DB, never cached.
+// ---------------------------------------------------------------------------
+
+export type PageContextKpis = ReturnType<typeof summarisePageContextRows> & {
+  collection: { sessions: number; resolved: number };
+  experiment: typeof PAGE_CONTEXT_EXPERIMENT;
+};
+
+export async function getPageContextKpis(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<PageContextKpis | null> {
+  if (!sql) return null;
+  try {
+    const [rows, collectionRows] = await Promise.all([
+      sql`
+        WITH pc AS (
+          SELECT session_id,
+                 min(created_at) AS first_at,
+                 bool_and((data->>'applied')::boolean) AS all_applied,
+                 bool_or((data->>'applied')::boolean)  AS any_applied,
+                 bool_or((data->>'resolved')::boolean) AS resolved,
+                 min(COALESCE((data->>'pct')::int, -1)) AS pct_min,
+                 max(COALESCE((data->>'pct')::int, -1)) AS pct_max,
+                 (array_agg(data->>'locale' ORDER BY created_at))[1] AS locale,
+                 count(*)::int AS turns
+            FROM kpi_events
+           WHERE event = ${KPI_PAGE_CONTEXT_APPLIED} AND data->>'kind' = 'product'
+             AND session_id IS NOT NULL
+             AND created_at >= ${range.from}::date AND created_at < (${range.to}::date + 1)
+           GROUP BY session_id
+        ), answered AS (
+          SELECT a.session_id,
+                 (array_agg(COALESCE((a.data->>'productCards')::int, 0) ORDER BY a.created_at))[1] AS first_cards,
+                 (array_agg(COALESCE((a.data->>'otherCards')::int, 0) ORDER BY a.created_at))[1] AS first_other_cards
+            FROM kpi_events a JOIN pc ON pc.session_id = a.session_id
+           WHERE a.event = ${KPI_PAGE_CONTEXT_ANSWERED} AND a.data->>'kind' = 'product'
+             AND a.created_at >= pc.first_at AND a.created_at < pc.first_at + interval '24 hours'
+           GROUP BY a.session_id
+        ), primed AS (
+          SELECT DISTINCT e.session_id FROM kpi_events e JOIN pc ON pc.session_id = e.session_id
+           WHERE e.event IN ('product_cta_opened', 'nudge_clicked')
+             AND e.created_at < pc.first_at AND e.created_at >= pc.first_at - interval '24 hours'
+        ), outcome AS (
+          SELECT e.session_id,
+                 bool_or(e.event ILIKE ${CTA_PATTERNS[0]} OR e.event ILIKE ${CTA_PATTERNS[1]}) AS clicked,
+                 bool_or((e.event ILIKE ${CTA_PATTERNS[0]} OR e.event ILIKE ${CTA_PATTERNS[1]})
+                         AND COALESCE(e.data->>'samePage', '') <> 'true') AS clicked_other,
+                 bool_or(e.event ILIKE ${CART_PATTERNS[0]} OR e.event ILIKE ${CART_PATTERNS[1]}) AS cart,
+                 bool_or(e.event = 'product_cta_opened') AS cta_after
+            FROM kpi_events e JOIN pc ON pc.session_id = e.session_id
+           WHERE e.created_at >= pc.first_at AND e.created_at < pc.first_at + interval '24 hours'
+           GROUP BY e.session_id
+        ), orders AS (
+          SELECT o.session_id, bool_or(o.attribution_tier = 'assisted') AS assisted
+            FROM mo_orders o JOIN pc ON pc.session_id = o.session_id
+           WHERE o.processed_at >= pc.first_at AND o.processed_at < pc.first_at + interval '7 days'
+           GROUP BY o.session_id
+        )
+        SELECT CASE WHEN pc.all_applied THEN 'applied' WHEN NOT pc.any_applied THEN 'holdout' ELSE 'mixed' END AS arm,
+               CASE WHEN pc.pct_min = pc.pct_max THEN pc.pct_min ELSE -1 END AS pct,
+               pc.resolved, (primed.session_id IS NOT NULL) AS primed, COALESCE(pc.locale, 'de') AS locale,
+               (pc.first_at > now() - interval '24 hours') AS click_window_open,
+               count(*)::int AS sessions, sum(pc.turns)::int AS turns,
+               count(*) FILTER (WHERE a.session_id IS NULL)::int AS unanswered,
+               count(*) FILTER (WHERE a.first_cards > 0)::int AS first_card,
+               count(*) FILTER (WHERE a.first_other_cards > 0)::int AS first_other_card,
+               count(*) FILTER (WHERE o.clicked)::int AS clicked,
+               count(*) FILTER (WHERE o.clicked_other)::int AS clicked_other,
+               count(*) FILTER (WHERE o.cart)::int AS cart,
+               count(*) FILTER (WHERE o.cta_after)::int AS cta_after,
+               count(*) FILTER (WHERE pc.first_at <= now() - interval '7 days')::int AS order_window_closed,
+               count(*) FILTER (WHERE pc.first_at <= now() - interval '7 days' AND r.session_id IS NOT NULL)::int AS ordered,
+               count(*) FILTER (WHERE pc.first_at <= now() - interval '7 days' AND r.assisted)::int AS ordered_assisted
+          FROM pc LEFT JOIN primed ON primed.session_id = pc.session_id
+                  LEFT JOIN answered a ON a.session_id = pc.session_id
+                  LEFT JOIN outcome o ON o.session_id = pc.session_id
+                  LEFT JOIN orders r ON r.session_id = pc.session_id
+         GROUP BY 1, 2, 3, 4, 5, 6
+      `,
+      sql`
+        SELECT count(DISTINCT session_id)::int AS sessions,
+               count(DISTINCT session_id) FILTER (WHERE (data->>'resolved')::boolean)::int AS resolved
+          FROM kpi_events
+         WHERE event = ${KPI_PAGE_CONTEXT_APPLIED} AND data->>'kind' = 'collection'
+           AND session_id IS NOT NULL
+           AND created_at >= ${range.from}::date AND created_at < (${range.to}::date + 1)
+      `,
+    ]);
+    const experiment = PAGE_CONTEXT_EXPERIMENT as { from: string; pct: number; targetPerArm: { applied: number; holdout: number } } | null;
+    const inExperiment = experiment && range.from >= experiment.from ? experiment : null;
+    const c = ((collectionRows as Array<Record<string, unknown>>)[0] ?? {}) as Record<string, unknown>;
+    return {
+      ...summarisePageContextRows(rows as Array<Record<string, unknown>>, inExperiment),
+      collection: { sessions: Number(c.sessions ?? 0), resolved: Number(c.resolved ?? 0) },
+      experiment: PAGE_CONTEXT_EXPERIMENT,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-store", phase: "getPageContextKpis" });
     return null;
   }
 }

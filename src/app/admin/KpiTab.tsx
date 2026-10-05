@@ -18,6 +18,7 @@ import {
   getLocaleSplit,
   getLoginGateFunnel,
   getOrderStatusKpis,
+  getPageContextKpis,
   getSigninDiagnosis,
 } from "@/lib/kpi-store";
 import { germanDay, releasesInRange } from "@/lib/kpi-releases.mjs";
@@ -59,6 +60,7 @@ import { KundenbasisSection } from "./kpi/sections/KundenbasisSection";
 import { MoEffektSection } from "./kpi/sections/MoEffektSection";
 import { EingangSection } from "./kpi/sections/EingangSection";
 import { OrderStatusSection } from "./kpi/sections/OrderStatusSection";
+import { PageContextSection } from "./kpi/sections/PageContextSection";
 
 export async function KpiTab({
   dbReady,
@@ -102,6 +104,7 @@ export async function KpiTab({
     loginGate,
     signinDiagnosis,
     orderStatus,
+    pageContext,
   ] = await Promise.all([
     getCoreMetrics(range),
     getMoAttributionKpis(range),
@@ -124,6 +127,7 @@ export async function KpiTab({
     getLoginGateFunnel(range),
     getSigninDiagnosis(range),
     getOrderStatusKpis(range),
+    getPageContextKpis(range),
   ]);
 
   const [beratung, marketing, umsatz, kosten, gesamt] = KPI_GROUPS;
@@ -155,6 +159,7 @@ export async function KpiTab({
 
       <Group group={beratung}>
         <CoreSection core={core} range={range} />
+        <PageContextSection kpis={pageContext} range={range} />
         <LocaleSection locales={locales} />
         <QualitySection stats={quality} />
         <QaSection kpis={qa} />
@@ -166,7 +171,7 @@ export async function KpiTab({
       <Group group={marketing}>
         <LoginGateSection funnel={loginGate} diagnosis={signinDiagnosis} range={range} />
         <ConsentGateSection funnel={gateFunnel} range={range} />
-        <EmailCaptureSection funnel={captureFunnel} />
+        <EmailCaptureSection funnel={captureFunnel} range={range} />
         <CampaignSection cached={shopify.campaign} range={range} />
         <EingangSection kpis={inboxKpis} />
         <BundleSection kpis={bundles} />

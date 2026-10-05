@@ -35,6 +35,27 @@ export function productPivotNote(ctx, locale) {
   return `(Hinweis aus dem Storefront: Der Nutzer schaut sich gerade das Produkt "${ctx.name}" (id ${ctx.id}) an und möchte sich vermutlich dazu beraten lassen. Beziehe dich natürlich darauf, ohne das bisherige Gespräch zu ignorieren.)`;
 }
 
+/**
+ * A3: the user TYPED a message on a product page (`context.source: "page"`).
+ * Softer than productPivotNote — the page is a hint, not the topic. No
+ * instruction about cards: the product card is what marks the product as
+ * discussed and mints the attribution token.
+ */
+export function pagePivotNote(ctx, locale) {
+  if (locale === "en") {
+    return `(Note from the storefront: the user is writing from the product page "${ctx.name}" (id ${ctx.id}). If their question is about a product and they name no other, they probably mean this one. For other requests (e.g. orders, shipping, returns) ignore this note. Never comment on which page they are viewing, and don't ignore the conversation so far.)`;
+  }
+  return `(Hinweis aus dem Storefront: Der Nutzer schreibt von der Produktseite "${ctx.name}" (id ${ctx.id}). Bezieht sich seine Frage auf ein Produkt und nennt er kein anderes, ist vermutlich dieses gemeint. Bei anderen Anliegen (z. B. Bestellung, Versand, Rückgabe) ignoriere den Hinweis. Kommentiere nie, welche Seite er gerade ansieht, und ignoriere das bisherige Gespräch nicht.)`;
+}
+
+/** A3: a typed message on a collection (category) page. */
+export function pageCategoryPivotNote(ctx, locale) {
+  if (locale === "en") {
+    return `(Note from the storefront: the user is writing from the category page "${ctx.name}". If they ask about products in general without naming a category, they probably mean this one. For other requests ignore this note. Never comment on which page they are viewing, and don't ignore the conversation so far.)`;
+  }
+  return `(Hinweis aus dem Storefront: Der Nutzer schreibt von der Kategorieseite "${ctx.name}". Fragt er allgemein nach Produkten, ohne eine Kategorie zu nennen, ist vermutlich diese gemeint. Bei anderen Anliegen ignoriere den Hinweis. Kommentiere nie, welche Seite er gerade ansieht, und ignoriere das bisherige Gespräch nicht.)`;
+}
+
 function renderProductContext(ctx, locale) {
   // System-level greeting seed for a fresh open from a product page. Kept short
   // and directive — the model turns it into a natural first message.

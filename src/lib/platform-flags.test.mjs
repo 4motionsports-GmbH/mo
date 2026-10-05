@@ -8,6 +8,7 @@ import {
   isChatOrderStatusEnabled,
   isAttributionSessionAnchorEnabled,
   isAppProxySigninEnabled,
+  isChatPageContextEnabled,
   appProxySigninMaxAgeHours,
   appProxyShopProofHours,
   aiProfileScope,
@@ -100,4 +101,9 @@ test("App Proxy sign-in: off by default, max age 0 by default, clamped, and 0 wh
   assert.equal(appProxySigninMaxAgeHours({ APP_PROXY_SIGNIN_MAX_AGE_HOURS: "99999" }), 720);
   assert.equal(appProxyShopProofHours({ APP_PROXY_SIGNIN_MAX_AGE_HOURS: "24" }), 0);
   assert.equal(appProxyShopProofHours({ APP_PROXY_SIGNIN_ENABLED: "1", APP_PROXY_SIGNIN_MAX_AGE_HOURS: "24" }), 24);
+});
+
+test("page context is off unless explicitly enabled", () => {
+  assert.equal(isChatPageContextEnabled({}), false);
+  assert.equal(isChatPageContextEnabled({ CHAT_PAGE_CONTEXT_ENABLED: "true" }), true);
 });

@@ -52,7 +52,17 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Mo bietet angemeldeten Kund:innen die Zusammenfassung per E-Mail nicht mehr an (das Widget blendete die Karte ohnehin aus). „Angeboten“ im E-Mail-Capture-Funnel sinkt dadurch, die Quote steigt — kein Verhaltenswechsel der Kund:innen.",
   },
+  {
+    date: "2026-10-05",
+    key: "optin-measurement",
+    title: "Opt-in-Messung nach Quelle und Ergebnis",
+    detail:
+      "Opt-ins tragen Quelle und Ergebnis (neue DOI / bereits abonniert / gesperrt), DOI-Bestätigungen ihre Quelle. Der E-Mail-Capture-Funnel zählt nur noch das Formular; die Einwilligung nach der Anmeldung zählt Sitzungen statt Klicks.",
+  },
 ]);
+
+/** First day the opt-in events carry source and outcome (OI1). */
+export const OPTIN_MEASUREMENT_FROM = "2026-10-05";
 
 /** First day whose data a section can be read for — earlier days are not comparable. */
 const MEANINGFUL_FROM = Object.freeze({
@@ -99,7 +109,7 @@ function isYmd(v) {
  * before the section's data is meaningful, one when it covers the sign-in
  * outage. Empty when the period is entirely after both.
  *
- * @param {string} section "anmelde-popup" | "consent" | "konto" | "campaign" | "attribution"
+ * @param {string} section "anmelde-popup" | "consent" | "konto" | "campaign" | "attribution" | "capture"
  * @param {{ from: string, to: string }} range
  * @returns {string[]}
  */
@@ -110,6 +120,11 @@ export function releaseNotesFor(section, range) {
   const m = /** @type {Record<string, { date: string, why: string }>} */ (MEANINGFUL_FROM)[section];
   if (m && range.from < m.date) {
     notes.push(`Erst ab dem ${germanDay(m.date)} aussagekräftig: ${m.why}. Für Vergleiche den Zeitraum ab diesem Tag wählen.`);
+  }
+  if ((section === "capture" || section === "consent") && range.from < OPTIN_MEASUREMENT_FROM) {
+    notes.push(
+      `Ergebnis und Quelle der Opt-ins erst ab dem ${germanDay(OPTIN_MEASUREMENT_FROM)}; ältere Events sind aus dem DOI-Status und dem Auslöser genähert. Zahlen vor und nach diesem Tag sind nicht direkt vergleichbar (Sitzungen statt Klicks, nur das Formular).`
+    );
   }
   if (SIGNIN_SECTIONS.has(section) && range.from <= SIGNIN_OUTAGE.to && range.to >= SIGNIN_OUTAGE.from) {
     notes.push(

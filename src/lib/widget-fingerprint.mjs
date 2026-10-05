@@ -26,6 +26,9 @@ export const WIDGET_MARKERS = Object.freeze([
   "ms-mo-attr", // 2026-08-12: cart attribution stamp
   "/api/attribution/token", // 2026-08-12: cart attribution token
   "starter_shown", // starter prompts (removed 2026-10-01)
+  "ms-chat-ctx-last", // tasks of 2026-10-05: page context on typed messages (storage key)
+  "ms-chat-optin-benefits", // tasks of 2026-10-05: served consent-popup bullets (class name)
+  "Rabattaktionen zuerst erfahren", // widget-authored popup bullet (2026-10-01 … 2026-10-04 builds); gone with the served bullets
 ]);
 
 /** @param {string} s */
@@ -62,13 +65,22 @@ export function countWidgetMarkers(js) {
  */
 export const WIDGET_BUILDS = Object.freeze([
   {
+    key: "tasks-2026-10-05",
+    commit: "nächster Upload",
+    label: "Widget mit den Aufgaben vom 05.10. (Vorteile vom Server, Seitenkontext, Token-Erneuerung)",
+    current: false,
+    acceptable: true,
+    consequence:
+      "Vorteile im Einwilligungs-Popup kommen vom Server, getippte Fragen auf Produktseiten tragen den Seitenkontext. CHAT_PAGE_CONTEXT_ENABLED darf nach 2–3 Tagen Beobachtung eingeschaltet werden.",
+  },
+  {
     key: "main-2026-10-04",
     commit: "3e87341",
     label: "Theme main 3e87341 (2026-10-04, alle Fixes)",
     current: true,
     acceptable: true,
     consequence:
-      "Erwarteter Live-Stand: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat. Bestellstatus darf eingeschaltet werden; der App Proxy erst nach dem Backend-Schritt C.17 (ROLLOUT 5.4).",
+      "Erwarteter Live-Stand: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat. Bestellstatus darf eingeschaltet werden; der App Proxy darf eingerichtet werden (ROLLOUT 5.4).",
   },
   {
     key: "fixes-minified",
@@ -77,7 +89,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: true,
     acceptable: true,
     consequence:
-      "Alle Funktionen der Kundenplattform sind live; ob auch der Audio-Stopp bei „Neuer Chat“ (3e87341) dabei ist, lässt sich in der minifizierten Datei nicht erkennen — im Browser prüfen. Bestellstatus darf eingeschaltet werden; der App Proxy erst nach dem Backend-Schritt C.17 (ROLLOUT 5.4).",
+      "Alle Funktionen der Kundenplattform sind live; ob auch der Audio-Stopp bei „Neuer Chat“ (3e87341) dabei ist, lässt sich in der minifizierten Datei nicht erkennen — im Browser prüfen. Bestellstatus darf eingeschaltet werden; der App Proxy darf eingerichtet werden (ROLLOUT 5.4).",
   },
   {
     key: "fixes-8d0a0c4",
@@ -86,7 +98,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Wie main, nur stoppt die Vorlesestimme bei „Neuer Chat“ nicht sofort — 3e87341 hochladen. Bestellstatus darf eingeschaltet werden; der App Proxy erst nach dem Backend-Schritt C.17 (ROLLOUT 5.4).",
+      "Wie main, nur stoppt die Vorlesestimme bei „Neuer Chat“ nicht sofort — 3e87341 hochladen. Bestellstatus darf eingeschaltet werden; der App Proxy darf eingerichtet werden (ROLLOUT 5.4).",
   },
   {
     key: "pr73",
@@ -144,6 +156,13 @@ export function classifyWidgetBuild(c) {
   if (n("/api/chat") === 0) return null; // not the widget (an error page)
   const pr73 = n("/api/auth/link") > 0 && n("ms_mo_c") > 0;
   const fixes = n("order_support") > 0 && n("Bestellnummer + kurz") > 0;
+  if (pr73 && fixes && (n("ms-chat-ctx-last") > 0 || n("ms-chat-optin-benefits") > 0)) {
+    // The upload with the tasks of 2026-10-05 — only when all of it arrived;
+    // a half-applied build is unknown.
+    const complete =
+      n("ms-chat-ctx-last") > 0 && n("ms-chat-optin-benefits") > 0 && n("Rabattaktionen zuerst erfahren") === 0;
+    return complete ? build("tasks-2026-10-05") : null;
+  }
   if (pr73 && fixes) {
     const speaking = n("endSpeaking(");
     if (speaking === 0) return build("fixes-minified"); // names mangled

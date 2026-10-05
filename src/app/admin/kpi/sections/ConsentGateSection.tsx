@@ -5,7 +5,7 @@
 // 2026-10-01; its old events stay visible while they fall in the period.
 
 import type { ConsentGateCounts, ConsentGateFunnel } from "@/lib/kpi-store";
-import { RETIRED_CONSENT_GATE_SURFACES } from "@/lib/kpi-widget-events.mjs";
+import { RETIRED_CONSENT_GATE_SURFACES, consentVariantRates } from "@/lib/kpi-widget-events.mjs";
 import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
 import type { KpiRange } from "@/lib/kpi-range";
 import { formatAdmin, ADMIN_DATE_PADDED } from "@/lib/admin-datetime.mjs";
@@ -26,7 +26,8 @@ const INFO = (
     <p>
       Alle vier Events sendet das Widget (<code>consent_gate_shown</code> / <code>_accepted</code> /{" "}
       <code>_declined</code> / <code>_dismissed</code>, <code>surface: signin</code>) — gemessen wird die
-      Oberfläche, nicht die bestätigte Anmeldung. Getrennt von den anderen Opt-in-Wegen (E-Mail-Capture,
+      Oberfläche, nicht die bestätigte Anmeldung. Gezählt werden Sitzungen mit ihrem letzten Stand
+      (akzeptiert vor abgelehnt vor weggeklickt; seit dem 05.10.2026, vorher Klicks). Getrennt von den anderen Opt-in-Wegen (E-Mail-Capture,
       Shop). Das anonyme Chat-Gate (<code>surface: chat</code>) zeigt das Widget seit dem 01.10.2026 nicht
       mehr — das Anmelde-Popup hat es ersetzt.
     </p>
@@ -35,6 +36,15 @@ const INFO = (
 
 const BY_WAY_INFO =
   "Sitzungen, nicht Events: je Sitzung zählt der letzte Stand (ein Akzeptieren mit anschließendem Wegklicken zählt einmal, als akzeptiert). „Über „Anmelden““ = im Chat angemeldet, „Über Shop-Login erkannt“ = vom Shop erkannt (App Proxy). „Opt-in (Server)“ = das vom Server gespeicherte Opt-in (email_capture_marketing_opted_in, trigger signin_optin) in derselben Sitzung.";
+
+const VARIANT_INFO =
+  "Sitzungen je Rahmen-Variante (Überschrift und Vorteile über dem Einwilligungstext) und Platzierung (Popup, nach der Anmeldung im Chat, Wertmoment). Akzeptanzrate = akzeptiert ÷ angezeigt; „akzeptiert ohne Anzeige“ ist nur ein Hinweis (Anzeige vor dem Zeitraum, älteres Widget). DOI-Quote = bestätigt ÷ „DOI nötig“ (bereits Abonnierte zählen nicht). Verglichen wird erst ab 100 Sitzungen je Zeile. Unbekannte Werte erscheinen als „unbekannt“.";
+
+const PLACEMENT_LABELS: Record<string, string> = {
+  popup: "Popup",
+  signin_return: "Nach Anmeldung im Chat",
+  value_moment: "Wertmoment",
+};
 
 const WAY_LABELS: Record<"signin" | "shop" | "unknown", string> = {
   signin: "Über „Anmelden“",
@@ -115,6 +125,55 @@ export function ConsentGateSection({ funnel, range }: { funnel: ConsentGateFunne
                         </TableRow>
                       );
                     })}
+                </TableBody>
+              </Table>
+            </>
+          )}
+
+          {funnel.byVariant.some((r) => r.variant !== "ohne (älteres Widget)" && r.variant !== "unbekannt") && (
+            <>
+              <SubHeading info={VARIANT_INFO}>Nach Variante und Platzierung</SubHeading>
+              <Table className="text-xs [&_td]:tabular-nums">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Variante</TableHead>
+                    <TableHead>Platzierung</TableHead>
+                    <TableHead align="right">Angezeigt</TableHead>
+                    <TableHead align="right">Akzeptiert</TableHead>
+                    <TableHead align="right">Akzeptanzrate</TableHead>
+                    <TableHead align="right">Abgelehnt</TableHead>
+                    <TableHead align="right">Akzeptiert ohne Anzeige</TableHead>
+                    <TableHead align="right">Opt-ins (Server)</TableHead>
+                    <TableHead align="right">Bereits angemeldet</TableHead>
+                    <TableHead align="right">DOI-Quote</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {funnel.byVariant.map((r) => {
+                    const rates = consentVariantRates(r);
+                    return (
+                      <TableRow key={`${r.variant}|${r.placement}`}>
+                        <TableCell className="font-medium">{r.variant}</TableCell>
+                        <TableCell>{PLACEMENT_LABELS[r.placement] ?? r.placement}</TableCell>
+                        <TableCell align="right">{num(r.shown)}</TableCell>
+                        <TableCell align="right">{num(r.accepted)}</TableCell>
+                        <TableCell align="right">
+                          {rates.acceptRate == null
+                            ? "—"
+                            : rates.comparable
+                              ? ratio(rates.acceptRate)
+                              : `${ratio(rates.acceptRate)} (zu wenige Sitzungen)`}
+                        </TableCell>
+                        <TableCell align="right">{num(r.declined)}</TableCell>
+                        <TableCell align="right">{num(r.acceptedWithoutShown)}</TableCell>
+                        <TableCell align="right">{num(r.optedIn)}</TableCell>
+                        <TableCell align="right">{num(r.alreadyConfirmed)}</TableCell>
+                        <TableCell align="right">
+                          {rates.doiRate == null ? "—" : `${ratio(rates.doiRate)} (${num(r.doiConfirmed)}/${num(r.doiRequired)})`}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </>

@@ -65,6 +65,15 @@ export function isChatOrderStatusEnabled(env = process.env) {
 }
 
 /**
+ * CHAT_PAGE_CONTEXT_ENABLED (A3): use the page facts the widget attaches to a
+ * typed message on a product / collection page (`context.source: "page"`).
+ * Off → ignored (today's typed-turn behaviour) but still measured. Default off.
+ */
+export function isChatPageContextEnabled(env = process.env) {
+  return parseFlag(env.CHAT_PAGE_CONTEXT_ENABLED);
+}
+
+/**
  * MO_ATTRIBUTION_SESSION_ANCHOR (ATTR-TOKEN-LIFETIME, docs/ORDER_ATTRIBUTION.md):
  * a widget token's 30-day window counts from the device's latest product
  * consultation instead of the token's minting, and retention keeps the token

@@ -92,7 +92,7 @@ test("loginGateRates: junk and impossible counts never break the funnel", () => 
 
 test("server-only events: the AC §5 server table, nothing the widget sends", async () => {
   const { SERVER_ONLY_EVENTS, isServerOnlyEvent } = await import("./kpi-widget-events.mjs");
-  for (const e of ["account_signin_linked", "account_signin_link_refused", "account_signin_succeeded", "account_erased", "campaign_chat_started", "contact_form_submitted", "order_status_lookup", "mo_order_marker_unresolved", "account_shop_recognised", "email_capture_ask_shown"]) {
+  for (const e of ["account_signin_linked", "account_signin_link_refused", "account_signin_succeeded", "account_erased", "campaign_chat_started", "contact_form_submitted", "order_status_lookup", "mo_order_marker_unresolved", "account_shop_recognised", "page_context_applied", "page_context_answered", "email_capture_ask_shown"]) {
     assert.equal(isServerOnlyEvent(e), true, e);
   }
   for (const e of [LOGIN_GATE_SHOWN, ACCOUNT_SIGNIN_STARTED, ACCOUNT_SIGNIN_RETURN, "consent_gate_accepted", "email_capture_declined", "account_export_started", "account_exported", "chat_opened", "product_cta_clicked", "add_to_cart_clicked"]) {
@@ -148,4 +148,28 @@ test("shopRecognitionRates: rates, minimum sample and the strict alarm threshold
   assert.equal(x.redeemRate, 1);
   assert.equal(x.unlinked, 0);
   assert.equal(x.tokenShare, 0.4);
+});
+
+test("consent variant rows: forged values merge into „unbekannt“; DOI rate leaves already-confirmed out", async () => {
+  const { normalizeConsentVariantRows: n, consentVariantRates: r } = await import("./kpi-widget-events.mjs");
+  const known = (id) => id === "a";
+  const place = (p) => (["popup", "signin_return", "value_moment"].includes(p) ? p : null);
+  const rows = n(
+    [
+      { variant: "a", placement: "popup", shown: 10, accepted: 4 },
+      { variant: "<script>", placement: "popup", shown: 1 },
+      { variant: "zz", placement: "popup", shown: 2 },
+      { variant: "", placement: "", shown: 3 },
+      { variant: "a", placement: "evil", shown: 1 },
+    ],
+    known,
+    place
+  );
+  const byKey = Object.fromEntries(rows.map((x) => [`${x.variant}|${x.placement}`, x]));
+  assert.equal(byKey["a|popup"].shown, 10);
+  assert.equal(byKey["unbekannt|popup"].shown, 3);
+  assert.equal(byKey["ohne (älteres Widget)|ohne"].shown, 3);
+  assert.equal(byKey["a|unbekannt"].shown, 1);
+  assert.deepEqual(r({ shown: 0, accepted: 0, doiRequired: 0, doiConfirmed: 0 }), { acceptRate: null, doiRate: null, comparable: false });
+  assert.deepEqual(r({ shown: 200, accepted: 50, doiRequired: 40, doiConfirmed: 20 }), { acceptRate: 0.25, doiRate: 0.5, comparable: true });
 });

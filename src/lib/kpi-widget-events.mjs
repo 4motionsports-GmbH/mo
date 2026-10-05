@@ -133,6 +133,8 @@ export const SERVER_ONLY_EVENTS = Object.freeze([
   "order_status_lookup",
   "mo_order_marker_unresolved",
   "account_shop_recognised",
+  "page_context_applied",
+  "page_context_answered",
 ]);
 
 const SERVER_ONLY = new Set(SERVER_ONLY_EVENTS);
@@ -203,6 +205,51 @@ export const SIGNIN_DIAGNOSIS = Object.freeze([
   { key: "start_lost", label: "Start nicht angekommen", cause: "Das Start-Event ging bei der Weiterleitung verloren oder die Weiterleitung schlug fehl.", ok: false },
   { key: "shop_not_redeemed", label: "Shop-Code nicht eingelöst", cause: "whoami hat einen Code ausgegeben, das Widget hat ihn nicht eingelöst — altes Widget ohne Code-Einlösung (Drift), Sitzungswechsel während der Anfrage oder Störung beim Einlösen.", ok: false },
 ]);
+
+// ---------------------------------------------------------------------------
+// Consent popup by framing variant and placement (OI3)
+// ---------------------------------------------------------------------------
+
+/** Sessions per arm below which a variant row is not compared. */
+export const MIN_VARIANT_SESSIONS = 100;
+
+/**
+ * Merge raw per-(variant, placement) rows into display keys: unknown or forged
+ * values become „unbekannt“, missing ones „ohne“ — arbitrary strings posted to
+ * /api/kpi never get their own admin row.
+ * @param {Array<Record<string, unknown>>} rows
+ * @param {(id: string) => boolean} isKnownVariant
+ * @param {(p: string) => string | null} normalizePlacementFn
+ */
+export function normalizeConsentVariantRows(rows, isKnownVariant, normalizePlacementFn) {
+  /** @type {Map<string, Record<string, number | string>>} */
+  const merged = new Map();
+  const fields = ["shown", "accepted", "declined", "dismissed", "acceptedWithoutShown", "optedIn", "alreadyConfirmed", "doiRequired", "doiConfirmed", "variantMismatch"];
+  for (const r of rows ?? []) {
+    const rawV = String(r.variant ?? "");
+    const rawP = String(r.placement ?? "");
+    const variant = rawV === "" ? "ohne (älteres Widget)" : isKnownVariant(rawV) ? rawV : "unbekannt";
+    const placement = rawP === "" ? "ohne" : normalizePlacementFn(rawP) ?? "unbekannt";
+    const key = `${variant}|${placement}`;
+    const cur = merged.get(key) ?? { variant, placement, ...Object.fromEntries(fields.map((f) => [f, 0])) };
+    for (const f of fields) cur[f] = Number(cur[f]) + (Number(r[f]) || 0);
+    merged.set(key, cur);
+  }
+  return [...merged.values()];
+}
+
+/**
+ * Rates of one variant row: accept rate on shown sessions; DOI rate on opt-ins
+ * that needed a DOI (already-confirmed answers are left out).
+ * @param {{ shown: number, accepted: number, doiRequired: number, doiConfirmed: number }} row
+ */
+export function consentVariantRates(row) {
+  return {
+    acceptRate: rate(row.accepted, row.shown),
+    doiRate: rate(row.doiConfirmed, row.doiRequired),
+    comparable: Number(row.shown) >= MIN_VARIANT_SESSIONS,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Shop-login recognition (App Proxy, P0.3)

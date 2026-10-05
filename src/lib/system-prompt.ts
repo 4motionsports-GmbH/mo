@@ -10,6 +10,8 @@ import type { Locale } from "./locale";
 import {
   buildSystemPrompt as buildSystemPromptCore,
   productPivotNote as productPivotNoteCore,
+  pagePivotNote as pagePivotNoteCore,
+  pageCategoryPivotNote as pageCategoryPivotNoteCore,
   browsingPivotNote as browsingPivotNoteCore,
   greetingTriggerText as greetingTriggerTextCore,
 } from "./system-prompt-core.mjs";
@@ -96,6 +98,17 @@ export function productPivotNote(ctx: ProductContext, locale: Locale = "de"): st
 // message flow, never wiping the history that came before it.
 export function browsingPivotNote(ctx: BrowsingContext, locale: Locale = "de"): string {
   return browsingPivotNoteCore(ctx, locale);
+}
+
+// A3: a typed message from a product page (`context.source: "page"`) — a
+// softer hint than productPivotNote.
+export function pagePivotNote(ctx: ProductContext, locale: Locale = "de"): string {
+  return pagePivotNoteCore(ctx, locale);
+}
+
+// A3: a typed message from a collection (category) page.
+export function pageCategoryPivotNote(ctx: { name: string }, locale: Locale = "de"): string {
+  return pageCategoryPivotNoteCore(ctx, locale);
 }
 
 // Server-only trigger turn pushed onto a fresh product/browsing open so the

@@ -46,6 +46,7 @@ import {
   KPI_EMAIL_CAPTURE_SUBMITTED,
   recordKpiEvent,
 } from "@/lib/kpi-events";
+import { storedOfferTrigger } from "@/lib/capture-funnel.mjs";
 
 export const maxDuration = 30;
 
@@ -182,10 +183,19 @@ export async function POST(req: Request) {
     // Funnel telemetry (pseudonymous, session-keyed — NO email in the data).
     // Emitted as soon as the consent is stored, so a downstream summary-send
     // failure (502 below) can't lose the fact that the user submitted.
+    // source = the surface (server-set); outcome = what the tick led to; the
+    // client's trigger echo is stored only when it is a tool value (OI1).
+    const outcome = capture.optInOutcome;
+    const storedTrigger = storedOfferTrigger(trigger);
     await recordKpiEvent({
       sessionId,
       event: KPI_EMAIL_CAPTURE_SUBMITTED,
-      data: { marketingConsent, ...(trigger ? { trigger } : {}) },
+      data: {
+        marketingConsent,
+        source: "mo_capture_form",
+        ...(outcome ? { outcome } : {}),
+        ...(storedTrigger ? { trigger: storedTrigger } : {}),
+      },
     });
     if (marketingConsent) {
       await recordKpiEvent({
@@ -193,7 +203,9 @@ export async function POST(req: Request) {
         event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
         data: {
           doiStatus: capture.marketingDoiStatus,
-          ...(trigger ? { trigger } : {}),
+          source: "mo_capture_form",
+          ...(outcome ? { outcome } : {}),
+          ...(storedTrigger ? { trigger: storedTrigger } : {}),
         },
       });
     }
@@ -265,11 +277,14 @@ export async function POST(req: Request) {
         ok: true,
         transactional: { summarySent: summary.sent || summarySkipped },
         marketing: {
-          status: capture.subscribedElsewhere ? "confirmed" : capture.marketingDoiStatus,
+          // A suppressed (unsubscribed) address is never answered „already
+          // subscribed“, whatever its old DOI status (OI1 F2).
+          status: capture.suppressed ? "none" : capture.subscribedElsewhere ? "confirmed" : capture.marketingDoiStatus,
           doiEmailSent,
           // True once the user is already confirmed (re-submission) — no DOI needed.
           alreadyConfirmed:
-            capture.subscribedElsewhere || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired),
+            !capture.suppressed &&
+            (capture.subscribedElsewhere || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired)),
         },
       },
       headers

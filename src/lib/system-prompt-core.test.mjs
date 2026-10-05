@@ -9,6 +9,8 @@ import {
   productPivotNote,
   browsingPivotNote,
   greetingTriggerText,
+  pagePivotNote,
+  pageCategoryPivotNote,
 } from "./system-prompt-core.mjs";
 import {
   emptyProfile,
@@ -561,4 +563,19 @@ test("order status on: the shop-login variant of sign_in_required (DE + EN)", ()
   const base = { profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], orderStatus: true };
   assert.match(buildSystemPrompt(base), /signedInViaShop: true`: Der Kunde IST über den Shop-Login erkannt/);
   assert.match(buildSystemPrompt({ ...base, locale: "en" }), /signedInViaShop: true`: the customer IS recognised through the shop login/);
+});
+
+test("A3 page notes: softer than the product pivot, no card instruction, both locales", () => {
+  const ctx = { id: "rack-1", name: "Power Rack X" };
+  const de = pagePivotNote(ctx, "de");
+  const en = pagePivotNote(ctx, "en");
+  assert.match(de, /Hinweis aus dem Storefront/);
+  assert.match(de, /Power Rack X/);
+  assert.match(de, /rack-1/);
+  assert.match(en, /Note from the storefront/);
+  assert.doesNotMatch(de, /möchte sich vermutlich dazu beraten lassen/);
+  for (const t of [de, en, pageCategoryPivotNote({ name: "Hanteln" }, "de"), pageCategoryPivotNote({ name: "Dumbbells" }, "en")]) {
+    assert.doesNotMatch(t, /Karte|card/i);
+  }
+  assert.match(pageCategoryPivotNote({ name: "Hanteln" }, "de"), /Kategorieseite "Hanteln"/);
 });

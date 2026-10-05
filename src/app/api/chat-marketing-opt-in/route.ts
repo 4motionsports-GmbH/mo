@@ -186,12 +186,22 @@ export async function POST(req: Request) {
     await recordKpiEvent({
       sessionId,
       event: KPI_EMAIL_CAPTURE_SUBMITTED,
-      data: { marketingConsent: true, trigger: trigger ?? "chat_gate" },
+      data: {
+        marketingConsent: true,
+        trigger: trigger ?? "chat_gate",
+        source: "mo_chat_gate",
+        ...(capture.optInOutcome ? { outcome: capture.optInOutcome } : {}),
+      },
     });
     await recordKpiEvent({
       sessionId,
       event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
-      data: { doiStatus: capture.marketingDoiStatus, trigger: trigger ?? "chat_gate" },
+      data: {
+        doiStatus: capture.marketingDoiStatus,
+        trigger: trigger ?? "chat_gate",
+        source: "mo_chat_gate",
+        ...(capture.optInOutcome ? { outcome: capture.optInOutcome } : {}),
+      },
     });
 
     // Send the DOI confirmation email — only when newly pending (a suppressed
@@ -241,11 +251,13 @@ export async function POST(req: Request) {
       {
         ok: true,
         marketing: {
-          status: capture.subscribedElsewhere ? "confirmed" : capture.marketingDoiStatus,
+          status: capture.suppressed ? "none" : capture.subscribedElsewhere ? "confirmed" : capture.marketingDoiStatus,
           doiEmailSent,
-          // True when the address was already confirmed (re-opt-in) — no DOI needed.
+          // True when the address was already confirmed (re-opt-in) — no DOI
+          // needed; never for a suppressed address (OI1 F2).
           alreadyConfirmed:
-            capture.subscribedElsewhere || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired),
+            !capture.suppressed &&
+            (capture.subscribedElsewhere || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired)),
         },
       },
       headers

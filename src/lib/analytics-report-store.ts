@@ -11,7 +11,8 @@
 //      category/quality distributions, the (range-scoped) persona favourites, the
 //      active-customer worklist, the per-conversation appendix and the interval's
 //      AI spend. ZERO model calls live here — the AI passes are orchestrated in
-//      analytics-report-generate.ts.
+//      analytics-report-generate.ts. The interval is whole days in Europe/Berlin
+//      (midnight to midnight local time), like the admin's dates (C.4).
 //
 // Identity note: most aggregations are pseudonymous Cluster-A reads. The active-
 // customer worklist returns customer IDs only (the generator resolves the rest
@@ -424,11 +425,11 @@ export async function getReportKpis(
           LEFT JOIN customers cu ON cu.id = c.customer_id
           LEFT JOIN customer_session_links csl ON csl.session_id = c.session_id
           LEFT JOIN customers cul ON cul.id = csl.customer_id
-         WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+         WHERE c.created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND c.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
       `,
       sql`
         SELECT count(*)::int AS n FROM conversations c
-         WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+         WHERE c.created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND c.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
            AND EXISTS (SELECT 1 FROM messages mu
                         WHERE mu.conversation_id = c.id AND mu.role = 'user'
                           AND mu.tool_name IS NULL AND length(btrim(mu.content)) > 0)
@@ -438,12 +439,12 @@ export async function getReportKpis(
       `,
       sql`
         SELECT count(*)::int AS n FROM conversations c
-         WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+         WHERE c.created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND c.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
            AND EXISTS (SELECT 1 FROM email_captures e WHERE e.session_id = c.session_id)
       `,
       sql`
         SELECT count(*)::int AS n FROM conversations c
-         WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+         WHERE c.created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND c.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
            AND EXISTS (SELECT 1 FROM kpi_events k
                         WHERE k.session_id = c.session_id
                           AND (k.event ILIKE ${CART_PATTERNS[0]} OR k.event ILIKE ${CART_PATTERNS[1]}))
@@ -483,13 +484,13 @@ export async function getRangePersonaInsights(
       sql`
         SELECT COALESCE(persona_label, 'unknown') AS persona, count(*)::int AS n
           FROM conversations
-         WHERE created_at >= ${from}::date AND created_at < (${to}::date + 1)
+         WHERE created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
          GROUP BY 1
       `,
       sql`
         SELECT COALESCE(c.persona_label, 'unknown') AS persona, pid, count(*)::int AS n
           FROM conversations c, unnest(c.recommended_product_ids) AS pid
-         WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+         WHERE c.created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND c.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
          GROUP BY 1, 2
       `,
     ]);
@@ -544,7 +545,7 @@ export async function countConversationsInRange(
   try {
     const rows = (await sql`
       SELECT count(*)::int AS n FROM conversations
-       WHERE created_at >= ${from}::date AND created_at < (${to}::date + 1)
+       WHERE created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
     `) as Array<{ n: number }>;
     return Number(rows[0]?.n ?? 0);
   } catch (err) {
@@ -564,7 +565,7 @@ export async function getPersonaLabelsInRange(
     const rows = (await sql`
       SELECT COALESCE(persona_label, 'unknown') AS persona, count(*)::int AS n
         FROM conversations
-       WHERE created_at >= ${from}::date AND created_at < (${to}::date + 1)
+       WHERE created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
        GROUP BY 1
        ORDER BY count(*) DESC
     `) as Array<{ persona: string; n: number }>;
@@ -596,11 +597,11 @@ export async function getActiveCustomerIdsInRange(
        WHERE cust.id IN (
          SELECT c.customer_id FROM conversations c
           WHERE c.customer_id IS NOT NULL
-            AND c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+            AND c.created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND c.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
          UNION
          SELECT csl.customer_id FROM customer_session_links csl
            JOIN conversations c ON c.session_id = csl.session_id
-          WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+          WHERE c.created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND c.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
        )
        ORDER BY cust.last_seen_at DESC NULLS LAST, cust.id DESC
        LIMIT ${cap}
@@ -632,7 +633,7 @@ export async function loadAppendixRows(
         LEFT JOIN customers cu ON cu.id = c.customer_id
         LEFT JOIN customer_session_links csl ON csl.session_id = c.session_id
         LEFT JOIN customers cul ON cul.id = csl.customer_id
-       WHERE c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+       WHERE c.created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND c.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
          AND c.analysis_updated_at IS NOT NULL
        ORDER BY c.created_at DESC, c.id DESC
        LIMIT ${cap}
@@ -687,7 +688,7 @@ export async function sampleUserMessagesForPersona(
         FROM messages m
         JOIN conversations c ON c.id = m.conversation_id
        WHERE COALESCE(c.persona_label, 'unknown') = ${persona}
-         AND c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+         AND c.created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND c.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
          AND m.role = 'user' AND m.tool_name IS NULL
          AND m.content IS NOT NULL AND length(btrim(m.content)) > 0
        ORDER BY m.created_at DESC, m.id DESC
@@ -714,7 +715,7 @@ export async function getRangeSpend(
              sum(input_tokens)::bigint AS in_tok,
              sum(output_tokens)::bigint AS out_tok
         FROM ai_usage
-       WHERE created_at >= ${from}::date AND created_at < (${to}::date + 1)
+       WHERE created_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND created_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
        GROUP BY call_site, model
     `) as Array<{ call_site: string; model: string; in_tok: string | number; out_tok: string | number }>;
 
@@ -773,7 +774,7 @@ export async function getReportCustomerBase(
         SELECT count(DISTINCT customer_id)::int AS n
           FROM consent_events
          WHERE state = 'subscribed' AND COALESCE(origin_ref, '') <> 'import'
-           AND occurred_at >= ${from}::date AND occurred_at < (${to}::date + 1)
+           AND occurred_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND occurred_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
       `,
     ])) as [Array<Record<string, number>>, Array<{ key: string; n: number }>, Array<{ n: number }>];
     const t = totals[0] ?? {};
@@ -807,7 +808,7 @@ export async function getReportCampaigns(from: string, to: string, sql: Sql | nu
         FROM campaign_sends s
         LEFT JOIN campaigns k ON k.id = s.campaign_id
        WHERE s.is_test = false
-         AND s.sent_at >= ${from}::date AND s.sent_at < (${to}::date + 1)
+         AND s.sent_at >= ((${from}::date)::timestamp AT TIME ZONE 'Europe/Berlin') AND s.sent_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Europe/Berlin')
        GROUP BY s.campaign_id
        ORDER BY sent DESC
     `) as Array<Record<string, unknown>>;
