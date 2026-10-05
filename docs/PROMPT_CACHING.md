@@ -26,9 +26,11 @@ the tools, the system prompt and the whole conversation history. Before
 caching, a 4-step turn billed that prefix 4× at full price; now step 1 writes
 it and steps 2–4 read it at 0.1×.
 
-Three breakpoints (Anthropic allows max 4 per request):
+Three markers (Anthropic allows max 4 per request), listed in prefix order;
+the names match the code comments in `route.ts` ("Breakpoint 1 / 2", "a third
+marker … on the last always-active tool"):
 
-1. **Tools** (`src/lib/tools.ts`, marker on `show_contact_form` — the last
+1. **Tools marker** (`src/lib/tools.ts`, marker on `show_contact_form` — the last
    *always-active* tool; `offer_email_summary` can be withheld via
    `activeTools`, so a marker there would disappear with it). The tool
    definitions are byte-stable per locale → this prefix also hits **across
@@ -40,12 +42,12 @@ Three breakpoints (Anthropic allows max 4 per request):
    `CHAT_ORDER_STATUS_TEST_CUSTOMERS` (the live check before the switch) gets
    the order-status tool set and prompt, a second cached prefix for those few
    sessions only.
-2. **System prompt** (`src/app/api/chat/route.ts` — the system prompt travels
+2. **Breakpoint 1 — system tier** (`src/app/api/chat/route.ts` — the system prompt travels
    as a leading `role: "system"` message because the AI SDK's `system` string
    option cannot carry `providerOptions`). The system prompt embeds per-turn
    retrieval (products, profile, memory), so this entry mostly hits **within a
    turn's steps**, not across turns.
-3. **Last history message** (`route.ts`, set after the greeting/pivot
+3. **Breakpoint 2 — messages tier, last history message** (`route.ts`, set after the greeting/pivot
    mutations). Covers the conversation history + this turn's user message for
    steps 2..n.
 
@@ -54,12 +56,14 @@ so model behaviour and answer quality are identical.
 
 ### What deliberately is *not* cached
 
-The back-office call sites (conversation analysis/insights, campaign +
-marketing drafts, Q&A drafts/translation, top questions, bundle suggestions,
-summary email, customer profile) have short instruction prompts dominated by
-per-item dynamic data. They sit below Anthropic's minimum cacheable prefix
-(512 tokens on Sonnet 5.5, 4096 on Haiku 4.5) and/or share no reusable
-prefix — a marker there would be a silent no-op or pay the 1.25× write premium
+Every other call site — all back-office calls (conversation analysis/insights,
+campaign + marketing + letter drafts, Q&A drafts/translation, top questions,
+bundle suggestions, summary email, customer profile, Eingang suggestions and
+reply drafts, „Frag Mo“, the improvement passes) — carries no marker (only
+`api/chat/route.ts` and `lib/tools.ts` set `cacheControl`). Their prompts are
+dominated by per-item dynamic data and are sent once per item: they sit below
+Anthropic's minimum cacheable prefix (512 tokens on Sonnet 5.5, 4096 on
+Haiku 4.5) and/or share no prefix that is reused within the 5-minute TTL — a marker there would be a silent no-op or pay the 1.25× write premium
 with no reads. Leave them uncached.
 
 ### Known cache-limiting behaviour (accepted)
@@ -70,9 +74,11 @@ with no reads. Leave them uncached.
   the system prompt into the latest user turn — a prompt restructure with
   behavioural risk; not done. Within-turn step caching (the big win) is
   unaffected.
-- When the email-offer ask cap is reached, `offer_email_summary` is filtered
-  from `activeTools` — the tool list changes and the tools-tier entry misses
-  once, then re-caches in the new shape.
+- `offer_email_summary` is filtered from `activeTools` once the ask cap is
+  reached, the e-mail was captured or the session is signed in. The tool sits
+  **after** the tools marker, so the tools-tier entry still hits; the bytes
+  before breakpoints 1 and 2 change, so the system and messages tiers miss for
+  that request and re-cache in the new shape.
 - The forced email-offer step (`prepareStep` → `activeTools:
   ["offer_email_summary"]`) sends a different tool list for that one step —
   a full miss for that step only.
@@ -115,7 +121,7 @@ requests byte-by-byte.
   consecutive turns comfortably fit; the 1-hour TTL would double the write
   premium for no benefit here.
 - Caches are per-model: changing the chat tier's model (`lib/ai-models.mjs`)
-  starts cold (first requests pay the write premium again). On Sonnet 5.5 a
-  cache read is $0.20 and a 5-minute write $2.50 per MTok — the 0.1× / 1.25×
-  multipliers in `lib/ai-pricing.mjs` still hold. The same applies after any deploy that changes
-  prompt/tool bytes.
+  starts cold (first requests pay the write premium again). The 0.1× / 1.25×
+  multipliers apply to whichever model the chat tier uses; the per-model input
+  prices are in `lib/ai-pricing.mjs` ([`AI_MODELS.md`](./AI_MODELS.md)). The
+  same cold start applies after any deploy that changes prompt/tool bytes.

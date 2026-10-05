@@ -101,6 +101,34 @@ creates a Shopify customer with that consent — one subscriber list — while
 > subscribers are no longer synced into `campaign_contacts`; their consent is
 > the one consent on `customers`.
 
+### Shopify webhook topics (`POST /api/webhooks/shopify`)
+
+Moved from the widget contract (`docs/frontend/API_CONTRACT.md` §11.3); the widget never calls this
+route. The `X-Shopify-Hmac-SHA256` signature is verified over the **raw body before it is parsed**
+(`verifyShopifyWebhook`, `src/lib/shopify-webhook.mjs`) against `SHOPIFY_WEBHOOK_SECRET`
+(subscriptions made in the Shopify admin) or `SHOPIFY_CLIENT_SECRET` (subscriptions made by the app,
+including the compliance topics). No secret configured → `503`; bad or missing signature → `401`, body
+never used. Registration: [`CATALOG_SYNC.md`](./CATALOG_SYNC.md) "Real-time stock webhook".
+
+| Topic (`X-Shopify-Topic`) | Effect |
+| --- | --- |
+| `products/*`, `inventory_levels/*` | Targeted single-product catalog refresh ([`CATALOG_SYNC.md`](./CATALOG_SYNC.md)). |
+| `customers/create`, `customers/update` | Upsert the customer mirror; the embedded e-mail-marketing consent goes through the consent resolver. |
+| `customers_email_marketing_consent/update` | Consent resolver only (Shopify-side subscribe / unsubscribe). Unknown customers are left to the reconciliation. |
+| `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled` | Order ledger (`customer_orders`). `orders/create` and `orders/paid` also feed the pseudonymous order attribution (`mo_orders`, [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)); a marked order that cannot be attributed is counted on `orders/create` as the session-less event `mo_order_marker_unresolved`. Other `orders/*` topics are acknowledged and ignored. |
+| `customers/delete`, `customers/redact` | The one erasure in Mo (trigger `shopify`: Shopify is not asked again). More than `SHOPIFY_ERASURE_ALERT_PER_HOUR` (default 20) in an hour raises an alert and an Eingang item. |
+| `customers/data_request` | An Eingang item `datenauskunft` (deadline 30 days) for the operator to answer with the data export. |
+| `shop/redact` | Alert + Eingang item only — never an automatic mass deletion. |
+| `bulk_operations/finish` | Acknowledged; the import's next step polls the bulk operation itself. |
+
+While `SHOPIFY_CUSTOMER_SYNC_ENABLED` is off, the customer, consent and order-ledger topics are
+acknowledged without writing (`ignored:sync-off` / `ledger:sync-off`); the attribution of
+`orders/create|paid` and the erasure and compliance topics are not gated. All customer, consent, order
+and compliance topics are de-duplicated by `X-Shopify-Webhook-Id` (a Shopify retry answers
+`{ "ok": true, "duplicate": true }`). A processing failure answers `500` and forgets the delivery id,
+so Shopify's retry is applied. The nightly `/api/cron/shopify-reconcile` catches whatever a webhook
+missed.
+
 ## Linking rule (e-mail capture)
 
 On every e-mail capture (`/api/capture-email`, `/api/chat-marketing-opt-in`,

@@ -311,6 +311,22 @@ Later, every marketing email carries:
         └─ render "Du wurdest abgemeldet."
 ```
 
+**Which products the summary cart carries — selected vs discussed** (moved from the widget
+contract, `docs/frontend/API_CONTRACT.md` §7.1). The backend tracks two product sets per
+conversation (`src/lib/recommended-products.mjs`):
+
+- **Selected** — products the user expressed intent to **buy**: the ids of the latest `add_to_cart`
+  (direct-checkout) tool call. Updated by replacement, so switching to an alternative drops the
+  rejected product.
+- **Discussed** — every product any product tool referenced (`show_product`, `compare_products`, …),
+  including compared-and-rejected alternatives.
+
+The cart permalink uses the **selected** set when the user made a clear choice and falls back to the
+**discussed** set only when there is no selection (`chooseCartProductIds`, `src/lib/cart.ts`).
+Sold-out products are always excluded from the cart link. The summary mail lists the cart's products,
+then the other discussed products under „Vielleicht auch interessant:“ (`summary-products.mjs`). The
+`productIds` the widget echoes from the tool call are not used.
+
 ## At-sign-in marketing opt-in (presentation-maximised, lawful) — copy v3, button-consent since v4
 
 > ℹ️ **v4 update:** this surface now uses the **button-consent mechanic** (see
@@ -600,6 +616,26 @@ is on; otherwise it says the shop-account deletion is queued.) Shopify's
 A later **new** subscribe act (newer than the erasure) lifts the erasure block
 (resolver rule 1). Details: [`CUSTOMERS.md`](./CUSTOMERS.md) "Retention /
 erasure".
+
+What the one erasure deletes (moved from the widget contract,
+`docs/frontend/API_CONTRACT.md` §11.1; the per-table plan is `ERASURE_PLAN` in
+`src/lib/customer-erasure-core.mjs`, tested against the migrations):
+
+1. **Mo deletes at once**, in one transaction: the customer and profile, every
+   conversation, consent records and history, marketing and campaign mails,
+   correspondence, letters, feedback, Mo's copy of the person's Shopify orders,
+   sign-in state, and the pseudonymous KPI events and order-attribution tokens
+   of the person's sessions. Aggregate order facts for the revenue KPIs
+   (`mo_orders`) lose the link to the person. The address stays on the
+   suppression list with reason `erasure`.
+2. **For a person with a Shopify customer id:** the tombstone and the two
+   outbox rows described above. A row whose switch is off waits.
+3. **A Mo contact without a Shopify account** (Interessent) is erased in Mo
+   only.
+
+The widget's „Meine Daten löschen“ and the mail-link page `/api/erase-data`
+render the served `surface=erase` copy, whose `confirmBody` names the shop
+account only while `SHOPIFY_ERASURE_SYNC` is on.
 
 ## Measurement (pseudonymous, Cluster A)
 

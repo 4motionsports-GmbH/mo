@@ -68,6 +68,26 @@ model inside the same call instead of failing the request.
 | Product search embeddings | `text-embedding-3-small` | No successor; `-large` is +2 MTEB points at 6.5× the price and 2× the vector file — not worth it. |
 | Voice (TTS) | `gpt-4o-mini-tts`, voice via `TTS_VOICE` | Still OpenAI's current TTS model. `marin` / `cedar` are newer voices worth a listening test (env only). |
 
+### Voice (TTS)
+
+`POST /api/tts` (`src/app/api/tts/route.ts`; widget contract: `docs/frontend/API_CONTRACT.md` §8).
+Moved here from the widget contract — nothing the widget sends changes these.
+
+| Var | Default (code and `.env.example`) | Notes |
+| --- | --- | --- |
+| `TTS_MODEL` | `gpt-4o-mini-tts` | Cost-efficient, multilingual, steerable via `instructions`. Legacy `tts-1` / `tts-1-hd` also work; they get no `instructions` (gated on the model family in code). |
+| `TTS_VOICE` | `coral` | Warm, upbeat; clean German pronunciation. Full voice list in `.env.example`. |
+| `TTS_INSTRUCTIONS` | empty → „Sprich natürliches, klares Hochdeutsch in einem freundlichen, energiegeladenen und motivierenden Ton.“ | Tone steering, `gpt-4o*` models only. A tempo hint derived from `TTS_SPEED` is appended. |
+| `TTS_SPEED` | `1.1` | Clamped 0.25–4.0. Legacy `tts-1*` models take it as the numeric `speed`; `gpt-4o*` models reject `speed`, so it becomes a sentence in `instructions` (≥ 1.2 „flott“, ≥ 1.05 „zügig“, ≤ 0.95 „ruhig“). `1.0` restores the neutral pace. |
+
+**Cost attribution.** Every request — single-shot or one streamed sentence — records one `ai_usage`
+row: `call_site = 'tts'`, the synthesized **characters** in `input_tokens` (TTS is billed per
+character; the `ai-pricing.mjs` entry is USD per million characters), `output_tokens = 0`,
+`estimated = true` to flag the unit, attributed to the conversation resolved from `x-ms-session`. It
+counts as chat-serving spend in the dashboard split (`CHAT_SIDE_CALL_SITES`, `ai-usage-store.ts`) and
+does not enter the token-based cost per consultation. A streamed answer aggregates to the same
+characters as the single-shot call, spread over more rows.
+
 ## Changing a model
 
 Edit the tier in `ai-models.mjs`, add the price to `ai-pricing.mjs` (the test

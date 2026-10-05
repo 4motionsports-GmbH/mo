@@ -11,13 +11,13 @@ Beratung (Mo scheitert / übergibt ans Kontaktformular)
    │  analysis_quality ∈ {unmet_need, dropped_off}  ODER  show_contact_form fired
    ▼
 "Gespräche scannen" (admin Wissen tab, explicit click)
-   │  1 Sonnet 5.5 pass per conversation (lib/qa-scan → lib/qa-draft)
+   │  1 writer-tier pass per conversation (lib/qa-scan → lib/qa-draft)
    │  → { Wissenslücke, präzise Frage, Produkt-Handle? }  → qa_entries (status: open)
    ▼
 Operator beantwortet im Wissen-Tab (Frage/Produkt anpassbar)  → status: answered
    ▼
 "Veröffentlichen"
-   ├─ Produkt-Frage → Shopify metafieldsSet auf custom.qa (JSON [{q,a}])
+   ├─ Produkt-Frage → Shopify metafieldsSet auf custom.qa (JSON [{q,a,…}], max. 20)
    │     → PDP-Q&A-Tab (Theme liest das Metafeld)
    │     → sofortiger Einzelprodukt-Refresh im Katalog-Blob (Mo weiß es SOFORT)
    │     → Nightly-Sync + Embeddings decken den Rest ab (Product.qa)
@@ -45,11 +45,13 @@ analysis).
 | `migrations/0036_qa_entries.sql` | `qa_entries` table + `conversations.qa_scanned_at`. |
 | `src/lib/qa-core.mjs` | Pure core: eligibility, draft prompt+parser, fingerprint de-dup, `custom.qa` format (parse/merge/serialize). |
 | `src/lib/qa-store.ts` | CRUD + scan candidates + cached general-QA loader for the chat hot path. |
-| `src/lib/qa-draft.ts` | The draft pass — Sonnet 5.5, writer tier in `lib/ai-models.mjs` (call site `qa_draft`, linked to the conversation FK). |
+| `src/lib/qa-draft.ts` | The draft pass — writer tier in `lib/ai-models.mjs` (model: [`AI_MODELS.md`](./AI_MODELS.md); call site `qa_draft`, linked to the conversation FK). |
+| `src/lib/qa-translate.ts` | The publish-time EN translation — bulk tier (call site `qa_translate`). |
+| `src/lib/qa-links.mjs` | Markdown-link renderer + sanitiser for `a_html` (tested). |
 | `src/lib/qa-scan.ts` | Orchestration: transcript → draft → entry → scanned stamp. |
 | `src/lib/shopify-qa.ts` | Publish: handle → GID, `metafieldsSet` on `custom.qa`, targeted catalog refresh. |
-| `src/app/api/admin/qa/*` | list / scan / draft / answer / publish / dismiss routes. |
-| `src/app/admin/WissenTab.tsx` + `WissenWorkspace.tsx` | The admin queue UI. |
+| `src/app/api/admin/qa/*` | `list`, `scan`, `answer`, `publish`, `unpublish`, `dismiss`, `restore` routes. |
+| `src/app/admin/WissenTab.tsx` (server) + `src/app/admin/wissen/` (`WissenWorkspace.tsx`, `QaEntryEditor.tsx`, `useQaQueue.ts`, `ProductField.tsx`, `badges.tsx`) | The admin queue UI. |
 
 ## How the knowledge reaches Mo
 
@@ -59,7 +61,9 @@ analysis).
      to 5 pairs, marked as team-verified so Mo may answer verbatim);
    - embedded ("Kundenfragen & Antworten" section in the embedding doc) so the
      next shopper asking the same thing retrieves this product;
-   - exposed on `GET /api/products` (`qa`) for the widget.
+   - exposed on `GET /api/products` (`qa`, contract:
+     [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §3; the widget
+     does not read it today, frontend/06 §4.8).
    Publishing also triggers the SAME targeted single-product refresh the stock
    webhook uses, so Mo knows immediately — the nightly sync is the backstop.
 2. **General Q&A** (no product) — `qa_entries` rows with
@@ -73,10 +77,11 @@ analysis).
   required `read_products`.
 - A product metafield **definition** for `custom.qa` (type: JSON) with
   **storefront access enabled** must exist so the theme can read
-  `product.metafields.custom.qa` — see the operator checklist in the PR /
-  admin docs. `metafieldsSet` itself works without a definition, but the
-  definition makes values visible in the Shopify admin product page and
-  readable from Liquid.
+  `product.metafields.custom.qa`. `metafieldsSet` itself works without a
+  definition, but the definition makes values visible in the Shopify admin
+  product page and readable from Liquid. How the theme renders the metafield
+  (tab, escaping, language fallback, JSON-LD) is owned by
+  [`frontend/06-commerce-and-storefront-integration.md`](./frontend/06-commerce-and-storefront-integration.md) §4.
 
 ## i18n (German + English) — the team writes German ONLY
 
@@ -86,9 +91,10 @@ The storefront runs German and English, but nobody maintains two answers:
   ONE cheap Haiku translation pass (call site `qa_translate`) — unless the
   entry already carries an English pair (cached from an earlier publish, or
   operator-provided in the Wissen tab's optional "Englische Version" fields).
-- The metafield stores both: `[{ "q", "a", "q_en", "a_en" }]`. The theme picks
-  the storefront language and falls back to German when `q_en`/`a_en` are
-  absent; pre-i18n values (plain `{q,a}`) keep working everywhere.
+- The metafield stores both: `[{ "q", "a", "q_en", "a_en" }]`, at most
+  `QA_MAX_PER_PRODUCT` = 20 pairs per product (the oldest are dropped,
+  `qa-core.mjs`). Pre-i18n values (plain `{q,a}`) keep working everywhere; the
+  theme's language choice and German fallback: frontend/06 §4.6.
 - Mo's context is locale-aware: the English prompt (product Q&A lines + the
   general knowledge block) prefers the English pair and falls back to German
   (Mo translates on the fly).
@@ -112,10 +118,11 @@ URL. Questions stay plain text.
 - **Metafeld:** the serializer writes the raw markdown as `a` (source of
   truth) and ADDITIONALLY `a_html` / `a_en_html` — pre-rendered, escaped HTML
   with plain anchors (`target="_blank" rel="noopener noreferrer"`, no inline
-  styles) — but only for answers that actually contain a link. **Theme rule:**
-  render `a_html` when present, else `a` (no markdown parser needed in
-  Liquid); style the anchors with theme CSS. The HTML is recomputed from the
-  text on every publish/unpublish, so text and HTML can never drift.
+  styles) — but only for answers that actually contain a link. The theme
+  renders `a_html` raw when present, else the escaped `a` (trust boundary:
+  frontend/06 §4.5) — so `qa-links.mjs` must stay the only writer of these keys.
+  The HTML is recomputed from the text on every publish/unpublish, so text and
+  HTML can never drift.
 - **Mo:** the prompt context keeps the raw markdown (`a`) — the chat renders
   markdown links natively, so Mo reuses them verbatim.
 - **Übersetzung:** the publish-time translation pass is instructed to keep
@@ -148,9 +155,10 @@ actively in the queue — two active copies would fight the de-dup rule.
 
 ## Cost & safety
 
-- Only the explicit "Gespräche scannen" / "Entwurf" clicks spend tokens
-  (one Sonnet 5.5 pass per conversation; usage recorded under
-  `qa_draft`, conversation-linked so it cascade-deletes).
+- „Gespräche scannen“ is the one token-spending admin action (one writer-tier
+  pass per conversation, at most 15 per click; usage recorded under
+  `qa_draft`, conversation-linked so it cascade-deletes). „Veröffentlichen“ may
+  add one cheap bulk-tier translation pass (`qa_translate`, see i18n above).
 - Drafted questions must be free of personal details (prompt rule); the
   operator reviews EVERYTHING before it becomes public — nothing auto-publishes.
 - De-dup: a normalized question fingerprint blocks duplicate queue entries;

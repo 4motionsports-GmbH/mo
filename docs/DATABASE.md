@@ -46,7 +46,9 @@ the pooled one. To add a migration, drop a new file with the next number
 (`migrations/00NN_<name>.sql`; never edit an applied one) — it must use plain
 DDL (`--` comments and `;` statement separators; no dollar-quoted function
 bodies, which the lightweight splitter doesn't parse). Production migrations are
-run manually by the maintainer.
+run manually by the maintainer. The latest migration is
+`0076_message_session_id.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
+below names the migration that created each table.
 
 ## Schema overview
 
@@ -56,15 +58,16 @@ The schema is split into **two clusters** (see the separation rationale below).
 
 | Table           | Key columns                                                                                          |
 | --------------- | --------------------------------------------------------------------------------------------------- |
-| `conversations` | `session_id` (unique), `created_at`/`updated_at`/`last_activity_at`, `persona_label`, `message_count`, `recommended_product_ids` (text[]), `selected_product_ids` (text[]), `status` (active/abandoned/converted — `converted` is set by the daily conversion sweep, `src/lib/conversion-sweep.ts`: the conversation's marketing email's unique `MS5-` code was redeemed in a real order), `locale` (migration 0041 — storefront chat language, stamped by `persistTurn`, latest turn wins; NULL for pre-0041 rows) |
+| `conversations` | `conversation_key` (unique thread key, 0018 — defaults to the session id; several threads per `session_id`, [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §9), `session_id` (indexed, not unique since 0018), `customer_id` (0008, FK customers, SET NULL — see the linking rule below), `created_at`/`updated_at`/`last_activity_at`, `persona_label`, `message_count`, `recommended_product_ids` (text[]), `selected_product_ids` (text[]), `status` (active/abandoned/converted — `converted` is set by the daily conversion sweep, `src/lib/conversion-sweep.ts`: the conversation's marketing email's unique `MS5-` code was redeemed in a real order), `title` (0016, custom label) / `title_auto` (0026, derived from the first user message), `analysis_*` (0031 — the per-conversation analysis: summary, category, tags, quality, model, tokens), `qa_scanned_at` (0036, [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md)), `locale` (migration 0041 — storefront chat language, stamped by `persistTurn`, latest turn wins; NULL for pre-0041 rows) |
 | `messages`      | `conversation_id` (FK, cascade), `client_message_id` (idempotency), `role`, `content`, `tool_name`, `session_id` (0076 — the session that wrote a tool marker row; NULL on text rows and on rows before 0076; partial index `messages_session_marker_idx` for the attribution window anchor, [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)) |
 | `kpi_events`    | `session_id`, `event`, `data` (jsonb), `created_at`                                                  |
-| `ai_usage`      | `conversation_id` (FK, cascade, nullable), `call_site`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (migration 0039 — prompt-cache splits, see docs/PROMPT_CACHING.md), `estimated`, `created_at` (migration 0012) |
-| `feedback`      | `message` (the comment), optional context: `session_id`, `conversation_id`, `tier`, `email`, `page`; `created_at` (migration 0020) |
+| `ai_usage`      | `conversation_id` (FK, cascade, nullable), `call_site`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (migration 0039 — prompt-cache splits, see docs/PROMPT_CACHING.md), `campaign_contact_id` (0054, no FK — usage of a Kampagne recipient's draft), `estimated`, `created_at` (migration 0012) |
+| `feedback`      | `message` (the comment), optional context: `session_id`, `conversation_id`, `tier`, `email`, `page`; `rating` (1–5) + `email_kind` (0054 — the one-click e-mail rating, `GET /api/newsletter-rating`); `created_at` (migration 0020) |
 
 - **Write path:** `/api/chat` calls `persistTurn()` (`src/lib/conversation-store.ts`)
   in its `onFinish` handler — *after* the stream finishes, so it adds no token
-  latency. It upserts the conversation by `session_id`, records the persona
+  latency. It upserts the conversation by `conversation_key` (the widget's
+  optional `conversationKey`, else the `session_id`), records the persona
   label, accumulates `recommended_product_ids` from product-referencing tool
   calls, and inserts the new user + assistant messages.
 - **Selected vs discussed:** `recommended_product_ids` is the DISCUSSED set —
@@ -146,7 +149,7 @@ Every Shopify customer is mirrored into `customers` (bulk import, `customers/*` 
 | `consent_events` (0064) | The consent history („Einwilligungsverlauf“): `customer_id` (FK customers, cascade), `occurred_at`, `recorded_at`, `source` (mo_capture_form \| mo_chat_gate \| mo_signin \| mo \| shopify \| admin \| import), `state`, `level`, `origin_ref` (never an e-mail address), `text_version` (Shopify-side acts: `SHOPIFY_CONSENT_TEXT_VERSION`), `note`. One row per change of `customers.email_consent_*`; the merge rules live in `consent-core.mjs`. |
 | `shopify_webhook_events` (0065) | Webhook dedupe by `X-Shopify-Webhook-Id`: `webhook_id` (PK), `topic`, `received_at`, `processed_at`, `outcome`, `error` — no payload stored |
 | `shopify_sync_runs` (0065) | The resumable bulk import and the nightly reconcile: `kind` (`import_customers` \| `import_orders` \| `reconcile` \| `refund_backfill` — the one-off marker of the 15-day refund-date look-back, kept by retention as the only done run of its kind), `status` (running/processing/done/failed/cancelled), `bulk_operation_id`, `result_url`, `byte_offset`, counts (`lines_processed`, `customers_upserted`, `orders_upserted`, `skipped`), `since` (reconcile floor), `started_at`/`updated_at`/`finished_at`, `error` |
-| `shopify_outbox` (0065) | Every write Mo makes to Shopify customers, retried with backoff (`src/lib/shopify-outbox.ts`, cron `/api/cron/shopify-sync` every 5 min): `kind` (`consent_update` \| `customer_create` \| `data_erasure` \| `writeback` — Mo's `mo-…` customer tags, `SHOPIFY_WRITEBACK_ENABLED`), `customer_id` (FK customers, SET NULL), `shopify_customer_id`, `payload` (target state; a create's e-mail and name are blanked once the row is done or dead), `status` (pending/done/failed/dead/skipped), `attempts`, `next_attempt_at`, `last_error`, `created_at`, `done_at` |
+| `shopify_outbox` (0065) | Every write Mo makes to Shopify customers, retried with backoff (`src/lib/shopify-outbox.ts`, cron `/api/cron/shopify-sync` every 5 min): `kind` (`consent_update` \| `customer_create` \| `data_erasure` \| `writeback` — Mo's `mo-…` customer tags, `SHOPIFY_WRITEBACK_ENABLED`), `customer_id` (FK customers, SET NULL), `shopify_customer_id`, `payload` (target state; a create's e-mail and name are blanked once the row is done or dead), `status` (pending/running/done/failed/dead/skipped — `running` is the processor's claim, re-picked after a 5-minute lease; `skipped` = superseded by a newer write), `attempts`, `next_attempt_at`, `last_error`, `created_at`, `done_at` |
 | `erasure_tombstones` (0065) | `shopify_customer_id` (PK) of every person erased in Mo, `erased_at`, `shopify_confirmed_at` (set by Shopify's `customers/redact` / `customers/delete`). Import, reconcile and webhooks skip tombstoned ids, so nobody is re-created before Shopify has redacted the record; a confirmed tombstone leaves after `ERASURE_TOMBSTONE_RETENTION_DAYS` ([`DATA_RETENTION.md`](./DATA_RETENTION.md)). |
 | `inbox_items` (0067) | The Eingang: `kind` (the rule in `customer-signals.mjs`, or a system matter), `customer_id` (FK customers, cascade; NULL for system items), `status` (`offen` \| `zurueckgestellt` \| `erledigt` \| `verworfen`), `priority`, `title`, `reason`, `evidence` (jsonb, never an e-mail address), `suggestion` (jsonb AI suggestion) + `suggested_at`, `dedupe_key` (unique — names the episode), `snoozed_until`, `decided_at`/`decision`/`decision_note`, `outcome` (jsonb, 14 days after the decision) + `outcome_checked_at`, `expires_at` |
 
@@ -190,30 +193,58 @@ facts, profiles) and [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) for the consent.
 
 ## Why conversations and marketing are separate
 
-This separation is a GDPR design decision, not just tidiness:
+The schema follows the two-cluster split whose lawful bases and windows
+[`DATA_RETENTION.md`](./DATA_RETENTION.md) owns. What it means for the tables:
 
-1. **Different lawful bases.** Conversations/analytics run on *legitimate
-   interest / service provision*; marketing email runs on *explicit consent*.
-   Mixing them would let the weaker basis contaminate the stronger one.
-2. **Email is quarantined.** An email address appears only in Cluster B
-   tables (`customers`, `email_captures`, `suppression_list`, the campaign and
-   correspondence tables) — plus the optional `feedback.email` described above.
-   Conversations are pseudonymous (`session_id` only), so the bulk of Cluster A
-   carries no directly-identifying field.
-3. **No implicit join between clusters.** For anonymous traffic the only
-   bridge is the pseudonymous `session_id`, which a user can sever by clearing
-   browser storage. Since migration 0008 there is **one explicit,
-   identity-anchored exception**: `conversations.customer_id`, set only when the
-   user actively submits their email or signs in for that session. The FK is
-   `ON DELETE SET NULL`, so a retention purge of a customer returns their
-   conversations to plain pseudonymous rows (the complete erasure deletes them).
-4. **Independent retention.** Each cluster expires on its own schedule (see
-   [`DATA_RETENTION.md`](./DATA_RETENTION.md)) — e.g. purging a marketing
-   capture on unsubscribe doesn't touch conversation analytics, and deleting an
-   old conversation doesn't touch a still-valid marketing consent.
+1. **E-mail addresses live only in Cluster B tables** (`customers`,
+   `email_captures`, `suppression_list`, the campaign, correspondence, sign-in
+   and Shopify-outbox tables) — plus the optional `feedback.email`, which is
+   contact context for that comment, not a consent record. Cluster A is keyed by
+   the pseudonymous `session_id`.
+2. **One explicit bridge.** `conversations.customer_id` (and
+   `email_captures.customer_id`, both 0008, `ON DELETE SET NULL`) is set only
+   when the visitor submits an e-mail or signs in in that session (linking rule
+   above). A retention purge of a customer returns the conversations to plain
+   pseudonymous rows; the complete erasure deletes them.
+3. **Independent retention.** Each cluster expires on its own schedule
+   ([`DATA_RETENTION.md`](./DATA_RETENTION.md)).
 
-See [`DATA_RETENTION.md`](./DATA_RETENTION.md) for lawful basis and retention
-windows in detail.
+## Table index — every table and where it is documented
+
+Every base table in the schema (migrations `0001`–`0076`; dropped tables
+`bestandskunden_suppression_list`, `email_templates`, `email_template_assignments`
+are gone since `0029` / `0049`). Columns of the tables marked *here* are in the
+sections above; the others are owned by the linked doc. Retention and erasure of
+every table: [`DATA_RETENTION.md`](./DATA_RETENTION.md).
+
+| Table | Created | Columns + semantics |
+| --- | --- | --- |
+| `conversations`, `messages`, `kpi_events` | 0001 | here (Cluster A) |
+| `email_captures`, `suppression_list`, `marketing_sends` | 0001 | here (Cluster B); consent: [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) |
+| `kpi_persona_question_summaries` | 0004 | `persona_label` (PK), `summary_md`, `sample_size`, `model`, `generated_at` — the KPI tab's „Top-Fragen“ cache per persona ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md)) |
+| `customers` | 0008 | here + [`CUSTOMERS.md`](./CUSTOMERS.md) |
+| `ai_usage` | 0012 | here; cache columns: [`PROMPT_CACHING.md`](./PROMPT_CACHING.md) |
+| `bundle_offers` | 0013 | [`BUNDLES.md`](./BUNDLES.md) „Data model“ |
+| `customer_oauth_tokens`, `customer_auth_pending`, `customer_merge_conflicts` | 0014 | [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §5 |
+| `customer_session_links` | 0019 (`link_kind`, `authenticated_at` 0071) | `session_id` (PK), `customer_id` (FK customers, cascade), `linked_at`, `last_seen_at`, `link_kind`, `authenticated_at` — here („The customer entity“) |
+| `feedback` | 0020 | here (Cluster A) |
+| `email_messages` | 0021 | `direction` (sent/received), `message_id` / `in_reply_to` / `references_ids` / derived `thread_id`, `from_address`, `to_address`, `subject`, `body_text`, `body_html`, `snippet`, `attachments` (metadata only), `provider` (`resend` \| `kontaktformular`), `provider_email_id`, `customer_id` + `marketing_send_id` (both SET NULL), `occurred_at` — the Korrespondenz log ([`DATA_RETENTION.md`](./DATA_RETENTION.md) „Korrespondenz“) |
+| `physical_letters` | 0022 | here (Cluster B) |
+| `admin_access_log` | 0028 | `action`, `target_customer_id` (no FK — survives the erasure), `detail` (ids and counts only), `ip`, `session_fp` (SHA-256 of the admin cookie, truncated), `occurred_at` — every admin access to customer data (`recordAdminAccess`) |
+| `conversation_insights` | 0031 (`references_json` 0033) | `date_from`/`date_to`, `summary_md`, `analyzed_count`, `model`, token counts, `references_json`, `generated_at` — the Gespräche insights rollup ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md)) |
+| `analytics_reports` | 0032 | `title`, `date_from`/`date_to`, `preset`, `status` (running/complete/failed), `phase`, `progress`, `options`, `sections` (jsonb), `usage`, `error`, timestamps — the stored Komplettanalyse ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md)) |
+| `campaign_contacts`, `campaign_drafts`, `campaign_sends` | 0034 | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.5 (owner) |
+| `qa_entries` | 0036 (`question_en`/`answer_en` 0037) | [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md) |
+| `mo_attribution_tokens`, `mo_orders` | 0042 | [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md) |
+| `improvement_runs`, `improvement_suggestions`, `mo_directives`, `mo_directive_versions` | 0044 (`step_claimed_at` 0045) | [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md) |
+| `email_design_selections` | 0049 | `email_kind` (PK: summary/doi/marketing/campaign), `design_key`, `updated_at` — [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) |
+| `customer_orders`, `customer_facts`, `consent_events`, `shopify_webhook_events`, `shopify_sync_runs`, `shopify_outbox`, `erasure_tombstones` | 0062–0065 | here (Kundenstamm) |
+| `campaigns` | 0066 | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2 |
+| `inbox_items` | 0067 | here (Kundenstamm) |
+| view `customer_overview` | 0068 | here |
+| `customer_link_grants` | 0073 | here („The customer entity“) |
+| `campaign_letters` | 0074 | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §8 |
+| `_migrations` | runner | applied migration names (`scripts/migrate.mjs`) |
 
 ## Local database (development)
 
@@ -247,4 +278,11 @@ Einzelansprache, Black Friday, a finished Aktion) with recipients, drafts and se
 (from the real signal rules), `shopify_sync_runs` / `shopify_webhook_events` / `shopify_outbox`,
 correspondence, letters, bundles, feedback, Q&A, reports and attribution. Without `--reset` it
 refuses to write into tables that already hold rows; re-running it with `--reset` recreates the same
-data. Not seeded: OAuth tokens, pending sign-ins, merge conflicts, erasure tombstones.
+data. Not seeded: OAuth tokens, pending sign-ins, merge conflicts, erasure tombstones,
+`campaign_letters`, `customer_link_grants` — all of them empty after `--reset` (the first four are
+in its truncate list, the last two go with `TRUNCATE … CASCADE` over their `customers` FK).
+
+`npm run db:reset` (`scripts/reset-test-data.mjs`, gated on `ALLOW_DB_RESET=true`) is the
+destructive TRUNCATE of every data table. Its table list stops at migration `0031`, so its
+completeness guard **aborts** on any database migrated further (it refuses to reset while
+unlisted tables exist). Locally use `npm run db:seed -- --reset` instead.
