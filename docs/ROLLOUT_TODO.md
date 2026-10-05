@@ -364,9 +364,8 @@ the single list of what is still open for M. C's open items are at the end of �
   3. Scopes: add `write_app_proxy`; keep every scope that is there.
   4. App proxy: subpath prefix `apps`, subpath `chat`, proxy URL
      `https://mo.motionsports.de/api/auth/storefront`.
-  5. Compliance webhooks: all three endpoints (customer data request, customer data erasure, shop
-     data erasure) = `https://mo.motionsports.de/api/webhooks/shopify`. **The form has no such
-     section** → release anyway (step 6) and do 5.4b afterwards.
+  5. Compliance webhooks: the version form has **no** such section (seen 05.10.) → release anyway
+     (step 6) and do 5.4b afterwards.
   6. Release. **Never rotate the client secret:** Mo's Admin API access, every webhook signature and
      the App Proxy signature use it (Vercel `SHOPIFY_CLIENT_SECRET`); a new secret breaks all three
      until Vercel has it.
@@ -407,8 +406,12 @@ the single list of what is still open for M. C's open items are at the end of �
     warning appears if the widget leaves codes unredeemed); KPI → Marketing & Kampagne →
     „Einwilligung nach der Anmeldung (Marketing-Opt-in)“ → „Nach Anmeldeweg“.
 
-  **5.4b · Fallback: compliance webhooks with the Shopify CLI** (only if step 5 found no section) —
-  F, or whoever has the app's project folder; then step 11.
+  **5.4b · Compliance webhooks with the Shopify CLI** (the Dev Dashboard version form has no
+  compliance section — confirmed 05.10.) — F in F's project folder (~5 min), or M alone; then step 11.
+  - (0) M alone, no project folder yet: `npm install -g @shopify/cli@latest`; in an empty folder
+    `shopify app init --client-id <Client ID>` (Dev Dashboard → App settings; = Vercel
+    `SHOPIFY_CLIENT_ID`; if asked for a template, take the extension-only one) → `cd` into the new
+    folder.
   - (a) In the app's project folder: `shopify app config link` → pick the app (writes the
     configuration released in step 6, incl. scope and App proxy, into `shopify.app.toml`).
   - (b) Check `shopify.app.toml`: `[access_scopes]` `scopes` contains `write_app_proxy` and every
@@ -430,8 +433,9 @@ the single list of what is still open for M. C's open items are at the end of �
     (if the toml already has a `[webhooks]` block, add only the `[[webhooks.subscriptions]]` part
     under it and keep its `api_version`). No other webhook topics in the toml — `npm run
     shopify:webhooks` registers those, and a second copy doubles every event.
-  - (c) `shopify app deploy` → confirm the new version. No reinstall (it would delete the
-    subscriptions the script registered).
+  - (c) `shopify app deploy` → **read the summary before confirming**: the only new thing must be
+    the compliance webhooks. If it says an extension would be removed, or scopes / URLs change →
+    answer no and tell C. No reinstall (it would delete the subscriptions the script registered).
 
 - [ ] **5.3 App ownership** (optional) — M + F
   - M has Dev Dashboard access to the app since 05.10. (5.4 needs nobody else). Left, optional: move
@@ -648,6 +652,31 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
     rows — decide with F-37 (b). §4.9, optional: dedupe `mo_order_marker_unresolved` by
     `X-Shopify-Event-Id`. Release date: move `attribution-window` / `MEANINGFUL_FROM.attribution`
     (`kpi-releases.mjs`) if the switch goes on after 05.10. (open list item 1).
+- [ ] **C.27** Code findings of the docs audit of 05.10. (the docs now describe the code as it is;
+      these are code changes, none urgent):
+  - **Bug:** a signed-in customer without a verified e-mail who types someone else's address into
+    the capture form ends their sign-in (correct) **and** `linkCustomerOnEmailCapture` moves all
+    conversations of the session to that address's customer row (`customer-store.ts`) — only the
+    sign-in link should change.
+  - **Decide (M):** an accept for a suppressed (unsubscribed) address writes no consent act, so the
+    post-sign-in ask can come back until the anti-nag stops it — should suppression make
+    `optInActionable` false?
+  - Copy: `marketing_consent_required` (`api-messages.mjs`) mentions a checkbox on the button-consent
+    surface; `/api/contact`'s delivery-failure message is German on `/en`; `/api/r/{token}` links and
+    1:1 marketing unsubscribe links carry no `locale`.
+  - `npm run db:reset` aborts on any database past migration 0031 (`scripts/reset-test-data.mjs`
+    `DATA_TABLES` stops there) — documented in `docs/DATABASE.md`, script still to fix.
+  - Retention gaps to decide: `shopify_outbox` rows with status `skipped` are never purged;
+    `customer_merge_conflicts` and `improvement_runs` / `improvement_suggestions` have no window.
+  - Admin texts that contradict the code: popup timing in `LoginGateSection` and the
+    `widget-popups` release note (the widget decides ~0.7 s after a send, once per tab session);
+    `RevenueSection` InfoTips name only MS5- codes (the query includes MK-); `AiCostSection` has no
+    label for 6 call sites; `SystemStatusCard` does not show the 05.10. switches
+    (`CHAT_PAGE_CONTEXT_ENABLED`, `APP_PROXY_SIGNIN_ENABLED`, `MO_ATTRIBUTION_SESSION_ANCHOR`,
+    `CONSENT_SIGNIN_VARIANTS`); `email-theme.mjs` labels the campaign audience „Shopify-Abonnenten“.
+  - Comment sweep: stale code comments listed in the audit reports (consent stamp versions in the
+    opt-in routes, `consent-copy` route header, `retention.ts` header, `kpi-events.ts` link data,
+    `seed-dev.mjs`, `shopify-discounts.ts` WELCOME prefix, a few more).
 
 ## Backlog — not built, decide later
 
