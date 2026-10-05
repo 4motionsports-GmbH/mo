@@ -37,8 +37,15 @@
  *            form keeps its two checkboxes; its labels are unchanged but ship
  *            as part of the v4 set. Lawyer-approved July 2026 (mechanic +
  *            wording).
+ *   - "v5" — the consent popup after a sign-in (surface=signin) gets SERVED
+ *            benefit bullets (`benefits`, framing like the headline — never in
+ *            consentTextShown) and a framing `variant` id; the widget stops
+ *            rendering bullets of its own once it renders the served ones
+ *            (frontend task 1 of 2026-10-05). Bullet wording chosen by the
+ *            owner 05.10.2026 (D-AP4); the English copy is approved as the
+ *            translation of the German (D-AP3). Labels and footers unchanged.
  */
-export const CONSENT_COPY_VERSION = "v4";
+export const CONSENT_COPY_VERSION = "v5";
 
 /**
  * Compose the pre-served `consentTextShown` audit string from the copy blocks

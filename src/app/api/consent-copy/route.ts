@@ -8,7 +8,7 @@
 // forms NOT triggered by the tool (e.g. a proactive share-form entry point),
 // and lets the widget refresh its copy without a theme release.
 //
-// Four surfaces, ONE version stamp (v4):
+// Four surfaces, ONE version stamp (v5; signin carries served `benefits` + `variant`):
 //   * default            — the in-chat capture form (email + two checkboxes).
 //   * ?surface=signin    — the AT-SIGN-IN marketing opt-in for a signed-in
 //                          customer (benefit-framed button-consent block, no
@@ -39,6 +39,7 @@ import {
   chatGateMarketingConsentCopy,
   erasurePageCopy,
   signInMarketingConsentCopy,
+  signInVariantsActive,
 } from "@/lib/consent-copy";
 import { isShopifyErasureSyncEnabled } from "@/lib/platform-flags.mjs";
 import { resolveLocale } from "@/lib/locale";
@@ -70,7 +71,7 @@ export async function GET(req: Request) {
     // when the one erasure reaches Shopify).
     const copy =
       surface === "signin"
-        ? signInMarketingConsentCopy(locale)
+        ? signInMarketingConsentCopy(locale, req.headers.get("x-ms-session"))
         : surface === "chat"
           ? chatGateMarketingConsentCopy(locale)
           : surface === "erase"
@@ -78,12 +79,14 @@ export async function GET(req: Request) {
             : captureConsentCopy(locale);
 
     // Short cache only: a lawyer copy change must propagate to live widgets
-    // quickly, since the served strings ARE the audit-trail text.
+    // quickly, since the served strings ARE the audit-trail text. While a
+    // sign-in framing A/B test runs, the copy is per session: never cached.
+    const perSession = surface === "signin" && signInVariantsActive(locale);
     return new Response(JSON.stringify(copy), {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+        "Cache-Control": perSession ? "private, no-store" : "public, max-age=60, stale-while-revalidate=300",
         ...cors,
       },
     });
