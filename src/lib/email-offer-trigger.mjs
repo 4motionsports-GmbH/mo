@@ -33,13 +33,16 @@ export const MAX_EMAIL_OFFERS_PER_CONVERSATION = 2;
  * - the model has not called offer_email_summary itself this turn,
  * - no email was captured in this session,
  * - the two-ask cap is not reached (the forced ask becomes one of the two),
- * - the user has not declined a capture form in this session.
+ * - the user has not declined a capture form in this session,
+ * - the session is not signed in (tier 3: the widget never shows the capture
+ *   card to a signed-in customer, CA §6.0).
  *
  * @param {{
  *   emailCaptured: boolean,
  *   offersMade: number,
  *   declined: boolean,
  *   toolNamesCalled: string[],
+ *   signedIn?: boolean,
  * }} state `offersMade` counts offers from PRIOR turns (message history);
  *   `toolNamesCalled` are the tool calls of the CURRENT turn's steps so far.
  * @returns {boolean}
@@ -49,7 +52,9 @@ export function shouldForceEmailOfferStep({
   offersMade,
   declined,
   toolNamesCalled,
+  signedIn = false,
 }) {
+  if (signedIn) return false;
   if (emailCaptured) return false;
   if (declined) return false;
   if (offersMade >= MAX_EMAIL_OFFERS_PER_CONVERSATION) return false;

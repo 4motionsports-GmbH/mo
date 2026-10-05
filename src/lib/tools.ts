@@ -73,8 +73,8 @@ export { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./email-offer-trigger.mjs";
 // NOTE on withholding offer_email_summary: the full tool set is always built
 // here so the return type is stable (api/chat's deterministic email-offer
 // trigger force-selects the tool in a prepareStep, which needs the tool's key
-// in the type). The actual withholding — ask cap reached or email already
-// captured, making "never a third ask" a guarantee rather than a prompt
+// in the type). The actual withholding — ask cap reached, email already
+// captured or the session is signed in (tier 3, CA §6.0), making "never a third ask" a guarantee rather than a prompt
 // instruction — happens in api/chat via streamText's `activeTools`: an
 // inactive tool is filtered out before the provider call and is invisible to
 // the model, exactly like omitting it from this object.

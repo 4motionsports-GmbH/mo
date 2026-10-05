@@ -499,3 +499,60 @@ test("order status on (EN) mirrors the German rules; full memory gets the except
     /Den Stand einer Bestellung \(Status, Versand, Zustellung, Erstattung\) nennst du ausschließlich aus dem Ergebnis von `get_order_status`\./
   );
 });
+
+// ---------------------------------------------------------------------------
+// Signed-in sessions: no e-mail offer, no sign-up talk (OI1 PR 1)
+// ---------------------------------------------------------------------------
+
+const offerSection = (prompt, heading) => {
+  const start = prompt.indexOf(heading);
+  if (start < 0) return "";
+  const next = prompt.indexOf("\n### ", start + heading.length);
+  const nextH2 = prompt.indexOf("\n## ", start + heading.length);
+  const ends = [next, nextH2].filter((i) => i > 0);
+  return prompt.slice(start, ends.length ? Math.min(...ends) : undefined);
+};
+
+test("signed in (DE): the summary section forbids the e-mail offer and the sign-up talk", () => {
+  const base = { profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], customerMemory: nameOnlyMemory() };
+  const p = buildSystemPrompt({ ...base, emailOffer: { offersMade: 0, emailCaptured: false, signedIn: true } });
+  assert.match(p, /### Zusammenfassung\n/);
+  assert.doesNotMatch(p, /### Zusammenfassung per E-Mail/);
+  const sec = offerSection(p, "### Zusammenfassung\n");
+  assert.match(sec, /show_contact_form/);
+  assert.match(sec, /melde ihn nie selbst an/);
+  assert.doesNotMatch(sec, /PDF/);
+  const dl = offerSection(
+    buildSystemPrompt({ ...base, emailOffer: { offersMade: 0, emailCaptured: false, signedIn: true, summaryDownload: true } }),
+    "### Zusammenfassung\n"
+  );
+  assert.match(dl, /Download-Symbol/);
+  assert.match(dl, /PDF/);
+});
+
+test("signed in (EN) mirrors the German rules", () => {
+  const base = { profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], locale: "en" };
+  const p = buildSystemPrompt({ ...base, emailOffer: { offersMade: 0, emailCaptured: false, signedIn: true } });
+  assert.match(p, /### Summary\n/);
+  assert.doesNotMatch(p, /### Summary by email/);
+  assert.doesNotMatch(p, /### Offer a summary by email/);
+  const sec = offerSection(p, "### Summary\n");
+  assert.match(sec, /never sign them up yourself/);
+  assert.doesNotMatch(sec, /PDF/);
+  const dl = offerSection(
+    buildSystemPrompt({ ...base, emailOffer: { offersMade: 0, emailCaptured: false, signedIn: true, summaryDownload: true } }),
+    "### Summary\n"
+  );
+  assert.match(dl, /download icon/);
+});
+
+test("signed in wins over a captured e-mail and over the cap", () => {
+  for (const emailOffer of [
+    { offersMade: 0, emailCaptured: true, signedIn: true },
+    { offersMade: 2, emailCaptured: false, signedIn: true },
+  ]) {
+    const p = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], emailOffer });
+    assert.match(p, /### Zusammenfassung\n/);
+    assert.doesNotMatch(p, /### Zusammenfassung per E-Mail/);
+  }
+});

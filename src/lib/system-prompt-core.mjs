@@ -578,6 +578,24 @@ function renderTeamDirectives(directives, locale) {
 function renderEmailOfferSection(state, locale) {
   const en = locale === "en";
 
+  // Signed in (tier 3): the widget never shows the capture card and the tool is
+  // withheld — no e-mail summary, no sign-up talk; consent stays on the served
+  // popup. A summary is the PDF download, which exists only in a keyed thread.
+  if (state.signedIn) {
+    if (en) {
+      const dl = state.summaryDownload
+        ? "If they ask for a summary, they can download it as a PDF via the download icon at the top of the chat."
+        : "If they ask for a summary, don't promise to send one; your recommendations and the cart link are right here in the chat.";
+      return `### Summary
+The customer is signed in with their customer account. Do NOT offer a summary by email (the tool is not available to you), never ask for an email address in the chat and do not bring up a newsletter or offers sign-up on your own. If they ask about the newsletter or offers themselves: never sign them up yourself, don't promise a sign-up and don't collect consent in the chat. If they want to know when a sold-out item is back in stock, use \`show_contact_form\` for that. ${dl} Just keep advising normally.`;
+    }
+    const dl = state.summaryDownload
+      ? "Fragt er nach einer Zusammenfassung, kann er sie über das Download-Symbol oben im Chat als PDF herunterladen."
+      : "Fragt er nach einer Zusammenfassung, versprich keinen Versand; deine Empfehlungen und der Warenkorb-Link stehen hier im Chat.";
+    return `### Zusammenfassung
+Der Kunde ist mit seinem Kundenkonto angemeldet. Biete KEINE Zusammenfassung per E-Mail an (das Tool steht dir nicht zur Verfügung), frage im Chat nie nach einer E-Mail-Adresse und sprich von dir aus keine Newsletter- oder Angebots-Anmeldung an. Fragt er selbst nach Newsletter oder Angeboten: melde ihn nie selbst an, versprich keine Anmeldung und hole keine Einwilligung im Chat ein. Möchte er erfahren, wann ein ausverkaufter Artikel wieder lieferbar ist, nutze dafür \`show_contact_form\`. ${dl} Berate einfach normal weiter.`;
+  }
+
   // Email already captured here — the summary is on its way; never re-ask.
   if (state.emailCaptured) {
     return en
@@ -1007,7 +1025,7 @@ export function greetingTriggerText(locale, ctx) {
  *   profile: import("./types").CustomerProfile,
  *   archetype: string,
  *   retrievedProducts: import("./types").Product[],
- *   emailOffer?: { offersMade: number, emailCaptured: boolean },
+ *   emailOffer?: { offersMade: number, emailCaptured: boolean, signedIn?: boolean, summaryDownload?: boolean },
  *   productContext?: { id: string, name: string },
  *   browsingContext?: object,
  *   customerMemory?: object,
