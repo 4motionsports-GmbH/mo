@@ -1,4 +1,5 @@
-// Admin PII-access audit trail (migration 0028, LEGAL_READINESS_REPORT §8 OQ-15).
+// Admin PII-access audit trail (migration 0028, docs/archive/LEGAL_READINESS_REPORT.md
+// §8 OQ-15).
 //
 // recordAdminAccess() writes one row per sensitive admin action so there is a
 // record of which customer's data an operator pulled. Best-effort and fail-soft:

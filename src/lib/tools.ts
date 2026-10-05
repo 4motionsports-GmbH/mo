@@ -288,7 +288,7 @@ export function buildChatTools(
       // /api/capture-email — the Art. 7 audit record can never drift from what
       // was displayed, and lawyer copy changes need no widget release. The
       // locale picks the consent language so an /en chat captures /en consent.
-      // See src/lib/consent-copy.ts and API_CONTRACT.md §7.4.
+      // See src/lib/consent-copy.ts and docs/frontend/API_CONTRACT.md §7.4.
       execute: async () => ({ ok: true, consentCopy: captureConsentCopy(locale) }),
     }),
   };

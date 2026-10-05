@@ -17,7 +17,7 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 /**
  * Documented error code for a capture submitted without transactional
- * consent. Stable — the widget dispatches on it (see API_CONTRACT.md §7.1).
+ * consent. Stable — the widget dispatches on it (see docs/frontend/API_CONTRACT.md §7.1).
  */
 export const CAPTURE_ERROR_TRANSACTIONAL_REQUIRED = "transactional_consent_required";
 

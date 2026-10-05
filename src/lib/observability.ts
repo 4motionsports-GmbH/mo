@@ -19,7 +19,7 @@ type SentryModule = typeof SentryNS;
 let sentryPromise: Promise<SentryModule | null> | null = null;
 
 // ---------------------------------------------------------------------------
-// PII scrubbing (GDPR — LEGAL_READINESS_REPORT §8 OQ-04)
+// PII scrubbing (GDPR — docs/archive/LEGAL_READINESS_REPORT.md §8 OQ-04)
 // ---------------------------------------------------------------------------
 //
 // Error messages / stack values can incidentally carry personal data — a chat
@@ -174,7 +174,7 @@ export type ErrorCode =
   | "upstream_unavailable"
   | "internal_error"
   // Capture form submitted without the (no-longer-pre-checked) transactional
-  // consent — see capture-validation.mjs + API_CONTRACT.md §7.1.
+  // consent — see capture-validation.mjs + docs/frontend/API_CONTRACT.md §7.1.
   | "transactional_consent_required"
   // A marketing opt-in POSTed without the explicit affirmative act (tick /
   // accept tap) — an account or a typed email never implies consent. See

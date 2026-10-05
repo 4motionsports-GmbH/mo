@@ -1,5 +1,6 @@
 // Shopify App Proxy request verification — the trust anchor for shop-native
-// already-signed-in detection (docs/CUSTOMER_ACCOUNT.md §3a).
+// already-signed-in detection (docs/frontend/ACCOUNT_CONTRACT.md §3a; backend:
+// docs/CUSTOMER_ACCOUNT.md §2 „Already-signed-in detection“).
 //
 // WHY THIS EXISTS. The chat widget lives in the theme (motionsports.de); the
 // backend is cross-origin on Vercel (mo.motionsports.de). The backend therefore

@@ -362,7 +362,7 @@ export async function POST(req: Request) {
       // immediately and survives a reload even if the answer never lands. Only
       // when a user turn exists (a bare greeting open mints no listed thread, like
       // ChatGPT). The onFinish persistTurn fills in the assistant turn on the same
-      // row. See lib/conversation-create + docs/CUSTOMER_ACCOUNT.md §7.6.
+      // row. See lib/conversation-create + docs/frontend/ACCOUNT_CONTRACT.md §7.6.
       latestUserMessage
         ? ensureConversationStarted({
             sessionId,
@@ -731,7 +731,8 @@ export async function POST(req: Request) {
 
           // Card-selection guard (observability). The visible product cards are
           // exactly Mo's explicit show_product recommendations in order (see
-          // lib/recommended-products + docs/frontend-handoff). The widget already
+          // lib/recommended-products + docs/frontend/API_CONTRACT.md §2, the
+          // card-selection contract). The widget already
           // renders nothing for an unknown id, and /api/products withholds the
           // checkout link for a sold-out one — but if the model recommended an
           // id that is unknown or sold-out, that is a prompt regression we want

@@ -106,7 +106,7 @@ export function loginGateRates(c) {
 }
 
 // ---------------------------------------------------------------------------
-// Server-only events (API_CONTRACT §5) — POST /api/kpi drops them
+// Server-only events (docs/frontend/API_CONTRACT.md §5) — POST /api/kpi drops them
 // ---------------------------------------------------------------------------
 
 /**

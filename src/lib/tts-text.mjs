@@ -123,7 +123,7 @@ export function prepareTtsText(input, maxChars = MAX_TTS_CHARS) {
 // (`stream: true`, incrementing `seq`) so the first audio plays ~1 s after the
 // FIRST sentence instead of after the whole answer. This is the CANONICAL,
 // unit-tested reference implementation of the boundary logic the streaming-TTS
-// contract describes (docs/frontend-handoff/API_CONTRACT.md §8.3) — the widget
+// contract describes (docs/frontend/API_CONTRACT.md §8 „Streaming voice mode“) — the widget
 // mirrors it so chunk boundaries match what the server expects to synthesize.
 //
 // Pure logic, no I/O — lives here next to the other TTS text helpers so the

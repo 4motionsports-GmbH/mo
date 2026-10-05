@@ -62,7 +62,7 @@ export async function refreshCustomerData(
     // live AND the address is PURCHASE-derived (a completed order's shipping
     // address, obtained in connection with the sale). The saved account default
     // ('consented_capture') is deliberately not auto-stored here — no postal-use
-    // consent was verified. See LEGAL_READINESS_REPORT §8 OQ-01.
+    // consent was verified. See docs/archive/LEGAL_READINESS_REPORT.md §8 OQ-01.
     if (isPhysicalMailSendsApproved()) {
       const lawful = await fetchLawfulAddressByEmail(customer.email);
       if (lawful && lawful.source === "purchase") {

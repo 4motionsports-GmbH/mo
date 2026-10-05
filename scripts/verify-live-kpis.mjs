@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Read-only live checks after a widget release, straight from kpi_events and
-// consent_events — the queries behind docs/ROLLOUT_TODO.md „Live-Check nach
-// dem Widget-Upload“. Only SELECTs; no names, e-mail addresses or message text
+// consent_events — the queries behind docs/ROLLOUT_TODO.md 1.11 (live check
+// after a widget upload). Only SELECTs; no names, e-mail addresses or message text
 // are printed (session ids are shortened).
 //
 //   npm run verify:live                       (since 2026-10-04, Europe/Berlin)

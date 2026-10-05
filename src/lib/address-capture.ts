@@ -7,8 +7,9 @@
 // runs everyone with a usable address is filled in, and customers with
 // genuinely no address aren't re-queried every time.
 //
-// ⚠️ GDPR — DATA MINIMISATION + LAWFUL ACQUISITION (LEGAL_READINESS_REPORT §8
-// OQ-01). A full postal address is collected here ONLY when BOTH hold:
+// ⚠️ GDPR — DATA MINIMISATION + LAWFUL ACQUISITION
+// (docs/archive/LEGAL_READINESS_REPORT.md §8 OQ-01). A full postal address is
+// collected here ONLY when BOTH hold:
 //   1. PHYSICAL_MAIL_SENDS_APPROVED is on — the address serves no purpose unless
 //      the physical-mail channel is actually live, so we don't collect it for a
 //      dormant feature; and

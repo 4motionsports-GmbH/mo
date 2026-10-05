@@ -111,7 +111,7 @@ export type ApproveAndSendResult =
  * Minimum days between two marketing sends to the SAME recipient (per-recipient
  * frequency cap). 0 disables (default). Configurable via
  * MARKETING_MIN_SEND_INTERVAL_DAYS — the cadence is a policy choice
- * (LEGAL_READINESS_REPORT §8 OQ-16).
+ * (docs/archive/LEGAL_READINESS_REPORT.md §8 OQ-16).
  */
 function minSendIntervalDays(): number {
   return parseIntEnv("MARKETING_MIN_SEND_INTERVAL_DAYS", 0, 0);

@@ -85,11 +85,12 @@ export function isAttributionSessionAnchorEnabled(env = process.env) {
 }
 
 /**
- * APP_PROXY_SIGNIN_ENABLED (P0.3, docs/CUSTOMER_ACCOUNT.md §3a): the shop's App
- * Proxy (whoami) may issue a one-time sign-in code for a visitor logged in to
- * the shop. Off → whoami only measures (account_shop_recognised) and answers
- * {signedIn:false}; it is also the kill switch (a redeploy, no Shopify access
- * needed). Default off.
+ * APP_PROXY_SIGNIN_ENABLED (P0.3, docs/frontend/ACCOUNT_CONTRACT.md §3a): the
+ * shop's App Proxy (whoami) may issue a one-time sign-in code for a visitor
+ * logged in to the shop. Off → whoami issues no code and answers
+ * {signedIn:false}; it still measures (account_shop_recognised) and still ends
+ * links on a handover or a shop logout. It is also the kill switch (a
+ * redeploy, no Shopify access needed). Default off.
  */
 export function isAppProxySigninEnabled(env = process.env) {
   return parseFlag(env.APP_PROXY_SIGNIN_ENABLED);

@@ -1,5 +1,6 @@
 // GET /api/auth/storefront — shop-native already-signed-in detection via a
-// Shopify APP PROXY (docs/CUSTOMER_ACCOUNT.md §3a).
+// Shopify APP PROXY (widget contract docs/frontend/ACCOUNT_CONTRACT.md §3a;
+// backend docs/CUSTOMER_ACCOUNT.md §2 „Already-signed-in detection“).
 //
 // THE BUG this fixes: a customer who logs in through the SHOP'S OWN login (the
 // storefront account icon) — not the chatbot's "Anmelden" — opens the chat and
@@ -18,17 +19,18 @@
 // name via the Admin API (no customer token needed). Detection therefore needs
 // only to establish IDENTITY; the Admin API supplies the rest.
 //
-// ⚠️ REQUIRES A STORE / THEME ACTION (Lucas) before it can fire — see the report
-// and docs/frontend/ACCOUNT_CONTRACT.md §3a:
-//   1. Add an App Proxy to the app (Shopify admin → app → App proxy):
-//        Subpath prefix: apps   Subpath: chat   URL: https://mo.motionsports.de/api/auth/storefront
+// ⚠️ NEEDS THE APP PROXY ON THE SHOPIFY APP before it can fire (operator steps,
+// incl. the live check of `logged_in_customer_id`: docs/ROLLOUT_TODO.md 5.4):
+//   1. App Proxy on the app: subpath prefix `apps`, subpath `chat`, URL
+//      https://mo.motionsports.de/api/auth/storefront
 //      (Shopify appends the sub-path, so /apps/chat/whoami lands on ./whoami — same handler)
-//   2. The theme calls the proxied path (same-origin) with ?session=<widget sid>.
-//   3. Set SHOPIFY_APP_PROXY_SECRET (the app's API secret key) — falls back to
+//   2. The widget calls the proxied path (same-origin) with ?session=<widget sid>
+//      (docs/frontend/ACCOUNT_CONTRACT.md §3a).
+//   3. SHOPIFY_APP_PROXY_SECRET (the app's API secret key) — falls back to
 //      SHOPIFY_CLIENT_SECRET. The spike flagged `logged_in_customer_id` as
-//      historically unreliable on NEW customer accounts; re-verify on the live
-//      store. Either way this endpoint FAILS CLOSED (no valid signature / no id →
-//      signedIn:false), and the chatbot-OAuth "Anmelden" remains the fallback.
+//      historically unreliable on NEW customer accounts. Either way this endpoint
+//      FAILS CLOSED (no valid signature / no id → signedIn:false), and the
+//      chatbot-OAuth "Anmelden" remains the fallback.
 //
 // Auth model: NOT origin/secret-guarded (the request is server-to-server FROM
 // Shopify, no Origin / x-ms-chat-key). The App Proxy HMAC signature IS the auth,
@@ -36,7 +38,7 @@
 // signed URL cannot be replayed. Fail-closed: anything we can't positively
 // prove returns { signedIn: false }. Tokens never appear here.
 //
-// P0.3 (docs/archive/plans-2026-10-04/P0.3.md): a code is issued only when the session
+// P0.3 (docs/frontend/ACCOUNT_CONTRACT.md §3a): a code is issued only when the session
 // will really count as signed in — APP_PROXY_SIGNIN_ENABLED (kill switch) and a
 // proof (a live chat token, or the shop proof under
 // APP_PROXY_SIGNIN_MAX_AGE_HOURS). If the session is signed in as ANOTHER shop

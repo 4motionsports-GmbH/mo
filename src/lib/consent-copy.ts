@@ -224,7 +224,7 @@ export interface ChatGateSignInHint {
   buttonLabel: string;
   /** Caption of the secondary path (typed e-mail + consent). */
   alternativeLabel: string;
-  /** Start of the Customer Account sign-in (top-level navigation, see CUSTOMER_ACCOUNT.md §2). */
+  /** Start of the Customer Account sign-in (top-level navigation, see docs/frontend/ACCOUNT_CONTRACT.md §2). */
   loginPath: string;
 }
 

@@ -62,7 +62,7 @@ export async function POST(req: Request) {
       return errorResponse("bad_request", "event too long", 400, cors);
     }
 
-    // Server-only names (API_CONTRACT §5 — sign-in linked, campaign chat
+    // Server-only names (docs/frontend/API_CONTRACT.md §5 — sign-in linked, campaign chat
     // started, erasure, …) are written by the backend routes alone. A copy from
     // here would double-count or forge a funnel stage: acknowledge, never store.
     if (isServerOnlyEvent(event)) {

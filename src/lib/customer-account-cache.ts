@@ -54,7 +54,7 @@ export async function refreshSignedInCustomerCache(
     // still only store it when the physical-mail channel is actually live (data
     // minimisation: no full address is held for a dormant feature). Its own
     // column set, never the minimised summary; absent ⇒ leave any previously-held
-    // address intact. See LEGAL_READINESS_REPORT §8 OQ-01.
+    // address intact. See docs/archive/LEGAL_READINESS_REPORT.md §8 OQ-01.
     if (data.lawfulAddress && isPhysicalMailSendsApproved()) {
       await saveCustomerPostalAddress(
         customerId,
