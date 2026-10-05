@@ -4,6 +4,8 @@ import { createHmac } from "node:crypto";
 import {
   verifyAppProxySignature,
   evaluateAppProxyAuth,
+  isFreshAppProxyTimestamp,
+  appProxyFailureKind,
 } from "./shopify-app-proxy.mjs";
 
 const SECRET = "hush-test-secret";
@@ -111,4 +113,30 @@ test("evaluateAppProxyAuth: a non-positive id (\"0\") is rejected — never bind
     reason: "not_logged_in",
     sessionId: null,
   });
+});
+
+const NOW_MS = 1_790_000_000_000;
+const NOW_S = NOW_MS / 1000;
+
+test("isFreshAppProxyTimestamp: ±300 s window; missing or non-numeric is stale", () => {
+  assert.equal(isFreshAppProxyTimestamp({}, NOW_MS), false);
+  assert.equal(isFreshAppProxyTimestamp({ timestamp: "abc" }, NOW_MS), false);
+  assert.equal(isFreshAppProxyTimestamp({ timestamp: String(NOW_S - 301) }, NOW_MS), false);
+  assert.equal(isFreshAppProxyTimestamp({ timestamp: String(NOW_S - 299) }, NOW_MS), true);
+  assert.equal(isFreshAppProxyTimestamp({ timestamp: String(NOW_S + 299) }, NOW_MS), true);
+  assert.equal(isFreshAppProxyTimestamp({ timestamp: String(NOW_S + 301) }, NOW_MS), false);
+});
+
+test("appProxyFailureKind: null when signed and fresh; unsigned, no_secret, mismatch, stale", () => {
+  const fresh = sign({ shop: "x.myshopify.com", logged_in_customer_id: "7", session: "s", timestamp: String(NOW_S) });
+  assert.equal(appProxyFailureKind(fresh, SECRET, NOW_MS), null);
+  assert.equal(appProxyFailureKind({ session: "s" }, SECRET, NOW_MS), "unsigned");
+  assert.equal(appProxyFailureKind(fresh, "", NOW_MS), "no_secret");
+  assert.equal(appProxyFailureKind(fresh, "other-secret", NOW_MS), "mismatch");
+  const old = sign({ shop: "x.myshopify.com", logged_in_customer_id: "7", session: "s", timestamp: String(NOW_S - 3600) });
+  assert.equal(appProxyFailureKind(old, SECRET, NOW_MS), "stale");
+  const noTs = sign({ shop: "x.myshopify.com", logged_in_customer_id: "7", session: "s" });
+  assert.equal(appProxyFailureKind(noTs, SECRET, NOW_MS), "stale");
+  // A forged fresh timestamp breaks the signature.
+  assert.equal(appProxyFailureKind({ ...old, timestamp: String(NOW_S) }, SECRET, NOW_MS), "mismatch");
 });

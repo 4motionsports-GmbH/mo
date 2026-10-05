@@ -123,3 +123,37 @@ export function evaluateAppProxyAuth(query, secret) {
   if (!/^[1-9]\d*$/.test(id)) return { ok: false, reason: "not_logged_in", sessionId };
   return { ok: true, shopifyCustomerId: id, sessionId };
 }
+
+/**
+ * Replay protection: Shopify adds `timestamp` (unix seconds, covered by the
+ * signature) to every App Proxy request. True only for a numeric timestamp
+ * within ±maxSkewSec of now; missing or non-numeric counts as stale.
+ * @param {URLSearchParams | Record<string, string|string[]>} query
+ * @param {number} nowMs
+ * @param {number} [maxSkewSec]
+ */
+export function isFreshAppProxyTimestamp(query, nowMs, maxSkewSec = 300) {
+  const raw = (toMultiMap(query).get("timestamp")?.[0] ?? "").trim();
+  if (!/^\d{1,12}$/.test(raw)) return false;
+  const ts = Number(raw) * 1000;
+  return Math.abs(nowMs - ts) <= maxSkewSec * 1000;
+}
+
+/**
+ * Why a request fails the App Proxy check, for reporting — or null when it is
+ * signed and fresh. 'unsigned' (no signature at all: a direct hit, a scanner)
+ * stays silent in the route; 'no_secret' / 'mismatch' point at a wrong
+ * secret; 'stale' at a replay or a misconfigured proxy.
+ * @param {URLSearchParams | Record<string, string|string[]>} query
+ * @param {string|null|undefined} secret
+ * @param {number} nowMs
+ * @returns {null | "unsigned" | "no_secret" | "mismatch" | "stale"}
+ */
+export function appProxyFailureKind(query, secret, nowMs) {
+  const provided = toMultiMap(query).get("signature")?.[0] ?? "";
+  if (!provided) return "unsigned";
+  if (!secret || typeof secret !== "string") return "no_secret";
+  if (!verifyAppProxySignature(query, secret)) return "mismatch";
+  if (!isFreshAppProxyTimestamp(query, nowMs)) return "stale";
+  return null;
+}

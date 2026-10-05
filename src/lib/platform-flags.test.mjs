@@ -7,6 +7,9 @@ import {
   isShopifyInsightsWritebackEnabled,
   isChatOrderStatusEnabled,
   isAttributionSessionAnchorEnabled,
+  isAppProxySigninEnabled,
+  appProxySigninMaxAgeHours,
+  appProxyShopProofHours,
   aiProfileScope,
   shopifyConsentTextVersion,
   erasureAlertPerHour,
@@ -85,4 +88,16 @@ test("the attribution session anchor is off unless explicitly enabled", () => {
   }
   assert.equal(isAttributionSessionAnchorEnabled({ MO_ATTRIBUTION_SESSION_ANCHOR: "true" }), true);
   assert.equal(isAttributionSessionAnchorEnabled({ MO_ATTRIBUTION_SESSION_ANCHOR: "1" }), true);
+});
+
+test("App Proxy sign-in: off by default, max age 0 by default, clamped, and 0 while off", () => {
+  assert.equal(isAppProxySigninEnabled({}), false);
+  assert.equal(isAppProxySigninEnabled({ APP_PROXY_SIGNIN_ENABLED: "true" }), true);
+  assert.equal(appProxySigninMaxAgeHours({}), 0);
+  assert.equal(appProxySigninMaxAgeHours({ APP_PROXY_SIGNIN_MAX_AGE_HOURS: "24" }), 24);
+  assert.equal(appProxySigninMaxAgeHours({ APP_PROXY_SIGNIN_MAX_AGE_HOURS: "-3" }), 0);
+  assert.equal(appProxySigninMaxAgeHours({ APP_PROXY_SIGNIN_MAX_AGE_HOURS: "abc" }), 0);
+  assert.equal(appProxySigninMaxAgeHours({ APP_PROXY_SIGNIN_MAX_AGE_HOURS: "99999" }), 720);
+  assert.equal(appProxyShopProofHours({ APP_PROXY_SIGNIN_MAX_AGE_HOURS: "24" }), 0);
+  assert.equal(appProxyShopProofHours({ APP_PROXY_SIGNIN_ENABLED: "1", APP_PROXY_SIGNIN_MAX_AGE_HOURS: "24" }), 24);
 });

@@ -76,6 +76,31 @@ export function isAttributionSessionAnchorEnabled(env = process.env) {
 }
 
 /**
+ * APP_PROXY_SIGNIN_ENABLED (P0.3, docs/CUSTOMER_ACCOUNT.md §3a): the shop's App
+ * Proxy (whoami) may issue a one-time sign-in code for a visitor logged in to
+ * the shop. Off → whoami only measures (account_shop_recognised) and answers
+ * {signedIn:false}; it is also the kill switch (a redeploy, no Shopify access
+ * needed). Default off.
+ */
+export function isAppProxySigninEnabled(env = process.env) {
+  return parseFlag(env.APP_PROXY_SIGNIN_ENABLED);
+}
+
+/**
+ * APP_PROXY_SIGNIN_MAX_AGE_HOURS: how long a shop-proven (App Proxy) link
+ * counts as signed in WITHOUT a Customer Account token (D-AP1). 0 (default)
+ * keeps the old rule: a chat token is required. Clamped at 720.
+ */
+export function appProxySigninMaxAgeHours(env = process.env) {
+  return parseNonNegativeInt(env.APP_PROXY_SIGNIN_MAX_AGE_HOURS, 0, 720);
+}
+
+/** The effective shop-proof window: 0 while the kill switch is off. */
+export function appProxyShopProofHours(env = process.env) {
+  return isAppProxySigninEnabled(env) ? appProxySigninMaxAgeHours(env) : 0;
+}
+
+/**
  * CHAT_ORDER_STATUS_TEST_CUSTOMERS — Shopify customer ids (comma-separated)
  * for whom the order status works while CHAT_ORDER_STATUS_ENABLED is still
  * off: the live check of a test account before switching it on for everyone.

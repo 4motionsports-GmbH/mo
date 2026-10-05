@@ -177,3 +177,36 @@ export async function resolveSignedInLink(sql, sessionId) {
     linkKind: r.link_kind,
   };
 }
+
+/**
+ * resolveSignedInLink plus WHEN the link was authenticated (0071) — the input
+ * of the App Proxy shop proof (signed-in-proof.mjs → signedInProofFor).
+ *
+ * @param {*} sql               tagged-template sql client (or null)
+ * @param {unknown} sessionId   the widget's localStorage session id
+ * @returns {Promise<{ customerId: number, shopifyCustomerId: string, linkKind: "customer_account" | "app_proxy", authenticatedAt: string | null } | null>}
+ */
+export async function resolveSignedInLinkWithProof(sql, sessionId) {
+  const sid = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!sql || !sid) return null;
+  const rows = await sql`
+    SELECT c.id, c.shopify_customer_id, l.link_kind, l.authenticated_at
+      FROM customer_session_links l
+      JOIN customers c ON c.id = l.customer_id
+     WHERE l.session_id = ${sid}
+       AND l.link_kind IN ('customer_account', 'app_proxy')
+       AND c.shopify_customer_id IS NOT NULL
+     LIMIT 1
+  `;
+  const r = rows && rows[0];
+  if (!r || r.shopify_customer_id == null || !isSignedInLinkKind(r.link_kind)) return null;
+  const customerId = Number(r.id);
+  if (!Number.isFinite(customerId)) return null;
+  const at = r.authenticated_at;
+  return {
+    customerId,
+    shopifyCustomerId: String(r.shopify_customer_id),
+    linkKind: r.link_kind,
+    authenticatedAt: at instanceof Date ? at.toISOString() : at != null ? String(at) : null,
+  };
+}

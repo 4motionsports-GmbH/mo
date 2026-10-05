@@ -6,6 +6,7 @@ import {
   resolveLinkedCustomerId,
   resolveSignedInCustomerRow,
   resolveSignedInLink,
+  resolveSignedInLinkWithProof,
 } from "./customer-session-link.mjs";
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,7 @@ import {
 // ---------------------------------------------------------------------------
 function makeSql({ customers = {} } = {}) {
   const links = new Map(); // session_id → { customerId, kind }
+  const authAt = new Map(); // session_id → authenticated_at
   const sql = (strings, ...values) => {
     const text = strings.join("?");
     if (text.includes("INSERT INTO customer_session_links")) {
@@ -33,6 +35,7 @@ function makeSql({ customers = {} } = {}) {
         ((isSignedInLinkKind(prev.kind) && kind === "email") ||
           (prev.kind === "customer_account" && kind === "app_proxy"));
       links.set(sid, { customerId, kind: keep ? prev.kind : kind });
+      if (!keep) authAt.set(sid, values[3] ?? null);
       return Promise.resolve([]);
     }
     // resolveSignedInCustomerRow joins the link to customers and only accepts
@@ -51,6 +54,7 @@ function makeSql({ customers = {} } = {}) {
           shopify_customer_id: cust.shopify_customer_id,
           identity_tier: cust.identity_tier ?? 3,
           link_kind: link.kind,
+          authenticated_at: authAt.get(sid) ?? null,
         },
       ]);
     }
@@ -262,4 +266,16 @@ test("the shop's App Proxy never downgrades a Customer Account sign-in of the sa
   // Another customer always re-points with the new kind.
   await linkSessionToCustomer(sql, "s", 8, "app_proxy");
   assert.deepEqual(sql._links.get("s"), { customerId: 8, kind: "app_proxy" });
+});
+
+test("resolveSignedInLinkWithProof also returns when the link was authenticated", async () => {
+  const sql = makeSql({ customers: { 42: { shopify_customer_id: "9988" } } });
+  await linkSessionToCustomer(sql, "sess-proxy", 42, "app_proxy");
+  const r = await resolveSignedInLinkWithProof(sql, "sess-proxy");
+  assert.equal(r?.linkKind, "app_proxy");
+  assert.equal(r?.customerId, 42);
+  assert.ok(r?.authenticatedAt && Number.isFinite(Date.parse(r.authenticatedAt)));
+  assert.equal(await resolveSignedInLinkWithProof(sql, "nope"), null);
+  await linkSessionToCustomer(sql, "typed", 42, "email");
+  assert.equal(await resolveSignedInLinkWithProof(sql, "typed"), null);
 });
