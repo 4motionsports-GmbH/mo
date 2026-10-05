@@ -700,7 +700,8 @@ function renderOrderStatusSection(orderStatus, locale) {
 - NEVER calculate return or withdrawal deadlines and don't say whether a deadline is still running — for returns, offer the contact form.
 - Freight goods (kerbside delivery) often have no tracking — the forwarding agent announces the delivery; that's not an error.
 - \`sign_in_required\`: explain that you can only show the order status when the customer is signed in with their customer account via "Sign in" in the chat, and offer the contact form as an alternative (\`show_contact_form\`, \`reason="order_support"\`). NEVER ask for an email address, order number or name as a substitute proof.
-- \`not_found\`: the number belongs to no order in their account — say so neutrally and ask whether they mean one of the orders shown. \`no_orders\`: there is no order in the account. \`unavailable\`: can't be fetched right now — offer the contact form.
+- \`not_found\`: the number belongs to no order in their account — say so neutrally and ask whether they mean one of the orders shown. \`unavailable\`: can't be fetched right now — offer the contact form.
+- \`no_orders\`: ALWAYS answer in words first: say plainly that you find no order in the customer account they are signed in with, and link "My orders" (\`ordersPageUrl\`). Add that an order placed as a guest or with a different email address does not show up there, and offer the contact form for that case (\`show_contact_form\`, \`reason="order_support"\`) — the form only in addition to this explanation, never instead of it.
 - \`delivery_problem\`, \`on_hold\` or a wish to change something about the order: state the facts and offer the contact form (\`reason="order_support"\`).
 - An earlier result \`{ "replayed": true }\` is outdated — for a new question, look it up again.`;
   }
@@ -712,7 +713,8 @@ function renderOrderStatusSection(orderStatus, locale) {
 - Berechne NIEMALS Rückgabe- oder Widerrufsfristen und sag nicht, ob eine Frist noch läuft — für Retouren bietest du das Kontaktformular an.
 - Speditionsware (Lieferung frei Bordsteinkante) hat oft keine Sendungsverfolgung — die Spedition kündigt die Zustellung an; das ist kein Fehler.
 - \`sign_in_required\`: Erkläre, dass du den Bestellstatus nur zeigen kannst, wenn der Kunde im Chat über „Anmelden" mit seinem Kundenkonto angemeldet ist, und biete alternativ das Kontaktformular an (\`show_contact_form\`, \`reason="order_support"\`). Frage NIE nach E-Mail-Adresse, Bestellnummer oder Namen als Ersatz-Nachweis.
-- \`not_found\`: Die Nummer gehört zu keiner Bestellung in seinem Konto — sag das neutral und frag, ob er eine der gezeigten Bestellungen meint. \`no_orders\`: Im Konto ist keine Bestellung zu finden. \`unavailable\`: Gerade nicht abrufbar — biete das Kontaktformular an.
+- \`not_found\`: Die Nummer gehört zu keiner Bestellung in seinem Konto — sag das neutral und frag, ob er eine der gezeigten Bestellungen meint. \`unavailable\`: Gerade nicht abrufbar — biete das Kontaktformular an.
+- \`no_orders\`: Antworte IMMER zuerst in Worten: Sag klar, dass du in dem Kundenkonto, mit dem er angemeldet ist, keine Bestellung findest, und verlinke „Meine Bestellungen" (\`ordersPageUrl\`). Ergänze, dass eine Bestellung als Gast oder mit einer anderen E-Mail-Adresse dort nicht erscheint, und biete für diesen Fall das Kontaktformular an (\`show_contact_form\`, \`reason="order_support"\`) — das Formular nur zusätzlich zu dieser Erklärung, nie stattdessen.
 - \`delivery_problem\`, \`on_hold\` oder der Wunsch, etwas an der Bestellung zu ändern: Fakten nennen und das Kontaktformular anbieten (\`reason="order_support"\`).
 - Ein früheres Ergebnis \`{ "replayed": true }\` ist veraltet — bei einer neuen Frage fragst du erneut ab.`;
 }

@@ -459,6 +459,8 @@ test("order status on (DE): state questions → get_order_status, actions → co
   assert.match(de, /Keine Beträge, keine Bestell- oder Sendungsnummern/);
   assert.match(de, /Speditionsware[^\n]*keine Sendungsverfolgung/);
   assert.match(de, /`sign_in_required`: Erkläre[^\n]*„Anmelden"[^\n]*Kontaktformular/);
+  // no_orders: words first, the form only in addition (live 05.10.: a bare form).
+  assert.match(de, /`no_orders`: Antworte IMMER zuerst in Worten[^\n]*keine Bestellung findest[^\n]*„Meine Bestellungen"[^\n]*als Gast oder mit einer anderen E-Mail-Adresse[^\n]*nie stattdessen\./);
   assert.match(de, /`\{ "replayed": true \}` ist veraltet/);
   // The section closes "### Grenzen", before the product block.
   assert.ok(de.indexOf("### Grenzen") < de.indexOf("### Bestellstatus"));
@@ -478,6 +480,7 @@ test("order status on (EN) mirrors the German rules; full memory gets the except
   assert.match(en, /concrete ACTION[^\n]*`show_contact_form` with `reason="order_support"`/);
   assert.match(en, /### Order status \(only from `get_order_status`\)/);
   assert.match(en, /NEVER calculate return or withdrawal deadlines/);
+  assert.match(en, /`no_orders`: ALWAYS answer in words first[^\n]*"My orders"[^\n]*as a guest or with a different email address[^\n]*never instead of it\./);
   assert.match(
     en,
     /The state of an order \(status, shipping, delivery, refund\) only ever from the result of `get_order_status`\./
