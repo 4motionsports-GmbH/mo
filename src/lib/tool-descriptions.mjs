@@ -274,11 +274,11 @@ function withOrderStatusRouting(desc, from, to) {
 DE.contactDescOrderStatus = withOrderStatusRouting(
   DE.contactDesc,
   "Bestellstatus/Sendungsverfolgung, eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, oder wenn der Kunde ausdrücklich einen Menschen / das Team erreichen möchte.",
-  "eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, ein Bestellproblem, das get_order_status nicht klären kann (Zustellproblem, angehaltene Bestellung, Kunde nicht angemeldet, Daten nicht abrufbar), oder wenn der Kunde ausdrücklich einen Menschen / das Team erreichen möchte. Fragen zum STAND einer Bestellung (Status, Versand/Sendungsverfolgung, Zustellung, Erstattungsstand) beantwortest du zuerst mit get_order_status."
+  "eine Retoure/Rückgabe oder Erstattung anstoßen, eine Bestellung stornieren, eine Reklamation, ein Bestellproblem, das get_order_status nicht klären kann (Zustellproblem, angehaltene Bestellung, Daten nicht abrufbar), oder wenn der Kunde ausdrücklich einen Menschen / das Team erreichen möchte. Fragen zum STAND einer Bestellung (Status, Versand/Sendungsverfolgung, Zustellung, Erstattungsstand) beantwortest du zuerst mit get_order_status; meldet es sign_in_required oder no_orders, antworte erst in Worten und frag, bevor du das Formular öffnest."
 );
 
 EN.contactDescOrderStatus = withOrderStatusRouting(
   EN.contactDesc,
   "order status/tracking, starting a return/refund, cancelling an order, a complaint, or when the customer explicitly wants to reach a human / the team.",
-  "starting a return/refund, cancelling an order, a complaint, an order problem get_order_status cannot resolve (delivery problem, order on hold, customer not signed in, data not available), or when the customer explicitly wants to reach a human / the team. Questions about the STATE of an order (status, shipping/tracking, delivery, refund state) you answer first with get_order_status."
+  "starting a return/refund, cancelling an order, a complaint, an order problem get_order_status cannot resolve (delivery problem, order on hold, data not available), or when the customer explicitly wants to reach a human / the team. Questions about the STATE of an order (status, shipping/tracking, delivery, refund state) you answer first with get_order_status; if it returns sign_in_required or no_orders, answer in words first and ask before you open the form."
 );

@@ -67,6 +67,11 @@ test("the contact-form variant for get_order_status changes only the order_suppo
     const tail = c.contactDesc.slice(c.contactDesc.indexOf("- When a matter") >= 0 ? c.contactDesc.indexOf("- When a matter") : c.contactDesc.indexOf("- Wenn ein Anliegen"));
     assert.ok(tail.length > 50 && c.contactDescOrderStatus.endsWith(tail), locale);
   }
+  // sign_in_required / no_orders: words first, the form only after asking
+  // (live 05.10.: the explanation landed in the form card only).
+  assert.match(toolCopy("de").contactDescOrderStatus, /meldet es sign_in_required oder no_orders, antworte erst in Worten und frag, bevor du das Formular öffnest\./);
+  assert.match(toolCopy("en").contactDescOrderStatus, /if it returns sign_in_required or no_orders, answer in words first and ask before you open the form\./);
+  assert.doesNotMatch(toolCopy("de").contactDescOrderStatus, /Kunde nicht angemeldet/);
   // The base (switch off) still routes order status to the form, as before.
   assert.match(toolCopy("de").contactDesc, /Bestellstatus\/Sendungsverfolgung, eine Retoure/);
 });
