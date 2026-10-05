@@ -42,7 +42,26 @@ test("parseRetentionOptions: 0 disables every retention window, never the attrib
   const o = parseRetentionOptions(env);
   for (const [key, value] of Object.entries(o)) {
     if (key === "attributionWindowDays") assert.equal(value, 30, key);
+    else if (key === "attributionTokenMaxDays") assert.equal(value, 180, key);
+    else if (key === "attributionSessionAnchor") assert.equal(value, false, key);
     else assert.equal(value, 0, key);
+  }
+});
+
+test("parseRetentionOptions: the attribution token cap is never disabled and never below window + 7", () => {
+  assert.equal(parseRetentionOptions({}).attributionTokenMaxDays, 180);
+  assert.equal(parseRetentionOptions({ KPI_RETENTION_DAYS: "0" }).attributionTokenMaxDays, 180);
+  assert.equal(parseRetentionOptions({ KPI_RETENTION_DAYS: "20" }).attributionTokenMaxDays, 37);
+  assert.equal(parseRetentionOptions({ KPI_RETENTION_DAYS: "365" }).attributionTokenMaxDays, 365);
+  assert.equal(parseRetentionOptions({ KPI_RETENTION_DAYS: "20", MO_ATTRIBUTION_WINDOW_DAYS: "60" }).attributionTokenMaxDays, 67);
+});
+
+test("parseRetentionOptions: the session anchor switch is off unless explicitly on", () => {
+  for (const v of [undefined, "", "0", "false", "nope"]) {
+    assert.equal(parseRetentionOptions({ MO_ATTRIBUTION_SESSION_ANCHOR: v }).attributionSessionAnchor, false, String(v));
+  }
+  for (const v of ["true", "1", " TRUE "]) {
+    assert.equal(parseRetentionOptions({ MO_ATTRIBUTION_SESSION_ANCHOR: v }).attributionSessionAnchor, true, v);
   }
 });
 

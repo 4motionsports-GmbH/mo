@@ -91,7 +91,7 @@ test("loginGateRates: junk and impossible counts never break the funnel", () => 
 
 test("server-only events: the AC §5 server table, nothing the widget sends", async () => {
   const { SERVER_ONLY_EVENTS, isServerOnlyEvent } = await import("./kpi-widget-events.mjs");
-  for (const e of ["account_signin_linked", "account_signin_link_refused", "account_signin_succeeded", "account_erased", "campaign_chat_started", "contact_form_submitted", "order_status_lookup", "email_capture_ask_shown"]) {
+  for (const e of ["account_signin_linked", "account_signin_link_refused", "account_signin_succeeded", "account_erased", "campaign_chat_started", "contact_form_submitted", "order_status_lookup", "mo_order_marker_unresolved", "email_capture_ask_shown"]) {
     assert.equal(isServerOnlyEvent(e), true, e);
   }
   for (const e of [LOGIN_GATE_SHOWN, ACCOUNT_SIGNIN_STARTED, ACCOUNT_SIGNIN_RETURN, "consent_gate_accepted", "email_capture_declined", "account_export_started", "account_exported", "chat_opened", "product_cta_clicked", "add_to_cart_clicked"]) {

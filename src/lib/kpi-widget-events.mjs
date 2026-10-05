@@ -131,6 +131,7 @@ export const SERVER_ONLY_EVENTS = Object.freeze([
   "account_export_requested",
   "account_erased",
   "order_status_lookup",
+  "mo_order_marker_unresolved",
 ]);
 
 const SERVER_ONLY = new Set(SERVER_ONLY_EVENTS);

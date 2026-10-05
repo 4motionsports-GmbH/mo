@@ -14,6 +14,7 @@ import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
 import { resolveLinkedCustomerId } from "./customer-session-link.mjs";
 import { deriveConversationTitle } from "./conversation-title.mjs";
+import { isUndefinedColumnError } from "./db-errors.mjs";
 import { ensureConversationStarted as ensureConversationStartedCore } from "./conversation-create.mjs";
 import {
   collectDiscussedProductIds,
@@ -365,46 +366,68 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
     // re-sends via client_message_id) and the assistant turn produced now.
     // Assistant messages are persisted ONLY here (never re-derived from
     // history), so there is no cross-turn duplication.
-    const queries = [];
+    // Tool marker rows also carry the WRITING session (0076): a thread resumed
+    // on another device keeps conversations.session_id, and the attribution
+    // window anchor counts only this device's product turns. Without the column
+    // (code deployed before the migration) the turn is written without it.
+    const buildQueries = (withWriterSession: boolean) => {
+      const queries = [];
 
-    const user = latestUserMessage(input.history);
-    if (user) {
-      const text = textOfMessage(user);
-      if (text) {
+      const user = latestUserMessage(input.history);
+      if (user) {
+        const text = textOfMessage(user);
+        if (text) {
+          queries.push(sql`
+            INSERT INTO messages (conversation_id, client_message_id, role, content, tool_name)
+            VALUES (${conversationId}, ${user.id ?? null}, 'user', ${truncate(text)}, NULL)
+            ON CONFLICT DO NOTHING
+          `);
+        }
+      }
+
+      if (input.assistantText.trim()) {
         queries.push(sql`
           INSERT INTO messages (conversation_id, client_message_id, role, content, tool_name)
-          VALUES (${conversationId}, ${user.id ?? null}, 'user', ${truncate(text)}, NULL)
+          VALUES (${conversationId}, ${input.assistantMessageId}, 'assistant',
+                  ${truncate(input.assistantText.trim())}, NULL)
           ON CONFLICT DO NOTHING
         `);
       }
-    }
 
-    if (input.assistantText.trim()) {
-      queries.push(sql`
-        INSERT INTO messages (conversation_id, client_message_id, role, content, tool_name)
-        VALUES (${conversationId}, ${input.assistantMessageId}, 'assistant',
-                ${truncate(input.assistantText.trim())}, NULL)
-        ON CONFLICT DO NOTHING
-      `);
-    }
+      input.assistantToolCalls.forEach((inv, i) => {
+        let body = "";
+        try {
+          body = JSON.stringify(inv.input ?? {});
+        } catch {
+          body = "";
+        }
+        if (withWriterSession) {
+          queries.push(sql`
+            INSERT INTO messages (conversation_id, client_message_id, role, content, tool_name, session_id)
+            VALUES (${conversationId}, ${`${input.assistantMessageId}:${i}`}, 'assistant',
+                    ${truncate(body)}, ${inv.toolName}, ${sessionId})
+            ON CONFLICT DO NOTHING
+          `);
+        } else {
+          queries.push(sql`
+            INSERT INTO messages (conversation_id, client_message_id, role, content, tool_name)
+            VALUES (${conversationId}, ${`${input.assistantMessageId}:${i}`}, 'assistant',
+                    ${truncate(body)}, ${inv.toolName})
+            ON CONFLICT DO NOTHING
+          `);
+        }
+      });
+      return queries;
+    };
 
-    input.assistantToolCalls.forEach((inv, i) => {
-      let body = "";
-      try {
-        body = JSON.stringify(inv.input ?? {});
-      } catch {
-        body = "";
-      }
-      queries.push(sql`
-        INSERT INTO messages (conversation_id, client_message_id, role, content, tool_name)
-        VALUES (${conversationId}, ${`${input.assistantMessageId}:${i}`}, 'assistant',
-                ${truncate(body)}, ${inv.toolName})
-        ON CONFLICT DO NOTHING
-      `);
-    });
-
+    const queries = buildQueries(true);
     if (queries.length > 0) {
-      await sql.transaction(queries);
+      try {
+        await sql.transaction(queries);
+      } catch (err) {
+        if (!isUndefinedColumnError(err) || input.assistantToolCalls.length === 0) throw err;
+        await sql.transaction(buildQueries(false));
+      }
     }
 
     // Record this turn's token usage against the conversation (cost-per-

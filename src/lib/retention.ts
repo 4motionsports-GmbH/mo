@@ -23,6 +23,7 @@ import { getSql } from "./db";
 import { purgeExpiredPendingAuth } from "./customer-oauth-store";
 import { purgeSessionLinkGrants } from "./session-link-grants";
 import { parseRetentionOptions } from "./retention-options.mjs";
+import { SESSION_ANCHORED_SOURCES, CONSULTATION_ANCHOR_TOOLS } from "./order-attribution.mjs";
 
 /** How long a decided Eingang item's bare marker stays (the longest rule episode). */
 const INBOX_MARKER_MAX_DAYS = 730;
@@ -71,12 +72,19 @@ export interface RetentionOptions {
   /** Erasure tombstones confirmed by Shopify longer ago than this are deleted. 0 disables. */
   erasureTombstoneRetentionDays: number;
   /**
-   * Order-attribution window (days) between token minting and an order —
-   * mirrors MO_ATTRIBUTION_WINDOW_DAYS (lib/mo-orders-store). Tokens older
-   * than this (+ grace) can never attribute again and are purged; mo_orders
-   * rows purge on the shared analytics window (kpiRetentionDays).
+   * Order-attribution window (days) — mirrors MO_ATTRIBUTION_WINDOW_DAYS
+   * (lib/mo-orders-store). Switch off: tokens leave window + 7 days after
+   * minting. Switch on (attributionSessionAnchor): a session-source token
+   * leaves window + 7 days after its own session's last product consultation,
+   * and never later than attributionTokenMaxDays after minting. Link sources
+   * leave by created_at. mo_orders rows purge on the shared analytics window
+   * (kpiRetentionDays).
    */
   attributionWindowDays: number;
+  /** MO_ATTRIBUTION_SESSION_ANCHOR (ATTR-TOKEN-LIFETIME). */
+  attributionSessionAnchor: boolean;
+  /** Absolute cap for a kept token: max(KPI window or its default, window + 7). */
+  attributionTokenMaxDays: number;
 }
 
 export interface RetentionResult {
@@ -111,6 +119,9 @@ export interface RetentionResult {
   deletedMoOrders: number;
   /** mo_attribution_tokens past the attribution window (+ grace) removed. */
   deletedAttributionTokens: number;
+  /** Tokens older than window + 7 days kept because their device is still
+   * consulting (only with MO_ATTRIBUTION_SESSION_ANCHOR; 0 otherwise). */
+  keptActiveAttributionTokens: number;
   /** Expired customer_auth_pending rows (CSRF/PKCE state) removed. */
   purgedAuthPending: number;
   /** Shopify webhook / sync-run / outbox bookkeeping rows removed. */
@@ -425,8 +436,10 @@ export async function runRetention(
   // 5i. Order-attribution rows (migration 0042). mo_orders are Cluster-A
   //     analytics like kpi_events, so they leave on the SAME analytics window
   //     (by the order's processed_at; NULL-dated rows leave by created_at).
-  //     Tokens can only ever attribute within the attribution window, so any
-  //     token older than window + 7 days grace is inert and purged.
+  //     Tokens can only ever attribute within the attribution window, so a
+  //     token older than window + 7 days grace is inert and purged — with
+  //     MO_ATTRIBUTION_SESSION_ANCHOR measured from its own session's last
+  //     product consultation (capped at attributionTokenMaxDays after minting).
   let deletedMoOrders: Array<{ n: number }> = [{ n: 0 }];
   if (opts.kpiRetentionDays > 0) {
     deletedMoOrders = (await sql`
@@ -439,14 +452,59 @@ export async function runRetention(
     `) as Array<{ n: number }>;
   }
   const attributionTokenCutoff = daysAgo(opts.attributionWindowDays + 7);
-  const deletedAttributionTokens = await sql`
-    WITH del AS (
-      DELETE FROM mo_attribution_tokens
-       WHERE created_at < ${attributionTokenCutoff}
-      RETURNING 1
-    )
-    SELECT count(*)::int AS n FROM del
-  `;
+  const attributionTokenCap = daysAgo(opts.attributionTokenMaxDays);
+  const anchoredSources = [...SESSION_ANCHORED_SOURCES];
+  const consultationTools = [...CONSULTATION_ANCHOR_TOOLS];
+  let deletedAttributionTokens: Array<{ n: number }>;
+  let keptActiveAttributionTokens: Array<{ n: number }> = [{ n: 0 }];
+  if (opts.attributionSessionAnchor) {
+    // Keep rule: a widget token whose OWN session wrote a product consultation
+    // inside the window + 7 horizon stays, up to the cap. Rows written before
+    // 0076 (messages.session_id NULL) count for the thread's session.
+    deletedAttributionTokens = (await sql`
+      WITH del AS (
+        DELETE FROM mo_attribution_tokens t
+         WHERE t.created_at < ${attributionTokenCutoff}
+           AND NOT (
+             t.created_at >= ${attributionTokenCap}
+             AND t.session_id IS NOT NULL
+             AND t.source = ANY(${anchoredSources}::text[])
+             AND (
+               EXISTS (
+                 SELECT 1 FROM messages m
+                  WHERE m.session_id = t.session_id
+                    AND m.created_at >= ${attributionTokenCutoff}
+                    AND m.tool_name = ANY(${consultationTools}::text[])
+               )
+               OR EXISTS (
+                 SELECT 1
+                   FROM conversations c
+                   JOIN messages m ON m.conversation_id = c.id
+                  WHERE c.session_id = t.session_id
+                    AND c.last_activity_at >= ${attributionTokenCutoff}
+                    AND m.session_id IS NULL
+                    AND m.created_at >= ${attributionTokenCutoff}
+                    AND m.tool_name = ANY(${consultationTools}::text[])
+               )
+             )
+           )
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+    keptActiveAttributionTokens = (await sql`
+      SELECT count(*)::int AS n FROM mo_attribution_tokens WHERE created_at < ${attributionTokenCutoff}
+    `) as Array<{ n: number }>;
+  } else {
+    deletedAttributionTokens = (await sql`
+      WITH del AS (
+        DELETE FROM mo_attribution_tokens
+         WHERE created_at < ${attributionTokenCutoff}
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+  }
 
   // 6. Purge expired pending-auth records (short-lived CSRF/PKCE state). The
   //    encrypted token rows (customer_oauth_tokens) carry no separate window —
@@ -544,6 +602,7 @@ export async function runRetention(
     deletedPersonaSummaries: deletedPersonaSummaries[0]?.n ?? 0,
     deletedMoOrders: deletedMoOrders[0]?.n ?? 0,
     deletedAttributionTokens: deletedAttributionTokens[0]?.n ?? 0,
+    keptActiveAttributionTokens: keptActiveAttributionTokens[0]?.n ?? 0,
     purgedAuthPending,
     deletedShopifySyncLog,
     deletedInboxItems,

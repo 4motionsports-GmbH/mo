@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { KPI_RELEASES, SIGNIN_OUTAGE, germanDay, releaseNotesFor, releasesInRange } from "./kpi-releases.mjs";
 
 test("releases are ordered and dated as documented", () => {
-  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04"]);
+  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05"]);
   assert.deepEqual(SIGNIN_OUTAGE, { from: "2026-10-03", to: "2026-10-04" });
   assert.equal(germanDay("2026-10-04"), "04.10.2026");
 });
@@ -29,9 +29,16 @@ test("a period starting on the upload day needs no 'meaningful from' note, but s
 });
 
 test("a period entirely after the releases has no notes", () => {
-  for (const s of ["anmelde-popup", "consent", "konto", "campaign"]) {
+  for (const s of ["anmelde-popup", "consent", "konto", "campaign", "attribution"]) {
     assert.deepEqual(releaseNotesFor(s, { from: "2026-10-05", to: "2026-11-03" }), []);
   }
+});
+
+test("attribution: one 'meaningful from' note before the window switch, no sign-in outage note", () => {
+  const notes = releaseNotesFor("attribution", { from: "2026-09-06", to: "2026-10-05" });
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /^Erst ab dem 05\.10\.2026/);
+  assert.match(notes[0], /Direkt/);
 });
 
 test("unknown sections and invalid ranges stay silent", () => {
@@ -43,6 +50,10 @@ test("unknown sections and invalid ranges stay silent", () => {
 test("releasesInRange is inclusive on both ends", () => {
   assert.deepEqual(releasesInRange({ from: "2026-10-01", to: "2026-10-03" }).map((r) => r.key), ["widget-popups", "signin-code"]);
   assert.deepEqual(releasesInRange({ from: "2026-10-04", to: "2026-10-04" }).map((r) => r.key), ["customer-platform-widget"]);
-  assert.deepEqual(releasesInRange({ from: "2026-10-05", to: "2026-10-30" }), []);
+  assert.deepEqual(releasesInRange({ from: "2026-10-05", to: "2026-10-30" }).map((r) => r.key), [
+    "attribution-unresolved",
+    "attribution-window",
+  ]);
+  assert.deepEqual(releasesInRange({ from: "2026-10-06", to: "2026-10-30" }), []);
   assert.deepEqual(releasesInRange({ from: "bad", to: "2026-10-30" }), []);
 });

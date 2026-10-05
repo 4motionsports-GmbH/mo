@@ -5,7 +5,10 @@
 // round it ALSO receives orders/create + orders/paid: verified order payloads
 // go to lib/mo-orders-store.ingestShopifyOrder, which stores ONLY orders
 // carrying a Mo marker (attribution token / MS5- / MK- code) as pseudonymous
-// rows — the payload's customer fields are never read. See
+// rows — the payload's customer fields are never read. A marked order no
+// consultation can claim (unknown token, outside the window) is counted once,
+// on orders/create after the delivery was recorded, as the session-less event
+// mo_order_marker_unresolved {reason, source?} (noteUnresolvedMarker). See
 // docs/ORDER_ATTRIBUTION.md. We:
 //   1. VERIFY the X-Shopify-Hmac-SHA256 signature over the RAW body BEFORE
 //      parsing it — an unverified request never touches the catalog (mirrors the
@@ -68,7 +71,7 @@ import {
   enqueuePendingRefresh,
   type PendingKind,
 } from "@/lib/shopify-throttle-gate";
-import { ingestShopifyOrder } from "@/lib/mo-orders-store";
+import { ingestShopifyOrder, noteUnresolvedMarker } from "@/lib/mo-orders-store";
 import { reportError } from "@/lib/observability";
 
 // A single-product Shopify fetch + (optional) one embedding + two blob writes —
@@ -158,6 +161,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: false, error: outcome.action }, { status: 500 });
       }
       await finishWebhookDelivery(webhookId, outcome.action);
+      if (attribution) await noteUnresolvedMarker(t, attribution);
       return NextResponse.json({
         ok: true,
         topic,

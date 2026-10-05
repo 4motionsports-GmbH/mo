@@ -13,7 +13,14 @@
 // variable with a minimum of 1 (lib/mo-orders-store), and this parser mirrors
 // that — 0 or invalid falls back to the default.
 //
+// With MO_ATTRIBUTION_SESSION_ANCHOR a widget token stays while its own
+// session keeps consulting, capped at attributionTokenMaxDays after minting:
+// KPI_RETENTION_DAYS, or its default when that step is disabled (0) — the cap
+// is never disabled — and never shorter than window + 7 days.
+//
 // Pure and env-injectable so node:test covers it.
+
+import { isAttributionSessionAnchorEnabled } from "./platform-flags.mjs";
 
 export const RETENTION_DEFAULTS = Object.freeze({
   RETENTION_DAYS: 180,
@@ -60,6 +67,7 @@ export function parseWindow(raw, fallback, { min = 0 } = {}) {
  *   campaignContactRetentionDays: number, analyticsReportRetentionDays: number,
  *   shopifySyncLogRetentionDays: number, inboxRetentionDays: number,
  *   erasureTombstoneRetentionDays: number, attributionWindowDays: number,
+ *   attributionSessionAnchor: boolean, attributionTokenMaxDays: number,
  * }} RetentionOptions
  */
 
@@ -71,9 +79,11 @@ export function parseWindow(raw, fallback, { min = 0 } = {}) {
 export function parseRetentionOptions(env = process.env) {
   const d = RETENTION_DEFAULTS;
   const w = (name) => parseWindow(env[name], d[name]);
+  const kpi = w("KPI_RETENTION_DAYS");
+  const attributionWindowDays = parseWindow(env.MO_ATTRIBUTION_WINDOW_DAYS, d.MO_ATTRIBUTION_WINDOW_DAYS, { min: 1 });
   return {
     retentionDays: w("RETENTION_DAYS"),
-    kpiRetentionDays: w("KPI_RETENTION_DAYS"),
+    kpiRetentionDays: kpi,
     abandonAfterMinutes: w("ABANDON_AFTER_MINUTES"),
     suppressedPurgeDays: w("SUPPRESSED_CAPTURE_PURGE_DAYS"),
     correspondenceRetentionDays: w("CORRESPONDENCE_RETENTION_DAYS"),
@@ -87,6 +97,8 @@ export function parseRetentionOptions(env = process.env) {
     inboxRetentionDays: w("INBOX_RETENTION_DAYS"),
     erasureTombstoneRetentionDays: w("ERASURE_TOMBSTONE_RETENTION_DAYS"),
     // Not a retention window — never 0 (see header).
-    attributionWindowDays: parseWindow(env.MO_ATTRIBUTION_WINDOW_DAYS, d.MO_ATTRIBUTION_WINDOW_DAYS, { min: 1 }),
+    attributionWindowDays,
+    attributionSessionAnchor: isAttributionSessionAnchorEnabled(env),
+    attributionTokenMaxDays: Math.max(kpi > 0 ? kpi : d.KPI_RETENTION_DAYS, attributionWindowDays + 7),
   };
 }

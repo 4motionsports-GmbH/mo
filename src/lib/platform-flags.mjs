@@ -65,6 +65,17 @@ export function isChatOrderStatusEnabled(env = process.env) {
 }
 
 /**
+ * MO_ATTRIBUTION_SESSION_ANCHOR (ATTR-TOKEN-LIFETIME, docs/ORDER_ATTRIBUTION.md):
+ * a widget token's 30-day window counts from the device's latest product
+ * consultation instead of the token's minting, and retention keeps the token
+ * while that device keeps consulting (never longer than KPI_RETENTION_DAYS
+ * after minting). Default off; turned on by the owner (ANWALTSDOSSIER §20).
+ */
+export function isAttributionSessionAnchorEnabled(env = process.env) {
+  return parseFlag(env.MO_ATTRIBUTION_SESSION_ANCHOR);
+}
+
+/**
  * CHAT_ORDER_STATUS_TEST_CUSTOMERS — Shopify customer ids (comma-separated)
  * for whom the order status works while CHAT_ORDER_STATUS_ENABLED is still
  * off: the live check of a test account before switching it on for everyone.
