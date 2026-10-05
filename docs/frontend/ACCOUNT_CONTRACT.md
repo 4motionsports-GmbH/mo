@@ -455,7 +455,7 @@ What to show for each answer: CONSENT_CONTRACT "One consent, shared with the sho
 | `400` | `marketing_consent_required` | „Bitte bestätige die Einwilligung aktiv …“ | `marketingConsent` was not exactly `true` (unreachable when the POST fires only on the tap) |
 | `401` | `unauthorized` | §1.1 | the sign-in ended → §5.1 |
 | `403` | `forbidden` | §1.1 | configuration error |
-| `404` | `not_found` | „Kunde nicht gefunden“ | the customer no longer exists (e.g. erased elsewhere) → treat like a sign-out |
+| `404` | `not_found` | „Kunde nicht gefunden“ | the customer no longer exists (e.g. erased elsewhere); showing the message is enough — treating it like a sign-out is optional |
 | `422` | `no_verified_email` | „Für dieses Konto liegt keine verifizierte E-Mail-Adresse vor.“ | offer the capture form (CONSENT_CONTRACT §4; mind §6.0) |
 | `429` | `rate_limited` | — | wait `Retry-After`, keep decline usable |
 | `503` | `upstream_unavailable` | „Einwilligung konnte nicht gespeichert werden — bitte später erneut versuchen.“ | nothing stored; let the user retry |

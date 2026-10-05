@@ -36,7 +36,7 @@ Every widget change keeps all of these. They are referenced as "§0 rule n".
 11. **Served framing vs widget chrome:** the consent popup's and card's headline and benefit bullets are served (`headline`, `benefits`, §7.4) — the widget adds no consent-surface text of its own beyond button captions and status lines; the sign-in popup is UI, not consent, so its text may live in the widget.
 12. **Tiers are additive:** anonymous and e-mail-only behaviour stays unchanged when signed-in features change; a signed-in customer never gets the typed-e-mail capture form except as the `422 no_verified_email` fallback (ACCOUNT_CONTRACT.md §6.0, §6.2).
 13. **KPI payloads carry ids, enums and booleans only** — never message text, transcripts, names, e-mails, product names, the browsing trail, URLs, tokens or codes (§5).
-14. **Never send a server-only event** (§5 server table); `/api/kpi` acknowledges and drops them.
+14. **Never send a server-only event** (§5: the server table and the four server-side e-mail-capture funnel events); `/api/kpi` acknowledges and drops them.
 15. **KPI names:** never rename an event the backend reads by name (§5); name new events with the dashboard's patterns in mind (`%cart%`, `%checkout%` count as add-to-cart clicks, `%product%click%`, `%cta%click%` as product clicks).
 16. **Unknown tools render nothing; silent tools render nothing but stay in the history and are replayed** with their outputs (§2).
 17. **Markdown safety:** assistant text is built as DOM (`createElement` / `textContent`), never `innerHTML` of model text; links only `http:`, `https:`, `mailto:` (§2 "Rendering assistant text").
@@ -1234,7 +1234,7 @@ opt-in POST). Each carries `data: { surface: "signin", placement?, variant? }`:
 - `variant` — the served `variant` id of the copy that was rendered (`^[a-z0-9_-]{1,32}$`, §7.4),
   optional.
 
-The dashboard shows a missing or unknown `placement` / `variant` as „unbekannt“, never as its own row.
+The dashboard groups a missing `variant` as „ohne (älteres Widget)“ and a missing `placement` as „ohne“; a value it does not know becomes „unbekannt“ — an arbitrary string never gets its own row.
 
 | Event                    | When                                                        |
 | ------------------------ | ----------------------------------------------------------- |
