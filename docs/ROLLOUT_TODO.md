@@ -255,7 +255,8 @@ Last updated: 2026-10-05 (decisions of M).
     retention periods (`docs/DATA_RETENTION.md`).
 
 - [x] **3.4 One consent text** (F-29) — M (L approves) — M handles it (05.10.); the English Mo
-  consent text is a translation of the German one and approved as such (D-AP3, 05.10.)
+  consent text is a translation of the German one and approved as such (D-AP3, 05.10.; served
+  with `enLegalReviewed: true` since then)
   - The newsletter checkbox text in the shop (checkout, account, footer) and Mo's consent
     text must say the same thing (personalised offers by e-mail, analysis of purchases and
     chats).
@@ -495,18 +496,20 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       conversation stamp, `account_shop_recognised`, renewals, dashboard split, drift alarm)
       **and Phase 2** (shop-logged-in visitors signed in without a chat token — D-AP1 decided
       05.10., lawyer confirmed). Unblocks 5.4. Dossier Nachtrag §19.
-- [ ] **C.18** OI1 PR 1 (no e-mail-summary ask for signed-in sessions) and PR 2 (opt-in `source` /
-      `outcome`, DOI by source, capture funnel = capture form only, consent gate per session).
+- [ ] **C.18** OI1 — **PR 1 done 05.10.** (no e-mail-summary offer and no forced checkout ask for
+      signed-in sessions; the prompt sends them to the PDF download / contact form). PR 2 open
+      (opt-in `source` / `outcome`, DOI by source, capture funnel = capture form only, consent
+      gate per session, F2).
 - [ ] **C.19** OI3 B1 (consent copy serves `benefits` + `variant`; opt-in POST takes `placement`
       / `variant`) → then FE task 1. The bullet wording is C's (D-AP4, 05.10.: attractive, honest,
       within the served-copy rules); EN is served as approved (D-AP3).
 - [ ] **C.20** A3 backend (`context.source`, softer page pivot note, `CHAT_PAGE_CONTEXT_ENABLED`
       off, `page_context_applied/_answered`, KPI section) → then FE task 2.
-- [ ] **C.21** ATTR-TOKEN-LIFETIME (pre-checks by M first: `npm run shopify:webhooks` (dry run, no
-      DUPLICATE for orders/*) and `npm run verify:live` section 7 (P1–P6, counts only); migration `messages.session_id`,
-      `MO_ATTRIBUTION_SESSION_ANCHOR` ships off, `mo_order_marker_unresolved`) → then FE task 3.
-      Decided by C (M delegated, 05.10.): anchor the 30 days on the device's latest product
-      consultation — switch on after the live checks. Dossier Nachtrag §20.
+- [x] **C.21** ATTR-TOKEN-LIFETIME — built 05.10. (pre-checks by M: webhooks once each, widget
+      tokens since 24.08., purge cliff reached 05.10. 08:40 UTC). Migration `0076`
+      (`messages.session_id`; the code works before and after it), `MO_ATTRIBUTION_SESSION_ANCHOR`
+      (off in code), `mo_order_marker_unresolved`, KPI notes, `verify:live` 7b, dossier §20 (F-37).
+      **M:** run `npm run db:migrate`, then set the switch (see 8.1). Then FE task 3.
 - [ ] **C.5** Keep this file current after every step.
 
 ## Backlog — not built, decide later

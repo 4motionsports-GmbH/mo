@@ -394,7 +394,7 @@ Breaking assumptions: if the theme stops setting `body.no-scroll` while the draw
 
 ## 8. Order attribution stamp (`_mo` cart attribute)
 
-Purpose and backend side: `ORDER_ATTRIBUTION.md` and `API_CONTRACT.md §10`. In short, the order webhook reads the `_mo` note attribute and assigns the tiers "Direkt" (Mo code or Mo-built link), "Beraten & gekauft" (`assisted`: widget stamp + a purchased line matches a product discussed in the session) and "Beraten, anderes gekauft" (`influenced`: stamp, no match), within `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) of the token's minting.
+Purpose and backend side: `ORDER_ATTRIBUTION.md` and `API_CONTRACT.md §10`. In short, the order webhook reads the `_mo` note attribute and assigns the tiers "Direkt" (Mo code or Mo-built link), "Beraten & gekauft" (`assisted`: widget stamp + a purchased line matches a product discussed in the session) and "Beraten, anderes gekauft" (`influenced`: stamp, no match), within `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) of the token's minting, or with the backend switch `MO_ATTRIBUTION_SESSION_ANCHOR` (owner decision 2026-10-05: on after migration 0076) of the device's latest product consultation (`show_product`, `compare_products`, `add_to_cart`, `suggest_showroom` written by the token's own sid, never after the order). A marked order the backend cannot attribute (unknown token, outside the window) is only counted, as the server-only event `mo_order_marker_unresolved`.
 
 ### 8.1 Consent gate (`moAnalyticsAllowed()`)
 
@@ -408,7 +408,7 @@ True only if `window.Shopify.customerPrivacy.analyticsProcessingAllowed() === tr
 
 - `POST {apiBase}/api/attribution/token`, headers `x-ms-chat-key` + `x-ms-session`, **no body**, no `Content-Type`, no locale.
 - Accepted response: `{ ok: true, token: <non-empty string>, cartAttributes: <plain object> }` (`moAttrValid()`). Anything else, or 401/403/429/5xx/network, sets `moAttrFailed` and gives up **for this page view**.
-- Single-flight (`moAttrInflight`). Idempotent server-side (same token per session).
+- Single-flight (`moAttrInflight`). Idempotent server-side: the same token per session while it exists; after a backend purge (retention) or erasure, a new one (AC §10).
 - Cache: memory `moAttr` + `localStorage['ms-mo-attr']` = `{ sid, token, cartAttributes }`. `moAttrLoad()` discards an entry whose `sid` is not the current session id.
 - When is a session "consulted" (mint allowed)? Only when a **`show_product` card renders** (`buildShowProduct → moAttrOnProductCard()`), including product cards re-rendered from restored history on page load. Compare tables, the showroom card and the add-to-cart card do **not** mark the session consulted; the add-to-cart **click** mints directly (`moAttrEnsure(false)`).
 
@@ -433,7 +433,7 @@ Same-origin, root path (not `window.routes.cart_update_url`), fire-and-forget, e
 
 ### 8.5 Reset
 
-`moAttrReset()` (memory + `ms-mo-attr`) runs inside `rotateSession()` ("Neuen Chat starten" for anonymous/email-only, `mo_new=1` only without a signed-in hint, sign-out, erase, server-confirmed end of sign-in). Adopting another tab's sid (`dropSessionHistory(adoptSid)`) clears only the in-memory attribution state (`moAttr`, `moAttrFailed`, `moAttrConsulted`); the stored `ms-mo-attr` was already removed by the rotating tab, and `moAttrLoad()` ignores an entry for another sid. For a possibly signed-in visitor (`shouldProbeAuth()`), `mo_new=1` keeps the sid and its token and only drops the local thread (`handleMoDeepLink()`). The **cart attribute already on the Shopify cart is not removed**: the live cart keeps the old token until a new stamp overwrites it.
+`moAttrReset()` (memory + `ms-mo-attr`) runs inside `rotateSession()` ("Neuen Chat starten" for anonymous/email-only, `mo_new=1` only without a signed-in hint, sign-out, erase, server-confirmed end of sign-in). Adopting another tab's sid (`dropSessionHistory(adoptSid)`) clears only the in-memory attribution state (`moAttr`, `moAttrFailed`, `moAttrConsulted`); the stored `ms-mo-attr` was already removed by the rotating tab, and `moAttrLoad()` ignores an entry for another sid. For a possibly signed-in visitor (`shouldProbeAuth()`), `mo_new=1` keeps the sid and its token and only drops the local thread (`handleMoDeepLink()`). The **cart attribute already on the Shopify cart is not removed**: the live cart keeps the old token until a new stamp overwrites it. On a shared browser a later order can therefore still be tied to the previous session (sign-out, erase, rotation, withdrawn consent) — with the backend switch for longer than 30 days from minting (ANWALTSDOSSIER §20, F-37 (b)). Cleanup: task 2 of [`3-attribution-token-renewal.md`](../frontend-handoff/tasks-2026-10-04/3-attribution-token-renewal.md) blanks the marker (`/cart/update.js` with every cached key set to `""`) on sign-out, erase, server-ended sign-in and consent withdrawal.
 
 ### 8.6 Privacy facts
 
@@ -446,7 +446,7 @@ Same-origin, root path (not `window.routes.cart_update_url`), fire-and-forget, e
 
 ### 8.7 Behaviour worth knowing for KPI interpretation
 
-- **Long-lived stamping**: the session id lives in `localStorage` with no expiry, so a device keeps re-stamping every new cart on every page load until the session rotates. The backend's 30-day window is what bounds "influenced"/"assisted".
+- **Long-lived stamping**: the session id lives in `localStorage` with no expiry, so a device keeps re-stamping every new cart on every page load until the session rotates. The backend's 30-day window is what bounds "influenced"/"assisted" (from the minting, or with `MO_ATTRIBUTION_SESSION_ANCHOR` from the device's latest product consultation). The backend also deletes the token: 37 days after minting, or with the switch 37 days after the device's last product consultation and at most 180 days after minting; erasure at once. The widget keeps stamping the cached dead token, and those orders count as `unknown_token`, until the sid rotates or the renewal (task 1 of [`3-attribution-token-renewal.md`](../frontend-handoff/tasks-2026-10-04/3-attribution-token-renewal.md)) ships. Tokens purged before 2026-10-05 are not recoverable by the backend.
 - **Consent ceiling**: unconsented visitors are never stamped.
 - **Permalink gap (likely NOT attributed, unverified)**: the „Zur Kasse“ permalink itself carries no `_mo`. A cart permalink builds its own cart/checkout, so the `_mo` attribute stamped via `/cart/update.js` probably does not carry over to that checkout. MANIFEST 2026-06-21 shows only that the permalink changes the storefront cart count, not that attributes survive. Verify with one test order (order `note_attributes`, §17). The fix path is F1/T1. On the first click of a session with no token, the mint is still in flight when the new tab opens, so the stamp may land after the permalink created its cart.
 - **No client KPI** exists for mint/stamp success, so the stamp rate cannot be measured from `kpi_events`.

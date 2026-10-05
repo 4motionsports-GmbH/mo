@@ -117,21 +117,19 @@ fields on **both** locales:
   "imprintUrl": "https://motionsports.de/pages/impressum",
   "privacyUrl": "https://motionsports.de/policies/privacy-policy",
   "lawyerApproved": true,          // German copy is lawyer-approved
-  "enLegalReviewed": false,        // ⚠️ NEW — English copy is NOT yet reviewed
+  "enLegalReviewed": true,         // English approved as the translation (2026-10-05)
   "returningHint": { "enabled": true, "text": "Been advised by Mo before? …" }
 }
 ```
 
-> ### ⚠️ LEGAL FLAG — English consent / refund / legal copy is UNREVIEWED
+> ### English consent / legal copy — approved as a translation (2026-10-05)
 >
 > The German DOI / marketing / transactional / refund copy is lawyer-approved
 > (`lawyerApproved: true`). The **English** equivalents are a faithful
-> translation provided so `/en` is functional, but they have **not** had a
-> human/legal review. The payload exposes **`enLegalReviewed: false`** so the
-> theme/legal can gate on it. Get an English-market legal review (GDPR/UWG
-> equivalents, the 14-day withdrawal wording, the unsubscribe/DOI text) before
-> relying on the English consent flow in production. This does **not** block
-> German, which is unchanged and approved.
+> translation of it and were approved as such by the owner on 2026-10-05
+> (D-AP3): the payload now serves **`enLegalReviewed: true`**. No string
+> changed, so every `consentTextShown` and the copy version stay the same.
+> A wording change in either language is a new review.
 
 Everything else about the consent flow (two separate unchecked boxes, DOI,
 verbatim `consentTextShown` echo, the version stamp) is identical to
@@ -153,7 +151,7 @@ Everything **user-facing** switches; the canonical strings live in unit-tested
 | **Product/browsing context + pivot notes + greeting trigger** | `system-prompt-core.mjs` | Full EN. |
 | **Customer-memory block** | `system-prompt-core.mjs` | Full EN (dates → `en-GB`). |
 | **Model-facing tool descriptions + field hints** | `tool-descriptions.mjs` | Full EN. |
-| **Capture-form consent + DOI confirm/invalid + unsubscribe confirm/invalid + email subjects** | `consent-copy-core.mjs` | Full EN ⚠️ (unreviewed). |
+| **Capture-form consent + DOI confirm/invalid + unsubscribe confirm/invalid + email subjects** | `consent-copy-core.mjs` | Full EN (approved as the translation, 2026-10-05). |
 | **DOI email body + unsubscribe footer (HTML/text)** | `consent-copy.ts` | Full EN ⚠️. |
 | **Transactional summary email** (subject, greeting, "Your selection", "You might also like", "To checkout", sign-off, AI-summary prose) | `summary-email.ts` + `summary-email`'s AI system prompt | Full EN. Prices → `en-GB` EUR (`€1,234.00`). |
 | **Signed-in summary PDF download** (headings, sections, sign-off, filename) | `summary-pdf.mjs` + `account/summary` route | Full EN. |

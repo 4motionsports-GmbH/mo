@@ -640,7 +640,7 @@ Rules: CF §1, FP "Rules that do not change".
 | Imprint + privacy next to consent | All three surfaces render the served URLs through `safeHref`. | Link labels "Impressum" / "Datenschutz" are widget chrome. |
 | `lawyerApproved` gating | **`surface=signin` only** (popup + card render nothing unless `=== true`). | The capture form does **not** check `lawyerApproved` (API §7.4 calls it informational there). Erase copy has no such field. |
 | Locale | All consent-copy GETs send `?locale=`. The submits carry `locale`. | Served per locale, never translated by the widget. |
-| `enLegalReviewed` | **Not checked.** The widget never reads the field. | The backend serves `enLegalReviewed: false` for `locale=en` on the capture and `surface=signin` copy (`src/lib/consent-copy.ts`, `CONSENT_COPY_EN_LEGAL_REVIEWED = false` in `consent-copy-core.mjs`). On `/en` the capture form and the signin popup / card still render the English copy. Only `lawyerApproved` gates the signin surface. |
+| `enLegalReviewed` | **Not checked.** The widget never reads the field. | Since 2026-10-05 the backend serves `enLegalReviewed: true` (English approved as the translation of the German, `CONSENT_COPY_EN_LEGAL_REVIEWED` in `consent-copy-core.mjs`), so ignoring it is no longer a gap. Only `lawyerApproved` gates the signin surface. |
 | The sign-in popup is UI, not consent | `presentLoginGate` uses only `ACCOUNT_COPY` / `GATE_COPY`. | FP: "its text may live in the widget". |
 
 **Widget-authored text (UI chrome) vs served text:**
@@ -808,7 +808,7 @@ Not fixed unless marked **Fixed in `8d0a0c4`** (merged to `main`, not uploaded t
 15. **Consent popup sends `consent_gate_dismissed` after an accept.** Esc / backdrop on the success view, or during the in-flight accept POST, still runs the `onDefer` handler (§10.2). A dismiss during the POST also leaves the later 2xx to record `accepted` and send `consent_gate_accepted` on a detached card the customer never sees.
 16. **History list: HTTP errors look like "no conversations".** `loadConversations` turns any non-401 error status into an empty list, clears the loaded server rows and shows "Noch keine gespeicherten Beratungen." (§7.3). Only network / parse failures show the load error.
 17. **Consent popup benefit bullets live in the widget** (`GATE_COPY.benefits`, §11). This conflicts with FP "Rules that do not change" (the consent popup's text may not live in the widget) and CF §1 (benefit framing in the served `headline`). Compliance risk until the bullets are removed or served.
-18. **`enLegalReviewed` is ignored.** On `/en` the capture form and the signin popup / card render English copy that the backend marks `enLegalReviewed: false` (§11).
+18. ~~**`enLegalReviewed` is ignored.**~~ Resolved on the backend 2026-10-05: the English copy is approved as the translation and served with `enLegalReviewed: true` (§11).
 19. **`error` / `login_required` return de-authenticates an already signed-in sid in the UI** (§4.4). It deletes `ms-chat-signed-in` and `auth-via`, keeps the local history, and is not re-probed in that tab without the `ShopifyAnalytics` hint, although the server link still resolves.
 
 ---

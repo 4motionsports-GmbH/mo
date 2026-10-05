@@ -632,6 +632,9 @@ below).
 
 ##### `offer_email_summary` → email-capture form
 
+> Not emitted for a signed-in (tier-3) session since 2026-10-05 (CA §6.0); the
+> widget's own tier-3 suppression stays (stored parts from before a sign-in).
+
 The assistant calls this at a **value-triggered** moment — after the user
 reacted well to a recommendation, after a helpful comparison, when the user
 wants to think it over, or at clear buying/checkout intent — never as the first
@@ -1174,11 +1177,14 @@ cannot double-count or fake a funnel stage:
 | `account_export_requested` | `GET /api/account/export` | `{}`, session `NULL` (pure volume counter) |
 | `account_erased`           | `POST /api/account/erase` | `{}`, session `NULL` (pure volume counter) |
 | `order_status_lookup`      | `POST /api/chat` — one per `get_order_status` call (2026-10, `CHAT_ORDER_STATUS_ENABLED`) | `{ outcome, topic, source, orders }` — `outcome` `ok` \| `no_orders` \| `not_found` \| `sign_in_required` \| `unavailable` \| `disabled` \| `ledger_off` \| `ledger_incomplete` (first order import not finished) \| `ledger_behind` (a live read found an order the ledger lacks); `topic` as the tool input; `source` `ledger` \| `ledger+live`; `orders` = number of orders in the answer. Never an order number, amount or id. Session-keyed. |
+| `mo_order_marker_unresolved` | `POST /api/webhooks/shopify` — `orders/create` only, after the delivery was recorded (a Shopify retry or the `orders/paid` delivery of the same order does not count again; 2026-10-05) | `{ reason, source? }` — `reason` `unknown_token` (token not in the table: purged, erased, forged) \| `outside_window`; `source` only for `outside_window`, one of `widget` \| `summary_email` \| `marketing_email` \| `bundle`. Session `NULL`; never an order id, token or amount. Caveat: a duplicate `orders/create` subscription delivers each order with its own webhook id and counts it twice. |
 
 They feed the Kampagnen-Funnel, Bundle and Kundenkonto/Self-Service sections
 of the admin KPI tab (see `ADMIN_DASHBOARD.md` §5.9/§5.10/§5.15);
-`order_status_lookup` feeds „Bestellstatus im Chat“ (§5.15a); the sign-in
-events also feed the per-session diagnosis of the Anmelde-Popup section (§5.7a).
+`order_status_lookup` feeds „Bestellstatus im Chat“ (§5.15a);
+`mo_order_marker_unresolved` feeds „Mo-zugeordneter Umsatz“ (§5.16, „ohne
+Zuordnung“); the sign-in events also feed the per-session diagnosis of the
+Anmelde-Popup section (§5.7a).
 
 ### Success response
 
@@ -1954,7 +1960,11 @@ fetch("/cart/update.js", {
 });
 ```
 
-Minting is idempotent per session (repeat calls return the same token). Stamp
+Minting is idempotent per session: it returns the same token while it exists;
+after a purge (retention) or erasure, a new one. The attribution window counts
+from the token's minting — with the backend switch `MO_ATTRIBUTION_SESSION_ANCHOR`
+on, from the session's latest product consultation before the order
+(`ORDER_ATTRIBUTION.md`). Stamp
 fail-silent, re-stamp before opening any Mo cart link and after each
 add-to-cart click (a completed checkout clears the cart and its attributes).
 
@@ -2043,7 +2053,7 @@ or missing signature → `401`, body never read.
 | `products/*`, `inventory_levels/*` | Targeted single-product catalog refresh (`docs/CATALOG_SYNC.md`). |
 | `customers/create`, `customers/update` | Upsert the customer mirror (a `customers` row per Shopify customer); the embedded e-mail-marketing consent goes through the consent resolver. |
 | `customers_email_marketing_consent/update` | Consent resolver only (Shopify-side subscribe / unsubscribe). Unknown customers are left to the reconciliation. |
-| `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled` | Order ledger (`customer_orders`). `orders/create` and `orders/paid` also feed the pseudonymous order attribution (`mo_orders`, `ORDER_ATTRIBUTION.md`). Other `orders/*` topics are acknowledged and ignored. |
+| `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled` | Order ledger (`customer_orders`). `orders/create` and `orders/paid` also feed the pseudonymous order attribution (`mo_orders`, `ORDER_ATTRIBUTION.md`); a marked order that cannot be attributed is counted on `orders/create` as the session-less event `mo_order_marker_unresolved` (§5). Other `orders/*` topics are acknowledged and ignored. |
 | `customers/delete`, `customers/redact` | The one erasure in Mo (trigger `shopify`: Shopify is not asked again). More than `SHOPIFY_ERASURE_ALERT_PER_HOUR` (default 20) in an hour raises an alert and an Eingang item. |
 | `customers/data_request` | An Eingang item `datenauskunft` (deadline 30 days) for the operator to answer with the data export. |
 | `shop/redact` | Alert + Eingang item only — never an automatic mass deletion. |

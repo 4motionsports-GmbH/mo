@@ -1,7 +1,7 @@
 # Rechtsdossier „Mo“ — KI-Verkaufsberater auf motionsports.de
 
 **Zweck:** Vollständige, aktuelle Beschreibung des Systems für die externe anwaltliche Prüfung (Datenschutz, Wettbewerbs-/Lauterkeitsrecht, KI-Regulierung, Verbraucherrecht) — als Grundlage für Ihr Feedback und Ihre Handlungsempfehlungen.
-**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34). **Nachtrag 03.10.2026 (2):** Bestellstatus im Chat — standardmäßig aus (§ 16, F-32); „Einplanen“ geprüfter Kampagnen-Mails (§ 17, F-33). **Nachtrag 03.10.2026 (3):** Werbebriefe als Kampagnen-Kanal (§ 18, F-35).
+**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34). **Nachtrag 03.10.2026 (2):** Bestellstatus im Chat — standardmäßig aus (§ 16, F-32); „Einplanen“ geprüfter Kampagnen-Mails (§ 17, F-33). **Nachtrag 03.10.2026 (3):** Werbebriefe als Kampagnen-Kanal (§ 18, F-35). **Nachtrag 05.10.2026:** Bestell-Zuordnung — Fenster ab der letzten Beratung; Entscheidung des Mandanten: Schalter an nach der Migration (§ 20, F-37).
 **Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`archive/LEGAL_READINESS_REPORT.md`](./archive/LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
 **Verantwortlicher:** motion sports [genaue Firmierung, Anschrift, Geschäftsführung, ggf. DSB — vom Mandanten zu ergänzen]. Betrieben wird der Onlineshop motionsports.de (Shopify) für Sport- und Fitnessgeräte (B2C, Studios/Physiotherapie, öffentliche Auftraggeber).
 
@@ -105,6 +105,7 @@ Die Datenbank ist bewusst in zwei Cluster getrennt: **Cluster A** (pseudonyme Ch
 | D-17 | IP-Adressen (Endnutzer) | Nur als Rate-Limit-Schlüssel in Upstash Redis (Fallback, wenn keine Session-ID; Kontaktformular pro IP) | TTL 60 s–60 min; kein Hashing, keine Analytics |
 | D-18 | Kontaktformular | Name, E-Mail, Telefon, Organisation, Nachricht | Seit 02.10.2026 als eingehende Mail in der Korrespondenz (D-09, **365 T**); Absender als Kundenakte ohne Einwilligung (Löschung bei Inaktivität wie jede Akte ohne Shop-Konto); Kopie im internen Postfach (organisatorische Frist nötig, → F-05) |
 | D-19 | Merge-Konflikte beim Login | Shopify-/lokale E-Mail, Session-ID | **Keine Frist, kein Lösch-Lauf** (→ F-10) |
+| D-20 | Bestell-Zuordnung (`mo_attribution_tokens`, `mo_orders`) | Markierung: opakes Token, Session-ID, Quelle (Widget, Zusammenfassungs-Mail, Werbe-Mail, Set-Angebot), Erstellzeit. Mo-zugeordnete Bestellung: Shopify-Bestell-ID und -Nummer, Datum, Zahlstatus, Betrag, Rabattcodes, Positionen, Zuordnungsstufe, Session-ID — **keine** Kundendaten. Nicht zuordenbare markierte Bestellungen nur als Zählereignis ohne Sitzung (D-03, § 20) | Markierung: 37 T ab Erstellung; mit Schalter (§ 20) bei Widget-Markierungen 37 T ab der letzten Produktberatung des Geräts, höchstens **180 T** ab Erstellung; bei Löschung auf Wunsch sofort. Bestellungen: **180 T** ab Bestelldatum (bei Löschung auf Wunsch ohne Session-Bezug weiter, § 3.2) |
 
 **Kein** Einsatz von: Google Analytics, Meta-Pixel o. ä. Tracking-Diensten; keine Öffnungs-Pixel in E-Mails (nur Klick-Tracking auf vom Empfänger angeklickten Links); keine User-Agent-Speicherung; kein Geräte-Fingerprinting.
 
@@ -157,7 +158,7 @@ Ein täglicher, abgesicherter Lösch-Lauf setzt alle Fristen automatisch durch. 
 | Chat-Gate | „Ja, schickt mir persönliche Angebote und exklusive Rabatt-Aktionen an diese E-Mail-Adresse — nur für Abonnenten. Jederzeit abbestellbar.“ |
 | Fußzeile (Teil des Nachweistexts) | „Verarbeitung durch motion sports gemäß Datenschutzerklärung; Widerruf jederzeit möglich.“ |
 
-**Englische Fassung:** Der Shop läuft auch auf `/en`. Die englischen Consent-Texte sind im Code ausdrücklich als **nicht rechtlich geprüft** markiert (`CONSENT_COPY_EN_LEGAL_REVIEWED = false`) und werden dennoch ausgeliefert (→ F-12).
+**Englische Fassung:** Der Shop läuft auch auf `/en`. Die englischen Consent-Texte sind im Code ausdrücklich als **nicht rechtlich geprüft** markiert (`CONSENT_COPY_EN_LEGAL_REVIEWED = false`) und werden dennoch ausgeliefert (→ F-12). *Nachtrag 05.10.2026:* Der Mandant hat die englischen Texte als getreue Übersetzung der freigegebenen deutschen Fassung freigegeben (`CONSENT_COPY_EN_LEGAL_REVIEWED = true`); Satz für Satz gegen das Deutsche geprüft (Erfassungsformular, Opt-in nach der Anmeldung, Chat-Einwilligung, DOI-Mail), kein Wortlaut geändert.
 
 ---
 
@@ -493,6 +494,39 @@ Grundlage: `docs/CUSTOMER_PLATFORM_PLAN.md` (Entscheidungen D-1 bis D-12). Alle 
   - (g) Adressen mit Herkunft `consented_capture` (hinterlegte Adresse aus dem Shop-Kundenkonto): löschen oder behalten? Derzeit behalten und für Briefe nicht verwendet.
   - (h) Nach einem Widerspruch bleibt die Adresse gespeichert. Wird sie für die Sperre gebraucht, oder ist sie zu löschen?
   - (i) Wer sich von E-Mail-Werbung abgemeldet hat (`unsubscribed`), erhält im Modus „ohne E-Mail-Einwilligung“ weiter Briefe, solange kein Widerspruch gegen Briefwerbung vorliegt. Ist eine E-Mail-Abmeldung auch als Widerspruch gegen Briefwerbung zu behandeln?
+
+---
+
+## 20. Nachtrag 05.10.2026 — Bestell-Zuordnung: Fenster ab der letzten Beratung
+
+Grundlage: `docs/ORDER_ATTRIBUTION.md`, `docs/plans/2026-10-04/ATTR-TOKEN-LIFETIME.md`. Die Bestell-Zuordnung (D-20) misst, ob eine Bestellung auf eine Mo-Beratung zurückgeht: Das Widget setzt mit Analyse-Einwilligung eine opake Markierung (`_mo`) an den Shopify-Warenkorb; Mo-Links in Mails und Set-Angeboten tragen sie im Link. Bisher wird eine Bestellung mit Markierung pseudonym gespeichert, wenn sie innerhalb von 30 Tagen (`MO_ATTRIBUTION_WINDOW_DAYS`) nach Erstellung der Markierung eingeht oder einen Mo-Rabattcode trägt.
+
+### 20.1 Tatsachen
+
+- **Was neu ist.** Bei Widget-Markierungen zählen die 30 Tage ab der **letzten Produktberatung auf demselben Gerät** vor der Bestellung, nicht mehr ab der Erstellung der Markierung. Mo-Links (Zusammenfassungs-Mail, Werbe-Mail, Set-Angebot) zählen unverändert ab ihrer Erstellung.
+  - Als Beratung zählen nur Produktkarte, Produktvergleich, Warenkorb-Karte und Showroom-Hinweis; ein reiner Versand- oder Service-Chat verlängert nichts.
+  - Eine Beratung **nach** der Bestellung zählt nie.
+- **Pro Gerät.** Gezählt werden nur Beratungen, die die Sitzung der Markierung selbst geschrieben hat. Dafür trägt jede Zeile eines Produkt-Werkzeugs jetzt die schreibende Session-ID (`messages.session_id`, Migration 0076). Das ist dieselbe pseudonyme Kennung, die schon am Gespräch steht; keine neue Datenkategorie, keine Verknüpfung über Geräte oder Kundenkonten. Sie wird mit dem Gespräch gelöscht (D-01, 180 T) und bei Löschung auf Wunsch.
+- **Übergang (37 Tage nach der Migration).** Ältere Zeilen ohne diese Kennung zählen für die ursprüngliche Sitzung ihres Gesprächs. Hat ein angemeldeter Kunde ein Gespräch auf einem anderen Gerät fortgesetzt, zählen in dieser Zeit auch die Beratungen des anderen Geräts. Danach haben diese Zeilen keine Wirkung mehr; die Ausnahme wird entfernt.
+- **Speicherfrist der Markierung.** Bisher 37 Tage ab Erstellung. Jetzt bei Widget-Markierungen höchstens 37 Tage nach der letzten Produktberatung des eigenen Geräts und **nie mehr als 180 Tage** (`KPI_RETENTION_DAYS`) nach Erstellung; die Obergrenze gilt auch, wenn die Kennzahlen-Frist abgeschaltet ist. Bei Löschung auf Wunsch sofort (`erasePerson`). Mo-Link-Markierungen unverändert 37 Tage ab Erstellung.
+- **Verlängerung unabhängig von der Einwilligung.** Das Backend sieht die Analyse-Einwilligung beim Chat nicht. Eine Produktberatung auf demselben Gerät **nach** dem Widerruf der Einwilligung verlängert daher das Fenster einer Markierung, die unter Einwilligung erstellt wurde.
+- **Markierung bleibt am Warenkorb.** Die `_mo`-Markierung am Shopify-Warenkorb wird bei Abmelden, Sitzungswechsel oder Widerruf nicht entfernt. Auf einem geteilten Browser kann eine spätere Bestellung dadurch länger als bisher (30 Tage ab Erstellung) dieser Sitzung zugeordnet werden — und über deren Gespräche der Akte eines angemeldeten Kunden. Abhilfe: Eine Widget-Aufgabe leert die Markierung beim Abmelden, Löschen und Widerruf; sie ist noch nicht live.
+- **Zähler ohne Bestellbezug.** Eine markierte Bestellung, die keiner Beratung zugeordnet werden kann (Markierung unbekannt oder gelöscht, Beratung außerhalb des Fensters), wird weder einer Sitzung zugeordnet noch in der Mo-Zuordnung gespeichert. Gezählt wird nur ein Ereignis ohne Sitzung mit Grund und ggf. Quelle der Markierung (D-03) — **nie** Bestellnummer, Markierung, Betrag oder Kundendaten.
+- **Klarstellung.** „Nicht markierte Bestellungen werden nicht gespeichert“ gilt nur für die Mo-Zuordnung (`mo_orders`). Die Bestellkopie (§ 13.1 Nr. 1) speichert bei eingeschaltetem Kundenabgleich (`SHOPIFY_CUSTOMER_SYNC_ENABLED`) jede Bestellung. Der Text im Dashboard ist entsprechend korrigiert.
+- **Schalter.** `MO_ATTRIBUTION_SESSION_ANCHOR`, im Code standardmäßig **aus**. Ausgeschaltet gilt die bisherige Regel für Fenster und Speicherfrist, ohne Code-Änderung. Eingeschaltet wird er erst nach der Migration.
+- **Umfang live (05.10.2026).** Widget-Markierungen werden seit 24.08.2026 erstellt (derzeit 208). Eine Bestellung ist zugeordnet. Die älteste Markierung stammt vom 29.08.2026; nach der bisherigen Regel würde sie ab 05.10.2026 gelöscht. Zwei bestehende Markierungen werden mit der neuen Regel sofort wieder wirksam.
+
+### 20.2 Entscheidung des Mandanten (05.10.2026)
+
+Der Mandant hat die Wahl an die Entwicklung (KI-Assistent Claude) übertragen. Entschieden ist: Das Fenster zählt bei Widget-Markierungen ab der letzten Produktberatung auf dem Gerät; der Schalter wird nach der Migration eingeschaltet. Er wird damit **vor** Ihrer Antwort auf F-37 eingeschaltet (anders als bei F-32). Die Prüfbitte F-37 bringt der Mandant mit der regulären Aktualisierung dieses Dossiers ein. Lehnen Sie ab, wird der Schalter ausgeschaltet.
+
+### 20.3 Prüfbitte
+
+- **F-37 — Bestell-Zuordnung ab der letzten Beratung:** Bitte bestätigen bzw. beraten Sie:
+  - (a) Die längere Lebensdauer der Widget-Markierung (bis 37 Tage nach der letzten Produktberatung, höchstens 180 Tage) auf Grundlage von Art. 6 (1) f und im Hinblick auf die Speicherbegrenzung (Art. 5 (1) e).
+  - (b) Ob die Verlängerung unabhängig von der Einwilligung (Beratung nach Widerruf) und die am Warenkorb verbleibende Markierung auf geteilten Browsern hinnehmbar sind — oder ob zuerst die Widget-Aufgabe „Markierung beim Abmelden, Löschen und Widerruf leeren“ live sein muss bzw. das Fenster nur über eine einwilligungsgebundene Erneuerung durch das Widget verlängert werden darf.
+  - (c) Die Übergangsregel: 37 Tage lang zählen ältere Gesprächszeilen für die ursprüngliche Sitzung, bei fortgesetzten Gesprächen also geräteübergreifend.
+  - (d) Den Hinweis auf den Zweck „Zuordnung von Käufen zur Beratung“ in der Datenschutzerklärung — zusammen mit F-28 und dem offenen Punkt aus `ORDER_ATTRIBUTION.md` (Datenschutzerklärung; Freigabe „Protected Customer Data“ für die Bestell-Webhooks bei Shopify).
 
 ---
 

@@ -9,7 +9,8 @@
 > "delete my data") is documented in [§9](#9-signed-in-conversation-history-tier-3).
 > **CA-4** (at-sign-in marketing opt-in) is in [§10](#10-at-sign-in-marketing-opt-in--the-match-up-ca-4),
 > which also pins the **tier-3 suppression contract** (the end-of-chat capture
-> widget is suppressed for signed-in customers; the opt-in moves to sign-in) and
+> widget is suppressed for signed-in customers — since 2026-10-05 the backend
+> withholds the offer for them too; the opt-in moves to sign-in) and
 > the `marketing.optInActionable` state. The signed-in **conversation summary
 > download** (the S5 summary email reused as a downloadable HTML document) is in
 > [§11](#11-conversation-summary-download-signed-in-s5-structure-reused).
@@ -765,7 +766,9 @@ contract.
   the summary is downloadable (§11) and the opt-in lives at sign-in. **Tiers 1–2
   are unchanged**: the end-of-chat capture form still shows for anonymous /
   email-only visitors exactly as before. This is a **frontend gate on an existing
-  field** — no backend behaviour change; sign-in is still identity, not consent.
+  field**, and since 2026-10-05 the backend also withholds the offer (and the
+  forced checkout-moment ask) for a live tier-3 session; sign-in is still
+  identity, not consent.
 - **At-sign-in opt-in actionability — `marketing.optInActionable`.** `/api/auth/me`
   now also returns `marketing: { status, optInActionable }`. The widget's
   `optInActionable` flag reads this: the CA-4 card is shown to a signed-in
