@@ -110,10 +110,10 @@ were set to `legacy` by 0073 (those customers sign in once more).
 |---|---|---|---|
 | `/api/auth/shopify/login` | GET | signed state + origin-allowlisted `return_url` | mint PKCE/state, store pending, 302 to Shopify |
 | `/api/auth/shopify/callback` | GET | signed state + single-use pending | exchange code, verify id_token, merge, store tokens, 302 back |
-| `/api/auth/link` | POST | origin allowlist + `x-ms-chat-key`, rate limit | redeem the one-time code for this `x-ms-session` → writes the signed-in link + attaches the session's chats (`200 { ok, signedIn }`; `400` unknown/expired/used/other session) |
+| `/api/auth/link` | POST | origin allowlist + `x-ms-chat-key`, rate limit | redeem the one-time code for this `x-ms-session` → writes the signed-in link + attaches the session's chats that have no customer or the same one (`200 { ok, signedIn }`; `400` unknown/expired/used/other session) |
 | `/api/auth/me` | GET | origin allowlist + `x-ms-chat-key` | identity re-hydration (`{ name, tier }`), fail-closed |
 | `/api/auth/shopify/logout` | GET | top-level navigation + return-url allowlist | server-INITIATE logout: build the OIDC `end_session` redirect from discovery, 302 to Shopify |
-| `/api/auth/shopify/logout/return` | GET | top-level navigation | drop the customer's tokens and signed-in links (every `customer_account` link of the customer — the tokens are per customer — and this session's link), 302 back to storefront `?ms_auth=logged_out` |
+| `/api/auth/shopify/logout/return` | GET | top-level navigation | drop the customer's tokens and signed-in links (every `customer_account` and `app_proxy` link of the customer on every session, and this session's link), 302 back to storefront `?ms_auth=logged_out` |
 
 `login`, `callback`, `logout`, and `logout/return` are **top-level navigations**
 (like the email-clicked confirm/unsubscribe routes) — no CORS/secret guard. The
@@ -160,11 +160,39 @@ granted — enriches the **name/email via the Admin API**
 (`lib/shopify-orders.fetchAdminCustomerById`), with **no customer OAuth token**.
 Detection therefore only establishes **IDENTITY**; the Admin API supplies the rest,
 so it **does not matter how the customer logged in**. It then find-or-creates the
-customer (the same `bindShopifyIdentity` merge as the OAuth callback) and links the
-widget `session_id`. Response:
-`{ signedIn: true, name, tier: 3, shopify_customer_id, identity:{name,tier}, marketing:{…} }`.
+customer (the same `bindShopifyIdentity` merge as the OAuth callback) and mints a
+one-time code for the widget `session_id` (kind `app_proxy`, 0073); the widget
+redeems it at `POST /api/auth/link`. Response:
+`{ signedIn: true, name, tier: 3, shopify_customer_id, identity:{name,tier}, marketing:{…}, linkCode }`.
 **Fail-closed:** bad/absent signature or a logged-out (empty id) session →
 `{ signedIn: false }`; no Admin/DB work happens until the signature verifies.
+
+**When whoami issues a code (P0.3, 05.10.2026).** `signedIn: true` now **always**
+comes with a `linkCode`, and only when the session will really count as signed in;
+every other case is `{ signedIn: false }` (shape unchanged). In order:
+
+1. **Fresh signature.** Shopify's signed `timestamp` must lie within ±300 s
+   (`appProxyFailureKind`, `shopify-app-proxy.mjs`, tested) — a signed URL cannot
+   be replayed. A stale, mismatched or unsigned request answers `{signedIn:false}`
+   and never ends or creates a link. `no_secret` / `mismatch` / `stale` are
+   reported (`reportError`, phase = the kind, at most once per kind per instance
+   every 10 minutes, never the URL or query); `unsigned` (a direct hit) is silent.
+2. `not_logged_in` ends the session's `app_proxy` link (unchanged).
+3. **Handover.** The session is signed in as **another** shop customer (shared
+   browser): that session's signed-in link ends (`unlinkSessionSignedIn`, this
+   session only — the previous person's other devices stay signed in), no code.
+   The widget's `/api/auth/me` probe then reads signed-out, it wipes its
+   transcript and rotates the session; the next tab links the new person.
+4. **Kill switch.** `APP_PROXY_SIGNIN_ENABLED` off (default) → no code.
+5. **Proof.** A live chat (Customer Account) token of the customer, or — with
+   `APP_PROXY_SIGNIN_MAX_AGE_HOURS > 0` — the shop login itself. Neither → no code.
+6. Otherwise Admin API → bind → mint; a failed mint → `{signedIn:false}`.
+
+Every recognised request (signed, fresh, logged in, with a session) records the
+server-only KPI event `account_shop_recognised { proof, hasToken, alreadySignedIn,
+codeIssued, noCode? }` (`noCode` `flag_off` | `no_proof` | `handover` | `failed`;
+`API_CONTRACT.md` §5) — with the switch off whoami only measures. Pure rules:
+`signed-in-proof.mjs → decideShopRecognition` (tested).
 
 > **⚠️ REQUIRES A ONE-TIME STORE + THEME ACTION (Lucas) before it can fire:**
 > 1. **Add an App Proxy** to the app — Shopify admin → the app → *App proxy*:
@@ -180,13 +208,27 @@ widget `session_id`. Response:
 >    populated for this store's customer-accounts mode (the spike's "unreliable"
 >    finding predates Shopify's fixes). The endpoint fails closed regardless, and
 >    the chatbot "Anmelden" remains the fallback — so this is never a security risk.
->
-> History for a *pure shop-native* session: `/api/account/*` still require a live
-> Customer-Account token (their liveness/logout proof), which a shop-native login
-> doesn't have. Detection (name) works without it; full history for that session
-> needs either a one-tap chatbot "Anmelden" (to mint a token) or routing the
-> account endpoints through the App Proxy as a follow-up — STATED here, not
-> half-built.
+>    The check: open `/apps/chat/whoami?session=livecheck-manual` while logged in
+>    to the shop and look for its `account_shop_recognised` row (`verify:live`
+>    section 8; `livecheck-%` sessions never count in the KPIs). No row = Shopify
+>    sends no `logged_in_customer_id` for this account type.
+
+**The two switches (D-AP1).** `APP_PROXY_SIGNIN_ENABLED` (default `false`) is the
+kill switch: off, whoami issues no code and answers `{signedIn:false}` but still
+measures. `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (default `0`, clamped to 720): with a
+value > 0 an `app_proxy` link counts as signed in **without** a chat token for
+that many hours after its last redeem — every new tab session renews it through
+whoami. While the kill switch is off the effective shop-proof hours are 0
+(`appProxyShopProofHours`, `platform-flags.mjs`). With 0, only customers with a
+live chat token (who used „Anmelden“ in the chat before) are recognised. D-AP1
+(shop proof counts as signed in, scope: `/api/auth/me`, every `/api/account/*`
+including export, erase and the marketing opt-in, and Mo's memory) was decided
+by the owner on 05.10.2026; the lawyer confirmed it (`ANWALTSDOSSIER.md` §19,
+F-36). Recommended production values, set by the owner once the App Proxy is
+configured in Shopify: `APP_PROXY_SIGNIN_ENABLED=true`,
+`APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`. The resolver behind all of it is
+`lib/signed-in-session.ts → resolveLiveSignedInCustomer` (§4). Order status
+stays Customer-Account-only (§8).
 
 ### `prompt=none` silent detection (alternative)
 
@@ -280,9 +322,13 @@ session signed in — typing the e-mail of a signed-in customer in another
 browser resolved as their session (fixed 03.10.2026). The old fallback via
 `conversations.customer_id` is gone for the same reason. A signed-in customer who
 types their **own** e-mail (summary mail) stays signed in; typing **another**
-customer's e-mail re-points the link as `email` and drops the sign-in. `/api/auth/me` then proves the session is still live by
-obtaining a **valid access token** (refreshing if needed) before reporting
-`signedIn: true`. Everything fails closed — a blank/unlinked session, or one
+customer's e-mail re-points the link as `email` and drops the sign-in. `/api/auth/me` then proves the session is still live
+(`lib/signed-in-session.ts → resolveLiveSignedInCustomer`, 05.10.2026, the one
+resolver behind `/api/auth/me`, `lib/account-guard.ts` and Mo's memory): a
+`customer_account` link needs a **valid access token** (refreshing if needed);
+an `app_proxy` link counts on the **shop proof** while its last redeem is within
+`APP_PROXY_SIGNIN_MAX_AGE_HOURS` (no token, no refresh), otherwise it needs a
+token too (§2, the two switches). Everything fails closed — a blank/unlinked session, or one
 linked only to a tier-1/2 customer (no `shopify_customer_id`), resolves to null.
 `resolveSignedInLink` (same module, same rules) additionally returns the
 `linkKind`, for callers that accept only one way of signing in — the order
@@ -298,11 +344,17 @@ id — `?session=` on login, `x-ms-session` on the redeem, `x-ms-session`/`?sess
 on `/api/auth/me`); the backend never mints its own.
 
 **Sign-out ends the links.** `logout/return` deletes the tokens and every
-`customer_account` link of the customer (the tokens are per customer, so another
-device's session would otherwise come back to life with the next sign-in
-anywhere) plus the session's own link; a revoked token seen by `/api/auth/me`
-does the same. A signed App Proxy request for a logged-out shop session deletes
-that session's `app_proxy` link.
+`customer_account` **and `app_proxy`** link of the customer on every session
+(the tokens are per customer, and a shop-proof link counts without one, so
+another device's session would otherwise come back to life) plus the session's
+own link; a revoked token seen by `/api/auth/me` does the same. A signed App
+Proxy request for a logged-out shop session deletes that session's `app_proxy`
+link. **Redeem never moves another customer's chats:** the conversation stamp
+runs only `WHERE customer_id IS NULL OR customer_id = <this customer>`, so on a
+shared browser a session's earlier chats stay with whoever they belong to. A dead
+Customer Account link that the shop re-proves (grant kind `app_proxy`, same
+customer, no valid token, max age > 0) is downgraded to `app_proxy` instead of
+staying dead.
 
 ## 5. Schema (migration `0014_customer_accounts.sql`)
 
@@ -490,7 +542,10 @@ personalisation, so it does **not** need the marketing consent above
 - the session's link is the **Customer Account sign-in in this session** —
   `resolveSignedInLink` (`customer-session-link.mjs`) reads `link_kind`
   explicitly and only `customer_account` counts; an App Proxy link
-  (`app_proxy`), a typed e-mail or a `legacy` link get `sign_in_required`;
+  (`app_proxy`), a typed e-mail or a `legacy` link get `sign_in_required`
+  (for an `app_proxy` session with `signedInViaShop: true`: Mo says the
+  customer is recognised, but order status needs one „Anmelden“ in the chat,
+  and links „Meine Bestellungen“);
 - `getValidAccessToken(customerId)` returns a **live token** (refreshing if
   needed) — signed out or expired → `sign_in_required`. The access gate is
   resolved once per chat request, so parallel tool calls never refresh the
@@ -531,15 +586,17 @@ requireSignedInCustomer`), in this order:
 1. **`guardRequest`** — origin allowlist + shared secret (`x-ms-chat-key`),
    like `/api/chat`. Widget XHR, with a CORS preflight.
 2. **Rate limit** — the chat bucket.
-3. **`resolveSignedInCustomer(session)`** — the session must link to a customer
-   with a `shopify_customer_id` **through a sign-in proven in this session**
-   (`link_kind` `customer_account` / `app_proxy`, migration `0071`).
-   **Anonymous** (no customer), **email-only** (a typed address, `link_kind =
-   'email'` — even for a Shopify customer) and pre-0071 (`legacy`) sessions
-   resolve to `null` → **401, fail closed**, before any history is read.
-4. **`getValidAccessToken`** — proves the session is **still authenticated**
-   (refreshing if needed), exactly like `/api/auth/me`. A logged-out / expired
-   session → 401.
+3. **`resolveLiveSignedInCustomer(session)`** (`lib/signed-in-session.ts`) — the
+   session must link to a customer with a `shopify_customer_id` **through a
+   sign-in proven in this session** (`link_kind` `customer_account` /
+   `app_proxy`, migration `0071`). **Anonymous** (no customer), **email-only** (a
+   typed address, `link_kind = 'email'` — even for a Shopify customer) and
+   pre-0071 (`legacy`) sessions → **401 „Nicht angemeldet“, fail closed**,
+   before any history is read.
+4. **Still live**, exactly like `/api/auth/me`: a valid access token (refreshing
+   if needed), or for an `app_proxy` link the fresh shop proof under
+   `APP_PROXY_SIGNIN_MAX_AGE_HOURS` (§2). A proof that ran out → 401 „Sitzung
+   abgelaufen“. The guard returns the proof (`token` | `shop`).
 
 **Resolved across devices.** All of a signed-in customer's sessions — on every
 device — link to the **same** `customers` row (keyed by `shopify_customer_id`),
@@ -705,7 +762,10 @@ CA-1 established that **signing in is identity, not marketing consent** (§1). C
 [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) "At-sign-in marketing opt-in".
 
 - **Endpoint:** `POST /api/account/marketing-opt-in` (the standard signed-in
-  guard: origin + secret + a **live** access token). It requires an explicit
+  guard: origin + secret + a **live** sign-in — a chat token or the fresh shop
+  proof, §9). The `consent_events` row of the opt-in records which proof stood
+  behind it in its `note`: „Anmeldenachweis: Kundenkonto-Anmeldung im Chat“ or
+  „Anmeldenachweis: Shop-Login (App Proxy)“ (`signInProofNote`). It requires an explicit
   `marketingConsent: true` (no auto-enrol), uses the customer's **verified**
   `customers.email` (refusing the synthetic `shopify:<id>` placeholder), and runs
   the **existing DOI** via `upsertEmailCapture` — `'pending'` + confirmation
@@ -779,7 +839,14 @@ contract.
   optInActionable = signedIn
                  && customer has a REAL verified email (not the shopify:<id> placeholder)
                  && marketing_status === 'none'      // no consent decision on record yet (Mo or Shopify)
+                 && !consentAskQuiet                 // anti-nag, per customer (05.10.2026)
   ```
+
+  **Anti-nag** (`src/lib/consent-ask-policy.mjs`, tested): `optInActionable` is
+  also `false` when the customer declined the consent popup (`consent_gate_declined`,
+  surface `signin`) in **any** of their sessions in the last 30 days, or the popup
+  was shown in **3** of their sessions in 30 days. It applies to chat sign-ins and
+  shop-login recognition alike; a read failure fails closed.
 
   `marketing_status` is the compatibility mirror of the **one** consent
   (`customers.email_consent_state`: `subscribed` → `confirmed`,

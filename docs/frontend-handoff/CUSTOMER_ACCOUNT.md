@@ -143,15 +143,35 @@ Response (HTTP 200, `no-store`), shape compatible with `/api/auth/me` (§4):
 { "signedIn": false }
 ```
 
-- **Fail-closed:** a bad/absent signature or a logged-out session (empty
-  `logged_in_customer_id`) → `{ "signedIn": false }`. The id is **never** taken
-  from a client-supplied value — only Shopify's signed one.
-- On `signedIn: true` the name and opt-in state are for display right away, but the
-  session is **not linked yet**: redeem `linkCode` at `POST /api/auth/link` with the
-  same `x-ms-session` (§2a) — only then do the history endpoints (§7) resolve (for
-  the **chatbot-token** path; for a pure shop-native session without a chatbot
-  OAuth token see the note in §7). A `linkCode` of `null` (database problem) means:
-  display only, stay unlinked.
+- **Fail-closed:** a bad/absent signature, a **stale** one (Shopify's signed
+  `timestamp` older or newer than 5 minutes — a replayed URL) or a logged-out
+  session (empty `logged_in_customer_id`) → `{ "signedIn": false }`. The id is
+  **never** taken from a client-supplied value — only Shopify's signed one.
+- **`signedIn: true` always comes with a `linkCode`** (since 2026-10-05), and only
+  when the session will really count as signed in after the redeem; every other
+  case is `{ "signedIn": false }` (shape unchanged). Redeem `linkCode` at
+  `POST /api/auth/link` with the same `x-ms-session` (§2a) — only then do
+  `/api/auth/me` (§4) and the history endpoints (§7) resolve. A widget that still
+  meets `linkCode: null` treats the answer as not signed in.
+- **When whoami says `signedIn: false` although the shop has a login:** the
+  backend switch `APP_PROXY_SIGNIN_ENABLED` is off (whoami then only measures);
+  the customer has no proof — no live chat token, and the shop login alone does
+  not count while `APP_PROXY_SIGNIN_MAX_AGE_HOURS` is 0 (D-AP1, decided
+  05.10.2026; recommended production value 24); a **handover** (below); or a
+  database problem. Nothing for the widget to do — „Anmelden“ stays the fallback.
+- **Shop proof (D-AP1).** With `APP_PROXY_SIGNIN_MAX_AGE_HOURS > 0` a shop-login
+  link counts as signed in **without** a chat token for that many hours after its
+  last redeem; every new tab session renews it through whoami. History, export,
+  erasure and the opt-in (§6.1, §7) then work on the shop login alone. A tab kept
+  open longer than the max age without a new tab gets `signedIn: false` from
+  `/api/auth/me` (or a 401 „Sitzung abgelaufen“ from `/api/account/*`) — the
+  usual „server says the sign-in ended“ path. Order status in the chat still
+  needs the chat's own „Anmelden“.
+- **Handover (shared browser).** If this session is signed in as **another** shop
+  customer, whoami ends that session's sign-in and issues no code. The widget's
+  `/api/auth/me` probe then answers `signedIn: false`, the widget runs its ended
+  sign-in cleanup (local transcript wiped, new session id), and the next tab
+  links the new person. The previous person's chats stay theirs.
 - A signed request for a **logged-out** shop session (`{ "signedIn": false }`) also
   ends this session's shop-native link: a shop logout signs the chat out.
 
@@ -160,7 +180,8 @@ Response (HTTP 200, `no-store`), shape compatible with `/api/auth/me` (§4):
 > subpath prefix `apps`, subpath `chat`, URL `https://mo.motionsports.de/api/auth/storefront`;
 > (2) the theme calls the proxied path above with `?session={sid}`; (3) backend env
 > `SHOPIFY_APP_PROXY_SECRET` (the app's API secret key; falls back to
-> `SHOPIFY_CLIENT_SECRET`). Until the proxy is configured this endpoint isn't
+> `SHOPIFY_CLIENT_SECRET`); (4) backend env `APP_PROXY_SIGNIN_ENABLED=true` and
+> `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24` (recommended; both off by default). Until the proxy is configured this endpoint isn't
 > reachable and the widget simply keeps using the chatbot "Anmelden" (§2) — no
 > regression. Shopify historically left `logged_in_customer_id` empty on **new
 > customer accounts**; re-verify on the live store. The endpoint fails closed
@@ -202,7 +223,9 @@ Response (always HTTP 200, `Cache-Control: no-store`):
 ```
 
 - `identity.name` is read **live from Shopify** (authoritative) and may be `null`
-  if Shopify returns no name — render a neutral fallback in that case.
+  if Shopify returns no name — render a neutral fallback in that case. For a
+  session signed in through the **shop login** alone (no chat token, §3a „Shop
+  proof“) it comes from the backend's cached account summary, else the Admin API.
 - `tier` is `3` for a signed-in customer. The widget never sees tokens, email,
   addresses, or orders in CA-1 (those arrive in CA-2/CA-3).
 - **`marketing`** (present only when `signedIn: true`) drives the **at-sign-in
@@ -217,9 +240,10 @@ Response (always HTTP 200, `Cache-Control: no-store`):
     `true` exactly when the customer has **no marketing decision on record yet**
     (`status === "none"`) **and** has a real verified email. It is `false` once a
     decision exists (`pending` / `confirmed` / `unsubscribed` — in Mo or in the
-    shop) or for the rare account with no verified email. Treat it as the single
-    source of truth for "should I show the opt-in" — don't re-derive it from
-    `status` yourself.
+    shop), for the rare account with no verified email, and — since 2026-10-05 —
+    after a decline or 3 shows within 30 days (anti-nag, §6.1). Treat it as the
+    single source of truth for "should I show the opt-in" — don't re-derive it
+    from `status` yourself.
 - A `CORS` preflight (`OPTIONS`) is supported; the endpoint advertises
   `GET, OPTIONS`.
 
@@ -243,9 +267,10 @@ session and bounces the browser back to the storefront with
 endpoint, the route degrades to a **local sign-out** (tokens dropped, same
 `?ms_auth=logged_out` bounce) — no widget change needed either way.
 
-The return route also ends the **signed-in links**: the tokens are per customer,
-so every chatbot sign-in of that customer (other devices included) is signed out
-with them, and this session's shop-native link too. The customer and their
+The return route also ends the **signed-in links**: every chatbot sign-in and —
+since 2026-10-05, because they can count without a token — every shop-login link
+of that customer (other devices included) is signed out, and this session's link
+too. The customer and their
 history are **not** deleted — logging out ends the sessions, not the account (full
 erasure is §7.5). Same open-redirect rule as login:
 `return_url` must be an allow-listed storefront origin.
@@ -303,12 +328,15 @@ customer who has **not yet recorded a marketing decision**; it is `false` once
 they've decided (DOI `pending` / `confirmed` / unsubscribed) — so a customer who
 already opted in (or whose prior opt-in carried forward when their email merged
 into the signed-in identity, or who subscribed in the shop) is **not**
-re-asked. A „Nein“ / decline is **not** recorded by the
-backend (only the KPI event), so `optInActionable` stays `true` after it: the
-widget SHOULD remember a decline locally (for example 30 days on the device, like
-the 24 h snooze of the sign-in popup) so the customer is not asked at every
-sign-in, and a dismissal at least for the session. The **backend** truth for
-"already decided" is `optInActionable: false`.
+re-asked. A „Nein“ / decline is **not** recorded as a consent decision (only
+the KPI event), but since 2026-10-05 the backend reads those KPI events per
+customer (**anti-nag**): `optInActionable` is `false` when the customer declined
+the popup (`consent_gate_declined`, surface `signin`) in **any** of their
+sessions in the last 30 days, or saw it (`consent_gate_shown`) in **3** sessions
+within 30 days — on every device, for chat sign-ins and shop-login recognition
+alike. The widget's own memory stays as is: it SHOULD still remember a decline
+locally (30 days on the device) and a dismissal at least for the session. The
+**backend** truth for "ask or not" is `optInActionable`.
 
 Render contract (copy + submit endpoint) is in
 [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §3 (`GET /api/consent-copy?surface=signin`
@@ -333,7 +361,10 @@ All of them:
 
 - are **fail-closed**: an anonymous or **email-only** session (not signed in via
   Shopify), or a logged-out / expired one, gets **HTTP 401**
-  `{ "error": { "code": "unauthorized", "message": "…" } }`. Only render the
+  `{ "error": { "code": "unauthorized", "message": "…" } }` — „Nicht angemeldet“
+  (no signed-in link) or „Sitzung abgelaufen“ (the chat token or the shop proof
+  ran out). A session signed in through the shop login alone (§3a „Shop proof“)
+  is signed in here too. Only render the
   history UI once `/api/auth/me` reports `signedIn: true`.
 - return JSON with `Cache-Control: no-store` and support a CORS `OPTIONS`
   preflight (the per-id route advertises `GET, PATCH, DELETE, OPTIONS`).

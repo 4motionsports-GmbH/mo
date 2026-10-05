@@ -29,7 +29,7 @@ Endpoints:
 | GET    | `/api/auth/shopify/callback` | OAuth callback (server-side PKCE exchange); returns `?ms_auth=ok&ms_code=…`. |
 | POST   | `/api/auth/link`          | Completes a sign-in: redeems the one-time code (`ms_code` / whoami `linkCode`) for this `x-ms-session`. Required since 2026-10-03. |
 | GET    | `/api/auth/me`            | Signed-in identity re-hydration (`{ name, tier, marketing }`). |
-| GET    | `/api/auth/storefront`    | Shop-native already-signed-in detection via Shopify App Proxy (HMAC-signed). |
+| GET    | `/api/auth/storefront`    | Shop-native already-signed-in detection via Shopify App Proxy (HMAC-signed, fresh within 5 minutes). |
 | GET    | `/api/auth/shopify/logout/return` | Logout-return landing. |
 | GET    | `/api/account/conversations` | Signed-in: LIST past conversations (tier 3). |
 | GET/PATCH/DELETE | `/api/account/conversations/{id}` | Signed-in: fetch / rename / delete one conversation. |
@@ -1172,8 +1172,9 @@ cannot double-count or fake a funnel stage:
 | `bundle_offer_clicked`     | `GET /api/r/<token>` (bundle offer) | `{ offerId, status, expired }`, session `NULL` |
 | `contact_form_submitted`   | `POST /api/contact` (accepted submissions) | `{ reason, productCount }` — `reason` one of the §4 reasons, else `other`; never the name/email/message. Session-keyed: the payload's `sessionId`, else the `x-ms-session` header. |
 | `account_signin_succeeded` | `GET /api/auth/shopify/callback` (success) | `{ silent }` — `prompt=none` re-detects flagged. Session-keyed (the session of `login?session=`). Since 0073 this alone does not sign the chat in. |
-| `account_signin_linked`    | `POST /api/auth/link` (code redeemed) | `{ kind }` — `customer_account` \| `app_proxy`. Session-keyed. The sign-in now counts for the chat. |
-| `account_signin_link_refused` | `POST /api/auth/link` (400) | `{ reason }` — `invalid` (expired, used, unknown) \| `session_mismatch` (another session's code). Session-keyed. A 503 (database not reachable) records nothing. |
+| `account_shop_recognised`  | `GET /api/auth/storefront` (App Proxy whoami: signed, fresh, Shopify vouches for a logged-in customer; 2026-10-05) | `{ proof, hasToken, alreadySignedIn, codeIssued, noCode? }` — `proof` `token` \| `shop` \| `none`; `hasToken` = the customer has a chat (Customer Account) token; `alreadySignedIn` = the session was already signed in as this customer; `noCode` (only when `codeIssued` is false) `flag_off` \| `no_proof` \| `handover` \| `failed`. Session-keyed; never a customer id, name, e-mail, the code or the URL. |
+| `account_signin_linked`    | `POST /api/auth/link` (code redeemed) | `{ kind, renewed }` — `kind` `customer_account` \| `app_proxy`; `renewed` (2026-10-05) = the session was already signed in as the same customer (a new tab confirming it, not a new sign-in). Session-keyed. The sign-in now counts for the chat. |
+| `account_signin_link_refused` | `POST /api/auth/link` (400) | `{ reason, kind? }` — `reason` `invalid` (expired, used, unknown) \| `session_mismatch` (another session's code); `kind` (2026-10-05) = the code's link kind when the code is known. Session-keyed. A 503 (database not reachable) records nothing. |
 | `account_export_requested` | `GET /api/account/export` | `{}`, session `NULL` (pure volume counter) |
 | `account_erased`           | `POST /api/account/erase` | `{}`, session `NULL` (pure volume counter) |
 | `order_status_lookup`      | `POST /api/chat` — one per `get_order_status` call (2026-10, `CHAT_ORDER_STATUS_ENABLED`) | `{ outcome, topic, source, orders }` — `outcome` `ok` \| `no_orders` \| `not_found` \| `sign_in_required` \| `unavailable` \| `disabled` \| `ledger_off` \| `ledger_incomplete` (first order import not finished) \| `ledger_behind` (a live read found an order the ledger lacks); `topic` as the tool input; `source` `ledger` \| `ledger+live`; `orders` = number of orders in the answer. Never an order number, amount or id. Session-keyed. |
@@ -1184,7 +1185,8 @@ of the admin KPI tab (see `ADMIN_DASHBOARD.md` §5.9/§5.10/§5.15);
 `order_status_lookup` feeds „Bestellstatus im Chat“ (§5.15a);
 `mo_order_marker_unresolved` feeds „Mo-zugeordneter Umsatz“ (§5.16, „ohne
 Zuordnung“); the sign-in events also feed the per-session diagnosis of the
-Anmelde-Popup section (§5.7a).
+Anmelde-Popup section (§5.7a); `account_shop_recognised` feeds the
+„Shop-Login-Erkennung (App Proxy)“ block of §5.15.
 
 ### Success response
 
