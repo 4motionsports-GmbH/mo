@@ -243,3 +243,70 @@ table(
       GROUP BY 1, 2, 3 ORDER BY 4 DESC`
   )
 );
+
+// ---------------------------------------------------------------------------
+// Before C.21 (docs/plans/2026-10-04/ATTR-TOKEN-LIFETIME.md §2): counts and
+// dates only, no session ids. Independent of --since.
+head("7 · Bestell-Zuordnung — Vorab-Checks P1–P6 (ATTR)");
+const q0 = (text) => sql.query(text, []);
+console.log("P1 · Zuordnungs-Token pro Quelle und Woche (keine 'widget'-Zeilen → Cookie-Banner-Frage zuerst):");
+table(
+  await q0(
+    `SELECT source, date_trunc('week', created_at)::date AS woche, count(*)::int AS tokens
+       FROM mo_attribution_tokens GROUP BY 1, 2 ORDER BY 2, 1`
+  )
+);
+console.log("P2 · Zugeordnete Bestellungen (mo_orders):");
+table(
+  await q0(
+    `SELECT attribution_source, attribution_tier, count(*)::int AS bestellungen,
+            min(processed_at) AS erste, max(processed_at) AS letzte
+       FROM mo_orders GROUP BY 1, 2 ORDER BY 1, 2`
+  )
+);
+console.log("P2b · Ankommende Bestell-Webhooks (orders/create muss dabei sein):");
+table(
+  await q0(
+    `SELECT topic, count(*)::int AS events, max(received_at) AS letzte
+       FROM shopify_webhook_events WHERE topic LIKE 'orders/%' GROUP BY 1 ORDER BY 1`
+  )
+);
+console.log("P3 · Ab wann Widget-Token gelöscht werden (ältester Token + 37 Tage):");
+table(
+  await q0(
+    `SELECT min(created_at) AS aeltester_widget_token,
+            min(created_at) + interval '37 days' AS erste_loeschung
+       FROM mo_attribution_tokens WHERE source = 'widget'`
+  )
+);
+console.log("P4–P6 · Betroffene Geräte und Token (Obergrenzen):");
+table(
+  await q0(
+    `SELECT
+       (SELECT count(DISTINCT c.session_id)::int
+          FROM conversations c
+         WHERE c.last_activity_at >= now() - interval '30 days'
+           AND EXISTS (SELECT 1 FROM conversations c2 JOIN messages m ON m.conversation_id = c2.id
+                        WHERE c2.session_id = c.session_id AND m.tool_name = 'show_product'
+                          AND m.created_at < now() - interval '37 days')
+           AND NOT EXISTS (SELECT 1 FROM mo_attribution_tokens t
+                            WHERE t.session_id = c.session_id AND t.source = 'widget')) AS p4_geraete_ohne_token,
+       (SELECT count(*)::int
+          FROM mo_attribution_tokens t
+         WHERE t.source = 'widget' AND t.created_at < now() - interval '30 days'
+           AND EXISTS (SELECT 1 FROM conversations c JOIN messages m ON m.conversation_id = c.id
+                        WHERE c.session_id = t.session_id
+                          AND m.tool_name IN ('show_product','compare_products','add_to_cart','suggest_showroom')
+                          AND m.created_at >= now() - interval '30 days')) AS p5_sofort_gerettet,
+       (SELECT count(*)::int
+          FROM mo_attribution_tokens t
+         WHERE t.created_at < now() - interval '37 days'
+           AND t.created_at >= now() - interval '180 days'
+           AND t.source = 'widget' AND t.session_id IS NOT NULL
+           AND EXISTS (SELECT 1 FROM conversations c JOIN messages m ON m.conversation_id = c.id
+                        WHERE c.session_id = t.session_id
+                          AND c.last_activity_at >= now() - interval '37 days'
+                          AND m.created_at >= now() - interval '37 days'
+                          AND m.tool_name IN ('show_product','compare_products','add_to_cart','suggest_showroom'))) AS p6_behalten_statt_geloescht`
+  )
+);

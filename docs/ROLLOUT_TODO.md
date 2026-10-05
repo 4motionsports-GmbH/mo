@@ -292,7 +292,9 @@ Last updated: 2026-10-05 (decisions of M).
   docs are in `docs/frontend/`. Live check: 1.11. Next widget tasks: the backlog in
   `docs/frontend/07` §7 (C writes the next prompt from it).
 
-- [ ] **5.2 Compliance webhooks** — F adds M to the app's Dev Dashboard organisation,
+- [ ] **5.2 Compliance webhooks** — do it as soon as F gives access; **without** the App Proxy
+  block/scope unless C has said the App Proxy safety step is live (5.4) — otherwise a second
+  `shopify app deploy` later (keep M as org member, 5.3). F adds M to the app's Dev Dashboard organisation,
   then M + C together (~10 min)
   - `shopify app config link` → check the toml (20 scopes, app proxy) → add the
     `compliance_topics` block (`customers/data_request`, `customers/redact`, `shop/redact`
@@ -500,7 +502,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       within the served-copy rules); EN is served as approved (D-AP3).
 - [ ] **C.20** A3 backend (`context.source`, softer page pivot note, `CHAT_PAGE_CONTEXT_ENABLED`
       off, `page_context_applied/_answered`, KPI section) → then FE task 2.
-- [ ] **C.21** ATTR-TOKEN-LIFETIME (pre-checks P0–P6 by M first; migration `messages.session_id`,
+- [ ] **C.21** ATTR-TOKEN-LIFETIME (pre-checks by M first: `npm run shopify:webhooks` (dry run, no
+      DUPLICATE for orders/*) and `npm run verify:live` section 7 (P1–P6, counts only); migration `messages.session_id`,
       `MO_ATTRIBUTION_SESSION_ANCHOR` ships off, `mo_order_marker_unresolved`) → then FE task 3.
       Decided by C (M delegated, 05.10.): anchor the 30 days on the device's latest product
       consultation — switch on after the live checks. Dossier Nachtrag §20.
