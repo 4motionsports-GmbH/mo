@@ -10,7 +10,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-04 (evening).
+Last updated: 2026-10-05.
 
 ## Done
 
@@ -143,8 +143,8 @@ Last updated: 2026-10-04 (evening).
     Send C the result. If a row looks wrong, tell L the same day (72 h, Art. 33 DSGVO).
   - Lawyer: dossier § 15.3 (F-34) → goes with 3.2.
 
-- [ ] **1.8 „Prüfen & testen“ in the campaign editor** — C built it 03.10., nothing to switch on;
-  tick it with the campaign-link test of 1.11 (same steps)
+- [x] **1.8 „Prüfen & testen“ in the campaign editor** — done: built 03.10., test mail and its
+  Mo link verified live 05.10. (1.11)
   - No migration, no env var. Uses the campaign send path for the test mail, so
     `CAMPAIGN_SENDS_APPROVED` must be on (it is).
   - Done when: Kampagnen → a campaign → „Bearbeiten“ → „Prüfen & testen“ shows the estimate;
@@ -201,10 +201,10 @@ Last updated: 2026-10-04 (evening).
       a `consent_events` row `mo_signin`, and after the click one
       `email_capture_marketing_confirmed` (the opt-in row itself never changes); „popup_erwartet“
       is true for that session.
-    - [ ] Campaign link: Kampagnen → a campaign whose button leads to Mo → „Bearbeiten“ →
-      „Prüfen & testen“ → „Testpostfach …“ (your address) → open the mail → the Mo button →
-      write one message → `verify:live` shows `campaign_chat_started` with `test = true`, 1 event
-      per send. Click the button again and write again: still 1.
+    - [x] Campaign link — verified 05.10.: test mail → Mo button → one message →
+      `campaign_chat_started` with `test = true`, 1 event. (Opening the chat alone records
+      nothing: the widget hands the token over with the first message, in the tab the link
+      opened.)
     - [ ] Then 6.6 (order status: test account, then on for everyone) and 5.4 (App Proxy).
   - KPI tab (30 days): „Änderungen im Zeitraum“ lists 01.10., 03.10., 04.10.; the
     Anmelde-Popup, Einwilligung, Kundenkonto and Kampagnen sections say „Erst ab dem
