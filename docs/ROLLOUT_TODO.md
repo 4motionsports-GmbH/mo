@@ -27,7 +27,7 @@ the single list of what is still open for M. C's open items are at the end of �
    (Details C.21; the purge of old widget tokens started 05.10.) If the switch goes on later than
    05.10., tell C the day: the KPI release „Bestell-Zuordnung: Fenster ab der letzten Beratung“ and
    the „aussagekräftig ab“ date of the attribution section are dated 05.10. (`src/lib/kpi-releases.mjs`).
-2. **Frontend prompt (today).** The prompt is the „Prompt“ part of `docs/frontend/tasks/README.md`;
+2. **Frontend prompt (when C hands it over, 05.10.).** The prompt is the „Prompt“ part of `docs/frontend/tasks/README.md`;
    send it to the frontend agent with exactly the files that README lists as attachments (the list
    is kept there, not here). When its PR is merged: upload the files it names to the theme →
    `npm run verify:widget` must report „Widget mit den Aufgaben vom 05.10. …“ → send C that output
@@ -36,27 +36,30 @@ the single list of what is still open for M. C's open items are at the end of �
    → section 9 shows `page_context_applied` rows with `erkannt = true` → Vercel
    `CHAT_PAGE_CONTEXT_ENABLED=true` → Redeploy → tell C the day (release note; the control group
    comes later, C prepares it). **Not before the upload** — until then the switch does nothing.
-4. **App Proxy + compliance webhooks (5.4, ~30 min, alone in the Shopify Dev Dashboard).** Follow
-   5.4 steps 1–15: one new app version (scope `write_app_proxy`, App proxy, compliance webhooks),
-   the checks with the switches off, the compliance test; step 12 switches on
-   `APP_PROXY_SIGNIN_ENABLED=true` + `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`. Until the compliance
-   test (step 11) has passed: the manual deletion/data-request rule in 5.2.
-5. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
+4. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
    recommend a cheap product, click „Zur Kasse“ on the card, complete the order (cancel/refund it
    afterwards). Shopify admin → the order → „Zusätzliche Details“: is there an `_mo` entry? Tell C
    yes/no (decides the next attribution task, A2).
-6. **Optional checks when convenient:** consent popup once with a never-subscribed account (1.11);
+5. **Optional checks when convenient:** consent popup once with a never-subscribed account (1.11);
    order status once with an account that has orders (6.6); one „Einplanen“ campaign card (1.7);
    one letter on Pingen staging (1.10); „Unzufriedenheit“ in the Eingang once (C.9b).
-7. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
+6. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
    Shopify, AI profiles for everyone, Shopify tags) and 7.1/7.2 (tuning, Claude GitHub App);
-   Black Friday (4.x) when you bring it up; app ownership (5.3).
-8. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
+   Black Friday (4.x) when you bring it up; app ownership (5.3); the decision in C.27 (should an
+   unsubscribed address stop the post-sign-in ask?); with C, optional: the App Proxy handover and
+   shop-logout tests (C.26). Tell F once: run `shopify app config link` before F's next
+   `shopify app deploy` (5.4 step 15).
+7. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
    (attribution window, F-37), §21 (consent bullets + page context, F-38); privacy-policy sentences
    F-05/F-28 for shop-login recognition and purchase attribution.
 
 ## Done
 
+- [x] 5.2 + 5.4 App Proxy + compliance webhooks (05.10., M): new app version in the Dev Dashboard
+  (scope `write_app_proxy`, App proxy `apps/chat`), compliance webhooks with the Shopify CLI (5.4b),
+  checks passed, `APP_PROXY_SIGNIN_ENABLED=true` + `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24` in Production.
+  Visitors logged in to the shop are recognised in the chat; the manual deletion rule of 5.2 is no
+  longer needed.
 - [x] Migrations `0061`–`0075` run on production (`0070`–`0074` on 03.10., `0075` on 04.10.);
       `0076` → open list item 1.
 - [x] Shopify scopes (incl. `read_inventory`), app reinstalled.
@@ -340,14 +343,14 @@ the single list of what is still open for M. C's open items are at the end of �
   docs are in `docs/frontend/`. Live check: 1.11. The next widget tasks (from the backlog in
   `docs/frontend/07` §7) are written: `docs/frontend/tasks/README.md` → open list item 2.
 
-- [ ] **5.2 Compliance webhooks** — now part of 5.4 (steps 5 and 11; fallback 5.4b): the same new
+- [x] **5.2 Compliance webhooks** (done 05.10.) — now part of 5.4 (steps 5 and 11; fallback 5.4b): the same new
   app version in the Dev Dashboard carries the App Proxy and the compliance webhooks, and M can do it
   alone (Dev Dashboard access since 05.10.).
   - **Until 5.4 step 11 has passed:** a deletion request → „Delete customer“ in Shopify (Mo follows);
     if you use „Erase personal data“ instead, also „Löschen“ (delete) the person in Mo → Kunden.
     A data request → also look the person up in Mo → Kunden.
 
-- [ ] **5.4 Shop sign-in detection (App Proxy) + compliance webhooks** — M alone in the Shopify Dev
+- [x] **5.4 Shop sign-in detection (App Proxy) + compliance webhooks** (done 05.10.) — M alone in the Shopify Dev
   Dashboard (~30 min), C checks with you — **ready since 05.10.** (backend P0.3 Phase 1+2: fresh
   signatures only, no code without proof, handover on shared browsers, renewals not counted as
   sign-ins, kill switch; D-AP1 decided: a visitor logged in to the shop counts as signed in to the
