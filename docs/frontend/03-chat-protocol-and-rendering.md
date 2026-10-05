@@ -1,6 +1,6 @@
 # 03 — Chat protocol, tools and rendering
 
-> **Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `8d0a0c4`. PR #73 "customer platform" (`a0df103`) is merged and **live since 2026-10-04**; `8d0a0c4` adds five fixes that are **not uploaded yet** (marked **[8d0a0c4]** below; 02 §1.1). Every claim comes from reading `assets/ms-chat-widget.js` (and the Liquid that feeds it). Backend behaviour is cross-referenced to the backend repo's `docs/frontend/API_CONTRACT.md` (cited as **AC §n**) and `docs/frontend-handoff/*.md`. It is not re-specified here.
+> **Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `3e87341` (PR #73 "customer platform" `a0df103` + the fixes `8d0a0c4` + `3e87341`; README). Every claim comes from reading `assets/ms-chat-widget.js` (and the Liquid that feeds it). The contract is cited as **AC §n** (`API_CONTRACT.md`) and **ACCT §n** (`ACCOUNT_CONTRACT.md`): field lists, limits, status codes and server rules live there and are not re-specified here; this chapter describes what the widget does with them. Production state: README §4.
 > Code locations are given as `file → function / key / selector`. Line numbers are left out on purpose.
 
 This chapter covers one conversation turn from start to finish: what starts a turn, the exact `POST /api/chat` request, the page context and browsing trail, how the SSE stream is parsed and assembled, and how each tool is rendered (what data it fetches, which buttons it shows, which KPI events it fires, and its edge cases). It also covers Markdown rendering, streaming and typing states, errors, rate limits and rollback, local history persistence, "Neue Beratung" and `conversationKey` threads, the PDF summary download, voice input, hands-free voice mode with streaming TTS, and the feedback entry point. It closes with findings for backend decisions and open questions.
@@ -66,7 +66,7 @@ Key properties:
 - The **full in-memory history** goes to the backend on every turn (`toWire(messages)`). The backend is stateless per request apart from persistence (AC §2).
 - Rendering is **incremental and idempotent**. Text bubbles re-render from the accumulated string on each delta. Tool cards are keyed by `toolCallId` and never duplicated.
 - The reply is **never conditional on the gate/popup**. The popup overlays the panel while the reply streams behind it.
-- There is **no client-side timeout** and **no user-facing "stop generating" button**. The only cancellation is internal (`abortActiveStream`). `dropSessionHistory()` calls it on: sign-out, erase, session rotation in another tab (`onSidChangedElsewhere()`), and when the server says a previously signed-in session has ended (`endedSignInCleanup()`: a definitive not-signed-in answer from `/api/auth/me` in `probeAuth()`, or a 401 on any `/api/account/*` call via `accountUnauthorized()`, both only if the device was signed in). **[8d0a0c4]** `startNewChat()` ("Neuen Chat starten", "Neue Beratung") and `openConversation()` (opening a past conversation) call it too. On live until that upload they do **not** cancel a running reply (§13).
+- There is **no client-side timeout** and **no user-facing "stop generating" button**. The only cancellation is internal (`abortActiveStream`). `dropSessionHistory()` calls it on: sign-out, erase, session rotation in another tab (`onSidChangedElsewhere()`), and when the server says a previously signed-in session has ended (`endedSignInCleanup()`: a definitive not-signed-in answer from `/api/auth/me` in `probeAuth()`, or a 401 on any `/api/account/*` call via `accountUnauthorized()`, both only if the device was signed in). `startNewChat()` ("Neuen Chat starten", "Neue Beratung") and `openConversation()` (opening a past conversation) call it too (§13).
 
 ---
 
@@ -98,13 +98,13 @@ The CTA deliberately uses a primer *user* message instead of the `messages: []` 
 - Launcher click, header buttons, "Per E-Mail teilen", feedback card, tool-card buttons.
 - Product hydration and TTS calls go to other endpoints (§7, §17).
 
-> **Important for backend decisions:** a normally typed message carries **no page context at all**. Mo only knows the current product page if the visitor used the product CTA or clicked a nudge on that page. The trail and `PAGE_CTX` exist in the browser but are not attached to typed turns (§4.4, §20).
+> **Important for backend decisions:** a normally typed message carries **no page context at all**. Mo only knows the current product page if the visitor used the product CTA or clicked a nudge on that page. The trail and `PAGE_CTX` exist in the browser but are not attached to typed turns (§4.4, §20). The contract already defines page facts for typed turns (AC §2 „Optional `context`“, `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/2-page-context.md`.
 
 ---
 
 ## 3. The `POST /api/chat` request
 
-Built in `startStream()`. URL: `{CFG.apiBase}/api/chat` (default `https://mo.motionsports.de`, setting `ai_advisor_backend_url`).
+Built in `startStream()`. URL: `{CFG.apiBase}/api/chat` (default `https://mo.motionsports.de`, setting `ai_advisor_backend_url`). Contract: AC §2 "Required request headers" and "Request body"; the tables below say what the widget sends and when.
 
 ### 3.1 Headers
 
@@ -114,7 +114,7 @@ Built in `startStream()`. URL: `{CFG.apiBase}/api/chat` (default `https://mo.mot
 | `x-ms-chat-key` | theme setting `ms_chat_shared_secret` (`CFG.chatKey`) | `CHAT_KEY`. If empty, the widget never mounts. |
 | `x-ms-session` | device session id (UUID, `localStorage['ms-chat-sid']`) | `sid` |
 | `x-ms-locale` | `"de"` or `"en"` | `LOCALE` (Liquid `localization.language.iso_code`, forced to `en` on `/en…` paths) |
-| `Origin` | set by the browser | must be in the backend `ALLOWED_ORIGINS` |
+| `Origin` | set by the browser | the backend's origin allow-list (AC §1 "Security model") |
 
 The request uses an `AbortController` signal when available (for internal cancellation only).
 
@@ -124,7 +124,7 @@ The request uses an `AbortController` signal when available (for internal cancel
 | --- | --- | --- |
 | `messages` | **always** | `toWire(messages)`: the full in-memory history (see §3.3). `[]` for the context greeting. |
 | `locale` | **always** | same as `x-ms-locale` |
-| `context` | only for the product CTA and the nudge greeting (§2) | see §4.3 |
+| `context` | only for the product CTA and the nudge greeting (§2) | see §4.3 (no `source` field; AC §2 defines it, `tasks/2-page-context.md` adds it) |
 | `conversationKey` | only if `auth.signedIn && activeConversationKey` | client-generated UUID of the active thread (§13). **Omitted** for anonymous and email-only visitors. **Also omitted for a signed-in visitor whose auth has not settled yet on this page load**, even when `activeConversationKey` (restored from `ms-chat-convkey:<sid>` by `loadConvKey()`) already exists. In practice this hits the product-page CTA, which sends right after `openPanel()` (§13 edge case, §20 finding 21). |
 | `customer` | only after a successful `POST /api/capture-email` **in this page load** | `{ "email": "<captured address>" }`. Held in the in-memory variable `capturedEmail` only. It is reset on navigation and on session drop (`dropSessionHistory()`), nowhere else. Never stored. AC §2 "customer". Attached whenever `capturedEmail` is set, **with no auth check**: if auth later settles as signed in during the same page view (e.g. `visibilitychange` re-detection after a shop login in another tab), the captured address still rides along. **It also survives `startNewChat()`**: the anonymous/email-only branch calls `rotateSession()`, which does not touch `capturedEmail`, so after "Neuen Chat starten" (header icon or the `payload_too_large` notice button) later turns send `customer.email` under the **new** sid. The backend only injects memory when the capture came from the same `x-ms-session` (AC §2), so memory silently stops working while the address keeps leaving the browser (§20 finding 19). |
 | `campaignToken` | while `sessionStorage['ms_mo_c']` holds a valid token | the `mo_c` value from a campaign landing URL, re-validated against `/^[A-Za-z0-9_-]{16,64}$/` on read. It is deleted only when a chat response comes back `res.ok`, so a failed first send retries it on the next turn. It rides on the first chat request of the **tab session**, which can be the greeting, a CTA turn or a typed message, even pages later. AC §2 "campaignToken". |
@@ -156,8 +156,8 @@ Example (signed-in visitor, product CTA, campaign landing):
 | Unknown tools | **not stored at all**, so never replayed |
 
 - Message ids: `u-<uuid>` (user), `a-<uuid>` (assistant), and `u-`/`a-` + uuid for transcripts loaded from the account history.
-- **History cap:** the widget does **not** cap what it sends. `loadHistory()` and `saveHistory()` keep the last 40 messages in storage, but the in-memory array grows freely during a page view. The backend rejects `messages.length > 40` with `400 payload_too_large` (AC §2), which the widget turns into a "start a new chat" notice (§11). The request fails once the in-memory array (including the new user message) exceeds 40. For a normal thread that is the **21st user message** (20 + 20 + 1 = 41), also when the thread started with a context greeting (1 + 20 + 20 + 1 = 42; the 20th send is exactly 40 and passes). Turns that store no assistant reply (an `error` chunk with no content, a cancelled reply) push the wall later. After a reload the stored 40 are restored, so the next send fails again.
-- The backend sanitises broken tool parts before model conversion and replaces replayed `get_order_status` outputs with `{ replayed: true }` (AC §2 "Tools the widget MUST NOT render"; backend `src/lib/chat-message-sanitize.mjs → sanitizeToolParts`, called from `src/app/api/chat/route.ts`). The filter drops only parts whose `state` is `input-streaming` or `input-available`, or whose `input` is not a plain object.
+- **History cap:** the widget does **not** cap what it sends. `loadHistory()` and `saveHistory()` keep the last 40 messages in storage, but the in-memory array grows freely during a page view. Over the per-request cap (AC §2: 40 messages) the backend answers `400 payload_too_large`, which the widget turns into a "start a new chat" notice (§11). The request fails once the in-memory array (including the new user message) exceeds 40. For a normal thread that is the **21st user message** (20 + 20 + 1 = 41), also when the thread started with a context greeting (1 + 20 + 20 + 1 = 42; the 20th send is exactly 40 and passes). Turns that store no assistant reply (an `error` chunk with no content, a cancelled reply) push the wall later. After a reload the stored 40 are restored, so the next send fails again.
+- The backend sanitises broken tool parts before model conversion and replaces replayed `get_order_status` outputs with `{ replayed: true }` (AC §2 "Request body" → "Replay the history as it streamed"; backend `src/lib/chat-message-sanitize.mjs → sanitizeToolParts`, called from `src/app/api/chat/route.ts`). The filter drops only parts whose `state` is `input-streaming` or `input-available`, or whose `input` is not a plain object.
 - **Output-less parts slip through that filter.** Because `accumulatePart()` labels a part `output-available` as soon as its input exists, a part that never got an output (after `tool-output-error`, a mid-tool `error` chunk, or a network drop after the input) is stored and replayed as `state: "output-available"` with no `output` key. The backend's incomplete-state check never matches such widget-made parts, so they reach `convertToModelMessages` without a result (`get_order_status` excepted, it is rebuilt with `{ replayed: true }`). Whether that breaks the provider call is **not verified** (§20 finding 14).
 
 ---
@@ -166,29 +166,11 @@ Example (signed-in visitor, product CTA, campaign landing):
 
 ### 4.1 Server-rendered page facts (`CFG.pageContext`)
 
-Injected by `snippets/ms-chat-widget.liquid` into `window.MS_CHAT_CONFIG.pageContext`:
-
-| Field | Liquid source | Only on |
-| --- | --- | --- |
-| `pageType` | `request.page_type` | always |
-| `productId` | `product.id` (numeric Shopify id) | product pages |
-| `productHandle` | `product.handle` | product pages |
-| `productTitle` | `product.title` | product pages |
-| `productType` | `product.type` | product pages |
-| `collectionTitle`, `collectionHandle` | `collection.title` / `.handle` | collection pages |
-
-The widget never renders on `/cart` or `/checkout` (snippet gate), nor on templates listed in the `ai_advisor_excluded_templates` setting, nor (**[8d0a0c4]**, snippet gate) with an empty `ms_chat_shared_secret`. In those cases the snippet hides the product-page CTA instead (01 §5.1).
+`snippets/ms-chat-widget.liquid` injects the server-rendered page facts as `window.MS_CHAT_CONFIG.pageContext`. Fields, Liquid sources, JS defaults and use: `02` §3.2 (owner). Where the widget does not render at all: `01` §5.1.
 
 ### 4.2 `PAGE_CTX` (normalised in the IIFE)
 
-| Key | Derivation |
-| --- | --- |
-| `type` | `product` / `collection` / `cart` kept as is; `index` → `home`; anything else → `other`. (`cart` cannot occur in practice because of the render gate.) |
-| `productId` | numeric id as a string. **Not used for KPI.** It is the fallback catalog id when no handle exists (trail entry in `recordTrail()`, nudge greeting context in `showNudge()`), and `openWithProduct()` compares it with the CTA's `data-ms-chat-product-id` to decide whether to swap in `productHandle`. `product_cta_opened` carries the CTA data-attribute id (also numeric), not this field. |
-| `productHandle` | the handle. Used as the catalog id in `context` and in the trail, because backend catalog ids are slug/handle-shaped (AC §3). |
-| `productName` | `productTitle` |
-| `collectionHandle` | collection handle |
-| `category` | `productType` on product pages, else `collectionTitle` |
+The widget normalises the page facts once into `PAGE_CTX` (`type`, `productId`, `productHandle`, `productName`, `collectionHandle`, `category`); derivation and every use: `02` §3.2. For the `context` it sends, `productHandle` is the catalog id (AC §3); the numeric `productId` is only a fallback id and the CTA comparison (§4.3), never a KPI field.
 
 ### 4.3 The `context` object sent to `/api/chat`
 

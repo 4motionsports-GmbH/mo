@@ -1,8 +1,8 @@
 # 06 — Commerce and storefront integration points
 
 This chapter lists every place where the Mo widget touches the shop, and every place where the shop touches Mo. It covers how the widget reads the product on a product page (PDP), the product-page CTA, the `custom.qa` metafield and the Q&A tab, the product data the widget fetches, the links it opens, the cart (checkout permalink, badge and drawer sync, stacking), the order-attribution stamp, shop login vs Mo sign-in, locales and prices, and the theme hooks the widget depends on. It ends with what the backend can change without a theme deploy, a list of findings and the open questions.
-Backend behaviour is not re-specified. It is cross-referenced to the backend repo's `docs/frontend/API_CONTRACT.md` (§n), `docs/ORDER_ATTRIBUTION.md`, `docs/QA_KNOWLEDGE.md`, `docs/CUSTOMER_ACCOUNT.md` and `docs/frontend-handoff/*.md`. The sibling chapters `01-storefront-theme.md`, `02-widget-architecture.md`, `03-chat-protocol-and-rendering.md` and `04-accounts-sign-in-and-consent.md` go deeper on theme layout, widget internals, the chat stream and identity.
-Code locations are given as `file → function / selector / key`. Line numbers are left out on purpose because they drift. The repo state described is `main` at `8d0a0c4`: PR #73 (`a0df103`, merged, **live since 2026-10-04**) plus five follow-up fixes that are **not uploaded yet** (owner upload pending: `assets/ms-chat-widget.js`, `snippets/ms-chat-widget.liquid`, `templates/product.produkt-new.json`, `product.produktnew.json`, `product.produkte-im-set.json`). The live theme may differ (see §17).
+Backend behaviour is not re-specified. It is cross-referenced to the backend repo's widget contract `docs/frontend/API_CONTRACT.md` and `docs/frontend/ACCOUNT_CONTRACT.md` (cited as `API_CONTRACT.md §n`, `ACCOUNT_CONTRACT.md §n`), `docs/ORDER_ATTRIBUTION.md`, `docs/QA_KNOWLEDGE.md` and the backend as-built `docs/CUSTOMER_ACCOUNT.md`. The sibling chapters `01-storefront-theme.md`, `02-widget-architecture.md`, `03-chat-protocol-and-rendering.md` and `04-accounts-sign-in-and-consent.md` go deeper on theme layout, widget internals, the chat stream and identity.
+Code locations are given as `file → function / selector / key`. Line numbers are left out on purpose because they drift. The repo state described is `main` at `3e87341`: PR #73 (`a0df103`), the fixes of `8d0a0c4`, and `3e87341`, which adds only two `endSpeaking()` calls. Which build the live shop serves: `07` §6.4; production status (uploads, App Proxy, backend switches) is tracked only in the backend's `docs/ROLLOUT_TODO.md`. The live theme may differ (see §17).
 
 **Contents**
 
@@ -28,21 +28,21 @@ Code locations are given as `file → function / selector / key`. Line numbers a
 
 ## 1. At a glance: every shop ⇄ Mo touchpoint
 
-| # | Touchpoint | Direction | Mechanism | Code location | Status (repo) |
+| # | Touchpoint | Direction | Mechanism | Code location | In this build |
 |---|---|---|---|---|---|
-| 1 | Page facts (page type, product id/handle/title/type, collection) | shop → widget | Liquid writes `window.MS_CHAT_CONFIG.pageContext` | `snippets/ms-chat-widget.liquid`; `ms-chat-widget.js → PAGE_CTX` | live |
-| 2 | Product-page CTA "Detaillierte Beratung zu diesem Produkt" | shop → widget | `<button class="ms-chat-product-cta" data-…>` + delegated click handler | `templates/product.json → custom_liquid_AErEyg` ("MO only"); `ms-chat-widget.js → bindProductCtas() / openWithProduct()` | repo: on every product template since `8d0a0c4`; live: `product.json` and `product.produktdesign-02.json` until the three new template files are uploaded (§3.7) |
-| 3 | PDP Q&A tab + FAQPage JSON-LD | backend → shop | Admin API `metafieldsSet` on product metafield `custom.qa` | `sections/tabs-cards.liquid`, `snippets/product-qa.liquid` | live |
-| 4 | Product cards, compare table, showroom card data | backend → widget | `GET {apiBase}/api/products` | `ms-chat-widget.js → hydrate()`, `buildAddToCart()` | live |
-| 5 | Checkout from the chat ("Zur Kasse") | widget → shop | Opens the backend-built cart permalink `…/cart/<variant>:1,…` in a new tab | `ms-chat-widget.js → buildAddToCart()` | live |
-| 6 | Cart badge / drawer / cart page refresh | shop → widget → shop UI | `GET /cart.js`, `#CartBubble`, `[data-fh-cart-bubble]`, `<cart-modal>.reloadContent()`, `?section_id=` | `ms-chat-widget.js → refreshCartUI()` and helpers | live |
-| 7 | Order attribution stamp | widget → shop cart → order → backend webhook | `POST /api/attribution/token`, then same-origin `POST /cart/update.js {attributes:{_mo}}` | `ms-chat-widget.js → moAttrEnsure() / moStampCart() / initAttribution()` | live (consent-gated) |
-| 8 | Shop login recognition | shop → backend → widget | Same-origin `GET /apps/chat/whoami?session=` through a Shopify App Proxy | `ms-chat-widget.js → detectViaStorefront()` | **App Proxy not set up** (silent no-op). May now be set up, since PR #73 is live (2026-10-04); confirm live runs the PR #73 widget first (§9.1) |
-| 9 | Shop-login hint | shop → widget | `window.ShopifyAnalytics.meta.page.customerId` | `ms-chat-widget.js → storefrontCustomerHint()` | live |
-| 10 | Consent state | shop → widget | `window.Shopify.customerPrivacy`, `visitorConsentCollected` event | `ms-chat-widget.js → moAnalyticsAllowed()`, `initAttribution()` | live |
-| 11 | Stacking vs theme drawers | theme ⇄ widget CSS | `body.no-scroll`, theme modal z-index 1900/2000 | `ms-chat-widget.css` | live |
-| 12 | Campaign / deep links into an open chat | shop URL → widget | `?mo=open`, `#mo-open`, `mo_new`, `mo_view`, `mo_c` | `layout/theme.liquid` head script; `ms-chat-widget.js → handleMoDeepLink()`, `captureCampaignToken()` | live (`mo_c` since the PR #73 upload of 2026-10-04) |
-| 13 | Showroom link | widget → shop page | Hard-coded URL in the snippet config | `snippets/ms-chat-widget.liquid → showroomUrl`; `ms-chat-widget.js → SHOWROOM_URL`, `buildShowroom()` | live |
+| 1 | Page facts (page type, product id/handle/title/type, collection) | shop → widget | Liquid writes `window.MS_CHAT_CONFIG.pageContext` | `snippets/ms-chat-widget.liquid`; `ms-chat-widget.js → PAGE_CTX` | yes |
+| 2 | Product-page CTA "Detaillierte Beratung zu diesem Produkt" | shop → widget | `<button class="ms-chat-product-cta" data-…>` + delegated click handler | `templates/product.json → custom_liquid_AErEyg` ("MO only"); `ms-chat-widget.js → bindProductCtas() / openWithProduct()` | yes, on every product template (§3.7) |
+| 3 | PDP Q&A tab + FAQPage JSON-LD | backend → shop | Admin API `metafieldsSet` on product metafield `custom.qa` | `sections/tabs-cards.liquid`, `snippets/product-qa.liquid` | yes |
+| 4 | Product cards, compare table, showroom card data | backend → widget | `GET {apiBase}/api/products` | `ms-chat-widget.js → hydrate()`, `buildAddToCart()` | yes |
+| 5 | Checkout from the chat ("Zur Kasse") | widget → shop | Opens the backend-built cart permalink `…/cart/<variant>:1,…` in a new tab | `ms-chat-widget.js → buildAddToCart()` | yes |
+| 6 | Cart badge / drawer / cart page refresh | shop → widget → shop UI | `GET /cart.js`, `#CartBubble`, `[data-fh-cart-bubble]`, `<cart-modal>.reloadContent()`, `?section_id=` | `ms-chat-widget.js → refreshCartUI()` and helpers | yes |
+| 7 | Order attribution stamp | widget → shop cart → order → backend webhook | `POST /api/attribution/token`, then same-origin `POST /cart/update.js {attributes:{_mo}}` | `ms-chat-widget.js → moAttrEnsure() / moStampCart() / initAttribution()` | yes (consent-gated) |
+| 8 | Shop login recognition | shop → backend → widget | Same-origin `GET /apps/chat/whoami?session=` through a Shopify App Proxy | `ms-chat-widget.js → detectViaStorefront()` | yes; a silent no-op while no App Proxy is set up (whether it is: `docs/ROLLOUT_TODO.md` 5.4; §9.1) |
+| 9 | Shop-login hint | shop → widget | `window.ShopifyAnalytics.meta.page.customerId` | `ms-chat-widget.js → storefrontCustomerHint()` | yes |
+| 10 | Consent state | shop → widget | `window.Shopify.customerPrivacy`, `visitorConsentCollected` event | `ms-chat-widget.js → moAnalyticsAllowed()`, `initAttribution()` | yes |
+| 11 | Stacking vs theme drawers | theme ⇄ widget CSS | `body.no-scroll`, theme modal z-index 1900/2000 | `ms-chat-widget.css` | yes |
+| 12 | Campaign / deep links into an open chat | shop URL → widget | `?mo=open`, `#mo-open`, `mo_new`, `mo_view`, `mo_c` | `layout/theme.liquid` head script; `ms-chat-widget.js → handleMoDeepLink()`, `captureCampaignToken()` | yes |
+| 13 | Showroom link | widget → shop page | Hard-coded URL in the snippet config | `snippets/ms-chat-widget.liquid → showroomUrl`; `ms-chat-widget.js → SHOWROOM_URL`, `buildShowroom()` | yes |
 
 The widget never adds to the cart through the AJAX cart API, never listens to theme cart events, and never dispatches its own DOM events. Its only cart writes are the attribution stamp (§8).
 
@@ -102,7 +102,7 @@ Uncertain: whether `product.handle` on `/en` is the same German handle the catal
 | Nudge click elsewhere, fresh conversation (same `nudgeEligible()` conditions) | same, greeting | `{ type:"browsing", recentlyViewed }` (if the trail has entries) |
 | Launcher click, or typing the first message on a PDP | `POST /api/chat` | **none**: the product the shopper is looking at is not sent |
 
-So a shopper who opens Mo with the launcher on a PDP and asks "Passt das in meine Wohnung?" gets an answer **without** the page's product context, unless Mo infers it. See §16, finding F3.
+So a shopper who opens Mo with the launcher on a PDP and asks "Passt das in meine Wohnung?" gets an answer **without** the page's product context, unless Mo infers it. See §16, finding F3. The backend side of the fix is built: `context.source: "page"` on a typed turn, used only behind `CHAT_PAGE_CONTEXT_ENABLED` (default off in code) with an optional control group, and measured by the server-only `page_context_applied` / `page_context_answered` (API_CONTRACT.md §2 „Optional `context`“, AD §5.1a in `docs/ADMIN_DASHBOARD.md`). The widget part is frontend task 2 ([`tasks/2-page-context.md`](tasks/2-page-context.md)).
 
 ---
 
@@ -116,7 +116,7 @@ So a shopper who opens Mo with the launcher on a PDP and asks "Passt das in mein
 
 The CTA therefore sits **below the rating stars and above the USPs, price, variant picker and Add-to-cart button**.
 
-Since `8d0a0c4` the same block (`custom_liquid_AErEyg`, byte-identical settings) is also in three alternate templates (not uploaded to live yet):
+The same block (`custom_liquid_AErEyg`, byte-identical settings) is also in three alternate templates (added with `8d0a0c4`):
 - `product.produkt-new.json`: after the Kurzinfo/USPs block `custom_liquid_BGU8Mt` ("USPs", which there has no CTA of its own), before the price.
 - `product.produktnew.json` and `product.produkte-im-set.json`: after the SKU + Garantie block `custom_liquid_dy3Byf`, before the price and buy blocks.
 
@@ -151,13 +151,11 @@ The same contract works on any page (collection cards, a cart-drawer block, a la
 
 Inline `<style>` inside the block (not in the widget CSS): an underlined text-link look, `font-size: 0.8rem`, black text, underline colour `rgb(var(--color-base-foreground, 0 0 0) / 35%)`, hover colour `rgb(var(--button-secondary-background, 0 140 203))` (brand blue), orb 36 × 36 px with `box-shadow: var(--msc-logo-rim-shadow) !important` (the variable is defined in `ms-chat-widget.css → .ms-chat-logo`). The wrapper `.ms-chat-product-advisor` has `margin: 9px 0 -12px 0`. Reduced-motion handling of the orb comes from the widget CSS.
 
-Note: `WIDGET_SPEC.md §9a` still describes an "outlined/bordered button below the product bullet points". The live markup is the underlined text link above the USPs/price (spec drift, not a bug).
-
 ### 3.4 Enabled state and gating
 
 - The block renders when `settings.ai_advisor_enabled` is on. It does **not** check `ai_advisor_excluded_templates`.
-- The widget JS and CSS load only when the snippet's render gate passes (`ai_advisor_enabled`, not cart/checkout, template not in `ai_advisor_excluded_templates`, and since `8d0a0c4` a non-empty `settings.ms_chat_shared_secret`; before, an empty secret still loaded the JS, which then exited at boot).
-- Since `8d0a0c4`, when `ai_advisor_enabled` is on but the gate fails (excluded template, cart/checkout, empty secret), `snippets/ms-chat-widget.liquid` outputs `<style>.ms-chat-product-advisor, .ms-chat-product-cta { display: none !important; }</style>` instead, so the CTA is **hidden**, not dead. Before that commit (and on live until the snippet is uploaded), an excluded product template showed a dead CTA: no JS handled the click and the orb had no styles.
+- The widget JS and CSS load only when the snippet's render gate passes (`ai_advisor_enabled`, not cart/checkout, template not in `ai_advisor_excluded_templates`, and a non-empty `settings.ms_chat_shared_secret`; builds before `8d0a0c4` still loaded the JS with an empty secret, which then exited at boot).
+- When `ai_advisor_enabled` is on but the gate fails (excluded template, cart/checkout, empty secret), `snippets/ms-chat-widget.liquid` outputs `<style>.ms-chat-product-advisor, .ms-chat-product-cta { display: none !important; }</style>` instead, so the CTA is **hidden**, not dead (`npm run verify:widget` looks for this style on `/cart`, `07` §6.4). Builds before `8d0a0c4` showed a dead CTA there: no JS handled the click and the orb had no styles.
 - Remaining edge: if the widget JS fails to load, or a click happens before `DOMContentLoaded` + `init()` (the script is `defer`), the visible CTA does nothing. There is no queued click.
 
 ### 3.5 Click behaviour (`ms-chat-widget.js → openWithProduct(id, title)`)
@@ -170,7 +168,7 @@ Note: `WIDGET_SPEC.md §9a` still describes an "outlined/bordered button below t
 6. Because it is a normal user turn, it appends to an existing conversation (the backend treats non-empty `messages` + context as a pivot, `API_CONTRACT.md §2`). Each click sends another primer. There is no de-duplication.
 7. `sendMessage` also triggers the first-message popups (sign-in / consent gate, `04-accounts-sign-in-and-consent.md`) exactly like a typed first message.
 
-It deliberately does **not** use the `messages: []` greeting path (`WIDGET_SPEC.md §9a`): the primer carries the title in text, so the consultation works even if the context id is dropped.
+It deliberately does **not** use the `messages: []` greeting path: the primer carries the title in text, so the consultation works even if the context id is dropped.
 
 ### 3.6 The legacy "USPs mit MO" block and the `produktdesign-02` variant
 
@@ -183,11 +181,11 @@ It deliberately does **not** use the `messages: []` greeting path (`WIDGET_SPEC.
 |---|---|---|
 | `product.json` (default) | yes ("MO only") | yes (`show_qa_tab: true`) |
 | `product.produktdesign-02.json` | yes ("USPs" = kurzinfo + CTA) | yes (setting absent → schema default `true`) |
-| `product.produkt-new.json` | yes ("MO only", since `8d0a0c4`) | yes (default) |
-| `product.produktnew.json` | yes ("MO only", since `8d0a0c4`) | yes (default) |
-| `product.produkte-im-set.json` | yes ("MO only", since `8d0a0c4`) | **no** `tabs-cards` section |
+| `product.produkt-new.json` | yes ("MO only") | yes (default) |
+| `product.produktnew.json` | yes ("MO only") | yes (default) |
+| `product.produkte-im-set.json` | yes ("MO only") | **no** `tabs-cards` section |
 
-On live, the three `8d0a0c4` rows show the CTA only after the owner uploads those template files (or adds the "MO only" custom-liquid block in the theme editor, MANIFEST 2026-10-04 b). Until then they have no CTA on live. These files are live-editor owned, so check them after every sync. `product.produkte-im-set` still has no Q&A tab.
+The last three rows got the "MO only" block with `8d0a0c4` (MANIFEST 2026-10-04 b). These files are live-editor owned, so check them after every sync (`07` §6.3). `product.produkte-im-set` still has no Q&A tab.
 
 Which products use which template is set per product in Shopify admin (`template_suffix`) and cannot be read from the repo.
 
@@ -278,7 +276,7 @@ The same pairs reach Mo through the catalog sync (`Product.qa`, exposed as `qa` 
 
 **Restored history re-fetches on every page load.** `init()` → `renderAllMessages()` → `renderRestoredAssistant()` → `renderPartIntoCtx()` re-renders the stored thread (`loadHistory()`, last 40 messages) on every page load, whether or not the panel is ever opened. Every restored product/compare/showroom/contact/capture card calls `hydrate()` again (`productCache` is in-memory per page, so it starts empty), and every restored `add_to_cart` card makes its own uncached GET. So each page view of a visitor with stored history re-fetches the products of every restored card. This counts against the 60 req / 60 s `/api/products` bucket (`API_CONTRACT.md §3`), and a restored `show_product` card calls `moAttrOnProductCard()`, so a token can be minted and the cart stamped at page load without any interaction (§8.4).
 
-No `x-ms-chat-key` is sent (the endpoint is origin-allowlisted only, `API_CONTRACT.md §3`). No locale is sent (`LOCALE.md §1`). The custom `x-ms-session` header makes these GETs CORS-preflighted. Responses are cacheable for 60 s by contract.
+No `x-ms-chat-key` is sent (the endpoint is origin-allowlisted only, `API_CONTRACT.md §3`). No locale is sent (`/api/products` reads none, `API_CONTRACT.md §12.2`). The custom `x-ms-session` header makes these GETs CORS-preflighted. Responses are cacheable for 60 s by contract.
 
 ### 5.2 Fields the widget uses
 
@@ -334,7 +332,7 @@ The showroom URL is **not** a theme setting: it is a literal in `snippets/ms-cha
 1. Tool input: `productIds` (preferred) or `productId`. Ids are trimmed, de-duplicated, order kept.
 2. One `GET /api/products?ids=…` (§5.1). Unresolved ids are dropped. If nothing resolves → no card.
 3. Card: optional `input.message`, one row per resolved product (thumb, name, price, sold-out note).
-4. If `cartUrl` is present: one button „Zur Kasse“ / "Checkout" (class `ms-chat-btn--checkout`, cart icon) linking to `cartUrl`, `target="_blank"`, plus the caption „Direkt zur sicheren Kasse bei motionsports.de“. The label is deliberately „Zur Kasse“ because the permalink lands in checkout (`WIDGET_SPEC.md §6` still says „In den Warenkorb“ — spec drift).
+4. If `cartUrl` is present: one button „Zur Kasse“ / "Checkout" (class `ms-chat-btn--checkout`, cart icon) linking to `cartUrl`, `target="_blank"`, plus the caption „Direkt zur sicheren Kasse bei motionsports.de“. The label is deliberately „Zur Kasse“ because the permalink lands in checkout.
 5. On click (the navigation is never delayed): `moAttrEnsure(false)` (mint if needed + re-stamp the **current** cart, §8), `track('add_to_cart_clicked', …)`, `pollCartAfterCheckout()`.
 6. If `cartUrl` is null (no in-stock resolvable variant): secondary "Zum Produkt" links per product instead of a checkout button.
 
@@ -394,7 +392,7 @@ Breaking assumptions: if the theme stops setting `body.no-scroll` while the draw
 
 ## 8. Order attribution stamp (`_mo` cart attribute)
 
-Purpose and backend side: `ORDER_ATTRIBUTION.md` and `API_CONTRACT.md §10`. In short, the order webhook reads the `_mo` note attribute and assigns the tiers "Direkt" (Mo code or Mo-built link), "Beraten & gekauft" (`assisted`: widget stamp + a purchased line matches a product discussed in the session) and "Beraten, anderes gekauft" (`influenced`: stamp, no match), within `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) of the token's minting, or with the backend switch `MO_ATTRIBUTION_SESSION_ANCHOR` (owner decision 2026-10-05: on after migration 0076) of the device's latest product consultation (`show_product`, `compare_products`, `add_to_cart`, `suggest_showroom` written by the token's own sid, never after the order). A marked order the backend cannot attribute (unknown token, outside the window) is only counted, as the server-only event `mo_order_marker_unresolved`.
+Purpose and backend side: `ORDER_ATTRIBUTION.md` and `API_CONTRACT.md §10`. In short, the order webhook reads the `_mo` note attribute and assigns the tiers "Direkt" (Mo code or Mo-built link), "Beraten & gekauft" (`assisted`: widget stamp + a purchased line matches a product discussed in the session) and "Beraten, anderes gekauft" (`influenced`: stamp, no match), within `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) of the token's minting, or with the backend switch `MO_ATTRIBUTION_SESSION_ANCHOR` (default off in code; production state: `docs/ROLLOUT_TODO.md`) of the device's latest product consultation (`show_product`, `compare_products`, `add_to_cart`, `suggest_showroom` written by the token's own sid, never after the order). A marked order the backend cannot attribute (unknown token, outside the window) is only counted, as the server-only event `mo_order_marker_unresolved`.
 
 ### 8.1 Consent gate (`moAnalyticsAllowed()`)
 
@@ -431,6 +429,8 @@ Same-origin, root path (not `window.routes.cart_update_url`), fire-and-forget, e
 | Click on „Zur Kasse“ | `moAttrEnsure(false)` | yes, if no token and no mint in flight or failed | every click when a token is cached and consent allows. Without a cached token it mints, and the stamp follows the mint response. No stamp from the click if a mint is already in flight (that mint stamps once when it resolves) or if a mint already failed on this page view (`moAttrInflight` / `moAttrFailed`) | per click, subject to those conditions |
 | Theme add-to-cart, quick-add, cart drawer changes | — | — | **no** | — |
 
+**Restored history mints without a click.** `init()` → `renderAllMessages()` → `renderRestoredAssistant()` re-renders a stored `show_product` card on every page load (before `initAttribution()`), panel open or not. So a device whose stored transcript (`localStorage['ms-chat-history:<sid>']`) holds a product card can mint and stamp without any interaction, and the page counts as consulted for the `visitorConsentCollected` listener. The mint on load happens only if the Customer Privacy API already reports consent when the card's `/api/products` hydration resolves (`moAttrEnsure()` returns at once while `moAnalyticsAllowed()` is false, including "API not loaded yet"); otherwise there is no mint on that page view unless the visitor answers the consent banner. A „Zur Kasse“ click never waits for the stamp: the permalink opens in parallel.
+
 ### 8.5 Reset
 
 `moAttrReset()` (memory + `ms-mo-attr`) runs inside `rotateSession()` ("Neuen Chat starten" for anonymous/email-only, `mo_new=1` only without a signed-in hint, sign-out, erase, server-confirmed end of sign-in). Adopting another tab's sid (`dropSessionHistory(adoptSid)`) clears only the in-memory attribution state (`moAttr`, `moAttrFailed`, `moAttrConsulted`); the stored `ms-mo-attr` was already removed by the rotating tab, and `moAttrLoad()` ignores an entry for another sid. For a possibly signed-in visitor (`shouldProbeAuth()`), `mo_new=1` keeps the sid and its token and only drops the local thread (`handleMoDeepLink()`). The **cart attribute already on the Shopify cart is not removed**: the live cart keeps the old token until a new stamp overwrites it. On a shared browser a later order can therefore still be tied to the previous session (sign-out, erase, rotation, withdrawn consent) — with the backend switch for longer than 30 days from minting (ANWALTSDOSSIER §20, F-37 (b)). Cleanup: task 2 of [`3-attribution-token-renewal.md`](tasks/3-attribution-token-renewal.md) blanks the marker (`/cart/update.js` with every cached key set to `""`) on sign-out, erase, server-ended sign-in and consent withdrawal.
@@ -447,7 +447,12 @@ Same-origin, root path (not `window.routes.cart_update_url`), fire-and-forget, e
 ### 8.7 Behaviour worth knowing for KPI interpretation
 
 - **Long-lived stamping**: the session id lives in `localStorage` with no expiry, so a device keeps re-stamping every new cart on every page load until the session rotates. The backend's 30-day window is what bounds "influenced"/"assisted" (from the minting, or with `MO_ATTRIBUTION_SESSION_ANCHOR` from the device's latest product consultation). The backend also deletes the token: 37 days after minting, or with the switch 37 days after the device's last product consultation and at most 180 days after minting; erasure at once. The widget keeps stamping the cached dead token, and those orders count as `unknown_token`, until the sid rotates or the renewal (task 1 of [`3-attribution-token-renewal.md`](tasks/3-attribution-token-renewal.md)) ships. Tokens purged before 2026-10-05 are not recoverable by the backend.
-- **Consent ceiling**: unconsented visitors are never stamped.
+- **Card builds are not cancelled on a sid rotation.** `renderPartIntoCtx()` calls `buildToolCard(…).then(…)` and nothing cancels it, and `buildShowProduct()` calls `moAttrOnProductCard()` inside `hydrate().then()`, i.e. after an async `GET /api/products`. On a campaign landing with `mo_new=1` (`05` §9.2 b), `init()` first runs `renderAllMessages()`, which starts hydration of the stored thread's `show_product` cards; `handleMoDeepLink()` then runs synchronously: `rotateSession()` → `moAttrReset()`, then `renderAllMessages()` (empty). When the old cards' hydration resolves, `moAttrOnProductCard()` sets `moAttrConsulted = true` and `moAttrEnsure(true)` mints a token for the **new** sid and stamps the cart (consent permitting), although the visitor has not consulted in the new session and the thread was deleted. Orders then count as Mo-influenced for that session. (The same applies to the signed-in-hint branch, which keeps the sid but drops the thread.)
+- **A mint in flight during a rotation is cached under the new sid.** `moAttrEnsure()` builds the cache entry as `{sid: sid, …}` from the module variable when the **response** arrives, so a token minted under the old `x-ms-session` is stored and stamped as the new sid's token. `moAttrReset()` does not clear `moAttrInflight`. The fix for both (capture `sid` before `hydrate()` / before the mint `fetch` and skip `moAttrOnProductCard()` / the cache write when it changed) is backlog `07` D17.
+- **Only `show_product` marks a session as consulted** (§8.2, F2): a consultation that shows only a comparison table, a showroom card or an add-to-cart card (before its click) mints no token and stamps nothing.
+- **The theme's own add-to-cart is not observed** (§7.8, F7): re-stamping after a completed checkout relies on the next page load of a widget page.
+- **Consent ceiling**: unconsented visitors are never stamped, and no event measures consent coverage, so the share of consultations that can be attributed at all is unknown.
+- Purchases on another device stay invisible (stated residual in `ORDER_ATTRIBUTION.md`).
 - **Permalink gap (likely NOT attributed, unverified)**: the „Zur Kasse“ permalink itself carries no `_mo`. A cart permalink builds its own cart/checkout, so the `_mo` attribute stamped via `/cart/update.js` probably does not carry over to that checkout. MANIFEST 2026-06-21 shows only that the permalink changes the storefront cart count, not that attributes survive. Verify with one test order (order `note_attributes`, §17). The fix path is F1/T1. On the first click of a session with no token, the mint is still in flight when the new tab opens, so the stamp may land after the permalink created its cart.
 - **No client KPI** exists for mint/stamp success, so the stamp rate cannot be measured from `kpi_events`.
 
@@ -460,20 +465,21 @@ Details are in `04-accounts-sign-in-and-consent.md`. This section shows only how
 | Aspect | Shop login (Online Store customer account) | Mo sign-in („Anmelden“ in the chat) |
 |---|---|---|
 | Entry point | Header account icon `a.header-auth-btn` → `routes.account_url` (rendered only if `shop.customer_accounts_enabled`; one in the topbar, one in the mobile icons) | Chat header pill, welcome sign-in card, first-message popup, account menu |
-| Mechanism | Shopify customer accounts (classic vs new accounts not determinable from the repo) | Backend OAuth (Customer Account API, PKCE) via `{apiBase}/api/auth/shopify/login`, return with one-time `?ms_code` redeemed at `POST /api/auth/link` (PR #73; required since 2026-10-03) |
+| Mechanism | Shopify customer accounts (classic vs new accounts not determinable from the repo) | Backend OAuth (Customer Account API, PKCE) via `{apiBase}/api/auth/shopify/login`, return with one-time `?ms_code` redeemed at `POST /api/auth/link` (ACCOUNT_CONTRACT.md §2a) |
 | What the widget reads | `ShopifyAnalytics.meta.page.customerId` as a **hint only** (`storefrontCustomerHint()`): it makes the widget call `/api/auth/me`. It never establishes identity. | `/api/auth/me` |
 | Bridge | `GET /apps/chat/whoami?session=<sid>` (same-origin, `credentials:'include'`), once per **tab** session (sessionStorage `ms-chat-whoami-done`, `detectViaStorefront()`), on the first panel open in that tab. sessionStorage is per tab, and Mo's product/checkout links open with `target="_blank"` + `rel="noopener"`, so such tabs do not inherit it: every new tab where the panel is opened makes one more whoami request. A JSON answer with `signedIn:true` and a `linkCode` is redeemed (`redeemLinkCode(code,'shop')`). | — |
-| Widget touches the shop account UI? | No. The widget never modifies or reads the header account icon and never links to `/account`. Mo's text may contain an `ordersPageUrl` link (order status, `CHAT_ORDER_STATUS.md`). | — |
+| Widget touches the shop account UI? | No. The widget never modifies or reads the header account icon and never links to `/account`. Mo's text may contain an `ordersPageUrl` link (order status, `API_CONTRACT.md §2` „Tools the widget MUST NOT render“). | — |
 
-Order status (`get_order_status`) works only for sessions signed in via „Anmelden“ (`link_kind = customer_account`). A shop-recognised session gets `sign_in_required`; the widget keeps „Mit Kundenkonto anmelden“ in the account menu for that case (`updateShopSignInBtn()`). Backend switch `CHAT_ORDER_STATUS_ENABLED` is still **off**. PR #73 (silent `get_order_status` rendering, history wipe on sign-out) is merged and live since 2026-10-04, so the switch may now be turned on once the backend has verified on live that a `get_order_status` part renders nothing. The same upload made chat sign-in work again on live (pending a real check).
+Order status (`get_order_status`) works only for sessions signed in via „Anmelden“ (`link_kind = customer_account`, `src/lib/order-status-core.mjs`). A shop-recognised session gets `sign_in_required` with `signedInViaShop: true`; the widget renders nothing for the tool and keeps „Mit Kundenkonto anmelden“ in the account menu for that case (`updateShopSignInBtn()`; ACCOUNT_CONTRACT.md §3a). The feature sits behind the backend switch `CHAT_ORDER_STATUS_ENABLED` (default off in code; production state: `docs/ROLLOUT_TODO.md`).
 
 Uncertain: whether a Mo sign-in also leaves the shopper logged in to the Online Store (or the reverse). Nothing in the repo shows it; treat the two sessions as independent.
 
-### 9.1 App Proxy status and setup
+### 9.1 App Proxy: behaviour without and with it
 
-- **Today**: not configured. `/apps/chat/whoami` returns Shopify's HTML 404 page. The widget rejects it (`!r.ok`, or a content type without `application/json`) and silently continues anonymously. Side effect: each tab session downloads that 404 page once on the first panel open in that tab (including tabs opened from Mo's product links), and the sign-in affordance appears only after that round trip.
-- **Precondition met, confirm before enabling**: PR #73 is merged and was uploaded to the live theme on 2026-10-04, so the App Proxy **may now be set up**. First confirm that the live `assets/ms-chat-widget.js` is the PR #73 version (it contains `redeemLinkCode`), because the live editor has reverted widget files before. Historical note: the pre-PR #73 widget (`44a076b` → `detectViaStorefront(force)`) applied a whoami `signedIn:true` answer directly as identity (`applyAuth(data)`) without redeeming `linkCode`; with a proxy under that widget, visitors would have seen a signed-in UI whose `/api/account/*` calls return 401. Same rule in `01-storefront-theme.md` (App Proxy row) and `07`.
-- **Setup** (`CUSTOMER_ACCOUNT.md §2`, `ROLLOUT_TODO.md 5.4`; after the confirmation above): add an App Proxy to the app (`shopify.app.toml` `[app_proxy]`: `url = "https://mo.motionsports.de/api/auth/storefront"`, `subpath = "chat"`, `prefix = "apps"`, then `shopify app deploy`). Set `SHOPIFY_APP_PROXY_SECRET` (falls back to `SHOPIFY_CLIENT_SECRET`). Since 2026-10-05 (P0.3) whoami answers `{"signedIn":false}` until the backend switches are on (`APP_PROXY_SIGNIN_ENABLED`, `APP_PROXY_SIGNIN_MAX_AGE_HOURS`; recommended `true` / `24`, D-AP1), so verify the setup with the manual check instead: open `https://www.motionsports.de/apps/chat/whoami?session=livecheck-manual` while logged in to the shop and look for its `account_shop_recognised` row (`npm run verify:live` section 8). A row means `logged_in_customer_id` is populated for this store's account mode; then set the switches.
+- **Without it** (not configured in the shop): `/apps/chat/whoami` returns Shopify's HTML 404 page. The widget rejects it (`!r.ok`, or a content type without `application/json`) and silently continues anonymously. Side effect: each tab session downloads that 404 page once on the first panel open in that tab (including tabs opened from Mo's product links), and the sign-in affordance appears only after that round trip.
+- **With it**: Shopify signs the request and forwards it to the backend's `/api/auth/storefront/whoami`, adding the logged-in customer id; the backend checks the signature with `SHOPIFY_APP_PROXY_SECRET` (falls back to `SHOPIFY_CLIENT_SECRET`). While `APP_PROXY_SIGNIN_ENABLED` is off (default off in code) it answers `{"signedIn":false}` but still records `account_shop_recognised` for a logged-in shop customer (`noCode: "flag_off"`); with the switch on it issues a code under the rules summarised in `04` §5.4. Contract: ACCOUNT_CONTRACT.md §3a; backend as-built: `docs/CUSTOMER_ACCOUNT.md` §2 „Already-signed-in detection“. The manual check `https://www.motionsports.de/apps/chat/whoami?session=livecheck-manual` while logged in to the shop, read with `npm run verify:live` section 8, shows whether `logged_in_customer_id` arrives for this store's account mode.
+- **Drift risk**: only a widget build that redeems `linkCode` is safe with the proxy on (`04` §5.4).
+- **Setup steps and live state**: `docs/ROLLOUT_TODO.md` 5.4 (the Dev Dashboard app version; CLI fallback 5.4b).
 - **No theme change needed**: the path default is `CFG.whoamiPath || '/apps/chat/whoami'`. The snippet does not set `whoamiPath`, so a different proxy path would need a snippet change.
 
 ---
@@ -490,7 +496,7 @@ Uncertain: whether a Mo sign-in also leaves the shopper logged in to the Online 
 | Showroom link | German page, no `/en` variant | snippet literal |
 | PDP CTA label | German literal on `/en` | `templates/product.json` |
 | Q&A tab | EN pair when both `q_en`/`a_en` exist, else German | `product-qa.liquid` |
-| Product names / specs in cards | German catalog data on both locales (`LOCALE.md §3`) | backend |
+| Product names / specs in cards | German catalog data on both locales (`API_CONTRACT.md §12.4`) | backend |
 | Price formatting | EUR always; `de` „1.234,5 €“ (no fixed decimals), `en` "€1,234.50" | `euro()` |
 | Market currency | Not supported. `currency_code_enabled` is `false`; `config/markets.json` is empty in the repo; whether other markets/currencies are active is unknown. If a non-EUR market exists, chat prices (EUR, catalog) would differ from PDP prices (converted). | `config/settings_data.json` |
 | Price freshness | Catalog prices from the daily sync (plus targeted refreshes); a price change in Shopify shows in the chat only after the next sync | backend |
@@ -499,14 +505,7 @@ Uncertain: whether a Mo sign-in also leaves the shopper logged in to the Online 
 
 ## 11. Shop → Mo entry links (campaign deep links)
 
-Any storefront URL where the widget renders accepts these parameters (full table in `01-storefront-theme.md §15`):
-
-- `?mo=open` or `#mo-open`: opens the panel after `init()` (`handleMoDeepLink()`); `mo_new=1` starts a fresh consultation; `mo_view=fullscreen` opens the desktop modal mode without saving the preference. No product priming.
-- `?mo_c=<token>` (`^[A-Za-z0-9_-]{16,64}$`): stripped from the address bar by the `<head>` script **before** `content_for_header` (Shopify analytics, web pixels) records the URL, stashed in `sessionStorage['ms-chat-early-params']`, then stored as `sessionStorage['ms_mo_c']` and sent once as `campaignToken` on the next `POST /api/chat` (deleted on `res.ok`). Live since the PR #73 upload of 2026-10-04; campaign clicks before that date never produced `campaign_chat_started` from a `mo_c` token.
-- The head script runs on every page while `ai_advisor_enabled` is on, including `/cart` and excluded templates (`ai_advisor_excluded_templates`) where no widget loads. There the token waits in the stash and is used only if a widget page loads in the same tab within 10 minutes (`earlyParam()` / `LINK_RETRY_MAX_MS`; the stash is deleted on first read, and any later `ms_auth`/`ms_code`/`mo_c` landing replaces it). Otherwise the campaign chat is not attributed. Campaign deep links should therefore target a widget page, not `/cart`.
-- `utm_*` are left untouched for the shop's analytics.
-
-Combining a PDP URL with `?mo=open` opens Mo on that product page, but the product is only sent as context if the shopper then clicks the PDP CTA (§2.4). The nudge cannot appear after `?mo=open`, because opening the panel (`openPanel()` sets `SS_CHAT_OPENED` and calls `removeNudge()`) ends nudge eligibility for the tab session (`nudgeEligible()`).
+Owned by `05-engagement-and-kpi.md` §9 (parameters, processing order, the head-script stash on pages without the widget, what counts as a campaign chat) and `01-storefront-theme.md §15` (the full parameter table). Commerce-relevant: `?mo=open` on a PDP opens Mo there without product priming (`05` §9.2 e), and after it no nudge appears in that tab session; campaign deep links should target a widget page, not `/cart` (`05` §9.1); `utm_*` are left untouched for the shop's analytics.
 
 ---
 
@@ -516,7 +515,7 @@ Combining a PDP URL with `?mo=open` opens Mo on that product page, but the produ
 |---|---|---|---|
 | `window.MS_CHAT_CONFIG` (`apiBase`, `chatKey`, `showroomUrl`, `allowedFromTheme`, `locale`, `pageContext`) | `snippets/ms-chat-widget.liquid` | All config. The JS reads `CFG.apiBase`, `CFG.chatKey`, `CFG.showroomUrl`, `CFG.locale`, `CFG.pageContext` and the optional `CFG.whoamiPath` (default `'/apps/chat/whoami'`; read but not emitted by the snippet). `allowedFromTheme` is emitted but never read by the JS | Missing → backend defaults, empty chat key (401s), no page context |
 | `{% render 'ms-chat-widget' %}` before `</body>` | `layout/theme.liquid` | Loads CSS/JS | Removed in a live sync → no Mo anywhere |
-| `<head>` stash script (`ms_auth`, `ms_code`, `mo_c` → `sessionStorage['ms-chat-early-params']`) | `layout/theme.liquid` (PR #73, live since 2026-10-04) | `earlyParam()` | Without it the params are still read from the URL, but analytics see them first (privacy regression) |
+| `<head>` stash script (`ms_auth`, `ms_code`, `mo_c` → `sessionStorage['ms-chat-early-params']`) | `layout/theme.liquid` (PR #73) | `earlyParam()` | Without it the params are still read from the URL, but analytics see them first (privacy regression) |
 | `window.Shopify.customerPrivacy.analyticsProcessingAllowed()` | Shopify Customer Privacy API (loaded by `<privacy-banner>` or Shopify's banner) | Attribution consent gate | API not loaded → attribution silently off for everyone |
 | `document` event `visitorConsentCollected` | Shopify | Late consent → stamp | Attribution only from the next page load |
 | `window.ShopifyAnalytics.meta.page.customerId` | Shopify `content_for_header` | Shop-login hint → `/api/auth/me` probe | Hint lost; recognition depends on the App Proxy or the local signed-in flag |
@@ -531,10 +530,10 @@ Combining a PDP URL with `?mo=open` opens Mo on that product page, but the produ
 | Theme modal z-index 1900 / 2000 | `snippets/template-modal.liquid`, `main.mjs → setZIndex` | Sidebar's 1800 must stay below | A theme value < 1800 would put the drawer under the sidebar again |
 | `sticky-header` element, `position: fixed` at 641–749 px | `sections/header.liquid` | CSS page-shift pin | Header overlaps the sidebar in that band |
 | `<html>` margin reflow | — | `html.ms-chat-page-shift` | Fixed/`100vw` theme elements ignore the margin and slide under the sidebar |
-| `.ms-chat-product-cta` + `data-ms-chat-product-id` / `-title`; empty `.ms-chat-logo` spans; wrapper `.ms-chat-product-advisor` | product templates | `bindProductCtas()`, orb fill in `init()`; the snippet hides `.ms-chat-product-advisor` / `.ms-chat-product-cta` where the widget does not mount (`8d0a0c4`, §3.4) | Renamed class → dead CTA, and no longer hidden on non-mounting pages |
+| `.ms-chat-product-cta` + `data-ms-chat-product-id` / `-title`; empty `.ms-chat-logo` spans; wrapper `.ms-chat-product-advisor` | product templates | `bindProductCtas()`, orb fill in `init()`; the snippet hides `.ms-chat-product-advisor` / `.ms-chat-product-cta` where the widget does not mount (§3.4) | Renamed class → dead CTA, and no longer hidden on non-mounting pages |
 | CSS vars `--color-base-foreground`, `--button-secondary-background` | theme | CTA inline style | Fallback colours apply |
 | Liquid: `request.page_type`, `template`, `product.*`, `collection.*`, `localization.language.iso_code` | Shopify | Render gate, page context, locale | — |
-| `/apps/chat/whoami` | Shopify App Proxy (not configured yet; may now be set up, PR #73 is live, §9.1) | Shop recognition | Enabled under a pre-PR #73 widget (e.g. after a live-editor revert) → signed-in UI with 401s on `/api/account/*` (§9.1) |
+| `/apps/chat/whoami` | Shopify App Proxy (§9.1; whether it is set up: `docs/ROLLOUT_TODO.md` 5.4) | Shop recognition | Enabled under a build that does not redeem `linkCode` (e.g. after a live-editor revert) → signed-in UI with 401s on `/api/account/*` (`04` §5.4) |
 | `storage` events, `history.replaceState`, `visualViewport` | browser | multi-tab, URL cleanup, mobile keyboard | — |
 
 Theme events the widget does **not** use (but could): `product:added-to-cart` (dispatched by `main.mjs` after product-form, quick-add and sticky add-to-cart; detail `{ id, quantity }`, where `id` is the numeric Shopify **variant** id (the product form's `[name=id]` value / the quick-add variant, the same value `main.mjs` puts into `sections_url: …/variants/<id>`) and `quantity` is the added quantity. The event carries no handle, so a listener can build `handle~variantId` refs only with a variant → handle lookup), `cart:updated` / `cart:refresh` / `cart:change` (listened to by the header script; dispatched by `snippets/product-detail-accordions.liquid` (`cart:updated`, `cart:refresh`, recommendations quick-add) and `blocks/ai_gen_block_677224a.liquid` (`cart:refresh`, `cart:change`, plus `ajaxProduct:added` with `source: 'premium-collection-grid'`); see `01-storefront-theme.md §8.3`), `order-note:updated`.
@@ -561,19 +560,9 @@ The browsing trail (`localStorage['ms-chat-trail']`, 5 entries, 3-day TTL) is ne
 
 ## 14. KPI events in this chapter's scope
 
-All via `track()` → `POST {apiBase}/api/kpi` (`API_CONTRACT.md §5`), fail-silent, `keepalive`.
+`product_cta_opened`, `product_cta_clicked`, `add_to_cart_clicked`, `showroom_clicked` and `chat_opened` — `data`, triggers, the two id spaces and the sold-out caveat of `add_to_cart_clicked` — are catalogued in `05-engagement-and-kpi.md` §4.1 and §4.4, the widget-side index (contract: `API_CONTRACT.md §5`). Name new events against the dashboard patterns (`%product%click%`, `%cta%click%`, `%cart%`, `%checkout%`; `API_CONTRACT.md §0` rule 15, `05` §12).
 
-| Event | `data` | Fired by | Id space |
-|---|---|---|---|
-| `product_cta_opened` | `{ productId }` | PDP CTA click (`openWithProduct()`) | numeric Shopify product id |
-| `product_cta_clicked` | `{ productId }` | "Zum Produkt" in product card / compare column / add-to-cart fallback | catalog id |
-| `add_to_cart_clicked` | `{ productId, productIds }` (`productId` = first resolved). `productIds` (and possibly `productId`) can include sold-out products (shown with „Ausverkauft — nicht im Warenkorb“) that are not in the `cartUrl` checkout, so the id list is not the same as what entered the cart | „Zur Kasse“ click | catalog ids |
-| `showroom_clicked` | `{ productIds }` | "Showroom ansehen" | catalog ids |
-| `chat_opened` | `{}` | every panel open (incl. via CTA, deep link) | — |
-
-Not tracked: theme add-to-cart, checkout completion (comes from the order webhook), Markdown links in Mo's text, Q&A tab interactions, attribution mint/stamp outcomes, whoami outcome.
-
-Backend aggregation note: the admin KPIs classify widget events **by name pattern** (`src/lib/kpi-event-patterns.mjs`): `%product%click%`, `%cta%click%` count as product/CTA clicks, `%cart%`, `%checkout%` count as cart/checkout clicks. Any new event name containing `cart` or `checkout` (e.g. a future `cart_refreshed`) would be counted as a checkout click. Name new events with this in mind.
+Not tracked in this scope: theme add-to-cart, checkout completion (that comes from the order webhook), Markdown links in Mo's text, Q&A tab interactions, attribution mint/stamp outcomes, whoami outcome.
 
 ---
 
@@ -589,16 +578,16 @@ Complements `01-storefront-theme.md §17`.
 | `/api/products` response | Every chat card: names, prices, images, stock badges, links, `cartUrl` | Only fields in §5.2 render. Changing `shopifyUrl` (e.g. adding `/en` or `?variant=`) changes where "Zum Produkt" goes, with no widget change. |
 | `cartUrl` content | What „Zur Kasse“ buys and carries | Could carry `attributes[_mo]` / `ref=mo` / a `discount=` code — but `/api/products` is public, session-less and cacheable 60 s, so a per-session token cannot be put there safely. A per-session marker needs a widget change (§16, T1). |
 | `cartAttributes` from `/api/attribution/token` | Keys/values stamped on the cart and the order | Must stay a flat object. |
-| Product `template_suffix` (Admin API) | Moves a product to another PDP layout. Until the three `8d0a0c4` templates are uploaded, this also decides whether the live PDP has the Mo CTA (§3.7); afterwards every product template has it | Changes the whole PDP layout. Owner decision. |
+| Product `template_suffix` (Admin API) | Moves a product to another PDP layout; every product template of this build carries the Mo CTA (§3.7), only `product.produkte-im-set` lacks the Q&A tab | Changes the whole PDP layout. Owner decision. |
 | Merchandising metafields (`custom.kurzinfo`, complementary products, badges …) | PDP content next to the CTA | Owned by merchandising; do not write without an explicit decision. |
 | Automatic discounts / discount codes | Prices in cart and checkout (not in chat cards) | Chat cards show catalog prices only. |
-| App Proxy configuration | Shop-login recognition (§9.1) | One-time app config, no theme change. PR #73 is live since 2026-10-04, so it may now be done; confirm first that live runs the PR #73 widget (§9.1). |
+| App Proxy configuration | Shop-login recognition (§9.1) | One-time app config plus the backend switches (default off in code); no theme change. Steps and state: `docs/ROLLOUT_TODO.md` 5.4; drift risk `04` §5.4. |
 | Deep links (`mo=open`, `mo_c`, …) | Open Mo from emails, ads, QR codes | §11. |
 | Theme settings (`config/settings_schema.json` "AI Advisor": `ai_advisor_enabled` (default off), `ai_advisor_backend_url`, `ms_chat_shared_secret` (snippet → `chatKey`), `ai_advisor_excluded_templates` (default `cart`)) | Kill switch, backend URL, secret, excluded templates | Changed in the theme editor by a person. Writing `settings_data.json` through the Admin Asset API is technically possible with `write_themes` (scope status unknown) but bypasses the manual deploy model and the live editor; not recommended. |
 
 ### 15.2 Needs a theme change (frontend task + manual upload)
 
-- Anything in §16's task list (variant context, `/en` link rewrite, permalink marker, theme add-to-cart listener, …).
+- Anything in the widget backlog `07` §7 (variant context, `/en` link rewrite, permalink marker, theme add-to-cart listener, …; mapped from §16's task ids).
 - A configurable CTA label / English label / per-product visibility. A one-time theme change could read a backend-owned metafield namespace (e.g. a hypothetical `mo.cta_label`, `mo.cta_hidden`) so later changes need only `metafieldsSet`. Owner decision; nothing like this exists today.
 - More page facts in `pageContext` (variant id, price, availability, a customer flag as a hint).
 - CTAs on other templates or sections (most are live-editor owned).
@@ -608,39 +597,39 @@ Complements `01-storefront-theme.md §17`.
 
 ## 16. Findings, risks and suggested frontend tasks
 
-Findings (code facts; F9 and T8 were addressed in `8d0a0c4`, which is merged but not uploaded to live yet; the rest is unchanged):
+Findings (code facts of this build; F9 is fixed):
 
 - **F1 — In-chat checkout permalink carries no attribution marker.** `cartUrl` has no `attributes[_mo]`, and the widget stamps the **current** cart instead. If the permalink's checkout does not inherit those attributes (unverified), Mo's most direct purchase path would be attributed only through product matching on a stamp that may not exist. On the first click without a cached token the mint races the navigation.
 - **F2 — Session becomes "consulted" only via `show_product` cards.** Sessions whose consultation shows only compare tables, a showroom card or an add-to-cart card are not minted until a checkout click. Purchases after such sessions via search or theme add-to-cart stay unattributed.
-- **F3 — Product context is not sent on a plain first message on a PDP.** Only the CTA and the nudge send it (§2.4).
+- **F3 — Product context is not sent on a plain first message on a PDP.** Only the CTA and the nudge send it (§2.4). Backend side built; widget part = task 2 (`07` A3).
 - **F4 — Variant is never known.** Neither the PDP's selected variant nor in-chat variants are used; "Zum Produkt" opens the default variant. The `/api/products` `id` is the base handle even for a variant ref (only `selectedVariantId`, ignored, carries the variant), so no product KPI event ever carries the variant.
 - **F5 — `/en` shoppers are sent to German pages** (product links, showroom, checkout permalink without locale). The PDP CTA label is German on `/en`.
 - **F6 — Different id spaces in KPIs**: `product_cta_opened` uses numeric ids, all other product events use catalog handles (always handle-level, never `handle~variantId`, §2.3).
-- **F7 — No re-stamp after theme add-to-cart (improvement, not a contract gap).** The widget meets the contract's re-stamp rule (`ORDER_ATTRIBUTION.md → "Widget (frontend-handoff)"` step 3: "re-run the stamp before opening any Mo cart link and after each `add_to_cart` click", i.e. the Mo `add_to_cart` tool card; `API_CONTRACT.md §10` states the same less precisely): it stamps on every „Zur Kasse“ click (`buildAddToCart()` → `moAttrEnsure(false)`) and once per page load. Neither document asks it to observe the theme's add-to-cart. It does not listen to `product:added-to-cart`, so a cart that a completed checkout cleared is re-stamped only on the next page load of a widget page; T5 would close that small gap. A stamp is also never re-applied if Shopify drops attributes for other reasons.
+- **F7 — No re-stamp after theme add-to-cart (improvement, not a contract gap).** The widget meets the contract's re-stamp rule (`API_CONTRACT.md §10`: "re-stamp before opening any Mo cart link and after each `add_to_cart` click", i.e. the Mo `add_to_cart` tool card): it stamps on every „Zur Kasse“ click (`buildAddToCart()` → `moAttrEnsure(false)`) and once per page load. The contract does not ask it to observe the theme's add-to-cart. It does not listen to `product:added-to-cart`, so a cart that a completed checkout cleared is re-stamped only on the next page load of a widget page; T5 would close that small gap. A stamp is also never re-applied if Shopify drops attributes for other reasons.
 - **F8 — Stale `_mo` after session rotation.** `moAttrReset()` clears the local cache but not the cart attribute. After sign-out / erase / "Neuen Chat starten" the live cart still carries the old token until a new stamp. Backend erasure makes erased tokens inert; for "Neuen Chat starten" the old token stays valid, so the new consultation's purchase may count for the old session.
-- **F9 — Fixed in `8d0a0c4` (not uploaded yet): dead CTA where the widget does not mount.** The snippet now hides `.ms-chat-product-advisor` / `.ms-chat-product-cta` on excluded templates, cart/checkout and with an empty shared secret, and no longer loads the JS without a secret (§3.4). Remaining edge: the CTA still does nothing if the JS fails to load or is clicked before the deferred script booted.
+- **F9 — Fixed (`8d0a0c4`): dead CTA where the widget does not mount.** The snippet hides `.ms-chat-product-advisor` / `.ms-chat-product-cta` on excluded templates, cart/checkout and with an empty shared secret, and no longer loads the JS without a secret (§3.4). Remaining edge: the CTA still does nothing if the JS fails to load or is clicked before the deferred script booted.
 - **F10 — `add_to_cart` with more than 10 ids renders nothing** (no chunking in `buildAddToCart`; the backend cap is 10).
 - **F11 — `productButton()` falls back to `href="#"`** with `target="_blank"` when `shopifyUrl` is missing: this opens a second copy of the current page in a new tab (full reload, widget included) and still fires `product_cta_clicked`.
 - **F12 — German price format has no fixed decimals** („99,9 €“).
 - **F13 — `reloadCartPageSection()` is unreachable** while `/cart` is excluded.
-- **F14 — Spec drift**: `WIDGET_SPEC.md §6` („In den Warenkorb“) and `§9a` (bordered button below bullets) no longer match the code („Zur Kasse“, underlined link above the price). `snippets/ms-chat-widget.liquid`'s header comment still points at `docs/ai-advisor/*`.
+- **F14 — Stale theme comment**: `snippets/ms-chat-widget.liquid`'s header comment still points at `docs/ai-advisor/*`. (The archived `WIDGET_SPEC.md` §6 / §9a described „In den Warenkorb“ and a bordered button below the bullets; no living contract prescribes either — the CTA block is editor-owned, `API_CONTRACT.md §0` rule 25.)
 - **F15 — `/cart.js` GET on every page load (`pageshow`) and every focus/visibility return** on every widget page, even without Mo use. Pages where the widget renders make two `/cart.js` GETs per view (header script plus the widget's `pageshow`). In addition, every click on a widget form submit button (contact, email capture, feedback, opt-in, rename) triggers two more `/cart.js` GETs (+600 ms, +1200 ms) from the header script, whose click selector includes any `button[type="submit"]` (§7.3). The `?section_id=` drawer/page re-render GET happens only when `item_count` differs from the last known count. Cheap, but it is extra traffic.
 - **F16 — Markdown product links in Mo's text are untracked**, so `product_cta_clicked` undercounts product clicks.
 
-Suggested frontend tasks (each needs a `MANIFEST.md` entry and a manual upload; owner decisions marked):
+Suggested frontend tasks — consolidated, with priorities, effort and the backend part, in the backlog `07` §7 (each still needs a `MANIFEST.md` entry and a manual upload):
 
-| Id | Task | Touches | KPI target |
-|---|---|---|---|
-| T1 | On „Zur Kasse“ click, if consent allows and a token is cached, append `cartAttributes` as `attributes[<key>]=<value>` plus `ref=mo` to the permalink (mirror of the backend `withCartAttribution()`); mint eagerly when the add-to-cart card renders | `buildAddToCart()`, `moAttrOnProductCard()` | attributed revenue |
-| T2 | Treat compare / showroom / add-to-cart card renders as "consulted" | `buildCompare`, `buildShowroom`, `buildAddToCart` | attributed revenue |
-| T3 | On a PDP, attach `PAGE_CTX` product context to the **first** user message of a fresh conversation | `sendMessage()` / `startStream()` | answer quality, product clicks |
-| T4 | Read the selected variant (`?variant=` / variant picker change) into `pageContext`/context as `handle~variantId`; deep-link "Zum Produkt" with `?variant=` for variant refs. For variant-level KPIs the widget must send `selectedVariantId` (or the requested ref) explicitly, because the response `id` is always the handle | snippet, `PAGE_CTX`, `productButton()`, `track()` calls | add-to-cart, measurement |
-| T5 | Listen to `product:added-to-cart`: re-stamp (consent-gated) and send a KPI event (name it with the §14 patterns in mind). `detail.id` is the numeric variant id (§12), so a catalog ref needs a variant → handle lookup | widget JS | attribution, measurement |
-| T6 | `/en`: rewrite `shopifyUrl`/showroom to the `/en` path (or have the backend localise `shopifyUrl` via a param); translate the CTA label (`| t` key) | widget JS, `product.json` (editor-owned) | EN conversion |
-| T7 | Track Markdown link clicks to product URLs as `product_cta_clicked` (with a `source`) | `appendInline()` | measurement |
-| T8 | **Done in `8d0a0c4`** (upload pending): the "MO only" block is now on `product.produkt-new`, `product.produktnew` and `product.produkte-im-set` (§3.7). After the upload, verify the block in the live editor, because these templates are editor-owned | product templates (editor-owned) | CTA opens |
-| T9 | A "Frage nicht dabei? Frag Mo" link at the end of the Q&A tab using the CTA contract | `product-qa.liquid` | CTA opens, Q&A loop |
-| T10 | Use one id space in KPIs (send the handle in `product_cta_opened`, keep the numeric id as an extra field) | `openWithProduct()` | measurement |
+| Id | Task | Backlog (`07` §7) |
+|---|---|---|
+| T1 | `_mo` on the „Zur Kasse“ permalink; mint eagerly when the add-to-cart card renders | A2 |
+| T2 | Compare / showroom / add-to-cart renders count as "consulted" | A1 |
+| T3 | PDP product context on the first typed message of a fresh conversation | A3 (task 2) |
+| T4 | Selected variant into the context; „Zum Produkt“ with `?variant=`; variant-level KPIs | D3 |
+| T5 | Listen to `product:added-to-cart`: re-stamp and a KPI event | D2 |
+| T6 | `/en` product and showroom links; translated CTA label | D4 |
+| T7 | Track Markdown links to product URLs | B4 |
+| T8 | "MO only" block on the three CTA-less templates | done (`8d0a0c4`); D5 keeps the open parts |
+| T9 | A „Frage nicht dabei? Frag Mo“ link at the end of the Q&A tab | D5 |
+| T10 | One id space in KPIs | B6 |
 
 ---
 
@@ -652,6 +641,6 @@ Suggested frontend tasks (each needs a `MANIFEST.md` entry and a manual upload; 
 4. **Markets and currencies**: whether any non-EUR market is active (repo `markets.json` is empty).
 5. **Which banner loads the Customer Privacy API** on live, and therefore the share of visitors for whom `analyticsProcessingAllowed()` can ever be true.
 6. **Classic vs new customer accounts**, which affects App Proxy `logged_in_customer_id` and whether the Mo sign-in and the shop login share a session.
-7. **Product → template assignment** (how many PDPs lack the CTA).
+7. **Product → template assignment** (which products use `product.produkte-im-set`, which has no Q&A tab).
 8. **Storefront caching delay** after `metafieldsSet` on `custom.qa`.
-9. **Live parity**: the live theme may differ from this repo (editor changes since the last snapshot). PR #73 was uploaded on 2026-10-04 (`assets/ms-chat-widget.js`, `assets/ms-chat-widget.css`, `layout/theme.liquid`, together with `snippets/product-qa.liquid`, `sections/header.liquid` and `snippets/product-detail-accordions.liquid` from the 2026-10-01 round); a real sign-in check on live by the backend is still pending. Everything marked `8d0a0c4` (CTA hiding, CTA on three more templates, contact-form `sessionId`, stream cancel on thread switch) is **not live yet** until the owner uploads `assets/ms-chat-widget.js`, `snippets/ms-chat-widget.liquid` and the three product templates.
+9. **Live parity**: the live theme may differ from this repo (a missed upload, editor changes since the last snapshot). Check with `07` §6.3–§6.4 after every upload.
