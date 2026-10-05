@@ -17,6 +17,7 @@ import { reportError } from "./observability";
 import { applyConsentAct, customerIdForEmail, getCustomerConsent, isSubscribed } from "./consent-store";
 import { runOutboxInline } from "./shopify-outbox";
 import type { ConsentSource } from "./consent-core.mjs";
+import { signInProofNote } from "./signed-in-proof.mjs";
 
 export type MoConsentSurface = "mo_capture_form" | "mo_chat_gate" | "mo_signin";
 
@@ -36,12 +37,15 @@ export async function isEmailAlreadySubscribed(email: string): Promise<boolean> 
   }
 }
 
-/** An opt-in tap on a Mo surface whose DOI mail went out (state pending). */
+/** An opt-in tap on a Mo surface whose DOI mail went out (state pending).
+ * `signInProof` (the opt-in after a sign-in): which sign-in stood behind it —
+ * recorded as the consent_events note (Art. 7(1) evidence, P0.3). */
 export async function recordMoOptIn(input: {
   email: string;
   surface: MoConsentSurface;
   captureId: number;
   doiPending: boolean;
+  signInProof?: "token" | "shop" | null;
 }): Promise<void> {
   if (!input.doiPending) return;
   const customerId = await customerIdForEmail(input.email);
@@ -50,6 +54,7 @@ export async function recordMoOptIn(input: {
     customerId,
     incoming: { state: "pending", at: new Date().toISOString(), source: input.surface },
     originRef: `email_capture:${input.captureId}`,
+    note: signInProofNote(input.signInProof ?? null),
   });
 }
 

@@ -520,3 +520,11 @@ test("withoutForeignOrders drops orders Shopify reports for another customer", (
   assert.equal(withoutForeignOrders(orders, []).length, 3);
   assert.deepEqual(withoutForeignOrders(null, ["1"]), []);
 });
+
+test("buildOrderStatusForModel: signedInViaShop only on sign_in_required for a shop-login session", async () => {
+  const { buildOrderStatusForModel: b } = await import("./order-status-core.mjs");
+  const url = "https://shop.example/account";
+  assert.equal(b({ status: "sign_in_required", ordersPageUrl: url, shopSignedIn: true }).signedInViaShop, true);
+  assert.equal("signedInViaShop" in b({ status: "sign_in_required", ordersPageUrl: url }), false);
+  assert.equal("signedInViaShop" in b({ status: "unavailable", ordersPageUrl: url, shopSignedIn: true }), false);
+});

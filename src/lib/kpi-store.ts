@@ -30,6 +30,7 @@ import {
   KPI_ACCOUNT_SIGNIN_SUCCEEDED,
   KPI_ACCOUNT_SIGNIN_LINKED,
   KPI_ACCOUNT_SIGNIN_LINK_REFUSED,
+  KPI_ACCOUNT_SHOP_RECOGNISED,
   KPI_ACCOUNT_EXPORT_REQUESTED,
   KPI_ACCOUNT_ERASED,
   KPI_CONTACT_FORM_SUBMITTED,
@@ -48,6 +49,7 @@ import {
   LOGIN_GATE_SHOWN,
   LOGIN_GATE_SIGNIN_CLICKED,
   loginGateRates,
+  shopRecognitionRates,
   signinSource,
 } from "./kpi-widget-events.mjs";
 
@@ -265,6 +267,14 @@ export interface ConsentGateFunnel {
    * `total`.
    */
   bySurface: { chat: ConsentGateCounts; signin: ConsentGateCounts };
+  /**
+   * The popup after a sign-in, per SESSION and by how the session signed in:
+   * „Anmelden“ in the chat, recognised by the shop login (App Proxy), or no
+   * sign-in event at all. accepted is the final state (an accept followed by
+   * a dismiss counts once, as accepted); optedIn = the server's opt-in
+   * (email_capture_marketing_opted_in, trigger signin_optin) in the period.
+   */
+  signinByWay: Record<"signin" | "shop" | "unknown", { shown: number; accepted: number; declined: number; optedIn: number }>;
 }
 
 const EMPTY_GATE_COUNTS: ConsentGateCounts = {
@@ -288,22 +298,69 @@ export async function getConsentGateFunnel(
 ): Promise<ConsentGateFunnel | null> {
   if (!sql) return null;
   try {
-    const rows = await sql`
-      SELECT event,
-             COALESCE(data->>'surface', '') AS surface,
-             count(*)::int AS n
-        FROM kpi_events
-       WHERE event IN (${KPI_CONSENT_GATE_SHOWN}, ${KPI_CONSENT_GATE_ACCEPTED},
-                       ${KPI_CONSENT_GATE_DECLINED}, ${KPI_CONSENT_GATE_DISMISSED})
-         AND created_at >= ${range.from}::date
-         AND created_at < (${range.to}::date + 1)
-       GROUP BY 1, 2
-    `;
+    const [rows, wayRows] = await Promise.all([
+      sql`
+        SELECT event,
+               COALESCE(data->>'surface', '') AS surface,
+               count(*)::int AS n
+          FROM kpi_events
+         WHERE event IN (${KPI_CONSENT_GATE_SHOWN}, ${KPI_CONSENT_GATE_ACCEPTED},
+                         ${KPI_CONSENT_GATE_DECLINED}, ${KPI_CONSENT_GATE_DISMISSED})
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY 1, 2
+      `,
+      sql`
+        WITH g AS (
+          SELECT session_id,
+                 bool_or(event = ${KPI_CONSENT_GATE_SHOWN})    AS shown,
+                 bool_or(event = ${KPI_CONSENT_GATE_ACCEPTED}) AS accepted,
+                 bool_or(event = ${KPI_CONSENT_GATE_DECLINED}) AS declined
+            FROM kpi_events
+           WHERE event IN (${KPI_CONSENT_GATE_SHOWN}, ${KPI_CONSENT_GATE_ACCEPTED}, ${KPI_CONSENT_GATE_DECLINED})
+             AND data->>'surface' = 'signin'
+             AND session_id IS NOT NULL
+             AND created_at >= ${range.from}::date
+             AND created_at < (${range.to}::date + 1)
+           GROUP BY session_id
+        ), w AS (
+          SELECT g.*,
+                 EXISTS (SELECT 1 FROM kpi_events l WHERE l.session_id = g.session_id
+                            AND l.event = ${KPI_ACCOUNT_SIGNIN_LINKED} AND l.data->>'kind' = 'customer_account') AS via_signin,
+                 EXISTS (SELECT 1 FROM kpi_events l WHERE l.session_id = g.session_id
+                            AND l.event = ${KPI_ACCOUNT_SIGNIN_LINKED} AND l.data->>'kind' = 'app_proxy') AS via_shop,
+                 EXISTS (SELECT 1 FROM kpi_events o WHERE o.session_id = g.session_id
+                            AND o.event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                            AND o.data->>'trigger' = 'signin_optin'
+                            AND o.created_at >= ${range.from}::date
+                            AND o.created_at < (${range.to}::date + 1)) AS opted_in
+            FROM g
+        )
+        SELECT CASE WHEN via_signin THEN 'signin' WHEN via_shop THEN 'shop' ELSE 'unknown' END AS way,
+               count(*) FILTER (WHERE shown)::int                     AS shown,
+               count(*) FILTER (WHERE accepted)::int                  AS accepted,
+               count(*) FILTER (WHERE declined AND NOT accepted)::int AS declined,
+               count(*) FILTER (WHERE opted_in)::int                  AS opted_in
+          FROM w
+         GROUP BY 1
+      `,
+    ]);
 
+    const emptyWay = () => ({ shown: 0, accepted: 0, declined: 0, optedIn: 0 });
     const funnel: ConsentGateFunnel = {
       total: { ...EMPTY_GATE_COUNTS },
       bySurface: { chat: { ...EMPTY_GATE_COUNTS }, signin: { ...EMPTY_GATE_COUNTS } },
+      signinByWay: { signin: emptyWay(), shop: emptyWay(), unknown: emptyWay() },
     };
+    for (const r of wayRows as Array<{ way: string; shown: number; accepted: number; declined: number; opted_in: number }>) {
+      const way = r.way === "signin" || r.way === "shop" ? r.way : "unknown";
+      funnel.signinByWay[way] = {
+        shown: Number(r.shown),
+        accepted: Number(r.accepted),
+        declined: Number(r.declined),
+        optedIn: Number(r.opted_in),
+      };
+    }
     const keyByEvent: Record<string, keyof ConsentGateCounts> = {
       [KPI_CONSENT_GATE_SHOWN]: "shown",
       [KPI_CONSENT_GATE_ACCEPTED]: "accepted",
@@ -389,6 +446,7 @@ export async function getLoginGateFunnel(
                    SELECT 1 FROM kpi_events s
                     WHERE s.session_id = g.session_id
                       AND s.event = ${KPI_ACCOUNT_SIGNIN_LINKED}
+                      AND COALESCE(s.data->>'kind', 'customer_account') = 'customer_account'
                       AND s.created_at >= g.clicked_at
                  ) AS linked
             FROM g
@@ -474,18 +532,24 @@ export async function getSigninDiagnosis(
                        AND COALESCE(data->>'result', '') NOT IN ('ok', 'link_failed', 'logged_out')) AS return_other,
                bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINKED}) AS linked,
                bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINKED} AND data->>'kind' = 'app_proxy') AS linked_via_shop,
+               bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINKED} AND data->>'kind' = 'app_proxy'
+                       AND COALESCE(data->>'renewed', 'false') = 'false') AS linked_via_shop_new,
+               bool_or(event = ${KPI_ACCOUNT_SHOP_RECOGNISED} AND data->>'codeIssued' = 'true') AS shop_code_issued,
                bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED} AND data->>'reason' = 'session_mismatch') AS refused_mismatch,
                bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED} AND COALESCE(data->>'reason', '') <> 'session_mismatch') AS refused_invalid
           FROM kpi_events
          WHERE event IN (${LOGIN_GATE_SIGNIN_CLICKED}, ${LOGIN_GATE_DISMISSED}, ${ACCOUNT_SIGNIN_STARTED},
                          ${KPI_ACCOUNT_SIGNIN_SUCCEEDED}, ${ACCOUNT_SIGNIN_RETURN}, ${KPI_ACCOUNT_SIGNIN_LINKED},
-                         ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED})
+                         ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED}, ${KPI_ACCOUNT_SHOP_RECOGNISED})
            AND session_id IS NOT NULL
+           AND session_id NOT LIKE 'livecheck-%'
            AND created_at >= ${range.from}::date
            AND created_at < (${range.to}::date + 1)
          GROUP BY session_id
         HAVING bool_or(event IN (${LOGIN_GATE_SIGNIN_CLICKED}, ${ACCOUNT_SIGNIN_STARTED}, ${KPI_ACCOUNT_SIGNIN_SUCCEEDED},
                                  ${ACCOUNT_SIGNIN_RETURN}, ${KPI_ACCOUNT_SIGNIN_LINKED}, ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED}))
+            OR bool_or(event = ${KPI_ACCOUNT_SHOP_RECOGNISED} AND data->>'codeIssued' = 'true')
+         ORDER BY max(created_at) DESC
          LIMIT ${SIGNIN_DIAGNOSIS_MAX + 1}
       `,
       sql`
@@ -512,6 +576,8 @@ export async function getSigninDiagnosis(
         returnOther: r.return_other === true,
         linked: r.linked === true,
         linkedViaShop: r.linked_via_shop === true,
+        linkedViaShopNew: r.linked_via_shop_new === true,
+        shopCodeIssued: r.shop_code_issued === true,
         refusedInvalid: r.refused_invalid === true,
         refusedMismatch: r.refused_mismatch === true,
       });
@@ -763,6 +829,24 @@ export interface AccountActivity {
   summaryDownloads: number;
   /** Chat-summary emails generated after a capture (ai_usage). */
   summaryEmails: number;
+  /** Sessions signed in to the chat in the period, by way: „Anmelden“ (any
+   * customer_account redeem), a NEW shop-login link (App Proxy, renewed=false),
+   * and sessions whose only link was a renewal of an existing sign-in. */
+  linkedSessions: { signin: number; shop: number; renewedOnly: number };
+  /** Shop-login recognition (App Proxy whoami, P0.3) — sessions. */
+  shopRecognition: {
+    recognised: number;
+    recognisedNew: number;
+    withToken: number;
+    withCode: number;
+    redeemed: number;
+    refused: number;
+    flagOff: number;
+    noProof: number;
+    handover: number;
+    codeFailed: number;
+    rates: ReturnType<typeof shopRecognitionRates>;
+  };
 }
 
 /**
@@ -777,7 +861,7 @@ export async function getAccountActivity(
 ): Promise<AccountActivity | null> {
   if (!sql) return null;
   try {
-    const [eventRows, usageRows] = await Promise.all([
+    const [eventRows, usageRows, shopRows] = await Promise.all([
       sql`
         SELECT event,
                count(*)::int AS n,
@@ -800,6 +884,54 @@ export async function getAccountActivity(
            AND created_at < (${range.to}::date + 1)
          GROUP BY call_site
       `,
+      sql`
+        WITH s AS (
+          SELECT session_id,
+                 min(created_at) FILTER (WHERE event = ${KPI_ACCOUNT_SHOP_RECOGNISED}) AS recognised_at,
+                 bool_or(event = ${KPI_ACCOUNT_SHOP_RECOGNISED}
+                         AND COALESCE(data->>'alreadySignedIn', 'false') = 'false') AS recognised_new,
+                 bool_or(event = ${KPI_ACCOUNT_SHOP_RECOGNISED} AND data->>'hasToken' = 'true') AS has_token,
+                 min(created_at) FILTER (WHERE event = ${KPI_ACCOUNT_SHOP_RECOGNISED}
+                                           AND data->>'codeIssued' = 'true') AS code_at,
+                 bool_or(event = ${KPI_ACCOUNT_SHOP_RECOGNISED} AND data->>'noCode' = 'flag_off') AS no_code_flag_off,
+                 bool_or(event = ${KPI_ACCOUNT_SHOP_RECOGNISED} AND data->>'noCode' = 'no_proof') AS no_code_no_proof,
+                 bool_or(event = ${KPI_ACCOUNT_SHOP_RECOGNISED} AND data->>'noCode' = 'handover') AS handover,
+                 bool_or(event = ${KPI_ACCOUNT_SHOP_RECOGNISED} AND data->>'noCode' = 'failed') AS code_failed,
+                 bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINKED} AND data->>'kind' = 'customer_account') AS linked_signin,
+                 bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINKED} AND data->>'kind' = 'app_proxy'
+                         AND COALESCE(data->>'renewed', 'false') = 'false') AS linked_shop_new,
+                 bool_or(event = ${KPI_ACCOUNT_SIGNIN_LINKED} AND data->>'kind' = 'app_proxy'
+                         AND data->>'renewed' = 'true') AS linked_shop_renewed,
+                 max(created_at) FILTER (WHERE event = ${KPI_ACCOUNT_SIGNIN_LINKED}
+                                           AND data->>'kind' = 'app_proxy') AS shop_linked_at,
+                 max(created_at) FILTER (WHERE event = ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED}
+                                           AND data->>'kind' = 'app_proxy') AS shop_refused_at
+            FROM kpi_events
+           WHERE event IN (${KPI_ACCOUNT_SHOP_RECOGNISED}, ${KPI_ACCOUNT_SIGNIN_LINKED}, ${KPI_ACCOUNT_SIGNIN_LINK_REFUSED})
+             AND session_id IS NOT NULL
+             AND session_id NOT LIKE 'livecheck-%'
+             AND created_at >= ${range.from}::date
+             AND created_at < (${range.to}::date + 1)
+           GROUP BY session_id
+        )
+        SELECT count(*) FILTER (WHERE linked_signin)::int                                         AS linked_signin,
+               count(*) FILTER (WHERE linked_shop_new AND NOT linked_signin)::int                 AS linked_shop,
+               count(*) FILTER (WHERE linked_shop_renewed AND NOT linked_shop_new
+                                  AND NOT linked_signin)::int                                     AS renewed_only,
+               count(*) FILTER (WHERE recognised_at IS NOT NULL)::int                             AS recognised,
+               count(*) FILTER (WHERE recognised_new)::int                                        AS recognised_new,
+               count(*) FILTER (WHERE recognised_at IS NOT NULL AND has_token)::int               AS with_token,
+               count(*) FILTER (WHERE code_at IS NOT NULL)::int                                   AS with_code,
+               count(*) FILTER (WHERE code_at IS NOT NULL AND shop_linked_at >= code_at)::int     AS redeemed,
+               count(*) FILTER (WHERE code_at IS NOT NULL
+                                  AND (shop_linked_at IS NULL OR shop_linked_at < code_at)
+                                  AND shop_refused_at >= code_at)::int                            AS refused,
+               count(*) FILTER (WHERE code_at IS NULL AND no_code_flag_off)::int                  AS flag_off,
+               count(*) FILTER (WHERE code_at IS NULL AND no_code_no_proof)::int                  AS no_proof,
+               count(*) FILTER (WHERE handover)::int                                              AS handover,
+               count(*) FILTER (WHERE code_at IS NULL AND code_failed)::int                       AS code_failed
+          FROM s
+      `,
     ]);
 
     const activity: AccountActivity = {
@@ -814,7 +946,37 @@ export async function getAccountActivity(
       contactWithSession: 0,
       summaryDownloads: 0,
       summaryEmails: 0,
+      linkedSessions: { signin: 0, shop: 0, renewedOnly: 0 },
+      shopRecognition: {
+        recognised: 0,
+        recognisedNew: 0,
+        withToken: 0,
+        withCode: 0,
+        redeemed: 0,
+        refused: 0,
+        flagOff: 0,
+        noProof: 0,
+        handover: 0,
+        codeFailed: 0,
+        rates: shopRecognitionRates({ recognised: 0, withToken: 0, withCode: 0, redeemed: 0 }),
+      },
     };
+    const sh = ((shopRows as Array<Record<string, unknown>>)[0] ?? {}) as Record<string, unknown>;
+    const shn = (k: string) => Number(sh[k] ?? 0);
+    activity.linkedSessions = { signin: shn("linked_signin"), shop: shn("linked_shop"), renewedOnly: shn("renewed_only") };
+    const recognition = {
+      recognised: shn("recognised"),
+      recognisedNew: shn("recognised_new"),
+      withToken: shn("with_token"),
+      withCode: shn("with_code"),
+      redeemed: shn("redeemed"),
+      refused: shn("refused"),
+      flagOff: shn("flag_off"),
+      noProof: shn("no_proof"),
+      handover: shn("handover"),
+      codeFailed: shn("code_failed"),
+    };
+    activity.shopRecognition = { ...recognition, rates: shopRecognitionRates(recognition) };
     for (const r of eventRows as Array<{ event: string; n: number; silent: number; order_support: number; with_session: number }>) {
       const n = Number(r.n);
       if (r.event === KPI_ACCOUNT_SIGNIN_SUCCEEDED) {

@@ -491,13 +491,17 @@ function renderOrder(order, index, live) {
  *   orders?: any[],
  *   live?: Map<string, ReturnType<typeof parseLiveOrder>>,
  *   ordersPageUrl: string,
+ *   shopSignedIn?: boolean,
  * }} input
  */
-export function buildOrderStatusForModel({ status, matched, orders = [], live, ordersPageUrl }) {
+export function buildOrderStatusForModel({ status, matched, orders = [], live, ordersPageUrl, shopSignedIn = false }) {
   const showOrders = status === "ok" || status === "not_found";
   const list = showOrders && Array.isArray(orders) ? orders.slice(0, MAX_ORDERS_SHOWN) : [];
   /** @type {Record<string, unknown>} */
   const out = { status };
+  // Recognised through the shop login (App Proxy): signed in for the chat, but
+  // order data needs the chat's own „Anmelden“ (Customer Account, F-32).
+  if (status === "sign_in_required" && shopSignedIn === true) out.signedInViaShop = true;
   if (showOrders && typeof matched === "boolean") out.matched = matched;
   out.orders = list.map((order, i) =>
     renderOrder(order, i, live instanceof Map ? live.get(String(order?.shopifyOrderId)) ?? null : null)

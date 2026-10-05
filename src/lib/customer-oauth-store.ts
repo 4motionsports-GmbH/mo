@@ -277,3 +277,34 @@ export async function purgeExpiredPendingAuth(sql: Sql | null = getSql()): Promi
     return 0;
   }
 }
+
+/**
+ * The Mo customer row of a Shopify customer and whether it holds a chat token
+ * (a Customer Account sign-in in the chat whose refresh token has not
+ * expired). A cheap existence check for MEASUREMENT (App Proxy recognition,
+ * P0.3); deciding a sign-in still uses getValidAccessToken. Null-safe, never
+ * throws.
+ */
+export async function findChatTokenCustomer(
+  shopifyCustomerId: string,
+  sql: Sql | null = getSql()
+): Promise<{ customerId: number | null; hasToken: boolean }> {
+  if (!sql || !shopifyCustomerId) return { customerId: null, hasToken: false };
+  try {
+    const rows = (await sql`
+      SELECT c.id AS customer_id,
+             EXISTS (SELECT 1 FROM customer_oauth_tokens t
+                      WHERE t.customer_id = c.id
+                        AND (t.refresh_expires_at IS NULL OR t.refresh_expires_at > now())) AS has_token
+        FROM customers c
+       WHERE c.shopify_customer_id = ${shopifyCustomerId}
+       LIMIT 1
+    `) as Array<{ customer_id: number | string; has_token: boolean }>;
+    const r = rows[0];
+    if (!r) return { customerId: null, hasToken: false };
+    return { customerId: Number(r.customer_id), hasToken: r.has_token === true };
+  } catch (err) {
+    reportError(err, { route: "lib/customer-oauth-store", phase: "findChatTokenCustomer" });
+    return { customerId: null, hasToken: false };
+  }
+}

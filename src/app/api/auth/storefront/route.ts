@@ -31,16 +31,33 @@
 //      signedIn:false), and the chatbot-OAuth "Anmelden" remains the fallback.
 //
 // Auth model: NOT origin/secret-guarded (the request is server-to-server FROM
-// Shopify, no Origin / x-ms-chat-key). The App Proxy HMAC signature IS the auth.
-// Fail-closed: anything we can't positively prove returns { signedIn: false }.
-// Tokens never appear here (there are none — this is the no-token path).
+// Shopify, no Origin / x-ms-chat-key). The App Proxy HMAC signature IS the auth,
+// and it must be FRESH (Shopify's signed `timestamp` within 5 minutes) so a
+// signed URL cannot be replayed. Fail-closed: anything we can't positively
+// prove returns { signedIn: false }. Tokens never appear here.
+//
+// P0.3 (docs/plans/2026-10-04/P0.3.md): a code is issued only when the session
+// will really count as signed in — APP_PROXY_SIGNIN_ENABLED (kill switch) and a
+// proof (a live chat token, or the shop proof under
+// APP_PROXY_SIGNIN_MAX_AGE_HOURS). If the session is signed in as ANOTHER shop
+// customer (a shared browser), that link ends and no code is issued (handover).
+// Every recognised request records account_shop_recognised (measurement).
 
 import { reportError } from "@/lib/observability";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-import { evaluateAppProxyAuth } from "@/lib/shopify-app-proxy.mjs";
+import { appProxyFailureKind, evaluateAppProxyAuth } from "@/lib/shopify-app-proxy.mjs";
 import { fetchAdminCustomerById } from "@/lib/shopify-orders";
 import { bindShopifyIdentity } from "@/lib/customer-store";
-import { endAppProxySessionLink, mintSessionLinkGrant } from "@/lib/session-link-grants";
+import {
+  currentSignedInLink,
+  endAppProxySessionLink,
+  endSessionSignedInLink,
+  mintSessionLinkGrant,
+} from "@/lib/session-link-grants";
+import { findChatTokenCustomer, getValidAccessToken } from "@/lib/customer-oauth-store";
+import { appProxyShopProofHours, isAppProxySigninEnabled } from "@/lib/platform-flags.mjs";
+import { decideShopRecognition } from "@/lib/signed-in-proof.mjs";
+import { recordKpiEvent, KPI_ACCOUNT_SHOP_RECOGNISED } from "@/lib/kpi-events";
 import {
   displayNameOf,
   resolveMarketingOptInState,
@@ -57,6 +74,16 @@ function appProxySecret(): string | null {
   return v || null;
 }
 
+// At most one report per failure kind per instance every 10 minutes; never
+// the URL or the query (they carry the customer id, session and signature).
+const lastReported = new Map<string, number>();
+function reportSignatureFailure(kind: string): void {
+  const now = Date.now();
+  if (now - (lastReported.get(kind) ?? 0) < 10 * 60_000) return;
+  lastReported.set(kind, now);
+  reportError(new Error(`App Proxy signature ${kind}`), { route: "api/auth/storefront", phase: kind });
+}
+
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -68,9 +95,15 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
 
-    // 1) Verify the App Proxy signature + read the Shopify-vouched customer id.
-    //    Fail-closed: a bad signature or a logged-out (empty id) session → not
-    //    signed in. NO Admin API / DB work happens until this passes.
+    // 1) Verify the App Proxy signature AND its freshness (replay), then read
+    //    the Shopify-vouched customer id. Fail-closed: a bad, unsigned or
+    //    stale request → not signed in, and it never ends or creates a link.
+    //    NO Admin API / DB work happens until this passes.
+    const failure = appProxyFailureKind(url.searchParams, appProxySecret(), Date.now());
+    if (failure) {
+      if (failure !== "unsigned") reportSignatureFailure(failure);
+      return json({ signedIn: false });
+    }
     const auth = evaluateAppProxyAuth(url.searchParams, appProxySecret());
     if (!auth.ok) {
       // Shopify vouches that this browser is logged OUT of the shop: the
@@ -88,6 +121,58 @@ export async function GET(req: Request) {
     const rl = await checkRateLimit(rlReq, "chat");
     if (!rl.ok) return rateLimitResponse(rl.retryAfter);
 
+    // No session → no code possible and nothing to key a measurement on.
+    if (!auth.sessionId) return json({ signedIn: false });
+    const sessionId = auth.sessionId;
+
+    // 1b) Decide (P0.3): handover, kill switch, proof. Two cheap reads; the
+    //     exact token check (refresh) runs only when it decides a code.
+    const [current, token] = await Promise.all([
+      currentSignedInLink(sessionId),
+      findChatTokenCustomer(auth.shopifyCustomerId),
+    ]);
+    const hours = appProxyShopProofHours();
+    const flagOn = isAppProxySigninEnabled();
+    const otherCustomerLinked =
+      current != null && current.shopifyCustomerId !== auth.shopifyCustomerId;
+    const liveToken =
+      flagOn && hours === 0 && token.hasToken && token.customerId != null && !otherCustomerLinked
+        ? (await getValidAccessToken(token.customerId)) != null
+        : token.hasToken;
+    const d = decideShopRecognition({
+      flagOn,
+      shopProofHours: hours,
+      hasToken: token.hasToken,
+      liveToken,
+      linkedShopifyCustomerId: current?.shopifyCustomerId ?? null,
+      shopifyCustomerId: auth.shopifyCustomerId,
+    });
+    const recognised = (codeIssued: boolean, noCode: string | null) =>
+      recordKpiEvent({
+        sessionId,
+        event: KPI_ACCOUNT_SHOP_RECOGNISED,
+        data: {
+          proof: d.proof,
+          hasToken: d.hasToken,
+          alreadySignedIn: d.alreadySignedIn,
+          codeIssued,
+          ...(noCode ? { noCode } : {}),
+        },
+      });
+    if (d.action === "handover") {
+      // Another shop customer is signed in to this chat session (shared
+      // browser): end that link, issue no code. /api/auth/me then answers
+      // signed-out and the widget wipes its transcript and rotates the
+      // session; the next tab links the new person on a fresh session.
+      await endSessionSignedInLink(sessionId);
+      await recognised(false, "handover");
+      return json({ signedIn: false });
+    }
+    if (d.action === "no_code") {
+      await recognised(false, d.noCode);
+      return json({ signedIn: false });
+    }
+
     // 2) Enrich IDENTITY → name + verified email via the Admin API (read_customers).
     //    No customer token is involved (shop-native login). Best-effort: a degraded
     //    name still reports signed-in.
@@ -102,7 +187,7 @@ export async function GET(req: Request) {
     //    whoami?session=<stranger's session>. The code travels only in this
     //    same-origin response to the shopper's own page; the widget redeems it
     //    at POST /api/auth/link with its x-ms-session (migration 0073).
-    //    Best-effort — a DB miss degrades to "signed-in, no history", never an error.
+    //    No code (a DB miss) → {signedIn:false}: signedIn:true always carries a code.
     let customerId: number | null = null;
     let linkCode: string | null = null;
     try {
@@ -110,15 +195,20 @@ export async function GET(req: Request) {
         shopifyCustomerId: auth.shopifyCustomerId,
         shopifyCustomerGid: gid,
         email: identity?.email ?? null,
-        sessionId: auth.sessionId,
+        sessionId,
       });
       customerId = bind?.customerId ?? null;
-      if (customerId != null && auth.sessionId) {
-        linkCode = await mintSessionLinkGrant({ sessionId: auth.sessionId, customerId, kind: "app_proxy" });
+      if (customerId != null) {
+        linkCode = await mintSessionLinkGrant({ sessionId, customerId, kind: "app_proxy" });
       }
     } catch (err) {
       reportError(err, { route: "api/auth/storefront", phase: "bind" });
     }
+    if (linkCode == null) {
+      await recognised(false, "failed");
+      return json({ signedIn: false });
+    }
+    await recognised(true, null);
 
     // 4) At-sign-in marketing opt-in state — the SAME shared contract as
     //    /api/auth/me (lib/signed-in-identity), so the opt-in card never diverges

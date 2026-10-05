@@ -10,7 +10,7 @@ import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
 import type { KpiRange } from "@/lib/kpi-range";
 import { formatAdmin, ADMIN_DATE_PADDED } from "@/lib/admin-datetime.mjs";
 import { num, ratio } from "@/lib/admin-format.mjs";
-import { Stat } from "../../ui";
+import { Stat, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../ui";
 import { StageFunnelChart } from "../charts";
 import { Explain, FunnelLayout, KpiSection, StatGrid, SubHeading } from "../KpiSection";
 
@@ -19,7 +19,9 @@ const INFO = (
     <p>
       Nach der Anmeldung fragt das Widget Kund:innen, die noch nicht entschieden haben, nach der
       Marketing-Einwilligung (Popup, Text aus <code>/api/consent-copy?surface=signin</code>): angezeigt →
-      akzeptiert („Ja, Angebote aktivieren“). Wer im Shop schon angemeldet ist, wird nicht gefragt.
+      akzeptiert („Ja, Angebote aktivieren“). Wer schon für Angebote angemeldet ist (im Shop oder bei Mo),
+      wird nicht gefragt; wer in einer Sitzung abgelehnt hat oder das Popup in 3 Sitzungen gesehen hat,
+      30 Tage lang auch nicht.
     </p>
     <p>
       Alle vier Events sendet das Widget (<code>consent_gate_shown</code> / <code>_accepted</code> /{" "}
@@ -30,6 +32,15 @@ const INFO = (
     </p>
   </Explain>
 );
+
+const BY_WAY_INFO =
+  "Sitzungen, nicht Events: je Sitzung zählt der letzte Stand (ein Akzeptieren mit anschließendem Wegklicken zählt einmal, als akzeptiert). „Über „Anmelden““ = im Chat angemeldet, „Über Shop-Login erkannt“ = vom Shop erkannt (App Proxy). „Opt-in (Server)“ = das vom Server gespeicherte Opt-in (email_capture_marketing_opted_in, trigger signin_optin) in derselben Sitzung.";
+
+const WAY_LABELS: Record<"signin" | "shop" | "unknown", string> = {
+  signin: "Über „Anmelden“",
+  shop: "Über Shop-Login erkannt",
+  unknown: "Ohne Anmelde-Event",
+};
 
 const CHAT_RETIRED = formatAdmin(`${RETIRED_CONSENT_GATE_SURFACES.chat}T12:00:00Z`, ADMIN_DATE_PADDED);
 
@@ -75,6 +86,39 @@ export function ConsentGateSection({ funnel, range }: { funnel: ConsentGateFunne
             <Stat label="Abgelehnt" value={num(signin.declined)} />
             <Stat label="Weggeklickt" value={num(signin.dismissed)} />
           </FunnelLayout>
+
+          {(funnel.signinByWay.signin.shown > 0 || funnel.signinByWay.shop.shown > 0 || funnel.signinByWay.unknown.shown > 0) && (
+            <>
+              <SubHeading info={BY_WAY_INFO}>Nach Anmeldeweg</SubHeading>
+              <Table className="text-xs [&_td]:tabular-nums">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Weg</TableHead>
+                    <TableHead align="right">Angezeigt</TableHead>
+                    <TableHead align="right">Akzeptiert</TableHead>
+                    <TableHead align="right">Akzeptanzrate</TableHead>
+                    <TableHead align="right">Opt-in (Server)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(["signin", "shop", "unknown"] as const)
+                    .filter((way) => way !== "unknown" || funnel.signinByWay.unknown.shown > 0)
+                    .map((way) => {
+                      const c = funnel.signinByWay[way];
+                      return (
+                        <TableRow key={way}>
+                          <TableCell className="font-medium">{WAY_LABELS[way]}</TableCell>
+                          <TableCell align="right">{num(c.shown)}</TableCell>
+                          <TableCell align="right">{num(c.accepted)}</TableCell>
+                          <TableCell align="right">{c.shown > 0 ? ratio(c.accepted / c.shown) : "—"}</TableCell>
+                          <TableCell align="right">{num(c.optedIn)}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                </TableBody>
+              </Table>
+            </>
+          )}
 
           {chat.shown > 0 && (
             <>

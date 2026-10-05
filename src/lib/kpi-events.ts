@@ -83,6 +83,11 @@ export const KPI_ACCOUNT_SIGNIN_LINKED = "account_signin_linked";
 /** POST /api/auth/link refused a code. `data: {reason}` — invalid (expired, used,
  * unknown) | session_mismatch (another session's code: a planted link or a widget bug). */
 export const KPI_ACCOUNT_SIGNIN_LINK_REFUSED = "account_signin_link_refused";
+/** Shopify's App Proxy (whoami) vouched for a logged-in shop customer on a
+ * signed, fresh request (P0.3). Session-keyed; `data: {proof: token|shop|none,
+ * hasToken, alreadySignedIn, codeIssued, noCode?: flag_off|no_proof|handover|failed}`
+ * — never a customer id, name, e-mail, the code or the URL. */
+export const KPI_ACCOUNT_SHOP_RECOGNISED = "account_shop_recognised";
 /** A signed-in customer requested their GDPR data export. */
 export const KPI_ACCOUNT_EXPORT_REQUESTED = "account_export_requested";
 /** A signed-in customer completed self-service erasure. */

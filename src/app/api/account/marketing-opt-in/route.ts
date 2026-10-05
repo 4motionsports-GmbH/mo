@@ -153,7 +153,13 @@ export async function POST(req: Request) {
     await linkCustomerOnEmailCapture({ email, sessionId });
     // Report the act to the one consent (pending until the DOI link is
     // clicked; nothing goes to Shopify before that).
-    await recordMoOptIn({ email, surface: "mo_signin", captureId: capture.id, doiPending: capture.doiEmailRequired });
+    await recordMoOptIn({
+      email,
+      surface: "mo_signin",
+      captureId: capture.id,
+      doiPending: capture.doiEmailRequired,
+      signInProof: guard.proof,
+    });
 
     // Funnel telemetry (pseudonymous, session-keyed — NO email in the data),
     // tagged so the opt-in surface can be split out from the in-chat capture.

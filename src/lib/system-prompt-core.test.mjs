@@ -556,3 +556,9 @@ test("signed in wins over a captured e-mail and over the cap", () => {
     assert.doesNotMatch(p, /### Zusammenfassung per E-Mail/);
   }
 });
+
+test("order status on: the shop-login variant of sign_in_required (DE + EN)", () => {
+  const base = { profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], orderStatus: true };
+  assert.match(buildSystemPrompt(base), /signedInViaShop: true`: Der Kunde IST über den Shop-Login erkannt/);
+  assert.match(buildSystemPrompt({ ...base, locale: "en" }), /signedInViaShop: true`: the customer IS recognised through the shop login/);
+});

@@ -4,13 +4,13 @@
 //
 //   1. guardRequest      — origin allowlist + shared secret (like /api/chat).
 //   2. rate limit        — the chat bucket (same widget surface).
-//   3. resolveSignedInCustomer(session) — the conversation's session must link
-//      to a customer with a shopify_customer_id. Anonymous (no customer) and
-//      email-only (tier-2, no shopify_customer_id) callers resolve to null →
-//      FAIL CLOSED here, before any history is touched.
-//   4. getValidAccessToken — prove the session is STILL authenticated (refresh
-//      if needed), exactly like /api/auth/me. A logged-out / expired session
-//      can't read or mutate history.
+//   3. resolveLiveSignedInCustomer(session) — the session must be signed in
+//      (a chat sign-in or the shop's App Proxy; a typed e-mail never counts)
+//      AND still live, exactly like /api/auth/me: a valid access token
+//      (refreshed if needed) for a chat sign-in, or a fresh shop proof under
+//      APP_PROXY_SIGNIN_MAX_AGE_HOURS (D-AP1). Anything else FAILS CLOSED here,
+//      before any history is touched. The guard returns the proof, so a route
+//      can record it (the opt-in's consent evidence).
 //
 // On success the caller gets the resolved customer id + the CORS headers to
 // attach to its response. On any failure it gets a ready-made Response.
@@ -18,14 +18,15 @@
 import { corsHeaders, guardRequest } from "./security";
 import { checkRateLimit, rateLimitResponse } from "./rate-limit";
 import { errorResponse } from "./observability";
-import { resolveSignedInCustomer } from "./customer-store";
-import { getValidAccessToken } from "./customer-oauth-store";
+import { resolveLiveSignedInCustomer, type SignedInProof } from "./signed-in-session";
 
 export type SignedInGuard =
   | {
       ok: true;
       customerId: number;
       shopifyCustomerId: string;
+      /** token = chat sign-in with a live token; shop = App Proxy shop proof. */
+      proof: SignedInProof;
       headers: Record<string, string>;
     }
   | { ok: false; response: Response };
@@ -53,22 +54,19 @@ export async function requireSignedInCustomer(
   if (!rl.ok) return { ok: false, response: rateLimitResponse(rl.retryAfter, headers) };
 
   const sessionId = readSession(req);
-  const resolved = await resolveSignedInCustomer(sessionId);
-  if (!resolved) {
-    // Anonymous / email-only / unlinked session → fail closed.
+  const resolved = await resolveLiveSignedInCustomer(sessionId);
+  if ("fail" in resolved) {
+    // Anonymous / email-only / unlinked → „Nicht angemeldet“; a signed-in
+    // link whose proof ran out (no live token, shop proof too old) →
+    // „Sitzung abgelaufen“.
     return {
       ok: false,
-      response: errorResponse("unauthorized", "Nicht angemeldet", 401, headers),
-    };
-  }
-
-  // Prove the session is still live (refresh if needed) before exposing any
-  // history — a logged-out / expired session resolves to nothing.
-  const token = await getValidAccessToken(resolved.customerId);
-  if (!token) {
-    return {
-      ok: false,
-      response: errorResponse("unauthorized", "Sitzung abgelaufen", 401, headers),
+      response: errorResponse(
+        "unauthorized",
+        resolved.fail === "expired" ? "Sitzung abgelaufen" : "Nicht angemeldet",
+        401,
+        headers
+      ),
     };
   }
 
@@ -76,6 +74,7 @@ export async function requireSignedInCustomer(
     ok: true,
     customerId: resolved.customerId,
     shopifyCustomerId: resolved.shopifyCustomerId,
+    proof: resolved.proof,
     headers,
   };
 }

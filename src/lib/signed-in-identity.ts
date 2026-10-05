@@ -6,6 +6,9 @@
 
 import { getCustomerById, type CustomerMarketingStatus } from "./customer-store";
 import { reportError } from "./observability";
+import { getSql } from "./db";
+import { isConsentAskQuiet } from "./consent-ask-policy.mjs";
+import { KPI_CONSENT_GATE_DECLINED, KPI_CONSENT_GATE_SHOWN } from "./kpi-events";
 
 // A tier-3 row created with no verified Shopify email claim is keyed by this
 // synthetic placeholder — it can't receive a DOI / marketing mail, so the
@@ -45,7 +48,9 @@ export interface MarketingOptInState {
  * (Shopify or Mo): a customer subscribed in Shopify reads "confirmed" and is
  * never asked again. Any DOI decision already on record
  * (pending / confirmed / unsubscribed) — or a synthetic placeholder email — makes
- * it non-actionable. Best-effort + fail-closed: a read failure degrades to
+ * it non-actionable, and so does a decline of the popup in any of the
+ * customer's sessions in the last 30 days or the popup shown in 3 sessions
+ * (anti-nag). Best-effort + fail-closed: a read failure degrades to
  * "not actionable" (never invite an opt-in we can't substantiate) and is logged.
  */
 export async function resolveMarketingOptInState(
@@ -55,12 +60,38 @@ export async function resolveMarketingOptInState(
   try {
     const customer = await getCustomerById(customerId);
     if (!customer) return { status: "none", optInActionable: false };
+    const actionable = hasRealEmail(customer.email) && customer.marketingStatus === "none";
     return {
       status: customer.marketingStatus,
-      optInActionable: hasRealEmail(customer.email) && customer.marketingStatus === "none",
+      optInActionable: actionable && !(await consentAskQuiet(customerId)),
     };
   } catch (err) {
     reportError(err, { route, phase: "marketingState" });
     return { status: "none", optInActionable: false };
   }
+}
+
+/**
+ * Per-customer anti-nag (P0.3 Phase 2, consent-ask-policy.mjs): across ALL the
+ * customer's linked sessions in the last 30 days, a decline of the consent
+ * popup — or the popup shown in 3 sessions — stops the ask. The widget only
+ * remembers per device / tab. Throws to the caller, which fails closed.
+ */
+async function consentAskQuiet(customerId: number): Promise<boolean> {
+  const sql = getSql();
+  if (!sql) return true;
+  const rows = (await sql`
+    SELECT count(DISTINCT k.session_id) FILTER (WHERE k.event = ${KPI_CONSENT_GATE_DECLINED})::int AS declined_sessions,
+           count(DISTINCT k.session_id) FILTER (WHERE k.event = ${KPI_CONSENT_GATE_SHOWN})::int    AS shown_sessions
+      FROM customer_session_links l
+      JOIN kpi_events k ON k.session_id = l.session_id
+     WHERE l.customer_id = ${customerId}
+       AND k.event IN (${KPI_CONSENT_GATE_SHOWN}, ${KPI_CONSENT_GATE_DECLINED})
+       AND k.data->>'surface' = 'signin'
+       AND k.created_at >= now() - interval '30 days'
+  `) as Array<{ declined_sessions: number; shown_sessions: number }>;
+  return isConsentAskQuiet({
+    declinedSessions: rows[0]?.declined_sessions ?? 0,
+    shownSessions: rows[0]?.shown_sessions ?? 0,
+  });
 }
