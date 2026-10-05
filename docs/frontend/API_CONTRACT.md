@@ -28,13 +28,13 @@ Every widget change keeps all of these. They are referenced as "§0 rule n".
 3. **Contract changes are additive:** new fields are optional, the widget keeps working against an older backend and the backend against an older widget (the widget sends no version header); new backend behaviour stays behind a switch until the widget is live ("no-op if the widget ships later").
 4. **No new request header:** the CORS allow-list is exactly `Content-Type, x-ms-chat-key, x-ms-session, x-ms-locale` (`src/lib/security.ts`); new data travels in the JSON body or the query.
 5. **The shared secret is not authentication:** it is visible in the page and works only together with the origin allow-list and the rate limits (§1 "Security model"); deploy only on allow-listed origins and never pretend to hide the key.
-6. **One session id everywhere:** `x-ms-session` = KPI `sessionId` = `?session=` on sign-in, logout, whoami and `/api/auth/me`; never rotated around a sign-in or while signed in (§6, ACCOUNT_CONTRACT §1).
+6. **One session id everywhere:** `x-ms-session` = KPI `sessionId` = `?session=` on sign-in, logout, whoami and `/api/auth/me`; never rotated around a sign-in or while signed in (§6, ACCOUNT_CONTRACT.md §1).
 7. **The raw session id never goes into a cart attribute, a cart permalink or any shop URL;** attribution uses only the server-minted `cartAttributes`, and only with Shopify analytics consent (§10).
-8. **Consent and legal copy comes only from the backend** (§7.4, the `offer_email_summary` output), rendered verbatim with `textContent`, never hard-coded or translated by the widget; `consentTextShown` is echoed byte for byte (CONSENT_CONTRACT §1).
-9. **Nothing pre-selected, decline as easy to reach as accept,** `marketingConsent: true` only from an explicit user act (CONSENT_CONTRACT §1).
+8. **Consent and legal copy comes only from the backend** (§7.4, the `offer_email_summary` output), rendered verbatim with `textContent`, never hard-coded or translated by the widget; `consentTextShown` is echoed byte for byte (CONSENT_CONTRACT.md §1).
+9. **Nothing pre-selected, decline as easy to reach as accept,** `marketingConsent: true` only from an explicit user act (CONSENT_CONTRACT.md §1).
 10. **Fail closed on legal copy:** no valid served copy (for the signed-in surfaces: `lawyerApproved === true`, `marketingLabel`, `consentTextShown`) means no consent UI, silently.
 11. **Served framing vs widget chrome:** the consent popup's and card's headline and benefit bullets are served (`headline`, `benefits`, §7.4) — the widget adds no consent-surface text of its own beyond button captions and status lines; the sign-in popup is UI, not consent, so its text may live in the widget.
-12. **Tiers are additive:** anonymous and e-mail-only behaviour stays unchanged when signed-in features change; a signed-in customer never gets the typed-e-mail capture form except as the `422 no_verified_email` fallback (ACCOUNT_CONTRACT §6.0, §6.1).
+12. **Tiers are additive:** anonymous and e-mail-only behaviour stays unchanged when signed-in features change; a signed-in customer never gets the typed-e-mail capture form except as the `422 no_verified_email` fallback (ACCOUNT_CONTRACT.md §6.0, §6.2).
 13. **KPI payloads carry ids, enums and booleans only** — never message text, transcripts, names, e-mails, product names, the browsing trail, URLs, tokens or codes (§5).
 14. **Never send a server-only event** (§5 server table); `/api/kpi` acknowledges and drops them.
 15. **KPI names:** never rename an event the backend reads by name (§5); name new events with the dashboard's patterns in mind (`%cart%`, `%checkout%` count as add-to-cart clicks, `%product%click%`, `%cta%click%` as product clicks).
@@ -45,7 +45,7 @@ Every widget change keeps all of these. They are referenced as "§0 rule n".
 20. **`customer.email`** is attached only after a successful capture in the current chat session and kept in memory only (§2 "Optional `customer`").
 21. **The campaign token stays session-less:** read from `mo_c`, kept in sessionStorage, sent once as `campaignToken`; never in KPI, localStorage, cookies or logs (§2 "Optional `campaignToken`").
 22. **Tone:** proactive copy references the page or category, never the visitor's behaviour; the nudge never asks for an e-mail.
-23. **Sign-in is a top-level redirect** (no popup window, no XHR login) and counts only after the one-time code was redeemed (ACCOUNT_CONTRACT §2, §2a).
+23. **Sign-in is a top-level redirect** (no popup window, no XHR login) and counts only after the one-time code was redeemed (ACCOUNT_CONTRACT.md §2, §2a).
 24. **Shared limits move together:** 40 messages per `/api/chat` request, 10 ids per `/api/products`, trail ≤ 3 products + 2 categories, campaign token `^[A-Za-z0-9_-]{16,64}$`, one-time code 10 min, `benefits` 1–4 strings of ≤ 200 chars, 20 Q&A entries per product (`QA_MAX_PER_PRODUCT` vs the PDP snippet's `limit: 20`), TTS chunking mirrors `splitIntoTtsChunks()` (§8).
 25. **Theme ownership:** `custom.*` metafields belong to merchandising except `custom.qa` (written by the backend; its `a_html` is pre-sanitised by the backend and output raw on the PDP); theme settings and editor-owned templates (e.g. the „MO only“ CTA block) are changed in the theme editor, not in code.
 
@@ -78,24 +78,24 @@ fresh within 300 s. **Bucket:** see "Rate limits" below.
 | POST | `/api/tts` | secret | `tts` / `tts-stream` | §8 |
 | POST | `/api/feedback` | secret | `feedback` | §9 |
 | POST | `/api/attribution/token` | secret | `kpi` | §10 |
-| POST | `/api/auth/link` | secret | `chat` | [ACCOUNT_CONTRACT §2a](./ACCOUNT_CONTRACT.md) |
-| GET | `/api/auth/me` | secret | `chat` | ACCOUNT_CONTRACT §4 |
-| GET | `/api/account/conversations` | signed-in | `chat` | ACCOUNT_CONTRACT §7.1 |
-| GET / PATCH / DELETE | `/api/account/conversations/{id}` | signed-in | `chat` | ACCOUNT_CONTRACT §7.2–§7.4 |
-| POST | `/api/account/erase` | signed-in | `chat` | ACCOUNT_CONTRACT §7.5 |
-| GET | `/api/account/export` | signed-in | `chat` | ACCOUNT_CONTRACT §7.7 |
-| GET | `/api/account/summary` | signed-in | `chat` | ACCOUNT_CONTRACT §8 |
-| POST | `/api/account/marketing-opt-in` | signed-in | `chat` | ACCOUNT_CONTRACT §6.1 |
+| POST | `/api/auth/link` | secret | `chat` | [ACCOUNT_CONTRACT.md §2a](./ACCOUNT_CONTRACT.md) |
+| GET | `/api/auth/me` | secret | `chat` | ACCOUNT_CONTRACT.md §4 |
+| GET | `/api/account/conversations` | signed-in | `chat` | ACCOUNT_CONTRACT.md §7.1 |
+| GET / PATCH / DELETE | `/api/account/conversations/{id}` | signed-in | `chat` | ACCOUNT_CONTRACT.md §7.2–§7.4 |
+| POST | `/api/account/erase` | signed-in | `chat` | ACCOUNT_CONTRACT.md §7.5 |
+| GET | `/api/account/export` | signed-in | `chat` | ACCOUNT_CONTRACT.md §7.7 |
+| GET | `/api/account/summary` | signed-in | `chat` | ACCOUNT_CONTRACT.md §8 |
+| POST | `/api/account/marketing-opt-in` | signed-in | `chat` | ACCOUNT_CONTRACT.md §6.2 |
 
 **Top-level navigations and the App Proxy**
 
 | Method | Path | Guard | Shape |
 | --- | --- | --- | --- |
-| GET | `/api/auth/shopify/login` | nav | ACCOUNT_CONTRACT §2 |
-| GET | `/api/auth/shopify/callback` — Shopify redirects the browser here; the widget never calls it | nav | ACCOUNT_CONTRACT §2, §2a |
-| GET | `/api/auth/shopify/logout` | nav | ACCOUNT_CONTRACT §5 |
-| GET | `/api/auth/shopify/logout/return` — Shopify redirects here after logout | nav | ACCOUNT_CONTRACT §5 |
-| GET | storefront `/apps/{proxy}/whoami` (same origin) → `/api/auth/storefront/whoami`; `/api/auth/storefront` answers identically | proxy (`chat` bucket, keyed by its `?session=`) | ACCOUNT_CONTRACT §3a |
+| GET | `/api/auth/shopify/login` | nav | ACCOUNT_CONTRACT.md §2 |
+| GET | `/api/auth/shopify/callback` — Shopify redirects the browser here; the widget never calls it | nav | ACCOUNT_CONTRACT.md §2, §2a |
+| GET | `/api/auth/shopify/logout` | nav | ACCOUNT_CONTRACT.md §5 |
+| GET | `/api/auth/shopify/logout/return` — Shopify redirects here after logout | nav | ACCOUNT_CONTRACT.md §5 |
+| GET | storefront `/apps/{proxy}/whoami` (same origin) → `/api/auth/storefront/whoami`; `/api/auth/storefront` answers identically | proxy (`chat` bucket, keyed by its `?session=`) | ACCOUNT_CONTRACT.md §3a |
 
 **Not called by the widget.** Mail links (top-level navigations from e-mails, HTML or redirect, no
 CORS and no secret — a mail client sends no `Origin` and no custom header; protected by unguessable
@@ -156,14 +156,14 @@ endpoint answers with which status is listed in its section.
 | --- | --- | --- |
 | `bad_request` | 400 (404 on `/api/account/conversations/{id}` and `/api/account/summary` for a conversation that does not exist or is not the customer's) | Invalid JSON, a missing or invalid field (incl. an invalid e-mail on `/api/capture-email`) |
 | `unauthorized` | 401 | Missing or wrong `x-ms-chat-key`; on `signed-in` endpoints also no live sign-in (message „Nicht angemeldet“ or „Sitzung abgelaufen“) |
-| `forbidden` | 403 | Origin not in the allowlist |
+| `forbidden` | 403 | Origin not in the allowlist (the answer carries no CORS headers, so a browser reports a network error) |
 | `not_found` | 404 | `/api/account/marketing-opt-in`: the customer row does not exist |
 | `rate_limited` | 429 | Bucket exhausted; `Retry-After` set |
 | `payload_too_large` | 400 (`/api/chat`, `/api/products`), 413 (`/api/feedback`) | Over a size cap |
 | `transactional_consent_required` | 400 | `/api/capture-email` without the transactional tick |
 | `marketing_consent_required` | 400 | `/api/chat-marketing-opt-in`, `/api/account/marketing-opt-in` without `marketingConsent: true` |
 | `invalid_email` | 400 | `/api/chat-marketing-opt-in` |
-| `no_verified_email` | 422 | `/api/account/marketing-opt-in`: the customer has no usable address (widget fallback: ACCOUNT_CONTRACT §6.1) |
+| `no_verified_email` | 422 | `/api/account/marketing-opt-in`: the customer has no usable address (widget fallback: CONSENT_CONTRACT.md §3.2) |
 | `upstream_unavailable` | 502 / 503 | A provider failed (mail, TTS: 502) or nothing could be stored (no database: 503) |
 | `internal_error` | 500 | Anything else |
 
@@ -249,7 +249,7 @@ key. The widget MAY send a **`conversationKey`** (a stable, client-generated per
 - **Omitted** → defaults to `session_id` server-side (legacy one-thread-per-session; fully
   backward-compatible).
 - Distinct from the numeric `conversationId` used by `/api/account/conversations/{id}`. Same
-  trust/entropy expectation as `session_id`. The signed-in thread flow: ACCOUNT_CONTRACT §7.6.
+  trust/entropy expectation as `session_id`. The signed-in thread flow: ACCOUNT_CONTRACT.md §7.6.
 
 #### Optional `context` — opening the chat "about" a product and/or with a browsing trail
 
@@ -387,7 +387,7 @@ Therefore:
   strictly by the email the user just provided in this session. A **signed-in** (tier 3) session is
   the exception: its live sign-in is the re-identification, so the greeting by name and the memory
   (consent permitting) come from the session itself, without a `customer` field
-  (ACCOUNT_CONTRACT §4).
+  (ACCOUNT_CONTRACT.md §4).
 
 #### Optional `campaignToken` — a chat opened from a campaign mail („Chat-Start“)
 
@@ -724,7 +724,7 @@ conversation**: the server withholds the tool after the second ask and once `cus
 attached. When a turn calls `add_to_cart` without an offer, the backend may append one step whose only
 tool is this one (best effort; never after an `email_capture_declined` of the session). **Not offered
 to a signed-in (tier-3) session** (since 2026-10-05); the widget's own tier-3 suppression stays for
-parts stored before a sign-in (ACCOUNT_CONTRACT §6.0).
+parts stored before a sign-in (ACCOUNT_CONTRACT.md §6.0).
 
 Input schema:
 ```ts
@@ -785,7 +785,7 @@ the same `toolCallId`):
 }
 ```
 Widget action: render `message` as the intro, then the capture form from `output.consentCopy` as
-CONSENT_CONTRACT §4 prescribes (two separate, unchecked boxes; transactional required; footer with
+CONSENT_CONTRACT.md §4 prescribes (two separate, unchecked boxes; transactional required; footer with
 imprint and privacy links; `returningHint` only when `enabled`). Submit to `POST /api/capture-email`
 (§7.1) with the two booleans, `consentTextShown` echoed byte for byte, the tool's `trigger` (telemetry
 only) and `locale`. `productIds` is advisory (cart preview); the backend determines the real products
@@ -829,7 +829,7 @@ The widget renders **nothing** for them — no card, no placeholder, no "tool us
   Never show, log or forward the output (KPI, analytics, error reports); it stays only in the history
   the widget keeps. The backend never trusts a replayed output — it replaces it with
   `{ replayed: true }` before the model sees it, so nothing needs filtering. Because the stored history
-  can hold order facts, the widget drops it when a sign-in ends (ACCOUNT_CONTRACT §5, §7.5).
+  can hold order facts, the widget drops it when a sign-in ends (ACCOUNT_CONTRACT.md §5.1).
 
 The same render-nothing rule holds for any tool name the widget does not know (assembly rules above).
 
@@ -1197,7 +1197,7 @@ row, else `mo`.
 
 **Sign-in opt-in extras.** Both `signin_optin` events additionally carry `alreadyConfirmed` and
 `doiRequired` (booleans, the same values as the response), `placement?` and `variant?` (the validated
-echo of the opt-in POST, ACCOUNT_CONTRACT §6.1; left out when unknown) and, only while more than one
+echo of the opt-in POST, ACCOUNT_CONTRACT.md §6.2; left out when unknown) and, only while more than one
 consent-popup variant is active, `variantMismatch: true` when the echoed variant is not the one this
 session is assigned (§7.4).
 
@@ -1224,7 +1224,7 @@ the session the login used (`login?session=`).
 ### Consent-gate events (canonical names)
 
 The marketing consent ask for **signed-in** customers (a popup after sign-in, plus the inline card
-after a mid-conversation sign-in; when to show it: ACCOUNT_CONTRACT §6.1) is measured through four
+after a mid-conversation sign-in; when to show it: ACCOUNT_CONTRACT.md §6.1) is measured through four
 **widget** events (names in `src/lib/kpi-events.ts`; the backend observes the accept only as the
 opt-in POST). Each carries `data: { surface: "signin", placement?, variant? }`:
 
@@ -1238,7 +1238,7 @@ The dashboard shows a missing or unknown `placement` / `variant` as „unbekannt
 
 | Event                    | When                                                        |
 | ------------------------ | ----------------------------------------------------------- |
-| `consent_gate_shown`     | The popup/card was rendered (once per session per surface). |
+| `consent_gate_shown`     | The popup or card was rendered (once per tab session for the ask). |
 | `consent_gate_accepted`  | The explicit „Ja, Angebote aktivieren“ tap.                 |
 | `consent_gate_declined`  | The explicit decline tap.                                   |
 | `consent_gate_dismissed` | Closed without an explicit accept/decline.                  |
@@ -1325,7 +1325,7 @@ What the backend keys by it:
 - **Rate limits** (`sid:<uuid>`, else the IP; §1). A stable id keeps one customer's bursts isolated
   from another's, and an abusive client can't rotate to a fresh bucket by reloading.
 - **The sign-in.** The one-time code is redeemed only for the session that started the sign-in, and
-  the signed-in link is that session's (ACCOUNT_CONTRACT §1, §2a).
+  the signed-in link is that session's (ACCOUNT_CONTRACT.md §1, §2a).
 - **KPI events** (§5), the same-session check behind `customer.email` (§2), the attribution token
   (§10) and the consent-popup variant (§7.4).
 
@@ -1333,7 +1333,7 @@ What the backend keys by it:
 
 - Never around a sign-in, and never while signed in — the id is the identity link. When a sign-in
   ends (sign-out, erase, a sign-in the server reports ended), the widget drops the stored history and
-  starts a new id (ACCOUNT_CONTRACT §5, §7.5).
+  starts a new id (ACCOUNT_CONTRACT.md §5.1).
 - A new conversation is a fresh `conversationKey`, not a new session id. Anonymous and e-mail-only
   visitors MAY also rotate the id when they start a new chat.
 - The 40-message cap (§2) is per request — the history of one thread. After `payload_too_large` the
@@ -1345,7 +1345,7 @@ What the backend keys by it:
 
 The capture form collects two **separate** consents — transactional (the summary) and marketing — and a
 marketing opt-in on a Mo surface requires a **double opt-in**. How the widget renders the consent
-surfaces: CONSENT_CONTRACT. Legal rationale and data model: backend doc `CONSENT_FLOW.md`. The German
+surfaces: CONSENT_CONTRACT.md. Legal rationale and data model: backend doc `CONSENT_FLOW.md`. The German
 checkbox/email copy is lawyer-approved (`lawyerApproved: true`); the English copy is approved as its
 translation (§12).
 
@@ -1367,7 +1367,7 @@ additive, no field changed:
   step.
 - A `pending` opt-in whose DOI link was never clicked falls back to „no consent“ one day after the link
   expired (`MARKETING_DOI_EXPIRY_DAYS` + 1, nightly, local only). The surfaces may then ask again
-  (signed-in gating: ACCOUNT_CONTRACT §6.1).
+  (signed-in gating: ACCOUNT_CONTRACT.md §6.1).
 
 ### 7.1 `POST /api/capture-email`
 
@@ -1492,7 +1492,7 @@ Which sends a suppression blocks: backend doc `CONSENT_FLOW.md`, "Suppression & 
 ### 7.4 `GET /api/consent-copy`
 
 Serves the canonical consent copy for the widget's consent surfaces. When the widget shows each
-surface: CONSENT_CONTRACT. The widget sources all consent copy from this endpoint or from the
+surface: CONSENT_CONTRACT.md. The widget sources all consent copy from this endpoint or from the
 `offer_email_summary` output (§2) and never hard-codes it — the strings are the Art. 7 audit text.
 
 Like `/api/products`: **no shared secret** (the strings are public form copy), origin allowlist + rate
@@ -1503,8 +1503,8 @@ limit only (`products` bucket, 60 req / 60 s). Send `x-ms-session` — it keys t
 
 ```
 GET /api/consent-copy                   # in-chat capture form (default) — submit: §7.1
-GET /api/consent-copy?surface=signin    # consent popup / inline card after a sign-in — submit: ACCOUNT_CONTRACT §6.1
-GET /api/consent-copy?surface=erase     # „Meine Daten löschen“ confirmation — flow: ACCOUNT_CONTRACT §7.5
+GET /api/consent-copy?surface=signin    # consent popup / inline card after a sign-in — submit: ACCOUNT_CONTRACT.md §6.2
+GET /api/consent-copy?surface=erase     # „Meine Daten löschen“ confirmation — flow: ACCOUNT_CONTRACT.md §7.5
 GET /api/consent-copy?surface=chat      # chat consent gate — not used by the widget since 2026-10-01 (§7.6)
 ```
 
@@ -1514,14 +1514,14 @@ Every surface accepts `?locale=en` (default German, §12). Every consent surface
 **`surface=signin`** (and the legacy `surface=chat`) share one payload shape: `headline`,
 `marketingLabel`, `consentFooter`, `consentTextShown`, `imprintUrl`, `privacyUrl`, `lawyerApproved`,
 `version`, `locale`, `enLegalReviewed`. `headline` is benefit framing and NOT part of
-`consentTextShown` (label + footer only). Both are **button-consent** surfaces (CONSENT_CONTRACT §1).
+`consentTextShown` (label + footer only). Both are **button-consent** surfaces (CONSENT_CONTRACT.md §1).
 `lawyerApproved` is `true`; `false` would mean "not signed off" (§0 rule 10).
 
 `surface=signin` additionally carries `benefits` and `variant` (v5, 2026-10-05):
 
 ```jsonc
 "variant": "a",              // framing variant id (^[a-z0-9_-]{1,32}$) — echoed as `variant` in the
-                             // consent_gate_* KPI data (§5) and the opt-in POST (ACCOUNT_CONTRACT §6.1)
+                             // consent_gate_* KPI data (§5) and the opt-in POST (ACCOUNT_CONTRACT.md §6.2)
 "benefits": [                // 1–4 short bullets (≤ 200 chars each) under the headline — framing like the
   "Angebote, die zu deiner Beratung passen",          // headline, NEVER part of consentTextShown
   "Exklusive Rabatt-Aktionen nur für Abonnenten",
@@ -1532,7 +1532,7 @@ Every surface accepts `?locale=en` (default German, §12). Every consent surface
 ```
 
 How the widget renders `benefits` (verbatim, all or nothing, never its own bullets) and echoes
-`variant`: CONSENT_CONTRACT §3.1. Neither key is required: a missing or invalid `benefits` / `variant`
+`variant`: CONSENT_CONTRACT.md §3.1. Neither key is required: a missing or invalid `benefits` / `variant`
 never hides the popup or the card. Only variant `a` is served by default
 (`CONSENT_SIGNIN_VARIANTS=a`). While **more than one variant** is active, the variant is assigned per
 session from the `x-ms-session` header of this GET, and the response is `Cache-Control: private,
@@ -1571,7 +1571,7 @@ e-mail gate); served for compatibility, do not build on it. Besides the shared s
   "body": "Melde dich mit deinem Kundenkonto an — dann kennt Mo deine Bestellungen und berät dich persönlich.",
   "buttonLabel": "Mit Kundenkonto anmelden",
   "alternativeLabel": "Kein Konto? Angebote per E-Mail erhalten",
-  "loginPath": "/api/auth/shopify/login"   // on the BACKEND origin (ACCOUNT_CONTRACT §2)
+  "loginPath": "/api/auth/shopify/login"   // on the BACKEND origin (ACCOUNT_CONTRACT.md §2)
 }
 ```
 
@@ -1991,16 +1991,16 @@ fail-silent, no consent check needed).
 
 The widget calls none of these. They are listed because they act on the data the widget creates
 (consents, conversations, the signed-in customer). The widget's own erasure call,
-`POST /api/account/erase`, is ACCOUNT_CONTRACT §7.5. The other mail-asset and provider endpoints (§1
+`POST /api/account/erase`, is ACCOUNT_CONTRACT.md §7.5. The other mail-asset and provider endpoints (§1
 "Not called by the widget") are backend matters.
 
 ### 11.1 Erasure — `POST /api/account/erase` and `GET/POST /api/erase-data`
 
 Both run **the one erasure path** (`erasePerson`), the same one as the admin's „Löschen“.
 
-- `POST /api/account/erase` — the signed-in widget XHR; shape and widget flow: ACCOUNT_CONTRACT §7.5.
+- `POST /api/account/erase` — the signed-in widget XHR; shape and widget flow: ACCOUNT_CONTRACT.md §7.5.
 - `/api/erase-data?token=…` (the „Daten löschen“ link in every marketing and campaign mail; the backend
-  appends `&locale=`): `GET` renders a confirmation page with a button (mail scanners open links, so the
+  appends `&locale=en` for English recipients): `GET` renders a confirmation page with a button (mail scanners open links, so the
   link itself never deletes), `POST` (the button) erases. HTML pages: `200`; `400` for an invalid
   token; `503` when nothing could be erased; `500` on an unexpected failure.
 
@@ -2122,21 +2122,21 @@ section that holds the fact; this table repeats none of the detail.
 | Date | Change | Where |
 | --- | --- | --- |
 | 2026-10 | `GET /api/consent-copy?surface=chat` carries `signIn` (UI chrome). | §7.4 |
-| 2026-10 | New `GET /api/consent-copy?surface=erase` — the copy for „Meine Daten löschen“. | §7.4; ACCOUNT_CONTRACT §7.5 |
+| 2026-10 | New `GET /api/consent-copy?surface=erase` — the copy for „Meine Daten löschen“. | §7.4; ACCOUNT_CONTRACT.md §7.5 |
 | 2026-10 | An address that already holds the marketing consent (Shopify or an earlier DOI) gets no DOI mail: `confirmed`, `alreadyConfirmed: true`, `doiEmailSent: false`. | §7 |
-| 2026-10 | `/api/auth/me` `marketing.status` reflects the one consent shared with Shopify. | ACCOUNT_CONTRACT §4 |
-| 2026-10 | `POST /api/account/erase` also reaches Shopify; response unchanged. | §11.1; ACCOUNT_CONTRACT §7.5 |
+| 2026-10 | `/api/auth/me` `marketing.status` reflects the one consent shared with Shopify. | ACCOUNT_CONTRACT.md §4 |
+| 2026-10 | `POST /api/account/erase` also reaches Shopify; response unchanged. | §11.1; ACCOUNT_CONTRACT.md §7.5 |
 | 2026-10 | `POST /api/chat` accepts `campaignToken` (the `mo_c` value of a campaign mail link); the server counts „Chat gestartet“ once per send, session-less. | §2 "Optional `campaignToken`", §11.2 |
-| 2026-10 | „Already subscribed“ only for an address not on the suppression list; an unconfirmed `pending` opt-in falls back to „no consent“ one day after the DOI link expired, so the opt-in may be offered again. | §7; ACCOUNT_CONTRACT §6.1 |
-| 2026-10 | New background tool `get_order_status` (behind `CHAT_ORDER_STATUS_ENABLED`, default off in code): render nothing, keep it in the history; any unknown tool renders nothing. | §2 "Tools the widget MUST NOT render"; history wipe: ACCOUNT_CONTRACT §5 |
+| 2026-10 | „Already subscribed“ only for an address not on the suppression list; an unconfirmed `pending` opt-in falls back to „no consent“ one day after the DOI link expired, so the opt-in may be offered again. | §7; ACCOUNT_CONTRACT.md §6.1 |
+| 2026-10 | New background tool `get_order_status` (behind `CHAT_ORDER_STATUS_ENABLED`, default off in code): render nothing, keep it in the history; any unknown tool renders nothing. | §2 "Tools the widget MUST NOT render"; history wipe: ACCOUNT_CONTRACT.md §5.1 |
 | 2026-10-01 | Widget KPI events `login_gate_*`, `account_signin_started { source }`, `account_signin_return { result }`, `consent_gate_* { surface: "signin" }`; joined by session to the server's sign-in events, so KPI `sessionId`, `x-ms-session` and the login's `session` must be the same id. | §5 |
 | 2026-10-01 | `GET /api/consent-copy?surface=chat` and `POST /api/chat-marketing-opt-in` are no longer used by the widget (the sign-in popup replaced the anonymous e-mail gate); still served. `starter_*` events retired. | §7.4, §7.6, §5 |
-| 2026-10-03 | A sign-in links the chat only after the widget redeems the one-time code (`POST /api/auth/link`); new server events `account_signin_linked`, `account_signin_link_refused`. | ACCOUNT_CONTRACT §2a; §5 |
+| 2026-10-03 | A sign-in links the chat only after the widget redeems the one-time code (`POST /api/auth/link`); new server events `account_signin_linked`, `account_signin_link_refused`. | ACCOUNT_CONTRACT.md §2a; §5 |
 | 2026-10-04 | `POST /api/kpi` acknowledges server-only event names with `202` and does not store them. | §5 |
 | 2026-10-04 | `POST /api/contact` takes an optional body `sessionId` for `contact_form_submitted` (fallback: the `x-ms-session` header). | §4 |
-| 2026-10-05 | Shop-login recognition (App Proxy): whoami answers `signedIn: true` only together with a `linkCode`; new server event `account_shop_recognised`; `account_signin_linked` gains `renewed`, `account_signin_link_refused` an optional `kind`. | ACCOUNT_CONTRACT §3a; §5 |
-| 2026-10-05 | `surface=signin` serves `benefits` (1–4 bullets, never in `consentTextShown`) and `variant`; the copy version is `v5` on every surface; with more than one active variant the variant is assigned per `x-ms-session` and the response is `private, no-store`. | §7.4; rendering: CONSENT_CONTRACT §3.1 |
-| 2026-10-05 | Optional `placement` and `variant` on `POST /api/account/marketing-opt-in` and in the `consent_gate_*` KPI data (telemetry only, never a 400); the opt-in server events gain `placement`, `variant`, `alreadyConfirmed`, `doiRequired`, `variantMismatch`. | ACCOUNT_CONTRACT §6.1; §5 |
+| 2026-10-05 | Shop-login recognition (App Proxy): whoami answers `signedIn: true` only together with a `linkCode`; new server event `account_shop_recognised`; `account_signin_linked` gains `renewed`, `account_signin_link_refused` an optional `kind`. | ACCOUNT_CONTRACT.md §3a; §5 |
+| 2026-10-05 | `surface=signin` serves `benefits` (1–4 bullets, never in `consentTextShown`) and `variant`; the copy version is `v5` on every surface; with more than one active variant the variant is assigned per `x-ms-session` and the response is `private, no-store`. | §7.4; rendering: CONSENT_CONTRACT.md §3.1 |
+| 2026-10-05 | Optional `placement` and `variant` on `POST /api/account/marketing-opt-in` and in the `consent_gate_*` KPI data (telemetry only, never a 400); the opt-in server events gain `placement`, `variant`, `alreadyConfirmed`, `doiRequired`, `variantMismatch`. | ACCOUNT_CONTRACT.md §6.2; §5 |
 | 2026-10-05 | The opt-in server events carry `source` / `outcome`; `email_capture_marketing_confirmed` carries `{ source }`; `/api/capture-email` stores `trigger` only for the five tool values. | §5, §7.1 |
 | 2026-10-05 | A suppressed address is answered `status: "none"`, `alreadyConfirmed: false` on all three opt-in endpoints. A capture submit without the marketing tick keeps a still-pending DOI (`pending`). | §7, §7.1 |
 | 2026-10-05 | `context.source` (`page` \| `cta` \| `nudge`) on `POST /api/chat`; `page` = page facts on a typed or spoken turn, two accepted shapes, used only behind `CHAT_PAGE_CONTEXT_ENABLED` (default off in code) with an optional control group. New server events `page_context_applied` / `page_context_answered`. | §2 "Optional `context`"; §5 |

@@ -284,7 +284,7 @@ written to the admin access log (`campaign.add_recipient`, `campaign.add_recipie
 | Table | Purpose | Key columns |
 | --- | --- | --- |
 | `campaigns` (`0066`) | One row per campaign | `name`, `slug` (unique), `kind`, `status`, `brief`, `audience` (jsonb spec), `audience_mode` (`dynamisch` \| `fest`), `priority`, `starts_at`/`ends_at`, `daily_target`, `auto_prepare_per_day`, `reentry_days`, `discount_percent`, `discount_scope`, `discount_valid_until`, `design_key`, `hero_mode`, `text_mode`, `mo_promo`, `cta_kind`/`cta_url`, `letter_mode` + `letter_budget_cents` (`0074`, §8), `audience_refreshed_at`, `started_at`/`ended_at` |
-| `campaign_contacts` (`0034`, recipients since `0066`) | One row per person per campaign per cycle + the review-queue lifecycle | `campaign_id` (FK campaigns, cascade), `customer_id` (FK customers, SET NULL, `0059`), `cycle` (default 1), normalized `email`, `first_name`/`last_name`, `language` + `language_override` (`0040`), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_order_at` (`0052`), `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `excluded` \| `draft_failed`), `excluded_reason`, `admin_note`, `conversation_id` (FK conversations, SET NULL), `added_at`, `created_at`, `sent_at`, `skipped_at`; `is_test` + `test_source_email` (`0057`, Testkontakte — §5); `added_manually` (`0069`, hand-added — §2.4); `approved_at`, `release_at`, `approved_fingerprint`, `release_error`, `claimed_at` (`0072`, Einplanen — §5). Unique `(campaign_id, customer_id, cycle)` for real rows and `(campaign_id, email)` for test rows; `shopify_customer_id` is no longer unique and may be NULL. |
+| `campaign_contacts` (`0034`, recipients since `0066`) | One row per person per campaign per cycle + the review-queue lifecycle | `campaign_id` (FK campaigns, cascade), `customer_id` (FK customers, SET NULL, `0059`), `cycle` (default 1), normalized `email`, `first_name`/`last_name`, `language` + `language_override` (`0040`), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_order_at` (`0052`), `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `excluded` \| `draft_failed`), `excluded_reason`, `admin_note`, `conversation_id` (FK conversations, SET NULL), `added_at`, `created_at`, `sent_at`, `skipped_at`; `is_test` + `test_source_email` (`0057`, Testkontakte — §5); `added_manually` (`0069`, hand-added — §2.4); `approved_at`, `release_at`, `approved_fingerprint`, `release_error`, `claimed_at` (`0072`, Einplanen — §5). Unique `(campaign_id, customer_id, cycle)` for real rows and `(campaign_id, email)` for test rows; `shopify_customer_id` (`0034`) is not unique and may be NULL. |
 | `campaign_drafts` | ONE editable draft per recipient (unique `contact_id`, cascade) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, `discount_scope` (`all` \| `recommendations` \| `set`, `0058`), compact `purchase_summary` (jsonb), `purchase_selected_ids` (`0043`, the recommendation basis), `recommended_product_ids`, `low_confidence`, `product_highlights` (`0046`), `text_mode` (`0047`), `segment` + `segment_days` (`0052`), the KI-Hero `hero_image_url` + `hero_image_prompt` (`0050`), `hero_headline` (`0051`), `hero_image_mobile_url` (`0053`) — [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) |
 | `campaign_sends` | Immutable send record (audit + KPI) | `contact_id` (SET NULL), `campaign_id` (FK campaigns, SET NULL, `0066`), `customer_id` (FK customers, SET NULL, `0066`), `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `redirect_token`/`clicked_at` (`0041` — the tracked CTA, see below; NULL for copy sends and pre-0041 rows), `sent_at`; `segment` (`0052`); the snapshot of `0054` — `design_key`, `hero_variant`, `hero_image_url`, `hero_headline`, `text_mode`, `language`, `discount_percent`, `bundle_offer_id`, `bundle_clicked_at`, `unsubscribed_at` — plus `discount_scope` (`0058`); `is_test` (`0057`); the delivery columns of `0055` — `provider_email_id`, `delivered_at`, `bounced_at`, `bounce_type`, `complained_at` (both: sections below) |
 | `campaign_letters` (`0074`) | One letter per person per campaign per cycle (the letter channel, §8.1) — separate from `campaign_contacts`, whose queries all assume the e-mail consent | `campaign_id` (FK campaigns, cascade), `customer_id` (FK customers, cascade), `cycle` (always 0), `status`, `excluded_reason`, `subject`/`body`, `edited`, `admin_note`, `drafted_at`/`approved_at`/`sent_at`, `page_count`, `physical_letter_id` (FK physical_letters, SET NULL), `error`, `added_at`/`updated_at`; unique `(campaign_id, customer_id, cycle)` |
@@ -307,19 +307,13 @@ is `confirmed_opt_in`). The gates are evaluated in one tested place,
 [`campaign-email.ts`](../src/lib/campaign-email.ts) (`approveAndSendCampaign`), in this order —
 the first failing gate is the refusal:
 
-> **Legal status.** The lawyer approved the channel on 2026-07-21 for the Shopify-checkbox
-> audience, including `SINGLE_OPT_IN`/`UNKNOWN` (record: [`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md)
-> Anhang A). Both flags default to `false` in code and in `.env.example`; an absent variable means
-> false, and either flag can be set false at any time to re-lock the channel. Production state:
-> [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) 6.5 „Send gates“.
-
 | # | Gate | Flag / source | Code default | Effect |
 | --- | --- | --- | --- | --- |
 | 0 | Campaign live | `campaigns.status` + schedule | — | Only a campaign in phase `laeuft` sends (the Einzelansprache while `aktiv`); otherwise `campaign_closed` (409). A Testkontakt may send before the start, never for an ended or archived campaign. |
-| 1 | Master send gate | `CAMPAIGN_SENDS_APPROVED` | **false** | While false, **every** campaign send is refused server-side (403) — UI *and* direct API calls. Drafting, preview and Copy keep working. The desk shows a banner that the sign-off for this channel is pending. Separate from `CONSENT_COPY_LAWYER_APPROVED` and `PHYSICAL_MAIL_SENDS_APPROVED`. |
+| 1 | Master send gate | `CAMPAIGN_SENDS_APPROVED` | **false** | While false, **every** campaign send is refused server-side (403) — UI *and* direct API calls. Drafting, preview and Copy keep working. The desk shows „Versand gesperrt“ (header pill and a blocked Prüfpunkt). Separate from `CONSENT_COPY_LAWYER_APPROVED` and `PHYSICAL_MAIL_SENDS_APPROVED`. |
 | 2 | Consent | `customers.email_consent_state`, read fresh | — | Must be `subscribed`; otherwise `no_consent` (403). A recipient whose customer row is gone is refused (`not_eligible`, 409). |
 | 3 | Opt-in level | `CAMPAIGN_ALLOW_SINGLE_OPT_IN` + `customers.email_consent_level` | **false** | Without `confirmed_opt_in` the send is refused (403, "Erneute Einwilligung erforderlich") while the flag is false; such recipients stay visible in the queue (Copy allowed). |
-| 4 | Suppression | `suppression_list` (`isSuppressed`) | — | Every reason blocks (unsubscribe, manual, bounce, complaint, erasure). Fail-closed: a DB error blocks the send. Also checked at refresh and prepare time. |
+| 4 | Suppression | `suppression_list` (`isSuppressed`) | — | Every reason blocks (unsubscribe, manual, bounce, complaint, erasure; `not_eligible`, 409). Fail-closed: a DB error blocks the send. Also checked at refresh and prepare time. |
 | 5 | Frequency cap | `MARKETING_MIN_SEND_INTERVAL_DAYS` | 0 (off) | Spans **every** campaign (Einzelansprache included) **and** the Mo funnel: the newest send to the address across `campaign_sends` *and* `marketing_sends` (`lastCrossChannelSendAt`) must be older than the window (429 otherwise). |
 
 **After the gates, before the claim** (`campaignSendPreflight`): a draft without a discount whose
@@ -337,9 +331,12 @@ Testkontakte (§5) skip gates 2, 4 and 5 — they are the operator's own inboxes
 (`POST /api/admin/campaign/mark-done`) delivers nothing, so the master flag does not apply; it does
 check the consent and the block list (409 `not_eligible`).
 
-**What the lawyer approved** with `CAMPAIGN_SENDS_APPROVED`: mailing this audience on the basis of
-Shopify's checkbox consent at all, and — separately — whether `SINGLE_OPT_IN`/`UNKNOWN` contacts may
-be included (`CAMPAIGN_ALLOW_SINGLE_OPT_IN`) or must first re-confirm.
+**What the two flags stand for:** `CAMPAIGN_SENDS_APPROVED` — mailing this audience on the basis of
+Shopify's checkbox consent at all; `CAMPAIGN_ALLOW_SINGLE_OPT_IN` — whether `SINGLE_OPT_IN`/`UNKNOWN`
+contacts may be included or must first re-confirm. The lawyer approved both on 2026-07-21 (record:
+[`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) Anhang A). Both default to `false` in code and in
+`.env.example` — an absent variable means false — and either can be set false at any time to
+re-lock the channel; production state: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) 6.5 „Send gates“.
 
 **Letters (§8) do not pass these gates — they have their own.** An advertising letter needs no
 e-mail consent (mode `ohne_einwilligung` even requires its absence); it is checked per letter, at
@@ -494,7 +491,7 @@ recipient ids); `ai_all` — for every prepared card (§5).
 
 Each campaign has its own **review desk** (Prüftisch) at `?tab=kampagne&campaign=<slug|id>`. The
 screen — header strip, the views Prüfen · Liste · Eingeplant · Briefe · Gesendet, rail, mail and
-review columns, Fokus-Modus and the keys (`N`/`P` next/previous, `S` send, `A` Einplanen while
+review columns, Fokus-Modus and the keys (`N`/`P` or `J`/`K` next/previous, `S` send, `A` Einplanen while
 `CAMPAIGN_RELEASE_ENABLED`, `X` skip, `E`/`Esc` edit, `R` regenerate, `V` preview, `C` copy, `F`
 Fokus-Modus, `/` contact search, `?` the key list) — is described in
 [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2 (design history:
@@ -539,18 +536,17 @@ campaign's offer settings; changes are remembered per campaign in the browser an
 „Entwurf erstellen“ and „Wiederherstellen“. The optional **KI-Hero** step (pre-selected) runs
 `suggest` + `generate` after the drafts — for every prepared card under `ai_all`, for the A group
 under `ai_ab` (see „KPIs and the hero A/B test“ below); it is offered only for these two hero modes,
-when the design has a hero and generation is configured. The estimate before any money is spent: drafts, heroes (one per draft
-under `ai_all`, about half the drafts under `ai_ab`; `prepareEstimate` in
-`campaign-desk-core.mjs`), ≈ € from the recorded `ai_usage` averages (`estimateCampaignCosts`),
-≈ minutes. It runs as a background job while the review continues.
+when the design has a hero and generation is configured. The estimate before any money is spent:
+drafts, heroes (one per draft under `ai_all`, about half the drafts under `ai_ab`;
+`prepareEstimate` in `campaign-desk-core.mjs`), ≈ € from the recorded `ai_usage` averages
+(`estimateCampaignCosts`), ≈ minutes. It runs as a background job while the review continues.
 
 **Nightly Vorbereiten** (`GET/POST /api/cron/prepare-campaign-drafts`, 04:15 UTC, after the
 reconcile, the audience refresh and the catalog sync). `CAMPAIGN_AUTO_PREPARE_COUNT` is the nightly
 **budget** across all campaigns; each campaign in phase `laeuft` takes its own
 `auto_prepare_per_day` from it, highest priority first (`planAutoPrepare`), with its own offer
 settings. When no campaign sets a figure, the whole budget goes to the `lebenszyklus` campaign with
-`CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `_TEXT_MODE` / `_DISCOUNT_SCOPE` (the behaviour before
-campaigns). **Off by default** (`0`): generation costs API money, so the budget is the deployment's
+`CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `_TEXT_MODE` / `_DISCOUNT_SCOPE`. **Off by default** (`0`): generation costs API money, so the budget is the deployment's
 explicit decision (`.env.example`). It never sends — every draft still needs a human on the desk.
 
 **Testkontakte** (migration `0057`, ⋯ → „Testkontakte…“). The operator's own inboxes as recipients
@@ -625,8 +621,8 @@ Actions:
 
 - **Send** (`POST /api/admin/campaign/send`) — re-verifies every gate
   server-side (§3), mints the `MK-` code (depth > 0), swaps placeholder + stale
-  expiry via the shared [`discount-swap.mjs`](../src/lib/discount-swap.mjs)
-  (extracted from the marketing send path — one logic, two channels), sends
+  expiry via [`discount-swap.mjs`](../src/lib/discount-swap.mjs) (shared with the
+  marketing send path), sends
   via Resend to the person's CURRENT address (a Shopify e-mail change may have merged people) with
   unsubscribe link + `List-Unsubscribe` header, records the `campaign_sends` row (with
   `campaign_id` and `customer_id`), writes the mail into the person's Korrespondenz
@@ -668,8 +664,8 @@ Actions:
   CURRENT card (the on-screen, possibly unsaved subject/body) through the
   exact send-path composition (`renderCampaignEmailPreview` reuses
   `renderCampaignEmail`: the campaign's design and hero mode, branded shell, bundle block, CTA,
-  discount line, unsubscribe footer) and returns `text/html`, shown in an in-tab
-  dialog iframe — the campaign sibling of the Kunden letter-preview route.
+  discount line, unsubscribe footer) and returns `text/html`, shown in the viewer dialog
+  (`EmailViewerDialog`).
   READ-ONLY and gate-free: nothing is claimed, minted, sent or recorded; the
   discount line shows the `MO-XXXX` placeholder with the projected expiry.
 - **Regenerate** (`POST /api/admin/campaign/draft`, `R`, with whatever offer
@@ -730,7 +726,7 @@ letters' own window and the lawful basis: [`DATA_RETENTION.md`](./DATA_RETENTION
 (cont.) — Campaigns“.
 
 **Complete deletion** of a person — the „Löschen“ icon in the card's Kontakt block
-(`POST /api/admin/customers/erase { contactId }`), the „Daten löschen“ link in the mail, the
+(`POST /api/admin/customers/erase { contactId, confirm: true }`), the „Daten löschen“ link in the mail, the
 customer's own widget button or a Shopify erasure webhook — runs the one erasure path
 (`erasePerson`): every recipient row of the person in every campaign (drafts cascade), the sends
 and the campaign letters go with the customer in one transaction; the address stays on the block
@@ -744,7 +740,7 @@ Shopify side: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Complete erasure“ 
 | --- | --- |
 | Campaign list / create (Entwurf) | `GET` + `POST /api/admin/campaigns` |
 | Edit a campaign (re-materialises a changed audience of an active one) | `POST /api/admin/campaigns/update` |
-| Status change (Starten, Pausieren, Fortsetzen, Beenden, Archivieren) | `POST /api/admin/campaigns/status` |
+| Status change (Starten, Pausieren, Fortsetzen, Wieder aufnehmen, Beenden, Archivieren) | `POST /api/admin/campaigns/status` |
 | Live audience count + German description (with `letterMode` also `letters { total, withAddress }`, §8.2) | `POST /api/admin/campaigns/audience-preview` |
 | AI help: audience from a sentence / Briefing draft | `POST /api/admin/campaigns/assist` (`action: "audience" \| "brief"`) |
 | Prüfen & testen: sample recipients, sample mail, test send | `POST /api/admin/campaigns/sample` (`action: "pick" \| "generate" \| "send_test"`) |
@@ -873,13 +869,12 @@ tested) decides per person: no completed order → checked, nothing stored; the 
 address already comes from this order → kept; otherwise (none, another source, an older order —
 moved?) → fetched. The desk's batch and the nightly run check each person at most once a day
 (`postal_address_checked_at`); an order without a usable shipping address (pickup) → checked,
-nothing stored. **Nothing is fetched
-while `PHYSICAL_MAIL_SENDS_APPROVED` is off.**
+nothing stored. **Nothing is fetched while `PHYSICAL_MAIL_SENDS_APPROVED` is off.**
 
 - **Other sources are never used for a letter.** An address with another source —
   `consented_capture`, the saved Shopify account address — stays stored but is refused for every
-  advertising letter (`not_purchase_address`) — the 1:1 letter of Kunden → Brief included; the
-  Brief tab offers „Adresse aus letzter Bestellung holen“ (`POST /api/admin/customers/letter-address`,
+  advertising letter (`not_purchase_address`), the 1:1 letter of Kunden → Brief included; the Brief
+  tab offers „Adresse aus letzter Bestellung holen“ (`POST /api/admin/customers/letter-address`,
   access log `customer.letter_address`).
 - **Who fetches.** The desk's „Adressen holen“ (50 per step) and, nightly, the campaign-audiences
   cron after the refresh: up to `CAMPAIGN_LETTER_ADDRESS_NIGHTLY` (default 200, max 2,000, 0 = off)
@@ -911,10 +906,9 @@ after an Art. 21 objection to profiling); the purchase summary from the ledger; 
 segment's intro rule; the product names. **Never** the address, the e-mail, order numbers or
 amounts — the purchase lines are the same `purchaseBlock` as a campaign mail: date and items,
 no order name or number (dossier § 7.1). Without `ANTHROPIC_API_KEY`, or when the call fails, a
-fixed template letter is stored —
-a person reviews every letter anyway. Nobody with a postal objection gets a draft. Phase 1 writes
-German only: an English reader gets a German letter (desk hint „Liest Englisch — der Brief ist
-deutsch.“).
+fixed template letter is stored — a person reviews every letter anyway. Nobody with a postal
+objection gets a draft. Letters are German only: an English reader gets a German letter (desk hint
+„Liest Englisch — der Brief ist deutsch.“).
 
 ### 8.5 The desk view „Briefe“
 
@@ -970,7 +964,7 @@ error marks it `failed`.
 Posting is `submitLetter` ([`physical-mail.ts`](../src/lib/physical-mail.ts)), the one hand-over
 to Pingen that Kunden → Brief uses too: render the PDF, create the `physical_letters` row (with
 `campaign_id`), attach it to the campaign letter, then submit with the row's Idempotency-Key and
-auto send, delivery options as before. Because the physical letter is attached **before** the
+auto send, with the delivery options of the 1:1 letter. Because the physical letter is attached **before** the
 submission, a step that dies after Pingen accepted it is never posted twice — the recovery puts
 back only letters without one. The PDF has the 1:1 layout; the footer of every page carries the
 Art. 21 objection notice, the sender and the privacy link. The PDFs print „ “ – — … € correctly
@@ -987,8 +981,9 @@ Art. 21 objection notice, the sender and the privacy link. The PDFs print „ �
 
 **Environment** (in `.env.example`): `LETTER_MIN_INTERVAL_DAYS` (60; 0 = no cadence check),
 `CAMPAIGN_LETTER_ADDRESS_NIGHTLY` (200; max 2,000; 0 = only the desk's button),
-`CAMPAIGN_LETTER_SHOP_URL` (shop address named on paper). Existing: `PHYSICAL_MAIL_SENDS_APPROVED`,
-`PINGEN_*` (incl. `PINGEN_STAGING`), `PINGEN_LETTER_COST_CENTS`.
+`CAMPAIGN_LETTER_SHOP_URL` (shop address named on paper). Shared with the 1:1 letter:
+`PHYSICAL_MAIL_SENDS_APPROVED` (code default `false`), `PINGEN_*` (incl. `PINGEN_STAGING`),
+`PINGEN_LETTER_COST_CENTS`.
 
 **Defaults the developer chose — open for the lawyer / maintainer** (dossier § 18, F-35): release
 per letter (no bulk approve); letter mode default „aus“; cadence 60 days; `consented_capture`
