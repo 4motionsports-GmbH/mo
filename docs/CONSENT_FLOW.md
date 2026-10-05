@@ -20,7 +20,9 @@ audit trail. It also lists exactly which copy a lawyer must approve.
 > and the **button-consent mechanic** on the marketing surfaces — July 2026).
 > It lives in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts), marked
 > with `CONSENT_COPY_LAWYER_APPROVED = true`. Treat these strings as approved —
-> any wording change needs a fresh review.
+> any wording change needs a fresh review. **v5 (2026-10-05)** adds served
+> benefit bullets to the consent popup after a sign-in (framing, not consent
+> text; wording decided by the owner, see "Lawyer sign-off status").
 >
 > ℹ️ **The §7(3) UWG "Bestandskunden" (existing-customer) feature was REMOVED
 > entirely on 2026-06-16 (client decision).** It was never live. Any §7(3)
@@ -69,6 +71,9 @@ Rules baked into the code:
   (framing, not consent text) may additionally sell **personalised offers and
   exclusive discount promotions** ("persönliche Angebote und exklusive
   Rabatt-Aktionen") — this upgraded wording is lawyer-approved (July 2026).
+  Since v5 the same framing may also appear in the served **`benefits`**
+  bullets of the sign-in popup — served copy only, static per locale, no
+  placeholders, nothing about the visitor's behaviour.
   Still no countdowns, no invented urgency, no concrete discount amount.
 - A **shared one-line footer** (`CONSENT_SHARED_FOOTER`) is rendered beneath
   both checkboxes — the Art. 7 minimum (controller + policy + anytime
@@ -79,16 +84,19 @@ Rules baked into the code:
 - Every marketing email MUST contain a working unsubscribe link.
 - The exact consent text shown to the user is stored verbatim
   (`consent_text_shown`) as **Art. 7 proof of consent**, together with a
-  **consent copy version stamp** (`consent_copy_version`, currently `"v4"` —
+  **consent copy version stamp** (`consent_copy_version`, currently `"v5"` —
   `CONSENT_COPY_VERSION` in `src/lib/consent-copy-version.mjs`), so
-  v1/v2/v3/v4 records stay distinguishable in the audit trail. One linear
+  v1/v2/v3/v4/v5 records stay distinguishable in the audit trail. One linear
   version spans **every** consent surface (the in-chat capture form, the
   at-sign-in opt-in, **and** the chat consent gate, see below); the verbatim
   text disambiguates which surface a record came from. **v3** added the
   at-sign-in opt-in (lawyer-approved June 2026). **v4** adds the **chat
   consent gate** surface, the upgraded personalised-offers headlines, and the
   button-consent mechanic (lawyer-approved July 2026); the capture-form labels
-  are unchanged but ship in the v4 set. The stamp is resolved
+  are unchanged but ship in the v4 set. **v5** (2026-10-05) adds the served
+  `benefits` bullets and a framing `variant` id to the sign-in surface; labels,
+  footers and every `consentTextShown` are unchanged (a framing-only bump,
+  like v4's headlines). The stamp is resolved
   server-side: it is set only when the echoed text is byte-identical to the
   copy the backend currently serves, and `NULL` otherwise (honest
   "unattested" — e.g. a ≤60s-stale cached copy across a deploy boundary; the
@@ -311,6 +319,27 @@ Later, every marketing email carries:
 > "ticks the (unchecked) box", read "taps the explicit accept button" — the
 > legal analysis is unchanged: nothing pre-selected, a clear affirmative act,
 > `marketingConsent: true` only sent on that act, same DOI, same audit.
+
+> ℹ️ **v5 update (2026-10-05, OI3):** `surface=signin` also serves
+> **`benefits`** — up to four short bullets under the headline, framing like the
+> headline and **never** part of `consentTextShown` — and a framing
+> **`variant`** id (`src/lib/consent-variants.mjs`, tested). Served today:
+> variant `a`, DE „Angebote, die zu deiner Beratung passen“, „Exklusive
+> Rabatt-Aktionen nur für Abonnenten“, „Jederzeit mit einem Klick
+> abbestellbar“ (EN: the approved translation). The widget renders them
+> verbatim and all or nothing, and stops showing bullets of its own with the
+> upload of frontend task 1 (until then the live widget `3e87341` keeps its
+> own two bullets and ignores the new fields). `CONSENT_SIGNIN_VARIANTS`
+> (default `a`) can activate further **approved** variants for an A/B test;
+> while more than one is active, the variant is picked per session
+> (`x-ms-session`) and the copy is served `private, no-store`. A variant is
+> only ever deactivated, never removed, so echoed ids stay known. The opt-in
+> POST takes optional `placement` (`popup` | `signin_return` |
+> `value_moment`) and `variant` — telemetry only, written to the pseudonymous
+> KPI events, never to the consent record and never a reason for a 400. The
+> attestation of `consentTextShown` is unchanged (label + footer, one string
+> for every variant). Render contract:
+> [`frontend-handoff/CONSENT_FLOW.md`](./frontend-handoff/CONSENT_FLOW.md) §1, §3.1–§3.2.
 
 A **signed-in** Shopify customer can opt into marketing **without re-typing their
 email**. This is a *presentation* optimisation only — the lawful basis is
@@ -584,7 +613,15 @@ surfaces additionally emit the widget-side `consent_gate_shown` /
 **No email address ever appears in an event** — see `src/lib/kpi-events.ts`
 and [`API_CONTRACT.md`](./API_CONTRACT.md) §5. The optional `trigger` echoed
 to `/api/capture-email` / `/api/chat-marketing-opt-in` is telemetry-only and
-is never stored on the consent record.
+is never stored on the consent record (the capture form's echo reaches the
+KPI events only when it is one of the tool's trigger values). Since
+2026-10-05 the opt-in events also carry the server-set `source`
+(`mo_capture_form` | `mo_signin` | `mo_chat_gate`) and `outcome`
+(`doi_required` | `already_confirmed` | `already_subscribed` | `suppressed`),
+the DOI confirmation carries the `source` it confirms, and the sign-in
+opt-in's `placement` / `variant` echo (v5) — all in `kpi_events` only, never on
+the consent record. A suppressed address is answered `status: "none"`,
+`alreadyConfirmed: false` (never „already subscribed“).
 
 ## Defensive email handling
 
@@ -637,6 +674,20 @@ Collected from `docs/CUSTOMER_PLATFORM_PLAN.md` §4 (D-1, D-3, D-5), §7.8 and
       Email. An Art. 21 objection to profiling removes every `mo-` tag (queued
       when the objection is recorded; the nightly run adds none while it
       stands). Open: the basis and the privacy-policy wording for the tags.
+- [ ] **Consent-popup benefit bullets as served `benefits` (variant `a`,
+      v5).** Wording decided by the owner on 2026-10-05 (D-AP4; the choice was
+      delegated to the development) and served since that day: „Angebote, die
+      zu deiner Beratung passen“, „Exklusive Rabatt-Aktionen nur für
+      Abonnenten“, „Jederzeit mit einem Klick abbestellbar“ (EN as the approved
+      translation, D-AP3). Framing, not part of `consentTextShown`; not yet
+      recorded as reviewed by the lawyer.
+- [ ] **Every later sign-in framing variant** (`b`, …) needs its own approval
+      before `CONSENT_SIGNIN_VARIANTS` lists it — together with the § 25 TDDDG
+      question of assigning variants per session id (docs/frontend/07 §8).
+- [ ] **Must the shown framing variant be stored on the consent record**
+      (`email_captures`)? Today it is only in the pseudonymous `kpi_events`
+      (deleted after `KPI_RETENTION_DAYS`); answer before a second variant is
+      activated.
 
 The chat gate's `signIn` strings (`chatGateSignInHint`) are UI chrome, not
 consent text, and are not part of `consentTextShown`.

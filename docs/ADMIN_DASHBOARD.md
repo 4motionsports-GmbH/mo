@@ -842,7 +842,9 @@ happened in the 14 days after), **Mo-Effekt** (Gesamtwerte, §5.19 — Mo
 customers vs. comparable customers without a chat) and, inside the
 Kampagnen-Funnel (title „Kampagnen-Funnel“, no longer „(Shopify-Subscriber)“),
 the table **„Kampagnen im Vergleich“** (the same funnel per campaign plus
-„Chat gestartet“, §5.9).
+„Chat gestartet“, §5.9). Added 2026-10-05: **Seitenkontext auf Produktseiten**
+(Beratung, after the core metrics, §5.1a) and, in „Einwilligung nach der
+Anmeldung“, the block **„Nach Variante und Platzierung“** (§5.7).
 Screenshots: `docs/screenshots/customer-platform/` (`kpi`, `kpi-kundenbasis`).
 
 ### 3.6 Gespräche
@@ -1292,6 +1294,7 @@ instances. All pure-DB sections are live.
 | Filtered by the period | Period-independent (lifetime / cohort) |
 | --- | --- |
 | **Core metrics** (§5.1) — `conversations` / `kpi_events` on `created_at` | Persona-insights (§5.2) |
+| **Seitenkontext auf Produktseiten** (§5.1a) — `kpi_events` on `created_at` (first page-context turn) | |
 | **Anmelde-Popup** (§5.7a) — `kpi_events` on `created_at` | Recommendation → purchase loop (§5.3) |
 | **Einwilligung nach der Anmeldung** (§5.7) — `kpi_events` on `created_at` | |
 | **E-Mail-Capture-Funnel** (§5.8) — `kpi_events` on `created_at` | Marketing funnel (§5.4), Postversand |
@@ -1318,13 +1321,18 @@ tested). When the period contains a release that changes what a number means,
 an InfoTip): 01.10.2026 widget update (sign-in popup, consent popup), 03.10.2026
 one-time sign-in code (backend), 04.10.2026 customer-platform widget live,
 05.10.2026 Bestell-Zuordnung (marked orders without attribution counted; window
-from the latest consultation — §5.16). The
+from the latest consultation — §5.16), 05.10.2026 „Opt-in-Messung nach Quelle
+und Ergebnis“ (§5.7, §5.8). The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
 „Mo-zugeordneter Umsatz“ „erst ab dem 05.10.2026“; the first three also note the sign-in
 outage from 03.10. until the widget upload on 04.10. (no sign-in could complete
-in the chat), so a drop on those days is not a trend. A new release is one entry
+in the chat), so a drop on those days is not a trend. Einwilligung and
+E-Mail-Capture-Funnel note, for a period starting before 05.10.2026, that
+source and outcome of the opt-ins exist only from that day, older events are
+approximated from DOI status and trigger, and figures before and after are not
+directly comparable (sessions instead of clicks, the form only). A new release is one entry
 in `KPI_RELEASES` (+ `MEANINGFUL_FROM` if a section's data starts with it). The Eingang's 30-day strip (§3.1) is a fixed trailing snapshot and
 has no picker.
 

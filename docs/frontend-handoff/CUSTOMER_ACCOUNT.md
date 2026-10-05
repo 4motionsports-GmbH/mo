@@ -344,6 +344,10 @@ Render contract (copy + submit endpoint) is in
 pre-select it. After a successful opt-in, the next `/api/auth/me` reports
 `optInActionable: false`. An already-subscribed address is answered with
 `marketing.status: "confirmed"`, `alreadyConfirmed: true` and no DOI email.
+Since 2026-10-05 the served copy also carries `benefits` (render verbatim, all
+or nothing) and `variant`, and the opt-in POST takes optional `placement`
+(`popup` | `signin_return` | `value_moment`) and `variant` (telemetry only,
+never a 400) — [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §3.1–§3.2.
 
 ## 7. Signed-in conversation history (CA-3-THEME contract)
 

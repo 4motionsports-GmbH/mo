@@ -205,14 +205,32 @@ MAY attach an optional `context` object alongside `messages`:
 | `productId`      | string   | Catalog product id (`type: "product"` only). Validated server-side. |
 | `productTitle`   | string?  | Optional/advisory. The backend uses the catalog's canonical name. |
 | `recentlyViewed` | array?   | Small browsing trail, most recent first. Entries: `{ type: "product", id, name }` or `{ type: "category", id?, name }`. |
+| `source`         | string?  | Additive 2026-10-05. `"page"` = the widget attached the open page's facts to a **typed or spoken** message; `"cta"` = the product CTA; `"nudge"` = a nudge click. Absent or any other value → today's behaviour (treated like `cta`/`nudge`). |
 
 **Privacy.** The browsing trail is gathered **in the browser** and only ever
 reaches the backend as part of a chat request the **user initiates** (opening
 the chat / sending a message) — it is conversation input, not background
 tracking. Like the single-product context, it shapes the live conversation
 and is never stored as a tracking profile. Don't send it on every turn:
-attach it when the chat is opened (or with the first message, e.g. a starter
-prompt) and when it meaningfully changed — not as a per-turn heartbeat.
+attach it when the chat is opened (CTA, nudge) or with the first typed message
+of a thread on a product page (`source: "page"`, below), and when it
+meaningfully changed — not as a per-turn heartbeat.
+
+**Typed turns (`source: "page"`, additive 2026-10-05).** Page facts only — the
+open product page's product, or the single category of a collection page;
+never the browsing trail. Send it with the first user message of a thread on
+that page and with the first message after the page's product changed. The
+backend accepts exactly two shapes and drops any other `source: "page"`
+context: `type: "product"` (any `recentlyViewed` is ignored) and
+`type: "browsing"` with exactly **one** `{ type: "category", name }` entry. The
+backend may ignore a `source: "page"` context — while it is switched off
+(`CHAT_PAGE_CONTEXT_ENABLED`, default off) or for a configured share of
+sessions kept as a control group (`CHAT_PAGE_CONTEXT_HOLDOUT_PCT`, product
+pages only); the response shape is the same in every case, and the widget must
+not try to detect either. A `cta` / `nudge` context is never affected. **No-op
+if the widget ships later:** a widget that sends no `source` keeps today's
+behaviour byte for byte; an older backend ignores `source` and treats a typed
+turn's product like a CTA context.
 
 **Validation & caps.** Everything is validated against the live catalog and
 **ignored gracefully** on mismatch (no error; the request behaves as if that
@@ -258,12 +276,14 @@ The backend keys its behavior off whether `messages` is empty:
   wiping the existing history**. The conversation continues normally; the
   widget keeps sending the full `messages` array each turn as usual.
 
-  This is also the path a **context-seeded starter prompt** takes: sending a
-  starter like "Ist das gut für Zuhause?" as the first user message together
-  with the `context` makes the answer specific to that product/trail — the
-  backend grounds the context products in the model's pre-retrieved product
-  block (specs + stock status), so sold-out and checkout rules apply from the
-  first answer.
+  This is also the path a **typed first message on a product page** takes
+  (`source: "page"`, above; starter prompts were removed 2026-10-01): "Ist das
+  leise?" sent with the page's product makes the answer specific to that
+  product — the backend grounds it in the model's pre-retrieved product block
+  (specs + stock status), so sold-out and checkout rules apply from the first
+  answer. A `source: "page"` turn gets a softer note than a CTA (the page is a
+  hint: used when the question is about a product and names no other, ignored
+  for orders, shipping or returns, never commented on).
 
 In both cases the **response is the same SSE chunk stream** documented
 below — `context` only seeds the model, it does not change the response
@@ -1096,17 +1116,55 @@ duplicate them:
 | Event                                | Emitted by | `data`                                  |
 | ------------------------------------ | ---------- | --------------------------------------- |
 | `email_capture_ask_shown`            | server (`/api/chat`) | `{ trigger, askNumber }` — one per `offer_email_summary` call. |
-| `email_capture_submitted`            | server (`/api/capture-email`) | `{ marketingConsent, trigger? }` |
-| `email_capture_marketing_opted_in`   | server (`/api/capture-email`) | `{ doiStatus, trigger? }` — the separate marketing box was ticked. |
-| `email_capture_marketing_confirmed`  | server (`/api/confirm-marketing`) | `{}` — unique DOI confirmations only. |
+| `email_capture_submitted`            | server (`/api/capture-email`, §7.6, `/api/account/marketing-opt-in`) | `{ marketingConsent, source, outcome?, trigger? }` |
+| `email_capture_marketing_opted_in`   | server (same three routes) | `{ doiStatus, source, outcome?, trigger? }` — the marketing box was ticked / the accept tapped. |
+| `email_capture_marketing_confirmed`  | server (`/api/confirm-marketing`) | `{ source }` (since 2026-10-05; `{}` before) — unique DOI confirmations only. |
 | `email_capture_declined`             | **widget** (this endpoint) | `{ trigger, askNumber? }` — capture card dismissed/declined without submit. |
 
 `trigger` is the value moment from the `offer_email_summary` tool call
 (`recommendation_accepted`, `comparison_delivered`, `consideration_pause`,
 `buying_intent`, `checkout_intent`), so opt-in rates can be compared per
-trigger moment and per ask number. Captures via the chat consent gate
-(§7.6) ride in the same funnel with `trigger: "chat_gate"`; the at-sign-in
-opt-in with `trigger: "signin_optin"`.
+trigger moment and per ask number. `/api/capture-email` stores the echoed
+`trigger` only when it is one of these five values (since 2026-10-05).
+Captures via the chat consent gate (§7.6) keep `trigger: "chat_gate"`, the
+at-sign-in opt-in `trigger: "signin_optin"`; both also carry `source`, and
+readers use `trigger` to tell the surfaces apart only on rows without
+`source` (before 2026-10-05).
+
+**`source` and `outcome` (server-set, additive 2026-10-05,
+`src/lib/capture-funnel.mjs`).** All values are server-written; the widget
+sends none of them.
+
+| `source` | Written by |
+| --- | --- |
+| `mo_capture_form` | `POST /api/capture-email` (the capture form) |
+| `mo_signin` | `POST /api/account/marketing-opt-in` (popup / card after a sign-in) |
+| `mo_chat_gate` | `POST /api/chat-marketing-opt-in` (§7.6, retired in the widget) |
+
+| `outcome` (only when the marketing box was ticked) | Meaning |
+| --- | --- |
+| `doi_required` | a DOI mail is due (written before the send; a failed send still counts) |
+| `already_confirmed` | the address already holds a confirmed Mo DOI — no DOI mail |
+| `already_subscribed` | the address is subscribed elsewhere (Shopify) — no DOI mail |
+| `suppressed` | the address is on the suppression list — no DOI mail, never re-pended |
+
+The routes answer `alreadyConfirmed: true` exactly for `already_confirmed`
+and `already_subscribed` (`isAlreadyConfirmedAnswer`). Since 2026-10-05 a
+`suppressed` address is answered `marketing.status: "none"`,
+`alreadyConfirmed: false` on all three opt-in routes — never „already
+subscribed“, whatever its old DOI status.
+
+`email_capture_marketing_confirmed.source` is the surface the DOI click
+confirms: the `source` of the capture session's latest opt-in that needed a
+DOI mail, else the surface of the latest pending consent row, else `mo`.
+
+**Sign-in opt-in extras (additive 2026-10-05).** Both `signin_optin` events
+additionally carry `alreadyConfirmed` and `doiRequired` (booleans, the same
+values as the response), `placement?` and `variant?` (the validated echo of
+the POST body, §7.4 / [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) §3.2; left out
+when unknown) and, only while more than one consent-popup variant is active,
+`variantMismatch: true` when the echoed variant is not the one this session
+is assigned.
 
 ### Sign-in popup events (widget 2026-10-01)
 
@@ -1136,9 +1194,13 @@ The marketing consent ask for **signed-in** customers (since the widget of
 2026-10-01 a popup after sign-in, plus the inline card after a mid-conversation
 sign-in) is measured through four **widget-emitted** events (names in
 `src/lib/kpi-events.ts`; the backend only observes the accept as an opt-in
-POST). Each carries `data: { surface: "signin" | "chat" }` — the widget sends
+POST). Each carries `data: { surface: "signin" | "chat", placement?, variant? }` — the widget sends
 only `signin` since 2026-10-01; `chat` was the anonymous e-mail gate, replaced by
-the sign-in popup (its endpoints stay, unused by the widget):
+the sign-in popup (its endpoints stay, unused by the widget). `placement`
+(`popup` | `signin_return` | `value_moment`) and `variant` (the served
+`variant` id of the copy that was rendered, `^[a-z0-9_-]{1,32}$`) are optional
+and additive (2026-10-05); the dashboard shows unknown values as „unbekannt“,
+never as their own row:
 
 | Event                    | When                                                        |
 | ------------------------ | ----------------------------------------------------------- |
@@ -1149,6 +1211,17 @@ the sign-in popup (its endpoints stay, unused by the widget):
 
 They feed the Consent-Gate funnel on the admin KPI tab
 (`getConsentGateFunnel`, `src/lib/kpi-store.ts`).
+
+### Product clicks (widget)
+
+`product_cta_clicked` `{ productId, samePage? }` — „Zum Produkt“ in a product
+card, a comparison column or the add-to-cart fallback links; `productId` is
+the catalog handle. `samePage` (boolean, additive 2026-10-05) is computed at
+click time: `true` when the clicked product is the product of the open
+product page, `false` otherwise (always `false` off a product page). The
+name still matches the dashboard's product-click pattern; „Seitenkontext auf
+Produktseiten“ counts only clicks whose `samePage` is not `true` as „andere
+Produkte geklickt“.
 
 > ⚠️ **Retired:** the widget no longer sends `starter_shown` /
 > `starter_clicked` (starter prompts removed, 2026-10-01). The endpoint (which
@@ -1179,12 +1252,15 @@ cannot double-count or fake a funnel stage:
 | `account_erased`           | `POST /api/account/erase` | `{}`, session `NULL` (pure volume counter) |
 | `order_status_lookup`      | `POST /api/chat` — one per `get_order_status` call (2026-10, `CHAT_ORDER_STATUS_ENABLED`) | `{ outcome, topic, source, orders }` — `outcome` `ok` \| `no_orders` \| `not_found` \| `sign_in_required` \| `unavailable` \| `disabled` \| `ledger_off` \| `ledger_incomplete` (first order import not finished) \| `ledger_behind` (a live read found an order the ledger lacks); `topic` as the tool input; `source` `ledger` \| `ledger+live`; `orders` = number of orders in the answer. Never an order number, amount or id. Session-keyed. |
 | `mo_order_marker_unresolved` | `POST /api/webhooks/shopify` — `orders/create` only, after the delivery was recorded (a Shopify retry or the `orders/paid` delivery of the same order does not count again; 2026-10-05) | `{ reason, source? }` — `reason` `unknown_token` (token not in the table: purged, erased, forged) \| `outside_window`; `source` only for `outside_window`, one of `widget` \| `summary_email` \| `marketing_email` \| `bundle`. Session `NULL`; never an order id, token or amount. Caveat: a duplicate `orders/create` subscription delivers each order with its own webhook id and counts it twice. |
+| `page_context_applied`     | `POST /api/chat` — one per request with a valid `context.source: "page"` and a user message (§2), written when the request arrives (2026-10-05) | `{ applied, kind, resolved, locale, pct }` — `applied` = the arm (context used, or ignored as switched off / control group), not "a note was added"; `kind` `product` \| `collection`; `resolved` = known to the catalog; `pct` = the control-group share in force (0–50), `100` while `CHAT_PAGE_CONTEXT_ENABLED` is off, `0` for `collection`. Session-keyed; never a product id. |
+| `page_context_answered`    | `POST /api/chat` — when that turn finished (2026-10-05) | `{ kind, productCards, otherCards }` — card tool calls in the answer (`show_product`, `compare_products`, `add_to_cart`); `otherCards` leaves out a `show_product` of the open page's product. Counts only, no ids. Session-keyed. |
 
 They feed the Kampagnen-Funnel, Bundle and Kundenkonto/Self-Service sections
 of the admin KPI tab (see `ADMIN_DASHBOARD.md` §5.9/§5.10/§5.15);
 `order_status_lookup` feeds „Bestellstatus im Chat“ (§5.15a);
 `mo_order_marker_unresolved` feeds „Mo-zugeordneter Umsatz“ (§5.16, „ohne
-Zuordnung“); the sign-in events also feed the per-session diagnosis of the
+Zuordnung“); `page_context_applied` / `_answered` feed „Seitenkontext auf
+Produktseiten“ (§5.1a); the sign-in events also feed the per-session diagnosis of the
 Anmelde-Popup section (§5.7a); `account_shop_recognised` feeds the
 „Shop-Login-Erkennung (App Proxy)“ block of §5.15.
 
@@ -1266,6 +1342,12 @@ What that means for the widget — all additive, no field changed:
   `alreadyConfirmed: true`, `doiEmailSent: false`. The tap itself is still
   stored as Art. 7 evidence (`email_captures`). Treat it like any
   `confirmed` answer: no "bitte bestätigen" hint.
+- An address **on the suppression list** (unsubscribed, bounced, complained)
+  gets no DOI mail either and, since 2026-10-05, the neutral answer
+  `marketing.status: "none"`, `alreadyConfirmed: false`,
+  `doiEmailSent: false` on all three opt-in endpoints — never „already
+  subscribed“, even when its old DOI row still reads `confirmed`. The widget
+  shows its neutral thank-you.
 - The DOI click and the unsubscribe link are reported to Shopify (§7.2,
   §7.3), so both sides stay in step.
 - A `pending` opt-in whose DOI link was never clicked falls back to „no
@@ -1320,8 +1402,10 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   alongside the text — resolved **server-side**: stamped only when the echoed
   string is byte-identical to the currently-served canonical copy, `NULL`
   otherwise (the widget does not send a version field).
-- `trigger` is silently **truncated to 40 characters** server-side before it
-  is stored/echoed (all five canonical trigger values fit well within that).
+- `trigger` is optional, an echo of the offer's trigger (telemetry only). It
+  is silently **truncated to 40 characters** server-side; since 2026-10-05 a
+  value outside the five tool values is accepted but **not stored** in the KPI
+  events (never a 400).
 
 #### Behaviour
 
@@ -1469,6 +1553,32 @@ the strings differ. `headline` is benefit framing and NOT part of
 decline equally reachable. The widget renders nothing while `lawyerApproved`
 is `false` (it is `true`).
 
+**`surface=signin` additionally carries `benefits` and `variant`** (additive,
+v5, 2026-10-05):
+
+```jsonc
+"variant": "a",              // framing variant id (^[a-z0-9_-]{1,32}$) — echo it as `variant` in the
+                             // consent_gate_* KPI data and the opt-in POST
+"benefits": [                // 1–4 short bullets under the headline — framing like the headline,
+  "Angebote, die zu deiner Beratung passen",          // NEVER part of consentTextShown
+  "Exklusive Rabatt-Aktionen nur für Abonnenten",
+  "Jederzeit mit einem Klick abbestellbar"
+]
+// locale=en: "Offers that match your consultation", "Exclusive discount promotions for
+// subscribers only", "Unsubscribe any time with one click"
+```
+
+Render `benefits` verbatim (`textContent`) and **all or nothing**: a list only
+when it is an array of 1–4 non-empty strings of at most 200 characters each;
+otherwise no list — never a subset, never widget-authored bullets. Neither key
+is required: a missing or invalid `benefits` / `variant` never hides the
+popup or the card. Only variant `a` is served by default
+(`CONSENT_SIGNIN_VARIANTS=a`). While **more than one variant** is active, the
+variant is assigned per session from the `x-ms-session` header of this GET,
+and the response is `Cache-Control: private, no-store` instead of the public
+60 s cache — so keep the served copy per session id, and take `variant` from
+the copy object that was actually rendered.
+
 **`surface=chat` additionally carries `signIn`** (additive; the chat gate
 **leads with sign-in**, `chatGateSignInHint()` in `src/lib/consent-copy.ts`).
 It is UI chrome — **never** part of `consentTextShown`, never echoed back:
@@ -1521,9 +1631,10 @@ Cache-Control: public, max-age=60, stale-while-revalidate=300
 ```
 ```jsonc
 {
-  // Identifier of the served copy ("v4"). Stamped server-side into the audit
-  // trail (consent_copy_version) when the echoed consentTextShown matches.
-  "version": "v4",
+  // Identifier of the served copy ("v5" since 2026-10-05; one stamp for every
+  // surface). Stamped server-side into the audit trail (consent_copy_version)
+  // when the echoed consentTextShown matches.
+  "version": "v5",
   // BOTH checkboxes start UNCHECKED (v2) — never pre-check either box.
   "transactionalLabel": "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl. Direkt-Link zur Kasse).",
   "marketingLabel": "Ja, ich möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten. Jederzeit abbestellbar.",
@@ -1613,8 +1724,9 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
 - `marketingConsent` must be exactly `true` (only sent on the accept tap) —
   anything else → **`400` code `marketing_consent_required`**.
 - `consentTextShown` is stored verbatim as Art. 7 proof, with the server-side
-  `consent_copy_version` stamp (`"v4"` when byte-identical to the served
-  `surface=chat` string, `NULL` otherwise) — same rules as §7.1.
+  `consent_copy_version` stamp (the current version, `"v5"` since
+  2026-10-05, when byte-identical to the served `surface=chat` string, `NULL`
+  otherwise) — same rules as §7.1.
 - Runs the **same double-opt-in pipeline** as `/api/capture-email` (marketing
   half): upsert, DOI `pending` + token, confirmation email; a
   suppressed/unsubscribed address is never re-pended; an address already
