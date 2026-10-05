@@ -207,6 +207,8 @@ Two UIs, one surface: the **popup** after the first message (`presentConsentGate
 
 Eligibility (`consentGateEligible()`, `optInActionable()`): signed in, `auth.optInActionable === true` from `/api/auth/me`, not answered or dismissed this tab session (`ms-chat-optin-done`), no recent device decline, no unanswered inline card on screen, not in voice mode. **An accept counts the tap, not the DOI.** The effective subscription is the server's `email_capture_marketing_opted_in {trigger:'signin_optin'}` → `email_capture_marketing_confirmed` (AD §5.7).
 
+> **Backend status (2026-10-05, OI1 + OI3):** the dashboard counts this surface per **session** with its final state (accepted > declined > dismissed), so the accept-then-Esc double count and several tabs of one sid no longer inflate it. The server events carry `source:'mo_signin'`, `outcome`, `alreadyConfirmed`, `doiRequired`, and `email_capture_marketing_confirmed` carries `{source}`, so DOI completion is measured per surface. The backend accepts optional `placement` (`popup` | `signin_return` | `value_moment`) and `variant` in these events' `data` and in the opt-in POST, and serves `benefits` + `variant` with the copy; the live widget sends neither until the upload with frontend task 1 (2026-10-05). AD §5.7 „Nach Variante und Platzierung“.
+
 ### 4.7 Email capture
 
 | Event | `data` | Trigger | Function |
@@ -219,6 +221,8 @@ Eligibility (`consentGateEligible()`, `optInActionable()`): signed in, `auth.opt
 - The capture submit sends `sessionId: sid` in the body (so does the contact form since `8d0a0c4`, §4.10).
 - **One offer can be declined (and counted) several times.** Cards are rebuilt from stored history on every page load and every full re-render (`renderAllMessages()` → `renderRestoredAssistant()` → `renderPartIntoCtx()` → `buildToolCard('offer_email_summary')`). The decline in `buildCaptureCard()` only swaps the card's DOM (`body.replaceChildren`) and is never stored, so the same stored offer shows a live „Nein danke, vielleicht später“ button again after each navigation, and each click sends another `email_capture_declined` with the same `trigger`. Declines can therefore exceed asks per session: count distinct sessions or dedupe per `trigger`.
 - `buildToolCard()` suppresses the `offer_email_summary` card when `auth.signedIn` is set at render time. For a signed-in customer the server's `email_capture_ask_shown` still counts, but no card was visible.
+
+> **Backend status (2026-10-05, OI1):** the „E-Mail-Capture-Funnel“ (AD §5.8) now counts the capture form only (server `source:'mo_capture_form'`; the sign-in opt-in is no longer mixed in), counts `email_capture_declined` once per session and `trigger`, bounds the triggers (unknown → „Anderer Wert“), and divides DOI confirmations by opt-ins whose `outcome` was `doi_required`. `/api/capture-email` stores the `trigger` echo only when it is one of the tool's five values. Since PR 1 of the same day the backend no longer offers the summary to a live signed-in session, so new signed-in asks come only from restored parts.
 
 ### 4.8 Account and self-service (signed-in only)
 
@@ -266,8 +270,8 @@ From AC §5. `/api/kpi` has no allowlist, so a widget that sent one of these wou
 | Event | Emitted by | Session-keyed? |
 | --- | --- | --- |
 | `email_capture_ask_shown` | `/api/chat` (`offer_email_summary`) | yes |
-| `email_capture_submitted`, `email_capture_marketing_opted_in` | `/api/capture-email`, `/api/chat-marketing-opt-in`, account opt-in | yes |
-| `email_capture_marketing_confirmed` | `/api/confirm-marketing` | — |
+| `email_capture_submitted`, `email_capture_marketing_opted_in` (since 2026-10-05 with `source`, `outcome`; the sign-in opt-in also `alreadyConfirmed`, `doiRequired`, `placement?`, `variant?`) | `/api/capture-email`, `/api/chat-marketing-opt-in`, account opt-in | yes |
+| `email_capture_marketing_confirmed` (`{source}` since 2026-10-05) | `/api/confirm-marketing` | — |
 | `marketing_email_clicked`, `campaign_email_clicked`, `bundle_offer_clicked` | `GET /api/r/<token>` | `NULL` |
 | `campaign_chat_started` | `/api/chat` with a valid `campaignToken` (once per send) | `NULL` (deliberately not tied to the chat) |
 | `contact_form_submitted` | `/api/contact` | yes since `8d0a0c4` (body `sessionId`); `NULL` for rows from before that upload |
@@ -277,6 +281,8 @@ From AC §5. `/api/kpi` has no allowlist, so a widget that sent one of these wou
 | `account_export_requested`, `account_erased` | account endpoints | `NULL` |
 | `order_status_lookup` | `/api/chat` `get_order_status` (behind `CHAT_ORDER_STATUS_ENABLED`, currently off) | yes |
 | `mo_order_marker_unresolved` | `POST /api/webhooks/shopify` on `orders/create`: a `_mo`-marked order the backend could not attribute (`{reason: unknown_token \| outside_window, source?}`; since 2026-10-05) | `NULL` |
+| `page_context_applied` (`{applied, kind, resolved, locale, pct}`; since 2026-10-05) | `/api/chat`, one per request with `context.source: "page"` (written when it arrives; the arm, A3) | yes |
+| `page_context_answered` (`{kind, productCards, otherCards}`; since 2026-10-05) | `/api/chat`, when that turn finished (counts only) | yes |
 
 The widget sends `account_export_started` / `account_exported` (UI) in addition to the server's `account_export_requested` (volume). These are different names and do not collide.
 
@@ -474,6 +480,8 @@ Note: this causes one same-origin GET of `window.routes.cart_url` (`/cart.js`) o
 
 > **Backend status (2026-10-04, after this chapter was written):** „Engagement“ is now „Geöffnet → geschrieben“ (sessions with `message_sent` ÷ sessions with `chat_opened`); the old denominator is shown as „Reichweite (Sitzungen)“. The Anmelde-Popup section has a per-session diagnosis that applies §12.1 (`classifySigninSession` in `src/lib/kpi-widget-events.mjs`). `/api/contact` takes the session from `x-ms-session` when the body has none. `POST /api/kpi` drops server-only event names. Release dates annotate the KPI tab (`src/lib/kpi-releases.mjs`). Live checks: `npm run verify:widget`, `npm run verify:live` (backend `docs/ROLLOUT_TODO.md` 1.11).
 
+> **Backend status (2026-10-05):** „Seitenkontext auf Produktseiten“ (AD §5.1a, Beratung) reads the server-only `page_context_applied` / `page_context_answered` per session and joins the widget's `product_cta_clicked` (`samePage` not `true` = „andere Produkte“), `add_to_cart_clicked`, `product_cta_opened` / `nudge_clicked` (primed before the first question) and `mo_orders` in fixed 24 h / 7 day windows; a comparison is shown only with a pre-registered control group. „Einwilligung nach der Anmeldung“ counts sessions with their final state and splits by `variant` × `placement`; the „E-Mail-Capture-Funnel“ counts the capture form only (OI1, rows below).
+
 The backend dashboard (AD §5) consumes widget events as follows. These observations come from reading `src/lib/kpi-store.ts`, `src/lib/kpi-widget-events.mjs` and `src/lib/kpi-event-patterns.mjs` in the backend repo. The click patterns (`CTA_PATTERNS`, `CART_PATTERNS`) are defined once in `kpi-event-patterns.mjs` and imported by `kpi-store.ts` (KPI tab), `src/lib/admin-conversations.ts` (Gespräche inspector) and `src/lib/analytics-report-store.ts` (Komplettanalyse).
 
 | Dashboard figure | Reads | Fit with the widget today |
@@ -482,8 +490,8 @@ The backend dashboard (AD §5) consumes widget events as follows. These observat
 | **Add-to-Cart-Klicks** | `event ILIKE '%cart%' OR '%checkout%'` | Matches `add_to_cart_clicked` only. Any future event name containing "cart" or "checkout" (e.g. `cart_refreshed`, `storefront_add_to_cart`) **will be counted here**. It also marks the session as "carted" in the Gespräche inspector (`admin-conversations.ts → loadSessionSignals()`, `cartUsed`) and in the Komplettanalyse (`analytics-report-store.ts`), which use the same `CART_PATTERNS`. Name new events with this pattern in mind or adjust the pattern in `kpi-event-patterns.mjs`. |
 | **Engagement** = chats ÷ `count(DISTINCT session_id)` in `kpi_events` | all session-keyed events | AD assumes "any telemetry implies the widget was opened". **That is false:** `launcher_attention_played` (and `nudge_shown`) fire without any open. The denominator is closer to "devices that loaded the widget with motion allowed" plus server sign-in events, so the ratio is a reach-based rate, not open → message. Use `chat_opened` sessions as the denominator for an open → message rate. The numerator is inflated too: a completed greeting-only turn (nudge click with context, §7.5) is persisted by `persistTurn()` in `/api/chat` `onFinish` and creates a `conversations` row (`message_count` 1) although the visitor sent nothing (§14.3). |
 | **Anmelde-Popup** (AD §5.7a) | `login_gate_*`, `account_signin_started.source`, server `account_signin_succeeded/linked` per session | Matches the widget. The source split is only `login_gate` vs `other` (§13). |
-| **Einwilligung nach der Anmeldung** (AD §5.7) | `consent_gate_*` with `data.surface` | Matches. It counts taps, not DOI. |
-| **E-Mail-Capture-Funnel** (AD §5.8) | server events + widget `email_capture_declined` | Declines from the header share card have no `trigger`. One stored offer can be declined again on every later page (the card is rebuilt from history, the decline is not stored), so declines can exceed asks: count distinct sessions or dedupe per `trigger`. For signed-in customers the card is hidden (`buildToolCard()`), so a server `ask_shown` may have had no visible card (§4.7). |
+| **Einwilligung nach der Anmeldung** (AD §5.7) | `consent_gate_*` with `data.surface` | Matches. It counts taps, not DOI. **2026-10-05:** per session with the final state (accepted > declined > dismissed); DOI per variant and placement in „Nach Variante und Platzierung“ once the widget sends `variant` / `placement`. |
+| **E-Mail-Capture-Funnel** (AD §5.8) | server events + widget `email_capture_declined` | **2026-10-05:** capture form only (server `source`), declines deduped per session and `trigger`, DOI rate ÷ „DOI-Mail fällig“ (OI1). Declines from the header share card have no `trigger`. One stored offer can be declined again on every later page (the card is rebuilt from history, the decline is not stored), so declines can exceed asks: count distinct sessions or dedupe per `trigger`. For signed-in customers the card is hidden (`buildToolCard()`), so a server `ask_shown` may have had no visible card (§4.7). |
 | **Kundenkonto & Self-Service** (AD §5.15) | server events | `contact_form_submitted` is session-keyed once `8d0a0c4` is live (body `sessionId`, §4.10). Earlier rows have session `NULL`, so a per-session contact join only works for rows after that upload. |
 | **Mo-zugeordneter Umsatz** (AD §5.16) | `mo_orders` from webhooks, `_mo` attribute | Depends on §10 coverage, including the permalink question. |
 | Raw event breakdown | top 20 events by count | `launcher_attention_played` and `chat_opened`/`chat_closed` will dominate. Rarer events (e.g. `summary_downloaded`) can fall off the top 20. |
@@ -548,8 +556,8 @@ Note: `account_signin_return` and `_linked` are keyed by the sid **at return tim
 | Recommendation → click | server tool calls (`show_product`, `compare_products`, `add_to_cart`; `recommended_product_ids`) → `product_cta_clicked` / `add_to_cart_clicked` | Server tool calls ≠ rendered cards. |
 | Click → order | `add_to_cart_clicked` / `product_cta_clicked` → `mo_orders` tier by session/token | Permalink and consent coverage (§10.3). |
 | Sign-in popup | `login_gate_shown` → `_signin_clicked` → `account_signin_started{source}` → server `succeeded` → `linked`, plus `account_signin_return.result` | Already on the dashboard (AD §5.7a). Real `linked` data only from the PR #73 upload on 2026-10-04 (from 2026-10-03 until then, sign-ins were not linked and the widget's `return{ok}` was inflated, §12.1 row 4a). |
-| Consent gate | `consent_gate_shown` → `_accepted` / `_declined` / `_dismissed` → server `email_capture_marketing_opted_in{trigger:'signin_optin'}` → `_confirmed` | Accept = tap, not DOI. Needs signed-in sessions, so data starts on 2026-10-04 (PR #73 live). |
-| Email capture | server `email_capture_ask_shown{trigger, askNumber}` → widget `email_capture_declined` / server `_submitted` → `_marketing_opted_in` → `_confirmed` | Header-share captures sit outside the ask counts. |
+| Consent gate | `consent_gate_shown` → `_accepted` / `_declined` / `_dismissed` → server `email_capture_marketing_opted_in{trigger:'signin_optin'}` → `_confirmed` | Accept = tap, not DOI. Needs signed-in sessions, so data starts on 2026-10-04 (PR #73 live). On the dashboard since 2026-10-05 per session and, with the widget's `variant` / `placement`, per variant (AD §5.7). |
+| Email capture | server `email_capture_ask_shown{trigger, askNumber}` → widget `email_capture_declined` / server `_submitted` → `_marketing_opted_in` → `_confirmed` | Header-share captures sit outside the ask counts. Since 2026-10-05 `source` / `outcome` split the opt-ins (new DOI / already subscribed / suppressed) and `_confirmed` carries `source`. |
 | Campaign | server `campaign_email_clicked` → `campaign_chat_started` (both session-less, joined by `sendId`) | The open step is missing (no deep-link event). |
 | Voice | `voice_mode_on` → `voice_reply_played` → `voice_mode_off` | Off includes automatic offs. Plays may double count. |
 | Self-service | `account_export_started` → `account_exported`; `summary_download_started` → `summary_downloaded`; `account_history_opened` → `conversation_opened` | History opens include automatic opens. Signed-in only, so data starts on 2026-10-04. |
@@ -559,7 +567,7 @@ Note: `account_signin_return` and `_linked` are keyed by the sid **at return tim
 
 - **No message text, no emails, no product names** in `track()` payloads (privacy posture in `ms-chat-widget.js`, WIDGET_SPEC §9b/§9c). Ids and enums only.
 - **Tone rule** for proactive copy: reference the page or category, never the visitor's behaviour.
-- **Marketing consent UI:** the legal text is backend-served and rendered verbatim (`consentTextShown` echoed byte-for-byte), shown only if `lawyerApproved === true`. Nothing is pre-ticked, decline is equally prominent, and the nudge never asks for an email (CONSENT_FLOW.md). Any A/B variant needs its own approved copy.
+- **Marketing consent UI:** the legal text is backend-served and rendered verbatim (`consentTextShown` echoed byte-for-byte), shown only if `lawyerApproved === true`. Nothing is pre-ticked, decline is equally prominent, and the nudge never asks for an email (CONSENT_FLOW.md). Any A/B variant needs its own approved copy. The consent popup's accept rate rests on `consent_gate_shown` as its denominator (a widget event, per session since 2026-10-05), so the § 25 TDDDG question below applies to it too; per-session variant assignment (`CONSENT_SIGNIN_VARIANTS`) adds to that question (07 §8).
 - **Attribution and analytics consent:** the `_mo` stamp requires `analyticsProcessingAllowed()`. Open legal question (not decided here): `track()` itself is not consent-gated, and the sid is written to localStorage on the first page load for every visitor (§3.1). Under § 25 TDDDG, storing/reading device data for non-essential analytics usually needs consent. More "silent" events (widget-load, impressions) increase that exposure. **Ask the lawyer before adding interaction-free events**, or gate them on the same `analyticsProcessingAllowed()` check.
 - **Campaign token:** keep it out of KPI payloads, and keep `campaign_chat_started` session-less unless legal agrees otherwise.
 - **Deployment:** every widget change needs a manual upload to the live theme, and template blocks can be overwritten by the live editor (chapter 01 §16). Plan for drift checks after each upload.
@@ -573,9 +581,9 @@ Effort: **S** = < ½ day widget change, no new endpoint. **M** = 1–3 days or n
 | Idea | What changes | Effort | Constraint |
 | --- | --- | --- | --- |
 | Send `askNumber` on `email_capture_declined` (allowed by AC §5) | The tool input does not carry `askNumber` today (`offer_email_summary` input is only `{message, trigger, productIds}`; the server computes `askNumber` in `/api/chat` `onFinish` and writes it only to `email_capture_ask_shown`). Either the backend adds `askNumber` to the tool input or output and the widget passes it through `buildCaptureCard` → `email_capture_declined`, or the widget counts prior `tool-offer_email_summary` parts in `messages`, which must match the server's `countEmailSummaryOffers()`. | M | Backend + widget change. |
-| Variant id on consent events | Backend serves `variant` with the consent copy, and the widget adds it to `consent_gate_*` | M | Every variant must be `lawyerApproved`. |
+| Variant id on consent events | Backend serves `variant` with the consent copy, and the widget adds it to `consent_gate_*` | M | Every variant must be `lawyerApproved`. **Backend built 2026-10-05** (OI3: `variant` + served `benefits`, `CONSENT_SIGNIN_VARIANTS`, dashboard block); widget part is frontend task 1. |
 | Ask at a value moment instead of only after the first message | After the first `add_to_cart_clicked` or the second product card for signed-in customers, re-use `presentSignInOptIn()` (still once per tab session) | M | Same consent rules; must not stack with the popup. |
-| Measure DOI completion per surface | Already possible server-side. Add `surface` to the opt-in POST if the backend wants to split card vs popup. | S | — |
+| Measure DOI completion per surface | **Done server-side 2026-10-05** (OI1: opt-ins and `_confirmed` carry `source`). Popup vs card: the backend accepts `placement` on the opt-in POST and the `consent_gate_*` data (OI3); the widget sends it with frontend task 1. | S | — |
 
 #### Sign-in rate
 

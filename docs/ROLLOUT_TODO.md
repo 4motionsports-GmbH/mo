@@ -44,7 +44,7 @@ the single list of what is still open for M. C's open items are at the end of �
    Shopify, AI profiles for everyone, Shopify tags) and 7.1/7.2 (tuning, Claude GitHub App);
    Black Friday (4.x) when you bring it up; app ownership (5.3).
 8. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
-   (attribution window, F-37), §21 (consent bullets + page context); privacy-policy sentences
+   (attribution window, F-37), §21 (consent bullets + page context, F-38); privacy-policy sentences
    F-05/F-28 for shop-login recognition and purchase attribution.
 
 ## Done

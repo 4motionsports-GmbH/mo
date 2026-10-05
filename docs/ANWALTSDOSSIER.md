@@ -1,7 +1,7 @@
 # Rechtsdossier „Mo“ — KI-Verkaufsberater auf motionsports.de
 
 **Zweck:** Vollständige, aktuelle Beschreibung des Systems für die externe anwaltliche Prüfung (Datenschutz, Wettbewerbs-/Lauterkeitsrecht, KI-Regulierung, Verbraucherrecht) — als Grundlage für Ihr Feedback und Ihre Handlungsempfehlungen.
-**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34). **Nachtrag 03.10.2026 (2):** Bestellstatus im Chat — standardmäßig aus (§ 16, F-32); „Einplanen“ geprüfter Kampagnen-Mails (§ 17, F-33). **Nachtrag 03.10.2026 (3):** Werbebriefe als Kampagnen-Kanal (§ 18, F-35). **Nachtrag 05.10.2026:** Bestell-Zuordnung — Fenster ab der letzten Beratung; Entscheidung des Mandanten: Schalter an nach der Migration (§ 20, F-37). **Nachtrag 05.10.2026 (2):** Erkennung der Shop-Anmeldung im Chat (App Proxy); Entscheidung des Mandanten, nach seiner Angabe von Ihnen bestätigt (§ 19, F-36 beantwortet).
+**Stand:** 05.08.2026 — code-basiert erstellt aus dem tatsächlichen Stand des Backends (nicht aus älteren Konzeptpapieren). **Nachtrag 01.10.2026:** Kundenplattform — eine Einwilligung mit Shopify, eine Löschung, alle Shop-Kunden, Briefwerbung (§ 13, Prüfbitten F-22 bis F-29). **Nachtrag 02.10.2026:** E-Mails im Eingang — KI-Antwortentwurf, Kontaktformular in der Kundenakte (§ 14, F-30). **Nachtrag 03.10.2026:** behobene Schwachstellen in der Anmelde-Zuordnung (§ 15, F-31 und F-34). **Nachtrag 03.10.2026 (2):** Bestellstatus im Chat — standardmäßig aus (§ 16, F-32); „Einplanen“ geprüfter Kampagnen-Mails (§ 17, F-33). **Nachtrag 03.10.2026 (3):** Werbebriefe als Kampagnen-Kanal (§ 18, F-35). **Nachtrag 05.10.2026:** Bestell-Zuordnung — Fenster ab der letzten Beratung; Entscheidung des Mandanten: Schalter an nach der Migration (§ 20, F-37). **Nachtrag 05.10.2026 (2):** Erkennung der Shop-Anmeldung im Chat (App Proxy); Entscheidung des Mandanten, nach seiner Angabe von Ihnen bestätigt (§ 19, F-36 beantwortet). **Nachtrag 05.10.2026 (3):** Vorteilspunkte im Einwilligungs-Popup vom Server (Copy-Version v5), Seitenkontext bei getippten Fragen auf Produktseiten — standardmäßig aus (§ 21, F-38).
 **Ersetzt:** den „DSGVO Readiness Report“ vom 16.06.2026 ([`archive/LEGAL_READINESS_REPORT.md`](./archive/LEGAL_READINESS_REPORT.md)). Was seither umgesetzt wurde, steht in § 11; was neu hinzukam, ist durchgängig eingearbeitet.
 **Verantwortlicher:** motion sports [genaue Firmierung, Anschrift, Geschäftsführung, ggf. DSB — vom Mandanten zu ergänzen]. Betrieben wird der Onlineshop motionsports.de (Shopify) für Sport- und Fitnessgeräte (B2C, Studios/Physiotherapie, öffentliche Auftraggeber).
 
@@ -138,13 +138,13 @@ Ein täglicher, abgesicherter Lösch-Lauf setzt alle Fristen automatisch durch. 
 
 ---
 
-## 5. Einwilligungen (Stand: Copy-Version v4)
+## 5. Einwilligungen (Stand: Copy-Version v5 seit 05.10.2026 — Änderungen gegenüber v4 in § 21)
 
 **Mechanik (alles serverseitig erzwungen, fail-closed):**
 
 - Zwei **getrennte, nie vorangekreuzte** Checkboxen (Zusammenfassung vs. Marketing); Marketing nie Voraussetzung für die Zusammenfassung; Prompt verbietet Kopplung und Dringlichkeitsdruck.
 - **Double-Opt-in** für Marketing: 256-Bit-Token, 7 Tage gültig; vor Bestätigung keine einzige Marketing-Mail.
-- **Wortlautgetreuer Nachweis:** Der angezeigte Einwilligungstext wird verbatim gespeichert; ein Versionsstempel (v4) wird nur vergeben, wenn der zurückgemeldete Text byte-identisch mit dem Serverstand ist.
+- **Wortlautgetreuer Nachweis:** Der angezeigte Einwilligungstext wird verbatim gespeichert; ein Versionsstempel (v4, seit 05.10.2026 v5 — § 21) wird nur vergeben, wenn der zurückgemeldete Text byte-identisch mit dem Serverstand ist.
 - **Widerruf:** signierter 1-Klick-Abmeldelink in jeder Marketing-/Kampagnen-Mail + `List-Unsubscribe`-Header; ohne funktionierenden Abmeldelink wird der Versand verweigert; Sperrliste dauerhaft, fail-closed.
 - **Drei Einwilligungs-Oberflächen:** (1) Capture-Formular im Chat (2 Checkboxen), (2) Opt-in beim Login (Button-Consent, hinterlegte Adresse), (3) Chat-Consent-Gate (Button-Consent, getippte Adresse, nur Marketing, max. 1× pro Session).
 
@@ -559,6 +559,24 @@ Der Mandant hat die Wahl an die Entwicklung (KI-Assistent Claude) übertragen. E
   - (b) Ob die Verlängerung unabhängig von der Einwilligung (Beratung nach Widerruf) und die am Warenkorb verbleibende Markierung auf geteilten Browsern hinnehmbar sind — oder ob zuerst die Widget-Aufgabe „Markierung beim Abmelden, Löschen und Widerruf leeren“ live sein muss bzw. das Fenster nur über eine einwilligungsgebundene Erneuerung durch das Widget verlängert werden darf.
   - (c) Die Übergangsregel: 37 Tage lang zählen ältere Gesprächszeilen für die ursprüngliche Sitzung, bei fortgesetzten Gesprächen also geräteübergreifend.
   - (d) Den Hinweis auf den Zweck „Zuordnung von Käufen zur Beratung“ in der Datenschutzerklärung — zusammen mit F-28 und dem offenen Punkt aus `ORDER_ATTRIBUTION.md` (Datenschutzerklärung; Freigabe „Protected Customer Data“ für die Bestell-Webhooks bei Shopify).
+
+---
+
+## 21. Nachtrag 05.10.2026 — Vorteile im Einwilligungs-Popup, Seitenkontext
+
+Grundlage: `docs/CONSENT_FLOW.md` („At-sign-in marketing opt-in“, v5), `docs/API_CONTRACT.md` § 2 und § 5, `docs/plans/2026-10-04/OI3.md`, `A3.md`.
+
+### 21.1 Tatsachen
+
+- **Vorteilspunkte vom Server.** Das Einwilligungs-Popup nach der Anmeldung zeigt unter der (freigegebenen) Überschrift drei Vorteilspunkte, die jetzt das Backend ausliefert statt das Widget: „Angebote, die zu deiner Beratung passen“, „Exklusive Rabatt-Aktionen nur für Abonnenten“, „Jederzeit mit einem Klick abbestellbar“ (englisch als Übersetzung). Wie die Überschrift sind sie Rahmung, **nicht** Teil des gespeicherten Einwilligungstexts; Einwilligungstext, Fußzeile, Mechanik und Double-Opt-in sind unverändert. Versionsstempel **v5**. Bis zum nächsten Widget-Upload zeigt das Live-Widget noch seine eigenen zwei Punkte.
+- **Entscheidung.** Den Wortlaut hat der Mandant am 05.10.2026 entschieden (die Wahl an die Entwicklung übertragen, § 19.2): ansprechend, wahr, ohne Dringlichkeit und ohne Rabattbeträge. Eine anwaltliche Freigabe der Punkte ist nicht vermerkt.
+- **Varianten.** Technisch können später weitere Rahmungs-Varianten im Wechsel gezeigt werden (A/B-Test, Zuteilung über die pseudonyme Session-ID). Standard ist eine einzige Variante; eine weitere wird erst nach eigener Freigabe eingeschaltet. Gezeigte Variante und Platzierung landen nur in den pseudonymen Kennzahlen-Ereignissen, nicht im Einwilligungsnachweis.
+- **Seitenkontext.** Tippt oder spricht jemand auf einer Produktseite eine Frage, schickt das Widget nach dem nächsten Upload Handle und Titel des Produkts der Seite mit (bei Kategorieseiten die Kategorie) — dieselbe Datenkategorie, die der Produkt-Button schon heute sendet, ohne Verlauf der angesehenen Seiten. Mo nutzt sie nur bei eingeschaltetem Schalter `CHAT_PAGE_CONTEXT_ENABLED` (standardmäßig **aus**). Gemessen wird mit zwei pseudonymen Server-Ereignissen je Sitzung (verwendet ja/nein, Produkt erkannt, Anzahl Produktkarten) — **ohne** Produktkennung, Text oder Kundendaten.
+- **Kontrollgruppe.** Optional erhält ein Anteil der Sitzungen (`CHAT_PAGE_CONTEXT_HOLDOUT_PCT`, standardmäßig 0, höchstens 50 %) absichtlich das bisherige Verhalten, um die Wirkung ehrlich zu messen. Das wird erst eingeschaltet, nachdem Messgröße und Zielgröße vorab festgelegt sind, und endet bei Erreichen der Zielgröße (höchstens etwa 6 Wochen).
+
+### 21.2 Prüfbitte
+
+- **F-38 — Rahmung und Vergleichsgruppen:** Bitte bestätigen bzw. beraten Sie (a) die drei Vorteilspunkte als Rahmung außerhalb des Einwilligungstexts; (b) vor einer zweiten Variante: die Zuteilung über die Session-ID (§ 25 TDDDG, neben F-14) und ob die gezeigte Variante im Einwilligungsnachweis stehen muss; (c) vor der Kontrollgruppe: die Datenschutzerklärung (mit F-05 / F-28) — Seitenangaben werden mit Chat-Nachrichten gesendet, Qualitätsvergleiche mit einer Kontrollgruppe auf Grundlage der Session-ID (Art. 6 (1) f).
 
 ---
 
