@@ -132,6 +132,7 @@ export const SERVER_ONLY_EVENTS = Object.freeze([
   "account_erased",
   "order_status_lookup",
   "mo_order_marker_unresolved",
+  "account_shop_recognised",
 ]);
 
 const SERVER_ONLY = new Set(SERVER_ONLY_EVENTS);
@@ -158,13 +159,19 @@ export function isServerOnlyEvent(event) {
  * @param {{ gateClicked?: boolean, dismissedAfterClick?: boolean, started?: boolean,
  *           succeeded?: boolean, returnOk?: boolean, returnLinkFailed?: boolean,
  *           returnOther?: boolean, linked?: boolean, linkedViaShop?: boolean,
+ *           linkedViaShopNew?: boolean, shopCodeIssued?: boolean,
  *           refusedInvalid?: boolean, refusedMismatch?: boolean }} f
+ * `linkedViaShopNew` false = every App Proxy link was a renewal of an existing
+ * sign-in (undefined keeps the pre-P0.3 reading); `shopCodeIssued` = whoami
+ * issued a code (a sign-in attempt even without any other event).
  */
 export function classifySigninSession(f) {
   if (f.linked) {
     if (f.returnOk) return "complete";
     // Only the App Proxy (whoami) link — no sign-in round trip at all.
-    if (f.linkedViaShop && !f.succeeded && !f.started) return "shop_recognised";
+    if (f.linkedViaShop && !f.succeeded && !f.started) {
+      return f.linkedViaShopNew === false ? "shop_renewed" : "shop_recognised";
+    }
     return "complete_retry";
   }
   if (f.refusedMismatch) return "refused_mismatch";
@@ -175,13 +182,15 @@ export function classifySigninSession(f) {
   if (f.succeeded) return "returned_error";
   if (f.started) return f.returnOther ? "returned_error" : "abandoned";
   if (f.gateClicked) return f.dismissedAfterClick ? "dismissed_while_waiting" : "start_lost";
+  if (f.shopCodeIssued) return "shop_not_redeemed";
   return "none";
 }
 
 /** Display order and German labels + the likely cause (05 §12.1). */
 export const SIGNIN_DIAGNOSIS = Object.freeze([
   { key: "complete", label: "Im Chat angemeldet", cause: "Code eingelöst, Rückkehr gemeldet.", ok: true },
-  { key: "shop_recognised", label: "Vom Shop erkannt", cause: "Im Shop angemeldet, über die App Proxy (whoami) ohne Klick im Chat angemeldet.", ok: true },
+  { key: "shop_recognised", label: "Vom Shop erkannt", cause: "Im Shop angemeldet, über die App Proxy (whoami) ohne Klick im Chat angemeldet — neue Anmeldung dieser Sitzung.", ok: true },
+  { key: "shop_renewed", label: "Bereits angemeldet, vom Shop bestätigt", cause: "Die Sitzung war schon angemeldet; whoami hat sie in einem neuen Tab erneut bestätigt — keine neue Anmeldung.", ok: true },
   { key: "complete_retry", label: "Angemeldet (zweiter Versuch)", cause: "Erster Einlöseversuch scheiterte (503/Netz), der stille zweite Versuch gelang.", ok: true },
   { key: "refused_mismatch", label: "Code für andere Sitzung", cause: "Die Anmeldung endete in einer anderen Sitzung (anderes Gerät oder Tab) — oder ein fremder Link.", ok: false },
   { key: "refused_invalid", label: "Code abgelaufen oder benutzt", cause: "Code älter als 10 Minuten, schon benutzt oder unbekannt.", ok: false },
@@ -192,4 +201,33 @@ export const SIGNIN_DIAGNOSIS = Object.freeze([
   { key: "abandoned", label: "Bei Shopify abgebrochen", cause: "Anmeldung bei Shopify nicht abgeschlossen — oder die Rücksprungadresse wurde abgelehnt.", ok: false },
   { key: "dismissed_while_waiting", label: "Beim Warten geschlossen", cause: "„Anmelden“ geklickt, das Popup aber geschlossen, bevor die Antwort fertig war.", ok: false },
   { key: "start_lost", label: "Start nicht angekommen", cause: "Das Start-Event ging bei der Weiterleitung verloren oder die Weiterleitung schlug fehl.", ok: false },
+  { key: "shop_not_redeemed", label: "Shop-Code nicht eingelöst", cause: "whoami hat einen Code ausgegeben, das Widget hat ihn nicht eingelöst — altes Widget ohne Code-Einlösung (Drift), Sitzungswechsel während der Anfrage oder Störung beim Einlösen.", ok: false },
 ]);
+
+// ---------------------------------------------------------------------------
+// Shop-login recognition (App Proxy, P0.3)
+// ---------------------------------------------------------------------------
+
+/** Drift alarm: at least this many sessions with a shop code, and more than this share unredeemed. */
+export const SHOP_REDEEM_ALARM = Object.freeze({ minSessions: 20, maxUnlinkedShare: 0.2 });
+
+/**
+ * Rates of the shop-login recognition (sessions). `alarm` when the widget
+ * leaves too many issued codes unredeemed — typically an old widget build.
+ * @param {{ recognised: number, withToken: number, withCode: number, redeemed: number }} c
+ * @returns {{ redeemRate: number | null, tokenShare: number | null, unlinked: number,
+ *   unlinkedShare: number | null, alarm: boolean }}
+ */
+export function shopRecognitionRates({ recognised, withToken, withCode, redeemed }) {
+  const codes = Math.max(0, Number(withCode) || 0);
+  const linked = Math.min(codes, Math.max(0, Number(redeemed) || 0));
+  const unlinked = codes - linked;
+  const unlinkedShare = rate(unlinked, codes);
+  return {
+    redeemRate: rate(linked, codes),
+    tokenShare: rate(withToken, recognised),
+    unlinked,
+    unlinkedShare,
+    alarm: codes >= SHOP_REDEEM_ALARM.minSessions && unlinkedShare != null && unlinkedShare > SHOP_REDEEM_ALARM.maxUnlinkedShare,
+  };
+}

@@ -39,6 +39,7 @@ test("no new event counts as a product click or a cart click", () => {
     "consent_gate_accepted",
     "account_signin_linked",
     "account_signin_link_refused",
+    "account_shop_recognised",
   ];
   for (const name of names) {
     for (const p of [...CTA_PATTERNS, ...CART_PATTERNS]) {
@@ -91,7 +92,7 @@ test("loginGateRates: junk and impossible counts never break the funnel", () => 
 
 test("server-only events: the AC §5 server table, nothing the widget sends", async () => {
   const { SERVER_ONLY_EVENTS, isServerOnlyEvent } = await import("./kpi-widget-events.mjs");
-  for (const e of ["account_signin_linked", "account_signin_link_refused", "account_signin_succeeded", "account_erased", "campaign_chat_started", "contact_form_submitted", "order_status_lookup", "mo_order_marker_unresolved", "email_capture_ask_shown"]) {
+  for (const e of ["account_signin_linked", "account_signin_link_refused", "account_signin_succeeded", "account_erased", "campaign_chat_started", "contact_form_submitted", "order_status_lookup", "mo_order_marker_unresolved", "account_shop_recognised", "email_capture_ask_shown"]) {
     assert.equal(isServerOnlyEvent(e), true, e);
   }
   for (const e of [LOGIN_GATE_SHOWN, ACCOUNT_SIGNIN_STARTED, ACCOUNT_SIGNIN_RETURN, "consent_gate_accepted", "email_capture_declined", "account_export_started", "account_exported", "chat_opened", "product_cta_clicked", "add_to_cart_clicked"]) {
@@ -120,9 +121,31 @@ test("classifySigninSession follows docs 05 §12.1", async () => {
   assert.equal(c({}), "none");
   assert.equal(c({ linked: true, linkedViaShop: true }), "shop_recognised");
   assert.equal(c({ linked: true, linkedViaShop: true, started: true, succeeded: true }), "complete_retry");
+  // P0.3: renewals vs new shop sign-ins; an issued but unredeemed shop code.
+  assert.equal(c({ linked: true, linkedViaShop: true, linkedViaShopNew: true }), "shop_recognised");
+  assert.equal(c({ linked: true, linkedViaShop: true, linkedViaShopNew: false }), "shop_renewed");
+  assert.equal(c({ shopCodeIssued: true }), "shop_not_redeemed");
+  // A chat sign-in outcome always wins over the shop code.
+  assert.equal(c({ shopCodeIssued: true, started: true }), "abandoned");
+  assert.equal(c({ shopCodeIssued: true, gateClicked: true }), "start_lost");
+  assert.equal(c({ shopCodeIssued: true, refusedInvalid: true }), "refused_invalid");
   // Every category has a label.
   const keys = new Set(SIGNIN_DIAGNOSIS.map((d) => d.key));
-  for (const k of ["complete", "shop_recognised", "complete_retry", "refused_mismatch", "refused_invalid", "link_failed_local", "stale_widget", "no_return", "returned_error", "abandoned", "dismissed_while_waiting", "start_lost"]) {
+  for (const k of ["complete", "shop_recognised", "shop_renewed", "shop_not_redeemed", "complete_retry", "refused_mismatch", "refused_invalid", "link_failed_local", "stale_widget", "no_return", "returned_error", "abandoned", "dismissed_while_waiting", "start_lost"]) {
     assert.ok(keys.has(k), k);
   }
+});
+
+test("shopRecognitionRates: rates, minimum sample and the strict alarm threshold", async () => {
+  const { shopRecognitionRates: r } = await import("./kpi-widget-events.mjs");
+  assert.deepEqual(r({ recognised: 0, withToken: 0, withCode: 0, redeemed: 0 }), {
+    redeemRate: null, tokenShare: null, unlinked: 0, unlinkedShare: null, alarm: false,
+  });
+  assert.equal(r({ recognised: 19, withToken: 0, withCode: 19, redeemed: 0 }).alarm, false);
+  assert.equal(r({ recognised: 20, withToken: 5, withCode: 20, redeemed: 15 }).alarm, true);
+  assert.equal(r({ recognised: 20, withToken: 5, withCode: 20, redeemed: 16 }).alarm, false);
+  const x = r({ recognised: 10, withToken: 4, withCode: 5, redeemed: 9 });
+  assert.equal(x.redeemRate, 1);
+  assert.equal(x.unlinked, 0);
+  assert.equal(x.tokenShare, 0.4);
 });
