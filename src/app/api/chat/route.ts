@@ -14,7 +14,7 @@ import {
 } from "@/lib/system-prompt";
 import { resolveLocale } from "@/lib/locale";
 import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-context";
-import { resolveChatMemory } from "@/lib/customer-memory";
+import { resolveChatIdentity } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
 import { shouldForceEmailOfferStep } from "@/lib/email-offer-trigger.mjs";
 import { anthropicOptionsFor, modelFor } from "@/lib/ai-models.mjs";
@@ -319,11 +319,11 @@ export async function POST(req: Request) {
     })();
 
     const campaignToken = typeof body.campaignToken === "string" ? body.campaignToken.slice(0, 128) : null;
-    const [hits, customerMemory, emailOfferDeclined, generalQa, directives] = await Promise.all([
+    const [hits, identity, emailOfferDeclined, generalQa, directives] = await Promise.all([
       latestUserText
         ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
         : Promise.resolve([]),
-      resolveChatMemory({ sessionId, email: claimedEmail || null }),
+      resolveChatIdentity({ sessionId, email: claimedEmail || null }),
       // Whether the user dismissed a capture card in this session (a UI click
       // the message history never shows — only the widget's KPI event records
       // it). Gates the deterministic email-offer trigger below: after an
@@ -361,6 +361,13 @@ export async function POST(req: Request) {
       // Campaign attribution („Chat-Start“, best-effort, never blocks the chat).
       campaignToken ? recordCampaignChatStarted(campaignToken) : Promise.resolve(false),
     ]);
+
+    const customerMemory = identity.memory;
+    // CA §6.0 on the server: the widget never shows the capture card to a
+    // signed-in customer, so the backend never offers it (no dead ask, no
+    // forced step). Fail-open: a failed sign-in lookup keeps the offer.
+    const signedIn = identity.signedIn;
+    const emailOfferAvailable = allowEmailSummaryOffer && !signedIn;
     // Optional product context (chat opened "about" a product) and/or
     // browsing context (small recently-viewed trail brought along by the
     // user). Both validated against the catalog; unknown/absent ids leave
@@ -447,7 +454,7 @@ export async function POST(req: Request) {
     const tools = buildChatTools(profile, locale, { sessionId, orderStatusEnabled });
     const defaultActiveTools = Object.keys(tools).filter(
       (name) =>
-        (allowEmailSummaryOffer || name !== "offer_email_summary") &&
+        (emailOfferAvailable || name !== "offer_email_summary") &&
         (orderStatusEnabled || name !== "get_order_status")
     ) as Array<keyof typeof tools>;
 
@@ -497,6 +504,9 @@ export async function POST(req: Request) {
             emailOffer: {
               offersMade: emailOffersMade,
               emailCaptured,
+              signedIn,
+              // The PDF download icon exists only in a thread with a key.
+              summaryDownload: signedIn && conversationKey !== null,
             },
             generalQa,
             directives,
@@ -525,8 +535,8 @@ export async function POST(req: Request) {
       // tool call, so countEmailSummaryOffers and the ask-shown KPI below
       // pick it up like any other offer), and never after the user declined a
       // capture card (widget-reported KPI event). When it fires, the tool is
-      // guaranteed present in the tool set: the trigger's gates are a strict
-      // subset of allowEmailSummaryOffer.
+      // guaranteed present in the tool set: the trigger's gates (incl.
+      // signedIn) are a strict subset of emailOfferAvailable.
       prepareStep: ({ steps, messages: stepMessages }) => {
         // After the email-offer step the tool list is back to normal — again a
         // different prefix than the offer step's, so replay without thinking.
@@ -536,6 +546,7 @@ export async function POST(req: Request) {
           offersMade: emailOffersMade,
           declined: emailOfferDeclined,
           toolNamesCalled: turnToolNames(steps),
+          signedIn,
         });
         if (!force) return undefined;
         emailOfferStepRan = true;
@@ -556,6 +567,7 @@ export async function POST(req: Request) {
           offersMade: emailOffersMade,
           declined: emailOfferDeclined,
           toolNamesCalled: turnToolNames(steps),
+          signedIn,
         });
         return !offerPending || steps.length > MAX_STEPS_PER_TURN;
       },

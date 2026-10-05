@@ -23,6 +23,10 @@ export interface EmailOfferState {
   offersMade: number;
   /** True once the user submitted their email via the capture form here. */
   emailCaptured: boolean;
+  /** Live signed-in session (tier 3): no e-mail offer, no sign-up talk. */
+  signedIn?: boolean;
+  /** Signed in AND the thread has a key — the widget's PDF download exists. */
+  summaryDownload?: boolean;
 }
 
 export interface ProductContext {

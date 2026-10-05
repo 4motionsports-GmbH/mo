@@ -141,3 +141,24 @@ test("a captured email suppresses the forced ask regardless of everything else",
     false
   );
 });
+
+test("a signed-in session never gets the forced ask (CA §6.0), across the whole matrix", () => {
+  for (const emailCaptured of [false, true]) {
+    for (const offersMade of [0, 1, 2]) {
+      for (const declined of [false, true]) {
+        for (const toolNamesCalled of [CHECKOUT_TURN, [...CHECKOUT_TURN, "offer_email_summary"]]) {
+          assert.equal(
+            shouldForceEmailOfferStep({ emailCaptured, offersMade, declined, toolNamesCalled, signedIn: true }),
+            false
+          );
+        }
+      }
+    }
+  }
+});
+
+test("signedIn omitted or false keeps the old behaviour", () => {
+  const base = { emailCaptured: false, offersMade: 0, declined: false, toolNamesCalled: CHECKOUT_TURN };
+  assert.equal(shouldForceEmailOfferStep(base), true);
+  assert.equal(shouldForceEmailOfferStep({ ...base, signedIn: false }), true);
+});

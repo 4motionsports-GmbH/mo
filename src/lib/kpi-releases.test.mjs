@@ -2,8 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { KPI_RELEASES, SIGNIN_OUTAGE, germanDay, releaseNotesFor, releasesInRange } from "./kpi-releases.mjs";
 
+test("release keys are unique and dates ascend", () => {
+  const keys = KPI_RELEASES.map((r) => r.key);
+  assert.equal(new Set(keys).size, keys.length);
+  const dates = KPI_RELEASES.map((r) => r.date);
+  assert.deepEqual([...dates].sort(), dates);
+});
+
 test("releases are ordered and dated as documented", () => {
-  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05"]);
+  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05"]);
   assert.deepEqual(SIGNIN_OUTAGE, { from: "2026-10-03", to: "2026-10-04" });
   assert.equal(germanDay("2026-10-04"), "04.10.2026");
 });
@@ -53,6 +60,7 @@ test("releasesInRange is inclusive on both ends", () => {
   assert.deepEqual(releasesInRange({ from: "2026-10-05", to: "2026-10-30" }).map((r) => r.key), [
     "attribution-unresolved",
     "attribution-window",
+    "signedin-offer-off",
   ]);
   assert.deepEqual(releasesInRange({ from: "2026-10-06", to: "2026-10-30" }), []);
   assert.deepEqual(releasesInRange({ from: "bad", to: "2026-10-30" }), []);

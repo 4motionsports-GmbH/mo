@@ -45,6 +45,13 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Widget-Markierungen zählen ab der letzten Produktberatung auf dem Gerät statt ab der ersten. Vorher wurden Bestellungen 30 Tage nach der ersten Beratung nicht mehr zugeordnet (Markierung nach 37 Tagen gelöscht). „Direkt“ unverändert.",
   },
+  {
+    date: "2026-10-05",
+    key: "signedin-offer-off",
+    title: "Keine E-Mail-Zusammenfassung mehr für angemeldete Kund:innen",
+    detail:
+      "Mo bietet angemeldeten Kund:innen die Zusammenfassung per E-Mail nicht mehr an (das Widget blendete die Karte ohnehin aus). „Angeboten“ im E-Mail-Capture-Funnel sinkt dadurch, die Quote steigt — kein Verhaltenswechsel der Kund:innen.",
+  },
 ]);
 
 /** First day whose data a section can be read for — earlier days are not comparable. */

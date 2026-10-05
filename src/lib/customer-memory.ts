@@ -197,21 +197,22 @@ export async function resolveCustomerMemory(
  * as tier 2 (CONSENT_COPY_LAWYER_APPROVED + marketing consent — see
  * canPersonaliseSignedIn). Non-consented → name only. Best-effort; never throws.
  */
-async function resolveSignedInMemory(
-  sessionId: string | null
-): Promise<CustomerMemoryContext | null> {
+async function resolveSignedInMemory(sessionId: string | null): Promise<ChatIdentity> {
   const sid = sessionId?.trim() || null;
-  if (!sid) return null;
+  if (!sid) return { signedIn: false, memory: null };
+  // Set once the session is proven live; a failure after that still knows it.
+  let signedIn = false;
   try {
     const resolved = await resolveSignedInCustomer(sid);
-    if (!resolved) return null;
+    if (!resolved) return { signedIn: false, memory: null };
 
     // Prove the session is still live (authenticated re-identification).
     const token = await getValidAccessToken(resolved.customerId);
-    if (!token) return null;
+    if (!token) return { signedIn: false, memory: null };
+    signedIn = true;
 
     const customer = await getCustomerById(resolved.customerId);
-    if (!customer) return null;
+    if (!customer) return { signedIn, memory: null };
 
     const displayName =
       customer.shopifyAccountSummary?.displayName?.trim() || resolved.name || null;
@@ -226,18 +227,21 @@ async function resolveSignedInMemory(
     if (!personalise) {
       // Authenticated greeting-by-name ONLY — no history personalisation leaks.
       // With nothing to even greet by, behave exactly as for an anonymous visit.
-      if (!displayName) return null;
+      if (!displayName) return { signedIn, memory: null };
       return {
-        firstSeenAt: null,
-        priorConversationCount: 0,
-        profileSummary: null,
-        ownedItems: [],
-        lastPurchaseAt: null,
-        welcomeAlreadyIssued: customer.welcomeIssuedAt != null,
-        signedIn: true,
-        personalised: false,
-        displayName,
-        addressContext: null,
+        signedIn,
+        memory: {
+          firstSeenAt: null,
+          priorConversationCount: 0,
+          profileSummary: null,
+          ownedItems: [],
+          lastPurchaseAt: null,
+          welcomeAlreadyIssued: customer.welcomeIssuedAt != null,
+          signedIn: true,
+          personalised: false,
+          displayName,
+          addressContext: null,
+        },
       };
     }
 
@@ -247,21 +251,24 @@ async function resolveSignedInMemory(
     const profileSummary = customer.profileSummary?.trim() || null;
 
     return {
-      firstSeenAt: customer.firstSeenAt,
-      priorConversationCount,
-      profileSummary,
-      ...profileExtras(customer),
-      ownedItems,
-      lastPurchaseAt,
-      welcomeAlreadyIssued: customer.welcomeIssuedAt != null,
-      signedIn: true,
-      personalised: true,
-      displayName,
-      addressContext: customer.shopifyAccountSummary?.addressContext ?? null,
+      signedIn,
+      memory: {
+        firstSeenAt: customer.firstSeenAt,
+        priorConversationCount,
+        profileSummary,
+        ...profileExtras(customer),
+        ownedItems,
+        lastPurchaseAt,
+        welcomeAlreadyIssued: customer.welcomeIssuedAt != null,
+        signedIn: true,
+        personalised: true,
+        displayName,
+        addressContext: customer.shopifyAccountSummary?.addressContext ?? null,
+      },
     };
   } catch (err) {
     reportError(err, { route: "lib/customer-memory", phase: "resolveSignedInMemory" });
-    return null;
+    return { signedIn, memory: null };
   }
 }
 
@@ -275,10 +282,26 @@ export async function resolveChatMemory(input: {
   sessionId: string | null;
   email: string | null;
 }): Promise<CustomerMemoryContext | null> {
-  const signedIn = await resolveSignedInMemory(input.sessionId);
-  if (signedIn) return signedIn;
-  if (input.email) {
-    return resolveCustomerMemory({ email: input.email, sessionId: input.sessionId });
-  }
-  return null;
+  return (await resolveChatIdentity(input)).memory;
+}
+
+/** Who is chatting: the memory (as resolveChatMemory) plus whether the session
+ * is a live signed-in one — the same rule as /api/auth/me. A signed-in session
+ * without a name to greet still reports signedIn (its memory is null). */
+export interface ChatIdentity {
+  signedIn: boolean;
+  memory: CustomerMemoryContext | null;
+}
+
+/** resolveChatMemory with the sign-in state; no extra lookups. Never throws. */
+export async function resolveChatIdentity(input: {
+  sessionId: string | null;
+  email: string | null;
+}): Promise<ChatIdentity> {
+  const tier3 = await resolveSignedInMemory(input.sessionId);
+  if (tier3.memory) return tier3;
+  const memory = input.email
+    ? await resolveCustomerMemory({ email: input.email, sessionId: input.sessionId })
+    : null;
+  return { signedIn: tier3.signedIn, memory };
 }
