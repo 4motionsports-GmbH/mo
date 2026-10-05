@@ -46,6 +46,7 @@ import {
   CONSENT_COPY_EN_LEGAL_REVIEWED,
 } from "./consent-copy-core.mjs";
 import type { Locale } from "./locale";
+import { activeSigninVariants, pickSigninVariant } from "./consent-variants.mjs";
 
 export { CONSENT_COPY_VERSION, CONSENT_COPY_EN_LEGAL_REVIEWED };
 
@@ -83,7 +84,7 @@ function returningHintEnabled(): boolean {
 
 /** The exact copy the widget needs to render the capture form. */
 export interface CaptureConsentCopy {
-  /** Identifier of the served copy (CONSENT_COPY_VERSION, currently "v3"). */
+  /** Identifier of the served copy (CONSENT_COPY_VERSION, currently "v5"). */
   version: string;
   /** Served language ("de" default, "en" on /en). */
   locale: Locale;
@@ -152,6 +153,14 @@ export interface SignInMarketingConsentCopy {
   locale: Locale;
   /** Attractive headline above the consent block (framing — NOT consent text). */
   headline: string;
+  /**
+   * Up to four short benefit bullets under the headline (framing — NOT consent
+   * text, never in consentTextShown). Rendered verbatim, all or nothing;
+   * since v5 (05.10.2026) the widget shows no bullets of its own.
+   */
+  benefits?: string[];
+  /** Framing variant id (consent-variants.mjs); echoed on the opt-in POST and the consent_gate_* events. */
+  variant?: string;
   /** The marketing consent label (nothing pre-selected). IS the consent text. */
   marketingLabel: string;
   /** Shared one-line Art. 7 footer rendered beneath the checkbox. */
@@ -169,22 +178,33 @@ export interface SignInMarketingConsentCopy {
 }
 
 export function signInMarketingConsentCopy(
-  locale: Locale = "de"
+  locale: Locale = "de",
+  sessionId: string | null = null
 ): SignInMarketingConsentCopy {
   const s = consentStrings(locale);
+  // The framing variant for this session (only "a" unless an A/B test is
+  // configured, CONSENT_SIGNIN_VARIANTS); the consent text never varies.
+  const v = pickSigninVariant(sessionId, locale, process.env.CONSENT_SIGNIN_VARIANTS);
   return {
     version: CONSENT_COPY_VERSION,
     locale,
-    headline: s.signinHeadline,
+    headline: v.headline,
+    benefits: [...v.benefits],
+    variant: v.id,
     marketingLabel: s.signinLabel,
     consentFooter: s.consentFooter,
-    // Audit string = label + footer only (the headline is framing, not consent).
+    // Audit string = label + footer only (headline and bullets are framing, not consent).
     consentTextShown: composeConsentTextShown([s.signinLabel, s.consentFooter]),
     imprintUrl: CAPTURE_FORM_IMPRINT_URL,
     privacyUrl: CAPTURE_FORM_PRIVACY_URL,
-    lawyerApproved: CONSENT_COPY_LAWYER_APPROVED,
+    lawyerApproved: CONSENT_COPY_LAWYER_APPROVED && v.lawyerApproved,
     enLegalReviewed: locale === "en" ? CONSENT_COPY_EN_LEGAL_REVIEWED : true,
   };
+}
+
+/** More than one sign-in framing variant is served (an A/B test is running). */
+export function signInVariantsActive(locale: Locale = "de"): boolean {
+  return activeSigninVariants(locale, process.env.CONSENT_SIGNIN_VARIANTS).length > 1;
 }
 
 /**
