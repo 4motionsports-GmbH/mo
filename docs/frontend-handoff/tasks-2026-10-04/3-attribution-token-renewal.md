@@ -19,6 +19,7 @@ Builds on widget `main` at `3e87341` (live since 2026-10-04, MANIFEST 2026-10-04
 - AC §5 server-only table (no new event).
 
 ## Backend state
+- Backend PR for ATTR-TOKEN-LIFETIME deployed on 2026-10-05 (the 30-day window counts from the device's latest product consultation once `MO_ATTRIBUTION_SESSION_ANCHOR` is on; unresolved marked orders are counted).
 - No contract change.
 - The endpoint already mints a new token when the (session, `widget`) row is gone (`mintAttributionToken`). Deployed since migration 0042.
 - The backend switch `MO_ATTRIBUTION_SESSION_ANCHOR` is independent: this task helps with it on or off.

@@ -10,7 +10,42 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-05 (decisions of M).
+Last updated: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top).
+
+## ▶ Open for M — the one list (05.10.2026, in this order)
+
+Everything below this box is the detailed history and the step-by-step instructions; this box is
+the single list of what is still open for M. C's open items are at the end of „C · Claude's tasks“.
+
+1. **Attribution switch (today, 5 min).** `git pull` → `npm run db:migrate` (applies `0076`) →
+   Vercel → Production → `MO_ATTRIBUTION_SESSION_ANCHOR=true` → Redeploy. Tomorrow:
+   `npm run verify:live -- --since 2026-10-05` → section 7b „V0“ `ohne_sitzung_danach` = 0.
+   (Details C.21; the purge of old widget tokens started 05.10.)
+2. **Frontend prompt (today).** Send `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md` (the
+   „Prompt“ part) with the files it lists to the frontend agent. When its PR is merged: upload the
+   files it names to the theme → `npm run verify:widget` must report „Widget mit den Aufgaben vom
+   05.10.“ → send C that output and the agent's reply (MANIFEST entry, fingerprint).
+3. **Page context on (2–3 days after the upload in 2).** `npm run verify:live -- --since <upload day>`
+   → section 9 shows `page_context_applied` rows with `erkannt = true` → Vercel
+   `CHAT_PAGE_CONTEXT_ENABLED=true` → Redeploy → tell C the day (release note; the control group
+   comes later, C prepares it). **Not before the upload** — until then the switch does nothing.
+4. **Freelancer session: compliance webhooks + App Proxy (5.2 + 5.4, ~20 min together).** Follow
+   5.4 steps 1–10 below (one `shopify app deploy` for both), then switch on
+   `APP_PROXY_SIGNIN_ENABLED=true` + `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24`. Until 5.2 is done: the
+   manual deletion/data-request rule in 5.2.
+5. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
+   recommend a cheap product, click „Zur Kasse“ on the card, complete the order (cancel/refund it
+   afterwards). Shopify admin → the order → „Zusätzliche Details“: is there an `_mo` entry? Tell C
+   yes/no (decides the next attribution task, A2).
+6. **Optional checks when convenient:** consent popup once with a never-subscribed account (1.11);
+   order status once with an account that has orders (6.6); one „Einplanen“ campaign card (1.7);
+   one letter on Pingen staging (1.10).
+7. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
+   Shopify, AI profiles for everyone, Shopify tags) and 7.1/7.2 (tuning, Claude GitHub App);
+   Black Friday (4.x) when you bring it up; app ownership (5.3).
+8. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
+   (attribution window, F-37), §21 (consent bullets + page context); privacy-policy sentences
+   F-05/F-28 for shop-login recognition and purchase attribution.
 
 ## Done
 
@@ -488,8 +523,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       „Bestellstatus im Chat“, contact-form split; `/api/kpi` drops server-only events;
       `/api/contact` session fallback; test sends count the chat start (`test:true`);
       `CHAT_ORDER_STATUS_TEST_CUSTOMERS`; `npm run verify:widget` / `verify:live` (1.11).
-- [ ] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
-      of UTC — low priority.
+- [x] **C.4** Komplettanalyse (full analysis report): day boundaries in Berlin time instead
+      of UTC — done 05.10. (every range query of the report runs midnight to midnight Berlin time).
 - [x] **C.15** Next items planned (item 8 of the 04.10. request) — done 04.10.: five ranked,
       verified plans in `docs/plans/2026-10-04/` (README = ranking, findings, decisions, order);
       widget tasks in `docs/frontend-handoff/FRONTEND_TASKS_2026-10-04.md` (send each only when its
@@ -506,21 +541,35 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       consent popup, proof note in the consent evidence, order-status wording for shop sessions,
       KPI „Shop-Login-Erkennung“ + „Nach Anmeldeweg“, `verify:live` section 8, dossier §19.
       **M:** 5.2 + 5.4 with F.
-- [ ] **C.18** OI1 — **PR 1 done 05.10.** (no e-mail-summary offer and no forced checkout ask for
-      signed-in sessions; the prompt sends them to the PDF download / contact form). PR 2 open
-      (opt-in `source` / `outcome`, DOI by source, capture funnel = capture form only, consent
-      gate per session, F2).
-- [ ] **C.19** OI3 B1 (consent copy serves `benefits` + `variant`; opt-in POST takes `placement`
-      / `variant`) → then FE task 1. The bullet wording is C's (D-AP4, 05.10.: attractive, honest,
-      within the served-copy rules); EN is served as approved (D-AP3).
-- [ ] **C.20** A3 backend (`context.source`, softer page pivot note, `CHAT_PAGE_CONTEXT_ENABLED`
-      off, `page_context_applied/_answered`, KPI section) → then FE task 2.
+- [x] **C.18** OI1 — PR 1 done 05.10. (no e-mail-summary offer and no forced checkout ask for
+      signed-in sessions); PR 2 done 05.10. (opt-ins carry `source` / `outcome`, DOI confirmations
+      their source; capture funnel = capture form only with „DOI-Mail fällig“ as the DOI base;
+      consent popup counted per session; F2: a suppressed address is never answered „already
+      subscribed“). No migration.
+- [x] **C.19** OI3 — done 05.10.: `surface=signin` serves three benefit bullets (C's wording,
+      D-AP4) and `variant: "a"` (copy version `v5`); the opt-in POST takes `placement` /
+      `variant`; KPI „Nach Variante und Platzierung“. FE task 1 ready (item 2 of the open list).
+- [x] **C.20** A3 backend — done 05.10.: `context.source`, softer page notes,
+      `CHAT_PAGE_CONTEXT_ENABLED` / `_HOLDOUT_PCT` off, `page_context_applied/_answered`, KPI
+      „Seitenkontext auf Produktseiten“, `verify:live` section 9, fingerprint row for the next
+      upload. FE task 2 ready (item 2 of the open list).
 - [x] **C.21** ATTR-TOKEN-LIFETIME — built 05.10. (pre-checks by M: webhooks once each, widget
       tokens since 24.08., purge cliff reached 05.10. 08:40 UTC). Migration `0076`
       (`messages.session_id`; the code works before and after it), `MO_ATTRIBUTION_SESSION_ANCHOR`
       (off in code), `mo_order_marker_unresolved`, KPI notes, `verify:live` 7b, dossier §20 (F-37).
       **M:** run `npm run db:migrate`, then set the switch (see 8.1). Then FE task 3.
 - [ ] **C.5** Keep this file current after every step.
+- [ ] **C.22** After the widget upload (open list item 2, M sends C the `verify:widget` output):
+      mark the row `tasks-2026-10-05` current in `widget-fingerprint.mjs`, add the release notes
+      („Einwilligungs-Popup: Vorteile vom Server, Variante und Platzierung“, „Seitenkontext bei
+      getippten Fragen“), refresh `docs/frontend/04`/`05`/`07` from the widget agent's reply.
+- [ ] **C.23** Page context: once the switch is on and 2–3 days of base rate are in, pre-register
+      the control-group experiment (`PAGE_CONTEXT_EXPERIMENT`, target size per arm) and tell M
+      the `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` value; read the result once the target is reached.
+- [ ] **C.24** Attribution: remove the legacy fallback (rows without `messages.session_id`) after
+      11.11.2026 (migration day + 37); A2 (`_mo` on the „Zur Kasse“ link) after M's test order (P0.2).
+- [ ] **C.25** Backlog, no deadline: D14 sanitize, B2 sign-in entry points, B6 handle mapping,
+      E6 widget version header (`docs/frontend/07` §7).
 
 ## Backlog — not built, decide later
 

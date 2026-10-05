@@ -68,7 +68,7 @@ How the comparison works:
 - **LOCALE §1:** `x-ms-locale` and `locale` work as today. The server picks the DE or EN note.
 
 ## Backend state
-**Deployed before this task is handed over** (backend PR „Seitenkontext auf Produktseiten“):
+**Deployed on 2026-10-05** (backend `main`, „Seitenkontext auf Produktseiten“):
 - `context.source` is accepted.
 - A `source: "page"` context with a non-empty `messages` gets a softer pivot note. In effect it says: „the user is writing from product page X; if the question is about a product and they name no other, they probably mean this one; for anything else ignore the note; never comment on the page“.
 - `cta`, `nudge` and absent sources keep today's behaviour, including today's stronger CTA pivot note.
