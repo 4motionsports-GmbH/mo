@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -21,45 +21,49 @@ doc paths follow the new layout — widget docs in `docs/frontend/`, history in 
 Everything below this box is the detailed history and the step-by-step instructions; this box is
 the single list of what is still open for M. C's open items are at the end of „C · Claude's tasks“.
 
-1. **Attribution switch (today, 5 min).** `git pull` → `npm run db:migrate` (applies `0076`) →
-   Vercel → Production → `MO_ATTRIBUTION_SESSION_ANCHOR=true` → Redeploy. Tomorrow:
-   `npm run verify:live -- --since 2026-10-05` → section 7b „V0“ `ohne_sitzung_danach` = 0.
-   (Details C.21; the purge of old widget tokens started 05.10.) If the switch goes on later than
-   05.10., tell C the day: the KPI release „Bestell-Zuordnung: Fenster ab der letzten Beratung“ and
-   the „aussagekräftig ab“ date of the attribution section are dated 05.10. (`src/lib/kpi-releases.mjs`).
-2. **Check the new widget (today, 5 min).** The tasks of 05.10. are live since 06.10. (theme
-   `bc7fb5d`). `npm run verify:widget` → „Widget mit den Aufgaben vom 05.10. (bc7fb5d …)“ with ✔.
-   Then `npm run verify:live -- --since 2026-10-05 --session d63d2e26` (the frontend agent's test
-   session): section 3 lists that session's `consent_gate_*` rows (and `email_capture_*` if it
-   accepted) with `variant: "a"` and `placement: "popup"` or `"signin_return"`; section 9 lists
-   `page_context_applied` (`pct: 100` while the switch is off), `page_context_answered` and
-   `product_cta_clicked` with `samePage`. Send C both outputs. Optional (task 3): in the Neon SQL
-   editor `DELETE FROM mo_attribution_tokens WHERE source = 'widget' AND session_id LIKE 'd63d2e26%';`
-   → tell the frontend agent; after its next product turn `/cart.js` holds a new `_mo`.
-3. **Page context on (from 08.10.).** `npm run verify:live -- --since 2026-10-06` → section 9 shows
-   `page_context_applied` rows with `erkannt = true` for most sessions → Vercel
-   `CHAT_PAGE_CONTEXT_ENABLED=true` → Redeploy → tell C the day (release note). Leave
-   `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` at 0: the control group comes after 2–3 days with the switch on;
-   C gives you the value (C.23).
-4. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
+1. **Consent popup with variant and placement (5 min, M or the frontend agent).** The frontend
+   agent's test session `d63d2e26` belongs to a customer who had already subscribed, so the popup
+   correctly did not appear and there is nothing to check yet. Sign in once in the chat on
+   www.motionsports.de with a Shopify customer who has **never** given marketing consent (real
+   e-mail address) and send a message — the popup appears; either answer is fine. Then
+   `npm run verify:live -- --since 2026-10-06`: section 3 „Wer sich im Chat angemeldet hat“ shows
+   that session with `popup_erwartet = true`; run it again with `--session <those 8 characters>` →
+   `consent_gate_shown` (and `_accepted` / `_declined`) with `variant: "a"` and
+   `placement: "popup"`. Send C the output.
+2. **Live check on 09.10. (5 min).** `npm run verify:live -- --since 2026-10-06` → send C the
+   output: section 9 (page-context base rate for the control group, C.23; product clicks by
+   `samePage`), section 7b V2/V2b (both must be 0) and V3.
+3. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
    recommend a cheap product, click „Zur Kasse“ on the card, complete the order (cancel/refund it
    afterwards). Shopify admin → the order → „Zusätzliche Details“: is there an `_mo` entry? Tell C
    yes/no (decides the next attribution task, A2).
-5. **Optional checks when convenient:** consent popup once with a never-subscribed account (1.11);
-   order status once with an account that has orders (6.6); one „Einplanen“ campaign card (1.7);
-   one letter on Pingen staging (1.10); „Unzufriedenheit“ in the Eingang once (C.9b).
-6. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
+4. **Optional checks when convenient:** order status once with an account that has orders (6.6);
+   one „Einplanen“ campaign card (1.7); one letter on Pingen staging (1.10); „Unzufriedenheit“ in
+   the Eingang once (C.9b).
+5. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
    Shopify, AI profiles for everyone, Shopify tags) and 7.1/7.2 (tuning, Claude GitHub App);
    Black Friday (4.x) when you bring it up; app ownership (5.3); the decision in C.27 (should an
    unsubscribed address stop the post-sign-in ask?); with C, optional: the App Proxy handover and
    shop-logout tests (C.26). Tell F once: run `shopify app config link` before F's next
    `shopify app deploy` (5.4 step 15).
-7. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
+6. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
    (attribution window, F-37), §21 (consent bullets + page context, F-38); privacy-policy sentences
    F-05/F-28 for shop-login recognition and purchase attribution.
 
 ## Done
 
+- [x] Widget checks of 06.10. (M + C): `verify:widget` ✔ (`bc7fb5d`). Page context works in
+  production: the first typed product-page question came 06.10. 09:13 UTC, the product was found
+  and Mo answered with one card of that product. The test session `d63d2e26` typed on the home page
+  (no page context — correct) and got its `_mo` token after the product turn. No
+  `product_cta_clicked` with `samePage` yet: the three clicks of 06.10. came from the previous
+  widget before the upload. Consent popup: open list item 1. The optional token deletion (task 3)
+  was skipped.
+- [x] Switches of 05.10. (M): migration `0076` and `MO_ATTRIBUTION_SESSION_ANCHOR=true` — the first
+  nightly run with it (06.10. 03:30 UTC) kept the widget token of 29.08. because its device kept
+  consulting; `CHAT_PAGE_CONTEXT_ENABLED=true` before the widget upload, so Mo uses the page context
+  from the first typed product-page message (`CHAT_PAGE_CONTEXT_HOLDOUT_PCT` = 0). The KPI release
+  dates of 05.10. stand.
 - [x] Frontend tasks of 05.10. live (06.10., FE PR #75 in the theme repo, `bc7fb5d`): served consent
   benefits with variant/placement, page context on typed product- and collection-page messages,
   attribution token renewal and blanking of the `_mo` marker on sign-out / erase / withdrawal. The
@@ -71,7 +75,7 @@ the single list of what is still open for M. C's open items are at the end of �
   Visitors logged in to the shop are recognised in the chat; the manual deletion rule of 5.2 is no
   longer needed.
 - [x] Migrations `0061`–`0075` run on production (`0070`–`0074` on 03.10., `0075` on 04.10.);
-      `0076` → open list item 1.
+      `0076` on 05.10.
 - [x] Shopify scopes (incl. `read_inventory`), app reinstalled.
 - [x] 13 webhooks registered by the app (each once); the hand-made admin webhooks deleted;
       `SHOPIFY_WEBHOOK_SECRET` removed from Vercel.
@@ -351,7 +355,7 @@ the single list of what is still open for M. C's open items are at the end of �
 - [x] **5.1 Frontend task** — done 04.10.: the frontend agent built the customer-platform
   widget (theme PR #73 + `8d0a0c4` + `3e87341`), the owner uploaded it on 04.10.; the frontend
   docs are in `docs/frontend/`. Live check: 1.11. The next widget tasks (from the backlog in
-  `docs/frontend/07` §7) are written: `docs/archive/frontend-tasks-2026-10-05/README.md` → open list item 2.
+  `docs/frontend/07` §7) are written: `docs/archive/frontend-tasks-2026-10-05/README.md` (live since 06.10., theme `bc7fb5d`).
 
 - [x] **5.2 Compliance webhooks** (done 05.10.) — now part of 5.4 (steps 5 and 11; fallback 5.4b): the same new
   app version in the Dev Dashboard carries the App Proxy and the compliance webhooks, and M can do it
@@ -610,29 +614,32 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [x] **C.19** OI3 — done 05.10.: `surface=signin` serves three benefit bullets (C's wording,
       D-AP4) and `variant: "a"` (copy version `v5`); the opt-in POST takes `placement` /
       `variant`; KPI „Nach Variante und Platzierung“. FE task 1:
-      `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 1 (sent with open list item 2).
+      `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 1 (live since 06.10.).
 - [x] **C.20** A3 backend — done 05.10.: `context.source`, softer page notes,
       `CHAT_PAGE_CONTEXT_ENABLED` / `_HOLDOUT_PCT` off, `page_context_applied/_answered`, KPI
       „Seitenkontext auf Produktseiten“, `verify:live` section 9, fingerprint row for the next
-      upload. FE task 2: `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 2 (sent with open list item 2).
+      upload. FE task 2: `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 2 (live since 06.10.).
 - [x] **C.21** ATTR-TOKEN-LIFETIME — built 05.10. (pre-checks by M: webhooks once each, widget
       tokens since 24.08., purge cliff reached 05.10. 08:40 UTC). Migration `0076`
       (`messages.session_id`; the code works before and after it), `MO_ATTRIBUTION_SESSION_ANCHOR`
       (off in code), `mo_order_marker_unresolved`, KPI notes, `verify:live` 7b, dossier §20 (F-37).
-      **M:** run `npm run db:migrate`, then set the switch (open list item 1). FE task 3:
-      `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 3 (sent with open list item 2).
+      **M:** done 05.10. (migration and switch). FE task 3:
+      `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 3 (live since 06.10.).
 - [ ] **C.5** Keep this file current after every step.
 - [x] **C.22** Widget upload of 06.10. (`bc7fb5d`): fingerprint row `tasks-2026-10-05` is current
       (measured raw, whitespace-only and minified), KPI release notes of 06.10. („Einwilligungs-Popup:
       Vorteile vom Server, Variante und Platzierung“, „Seitenkontext bei getippten Fragen (Widget)“,
       „Bestell-Zuordnung: Markierung wird nach einer Beratung erneuert“), `docs/frontend/01`–`07`
       refreshed to `bc7fb5d`, the round archived; `verify:live --session` also lists a session's
-      consent rows (section 3).
-- [ ] **C.23** Page context: once the switch is on and 2–3 days of base rate are in, pre-register
+      consent rows (section 3). Afternoon: the checks evaluated (Done), `verify:live` 7b V2/V2b
+      (against the latest nightly run, `--ran-at` optional) and section 9 clicks by `samePage`,
+      dossier §21.3 with both switch states.
+- [ ] **C.23** Page context: the switch is on since 05.10., the context in use since the upload of
+      06.10.; once 2–3 days of base rate are in (≈ 09.10., open list item 2), pre-register
       the control-group experiment (`PAGE_CONTEXT_EXPERIMENT`, target size per arm) and tell M
       the `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` value; read the result once the target is reached.
 - [ ] **C.24** Attribution: remove the legacy fallback (rows without `messages.session_id`) 37 days
-      after `0076` ran on production (11.11.2026 if it runs on 05.10.); A2 (`_mo` on the „Zur Kasse“
+      after `0076` ran on production (it ran on 05.10. → from 11.11.2026); A2 (`_mo` on the „Zur Kasse“
       link) after M's test order (P0.2).
 - [ ] **C.25** Backlog, no deadline: D14 sanitize, B2 sign-in entry points, B6 handle mapping,
       E6 widget version header (`docs/frontend/07` §7).
@@ -653,19 +660,18 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
   - **OI3 B4** — a second consent-popup variant only after L's answer on F-38 (b); if the shown
     variant must be on the consent record: migration `0077` (`email_captures.consent_variant`),
     written by the opt-in route before the second variant is activated (OI3.md „B4“).
-  - **A3**, data-dependent (after the page-context switch, item 3): many `en` sessions with
+  - **A3**, data-dependent (the page-context switch is on since 05.10.): many `en` sessions with
     `resolved: false` → a backend fallback over the `/en` translated handle; over-pivoting on order
     or shipping questions → tighten `pagePivotNote()`; suppress repeated cards of the open product
     only together with an attribution replacement (A3.md §9 step 7).
   - **ATTR** — V2/V2b (no old widget token survived without a same-session consultation; the
-    180-day cap holds) after the first nightly retention run with `MO_ATTRIBUTION_SESSION_ANCHOR`
-    on — not in `verify:live` (ATTR-TOKEN-LIFETIME.md §4.11, §6). §9.1: a reused mail-link token
+    180-day cap holds) are in `verify:live` 7b since 06.10.; M's next run reports them (open list
+    item 2). §9.1: a reused mail-link token
     keeps its old `created_at` (`mintAttributionToken`), so a mail sent 31–37 days after the
     token was minted carries a link that is already outside the window. §9.2: the overlap check reads only the session's latest thread
     (`loadConversationForSummary`). §9.5: anchor on the consent-gated token renewal instead of chat
     rows — decide with F-37 (b). §4.9, optional: dedupe `mo_order_marker_unresolved` by
-    `X-Shopify-Event-Id`. Release date: move `attribution-window` / `MEANINGFUL_FROM.attribution`
-    (`kpi-releases.mjs`) if the switch goes on after 05.10. (open list item 1).
+    `X-Shopify-Event-Id`.
 - [ ] **C.27** Code findings of the docs audit of 05.10. (the docs now describe the code as it is;
       these are code changes, none urgent):
   - **Bug:** a signed-in customer without a verified e-mail who types someone else's address into

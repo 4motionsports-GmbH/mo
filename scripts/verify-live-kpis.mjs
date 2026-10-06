@@ -7,17 +7,23 @@
 //   npm run verify:live                       (since 2026-10-04, Europe/Berlin)
 //   npm run verify:live -- --since 2026-10-05
 //   npm run verify:live -- --since 2026-10-05 --session <sid prefix>   (sections 3 and 9)
+//   npm run verify:live -- --ran-at <ISO>     (V2/V2b against that retention run)
 //
 // Sections: 1 sign-in chain + diagnosis, 3 consent + no widget-sent erasures,
 // 4 campaign chat starts (once per send), 5 contact form, 6 order status,
 // 7 order attribution (pre-checks P1–P6; after migration 0076 the live
-// checks V0, V3, V4 and the kept tokens), 8 shop-login recognition (App
+// checks V0, V2/V2b, V3, V4 and the kept tokens), 8 shop-login recognition (App
 // Proxy, P0.3; manual whoami checks with session=livecheck-… never count),
-// 9 page context on typed product-page messages (A3). `--session <prefix>`
-// adds one session's rows to sections 3 (consent with variant / placement) and 9.
+// 9 page context on typed product-page messages (A3) + product clicks by
+// samePage. `--session <prefix>` adds one session's rows to sections 3 (consent
+// with variant / placement) and 9. V2/V2b read against the latest nightly
+// retention run (03:30 UTC, vercel.json) unless `--ran-at` names the `ranAt`
+// of the cron log; window and cap come from .env (defaults 30 + 7 and 180 days).
 
 import { neon, neonConfig } from "@neondatabase/serverless";
 import { SIGNIN_DIAGNOSIS, classifySigninSession } from "../src/lib/kpi-widget-events.mjs";
+import { parseRetentionOptions } from "../src/lib/retention-options.mjs";
+import { CONSULTATION_ANCHOR_TOOLS, SESSION_ANCHORED_SOURCES } from "../src/lib/order-attribution.mjs";
 
 if (process.env.NEON_FETCH_ENDPOINT) neonConfig.fetchEndpoint = process.env.NEON_FETCH_ENDPOINT;
 
@@ -30,6 +36,15 @@ const sql = neon(url);
 const args = process.argv.slice(2);
 const sinceArg = args[args.indexOf("--since") + 1];
 const since = args.includes("--since") && /^\d{4}-\d{2}-\d{2}$/.test(sinceArg ?? "") ? sinceArg : "2026-10-04";
+/** The retention run V2/V2b read against: `--ran-at <ISO>`, else the latest 03:30 UTC. */
+const ranAtArg = args.includes("--ran-at") ? args[args.indexOf("--ran-at") + 1] : null;
+const ranAt = (() => {
+  if (ranAtArg && !Number.isNaN(Date.parse(ranAtArg))) return new Date(ranAtArg).toISOString();
+  const now = new Date();
+  const run = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 3, 30));
+  if (run > now) run.setUTCDate(run.getUTCDate() - 1);
+  return run.toISOString();
+})();
 
 /** Midnight Europe/Berlin of `since`, as the lower bound of every query. */
 const SINCE = `(($1::date)::timestamp AT TIME ZONE 'Europe/Berlin')`;
@@ -370,6 +385,41 @@ try {
 } catch (err) {
   console.log(`  Migration 0076 fehlt noch (messages.session_id): ${err?.message ?? err}`);
 }
+// V2/V2b (ATTR-TOKEN-LIFETIME §4.12, archived plan): against the nightly run at
+// `ranAt`; a 5-minute margin on every horizon because the run computes its
+// cutoffs at its start and stamps ranAt at its end. Same keep rule as
+// runRetention (retention.ts), incl. the legacy rows without messages.session_id.
+const ret = parseRetentionOptions(process.env);
+const horizonDays = ret.attributionWindowDays + 7;
+console.log(
+  `V2 · Nachtlauf ${ranAt}: Token älter als ${horizonDays} Tage ohne Beratung derselben Sitzung (muss 0 sein); ` +
+    `V2b · Token älter als ${ret.attributionTokenMaxDays} Tage (muss 0 sein):`
+);
+try {
+  table(
+    await sql.query(
+      `SELECT
+         (SELECT count(*)::int FROM mo_attribution_tokens t
+           WHERE t.created_at < $1::timestamptz - make_interval(days => $2::int) - interval '5 minutes'
+             AND NOT (
+               t.source = ANY($4::text[]) AND t.session_id IS NOT NULL
+               AND t.created_at >= $1::timestamptz - make_interval(days => $3::int) - interval '5 minutes'
+               AND (EXISTS (SELECT 1 FROM messages m
+                             WHERE m.session_id = t.session_id
+                               AND m.created_at >= $1::timestamptz - make_interval(days => $2::int) - interval '5 minutes'
+                               AND m.tool_name = ANY($5::text[]))
+                    OR EXISTS (SELECT 1 FROM conversations c JOIN messages m ON m.conversation_id = c.id
+                                WHERE c.session_id = t.session_id AND m.session_id IS NULL
+                                  AND m.created_at >= $1::timestamptz - make_interval(days => $2::int) - interval '5 minutes'
+                                  AND m.tool_name = ANY($5::text[]))))) AS v2_ohne_beratung,
+         (SELECT count(*)::int FROM mo_attribution_tokens
+           WHERE created_at < $1::timestamptz - make_interval(days => $3::int) - interval '5 minutes') AS v2b_ueber_obergrenze`,
+      [ranAt, horizonDays, ret.attributionTokenMaxDays, [...SESSION_ANCHORED_SOURCES], [...CONSULTATION_ANCHOR_TOOLS]]
+    )
+  );
+} catch (err) {
+  console.log(`  Migration 0076 fehlt noch (messages.session_id): ${err?.message ?? err}`);
+}
 console.log("V3 · Markierte Bestellungen ohne Zuordnung (immer ohne Sitzung; nur die Schlüssel reason/source):");
 table(
   await q(
@@ -467,6 +517,15 @@ table(
             count(*)::int AS events, count(DISTINCT session_id)::int AS sitzungen
        FROM kpi_events WHERE event = 'page_context_applied' AND created_at >= ${SINCE}
       GROUP BY 1, 2, 3, 4, 5 ORDER BY 7 DESC`
+  )
+);
+console.log("product_cta_clicked nach gleicher Seite (samePage; leer = Widget vor bc7fb5d):");
+table(
+  await q(
+    `SELECT COALESCE(data->>'samePage', '') AS gleiche_seite, count(*)::int AS klicks,
+            count(DISTINCT session_id)::int AS sitzungen, max(created_at) AS letzter
+       FROM kpi_events WHERE event = 'product_cta_clicked' AND created_at >= ${SINCE}
+      GROUP BY 1 ORDER BY 1`
   )
 );
 if (sessionOk) {

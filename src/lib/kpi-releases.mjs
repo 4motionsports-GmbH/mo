@@ -78,7 +78,7 @@ export const KPI_RELEASES = Object.freeze([
     key: "page-context-typed",
     title: "Seitenkontext bei getippten Fragen (Widget)",
     detail:
-      "Die erste getippte oder gesprochene Frage auf einer Produkt- oder Kollektionsseite trägt seitdem die Seite mit; Produktkarten-Klicks melden „gleiche Seite“. Mo nutzt den Kontext erst, wenn CHAT_PAGE_CONTEXT_ENABLED an ist — bis dahin wird er nur gemessen.",
+      "Die erste getippte oder gesprochene Frage auf einer Produkt- oder Kollektionsseite trägt seitdem die Seite mit; Produktkarten-Klicks melden „gleiche Seite“. Mo nutzt den Kontext seitdem (CHAT_PAGE_CONTEXT_ENABLED war schon am 05.10. an), noch ohne Kontrollgruppe.",
   },
   {
     date: "2026-10-06",

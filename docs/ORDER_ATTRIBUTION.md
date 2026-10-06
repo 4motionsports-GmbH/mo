@@ -242,5 +242,5 @@ consent is withdrawn. Contract (request, response, re-stamp, renewal, blanking, 
 | `src/lib/conversion-sweep.ts` | Uses ingested orders as a Shopify-free short-circuit. |
 | `src/app/admin/KpiTab.tsx`, `src/app/admin/kpi/sections/AttributionSection.tsx` | The tiered KPI section, the „ohne Zuordnung“ note and the release notes. |
 | `src/lib/kpi-releases.mjs` | Release entries `attribution-unresolved` + `attribution-window` (2026-10-05), `attribution-token-renewal` (2026-10-06, the widget's renewal and blanking) and `MEANINGFUL_FROM.attribution`. |
-| `scripts/verify-live-kpis.mjs` | Section 7 (pre-checks P1–P6) and 7b (live checks V0, V3, V4, tokens older than 37 days). |
+| `scripts/verify-live-kpis.mjs` | Section 7 (pre-checks P1–P6) and 7b (live checks V0, V2/V2b against the latest nightly retention run or `--ran-at`, V3, V4, tokens older than 37 days). |
 | `scripts/register-shopify-webhooks.mjs` | `npm run shopify:webhooks`: registers the `orders/create` + `orders/paid` subscriptions (with the app's other topics), `--dedupe` for duplicates. |
