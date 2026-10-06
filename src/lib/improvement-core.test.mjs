@@ -1,279 +1,202 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  nextRunPhase,
-  suggestionFingerprint,
-  normalizeSuggestionsPayload,
-  computeKpiBaseline,
-  computeBaselineDelta,
-  renderDeltaMd,
-  parseSuggestionsResponse,
+  RUN_PHASES,
+  RUN_PHASE_LABELS,
+  STRATEGIST_PHASES,
+  OWNER_LANES,
+  OWNER_LANE_LABELS,
+  OWNER_LANE_DESCRIPTIONS,
+  PASS_LANES,
+  SHOP_CATEGORIES,
+  MO_CATEGORIES,
+  SUGGESTION_STATUSES,
+  SUGGESTION_STATUS_LABELS,
+  backlogMatrix,
   dedupeSuggestions,
-  renderPriorSuggestions,
+  nextRunPhase,
+  ownerLaneOf,
+  priorityScore,
+  priorityTier,
   renderReportExtract,
-  buildSuggestPrompt,
-  MAX_SUGGESTIONS_PER_RUN,
-  MAX_DIRECTIVE_CHARS,
+  resolveRunPeriod,
+  MAX_RUN_PERIOD_DAYS,
+  runPhaseIndex,
+  runVersion,
+  storageLaneFor,
+  suggestionFingerprint,
 } from "./improvement-core.mjs";
 
-// ── Phase machine ─────────────────────────────────────────────────────────────
+// ── Versions and phases ───────────────────────────────────────────────────────
 
-test("nextRunPhase walks wirkung → shop → mo → done and tolerates junk", () => {
-  assert.equal(nextRunPhase("wirkung"), "vorschlaege_shop");
-  assert.equal(nextRunPhase("vorschlaege_shop"), "vorschlaege_mo");
-  assert.equal(nextRunPhase("vorschlaege_mo"), "done");
-  assert.equal(nextRunPhase("done"), "done");
+test("runVersion tells snapshot runs (v2) from the older report runs (v1)", () => {
+  assert.equal(runVersion({ version: 2, period: {} }), 2);
+  assert.equal(runVersion({ conversations: 12, analyzedShare: 50 }), 1);
+  assert.equal(runVersion(null), 1);
+});
+
+test("nextRunPhase: daten → messung → (wirkungscheck) → chat → betrieb → done", () => {
+  assert.equal(nextRunPhase("daten"), "messung");
+  assert.equal(nextRunPhase("messung", { hasAssessable: true }), "wirkungscheck");
+  assert.equal(nextRunPhase("messung", { hasAssessable: false }), "vorschlaege_chat");
+  assert.equal(nextRunPhase("wirkungscheck"), "vorschlaege_chat");
+  assert.equal(nextRunPhase("vorschlaege_chat"), "vorschlaege_betrieb");
+  assert.equal(nextRunPhase("vorschlaege_betrieb"), "done");
   assert.equal(nextRunPhase("nonsense"), "done");
+  assert.equal(runPhaseIndex("wirkungscheck"), 2);
+  assert.equal(runPhaseIndex("vorschlaege_shop"), -1, "legacy phases are not part of the v2 machine");
+});
+
+test("every phase — v2 and legacy — has a German label; strategist phases are v2 phases", () => {
+  for (const p of [...RUN_PHASES, "wirkung", "vorschlaege", "vorschlaege_shop", "vorschlaege_mo"]) {
+    assert.ok(RUN_PHASE_LABELS[p], `label for ${p}`);
+  }
+  for (const p of STRATEGIST_PHASES) assert.ok(RUN_PHASES.includes(p));
+});
+
+// ── Period ────────────────────────────────────────────────────────────────────
+
+test("resolveRunPeriod: presets are full days up to yesterday; report and custom ranges", () => {
+  const today = "2026-10-06";
+  assert.deepEqual(resolveRunPeriod({ preset: "30d" }, today), {
+    from: "2026-09-06",
+    to: "2026-10-05",
+    days: 30,
+    label: "06.09.2026 – 05.10.2026",
+  });
+  assert.equal(resolveRunPeriod({ preset: "7d" }, today).from, "2026-09-29");
+  assert.deepEqual(resolveRunPeriod({ preset: "report", reportRange: { from: "2026-08-10", to: "2026-09-08" } }, today).days, 30);
+  assert.equal(resolveRunPeriod({ preset: "report" }, today), null);
+  const custom = resolveRunPeriod({ preset: "custom", from: "2026-10-09", to: "2026-09-01" }, today);
+  assert.deepEqual([custom.from, custom.to], ["2026-09-01", "2026-10-05"], "swapped and clamped to yesterday");
+  assert.equal(resolveRunPeriod({ preset: "custom", from: "2024-01-01", to: "2026-09-30" }, today).days, MAX_RUN_PERIOD_DAYS);
+  assert.equal(resolveRunPeriod({ preset: "custom", from: "2026-10-07", to: "2026-10-08" }, today), null, "entirely in the future");
+  assert.equal(resolveRunPeriod({ preset: "custom", from: "x", to: "2026-09-01" }, today), null);
+  assert.equal(resolveRunPeriod({ preset: "nonsense" }, today), null);
+});
+
+// ── Owner lanes ───────────────────────────────────────────────────────────────
+
+test("owner lanes have labels and descriptions; the passes cover every lane", () => {
+  for (const l of OWNER_LANES) {
+    assert.ok(OWNER_LANE_LABELS[l]);
+    assert.ok(OWNER_LANE_DESCRIPTIONS[l]);
+  }
+  const covered = new Set([...PASS_LANES.vorschlaege_chat, ...PASS_LANES.vorschlaege_betrieb]);
+  assert.deepEqual([...covered].sort(), [...OWNER_LANES].sort());
+  assert.ok(PASS_LANES.vorschlaege_chat.includes("chat"), "directives come from the chat pass");
+  assert.ok(!PASS_LANES.vorschlaege_betrieb.includes("chat"));
+});
+
+test("ownerLaneOf: v2 rows keep the lane in `category`, v1 rows are mapped", () => {
+  assert.equal(ownerLaneOf({ lane: "shop", category: "campaign" }), "campaign");
+  assert.equal(ownerLaneOf({ lane: "mo", category: "anweisung" }), "chat");
+  assert.equal(ownerLaneOf({ lane: "mo", category: "wissen" }), "operator");
+  assert.equal(ownerLaneOf({ lane: "mo", category: "tools" }), "developer");
+  assert.equal(ownerLaneOf({ lane: "shop", category: "marketing" }), "campaign");
+  assert.equal(ownerLaneOf({ lane: "shop", category: "ux_storefront" }), "frontend");
+  assert.equal(ownerLaneOf({ lane: "mo", category: "unbekannt" }), "chat");
+  assert.equal(ownerLaneOf({ lane: "shop", category: "" }), "operator");
+  // Every v1 category is mapped deliberately.
+  for (const c of [...Object.keys(SHOP_CATEGORIES), ...Object.keys(MO_CATEGORIES)]) {
+    assert.ok(OWNER_LANES.includes(ownerLaneOf({ category: c })), c);
+  }
+  assert.equal(storageLaneFor("chat"), "mo");
+  assert.equal(storageLaneFor("campaign"), "shop");
+});
+
+test("statuses keep their plain-language labels", () => {
+  assert.deepEqual(SUGGESTION_STATUSES, ["open", "accepted", "implemented", "dismissed"]);
+  assert.equal(SUGGESTION_STATUS_LABELS.accepted, "Geplant");
+});
+
+// ── Priority and backlog ──────────────────────────────────────────────────────
+
+test("priority: impact × confidence ÷ effort, damped by risk, in three tiers", () => {
+  const top = priorityScore({ impact: "hoch", effort: "niedrig", confidence: "hoch", risk: "niedrig" });
+  assert.equal(top, 3);
+  assert.equal(priorityTier(top), 1);
+  const mid = priorityScore({ impact: "mittel", effort: "mittel", confidence: "mittel" });
+  assert.equal(priorityTier(mid), 2);
+  const low = priorityScore({ impact: "niedrig", effort: "hoch", confidence: "niedrig", risk: "hoch" });
+  assert.equal(priorityTier(low), 3);
+  // Risk lowers, never raises.
+  assert.ok(priorityScore({ impact: "hoch", effort: "niedrig", confidence: "hoch", risk: "hoch" }) < top);
+  // v1 rows have no confidence / risk: they count as "mittel" / undamped.
+  assert.equal(priorityScore({ impact: "hoch", effort: "mittel" }), priorityScore({ impact: "hoch", effort: "mittel", confidence: "mittel" }));
+  assert.equal(priorityTier(Number.NaN), 3);
+});
+
+test("backlogMatrix counts open and planned suggestions by lane and tier", () => {
+  const m = backlogMatrix([
+    { status: "open", category: "chat", impact: "hoch", effort: "niedrig", confidence: "hoch" },
+    { status: "accepted", category: "chat", impact: "mittel", effort: "mittel", confidence: "mittel" },
+    { status: "open", lane: "shop", category: "marketing", impact: "niedrig", effort: "hoch" },
+    { status: "implemented", category: "operator", impact: "hoch", effort: "niedrig" },
+    { status: "dismissed", category: "legal", impact: "hoch", effort: "niedrig" },
+  ]);
+  assert.equal(m.total, 3);
+  assert.deepEqual(
+    m.lanes.map((l) => l.lane),
+    ["chat", "campaign"],
+    "OWNER_LANES order, empty lanes left out"
+  );
+  assert.deepEqual(m.lanes[0].tiers, { 1: 1, 2: 1, 3: 0 });
+  assert.equal(m.lanes[0].planned, 1);
+  assert.deepEqual(m.lanes[1].tiers, { 1: 0, 2: 0, 3: 1 });
+  assert.deepEqual(backlogMatrix([]), { total: 0, lanes: [] });
 });
 
 // ── Fingerprint ───────────────────────────────────────────────────────────────
 
 test("suggestionFingerprint normalises umlauts, case, punctuation and whitespace", () => {
-  // Same normalisation as qa-core: accents stripped (ö→o), ß→ss, lowercase,
-  // punctuation → space, whitespace collapsed.
-  assert.equal(
-    suggestionFingerprint("Größere  Auswahl an Laufbändern!"),
-    "grossere auswahl an laufbandern"
-  );
+  assert.equal(suggestionFingerprint("Größere  Auswahl an Laufbändern!"), "grossere auswahl an laufbandern");
   assert.equal(suggestionFingerprint("Maße prüfen"), "masse prufen");
   assert.equal(suggestionFingerprint(null), "");
 });
 
-// ── Baseline + delta ──────────────────────────────────────────────────────────
+test("dedupeSuggestions drops fingerprint matches (existing AND within the batch)", () => {
+  const items = ["Mehr klappbare Laufbänder aufnehmen", "Mehr klappbare Laufbänder aufnehmen!", "Etwas ganz anderes"].map((title) => ({
+    title,
+    fingerprint: suggestionFingerprint(title),
+  }));
+  const kept = dedupeSuggestions(items, [suggestionFingerprint("Etwas ganz anderes")]);
+  assert.deepEqual(
+    kept.map((k) => k.title),
+    ["Mehr klappbare Laufbänder aufnehmen"]
+  );
+});
+
+// ── Report extract ────────────────────────────────────────────────────────────
 
 const sections = (over = {}) => ({
-  kpis: {
-    conversations: 200,
-    analyzed: 150,
-    tiers: { anonymous: 150, emailOnly: 30, signedIn: 20 },
-    withError: 10,
-    emailCaptured: 40,
-    cartUsed: 30,
-    checkoutOffered: 60,
-  },
+  kpis: { conversations: 200, analyzed: 150, tiers: { anonymous: 150, emailOnly: 30, signedIn: 20 }, withError: 10, emailCaptured: 40, cartUsed: 30, checkoutOffered: 60 },
   categories: [{ label: "Produktberatung", count: 100 }],
   qualities: [
     { label: "Gut gelöst", count: 90 },
     { label: "Bedürfnis unerfüllt", count: 30 },
   ],
-  personas: [],
+  personas: [{ personaDisplay: "Heimtrainer:in", chatCount: 12, favoriteProducts: [{ name: "Laufband X" }], topQuestionsMd: "- Wie laut?" }],
   notes: [],
   insightsMd: null,
   customerKnowledgeMd: null,
   ...over,
 });
 
-test("computeKpiBaseline produces one-decimal percent rates", () => {
-  const b = computeKpiBaseline(sections());
-  assert.equal(b.conversations, 200);
-  assert.equal(b.emailCapturedShare, 20);
-  assert.equal(b.cartUsedShare, 15);
-  assert.equal(b.withErrorShare, 5);
-  assert.equal(b.qualityShares["Gut gelöst"], 45);
-});
-
-test("computeKpiBaseline reports null rates for an empty window", () => {
-  const b = computeKpiBaseline(sections({ kpis: { conversations: 0 } }));
-  assert.equal(b.conversations, 0);
-  assert.equal(b.emailCapturedShare, null);
-});
-
-test("computeBaselineDelta compares only mutually measurable rates", () => {
-  const prev = computeKpiBaseline(sections());
-  const cur = computeKpiBaseline(
-    sections({
-      kpis: { ...sections().kpis, emailCaptured: 60 },
-      qualities: [{ label: "Gut gelöst", count: 110 }],
-    })
-  );
-  const delta = computeBaselineDelta(prev, cur);
-  const email = delta.rows.find((r) => r.key === "emailCapturedShare");
-  assert.equal(email.prev, 20);
-  assert.equal(email.cur, 30);
-  assert.equal(email.delta, 10);
-  const gut = delta.rows.find((r) => r.key === "quality:Gut gelöst");
-  assert.equal(gut.delta, 10);
-  // "Bedürfnis unerfüllt" is absent from cur → no row.
-  assert.equal(delta.rows.some((r) => r.key.includes("unerfüllt")), false);
-  assert.equal(computeBaselineDelta(null, cur), null);
-});
-
-test("renderDeltaMd renders a table and a graceful empty state", () => {
-  const prev = computeKpiBaseline(sections());
-  const md = renderDeltaMd(computeBaselineDelta(prev, prev));
-  assert.match(md, /\| Kennzahl \|/);
-  assert.match(md, /E-Mail-Capture-Quote/);
-  assert.match(renderDeltaMd(null), /Keine vergleichbaren Kennzahlen/);
-});
-
-// ── Suggestions parser ────────────────────────────────────────────────────────
-
-const validItem = (over = {}) => ({
-  lane: "shop",
-  category: "sortiment",
-  title: "Mehr klappbare Laufbänder aufnehmen",
-  rationale: "Viele Wohnungs-Personas fragen danach.",
-  proposal: "Zwei klappbare Modelle unter 800 € listen.",
-  expected_effect: "Warenkorb-Klick-Quote steigt",
-  impact: "hoch",
-  effort: "mittel",
-  evidence: ["Persona Einsteiger: 12 Nachfragen"],
-  ...over,
-});
-
-test("parseSuggestionsResponse accepts plain JSON and code-fenced JSON", () => {
-  const payload = JSON.stringify({ vorschlaege: [validItem()] });
-  for (const text of [payload, "```json\n" + payload + "\n```"]) {
-    const res = parseSuggestionsResponse(text);
-    assert.equal(res.ok, true);
-    assert.equal(res.suggestions.length, 1);
-    assert.equal(res.suggestions[0].lane, "shop");
-    assert.equal(res.suggestions[0].impact, "hoch");
-    assert.ok(res.suggestions[0].fingerprint.length > 0);
-  }
-});
-
-test("parseSuggestionsResponse extracts the JSON object out of surrounding prose", () => {
-  const text = "Hier die Vorschläge:\n" + JSON.stringify({ vorschlaege: [validItem()] });
-  assert.equal(parseSuggestionsResponse(text).ok, true);
-});
-
-test("parseSuggestionsResponse rejects garbage and empty payloads", () => {
-  assert.equal(parseSuggestionsResponse("kein json").ok, false);
-  assert.equal(parseSuggestionsResponse(JSON.stringify({ foo: 1 })).ok, false);
-  assert.equal(parseSuggestionsResponse(JSON.stringify({ vorschlaege: [{}] })).ok, false);
-});
-
-test("parseSuggestionsResponse validates lane, falls back on category, drops incomplete items", () => {
-  const res = parseSuggestionsResponse(
-    JSON.stringify({
-      vorschlaege: [
-        validItem({ lane: "weird" }), // dropped — unknown lane
-        validItem({ category: "unbekannt" }), // kept — category falls back
-        validItem({ title: "" }), // dropped — no title
-      ],
-    })
-  );
-  assert.equal(res.ok, true);
-  assert.equal(res.suggestions.length, 1);
-  assert.equal(res.suggestions[0].category, "sortiment");
-});
-
-test("directive is kept only for lane=mo and clamped to the directive cap", () => {
-  const long = "x".repeat(MAX_DIRECTIVE_CHARS + 100);
-  const res = parseSuggestionsResponse(
-    JSON.stringify({
-      vorschlaege: [
-        validItem({ lane: "mo", category: "anweisung", directive: long }),
-        validItem({ directive: "sollte verschwinden" }),
-      ],
-    })
-  );
-  assert.equal(res.ok, true);
-  assert.ok(res.suggestions[0].directive.length <= MAX_DIRECTIVE_CHARS);
-  assert.equal(res.suggestions[1].directive, null);
-});
-
-test("lane option filters foreign-lane items, defaults missing lanes, and caps per lane", () => {
-  const res = parseSuggestionsResponse(
-    JSON.stringify({
-      vorschlaege: [
-        validItem({ lane: "mo", category: "anweisung", title: "Mo-Vorschlag" }),
-        validItem({ title: "Shop-Vorschlag" }), // lane 'shop' → dropped in mo pass
-        validItem({ lane: undefined, category: "wissen", title: "Ohne Lane" }), // defaults to pass lane
-      ],
-    }),
-    { lane: "mo", max: 2 }
-  );
-  assert.equal(res.ok, true);
-  assert.equal(res.suggestions.length, 2);
-  assert.ok(res.suggestions.every((s) => s.lane === "mo"));
-  assert.deepEqual(
-    res.suggestions.map((s) => s.title),
-    ["Mo-Vorschlag", "Ohne Lane"]
-  );
-});
-
-test("normalizeSuggestionsPayload validates an already-parsed object (structured generation path)", () => {
-  const ok = normalizeSuggestionsPayload({ vorschlaege: [validItem()] }, { lane: "shop" });
-  assert.equal(ok.ok, true);
-  assert.equal(ok.suggestions[0].lane, "shop");
-  assert.equal(normalizeSuggestionsPayload({ foo: 1 }).ok, false);
-  assert.equal(normalizeSuggestionsPayload(null).ok, false);
-});
-
-test("parser caps the number of suggestions per run", () => {
-  const many = Array.from({ length: MAX_SUGGESTIONS_PER_RUN + 5 }, (_, i) =>
-    validItem({ title: `Vorschlag Nummer ${i}` })
-  );
-  const res = parseSuggestionsResponse(JSON.stringify({ vorschlaege: many }));
-  assert.equal(res.suggestions.length, MAX_SUGGESTIONS_PER_RUN);
-});
-
-test("dedupeSuggestions drops fingerprint matches (existing AND within-batch)", () => {
-  const res = parseSuggestionsResponse(
-    JSON.stringify({
-      vorschlaege: [
-        validItem(),
-        validItem({ title: "Mehr klappbare Laufbänder aufnehmen!" }), // same fp
-        validItem({ title: "Etwas ganz anderes" }),
-      ],
-    })
-  );
-  const kept = dedupeSuggestions(res.suggestions, [
-    suggestionFingerprint("Etwas ganz anderes"),
-  ]);
-  assert.equal(kept.length, 1);
-  assert.equal(kept[0].title, "Mehr klappbare Laufbänder aufnehmen");
-});
-
-// ── Prompt builders ───────────────────────────────────────────────────────────
-
-test("renderPriorSuggestions lists status + effect and has an empty state", () => {
-  assert.equal(renderPriorSuggestions([]), "(keine)");
-  const md = renderPriorSuggestions([
-    {
-      lane: "mo",
-      title: "Titel A",
-      status: "implemented",
-      expectedEffect: "Quote X steigt",
-      statusNote: "seit Mai live",
-    },
-  ]);
-  assert.match(md, /\[Mo\] · Titel A/);
-  assert.match(md, /Erledigt/);
-  assert.match(md, /Quote X steigt/);
-  assert.match(md, /seit Mai live/);
-});
-
-test("renderReportExtract carries KPIs, distributions and clamps narratives", () => {
-  const md = renderReportExtract(
-    sections({ insightsMd: "A".repeat(10_000), notes: ["Anhang begrenzt."] }),
-    { maxNarrativeChars: 500 }
-  );
+test("renderReportExtract carries KPIs, distributions, personas and clamps narratives", () => {
+  const md = renderReportExtract(sections({ insightsMd: "A".repeat(10_000), notes: ["Anhang begrenzt."] }), { maxNarrativeChars: 500 });
   assert.match(md, /Gespräche im Zeitraum: 200/);
   assert.match(md, /Gut gelöst: 90/);
+  assert.match(md, /Persona Heimtrainer:in: 12 Gespräch\(e\) · häufig empfohlen: Laufband X/);
+  assert.match(md, /Top-Fragen je Persona/);
   assert.match(md, /Anhang begrenzt\./);
-  const insights = md.split("### Aggregierte Insights")[1];
+  const insights = md.split("### Aggregierte Insights")[1].split("###")[0];
   assert.ok(insights.length < 600);
 });
 
-test("buildSuggestPrompt assembles all provided sections in order", () => {
-  const prompt = buildSuggestPrompt({
-    reportTitle: "Testbericht",
-    rangeFrom: "2026-08-01",
-    rangeTo: "2026-08-07",
-    reportMd: "REPORT",
-    selfSnapshot: "SELF",
-    priorSuggestions: [],
-    deltaMd: "DELTA",
-    effectCheckMd: "WIRKUNG",
-  });
-  const order = ["Testbericht", "REPORT", "SELF", "(keine)", "DELTA", "WIRKUNG", "JSON"];
-  let last = -1;
-  for (const needle of order) {
-    const idx = prompt.indexOf(needle);
-    assert.ok(idx > last, `${needle} fehlt oder falsche Reihenfolge`);
-    last = idx;
-  }
+test("renderReportExtract masks personal data in the narratives", () => {
+  const md = renderReportExtract(sections({ customerKnowledgeMd: "Kundin anna@example.com fragte nach Bestellung #12345." }));
+  assert.ok(!md.includes("anna@example.com"));
+  assert.ok(!md.includes("#12345"));
+  assert.match(md, /\[E-Mail\]/);
 });

@@ -12,9 +12,9 @@ docs name the tier and link here instead of repeating model ids.
 |---|---|---|---|
 | `chat` | `claude-sonnet-5-5` | `between_tools` (no up-front thinking), effort `high` | `/api/chat` |
 | `writer` | `claude-sonnet-5-5` | adaptive, effort `low` | operator-reviewed and short generation: campaign drafts (`campaign-draft.ts`), campaign letter drafts (`campaign-letter-draft.ts`), campaign assist — audience and brief (`campaign-assist.ts`), marketing drafts and the Kunden → Brief letter draft of the 1:1 path (`marketing-draft.ts`), bundle suggestion, hero prompt (`email-hero.ts`), summary e-mail and summary download (`summary-email.ts`), persona top-questions (KPI + report), Q&A answer drafts (`qa-draft.ts`), „Frag Mo“ (`customer-ask.ts`), Eingang suggestions (`inbox-suggest.ts`), e-mail reply drafts in the Eingang (`inbox-mail.ts`), the **Kaufprofil** (`customer-profile.ts`) |
-| `analyst` | `claude-sonnet-5-5` | adaptive, effort `medium` | Verbesserung (Wirkungs-Check + Vorschläge — moves to `strategist` with its rework), insights rollup (also the Komplettanalyse's), the Komplettanalyse's aggregate customer knowledge (an input digest for the strategist), hero image check (vision) |
+| `analyst` | `claude-sonnet-5-5` | adaptive, effort `medium` | insights rollup (also the Komplettanalyse's), the Komplettanalyse's aggregate customer knowledge (an input digest for the strategist), hero image check (vision) |
 | `deep` | `claude-opus-5-5` | adaptive (always on), effort `medium` | the **Vollprofil** of the central customer profile — nightly upkeep, the Kunden button, the Analyse report (structured output: summary + persona, level, budget, goals, owned, interests, next steps) |
-| `strategist` | `claude-opus-5-5` | adaptive (always on), effort `high` (retry ladder `medium`, `low` after a timeout) | the operator's business decisions (owner 06.10.2026: the best suitable model for decisions): the Komplettanalyse's two decision passes — „Entscheidungen“ and „Maßnahmen“ ([`strategist-call.ts`](../src/lib/strategist-call.ts), structured output, call site `analytics_report`); the Verbesserung suggestions with their rework |
+| `strategist` | `claude-opus-5-5` | adaptive (always on), effort `high` (retry ladder `medium`, `low` after a timeout) | the operator's business decisions (owner 06.10.2026: the best suitable model for decisions): the Komplettanalyse's two decision passes — „Entscheidungen“ and „Maßnahmen“ ([`strategist-call.ts`](../src/lib/strategist-call.ts), structured output, call site `analytics_report`); the Verbesserung's three passes — Wirkungs-Check, Vorschläge Chat & Prompt, Vorschläge Betrieb (call site `improvement`, [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md)) |
 | `bulk` | `claude-haiku-4-5` | none | per-conversation analysis, Q&A translation |
 
 The profile depth decides the tier: people with a Mo chat or correspondence get
@@ -94,7 +94,7 @@ at runtime, `USD_EUR_RATE` (default 0.92) converts for the dashboard's
   which needs `@ai-sdk/anthropic` ≥ 3.0.125 (older versions fell back to a forced
   `json` tool, which the 5.5 models reject).
 
-### Long strategist calls (Komplettanalyse)
+### Long strategist calls (Komplettanalyse, Verbesserung)
 
 One strategist pass reads ~25–30k tokens (the business snapshot, the comparison
 with the previous report, insights, customer knowledge, personas) and thinks at
@@ -122,6 +122,23 @@ inside a 300 s serverless step:
 - **Refusal fallback** — `fallbacks: "default"` like every 5.x tier.
 - **Usage** — recorded in `ai_usage` (call site `analytics_report`), also for an
   output that ended without a valid object; the report's own cost counts it.
+
+**The Verbesserung** runs the same wrapper the same way
+([`improvement-generate.ts`](../src/lib/improvement-generate.ts), one strategist
+call per `improve/step`, `maxDuration` 300): the Wirkungs-Check (answer budget
+2,500 tokens, `EFFECT_REVIEW_ANSWER_TOKENS`; only when a measured change has a
+verdict to assess) and the two suggestion passes (5,000 each,
+`SUGGESTIONS_ANSWER_TOKENS`, at most 6 suggestions per pass), each plus 16,000
+thinking headroom, aborted after 240 s (`IMPROVEMENT_STRATEGIST_TIMEOUT_MS`,
+tested to stay ≥ 45 s below the route's `maxDuration`), the same effort ladder
+(`strategistEffortForAttempt`), call site `improvement`. Splitting the
+suggestions into two passes keeps each call well inside the timeout at effort
+`high`. Input: the full snapshot (≤ 26,000 characters), the measurement, the
+backlog, the directives and — chat pass only — Mo's self-snapshot (≤ 32,000
+characters) and the report's conversation chapters. The effect measurement
+itself is deterministic code (no model, no per-item calls). Estimate ≈ 0.70 €
+without, 0.90 € with the Wirkungs-Check (`estimateImprovementCostUsd`, shown in
+the new-run panel).
 
 The high-volume passes of the same report stay on the cheap tiers:
 per-conversation analysis `bulk`, persona top-questions `writer`, insights and

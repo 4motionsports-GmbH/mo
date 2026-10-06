@@ -1127,27 +1127,43 @@ chapters) and keeps the v1 layout for older reports. Reports can be deleted (con
 
 ### 3.9 Verbesserung
 
-Mo reads a **completed Komplettanalyse** together with his own current
-configuration (the rendered system prompt, tools, personas, knowledge and team
-directives — hashed as a prompt version) and produces evidence-based
-improvement suggestions in two lanes: the **online store** and **Mo himself**.
-Suggestions carry an operator lifecycle (open → accepted → implemented /
-dismissed); every new run first runs an honest **Wirkungs-Check** — did the
-previously decided measures move the comparable KPI rates? — which is what
-closes the loop. `mo`-lane suggestions of category `anweisung` ship a
-ready-made directive text the operator can adopt with one click into the
-**live, versioned team-directive layer** of the system prompt (bounded, cached
-like the Q&A knowledge block, full append-only history; the core prompt stays
-in git). The Gespräche boundary is unchanged: nothing is ever applied
-automatically — the engine only proposes. Full design, tables (migration
-0044), routes and honesty rules: see [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md).
+The closed improvement loop on the **business snapshot** (since 2026-10-06; full
+design, measurement rules, storage and routes: [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md)).
+A run takes the snapshot of a period ([`BUSINESS_SNAPSHOT.md`](./BUSINESS_SNAPSHOT.md) —
+the KPI numbers vs. the previous period), **measures every adopted directive and
+every suggestion marked Erledigt** on its success metric (before/after windows,
+both sample sizes, significance test, confounders from releases, switch flips and
+other changes; never an effect across a measurement change), and the
+**strategist** (Opus 5.5) reviews the measurement and writes decision-grade
+suggestions in two passes (Chat & Prompt / Widget / Entwicklung; Betrieb /
+Kampagnen / Entwicklung / Recht). A chosen Komplettanalyse adds its conversation
+insights; a decision report's open recommendations can be imported, so they are
+decided and measured here. Nothing is applied automatically: chat & prompt
+suggestions with a directive are adopted with one click into the **live,
+versioned team-directive layer** (bounded, cached like the Q&A knowledge,
+append-only history; the core prompt stays in the repository); everything else
+is planned and marked done.
 
-Screen: „Neuer Verbesserungslauf“ (pick a completed Komplettanalyse →
-`improve/run`, stepped via `improve/step`), the run list, the run view (baseline
-vs. delta table, Wirkungs-Check, suggestion cards with „Übernehmen“ /
-„Erledigt“ / „Verwerfen“ + note / „Wieder öffnen“), **Anweisungen an Mo**
-(create, edit, toggle, version history — `directives/*`) and Mo's self-snapshot
-(rendered prompt + version hash). Deep link `?run=<id>`.
+Screen: the run list; „Neuer Verbesserungslauf“ (steps, Komplettanalyse,
+period — as the analysis or the last 7 / 30 / 90 full days —, import of its
+recommendations, model + estimate → `improve/run`, stepped via `improve/step`
+with a progress card for the Opus passes: phases, measurement counter, attempt
+and thinking depth, elapsed time, cost, pause); a finished run (v2) shows
+**Lage** (headline, tiles, „Besser geworden“ / „Schlechter geworden“, „Offen nach
+Bereich“ = open and planned suggestions of every run by owner lane × P1–P3),
+**Wirkung umgesetzter Änderungen** (one card per measured change with verdict,
+confidence, before → after, windows, target, side effects, confounders and the
+strategist's keep / adjust / roll back / watch), **Vorschläge** („Dieser Lauf |
+Alle offenen“, lane filter; cards with priority, lane, impact / effort /
+confidence / risk, origin, why, what to do, expected impact, success metric =
+snapshot key with today's value and target, evidence as frozen snapshot numbers,
+the admin link; Übernehmen / Erledigt / Einplanen / Verwerfen + note / Wieder
+öffnen) and **Kennzahlen & Messhinweise** (every snapshot section, caveats,
+switches). Runs before 2026-10-06 keep their original view. Below: **Anweisungen
+an Mo** (create, edit, toggle, version history — `directives/*` — and each
+directive's measured effect from the newest run) and Mo's self-snapshot
+(rendered prompt + version hash). Deep link `?run=<id>`. Screenshots:
+[`screenshots/2026-10-06-verbesserung/`](./screenshots/2026-10-06-verbesserung/).
 
 ### 3.10 Einstellungen
 
@@ -2323,7 +2339,7 @@ them. Actions that read or act on one person's data write the admin access log
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |
 | Gespräche | `POST conversations/detail / analyze / analyze-bulk / insights` | transcript, cached analysis, confirmed bulk analysis, insights rollup |
 | Analyse | `GET analytics`, `GET analytics/<id>`, `GET analytics/<id>/pdf`, `POST analytics/estimate / create / step / delete` | Komplettanalysen; `estimate` also returns `strategistEur`, `minutes { low, high }` and `previousReport`; `step` answers `busy: true` while another step holds the report's claim (0077) |
-| Verbesserung | `GET improve`, `GET improve/<id>`, `POST improve/run / step / suggestion / adopt / delete` | improvement runs |
+| Verbesserung | `GET improve`, `GET improve/<id>`, `GET improve/backlog`, `POST improve/run / step / suggestion / adopt / delete` | improvement runs, the open backlog |
 | | `POST directives/save / toggle`, `GET directives/versions?id=` | Mo's live directives |
 | Einstellungen | `POST email-designs/preview / assign` | design preview and per-type assignment |
 | | `GET shopify/status` | Shopify-Abgleich: `{ health, runs, outbox, alignment, flags }` (pure DB) |

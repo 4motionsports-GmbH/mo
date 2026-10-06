@@ -1,13 +1,25 @@
-// Data layer for improvement runs + suggestions (migration 0044,
+// Data layer for improvement runs + suggestions (migrations 0044/0045,
 // docs/IMPROVEMENT_LOOP.md). Pure persistence — the model calls live in
-// improvement-generate.ts, the pure maths in improvement-core.mjs.
+// improvement-generate.ts, the measurement I/O in improvement-measure.ts, the
+// pure logic in improvement-core / -effects / -decision (.mjs).
+//
+// Two run versions share the tables (no migration):
+//   v1 — `baseline_json` = conversation rates of one report, `delta_json` =
+//        their movement; suggestions with lane shop|mo and a v1 category,
+//        `evidence_json` = string[];
+//   v2 — `baseline_json` = { version: 2, period, options, snapshot },
+//        `delta_json` = { version: 2, measurement, review, synthesis,
+//        imported, state }; suggestions keep the owner lane in `category`
+//        and their decision fields in `evidence_json` = { version: 2, items,
+//        details } (improvement-types.ts).
 //
 // Cost note: like the Komplettanalyse, a run stores per-model token sums
 // ({model: {input, output}}) and the EUR figure is priced in JS on every read
 // (lib/ai-pricing.mjs) — one pricing source of truth.
 //
-// GDPR: all payloads are pseudonymous derived text (report narratives, KPI
-// rates, suggestion prose) — no identity values (Cluster A discipline).
+// GDPR: all payloads are pseudonymous derived text and aggregates (snapshot
+// metrics, report narratives, suggestion prose) — no identity values
+// (Cluster A discipline).
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
@@ -15,15 +27,34 @@ import { loadModelPrices, usdEurRate } from "./ai-pricing.mjs";
 import { reportCostEur } from "./analytics-report-core.mjs";
 import {
   SUGGESTION_STATUSES,
+  ownerLaneOf,
+  priorityScore,
+  priorityTier,
+  runVersion,
   suggestionFingerprint,
 } from "./improvement-core.mjs";
+import { readSuggestionDetails } from "./improvement-decision.mjs";
 import type { ReportUsage } from "./analytics-report-store";
+import type {
+  EvidenceItem,
+  Measurement,
+  OwnerLane,
+  RunAnalysisV2,
+  RunBaselineV2,
+  SuggestionDetails,
+  SuggestionOrigin,
+  SwitchChange,
+} from "./improvement-types";
+import type { SnapshotSwitch } from "./business-snapshot";
 
 const RUN_LIST_LIMIT = 50;
 // How many prior suggestions each new run sees (prompt input + dedup base).
 const PRIOR_SUGGESTIONS_LIMIT = 60;
+// Open + planned suggestions across runs (backlog view and matrix).
+const BACKLOG_LIMIT = 200;
 
 export type ImprovementRunStatus = "running" | "complete" | "failed";
+/** The stored coarse lane column (CHECK shop|mo). */
 export type SuggestionLane = "shop" | "mo";
 export type SuggestionStatus = "open" | "accepted" | "implemented" | "dismissed";
 
@@ -31,7 +62,10 @@ export interface ImprovementSuggestion {
   id: number;
   runId: number;
   lane: SuggestionLane;
+  /** v1: a SHOP_/MO_CATEGORIES key; v2: the owner lane. */
   category: string;
+  /** Who acts (v2 directly, v1 mapped). */
+  ownerLane: OwnerLane;
   title: string;
   fingerprint: string;
   rationaleMd: string;
@@ -40,7 +74,12 @@ export interface ImprovementSuggestion {
   expectedEffect: string | null;
   impact: string;
   effort: string;
-  evidence: string[];
+  /** 1 = before 2026-10-06 (free-text evidence), 2 = decision-grade. */
+  detailsVersion: 1 | 2;
+  evidence: EvidenceItem[];
+  details: SuggestionDetails | null;
+  priority: number;
+  tier: 1 | 2 | 3;
   status: SuggestionStatus;
   statusNote: string | null;
   statusChangedAt: string | null;
@@ -49,6 +88,7 @@ export interface ImprovementSuggestion {
 
 export interface ImprovementRunListItem {
   id: number;
+  version: 1 | 2;
   reportId: number | null;
   reportTitle: string;
   rangeFrom: string;
@@ -63,7 +103,9 @@ export interface ImprovementRunListItem {
 }
 
 export interface ImprovementRunDetail extends ImprovementRunListItem {
+  /** v1 baseline (rates) or v2 RunBaselineV2. */
   baseline: Record<string, unknown> | null;
+  /** v1 delta (rows) or v2 RunAnalysisV2. */
   delta: Record<string, unknown> | null;
   effectCheckMd: string | null;
   error: string | null;
@@ -75,9 +117,16 @@ export interface ImprovementRunDetail extends ImprovementRunListItem {
 export interface PriorSuggestion {
   id: number;
   lane: SuggestionLane;
+  category: string;
   title: string;
   fingerprint: string;
   status: SuggestionStatus;
+  impact: string;
+  effort: string;
+  confidence: string | null;
+  risk: string | null;
+  successMetricKey: string | null;
+  origin: SuggestionOrigin | null;
   expectedEffect: string | null;
   statusNote: string | null;
   createdAt: string;
@@ -87,19 +136,31 @@ interface RunRow {
   id: number;
   report_id: number | null;
   report_title: string;
-  range_from: string;
-  range_to: string;
+  range_from: unknown;
+  range_to: unknown;
   prompt_hash: string;
-  baseline_json: unknown;
-  delta_json: unknown;
-  effect_check_md: string | null;
+  baseline_json?: unknown;
+  delta_json?: unknown;
+  run_version?: unknown;
+  effect_check_md?: string | null;
   status: string;
   phase: string;
-  error: string | null;
+  error?: string | null;
   usage: unknown;
-  created_at: string;
-  completed_at: string | null;
+  created_at: unknown;
+  completed_at: unknown;
   suggestion_count?: number;
+}
+
+function toIso(v: unknown): string {
+  if (v instanceof Date) return v.toISOString();
+  return v == null ? "" : String(v);
+}
+
+/** YYYY-MM-DD of a DATE column (string or Date). */
+function ymd(v: unknown): string {
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  return toIso(v).slice(0, 10);
 }
 
 function costOf(usage: unknown): number {
@@ -113,19 +174,18 @@ function costOf(usage: unknown): number {
 function mapListRow(r: RunRow): ImprovementRunListItem {
   return {
     id: Number(r.id),
+    version: Number(r.run_version) >= 2 ? 2 : 1,
     reportId: r.report_id == null ? null : Number(r.report_id),
     reportTitle: r.report_title,
-    rangeFrom: String(r.range_from),
-    rangeTo: String(r.range_to),
-    status: (["running", "complete", "failed"].includes(r.status)
-      ? r.status
-      : "failed") as ImprovementRunStatus,
+    rangeFrom: ymd(r.range_from),
+    rangeTo: ymd(r.range_to),
+    status: (["running", "complete", "failed"].includes(r.status) ? r.status : "failed") as ImprovementRunStatus,
     phase: r.phase,
     promptHash: r.prompt_hash,
     costEur: costOf(r.usage),
     suggestionCount: Number(r.suggestion_count ?? 0),
-    createdAt: String(r.created_at),
-    completedAt: r.completed_at == null ? null : String(r.completed_at),
+    createdAt: toIso(r.created_at),
+    completedAt: r.completed_at == null ? null : toIso(r.completed_at),
   };
 }
 
@@ -145,16 +205,31 @@ interface SuggestionRow {
   evidence_json: unknown;
   status: string;
   status_note: string | null;
-  status_changed_at: string | null;
-  created_at: string;
+  status_changed_at: unknown;
+  created_at: unknown;
+}
+
+function statusOf(s: string): SuggestionStatus {
+  return (SUGGESTION_STATUSES.includes(s) ? s : "open") as SuggestionStatus;
 }
 
 function mapSuggestion(r: SuggestionRow): ImprovementSuggestion {
+  const read = readSuggestionDetails(r.evidence_json);
+  const details = read.details as SuggestionDetails | null;
+  const lane: SuggestionLane = r.lane === "mo" ? "mo" : "shop";
+  const ownerLane = (details?.lane ?? ownerLaneOf({ lane, category: r.category })) as OwnerLane;
+  const score = priorityScore({
+    impact: r.impact,
+    effort: r.effort,
+    confidence: details?.confidence ?? null,
+    risk: details?.risk ?? null,
+  });
   return {
     id: Number(r.id),
     runId: Number(r.run_id),
-    lane: r.lane === "mo" ? "mo" : "shop",
+    lane,
     category: r.category,
+    ownerLane,
     title: r.title,
     fingerprint: r.fingerprint,
     rationaleMd: r.rationale_md,
@@ -163,13 +238,15 @@ function mapSuggestion(r: SuggestionRow): ImprovementSuggestion {
     expectedEffect: r.expected_effect,
     impact: r.impact,
     effort: r.effort,
-    evidence: Array.isArray(r.evidence_json)
-      ? (r.evidence_json as unknown[]).filter((e): e is string => typeof e === "string")
-      : [],
-    status: (SUGGESTION_STATUSES.includes(r.status) ? r.status : "open") as SuggestionStatus,
+    detailsVersion: read.version,
+    evidence: read.items as EvidenceItem[],
+    details,
+    priority: score,
+    tier: priorityTier(score) as 1 | 2 | 3,
+    status: statusOf(r.status),
     statusNote: r.status_note,
-    statusChangedAt: r.status_changed_at == null ? null : String(r.status_changed_at),
-    createdAt: String(r.created_at),
+    statusChangedAt: r.status_changed_at == null ? null : toIso(r.status_changed_at),
+    createdAt: toIso(r.created_at),
   };
 }
 
@@ -177,14 +254,14 @@ function mapSuggestion(r: SuggestionRow): ImprovementSuggestion {
 
 export async function createImprovementRun(
   input: {
-    reportId: number;
+    reportId: number | null;
     reportTitle: string;
     rangeFrom: string;
     rangeTo: string;
     promptHash: string;
-    baseline: Record<string, unknown>;
-    delta: Record<string, unknown> | null;
-    /** First phase — 'wirkung' when there is history to check, else 'vorschlaege'. */
+    baseline: RunBaselineV2 | Record<string, unknown>;
+    delta: RunAnalysisV2 | Record<string, unknown> | null;
+    /** First phase of the run. */
     phase: string;
   },
   sql: Sql | null = getSql()
@@ -208,14 +285,13 @@ export async function createImprovementRun(
   }
 }
 
-export async function listImprovementRuns(
-  sql: Sql | null = getSql()
-): Promise<ImprovementRunListItem[]> {
+export async function listImprovementRuns(sql: Sql | null = getSql()): Promise<ImprovementRunListItem[]> {
   if (!sql) return [];
   try {
     const rows = (await sql`
       SELECT r.id, r.report_id, r.report_title, r.range_from, r.range_to,
              r.prompt_hash, r.status, r.phase, r.usage, r.created_at, r.completed_at,
+             (r.baseline_json->>'version') AS run_version,
              (SELECT count(*)::int FROM improvement_suggestions s WHERE s.run_id = r.id)
                AS suggestion_count
         FROM improvement_runs r
@@ -229,16 +305,13 @@ export async function listImprovementRuns(
   }
 }
 
-export async function getImprovementRun(
-  id: number,
-  sql: Sql | null = getSql()
-): Promise<ImprovementRunDetail | null> {
+export async function getImprovementRun(id: number, sql: Sql | null = getSql()): Promise<ImprovementRunDetail | null> {
   if (!sql) return null;
   try {
     const rows = (await sql`
       SELECT id, report_id, report_title, range_from, range_to, prompt_hash,
-             baseline_json, delta_json, effect_check_md, status, phase, error,
-             usage, created_at, completed_at
+             baseline_json, delta_json, (baseline_json->>'version') AS run_version,
+             effect_check_md, status, phase, error, usage, created_at, completed_at
         FROM improvement_runs
        WHERE id = ${id}
     `) as RunRow[];
@@ -257,11 +330,12 @@ export async function getImprovementRun(
     const suggestions = suggestionRows.map(mapSuggestion);
     return {
       ...mapListRow(r),
+      version: runVersion(r.baseline_json) as 1 | 2,
       suggestionCount: suggestions.length,
       baseline: (r.baseline_json as Record<string, unknown>) ?? null,
       delta: (r.delta_json as Record<string, unknown>) ?? null,
-      effectCheckMd: r.effect_check_md,
-      error: r.error,
+      effectCheckMd: r.effect_check_md ?? null,
+      error: r.error ?? null,
       usage: (r.usage as ReportUsage) ?? {},
       suggestions,
     };
@@ -279,6 +353,10 @@ export async function updateImprovementRun(
     error?: string | null;
     effectCheckMd?: string | null;
     usage?: ReportUsage;
+    /** Replaces baseline_json (v2: the run's period, options and snapshot). */
+    baseline?: RunBaselineV2;
+    /** Replaces delta_json (v2: measurement, review, synthesis, state). */
+    delta?: RunAnalysisV2;
     completed?: boolean;
   },
   sql: Sql | null = getSql()
@@ -295,6 +373,8 @@ export async function updateImprovementRun(
              error = COALESCE(${patch.error ?? null}, error),
              effect_check_md = COALESCE(${patch.effectCheckMd ?? null}, effect_check_md),
              usage = COALESCE(${patch.usage ? JSON.stringify(patch.usage) : null}::jsonb, usage),
+             baseline_json = COALESCE(${patch.baseline ? JSON.stringify(patch.baseline) : null}::jsonb, baseline_json),
+             delta_json = COALESCE(${patch.delta ? JSON.stringify(patch.delta) : null}::jsonb, delta_json),
              completed_at = CASE WHEN ${patch.completed === true} THEN now() ELSE completed_at END,
              step_claimed_at = NULL,
              updated_at = now()
@@ -312,15 +392,12 @@ const STEP_CLAIM_TTL_MINUTES = 6;
 
 /**
  * Atomically claim the run for ONE step (migration 0045). Returns
- *  - 'claimed' — proceed with the model call;
+ *  - 'claimed' — proceed with the step's work;
  *  - 'busy'    — another /step is live on this run (client should poll);
- *  - 'error'   — DB unavailable/failed (caller treats like busy: no work).
+ *  - 'error'   — DB unavailable/failed (the caller proceeds fail-open).
  * A stale claim (older than STEP_CLAIM_TTL_MINUTES) is taken over.
  */
-export async function claimRunStep(
-  id: number,
-  sql: Sql | null = getSql()
-): Promise<"claimed" | "busy" | "error"> {
+export async function claimRunStep(id: number, sql: Sql | null = getSql()): Promise<"claimed" | "busy" | "error"> {
   if (!sql) return "error";
   try {
     const rows = (await sql`
@@ -339,10 +416,7 @@ export async function claimRunStep(
   }
 }
 
-export async function deleteImprovementRun(
-  id: number,
-  sql: Sql | null = getSql()
-): Promise<boolean> {
+export async function deleteImprovementRun(id: number, sql: Sql | null = getSql()): Promise<boolean> {
   if (!sql) return false;
   try {
     await sql`DELETE FROM improvement_runs WHERE id = ${id}`;
@@ -353,24 +427,35 @@ export async function deleteImprovementRun(
   }
 }
 
-/** The most recent COMPLETED run — the yardstick a new run measures against. */
+/**
+ * The most recent COMPLETED run before `beforeRunId` — its switches (v2) are
+ * the yardstick for which switches flipped since. Only the small parts are
+ * read, never the whole snapshot.
+ */
 export async function getPreviousCompletedRun(
+  beforeRunId: number,
   sql: Sql | null = getSql()
-): Promise<{ id: number; baseline: Record<string, unknown>; createdAt: string } | null> {
+): Promise<{ id: number; version: 1 | 2; createdAt: string; switches: SnapshotSwitch[] | null } | null> {
   if (!sql) return null;
   try {
     const rows = (await sql`
-      SELECT id, baseline_json, created_at
-        FROM improvement_runs
-       WHERE status = 'complete'
-       ORDER BY created_at DESC, id DESC
+      SELECT p.id, p.created_at,
+             (p.baseline_json->>'version') AS run_version,
+             p.baseline_json->'snapshot'->'switches' AS switches
+        FROM improvement_runs p
+       WHERE p.status = 'complete'
+         AND p.id <> ${beforeRunId}
+         AND p.created_at <= COALESCE((SELECT created_at FROM improvement_runs WHERE id = ${beforeRunId}), now())
+       ORDER BY p.created_at DESC, p.id DESC
        LIMIT 1
-    `) as Array<{ id: number; baseline_json: unknown; created_at: string }>;
-    if (rows.length === 0) return null;
+    `) as Array<{ id: number; created_at: unknown; run_version: unknown; switches: unknown }>;
+    const r = rows[0];
+    if (!r) return null;
     return {
-      id: Number(rows[0].id),
-      baseline: (rows[0].baseline_json as Record<string, unknown>) ?? {},
-      createdAt: String(rows[0].created_at),
+      id: Number(r.id),
+      version: Number(r.run_version) >= 2 ? 2 : 1,
+      createdAt: toIso(r.created_at),
+      switches: Array.isArray(r.switches) ? (r.switches as SnapshotSwitch[]) : null,
     };
   } catch (err) {
     reportError(err, { route: "lib/improvement-store", phase: "previous" });
@@ -378,25 +463,91 @@ export async function getPreviousCompletedRun(
   }
 }
 
+/**
+ * The measurements of the newest completed v2 run (for the directive list:
+ * "measured effect") with the run's id and date.
+ */
+export async function getLatestMeasurements(
+  sql: Sql | null = getSql()
+): Promise<{ runId: number; createdAt: string; measurements: Measurement[]; switchHistory: SwitchChange[] } | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT id, created_at,
+             delta_json->'measurement'->'measurements' AS measurements,
+             delta_json->'measurement'->'switchHistory' AS switch_history
+        FROM improvement_runs
+       WHERE status = 'complete'
+         AND baseline_json->>'version' = '2'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+    `) as Array<{ id: number; created_at: unknown; measurements: unknown; switch_history: unknown }>;
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      runId: Number(r.id),
+      createdAt: toIso(r.created_at),
+      measurements: Array.isArray(r.measurements) ? (r.measurements as Measurement[]) : [],
+      switchHistory: Array.isArray(r.switch_history) ? (r.switch_history as SwitchChange[]) : [],
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/improvement-store", phase: "latest-measurements" });
+    return null;
+  }
+}
+
+/**
+ * The completed Komplettanalysen with whether they carry the decision layer
+ * and how many recommendations — the new-run panel's choice (no sections
+ * payload is loaded).
+ */
+export async function listReportsForRuns(
+  sql: Sql | null = getSql()
+): Promise<Array<{ id: number; title: string; from: string; to: string; decision: boolean; recommendations: number }>> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT id, title, date_from, date_to,
+             (sections->>'version') AS sections_version,
+             CASE WHEN jsonb_typeof(sections->'decision'->'recommendations') = 'array'
+                  THEN jsonb_array_length(sections->'decision'->'recommendations') ELSE 0 END AS recommendations
+        FROM analytics_reports
+       WHERE status = 'complete' AND sections IS NOT NULL
+       ORDER BY created_at DESC, id DESC
+       LIMIT 50
+    `) as Array<{ id: number; title: string; date_from: unknown; date_to: unknown; sections_version: unknown; recommendations: unknown }>;
+    return rows.map((r) => ({
+      id: Number(r.id),
+      title: String(r.title ?? ""),
+      from: ymd(r.date_from),
+      to: ymd(r.date_to),
+      decision: Number(r.sections_version) >= 2,
+      recommendations: Number(r.recommendations) || 0,
+    }));
+  } catch (err) {
+    reportError(err, { route: "lib/improvement-store", phase: "reports" });
+    return [];
+  }
+}
+
 // ── Suggestions ───────────────────────────────────────────────────────────────
 
-export async function insertSuggestions(
-  runId: number,
-  suggestions: Array<{
-    lane: SuggestionLane;
-    category: string;
-    title: string;
-    fingerprint: string;
-    rationale: string;
-    proposal: string;
-    directive: string | null;
-    expectedEffect: string | null;
-    impact: string;
-    effort: string;
-    evidence: string[];
-  }>,
-  sql: Sql | null = getSql()
-): Promise<number> {
+/** One row to insert (improvement-decision suggestionStorage; v2 `evidence` is an object). */
+export interface SuggestionInsert {
+  lane: SuggestionLane;
+  category: string;
+  title: string;
+  fingerprint: string;
+  rationale: string;
+  proposal: string;
+  directive: string | null;
+  expectedEffect: string | null;
+  impact: string;
+  effort: string;
+  evidence: unknown;
+}
+
+export async function insertSuggestions(runId: number, suggestions: SuggestionInsert[], sql: Sql | null = getSql()): Promise<number> {
   if (!sql) return 0;
   let inserted = 0;
   for (const s of suggestions) {
@@ -419,50 +570,145 @@ export async function insertSuggestions(
   return inserted;
 }
 
+function mapPrior(r: SuggestionRow): PriorSuggestion {
+  const s = mapSuggestion(r);
+  return {
+    id: s.id,
+    lane: s.lane,
+    category: s.category,
+    title: s.title,
+    fingerprint: s.fingerprint,
+    status: s.status,
+    impact: s.impact,
+    effort: s.effort,
+    confidence: s.details?.confidence ?? null,
+    risk: s.details?.risk ?? null,
+    successMetricKey: s.details?.successMetric?.key ?? null,
+    origin: s.details?.origin ?? null,
+    expectedEffect: s.expectedEffect,
+    statusNote: s.statusNote,
+    createdAt: s.createdAt,
+  };
+}
+
 /**
  * The newest prior suggestions across ALL runs — what the engine must not
  * repeat (prompt input) and the fingerprint base for the hard dedup.
  */
-export async function listPriorSuggestions(
-  sql: Sql | null = getSql()
-): Promise<PriorSuggestion[]> {
+export async function listPriorSuggestions(sql: Sql | null = getSql()): Promise<PriorSuggestion[]> {
   if (!sql) return [];
   try {
     const rows = (await sql`
-      SELECT id, lane, title, fingerprint, status, expected_effect, status_note, created_at
+      SELECT id, run_id, lane, category, title, fingerprint, rationale_md,
+             proposal_md, directive_text, expected_effect, impact, effort,
+             evidence_json, status, status_note, status_changed_at, created_at
         FROM improvement_suggestions
        ORDER BY created_at DESC, id DESC
        LIMIT ${PRIOR_SUGGESTIONS_LIMIT}
-    `) as Array<{
-      id: number;
-      lane: string;
-      title: string;
-      fingerprint: string;
-      status: string;
-      expected_effect: string | null;
-      status_note: string | null;
-      created_at: string;
-    }>;
-    return rows.map((r) => ({
-      id: Number(r.id),
-      lane: r.lane === "mo" ? "mo" : "shop",
-      title: r.title,
-      fingerprint: r.fingerprint,
-      status: (SUGGESTION_STATUSES.includes(r.status) ? r.status : "open") as SuggestionStatus,
-      expectedEffect: r.expected_effect,
-      statusNote: r.status_note,
-      createdAt: String(r.created_at),
-    }));
+    `) as SuggestionRow[];
+    return rows.map(mapPrior);
   } catch (err) {
     reportError(err, { route: "lib/improvement-store", phase: "prior" });
     return [];
   }
 }
 
-export async function getSuggestion(
-  id: number,
+/**
+ * Fingerprint, status and origin of every suggestion — the Komplettanalyse
+ * import skips what was imported or decided before.
+ */
+export async function listSuggestionOrigins(
   sql: Sql | null = getSql()
-): Promise<ImprovementSuggestion | null> {
+): Promise<Array<{ fingerprint: string; status: string; origin: SuggestionOrigin | null }>> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT fingerprint, status,
+             CASE WHEN jsonb_typeof(evidence_json) = 'object'
+                  THEN evidence_json->'details'->'origin' END AS origin
+        FROM improvement_suggestions
+       ORDER BY id DESC
+       LIMIT 2000
+    `) as Array<{ fingerprint: string; status: string; origin: unknown }>;
+    return rows.map((r) => ({
+      fingerprint: r.fingerprint,
+      status: r.status,
+      origin: r.origin && typeof r.origin === "object" ? (r.origin as SuggestionOrigin) : null,
+    }));
+  } catch (err) {
+    reportError(err, { route: "lib/improvement-store", phase: "origins" });
+    return [];
+  }
+}
+
+/** Open and planned suggestions of every run — the backlog, newest first. */
+export async function listBacklog(sql: Sql | null = getSql()): Promise<ImprovementSuggestion[]> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT id, run_id, lane, category, title, fingerprint, rationale_md,
+             proposal_md, directive_text, expected_effect, impact, effort,
+             evidence_json, status, status_note, status_changed_at, created_at
+        FROM improvement_suggestions
+       WHERE status IN ('open', 'accepted')
+       ORDER BY created_at DESC, id DESC
+       LIMIT ${BACKLOG_LIMIT}
+    `) as SuggestionRow[];
+    return rows.map(mapSuggestion);
+  } catch (err) {
+    reportError(err, { route: "lib/improvement-store", phase: "backlog" });
+    return [];
+  }
+}
+
+/**
+ * The suggestions the effect measurement needs: everything implemented, and
+ * every suggestion a directive was adopted from (its success metric).
+ */
+export async function listSuggestionsForChanges(sql: Sql | null = getSql()): Promise<
+  Array<{
+    id: number;
+    title: string;
+    lane: string;
+    category: string;
+    status: string;
+    statusChangedAt: string | null;
+    expectedEffect: string | null;
+    details: SuggestionDetails | null;
+  }>
+> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT id, run_id, lane, category, title, fingerprint, rationale_md,
+             proposal_md, directive_text, expected_effect, impact, effort,
+             evidence_json, status, status_note, status_changed_at, created_at
+        FROM improvement_suggestions
+       WHERE status = 'implemented'
+          OR id IN (SELECT suggestion_id FROM mo_directives WHERE suggestion_id IS NOT NULL)
+       ORDER BY status_changed_at DESC NULLS LAST, id DESC
+       LIMIT 200
+    `) as SuggestionRow[];
+    return rows.map((r) => {
+      const s = mapSuggestion(r);
+      return {
+        id: s.id,
+        title: s.title,
+        lane: s.lane,
+        category: s.category,
+        status: s.status,
+        statusChangedAt: s.statusChangedAt,
+        expectedEffect: s.expectedEffect,
+        details: s.details,
+      };
+    });
+  } catch (err) {
+    reportError(err, { route: "lib/improvement-store", phase: "changes" });
+    return [];
+  }
+}
+
+export async function getSuggestion(id: number, sql: Sql | null = getSql()): Promise<ImprovementSuggestion | null> {
   if (!sql) return null;
   try {
     const rows = (await sql`
@@ -503,48 +749,5 @@ export async function updateSuggestionStatus(
   } catch (err) {
     reportError(err, { route: "lib/improvement-store", phase: "status" });
     return null;
-  }
-}
-
-/**
- * Prior accepted/implemented suggestions for the Wirkungs-Check pass — the
- * measures whose effect the new run assesses. Excludes the run being generated
- * (its suggestions don't exist yet, but be explicit anyway).
- */
-export async function listMeasuresForEffectCheck(
-  excludeRunId: number,
-  sql: Sql | null = getSql()
-): Promise<PriorSuggestion[]> {
-  if (!sql) return [];
-  try {
-    const rows = (await sql`
-      SELECT id, lane, title, fingerprint, status, expected_effect, status_note, created_at
-        FROM improvement_suggestions
-       WHERE status IN ('accepted', 'implemented') AND run_id <> ${excludeRunId}
-       ORDER BY created_at DESC, id DESC
-       LIMIT ${PRIOR_SUGGESTIONS_LIMIT}
-    `) as Array<{
-      id: number;
-      lane: string;
-      title: string;
-      fingerprint: string;
-      status: string;
-      expected_effect: string | null;
-      status_note: string | null;
-      created_at: string;
-    }>;
-    return rows.map((r) => ({
-      id: Number(r.id),
-      lane: r.lane === "mo" ? "mo" : "shop",
-      title: r.title,
-      fingerprint: r.fingerprint,
-      status: (SUGGESTION_STATUSES.includes(r.status) ? r.status : "open") as SuggestionStatus,
-      expectedEffect: r.expected_effect,
-      statusNote: r.status_note,
-      createdAt: String(r.created_at),
-    }));
-  } catch (err) {
-    reportError(err, { route: "lib/improvement-store", phase: "measures" });
-    return [];
   }
 }

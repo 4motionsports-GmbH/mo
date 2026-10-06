@@ -12,7 +12,7 @@
 //   writer  — operator-reviewed text: marketing / campaign drafts, hero prompt,
 //             bundle suggestion, summary e-mail, Q&A answer drafts. Sonnet 5.5,
 //             adaptive thinking at `low` (thinks only when the task needs it).
-//   analyst — judgement over a lot of material: Wissens-/Verbesserungs-Pässe,
+//   analyst — judgement over a lot of material: Wissens-Pässe,
 //             insights, persona questions, customer synthesis, the hero image
 //             check (vision). Sonnet 5.5, adaptive thinking at `medium`.
 //   deep    — the per-customer "current understanding" (identity-level, few

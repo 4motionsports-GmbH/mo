@@ -7,12 +7,18 @@
 // edits ONLY the bounded directive section.
 
 import * as React from "react";
-import { Plus, Pencil, History, Power, Check } from "lucide-react";
-import { ADMIN_DATE_TIME_MEDIUM, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { Plus, Pencil, History, Power, Check, FlaskConical } from "lucide-react";
+import { ADMIN_DATE_MEDIUM, ADMIN_DATE_TIME_MEDIUM, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { formatMetricValue } from "@/lib/business-snapshot-core.mjs";
 import { num } from "@/lib/admin-format.mjs";
 import { Button, Field, IconButton, InfoTip, StatusBadge, Textarea, toast } from "../ui";
 import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
 import { useAsyncAction } from "../lib/use-async-action";
+import { DeltaPill, type SnapshotMetric } from "../analytics/report-parts";
+import { ConfidenceBadge, VerdictBadge } from "./parts";
+import type { DirectiveEffect } from "./types";
+
+export type { DirectiveEffect } from "./types";
 
 export interface DirectiveItem {
   id: number;
@@ -28,6 +34,7 @@ export interface DirectiveLimits {
   maxActive: number;
   maxChars: number;
 }
+
 
 interface DirectiveVersion {
   id: number;
@@ -51,10 +58,13 @@ function fmtTs(iso: string): string {
 export function DirectivesCard({
   initialDirectives,
   limits,
+  effects = {},
   onActiveCountChange,
 }: {
   initialDirectives: DirectiveItem[];
   limits: DirectiveLimits;
+  /** Directive id → its measured effect in the newest run. */
+  effects?: Record<number, DirectiveEffect>;
   onActiveCountChange?: (n: number) => void;
 }) {
   const [directives, setDirectives] = React.useState<DirectiveItem[]>(initialDirectives);
@@ -127,7 +137,7 @@ export function DirectivesCard({
       ) : (
         <ul className="flex flex-col gap-2">
           {directives.map((d) => (
-            <DirectiveRow key={d.id} directive={d} limits={limits} onChanged={replaceDirective} />
+            <DirectiveRow key={d.id} directive={d} limits={limits} effect={effects[d.id] ?? null} onChanged={replaceDirective} />
           ))}
         </ul>
       )}
@@ -159,10 +169,12 @@ export function DirectivesCard({
 function DirectiveRow({
   directive,
   limits,
+  effect,
   onChanged,
 }: {
   directive: DirectiveItem;
   limits: DirectiveLimits;
+  effect: DirectiveEffect | null;
   onChanged: (d: DirectiveItem) => void;
 }) {
   const [editing, setEditing] = React.useState(false);
@@ -290,6 +302,8 @@ function DirectiveRow({
         <p className="mt-1.5 text-sm text-foreground">{directive.content}</p>
       )}
 
+      {!editing && <DirectiveEffectLine directive={directive} effect={effect} />}
+
       {showHistory && (
         <div className="mt-2 flex flex-col gap-1.5 border-t border-border/60 pt-2">
           <p className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">Verlauf</p>
@@ -312,5 +326,36 @@ function DirectiveRow({
         </div>
       )}
     </li>
+  );
+}
+
+/** The measured effect of a directive (newest Verbesserungslauf) in one line. */
+function DirectiveEffectLine({ directive, effect }: { directive: DirectiveItem; effect: DirectiveEffect | null }) {
+  if (!effect) {
+    return directive.active ? (
+      <p className="mt-2 flex items-center gap-1.5 text-2xs text-muted-foreground">
+        <FlaskConical className="size-3.5" aria-hidden />
+        Noch nicht gemessen — der nächste Verbesserungslauf misst ihre Wirkung.
+      </p>
+    ) : null;
+  }
+  const m = effect.measurement;
+  const primary = m.metrics[0];
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-surface-2 px-2 py-1.5 text-2xs">
+      <FlaskConical className="size-3.5 text-accent" aria-hidden />
+      <VerdictBadge verdict={m.verdict} />
+      {primary && (
+        <span className="flex flex-wrap items-center gap-x-1.5 tabular-nums text-foreground">
+          <span className="text-muted-foreground">{primary.label}</span>
+          {formatMetricValue(primary.unit, primary.previous)} → <strong className="font-semibold">{formatMetricValue(primary.unit, primary.value)}</strong>
+          {primary.delta && <DeltaPill metric={primary as unknown as SnapshotMetric} />}
+        </span>
+      )}
+      <ConfidenceBadge level={m.confidence} />
+      <span className="text-muted-foreground">
+        Lauf #{effect.runId} vom {formatAdmin(effect.runCreatedAt, ADMIN_DATE_MEDIUM, effect.runCreatedAt)}
+      </span>
+    </div>
   );
 }

@@ -427,12 +427,29 @@ test("flattenSnapshot gives every metric once, keyed and with its section", () =
   for (const key of HEADLINE_METRICS) assert.ok(flat[key], `headline metric ${key} exists`);
 });
 
+test("every period rate carries the sample size of both periods (base and previousBase)", () => {
+  const s = buildBusinessSnapshot(SAMPLE_SNAPSHOT_RAW);
+  const flat = flattenSnapshot(s);
+  assert.equal(flat["chat.engagement"].base, 212);
+  assert.equal(flat["chat.engagement"].previousBase, 180);
+  assert.equal(flat["journey.chatToOrder"].previousBase, 66);
+  assert.equal(flat["signin.popupRate"].previousBase, 120);
+  // Every rate with a previous value knows its previous sample size; the
+  // cache hit rate is token-based (no case count) and lifetime rates have no
+  // previous period.
+  for (const m of Object.values(flat)) {
+    if (m.unit !== "rate" || m.previous === null || m.key === "costs.cacheHitRate") continue;
+    assert.ok(typeof m.previousBase === "number", `${m.key} has a previousBase`);
+  }
+  assert.equal(metric("x.r", "R", "rate", 0.5, 0.4, { base: 10 }).previousBase, undefined, "optional");
+});
+
 test("renderSnapshotForPrompt lists keys, values, previous values and caveats — and no personal data", () => {
   const s = buildBusinessSnapshot(SAMPLE_SNAPSHOT_RAW);
   const text = renderSnapshotForPrompt(s);
   assert.match(text, /Zeitraum: 10\.08\.2026 – 08\.09\.2026 \(30 Tage\)/);
   assert.match(text, /\[revenue\.total\]: 15\.221\s€ \(Vorperiode 10\.120\s€, \+50 %; inkl\. 1 Bestellung/);
-  assert.match(text, /\[chat\.engagement\]: 47,6 % \(Vorperiode 41,1 %, \+6,5 Pp\.; n = 212\)/);
+  assert.match(text, /\[chat\.engagement\]: 47,6 % \(Vorperiode 41,1 %, \+6,5 Pp\.; n = 212, VP n = 180\)/);
   assert.match(text, /Tabelle „Kampagnen im Vergleich“/);
   assert.match(text, /## Funnels/);
   assert.match(text, /## Datenqualität/);

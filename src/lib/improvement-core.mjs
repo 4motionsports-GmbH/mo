@@ -1,57 +1,163 @@
-// Pure helpers for the closed improvement loop ("Verbesserung" tab). No I/O, no
-// DB, no model — imported by the data layer (improvement-store.ts), the engine
-// (improvement-generate.ts), the directives store (directives-store.ts) AND the
-// node:test suite, so it stays a plain .mjs (like analytics-report-core.mjs /
-// conversation-analysis-core.mjs / qa-core.mjs).
+// Pure helpers for the closed improvement loop ("Verbesserung" tab,
+// docs/IMPROVEMENT_LOOP.md). No I/O, no DB, no model — imported by the data
+// layer (improvement-store.ts), the engine (improvement-generate.ts), the
+// directives store, the admin UI AND the node:test suite, so it stays a plain
+// .mjs.
 //
-// It owns: the run phase state-machine, the lane/category/status vocabularies,
-// the KPI baseline + delta maths (the yardstick of the Wirkungs-Check), the
-// defensive parser for the engine's JSON output, the suggestion fingerprint
-// (cross-run dedup), the directive bounds, and the prompt builders for both
-// engine passes.
+// It owns: the run versions and the phase state-machine, the owner lanes of a
+// suggestion (who acts), the legacy lane/category vocabularies (runs before
+// 2026-10-06 stay renderable), the status vocabulary, priority (impact ×
+// confidence ÷ effort, damped by risk) and the backlog matrix, the suggestion
+// fingerprint (cross-run dedup), the directive bounds and the compact report
+// extract fed to the strategist.
+//
+// The effect measurement lives in improvement-effects.mjs, the decision layer
+// (normalisers, prompts, Komplettanalyse import) in improvement-decision.mjs.
 
-import { modelFor } from "./ai-models.mjs";
+import { periodLabel, scrubPii } from "./business-snapshot-core.mjs";
+import { daysBetween, parseYmd, shiftYmd } from "./kpi-range.mjs";
 
-// ── Models ────────────────────────────────────────────────────────────────────
-// Both engine passes read a lot (report narrative + Mo's full self-snapshot)
-// and write structured, high-judgement output — the analyst tier
-// (lib/ai-models.mjs), like the customer synthesis; Haiku is too weak for
-// "criticize the system prompt", Opus too expensive for a repeatable loop.
+// ── Run versions ──────────────────────────────────────────────────────────────
+// v1 (until 2026-10-06): a run read one Komplettanalyse, compared a handful of
+//     conversation rates with the previous run and wrote suggestions in two
+//     lanes (shop / mo) on the analyst tier.
+// v2: a run is built on the business snapshot of a period, measures every
+//     adopted directive and implemented change against its success metric, and
+//     writes decision-grade suggestions on the strategist tier. The version is
+//     stored in `baseline_json.version` (no migration — docs/IMPROVEMENT_LOOP.md).
 
-export const EFFECT_MODEL = modelFor("analyst");
-export const SUGGEST_MODEL = modelFor("analyst");
+export const RUN_VERSION = 2;
 
-// ── Phase state-machine ───────────────────────────────────────────────────────
-// Stepped like the Komplettanalyse: ONE bounded model call per /step request.
-//   wirkung          — assess previously implemented/accepted suggestions
-//                      against the measured KPI movement (skipped without history)
-//   vorschlaege_shop — suggestions for the ONLINE STORE lane
-//   vorschlaege_mo   — suggestions for the MO lane (gets the full self-snapshot)
-// The suggestions work is deliberately split per lane so each step is a SHORT
-// model call — a single monolithic pass proved to outlive the serverless
-// function budget in production (killed mid-call → "Netzwerkfehler" in the UI).
-
-const RUN_PHASES = ["wirkung", "vorschlaege_shop", "vorschlaege_mo", "done"];
-
-export const RUN_PHASE_LABELS = {
-  wirkung: "Wirkungs-Check der bisherigen Maßnahmen",
-  vorschlaege_shop: "Vorschläge für den Online-Shop erarbeiten",
-  vorschlaege_mo: "Vorschläge für Mo erarbeiten",
-  done: "Fertig",
-};
-
-/** The phase that follows `current`, or 'done' at the end. */
-export function nextRunPhase(current) {
-  const i = RUN_PHASES.indexOf(current);
-  if (i === -1) return "done";
-  return RUN_PHASES[i + 1] ?? "done";
+/** 2 for runs built on the business snapshot, 1 for older runs. */
+export function runVersion(baseline) {
+  return Number(baseline?.version) >= 2 ? 2 : 1;
 }
 
-// ── Vocabularies ──────────────────────────────────────────────────────────────
+// ── Phase state-machine (v2) ──────────────────────────────────────────────────
+// Stepped like the Komplettanalyse: ONE bounded unit of work per /step request.
+//   daten               — collect the business snapshot (pure DB; the Shopify
+//                         code lookup bounded) and import the open
+//                         recommendations of the chosen Komplettanalyse
+//   messung             — measure adopted directives / implemented changes
+//                         (one before/after snapshot per window, time-boxed)
+//   wirkungscheck       — strategist: assess the measured changes (only when
+//                         a measurement has a verdict to assess)
+//   vorschlaege_chat    — strategist: suggestions for chat, prompt & widget
+//   vorschlaege_betrieb — strategist: suggestions for operations, campaigns,
+//                         development and legal + the run's headline
+// One strategist call per step, never two (the step claim of migration 0045).
 
-const LANES = ["shop", "mo"];
+export const RUN_PHASES = Object.freeze(["daten", "messung", "wirkungscheck", "vorschlaege_chat", "vorschlaege_betrieb", "done"]);
 
-/** Validated per-lane category keys + German display labels. */
+/** The phases that make one strategist (Opus) call. */
+export const STRATEGIST_PHASES = Object.freeze(["wirkungscheck", "vorschlaege_chat", "vorschlaege_betrieb"]);
+
+/** German phase labels — v2 phases plus the legacy v1 ones (old running runs). */
+export const RUN_PHASE_LABELS = Object.freeze({
+  daten: "Geschäftsdaten sammeln",
+  messung: "Wirkung umgesetzter Änderungen messen",
+  wirkungscheck: "Wirkungs-Check",
+  vorschlaege_chat: "Vorschläge: Chat, Prompt & Widget",
+  vorschlaege_betrieb: "Vorschläge: Betrieb, Kampagnen, Entwicklung & Recht",
+  done: "Fertig",
+  wirkung: "Wirkungs-Check der bisherigen Maßnahmen",
+  vorschlaege: "Vorschläge erarbeiten",
+  vorschlaege_shop: "Vorschläge für den Online-Shop erarbeiten",
+  vorschlaege_mo: "Vorschläge für Mo erarbeiten",
+});
+
+/**
+ * The phase after `phase`. The Wirkungs-Check runs only when the measurement
+ * produced something to assess.
+ * @param {string} phase
+ * @param {{ hasAssessable?: boolean }} [ctx]
+ */
+export function nextRunPhase(phase, { hasAssessable = false } = {}) {
+  switch (phase) {
+    case "daten":
+      return "messung";
+    case "messung":
+      return hasAssessable ? "wirkungscheck" : "vorschlaege_chat";
+    case "wirkungscheck":
+      return "vorschlaege_chat";
+    case "vorschlaege_chat":
+      return "vorschlaege_betrieb";
+    default:
+      return "done";
+  }
+}
+
+/** Position of a phase in RUN_PHASES (−1 for legacy / unknown phases). */
+export function runPhaseIndex(phase) {
+  return RUN_PHASES.indexOf(phase);
+}
+
+// ── The run's period ──────────────────────────────────────────────────────────
+
+/** Presets of the new-run panel: full days up to yesterday (no partial today). */
+export const RUN_PERIOD_PRESETS = Object.freeze({ "7d": 7, "14d": 14, "30d": 30, "90d": 90 });
+export const MAX_RUN_PERIOD_DAYS = 366;
+
+/**
+ * The period a run is built on: a Komplettanalyse's period ("report"), a
+ * preset of full days ending yesterday, or a custom range (swapped when
+ * reversed, never after yesterday, at most MAX_RUN_PERIOD_DAYS). null when the
+ * input is unusable.
+ * @param {{ preset?: string | null, from?: string | null, to?: string | null, reportRange?: { from: string, to: string } | null }} input
+ * @param {string} today YYYY-MM-DD (UTC)
+ * @returns {{ from: string, to: string, days: number, label: string } | null}
+ */
+export function resolveRunPeriod({ preset = "30d", from = null, to = null, reportRange = null } = {}, today) {
+  const yesterday = shiftYmd(today, -1);
+  const shape = (a, b) => ({ from: a, to: b, days: daysBetween(a, b), label: periodLabel(a, b) });
+  if (preset === "report") {
+    if (!reportRange || parseYmd(reportRange.from) == null || parseYmd(reportRange.to) == null) return null;
+    return shape(reportRange.from, reportRange.to);
+  }
+  const days = /** @type {Record<string, number>} */ (RUN_PERIOD_PRESETS)[preset ?? ""];
+  if (days) return shape(shiftYmd(yesterday, -(days - 1)), yesterday);
+  if (preset !== "custom" || parseYmd(from) == null || parseYmd(to) == null) return null;
+  let a = /** @type {string} */ (from);
+  let b = /** @type {string} */ (to);
+  if (a > b) [a, b] = [b, a];
+  if (b > yesterday) b = yesterday;
+  if (a > b) return null;
+  if (daysBetween(a, b) > MAX_RUN_PERIOD_DAYS) a = shiftYmd(b, -(MAX_RUN_PERIOD_DAYS - 1));
+  return shape(a, b);
+}
+
+// ── Owner lanes (v2) — who acts on a suggestion ───────────────────────────────
+
+export const OWNER_LANES = Object.freeze(["chat", "operator", "campaign", "frontend", "developer", "legal"]);
+
+export const OWNER_LANE_LABELS = Object.freeze({
+  chat: "Chat & Prompt",
+  operator: "Betrieb",
+  campaign: "Kampagnen & Marketing",
+  frontend: "Widget & Shop",
+  developer: "Entwicklung",
+  legal: "Recht",
+});
+
+/** What each lane means — InfoTip text and the strategist's definition. */
+export const OWNER_LANE_DESCRIPTIONS = Object.freeze({
+  chat: "Mos Verhalten: eine Anweisung an Mo (mit einem Klick live) oder eine Änderung am Kern-Prompt (Code).",
+  operator: "Betrieb im Admin: Eingang, Kunden, Wissen beantworten, Set-Angebote, Schalter umlegen lassen.",
+  campaign: "Kampagnen-Mails und Briefe: Zielgruppen, Angebote, Versandzeitpunkte.",
+  frontend: "Widget und Shopify-Theme (Aufgabe für den Frontend-Agenten): Popups, Texte, Platzierung, Seitenkontext.",
+  developer: "Backend-Entwicklung: Mos Werkzeuge, Messung, Integrationen, neue Funktionen.",
+  legal: "Rechtliche Prüfung: Einwilligung, Werbung, Datenschutz.",
+});
+
+/** Which owner lanes each suggestion pass may fill. */
+export const PASS_LANES = Object.freeze({
+  vorschlaege_chat: Object.freeze(["chat", "frontend", "developer"]),
+  vorschlaege_betrieb: Object.freeze(["operator", "campaign", "developer", "legal"]),
+});
+
+// ── Legacy vocabularies (v1 suggestions) ──────────────────────────────────────
+
+/** Validated per-lane category keys + German display labels (v1). */
 export const SHOP_CATEGORIES = {
   sortiment: "Sortiment & Verfügbarkeit",
   produktdaten: "Produktdaten & Inhalte",
@@ -70,9 +176,38 @@ export const MO_CATEGORIES = {
   faehigkeit: "Neue Fähigkeit",
 };
 
-function categoriesForLane(lane) {
-  return lane === "mo" ? MO_CATEGORIES : SHOP_CATEGORIES;
+const V1_CATEGORY_LANES = Object.freeze({
+  anweisung: "chat",
+  prompt_kern: "chat",
+  persona: "chat",
+  wissen: "operator",
+  tools: "developer",
+  faehigkeit: "developer",
+  sortiment: "operator",
+  produktdaten: "operator",
+  preis_angebot: "operator",
+  prozess: "operator",
+  ux_storefront: "frontend",
+  marketing: "campaign",
+});
+
+/**
+ * The owner lane of any stored suggestion: v2 rows keep it in `category`, v1
+ * rows map their (lane, category).
+ * @param {{ lane?: string, category?: string }} s
+ */
+export function ownerLaneOf(s) {
+  const category = String(s?.category ?? "");
+  if (OWNER_LANES.includes(category)) return category;
+  return V1_CATEGORY_LANES[category] ?? (s?.lane === "mo" ? "chat" : "operator");
 }
+
+/** The stored coarse lane column (CHECK shop|mo): "mo" when it changes Mo's behaviour. */
+export function storageLaneFor(ownerLane) {
+  return ownerLane === "chat" ? "mo" : "shop";
+}
+
+// ── Statuses ──────────────────────────────────────────────────────────────────
 
 export const SUGGESTION_STATUSES = ["open", "accepted", "implemented", "dismissed"];
 
@@ -86,19 +221,68 @@ export const SUGGESTION_STATUS_LABELS = {
   dismissed: "Verworfen",
 };
 
-const IMPACT_LEVELS = ["hoch", "mittel", "niedrig"];
+// ── Levels and priority ───────────────────────────────────────────────────────
+
+/** Impact, effort, confidence and risk share one stored scale (DB CHECK for impact/effort). */
+export const LEVELS = Object.freeze(["hoch", "mittel", "niedrig"]);
+
+/** Effort reads as size: niedrig → klein, hoch → groß. */
+export const EFFORT_LABELS = Object.freeze({ niedrig: "klein", mittel: "mittel", hoch: "groß" });
+
+const IMPACT_WEIGHT = { hoch: 3, mittel: 2, niedrig: 1 };
+const CONFIDENCE_WEIGHT = { hoch: 1, mittel: 0.75, niedrig: 0.5 };
+const EFFORT_WEIGHT = { niedrig: 1, mittel: 1.6, hoch: 2.5 };
+const RISK_WEIGHT = { niedrig: 1, mittel: 0.9, hoch: 0.75 };
+
+/**
+ * Priority score: impact × confidence ÷ effort, damped by risk (0.1 … 3).
+ * Unknown values count as "mittel"; an unknown risk does not damp.
+ * @param {{ impact?: string, effort?: string, confidence?: string | null, risk?: string | null }} s
+ */
+export function priorityScore(s) {
+  const impact = IMPACT_WEIGHT[s?.impact] ?? IMPACT_WEIGHT.mittel;
+  const confidence = CONFIDENCE_WEIGHT[s?.confidence ?? ""] ?? CONFIDENCE_WEIGHT.mittel;
+  const effort = EFFORT_WEIGHT[s?.effort] ?? EFFORT_WEIGHT.mittel;
+  const risk = RISK_WEIGHT[s?.risk ?? ""] ?? 1;
+  return Math.round(((impact * confidence * risk) / effort) * 100) / 100;
+}
+
+/** Priority tier 1–3 of a score (1 = do first). */
+export function priorityTier(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return 3;
+  if (n >= 1.5) return 1;
+  if (n >= 0.75) return 2;
+  return 3;
+}
+
+/**
+ * Open and planned suggestions (any run) by owner lane and priority tier — the
+ * "what is still on the table" overview. Lanes without items are left out;
+ * order follows OWNER_LANES.
+ * @param {Array<{ status: string, lane?: string, category?: string, impact?: string, effort?: string, confidence?: string | null, risk?: string | null }>} items
+ */
+export function backlogMatrix(items) {
+  /** @type {Record<string, { lane: string, label: string, total: number, planned: number, tiers: Record<1|2|3, number> }>} */
+  const byLane = {};
+  let total = 0;
+  for (const s of items ?? []) {
+    if (s?.status !== "open" && s?.status !== "accepted") continue;
+    const lane = ownerLaneOf(s);
+    const row = (byLane[lane] ??= { lane, label: OWNER_LANE_LABELS[lane], total: 0, planned: 0, tiers: { 1: 0, 2: 0, 3: 0 } });
+    row.total += 1;
+    if (s.status === "accepted") row.planned += 1;
+    row.tiers[/** @type {1|2|3} */ (priorityTier(priorityScore(s)))] += 1;
+    total += 1;
+  }
+  return { total, lanes: OWNER_LANES.filter((l) => byLane[l]).map((l) => byLane[l]) };
+}
 
 // ── Bounds ────────────────────────────────────────────────────────────────────
 
 export const MAX_SUGGESTIONS_PER_RUN = 12;
-// Per lane-pass cap (the run total stays MAX_SUGGESTIONS_PER_RUN across both).
+/** Per pass (each suggestion pass is one strategist call). */
 export const MAX_SUGGESTIONS_PER_LANE = 6;
-const MAX_TITLE_CHARS = 140;
-const MAX_RATIONALE_CHARS = 1200;
-const MAX_PROPOSAL_CHARS = 1600;
-const MAX_EVIDENCE_ITEMS = 6;
-const MAX_EVIDENCE_CHARS = 200;
-const MAX_EXPECTED_EFFECT_CHARS = 240;
 
 // The live directive layer must stay a bounded prompt section: at most this
 // many ACTIVE directives, each at most this long. Enforced in the store,
@@ -115,218 +299,13 @@ export const MAX_DIRECTIVE_CHARS = 600;
 export function suggestionFingerprint(title) {
   return String(title ?? "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/ß/g, "ss")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);
-}
-
-// ── KPI baseline + delta ──────────────────────────────────────────────────────
-// A run stores comparable RATES (shares of the window's conversations), not
-// absolutes — windows differ in length and traffic, so only rates are honestly
-// comparable across runs. Distribution shares are keyed by their German label
-// (the shape the report sections already carry).
-
-function share(part, total) {
-  const p = Number(part) || 0;
-  const t = Number(total) || 0;
-  if (t <= 0) return null;
-  return Math.round((p / t) * 1000) / 10; // one decimal, in percent
-}
-
-/**
- * Compute the comparable baseline from a report's `sections` payload.
- * Returns a flat, JSON-safe object; null rates mean "not measurable" (e.g. an
- * empty window) and are skipped by the delta.
- */
-export function computeKpiBaseline(sections) {
-  const k = sections?.kpis ?? {};
-  const conversations = Number(k.conversations) || 0;
-  const qualityShares = {};
-  for (const row of Array.isArray(sections?.qualities) ? sections.qualities : []) {
-    if (row && typeof row.label === "string") {
-      qualityShares[row.label] = share(row.count, conversations);
-    }
-  }
-  const categoryShares = {};
-  for (const row of Array.isArray(sections?.categories) ? sections.categories : []) {
-    if (row && typeof row.label === "string") {
-      categoryShares[row.label] = share(row.count, conversations);
-    }
-  }
-  return {
-    conversations,
-    analyzedShare: share(k.analyzed, conversations),
-    emailCapturedShare: share(k.emailCaptured, conversations),
-    cartUsedShare: share(k.cartUsed, conversations),
-    checkoutOfferedShare: share(k.checkoutOffered, conversations),
-    withErrorShare: share(k.withError, conversations),
-    qualityShares,
-    categoryShares,
-  };
-}
-
-const RATE_LABELS = {
-  emailCapturedShare: "E-Mail-Capture-Quote",
-  cartUsedShare: "Warenkorb-Klick-Quote",
-  checkoutOfferedShare: "Checkout-Angebots-Quote",
-  withErrorShare: "Quote ohne Bot-Antwort",
-  analyzedShare: "Analyse-Abdeckung",
-};
-
-/**
- * Movement between two baselines as a flat row list:
- *   { key, label, prev, cur, delta }  — rates in %, delta in percentage points.
- * Rows where either side is unmeasurable are dropped. Quality shares are
- * included per label ("Qualität: Gut gelöst" …); categories are deliberately
- * NOT — category mix shifts with season/traffic and reads as noise, while the
- * quality distribution is the actual outcome measure.
- */
-export function computeBaselineDelta(prev, cur) {
-  if (!prev || !cur) return null;
-  const rows = [];
-  for (const [key, label] of Object.entries(RATE_LABELS)) {
-    const a = prev[key];
-    const b = cur[key];
-    if (typeof a !== "number" || typeof b !== "number") continue;
-    rows.push({ key, label, prev: a, cur: b, delta: Math.round((b - a) * 10) / 10 });
-  }
-  const prevQ = prev.qualityShares ?? {};
-  const curQ = cur.qualityShares ?? {};
-  for (const label of Object.keys(curQ)) {
-    const a = prevQ[label];
-    const b = curQ[label];
-    if (typeof a !== "number" || typeof b !== "number") continue;
-    rows.push({
-      key: `quality:${label}`,
-      label: `Qualität: ${label}`,
-      prev: a,
-      cur: b,
-      delta: Math.round((b - a) * 10) / 10,
-    });
-  }
-  return {
-    prevConversations: Number(prev.conversations) || 0,
-    curConversations: Number(cur.conversations) || 0,
-    rows,
-  };
-}
-
-/** Render a delta as a compact German Markdown table (prompt + UI fallback). */
-export function renderDeltaMd(delta) {
-  if (!delta || !Array.isArray(delta.rows) || delta.rows.length === 0) {
-    return "_Keine vergleichbaren Kennzahlen zwischen den Zeiträumen._";
-  }
-  const fmt = (n) => `${n.toLocaleString("de-DE", { maximumFractionDigits: 1 })} %`;
-  const sign = (n) =>
-    `${n > 0 ? "+" : ""}${n.toLocaleString("de-DE", { maximumFractionDigits: 1 })} pp`;
-  const lines = [
-    `| Kennzahl | vorher | jetzt | Δ |`,
-    `| --- | --- | --- | --- |`,
-    ...delta.rows.map((r) => `| ${r.label} | ${fmt(r.prev)} | ${fmt(r.cur)} | ${sign(r.delta)} |`),
-  ];
-  return lines.join("\n");
-}
-
-// ── Defensive parser for the engine's JSON output ─────────────────────────────
-
-function clampText(v, max) {
-  if (typeof v !== "string") return "";
-  const t = v.trim();
-  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
-}
-
-function stripCodeFences(text) {
-  const t = String(text ?? "").trim();
-  const fenced = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  return fenced ? fenced[1] : t;
-}
-
-/**
- * Parse + validate the suggestions pass output from free TEXT. Kept as the
- * fallback path (and for tests); the engine now gets an already-parsed object
- * from structured generation and calls normalizeSuggestionsPayload directly —
- * free-text JSON from the model proved fragile in production (literal
- * newlines inside strings, truncation → "invalid_json").
- *
- * @param {string} text
- * @param {{ lane?: "shop" | "mo" | null, max?: number }} [opts]
- */
-export function parseSuggestionsResponse(text, opts = {}) {
-  let payload;
-  try {
-    payload = JSON.parse(stripCodeFences(text));
-  } catch {
-    // Fallback: first {...} block in the text (models occasionally add prose).
-    const m = String(text ?? "").match(/\{[\s\S]*\}/);
-    if (!m) return { ok: false, reason: "no_json" };
-    try {
-      payload = JSON.parse(m[0]);
-    } catch {
-      return { ok: false, reason: "invalid_json" };
-    }
-  }
-  return normalizeSuggestionsPayload(payload, opts);
-}
-
-/**
- * Validate an already-parsed suggestions payload:
- *   { vorschlaege: [ { lane, category, title, rationale, proposal,
- *                      directive?, expected_effect?, impact?, effort?,
- *                      evidence? } ] }
- * Never throws. Invalid items are dropped; a malformed payload returns
- * { ok: false } so the caller can fail the run with a clear message. The
- * returned items are clamped, validated against the lane vocabularies and
- * capped at `max` (default MAX_SUGGESTIONS_PER_RUN). When `lane` is given
- * (the per-lane passes), items of any other lane are dropped instead of kept —
- * each pass owns exactly one lane.
- *
- * @param {unknown} payload
- * @param {{ lane?: "shop" | "mo" | null, max?: number }} [opts]
- */
-export function normalizeSuggestionsPayload(payload, { lane = null, max = MAX_SUGGESTIONS_PER_RUN } = {}) {
-  const raw = Array.isArray(payload?.vorschlaege) ? payload.vorschlaege : null;
-  if (!raw) return { ok: false, reason: "missing_vorschlaege" };
-
-  const out = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const itemLane = LANES.includes(item.lane) ? item.lane : lane;
-    if (!itemLane || (lane && itemLane !== lane)) continue;
-    const categories = categoriesForLane(itemLane);
-    const category = Object.prototype.hasOwnProperty.call(categories, item.category)
-      ? item.category
-      : Object.keys(categories)[0];
-    const title = clampText(item.title, MAX_TITLE_CHARS);
-    const rationale = clampText(item.rationale, MAX_RATIONALE_CHARS);
-    const proposal = clampText(item.proposal, MAX_PROPOSAL_CHARS);
-    if (!title || !rationale || !proposal) continue;
-    const directive =
-      itemLane === "mo" ? clampText(item.directive, MAX_DIRECTIVE_CHARS) || null : null;
-    const evidence = (Array.isArray(item.evidence) ? item.evidence : [])
-      .filter((e) => typeof e === "string" && e.trim())
-      .slice(0, MAX_EVIDENCE_ITEMS)
-      .map((e) => clampText(e, MAX_EVIDENCE_CHARS));
-    out.push({
-      lane: itemLane,
-      category,
-      title,
-      fingerprint: suggestionFingerprint(title),
-      rationale,
-      proposal,
-      directive,
-      expectedEffect: clampText(item.expected_effect, MAX_EXPECTED_EFFECT_CHARS) || null,
-      impact: IMPACT_LEVELS.includes(item.impact) ? item.impact : "mittel",
-      effort: IMPACT_LEVELS.includes(item.effort) ? item.effort : "mittel",
-      evidence,
-    });
-    if (out.length >= max) break;
-  }
-  if (out.length === 0) return { ok: false, reason: "no_valid_items" };
-  return { ok: true, suggestions: out };
 }
 
 /**
@@ -344,74 +323,19 @@ export function dedupeSuggestions(parsed, existingFingerprints) {
   return kept;
 }
 
-// ── Prompt builders ───────────────────────────────────────────────────────────
-// Kept here (like conversation-analysis-core's buildRollupPrompt) so the exact
-// engine inputs are unit-testable without a model call.
+// ── Report extract (conversation insights for the chat pass) ──────────────────
 
-/** Compact German one-liner list of prior suggestions for either pass. */
-export function renderPriorSuggestions(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return "(keine)";
-  return rows
-    .map((s) => {
-      const bits = [
-        `[${s.lane === "mo" ? "Mo" : "Shop"}]`,
-        s.title,
-        `Status: ${SUGGESTION_STATUS_LABELS[s.status] ?? s.status}`,
-      ];
-      if (s.expectedEffect) bits.push(`Erwartete Wirkung: ${s.expectedEffect}`);
-      if (s.statusNote) bits.push(`Notiz: ${s.statusNote}`);
-      return `- ${bits.join(" · ")}`;
-    })
-    .join("\n");
+function clampText(v, max) {
+  if (typeof v !== "string") return "";
+  const t = v.trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
 /**
- * User prompt of the Wirkungs-Check pass: measured movement + what was done.
- */
-export function buildEffectPrompt({ deltaMd, priorSuggestions, reportExtract }) {
-  return (
-    `## Gemessene Veränderung seit dem letzten Lauf\n${deltaMd}\n\n` +
-    `## Damals beschlossene Maßnahmen (angenommen oder bereits umgesetzt)\n` +
-    `${renderPriorSuggestions(priorSuggestions)}\n\n` +
-    `## Auszug aus dem aktuellen Analysebericht\n${reportExtract}\n\n` +
-    `Erstelle jetzt den Wirkungs-Check.`
-  );
-}
-
-/**
- * User prompt of a suggestions pass: the evidence package. `selfSnapshot` is
- * optional — the Mo-lane pass sends the full self-snapshot, the shop-lane pass
- * deliberately omits it (smaller input, the report IS the shop evidence).
- */
-export function buildSuggestPrompt({
-  reportTitle,
-  rangeFrom,
-  rangeTo,
-  reportMd,
-  selfSnapshot,
-  priorSuggestions,
-  deltaMd,
-  effectCheckMd,
-}) {
-  const parts = [
-    `## Analysebericht „${reportTitle}“ (${rangeFrom} bis ${rangeTo})\n${reportMd}`,
-  ];
-  if (selfSnapshot) {
-    parts.push(`## Mos aktuelle Konfiguration (Selbstbild)\n${selfSnapshot}`);
-  }
-  parts.push(
-    `## Bisherige Vorschläge (NICHT wiederholen — auch verworfene nicht)\n${renderPriorSuggestions(priorSuggestions)}`
-  );
-  if (deltaMd) parts.push(`## Kennzahlen-Veränderung seit dem letzten Lauf\n${deltaMd}`);
-  if (effectCheckMd) parts.push(`## Wirkungs-Check dieses Laufs\n${effectCheckMd}`);
-  parts.push(`Erstelle jetzt die Verbesserungsvorschläge als JSON.`);
-  return parts.join("\n\n");
-}
-
-/**
- * Compact Markdown extract of a report's sections for the engine passes —
- * KPIs + distributions as data lines, then the two narrative sections. Bounded:
- * narratives are clamped so the prompt cannot explode with a huge report.
+ * Compact Markdown extract of a Komplettanalyse's conversation chapters —
+ * KPIs + distributions as data lines, personas, the insights, the top
+ * questions and the aggregate customer knowledge. Bounded and scrubbed of
+ * personal data (the business numbers come from the snapshot, not from here).
  */
 export function renderReportExtract(sections, { maxNarrativeChars = 6000 } = {}) {
   const k = sections?.kpis ?? {};
@@ -431,9 +355,7 @@ export function renderReportExtract(sections, { maxNarrativeChars = 6000 } = {})
       .map((f) => f.name)
       .slice(0, 3)
       .join(", ");
-    lines.push(
-      `- Persona ${p.personaDisplay}: ${p.chatCount} Gespräch(e)${fav ? ` · häufig empfohlen: ${fav}` : ""}`
-    );
+    lines.push(`- Persona ${p.personaDisplay}: ${p.chatCount} Gespräch(e)${fav ? ` · häufig empfohlen: ${fav}` : ""}`);
   }
   const out = [`### Kennzahlen\n${lines.join("\n")}`];
   if (sections?.insightsMd) {
@@ -445,12 +367,10 @@ export function renderReportExtract(sections, { maxNarrativeChars = 6000 } = {})
     .join("\n\n");
   if (personaQ) out.push(`### Top-Fragen je Persona\n${clampText(personaQ, maxNarrativeChars)}`);
   if (sections?.customerKnowledgeMd) {
-    out.push(
-      `### Aggregiertes Kundenwissen\n${clampText(sections.customerKnowledgeMd, maxNarrativeChars)}`
-    );
+    out.push(`### Aggregiertes Kundenwissen\n${clampText(sections.customerKnowledgeMd, maxNarrativeChars)}`);
   }
   if (Array.isArray(sections?.notes) && sections.notes.length > 0) {
     out.push(`### Hinweise\n${sections.notes.map((n) => `- ${n}`).join("\n")}`);
   }
-  return out.join("\n\n");
+  return scrubPii(out.join("\n\n"));
 }

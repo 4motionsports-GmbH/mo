@@ -1,101 +1,182 @@
 // The improvement engine ("Verbesserung" tab) — the server-only stepper that
-// drives one improvement run from 'running' to 'complete', ONE bounded model
-// call per /step request (the same shape as the Komplettanalyse stepper, so no
-// request approaches maxDuration).
+// drives one run from 'running' to 'complete', ONE bounded unit of work per
+// /step request (the shape of the Komplettanalyse stepper, so no request
+// approaches maxDuration).
 //
-// A run reads three things and produces two:
-//   reads  — a COMPLETED Komplettanalyse (its stored `sections`),
-//            Mo's current self-snapshot (lib/mo-self-snapshot.ts) and
-//            the prior suggestions + the measured KPI movement since the last
-//            run (lib/improvement-core.mjs baseline/delta maths);
-//   writes — an honest "Wirkungs-Check" of previously accepted/implemented
-//            measures, and up to MAX_SUGGESTIONS_PER_RUN new, evidence-based
-//            suggestions in two lanes (Online-Shop / Mo selbst).
+// A run (v2, docs/IMPROVEMENT_LOOP.md) is built on the BUSINESS SNAPSHOT of a
+// period (lib/business-snapshot — the KPI screen's numbers, vs the previous
+// period):
+//   daten               — collect the snapshot; import the open
+//                         recommendations of the chosen Komplettanalyse
+//   messung             — measure every adopted directive / implemented change
+//                         on its success metric (before/after windows, tests,
+//                         confounders — improvement-effects.mjs), time-boxed
+//   wirkungscheck       — strategist: keep / adjust / roll back / watch
+//   vorschlaege_chat    — strategist: chat & prompt, widget, Mo's tools
+//   vorschlaege_betrieb — strategist: operations, campaigns, development,
+//                         legal + the run's headline
+// The strategist passes run on Opus 5.5 (tier `strategist`, runStrategistObject:
+// structured output, streamed, timeout below maxDuration, refusal fallback);
+// a pass that times out or fails stays in its phase and is retried one rung
+// lower on the effort ladder (high → medium → low); after that, or without an
+// Anthropic key, the run moves on with a note — the deterministic parts
+// (snapshot, measurement, imports) always complete.
 //
-// Human-in-the-loop boundary (docs/IMPROVEMENT_LOOP.md): the engine only ever
-// PROPOSES. Nothing here mutates Mo's prompt, the directives, the catalog or
-// any store content — adoption is an explicit admin action on the suggestion.
+// Human-in-the-loop boundary: the engine only ever PROPOSES. Nothing here
+// mutates Mo's prompt, the directives, the catalog or any store content —
+// adoption is an explicit admin action on the suggestion.
 
-import { generateText, generateObject, NoObjectGeneratedError } from "ai";
-import { z } from "zod";
-import { anthropic } from "@ai-sdk/anthropic";
-import { anthropicOptionsFor, maxOutputTokensFor } from "./ai-models.mjs";
-import { recordAiUsage } from "./ai-usage-store";
-import { reportError } from "./observability";
-import { getAnalyticsReport } from "./analytics-report-store";
+import { getAnalyticsReport, type AnalyticsReportDetail } from "./analytics-report-store";
+import { getBusinessSnapshot, type BusinessSnapshot } from "./business-snapshot";
+import { flattenSnapshot } from "./business-snapshot-core.mjs";
+import { isDecisionReport, strategistEffortForAttempt } from "./analytics-report-synthesis-core.mjs";
+import { mergeUsage } from "./analytics-report-core.mjs";
 import { buildMoSelfSnapshot } from "./mo-self-snapshot";
+import { listDirectives } from "./directives-store";
+import { reportError } from "./observability";
+import { runStrategistObject, STRATEGIST_MODEL } from "./strategist-call";
+import { toYmd } from "./kpi-range.mjs";
+import {
+  RUN_VERSION,
+  dedupeSuggestions,
+  nextRunPhase,
+  renderReportExtract,
+  resolveRunPeriod,
+} from "./improvement-core.mjs";
+import { dayOf, snapshotMovers, summariseMeasurements, switchChanges } from "./improvement-effects.mjs";
+import {
+  EFFECT_REVIEW_ANSWER_TOKENS,
+  IMPROVEMENT_STRATEGIST_TIMEOUT_MS,
+  MEASURE_STEP_BUDGET_MS,
+  SUGGESTIONS_ANSWER_TOKENS,
+  buildEffectReviewPrompt,
+  buildSuggestionPrompt,
+  importReportRecommendations,
+  normalizeEffectReview,
+  normalizeSuggestionsPayload,
+  suggestionStorage,
+} from "./improvement-decision.mjs";
+import { effectReviewSchema, suggestionsSchema } from "./improvement-schemas.mjs";
 import {
   createImprovementRun,
   getImprovementRun,
-  updateImprovementRun,
+  getPreviousCompletedRun,
   claimRunStep,
   insertSuggestions,
   listPriorSuggestions,
-  listMeasuresForEffectCheck,
-  getPreviousCompletedRun,
+  listSuggestionOrigins,
+  updateImprovementRun,
   type ImprovementRunDetail,
+  type SuggestionInsert,
 } from "./improvement-store";
-import { mergeUsage } from "./analytics-report-core.mjs";
-import {
-  EFFECT_MODEL,
-  SUGGEST_MODEL,
-  SHOP_CATEGORIES,
-  MO_CATEGORIES,
-  MAX_SUGGESTIONS_PER_LANE,
-  MAX_DIRECTIVE_CHARS,
-  computeKpiBaseline,
-  computeBaselineDelta,
-  renderDeltaMd,
-  renderReportExtract,
-  buildEffectPrompt,
-  buildSuggestPrompt,
-  normalizeSuggestionsPayload,
-  dedupeSuggestions,
-  nextRunPhase,
-} from "./improvement-core.mjs";
+import { collectChanges, measurePending } from "./improvement-measure";
+import type { EffectReview, Measurement, RunAnalysisV2, RunBaselineV2, RunPeriod, StrategistEffortName } from "./improvement-types";
+
+type StrategistPhase = "wirkungscheck" | "vorschlaege_chat" | "vorschlaege_betrieb";
+
+const PASS_LABELS: Record<StrategistPhase, string> = {
+  wirkungscheck: "Wirkungs-Check",
+  vorschlaege_chat: "Vorschläge für Chat, Prompt & Widget",
+  vorschlaege_betrieb: "Vorschläge für Betrieb, Kampagnen, Entwicklung & Recht",
+};
+
+function todayUtc(): string {
+  return toYmd(new Date());
+}
+
+export function emptyAnalysis(): RunAnalysisV2 {
+  return {
+    version: 2,
+    measurement: { today: null, changes: null, measurements: [], switchHistory: [], previousRunId: null, done: false },
+    review: null,
+    synthesis: null,
+    imported: 0,
+    state: { attempts: {}, efforts: {}, model: null, notes: [] },
+  };
+}
+
+/** The v2 payloads of a run (defaults filled), or null for a v1 run. */
+function v2Of(run: ImprovementRunDetail): { baseline: RunBaselineV2; analysis: RunAnalysisV2 } | null {
+  if (run.version !== 2 || !run.baseline) return null;
+  const baseline = run.baseline as unknown as RunBaselineV2;
+  const stored = (run.delta ?? {}) as Partial<RunAnalysisV2>;
+  const empty = emptyAnalysis();
+  const analysis: RunAnalysisV2 = {
+    ...empty,
+    ...stored,
+    version: 2,
+    measurement: { ...empty.measurement, ...(stored.measurement ?? {}) },
+    state: { ...empty.state, ...(stored.state ?? {}), attempts: { ...(stored.state?.attempts ?? {}) }, efforts: { ...(stored.state?.efforts ?? {}) } },
+  };
+  return { baseline, analysis };
+}
+
+function pushNote(notes: string[], note: string): string[] {
+  return notes.includes(note) ? notes : [...notes, note];
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+
+export interface StartRunInput {
+  /** A completed Komplettanalyse: its conversation insights feed the chat pass. */
+  reportId?: number | null;
+  /** "report" = the report's period; "7d" | "14d" | "30d" | "90d" = full days up to yesterday; "custom" = from/to. */
+  preset?: string | null;
+  from?: string | null;
+  to?: string | null;
+  /** Import the report's open recommendations (decision reports only). Default true. */
+  importRecommendations?: boolean;
+}
 
 export interface StartRunResult {
   ok: boolean;
   runId?: number;
-  error?: "not_found" | "not_complete" | "db_error";
+  error?: "not_found" | "not_complete" | "bad_period" | "db_error";
 }
 
 /**
- * Create a run over a COMPLETED report and decide its first phase. No model
- * call happens here — the client drives /step until done.
+ * Create a run and decide its period. No model call and no snapshot here —
+ * the client drives /step until done.
  */
-export async function startImprovementRun(reportId: number): Promise<StartRunResult> {
-  const report = await getAnalyticsReport(reportId);
-  if (!report) return { ok: false, error: "not_found" };
-  if (report.status !== "complete" || !report.sections) {
-    return { ok: false, error: "not_complete" };
+export async function startImprovementRun(input: StartRunInput): Promise<StartRunResult> {
+  let report: AnalyticsReportDetail | null = null;
+  if (input.reportId != null) {
+    report = await getAnalyticsReport(input.reportId);
+    if (!report) return { ok: false, error: "not_found" };
+    if (report.status !== "complete" || !report.sections) return { ok: false, error: "not_complete" };
   }
+  const preset = input.preset ?? (report ? "report" : "30d");
+  const period = resolveRunPeriod(
+    { preset, from: input.from ?? null, to: input.to ?? null, reportRange: report ? { from: report.from, to: report.to } : null },
+    todayUtc()
+  ) as RunPeriod | null;
+  if (!period) return { ok: false, error: "bad_period" };
 
-  const [snapshot, previous, measures] = await Promise.all([
-    buildMoSelfSnapshot(),
-    getPreviousCompletedRun(),
-    listMeasuresForEffectCheck(0),
-  ]);
-
-  const baseline = computeKpiBaseline(report.sections);
-  const delta = previous ? computeBaselineDelta(previous.baseline, baseline) : null;
-  // The Wirkungs-Check needs BOTH a measured movement and measures to assess;
-  // otherwise the run starts straight at the first suggestions pass.
-  const phase = delta && measures.length > 0 ? "wirkung" : "vorschlaege_shop";
-
+  const self = await buildMoSelfSnapshot();
+  const baseline: RunBaselineV2 = {
+    version: RUN_VERSION,
+    period,
+    options: {
+      reportId: report?.id ?? null,
+      importRecommendations: Boolean(report && isDecisionReport(report.sections) && input.importRecommendations !== false),
+    },
+    snapshot: null,
+  };
   const runId = await createImprovementRun({
-    reportId,
-    reportTitle: report.title,
-    rangeFrom: report.from,
-    rangeTo: report.to,
-    promptHash: snapshot.hash,
+    reportId: report?.id ?? null,
+    reportTitle: report ? report.title : `Geschäftsdaten ${period.label}`,
+    rangeFrom: period.from,
+    rangeTo: period.to,
+    promptHash: self.hash,
     baseline,
-    delta: delta as unknown as Record<string, unknown> | null,
-    phase,
+    delta: emptyAnalysis(),
+    phase: "daten",
   });
   if (runId == null) return { ok: false, error: "db_error" };
   return { ok: true, runId };
 }
+
+// ── Step ──────────────────────────────────────────────────────────────────────
 
 export interface RunStepResult {
   ok: boolean;
@@ -106,41 +187,71 @@ export interface RunStepResult {
   /** True when another /step is already live on this run — poll, don't work. */
   busy?: boolean;
   error?: string;
+  /** Progress details for the driver. */
+  progress?: {
+    measured: number;
+    toMeasure: number | null;
+    attempt: number;
+    effort: StrategistEffortName | null;
+    suggestions: number;
+  };
 }
 
-/** Advance the run by one bounded model call. Never throws. */
+function progressOf(run: ImprovementRunDetail): RunStepResult["progress"] {
+  const v2 = v2Of(run);
+  if (!v2) return undefined;
+  const { analysis } = v2;
+  const phase = run.phase as StrategistPhase;
+  const attempt = analysis.state.attempts[phase] ?? 0;
+  return {
+    measured: analysis.measurement.measurements.length,
+    toMeasure: analysis.measurement.changes ? analysis.measurement.changes.length : null,
+    attempt,
+    effort: (["wirkungscheck", "vorschlaege_chat", "vorschlaege_betrieb"].includes(run.phase)
+      ? strategistEffortForAttempt(attempt)
+      : null) as StrategistEffortName | null,
+    suggestions: run.suggestions.length,
+  };
+}
+
+/** Advance the run by one bounded unit of work. Never throws. */
 export async function stepImprovementRun(id: number): Promise<RunStepResult> {
   const run = await getImprovementRun(id);
   if (!run) return { ok: false, done: true, error: "not_found" };
   if (run.status !== "running") {
-    return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: true };
+    return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: true, progress: progressOf(run) };
   }
 
-  // Retry-safety (migration 0045): a client whose request was aborted locally
-  // (e.g. Chrome net::ERR_NETWORK_CHANGED) retries — while the original
-  // function may still be mid-model-call. The atomic claim makes the retry a
-  // cheap "busy" poll instead of a duplicate model call.
-  // 'error' (e.g. migration 0045 not applied yet, transient DB failure) falls
-  // through fail-open — that is exactly the pre-claim behavior, so the loop
-  // can never get stuck on an unclaimable run.
+  // Retry-safety (migration 0045): a retried request while the original is
+  // still working becomes a cheap "busy" poll. 'error' (claim not possible)
+  // falls through fail-open — the pre-claim behaviour.
   const claim = await claimRunStep(id);
   if (claim === "busy") {
-    return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: false, busy: true };
+    return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: false, busy: true, progress: progressOf(run) };
   }
 
   try {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error("Anthropic-Key nicht konfiguriert.");
-    }
-    if (run.phase === "wirkung") {
-      await stepEffectCheck(run);
-    } else if (run.phase === "vorschlaege_mo") {
-      await stepSuggestLane(run, "mo");
+    const v2 = v2Of(run);
+    if (!v2) {
+      await upgradeLegacyRun(run);
     } else {
-      // Covers "vorschlaege_shop" AND the legacy single-pass phase value
-      // "vorschlaege" (runs created before the per-lane split — they resume
-      // here and continue through the mo pass).
-      await stepSuggestLane(run, "shop");
+      switch (run.phase) {
+        case "daten":
+          await stepData(run, v2.baseline, v2.analysis);
+          break;
+        case "messung":
+          await stepMeasure(run, v2.baseline, v2.analysis);
+          break;
+        case "wirkungscheck":
+          await stepEffectReview(run, v2.baseline, v2.analysis);
+          break;
+        case "vorschlaege_chat":
+        case "vorschlaege_betrieb":
+          await stepSuggestions(run, v2.baseline, v2.analysis, run.phase);
+          break;
+        default:
+          await updateImprovementRun(id, { status: "complete", phase: "done", completed: true });
+      }
     }
   } catch (err) {
     reportError(err, { route: "lib/improvement-generate", phase: run.phase });
@@ -157,260 +268,232 @@ export async function stepImprovementRun(id: number): Promise<RunStepResult> {
     phase: after.phase,
     costEur: after.costEur,
     done: after.status !== "running",
+    progress: progressOf(after),
   };
 }
 
-async function loadReportExtract(run: ImprovementRunDetail): Promise<string> {
-  if (run.reportId != null) {
-    const report = await getAnalyticsReport(run.reportId);
-    if (report?.sections) return renderReportExtract(report.sections);
-  }
-  return "_(Der zugrunde liegende Bericht ist nicht mehr vorhanden.)_";
+/**
+ * A run started before the snapshot rework that is still running: it
+ * continues as a v2 run over its report's period (its existing suggestions
+ * stay).
+ */
+async function upgradeLegacyRun(run: ImprovementRunDetail): Promise<void> {
+  const period = resolveRunPeriod({ preset: "report", reportRange: { from: run.rangeFrom, to: run.rangeTo } }, todayUtc()) as RunPeriod | null;
+  if (!period) throw new Error("Zeitraum des Laufs ist nicht lesbar — bitte löschen und neu starten.");
+  const baseline: RunBaselineV2 = {
+    version: RUN_VERSION,
+    period,
+    options: { reportId: run.reportId, importRecommendations: false },
+    snapshot: null,
+    upgradedFrom: 1,
+  };
+  const analysis = emptyAnalysis();
+  analysis.state.notes = ["Vor der Umstellung auf die Geschäftsdaten gestartet und mit dem neuen Ablauf fortgesetzt."];
+  await updateImprovementRun(run.id, { phase: "daten", baseline, delta: analysis });
 }
 
-// ── Phase: Wirkungs-Check ─────────────────────────────────────────────────────
+// ── Phase: daten ──────────────────────────────────────────────────────────────
 
-async function stepEffectCheck(run: ImprovementRunDetail): Promise<void> {
-  const [measures, reportExtract] = await Promise.all([
-    listMeasuresForEffectCheck(run.id),
-    loadReportExtract(run),
+async function stepData(run: ImprovementRunDetail, baseline: RunBaselineV2, analysis: RunAnalysisV2): Promise<void> {
+  const { period, options } = baseline;
+  const [snapshot, previousRun, report] = await Promise.all([
+    // The Shopify cross-check of the Mo codes goes through the KPI screen's
+    // 10-minute cache and is bounded inside the snapshot (45 s).
+    getBusinessSnapshot({ from: period.from, to: period.to }, { includeShopify: true }),
+    getPreviousCompletedRun(run.id),
+    options.reportId != null && options.importRecommendations ? getAnalyticsReport(options.reportId) : Promise.resolve(null),
   ]);
-  const deltaMd = renderDeltaMd(run.delta);
+  const today = todayUtc();
 
-  const { text, usage } = await generateText({
-    model: anthropic(EFFECT_MODEL),
-    providerOptions: anthropicOptionsFor("analyst"),
-    maxOutputTokens: maxOutputTokensFor("analyst", 900),
-    system:
-      "Du bist der Verbesserungs-Analyst von motion sports (Fitness- und Kraftsportgeräte, " +
-      "Online-Shop mit KI-Berater 'Mo'). Deine Aufgabe: ehrlich prüfen, ob die zuletzt " +
-      "beschlossenen Verbesserungsmaßnahmen WIRKEN. Du erhältst die gemessene Veränderung " +
-      "der Kennzahlen zwischen zwei Analysezeiträumen und die Liste der Maßnahmen.\n\n" +
-      "Schreibe einen kompakten „Wirkungs-Check“ auf Deutsch (Markdown, keine Einleitung, " +
-      "max. ~300 Wörter): je Maßnahme (oder sinnvoll gruppiert) eine ehrliche Einschätzung — " +
-      "**wirkt**, **wirkt bisher nicht** oder **nicht messbar** — mit Bezug auf die konkrete " +
-      "Kennzahl.\n\n" +
-      "Ehrlichkeits-Regeln (KRITISCH):\n" +
-      "- Behaupte NIE Kausalität — eine Bewegung „passt zur Maßnahme“, mehr nicht.\n" +
-      "- Kleine Stichproben und kurze Zeiträume ausdrücklich einordnen.\n" +
-      "- Eine Maßnahme ohne passende Kennzahl ist „nicht messbar“ — nichts erfinden.",
-    prompt: buildEffectPrompt({ deltaMd, priorSuggestions: measures, reportExtract }),
-  });
+  let notes = analysis.state.notes;
+  const switchHistory =
+    previousRun?.switches && previousRun.version === 2
+      ? switchChanges(previousRun.switches, snapshot.switches, { from: dayOf(previousRun.createdAt) ?? today, to: today })
+      : [];
+  if (!previousRun || previousRun.version !== 2) {
+    notes = pushNote(notes, "Schalter-Historie beginnt mit diesem Lauf — Schalter-Änderungen vor ihm sind nicht bekannt.");
+  }
 
-  await recordAiUsage({
-    callSite: "improvement",
-    model: EFFECT_MODEL,
-    inputTokens: usage?.inputTokens ?? 0,
-    outputTokens: usage?.outputTokens ?? 0,
-  });
+  let imported = analysis.imported;
+  if (report?.sections && isDecisionReport(report.sections)) {
+    const existing = await listSuggestionOrigins();
+    const recs = importReportRecommendations(report.sections, {
+      reportId: report.id,
+      reportTitle: report.title,
+      flat: flattenSnapshot(snapshot),
+      existing,
+    });
+    imported += await insertSuggestions(run.id, recs.map((s) => suggestionStorage(s) as SuggestionInsert));
+  }
 
   await updateImprovementRun(run.id, {
-    phase: nextRunPhase("wirkung"),
-    effectCheckMd: text.trim() || null,
-    usage: mergeUsage(run.usage, EFFECT_MODEL, usage?.inputTokens ?? 0, usage?.outputTokens ?? 0),
+    phase: nextRunPhase("daten"),
+    baseline: { ...baseline, snapshot },
+    delta: {
+      ...analysis,
+      imported,
+      measurement: { ...analysis.measurement, switchHistory, previousRunId: previousRun?.id ?? null },
+      state: { ...analysis.state, notes },
+    },
   });
 }
 
-// ── Phases: Vorschläge (one SHORT pass per lane) ─────────────────────────────
-// Split deliberately: one monolithic pass over both lanes produced a single
-// long model call that outlived the serverless function budget in production
-// (the function was killed mid-call and the browser saw a dropped connection).
-// Per lane the output is roughly halved and the shop pass also skips the big
-// self-snapshot input, so each step finishes comfortably inside maxDuration.
+// ── Phase: messung ────────────────────────────────────────────────────────────
 
-const COMMON_RULES =
-  "Qualitäts-Regeln (KRITISCH):\n" +
-  "- NUR was die Daten belegen. Jeder Vorschlag zitiert seine Evidenz (Kennzahl, Kategorie, " +
-  "Persona-Befund) — nichts erfinden, keine Allgemeinplätze („mehr Marketing machen“).\n" +
-  "- KEINE Wiederholungen: Vorschläge, die inhaltlich schon in der Liste der bisherigen " +
-  "Vorschläge stehen (egal mit welchem Status, auch verworfene), NICHT erneut bringen.\n" +
-  "- Konkret und umsetzbar: `proposal` beschreibt die Änderung so genau, dass ein Mensch sie " +
-  "direkt umsetzen kann.\n" +
-  "- Kompakt: `rationale` unter ~600 Zeichen, `proposal` unter ~800 Zeichen — dicht statt " +
-  "ausschweifend.\n" +
-  "- `expected_effect`: welche Kennzahl sich messbar bewegen soll (die Grundlage des " +
-  "nächsten Wirkungs-Checks).\n" +
-  "- Priorisiere: wenige Vorschläge mit hoher Wirkung schlagen viele kleine. Maximal " +
-  MAX_SUGGESTIONS_PER_LANE + ".\n\n" +
-  "WICHTIG: Du schlägst nur VOR. Nichts wird automatisch geändert — ein Mensch prüft und " +
-  "entscheidet jede Maßnahme.";
+async function stepMeasure(run: ImprovementRunDetail, baseline: RunBaselineV2, analysis: RunAnalysisV2): Promise<void> {
+  const snapshot = baseline.snapshot;
+  const reference = snapshot ? flattenSnapshot(snapshot) : {};
+  const m = { ...analysis.measurement };
+  if (!m.today) m.today = todayUtc();
+  if (!m.changes) m.changes = await collectChanges(reference, m.today);
 
-// Output schema for the structured suggestion passes (generateObject, like the
-// marketing/campaign drafts). Anthropic's native structured output
-// (`output_config.format`, docs/AI_MODELS.md — the 5.5 models reject a forced
-// tool call) returns JSON matching this schema; the free-text-JSON path
-// broke in production (literal newlines in strings / truncation →
-// "invalid_json"). Only the essential fields are strict; everything else is
-// tolerated loose and hardened by normalizeSuggestionsPayload afterwards.
-const laneOutputSchema = z.object({
-  vorschlaege: z
-    .array(
-      z.object({
-        lane: z.enum(["shop", "mo"]).describe("Bahn dieses Vorschlags"),
-        category: z.string().describe("Kategorie-Schlüssel der Bahn"),
-        title: z.string().describe("Prägnanter deutscher Titel"),
-        rationale: z
-          .string()
-          .describe("WARUM — mit Evidenz aus dem Bericht (Markdown, unter ~600 Zeichen)"),
-        proposal: z
-          .string()
-          .describe("WAS genau ändern — konkret umsetzbar (Markdown, unter ~800 Zeichen)"),
-        directive: z
-          .string()
-          .nullable()
-          .describe("Nur Bahn 'mo', Kategorie 'anweisung': fertiger Anweisungstext; sonst null"),
-        expected_effect: z
-          .string()
-          .nullable()
-          .describe("Welche Kennzahl sich wie messbar bewegen soll"),
-        impact: z.enum(["hoch", "mittel", "niedrig"]),
-        effort: z.enum(["hoch", "mittel", "niedrig"]),
-        evidence: z.array(z.string()).describe("Kurze Belege aus dem Bericht"),
-      })
-    )
-    .describe(`Die besten Vorschläge, maximal ${MAX_SUGGESTIONS_PER_LANE}`),
-});
-
-function shopSystemPrompt(): string {
-  const cats = Object.entries(SHOP_CATEGORIES)
-    .map(([k, v]) => `\`${k}\` (${v})`)
-    .join(", ");
-  return (
-    "Du bist der Verbesserungs-Analyst von motion sports (Fitness- und Kraftsportgeräte, " +
-    "Online-Shop mit KI-Berater 'Mo'). Du erhältst den verdichteten Analysebericht eines " +
-    "Zeitraums, die bisherigen Vorschläge mit Status und ggf. die Kennzahlen-Veränderung samt " +
-    "Wirkungs-Check.\n\n" +
-    "Erarbeite daraus die WENIGEN besten Verbesserungsvorschläge für den ONLINE-SHOP selbst " +
-    "(lane `shop`). Kategorien: " + cats + ". `directive` ist in dieser Bahn immer null.\n\n" +
-    COMMON_RULES
-  );
-}
-
-function moSystemPrompt(): string {
-  const cats = Object.entries(MO_CATEGORIES)
-    .map(([k, v]) => `\`${k}\` (${v})`)
-    .join(", ");
-  return (
-    "Du bist der Verbesserungs-Analyst von motion sports (Fitness- und Kraftsportgeräte). " +
-    "Der Shop setzt den KI-Berater 'Mo' ein. Du erhältst den verdichteten Analysebericht eines " +
-    "Zeitraums, Mos AKTUELLE Konfiguration (System-Prompt, Tools, Personas, Wissen, " +
-    "Team-Anweisungen) — sein „Selbstbild“ —, die bisherigen Vorschläge mit Status und ggf. " +
-    "die Kennzahlen-Veränderung samt Wirkungs-Check.\n\n" +
-    "Erarbeite daraus die WENIGEN besten Verbesserungsvorschläge für MO SELBST (lane `mo` — " +
-    "sein Prompt, Wissen, Verhalten, Tools). Kategorien: " + cats + ".\n\n" +
-    COMMON_RULES + "\n\n" +
-    "Zusatz-Regeln für Mo-Vorschläge:\n" +
-    "- Kategorie `anweisung`: liefere in `directive` den fertigen deutschen Anweisungstext " +
-    "(max. " + MAX_DIRECTIVE_CHARS + " Zeichen), so wie er 1:1 in Mos System-Prompt übernommen " +
-    "werden kann — als Verhaltensregel formuliert, an Mo gerichtet („Wenn …, dann …“). Eine " +
-    "directive darf NIE rechtliche Zusagen, Medizin-Beratung, Preisnachlässe oder Versprechen " +
-    "enthalten, die der Shop nicht hält. Für alle anderen Kategorien: `directive` = null.\n" +
-    "- Kategorie `prompt_kern`: beschreibe die Änderung als konkreten Textvorschlag für den " +
-    "Kern-Prompt (der per Code/Git geändert wird) — welcher Abschnitt, welcher neue Wortlaut."
-  );
-}
-
-async function stepSuggestLane(run: ImprovementRunDetail, lane: "shop" | "mo"): Promise<void> {
-  const isMoLane = lane === "mo";
-  const [snapshot, prior, reportMd] = await Promise.all([
-    isMoLane ? buildMoSelfSnapshot() : Promise.resolve(null),
-    listPriorSuggestions(),
-    loadReportExtract(run),
-  ]);
-
-  const prompt = buildSuggestPrompt({
-    reportTitle: run.reportTitle,
-    rangeFrom: run.rangeFrom,
-    rangeTo: run.rangeTo,
-    reportMd,
-    selfSnapshot: snapshot?.text ?? null,
-    priorSuggestions: prior,
-    deltaMd: run.delta ? renderDeltaMd(run.delta) : null,
-    effectCheckMd: run.effectCheckMd,
+  const added = await measurePending({
+    changes: m.changes,
+    measured: m.measurements,
+    today: m.today,
+    switchHistory: m.switchHistory,
+    reference,
+    budgetMs: MEASURE_STEP_BUDGET_MS,
   });
+  const order = new Map(m.changes.map((c, i) => [c.ref, i]));
+  m.measurements = [...m.measurements, ...added].sort((a, b) => (order.get(a.ref) ?? 0) - (order.get(b.ref) ?? 0));
+  m.done = m.measurements.length >= m.changes.length;
 
-  let object: z.infer<typeof laneOutputSchema>;
-  let usage: { inputTokens?: number; outputTokens?: number } | undefined;
-  try {
-    ({ object, usage } = await generateObject({
-      model: anthropic(SUGGEST_MODEL),
-      providerOptions: anthropicOptionsFor("analyst"),
-      schema: laneOutputSchema,
-      maxOutputTokens: maxOutputTokensFor("analyst", 4000),
-      system: isMoLane ? moSystemPrompt() : shopSystemPrompt(),
-      prompt,
-    }));
-  } catch (err) {
-    // Structured generation failed terminally (schema mismatch after the
-    // SDK's own repair attempts, or output truncated at the token cap). Record
-    // what was spent, fail the run with a clear German message — the operator
-    // deletes and restarts. Anything else (network, 5xx) bubbles to the
-    // stepper's catch as before.
-    if (NoObjectGeneratedError.isInstance(err)) {
-      reportError(err, { route: "lib/improvement-generate", phase: `vorschlaege_${lane}` });
-      const u = err.usage;
-      await recordAiUsage({
-        callSite: "improvement",
-        model: SUGGEST_MODEL,
-        inputTokens: u?.inputTokens ?? 0,
-        outputTokens: u?.outputTokens ?? 0,
-      });
-      await updateImprovementRun(run.id, {
-        status: "failed",
-        error: `Vorschläge (${lane}): KI-Antwort nicht lesbar — bitte Lauf löschen und neu starten.`,
-        usage: mergeUsage(run.usage, SUGGEST_MODEL, u?.inputTokens ?? 0, u?.outputTokens ?? 0),
-      });
+  await updateImprovementRun(run.id, {
+    phase: m.done ? nextRunPhase("messung", { hasAssessable: summariseMeasurements(m.measurements).assessable }) : "messung",
+    delta: { ...analysis, measurement: m },
+  });
+}
+
+// ── Strategist phases ─────────────────────────────────────────────────────────
+
+/**
+ * Bookkeeping shared by the three strategist passes: the effort of this
+ * attempt, and how to move on (success, give up with a note, or stay for a
+ * retry one rung lower).
+ */
+function ladder(run: ImprovementRunDetail, analysis: RunAnalysisV2, phase: StrategistPhase) {
+  const attempts = analysis.state.attempts[phase] ?? 0;
+  const effort = strategistEffortForAttempt(attempts) as StrategistEffortName | null;
+  const label = PASS_LABELS[phase];
+  const next = nextRunPhase(phase);
+  const finish = async (patch: Partial<RunAnalysisV2>, extra: { usage?: ImprovementRunDetail["usage"]; effectCheckMd?: string | null } = {}) => {
+    const done = next === "done";
+    await updateImprovementRun(run.id, {
+      phase: next,
+      ...(done ? { status: "complete" as const, completed: true } : {}),
+      ...(extra.usage ? { usage: extra.usage } : {}),
+      ...(extra.effectCheckMd ? { effectCheckMd: extra.effectCheckMd } : {}),
+      delta: { ...analysis, ...patch },
+    });
+  };
+  const skip = async (note: string, usage?: ImprovementRunDetail["usage"]) => {
+    await finish({ state: { ...analysis.state, notes: pushNote(analysis.state.notes, note) } }, { usage });
+  };
+  const retryOrSkip = async (message: string, usage: ImprovementRunDetail["usage"]) => {
+    const nextAttempts = attempts + 1;
+    const state = { ...analysis.state, attempts: { ...analysis.state.attempts, [phase]: nextAttempts } };
+    if (strategistEffortForAttempt(nextAttempts) === null) {
+      await finish({ state: { ...state, notes: pushNote(state.notes, `${label} nicht erstellt (${message}).`) } }, { usage });
       return;
     }
-    throw err;
-  }
+    await updateImprovementRun(run.id, { phase, usage, delta: { ...analysis, state } });
+  };
+  const succeeded = (eff: StrategistEffortName) => {
+    let notes = analysis.state.notes;
+    if (attempts > 0) notes = pushNote(notes, `${label} im ${attempts + 1}. Versuch mit Denktiefe „${eff}“ erstellt (vorher Zeitlimit oder Fehler).`);
+    return { ...analysis.state, notes, model: STRATEGIST_MODEL, efforts: { ...analysis.state.efforts, [phase]: eff } };
+  };
+  return { attempts, effort, label, finish, skip, retryOrSkip, succeeded };
+}
 
-  await recordAiUsage({
+async function stepEffectReview(run: ImprovementRunDetail, baseline: RunBaselineV2, analysis: RunAnalysisV2): Promise<void> {
+  const l = ladder(run, analysis, "wirkungscheck");
+  if (!process.env.ANTHROPIC_API_KEY) return l.skip(`Anthropic-Key fehlt — ${l.label} übersprungen; die Messung steht.`);
+  if (!baseline.snapshot) return l.skip(`Keine Geschäftsdaten — ${l.label} übersprungen.`);
+  if (l.effort === null) return l.skip(`${l.label} nach ${l.attempts} Versuchen nicht erstellt.`);
+
+  const measurements = analysis.measurement.measurements as Measurement[];
+  const directives = await listDirectives();
+  const res = await runStrategistObject({
+    schema: effectReviewSchema,
+    ...buildEffectReviewPrompt({ snapshot: baseline.snapshot, movers: snapshotMovers(baseline.snapshot), measurements, directives }),
+    answerTokens: EFFECT_REVIEW_ANSWER_TOKENS,
     callSite: "improvement",
-    model: SUGGEST_MODEL,
-    inputTokens: usage?.inputTokens ?? 0,
-    outputTokens: usage?.outputTokens ?? 0,
+    effort: l.effort,
+    timeoutMs: IMPROVEMENT_STRATEGIST_TIMEOUT_MS,
+    label: "improvement-effects",
   });
+  const usage = mergeUsage(run.usage, res.model, res.inputTokens, res.outputTokens);
+  if (res.ok) {
+    const review = normalizeEffectReview(res.object, measurements.map((m) => m.ref)) as EffectReview;
+    return l.finish({ review, state: l.succeeded(l.effort) }, { usage, effectCheckMd: review.summary });
+  }
+  if (res.reason === "unconfigured") return l.skip(`Anthropic-Key fehlt — ${l.label} übersprungen; die Messung steht.`, usage);
+  return l.retryOrSkip(res.message, usage);
+}
 
-  const mergedUsage = mergeUsage(
-    run.usage,
-    SUGGEST_MODEL,
-    usage?.inputTokens ?? 0,
-    usage?.outputTokens ?? 0
-  );
+async function stepSuggestions(
+  run: ImprovementRunDetail,
+  baseline: RunBaselineV2,
+  analysis: RunAnalysisV2,
+  pass: "vorschlaege_chat" | "vorschlaege_betrieb"
+): Promise<void> {
+  const l = ladder(run, analysis, pass);
+  if (!process.env.ANTHROPIC_API_KEY) return l.skip(`Anthropic-Key fehlt — ${l.label} übersprungen.`);
+  if (!baseline.snapshot) return l.skip(`Keine Geschäftsdaten — ${l.label} übersprungen.`);
+  if (l.effort === null) return l.skip(`${l.label} nach ${l.attempts} Versuchen nicht erstellt.`);
 
-  const parsed = normalizeSuggestionsPayload(object, { lane, max: MAX_SUGGESTIONS_PER_LANE });
-  if (!parsed.ok) {
-    await updateImprovementRun(run.id, {
-      status: "failed",
-      error: `Vorschläge (${lane}) nicht lesbar (${parsed.reason}).`,
-      usage: mergedUsage,
-    });
-    return;
+  const isChat = pass === "vorschlaege_chat";
+  const reportId = baseline.options.reportId;
+  const [prior, directives, self, report] = await Promise.all([
+    listPriorSuggestions(),
+    listDirectives(),
+    isChat ? buildMoSelfSnapshot() : Promise.resolve(null),
+    reportId != null && isChat ? getAnalyticsReport(reportId) : Promise.resolve(null),
+  ]);
+  const snapshot: BusinessSnapshot = baseline.snapshot;
+  const flat = flattenSnapshot(snapshot);
+  const res = await runStrategistObject({
+    schema: suggestionsSchema(pass),
+    ...buildSuggestionPrompt(pass, {
+      snapshot,
+      movers: snapshotMovers(snapshot),
+      measurements: analysis.measurement.measurements,
+      review: analysis.review,
+      backlog: prior,
+      directives,
+      selfSnapshot: self?.text ?? null,
+      reportExtract: report?.sections ? renderReportExtract(report.sections) : null,
+      reportTitle: report?.title ?? null,
+      earlier: run.suggestions.filter((s) => s.details?.origin?.kind !== "report").map((s) => ({ lane: s.ownerLane, title: s.title })),
+    }),
+    answerTokens: SUGGESTIONS_ANSWER_TOKENS,
+    callSite: "improvement",
+    effort: l.effort,
+    timeoutMs: IMPROVEMENT_STRATEGIST_TIMEOUT_MS,
+    label: `improvement-${pass}`,
+  });
+  const usage = mergeUsage(run.usage, res.model, res.inputTokens, res.outputTokens);
+  if (!res.ok) {
+    if (res.reason === "unconfigured") return l.skip(`Anthropic-Key fehlt — ${l.label} übersprungen.`, usage);
+    return l.retryOrSkip(res.message, usage);
   }
 
-  // Hard dedup against every non-dismissed prior suggestion AND anything the
-  // earlier lane pass of THIS run already inserted — the prompt also forbids
-  // repeats, this is the guard. A dismissed idea MAY return (the model was
-  // told not to, but if it insists with new evidence the operator decides).
-  const existingFps = [
+  const out = normalizeSuggestionsPayload(res.object, { flat, pass });
+  // Hard dedup against every non-dismissed prior suggestion AND this run's own
+  // (imports and the earlier pass) — the prompt also forbids repeats.
+  const existing = [
     ...prior.filter((p) => p.status !== "dismissed").map((p) => p.fingerprint),
     ...run.suggestions.map((s) => s.fingerprint),
   ];
-  const fresh = dedupeSuggestions(parsed.suggestions, existingFps);
-  await insertSuggestions(run.id, fresh);
-
-  if (isMoLane) {
-    await updateImprovementRun(run.id, {
-      status: "complete",
-      phase: "done",
-      usage: mergedUsage,
-      completed: true,
-    });
-  } else {
-    await updateImprovementRun(run.id, {
-      phase: "vorschlaege_mo",
-      usage: mergedUsage,
-    });
-  }
+  const fresh = dedupeSuggestions(out.suggestions, existing) as typeof out.suggestions;
+  await insertSuggestions(run.id, fresh.map((s) => suggestionStorage(s) as SuggestionInsert));
+  return l.finish(
+    {
+      state: l.succeeded(l.effort),
+      ...(isChat ? {} : { synthesis: { headline: out.headline, summary: out.summary } }),
+    },
+    { usage }
+  );
 }
