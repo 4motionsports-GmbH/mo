@@ -1031,32 +1031,97 @@ list keeps its toolbar on an empty result.
 
 ### 3.8 Analyse
 
-Stored **Komplettanalysen** per interval: a `SidebarList` of reports on the
-left, the generator or the selected report on the right. The generator shows a
-live, zero-token estimate (`analytics/estimate`) for the chosen range and
-options (per-customer section, appendix), creates the report
-(`analytics/create`) and drives it step by step (`analytics/step`) via
-`useStepLoop` with a progress bar; finished reports render their sections and
-can be downloaded as PDF (`analytics/<id>/pdf`) or deleted (confirm). Deep link
-`?report=<id>`.
+Stored **Komplettanalysen** per interval — since 2026-10-06 a **decision
+report**: a `SidebarList` of reports on the left, the generator or the selected
+report on the right. Deep link `?report=<id>`. Screenshots (sample report,
+generator, progress; 1440/1024, light/dark): `docs/screenshots/2026-10-06-analyse/`.
 
-Two chapters come from the customer platform — deterministic, pure DB, no extra
-tokens, assembled in the last step (`getReportCustomerBase`,
-`getReportCampaigns` in [`analytics-report-store.ts`](../src/lib/analytics-report-store.ts))
-and rendered on screen ([`ReportView.tsx`](../src/app/admin/analytics/ReportView.tsx))
-and in the PDF ([`analytics-report-pdf.mjs`](../src/lib/analytics-report-pdf.mjs)), after the
-Kennzahlen:
+**Generator** ([`GenerateReportPanel.tsx`](../src/app/admin/analytics/GenerateReportPanel.tsx)):
+period (7 / 30 / 90 days or custom), per-customer profiles, appendix, and a live
+zero-token „Vorschau“ (`analytics/estimate`): conversations and those still to
+analyse, persona groups, the estimated AI cost with the strategist share
+(„davon Entscheidungsteil (Opus 5.5, zwei Durchgänge)“), the expected duration
+(`estimateReportMinutes`) and the stored report the new one will be compared
+with. `analytics/create` creates the running report.
 
-- **Kundenbasis** („Stand heute; neue Anmeldungen im gewählten Zeitraum.“) —
-  Kunden gesamt, Shopify-Kunden, Mit Mo gesprochen, Mit Einwilligung (subscribed,
-  not blocked) as of the report's assembly, „Neu angemeldet“ (people with a
-  sign-up to the one consent in `consent_events` within the interval, any
-  surface, the backfill excluded) and the Lebenszyklus mix.
-- **Kampagnen** („Im Zeitraum gesendete Kampagnen-Mails und was daraus wurde.“)
-  — per campaign the real sends in the interval: Gesendet, Geklickt (any click,
-  with the rate), Chat gestartet (§5.9), Abgemeldet.
+**Generation** ([`analytics-report-generate.ts`](../src/lib/analytics-report-generate.ts)),
+stepped by `useStepLoop` over `analytics/step`, one bounded chunk per step:
 
-Reports generated before these chapters render unchanged.
+| Phase | What | Model ([`AI_MODELS.md`](./AI_MODELS.md)) |
+| --- | --- | --- |
+| `analyze` | per-conversation analysis, 12 per step | bulk |
+| `insights` | insights rollup (also fills the Gespräche cache) | analyst |
+| `personas` | top questions per persona, 2 per step | writer |
+| `customer_synthesis` | aggregate, pseudonymous customer knowledge | analyst |
+| `customer_profiles` | optional per-customer profile, 1 per step | deep |
+| `snapshot` | the business snapshot of the period vs. the previous period ([`BUSINESS_SNAPSHOT.md`](./BUSINESS_SNAPSHOT.md)) and the comparison with the last stored completed report | — (pure DB, Shopify cross-check cached) |
+| `decisions` | strategist pass 1: headline, summary, 3–5 decisions, revenue story, bottlenecks, changes, segments, campaigns | strategist |
+| `plan` | strategist pass 2: prioritised recommendations, experiments, risks, data-quality caveats | strategist |
+| `assemble` | pure aggregations, the sections payload | — |
+
+The two strategist passes ([`strategist-call.ts`](../src/lib/strategist-call.ts),
+prompts and schemas in [`analytics-report-synthesis-core.mjs`](../src/lib/analytics-report-synthesis-core.mjs) /
+`-schemas.mjs`, tested) read the snapshot as text (`renderSnapshotForPrompt`),
+the comparison and what the previous report decided, the insights, the
+customer knowledge and the persona themes — aggregates only, free texts through
+`scrubPii`, never a per-customer profile. One pass per step: structured output,
+streamed, aborted after 240 s (`STRATEGIST_TIMEOUT_MS`, below the route's 300 s);
+a pass that times out or fails stays in its phase and is retried on the next
+step one rung lower (effort `high` → `medium` → `low`); after the third failure
+— or without an Anthropic key — the report completes without that part and says
+so („Synthese unvollständig“ / the decision status `partial` / `unavailable`).
+**Step claim** (migration 0077): every step claims the report
+(`step_claimed_at`); a concurrent step — the browser retried a dropped request
+while the function still waits for Opus — answers `busy` and the client polls
+instead of starting a second Opus call. Without the migration the claim fails
+open (the behaviour before). A stale claim expires after 6 minutes.
+
+**Progress** ([`ReportProgressDriver.tsx`](../src/app/admin/analytics/ReportProgressDriver.tsx)):
+overall bar, the phase checklist with counters and an „Opus 5.5“ tag on the two
+strategist phases, the elapsed time of the current phase, an info line while the
+strategist thinks, „wird abgewartet“ on a busy answer, Pause / Fortsetzen; a
+report left open resumes where it stopped.
+
+**The report** ([`ReportView.tsx`](../src/app/admin/analytics/ReportView.tsx)
+dispatches): a v2 payload (`sections.version` 2 with `snapshot`, `decision`,
+`comparison`) renders [`DecisionReport.tsx`](../src/app/admin/analytics/DecisionReport.tsx),
+with a chip navigation to its chapters, each explained behind its InfoTip:
+
+1. **Auf einen Blick** — headline and summary, six headline tiles (Mo-Umsatz,
+   Anteil am Shop-Umsatz, Gespräche, Neue Einwilligungen, KI-Kosten, Mo-Umsatz
+   je KI-Euro) with the change against the previous period, generation notes.
+2. **Jetzt entscheiden** — 3–5 decisions: rationale with numbers, owner
+   (Betrieb / Entwicklung / Frontend / Anwalt), impact, confidence, success
+   metric, link into the admin screen.
+3. **Umsatz über Mo** — how it came about, tier tiles, drivers, revenue by marker source.
+4. **Engpässe im Funnel** — the bottlenecks with evidence, the measured funnels
+   (chat, sign-in popup, consent, capture form, campaign) as bars with step
+   conversion and previous period.
+5. **Seit dem letzten Bericht** — link to the compared report, the model's
+   reading (incl. whether earlier recommendations show), the metric table now
+   vs. then (per day for unequal periods; a v1 predecessor compares the KPIs
+   every report has), „Damals empfohlen“.
+6. **Kunden & Segmente** — ledger, repurchase, Mo effect, consent share,
+   segment insights, the lifecycle bars.
+7. **Kampagnen** — tiles, the model's reading per campaign, the campaign table.
+8. **Maßnahmen nach Priorität** — the recommendations (impact × confidence ÷
+   effort), filterable by owner (`SegmentedControl`), each with why, first
+   steps, expected impact, success metric (snapshot key) and admin link.
+9. **Experimente** — hypothesis, design, metric, duration / sample, success criterion.
+10. **Risiken & Datenqualität** — risks with severity and mitigation, the
+    snapshot caveats and the model's data-quality notes, further notes and
+    releases, the switches (Stand heute).
+11. **Alle Kennzahlen** — every snapshot section as a disclosure: metric table
+    (period, previous, change) and its breakdowns, with the admin link.
+12. **Grundlagen der Analyse** — the analysis chapters, collapsed: distributions,
+    insights, personas, customer knowledge (+ profiles), appendix.
+
+Reports generated before 2026-10-06 (v1) keep their original view (Kennzahlen,
+Kundenbasis, Kampagnen, then the analysis chapters) with a note that they have
+no decision part; they stay comparable as the previous report. The PDF
+(`analytics/<id>/pdf`, [`analytics-report-pdf.mjs`](../src/lib/analytics-report-pdf.mjs))
+follows the same order for v2 (chapters 1–11 as text, then the analysis
+chapters) and keeps the v1 layout for older reports. Reports can be deleted (confirm).
 
 ### 3.9 Verbesserung
 
@@ -2255,7 +2320,7 @@ them. Actions that read or act on one person's data write the admin access log
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |
 | Gespräche | `POST conversations/detail / analyze / analyze-bulk / insights` | transcript, cached analysis, confirmed bulk analysis, insights rollup |
-| Analyse | `GET analytics`, `GET analytics/<id>`, `GET analytics/<id>/pdf`, `POST analytics/estimate / create / step / delete` | Komplettanalysen |
+| Analyse | `GET analytics`, `GET analytics/<id>`, `GET analytics/<id>/pdf`, `POST analytics/estimate / create / step / delete` | Komplettanalysen; `estimate` also returns `strategistEur`, `minutes { low, high }` and `previousReport`; `step` answers `busy: true` while another step holds the report's claim (0077) |
 | Verbesserung | `GET improve`, `GET improve/<id>`, `POST improve/run / step / suggestion / adopt / delete` | improvement runs |
 | | `POST directives/save / toggle`, `GET directives/versions?id=` | Mo's live directives |
 | Einstellungen | `POST email-designs/preview / assign` | design preview and per-type assignment |

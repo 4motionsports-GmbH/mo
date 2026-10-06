@@ -34,6 +34,7 @@ defaults („default off in code“), never what is currently live. Screenshots 
 | [`CATALOG_SYNC.md`](./CATALOG_SYNC.md) | Product catalog sync, Shopify app access and webhook registration. |
 | [`BUNDLES.md`](./BUNDLES.md), [`DISCOUNTS.md`](./DISCOUNTS.md) | Personalised bundle offers; discount codes and their expiry. |
 | [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md), [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md) | „Wissen“ (Q&A from conversations); „Verbesserung“ (the improvement loop). |
+| [`BUSINESS_SNAPSHOT.md`](./BUSINESS_SNAPSHOT.md) | The business snapshot: every decision figure of a period vs. the previous period (fields, caveats, reuse) — read by the Komplettanalyse; the Verbesserung's baseline. |
 | [`REPURCHASE_ANALYSIS.md`](./REPURCHASE_ANALYSIS.md) | The repurchase analysis behind the lifecycle segments. |
 | [`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) | The dossier for the lawyer (German): data flows, decisions, open questions F-xx. |
 

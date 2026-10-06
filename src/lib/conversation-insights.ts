@@ -10,8 +10,9 @@
 // their length. The rollup is cached by date range (conversation_insights) and
 // regenerated on demand.
 //
-// Model: Claude Haiku 4.5 (same cheap model as the per-conversation analysis) —
-// this is back-office synthesis, not consultation.
+// Model: the analyst tier (lib/ai-models.mjs — Sonnet 5.5): one synthesis over
+// hundreds of summaries. The Komplettanalyse runs it as its `insights` phase and
+// hands the result to its strategist passes; the decisions are made there.
 //
 // EXPLICIT BOUNDARY (out of scope, by design): this NEVER rewrites Mo's prompt or
 // behaviour. Mo gives legally + product-sensitive advice; refinement stays

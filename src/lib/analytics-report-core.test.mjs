@@ -17,6 +17,9 @@ import {
   MAX_ANALYZE_CAP,
   ANALYZE_MODEL,
   PROFILE_MODEL,
+  STRATEGIST_MODEL,
+  STRATEGIST_PHASES,
+  PHASE_LABELS,
 } from "./analytics-report-core.mjs";
 
 const PRICES = {
@@ -40,7 +43,11 @@ test("nextPhase walks the active set and ends at done", () => {
   assert.equal(nextPhase("insights", opts), "personas");
   assert.equal(nextPhase("personas", opts), "customer_synthesis");
   // customer_profiles is skipped when off.
-  assert.equal(nextPhase("customer_synthesis", opts), "assemble");
+  assert.equal(nextPhase("customer_synthesis", opts), "snapshot");
+  // The decision layer: snapshot → two strategist passes → assemble.
+  assert.equal(nextPhase("snapshot", opts), "decisions");
+  assert.equal(nextPhase("decisions", opts), "plan");
+  assert.equal(nextPhase("plan", opts), "assemble");
   assert.equal(nextPhase("assemble", opts), "done");
   assert.equal(nextPhase("done", opts), "done");
   // Unknown phase fails safe to done.
@@ -50,12 +57,13 @@ test("nextPhase walks the active set and ends at done", () => {
 test("nextPhase includes customer_profiles when on", () => {
   const opts = { includePerCustomer: true };
   assert.equal(nextPhase("customer_synthesis", opts), "customer_profiles");
-  assert.equal(nextPhase("customer_profiles", opts), "assemble");
+  assert.equal(nextPhase("customer_profiles", opts), "snapshot");
 });
 
 test("phaseIndex reflects the active set", () => {
   assert.equal(phaseIndex("analyze", { includePerCustomer: true }), 0);
-  assert.equal(phaseIndex("assemble", { includePerCustomer: false }), 4);
+  assert.equal(phaseIndex("assemble", { includePerCustomer: false }), 7);
+  assert.equal(phaseIndex("snapshot", { includePerCustomer: false }), 4);
   assert.equal(phaseIndex("customer_profiles", { includePerCustomer: false }), -1);
 });
 
@@ -140,4 +148,32 @@ test("estimateReportCostUsd scales with the known counts and respects the per-cu
     PRICES
   );
   assert.ok(more > withoutProfiles);
+});
+
+test("the decision passes run on the strategist tier and every phase has a German label", () => {
+  assert.equal(STRATEGIST_MODEL, "claude-opus-5-5");
+  assert.deepEqual([...STRATEGIST_PHASES], ["decisions", "plan"]);
+  for (const p of PHASE_ORDER) assert.ok(PHASE_LABELS[p], `label for ${p}`);
+});
+
+test("the estimate always includes the two strategist passes", () => {
+  // Nothing to analyse, no personas, no profiles: only insights, synthesis and the strategist passes remain.
+  const base = estimateReportCostUsd({ conversationsToAnalyze: 0, personaCount: 0, includePerCustomer: false }, PRICES);
+  const opusOnly =
+    (28000 * 4 + 12000 * 20) / 1e6 + // decisions
+    (31000 * 4 + 13000 * 20) / 1e6; // plan
+  assert.ok(base > opusOnly, "strategist passes are part of every run");
+  assert.ok(base < opusOnly + 0.5, "the rest stays small");
+});
+
+test("the strategist share of the estimate and the duration range", async () => {
+  const { estimateStrategistCostUsd, estimateReportMinutes } = await import("./analytics-report-core.mjs");
+  const opus = estimateStrategistCostUsd(PRICES);
+  assert.equal(Math.round(opus * 1000), Math.round(((28000 + 31000) * 4 + (12000 + 13000) * 20) / 1e3));
+  const [low, high] = estimateReportMinutes({ conversationsToAnalyze: 0, personaCount: 0 });
+  assert.ok(low >= 1 && high > low, "even an empty run takes the two strategist passes");
+  const [bigLow, bigHigh] = estimateReportMinutes({ conversationsToAnalyze: 240, personaCount: 6, customerCount: 10, includePerCustomer: true });
+  assert.ok(bigLow > low && bigHigh > high);
+  const [noProfiles] = estimateReportMinutes({ conversationsToAnalyze: 240, personaCount: 6, customerCount: 10, includePerCustomer: false });
+  assert.ok(noProfiles < bigLow, "profiles only count when requested");
 });

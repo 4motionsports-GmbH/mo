@@ -27,6 +27,7 @@ import {
   totalTokens,
   normalizeOptions,
 } from "./analytics-report-core.mjs";
+import type { BusinessSnapshot } from "./business-snapshot";
 import {
   classifyTier,
   CATEGORY_LABELS,
@@ -120,6 +121,91 @@ export interface ReportSections {
   customerBase?: ReportCustomerBase | null;
   /** Chapter „Kampagnen“: mails sent in the interval, per campaign. */
   campaigns?: ReportCampaignRow[];
+  /** Payload version: absent/1 = before the decision layer, 2 = with it (2026-10-06). */
+  version?: number;
+  /** The business snapshot of the period vs the previous period (v2). */
+  snapshot?: BusinessSnapshot | null;
+  /** The strategist's decision layer (v2): summary, decisions, plan, risks. */
+  decision?: ReportDecision | null;
+  /** The comparison with the previously stored, completed report (v2). */
+  comparison?: ReportComparison | null;
+}
+
+// ── The decision layer (sections v2) — shapes of analytics-report-synthesis-core ──
+
+export type ReportOwner = "operator" | "developer" | "frontend" | "lawyer";
+export type ReportLevel = "hoch" | "mittel" | "niedrig";
+export type ReportEffortLevel = "klein" | "mittel" | "gross";
+
+/** The strategist's result as stored (assembleDecision): both passes, normalised. */
+export interface ReportDecision {
+  /** complete = both passes; partial = one failed; unavailable = none ran. */
+  status: "complete" | "partial" | "unavailable";
+  model: string | null;
+  efforts: { decisions: string | null; plan: string | null };
+  generatedAt: string | null;
+  notes: string[];
+  // Pass 1 — decisions
+  headline: string;
+  summary: string;
+  decisions: Array<{
+    title: string;
+    rationale: string;
+    owner: ReportOwner;
+    impact: ReportLevel;
+    confidence: ReportLevel;
+    metric: string;
+    link: string;
+  }>;
+  revenue: { summary: string; drivers: Array<{ title: string; detail: string }> };
+  bottlenecks: Array<{ stage: string; finding: string; evidence: string; impact: ReportLevel; link: string }>;
+  changes: {
+    summary: string;
+    items: Array<{ title: string; detail: string; direction: "besser" | "schlechter" | "gleich" | "unklar" }>;
+  };
+  segments: Array<{ segment: string; insight: string; action: string; link: string }>;
+  campaigns: { summary: string; items: Array<{ campaign: string; insight: string; action: string }> };
+  // Pass 2 — plan
+  recommendations: Array<{
+    title: string;
+    why: string;
+    action: string;
+    expectedImpact: string;
+    impact: ReportLevel;
+    effort: ReportEffortLevel;
+    confidence: ReportLevel;
+    owner: ReportOwner;
+    successMetric: string;
+    link: string;
+  }>;
+  experiments: Array<{
+    title: string;
+    hypothesis: string;
+    design: string;
+    metric: string;
+    duration: string;
+    successCriterion: string;
+    owner: ReportOwner;
+  }>;
+  risks: Array<{ title: string; detail: string; severity: ReportLevel; mitigation: string; owner: ReportOwner }>;
+  dataQuality: Array<{ title: string; detail: string }>;
+}
+
+/** The comparison with the previously stored report (buildReportComparison). */
+export interface ReportComparison {
+  previousReportId: number;
+  title: string;
+  from: string;
+  to: string;
+  completedAt: string | null;
+  /** snapshot = both reports carry a snapshot; legacy = the KPIs every report has. */
+  basis: "snapshot" | "legacy";
+  sameLength: boolean;
+  /** Counts and amounts are per day (the periods differ in length). */
+  perDay: boolean;
+  metrics: Array<{ key: string; label: string; unit: string; now: number | null; then: number | null; good: string }>;
+  previousDecisions: Array<{ title: string; owner: string | null }>;
+  previousRecommendations: Array<{ title: string; owner: string | null; successMetric: string }>;
 }
 
 export interface ReportCustomerBase {
@@ -363,6 +449,115 @@ export async function updateAnalyticsReport(
   } catch (err) {
     reportError(err, { route: "lib/analytics-report-store", phase: "update" });
     return false;
+  }
+}
+
+// How long a step claim shields against concurrent stepping before it counts as
+// stale (a crashed function never released it). Above the step route's 300 s.
+const STEP_CLAIM_TTL_MINUTES = 6;
+
+/**
+ * Atomically claim a running report for ONE step (migration 0077):
+ *  - 'claimed' — do the work, then releaseReportStep();
+ *  - 'busy'    — another /step is live on this report (the client polls);
+ *  - 'error'   — DB failure or migration 0077 not applied: the caller proceeds
+ *                without a claim (fail-open — the behaviour before the claim).
+ */
+export async function claimReportStep(
+  id: number,
+  sql: Sql | null = getSql()
+): Promise<"claimed" | "busy" | "error"> {
+  if (!sql) return "error";
+  try {
+    const rows = (await sql`
+      UPDATE analytics_reports
+         SET step_claimed_at = now()
+       WHERE id = ${id}
+         AND status = 'running'
+         AND (step_claimed_at IS NULL
+              OR step_claimed_at < now() - make_interval(mins => ${STEP_CLAIM_TTL_MINUTES}))
+      RETURNING id
+    `) as Array<{ id: number }>;
+    return rows.length > 0 ? "claimed" : "busy";
+  } catch (err) {
+    // 42703 = undefined column: migration 0077 not applied yet — fail open quietly.
+    if ((err as { code?: string })?.code !== "42703") {
+      reportError(err, { route: "lib/analytics-report-store", phase: "claim" });
+    }
+    return "error";
+  }
+}
+
+/** Release a step claim (best effort; a stale claim expires on its own). */
+export async function releaseReportStep(id: number, sql: Sql | null = getSql()): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`UPDATE analytics_reports SET step_claimed_at = NULL WHERE id = ${id}`;
+  } catch (err) {
+    reportError(err, { route: "lib/analytics-report-store", phase: "release" });
+  }
+}
+
+/** The previous report to compare with: the latest COMPLETED report created before this one. */
+export interface PreviousReport {
+  id: number;
+  title: string;
+  from: string;
+  to: string;
+  completedAt: string | null;
+  sections: ReportSections;
+}
+
+export async function getPreviousCompletedReport(
+  id: number,
+  sql: Sql | null = getSql()
+): Promise<PreviousReport | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT p.id, p.title, p.date_from, p.date_to, p.completed_at, p.sections
+        FROM analytics_reports p
+       WHERE p.status = 'complete'
+         AND p.sections IS NOT NULL
+         AND p.id <> ${id}
+         AND p.created_at <= (SELECT created_at FROM analytics_reports WHERE id = ${id})
+       ORDER BY p.created_at DESC, p.id DESC
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      id: Number(r.id),
+      title: String(r.title ?? ""),
+      from: ymd(r.date_from),
+      to: ymd(r.date_to),
+      completedAt: toIsoOrNull(r.completed_at),
+      sections: r.sections as ReportSections,
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/analytics-report-store", phase: "previous" });
+    return null;
+  }
+}
+
+/** The newest completed report (id, title, period) — what a new run will compare with. */
+export async function getLatestCompletedReportMeta(
+  sql: Sql | null = getSql()
+): Promise<{ id: number; title: string; from: string; to: string } | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT id, title, date_from, date_to
+        FROM analytics_reports
+       WHERE status = 'complete' AND sections IS NOT NULL
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    const r = rows[0];
+    return r ? { id: Number(r.id), title: String(r.title ?? ""), from: ymd(r.date_from), to: ymd(r.date_to) } : null;
+  } catch (err) {
+    reportError(err, { route: "lib/analytics-report-store", phase: "latestCompleted" });
+    return null;
   }
 }
 

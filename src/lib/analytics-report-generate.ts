@@ -16,6 +16,16 @@
 // synthesis are run here directly so their token usage can be captured into the
 // report's own per-model cost (each ALSO records into ai_usage for the global
 // cost KPI, like every other backend LLM call).
+//
+// The decision layer (2026-10-06): `snapshot` collects the business snapshot
+// (lib/business-snapshot — pure DB, the KPI getters) and the comparison with
+// the previously stored report; `decisions` and `plan` are the two strategist
+// passes (Opus 5.5, effort high — lib/strategist-call), one model call per
+// step, each bounded by an abort timeout below the route's maxDuration. A pass
+// that times out stays in its phase and is retried on the next step with less
+// thinking (STRATEGIST_EFFORTS); once the ladder is exhausted the report is
+// finished without that part and says so. Every step claims the report first
+// (migration 0077) so a retried request never starts a second Opus call.
 
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
@@ -25,6 +35,9 @@ import { reportError } from "./observability";
 import {
   getAnalyticsReport,
   updateAnalyticsReport,
+  claimReportStep,
+  releaseReportStep,
+  getPreviousCompletedReport,
   getReportKpis,
   getRangePersonaInsights,
   getPersonaLabelsInRange,
@@ -39,7 +52,25 @@ import {
   type ReportSections,
   type ReportUsage,
   type ReportProfileSection,
+  type ReportComparison,
+  type ReportDecision,
 } from "./analytics-report-store";
+import { getBusinessSnapshot, type BusinessSnapshot } from "./business-snapshot";
+import { runStrategistObject } from "./strategist-call";
+import {
+  assembleDecision,
+  buildDecisionsPrompt,
+  buildPlanPrompt,
+  buildReportComparison,
+  normalizeDecisions,
+  normalizePlan,
+  strategistEffortForAttempt,
+  DECISIONS_ANSWER_TOKENS,
+  PLAN_ANSWER_TOKENS,
+  REPORT_SECTIONS_VERSION,
+  STRATEGIST_TIMEOUT_MS,
+} from "./analytics-report-synthesis-core.mjs";
+import { decisionsSchema, planSchema } from "./analytics-report-synthesis-schemas.mjs";
 import {
   getAdminConversationDetail,
   saveConversationAnalysis,
@@ -59,6 +90,7 @@ import {
   PERSONA_MODEL,
   SYNTHESIS_MODEL,
   PROFILE_MODEL,
+  STRATEGIST_MODEL,
 } from "./analytics-report-core.mjs";
 
 // Per-step work budgets — sized so a single /step stays well under maxDuration.
@@ -82,6 +114,20 @@ interface ReportScratch {
   customerKnowledgeMd?: string;
   customerQueue?: number[];
   profiles?: ReportProfileSection[];
+  snapshot?: BusinessSnapshot;
+  comparison?: ReportComparison | null;
+  decisions?: unknown;
+  plan?: unknown;
+  strategist?: StrategistScratch;
+}
+
+/** How the strategist passes went (attempts walk down the effort ladder). */
+interface StrategistScratch {
+  decisionsAttempts: number;
+  planAttempts: number;
+  decisionsEffort: string | null;
+  planEffort: string | null;
+  notes: string[];
 }
 
 export interface StepResult {
@@ -91,6 +137,8 @@ export interface StepResult {
   progress?: ReportProgress;
   costEur?: number;
   done: boolean;
+  /** Another /step is live on this report — poll, don't work. */
+  busy?: boolean;
   error?: string;
 }
 
@@ -115,6 +163,11 @@ function customerDisplayName(c: {
   );
 }
 
+/** The progress counters without the (large) scratch work area — what the client needs. */
+function leanProgress(p: ReportProgress): ReportProgress {
+  return { ...p, scratch: undefined };
+}
+
 /**
  * Advance the report by one bounded chunk. Never throws: a fatal error marks the
  * report 'failed' with a message; per-item failures inside a phase are counted
@@ -128,9 +181,26 @@ export async function stepReport(id: number): Promise<StepResult> {
       ok: true,
       status: report.status,
       phase: report.phase,
-      progress: report.progress,
+      progress: leanProgress(report.progress),
       costEur: report.costEur,
       done: true,
+    };
+  }
+
+  // Retry-safety (migration 0077): a request the browser dropped is retried
+  // while the first function may still be inside a minutes-long Opus call —
+  // the claim turns the retry into a cheap "busy" poll. 'error' (migration not
+  // applied, DB hiccup) proceeds without a claim, as before.
+  const claim = await claimReportStep(id);
+  if (claim === "busy") {
+    return {
+      ok: true,
+      status: report.status,
+      phase: report.phase,
+      progress: leanProgress(report.progress),
+      costEur: report.costEur,
+      done: false,
+      busy: true,
     };
   }
 
@@ -151,6 +221,15 @@ export async function stepReport(id: number): Promise<StepResult> {
       case "customer_profiles":
         await stepProfiles(report);
         break;
+      case "snapshot":
+        await stepSnapshot(report);
+        break;
+      case "decisions":
+        await stepStrategist(report, "decisions");
+        break;
+      case "plan":
+        await stepStrategist(report, "plan");
+        break;
       case "assemble":
         await stepAssemble(report);
         break;
@@ -163,6 +242,8 @@ export async function stepReport(id: number): Promise<StepResult> {
     const message = err instanceof Error ? err.message : String(err);
     await updateAnalyticsReport(id, { status: "failed", error: message.slice(0, 500) });
     return { ok: true, status: "failed", phase: report.phase, done: true, error: message };
+  } finally {
+    if (claim === "claimed") await releaseReportStep(id);
   }
 
   const after = await getAnalyticsReport(id);
@@ -171,7 +252,7 @@ export async function stepReport(id: number): Promise<StepResult> {
     ok: true,
     status: after.status,
     phase: after.phase,
-    progress: after.progress,
+    progress: leanProgress(after.progress),
     costEur: after.costEur,
     done: after.status !== "running",
   };
@@ -510,6 +591,154 @@ async function stepProfiles(report: AnalyticsReportDetail): Promise<void> {
   });
 }
 
+// ── Phase: the business snapshot + the previous report to compare with ───────
+
+async function stepSnapshot(report: AnalyticsReportDetail): Promise<void> {
+  const { from, to, options } = report;
+  const progress = report.progress;
+  const scratch = getScratch(progress);
+
+  const [snapshot, previous, kpis, stats, spend] = await Promise.all([
+    // The Shopify cross-check of the Mo codes goes through the KPI screen's
+    // 10-minute cache and is bounded by a timeout inside the snapshot.
+    getBusinessSnapshot({ from, to }, { includeShopify: true }),
+    getPreviousCompletedReport(report.id),
+    getReportKpis(from, to),
+    getConversationStats(from, to),
+    getRangeSpend(from, to),
+  ]);
+  const comparison = buildReportComparison(
+    { snapshot, kpis, qualities: stats.qualities, spend, from, to },
+    previous
+  ) as ReportComparison | null;
+
+  await updateAnalyticsReport(report.id, {
+    phase: nextPhase("snapshot", options),
+    progress: { ...progress, scratch: { ...scratch, snapshot, comparison } },
+  });
+}
+
+// ── Phases: the two strategist passes (decisions, plan) ───────────────────────
+
+async function strategistInput(report: AnalyticsReportDetail, scratch: ReportScratch) {
+  const personasAgg = await getRangePersonaInsights(report.from, report.to, 5);
+  const topQ = scratch.personaTopQ ?? {};
+  return {
+    snapshot: scratch.snapshot ?? null,
+    comparison: scratch.comparison ?? null,
+    insightsMd: scratch.insightsMd ?? null,
+    customerKnowledgeMd: scratch.customerKnowledgeMd ?? null,
+    personas: personasAgg.map((p) => ({ ...p, topQuestionsMd: topQ[p.personaLabel] ?? null })),
+    notes: scratch.notes ?? [],
+  };
+}
+
+const PASS_LABELS = { decisions: "Entscheidungsteil", plan: "Maßnahmenteil" } as const;
+
+/**
+ * One strategist pass per step. Success → next phase. A timeout or a failed
+ * output stays in the phase and is retried on the next step one rung lower on
+ * the effort ladder; an exhausted ladder or a missing key moves on with a note
+ * (the report still completes — the snapshot and the other chapters stand).
+ */
+async function stepStrategist(report: AnalyticsReportDetail, pass: "decisions" | "plan"): Promise<void> {
+  const { options } = report;
+  const progress = report.progress;
+  const scratch = getScratch(progress);
+  const strat: StrategistScratch = scratch.strategist ?? {
+    decisionsAttempts: 0,
+    planAttempts: 0,
+    decisionsEffort: null,
+    planEffort: null,
+    notes: [],
+  };
+  const attemptsKey = pass === "decisions" ? "decisionsAttempts" : "planAttempts";
+  const effort = strategistEffortForAttempt(strat[attemptsKey]);
+  const label = PASS_LABELS[pass];
+
+  const advance = async (patch: Partial<ReportScratch>, usage?: ReportUsage) => {
+    await updateAnalyticsReport(report.id, {
+      phase: nextPhase(pass, options),
+      progress: { ...progress, scratch: { ...scratch, ...patch, strategist: strat } },
+      ...(usage ? { usage } : {}),
+    });
+  };
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    strat.notes = pushNote(strat.notes, `Anthropic-Key fehlt — ${label} übersprungen.`);
+    await advance({});
+    return;
+  }
+  if (!scratch.snapshot) {
+    strat.notes = pushNote(strat.notes, `Keine Geschäftsdaten — ${label} übersprungen.`);
+    await advance({});
+    return;
+  }
+  if (effort === null) {
+    strat.notes = pushNote(strat.notes, `${label} nach ${strat[attemptsKey]} Versuchen nicht erstellt.`);
+    await advance({});
+    return;
+  }
+
+  const input = await strategistInput(report, scratch);
+  const res =
+    pass === "decisions"
+      ? await runStrategistObject({
+          schema: decisionsSchema,
+          ...buildDecisionsPrompt(input),
+          answerTokens: DECISIONS_ANSWER_TOKENS,
+          callSite: "analytics_report",
+          effort,
+          timeoutMs: STRATEGIST_TIMEOUT_MS,
+          label: "analytics-decisions",
+        })
+      : await runStrategistObject({
+          schema: planSchema,
+          ...buildPlanPrompt(input, scratch.decisions ?? null),
+          answerTokens: PLAN_ANSWER_TOKENS,
+          callSite: "analytics_report",
+          effort,
+          timeoutMs: STRATEGIST_TIMEOUT_MS,
+          label: "analytics-plan",
+        });
+  const usage = mergeUsage(report.usage, res.model, res.inputTokens, res.outputTokens);
+
+  if (res.ok) {
+    if (pass === "decisions") strat.decisionsEffort = effort;
+    else strat.planEffort = effort;
+    if (strat[attemptsKey] > 0) {
+      strat.notes = pushNote(
+        strat.notes,
+        `${label} im ${strat[attemptsKey] + 1}. Versuch mit Denktiefe „${effort}“ erstellt (vorher Zeitlimit oder Fehler).`
+      );
+    }
+    await advance(
+      pass === "decisions" ? { decisions: normalizeDecisions(res.object) } : { plan: normalizePlan(res.object) },
+      usage
+    );
+    return;
+  }
+  if (res.reason === "unconfigured") {
+    strat.notes = pushNote(strat.notes, `Anthropic-Key fehlt — ${label} übersprungen.`);
+    await advance({}, usage);
+    return;
+  }
+
+  // Timeout, truncated or failed output: stay in the phase; the next step
+  // retries with less thinking until the ladder is exhausted.
+  strat[attemptsKey] += 1;
+  if (strategistEffortForAttempt(strat[attemptsKey]) === null) {
+    strat.notes = pushNote(strat.notes, `${label} nicht erstellt (${res.message}).`);
+    await advance({}, usage);
+    return;
+  }
+  await updateAnalyticsReport(report.id, {
+    phase: pass,
+    progress: { ...progress, scratch: { ...scratch, strategist: strat } },
+    usage,
+  });
+}
+
 // ── Phase: pure aggregations + finalise the sections payload ──────────────────
 
 async function stepAssemble(report: AnalyticsReportDetail): Promise<void> {
@@ -536,6 +765,28 @@ async function stepAssemble(report: AnalyticsReportDetail): Promise<void> {
     notes = pushNote(notes, `Anhang auf ${appendixCap} Gespräche begrenzt.`);
   }
 
+  // The decision layer exists for reports that went through the snapshot
+  // phase; a report started before it (and resumed now) stays a v1 payload.
+  const decisionLayer: Partial<ReportSections> = scratch.snapshot
+    ? {
+        version: REPORT_SECTIONS_VERSION,
+        snapshot: scratch.snapshot,
+        comparison: scratch.comparison ?? null,
+        // The normalisers guarantee the ReportDecision shape.
+        decision: assembleDecision({
+          decisions: scratch.decisions ?? null,
+          plan: scratch.plan ?? null,
+          model: STRATEGIST_MODEL,
+          efforts: {
+            decisions: scratch.strategist?.decisionsEffort ?? null,
+            plan: scratch.strategist?.planEffort ?? null,
+          },
+          notes: scratch.strategist?.notes ?? [],
+          generatedAt: new Date().toISOString(),
+        }) as ReportDecision,
+      }
+    : {};
+
   const sections: ReportSections = {
     kpis,
     spend,
@@ -549,6 +800,7 @@ async function stepAssemble(report: AnalyticsReportDetail): Promise<void> {
     notes,
     customerBase,
     campaigns,
+    ...decisionLayer,
   };
 
   await updateAnalyticsReport(report.id, {
