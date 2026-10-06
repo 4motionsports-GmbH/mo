@@ -54,7 +54,7 @@ const idParam = (v: string | string[] | undefined): number | null => {
 };
 
 /**
- * Navigation counts (queue sizes) shown next to the screen names. Three cheap
+ * Navigation counts (queue sizes) shown next to the screen names. Four cheap
  * COUNT queries, all fail-soft — a missing count never breaks the page.
  */
 async function loadBadges(dbReady: boolean): Promise<AdminBadges> {

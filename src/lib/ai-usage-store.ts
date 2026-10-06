@@ -32,7 +32,8 @@ export type AiCallSite =
   | "summary_download"
   | "marketing_draft"
   // AI hero images for the image-first email designs (docs/EMAIL_DESIGNS.md):
-  // the prompt-suggestion pass (Anthropic) and the image render (gpt-image-1).
+  // the prompt-suggestion pass (Anthropic) and the image render (gpt-image-2,
+  // fallback gpt-image-1.5).
   // Dashboard/admin-side spend (no conversation FK).
   | "hero_image"
   // Campaign module (docs/CAMPAIGNS.md): the per-contact AI draft for the

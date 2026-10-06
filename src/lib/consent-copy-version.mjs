@@ -9,9 +9,9 @@
 // CONSENT_COPY_VERSION whenever the served consent copy (any surface) changes.
 //
 // One linear version spans EVERY consent surface the backend serves (the
-// in-chat capture form AND the at-sign-in marketing opt-in). The verbatim
-// `consent_text_shown` disambiguates which surface a record came from; the
-// version is the coarse copy-era stamp shared by both.
+// in-chat capture form, the at-sign-in marketing opt-in and the chat consent
+// gate). The verbatim `consent_text_shown` disambiguates which surface a record
+// came from; the version is the coarse copy-era stamp shared by all of them.
 
 /**
  * Identifier of the consent copy currently served by the backend. History:

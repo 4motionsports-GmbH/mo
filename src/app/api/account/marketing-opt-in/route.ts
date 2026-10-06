@@ -5,18 +5,21 @@
 // Shopify address, so the account removes ONLY the "type your email" step. The
 // consent itself is unchanged from the in-chat capture flow:
 //
-//   * NO auto-enrol / NO pre-tick — the widget renders an UNCHECKED box and the
-//     customer must actively tick it. We still require `marketingConsent: true`
-//     in the body; without it we refuse (a Shopify account NEVER implies
-//     consent).
+//   * NO auto-enrol / NOTHING pre-selected — BUTTON-CONSENT since v4: the
+//     widget shows the served label + footer in full and the customer must
+//     actively tap the accept button (decline equally reachable). We still
+//     require `marketingConsent: true` in the body; without it we refuse (a
+//     Shopify account NEVER implies consent).
 //   * runs the EXISTING double-opt-in: this only sets DOI 'pending' and sends
 //     the confirmation email. NO marketing is permitted until the customer
 //     clicks that link (GET /api/confirm-marketing).
 //   * stores the exact label + footer shown verbatim as `consent_text_shown`
-//     with the same `consent_copy_version` stamp (v3), so the Art. 7 audit is
-//     identical to the typed-email path. Withdrawable via the same unsubscribe.
+//     with the same `consent_copy_version` stamp (CONSENT_COPY_VERSION,
+//     currently v5), so the Art. 7 audit is identical to the typed-email path.
+//     Withdrawable via the same unsubscribe.
 //
-// Gated by the standard signed-in guard (origin + secret + live access token).
+// Gated by the standard signed-in guard (origin + secret + a live sign-in: a
+// live access token or a fresh App Proxy shop proof — lib/account-guard.ts).
 
 import { requireSignedInCustomer, readSession } from "@/lib/account-guard";
 import { preflightResponse } from "@/lib/security";
@@ -121,8 +124,9 @@ export async function POST(req: Request) {
     const consentTextShown =
       typeof payload.consentTextShown === "string" ? payload.consentTextShown : null;
 
-    // Attest the v3 sign-in copy only when the echoed text is byte-identical to
-    // the canonical SIGN-IN string (label + footer); anything else → NULL
+    // Attest the current sign-in copy (CONSENT_COPY_VERSION) only when the echoed
+    // text is byte-identical to the canonical SIGN-IN string (label + footer) of
+    // the served locale; anything else → NULL
     // (honest "unattested"; the verbatim text stays authoritative).
     const consentCopyVersion = resolveConsentCopyVersion(
       consentTextShown,

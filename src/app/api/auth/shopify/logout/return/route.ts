@@ -4,8 +4,9 @@
 //
 // We drop the server-side tokens and the signed-in session links (so the next
 // /api/auth/me reports signed-out), then bounce the browser back to the
-// storefront. The tokens are per customer, so EVERY Customer Account link of
-// that customer ends with them — otherwise a later sign-in on another device
+// storefront. The tokens are per customer, so EVERY signed-in link of that
+// customer ends with them — Customer Account and App Proxy alike
+// (unlinkSignedInSessions) — otherwise a later sign-in on another device
 // would revive a session left behind on a shared computer (0073). The
 // customer row and its history stay — logging out ends the session, not the
 // account.

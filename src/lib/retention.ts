@@ -4,20 +4,35 @@
 // /api/cron/retention endpoint (or manually). All windows are configurable via
 // env so the policy can be tuned without a code change once Legal signs off.
 //
-// What it does, per run:
-//   1. Flip stale 'active' conversations to 'abandoned' (a lazy, cron-driven
-//      version of the abandonment check).
-//   2. Delete conversations (messages cascade) past the retention window.
-//   3. Delete kpi_events past the telemetry retention window, and the
-//      dashboard/admin AI-usage rows (the ones with no conversation) on the same
-//      analytics window. Chat AI-usage rows carry a conversation FK and cascade
-//      with step 2 instead.
-//   4. Purge PII for suppressed/unsubscribed email_captures after a grace
-//      period — the suppression_list record itself is kept so we keep honouring
-//      the opt-out. The matching `customers` row (email + cached profile /
-//      purchase summaries — all PII) is purged with the same criteria; its
-//      ON DELETE SET NULL FKs return the linked conversations to plain
-//      pseudonymous rows.
+// What it does, per run (the numbers match the step comments in runRetention):
+//   1.  Flip stale 'active' conversations to 'abandoned' (a lazy, cron-driven
+//       version of the abandonment check).
+//   2.  Delete conversations (messages cascade) past the retention window.
+//   3.  Delete kpi_events past the telemetry (analytics) window; 3b the
+//       dashboard/admin AI-usage rows (the ones with no conversation) on the
+//       same window. Chat AI-usage rows carry a conversation FK and cascade
+//       with step 2 instead.
+//   4.  Purge PII for suppressed/unsubscribed email_captures after a grace
+//       period — the suppression_list record itself is kept so we keep
+//       honouring the opt-out.
+//   5.  Purge the matching non-Shopify `customers` row (email + cached profile
+//       / purchase summaries — all PII) after the same grace; its ON DELETE SET
+//       NULL FKs return the linked conversations to plain pseudonymous rows.
+//   5b–5g. Data with its OWN window: correspondence (email_messages),
+//       physical_letters, feedback, dormant non-Shopify customers without an
+//       active consent, the admin access log, campaign contacts / sends /
+//       letter recipients.
+//   5h. Derived analytics: analytics_reports (+ finished, decided Verbesserung
+//       runs) on the report window; conversation_insights and persona
+//       summaries on the analytics window.
+//   5i. Order attribution: mo_orders on the analytics window; attribution
+//       tokens once inert (attribution window + 7 days; session-anchored with
+//       MO_ATTRIBUTION_SESSION_ANCHOR).
+//   6.  Expired pending sign-ins (PKCE state) and one-time link codes.
+//   7.  Shopify sync bookkeeping (webhook dedupe rows, finished sync runs and
+//       outbox rows); 7b reviewed sign-in merge conflicts on the same window.
+//   8.  Decided Eingang items: slimmed to a marker, the marker deleted later.
+//   9.  Erasure tombstones once Shopify confirmed the redaction.
 
 import { getSql } from "./db";
 import { purgeExpiredPendingAuth } from "./customer-oauth-store";
@@ -51,7 +66,8 @@ export interface RetentionOptions {
   /**
    * Storage limitation (Art. 5(1)(e)): purge IDENTIFIED but dormant customers —
    * last_seen_at older than this AND not holding an active marketing consent
-   * ('confirmed'/'pending', which is its own basis to retain). 0 disables.
+   * (email_consent_state 'subscribed'/'pending', which is its own basis to
+   * retain) AND not a Shopify customer. 0 disables.
    */
   customerInactivityRetentionDays: number;
   /** admin_access_log rows older than this (by occurred_at) are deleted. 0 disables. */
@@ -337,7 +353,7 @@ export async function runRetention(
 
   // 5e. Storage limitation (Art. 5(1)(e)): purge IDENTIFIED but DORMANT customers
   //     — no activity since the inactivity window — UNLESS they hold an active
-  //     marketing consent ('confirmed' = live consent, 'pending' = mid-DOI), which
+  //     marketing consent ('subscribed' = live consent, 'pending' = mid-DOI), which
   //     is its own lawful basis to retain. Like step 5, the ON DELETE SET NULL FKs
   //     return their conversations/correspondence to pseudonymous rows and the
   //     ON DELETE CASCADE drops their OAuth tokens; the suppression_list (keyed by

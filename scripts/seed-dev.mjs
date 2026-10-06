@@ -20,8 +20,11 @@
 //   improvement_suggestions, mo_directives, mo_directive_versions,
 //   email_design_selections, mo_attribution_tokens, mo_orders, admin_access_log.
 //
-// NOT touched: _migrations (schema tracker), customer_oauth_tokens,
-// customer_auth_pending, customer_merge_conflicts.
+// NOT seeded: customer_oauth_tokens, customer_auth_pending,
+// customer_merge_conflicts, erasure_tombstones (`--reset` still truncates them
+// with the seeded tables, see SEEDED_TABLES), and campaign_letters +
+// customer_link_grants (emptied by the TRUNCATE … CASCADE, since they reference
+// campaigns / customers). Never touched: _migrations (schema tracker).
 //
 // Deterministic: a seeded PRNG + a fixed date anchor (2026-09-08) mean a re-run
 // produces the same rows. Dates spread over the ~120 days before the anchor,

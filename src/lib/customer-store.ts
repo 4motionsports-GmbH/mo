@@ -594,9 +594,11 @@ export async function resolveSignedInCustomer(
   const sid = sessionId?.trim();
   if (!sid) return null;
   try {
-    // Resolve through the DIRECT session → customer link (migration 0019), with a
-    // fallback to the legacy conversation stamp. Reads shopify_customer_id IS NOT
-    // NULL only — anonymous/email-only sessions resolve to null (fail closed).
+    // Resolve through the DIRECT session → customer link (migration 0019) only —
+    // and only a link proven by a sign-in (link_kind customer_account /
+    // app_proxy, customer-session-link.mjs); the old fallback to the
+    // conversation stamp is gone. Reads shopify_customer_id IS NOT NULL only —
+    // anonymous/email-only sessions resolve to null (fail closed).
     const resolved = await resolveSignedInCustomerRow(sql, sid);
     if (!resolved) return null;
     // The name comes from Shopify (authoritative) at sign-in; we don't cache PII
