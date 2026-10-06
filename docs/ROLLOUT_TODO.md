@@ -588,8 +588,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       of UTC — done 05.10. (every range query of the report runs midnight to midnight Berlin time).
 - [x] **C.15** Next items planned (item 8 of the 04.10. request) — done 04.10.: five ranked,
       verified plans, all built 05.10. (C.16–C.21) and archived in `docs/archive/plans-2026-10-04/`
-      (README = ranking, findings, decisions, order; open follow-ups → C.26); widget tasks in
-      `docs/frontend/tasks/` → open list item 2.
+      (README = ranking, findings, decisions, order; open follow-ups → C.26); the widget tasks went
+      live on 06.10. (`docs/archive/frontend-tasks-2026-10-05/`, C.22).
 - [x] **C.16** OI1 F1 (opt-in loss) fixed 05.10.: a submit without the marketing tick keeps a
       `pending` DOI (status, token, `doi_sent_at`, marketing flag) unless the address is
       suppressed, so the link in the inbox keeps working; rules in the tested

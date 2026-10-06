@@ -93,9 +93,11 @@ The switch moves the token cliff, it does not remove it: with it on, a
 `widget` token is still purged window + 7 days (37 by default) after the device's
 last product consultation, capped after minting; with it off, window + 7 days after
 minting (exact rule and cap: `DATA_RETENTION.md` step 5i). A device that keeps its
-session id stamps the purged token until the widget renews it (API_CONTRACT §10
-„Lifetime and renewal“; frontend task `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 3);
-tokens purged before 2026-10-05 are not recoverable by the backend.
+session id stamps the purged token until the widget renews it — from the widget
+build `bc7fb5d` (2026-10-06) once per page view after a finished live product
+consultation, with a cached token and analytics consent (API_CONTRACT §10
+„Lifetime and renewal“; as built: `docs/frontend/06-commerce-and-storefront-integration.md`
+§8); tokens purged before 2026-10-05 are not recoverable by the backend.
 
 **Unattributed marked orders.** A marked order whose token is unknown
 (purged, erased, forged) or outside the window — and that carries no Mo
@@ -168,16 +170,18 @@ simply can't contribute to the overlap check.
   analytics consent at chat time: a product chat on the same device after
   analytics consent was withdrawn still extends the window of the token minted
   under consent.
-* **Cart attribute left on a shared browser.** The `_mo` already on the
-  Shopify cart is not removed on sign-out, session rotation or consent
-  withdrawal (`docs/frontend/06-commerce-and-storefront-integration.md` §8.5).
-  On a shared browser a later order can therefore be tied to that session —
-  and through its conversations to a signed-in customer — with the switch on
-  for longer than the 30 days from minting. Mitigations: the switch is off by
-  default in code; the widget contract asks the widget to blank the marker on
-  sign-out, erase, a server-ended sign-in and consent withdrawal (API_CONTRACT §10
-  „Ending the marker“; task 2 of the frontend renewal task); open question F-37 (b)
-  in the dossier.
+* **Cart attribute left on a shared browser.** From the widget build `bc7fb5d`
+  (2026-10-06) the widget blanks the `_mo` on the Shopify cart (every key of the
+  cached `cartAttributes` set to `""`, fire-and-forget) on sign-out, erase, a
+  server-ended sign-in and analytics-consent withdrawal (API_CONTRACT §10 „Ending
+  the marker“; as built: `docs/frontend/06-commerce-and-storefront-integration.md`
+  §8). A plain session rotation („Neuen Chat starten“, `mo_new=1`) does not blank
+  it, and without a cached token entry there is nothing to blank: the cart keeps
+  the old token until a new stamp overwrites it. In those cases a later order on a
+  shared browser can still be tied to that session — and through its
+  conversations to a signed-in customer — with the switch on for longer than the
+  30 days from minting. Mitigations: the switch is off by default in code; open
+  question F-37 (b) in the dossier (the widget change is reported there in §21.3).
 * **Open lawyer check — F-37 (d)** (ANWALTSDOSSIER §20.3): the privacy policy should
   mention the purchase-attribution purpose, and the webhook's order topics may need
   Protected Customer Data approval in the Shopify Partner Dashboard (we discard the
@@ -212,8 +216,9 @@ Which of these steps are done in production: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.
 The widget fetches the session's token at `POST /api/attribution/token` (one `widget`
 token per session while it exists — `mintAttributionToken` returns the existing one)
 only while analytics consent allows it, and stamps the live cart same-origin and
-fail-silent; the contract also asks it to blank the marker when the session ends.
-Contract (request, response, re-stamp, renewal, blanking, errors):
+fail-silent. From the build `bc7fb5d` (2026-10-06) it also renews the token after a
+live product consultation and blanks the marker when the session ends or analytics
+consent is withdrawn. Contract (request, response, re-stamp, renewal, blanking, errors):
 [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §10; as built in the theme:
 [`frontend/06-commerce-and-storefront-integration.md`](./frontend/06-commerce-and-storefront-integration.md)
 §8.
@@ -236,6 +241,6 @@ Contract (request, response, re-stamp, renewal, blanking, errors):
 | `src/lib/summary-email.ts`, `src/lib/marketing-email.ts`, `src/lib/bundle-offers.ts` | Stamp their cart links at build/send time. |
 | `src/lib/conversion-sweep.ts` | Uses ingested orders as a Shopify-free short-circuit. |
 | `src/app/admin/KpiTab.tsx`, `src/app/admin/kpi/sections/AttributionSection.tsx` | The tiered KPI section, the „ohne Zuordnung“ note and the release notes. |
-| `src/lib/kpi-releases.mjs` | Release entries `attribution-unresolved` + `attribution-window` (2026-10-05) and `MEANINGFUL_FROM.attribution`. |
+| `src/lib/kpi-releases.mjs` | Release entries `attribution-unresolved` + `attribution-window` (2026-10-05), `attribution-token-renewal` (2026-10-06, the widget's renewal and blanking) and `MEANINGFUL_FROM.attribution`. |
 | `scripts/verify-live-kpis.mjs` | Section 7 (pre-checks P1–P6) and 7b (live checks V0, V3, V4, tokens older than 37 days). |
 | `scripts/register-shopify-webhooks.mjs` | `npm run shopify:webhooks`: registers the `orders/create` + `orders/paid` subscriptions (with the app's other topics), `--dedupe` for duplicates. |
