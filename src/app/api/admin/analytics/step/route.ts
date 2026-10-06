@@ -13,9 +13,13 @@ import { isDbConfigured } from "@/lib/db";
 import { stepReport } from "@/lib/analytics-report-generate";
 import { reportError } from "@/lib/observability";
 
-// One step may run a handful of model calls (e.g. a batch of Haiku analyses, or a
-// single Opus customer profile, which thinks before it writes) — give it the
-// headroom the profile route has.
+// One step may run a handful of model calls (a batch of Haiku analyses), a
+// single Opus customer profile, or ONE strategist pass (Opus 5.5 at effort
+// high, several minutes). The strategist call aborts itself after
+// STRATEGIST_TIMEOUT_MS (240 s, analytics-report-synthesis-core — keep
+// STEP_MAX_DURATION_S there in sync with this value) and is retried on the next
+// step with less thinking, so the platform never kills the function mid-call.
+// A concurrent retry of the same report answers `busy` (migration 0077).
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
@@ -48,6 +52,7 @@ export async function POST(req: Request) {
       progress: result.progress,
       costEur: result.costEur,
       done: result.done,
+      busy: result.busy,
       error: result.error,
     });
   } catch (err) {

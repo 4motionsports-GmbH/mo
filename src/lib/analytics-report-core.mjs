@@ -7,7 +7,8 @@
 // It owns: the generation phase state-machine, the option normaliser, the
 // default-title builder, the per-model usage accumulator + EUR pricing, and the
 // up-front cost estimate shown before the operator confirms a (deliberately
-// expensive) full run.
+// expensive) full run. The decision layer (schemas, prompts, comparison with
+// the previous report) lives in analytics-report-synthesis-core.mjs.
 
 import { usdCostForUsage, usdToEur } from "./ai-pricing.mjs";
 import { germanDate } from "./kpi-range.mjs";
@@ -16,15 +17,18 @@ import { modelFor } from "./ai-models.mjs";
 // ── Models ────────────────────────────────────────────────────────────────────
 // The models each generation phase calls, by tier (lib/ai-models.mjs). These
 // MUST match the tiers the underlying libs use (conversation-analysis = bulk;
-// conversation-insights = analyst; customer-profile = deep) so the up-front
-// estimate and the recorded spend price against the same table
-// (lib/ai-pricing.mjs).
+// conversation-insights = analyst; customer-profile = deep; strategist-call =
+// strategist) so the up-front estimate and the recorded spend price against
+// the same table (lib/ai-pricing.mjs). The high-volume per-conversation and
+// per-persona passes stay on the cheap tiers; only the two decision passes
+// run on the strategist (Opus 5.5, effort high).
 
 export const ANALYZE_MODEL = modelFor("bulk");
 export const INSIGHTS_MODEL = modelFor("analyst");
 export const PERSONA_MODEL = modelFor("writer");
 export const SYNTHESIS_MODEL = modelFor("analyst");
 export const PROFILE_MODEL = modelFor("deep");
+export const STRATEGIST_MODEL = modelFor("strategist");
 
 // ── Phase state-machine ───────────────────────────────────────────────────────
 // The generation runs as an ordered set of phases, advanced one bounded chunk per
@@ -37,9 +41,15 @@ export const PHASE_ORDER = [
   "personas", // per-persona top-questions (range-scoped)
   "customer_synthesis", // aggregate, pseudonymous customer-knowledge synthesis
   "customer_profiles", // OPTIONAL per-customer "current understanding" (identity)
+  "snapshot", // the business snapshot (pure DB) + the previous report to compare with
+  "decisions", // strategist pass 1: summary, decisions, revenue, bottlenecks, changes, segments, campaigns
+  "plan", // strategist pass 2: recommendations, experiments, risks, data quality
   "assemble", // pure aggregations + finalise the sections payload
   "done",
 ];
+
+/** The phases that call the strategist (one slow Opus call per step). */
+export const STRATEGIST_PHASES = Object.freeze(["decisions", "plan"]);
 
 /** German labels for the progress UI. */
 export const PHASE_LABELS = {
@@ -48,6 +58,9 @@ export const PHASE_LABELS = {
   personas: "Personas & Top-Fragen",
   customer_synthesis: "Kundenwissen (aggregiert)",
   customer_profiles: "Kundenprofile (pro Kunde)",
+  snapshot: "Geschäftsdaten sammeln",
+  decisions: "Entscheidungen ableiten",
+  plan: "Maßnahmen & Experimente",
   assemble: "Bericht zusammenstellen",
   done: "Fertig",
 };
@@ -176,6 +189,10 @@ const EST = {
   persona: { in: 5000, out: 450, model: PERSONA_MODEL },
   synthesis: { in: 6000, out: 2500, model: SYNTHESIS_MODEL },
   profile: { in: 9000, out: 3300, model: PROFILE_MODEL },
+  // The two strategist passes read the snapshot + insights (~25–30k tokens)
+  // and think at effort high before writing ~4–6k tokens of structured output.
+  decisions: { in: 28000, out: 12000, model: STRATEGIST_MODEL },
+  plan: { in: 31000, out: 13000, model: STRATEGIST_MODEL },
 };
 
 function n(v) {
@@ -186,7 +203,8 @@ function n(v) {
 /**
  * Estimated USD cost of a full run. Inputs are the counts known up front:
  * conversations still to analyse, distinct personas, and (when per-customer is
- * on) the number of active customers to profile.
+ * on) the number of active customers to profile. The two strategist passes are
+ * always part of a run.
  */
 export function estimateReportCostUsd(input, prices) {
   const conversations = n(input?.conversationsToAnalyze);
@@ -204,6 +222,8 @@ export function estimateReportCostUsd(input, prices) {
     unit("insights", 1) +
     unit("persona", personas) +
     unit("synthesis", 1) +
-    unit("profile", customers)
+    unit("profile", customers) +
+    unit("decisions", 1) +
+    unit("plan", 1)
   );
 }
