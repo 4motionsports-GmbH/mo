@@ -47,7 +47,7 @@ the pooled one. To add a migration, drop a new file with the next number
 DDL (`--` comments and `;` statement separators; no dollar-quoted function
 bodies, which the lightweight splitter doesn't parse). Production migrations are
 run manually by the maintainer. The latest migration is
-`0076_message_session_id.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
+`0077_analytics_report_step_claim.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
 below names the migration that created each table.
 
 ## Schema overview
@@ -211,7 +211,7 @@ The schema follows the two-cluster split whose lawful bases and windows
 
 ## Table index — every table and where it is documented
 
-Every base table in the schema (migrations `0001`–`0076`; dropped tables
+Every base table in the schema (migrations `0001`–`0077`; dropped tables
 `bestandskunden_suppression_list`, `email_templates`, `email_template_assignments`
 are gone since `0029` / `0049`). Columns of the tables marked *here* are in the
 sections above; the others are owned by the linked doc. Retention and erasure of
@@ -232,7 +232,7 @@ every table: [`DATA_RETENTION.md`](./DATA_RETENTION.md).
 | `physical_letters` | 0022 | here (Cluster B) |
 | `admin_access_log` | 0028 | `action`, `target_customer_id` (no FK — survives the erasure), `detail` (ids and counts only), `ip`, `session_fp` (SHA-256 of the admin cookie, truncated), `occurred_at` — every admin access to customer data (`recordAdminAccess`) |
 | `conversation_insights` | 0031 (`references_json` 0033) | `date_from`/`date_to`, `summary_md`, `analyzed_count`, `model`, token counts, `references_json`, `generated_at` — the Gespräche insights rollup ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md)) |
-| `analytics_reports` | 0032 | `title`, `date_from`/`date_to`, `preset`, `status` (running/complete/failed), `phase`, `progress`, `options`, `sections` (jsonb), `usage`, `error`, timestamps — the stored Komplettanalyse ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md)) |
+| `analytics_reports` | 0032 | `title`, `date_from`/`date_to`, `preset`, `status` (running/complete/failed), `phase`, `progress`, `options`, `sections` (jsonb; v2 since 2026-10-06 adds `version`, `snapshot`, `decision`, `comparison`), `usage`, `error`, timestamps, `step_claimed_at` (0077 — the step claim) — the stored Komplettanalyse ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.8) |
 | `campaign_contacts`, `campaign_drafts`, `campaign_sends` | 0034 | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.5 (owner) |
 | `qa_entries` | 0036 (`question_en`/`answer_en` 0037) | [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md) |
 | `mo_attribution_tokens`, `mo_orders` | 0042 | [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md) |

@@ -12,9 +12,9 @@ docs name the tier and link here instead of repeating model ids.
 |---|---|---|---|
 | `chat` | `claude-sonnet-5-5` | `between_tools` (no up-front thinking), effort `high` | `/api/chat` |
 | `writer` | `claude-sonnet-5-5` | adaptive, effort `low` | operator-reviewed and short generation: campaign drafts (`campaign-draft.ts`), campaign letter drafts (`campaign-letter-draft.ts`), campaign assist — audience and brief (`campaign-assist.ts`), marketing drafts and the Kunden → Brief letter draft of the 1:1 path (`marketing-draft.ts`), bundle suggestion, hero prompt (`email-hero.ts`), summary e-mail and summary download (`summary-email.ts`), persona top-questions (KPI + report), Q&A answer drafts (`qa-draft.ts`), „Frag Mo“ (`customer-ask.ts`), Eingang suggestions (`inbox-suggest.ts`), e-mail reply drafts in the Eingang (`inbox-mail.ts`), the **Kaufprofil** (`customer-profile.ts`) |
-| `analyst` | `claude-sonnet-5-5` | adaptive, effort `medium` | Verbesserung (Wirkungs-Check + Vorschläge), insights rollup, report customer synthesis, hero image check (vision) |
+| `analyst` | `claude-sonnet-5-5` | adaptive, effort `medium` | Verbesserung (Wirkungs-Check + Vorschläge — moves to `strategist` with its rework), insights rollup (also the Komplettanalyse's), the Komplettanalyse's aggregate customer knowledge (an input digest for the strategist), hero image check (vision) |
 | `deep` | `claude-opus-5-5` | adaptive (always on), effort `medium` | the **Vollprofil** of the central customer profile — nightly upkeep, the Kunden button, the Analyse report (structured output: summary + persona, level, budget, goals, owned, interests, next steps) |
-| `strategist` | `claude-opus-5-5` | adaptive (always on), effort `high` | the operator's business decisions: the Komplettanalyse synthesis and the Verbesserung suggestions (owner 06.10.2026: the best suitable model for decisions) |
+| `strategist` | `claude-opus-5-5` | adaptive (always on), effort `high` (retry ladder `medium`, `low` after a timeout) | the operator's business decisions (owner 06.10.2026: the best suitable model for decisions): the Komplettanalyse's two decision passes — „Entscheidungen“ and „Maßnahmen“ ([`strategist-call.ts`](../src/lib/strategist-call.ts), structured output, call site `analytics_report`); the Verbesserung suggestions with their rework |
 | `bulk` | `claude-haiku-4-5` | none | per-conversation analysis, Q&A translation |
 
 The profile depth decides the tier: people with a Mo chat or correspondence get
@@ -93,6 +93,41 @@ at runtime, `USD_EUR_RATE` (default 0.92) converts for the dashboard's
 - **Structured output** (`generateObject`) uses native `output_config.format`,
   which needs `@ai-sdk/anthropic` ≥ 3.0.125 (older versions fell back to a forced
   `json` tool, which the 5.5 models reject).
+
+### Long strategist calls (Komplettanalyse)
+
+One strategist pass reads ~25–30k tokens (the business snapshot, the comparison
+with the previous report, insights, customer knowledge, personas) and thinks at
+effort `high` before writing ~4–6k tokens of structured output — one to several
+minutes. [`strategist-call.ts`](../src/lib/strategist-call.ts) makes that safe
+inside a 300 s serverless step:
+
+- **Structured output without forced tool choice** — `streamObject` with a zod
+  schema (no min/max keywords; the normalisers in
+  `analytics-report-synthesis-core.mjs` clamp lists and texts), sent as
+  `output_config.format`; Opus 5.5 rejects `tool_choice` `any`/`tool`.
+- **Streamed**, so the response starts at once and a long thinking phase never
+  hits a response-headers timeout.
+- **Output cap with headroom** — `maxOutputTokensFor("strategist", answer)`:
+  answer budgets 6,000 (decisions) and 7,000 (plan) plus 16,000 thinking
+  headroom; thinking counts toward `max_tokens`.
+- **Bounded** — an `AbortSignal` after 240 s (`STRATEGIST_TIMEOUT_MS`, below the
+  step route's `maxDuration` 300), one SDK retry. A pass that times out, is cut
+  off or returns no valid object stays in its phase; the next step retries it
+  one rung lower on the effort ladder (`high` → `medium` → `low`); after the
+  third failure the report completes without that part and names it.
+- **One Opus call per step, never two** — the step claim of migration 0077 turns
+  a retried request (the browser dropped the connection while the function still
+  waits) into a `busy` poll.
+- **Refusal fallback** — `fallbacks: "default"` like every 5.x tier.
+- **Usage** — recorded in `ai_usage` (call site `analytics_report`), also for an
+  output that ended without a valid object; the report's own cost counts it.
+
+The high-volume passes of the same report stay on the cheap tiers:
+per-conversation analysis `bulk`, persona top-questions `writer`, insights and
+the aggregate customer knowledge `analyst`, optional per-customer profiles
+`deep`. Estimate per run: about 0.70 € for the two strategist passes
+(`estimateStrategistCostUsd`, shown in the generator).
 
 ## OpenAI
 
