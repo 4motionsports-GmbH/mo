@@ -7,6 +7,14 @@
 // and feeds the snapshot to the strategist model; the Verbesserung reads it as
 // its baseline. Field list and rules: docs/BUSINESS_SNAPSHOT.md.
 //
+// „Umsatz durch Mo“ is folded by the KPI screen's own pure core
+// (mo-revenue.mjs: mergeCodeRedemptions → summariseRevenue, one channel per
+// order) from the same ledger + Shopify code lookup, and the chat journey by
+// kpi-journey.mjs — so tiers, channels, dedupe and the journey funnel are the
+// KPI screen's to the cent. SNAPSHOT_RAW_FIELDS lists every raw field the
+// builder reads; tsc checks it against the getter types, the tests against the
+// fixture.
+//
 // Shape (SNAPSHOT_VERSION 1):
 //   { version, generatedAt, period, previous, sections[], funnels[], caveats[],
 //     switches[], releases[] }
@@ -25,6 +33,16 @@
 import { eur, num, ratio, hours as fmtHours } from "./admin-format.mjs";
 import { daysBetween, germanDate, shiftYmd } from "./kpi-range.mjs";
 import { isRealisedFinancialStatus } from "./kpi-revenue-core.mjs";
+import {
+  classifyRevenueOrder,
+  mergeCodeRedemptions,
+  REVENUE_TIERS,
+  revenuePerAiEuro,
+  summariseRevenue,
+  TIER_LABELS,
+} from "./mo-revenue.mjs";
+import { journeyFunnel } from "./kpi-journey.mjs";
+import { AI_CALL_SITE_LABELS } from "./ai-call-sites.mjs";
 
 export const SNAPSHOT_VERSION = 1;
 
@@ -35,41 +53,6 @@ export const MIN_RATE_BASE = 30;
 export const MIN_ANALYSIS_COVERAGE = 0.5;
 
 // ── Labels ────────────────────────────────────────────────────────────────────
-
-/** German labels of the AI call sites (ai-usage-store AiCallSite). Unknown keys render raw. */
-export const AI_CALL_SITE_LABELS = Object.freeze({
-  chat: "Beratungs-Chat",
-  embeddings: "Embeddings (Produktsuche)",
-  tts: "Sprachausgabe (TTS)",
-  summary_email: "Zusammenfassungs-E-Mail",
-  summary_download: "Zusammenfassung (Download)",
-  marketing_draft: "Marketing-Entwürfe",
-  campaign_draft: "Kampagnen-Entwürfe",
-  campaign_letter: "Kampagnen-Briefe",
-  customer_profile: "Kundenprofile",
-  top_questions: "Top-Fragen (Personas)",
-  conversation_analysis: "Gesprächsanalyse",
-  conversation_insights: "Insights-Rollup",
-  analytics_report: "Komplettanalyse",
-  qa_draft: "Wissen: Entwürfe",
-  qa_translate: "Wissen: Übersetzung",
-  bundle_suggestions: "Bundle-Vorschläge",
-  hero_image: "KI-Titelbilder",
-  campaign_assist: "Kampagnen: Zielgruppe & Briefing",
-  inbox_suggestion: "Eingang: Vorschläge",
-  inbox_mail_reply: "Eingang: E-Mail beantworten",
-  customer_ask: "Kunden: Frag Mo",
-  improvement: "Verbesserung",
-});
-
-/** mo_orders.attribution_source → German. */
-export const ORDER_SOURCE_LABELS = Object.freeze({
-  widget: "Widget-Warenkorb (Beratung)",
-  summary_email: "Zusammenfassungs-Mail",
-  marketing_email: "Persönliche Marketing-Mail",
-  bundle: "Set-Angebot",
-  discount_code: "Mo-Rabattcode",
-});
 
 export const SEGMENT_LABELS = Object.freeze({
   frisch: "Frisch gekauft",
@@ -299,8 +282,11 @@ export function isSmallSample(m) {
  */
 export const ADMIN_LINKS = Object.freeze({
   kpi: { label: "KPIs", tab: "kpi", anchor: null },
-  kpi_umsatz: { label: "KPIs · Umsatz", tab: "kpi", anchor: "umsatz-webhook" },
+  kpi_umsatz: { label: "KPIs · Umsatz", tab: "kpi", anchor: "umsatz" },
+  kpi_umsatz_wege: { label: "KPIs · Umsatz nach Weg", tab: "kpi", anchor: "umsatz-wege" },
+  kpi_journey: { label: "KPIs · Vom Chat zur Bestellung", tab: "kpi", anchor: "journey" },
   kpi_beratung: { label: "KPIs · Beratung", tab: "kpi", anchor: "kern" },
+  kpi_bundles: { label: "KPIs · Bundle-Angebote", tab: "kpi", anchor: "bundles" },
   kpi_seitenkontext: { label: "KPIs · Seitenkontext", tab: "kpi", anchor: "seitenkontext" },
   kpi_anmeldung: { label: "KPIs · Anmelde-Popup", tab: "kpi", anchor: "anmelde-popup" },
   kpi_einwilligung: { label: "KPIs · Einwilligung", tab: "kpi", anchor: "consent" },
@@ -372,64 +358,202 @@ export function scrubPii(text) {
     .replace(/\b\d{6,}\b/g, "[Nr.]");
 }
 
-// ── Raw-row helpers (used by the data layer, tested here) ─────────────────────
+// ── Umsatz durch Mo (the KPI screen's fold, kpi/revenue-view) ─────────────────
+
+/** @param {unknown} v @returns {number | null} finite, non-negative amount (mo-revenue amountOf) */
+function amountOf(v) {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
 
 /**
- * Aggregate the period's mo_orders rows: realised orders and revenue by the
- * marker's source, by Mo code family (MS5- personal mail, MK- campaign) and by
- * campaign (an MK- code mapped through `codeToCampaign`, code → campaign id).
- * Unpaid rows are skipped — getMoAttributionKpis counts them separately.
+ * „Umsatz durch Mo“ for the snapshot, folded exactly like the KPI screen
+ * (kpi/revenue-view buildRevenueView): the period's ledger orders plus the
+ * coded orders the Shopify lookup found that the ledger does not hold
+ * (mergeCodeRedemptions — a code or order number already in the ledger counts
+ * once, from the ledger), summed by summariseRevenue (paid only, one channel
+ * per order). The previous period is the ledger alone, as on the KPI screen.
  *
- * @param {Array<{ attribution_source?: string | null, financial_status?: string | null, total_price?: unknown, discount_codes?: string[] | null }>} rows
- * @param {Record<string, number | string | null>} [codeToCampaign] upper-cased code → campaign id
+ * @param {any} data  getMoRevenueData(range) (mo-revenue-store) or null
+ * @param {any} [lookup]  the cached Shopify code lookup (kpi-revenue-store MoRevenue) or null
  */
-export function summarizeMoOrderRows(rows, codeToCampaign = {}) {
-  /** @type {Map<string, { orders: number, revenue: number }>} */
-  const bySource = new Map();
-  /** @type {Map<string, { orders: number, revenue: number }>} */
-  const byCampaign = new Map();
-  const ms5 = { orders: 0, revenue: 0 };
-  const mk = { orders: 0, revenue: 0 };
-  const add = (acc, amount) => {
-    acc.orders += 1;
-    acc.revenue = Math.round((acc.revenue + amount) * 100) / 100;
+export function snapshotRevenue(data, lookup = null) {
+  if (!data) return null;
+  const ledger = Array.isArray(data.orders) ? data.orders : [];
+  const { extra, alreadyCounted } = mergeCodeRedemptions({
+    ledgerCodes: data.ledgerCodes ?? [],
+    ledgerOrderNames: data.ledgerOrderNames ?? [],
+    redemptions: lookup?.redemptions ?? [],
+  });
+  const orders = [...ledger, ...extra];
+  const summary = summariseRevenue(orders);
+  const ledgerSummary = extra.length > 0 ? summariseRevenue(ledger) : summary;
+  const previousOrders = data.previous && Array.isArray(data.previousOrders) ? data.previousOrders : [];
+  const previous = data.previous ? summariseRevenue(previousOrders) : null;
+  const added = summariseRevenue(extra);
+  return {
+    orders,
+    previousOrders,
+    summary,
+    ledgerSummary,
+    previous,
+    complement: lookup
+      ? {
+          shopifyConfigured: lookup.shopifyConfigured !== false,
+          orders: added.orders,
+          revenue: added.revenue,
+          alreadyCounted,
+          unknown: finite(lookup.redemptionUnknown) ?? 0,
+          sampled: Boolean(lookup.sampled),
+        }
+      : null,
+    unresolved: data.unresolved
+      ? { unknownToken: finite(data.unresolved.unknownToken) ?? 0, outsideWindow: finite(data.unresolved.outsideWindow) ?? 0 }
+      : null,
+    ingestionSeen: Boolean(data.ingestionSeen),
   };
-  for (const r of rows ?? []) {
-    if (!isRealisedFinancialStatus(r.financial_status)) continue;
-    const amount = Math.max(0, finite(r.total_price) ?? 0);
-    const source = String(r.attribution_source ?? "unknown");
-    if (!bySource.has(source)) bySource.set(source, { orders: 0, revenue: 0 });
-    add(bySource.get(source), amount);
-    const codes = (r.discount_codes ?? []).map((c) => String(c).trim().toUpperCase());
-    if (codes.some((c) => c.startsWith("MS5-"))) add(ms5, amount);
-    const mkCodes = codes.filter((c) => c.startsWith("MK-"));
-    if (mkCodes.length) {
-      add(mk, amount);
-      const campaign = mkCodes.map((c) => codeToCampaign[c]).find((v) => v !== undefined);
-      const key = campaign == null ? "none" : String(campaign);
-      if (!byCampaign.has(key)) byCampaign.set(key, { orders: 0, revenue: 0 });
-      add(byCampaign.get(key), amount);
+}
+
+/**
+ * The MK codes (upper case) among orders and Shopify redemptions — the codes
+ * the data layer maps to their campaign.
+ * @param {...Array<{ discountCodes?: unknown, code?: unknown }> | null | undefined} lists
+ * @returns {string[]}
+ */
+export function campaignCodesIn(...lists) {
+  /** @type {Set<string>} */
+  const out = new Set();
+  for (const list of lists) {
+    for (const o of Array.isArray(list) ? list : []) {
+      const codes = Array.isArray(o?.discountCodes) ? o.discountCodes : o?.code != null ? [o.code] : [];
+      for (const c of codes) {
+        const code = String(c ?? "").trim().toUpperCase();
+        if (code.startsWith("MK-")) out.add(code);
+      }
     }
   }
+  return [...out];
+}
+
+/**
+ * Paid revenue of the channel „Kampagne (MK-Code)“ per campaign — each order's
+ * MK code mapped through `codeToCampaign` (upper-case code → campaign id;
+ * "none" when the code belongs to no known campaign). The same rules as
+ * summariseRevenue (classified, paid, in `currency`), so the campaigns add up
+ * to the channel to the cent.
+ *
+ * @param {Array<Record<string, any>>} orders
+ * @param {string} currency  summariseRevenue(orders).currency
+ * @param {Record<string, number | string | null>} [codeToCampaign]
+ * @returns {Record<string, { orders: number, revenue: number }>}
+ */
+export function campaignRevenueByCode(orders, currency, codeToCampaign = {}) {
+  /** @type {Record<string, { orders: number, revenue: number }>} */
+  const out = {};
+  for (const o of Array.isArray(orders) ? orders : []) {
+    if (!o || typeof o !== "object") continue;
+    const cls = classifyRevenueOrder(o);
+    if (!cls || cls.channel !== "kampagne") continue;
+    if (!isRealisedFinancialStatus(o.financialStatus)) continue;
+    const cur = typeof o.currency === "string" && o.currency.trim() ? o.currency.trim().toUpperCase() : currency;
+    if (cur !== currency) continue;
+    const campaign = cls.moCodes
+      .map((c) => codeToCampaign[c.toUpperCase()])
+      .find((v) => v !== undefined && v !== null);
+    const key = campaign == null ? "none" : String(campaign);
+    const acc = (out[key] ??= { orders: 0, revenue: 0 });
+    acc.orders += 1;
+    acc.revenue = Math.round((acc.revenue + (amountOf(o.total) ?? 0)) * 100) / 100;
+  }
+  return out;
+}
+
+/**
+ * The period's campaign rows (sends, clicks, letters — data layer) with the
+ * campaign revenue added, plus a row for every campaign with revenue but no
+ * send or letter in the period (a code mailed last month, redeemed now).
+ *
+ * @param {Array<Record<string, any>> | null | undefined} rows
+ * @param {Record<string, { orders: number, revenue: number }>} revenue  campaignRevenueByCode
+ * @param {Array<{ campaignId: number | null, name: string | null }>} meta  campaignCodes
+ */
+export function withCampaignRevenue(rows, revenue, meta) {
+  if (!rows) return null;
+  const keyOf = (id) => (id == null ? "none" : String(id));
+  const out = rows.map((r) => {
+    const v = revenue[keyOf(r.campaignId)];
+    return {
+      campaignId: r.campaignId ?? null,
+      name: String(r.name ?? ""),
+      sent: finite(r.sent) ?? 0,
+      tracked: finite(r.tracked) ?? 0,
+      clicked: finite(r.clicked) ?? 0,
+      chatStarted: finite(r.chatStarted) ?? 0,
+      unsubscribed: finite(r.unsubscribed) ?? 0,
+      bounced: finite(r.bounced) ?? 0,
+      complained: finite(r.complained) ?? 0,
+      letters: finite(r.letters) ?? 0,
+      moOrders: v?.orders ?? 0,
+      moRevenue: v?.revenue ?? 0,
+    };
+  });
+  const seen = new Set(out.map((r) => keyOf(r.campaignId)));
+  for (const [key, v] of Object.entries(revenue)) {
+    if (seen.has(key)) continue;
+    const m = key === "none" ? null : (meta ?? []).find((x) => keyOf(x.campaignId) === key);
+    out.push({
+      campaignId: key === "none" ? null : Number(key),
+      name: m?.name ?? (key === "none" ? "Ohne Kampagne" : `Kampagne #${key}`),
+      sent: 0,
+      tracked: 0,
+      clicked: 0,
+      chatStarted: 0,
+      unsubscribed: 0,
+      bounced: 0,
+      complained: 0,
+      letters: 0,
+      moOrders: v.orders,
+      moRevenue: v.revenue,
+    });
+  }
+  return out;
+}
+
+/**
+ * What the builder derives once from the raw parts: „Umsatz durch Mo“ (both
+ * periods), the campaign rows with their MK revenue, the journey funnels.
+ * @param {Record<string, any>} r
+ */
+function derive(r) {
+  const revenue = snapshotRevenue(r.moRevenue, r.shopify?.revenue ?? null);
+  const meta = Array.isArray(r.campaignCodes) ? r.campaignCodes : [];
+  /** @type {Record<string, number | null>} */
+  const codeToCampaign = {};
+  for (const m of meta) codeToCampaign[String(m.code).toUpperCase()] = m.campaignId;
+  const curCampaigns = withCampaignRevenue(
+    r.cur?.campaigns,
+    revenue ? campaignRevenueByCode(revenue.orders, revenue.summary.currency, codeToCampaign) : {},
+    meta
+  );
+  const prevCampaigns = withCampaignRevenue(
+    r.prev?.campaigns,
+    revenue?.previous ? campaignRevenueByCode(revenue.previousOrders, revenue.previous.currency, codeToCampaign) : {},
+    meta
+  );
   return {
-    bySource: [...bySource.entries()].map(([source, v]) => ({ source, ...v })),
-    codeOrders: { ms5, mk },
-    byCampaign: Object.fromEntries(byCampaign),
+    revenue,
+    campaigns: { cur: curCampaigns, prev: prevCampaigns },
+    journey: {
+      cur: r.cur?.journey ? journeyFunnel(r.cur.journey) : null,
+      prev: r.prev?.journey ? journeyFunnel(r.prev.journey) : null,
+    },
   };
 }
 
 // ── The builder ───────────────────────────────────────────────────────────────
 
 const EMPTY = Object.freeze({});
-
-function tierTotals(attr) {
-  if (!attr) return { orders: null, revenue: null };
-  const tiers = [attr.direct, attr.assisted, attr.influenced];
-  return {
-    orders: sum(tiers.map((t) => t?.orderCount)),
-    revenue: sum(tiers.map((t) => t?.revenueAmount)),
-  };
-}
 
 /** Rows of a [{ key, …cols }] list matched by key between two periods. */
 function pairRows(cur, prev, keyOf) {
@@ -444,67 +568,97 @@ function table(key, title, columns, rows, note) {
   return t;
 }
 
-function revenueSection(raw) {
-  const c = raw.cur ?? EMPTY;
-  const p = raw.prev ?? EMPTY;
-  const ct = tierTotals(c.attribution);
-  const pt = tierTotals(p.attribution);
-  const unresolved = (a) => (a ? sum([a.unresolvedOrders?.unknownToken, a.unresolvedOrders?.outsideWindow]) : null);
+/** Total AI spend of a period as the KPI screen counts it (null before capture started). */
+function aiSpend(cost) {
+  return cost && cost.capturedSince != null ? finite(cost.totalSpendEur) : null;
+}
+
+function revenueSection(raw, d) {
+  const rev = d.revenue;
+  const s = rev?.summary ?? null;
+  const ps = rev?.previous ?? null;
+  const cc = rev?.complement ?? null;
+  const tier = (x, t) => x?.byTier?.[t] ?? null;
+  const totalHint =
+    cc && cc.orders > 0
+      ? `inkl. ${num(cc.orders)} Bestellung(en) mit Mo-Code (${eur(cc.revenue)}) aus dem Shopify-Code-Abgleich — die Vorperiode ohne Abgleich; per Webhook erfasst: ${eur(rev.ledgerSummary.revenue)}`
+      : undefined;
+  const unresolved = rev?.unresolved ? rev.unresolved.unknownToken + rev.unresolved.outsideWindow : null;
   const metrics = [
-    metric("revenue.total", "Mo-zugeordneter Umsatz (bezahlt)", "eur", ct.revenue, pt.revenue),
-    metric("revenue.orders", "Bestellungen über Mo (bezahlt)", "count", ct.orders, pt.orders),
-    metric("revenue.aov", "Ø Bestellwert über Mo", "eur", safeRate(ct.revenue, ct.orders), safeRate(pt.revenue, pt.orders)),
-    metric("revenue.direct", "davon Direkt (Code oder Mo-Link)", "eur", c.attribution?.direct?.revenueAmount, p.attribution?.direct?.revenueAmount),
-    metric("revenue.assisted", "davon Beraten & gekauft", "eur", c.attribution?.assisted?.revenueAmount, p.attribution?.assisted?.revenueAmount),
-    metric("revenue.influenced", "davon Beraten, anderes gekauft", "eur", c.attribution?.influenced?.revenueAmount, p.attribution?.influenced?.revenueAmount),
-    metric("revenue.ms5", "Über MS5-Codes (persönliche Mail)", "eur", c.codeOrders?.ms5?.revenue, p.codeOrders?.ms5?.revenue),
-    metric("revenue.mk", "Über MK-Codes (Kampagnen)", "eur", c.codeOrders?.mk?.revenue, p.codeOrders?.mk?.revenue),
-    metric("revenue.unrealised", "Markierte Bestellungen noch nicht bezahlt", "count", c.attribution?.unrealisedOrders, p.attribution?.unrealisedOrders, { good: "none" }),
-    metric("revenue.unresolved", "Markiert, aber keiner Beratung zuzuordnen", "count", unresolved(c.attribution), unresolved(p.attribution), { good: "down" }),
+    metric("revenue.total", "Umsatz durch Mo (bezahlt)", "eur", s?.revenue, ps?.revenue, { hint: totalHint }),
+    metric("revenue.orders", "Bestellungen über Mo (bezahlt)", "count", s?.orders, ps?.orders),
+    metric("revenue.aov", "Ø Bestellwert über Mo", "eur", s?.aov, ps?.aov),
+    metric("revenue.assisted", `davon ${TIER_LABELS.assisted}`, "eur", tier(s, "assisted")?.revenue, tier(ps, "assisted")?.revenue),
+    metric("revenue.influenced", `davon ${TIER_LABELS.influenced}`, "eur", tier(s, "influenced")?.revenue, tier(ps, "influenced")?.revenue),
+    metric("revenue.direct", `davon ${TIER_LABELS.direct}`, "eur", tier(s, "direct")?.revenue, tier(ps, "direct")?.revenue),
+    metric("revenue.withMoCode", "davon mit Mo-Rabattcode (MS5-/MK-)", "eur", s?.withMoCode?.revenue, ps?.withMoCode?.revenue, {
+      hint: s ? `${num(s.withMoCode.orders)} Bestellung(en) — ein Querschnitt über die Wege, nicht zusätzlich` : undefined,
+    }),
+    metric("revenue.unrealised", "Erfasst, (noch) nicht bezahlt", "count", s?.unrealised?.orders, ps?.unrealised?.orders, {
+      good: "none",
+      hint: s && s.unrealised.orders > 0 ? `${eur(s.unrealised.revenue)} — zählt nicht zum Umsatz` : undefined,
+    }),
+    metric("revenue.unresolved", "Markiert, aber keiner Beratung zuzuordnen", "count", unresolved, null, {
+      good: "down",
+      hint: rev?.unresolved
+        ? `${num(rev.unresolved.unknownToken)} unbekannte oder gelöschte Markierung, ${num(rev.unresolved.outsideWindow)} außerhalb des Zuordnungsfensters`
+        : undefined,
+    }),
   ];
-  const shop = raw.shopify?.revenue;
-  if (shop && shop.shopifyConfigured !== false) {
+  if (cc && cc.shopifyConfigured) {
     metrics.push(
-      metric("revenue.codesShopify", "Umsatz über Mo-Rabattcodes (Shopify-Prüfung)", "eur", shop.revenueAmount, null, {
-        hint: shop.sampled ? "Stichprobe der 100 neuesten Codes" : undefined,
+      metric("revenue.codeComplement", "Aus dem Shopify-Code-Abgleich ergänzt", "eur", cc.revenue, null, {
+        good: "none",
+        hint: `${num(cc.orders)} Bestellung(en) mit Mo-Code vor der Webhook-Registrierung; ${num(cc.alreadyCounted)} eingelöste Code(s) schon im Ledger${cc.sampled ? "; Stichprobe der 100 neuesten Codes" : ""}`,
       })
     );
   }
-  const tierRows = [
-    ["direct", "Direkt"],
-    ["assisted", "Beraten & gekauft"],
-    ["influenced", "Beraten, anderes gekauft"],
-  ].map(([k, label]) => ({
-    key: k,
-    label,
-    values: { orders: finite(c.attribution?.[k]?.orderCount), revenue: finite(c.attribution?.[k]?.revenueAmount) },
-    previous: { orders: finite(p.attribution?.[k]?.orderCount), revenue: finite(p.attribution?.[k]?.revenueAmount) },
+  const shareOf = (x, v) => (x && x.revenue > 0 ? v / x.revenue : null);
+  const tierRows = REVENUE_TIERS.map((t) => ({
+    key: t,
+    label: TIER_LABELS[t],
+    values: { orders: finite(tier(s, t)?.orders), revenue: finite(tier(s, t)?.revenue), share: shareOf(s, tier(s, t)?.revenue ?? 0) },
+    previous: { orders: finite(tier(ps, t)?.orders), revenue: finite(tier(ps, t)?.revenue), share: shareOf(ps, tier(ps, t)?.revenue ?? 0) },
   }));
-  const sourceRows = pairRows(c.ordersBySource, p.ordersBySource, (r) => String(r.source)).map(({ key, cur, prev }) => ({
-    key,
-    label: ORDER_SOURCE_LABELS[key] ?? key,
-    values: { orders: finite(cur?.orders) ?? 0, revenue: finite(cur?.revenue) ?? 0 },
-    previous: { orders: finite(prev?.orders) ?? 0, revenue: finite(prev?.revenue) ?? 0 },
-  }));
-  sourceRows.sort((a, b) => (b.values.revenue ?? 0) - (a.values.revenue ?? 0));
-  const cols = [
+  const channelRows = (s?.byChannel ?? [])
+    .map((ch) => {
+      const prev = (ps?.byChannel ?? []).find((x) => x.key === ch.key) ?? null;
+      return {
+        key: ch.key,
+        label: ch.label,
+        values: { orders: ch.orders, revenue: ch.revenue, share: ch.share, aov: ch.aov },
+        previous: { orders: prev?.orders ?? 0, revenue: prev?.revenue ?? 0, share: prev?.share ?? null, aov: prev?.aov ?? null },
+      };
+    })
+    // „Sonstiger Mo-Weg“ only when it holds something (as on the KPI screen).
+    .filter((row) => row.key !== "sonstig" || row.values.orders > 0 || row.previous.orders > 0);
+  const tierCols = [
     { key: "orders", label: "Bestellungen", unit: "count" },
     { key: "revenue", label: "Umsatz", unit: "eur" },
+    { key: "share", label: "Anteil", unit: "rate" },
   ];
   return {
     key: "revenue",
-    title: "Umsatz über Mo",
+    title: "Umsatz durch Mo",
     scope: "period",
     link: "kpi_umsatz",
     metrics,
-    tables: [
-      table("revenue.tiers", "Nach Zuordnungsstufe", cols, tierRows),
-      table("revenue.sources", "Nach Quelle der Markierung", cols, sourceRows),
-    ],
+    tables: s
+      ? [
+          table("revenue.tiers", "Nach Zuordnungsstufe", tierCols, tierRows),
+          table(
+            "revenue.channels",
+            "Wie der Umsatz entstand (Weg)",
+            [...tierCols, { key: "aov", label: "Ø Bestellwert", unit: "eur" }],
+            channelRows,
+            "Jede Bestellung in genau einer Zeile: Mo-Rabattcode vor Mo-Link vor Widget-Markierung (wie „Wie der Umsatz entstand“ auf der KPI-Seite)."
+          ),
+        ]
+      : [],
   };
 }
 
-function chatSection(raw) {
+function chatSection(raw, d) {
   const c = raw.cur ?? EMPTY;
   const p = raw.prev ?? EMPTY;
   const cc = c.core;
@@ -543,6 +697,24 @@ function chatSection(raw) {
       base: sum((c.locales?.chats ?? []).map((r) => r.count)),
     }),
   ];
+  // „Vom Chat zur Bestellung“ (kpi-journey): sessions with a chat started in
+  // the period, and how many of them ordered (Mo-attributed, paid) afterwards.
+  const jc = d.journey.cur;
+  const jp = d.journey.prev;
+  const start = (f) => f?.stages?.[0]?.value ?? null;
+  metrics.push(
+    metric("journey.chats", "Sitzungen mit Beratung", "count", start(jc), start(jp)),
+    metric("journey.orderedAny", "Davon danach bestellt (Sitzungen)", "count", jc?.orderedAny, jp?.orderedAny, {
+      hint: jc ? `${num(jc.orderedWithoutCart)} ohne Warenkorb-Klick im Chat` : undefined,
+    }),
+    metric("journey.chatToOrder", "Beratung → Bestellung", "rate", jc?.chatToOrderRate, jp?.chatToOrderRate, {
+      base: start(jc),
+      hint: jc?.biggestDrop ? `größter Verlust: ${jc.biggestDrop.from} → ${jc.biggestDrop.to} (${ratio(jc.biggestDrop.rate, 0)})` : undefined,
+    }),
+    metric("journey.revenuePerChat", "Umsatz je Beratung", "eur", jc?.revenuePerChat, jp?.revenuePerChat, {
+      hint: jc ? `${eur(jc.revenue)} aus ${num(jc.orderedOrders)} Bestellung(en) dieser Sitzungen` : undefined,
+    })
+  );
   return { key: "chat", title: "Beratung im Chat", scope: "period", link: "kpi_beratung", metrics, tables: [] };
 }
 
@@ -665,12 +837,19 @@ function consentSection(raw) {
   return { key: "consent", title: "Einwilligung & E-Mail", scope: "period", link: "kpi_einwilligung", metrics, tables };
 }
 
-function campaignSection(raw) {
+function campaignSection(raw, d) {
   const c = raw.cur ?? EMPTY;
   const p = raw.prev ?? EMPTY;
   const tot = (rows, f) => sum((rows ?? []).map((r) => r[f]));
-  const cs = c.campaigns;
-  const ps = p.campaigns;
+  // Rows with their MK revenue (derive → campaignRevenueByCode); the totals
+  // come straight from the channel „Kampagne (MK-Code)“ of „Umsatz durch Mo“.
+  const cs = d.campaigns.cur;
+  const ps = d.campaigns.prev;
+  const channel = (summary, key) => summary?.byChannel?.find((x) => x.key === key) ?? null;
+  const ck = channel(d.revenue?.summary, "kampagne");
+  const pk = channel(d.revenue?.previous, "kampagne");
+  const cset = channel(d.revenue?.summary, "set");
+  const pset = channel(d.revenue?.previous, "set");
   const ratingOf = (ratings) => {
     const rows = (ratings ?? []).filter((r) => r.kind === "campaign");
     const n = sum(rows.map((r) => r.count));
@@ -686,8 +865,10 @@ function campaignSection(raw) {
       base: tot(cs, "tracked"),
     }),
     metric("campaigns.chatStarted", "Chat aus der Mail gestartet", "count", tot(cs, "chatStarted"), tot(ps, "chatStarted")),
-    metric("campaigns.orders", "Bestellungen mit MK-Code", "count", tot(cs, "moOrders"), tot(ps, "moOrders")),
-    metric("campaigns.revenue", "Umsatz mit MK-Code (bezahlt)", "eur", tot(cs, "moRevenue"), tot(ps, "moRevenue")),
+    metric("campaigns.orders", "Bestellungen mit MK-Code (bezahlt)", "count", ck?.orders, pk?.orders),
+    metric("campaigns.revenue", "Umsatz mit MK-Code (bezahlt)", "eur", ck?.revenue, pk?.revenue, {
+      hint: "Weg „Kampagne (MK-Code)“ aus „Umsatz durch Mo“",
+    }),
     metric("campaigns.unsubscribed", "Abmeldungen nach Kampagnen-Mail", "count", tot(cs, "unsubscribed"), tot(ps, "unsubscribed"), { good: "down" }),
     metric("campaigns.unsubscribeRate", "Abmeldequote", "rate", safeRate(tot(cs, "unsubscribed"), tot(cs, "sent")), safeRate(tot(ps, "unsubscribed"), tot(ps, "sent")), {
       good: "down",
@@ -699,6 +880,13 @@ function campaignSection(raw) {
     metric("letters.sent", "Briefe versendet (Pingen)", "count", c.letters?.sent, p.letters?.sent, { good: "none" }),
     metric("letters.cost", "Porto der Briefe", "eur", c.letters ? (finite(c.letters.costCents) ?? 0) / 100 : null, p.letters ? (finite(p.letters.costCents) ?? 0) / 100 : null, {
       good: "none",
+    }),
+    // Bundle-Angebote (KPI section „Bundle-Angebote“): created and clicked in
+    // the period, and the orders of the channel „Set-Angebot“.
+    metric("bundles.created", "Bundle-Angebote erstellt", "count", c.bundles?.created?.total, p.bundles?.created?.total, { good: "none" }),
+    metric("bundles.clicks", "Klicks auf Bundle-Angebote", "count", c.bundles?.clicks, p.bundles?.clicks),
+    metric("bundles.revenue", "Über Set-Link gekauft (bezahlt)", "eur", cset?.revenue, pset?.revenue, {
+      hint: cset ? `${num(cset.orders)} Bestellung(en) — Weg „Set-Angebot“ aus „Umsatz durch Mo“` : undefined,
     }),
   ];
   const shop = raw.shopify?.campaign;
@@ -734,7 +922,7 @@ function campaignSection(raw) {
   rows.sort((a, b) => (b.values.sent ?? 0) - (a.values.sent ?? 0) || (b.previous.sent ?? 0) - (a.previous.sent ?? 0));
   return {
     key: "campaigns",
-    title: "Kampagnen & Briefe",
+    title: "Kampagnen, Bundles & Briefe",
     scope: "period",
     link: "kampagnen",
     metrics,
@@ -752,7 +940,7 @@ function campaignSection(raw) {
           { key: "letters", label: "Briefe", unit: "count" },
         ],
         rows.slice(0, 15),
-        "Bestellungen und Umsatz: bezahlte Bestellungen im Zeitraum, die einen MK-Code dieser Kampagne eingelöst haben (Bestell-Webhook)."
+        "Bestellungen und Umsatz: Weg „Kampagne (MK-Code)“ aus „Umsatz durch Mo“ — bezahlte Bestellungen im Zeitraum mit einem MK-Code dieser Kampagne (Bestell-Webhook, im aktuellen Zeitraum ergänzt um den Shopify-Code-Abgleich)."
       ),
     ],
   };
@@ -815,14 +1003,13 @@ function inboxSection(raw) {
   };
 }
 
-/** Mo-attributed revenue ÷ the ledger's shop revenue of a period (unguarded). */
-function moShareRaw(x) {
-  const mo = tierTotals(x?.attribution).revenue;
-  const shop = x?.ledger ? (finite(x.ledger.revenueCents) ?? 0) / 100 : null;
-  return safeRate(mo, shop);
+/** „Umsatz durch Mo“ ÷ the ledger's shop revenue of a period (unguarded). */
+function moShareRaw(revenueSummary, ledger) {
+  const shop = ledger ? (finite(ledger.revenueCents) ?? 0) / 100 : null;
+  return safeRate(revenueSummary?.revenue, shop);
 }
 
-function customerSection(raw) {
+function customerSection(raw, d) {
   const c = raw.cur ?? EMPTY;
   const p = raw.prev ?? EMPTY;
   const base = raw.lifetime?.customerBase;
@@ -830,8 +1017,8 @@ function customerSection(raw) {
   const ledger = (x) => x?.ledger;
   // Mo's share of the shop revenue. Above 100 % the ledger is incomplete (the
   // customer sync was off or behind) — then the share is unknown, not 140 %.
-  const moShare = (x) => {
-    const r = moShareRaw(x);
+  const moShare = (summary, l) => {
+    const r = moShareRaw(summary, l);
     return r !== null && r > 1 ? null : r;
   };
   const metrics = [
@@ -843,15 +1030,15 @@ function customerSection(raw) {
     metric("ledger.repeatShare", "Anteil Wiederkäufer:innen", "rate", safeRate(ledger(c)?.returningBuyers, ledger(c)?.buyers), safeRate(ledger(p)?.returningBuyers, ledger(p)?.buyers), {
       base: ledger(c)?.buyers,
     }),
-    metric("ledger.moShare", "Anteil Mo am Shop-Umsatz", "rate", moShare(c), moShare(p), {
+    metric("ledger.moShare", "Anteil Mo am Shop-Umsatz", "rate", moShare(d.revenue?.summary, ledger(c)), moShare(d.revenue?.previous, ledger(p)), {
       base: ledger(c)?.orders,
-      hint: "Mo-zugeordneter Umsatz ÷ Shop-Umsatz im Ledger",
+      hint: "„Umsatz durch Mo“ ÷ Shop-Umsatz im Ledger",
     }),
     metric("customers.total", "Kund:innen gesamt (Stand heute)", "count", base?.total, null, { good: "none" }),
     metric("customers.shopify", "davon Shopify-Kund:innen", "count", base?.shopifyCustomers, null, { good: "none" }),
     metric("customers.withMo", "Mit Mo gesprochen (Stand heute)", "count", base?.withMo, null),
-    metric("customers.subscribed", "Mit Einwilligung (Stand heute)", "count", base?.consent?.subscribed ?? base?.subscribed, null),
-    metric("customers.subscribedShare", "Anteil mit Einwilligung", "rate", safeRate(base?.consent?.subscribed ?? base?.subscribed, base?.total), null, {
+    metric("customers.subscribed", "Mit Einwilligung (Stand heute)", "count", base?.consent?.subscribed, null),
+    metric("customers.subscribedShare", "Anteil mit Einwilligung", "rate", safeRate(base?.consent?.subscribed, base?.total), null, {
       base: base?.total,
     }),
     metric("customers.churnHigh", "Abwanderung hoch (Stand heute)", "count", base?.churnHigh, null, { good: "down" }),
@@ -1025,11 +1212,11 @@ function qualitySection(raw) {
   return { key: "quality", title: "Qualität, Wissen & Feedback", scope: "period", link: "gespraeche", metrics, tables };
 }
 
-function costSection(raw) {
-  const c = raw.cur?.aiCost;
-  const p = raw.prev?.aiCost;
-  const moRev = tierTotals(raw.cur?.attribution).revenue;
-  const moRevPrev = tierTotals(raw.prev?.attribution).revenue;
+function costSection(raw, d) {
+  // Before the usage capture started there is no cost to show (KPI „KI-Kosten“ is empty then).
+  const ready = (x) => (x && x.capturedSince != null ? x : null);
+  const c = ready(raw.cur?.aiCost);
+  const p = ready(raw.prev?.aiCost);
   const metrics = [
     metric("costs.total", "KI-Kosten gesamt", "eur", c?.totalSpendEur, p?.totalSpendEur, { good: "down" }),
     metric("costs.chat", "davon Chat (Beratung)", "eur", c?.chatSpendEur, p?.chatSpendEur, { good: "none" }),
@@ -1037,9 +1224,15 @@ function costSection(raw) {
     metric("costs.perConsultation", "Ø KI-Kosten je Beratung", "eur", c?.avgCostPerConsultationEur, p?.avgCostPerConsultationEur, { good: "down" }),
     metric("costs.cacheHitRate", "Prompt-Cache-Trefferquote (Chat)", "rate", c?.cache?.hitRate, p?.cache?.hitRate, { base: null }),
     metric("costs.cacheSaved", "Ersparnis durch Prompt-Cache", "eur", c?.cache?.savedEur, p?.cache?.savedEur),
-    metric("costs.roi", "Mo-Umsatz je 1 € KI-Kosten", "eur", safeRate(moRev, c?.totalSpendEur), safeRate(moRevPrev, p?.totalSpendEur), {
-      hint: "Mo-zugeordneter Umsatz ÷ KI-Kosten (alle Aufrufe)",
-    }),
+    // As the KPI tile „Umsatz je 1 € KI-Kosten“ (kpi/revenue-view): revenuePerAiEuro.
+    metric(
+      "costs.roi",
+      "Umsatz durch Mo je 1 € KI-Kosten",
+      "eur",
+      revenuePerAiEuro(d.revenue?.summary?.revenue, aiSpend(c)),
+      revenuePerAiEuro(d.revenue?.previous?.revenue, aiSpend(p)),
+      { hint: "„Umsatz durch Mo“ ÷ KI-Kosten aller Aufrufe — Umsatz ist keine Marge" }
+    ),
   ];
   const rows = pairRows(c?.perCallSite, p?.perCallSite, (r) => String(r.callSite))
     .map(({ key, cur, prev }) => ({
@@ -1066,7 +1259,7 @@ function step(label, value, previous) {
   return { label, value: finite(value), previous: finite(previous) };
 }
 
-function buildFunnels(raw) {
+function buildFunnels(raw, d) {
   const c = raw.cur ?? EMPTY;
   const p = raw.prev ?? EMPTY;
   const way = (x, f) => {
@@ -1074,7 +1267,16 @@ function buildFunnels(raw) {
     return w ? sum(["signin", "shop", "unknown"].map((k) => w[k]?.[f])) : null;
   };
   const tot = (rows, f) => sum((rows ?? []).map((r) => r[f]));
+  const jc = d.journey.cur;
+  const jp = d.journey.prev;
   const funnels = [
+    {
+      // „Vom Chat zur Bestellung“ — nested stages, sessions (kpi-journey).
+      key: "journey",
+      title: "Vom Chat zur Bestellung (Sitzungen)",
+      link: "kpi_journey",
+      steps: (jc ?? jp)?.stages.map((st, i) => step(st.label, jc?.stages[i]?.value, jp?.stages[i]?.value)) ?? [],
+    },
     {
       key: "chat",
       title: "Chat (Sitzungen)",
@@ -1122,10 +1324,10 @@ function buildFunnels(raw) {
       title: "Kampagnen-Mails",
       link: "kampagnen",
       steps: [
-        step("Gesendet", tot(c.campaigns, "sent"), tot(p.campaigns, "sent")),
-        step("Geklickt", tot(c.campaigns, "clicked"), tot(p.campaigns, "clicked")),
-        step("Chat gestartet", tot(c.campaigns, "chatStarted"), tot(p.campaigns, "chatStarted")),
-        step("Bestellt (MK-Code)", tot(c.campaigns, "moOrders"), tot(p.campaigns, "moOrders")),
+        step("Gesendet", tot(d.campaigns.cur, "sent"), tot(d.campaigns.prev, "sent")),
+        step("Geklickt", tot(d.campaigns.cur, "clicked"), tot(d.campaigns.prev, "clicked")),
+        step("Chat gestartet", tot(d.campaigns.cur, "chatStarted"), tot(d.campaigns.prev, "chatStarted")),
+        step("Bestellt (MK-Code)", tot(d.campaigns.cur, "moOrders"), tot(d.campaigns.prev, "moOrders")),
       ],
     },
   ];
@@ -1164,7 +1366,7 @@ export function describeSwitches(switches) {
  * the two periods, section notes, missing data, small samples, coverage, the
  * switches that change what a number means, and the standing honesty rules.
  */
-function buildCaveats(raw, sections) {
+function buildCaveats(raw, sections, d) {
   /** @type {Array<{ level: "info" | "warning", title: string, detail: string, sections?: string[] }>} */
   const out = [];
   for (const r of raw.releases ?? []) {
@@ -1183,8 +1385,9 @@ function buildCaveats(raw, sections) {
   }
   const missing = [];
   const c = raw.cur ?? EMPTY;
-  if (!c.attribution) missing.push("Umsatz über Mo");
+  if (!d.revenue) missing.push("Umsatz durch Mo");
   if (!c.core) missing.push("Chat-Kennzahlen");
+  if (!c.journey) missing.push("Vom Chat zur Bestellung");
   if (!c.aiCost) missing.push("KI-Kosten");
   if (!raw.lifetime?.customerBase) missing.push("Kundenbasis");
   if (!c.ledger) missing.push("Bestell-Ledger");
@@ -1213,7 +1416,7 @@ function buildCaveats(raw, sections) {
       sections: ["quality"],
     });
   }
-  const share = moShareRaw(c);
+  const share = moShareRaw(d.revenue?.summary, c.ledger);
   if (share !== null && share > 1) {
     out.push({
       level: "warning",
@@ -1254,6 +1457,37 @@ function buildCaveats(raw, sections) {
       detail: "Die Shopify-Prüfung der Rabattcodes umfasst die 100 neuesten Codes; nicht beantwortete Codes zählen als unbekannt, nicht als 0.",
     });
   }
+  const rev = d.revenue;
+  const cc = rev?.complement;
+  if (cc && cc.orders > 0) {
+    const ledgerRev = rev.ledgerSummary.revenue;
+    const prevRev = rev.previous?.revenue;
+    const like = prevRev ? ` Ohne sie ${eur(ledgerRev)} gegenüber ${eur(prevRev)} in der Vorperiode (${ledgerRev >= prevRev ? "+" : "−"}${ratio(Math.abs(ledgerRev - prevRev) / prevRev, 0)}).` : "";
+    out.push({
+      level: "warning",
+      title: "Umsatz: Shopify-Code-Abgleich nur im aktuellen Zeitraum",
+      detail: `${num(cc.orders)} Bestellung(en) mit Mo-Code (${eur(cc.revenue)}) aus der Zeit vor der Webhook-Registrierung sind im aktuellen Zeitraum ergänzt, in der Vorperiode nicht — wie auf der KPI-Seite.${like}`,
+      sections: ["revenue", "costs"],
+    });
+  } else if (rev && !raw.shopify) {
+    out.push({
+      level: "info",
+      title: "Umsatz ohne Shopify-Code-Abgleich",
+      detail:
+        sw.shopifyConfigured === false
+          ? "Shopify ist nicht konfiguriert — Bestellungen mit Mo-Code aus der Zeit vor der Webhook-Registrierung können nicht ergänzt werden (wie auf der KPI-Seite)."
+          : "Der Shopify-Code-Abgleich war nicht verfügbar (nicht angefragt oder Zeitüberschreitung) — Bestellungen mit Mo-Code aus der Zeit vor der Webhook-Registrierung fehlen, „Umsatz durch Mo“ kann niedriger sein als auf der KPI-Seite.",
+      sections: ["revenue"],
+    });
+  }
+  if (rev && (rev.summary.otherCurrency > 0 || rev.summary.unclassified > 0)) {
+    out.push({
+      level: "info",
+      title: "Umsatz: nicht gezählte Bestellungen",
+      detail: `${num(rev.summary.otherCurrency)} Bestellung(en) in einer anderen Währung als ${rev.summary.currency} (nicht umgerechnet) und ${num(rev.summary.unclassified)} ohne erkennbaren Mo-Weg sind nicht enthalten.`,
+      sections: ["revenue"],
+    });
+  }
   out.push(
     {
       level: "info",
@@ -1270,7 +1504,7 @@ function buildCaveats(raw, sections) {
     {
       level: "info",
       title: "Nur markierte Bestellungen zählen für Mo",
-      detail: "„Umsatz über Mo“ kennt nur Bestellungen mit Mo-Markierung oder Mo-Code; Käufe nach einer Beratung auf einem anderen Gerät bleiben unsichtbar — eine Untergrenze.",
+      detail: "„Umsatz durch Mo“ kennt nur Bestellungen mit Mo-Markierung oder Mo-Code; Käufe nach einer Beratung auf einem anderen Gerät bleiben unsichtbar — eine Untergrenze.",
       sections: ["revenue"],
     }
   );
@@ -1300,16 +1534,17 @@ export function buildBusinessSnapshot(raw) {
   const r = raw ?? {};
   const period = r.period ?? null;
   const previous = r.previous ?? (period ? previousPeriod(period) : null);
+  const d = derive(r);
   const sections = [
-    revenueSection(r),
-    chatSection(r),
+    revenueSection(r, d),
+    chatSection(r, d),
     signinSection(r),
     consentSection(r),
-    campaignSection(r),
-    customerSection(r),
+    campaignSection(r, d),
+    customerSection(r, d),
     inboxSection(r),
     qualitySection(r),
-    costSection(r),
+    costSection(r, d),
   ].map((s) => {
     const notes = r.releaseNotes?.[s.key] ?? {};
     return {
@@ -1324,12 +1559,233 @@ export function buildBusinessSnapshot(raw) {
     period,
     previous,
     sections,
-    funnels: buildFunnels(r),
-    caveats: buildCaveats(r, sections),
+    funnels: buildFunnels(r, d),
+    caveats: buildCaveats(r, sections, d),
     switches: describeSwitches(r.switches),
     releases: (r.releases ?? []).map((x) => ({ date: x.date, key: x.key, title: x.title })),
   };
 }
+
+// ── The raw-field contract ────────────────────────────────────────────────────
+
+/**
+ * Every getter field the builder reads, per raw part (leaf paths; "[]" = an
+ * array element). The contract between the store getters and this core:
+ *   - business-snapshot.ts checks each path against the getter's return type
+ *     (tsc fails when a getter drops or renames a field the snapshot reads),
+ *   - business-snapshot-core.test.mjs runs the builder on a recording proxy of
+ *     the fixture and fails when it reads a field not listed here, or when the
+ *     fixture lacks a listed field.
+ * `period` applies to both `cur` and `prev`. A field read only on a fallback
+ * path (a stored tier missing, a matched comparison group missing) is listed
+ * too.
+ */
+export const SNAPSHOT_RAW_FIELDS = Object.freeze({
+  period: /** @type {const} */ ([
+    // kpi-store getCoreMetrics
+    "core.sessionsWithTelemetry",
+    "core.openedSessions",
+    "core.wroteSessions",
+    "core.engagementRate",
+    "core.totalChats",
+    "core.avgMessagesPerChat",
+    "core.productCtaClicks",
+    "core.productCtaRatePerChat",
+    "core.addToCartClicks",
+    "core.addToCartRatePerChat",
+    "core.abandonedRate",
+    // kpi-journey-store getJourneyCounts
+    "journey.chats",
+    "journey.shown",
+    "journey.clicked",
+    "journey.cart",
+    "journey.ordered",
+    "journey.orderedAny",
+    "journey.orderedOrders",
+    "journey.revenue",
+    // analytics-report-store getReportKpis
+    "reportKpis.checkoutOffered",
+    "reportKpis.withError",
+    // kpi-store getPageContextKpis, getLocaleSplit
+    "pageContext.sessions",
+    "pageContext.resolved",
+    "locales.chats[].locale",
+    "locales.chats[].count",
+    // kpi-store getLoginGateFunnel
+    "loginGate.shown",
+    "loginGate.clicked",
+    "loginGate.signedIn",
+    "loginGate.linked",
+    // kpi-store getAccountActivity
+    "account.linkedSessions.signin",
+    "account.linkedSessions.shop",
+    "account.shopRecognition.recognised",
+    "account.shopRecognition.redeemed",
+    "account.shopRecognition.withCode",
+    "account.refusedLinks",
+    "account.signins",
+    "account.exports",
+    "account.erasures",
+    "account.contactFormSubmissions",
+    // kpi-store getConsentGateFunnel
+    "consentGate.signinByWay.signin.shown",
+    "consentGate.signinByWay.signin.accepted",
+    "consentGate.signinByWay.signin.optedIn",
+    "consentGate.signinByWay.shop.shown",
+    "consentGate.signinByWay.shop.accepted",
+    "consentGate.signinByWay.shop.optedIn",
+    "consentGate.signinByWay.unknown.shown",
+    "consentGate.signinByWay.unknown.accepted",
+    "consentGate.signinByWay.unknown.optedIn",
+    "consentGate.byVariant[].variant",
+    "consentGate.byVariant[].placement",
+    "consentGate.byVariant[].shown",
+    "consentGate.byVariant[].accepted",
+    "consentGate.byVariant[].optedIn",
+    "consentGate.byVariant[].doiConfirmed",
+    "consentGate.byVariant[].doiRequired",
+    // kpi-store getEmailCaptureFunnel
+    "capture.askShown",
+    "capture.submitted",
+    "capture.submitRate",
+    "capture.marketingOptedIn",
+    "capture.doiSent",
+    "capture.confirmed",
+    "capture.doiRate",
+    // business-snapshot.ts own queries (consent events, campaign sends, letters, ratings, ledger)
+    "newSubscribers",
+    "campaigns[].campaignId",
+    "campaigns[].name",
+    "campaigns[].sent",
+    "campaigns[].tracked",
+    "campaigns[].clicked",
+    "campaigns[].chatStarted",
+    "campaigns[].unsubscribed",
+    "campaigns[].bounced",
+    "campaigns[].complained",
+    "campaigns[].letters",
+    "letters.sent",
+    "letters.costCents",
+    "ratings[].kind",
+    "ratings[].count",
+    "ratings[].avg",
+    "ledger.orders",
+    "ledger.revenueCents",
+    "ledger.buyers",
+    "ledger.newBuyers",
+    "ledger.returningBuyers",
+    // bundle-offers-store getBundleKpis
+    "bundles.created.total",
+    "bundles.clicks",
+    // inbox-store getInboxKpis
+    "inbox.kinds[].kind",
+    "inbox.kinds[].created",
+    "inbox.kinds[].acted",
+    "inbox.kinds[].dismissed",
+    "inbox.kinds[].ordersAfterActed",
+    "inbox.kinds[].revenueAfterActedCents",
+    "inbox.totalCreated",
+    "inbox.totalActed",
+    "inbox.suggestionsMade",
+    // admin-conversations getConversationStats
+    "quality.total",
+    "quality.analyzedCount",
+    "quality.qualities[].quality",
+    "quality.qualities[].count",
+    "quality.categories[].category",
+    "quality.categories[].label",
+    "quality.categories[].count",
+    // qa-store getQaKpis, feedback-store getFeedbackKpis, kpi-store getOrderStatusKpis
+    "qa.createdInWindow",
+    "qa.publishedInWindow",
+    "qa.medianHoursToAnswer",
+    "qa.queue.open",
+    "qa.scanBacklog",
+    "feedback.total",
+    "orderStatus.lookups",
+    "orderStatus.byOutcome[].outcome",
+    "orderStatus.byOutcome[].count",
+    // ai-usage-store getAiCostMetrics
+    "aiCost.capturedSince",
+    "aiCost.totalSpendEur",
+    "aiCost.chatSpendEur",
+    "aiCost.adminSpendEur",
+    "aiCost.avgCostPerConsultationEur",
+    "aiCost.cache.hitRate",
+    "aiCost.cache.savedEur",
+    "aiCost.perCallSite[].callSite",
+    "aiCost.perCallSite[].spendEur",
+  ]),
+  // customer-list-store getCustomerBaseKpis / getMoEffectKpis (→ mo-effect computeMoEffect)
+  lifetime: /** @type {const} */ ([
+    "customerBase.total",
+    "customerBase.shopifyCustomers",
+    "customerBase.withMo",
+    "customerBase.consent.subscribed",
+    "customerBase.churnHigh",
+    "customerBase.bySegment[].key",
+    "customerBase.bySegment[].n",
+    "customerBase.byValueTier[].key",
+    "customerBase.byValueTier[].n",
+    "moEffect.mo.n",
+    "moEffect.mo.repurchaseRate",
+    "moEffect.mo.aovCents",
+    "moEffect.withoutMo.n",
+    "moEffect.withoutMo.repurchaseRate",
+    "moEffect.withoutMo.aovCents",
+    "moEffect.withoutMoMatched.repurchaseRate",
+    "moEffect.withoutMoMatched.aovCents",
+    "moEffect.tiers[].tier",
+    "moEffect.tiers[].mo.n",
+    "moEffect.tiers[].mo.repurchaseRate",
+    "moEffect.tiers[].withoutMo.n",
+    "moEffect.tiers[].withoutMo.repurchaseRate",
+    "wonByMo.n",
+    "wonByMo.revenueCents",
+    "subscribersBySource[].source",
+    "subscribersBySource[].n",
+  ]),
+  // mo-revenue-store getMoRevenueData — folded by mo-revenue.mjs like the KPI screen
+  moRevenue: /** @type {const} */ ([
+    "orders[].total",
+    "orders[].currency",
+    "orders[].financialStatus",
+    "orders[].tier",
+    "orders[].source",
+    "orders[].discountCodes",
+    "orders[].overlap",
+    "previous",
+    "previousOrders[].total",
+    "previousOrders[].currency",
+    "previousOrders[].financialStatus",
+    "previousOrders[].tier",
+    "previousOrders[].source",
+    "previousOrders[].discountCodes",
+    "previousOrders[].overlap",
+    "ledgerCodes",
+    "ledgerOrderNames",
+    "unresolved.unknownToken",
+    "unresolved.outsideWindow",
+    "ingestionSeen",
+  ]),
+  // kpi-cache loadKpiShopifyBlock (kpi-revenue-store MoRevenue, campaign-store CampaignKpis)
+  shopify: /** @type {const} */ ([
+    "revenue.shopifyConfigured",
+    "revenue.redemptionUnknown",
+    "revenue.sampled",
+    "revenue.redemptions[].code",
+    "revenue.redemptions[].orderName",
+    "revenue.redemptions[].createdAt",
+    "revenue.redemptions[].amount",
+    "revenue.redemptions[].currency",
+    "revenue.redemptions[].financialStatus",
+    "campaign.shopifyConfigured",
+    "campaign.converted",
+    "campaign.sampled",
+  ]),
+  // business-snapshot.ts loadCampaignCodes
+  campaignCodes: /** @type {const} */ (["[].code", "[].campaignId", "[].name"]),
+});
 
 // ── Reading a snapshot ────────────────────────────────────────────────────────
 
@@ -1368,7 +1824,7 @@ export const HEADLINE_METRICS = Object.freeze([
   "ledger.moShare",
   "chat.chats",
   "chat.engagement",
-  "chat.clicksPerChat",
+  "journey.chatToOrder",
   "consent.newSubscribers",
   "costs.total",
   "costs.roi",

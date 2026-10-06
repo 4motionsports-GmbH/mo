@@ -23,7 +23,7 @@ import {
 } from "./analytics-report-synthesis-core.mjs";
 import { decisionsSchema, planSchema } from "./analytics-report-synthesis-schemas.mjs";
 import { buildBusinessSnapshot } from "./business-snapshot-core.mjs";
-import { SAMPLE_SNAPSHOT_RAW } from "./business-snapshot.fixtures.mjs";
+import { SAMPLE_PREVIOUS_PERIOD_RAW } from "./business-snapshot.fixtures.mjs";
 import {
   SAMPLE_DECISIONS_OUTPUT,
   SAMPLE_PLAN_OUTPUT,
@@ -140,7 +140,7 @@ test("buildReportComparison against a v1 report compares the legacy KPIs and kee
 
 test("buildReportComparison between two v2 reports uses the snapshot keys, per day when lengths differ", () => {
   const cur = sampleReportSections();
-  const prevSections = { ...sampleReportSections(), snapshot: buildBusinessSnapshot({ ...SAMPLE_SNAPSHOT_RAW, cur: SAMPLE_SNAPSHOT_RAW.prev }) };
+  const prevSections = { ...sampleReportSections(), snapshot: buildBusinessSnapshot(SAMPLE_PREVIOUS_PERIOD_RAW) };
   const c = buildReportComparison(
     { ...cur, from: "2026-08-10", to: "2026-09-08" },
     { id: 12, title: "Vorbericht", from: "2026-07-27", to: "2026-08-09", completedAt: null, sections: prevSections }
@@ -154,6 +154,11 @@ test("buildReportComparison between two v2 reports uses the snapshot keys, per d
   assert.equal(Math.round(revenue.then * 100) / 100, Math.round((10120 / 14) * 100) / 100);
   const rate = c.metrics.find((m) => m.key === "chat.engagement");
   assert.ok(rate.now < 1 && rate.then < 1, "rates are not divided by days");
+  // Averages and ratios in euros stay as they are, too.
+  const aov = c.metrics.find((m) => m.key === "revenue.aov");
+  assert.deepEqual([aov.now, aov.then], [691.86, 632.5]);
+  assert.equal(c.metrics.find((m) => m.key === "costs.roi").now, 711.26);
+  assert.ok(c.metrics.some((m) => m.key === "journey.chatToOrder"));
   assert.equal(c.previousDecisions.length, 4);
   assert.equal(c.previousRecommendations[0].title, "Rückkehr nach der Shopify-Anmeldung reparieren");
   const text = renderComparisonForPrompt(c);

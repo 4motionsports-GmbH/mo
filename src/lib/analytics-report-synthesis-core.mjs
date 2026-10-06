@@ -315,11 +315,21 @@ export const COMPARISON_KEYS = Object.freeze([
   "capture.doiRate",
   "campaigns.sent",
   "campaigns.clickRate",
+  "journey.chatToOrder",
+  "journey.revenuePerChat",
   "campaigns.revenue",
   "quality.handledWell",
   "quality.unmetNeed",
   "costs.total",
   "costs.roi",
+]);
+
+/** Amounts that are averages or ratios — never divided by days when the period lengths differ. */
+export const NON_ADDITIVE_KEYS = Object.freeze([
+  "revenue.aov",
+  "journey.revenuePerChat",
+  "costs.roi",
+  "costs.perConsultation",
 ]);
 
 /** Legacy (v1) report KPIs, comparable between any two reports. */
@@ -364,7 +374,9 @@ export function buildReportComparison(current, previous) {
   const curDays = daysOf(current);
   const prevDays = daysOf(previous);
   const sameLength = curDays !== null && curDays === prevDays;
-  const perDay = (unit, v, days) => (v === null || v === undefined ? null : !sameLength && unit !== "rate" && unit !== "ratio" && days ? v / days : v);
+  // Only sums grow with the length of a period; averages, rates and ratios do not.
+  const additive = (key, unit) => (unit === "count" || unit === "eur") && !NON_ADDITIVE_KEYS.includes(key);
+  const perDay = (key, unit, v, days) => (v === null || v === undefined ? null : !sameLength && additive(key, unit) && days ? v / days : v);
 
   /** @type {Array<{ key: string, label: string, unit: string, now: number | null, then: number | null, good: string }>} */
   let metrics = [];
@@ -379,8 +391,8 @@ export function buildReportComparison(current, previous) {
         key,
         label: a[key].label,
         unit: a[key].unit,
-        now: perDay(a[key].unit, a[key].value, curDays),
-        then: perDay(b[key].unit, b[key].value, prevDays),
+        now: perDay(key, a[key].unit, a[key].value, curDays),
+        then: perDay(key, b[key].unit, b[key].value, prevDays),
         good: a[key].good,
       });
     }
@@ -388,7 +400,7 @@ export function buildReportComparison(current, previous) {
     const a = legacyMetrics(current);
     const b = legacyMetrics(previous.sections);
     for (const [key, m] of Object.entries(a)) {
-      metrics.push({ key, label: m.label, unit: m.unit, now: perDay(m.unit, m.value, curDays), then: perDay(m.unit, b[key].value, prevDays), good: m.good });
+      metrics.push({ key, label: m.label, unit: m.unit, now: perDay(key, m.unit, m.value, curDays), then: perDay(key, m.unit, b[key].value, prevDays), good: m.good });
     }
   }
   metrics = metrics.filter((m) => m.now !== null || m.then !== null);
@@ -446,7 +458,7 @@ export const STRATEGIST_SYSTEM = [
   "",
   "Was Mo ist: Mo berät im Chat-Widget auf der Shopify-Seite, empfiehlt Produkte (Produktkarten, Warenkorb-Links, Set-Angebote), bietet eine E-Mail-Zusammenfassung an, lädt anonyme Besucher:innen zur Anmeldung ein und fragt Angemeldete nach der Werbe-Einwilligung (Double-Opt-in). Der Admin verschickt Kampagnen-Mails (MK-Codes) und persönliche Mails (MS5-Codes) an Kund:innen mit Einwilligung, optional Briefe (Pingen). Bestellungen mit Mo-Markierung oder Mo-Code werden Mo zugeordnet: Direkt, Beraten & gekauft, Beraten, anderes gekauft. Der Eingang schlägt dem Betrieb Kund:innen vor, die heute Aufmerksamkeit brauchen.",
   "",
-  "Ziel der Inhaber: mehr profitabler Umsatz über Mo, eine wachsende Basis von Kund:innen mit Einwilligung, Kampagnen, die verkaufen statt nerven, und rechtlich saubere Abläufe — bei vertretbaren KI-Kosten.",
+  "Ziel der Inhaber: mehr profitabler Umsatz durch Mo, eine wachsende Basis von Kund:innen mit Einwilligung, Kampagnen, die verkaufen statt nerven, und rechtlich saubere Abläufe — bei vertretbaren KI-Kosten.",
   "",
   "Regeln:",
   "- Nutze ausschließlich die gelieferten Daten. Jede Zahl, die du nennst, stammt aus den Daten; nenne bei Quoten die Basis (n) und den Vergleich zur Vorperiode. Erfinde keine Zahlen, keine Benchmarks und keine Funktionen, die es nicht gibt.",
@@ -501,8 +513,8 @@ export function buildDecisionsPrompt(input) {
       "Erstelle den Entscheidungsteil der Komplettanalyse:",
       "1. headline + summary: die Lage auf einen Blick.",
       "2. decisions: die 3–5 Entscheidungen, die die Inhaber JETZT treffen sollten — konkret, mit Eigentümer, Wirkung, Konfidenz, Erfolgskennzahl und Admin-Link. Lieber wenige starke als viele schwache.",
-      "3. revenue: wie der Umsatz über Mo zustande kam (Stufen, Quellen, Codes, Kampagnen, Sets) und was ihn treibt oder bremst.",
-      "4. bottlenecks: wo im Funnel (Chat, Anmeldung, Einwilligung, E-Mail, Kampagne, Kauf) am meisten verloren geht — mit Zahlen.",
+      "3. revenue: wie der Umsatz durch Mo zustande kam (Stufen und Wege — Code, Mo-Link, Widget-Markierung —, Kampagnen, Sets) und was ihn treibt oder bremst.",
+      "4. bottlenecks: wo im Funnel (vom Chat zur Bestellung, Anmeldung, Einwilligung, E-Mail, Kampagne) am meisten verloren geht — mit Zahlen.",
       "5. changes: was sich seit dem letzten Bericht verändert hat und ob die damaligen Empfehlungen sichtbar wirken (sonst: gegenüber der Vorperiode).",
       "6. segments: was Lebenszyklus, Wertstufen, Personas und Mo-Effekt für die Ansprache bedeuten.",
       "7. campaigns: welche Kampagnen verkaufen und welche nicht.",

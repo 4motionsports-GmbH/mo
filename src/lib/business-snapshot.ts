@@ -2,16 +2,22 @@
 // long period before it, everything a business decision needs from the
 // current backend, and shapes it with the pure, tested
 // business-snapshot-core.mjs. Read-only: it calls the SAME store getters the
-// KPI screen calls (kpi-store, mo-orders-store, ai-usage-store, …) so every
-// number matches the KPI screen, plus a handful of small spelled-out queries
-// for what no getter answers per period (orders by marker source, campaigns
-// with their MK revenue, letters, e-mail ratings, the order ledger).
+// KPI screen calls (kpi-store, mo-revenue-store, kpi-journey-store,
+// ai-usage-store, …) so every number matches the KPI screen, plus a handful of
+// small spelled-out queries for what no getter answers per period (campaign
+// sends per campaign, the campaign of an MK code, letters, e-mail ratings,
+// the order ledger, new consents).
+//
+// „Umsatz durch Mo“ is the KPI screen's: the ledger from getMoRevenueData plus
+// the Shopify code lookup of the KPI cache, folded by mo-revenue.mjs in the
+// core (same tiers, channels, dedupe). The Shopify lookup is bounded by a
+// timeout so a slow Shopify never stalls a report step; without it the
+// snapshot says so in a caveat.
 //
 // Null-safe and never throws: without a database every part is null and the
 // snapshot carries a "Fehlende Daten" caveat; a failing part is reported via
-// reportError and left null. The optional Shopify cross-check (Mo codes
-// checked at Shopify) goes through the KPI screen's 10-minute cache and is
-// bounded by a timeout so a slow Shopify never stalls a report step.
+// reportError and left null. The raw fields the core reads are a typed
+// contract (SNAPSHOT_RAW_FIELDS, checked below against the getter types).
 //
 // Consumers: the Komplettanalyse (analytics-report-generate.ts) and the
 // Verbesserung. Field list: docs/BUSINESS_SNAPSHOT.md.
@@ -21,10 +27,11 @@ import { reportError } from "./observability";
 import type { KpiRange } from "./kpi-range";
 import {
   buildBusinessSnapshot,
+  campaignCodesIn,
   describePeriod,
   previousPeriod,
   SECTION_RELEASE_NOTES,
-  summarizeMoOrderRows,
+  SNAPSHOT_RAW_FIELDS,
 } from "./business-snapshot-core.mjs";
 import { releaseNotesFor, releasesInRange } from "./kpi-releases.mjs";
 import {
@@ -37,7 +44,8 @@ import {
   getOrderStatusKpis,
   getPageContextKpis,
 } from "./kpi-store";
-import { getMoAttributionKpis } from "./mo-orders-store";
+import { getMoRevenueData } from "./mo-revenue-store";
+import { getJourneyCounts } from "./kpi-journey-store";
 import { getAiCostMetrics } from "./ai-usage-store";
 import { getInboxKpis } from "./inbox-store";
 import { getQaKpis } from "./qa-store";
@@ -222,42 +230,42 @@ interface CampaignPeriodRow {
   delivered: number;
   bounced: number;
   complained: number;
-  moOrders: number;
-  moRevenue: number;
   letters: number;
 }
 
-/** Mo-marked orders of the period by source, code family and campaign. */
-async function loadMoOrderBreakdown(range: KpiRange, sql: Sql) {
-  const rows = (await sql`
-    SELECT attribution_source, financial_status, total_price, discount_codes
-      FROM mo_orders
-     WHERE processed_at >= ${range.from}::date
-       AND processed_at < (${range.to}::date + 1)
-  `) as Array<{ attribution_source: string | null; financial_status: string | null; total_price: unknown; discount_codes: string[] | null }>;
-  const mkCodes = [
-    ...new Set(
-      rows.flatMap((r) => (r.discount_codes ?? []).map((c) => String(c).trim().toUpperCase())).filter((c) => c.startsWith("MK-"))
-    ),
-  ];
-  const codeToCampaign: Record<string, number | null> = {};
-  if (mkCodes.length > 0) {
-    const mapRows = (await sql`
-      SELECT upper(discount_code) AS code, campaign_id
-        FROM campaign_sends
-       WHERE is_test = false AND upper(discount_code) = ANY(${mkCodes}::text[])
-    `) as Array<{ code: string; campaign_id: number | null }>;
-    for (const r of mapRows) codeToCampaign[r.code] = r.campaign_id == null ? null : Number(r.campaign_id);
-  }
-  return summarizeMoOrderRows(rows, codeToCampaign);
+/** An MK code and its campaign — maps the channel „Kampagne (MK-Code)“ onto campaigns. */
+interface CampaignCodeRow {
+  code: string;
+  campaignId: number | null;
+  name: string | null;
+  kind: string | null;
 }
 
-/** Campaign sends of the period per campaign — the same funnel the KPI screen shows, pure DB. */
-async function loadCampaignRows(
-  range: KpiRange,
-  byCampaignRevenue: Record<string, { orders: number; revenue: number }>,
-  sql: Sql
-): Promise<CampaignPeriodRow[]> {
+/** The campaign of each MK code (non-test sends); codes upper case. */
+async function loadCampaignCodes(codes: string[], sql: Sql): Promise<CampaignCodeRow[]> {
+  if (codes.length === 0) return [];
+  const rows = (await sql`
+    SELECT DISTINCT ON (upper(s.discount_code))
+           upper(s.discount_code) AS code, s.campaign_id, k.name, k.kind
+      FROM campaign_sends s
+      LEFT JOIN campaigns k ON k.id = s.campaign_id
+     WHERE s.is_test = false AND upper(s.discount_code) = ANY(${codes}::text[])
+     ORDER BY upper(s.discount_code), s.id
+  `) as Array<{ code: string; campaign_id: number | null; name: string | null; kind: string | null }>;
+  return rows.map((r) => ({
+    code: String(r.code),
+    campaignId: r.campaign_id == null ? null : Number(r.campaign_id),
+    name: r.name == null ? null : String(r.name),
+    kind: r.kind == null ? null : String(r.kind),
+  }));
+}
+
+/**
+ * Campaign sends of the period per campaign — the same funnel the KPI screen
+ * shows, pure DB — plus the letters per campaign. The MK revenue per campaign
+ * is added by the core (business-snapshot-core withCampaignRevenue).
+ */
+async function loadCampaignRows(range: KpiRange, sql: Sql): Promise<CampaignPeriodRow[]> {
   const [sendRows, letterRows] = (await Promise.all([
     sql`
       SELECT s.campaign_id, COALESCE(min(k.name), 'Ohne Kampagne') AS name, COALESCE(min(k.kind), '') AS kind,
@@ -304,15 +312,13 @@ async function loadCampaignRows(
       delivered: Number(r.delivered ?? 0),
       bounced: Number(r.bounced ?? 0),
       complained: Number(r.complained ?? 0),
-      moOrders: byCampaignRevenue[key]?.orders ?? 0,
-      moRevenue: byCampaignRevenue[key]?.revenue ?? 0,
       letters: letters.get(key) ?? 0,
     };
   });
-  // Campaigns with revenue or letters in the period but no send in it (a code
-  // mailed last month, redeemed now) still belong in the comparison.
+  // Campaigns with letters in the period but no send in it still belong in
+  // the comparison (campaigns with only revenue are added by the core).
   const seen = new Set(out.map((r) => (r.campaignId == null ? "none" : String(r.campaignId))));
-  const missing = [...new Set([...Object.keys(byCampaignRevenue), ...letters.keys()])].filter((k) => !seen.has(k));
+  const missing = [...letters.keys()].filter((k) => !seen.has(k));
   if (missing.length > 0) {
     const ids = missing.filter((k) => k !== "none").map(Number);
     const names = ids.length
@@ -333,8 +339,6 @@ async function loadCampaignRows(
         delivered: 0,
         bounced: 0,
         complained: 0,
-        moOrders: byCampaignRevenue[k]?.orders ?? 0,
-        moRevenue: byCampaignRevenue[k]?.revenue ?? 0,
         letters: letters.get(k) ?? 0,
       });
     }
@@ -419,9 +423,8 @@ async function loadNewSubscribers(range: KpiRange, sql: Sql) {
 async function collectPeriod(range: KpiRange, sql: Sql | null) {
   const db = sql;
   const [
-    attribution,
-    moBreakdown,
     core,
+    journey,
     reportKpis,
     pageContext,
     locales,
@@ -430,6 +433,7 @@ async function collectPeriod(range: KpiRange, sql: Sql | null) {
     consentGate,
     capture,
     newSubscribers,
+    campaigns,
     letters,
     ratings,
     inbox,
@@ -441,9 +445,8 @@ async function collectPeriod(range: KpiRange, sql: Sql | null) {
     bundles,
     aiCost,
   ] = await Promise.all([
-    safe("attribution", () => getMoAttributionKpis(range)),
-    db ? safe("moOrders", () => loadMoOrderBreakdown(range, db)) : Promise.resolve(null),
     safe("core", () => getCoreMetrics(range)),
+    safe("journey", () => getJourneyCounts(range)),
     safe("reportKpis", () => getReportKpis(range.from, range.to)),
     safe("pageContext", () => getPageContextKpis(range)),
     safe("locales", () => getLocaleSplit(range)),
@@ -452,6 +455,7 @@ async function collectPeriod(range: KpiRange, sql: Sql | null) {
     safe("consentGate", () => getConsentGateFunnel(range)),
     safe("capture", () => getEmailCaptureFunnel(range)),
     db ? safe("newSubscribers", () => loadNewSubscribers(range, db)) : Promise.resolve(null),
+    db ? safe("campaigns", () => loadCampaignRows(range, db)) : Promise.resolve(null),
     db ? safe("letters", () => loadLetters(range, db)) : Promise.resolve(null),
     db ? safe("ratings", () => loadRatings(range, db)) : Promise.resolve(null),
     safe("inbox", () => getInboxKpis(range)),
@@ -463,14 +467,9 @@ async function collectPeriod(range: KpiRange, sql: Sql | null) {
     safe("bundles", () => getBundleKpis(range)),
     safe("aiCost", () => getAiCostMetrics(range)),
   ]);
-  const campaigns = db
-    ? await safe("campaigns", () => loadCampaignRows(range, moBreakdown?.byCampaign ?? {}, db))
-    : null;
   return {
-    attribution,
-    ordersBySource: moBreakdown?.bySource ?? null,
-    codeOrders: moBreakdown?.codeOrders ?? null,
     core,
+    journey,
     reportKpis,
     pageContext,
     locales,
@@ -534,17 +533,25 @@ export async function collectBusinessSnapshotRaw(
 ) {
   const period = describePeriod(range);
   const previous = previousPeriod(range);
-  const [cur, prev, customerBase, moEffectRaw] = await Promise.all([
+  const shopifyWanted = Boolean(opts.includeShopify) && isShopifyConfigured();
+  const [cur, prev, moRevenueData, shopifyBlock, customerBase, moEffectRaw] = await Promise.all([
     collectPeriod(asRange(period), sql),
     collectPeriod(asRange(previous), sql),
+    // Both periods' ledger in one call (its previous period is ours).
+    safe("moRevenue", () => getMoRevenueData(asRange(period), sql)),
+    shopifyWanted
+      ? withTimeout(loadKpiShopifyBlock(asRange(period)), opts.shopifyTimeoutMs ?? 45_000)
+      : Promise.resolve(null),
     safe("customerBase", () => getCustomerBaseKpis()),
     safe("moEffect", () => getMoEffectKpis()),
   ]);
-  let shopify: { revenue: unknown; campaign: unknown; fetchedAt: string } | null = null;
-  if (opts.includeShopify && isShopifyConfigured()) {
-    const block = await withTimeout(loadKpiShopifyBlock(asRange(period)), opts.shopifyTimeoutMs ?? 45_000);
-    if (block) shopify = { revenue: block.revenue.value, campaign: block.campaign.value, fetchedAt: block.fetchedAt };
-  }
+  const shopify = shopifyBlock
+    ? { revenue: shopifyBlock.revenue.value, campaign: shopifyBlock.campaign.value, fetchedAt: shopifyBlock.fetchedAt }
+    : null;
+  // The detail rows (products, conversations) are the KPI drill-down, not snapshot input.
+  const moRevenue = moRevenueData ? { ...moRevenueData, details: [] } : null;
+  const codes = campaignCodesIn(moRevenue?.orders, moRevenue?.previousOrders, shopify?.revenue?.redemptions);
+  const campaignCodes = sql && codes.length > 0 ? ((await safe("campaignCodes", () => loadCampaignCodes(codes, sql))) ?? []) : [];
   return {
     generatedAt: (opts.now ?? new Date()).toISOString(),
     period,
@@ -557,12 +564,47 @@ export async function collectBusinessSnapshotRaw(
       wonByMo: moEffectRaw?.wonByMo ?? null,
       subscribersBySource: moEffectRaw?.subscribersBySource ?? [],
     },
+    moRevenue,
     shopify,
+    campaignCodes,
     switches: snapshotSwitches(),
     releases: releasesInRange({ from: previous.from, to: period.to }),
     releaseNotes: releaseNotesBySection(period, previous),
   };
 }
+
+// ── The raw-field contract, checked at compile time ──
+// Every path in SNAPSHOT_RAW_FIELDS must exist in the type of the part it
+// names; a getter that drops or renames a field the snapshot reads fails tsc
+// here, with the path in the message. (The tests check the other half: the
+// builder reads nothing else, and the fixture has every field.)
+
+type SnapshotRaw = Awaited<ReturnType<typeof collectBusinessSnapshotRaw>>;
+type Leaf = string | number | boolean | bigint | symbol | Date | null | undefined;
+type Depth = [never, 0, 1, 2, 3, 4, 5, 6];
+/** Dotted field paths into T ("a.b", "list[].c", "codes[]"), up to 7 levels. */
+type FieldPath<T, D extends number = 7> = [D] extends [never]
+  ? never
+  : NonNullable<T> extends Leaf
+    ? never
+    : NonNullable<T> extends ReadonlyArray<infer E>
+      ? "[]" | `[].${FieldPath<E, Depth[D]>}`
+      : {
+          [K in keyof NonNullable<T> & string]: NonNullable<NonNullable<T>[K]> extends ReadonlyArray<infer E>
+            ? K | `${K}[]` | `${K}[].${FieldPath<E, Depth[D]>}`
+            : K | `${K}.${FieldPath<NonNullable<T>[K], Depth[D]>}`;
+        }[keyof NonNullable<T> & string];
+/** Resolves only when `Unknown` is empty — otherwise tsc names the unknown path. */
+type NoUnknownField<Unknown extends never> = Unknown;
+type Declared = typeof SNAPSHOT_RAW_FIELDS;
+
+export type SnapshotRawFieldCheck = [
+  NoUnknownField<Exclude<Declared["period"][number], FieldPath<SnapshotRaw["cur"]>>>,
+  NoUnknownField<Exclude<Declared["lifetime"][number], FieldPath<SnapshotRaw["lifetime"]>>>,
+  NoUnknownField<Exclude<Declared["moRevenue"][number], FieldPath<SnapshotRaw["moRevenue"]>>>,
+  NoUnknownField<Exclude<Declared["shopify"][number], FieldPath<SnapshotRaw["shopify"]>>>,
+  NoUnknownField<Exclude<Declared["campaignCodes"][number], FieldPath<SnapshotRaw["campaignCodes"]>>>,
+];
 
 /**
  * The business snapshot for `range` vs the equally long period before it.

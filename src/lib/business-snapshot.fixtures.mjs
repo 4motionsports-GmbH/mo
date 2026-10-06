@@ -1,24 +1,159 @@
 // A realistic raw input for buildBusinessSnapshot() — the shape business-
 // snapshot.ts collects from the store getters — used by the node:test suites
 // of the snapshot, the report synthesis and the PDF. Numbers are invented but
-// consistent (the funnels narrow, rates match their counts).
+// consistent (the funnels narrow, rates match their counts). Every part has
+// the shape of its getter (business-snapshot-core SNAPSHOT_RAW_FIELDS; the
+// field-contract test checks the builder reads nothing this fixture lacks).
 
 export const SAMPLE_PERIOD = { from: "2026-08-10", to: "2026-09-08", days: 30, label: "10.08.2026 – 08.09.2026" };
 export const SAMPLE_PREVIOUS = { from: "2026-07-11", to: "2026-08-09", days: 30, label: "11.07.2026 – 09.08.2026" };
 
-function attribution(direct, assisted, influenced, extra = {}) {
+/** One mo_orders ledger row as mo-revenue-store RevenueLedgerOrder. */
+function order(day, total, tier, source, { codes = [], overlap = null, status = "PAID" } = {}) {
   return {
-    direct: { orderCount: direct[0], revenueAmount: direct[1] },
-    assisted: { orderCount: assisted[0], revenueAmount: assisted[1] },
-    influenced: { orderCount: influenced[0], revenueAmount: influenced[1] },
-    unrealisedOrders: extra.unrealised ?? 0,
+    processedAt: `${day}T10:00:00.000Z`,
+    total,
     currency: "EUR",
-    totalOrders: direct[0] + assisted[0] + influenced[0] + (extra.unrealised ?? 0),
-    ingestionSeen: true,
-    attributionWindowDays: 30,
-    unresolvedOrders: { unknownToken: extra.unknownToken ?? 0, outsideWindow: extra.outsideWindow ?? 0 },
-    sessionAnchor: false,
-    range: { from: "", to: "", days: 30, label: "" },
+    financialStatus: status,
+    tier,
+    source,
+    discountCodes: codes,
+    overlap,
+  };
+}
+
+// „Umsatz durch Mo“ — current period (ledger). Paid: 21 orders, 14 920,90 €;
+// the Shopify lookup adds MK-HERBST-03 (300 €) → 22 orders, 15 220,90 €.
+//   Beraten & gekauft 3 / 1 890 · Beraten, anderes 5 / 4 210,50 · Direkt 14 / 9 120,40
+//   (Set 4 / 5 120 · Kampagne 4 / 1 340,40 · Marketing 4 / 1 450 · Zusammenfassung 2 / 1 210)
+const CURRENT_ORDERS = [
+  order("2026-08-12", 720, "assisted", "widget", { overlap: true }),
+  order("2026-08-19", 650, "assisted", "widget", { overlap: true }),
+  order("2026-09-02", 520, "assisted", "widget", { overlap: true }),
+  order("2026-08-11", 1200, "influenced", "widget", { overlap: false }),
+  order("2026-08-15", 980.5, "influenced", "widget", { overlap: false }),
+  order("2026-08-24", 850, "influenced", "widget", { overlap: false }),
+  order("2026-08-29", 640, "influenced", "widget", { overlap: false }),
+  order("2026-09-05", 540, "influenced", "widget", { overlap: false }),
+  order("2026-08-13", 1800, "direct", "bundle"),
+  order("2026-08-21", 1400, "direct", "bundle"),
+  order("2026-08-27", 1100, "direct", "bundle"),
+  order("2026-09-04", 820, "direct", "bundle"),
+  order("2026-08-20", 420.4, "direct", "discount_code", { codes: ["MK-HERBST-01"] }),
+  order("2026-08-26", 320, "direct", "discount_code", { codes: ["MK-HERBST-02"] }),
+  order("2026-09-01", 300, "direct", "discount_code", { codes: ["MK-EINZEL-01"] }),
+  order("2026-08-17", 340, "direct", "discount_code", { codes: ["MS5-A7Q2"] }),
+  order("2026-08-31", 300, "direct", "discount_code", { codes: ["MS5-B3K9"] }),
+  order("2026-08-22", 470, "direct", "marketing_email"),
+  order("2026-09-03", 340, "direct", "marketing_email"),
+  order("2026-08-14", 700, "direct", "summary_email"),
+  order("2026-08-28", 510, "direct", "summary_email"),
+  // Not (yet) paid — counted as „erfasst, nicht bezahlt“, never as revenue.
+  order("2026-09-07", 480, "influenced", "widget", { overlap: false, status: "PENDING" }),
+  order("2026-09-08", 999, "direct", "bundle", { status: "PENDING" }),
+];
+
+// Previous period (ledger only, as on the KPI screen): 16 paid orders, 10 120 €.
+const PREVIOUS_ORDERS = [
+  order("2026-07-14", 560, "assisted", "widget", { overlap: true }),
+  order("2026-07-30", 420, "assisted", "widget", { overlap: true }),
+  order("2026-07-12", 1000, "influenced", "widget", { overlap: false }),
+  order("2026-07-20", 850, "influenced", "widget", { overlap: false }),
+  order("2026-07-27", 610, "influenced", "widget", { overlap: false }),
+  order("2026-08-05", 450, "influenced", "widget", { overlap: false }),
+  order("2026-07-16", 2500, "direct", "bundle"),
+  order("2026-08-02", 768.65, "direct", "bundle"),
+  order("2026-07-22", 330, "direct", "discount_code", { codes: ["MK-SOMMER-01"] }),
+  order("2026-07-29", 280, "direct", "discount_code", { codes: ["MK-SOMMER-02"] }),
+  order("2026-08-06", 200, "direct", "discount_code", { codes: ["MK-EINZEL-00"] }),
+  order("2026-07-18", 310, "direct", "discount_code", { codes: ["MS5-C1D4"] }),
+  order("2026-07-25", 300, "direct", "discount_code", { codes: ["MS5-D8F2"] }),
+  order("2026-08-01", 924.11, "direct", "marketing_email"),
+  order("2026-07-15", 400, "direct", "summary_email"),
+  order("2026-08-08", 217.24, "direct", "summary_email"),
+  order("2026-08-09", 300, "influenced", "widget", { overlap: false, status: "PENDING" }),
+];
+
+/** getMoRevenueData(range) — mo-revenue-store MoRevenueData (details trimmed). */
+export const SAMPLE_MO_REVENUE = {
+  range: SAMPLE_PERIOD,
+  previous: { from: SAMPLE_PREVIOUS.from, to: SAMPLE_PREVIOUS.to, days: SAMPLE_PREVIOUS.days },
+  orders: CURRENT_ORDERS,
+  previousOrders: PREVIOUS_ORDERS,
+  details: [],
+  detailsTruncated: false,
+  ledgerCodes: ["MK-HERBST-01", "MK-HERBST-02", "MK-EINZEL-01", "MS5-A7Q2", "MS5-B3K9"],
+  ledgerOrderNames: ["#1031", "#1036", "#1040"],
+  unresolved: { unknownToken: 2, outsideWindow: 1 },
+  ingestionSeen: true,
+  attributionWindowDays: 30,
+  sessionAnchor: false,
+};
+
+/** The cached Shopify block (kpi-cache loadKpiShopifyBlock): the code lookup and the campaign funnel. */
+export const SAMPLE_SHOPIFY = {
+  revenue: {
+    revenueAmount: 1360.4,
+    currency: "EUR",
+    orderCount: 3,
+    shopifyConfigured: true,
+    codesChecked: 18,
+    redemptionUnknown: 0,
+    codesInScope: 18,
+    sampled: false,
+    redemptions: [
+      // Already in the ledger (code) — counted once, from the ledger.
+      { code: "MK-HERBST-01", orderName: "#1031", createdAt: "2026-08-20T10:00:00.000Z", amount: 420.4, currency: "EUR", financialStatus: "PAID" },
+      { code: "ms5-a7q2", orderName: "#1029", createdAt: "2026-08-17T10:00:00.000Z", amount: 340, currency: "EUR", financialStatus: "PAID" },
+      // Before the webhook registration — the code complement.
+      { code: "MK-HERBST-03", orderName: "#1019", createdAt: "2026-08-10T15:00:00.000Z", amount: 300, currency: "EUR", financialStatus: "PAID" },
+    ],
+    range: SAMPLE_PERIOD,
+  },
+  campaign: {
+    sent: 30,
+    sentViaEmail: 30,
+    sentViaCopy: 0,
+    trackedSends: 30,
+    clicked: 10,
+    clickRate: 0.333,
+    byLanguage: { de: 30, en: 0, unknown: 0 },
+    shopifyConfigured: true,
+    converted: 4,
+    conversionRate: 0.133,
+    codesChecked: 30,
+    redemptionUnknown: 0,
+    sampled: false,
+    revenueEur: 1340.4,
+    bundleSends: 4,
+  },
+  fetchedAt: "2026-09-09T05:58:00.000Z",
+};
+
+/** MK codes → campaign (business-snapshot.ts loadCampaignCodes). */
+export const SAMPLE_CAMPAIGN_CODES = [
+  { code: "MK-HERBST-01", campaignId: 3, name: "Herbst-Kraftraum", kind: "segment" },
+  { code: "MK-HERBST-02", campaignId: 3, name: "Herbst-Kraftraum", kind: "segment" },
+  { code: "MK-HERBST-03", campaignId: 3, name: "Herbst-Kraftraum", kind: "segment" },
+  { code: "MK-EINZEL-01", campaignId: 1, name: "Einzelansprache", kind: "einzel" },
+  { code: "MK-EINZEL-00", campaignId: 1, name: "Einzelansprache", kind: "einzel" },
+  { code: "MK-SOMMER-01", campaignId: 2, name: "Sommer-Ausdauer", kind: "segment" },
+  { code: "MK-SOMMER-02", campaignId: 2, name: "Sommer-Ausdauer", kind: "segment" },
+];
+
+/** getJourneyCounts(range) — kpi-journey-store JourneyCounts. */
+function journey(o) {
+  return {
+    chats: o.chats,
+    shown: o.shown,
+    clicked: o.clicked,
+    cart: o.cart,
+    ordered: o.ordered,
+    orderedAny: o.orderedAny,
+    orderedOrders: o.orderedAny,
+    revenue: o.revenue,
+    productClicks: o.productClicks,
+    cartClicks: o.cartClicks,
   };
 }
 
@@ -111,16 +246,8 @@ export const SAMPLE_SNAPSHOT_RAW = {
   period: SAMPLE_PERIOD,
   previous: SAMPLE_PREVIOUS,
   cur: {
-    attribution: attribution([14, 9120.4], [3, 1890.0], [5, 4210.5], { unrealised: 2, unknownToken: 2, outsideWindow: 1 }),
-    ordersBySource: [
-      { source: "bundle", orders: 4, revenue: 5120.0 },
-      { source: "discount_code", orders: 6, revenue: 1980.4 },
-      { source: "summary_email", orders: 2, revenue: 1210.0 },
-      { source: "marketing_email", orders: 2, revenue: 810.0 },
-      { source: "widget", orders: 8, revenue: 6100.5 },
-    ],
-    codeOrders: { ms5: { orders: 2, revenue: 640.0 }, mk: { orders: 4, revenue: 1340.4 } },
     core: core({ chats: 96, avgMessages: 7.4, abandoned: 21, clicks: 58, cart: 9, reach: 1840, opened: 212, wrote: 101 }),
+    journey: journey({ chats: 88, shown: 61, clicked: 30, cart: 9, ordered: 5, orderedAny: 8, revenue: 6100.5, productClicks: 58, cartClicks: 9 }),
     reportKpis: { conversations: 96, analyzed: 74, withError: 3, emailCaptured: 18, cartUsed: 7, checkoutOffered: 61 },
     pageContext: { sessions: 34, resolved: 29, byLocale: {}, pcts: [0], arms: {}, excluded: {}, primary: null, progress: null },
     locales: { chats: [{ locale: "de", count: 88 }, { locale: "en", count: 8 }], captures: [] },
@@ -133,12 +260,16 @@ export const SAMPLE_SNAPSHOT_RAW = {
       wayShown: [21, 9],
       wayAccepted: [9, 3],
       wayOpted: [8, 3],
+      variants: [
+        { variant: "vorteile", placement: "chat", shown: 21, accepted: 9, declined: 6, dismissed: 3, acceptedWithoutShown: 0, optedIn: 8, alreadyConfirmed: 1, doiRequired: 7, doiConfirmed: 5, variantMismatch: 0 },
+        { variant: "kurz", placement: "chat", shown: 9, accepted: 3, declined: 2, dismissed: 1, acceptedWithoutShown: 0, optedIn: 3, alreadyConfirmed: 0, doiRequired: 3, doiConfirmed: 1, variantMismatch: 0 },
+      ],
     }),
     capture: capture({ asked: 64, submitted: 22, opted: 14, doiSent: 12, confirmed: 8 }),
     newSubscribers: 19,
     campaigns: [
-      { campaignId: 3, name: "Herbst-Kraftraum", kind: "segment", sent: 24, tracked: 24, clicked: 7, bundleClicked: 2, chatStarted: 3, unsubscribed: 1, delivered: 23, bounced: 1, complained: 0, moOrders: 3, moRevenue: 1040.4, letters: 4 },
-      { campaignId: 1, name: "Einzelansprache", kind: "einzel", sent: 6, tracked: 6, clicked: 3, bundleClicked: 0, chatStarted: 1, unsubscribed: 0, delivered: 6, bounced: 0, complained: 0, moOrders: 1, moRevenue: 300.0, letters: 0 },
+      { campaignId: 3, name: "Herbst-Kraftraum", kind: "segment", sent: 24, tracked: 24, clicked: 7, bundleClicked: 2, chatStarted: 3, unsubscribed: 1, delivered: 23, bounced: 1, complained: 0, letters: 4 },
+      { campaignId: 1, name: "Einzelansprache", kind: "einzel", sent: 6, tracked: 6, clicked: 3, bundleClicked: 0, chatStarted: 1, unsubscribed: 0, delivered: 6, bounced: 0, complained: 0, letters: 0 },
     ],
     ratings: [
       { kind: "campaign", count: 5, avg: 4.2 },
@@ -193,16 +324,8 @@ export const SAMPLE_SNAPSHOT_RAW = {
     },
   },
   prev: {
-    attribution: attribution([10, 6230.0], [2, 980.0], [4, 2910.0], { unrealised: 1, unknownToken: 4, outsideWindow: 2 }),
-    ordersBySource: [
-      { source: "bundle", orders: 2, revenue: 2268.65 },
-      { source: "discount_code", orders: 5, revenue: 1420.0 },
-      { source: "widget", orders: 6, revenue: 3890.0 },
-      { source: "summary_email", orders: 2, revenue: 617.24 },
-      { source: "marketing_email", orders: 1, revenue: 924.11 },
-    ],
-    codeOrders: { ms5: { orders: 2, revenue: 610.0 }, mk: { orders: 3, revenue: 810.0 } },
     core: core({ chats: 71, avgMessages: 6.9, abandoned: 19, clicks: 37, cart: 5, reach: 1610, opened: 180, wrote: 74 }),
+    journey: journey({ chats: 66, shown: 40, clicked: 20, cart: 5, ordered: 3, orderedAny: 6, revenue: 3890, productClicks: 37, cartClicks: 5 }),
     reportKpis: { conversations: 71, analyzed: 66, withError: 4, emailCaptured: 15, cartUsed: 4, checkoutOffered: 40 },
     pageContext: null,
     locales: { chats: [{ locale: "de", count: 67 }, { locale: "en", count: 4 }], captures: [] },
@@ -219,8 +342,8 @@ export const SAMPLE_SNAPSHOT_RAW = {
     capture: capture({ asked: 58, submitted: 17, opted: 11, doiSent: 11, confirmed: 6 }),
     newSubscribers: 12,
     campaigns: [
-      { campaignId: 2, name: "Sommer-Ausdauer", kind: "segment", sent: 15, tracked: 15, clicked: 3, bundleClicked: 1, chatStarted: 0, unsubscribed: 1, delivered: 15, bounced: 0, complained: 0, moOrders: 2, moRevenue: 610.0, letters: 2 },
-      { campaignId: 1, name: "Einzelansprache", kind: "einzel", sent: 4, tracked: 4, clicked: 1, bundleClicked: 0, chatStarted: 0, unsubscribed: 0, delivered: 4, bounced: 0, complained: 0, moOrders: 1, moRevenue: 200.0, letters: 0 },
+      { campaignId: 2, name: "Sommer-Ausdauer", kind: "segment", sent: 15, tracked: 15, clicked: 3, bundleClicked: 1, chatStarted: 0, unsubscribed: 1, delivered: 15, bounced: 0, complained: 0, letters: 2 },
+      { campaignId: 1, name: "Einzelansprache", kind: "einzel", sent: 4, tracked: 4, clicked: 1, bundleClicked: 0, chatStarted: 0, unsubscribed: 0, delivered: 4, bounced: 0, complained: 0, letters: 0 },
     ],
     ratings: [{ kind: "campaign", count: 2, avg: 3.5 }],
     letters: { sent: 2, costCents: 212 },
@@ -306,7 +429,9 @@ export const SAMPLE_SNAPSHOT_RAW = {
       { source: "import", n: 12 },
     ],
   },
-  shopify: null,
+  moRevenue: SAMPLE_MO_REVENUE,
+  shopify: SAMPLE_SHOPIFY,
+  campaignCodes: SAMPLE_CAMPAIGN_CODES,
   switches: {
     shopifyConfigured: true,
     customerSync: true,
@@ -328,4 +453,27 @@ export const SAMPLE_SNAPSHOT_RAW = {
   releaseNotes: {
     signin: { current: [], previous: ["Erst ab dem 04.08.2026 aussagekräftig: Beispiel."] },
   },
+};
+
+/**
+ * The previous period as its own snapshot input (a report about it, without a
+ * period before it) — for report-to-report comparisons.
+ */
+export const SAMPLE_PREVIOUS_PERIOD_RAW = {
+  ...SAMPLE_SNAPSHOT_RAW,
+  period: SAMPLE_PREVIOUS,
+  previous: null,
+  cur: SAMPLE_SNAPSHOT_RAW.prev,
+  prev: null,
+  moRevenue: {
+    ...SAMPLE_MO_REVENUE,
+    range: SAMPLE_PREVIOUS,
+    previous: null,
+    orders: PREVIOUS_ORDERS,
+    previousOrders: [],
+    ledgerCodes: ["MK-SOMMER-01", "MK-SOMMER-02", "MK-EINZEL-00", "MS5-C1D4", "MS5-D8F2"],
+    ledgerOrderNames: [],
+    unresolved: { unknownToken: 4, outsideWindow: 2 },
+  },
+  shopify: null,
 };
