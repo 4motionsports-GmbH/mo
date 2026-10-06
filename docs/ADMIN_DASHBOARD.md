@@ -1054,7 +1054,7 @@ stepped by `useStepLoop` over `analytics/step`, one bounded chunk per step:
 | `personas` | top questions per persona, 2 per step | writer |
 | `customer_synthesis` | aggregate, pseudonymous customer knowledge | analyst |
 | `customer_profiles` | optional per-customer profile, 1 per step | deep |
-| `snapshot` | the business snapshot of the period vs. the previous period ([`BUSINESS_SNAPSHOT.md`](./BUSINESS_SNAPSHOT.md)) and the comparison with the last stored completed report | — (pure DB, Shopify cross-check cached) |
+| `snapshot` | the business snapshot of the period vs. the previous period ([`BUSINESS_SNAPSHOT.md`](./BUSINESS_SNAPSHOT.md)) and the comparison with the last stored completed report | — (pure DB, Shopify code lookup cached) |
 | `decisions` | strategist pass 1: headline, summary, 3–5 decisions, revenue story, bottlenecks, changes, segments, campaigns | strategist |
 | `plan` | strategist pass 2: prioritised recommendations, experiments, risks, data-quality caveats | strategist |
 | `assemble` | pure aggregations, the sections payload | — |
@@ -1087,15 +1087,17 @@ dispatches): a v2 payload (`sections.version` 2 with `snapshot`, `decision`,
 `comparison`) renders [`DecisionReport.tsx`](../src/app/admin/analytics/DecisionReport.tsx),
 with a chip navigation to its chapters, each explained behind its InfoTip:
 
-1. **Auf einen Blick** — headline and summary, six headline tiles (Mo-Umsatz,
-   Anteil am Shop-Umsatz, Gespräche, Neue Einwilligungen, KI-Kosten, Mo-Umsatz
-   je KI-Euro) with the change against the previous period, generation notes.
+1. **Auf einen Blick** — headline and summary, six headline tiles (Umsatz durch Mo,
+   Anteil am Shop-Umsatz, Gespräche, Neue Einwilligungen, KI-Kosten, Umsatz je
+   1 € KI-Kosten) with the change against the previous period, generation notes.
 2. **Jetzt entscheiden** — 3–5 decisions: rationale with numbers, owner
    (Betrieb / Entwicklung / Frontend / Anwalt), impact, confidence, success
    metric, link into the admin screen.
-3. **Umsatz über Mo** — how it came about, tier tiles, drivers, revenue by marker source.
+3. **Umsatz durch Mo** — the same figures as the KPI section „Umsatz durch Mo“ (ledger + Shopify code
+   complement, one channel per order): how it came about, tier tiles, drivers, revenue by channel
+   („Wie der Umsatz entstand“).
 4. **Engpässe im Funnel** — the bottlenecks with evidence, the measured funnels
-   (chat, sign-in popup, consent, capture form, campaign) as bars with step
+   (vom Chat zur Bestellung, chat, sign-in popup, consent, capture form, campaign) as bars with step
    conversion and previous period.
 5. **Seit dem letzten Bericht** — link to the compared report, the model's
    reading (incl. whether earlier recommendations show), the metric table now
