@@ -71,7 +71,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: true,
     acceptable: true,
     consequence:
-      "Erwarteter Live-Stand: Vorteile im Einwilligungs-Popup kommen vom Server (mit Variante und Platzierung), getippte Fragen auf Produkt- und Kollektionsseiten tragen den Seitenkontext, die Bestell-Markierung wird nach einer Beratung erneuert und beim Abmelden geleert. CHAT_PAGE_CONTEXT_ENABLED darf nach 2–3 Tagen Beobachtung eingeschaltet werden.",
+      "Erwarteter Live-Stand: Vorteile im Einwilligungs-Popup kommen vom Server (mit Variante und Platzierung), getippte Fragen auf Produkt- und Kollektionsseiten tragen den Seitenkontext, die Bestell-Markierung wird nach einer Beratung erneuert und beim Abmelden geleert.",
   },
   {
     key: "main-2026-10-04",
