@@ -343,15 +343,19 @@ function parseBlocks(md: string): React.ReactNode[] {
 export function Markdown({
   content,
   className,
+  tone = "default",
 }: {
   content: string | null | undefined;
   className?: string;
+  /** `muted` for supporting text under a more prominent element (bold stays foreground). */
+  tone?: "default" | "muted";
 }) {
   const text = content ?? "";
   return (
     <div
       className={cn(
-        "space-y-2 text-sm leading-relaxed break-words text-foreground",
+        "space-y-2 text-sm leading-relaxed break-words",
+        tone === "muted" ? "text-muted-foreground" : "text-foreground",
         className
       )}
     >
