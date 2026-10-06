@@ -14,7 +14,8 @@
 // The effect measurement lives in improvement-effects.mjs, the decision layer
 // (normalisers, prompts, Komplettanalyse import) in improvement-decision.mjs.
 
-import { scrubPii } from "./business-snapshot-core.mjs";
+import { periodLabel, scrubPii } from "./business-snapshot-core.mjs";
+import { daysBetween, parseYmd, shiftYmd } from "./kpi-range.mjs";
 
 // ── Run versions ──────────────────────────────────────────────────────────────
 // v1 (until 2026-10-06): a run read one Komplettanalyse, compared a handful of
@@ -89,6 +90,40 @@ export function nextRunPhase(phase, { hasAssessable = false } = {}) {
 /** Position of a phase in RUN_PHASES (−1 for legacy / unknown phases). */
 export function runPhaseIndex(phase) {
   return RUN_PHASES.indexOf(phase);
+}
+
+// ── The run's period ──────────────────────────────────────────────────────────
+
+/** Presets of the new-run panel: full days up to yesterday (no partial today). */
+export const RUN_PERIOD_PRESETS = Object.freeze({ "7d": 7, "14d": 14, "30d": 30, "90d": 90 });
+export const MAX_RUN_PERIOD_DAYS = 366;
+
+/**
+ * The period a run is built on: a Komplettanalyse's period ("report"), a
+ * preset of full days ending yesterday, or a custom range (swapped when
+ * reversed, never after yesterday, at most MAX_RUN_PERIOD_DAYS). null when the
+ * input is unusable.
+ * @param {{ preset?: string | null, from?: string | null, to?: string | null, reportRange?: { from: string, to: string } | null }} input
+ * @param {string} today YYYY-MM-DD (UTC)
+ * @returns {{ from: string, to: string, days: number, label: string } | null}
+ */
+export function resolveRunPeriod({ preset = "30d", from = null, to = null, reportRange = null } = {}, today) {
+  const yesterday = shiftYmd(today, -1);
+  const shape = (a, b) => ({ from: a, to: b, days: daysBetween(a, b), label: periodLabel(a, b) });
+  if (preset === "report") {
+    if (!reportRange || parseYmd(reportRange.from) == null || parseYmd(reportRange.to) == null) return null;
+    return shape(reportRange.from, reportRange.to);
+  }
+  const days = /** @type {Record<string, number>} */ (RUN_PERIOD_PRESETS)[preset ?? ""];
+  if (days) return shape(shiftYmd(yesterday, -(days - 1)), yesterday);
+  if (preset !== "custom" || parseYmd(from) == null || parseYmd(to) == null) return null;
+  let a = /** @type {string} */ (from);
+  let b = /** @type {string} */ (to);
+  if (a > b) [a, b] = [b, a];
+  if (b > yesterday) b = yesterday;
+  if (a > b) return null;
+  if (daysBetween(a, b) > MAX_RUN_PERIOD_DAYS) a = shiftYmd(b, -(MAX_RUN_PERIOD_DAYS - 1));
+  return shape(a, b);
 }
 
 // ── Owner lanes (v2) — who acts on a suggestion ───────────────────────────────

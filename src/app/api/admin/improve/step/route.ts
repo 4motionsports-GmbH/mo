@@ -1,9 +1,11 @@
 // POST /api/admin/improve/step  { id }
 //
-// Advance ONE improvement run by exactly one bounded model call
-// (lib/improvement-generate): first the optional Wirkungs-Check, then the
-// suggestions pass. The client calls this until `done` — the same stepping
-// pattern as the Komplettanalyse, so no request approaches maxDuration.
+// Advance ONE improvement run by exactly one bounded unit of work
+// (lib/improvement-generate): collect the business snapshot, measure the
+// adopted changes (time-boxed), or one strategist (Opus 5.5) pass — the
+// Wirkungs-Check, then the two suggestion passes. The client calls this until
+// `done` — the stepping pattern of the Komplettanalyse, so no request
+// approaches maxDuration.
 //
 // Auth + CSRF: guardAdminPost (the proxy already gates /api/admin/*).
 
@@ -12,12 +14,12 @@ import { isDbConfigured } from "@/lib/db";
 import { stepImprovementRun } from "@/lib/improvement-generate";
 import { reportError } from "@/lib/observability";
 
-// Each step is ONE Sonnet call, and the suggestion phases are split per lane
-// so no single call produces more than ~2.5k output tokens. Still, a Sonnet
-// call with the self-snapshot input can take well over a minute — give the
-// route the full Fluid-compute headroom so the platform never kills the
-// function mid-call (which surfaced as a dropped connection / "Netzwerkfehler"
-// in the admin when the original single-pass design exceeded its budget).
+// A strategist pass streams one Opus call that is aborted after 240 s
+// (IMPROVEMENT_STRATEGIST_TIMEOUT_MS, improvement-decision.mjs — keep
+// IMPROVEMENT_STEP_MAX_DURATION_S there in sync with this value) and is
+// retried on the next step one rung lower on the effort ladder; the
+// measurement step stops fetching window snapshots after 120 s. The full
+// Fluid-compute headroom keeps the platform from killing a function mid-call.
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
@@ -51,6 +53,7 @@ export async function POST(req: Request) {
       done: result.done,
       busy: result.busy,
       error: result.error,
+      progress: result.progress ?? null,
     });
   } catch (err) {
     reportError(err, { route: "api/admin/improve/step" });

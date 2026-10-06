@@ -251,10 +251,12 @@ export function normalizeSuggestion(raw, { flat = {}, lanes = OWNER_LANES, origi
 export function normalizeSuggestionsPayload(raw, { flat = {}, pass }) {
   const o = raw && typeof raw === "object" ? /** @type {Record<string, any>} */ (raw) : {};
   const lanes = PASS_LANES[pass] ?? OWNER_LANES;
-  const suggestions = (Array.isArray(o.suggestions) ? o.suggestions : [])
-    .map((s) => normalizeSuggestion(s, { flat, lanes }))
-    .filter(Boolean)
-    .slice(0, MAX_SUGGESTIONS_PER_LANE);
+  /** @type {Array<NonNullable<ReturnType<typeof normalizeSuggestion>>>} */
+  const suggestions = [];
+  for (const s of Array.isArray(o.suggestions) ? o.suggestions : []) {
+    const n = normalizeSuggestion(s, { flat, lanes });
+    if (n && suggestions.length < MAX_SUGGESTIONS_PER_LANE) suggestions.push(n);
+  }
   return {
     headline: text(o.headline, LIMITS.headline) || null,
     summary: text(o.summary, LIMITS.summary) || null,
@@ -552,7 +554,10 @@ export function renderDirectivesForPrompt(directives) {
   return directives.map((d) => `- [D${d.id}] ${d.active ? "aktiv" : "inaktiv"}: ${scrubPii(d.content)}`).join("\n");
 }
 
-/** Pass `wirkungscheck`: system + prompt. */
+/**
+ * Pass `wirkungscheck`: system + prompt.
+ * @param {{ snapshot: any, movers: any, measurements: any[], directives?: Array<{ id: number, content: string, active: boolean }> }} input
+ */
 export function buildEffectReviewPrompt({ snapshot, movers, measurements, directives = [] }) {
   return {
     system: IMPROVEMENT_SYSTEM,
@@ -581,6 +586,12 @@ export function buildEffectReviewPrompt({ snapshot, movers, measurements, direct
 /**
  * Pass `vorschlaege_chat` or `vorschlaege_betrieb`: system + prompt.
  * @param {"vorschlaege_chat" | "vorschlaege_betrieb"} pass
+ * @param {{
+ *   snapshot: any, movers: any, measurements?: any[], review?: any,
+ *   backlog?: Array<any>, directives?: Array<{ id: number, content: string, active: boolean }>,
+ *   selfSnapshot?: string | null, reportExtract?: string | null, reportTitle?: string | null,
+ *   earlier?: Array<{ lane: string, title: string }>,
+ * }} input
  */
 export function buildSuggestionPrompt(pass, input) {
   const {

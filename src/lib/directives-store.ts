@@ -139,6 +139,53 @@ export async function listDirectiveVersions(
   }
 }
 
+/**
+ * Every directive with its version events (created / updated / activated /
+ * deactivated, oldest first) — what the Verbesserung's effect measurement
+ * reads to know since when each wording was live (improvement-effects
+ * buildChangeList). Timestamps as ISO strings.
+ */
+export async function listDirectivesWithEvents(
+  sql: Sql | null = getSql()
+): Promise<Array<MoDirective & { events: Array<{ action: MoDirectiveVersion["action"]; at: string }> }>> {
+  if (!sql) return [];
+  try {
+    const [directiveRows, versionRows] = await Promise.all([
+      sql`
+        SELECT id, content, active, source, suggestion_id, created_at, updated_at
+          FROM mo_directives
+         ORDER BY created_at ASC, id ASC
+      `,
+      sql`
+        SELECT directive_id, action, created_at
+          FROM mo_directive_versions
+         ORDER BY created_at ASC, id ASC
+      `,
+    ]);
+    const directives = directiveRows as DirectiveRow[];
+    const versions = versionRows as Array<{ directive_id: number; action: string; created_at: unknown }>;
+    const byDirective = new Map<number, Array<{ action: MoDirectiveVersion["action"]; at: string }>>();
+    for (const v of versions) {
+      const at = v.created_at instanceof Date ? v.created_at.toISOString() : String(v.created_at);
+      const action = (["created", "updated", "activated", "deactivated"].includes(v.action)
+        ? v.action
+        : "updated") as MoDirectiveVersion["action"];
+      const list = byDirective.get(Number(v.directive_id)) ?? [];
+      list.push({ action, at });
+      byDirective.set(Number(v.directive_id), list);
+    }
+    return directives.map((r) => {
+      const d = mapRow(r);
+      // A directive without version rows (should not happen) counts from its creation.
+      const events = byDirective.get(d.id) ?? [{ action: "created" as const, at: d.createdAt }];
+      return { ...d, events };
+    });
+  } catch (err) {
+    reportError(err, { route: "lib/directives-store", phase: "events" });
+    return [];
+  }
+}
+
 // ── Chat-path read (cached) ───────────────────────────────────────────────────
 
 /** ACTIVE directives, oldest first, capped — the exact prompt input. */

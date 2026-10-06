@@ -19,6 +19,8 @@ import {
   priorityScore,
   priorityTier,
   renderReportExtract,
+  resolveRunPeriod,
+  MAX_RUN_PERIOD_DAYS,
   runPhaseIndex,
   runVersion,
   storageLaneFor,
@@ -50,6 +52,27 @@ test("every phase — v2 and legacy — has a German label; strategist phases ar
     assert.ok(RUN_PHASE_LABELS[p], `label for ${p}`);
   }
   for (const p of STRATEGIST_PHASES) assert.ok(RUN_PHASES.includes(p));
+});
+
+// ── Period ────────────────────────────────────────────────────────────────────
+
+test("resolveRunPeriod: presets are full days up to yesterday; report and custom ranges", () => {
+  const today = "2026-10-06";
+  assert.deepEqual(resolveRunPeriod({ preset: "30d" }, today), {
+    from: "2026-09-06",
+    to: "2026-10-05",
+    days: 30,
+    label: "06.09.2026 – 05.10.2026",
+  });
+  assert.equal(resolveRunPeriod({ preset: "7d" }, today).from, "2026-09-29");
+  assert.deepEqual(resolveRunPeriod({ preset: "report", reportRange: { from: "2026-08-10", to: "2026-09-08" } }, today).days, 30);
+  assert.equal(resolveRunPeriod({ preset: "report" }, today), null);
+  const custom = resolveRunPeriod({ preset: "custom", from: "2026-10-09", to: "2026-09-01" }, today);
+  assert.deepEqual([custom.from, custom.to], ["2026-09-01", "2026-10-05"], "swapped and clamped to yesterday");
+  assert.equal(resolveRunPeriod({ preset: "custom", from: "2024-01-01", to: "2026-09-30" }, today).days, MAX_RUN_PERIOD_DAYS);
+  assert.equal(resolveRunPeriod({ preset: "custom", from: "2026-10-07", to: "2026-10-08" }, today), null, "entirely in the future");
+  assert.equal(resolveRunPeriod({ preset: "custom", from: "x", to: "2026-09-01" }, today), null);
+  assert.equal(resolveRunPeriod({ preset: "nonsense" }, today), null);
 });
 
 // ── Owner lanes ───────────────────────────────────────────────────────────────

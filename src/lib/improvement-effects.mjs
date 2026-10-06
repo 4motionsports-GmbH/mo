@@ -546,13 +546,14 @@ export function windowKey(w) {
  * @param {Array<{ key: string, label: string, value: boolean | number }> | null | undefined} before
  * @param {Array<{ key: string, label: string, value: boolean | number }> | null | undefined} after
  * @param {{ from: string, to: string }} between days of the two runs
+ * @returns {Array<{ key: string, label: string, from: boolean | number, to: boolean | number, between: { from: string, to: string } }>}
  */
 export function switchChanges(before, after, between) {
   if (!Array.isArray(before) || !Array.isArray(after)) return [];
   const prev = new Map(before.map((s) => [s.key, s.value]));
   return after
     .filter((s) => prev.has(s.key) && prev.get(s.key) !== s.value)
-    .map((s) => ({ key: s.key, label: s.label, from: prev.get(s.key), to: s.value, between }));
+    .map((s) => ({ key: s.key, label: s.label, from: /** @type {boolean | number} */ (prev.get(s.key)), to: s.value, between }));
 }
 
 // ── Measuring one change ──────────────────────────────────────────────────────
