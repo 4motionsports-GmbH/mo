@@ -4,8 +4,8 @@ One versioned, PII-free structure with everything a business decision needs
 from the current backend, for a period **and the equally long period right
 before it**. The Komplettanalyse ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md)
 §3.8) renders it, prints it and feeds it to the strategist model; the
-Verbesserung ([`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md)) can read it as its
-baseline. Since 2026-10-06.
+Verbesserung ([`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md)) builds every run on
+it and measures adopted changes on before/after snapshots of their windows. Since 2026-10-06.
 
 | File | Role |
 | --- | --- |
