@@ -37,7 +37,7 @@ the single list of what is still open for M. C's open items are at the end of �
 2. **Live check on 09.10. (5 min).** `npm run verify:live -- --since 2026-10-06` → send C the
    output: section 9 (page-context base rate for the control group, C.23; product clicks by
    `samePage`), section 7b V2/V2b (both must be 0) and V3.
-3. **Neue Auswertungen prüfen (nach dem Deploy, ~30 min).** The three reworks of 06.10. (Done) went
+3. **Neue Auswertungen prüfen (nach dem Deploy, ~30 min).** The four reworks of 06.10. (Done) went
    live with C's push to main on 06.10. First `npm run db:migrate` (applies `0077`, the step claim of
    the Komplettanalyse — recommended before the first new report; without it a dropped request can
    start a second Opus call). Then:
@@ -52,6 +52,9 @@ the single list of what is still open for M. C's open items are at the end of �
      `/api/admin/analytics/step` — the plan must allow the route's 300 s.
    - **Kunden:** one person with a Vollprofil, one with a Kaufprofil → Überblick: each part of the
      profile text sits in the right card, nothing is missing.
+   - **Verbesserung:** one run on the new Komplettanalyse („Maßnahmen importieren“ on) → note the
+     minutes per Opus phase (240 s limit), the cost (≈ 0,90 €) and whether „Wirkung“ judges the live
+     Anweisungen or says „Zu früh“ / „Tendenz“ (too few analysed chats — C.30).
    Send C the notes; the open questions of the reworks are C.30.
 4. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
    recommend a cheap product, click „Zur Kasse“ on the card, complete the order (cancel/refund it
@@ -71,9 +74,14 @@ the single list of what is still open for M. C's open items are at the end of �
 
 ## Done
 
-- [x] Three reworks of 06.10. (C; on the branch, live with the next deploy together with the
-  Verbesserung rework; migration `0077` for M, no new switch; checks: open list item 3; open questions:
-  C.30):
+- [x] Four reworks of 06.10. (C; pushed to main on 06.10. at the owner's request; migration `0077`
+  for M, no new switch; checks: open list item 3; open questions: C.30):
+  - **Verbesserung:** runs on the business snapshot (a Komplettanalyse's period or 7/30/90 days vs
+    the period before), measures live Anweisungen and „Erledigt“ suggestions against snapshot
+    metrics with tested significance rules and confounders (`improvement-effects.mjs`), and makes
+    decision-grade suggestions per lane (P1–P3, evidence, success metric, link) on Opus 5.5
+    (strategist), importing the open recommendations of the chosen Komplettanalyse;
+    `docs/IMPROVEMENT_LOOP.md`, screenshots `docs/screenshots/2026-10-06-verbesserung/`.
   - **Kunden → Überblick:** „Aktuelles Kundenverständnis“ is a visual card at the top — persona,
     Vollprofil / Kaufprofil, „Stand … · vor … Tagen“, stale badges; theme cards with „Schwerpunkt“,
     level and budget meters, chips; next steps with kind icons. The profile prompt asks for the most
@@ -781,7 +789,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       Mo recorded no Shopify consent event. If Shopify shows the address as pending while Mo has no
       `shopify` consent event, Mo misses the shop's sign-up consent and the popup after the sign-in
       would ask again (two confirmation mails): find where it is lost and fix it.
-- [ ] **C.30** Open decisions of the three reworks of 06.10. — **M decides**, C builds what changes:
+- [ ] **C.30** Open decisions of the four reworks of 06.10. — **M decides**, C builds what changes:
   - **Order list and privacy:** „Was genau passiert ist“ shows per order the order number, amount, Mo
     code and product titles, linked to the customer and the conversation by id (no name, no e-mail on
     the KPI page). Does dossier §20 / F-37 need a note?
@@ -796,6 +804,13 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
   - **Prompt caching** is not used for the two strategist passes — worth adding?
   - **New reports:** the business snapshot replaces the old chapters Kennzahlen, Kundenbasis and
     Kampagnen (still stored, shown only for older reports) — keep it that way?
+
+  - **Verbesserung (06.10.):** directives are judged on analysed chats only (≈ 36 % of conversations are
+    analysed) — most verdicts stay „Tendenz“; options: analyse daily, a 28-day default horizon, or
+    another metric (M decides). Named columns via a migration later, or keep the versioned JSONB? A
+    switch log would make switch confounders exact (today they start with the first v2 run). An
+    optional „live seit“ date for „Erledigt“ suggestions. The shared `CardContent` has `pt-0`, so
+    cards on other screens look cramped at the top (Verbesserung pads its own).
 
 ## Backlog — not built, decide later
 
