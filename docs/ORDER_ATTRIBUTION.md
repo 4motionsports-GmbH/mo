@@ -94,7 +94,7 @@ The switch moves the token cliff, it does not remove it: with it on, a
 last product consultation, capped after minting; with it off, window + 7 days after
 minting (exact rule and cap: `DATA_RETENTION.md` step 5i). A device that keeps its
 session id stamps the purged token until the widget renews it (API_CONTRACT §10
-„Lifetime and renewal“; frontend task `docs/frontend/tasks/TASKS.md` task 3);
+„Lifetime and renewal“; frontend task `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 3);
 tokens purged before 2026-10-05 are not recoverable by the backend.
 
 **Unattributed marked orders.** A marked order whose token is unknown

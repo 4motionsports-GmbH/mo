@@ -58,7 +58,7 @@ export function countWidgetMarkers(js) {
 }
 
 /**
- * The builds, newest first. `current` = the build live since 2026-10-04;
+ * The builds, newest first. `current` = the build live since 2026-10-06 (bc7fb5d);
  * `acceptable` = the widget side is ready for the order status and the App Proxy
  * (the App Proxy also needs the backend step C.17, docs/ROLLOUT_TODO.md 5.4).
  * @type {ReadonlyArray<{ key: string, commit: string, label: string, current: boolean, acceptable: boolean, consequence: string }>}
@@ -66,30 +66,30 @@ export function countWidgetMarkers(js) {
 export const WIDGET_BUILDS = Object.freeze([
   {
     key: "tasks-2026-10-05",
-    commit: "nächster Upload",
-    label: "Widget mit den Aufgaben vom 05.10. (Vorteile vom Server, Seitenkontext, Token-Erneuerung)",
-    current: false,
+    commit: "bc7fb5d",
+    label: "Widget mit den Aufgaben vom 05.10. (bc7fb5d, 2026-10-06: Vorteile vom Server, Seitenkontext, Token-Erneuerung)",
+    current: true,
     acceptable: true,
     consequence:
-      "Vorteile im Einwilligungs-Popup kommen vom Server, getippte Fragen auf Produktseiten tragen den Seitenkontext. CHAT_PAGE_CONTEXT_ENABLED darf nach 2–3 Tagen Beobachtung eingeschaltet werden.",
+      "Erwarteter Live-Stand: Vorteile im Einwilligungs-Popup kommen vom Server (mit Variante und Platzierung), getippte Fragen auf Produkt- und Kollektionsseiten tragen den Seitenkontext, die Bestell-Markierung wird nach einer Beratung erneuert und beim Abmelden geleert. CHAT_PAGE_CONTEXT_ENABLED darf nach 2–3 Tagen Beobachtung eingeschaltet werden.",
   },
   {
     key: "main-2026-10-04",
     commit: "3e87341",
     label: "Theme main 3e87341 (2026-10-04, alle Fixes)",
-    current: true,
+    current: false,
     acceptable: true,
     consequence:
-      "Erwarteter Live-Stand: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat. Bestellstatus darf eingeschaltet werden; der App Proxy darf eingerichtet werden (ROLLOUT 5.4).",
+      "Stand vor dem 06.10.: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat — aber Vorteile im Einwilligungs-Popup noch aus dem Widget, kein Seitenkontext bei getippten Fragen, keine Token-Erneuerung. bc7fb5d hochladen.",
   },
   {
     key: "fixes-minified",
     commit: "8d0a0c4 / 3e87341",
     label: "8d0a0c4 oder main 3e87341 (minifiziert ausgeliefert)",
-    current: true,
+    current: false,
     acceptable: true,
     consequence:
-      "Alle Funktionen der Kundenplattform sind live; ob auch der Audio-Stopp bei „Neuer Chat“ (3e87341) dabei ist, lässt sich in der minifizierten Datei nicht erkennen — im Browser prüfen. Bestellstatus darf eingeschaltet werden; der App Proxy darf eingerichtet werden (ROLLOUT 5.4).",
+      "Stand vor dem 06.10. (minifiziert; ob der Audio-Stopp von 3e87341 dabei ist, lässt sich nicht erkennen): ohne Vorteile vom Server, Seitenkontext und Token-Erneuerung — bc7fb5d hochladen.",
   },
   {
     key: "fixes-8d0a0c4",

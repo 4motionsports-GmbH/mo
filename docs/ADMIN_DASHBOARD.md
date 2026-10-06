@@ -1397,7 +1397,7 @@ observed base rate). Without it no comparison is shown.
 > arm; `productCards` counts card tool calls, not rendered cards; `/en`
 > handles the catalog does not know show up as „nicht erkannt“; `samePage` and
 > the page context come only from a widget build with the 2026-10-05 tasks
-> (docs/frontend/tasks; whether it is uploaded: ROLLOUT_TODO.md) — without
+> (theme `bc7fb5d` and later; what is uploaded: ROLLOUT_TODO.md) — without
 > such events the section is empty („Noch keine Daten — das Widget schickt den
 > Seitenkontext erst nach dem Upload.“). Live check: `npm run
 > verify:live -- --session <prefix>` section 9.
@@ -1576,8 +1576,8 @@ denominator). Values outside the known variants and placements are merged into
 SQL and in the tested `normalizeConsentVariantRows`, `kpi-widget-events.mjs`),
 so arbitrary strings posted to `/api/kpi` never get their own row. The block
 appears only once a known variant arrives — i.e. from a widget build that
-echoes the served bullets' `variant` and `placement` (docs/frontend/tasks;
-older builds send neither field; what is uploaded: ROLLOUT_TODO.md).
+echoes the served bullets' `variant` and `placement` (theme `bc7fb5d` and
+later; older builds send neither field; what is uploaded: ROLLOUT_TODO.md).
 `variantMismatch` (echoed variant ≠ the session's assignment while more than
 one variant runs) is counted for the live check.
 

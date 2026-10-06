@@ -27,7 +27,7 @@ the single list of what is still open for M. C's open items are at the end of �
    (Details C.21; the purge of old widget tokens started 05.10.) If the switch goes on later than
    05.10., tell C the day: the KPI release „Bestell-Zuordnung: Fenster ab der letzten Beratung“ and
    the „aussagekräftig ab“ date of the attribution section are dated 05.10. (`src/lib/kpi-releases.mjs`).
-2. **Frontend prompt (when C hands it over, 05.10.).** The prompt is the „Prompt“ part of `docs/frontend/tasks/README.md`;
+2. **Frontend prompt (when C hands it over, 05.10.).** The prompt is the „Prompt“ part of `docs/archive/frontend-tasks-2026-10-05/README.md`;
    send it to the frontend agent with exactly the files that README lists as attachments (the list
    is kept there, not here). When its PR is merged: upload the files it names to the theme →
    `npm run verify:widget` must report „Widget mit den Aufgaben vom 05.10. …“ → send C that output
@@ -341,7 +341,7 @@ the single list of what is still open for M. C's open items are at the end of �
 - [x] **5.1 Frontend task** — done 04.10.: the frontend agent built the customer-platform
   widget (theme PR #73 + `8d0a0c4` + `3e87341`), the owner uploaded it on 04.10.; the frontend
   docs are in `docs/frontend/`. Live check: 1.11. The next widget tasks (from the backlog in
-  `docs/frontend/07` §7) are written: `docs/frontend/tasks/README.md` → open list item 2.
+  `docs/frontend/07` §7) are written: `docs/archive/frontend-tasks-2026-10-05/README.md` → open list item 2.
 
 - [x] **5.2 Compliance webhooks** (done 05.10.) — now part of 5.4 (steps 5 and 11; fallback 5.4b): the same new
   app version in the Dev Dashboard carries the App Proxy and the compliance webhooks, and M can do it
@@ -600,17 +600,17 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [x] **C.19** OI3 — done 05.10.: `surface=signin` serves three benefit bullets (C's wording,
       D-AP4) and `variant: "a"` (copy version `v5`); the opt-in POST takes `placement` /
       `variant`; KPI „Nach Variante und Platzierung“. FE task 1:
-      `docs/frontend/tasks/TASKS.md` task 1 (sent with open list item 2).
+      `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 1 (sent with open list item 2).
 - [x] **C.20** A3 backend — done 05.10.: `context.source`, softer page notes,
       `CHAT_PAGE_CONTEXT_ENABLED` / `_HOLDOUT_PCT` off, `page_context_applied/_answered`, KPI
       „Seitenkontext auf Produktseiten“, `verify:live` section 9, fingerprint row for the next
-      upload. FE task 2: `docs/frontend/tasks/TASKS.md` task 2 (sent with open list item 2).
+      upload. FE task 2: `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 2 (sent with open list item 2).
 - [x] **C.21** ATTR-TOKEN-LIFETIME — built 05.10. (pre-checks by M: webhooks once each, widget
       tokens since 24.08., purge cliff reached 05.10. 08:40 UTC). Migration `0076`
       (`messages.session_id`; the code works before and after it), `MO_ATTRIBUTION_SESSION_ANCHOR`
       (off in code), `mo_order_marker_unresolved`, KPI notes, `verify:live` 7b, dossier §20 (F-37).
       **M:** run `npm run db:migrate`, then set the switch (open list item 1). FE task 3:
-      `docs/frontend/tasks/TASKS.md` task 3 (sent with open list item 2).
+      `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 3 (sent with open list item 2).
 - [ ] **C.5** Keep this file current after every step.
 - [ ] **C.22** After the widget upload (open list item 2, M sends C the `verify:widget` output):
       mark the row `tasks-2026-10-05` current in `widget-fingerprint.mjs`, add the release notes

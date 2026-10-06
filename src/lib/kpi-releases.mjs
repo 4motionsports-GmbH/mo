@@ -66,6 +66,27 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Opt-ins tragen Quelle und Ergebnis (neue DOI / bereits abonniert / gesperrt), DOI-Bestätigungen ihre Quelle. Der E-Mail-Capture-Funnel zählt nur noch das Formular; die Einwilligung nach der Anmeldung zählt Sitzungen statt Klicks.",
   },
+  {
+    date: "2026-10-06",
+    key: "consent-benefits-served",
+    title: "Einwilligungs-Popup: Vorteile vom Server, Variante und Platzierung",
+    detail:
+      "Das Widget zeigt die Vorteilspunkte im Einwilligungs-Popup und in der Karte so, wie der Server sie liefert, und meldet Variante und Platzierung mit. „Nach Variante und Platzierung“ hat erst seitdem Daten; nach einem Annehmen gibt es kein „Weggeklickt“ mehr.",
+  },
+  {
+    date: "2026-10-06",
+    key: "page-context-typed",
+    title: "Seitenkontext bei getippten Fragen (Widget)",
+    detail:
+      "Die erste getippte oder gesprochene Frage auf einer Produkt- oder Kollektionsseite trägt seitdem die Seite mit; Produktkarten-Klicks melden „gleiche Seite“. Mo nutzt den Kontext erst, wenn CHAT_PAGE_CONTEXT_ENABLED an ist — bis dahin wird er nur gemessen.",
+  },
+  {
+    date: "2026-10-06",
+    key: "attribution-token-renewal",
+    title: "Bestell-Zuordnung: Markierung wird nach einer Beratung erneuert",
+    detail:
+      "Das Widget holt die Bestell-Markierung nach einer Produktberatung neu (eine gelöschte wird ersetzt) und leert sie beim Abmelden, Löschen und Widerruf der Analyse-Einwilligung. „Markierung unbekannt“ unter den markierten Bestellungen ohne Zuordnung sollte dadurch sinken.",
+  },
 ]);
 
 /** First day the opt-in events carry source and outcome (OI1). */

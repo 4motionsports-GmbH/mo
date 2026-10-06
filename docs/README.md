@@ -45,4 +45,4 @@ defaults („default off in code“), never what is currently live. Screenshots 
 | [`frontend/ACCOUNT_CONTRACT.md`](./frontend/ACCOUNT_CONTRACT.md) | Sign-in, App Proxy recognition, `/api/auth/me`, logout, conversation history, export, erase, the post-sign-in opt-in (gating §6.1, request §6.2). |
 | [`frontend/CONSENT_CONTRACT.md`](./frontend/CONSENT_CONTRACT.md) | How the widget shows and renders the consent surfaces. |
 | [`frontend/README.md`](./frontend/README.md) + `01`–`07` | The as-built description of the theme and widget at the build named in `frontend/README.md` (written by the frontend agent, maintained here). |
-| [`frontend/tasks/`](./frontend/tasks/README.md) | The current frontend prompt and its tasks, with the exact list of files to attach. |
+| `frontend/tasks/` | The prompt and tasks of a frontend round while it is open (none open now); finished rounds move to `archive/` — the latest is [`archive/frontend-tasks-2026-10-05/`](./archive/frontend-tasks-2026-10-05/README.md). |
