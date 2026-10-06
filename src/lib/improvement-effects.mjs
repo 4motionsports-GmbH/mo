@@ -12,8 +12,10 @@
 //     for per-chat ratios, the order count for revenue amounts; averages and
 //     scores get no test — direction only;
 //   · a measurement change (a release that changed what the number means, a
-//     section note of the snapshot, a measurement switch flipped) inside the
-//     windows → "nicht vergleichbar": never an effect across it;
+//     measurement switch flipped) inside the compared span → "nicht
+//     vergleichbar": never an effect across it. The snapshot's section notes
+//     ("only meaningful from …") are not a change between two windows that
+//     both lie under the same rule — the release inside the span is the test;
 //   · confounders — other changes, product releases, switches in the window —
 //     are named and lower the confidence;
 //   · the verdict says "besser / schlechter / unverändert", never "caused by".
@@ -329,7 +331,7 @@ export function classifyMetricEffect(m, stats, { days, minDays = MIN_EFFECT_DAYS
   // 2 = hoch, 1 = mittel, 0 = niedrig
   let level = significant ? 2 : stats.test === "none" ? 0 : 1;
   if (stats.test === "none") reasons.push("Kein statistischer Test möglich (Durchschnitt oder Betrag ohne Fallzahl) — nur die Richtung zählt.");
-  else if (!significant && moved) reasons.push("Die Veränderung liegt im Bereich des Zufalls (|z| < 1,96).");
+  else if (!significant && moved && !stats.small) reasons.push("Die Veränderung liegt im Bereich des Zufalls (|z| < 1,96).");
   if (stats.small) {
     level = 0;
     reasons.push("Kleine Stichprobe — eine Bewegung dieser Größe kann Zufall sein.");
@@ -558,11 +560,6 @@ export function switchChanges(before, after, between) {
 
 // ── Measuring one change ──────────────────────────────────────────────────────
 
-function sectionNotes(snapshot, sectionKey) {
-  const s = (snapshot?.sections ?? []).find((x) => x.key === sectionKey);
-  return [...(s?.notes ?? []), ...(s?.previousNotes ?? [])];
-}
-
 function inSpan(date, w) {
   return Boolean(w.before) && date > w.before.from && date <= w.to;
 }
@@ -619,9 +616,11 @@ export function measureChange(change, { snapshot, today, allChanges = [], switch
       if (fx && touches(fx.measurement, key)) measurementBy.push({ kind: "switch", label, date: null });
       else if (!fx || touches(fx.product, key)) productBy.push({ kind: "switch", label, date: null });
     }
-    for (const o of others) productBy.push({ kind: "change", label: `${o.kind === "directive" ? "Anweisung" : "Maßnahme"} „${o.title.slice(0, 80)}“ (${germanDay(o.date)})`, date: o.date });
-    const notes = m ? sectionNotes(snapshot, m.section) : [];
-    const measurementChange = measurementBy.length > 0 || notes.length > 0;
+    for (const o of others) {
+      const t = o.title.length > 80 ? `${o.title.slice(0, 79).trimEnd()}…` : o.title;
+      productBy.push({ kind: "change", label: `${o.kind === "directive" ? "Anweisung" : "Maßnahme"} „${t}“ (${germanDay(o.date)})`, date: o.date });
+    }
+    const measurementChange = measurementBy.length > 0;
     for (const c of [...measurementBy.map((x) => ({ ...x, measurement: true })), ...productBy.map((x) => ({ ...x, measurement: false }))]) {
       const hit = confounders.find((y) => y.label === c.label && y.measurement === c.measurement);
       if (hit) {
@@ -630,7 +629,6 @@ export function measureChange(change, { snapshot, today, allChanges = [], switch
     }
     const stats = m ? effectStats(m, flat) : { test: /** @type {const} */ ("none"), z: null, n: null, small: true };
     const cls = classifyMetricEffect(m, stats, { days: w.days, measurementChange, confounders: productBy.length });
-    if (measurementChange && notes.length && measurementBy.length === 0) cls.reasons.push(...notes);
     const d = m ? metricDelta(m) : null;
     const meta = m ?? reference?.[key] ?? null;
     return {
@@ -736,8 +734,8 @@ export const MOVER_KEYS = Object.freeze([
 /**
  * What got better and what got worse in the run's period against the
  * previous period — decision metrics only, with the same test as the
- * measurement; metrics whose measurement changed (section notes, measurement
- * releases inside the two periods) are listed apart, never as a mover.
+ * measurement; metrics whose measurement changed (a measurement release
+ * inside the two periods) are listed apart, never as a mover.
  * Significant moves first, then by |z|.
  * @param {any} snapshot
  * @param {{ limit?: number, releases?: ReadonlyArray<{ date: string, key: string, title: string }> }} [opts]
@@ -755,15 +753,20 @@ export function snapshotMovers(snapshot, { limit = 6, releases = null } = {}) {
   for (const key of MOVER_KEYS) {
     const m = flat[key];
     if (!m || m.good === "none" || finite(m.value) === null || finite(m.previous) === null) continue;
-    const measured = sectionNotes(snapshot, m.section).length > 0 || rel.some((r) => touches(/** @type {any} */ (RELEASE_EFFECTS)[r.key]?.measurement, key));
+    const measured = rel.some((r) => touches(/** @type {any} */ (RELEASE_EFFECTS)[r.key]?.measurement, key));
     if (measured) {
       notComparable.push({ key, label: m.label });
       continue;
     }
     const stats = effectStats(m, flat);
     const cls = classifyMetricEffect(m, stats, { days: snapshot.period.days ?? 30, minDays: 1 });
+    const d = metricDelta(m);
+    // Strength of the move: |z| where tested; an untested amount or average
+    // ranks by its relative size, kept below the significance threshold.
+    const strength = stats.z !== null ? Math.abs(stats.z) : Math.min(Z_SIGNIFICANT - 0.01, Math.abs(d?.rel ?? 0) * 2.5);
     const item = {
       key,
+      strength,
       label: m.label,
       unit: m.unit,
       good: m.good,
@@ -783,10 +786,10 @@ export function snapshotMovers(snapshot, { limit = 6, releases = null } = {}) {
     else if (cls.verdict === "schlechter_belastbar" || cls.verdict === "schlechter_tendenz") worsened.push(item);
     else steady += 1;
   }
-  const rank = (a, b) =>
-    Number(b.significant) - Number(a.significant) ||
-    Math.abs(b.z ?? 0) - Math.abs(a.z ?? 0) ||
-    MOVER_KEYS.indexOf(a.key) - MOVER_KEYS.indexOf(b.key);
+  // Significant moves first; then by strength, with a small bonus for the
+  // more important decision keys (MOVER_KEYS is ordered by importance).
+  const weight = (x) => x.strength + (0.5 * (MOVER_KEYS.length - MOVER_KEYS.indexOf(x.key))) / MOVER_KEYS.length;
+  const rank = (a, b) => Number(b.significant) - Number(a.significant) || weight(b) - weight(a);
   return {
     improved: improved.sort(rank).slice(0, limit),
     worsened: worsened.sort(rank).slice(0, limit),

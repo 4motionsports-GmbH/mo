@@ -39,7 +39,8 @@ function testText(x: MeasuredMetric): string {
   if (x.test === "none") return "ohne Test (nur Richtung)";
   const via = x.test === "companion" ? " über die Bestellungen" : x.test === "poisson_rate" ? " je Gespräch" : "";
   const z = x.z == null ? "" : `z = ${num(x.z, 2)}`;
-  return `${z}${via} · ${x.significant ? "statistisch klar" : "im Rahmen des Zufalls"}`;
+  const reading = x.significant ? "statistisch klar" : x.small ? "kleine Stichprobe — nicht belastbar" : "im Rahmen des Zufalls";
+  return `${z}${via} · ${reading}`;
 }
 
 function nText(n: MeasuredMetric["testN"], which: "before" | "after", unit: MeasuredMetric["unit"]): string {
@@ -89,7 +90,7 @@ export function EffectsSection({ measurements, review }: { measurements: Measure
       >
         {review?.summary && (
           <Card className="mb-3 bg-accent-soft/40">
-            <CardContent className="p-4">
+            <CardContent className="p-4 pt-4">
               <FieldLabel>Wirkungs-Check (Opus 5.5)</FieldLabel>
               <p className="mt-1 text-sm leading-relaxed text-foreground">{review.summary}</p>
             </CardContent>
@@ -121,7 +122,7 @@ function MeasurementCard({ m, review }: { m: Measurement; review: EffectReview["
   const reasons = primary?.reasons ?? [];
   return (
     <Card>
-      <CardContent className="flex flex-col gap-3 p-4">
+      <CardContent className="flex flex-col gap-3 p-4 pt-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 text-2xs font-medium text-muted-foreground">

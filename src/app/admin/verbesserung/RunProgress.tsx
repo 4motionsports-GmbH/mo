@@ -77,9 +77,9 @@ export function RunProgress({
     body: { id },
     onStep: (data) => {
       if (data.phase && data.phase !== phaseRef.current) {
-        const from = runPhaseIndex(phaseRef.current);
-        const to = runPhaseIndex(data.phase);
-        if (from >= 0 && to > from + 1) setSkipped((s) => [...s, ...PHASES.slice(from + 1, to)]);
+        // Only the Wirkungs-Check is ever skipped (nothing to assess); a
+        // bigger jump just means steps finished while the page was away.
+        if (phaseRef.current === "messung" && data.phase === "vorschlaege_chat") setSkipped(["wirkungscheck"]);
         phaseRef.current = data.phase;
         setPhase(data.phase);
         setPhaseStartedAt(Date.now());
@@ -104,7 +104,7 @@ export function RunProgress({
 
   return (
     <Card>
-      <CardContent className="flex flex-col gap-4 p-5">
+      <CardContent className="flex flex-col gap-4 p-5 pt-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm font-semibold text-foreground">

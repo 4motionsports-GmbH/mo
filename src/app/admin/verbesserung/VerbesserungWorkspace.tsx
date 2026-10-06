@@ -161,7 +161,7 @@ export function VerbesserungWorkspace({
   } else if (!current) {
     main = (
       <Card>
-        <CardContent className="space-y-2 p-5" aria-busy="true" aria-label="Lauf wird geladen">
+        <CardContent className="space-y-2 p-5 pt-5" aria-busy="true" aria-label="Lauf wird geladen">
           <Skeleton className="h-5 w-1/2" />
           <Skeleton className="h-3 w-1/3" />
           <Skeleton className="h-32 w-full" />

@@ -69,7 +69,7 @@ export function RunOverview({
         info="Die Lage des Zeitraums gegenüber der gleich lang davor liegenden Vorperiode — aus der Geschäftsübersicht (dieselben Abfragen wie die KPIs). Den Text schreibt das Strategie-Modell (Opus 5.5) aus diesen Zahlen; „Besser“ und „Schlechter“ sind gerechnet, nicht geschrieben."
       >
         <Card className="border-l-4 border-l-accent">
-          <CardContent className="flex flex-col gap-2.5 p-5">
+          <CardContent className="flex flex-col gap-2.5 p-5 pt-5">
             {synthesis?.headline ? (
               <>
                 <p className="text-base font-semibold leading-snug tracking-tight text-foreground">{synthesis.headline}</p>
@@ -94,7 +94,7 @@ export function RunOverview({
           </div>
         )}
 
-        <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <MoverCard
             title="Besser geworden"
             icon={<ArrowUpRight className="size-4 text-success" aria-hidden />}
@@ -119,6 +119,8 @@ export function RunOverview({
               ) : null
             }
           />
+        </div>
+        <div className="mt-3">
           <BacklogCard backlog={backlog} onLaneSelect={onLaneSelect} />
         </div>
       </Section>
@@ -145,7 +147,7 @@ function MoverCard({
 }) {
   return (
     <Card>
-      <CardContent className="flex h-full flex-col gap-2 p-4">
+      <CardContent className="flex h-full flex-col gap-2 p-4 pt-4">
         <h4 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
           {icon}
           {title}
@@ -160,7 +162,7 @@ function MoverCard({
           <ul className="flex flex-col divide-y divide-border/60">
             {items.map((m) => {
               const link = m.section ? adminLinkFor(sectionLinks[m.section] ?? "", range) : null;
-              const label = <span className="truncate text-xs text-foreground">{m.label}</span>;
+              const label = <span className="line-clamp-2 text-xs leading-snug text-foreground">{m.label}</span>;
               return (
                 <li key={m.key} className="flex items-center gap-2 py-1.5">
                   <Tooltip content={m.significant ? "Statistisch klar" : m.small ? "Tendenz — kleine Stichprobe" : "Tendenz — im Rahmen des Zufalls"}>
@@ -177,11 +179,11 @@ function MoverCard({
                     />
                   </Tooltip>
                   {link ? (
-                    <Link href={link.href} className="min-w-0 flex-1 truncate hover:underline">
+                    <Link href={link.href} className="min-w-0 flex-1 hover:underline">
                       {label}
                     </Link>
                   ) : (
-                    <span className="min-w-0 flex-1 truncate">{label}</span>
+                    <span className="min-w-0 flex-1">{label}</span>
                   )}
                   <span className="shrink-0 text-xs font-semibold tabular-nums text-foreground">
                     {formatMetricValue(m.unit, m.value)}
@@ -202,7 +204,7 @@ function BacklogCard({ backlog, onLaneSelect }: { backlog: SuggestionItem[]; onL
   const matrix = React.useMemo(() => backlogMatrix(backlog), [backlog]);
   return (
     <Card>
-      <CardContent className="flex h-full flex-col gap-2 p-4">
+      <CardContent className="flex h-full flex-col gap-2 p-4 pt-4">
         <h4 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
           <ListTodo className="size-4 text-accent" aria-hidden />
           Offen nach Bereich
@@ -215,7 +217,7 @@ function BacklogCard({ backlog, onLaneSelect }: { backlog: SuggestionItem[]; onL
         {matrix.total === 0 ? (
           <p className="text-xs text-muted-foreground">Nichts offen — alle Vorschläge sind entschieden.</p>
         ) : (
-          <ul className="flex flex-col gap-1">
+          <ul className="grid gap-x-4 gap-y-1 sm:grid-cols-2 2xl:grid-cols-3">
             {matrix.lanes.map((row) => (
               <li key={row.lane}>
                 <button

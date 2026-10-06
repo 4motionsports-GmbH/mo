@@ -354,7 +354,7 @@ test("measureChange: a measurement release in the window → 'nicht vergleichbar
   assert.notEqual(outside.verdict, "nicht_vergleichbar");
 });
 
-test("measureChange: section notes of the window snapshot and measurement switches also block the comparison", () => {
+test("measureChange: section notes alone do not block (both windows under one rule); a measurement switch does", () => {
   const change = {
     ref: "S51",
     kind: "suggestion",
@@ -375,8 +375,7 @@ test("measureChange: section notes of the window snapshot and measurement switch
     today: SAMPLE_TODAY,
     releases: [],
   });
-  assert.equal(noted.verdict, "nicht_vergleichbar");
-  assert.match(noted.metrics[0].reasons.join(" "), /04\.10\.2026/);
+  assert.notEqual(noted.verdict, "nicht_vergleichbar", "a note says when the data starts to mean something — not that it changed inside the span");
 
   const revenueChange = { ...change, ref: "S52", metrics: [{ key: "revenue.total", role: "primary" }] };
   const sw = [{ key: "attributionSessionAnchor", label: "Zuordnungsfenster ab letzter Beratung", from: false, to: true, between: { from: "2026-08-25", to: "2026-09-09" } }];
@@ -398,14 +397,16 @@ test("measureChange: too fresh changes and summariseMeasurements", () => {
 
 // ── Movers ────────────────────────────────────────────────────────────────────
 
-test("snapshotMovers: better and worse decision metrics, measurement-changed sections apart", () => {
+test("snapshotMovers: better and worse decision metrics, measurement-changed metrics apart", () => {
   const movers = snapshotMovers(sampleRunSnapshot());
   const improved = movers.improved.map((m) => m.key);
-  assert.ok(improved.includes("revenue.total"));
-  assert.ok(improved.length <= 6);
-  // The fixture's sign-in section carries a previous-period note → not a mover.
-  assert.ok(movers.notComparable.some((m) => m.key === "signin.popupRate"));
-  assert.ok(!improved.includes("signin.popupRate"));
+  assert.equal(improved.length, 6, "top 6");
+  assert.ok(snapshotMovers(sampleRunSnapshot(), { limit: 30 }).improved.some((m) => m.key === "revenue.total"));
+  assert.deepEqual(movers.notComparable, [], "the fixture's only release is not a measurement change");
+  // A measurement release inside the two periods takes the metric out.
+  const withRelease = snapshotMovers(sampleRunSnapshot(), { releases: [{ date: "2026-08-20", key: "attribution-window", title: "Zuordnung" }] });
+  assert.ok(withRelease.notComparable.some((m) => m.key === "revenue.total"));
+  assert.ok(!withRelease.improved.some((m) => m.key === "revenue.total"));
   // Significant moves first.
   const firstPlain = movers.improved.findIndex((m) => !m.significant);
   if (firstPlain >= 0) assert.ok(movers.improved.slice(firstPlain).every((m) => !m.significant));

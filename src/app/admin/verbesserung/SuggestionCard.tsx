@@ -149,7 +149,7 @@ export function SuggestionCard({
             value={directiveDraft}
             onChange={(e) => setDirectiveDraft(e.target.value)}
             maxLength={MAX_DIRECTIVE_CHARS}
-            className="mt-1 min-h-[80px] bg-card text-sm"
+            className="mt-1 min-h-[104px] bg-card text-sm"
             aria-label="Anweisungstext"
           />
           <p className="mt-1 text-2xs text-muted-foreground">
@@ -163,7 +163,7 @@ export function SuggestionCard({
 
   return (
     <Card className={cn(status === "dismissed" && "opacity-75")}>
-      <CardContent className="flex flex-col gap-3 p-4">
+      <CardContent className="flex flex-col gap-3 p-4 pt-4">
         {suggestion.detailsVersion === 2 && suggestion.details ? (
           <DecisionBody suggestion={suggestion} range={range} directiveBox={directiveBox} showRun={showRun} />
         ) : (

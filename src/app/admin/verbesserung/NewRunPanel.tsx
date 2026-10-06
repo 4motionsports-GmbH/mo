@@ -79,7 +79,7 @@ export function NewRunPanel({
 
   return (
     <Card>
-      <CardContent className="flex flex-col gap-5 p-5">
+      <CardContent className="flex flex-col gap-5 p-5 pt-5">
         <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
           <Sparkles className="size-4 text-accent" aria-hidden />
           Neuer Verbesserungslauf
@@ -104,7 +104,7 @@ export function NewRunPanel({
           </InfoTip>
         </h2>
 
-        <ol className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <ol className="grid grid-cols-2 gap-2 xl:grid-cols-4">
           {steps.map((s, i) => (
             <li
               key={s.label}
@@ -126,7 +126,7 @@ export function NewRunPanel({
           ))}
         </ol>
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4">
           <Field
             label="Komplettanalyse"
             info="Optional. Ihre Gesprächs-Insights, Personas und das Kundenwissen fließen in die Vorschläge zu Chat & Prompt ein. Bei einer Entscheidungs-Analyse können ihre Maßnahmen hier übernommen werden — dann werden sie hier entschieden und im nächsten Lauf gemessen."
@@ -159,6 +159,7 @@ export function NewRunPanel({
               value={effectivePreset}
               onChange={setPreset}
               options={presetOptions}
+              className="max-w-full flex-wrap"
             />
           </Field>
         </div>

@@ -294,7 +294,14 @@ function SuggestionsSection({
       >
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           {laneOptions.length > 2 ? (
-            <SegmentedControl label="Nach Bereich filtern" size="sm" value={effectiveLane} onChange={onLane} options={laneOptions} />
+            <SegmentedControl
+              label="Nach Bereich filtern"
+              size="sm"
+              value={effectiveLane}
+              onChange={onLane}
+              options={laneOptions}
+              className="max-w-full flex-wrap"
+            />
           ) : (
             <span />
           )}
@@ -397,7 +404,7 @@ function LegacyRunBody({ detail, onSuggestionChanged }: { detail: RunDetail; onS
       </Callout>
       {(delta?.rows?.length || detail.effectCheckMd) && (
         <Card>
-          <CardContent className="flex flex-col gap-3 p-5">
+          <CardContent className="flex flex-col gap-3 p-5 pt-5">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
               Wirkungs-Check — was haben die bisherigen Maßnahmen bewirkt?
               <InfoTip>
