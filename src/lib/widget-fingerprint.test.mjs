@@ -17,6 +17,7 @@ import {
 // mangle (min) — Shopify may minify ES5 theme JS when it serves it.
 const MEASURED = {
   raw: {
+    "bc7fb5d": {"/api/chat": 9, "/api/auth/link": 2, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 7, "order_support": 3, "Bestellnummer + kurz": 1, "endSpeaking(": 10, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 3, "ms-chat-ctx-last": 2, "ms-chat-optin-benefits": 2},
     "3e87341": {"/api/chat": 8, "/api/auth/link": 2, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 7, "order_support": 3, "Bestellnummer + kurz": 1, "endSpeaking(": 10, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 2, "Rabattaktionen zuerst erfahren": 1},
     "8d0a0c4": {"/api/chat": 8, "/api/auth/link": 2, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 7, "order_support": 3, "Bestellnummer + kurz": 1, "endSpeaking(": 8, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 2, "Rabattaktionen zuerst erfahren": 1},
     "a0df103": {"/api/chat": 8, "/api/auth/link": 2, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 7, "endSpeaking(": 8, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 2, "Rabattaktionen zuerst erfahren": 1},
@@ -27,6 +28,7 @@ const MEASURED = {
     "f7dc50a": {"/api/chat": 5, "endSpeaking(": 7, "starter_shown": 2},
   },
   ws: {
+    "bc7fb5d": {"/api/chat": 1, "/api/auth/link": 1, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 1, "order_support": 3, "Bestellnummer + kurz": 1, "endSpeaking(": 10, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 2, "ms-chat-ctx-last": 1, "ms-chat-optin-benefits": 1},
     "3e87341": {"/api/chat": 1, "/api/auth/link": 1, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 1, "order_support": 3, "Bestellnummer + kurz": 1, "endSpeaking(": 10, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 1, "Rabattaktionen zuerst erfahren": 1},
     "8d0a0c4": {"/api/chat": 1, "/api/auth/link": 1, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 1, "order_support": 3, "Bestellnummer + kurz": 1, "endSpeaking(": 8, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 1, "Rabattaktionen zuerst erfahren": 1},
     "a0df103": {"/api/chat": 1, "/api/auth/link": 1, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 1, "endSpeaking(": 8, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 1, "Rabattaktionen zuerst erfahren": 1},
@@ -37,6 +39,7 @@ const MEASURED = {
     "f7dc50a": {"/api/chat": 1, "endSpeaking(": 7, "starter_shown": 1},
   },
   min: {
+    "bc7fb5d": {"/api/chat": 1, "/api/auth/link": 1, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 1, "order_support": 3, "Bestellnummer + kurz": 1, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 2, "ms-chat-ctx-last": 1, "ms-chat-optin-benefits": 1},
     "3e87341": {"/api/chat": 1, "/api/auth/link": 1, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 1, "order_support": 3, "Bestellnummer + kurz": 1, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 1, "Rabattaktionen zuerst erfahren": 1},
     "8d0a0c4": {"/api/chat": 1, "/api/auth/link": 1, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 1, "order_support": 3, "Bestellnummer + kurz": 1, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 1, "Rabattaktionen zuerst erfahren": 1},
     "a0df103": {"/api/chat": 1, "/api/auth/link": 1, "ms_mo_c": 1, "ms-chat-whoami-done": 1, "ms-chat-early-params": 1, "get_order_status": 1, "ms-chat-login-gate-snooze": 1, "ms-chat-mkt-decision": 1, "ms-mo-attr": 1, "/api/attribution/token": 1, "Rabattaktionen zuerst erfahren": 1},
@@ -49,9 +52,9 @@ const MEASURED = {
 };
 
 const EXPECTED = {
-  raw: { "3e87341": "main-2026-10-04", "8d0a0c4": "fixes-8d0a0c4" },
-  ws: { "3e87341": "main-2026-10-04", "8d0a0c4": "fixes-8d0a0c4" },
-  min: { "3e87341": "fixes-minified", "8d0a0c4": "fixes-minified" },
+  raw: { bc7fb5d: "tasks-2026-10-05", "3e87341": "main-2026-10-04", "8d0a0c4": "fixes-8d0a0c4" },
+  ws: { bc7fb5d: "tasks-2026-10-05", "3e87341": "main-2026-10-04", "8d0a0c4": "fixes-8d0a0c4" },
+  min: { bc7fb5d: "tasks-2026-10-05", "3e87341": "fixes-minified", "8d0a0c4": "fixes-minified" },
 };
 const OLDER = {
   a0df103: "pr73",
@@ -77,7 +80,7 @@ test("the live-safe builds are exactly the ones that redeem the code", () => {
       assert.equal(Boolean(b?.acceptable), widgetRedeemsLinkCode(counts), `${variant} ${commit}`);
     }
   }
-  assert.deepEqual(WIDGET_BUILDS.filter((b) => b.current).map((b) => b.key), ["main-2026-10-04", "fixes-minified"]);
+  assert.deepEqual(WIDGET_BUILDS.filter((b) => b.current).map((b) => b.key), ["tasks-2026-10-05"]);
 });
 
 test("a half-applied set or a non-widget file is never passed off as a known build", () => {

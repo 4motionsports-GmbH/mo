@@ -12,11 +12,11 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
-## ▶ Open for M — the one list (05.10.2026, in this order)
+## ▶ Open for M — the one list (06.10.2026, in this order)
 
 Everything below this box is the detailed history and the step-by-step instructions; this box is
 the single list of what is still open for M. C's open items are at the end of „C · Claude's tasks“.
@@ -27,15 +27,20 @@ the single list of what is still open for M. C's open items are at the end of �
    (Details C.21; the purge of old widget tokens started 05.10.) If the switch goes on later than
    05.10., tell C the day: the KPI release „Bestell-Zuordnung: Fenster ab der letzten Beratung“ and
    the „aussagekräftig ab“ date of the attribution section are dated 05.10. (`src/lib/kpi-releases.mjs`).
-2. **Frontend prompt (when C hands it over, 05.10.).** The prompt is the „Prompt“ part of `docs/frontend/tasks/README.md`;
-   send it to the frontend agent with exactly the files that README lists as attachments (the list
-   is kept there, not here). When its PR is merged: upload the files it names to the theme →
-   `npm run verify:widget` must report „Widget mit den Aufgaben vom 05.10. …“ → send C that output
-   and the agent's reply (MANIFEST entry, fingerprint) — C.22.
-3. **Page context on (2–3 days after the upload in 2).** `npm run verify:live -- --since <upload day>`
-   → section 9 shows `page_context_applied` rows with `erkannt = true` → Vercel
-   `CHAT_PAGE_CONTEXT_ENABLED=true` → Redeploy → tell C the day (release note; the control group
-   comes later, C prepares it). **Not before the upload** — until then the switch does nothing.
+2. **Check the new widget (today, 5 min).** The tasks of 05.10. are live since 06.10. (theme
+   `bc7fb5d`). `npm run verify:widget` → „Widget mit den Aufgaben vom 05.10. (bc7fb5d …)“ with ✔.
+   Then `npm run verify:live -- --since 2026-10-05 --session d63d2e26` (the frontend agent's test
+   session): section 3 lists that session's `consent_gate_*` rows (and `email_capture_*` if it
+   accepted) with `variant: "a"` and `placement: "popup"` or `"signin_return"`; section 9 lists
+   `page_context_applied` (`pct: 100` while the switch is off), `page_context_answered` and
+   `product_cta_clicked` with `samePage`. Send C both outputs. Optional (task 3): in the Neon SQL
+   editor `DELETE FROM mo_attribution_tokens WHERE source = 'widget' AND session_id LIKE 'd63d2e26%';`
+   → tell the frontend agent; after its next product turn `/cart.js` holds a new `_mo`.
+3. **Page context on (from 08.10.).** `npm run verify:live -- --since 2026-10-06` → section 9 shows
+   `page_context_applied` rows with `erkannt = true` for most sessions → Vercel
+   `CHAT_PAGE_CONTEXT_ENABLED=true` → Redeploy → tell C the day (release note). Leave
+   `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` at 0: the control group comes after 2–3 days with the switch on;
+   C gives you the value (C.23).
 4. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
    recommend a cheap product, click „Zur Kasse“ on the card, complete the order (cancel/refund it
    afterwards). Shopify admin → the order → „Zusätzliche Details“: is there an `_mo` entry? Tell C
@@ -55,6 +60,11 @@ the single list of what is still open for M. C's open items are at the end of �
 
 ## Done
 
+- [x] Frontend tasks of 05.10. live (06.10., FE PR #75 in the theme repo, `bc7fb5d`): served consent
+  benefits with variant/placement, page context on typed product- and collection-page messages,
+  attribution token renewal and blanking of the `_mo` marker on sign-out / erase / withdrawal. The
+  agent checked `_mo` on and off in `/cart.js` live. Prompt and tasks archived in
+  `docs/archive/frontend-tasks-2026-10-05/`.
 - [x] 5.2 + 5.4 App Proxy + compliance webhooks (05.10., M): new app version in the Dev Dashboard
   (scope `write_app_proxy`, App proxy `apps/chat`), compliance webhooks with the Shopify CLI (5.4b),
   checks passed, `APP_PROXY_SIGNIN_ENABLED=true` + `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24` in Production.
@@ -341,7 +351,7 @@ the single list of what is still open for M. C's open items are at the end of �
 - [x] **5.1 Frontend task** — done 04.10.: the frontend agent built the customer-platform
   widget (theme PR #73 + `8d0a0c4` + `3e87341`), the owner uploaded it on 04.10.; the frontend
   docs are in `docs/frontend/`. Live check: 1.11. The next widget tasks (from the backlog in
-  `docs/frontend/07` §7) are written: `docs/frontend/tasks/README.md` → open list item 2.
+  `docs/frontend/07` §7) are written: `docs/archive/frontend-tasks-2026-10-05/README.md` → open list item 2.
 
 - [x] **5.2 Compliance webhooks** (done 05.10.) — now part of 5.4 (steps 5 and 11; fallback 5.4b): the same new
   app version in the Dev Dashboard carries the App Proxy and the compliance webhooks, and M can do it
@@ -578,8 +588,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       of UTC — done 05.10. (every range query of the report runs midnight to midnight Berlin time).
 - [x] **C.15** Next items planned (item 8 of the 04.10. request) — done 04.10.: five ranked,
       verified plans, all built 05.10. (C.16–C.21) and archived in `docs/archive/plans-2026-10-04/`
-      (README = ranking, findings, decisions, order; open follow-ups → C.26); widget tasks in
-      `docs/frontend/tasks/` → open list item 2.
+      (README = ranking, findings, decisions, order; open follow-ups → C.26); the widget tasks went
+      live on 06.10. (`docs/archive/frontend-tasks-2026-10-05/`, C.22).
 - [x] **C.16** OI1 F1 (opt-in loss) fixed 05.10.: a submit without the marketing tick keeps a
       `pending` DOI (status, token, `doi_sent_at`, marketing flag) unless the address is
       suppressed, so the link in the inbox keeps working; rules in the tested
@@ -600,23 +610,24 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [x] **C.19** OI3 — done 05.10.: `surface=signin` serves three benefit bullets (C's wording,
       D-AP4) and `variant: "a"` (copy version `v5`); the opt-in POST takes `placement` /
       `variant`; KPI „Nach Variante und Platzierung“. FE task 1:
-      `docs/frontend/tasks/TASKS.md` task 1 (sent with open list item 2).
+      `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 1 (sent with open list item 2).
 - [x] **C.20** A3 backend — done 05.10.: `context.source`, softer page notes,
       `CHAT_PAGE_CONTEXT_ENABLED` / `_HOLDOUT_PCT` off, `page_context_applied/_answered`, KPI
       „Seitenkontext auf Produktseiten“, `verify:live` section 9, fingerprint row for the next
-      upload. FE task 2: `docs/frontend/tasks/TASKS.md` task 2 (sent with open list item 2).
+      upload. FE task 2: `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 2 (sent with open list item 2).
 - [x] **C.21** ATTR-TOKEN-LIFETIME — built 05.10. (pre-checks by M: webhooks once each, widget
       tokens since 24.08., purge cliff reached 05.10. 08:40 UTC). Migration `0076`
       (`messages.session_id`; the code works before and after it), `MO_ATTRIBUTION_SESSION_ANCHOR`
       (off in code), `mo_order_marker_unresolved`, KPI notes, `verify:live` 7b, dossier §20 (F-37).
       **M:** run `npm run db:migrate`, then set the switch (open list item 1). FE task 3:
-      `docs/frontend/tasks/TASKS.md` task 3 (sent with open list item 2).
+      `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 3 (sent with open list item 2).
 - [ ] **C.5** Keep this file current after every step.
-- [ ] **C.22** After the widget upload (open list item 2, M sends C the `verify:widget` output):
-      mark the row `tasks-2026-10-05` current in `widget-fingerprint.mjs`, add the release notes
-      („Einwilligungs-Popup: Vorteile vom Server, Variante und Platzierung“, „Seitenkontext bei
-      getippten Fragen“), refresh `docs/frontend/04`/`05`/`07` from the widget agent's reply, then
-      move the finished tasks (`docs/frontend/tasks/`) to `docs/archive/`.
+- [x] **C.22** Widget upload of 06.10. (`bc7fb5d`): fingerprint row `tasks-2026-10-05` is current
+      (measured raw, whitespace-only and minified), KPI release notes of 06.10. („Einwilligungs-Popup:
+      Vorteile vom Server, Variante und Platzierung“, „Seitenkontext bei getippten Fragen (Widget)“,
+      „Bestell-Zuordnung: Markierung wird nach einer Beratung erneuert“), `docs/frontend/01`–`07`
+      refreshed to `bc7fb5d`, the round archived; `verify:live --session` also lists a session's
+      consent rows (section 3).
 - [ ] **C.23** Page context: once the switch is on and 2–3 days of base rate are in, pre-register
       the control-group experiment (`PAGE_CONTEXT_EXPERIMENT`, target size per arm) and tell M
       the `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` value; read the result once the target is reached.

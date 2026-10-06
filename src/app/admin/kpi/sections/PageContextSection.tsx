@@ -40,7 +40,7 @@ function share(pcts: number[]): string {
 export function PageContextSection({ kpis, range }: { kpis: PageContextKpis | null; range: KpiRange }) {
   const empty =
     !kpis || (kpis.sessions === 0 && kpis.collection.sessions === 0)
-      ? "Noch keine Daten — das Widget schickt den Seitenkontext erst nach dem Upload."
+      ? "Noch keine Daten im Zeitraum — getippte Fragen tragen den Seitenkontext erst mit dem Widget vom 06.10.2026."
       : null;
   const hasControl = Boolean(kpis?.pcts.some((p) => p > 0 && p < 100));
   const arms = kpis?.arms;

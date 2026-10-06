@@ -1294,7 +1294,14 @@ E-Mail-Zusammenfassung mehr für angemeldete Kund:innen“ (`signedin-offer-off`
 „Angeboten“ in §5.8 drops and its rate rises — no change in customer
 behaviour), „Shop-Anmeldung zählt im Chat (App Proxy)“ (`app-proxy-signin`:
 sign-ins, consent popups and Kundenkonto figures rise; §5.15 „Shop-Login-Erkennung“)
-and „Opt-in-Messung nach Quelle und Ergebnis“ (§5.7, §5.8) — eight entries in all. The
+and „Opt-in-Messung nach Quelle und Ergebnis“ (§5.7, §5.8), and on 06.10.2026 the
+three changes of the widget build `bc7fb5d` (the 2026-10-05 tasks): „Einwilligungs-Popup:
+Vorteile vom Server, Variante und Platzierung“ (`consent-benefits-served`: „Nach Variante
+und Platzierung“ in §5.7 has data only from then; no „Weggeklickt“ after an accept),
+„Seitenkontext bei getippten Fragen (Widget)“ (`page-context-typed`: §5.1a; Mo uses the
+context only with `CHAT_PAGE_CONTEXT_ENABLED`) and „Bestell-Zuordnung: Markierung wird
+nach einer Beratung erneuert“ (`attribution-token-renewal`: fewer unknown markers in
+§5.16) — eleven entries in all; the three of 06.10. add no section note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
@@ -1396,10 +1403,11 @@ observed base rate). Without it no comparison is shown.
 > attrition can differ by arm — judged on assignment rows, attrition shown per
 > arm; `productCards` counts card tool calls, not rendered cards; `/en`
 > handles the catalog does not know show up as „nicht erkannt“; `samePage` and
-> the page context come only from a widget build with the 2026-10-05 tasks
-> (docs/frontend/tasks; whether it is uploaded: ROLLOUT_TODO.md) — without
-> such events the section is empty („Noch keine Daten — das Widget schickt den
-> Seitenkontext erst nach dem Upload.“). Live check: `npm run
+> the page context come only from the widget build `bc7fb5d` (the 2026-10-05
+> tasks, 2026-10-06; KPI release `page-context-typed`) and later — a period
+> without such events shows the empty state („Noch keine Daten im Zeitraum —
+> getippte Fragen tragen den Seitenkontext erst mit dem Widget vom 06.10.2026.“).
+> Which build is live: `npm run verify:widget`. Live check: `npm run
 > verify:live -- --session <prefix>` section 9.
 
 ### 5.2 Persona-group insights — [`lib/kpi-persona.ts`](../src/lib/kpi-persona.ts)
@@ -1575,9 +1583,11 @@ denominator). Values outside the known variants and placements are merged into
 „unbekannt“, missing ones into „ohne (älteres Widget)“ / „ohne“ (bounded in
 SQL and in the tested `normalizeConsentVariantRows`, `kpi-widget-events.mjs`),
 so arbitrary strings posted to `/api/kpi` never get their own row. The block
-appears only once a known variant arrives — i.e. from a widget build that
-echoes the served bullets' `variant` and `placement` (docs/frontend/tasks;
-older builds send neither field; what is uploaded: ROLLOUT_TODO.md).
+appears only once a known variant arrives — i.e. from the widget build that
+echoes the served bullets' `variant` and `placement`: `bc7fb5d` (2026-10-06,
+KPI release `consent-benefits-served`) and later; older builds send neither
+field, so the block has data from 2026-10-06. The widget sends `popup` or
+`signin_return`, never `value_moment` (the placement is accepted but unused).
 `variantMismatch` (echoed variant ≠ the session's assignment while more than
 one variant runs) is counted for the live check.
 
@@ -1846,13 +1856,18 @@ oder gelöschter Markierung, {b} außerhalb des Zuordnungsfensters — keiner
 Beratung zugeordnet (nicht in der Mo-Zuordnung gespeichert), nur gezählt.“
 They are not linked to a session and not in `mo_orders`.
 
-**Release notes.** The section takes `range` and shows
-`releaseNotesFor("attribution", range)`: releases `attribution-unresolved` and
-`attribution-window` (both 05.10.2026); for a period starting earlier the note
-„Erst ab dem 05.10.2026 aussagekräftig“ — „Beraten & gekauft“ and „Beraten,
+**Release notes.** The releases `attribution-unresolved`, `attribution-window`
+(both 05.10.2026) and `attribution-token-renewal` (06.10.2026: from the widget
+build `bc7fb5d` a token the backend deleted is replaced after the next live
+product consultation, and the marker is blanked when the session ends — so „mit
+unbekannter oder gelöschter Markierung“ should drop; widget rules: API_CONTRACT
+§10, as built: docs/frontend/06 §8) are listed under „Änderungen im Zeitraum“
+(§5.0). The section itself takes `range` and shows
+`releaseNotesFor("attribution", range)`: for a period starting before 05.10.2026
+the note „Erst ab dem 05.10.2026 aussagekräftig“ — „Beraten & gekauft“ and „Beraten,
 anderes gekauft“ count from the latest consultation since then („Direkt“
-unchanged). The note and the release are shown regardless of the switch; the
-latest-consultation window they describe applies only with
+unchanged). The note and the `attribution-window` release are shown regardless of
+the switch; the latest-consultation window they describe applies only with
 `MO_ATTRIBUTION_SESSION_ANCHOR` on (window anchor above).
 
 §5.5's code-only revenue KPI deliberately stays separate (exact definition
