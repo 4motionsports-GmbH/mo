@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "../../ui";
-import { StageFunnelChart } from "../charts";
+import { FunnelBars } from "../FunnelBars";
 import { Explain, FreshnessBadge, FunnelLayout, KpiSection } from "../KpiSection";
 import type { KpiRange } from "@/lib/kpi-range";
 import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
@@ -77,11 +77,11 @@ export function CampaignSection({ cached, range }: { cached: Cached<CampaignKpis
         <>
           <FunnelLayout
             chart={
-              <StageFunnelChart
+              <FunnelBars
                 stages={[
-                  { name: "Gesendet", value: kpis.sent },
-                  { name: "Geklickt", value: kpis.clicked },
-                  ...(kpis.shopifyConfigured ? [{ name: "Eingelöst", value: kpis.converted }] : []),
+                  { label: "Gesendet", value: kpis.sent },
+                  { label: "Geklickt", value: kpis.clicked },
+                  ...(kpis.shopifyConfigured ? [{ label: "Eingelöst", value: kpis.converted }] : []),
                 ]}
               />
             }

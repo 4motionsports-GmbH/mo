@@ -1,7 +1,8 @@
 // I/O layer of the Mo order-attribution pipeline (pure logic:
 // lib/order-attribution.mjs; design: docs/ORDER_ATTRIBUTION.md).
 //
-// Three responsibilities:
+// Two responsibilities (the KPI aggregation over mo_orders lives in
+// lib/mo-revenue-store — „Umsatz durch Mo“):
 //   1. MINT attribution tokens — opaque, server-side random ids that ride on
 //      Mo-built cart links (`attributes[_mo]=<token>`) or that the widget
 //      stamps onto the live storefront cart. One token per (session, source),
@@ -11,7 +12,6 @@
 //      upsert keyed by shopify_order_id. Only orders carrying a Mo marker are
 //      stored (data minimisation); the tier is snapshotted at ingest against
 //      the session's discussed/selected products.
-//   3. AGGREGATE the tiered attribution KPIs for the dashboard.
 //
 // GDPR: everything here is Cluster A — session-keyed, pseudonymous. The
 // webhook payload's customer fields are never read (see parseOrderWebhook).
@@ -22,7 +22,6 @@
 import { getSql, type Sql } from "./db";
 import { loadProductCatalog } from "./product-catalog";
 import { hasRecommendedPurchase } from "./kpi-match.mjs";
-import { isRealisedFinancialStatus } from "./kpi-revenue-core.mjs";
 import {
   parseOrderWebhook,
   hasMoMarker,
@@ -34,7 +33,6 @@ import {
   isSessionAnchoredSource,
   unresolvedMarkerEvent,
   unresolvedMarkerDedupeKey,
-  countUnresolvedMarkers,
   restartsWindowOnReuse,
   overlapLookback,
   unionConsultedProducts,
@@ -44,7 +42,6 @@ import { isAttributionSessionAnchorEnabled } from "./platform-flags.mjs";
 import { recordKpiEvent, KPI_MO_ORDER_MARKER_UNRESOLVED } from "./kpi-events";
 import { reportError } from "./observability";
 import { parseIntEnv } from "./env-num";
-import type { KpiRange } from "./kpi-range";
 
 // ---------------------------------------------------------------------------
 // Tokens
@@ -412,117 +409,5 @@ export async function wasCodeSeenOnIngestedOrder(
   } catch (err) {
     reportError(err, { route: "lib/mo-orders-store", phase: "wasCodeSeenOnIngestedOrder" });
     return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// KPI aggregation
-// ---------------------------------------------------------------------------
-
-export interface MoAttributionTierStats {
-  /** Orders in the window (realised money only — PAID/PARTIALLY_REFUNDED). */
-  orderCount: number;
-  /** Sum of the realised order totals. */
-  revenueAmount: number;
-}
-
-export interface MoAttributionKpis {
-  direct: MoAttributionTierStats;
-  assisted: MoAttributionTierStats;
-  influenced: MoAttributionTierStats;
-  /** Ingested orders in the window whose money is not (yet) realised
-   * (pending/voided/refunded) — visible so nothing disappears silently. */
-  unrealisedOrders: number;
-  currency: string;
-  /** Total ingested Mo-marked orders in the window (all tiers, all statuses). */
-  totalOrders: number;
-  /** True once at least one marked order was EVER seen (stored, or counted as
-   * unresolved) — before that the section shows the "webhook not registered
-   * yet?" empty state. */
-  ingestionSeen: boolean;
-  attributionWindowDays: number;
-  /** Marked orders in the range that no consultation could claim, by reason
-   * (event `mo_order_marker_unresolved`, dated by the orders/create arrival). */
-  unresolvedOrders: { unknownToken: number; outsideWindow: number };
-  /** MO_ATTRIBUTION_SESSION_ANCHOR — which window rule the InfoTip explains. */
-  sessionAnchor: boolean;
-  range: { from: string; to: string; days: number; label: string };
-}
-
-const EMPTY_TIER: MoAttributionTierStats = { orderCount: 0, revenueAmount: 0 };
-
-/**
- * Tiered "Mo-zugeordneter Umsatz" for the dashboard window — a plain DB
- * aggregate over ingested orders (no Shopify calls, no caps, no sampling).
- * Returns null only when no DB is configured. Never throws.
- */
-export async function getMoAttributionKpis(
-  range: KpiRange,
-  sql: Sql | null = getSql()
-): Promise<MoAttributionKpis | null> {
-  if (!sql) return null;
-  try {
-    const rows = (await sql`
-      SELECT attribution_tier, financial_status, total_price, currency
-        FROM mo_orders
-       WHERE processed_at >= ${range.from}::date
-         AND processed_at < (${range.to}::date + 1)
-    `) as Array<{
-      attribution_tier: string | null;
-      financial_status: string | null;
-      total_price: string | number | null;
-      currency: string | null;
-    }>;
-    const seenRows = (await sql`
-      SELECT 1 FROM mo_orders LIMIT 1
-    `) as Array<Record<string, unknown>>;
-    const unresolvedRows = (await sql`
-      SELECT COALESCE(data->>'reason', '') AS reason, count(*)::int AS n
-        FROM kpi_events
-       WHERE event = ${KPI_MO_ORDER_MARKER_UNRESOLVED}
-         AND created_at >= ${range.from}::date
-         AND created_at < (${range.to}::date + 1)
-       GROUP BY 1
-    `) as Array<{ reason: string; n: number }>;
-    const unresolvedSeen = (await sql`
-      SELECT 1 FROM kpi_events WHERE event = ${KPI_MO_ORDER_MARKER_UNRESOLVED} LIMIT 1
-    `) as Array<Record<string, unknown>>;
-
-    const tiers: Record<"direct" | "assisted" | "influenced", MoAttributionTierStats> = {
-      direct: { ...EMPTY_TIER },
-      assisted: { ...EMPTY_TIER },
-      influenced: { ...EMPTY_TIER },
-    };
-    let unrealisedOrders = 0;
-    let currency = "EUR";
-    for (const row of rows) {
-      if (row.currency) currency = String(row.currency);
-      if (!isRealisedFinancialStatus(row.financial_status)) {
-        unrealisedOrders++;
-        continue;
-      }
-      const tier = row.attribution_tier as keyof typeof tiers | null;
-      if (!tier || !(tier in tiers)) continue;
-      const amount = row.total_price == null ? null : Number(row.total_price);
-      tiers[tier].orderCount++;
-      if (amount != null && Number.isFinite(amount) && amount >= 0) {
-        tiers[tier].revenueAmount = Math.round((tiers[tier].revenueAmount + amount) * 100) / 100;
-      }
-    }
-
-    return {
-      ...tiers,
-      unrealisedOrders,
-      currency,
-      totalOrders: rows.length,
-      ingestionSeen: seenRows.length > 0 || unresolvedSeen.length > 0,
-      attributionWindowDays: attributionWindowDays(),
-      unresolvedOrders: countUnresolvedMarkers(unresolvedRows),
-      sessionAnchor: isAttributionSessionAnchorEnabled(),
-      range: { from: range.from, to: range.to, days: range.days, label: range.label },
-    };
-  } catch (err) {
-    reportError(err, { route: "lib/mo-orders-store", phase: "getMoAttributionKpis" });
-    return null;
   }
 }
