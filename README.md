@@ -97,7 +97,7 @@ every retention window treats `0` as „disabled“, never as „delete everythi
 | `npm run dev` / `build` / `start` | Next.js dev server, production build, production server. |
 | `npm run lint`, `npx tsc --noEmit`, `npm test` | ESLint, type check, the `node --test` suite (`src/**/*.test.mjs`). |
 | `npm run db:migrate` | Apply pending SQL migrations from `migrations/` (forward-only, run manually). |
-| `npm run db:proxy`, `npm run db:seed`, `npm run db:reset` | Local Neon-protocol proxy, demo data, test-data reset (see `docs/DATABASE.md`; `db:reset` currently aborts on a database past migration 0031). |
+| `npm run db:proxy`, `npm run db:seed`, `npm run db:reset` | Local Neon-protocol proxy, demo data, test-data reset (see `docs/DATABASE.md`). |
 | `npm run verify:shopify` / `verify:pingen` / `verify:customer-account` | Check the respective credentials. |
 | `npm run verify:widget`, `npm run verify:live` | After a widget upload: which widget build the shop serves (public GETs) and the read-only live KPI checks against the database (`-- --since YYYY-MM-DD`); `docs/ROLLOUT_TODO.md` 1.11. |
 | `npm run shopify:webhooks` (`-- --apply`) | List (and create) the Shopify webhook subscriptions Mo needs; checks the app's scopes. |

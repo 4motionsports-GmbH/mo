@@ -61,8 +61,9 @@ transcript. The tool's result itself is not stored (only the call's
 | Insights rollups (`conversation_insights`) | **180 days** by `generated_at` | `KPI_RETENTION_DAYS` | Hard delete (derived from Cluster A — leaves when its sources would; regenerable on demand) |
 | Persona top-question cache (`kpi_persona_question_summaries`) | **180 days** by `generated_at` | `KPI_RETENTION_DAYS` | Hard delete (derived cache, regenerable on demand) |
 | Komplettanalyse reports (`analytics_reports`) | **365 days** by `created_at` | `ANALYTICS_REPORT_RETENTION_DAYS` | Hard delete — reports generated with per-customer profiles carry customer display names and must not live forever. 0 disables. |
+| Verbesserung runs + suggestions (`improvement_runs`, `improvement_suggestions`, `0044`) | **365 days** by the run's `created_at`, and every suggestion of the run decided before the window (`COALESCE(status_changed_at, created_at)`) | `ANALYTICS_REPORT_RETENTION_DAYS` | Hard delete of the run, its suggestions cascade (step 5h). A run stays while it is `running`, while any suggestion is still `open` („Neu“, awaiting a decision), and while it is the newest `complete` run (the yardstick the next run measures against). The operator's directives (`mo_directives` + versions) have no window — configuration; one adopted from a purged suggestion keeps its text, its `suggestion_id` turns NULL. 0 disables. |
 | Order-attribution rows (`mo_orders`) | **180 days** by `COALESCE(processed_at, created_at)` | `KPI_RETENTION_DAYS` | Hard delete (Cluster-A analytics like `kpi_events`; pseudonymous order facts only — see `docs/ORDER_ATTRIBUTION.md`) |
-| Attribution tokens (`mo_attribution_tokens`) | Switch off: **window + 7 days** by `created_at`. Switch on (session source `widget`): **window + 7 days after the token's own session's last product consultation**, never more than `KPI_RETENTION_DAYS` (default **180**; 180 when that window is 0; never less than window + 7) after minting. Link sources (`summary_email`, `marketing_email`, `bundle`): by `created_at` | `MO_ATTRIBUTION_WINDOW_DAYS` (window, default 30), `MO_ATTRIBUTION_SESSION_ANCHOR` (default off) | Hard delete — a token past the attribution window can never attribute again; deleted on erasure |
+| Attribution tokens (`mo_attribution_tokens`) | Switch off: **window + 7 days** by `created_at`. Switch on (session source `widget`): **window + 7 days after the token's own session's last product consultation**, never more than `KPI_RETENTION_DAYS` (default **180**; 180 when that window is 0; never less than window + 7) after minting. Link sources (`summary_email`, `marketing_email`, `bundle`): by `created_at`, which every new mail of the session re-stamps on its reused mail-link token — so window + 7 days after the latest mail carrying it (`docs/ORDER_ATTRIBUTION.md` „Attribution window“) | `MO_ATTRIBUTION_WINDOW_DAYS` (window, default 30), `MO_ATTRIBUTION_SESSION_ANCHOR` (default off) | Hard delete — a token past the attribution window can never attribute again; deleted on erasure |
 | Writer session of product-tool rows (`messages.session_id`, `0076`) | follows the conversation | `RETENTION_DAYS` | Cascade-deleted with the conversation and on erasure; written only on tool marker rows (text rows stay NULL) — the attribution anchor counts only the token's own device |
 | Active → abandoned transition | **30 minutes** idle | `ABANDON_AFTER_MINUTES` | Status flip (not deletion) |
 
@@ -234,7 +235,7 @@ again. The basis and privacy-policy wording are an open legal item
 | `inbox_items` (decided: `erledigt` / `verworfen`) | **180 days** by `COALESCE(decided_at, updated_at)`, marker **2 years** | `INBOX_RETENTION_DAYS` | Content cleared, a marker (kind, customer, decision, dedupe key) stays until 2 years (step 8). Open items stay; items about a person cascade with the customer. |
 | `shopify_webhook_events` | **90 days** by `received_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7) |
 | `shopify_sync_runs` (done / failed / cancelled) | **90 days** by `started_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7); the newest `done` run per kind always stays (import marker, reconcile floor, the one-off `refund_backfill` marker). Running runs stay. |
-| `shopify_outbox` (done / dead) | **90 days** by `created_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7). Only `done` / `dead` rows are purged; `pending`, `failed`, `running` (claimed, lease 5 min) and `skipped` (superseded by a newer write) rows stay — `skipped` rows therefore have no purge at all (known gap). `customer_id` is `SET NULL` when the customer goes; the erasure deletes the person's open rows. |
+| `shopify_outbox` (done / dead / skipped) | **90 days** by `created_at` | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7). Finished rows are purged — `done`, `dead` and `skipped` (superseded by a newer consent write of the same person); `pending`, `failed` and `running` (claimed, lease 5 min) rows stay. `customer_id` is `SET NULL` when the customer goes; the erasure deletes the person's open rows. |
 | `erasure_tombstones` | **30 days** after Shopify confirmed the redaction (`shopify_confirmed_at`) | `ERASURE_TOMBSTONE_RETENTION_DAYS` | Hard delete (step 9). An unconfirmed tombstone always stays, so no import re-creates a person Shopify still holds. |
 
 ---
@@ -353,7 +354,7 @@ through the mirror's webhooks and reconcile, never the sign-in itself.
 | `customer_oauth_tokens` | follows the customer | — | **Cascade-deleted** with the customer (`ON DELETE CASCADE`). A GDPR erasure / customer purge removes the tokens in the same step. Access tokens also rotate/expire continuously (refresh-token rotation). |
 | `customer_auth_pending` | **~10 min** | `CUSTOMER_AUTH_PENDING_TTL_MINUTES` | Hard delete by the retention cron once past `expires_at`. |
 | `customer_link_grants` | **10 min** (+1 day) | — | Hard delete by the retention cron one day past `expires_at` (counted with the pending-auth rows); cascade-deleted with the customer. |
-| `customer_merge_conflicts` | no window | — | No retention step; removed only by the complete erasure (`erasePerson`). |
+| `customer_merge_conflicts` (reviewed) | **90 days** after the review (`resolved_at`) | `SHOPIFY_SYNC_LOG_RETENTION_DAYS` | Hard delete (step 7b). Only reviewed conflicts (`resolved_at` set) leave; open ones (`resolved_at` NULL) stay — `resolved_customer_id` is the row the sign-in bound to, not a review. No code sets `resolved_at` yet (no admin view reads or clears the table), so today the step removes nothing and the rows leave only by the complete erasure (`erasePerson`). |
 
 **Why tokens have no separate window:** they exist only to act for a *currently
 signed-in* customer and they live and die with that customer's row. Logging out
@@ -504,7 +505,11 @@ step numbers below are the ones in the code. Each run:
    untouched — see [`CAMPAIGNS.md`](./CAMPAIGNS.md).
 5h. Deletes `analytics_reports` past `ANALYTICS_REPORT_RETENTION_DAYS`, and
    `conversation_insights` + `kpi_persona_question_summaries` on the
-   `KPI_RETENTION_DAYS` window.
+   `KPI_RETENTION_DAYS` window. On the report window it also deletes finished
+   Verbesserung runs (`improvement_runs` `complete` / `failed`, by `created_at`)
+   whose suggestions were all decided before the window — never a `running` run,
+   never a run with an `open` suggestion, never the newest `complete` run; the
+   suggestions cascade (`deletedImprovementRuns`, `deletedImprovementSuggestions`).
 5i. Deletes `mo_orders` on the `KPI_RETENTION_DAYS` window (by
    `COALESCE(processed_at, created_at)`) and `mo_attribution_tokens` older than
    the attribution window + 7 days. With `MO_ATTRIBUTION_SESSION_ANCHOR` on, a
@@ -524,8 +529,12 @@ step numbers below are the ones in the code. Each run:
    (default **90 days**): `shopify_webhook_events` by `received_at`, finished
    `shopify_sync_runs` (done / failed / cancelled) by `started_at` — the newest
    `done` run per kind always stays (it is the import marker and the reconcile
-   floor) — and `done` / `dead` `shopify_outbox` rows by `created_at`. Pending,
-   failed, running and skipped outbox rows are never purged.
+   floor) — and finished `shopify_outbox` rows (`done` / `dead` / `skipped`) by
+   `created_at`, all counted in `deletedShopifySyncLog`. Pending, failed and
+   running outbox rows are never purged. (7b) On the same window, reviewed
+   `customer_merge_conflicts` (`resolved_at` older than the window) are deleted
+   (`deletedMergeConflicts`); open conflicts stay. The status lists live in
+   `src/lib/retention-rules.mjs` (tested).
 8. Reduces decided Eingang items (`inbox_items` with status `erledigt` /
    `verworfen`) past `INBOX_RETENTION_DAYS` (default **180 days**, by
    `COALESCE(decided_at, updated_at)`) to a marker — reason, evidence, AI
@@ -568,8 +577,12 @@ every step reports its count, `options` echoes every window):
   "deletedInactiveCustomers": 0,
   "deletedCampaignContacts": 3,
   "deletedCampaignSends": 3,
+  "deletedAnalyticsReports": 1,
+  "deletedImprovementRuns": 1,
+  "deletedImprovementSuggestions": 8,
   "purgedAuthPending": 3,
   "deletedShopifySyncLog": 41,
+  "deletedMergeConflicts": 0,
   "deletedAttributionTokens": 6,
   "keptActiveAttributionTokens": 0,
   "deletedInboxItems": 9,
