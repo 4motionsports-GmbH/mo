@@ -24,7 +24,7 @@ export const decisionsSchema = z.object({
   headline: z.string().describe("Ein Satz: die wichtigste Erkenntnis des Zeitraums, mit Zahl."),
   summary: z
     .string()
-    .describe("Executive Summary in 3–5 Sätzen: Lage, Umsatz über Mo, größter Hebel, größtes Risiko — mit Zahlen und Vergleich zur Vorperiode."),
+    .describe("Executive Summary in 3–5 Sätzen: Lage, Umsatz durch Mo, größter Hebel, größtes Risiko — mit Zahlen und Vergleich zur Vorperiode."),
   decisions: z
     .array(
       z.object({
@@ -39,10 +39,10 @@ export const decisionsSchema = z.object({
     )
     .describe("Die 3–5 Entscheidungen, die jetzt zu treffen sind, wichtigste zuerst."),
   revenue: z.object({
-    summary: z.string().describe("Wie der Umsatz über Mo zustande kam (2–4 Sätze, Zahlen, Vorperiode)."),
+    summary: z.string().describe("Wie der Umsatz durch Mo zustande kam (2–4 Sätze, Zahlen, Vorperiode)."),
     drivers: z
       .array(z.object({ title: z.string(), detail: z.string().describe("1–2 Sätze mit Zahlen.") }))
-      .describe("Die 2–5 Treiber bzw. Bremsen des Umsatzes über Mo."),
+      .describe("Die 2–5 Treiber bzw. Bremsen des Umsatzes durch Mo."),
   }),
   bottlenecks: z
     .array(

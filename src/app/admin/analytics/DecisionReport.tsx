@@ -172,12 +172,12 @@ function Overview({
       : null,
   ].filter(Boolean);
   const tiles: Array<[string, string]> = [
-    ["revenue.total", "Mo-Umsatz (bezahlt)"],
+    ["revenue.total", "Umsatz durch Mo"],
     ["ledger.moShare", "Anteil am Shop-Umsatz"],
     ["chat.chats", "Gespräche"],
     ["consent.newSubscribers", "Neue Einwilligungen"],
     ["costs.total", "KI-Kosten"],
-    ["costs.roi", "Mo-Umsatz je KI-Euro"],
+    ["costs.roi", "Umsatz je 1 € KI-Kosten"],
   ];
   return (
     <section id="r-ueberblick" className="scroll-mt-24">
@@ -282,7 +282,7 @@ function Decisions({ decision, range }: { decision: Decision | null; range: { fr
   );
 }
 
-// ── Umsatz über Mo ───────────────────────────────────────────────────────────
+// ── Umsatz durch Mo ──────────────────────────────────────────────────────────
 
 function Revenue({
   decision,
@@ -295,49 +295,48 @@ function Revenue({
   m: (key: string) => SnapshotMetric | null;
   range: { from: string; to: string } | null;
 }) {
-  const sources = tableOf(snapshot, "revenue", "revenue.sources");
+  const channels = tableOf(snapshot, "revenue", "revenue.channels");
   return (
     <section id="r-umsatz" className="scroll-mt-24">
       <Section
         title={
           <span className="inline-flex items-center gap-1.5">
             <PiggyBank className="size-4 text-accent" aria-hidden />
-            Umsatz über Mo
+            Umsatz durch Mo
           </span>
         }
         level={3}
-        info="Bezahlte Bestellungen mit Mo-Markierung oder Mo-Code (Bestell-Webhook): Direkt = Mo-Code oder Mo-Link, Beraten & gekauft = Warenkorb-Markierung und ein beratenes Produkt gekauft, Beraten, anderes gekauft = Markierung ohne Produktüberschneidung. Eine Untergrenze: Käufe auf einem anderen Gerät sind unsichtbar."
+        info="Dieselbe Zählung wie „Umsatz durch Mo“ auf der KPI-Seite: bezahlter Umsatz aller Bestellungen mit Mo-Markierung oder Mo-Code, jede Bestellung genau einmal — Mo-Rabattcode vor Mo-Link vor Widget-Markierung. Beraten & gekauft = Warenkorb-Markierung und ein beratenes Produkt gekauft, Beraten, anderes gekauft = Markierung ohne Produktüberschneidung, Direkt über Mo = Mo-Code oder Mo-Link. Bestellungen mit Mo-Code aus der Zeit vor der Webhook-Registrierung ergänzt der Shopify-Code-Abgleich (nur im aktuellen Zeitraum). Eine Untergrenze: Käufe auf einem anderen Gerät sind unsichtbar."
         actions={<AdminTextLink target="kpi_umsatz" range={range} />}
       >
         <div className="flex flex-col gap-4">
           {decision?.revenue.summary ? <Prose>{decision.revenue.summary}</Prose> : <Empty>Keine Einordnung verfügbar.</Empty>}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <MetricTile metric={m("revenue.total")} label="Mo-Umsatz (bezahlt)" />
-            <MetricTile metric={m("revenue.direct")} label="Direkt" />
+            <MetricTile metric={m("revenue.total")} label="Umsatz durch Mo" />
             <MetricTile metric={m("revenue.assisted")} label="Beraten & gekauft" />
             <MetricTile metric={m("revenue.influenced")} label="Beraten, anderes gekauft" />
+            <MetricTile metric={m("revenue.direct")} label="Direkt über Mo" />
           </div>
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            {(decision?.revenue.drivers ?? []).length > 0 ? (
-              <ul className="flex flex-col gap-2">
-                {decision!.revenue.drivers.map((d, i) => (
-                  <li key={i} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
-                    <div className="text-xs font-semibold text-foreground">{d.title}</div>
-                    <div className="text-xs text-muted-foreground">{d.detail}</div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <span />
-            )}
-            {sources && (
-              <Card>
-                <CardContent className="overflow-x-auto p-3">
-                  <BreakdownTable table={sources} />
-                </CardContent>
-              </Card>
-            )}
-          </div>
+          {(decision?.revenue.drivers ?? []).length > 0 && (
+            <ul className="grid gap-2 sm:grid-cols-2">
+              {decision!.revenue.drivers.map((d, i) => (
+                <li key={i} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
+                  <div className="text-xs font-semibold text-foreground">{d.title}</div>
+                  <div className="text-xs text-muted-foreground">{d.detail}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {channels && (
+            <Card>
+              <CardContent className="flex flex-col gap-2 overflow-x-auto p-3">
+                <BreakdownTable table={channels} />
+                <div className="flex justify-end">
+                  <AdminTextLink target="kpi_umsatz_wege" range={range} />
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </Section>
     </section>
@@ -367,7 +366,7 @@ function Bottlenecks({
           </span>
         }
         level={3}
-        info="Wo zwischen Chat, Anmeldung, Einwilligung, E-Mail, Kampagne und Kauf am meisten verloren geht. Rechts die gemessenen Stufen: Balken relativ zur ersten Stufe, daneben der Übergang von der vorigen Stufe und der Wert der Vorperiode (VP). Chat, Anmeldung und Einwilligung zählen Sitzungen, das Formular Ereignisse, Kampagnen Mails."
+        info="Wo zwischen Chat, Anmeldung, Einwilligung, E-Mail, Kampagne und Kauf am meisten verloren geht. Rechts die gemessenen Stufen: Balken relativ zur ersten Stufe, daneben der Übergang von der vorigen Stufe und der Wert der Vorperiode (VP). „Vom Chat zur Bestellung“ (wie auf der KPI-Seite: jede Stufe eine Teilmenge der vorigen), Chat, Anmeldung und Einwilligung zählen Sitzungen, das Formular Ereignisse, Kampagnen Mails."
       >
         <div className="flex flex-col gap-4">
           {items.length === 0 ? (

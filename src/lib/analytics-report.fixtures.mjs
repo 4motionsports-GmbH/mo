@@ -29,11 +29,11 @@ export const SAMPLE_DECISIONS_OUTPUT = {
     {
       title: "Set-Angebote für Großgeräte-Beratungen zum Standard machen",
       rationale:
-        "Sets brachten 5.120 € aus 4 Bestellungen (Vorperiode 2.269 €) und haben den höchsten Bestellwert aller Quellen. Großgeräte-Käufer:innen mit Mo kaufen häufiger wieder (34 % vs. 27 %).",
+        "Sets brachten 5.120 € aus 4 Bestellungen (Vorperiode 3.269 €) und haben den höchsten Bestellwert aller Wege. Großgeräte-Käufer:innen mit Mo kaufen häufiger wieder (34 % vs. 27 %).",
       owner: "operator",
       impact: "hoch",
       confidence: "mittel",
-      metric: "Umsatz der Quelle „Set-Angebot“ ≥ 6.000 € je 30 Tage bei ≥ 5 Bestellungen",
+      metric: "Umsatz des Wegs „Set-Angebot“ ≥ 6.000 € je 30 Tage bei ≥ 5 Bestellungen",
       link: "kampagnen",
     },
     {
@@ -59,12 +59,12 @@ export const SAMPLE_DECISIONS_OUTPUT = {
   ],
   revenue: {
     summary:
-      "15.221 € bezahlter Mo-Umsatz aus 22 Bestellungen (Ø 692 €). Direkt — Code oder Mo-Link — sind 9.120 €, nach Beratung gekauft 1.890 €, beraten und anderes gekauft 4.211 €. Gegenüber der Vorperiode wuchs vor allem die Beratung im Widget-Warenkorb (+57 %) und das Set-Angebot (+126 %).",
+      "15.221 € bezahlter Mo-Umsatz aus 22 Bestellungen (Ø 692 €). Direkt — Code oder Mo-Link — sind 9.120 €, nach Beratung gekauft 1.890 €, beraten und anderes gekauft 4.211 €. Gegenüber der Vorperiode wuchs vor allem die Beratung im Widget-Warenkorb (+57 %) und das Set-Angebot (+57 %).",
     drivers: [
       { title: "Widget-Warenkörbe nach Beratung", detail: "8 Bestellungen, 6.101 € (Vorperiode 3.890 €) — die Produktklicks je Gespräch stiegen von 0,52 auf 0,6." },
-      { title: "Set-Angebote", detail: "4 Bestellungen, 5.120 € — der höchste Bestellwert aller Quellen (Ø 1.280 €)." },
+      { title: "Set-Angebote", detail: "4 Bestellungen, 5.120 € — der höchste Bestellwert aller Wege (Ø 1.280 €)." },
       { title: "Kampagnen-Codes (MK)", detail: "1.340 € aus 4 Bestellungen; „Herbst-Kraftraum“ trägt 1.040 €." },
-      { title: "Bremse: nicht zuordenbare Markierungen", detail: "3 markierte Bestellungen ohne Zuordnung (Vorperiode 6) — Tendenz richtig, aber weiter Umsatz, den niemand sieht." },
+      { title: "Bremse: nicht zuordenbare Markierungen", detail: "3 markierte Bestellungen ohne Zuordnung (2 mit unbekannter Markierung, 1 außerhalb des Fensters) — Umsatz, den niemand sieht." },
     ],
   },
   bottlenecks: [
@@ -147,14 +147,14 @@ export const SAMPLE_PLAN_OUTPUT = {
     },
     {
       title: "Set-Angebot nach jeder Großgeräte-Beratung anbieten",
-      why: "Sets haben den höchsten Bestellwert (Ø 1.280 €) und verdoppelten ihren Umsatz.",
+      why: "Sets haben den höchsten Bestellwert (Ø 1.280 €) und steigerten ihren Umsatz um 57 %.",
       action: "Mos Anweisung ergänzen: nach Laufband, Rack oder Bank ein passendes Set mit Zubehör vorschlagen.",
       expectedImpact: "+2 Set-Bestellungen je 30 Tage (≈ +2.500 €), Annahme: gleiche Abschlussquote",
       impact: "hoch",
       effort: "klein",
       confidence: "mittel",
       owner: "developer",
-      successMetric: "Umsatz der Quelle „Set-Angebot“ ≥ 6.000 € je 30 Tage",
+      successMetric: "Umsatz des Wegs „Set-Angebot“ ≥ 6.000 € je 30 Tage",
       link: "verbesserung",
     },
     {

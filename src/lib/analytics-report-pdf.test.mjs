@@ -169,7 +169,7 @@ test("a decision report (v2) leads with the strategist's chapters and every snap
   for (const heading of [
     "Auf einen Blick",
     "Jetzt entscheiden",
-    "Umsatz über Mo",
+    "Umsatz durch Mo",
     "Engpässe im Funnel",
     "Seit dem letzten Bericht",
     "Kunden & Segmente",

@@ -143,8 +143,8 @@ export function GenerateReportPanel({ onCreated }: { onCreated: (id: number) => 
           Neue Komplettanalyse
           <InfoTip panelClassName="max-w-md">
             Ein Entscheidungsbericht für einen Zeitraum: Das Strategie-Modell (Opus 5.5) liest die
-            Geschäftsdaten — Umsatz über Mo, Chat-, Anmelde- und Einwilligungs-Funnel, Kampagnen und
-            Briefe, Eingang, Kundenbasis und Wiederkauf, Qualität, Wissen, KI-Kosten — im Vergleich zur
+            Geschäftsdaten — Umsatz durch Mo (wie auf der KPI-Seite), vom Chat zur Bestellung, Anmelde- und
+            Einwilligungs-Funnel, Kampagnen, Bundles und Briefe, Eingang, Kundenbasis und Wiederkauf, Qualität, Wissen, KI-Kosten — im Vergleich zur
             Vorperiode und zum letzten Bericht, dazu alle Gesprächsanalysen. Heraus kommen die
             Entscheidungen, die jetzt anstehen, die Engpässe, priorisierte Maßnahmen mit Verantwortung
             und Erfolgsmessung, Experimente sowie Risiken und Messhinweise. Bewusst gründlich (und damit

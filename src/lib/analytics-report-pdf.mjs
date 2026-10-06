@@ -368,8 +368,8 @@ function renderDecisionReport(flow, s) {
   });
   flow.gap(0.4);
 
-  // ── Umsatz über Mo ──
-  flow.sectionHeading("Umsatz über Mo");
+  // ── Umsatz durch Mo (tiers and channels as on the KPI screen) ──
+  flow.sectionHeading("Umsatz durch Mo");
   if (d.revenue?.summary) flow.paragraph(pdfText(d.revenue.summary));
   for (const dr of d.revenue?.drivers ?? []) flow.bullet(pdfText(`${dr.title}: ${dr.detail}`), small);
   const revenue = (snap?.sections ?? []).find((x) => x.key === "revenue");
@@ -526,7 +526,7 @@ function renderDecisionReport(flow, s) {
         flow.bullet(pdfText(metricLine(m)), { size: 9, leading: 12.5 });
       }
       for (const t of sec.tables ?? []) {
-        if (t.key === "revenue.tiers") continue;
+        if (sec.key === "revenue") continue; // printed in „Umsatz durch Mo“
         renderTableLines(flow, t);
       }
     }
