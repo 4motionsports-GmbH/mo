@@ -98,8 +98,6 @@ export const REVENUE_CHANNELS = Object.freeze([
   },
 ]);
 
-const CHANNEL_BY_KEY = new Map(REVENUE_CHANNELS.map((c) => [c.key, c]));
-
 /** Link sources that make an order „Direkt“ (mirrors classifyAttributionTier). */
 const DIRECT_LINK_CHANNEL = Object.freeze({
   bundle: "set",
@@ -576,9 +574,4 @@ export function revenuePerAiEuro(revenue, cost) {
   if (typeof revenue !== "number" || !Number.isFinite(revenue)) return null;
   if (typeof cost !== "number" || !Number.isFinite(cost) || cost <= 0) return null;
   return Math.round((revenue / cost) * 100) / 100;
-}
-
-/** @param {string} key */
-export function channelInfo(key) {
-  return CHANNEL_BY_KEY.get(key) ?? CHANNEL_BY_KEY.get("sonstig");
 }
