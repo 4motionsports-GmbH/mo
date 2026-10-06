@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -21,22 +21,13 @@ doc paths follow the new layout — widget docs in `docs/frontend/`, history in 
 Everything below this box is the detailed history and the step-by-step instructions; this box is
 the single list of what is still open for M. C's open items are at the end of „C · Claude's tasks“.
 
-1. **Consent popup with variant and placement — re-test (10 min, M or the frontend agent).** M's
-   test of 06.10. showed no popup: the customer was „never asked“ in Mo and no `consent_gate_shown`
-   arrived — most likely the widget's per-tab popup memory from earlier tests (D18,
-   `docs/frontend/07` §7). Always a **new** address, never a deleted one (an erasure in Mo or a
-   Shopify customer deletion blocks the address for good, and a blocked address is never asked).
-   Steps: close **all** private windows, open a fresh one → www.motionsports.de → chat → „Anmelden“
-   with another fresh address (e.g. `marcel+mo-test2@marcelkueck.dev`), **without** ticking the
-   shop's newsletter box → send a question → the popup shows the three served benefit points →
-   accept and click the link in the DOI mail. No popup: F12 → Network → the `me` response →
-   `marketing.optInActionable`, and Application → Session storage → the `ms-chat-*` keys; send C
-   both. `npm run verify:live -- --since 2026-10-06`: in section 3 the newest sign-in row is that
-   session (`popup_erwartet` true until the answer, `gesperrt` false); with
-   `--session <its 8 characters>` → `consent_gate_shown` / `_accepted` with `variant: "a"`,
-   `placement: "popup"`, the opt-in with `source: "mo_signin"`, `doiSent: true`. Send C the output.
-   Clean-up: „Meine Daten löschen“ in the chat; while 6.2 is open also delete the Shopify customer
-   yourself. A decline counts too (then no popup for that customer for 30 days).
+1. **Consent popup — works (06.10., M, fresh private window; the earlier miss was the widget's
+   per-tab popup memory, D18 confirmed).** To close it (5 min): `npm run verify:live -- --since
+   2026-10-06`; with `--session <the test session's 8 characters>` section 3 shows
+   `consent_gate_shown` / `_accepted` with `variant: "a"`, `placement: "popup"` and the opt-in with
+   `source: "mo_signin"`, `doiSent: true` → send C the output (closes the frontend agent's check 1).
+   Then clean up the test customers: „Meine Daten löschen“ in the chat (or Kunden → „Kunde
+   vollständig löschen“) and delete them in the Shopify admin (6.2 is off).
    **Second check (5 min):** at the sign-up of 06.10. M ticked the shop's newsletter box (Shopify
    sent its own confirmation mail; Mo recorded no Shopify consent event). About 10 min after such a
    sign-up, re-run the consent diagnosis for that address (Mo's side: Kunden → the address →
@@ -46,24 +37,59 @@ the single list of what is still open for M. C's open items are at the end of �
 2. **Live check on 09.10. (5 min).** `npm run verify:live -- --since 2026-10-06` → send C the
    output: section 9 (page-context base rate for the control group, C.23; product clicks by
    `samePage`), section 7b V2/V2b (both must be 0) and V3.
-3. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
+3. **Neue Auswertungen prüfen (nach dem Deploy, ~30 min).** The three reworks of 06.10. (Done) went
+   live with C's push to main on 06.10. First `npm run db:migrate` (applies `0077`, the step claim of
+   the Komplettanalyse — recommended before the first new report; without it a dropped request can
+   start a second Opus call). Then:
+   - **KPIs**, „Zeitraum…“ 06.09.–05.10.2026: the channel rows of „Wie der Umsatz entstand“ add up
+     to „Umsatz durch Mo“, and no order number appears twice in „Was genau passiert ist“ (an order
+     counted twice → tell C); compare three orders with Shopify admin (number, amount, code,
+     products) and open their „Kunde öffnen“ / „Gespräch öffnen“; „Aktualisieren“ comes back faster
+     (two Shopify queries instead of four).
+   - **Analyse:** one Komplettanalyse for 30 days → note the minutes per Opus phase, any note „… im 2.
+     Versuch …“ (the 240 s limit was hit, the effort lowered), the cost of the decision part (≈ 0,70 €)
+     and the chapter „Seit dem letzten Bericht“. Vercel → Logs: no timeout (504) on
+     `/api/admin/analytics/step` — the plan must allow the route's 300 s.
+   - **Kunden:** one person with a Vollprofil, one with a Kaufprofil → Überblick: each part of the
+     profile text sits in the right card, nothing is missing.
+   Send C the notes; the open questions of the reworks are C.30.
+4. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
    recommend a cheap product, click „Zur Kasse“ on the card, complete the order (cancel/refund it
    afterwards). Shopify admin → the order → „Zusätzliche Details“: is there an `_mo` entry? Tell C
    yes/no (decides the next attribution task, A2).
-4. **Optional checks when convenient:** order status once with an account that has orders (6.6);
+5. **Optional checks when convenient:** order status once with an account that has orders (6.6);
    one „Einplanen“ campaign card (1.7); one letter on Pingen staging (1.10); „Unzufriedenheit“ in
    the Eingang once (C.9b).
-5. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
+6. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
    Shopify, AI profiles for everyone, Shopify tags) and 7.1/7.2 (tuning, Claude GitHub App);
    Black Friday (4.x) when you bring it up; app ownership (5.3); with C, optional: the App Proxy
    handover and shop-logout tests (C.26). Tell F once: run `shopify app config link` before F's next
    `shopify app deploy` (5.4 step 15).
-6. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
+7. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
    (attribution window, F-37), §21 (consent bullets + page context, F-38); privacy-policy sentences
    F-05/F-28 for shop-login recognition and purchase attribution.
 
 ## Done
 
+- [x] Three reworks of 06.10. (C; on the branch, live with the next deploy together with the
+  Verbesserung rework; migration `0077` for M, no new switch; checks: open list item 3; open questions:
+  C.30):
+  - **Kunden → Überblick:** „Aktuelles Kundenverständnis“ is a visual card at the top — persona,
+    Vollprofil / Kaufprofil, „Stand … · vor … Tagen“, stale badges; theme cards with „Schwerpunkt“,
+    level and budget meters, chips; next steps with kind icons. The profile prompt asks for the most
+    important goal and the most urgent step first (older profiles keep their order). Parser
+    `src/lib/customer-profile-view.mjs` (tested). `docs/ADMIN_DASHBOARD.md` §3.3.
+  - **KPIs:** seven groups, revenue first; new „Umsatz durch Mo“, „Wie der Umsatz entstand“, „Was
+    genau passiert ist“, „Vom Chat zur Bestellung“; one order = one tier + one channel. **Owner
+    decision 06.10.:** „Umsatz über Mo-Rabattcodes“ and „Mo-zugeordneter Umsatz“ merged into these;
+    „Empfehlung → Kauf“, „Marketing-Funnel“, the standalone „Sprachen“ and the „Status-Verteilung“
+    removed. `docs/ADMIN_DASHBOARD.md` §3.5, §5.
+  - **Analyse:** the Komplettanalyse is a decision report — 12 chapters, owner filter, comparison with
+    the previous report, the business snapshot (`docs/BUSINESS_SNAPSHOT.md`), decisions and plan on
+    the new AI tier `strategist` (Opus 5.5, effort high; `docs/AI_MODELS.md`), ≈ 0,70 € per report;
+    older reports keep their view; the PDF follows the new order. `docs/ADMIN_DASHBOARD.md` §3.8.
+  - Screenshots `docs/screenshots/2026-10-06-kundenprofil/`, `docs/screenshots/2026-10-06-kpi/`,
+    `docs/screenshots/2026-10-06-analyse/`.
 - [x] Code tracks of 06.10. (C; no migration, no new switch — live with their deploy): **owner
   decision 06.10.:** an address on the suppression list (any reason) is never asked after sign-in;
   a capture keeps a signed-in customer's chats; opt-ins record whether the DOI mail went out (OI1
@@ -443,8 +469,8 @@ the single list of what is still open for M. C's open items are at the end of �
   15. **Tell F:** run `shopify app config link` before the next `shopify app deploy`, so F's
       `shopify.app.toml` keeps the new scope, the App proxy and the compliance webhooks (a deploy
       from an old toml replaces the whole configuration and removes them).
-  - Watch: KPI → Beratung → „Kundenkonto & Self-Service“ → „Shop-Login-Erkennung (App Proxy)“ (a
-    warning appears if the widget leaves codes unredeemed); KPI → Marketing & Kampagne →
+  - Watch: KPI → Anmeldung → „Kundenkonto & Self-Service“ → „Shop-Login-Erkennung (App Proxy)“ (a
+    warning appears if the widget leaves codes unredeemed); KPI → Anmeldung →
     „Einwilligung nach der Anmeldung (Marketing-Opt-in)“ → „Nach Anmeldeweg“.
 
   **5.4b · Compliance webhooks with the Shopify CLI** (the Dev Dashboard version form has no
@@ -685,8 +711,9 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
     (capture funnel and „Nach Variante und Platzierung“), older rows count as sent; `verify:live`
     section 3 column `doi_verschickt`; release `doi-mail-sent` (OI1.md §1 F3, §13).
   - **OI3 B4** — a second consent-popup variant only after L's answer on F-38 (b); if the shown
-    variant must be on the consent record: migration `0077` (`email_captures.consent_variant`),
-    written by the opt-in route before the second variant is activated (OI3.md „B4“).
+    variant must be on the consent record: a migration `email_captures.consent_variant` with the next
+    free number (`0077` is taken since 06.10. by the report step claim), written by the opt-in route
+    before the second variant is activated (OI3.md „B4“).
   - **A3**, data-dependent (the page-context switch is on since 05.10.): many `en` sessions with
     `resolved: false` → a backend fallback over the `/en` translated handle; over-pivoting on order
     or shipping questions → tighten `pagePivotNote()`; suppress repeated cards of the open product
@@ -754,6 +781,21 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       Mo recorded no Shopify consent event. If Shopify shows the address as pending while Mo has no
       `shopify` consent event, Mo misses the shop's sign-up consent and the popup after the sign-in
       would ask again (two confirmation mails): find where it is lost and fix it.
+- [ ] **C.30** Open decisions of the three reworks of 06.10. — **M decides**, C builds what changes:
+  - **Order list and privacy:** „Was genau passiert ist“ shows per order the order number, amount, Mo
+    code and product titles, linked to the customer and the conversation by id (no name, no e-mail on
+    the KPI page). Does dossier §20 / F-37 need a note?
+  - **„Umsatz je 1 € KI-Kosten“** divides revenue incl. VAT by the AI cost alone (no postage, no other
+    cost) — keep, or net of VAT / with postage?
+  - **Journey funnel:** „Bestellt“ counts only sessions with a cart click in the chat; orders without
+    one are shown beside it („Beratung → Bestellung“) — keep?
+  - **Previous period:** the comparisons use the order ledger only (no Shopify code complement) — keep?
+  - **Strategist time limit:** if Opus often needs more than 240 s at effort high (open list item 3
+    shows „im 2. Versuch“), start at medium instead of high, or give the pass more time (the
+    240 s abort and the route's 300 s would both have to rise)?
+  - **Prompt caching** is not used for the two strategist passes — worth adding?
+  - **New reports:** the business snapshot replaces the old chapters Kennzahlen, Kundenbasis and
+    Kampagnen (still stored, shown only for older reports) — keep it that way?
 
 ## Backlog — not built, decide later
 
