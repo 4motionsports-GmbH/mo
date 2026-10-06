@@ -179,12 +179,17 @@ const profileSchema = z.object({
   persona: z
     .enum(PROFILE_PERSONAS as [string, ...string[]])
     .describe(`Die am besten passende Persona: ${PERSONA_GUIDE}; unknown, wenn unklar.`),
-  goals: z.array(z.string()).describe("Trainingsziele und Bedarfe, je ein kurzer Stichpunkt (höchstens 8)."),
+  // Order matters: the Kunden card highlights the first goal as „Schwerpunkt“.
+  goals: z
+    .array(z.string())
+    .describe("Trainingsziele und Bedarfe, je ein kurzer Stichpunkt (höchstens 8), das aktuell wichtigste zuerst."),
   owned: z.array(z.string()).describe("Geräte/Produkte, die die Person BESITZT (aus Käufen oder eigener Aussage), je ein Stichpunkt."),
   interests: z.array(z.string()).describe("Produkte, Kategorien oder Themen, für die sich die Person interessiert, aber noch nicht besitzt."),
   level: z.enum(PROFILE_LEVELS as [string, ...string[]]).describe("Trainingsniveau; unbekannt, wenn nicht erkennbar."),
   budget: z.enum(PROFILE_BUDGETS as [string, ...string[]]).describe("Budget-Signal aus Käufen/Aussagen; unbekannt, wenn nicht erkennbar."),
-  nextSteps: z.array(z.string()).describe("Sinnvolle nächste Schritte bzw. Ergänzungen, je ein Stichpunkt."),
+  nextSteps: z
+    .array(z.string())
+    .describe("Sinnvolle nächste Schritte bzw. Ergänzungen, je ein Stichpunkt, der dringendste zuerst."),
 });
 
 /**

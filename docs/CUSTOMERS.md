@@ -195,7 +195,7 @@ pass (`generateCustomerProfile` in `src/lib/customer-profile.ts`):
 | Column | Content |
 | --- | --- |
 | `profile_summary` (+`_updated_at`) | The readable "current understanding" (Markdown). |
-| `profile_data` (jsonb) | Structured facts: `persona` (archetype), `level` (einsteiger / fortgeschritten / profi / unbekannt), `budget` (niedrig / mittel / hoch / unbekannt), `goals`, `owned`, `interests`, `nextSteps` (≤ 8 short items each; normalised by `src/lib/customer-profile-core.mjs`). |
+| `profile_data` (jsonb) | Structured facts: `persona` (archetype), `level` (einsteiger / fortgeschritten / profi / unbekannt), `budget` (niedrig / mittel / hoch / unbekannt), `goals` (the current main goal first), `owned`, `interests`, `nextSteps` (the most urgent first) (≤ 8 short items each; normalised by `src/lib/customer-profile-core.mjs`). |
 | `persona_label` | The persona, denormalised for list filters and badges. |
 | `profile_depth` | `voll` or `kauf` — which tier wrote it (below). |
 | `profile_checked_at` | When upkeep last looked at the customer (also set when there was nothing to profile). |
@@ -256,7 +256,7 @@ the deployed cron with `?only=profiles` until nothing is left).
 | Marketing / Kampagne hero images (`email-hero.ts`) | Profile as art-direction context. |
 | Bundle suggestions, letter drafts, marketing drafts | `profileSummary` in the generator prompt. |
 | Eingang suggestions (`inbox-suggest.ts`), e-mail reply drafts (`inbox-mail.ts`), „Frag Mo“ (`customer-ask.ts`) | Profile as context; left out while a profile objection stands. |
-| Admin | Kunden → Überblick (facts + profile text, depth badge), persona filter/badges. |
+| Admin | Kunden → Überblick: the profile card first — persona, depth, freshness, one card per theme with the structured fields and the matching part of the text ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.3); persona filter/badges. |
 
 `purchase_summary` (+`_updated_at`) stays the per-e-mail Shopify order-history
 cache (`fetchOrderHistoryByEmail`, or the Customer Account API for signed-in
