@@ -177,12 +177,14 @@ table(
       GROUP BY 1, 2 ORDER BY 1, 2`
   )
 );
-console.log("Wer sich im Chat angemeldet hat — Einwilligungsstand (Popup nur bei marketing_status = none + echter E-Mail):");
+console.log("Wer sich im Chat angemeldet hat — Einwilligungsstand (Popup nur bei marketing_status = none + echter E-Mail + nicht gesperrt; Anti-Nag nicht geprüft):");
 table(
   await q(
     `SELECT left(k.session_id, 8) AS sitzung, k.created_at, c.marketing_status, c.email_consent_state,
             c.email NOT LIKE 'shopify:%' AS echte_email,
-            (c.marketing_status = 'none' AND c.email NOT LIKE 'shopify:%') AS popup_erwartet
+            EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = c.email) AS gesperrt,
+            (c.marketing_status = 'none' AND c.email NOT LIKE 'shopify:%'
+             AND NOT EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = c.email)) AS popup_erwartet
        FROM kpi_events k
        LEFT JOIN customer_session_links l ON l.session_id = k.session_id
        LEFT JOIN LATERAL (SELECT customer_id FROM conversations
@@ -193,7 +195,7 @@ table(
       LIMIT 25`
   )
 );
-console.log("Opt-ins nach Quelle und Ergebnis (seit 05.10.: source/outcome; ältere über trigger/doiStatus genähert):");
+console.log("Opt-ins nach Quelle und Ergebnis (seit 05.10.: source/outcome; ältere über trigger/doiStatus genähert; doi_verschickt nur bei doi_required, „–“ = vor der Versand-Erfassung):");
 table(
   await q(
     `SELECT COALESCE(data->>'source',
@@ -202,11 +204,12 @@ table(
             COALESCE(data->>'outcome',
                      CASE data->>'doiStatus' WHEN 'pending' THEN 'doi_required (genähert)'
                                              WHEN 'confirmed' THEN 'already_confirmed (genähert)' ELSE 'unbekannt' END) AS ergebnis,
+            COALESCE(data->>'doiSent', '–') AS doi_verschickt,
             COALESCE(data->>'variant', '') AS variante, COALESCE(data->>'placement', '') AS platzierung,
             count(*)::int AS events, count(DISTINCT session_id)::int AS sitzungen
        FROM kpi_events
       WHERE event = 'email_capture_marketing_opted_in' AND created_at >= ${SINCE}
-      GROUP BY 1, 2, 3, 4 ORDER BY 1, 2`
+      GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 3`
   )
 );
 if (sessionOk) {
@@ -214,7 +217,8 @@ if (sessionOk) {
   const rows = await q(
     `SELECT session_id, event, created_at,
             jsonb_build_object('surface', data->'surface', 'variant', data->'variant', 'placement', data->'placement',
-                               'source', data->'source', 'outcome', data->'outcome', 'variantMismatch', data->'variantMismatch') AS daten
+                               'source', data->'source', 'outcome', data->'outcome', 'doiSent', data->'doiSent',
+                               'variantMismatch', data->'variantMismatch') AS daten
        FROM kpi_events
       WHERE (event LIKE 'consent_gate_%' OR event IN ('email_capture_submitted', 'email_capture_marketing_opted_in'))
         AND session_id LIKE $2 || '%' AND created_at >= ${SINCE}

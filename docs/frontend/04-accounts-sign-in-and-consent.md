@@ -543,7 +543,7 @@ Copy caches (`fetchConsentCopy`, `fetchSignInConsentCopy`): in memory, **60 s TT
 | Signs in from the **header pill, the account-menu link or the link-failed notice** mid-conversation (the welcome card is only on screen in an empty chat, so it always falls under row 1) | not yet shown | **Inline card** right after the return. The popup stays quiet this session once the card was shown (`ms-chat-optin-ask-shown`). |
 | Signs in from the **login popup** (always mid-conversation) | already used by the login popup | **Inline card** only. |
 | Recognised by **whoami** | not yet shown | Consent popup ~0.7 s after the next send (§9.1), if `optInActionable`. No card. Only visitors the backend signs in are recognised: chat-token holders, and with `APP_PROXY_SIGNIN_MAX_AGE_HOURS` > 0 every shop-logged-in visitor (§5.4). |
-| `optInActionable: false` (already decided in Mo or subscribed in the shop; also the backend anti-nag, ACCOUNT_CONTRACT §6.1: the customer declined the popup in any of their sessions in the last 30 days, or saw it in 3 sessions within 30 days — on every device) | — | Nothing. |
+| `optInActionable: false` (already decided in Mo or subscribed in the shop; an address on the backend's suppression list; also the backend anti-nag, ACCOUNT_CONTRACT §6.1: the customer declined the popup in any of their sessions in the last 30 days, or saw it in 3 sessions within 30 days — on every device) | — | Nothing. |
 | Declined on this device within 30 days (any customer) | — | Nothing. |
 
 ### 10.5 Anonymous / email-only capture form (`buildCaptureCard`)

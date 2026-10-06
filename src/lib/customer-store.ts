@@ -26,7 +26,7 @@ import type { SignedInAccountSummary } from "./shopify-customer-account";
 import { reportError } from "./observability";
 import { decideMerge } from "./customer-merge.mjs";
 import { normalizeProfileData } from "./customer-profile-core.mjs";
-import { linkSessionToCustomer, resolveSignedInCustomerRow } from "./customer-session-link.mjs";
+import { attachSessionOnEmailCapture, resolveSignedInCustomerRow } from "./customer-session-link.mjs";
 
 export type CustomerMarketingStatus = "none" | "pending" | "confirmed" | "unsubscribed";
 
@@ -243,8 +243,9 @@ export interface LinkCustomerInput {
 }
 
 /**
- * Find-or-create the customer for an email capture, attach the current
- * conversation, bump last_seen_at, and mirror the aggregated consent state.
+ * Find-or-create the customer for an email capture, attach the session's
+ * conversations (never one of a person the session was signed in as — C.27),
+ * bump last_seen_at, and mirror the aggregated consent state.
  * Returns the customer id, or null when skipped/failed. Best-effort: a failure
  * here must NEVER break the capture flow (the consent is already stored), so
  * this logs and returns null instead of throwing.
@@ -284,18 +285,18 @@ export async function linkCustomerOnEmailCapture(
       UPDATE email_captures SET customer_id = ${customerId} WHERE email = ${email}
     `;
 
-    // Attach the current conversation — the one explicit, consent-anchored
-    // bridge into Cluster A. Latest capture wins: if a user corrects their
-    // email mid-session, the conversation follows the newest identity.
+    // Attach the session's conversations — the one explicit, consent-anchored
+    // bridge into Cluster A — and record the DIRECT session → customer link
+    // (migration 0019) so identity resolution never depends on a conversation
+    // row existing. A typed e-mail proves nothing about mailbox ownership: the
+    // link is 'email' and never resolves as signed in (0071); typed by a
+    // session signed in as SOMEONE ELSE it ends that sign-in, but that
+    // person's chats stay theirs (C.27). Unowned chats follow the capture, and
+    // a correction of an earlier typed e-mail takes its chats along (latest
+    // capture wins). Rule + tests: customer-session-link.mjs →
+    // attachSessionOnEmailCapture / captureMovesConversationsFrom.
     if (sessionId) {
-      await sql`
-        UPDATE conversations SET customer_id = ${customerId} WHERE session_id = ${sessionId}
-      `;
-      // Record the DIRECT session → customer link (migration 0019) so identity
-      // resolution never depends on a conversation row existing.
-      // A typed e-mail proves nothing about mailbox ownership: the link is
-      // 'email' and never resolves as signed in (0071).
-      await linkSessionToCustomer(sql, sessionId, customerId, "email");
+      await attachSessionOnEmailCapture(sql, sessionId, customerId);
     }
     return customerId;
   } catch (err) {

@@ -350,7 +350,8 @@ instead (§8).
 - **Exception:** the `422 no_verified_email` answer of the opt-in (§6.2) falls back to the capture
   form. A capture submit links the session to the **typed** address: if that is not the signed-in
   customer's own address, the session stops being signed in (fail closed) and the next
-  `/api/auth/me` answers `signedIn: false`.
+  `/api/auth/me` answers `signedIn: false`. The chats of the session stay in the signed-in
+  customer's history; only chats without an owner join the typed address.
 
 ### 6.1 When to show the marketing ask — `optInActionable`
 
@@ -372,9 +373,16 @@ optInActionable =
      the session is signed in (§4)
   && marketing.status === "none"        // no decision on record — in Mo or in the shop
   && the account has a real e-mail      // not the placeholder of an account without a verified address
+  && the address is not blocked         // no suppression-list entry, whatever the reason
   && not quiet (anti-nag, below)
   && the backend could read all of this // any read failure → false (fail closed)
 ```
+
+- **A blocked address is never asked.** An address on the backend's suppression list —
+  unsubscribed (mail link, shop or operator), bounced, complained, or erased earlier — gets
+  `optInActionable: false`, even while `status` reads `"none"`: an accept for it would change
+  nothing in the consent (§6.2). Once the block is lifted (e.g. the operator lifts an opt-out),
+  the ask can come back.
 
 - **`status` is `"none"` again after an expired DOI.** A `pending` opt-in whose confirmation link
   was never clicked is reset to no consent by the nightly run, the first run more than
@@ -392,8 +400,9 @@ optInActionable =
   at least for the tab session. The **backend** truth for "ask or not" is `optInActionable`.
 - **After an accept** that started a DOI (`pending`) or found the address subscribed
   (`confirmed`), `/api/auth/me` reports `optInActionable: false`. An accept for a suppressed
-  address (answer `status: "none"`, §6.2) changes nothing in the consent, so `optInActionable` can
-  stay `true`; the widget's memory of the answered ask and the anti-nag keep it from nagging.
+  address (possible only from an answer read before the block; answer `status: "none"`,
+  `doiEmailSent: false`, §6.2) changes nothing in the consent; `optInActionable` is already
+  `false` for it.
 
 Copy: `GET /api/consent-copy?surface=signin` (payload API_CONTRACT §7.4, rendering
 CONSENT_CONTRACT §3.1). Submit: §6.2.
@@ -736,3 +745,4 @@ built before the date. Changes to other endpoints: API_CONTRACT Appendix A.
 | 2026-10-05 | Backend anti-nag on `optInActionable`; opt-in POST takes `placement` and `variant`; a suppressed address is answered `status: "none"`. | §6.1, §6.2 |
 | 2026-10-05 | The backend no longer offers `offer_email_summary` to a live signed-in session. | §6.0 |
 | 2026-10-05 | `GET /api/account/export` documented (route unchanged). | §7.7 |
+| 2026-10-06 | `optInActionable` is `false` for an address on the suppression list (any reason); the field and its shape are unchanged. A capture submit that ends a sign-in leaves the session's chats with the signed-in customer. | §6.1, §6.0 |

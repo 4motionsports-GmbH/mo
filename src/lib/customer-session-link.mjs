@@ -80,6 +80,65 @@ export async function linkSessionToCustomer(sql, sessionId, customerId, kind = "
 }
 
 /**
+ * Which already-owned conversations of a session an e-mail capture may re-point
+ * to the typed address's customer (C.27). Conversations owned by nobody or by
+ * that customer always follow. Besides those, only a CORRECTION moves chats:
+ * the session was linked by an earlier typed e-mail (kind 'email') to another
+ * customer — latest capture wins, as it always did. A session signed in as
+ * someone (customer_account / app_proxy), a 'legacy' link or no link moves
+ * nothing that already has an owner: typing someone else's address ends the
+ * sign-in (linkSessionToCustomer), but the signed-in person's chats stay theirs.
+ *
+ * @param {{ customerId: unknown, kind: unknown } | null | undefined} prior  the session's link before the capture
+ * @param {number} customerId  the customer of the typed address
+ * @returns {number | null}    the one other customer whose chats follow the capture, or null
+ */
+export function captureMovesConversationsFrom(prior, customerId) {
+  if (!prior || prior.kind !== "email" || prior.customerId == null) return null;
+  const from = Number(prior.customerId);
+  if (!Number.isFinite(from) || from === Number(customerId)) return null;
+  return from;
+}
+
+/**
+ * The session side of an e-mail capture (customer-store.ts →
+ * linkCustomerOnEmailCapture): attach the session's conversations by the rule
+ * of captureMovesConversationsFrom, then link the session by e-mail
+ * (linkSessionToCustomer: a typed address of ANOTHER customer ends a sign-in,
+ * the same customer's stays). Returns false (no write) when there is nothing
+ * safe to write. Throws on DB errors; the TypeScript caller catches and reports.
+ *
+ * @param {*} sql                 tagged-template sql client (or null)
+ * @param {unknown} sessionId     the widget's localStorage session id
+ * @param {number|null} customerId  the customer of the typed address
+ * @returns {Promise<boolean>}
+ */
+export async function attachSessionOnEmailCapture(sql, sessionId, customerId) {
+  const sid = typeof sessionId === "string" ? sessionId.trim() : "";
+  if (!sql || !sid || customerId == null) return false;
+  const prior = await sql`
+    SELECT customer_id, link_kind FROM customer_session_links WHERE session_id = ${sid}
+  `;
+  const p = prior && prior[0];
+  const from = captureMovesConversationsFrom(p ? { customerId: p.customer_id, kind: p.link_kind } : null, customerId);
+  if (from != null) {
+    await sql`
+      UPDATE conversations SET customer_id = ${customerId}
+       WHERE session_id = ${sid}
+         AND (customer_id IS NULL OR customer_id = ${customerId} OR customer_id = ${from})
+    `;
+  } else {
+    await sql`
+      UPDATE conversations SET customer_id = ${customerId}
+       WHERE session_id = ${sid}
+         AND (customer_id IS NULL OR customer_id = ${customerId})
+    `;
+  }
+  await linkSessionToCustomer(sql, sid, customerId, "email");
+  return true;
+}
+
+/**
  * Resolve the customer_id a session is linked to (ANY tier), or null when the
  * session is blank/unlinked or there's no sql. This is the DIRECT link only — it
  * does NOT gate on shopify_customer_id (use resolveSignedInCustomerRow for the

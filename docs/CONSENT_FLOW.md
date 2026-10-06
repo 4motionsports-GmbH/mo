@@ -360,9 +360,12 @@ optimisation only — the lawful basis is unchanged (consent path B, a real doub
   consent record.
 - **When it is asked:** `marketing.optInActionable` on `/api/auth/me` — no consent decision on record
   (a `pending` DOI counts as one until it expires; then the person may be asked again — "Mo surfaces →
-  the one consent"), a real address, not quiet under the per-customer anti-nag
-  (`src/lib/consent-ask-policy.mjs`), fail closed. Widget view: ACCOUNT_CONTRACT §6.1; backend
-  computation: `CUSTOMER_ACCOUNT.md` §10 (`signed-in-identity.ts`).
+  the one consent"), a real address, **not on the suppression list** (any reason — unsubscribe,
+  manual, complaint, bounce, erasure; owner's decision 2026-10-06: an accept for a blocked address
+  writes no consent act, so the ask would only come back), not quiet under the per-customer anti-nag,
+  fail closed. The whole rule is `isMarketingOptInActionable` (`src/lib/consent-ask-policy.mjs`,
+  tested). Widget view: ACCOUNT_CONTRACT §6.1; backend computation: `CUSTOMER_ACCOUNT.md` §10
+  (`signed-in-identity.ts`).
 - **No capture form for tier 3.** The widget does not render the capture form for a signed-in customer
   (ACCOUNT_CONTRACT §6.0), and the backend does not offer `offer_email_summary` (nor the forced
   checkout-moment ask) to a live signed-in session — fail-open on a lookup error, so the widget gate

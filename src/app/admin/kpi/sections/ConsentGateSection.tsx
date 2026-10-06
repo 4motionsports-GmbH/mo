@@ -20,8 +20,8 @@ const INFO = (
       Nach der Anmeldung fragt das Widget Kund:innen, die noch nicht entschieden haben, nach der
       Marketing-Einwilligung (Popup, Text aus <code>/api/consent-copy?surface=signin</code>): angezeigt →
       akzeptiert („Ja, Angebote aktivieren“). Wer schon für Angebote angemeldet ist (im Shop oder bei Mo),
-      wird nicht gefragt; wer in einer Sitzung abgelehnt hat oder das Popup in 3 Sitzungen gesehen hat,
-      30 Tage lang auch nicht.
+      wird nicht gefragt, eine gesperrte Adresse (Abmeldung, Bounce, Beschwerde, Löschung) nie; wer in
+      einer Sitzung abgelehnt hat oder das Popup in 3 Sitzungen gesehen hat, 30 Tage lang auch nicht.
     </p>
     <p>
       Alle vier Events sendet das Widget (<code>consent_gate_shown</code> / <code>_accepted</code> /{" "}
@@ -38,7 +38,7 @@ const BY_WAY_INFO =
   "Sitzungen, nicht Events: je Sitzung zählt der letzte Stand (ein Akzeptieren mit anschließendem Wegklicken zählt einmal, als akzeptiert). „Über „Anmelden““ = im Chat angemeldet, „Über Shop-Login erkannt“ = vom Shop erkannt (App Proxy). „Opt-in (Server)“ = das vom Server gespeicherte Opt-in (email_capture_marketing_opted_in, trigger signin_optin) in derselben Sitzung.";
 
 const VARIANT_INFO =
-  "Sitzungen je Rahmen-Variante (Überschrift und Vorteile über dem Einwilligungstext) und Platzierung (Popup, nach der Anmeldung im Chat, Wertmoment). Akzeptanzrate = akzeptiert ÷ angezeigt; „akzeptiert ohne Anzeige“ ist nur ein Hinweis (Anzeige vor dem Zeitraum, älteres Widget). DOI-Quote = bestätigt ÷ „DOI nötig“ (bereits Abonnierte zählen nicht). Verglichen wird erst ab 100 Sitzungen je Zeile. Unbekannte Werte erscheinen als „unbekannt“.";
+  "Sitzungen je Rahmen-Variante (Überschrift und Vorteile über dem Einwilligungstext) und Platzierung (Popup, nach der Anmeldung im Chat, Wertmoment). Akzeptanzrate = akzeptiert ÷ angezeigt; „akzeptiert ohne Anzeige“ ist nur ein Hinweis (Anzeige vor dem Zeitraum, älteres Widget). DOI-Quote = bestätigt ÷ verschickte DOI-Mails (bereits Abonnierte und nicht verschickte DOI-Mails zählen nicht; Opt-ins aus der Zeit, bevor der Versand festgehalten wurde, zählen als verschickt). Verglichen wird erst ab 100 Sitzungen je Zeile. Unbekannte Werte erscheinen als „unbekannt“.";
 
 const PLACEMENT_LABELS: Record<string, string> = {
   popup: "Popup",

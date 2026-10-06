@@ -8,6 +8,9 @@ import {
   eventOutcome,
   eventSource,
   confirmationSource,
+  optInAnswer,
+  doiSentField,
+  isDoiMailSent,
 } from "./capture-funnel.mjs";
 
 const r = (o) => ({ marketingConsent: true, suppressed: false, doiEmailRequired: false, marketingDoiStatus: "none", subscribedElsewhere: false, ...o });
@@ -54,4 +57,69 @@ test("confirmationSource: session first, then pending, else mo", () => {
   assert.equal(confirmationSource({ sessionSource: "mo_signin", pendingSource: "mo_capture_form" }), "mo_signin");
   assert.equal(confirmationSource({ sessionSource: null, pendingSource: "mo_capture_form" }), "mo_capture_form");
   assert.equal(confirmationSource({}), "mo");
+});
+
+const a = (o) => ({ suppressed: false, subscribedElsewhere: false, marketingDoiStatus: "pending", doiEmailRequired: true, doiEmailSent: true, ...o });
+
+test("optInAnswer: a suppressed address never reads as subscribed or as 'DOI mail sent'", () => {
+  for (const marketingDoiStatus of ["none", "pending", "confirmed"]) {
+    for (const doiEmailSent of [true, false]) {
+      assert.deepEqual(optInAnswer(a({ suppressed: true, marketingDoiStatus, doiEmailSent, subscribedElsewhere: true })), {
+        status: "none",
+        doiEmailSent: false,
+        alreadyConfirmed: false,
+      });
+    }
+  }
+});
+
+test("optInAnswer: new DOI, failed send, already confirmed, subscribed elsewhere", () => {
+  assert.deepEqual(optInAnswer(a({})), { status: "pending", doiEmailSent: true, alreadyConfirmed: false });
+  assert.deepEqual(optInAnswer(a({ doiEmailSent: false })), { status: "pending", doiEmailSent: false, alreadyConfirmed: false });
+  assert.deepEqual(optInAnswer(a({ marketingDoiStatus: "confirmed", doiEmailRequired: false, doiEmailSent: false })), {
+    status: "confirmed",
+    doiEmailSent: false,
+    alreadyConfirmed: true,
+  });
+  assert.deepEqual(optInAnswer(a({ subscribedElsewhere: true, marketingDoiStatus: "none", doiEmailRequired: false, doiEmailSent: false })), {
+    status: "confirmed",
+    doiEmailSent: false,
+    alreadyConfirmed: true,
+  });
+  // The alreadyConfirmed answer equals the outcome-based reconstruction for every non-suppressed branch.
+  for (const x of [
+    a({}),
+    a({ marketingDoiStatus: "confirmed", doiEmailRequired: false }),
+    a({ subscribedElsewhere: true, marketingDoiStatus: "none", doiEmailRequired: false }),
+  ]) {
+    const outcome = optInOutcome({ marketingConsent: true, ...x });
+    assert.equal(optInAnswer(x).alreadyConfirmed, isAlreadyConfirmedAnswer(outcome));
+  }
+});
+
+test("doiSentField: only for doi_required; true only for a successful send (F3)", () => {
+  assert.deepEqual(doiSentField("doi_required", true), { doiSent: true });
+  assert.deepEqual(doiSentField("doi_required", false), { doiSent: false });
+  assert.deepEqual(doiSentField("doi_required", undefined), { doiSent: false });
+  for (const o of ["already_confirmed", "already_subscribed", "suppressed", null]) {
+    assert.deepEqual(doiSentField(o, true), {});
+  }
+});
+
+test("isDoiMailSent: counts sent DOI mails; legacy rows without doiSent count as before (F3)", () => {
+  assert.equal(isDoiMailSent("doi_required", "pending", true), true);
+  assert.equal(isDoiMailSent("doi_required", "pending", "true"), true);
+  assert.equal(isDoiMailSent("doi_required", "pending", false), false);
+  assert.equal(isDoiMailSent("doi_required", "pending", "false"), false);
+  // Before F3: no doiSent → counted as sent (as the KPI always did).
+  assert.equal(isDoiMailSent("doi_required", "pending", undefined), true);
+  assert.equal(isDoiMailSent(undefined, "pending", undefined), true);
+  // No DOI mail was due: never counted.
+  assert.equal(isDoiMailSent("already_confirmed", "confirmed", undefined), false);
+  assert.equal(isDoiMailSent("suppressed", "confirmed", undefined), false);
+  assert.equal(isDoiMailSent(undefined, "none", undefined), false);
+  // The write side and the read side agree.
+  for (const sent of [true, false]) {
+    assert.equal(isDoiMailSent("doi_required", "pending", doiSentField("doi_required", sent).doiSent), sent);
+  }
 });
