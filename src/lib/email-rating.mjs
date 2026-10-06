@@ -11,9 +11,6 @@
 const EMAIL_RATING_MIN = 1;
 const EMAIL_RATING_MAX = 5;
 
-/** The smiley + caption shown per score (German admin/customer copy). */
-export const EMAIL_RATING_FACES = ["☹", "🙁", "😐", "🙂", "😊"];
-
 /**
  * Parse an untrusted rating value ("4", 4) into 1–5, or null.
  * @param {unknown} value
