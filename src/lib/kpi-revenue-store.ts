@@ -1,22 +1,20 @@
-// "Umsatz über Mo-Rabattcodes" — the revenue attributable to Mo, computed
-// HONESTLY from the ONLY signal that ties an order back to Mo and exposes its
-// value: a UNIQUE single-use discount code minted by Mo's outbound flows
-// (MS5-… codes on marketing_sends, MK-… codes on campaign_sends — the prefix
-// keeps the two channels separable; both usageLimit:1). See
-// docs/ADMIN_DASHBOARD.md and docs/CAMPAIGNS.md.
+// The Shopify code lookup of „Umsatz durch Mo“ (docs/ADMIN_DASHBOARD.md §5.1):
+// the orders that redeemed a UNIQUE single-use discount code minted by Mo's
+// outbound mail (MS5-… on marketing_sends, MK-… on campaign_sends; both
+// usageLimit:1), asked of Shopify per code. See docs/CAMPAIGNS.md.
 //
-// Deliberately NOT counted HERE (this KPI stays code-only by definition):
-//   - cart permalinks and bundle offers — since the order-attribution round
-//     (migration 0042, docs/ORDER_ATTRIBUTION.md) Mo-built cart links DO carry
-//     an opaque attribution marker, and those orders are measured by the
-//     SEPARATE "Mo-zugeordneter Umsatz" KPI (lib/mo-orders-store), fed by the
-//     orders webhooks. Keeping the two KPIs separate keeps this one's
-//     definition ("Umsatz über Mo-Rabattcodes") exact.
-//   - the welcome code — that automatic discount has been retired.
+// Why it still exists next to the webhook ledger (`mo_orders`, which ingests
+// every coded order too): the ledger only fills from the moment the orders
+// webhooks were registered. This lookup finds the coded orders of a period that
+// the ledger never saw; the pure mergeCodeRedemptions (lib/mo-revenue.mjs)
+// drops every redemption the ledger already holds, so an order is counted once.
+// `redemptions` carries the redeemed orders for that merge; the aggregate
+// fields describe the lookup itself (checked, unknown, capped).
 //
 // Cost: a bounded per-code fan-out to Shopify (capped, newest-first, only codes
-// minted on/before the window end), mirroring the marketing funnel's pattern. The
-// money summation + realised-status policy live in the pure ./kpi-revenue-core.
+// minted on/before the window end), served from the 10-minute KPI cache
+// (lib/kpi-cache). The money summation + realised-status policy live in the
+// pure ./kpi-revenue-core.
 
 import { getSql, type Sql } from "./db";
 import { isShopifyConfigured } from "./shopify";
@@ -28,6 +26,16 @@ import type { KpiRange } from "./kpi-range";
 // Bound the per-load Shopify fan-out: at most this many codes are checked for a
 // redeeming order, newest-first (same cap discipline as the marketing funnel).
 export const REVENUE_MAX_CODES = 100;
+
+/** One redeemed Mo code and its order, as Shopify reported it. */
+export interface MoCodeRedemption {
+  code: string;
+  orderName: string | null;
+  createdAt: string | null;
+  amount: number | null;
+  currency: string | null;
+  financialStatus: string | null;
+}
 
 export interface MoRevenue {
   /** Sum of realised (paid) order totals attributed to Mo, in the window. */
@@ -46,6 +54,9 @@ export interface MoRevenue {
   codesInScope: number;
   /** True when the checked set was truncated to REVENUE_MAX_CODES. */
   sampled: boolean;
+  /** Every redeemed code in the window with its order (paid or not) — merged
+   * with the ledger at render time (mergeCodeRedemptions). */
+  redemptions: MoCodeRedemption[];
   /** Echo of the window, for the caveat/label. */
   range: { from: string; to: string; days: number; label: string };
 }
@@ -100,6 +111,18 @@ export async function getMoRevenue(
     }
 
     const summary = summarizeRedemptions(results);
+    const redemptions: MoCodeRedemption[] = [];
+    results.forEach((r, i) => {
+      if (r.status !== "redeemed") return;
+      redemptions.push({
+        code: codes[i],
+        orderName: r.orderName,
+        createdAt: r.createdAt,
+        amount: r.amount,
+        currency: r.currency,
+        financialStatus: r.financialStatus,
+      });
+    });
     return {
       revenueAmount: summary.revenueAmount,
       currency: summary.currency ?? "EUR",
@@ -109,6 +132,7 @@ export async function getMoRevenue(
       redemptionUnknown: summary.redemptionUnknown,
       codesInScope: codes.length,
       sampled,
+      redemptions,
       range: { from: range.from, to: range.to, days: range.days, label: range.label },
     } satisfies MoRevenue;
   } catch (err) {
