@@ -2,7 +2,7 @@
 
 This chapter lists every place where the Mo widget touches the shop, and every place where the shop touches Mo. It covers how the widget reads the product on a product page (PDP), the product-page CTA, the `custom.qa` metafield and the Q&A tab, the product data the widget fetches, the links it opens, the cart (checkout permalink, badge and drawer sync, stacking), the order-attribution stamp, shop login vs Mo sign-in, locales and prices, and the theme hooks the widget depends on. It ends with what the backend can change without a theme deploy, a list of findings and the open questions.
 Backend behaviour is not re-specified. It is cross-referenced to the backend repo's widget contract `docs/frontend/API_CONTRACT.md` and `docs/frontend/ACCOUNT_CONTRACT.md` (cited as `API_CONTRACT.md §n`, `ACCOUNT_CONTRACT.md §n`), `docs/ORDER_ATTRIBUTION.md`, `docs/QA_KNOWLEDGE.md` and the backend as-built `docs/CUSTOMER_ACCOUNT.md`. The sibling chapters `01-storefront-theme.md`, `02-widget-architecture.md`, `03-chat-protocol-and-rendering.md` and `04-accounts-sign-in-and-consent.md` go deeper on theme layout, widget internals, the chat stream and identity.
-Code locations are given as `file → function / selector / key`. Line numbers are left out on purpose because they drift. The repo state described is `main` at `3e87341`: PR #73 (`a0df103`), the fixes of `8d0a0c4`, and `3e87341`, which adds only two `endSpeaking()` calls. Which build the live shop serves: `07` §6.4; production status (uploads, App Proxy, backend switches) is tracked only in the backend's `docs/ROLLOUT_TODO.md`. The live theme may differ (see §17).
+Code locations are given as `file → function / selector / key`. Line numbers are left out on purpose because they drift. The repo state described is `main` at `bc7fb5d`: the 2026-10-05 tasks (`11ac337` + `bc7fb5d`, theme PR #75: served consent bullets, page context on typed turns, attribution-token renewal and cart-marker blanking) on top of `3e87341` (PR #73 `a0df103`, the fixes of `8d0a0c4`, and two added `endSpeaking()` calls). Liquid, templates, settings and the other assets are unchanged since `3e87341` (only the two widget assets, `MANIFEST.md` and the theme repo's own docs changed). Which build the live shop serves: `07` §6.4; production status (uploads, App Proxy, backend switches) is tracked only in the backend's `docs/ROLLOUT_TODO.md`. The live theme may differ (see §17).
 
 **Contents**
 
@@ -36,7 +36,7 @@ Code locations are given as `file → function / selector / key`. Line numbers a
 | 4 | Product cards, compare table, showroom card data | backend → widget | `GET {apiBase}/api/products` | `ms-chat-widget.js → hydrate()`, `buildAddToCart()` | yes |
 | 5 | Checkout from the chat ("Zur Kasse") | widget → shop | Opens the backend-built cart permalink `…/cart/<variant>:1,…` in a new tab | `ms-chat-widget.js → buildAddToCart()` | yes |
 | 6 | Cart badge / drawer / cart page refresh | shop → widget → shop UI | `GET /cart.js`, `#CartBubble`, `[data-fh-cart-bubble]`, `<cart-modal>.reloadContent()`, `?section_id=` | `ms-chat-widget.js → refreshCartUI()` and helpers | yes |
-| 7 | Order attribution stamp | widget → shop cart → order → backend webhook | `POST /api/attribution/token`, then same-origin `POST /cart/update.js {attributes:{_mo}}` | `ms-chat-widget.js → moAttrEnsure() / moStampCart() / initAttribution()` | yes (consent-gated) |
+| 7 | Order attribution stamp | widget → shop cart → order → backend webhook | `POST /api/attribution/token`, then same-origin `POST /cart/update.js {attributes:{_mo}}`; renewed after a live consultation, blanked (`""`) when the session ends | `ms-chat-widget.js → moAttrEnsure() / moStampCart() / initAttribution() / moAttrRenew() / moBlankCart()` | yes (stamp and renewal consent-gated, §8) |
 | 8 | Shop login recognition | shop → backend → widget | Same-origin `GET /apps/chat/whoami?session=` through a Shopify App Proxy | `ms-chat-widget.js → detectViaStorefront()` | yes; a silent no-op while no App Proxy is set up (whether it is: `docs/ROLLOUT_TODO.md` 5.4; §9.1) |
 | 9 | Shop-login hint | shop → widget | `window.ShopifyAnalytics.meta.page.customerId` | `ms-chat-widget.js → storefrontCustomerHint()` | yes |
 | 10 | Consent state | shop → widget | `window.Shopify.customerPrivacy`, `visitorConsentCollected` event | `ms-chat-widget.js → moAnalyticsAllowed()`, `initAttribution()` | yes |
@@ -44,7 +44,7 @@ Code locations are given as `file → function / selector / key`. Line numbers a
 | 12 | Campaign / deep links into an open chat | shop URL → widget | `?mo=open`, `#mo-open`, `mo_new`, `mo_view`, `mo_c` | `layout/theme.liquid` head script; `ms-chat-widget.js → handleMoDeepLink()`, `captureCampaignToken()` | yes |
 | 13 | Showroom link | widget → shop page | Hard-coded URL in the snippet config | `snippets/ms-chat-widget.liquid → showroomUrl`; `ms-chat-widget.js → SHOWROOM_URL`, `buildShowroom()` | yes |
 
-The widget never adds to the cart through the AJAX cart API, never listens to theme cart events, and never dispatches its own DOM events. Its only cart writes are the attribution stamp (§8).
+The widget never adds to the cart through the AJAX cart API, never listens to theme cart events, and never dispatches its own DOM events. Its only cart writes are the attribution stamp and its blanking (§8).
 
 ---
 
@@ -70,24 +70,26 @@ The backend catalog's product id is the slug-shaped **handle** (`API_CONTRACT.md
 |---|---|---|
 | `context.productId` from the PDP CTA | Handle, if the CTA's `data-ms-chat-product-id` equals `PAGE_CTX.productId` (or either is empty); otherwise the passed (numeric) id | `openWithProduct()` |
 | `context.productId` from the nudge greeting | `PAGE_CTX.productHandle`, falling back to the numeric id | `showNudge()` click handler |
+| `context.productId` on a typed / spoken turn (`source:'page'`) | `PAGE_CTX.productHandle` only; without a handle no context is sent | `pageContextForSend()` |
 | Browsing trail entry `id` | `productHandle`, falling back to the numeric id | `recordTrail()` |
 | KPI `product_cta_opened.productId` | **numeric** Shopify product id (deliberately, "numeric id stays for KPI") | `openWithProduct()` |
 | KPI `product_cta_clicked` / `add_to_cart_clicked` / `showroom_clicked` ids | **catalog handles**: the `id` of each `/api/products` entry, which is always the base product handle, even when a variant ref `handle~variantId` was requested (backend `src/app/api/products/route.ts → toPublic()` returns `id: source.id` with `source = base ?? p`). The variant is visible only in `selectedVariantId`, which the widget ignores, so these events are handle-level and never carry the variant | `productButton()`, `buildAddToCart()`, `buildShowroom()` |
+| KPI `product_cta_clicked.samePage` | `true` when the clicked catalog id equals `PAGE_CTX.productHandle` on a product page (handle vs handle, so it works only where the catalog uses the page's handle) | `isSamePageProduct()` |
 
 Consequence for KPIs: PDP-CTA opens and in-chat product clicks are recorded in **different id spaces**. Joining them needs a numeric-id → handle map (the catalog sync has both).
 
-Uncertain: whether `product.handle` on `/en` is the same German handle the catalog uses. If the shop translates handles (Translate & Adapt can), the `/en` handle would not match the catalog and the context id would be dropped. The primer text still carries the title (§3.5), so the consultation still works.
+Uncertain: whether `product.handle` on `/en` is the same German handle the catalog uses. If the shop translates handles (Translate & Adapt can), the `/en` handle would not match the catalog and the context id would be dropped. The primer text still carries the title (§3.5), so the consultation still works; a typed turn's page context would then be „nicht erkannt“ (AD §5.1a) and `samePage` would stay `false`.
 
 ### 2.4 Where product context is actually sent
 
-| Trigger | Request | `context` |
-|---|---|---|
-| Click on the PDP CTA | `POST /api/chat` with a primer **user message** (`Ich interessiere mich für „<Titel>". Kannst du mich zu diesem Produkt beraten?`, opening „, closing ASCII `"`) | `{ type:"product", productId, productTitle, recentlyViewed? }` |
-| Click on the contextual nudge on a PDP, fresh conversation only, and only if the nudge was eligible: panel never opened in this tab session, nudge not yet shown in this tab session, never dismissed on this device (`nudgeEligible()`) | `POST /api/chat` with `messages: []` (server greeting) | `{ type:"product", productId:<handle>, productTitle, recentlyViewed? }` |
-| Nudge click elsewhere, fresh conversation (same `nudgeEligible()` conditions) | same, greeting | `{ type:"browsing", recentlyViewed }` (if the trail has entries) |
-| Launcher click, or typing the first message on a PDP | `POST /api/chat` | **none**: the product the shopper is looking at is not sent |
+Which turn carries which `context`, its exact shape, and when a typed turn counts as "already sent" (`sessionStorage['ms-chat-ctx-last']`): `02` §3.2 „Page facts on the wire“ (owner); the shapes the backend accepts: `API_CONTRACT.md §2` „Optional `context`“. Commerce view of a product page:
 
-So a shopper who opens Mo with the launcher on a PDP and asks "Passt das in meine Wohnung?" gets an answer **without** the page's product context, unless Mo infers it. See §16, finding F3. The backend side of the fix is built: `context.source: "page"` on a typed turn, used only behind `CHAT_PAGE_CONTEXT_ENABLED` (default off in code) with an optional control group, and measured by the server-only `page_context_applied` / `page_context_answered` (API_CONTRACT.md §2 „Optional `context`“, AD §5.1a in `docs/ADMIN_DASHBOARD.md`). The widget part is frontend task 2 ([`tasks/TASKS.md` task 2](tasks/TASKS.md task 2)).
+- **CTA click** (§3.5): primer user message + `{type:"product", productId:<handle or passed id, §2.3>, productTitle, recentlyViewed?, source:"cta"}`.
+- **Nudge click** on a fresh thread (only while the nudge is eligible, `05` §7.1): context greeting (`messages: []`) with the page's product (handle, falling back to the numeric id) and `source:"nudge"`.
+- **First typed or spoken message** of a thread on the page, and the first after the page's product changed: the user's message + `{type:"product", productId:<handle>, productTitle?, source:"page"}` — page facts only, never the trail; on a collection page the one category of the page. A CTA or product-nudge turn already answered on the page counts as sent, so the next typed message carries none.
+- **Launcher open alone** sends no chat request; later messages on the same page carry no context.
+
+Mo uses a `source:"page"` context only with `CHAT_PAGE_CONTEXT_ENABLED` (default off in code) and outside the optional control group; the server records `page_context_applied` / `page_context_answered` either way (AD §5.1a in `docs/ADMIN_DASHBOARD.md`). Builds before `bc7fb5d` sent no context on typed turns (§16 F3, closed).
 
 ---
 
@@ -148,7 +150,7 @@ Inline `<style>` inside the block (not in the widget CSS): an underlined text-li
 1. `openPanel()`. If the panel was already open this is a no-op, so no second `chat_opened`.
 2. `track('product_cta_opened', { productId: <numeric id> })`.
 3. If a reply is streaming or the rate-limit lock is on: stop here (the panel is open, the user can type).
-4. Build `context = { type:'product', productId:<handle or passed id>, productTitle:<title> }` plus `recentlyViewed` from the local trail (max 3 products + 2 categories, `recentlyViewedPayload()`).
+4. Build `context = { type:'product', productId:<handle or passed id>, productTitle:<title>, source:'cta' }` plus `recentlyViewed` from the local trail (max 3 products + 2 categories, `recentlyViewedPayload()`). The backend never holds a `cta` context out (API_CONTRACT.md §2).
 5. `sendMessage(primer, context)`. Primer DE, verbatim: `Ich interessiere mich für „<Titel>". Kannst du mich zu diesem Produkt beraten?` (opening „, closing ASCII `"`, not `“`; this exact string is the user text the backend receives, relevant for primer detection or analytics). EN: "I'm interested in "<title>". Can you advise me on this product?". Without a title: „Kannst du mich zu diesem Produkt beraten?“.
 6. Because it is a normal user turn, it appends to an existing conversation (the backend treats non-empty `messages` + context as a pivot, `API_CONTRACT.md §2`). Each click sends another primer. There is no de-duplication.
 7. `sendMessage` also triggers the first-message popups (sign-in / consent gate, `04-accounts-sign-in-and-consent.md`) exactly like a typed first message.
@@ -361,7 +363,7 @@ Breaking assumptions: if the theme stops setting `body.no-scroll` while the draw
 
 ## 8. Order attribution stamp (`_mo` cart attribute)
 
-Purpose and backend side: `ORDER_ATTRIBUTION.md` and `API_CONTRACT.md §10`. In short, the order webhook reads the `_mo` note attribute and assigns the tiers "Direkt" (Mo code or Mo-built link), "Beraten & gekauft" (`assisted`: widget stamp + a purchased line matches a product discussed in the session) and "Beraten, anderes gekauft" (`influenced`: stamp, no match), within `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) of the token's minting, or with the backend switch `MO_ATTRIBUTION_SESSION_ANCHOR` (default off in code; production state: `docs/ROLLOUT_TODO.md`) of the device's latest product consultation (`show_product`, `compare_products`, `add_to_cart`, `suggest_showroom` written by the token's own sid, never after the order). A marked order the backend cannot attribute (unknown token, outside the window) is only counted, as the server-only event `mo_order_marker_unresolved`.
+This section is the one description of the widget's as-built attribution behaviour (mint, stamp, renewal §8.8, blanking §8.9); `01` §10 and `05` §10 point here. Purpose and backend side: `ORDER_ATTRIBUTION.md` and `API_CONTRACT.md §10`. In short, the order webhook reads the `_mo` note attribute and assigns the tiers "Direkt" (Mo code or Mo-built link), "Beraten & gekauft" (`assisted`: widget stamp + a purchased line matches a product discussed in the session) and "Beraten, anderes gekauft" (`influenced`: stamp, no match), within `MO_ATTRIBUTION_WINDOW_DAYS` (default 30) of the token's minting, or with the backend switch `MO_ATTRIBUTION_SESSION_ANCHOR` (default off in code; production state: `docs/ROLLOUT_TODO.md`) of the device's latest product consultation (`show_product`, `compare_products`, `add_to_cart`, `suggest_showroom` written by the token's own sid, never after the order). A marked order the backend cannot attribute (unknown token, outside the window) is only counted, as the server-only event `mo_order_marker_unresolved`.
 
 ### 8.1 Consent gate (`moAnalyticsAllowed()`)
 
@@ -369,13 +371,13 @@ True only if `window.Shopify.customerPrivacy.analyticsProcessingAllowed() === tr
 
 - The widget does **not** load the Customer Privacy API itself. It relies on the theme `<privacy-banner>` (which calls `Shopify.loadFeatures([{name:'consent-tracking-api'}])`) or Shopify's own banner.
 - `initAttribution()` checks at init and again at about 1 s, 3 s, 6 s, 10 s and 15 s (delays of 1–5 s) while `window.Shopify.customerPrivacy` is missing. It stops as soon as the API exists (allowed → re-stamp; "not allowed" → stop). This loop only re-stamps a cached token and never mints.
-- It listens to the document event `visitorConsentCollected` for the rest of the page view: if consent is now allowed and a token is cached or the session is "consulted", it calls `moAttrEnsure(true)`.
+- It listens to the document event `visitorConsentCollected` for the rest of the page view: if consent is now allowed and a token is cached or the session is "consulted", it calls `moAttrEnsure(true)`; if it is not allowed, it blanks the cart marker (`moBlankCart()`, §8.9).
 
 ### 8.2 Token mint
 
 - `POST {apiBase}/api/attribution/token`, headers `x-ms-chat-key` + `x-ms-session`, **no body**, no `Content-Type`, no locale.
-- Accepted response: `{ ok: true, token: <non-empty string>, cartAttributes: <plain object> }` (`moAttrValid()`). Anything else, or 401/403/429/5xx/network, sets `moAttrFailed` and gives up **for this page view**.
-- Single-flight (`moAttrInflight`). Idempotent server-side: the same token per session while it exists; after a backend purge (retention) or erasure, a new one (`API_CONTRACT.md §10`).
+- Accepted response: `{ ok: true, token: <non-empty string>, cartAttributes: <plain object> }` (`moAttrValid()`). Anything else, or 401/403/429/5xx/network, sets `moAttrFailed` and gives up **for this page view** (a failed renewal does not, §8.8).
+- Single-flight (`moAttrInflight`, shared with the renewal). Idempotent server-side: the same token per session while it exists; after a backend purge (retention) or erasure, a new one (`API_CONTRACT.md §10`).
 - Cache: memory `moAttr` + `localStorage['ms-mo-attr']` = `{ sid, token, cartAttributes }`. `moAttrLoad()` discards an entry whose `sid` is not the current session id.
 - When is a session "consulted" (mint allowed)? Only when a **`show_product` card renders** (`buildShowProduct → moAttrOnProductCard()`), including product cards re-rendered from restored history on page load. Compare tables, the showroom card and the add-to-cart card do **not** mark the session consulted; the add-to-cart **click** mints directly (`moAttrEnsure(false)`).
 
@@ -396,13 +398,14 @@ Same-origin, root path (not `window.routes.cart_update_url`), fire-and-forget, e
 | Page load with a cached token for this sid | `initAttribution()` tick → `moAttrEnsure(true)` | no | yes | once per page load |
 | Consent arrives later (`visitorConsentCollected`) | `moAttrEnsure(true)` | if consulted and no token | yes | once per page load |
 | Click on „Zur Kasse“ | `moAttrEnsure(false)` | yes, if no token and no mint in flight or failed | every click when a token is cached and consent allows. Without a cached token it mints, and the stamp follows the mint response. No stamp from the click if a mint is already in flight (that mint stamps once when it resolves) or if a mint already failed on this page view (`moAttrInflight` / `moAttrFailed`) | per click, subject to those conditions |
+| A streamed turn with a consultation tool part finished cleanly, token cached | `finalizeStream()` → `moAttrRenew()` (§8.8) | asks again; the backend returns the same token or a replacement | only when the token changed | once per page view (`moAttrRenewed`) |
 | Theme add-to-cart, quick-add, cart drawer changes | — | — | **no** | — |
 
 **Restored history mints without a click.** `init()` → `renderAllMessages()` → `renderRestoredAssistant()` re-renders a stored `show_product` card on every page load (before `initAttribution()`), panel open or not. So a device whose stored transcript (`localStorage['ms-chat-history:<sid>']`) holds a product card can mint and stamp without any interaction, and the page counts as consulted for the `visitorConsentCollected` listener. The mint on load happens only if the Customer Privacy API already reports consent when the card's `/api/products` hydration resolves (`moAttrEnsure()` returns at once while `moAnalyticsAllowed()` is false, including "API not loaded yet"); otherwise there is no mint on that page view unless the visitor answers the consent banner. A „Zur Kasse“ click never waits for the stamp: the permalink opens in parallel.
 
 ### 8.5 Reset
 
-`moAttrReset()` (memory + `ms-mo-attr`) runs inside `rotateSession()` ("Neuen Chat starten" for anonymous/email-only, `mo_new=1` only without a signed-in hint, sign-out, erase, server-confirmed end of sign-in). Adopting another tab's sid (`dropSessionHistory(adoptSid)`) clears only the in-memory attribution state (`moAttr`, `moAttrFailed`, `moAttrConsulted`); the stored `ms-mo-attr` was already removed by the rotating tab, and `moAttrLoad()` ignores an entry for another sid. For a possibly signed-in visitor (`shouldProbeAuth()`), `mo_new=1` keeps the sid and its token and only drops the local thread (`handleMoDeepLink()`). The **cart attribute already on the Shopify cart is not removed**: the live cart keeps the old token until a new stamp overwrites it. On a shared browser a later order can therefore still be tied to the previous session (sign-out, erase, rotation, withdrawn consent) — with the backend switch for longer than 30 days from minting (ANWALTSDOSSIER §20, F-37 (b)). Cleanup: task 2 of [`3-attribution-token-renewal.md`](tasks/TASKS.md task 3) blanks the marker (`/cart/update.js` with every cached key set to `""`) on sign-out, erase, server-ended sign-in and consent withdrawal.
+`moAttrReset()` (memory + `ms-mo-attr`) runs inside `rotateSession()` ("Neuen Chat starten" for anonymous/email-only, `mo_new=1` only without a signed-in hint, sign-out, erase, server-confirmed end of sign-in). Adopting another tab's sid (`dropSessionHistory(adoptSid)`) clears only the in-memory attribution state (`moAttr`, `moAttrFailed`, `moAttrConsulted`); the stored `ms-mo-attr` was already removed by the rotating tab, and `moAttrLoad()` ignores an entry for another sid. For a possibly signed-in visitor (`shouldProbeAuth()`), `mo_new=1` keeps the sid and its token and only drops the local thread (`handleMoDeepLink()`). **The cart attribute already on the Shopify cart:** sign-out, erase and a server-ended sign-in blank it before the rotation drops the cached token, and a consent withdrawal blanks it too (§8.9). After the other rotations — anonymous „Neuen Chat starten“, `mo_new=1` without a signed-in hint, adopting another tab's sid — the live cart keeps the old token until a new stamp overwrites it, so on a shared browser a later order can still be tied to the previous session — with the backend switch for longer than 30 days from minting (ANWALTSDOSSIER §20, F-37 (b)).
 
 ### 8.6 Privacy facts
 
@@ -415,15 +418,36 @@ Same-origin, root path (not `window.routes.cart_update_url`), fire-and-forget, e
 
 ### 8.7 Behaviour worth knowing for KPI interpretation
 
-- **Long-lived stamping**: the session id lives in `localStorage` with no expiry, so a device keeps re-stamping every new cart on every page load until the session rotates. The backend's 30-day window is what bounds "influenced"/"assisted" (from the minting, or with `MO_ATTRIBUTION_SESSION_ANCHOR` from the device's latest product consultation). The backend also deletes the token: 37 days after minting, or with the switch 37 days after the device's last product consultation and at most 180 days after minting; erasure at once. The widget keeps stamping the cached dead token, and those orders count as `unknown_token`, until the sid rotates or the renewal (task 1 of [`3-attribution-token-renewal.md`](tasks/TASKS.md task 3)) ships. Tokens purged before 2026-10-05 are not recoverable by the backend.
+- **Long-lived stamping**: the session id lives in `localStorage` with no expiry, so a device keeps re-stamping every new cart on every page load until the session rotates. The backend's 30-day window is what bounds "influenced"/"assisted" (from the minting, or with `MO_ATTRIBUTION_SESSION_ANCHOR` from the device's latest product consultation). The backend also deletes the token: 37 days after minting, or with the switch 37 days after the device's last product consultation and at most 180 days after minting; erasure at once. The widget keeps stamping the cached dead token, and those orders count as `unknown_token`, until a page view with a live consultation turn renews it (§8.8) or the sid rotates; a device that only reloads its restored history never renews. Tokens purged before 2026-10-05 are not recoverable by the backend.
 - **Card builds are not cancelled on a sid rotation.** `renderPartIntoCtx()` calls `buildToolCard(…).then(…)` and nothing cancels it, and `buildShowProduct()` calls `moAttrOnProductCard()` inside `hydrate().then()`, i.e. after an async `GET /api/products`. On a campaign landing with `mo_new=1` (`05` §9.2 b), `init()` first runs `renderAllMessages()`, which starts hydration of the stored thread's `show_product` cards; `handleMoDeepLink()` then runs synchronously: `rotateSession()` → `moAttrReset()`, then `renderAllMessages()` (empty). When the old cards' hydration resolves, `moAttrOnProductCard()` sets `moAttrConsulted = true` and `moAttrEnsure(true)` mints a token for the **new** sid and stamps the cart (consent permitting), although the visitor has not consulted in the new session and the thread was deleted. Orders then count as Mo-influenced for that session. (The same applies to the signed-in-hint branch, which keeps the sid but drops the thread.)
-- **A mint in flight during a rotation is cached under the new sid.** `moAttrEnsure()` builds the cache entry as `{sid: sid, …}` from the module variable when the **response** arrives, so a token minted under the old `x-ms-session` is stored and stamped as the new sid's token. `moAttrReset()` does not clear `moAttrInflight`. The fix for both (capture `sid` before `hydrate()` / before the mint `fetch` and skip `moAttrOnProductCard()` / the cache write when it changed) is backlog `07` D17.
+- **A mint in flight during a rotation is cached under the new sid.** `moAttrEnsure()` builds the cache entry as `{sid: sid, …}` from the module variable when the **response** arrives, so a token minted under the old `x-ms-session` is stored and stamped as the new sid's token. `moAttrReset()` does not clear `moAttrInflight`. The fix for both (capture `sid` before `hydrate()` / before the mint `fetch` and skip `moAttrOnProductCard()` / the cache write when it changed) is backlog `07` D17. The renewal already does this (it captures `reqSid` and drops a reply for a rotated sid, §8.8).
 - **Only `show_product` marks a session as consulted** (§8.2, F2): a consultation that shows only a comparison table, a showroom card or an add-to-cart card (before its click) mints no token and stamps nothing.
 - **The theme's own add-to-cart is not observed** (§7.8, F7): re-stamping after a completed checkout relies on the next page load of a widget page.
 - **Consent ceiling**: unconsented visitors are never stamped, and no event measures consent coverage, so the share of consultations that can be attributed at all is unknown.
 - Purchases on another device stay invisible (stated residual in `ORDER_ATTRIBUTION.md`).
 - **Permalink gap (likely NOT attributed, unverified)**: the „Zur Kasse“ permalink itself carries no `_mo`. A cart permalink builds its own cart/checkout, so the `_mo` attribute stamped via `/cart/update.js` probably does not carry over to that checkout. MANIFEST 2026-06-21 shows only that the permalink changes the storefront cart count, not that attributes survive. Verify with one test order (order `note_attributes`, §17). The fix path is F1/T1. On the first click of a session with no token, the mint is still in flight when the new tab opens, so the stamp may land after the permalink created its cart.
 - **No client KPI** exists for mint/stamp success, so the stamp rate cannot be measured from `kpi_events`.
+
+### 8.8 Renewal after a live consultation (`moAttrRenew()`, since `bc7fb5d`)
+
+Contract: `API_CONTRACT.md §10` „Lifetime and renewal“ (the endpoint returns the same token while it exists and a new one after a purge or erasure).
+
+- **Trigger:** `finalizeStream()` of a streamed `/api/chat` turn (typed, CTA primer or nudge greeting) that finished without an SSE error, under the sid it was sent for, whose assistant parts contain a `tool-show_product`, `tool-compare_products`, `tool-add_to_cart` or `tool-suggest_showroom` part (`MO_CONSULT_PARTS`, `hasConsultationPart()`). Never from restored history or a page load.
+- **Preconditions:** analytics consent (`moAnalyticsAllowed()`), a cached token for the current sid (`moAttrLoad()`; without one the card render mints as before, §8.2), no mint or renewal in flight, and no renewal yet on this page view (`moAttrRenewed`, set when the request starts).
+- **Request:** the same `POST /api/attribution/token` as the mint (`x-ms-chat-key`, `x-ms-session` = the sid at call time, no body).
+- **Outcome:** a valid reply with a **different** token replaces memory + `localStorage['ms-mo-attr']` and stamps the cart (consent re-checked in `moStampCart()`). The same token: nothing to do. A failure (non-2xx, invalid body, network): the cached token stays and `moAttrFailed` is **not** set, so the checkout click keeps stamping it. A reply that arrives after the sid rotated is dropped.
+- **Ordering with the render stamp:** while the renewal runs (`moAttrRenewing`), a card-render stamp is deferred (`moAttrStampDeferred`) so it cannot land after the renewal's stamp and put the old token back; if the renewal did not stamp, the deferred stamp is made up once it finishes. The checkout click (`moAttrEnsure(false)`) stamps the cached token immediately as before.
+- No KPI event, no UI. Effect on the numbers: `05` §10.4.
+
+### 8.9 Ending the marker (`moBlankCart()`, since `bc7fb5d`)
+
+Contract: `API_CONTRACT.md §10` „Ending the marker“.
+
+- **What:** `POST /cart/update.js` (same origin, root path, `keepalive`, fire-and-forget, errors swallowed) with every key of the **cached** `cartAttributes` set to `""` — today `{ "_mo": "" }`. The widget never hard-codes the key; without a cached entry for the current sid (nothing minted, or another tab rotated first) it sends nothing.
+- **When:** `signOut()` („Abmelden“), `clearAfterErase()` (erase answered 200, or 401 = session already gone), `endedSignInCleanup()` (a signed-in session the server reports ended on an `/api/auth/me` probe, or any `/api/account/*` 401 on a device that was signed in, `accountUnauthorized()`) — each **before** `dropSessionHistory()` rotates the sid and drops the cached token — and on `visitorConsentCollected` when analytics processing is no longer allowed.
+- **Not consent-gated** (it removes a marker and sends nothing for analytics).
+- **Not blanked:** anonymous „Neuen Chat starten“, a `mo_new=1` rotation, adopting another tab's rotation (the rotating tab blanked if it was a sign-out or erase), and a consent state that is already "not allowed" at page load without a `visitorConsentCollected` event on that page (the stamp then simply stops, §8.1).
+- Observed on live by the frontend agent on 2026-10-06: after „Abmelden“ in the chat, `/cart.js` no longer lists `_mo` (Shopify drops an attribute set to `""`).
 
 ---
 
@@ -486,11 +510,11 @@ Owned by `05-engagement-and-kpi.md` §9 (parameters, processing order, the head-
 | `{% render 'ms-chat-widget' %}` before `</body>` | `layout/theme.liquid` | Loads CSS/JS | Removed in a live sync → no Mo anywhere |
 | `<head>` stash script (`ms_auth`, `ms_code`, `mo_c` → `sessionStorage['ms-chat-early-params']`) | `layout/theme.liquid` (PR #73) | `earlyParam()` | Without it the params are still read from the URL, but analytics see them first (privacy regression) |
 | `window.Shopify.customerPrivacy.analyticsProcessingAllowed()` | Shopify Customer Privacy API (loaded by `<privacy-banner>` or Shopify's banner) | Attribution consent gate | API not loaded → attribution silently off for everyone |
-| `document` event `visitorConsentCollected` | Shopify | Late consent → stamp | Attribution only from the next page load |
+| `document` event `visitorConsentCollected` | Shopify | Late consent → stamp; withdrawn consent → blank the marker (§8.9) | Attribution only from the next page load; a withdrawal leaves the marker on the cart |
 | `window.ShopifyAnalytics.meta.page.customerId` | Shopify `content_for_header` | Shop-login hint → `/api/auth/me` probe | Hint lost; recognition depends on the App Proxy or the local signed-in flag |
 | `window.routes.cart_url` (with `.js` suffix) | `layout/theme.liquid → window.routes` | `/cart.js` read | Falls back to `/cart.js` (fine); a route **without** `.js` would return HTML and break the read silently |
 | `GET /cart.js` → `item_count` | Shopify AJAX cart | Badge reconcile | — |
-| `POST /cart/update.js` | Shopify AJAX cart | Attribution stamp | — |
+| `POST /cart/update.js` | Shopify AJAX cart | Attribution stamp and its blanking (§8.9) | — |
 | `#CartBubble` (exactly one, always rendered) with `.hidden` = empty | `sections/header.liquid` (mobile icons badge) | `readBubbleCount()`, `setCartBubble()`; also required by the theme's `qe()` | Missing id → theme add-to-cart throws, drawer never opens (§7.4); widget reads 0 |
 | `[data-fh-cart-bubble]` | `sections/header.liquid` (both badges) | `setCartBubble()` | Visible desktop badge stays stale after a chat checkout |
 | `<cart-modal>` with `reloadContent()` | `sections/cart-modal.liquid` + `main.mjs` | `reloadCartDrawer()` | Drawer shows stale contents until reload (no error) |
@@ -514,16 +538,16 @@ Theme events the widget does **not** use (but could): `product:added-to-cart` (d
 | Request | Destination | Data | When |
 |---|---|---|---|
 | `GET /api/products?ids=` | backend | catalog ids, `x-ms-session` | each product/compare/showroom/contact/capture (`offer_email_summary`) card not yet cached, each add-to-cart card (always uncached); restored cards re-fetch on **every page load** for a visitor with stored history, panel open or not |
-| `POST /api/attribution/token` | backend | `x-ms-chat-key`, `x-ms-session` | Analytics consent required. Triggers: first `show_product` render (stream or restored history, panel open or not), a „Zur Kasse“ click (even if not consulted), or late consent (`visitorConsentCollected`) on a page where a product card rendered. Idempotent per sid and cached in `localStorage['ms-mo-attr']`. A failed mint is abandoned only for that page view (`moAttrFailed` is in-memory), so the next page view's trigger retries |
-| `POST /cart/update.js` | Shopify (same origin) | `{ attributes: { _mo: token } }` | §8.4 |
+| `POST /api/attribution/token` | backend | `x-ms-chat-key`, `x-ms-session` | Analytics consent required. Triggers: first `show_product` render (stream or restored history, panel open or not), a „Zur Kasse“ click (even if not consulted), late consent (`visitorConsentCollected`) on a page where a product card rendered, or the renewal after a live consultation turn with a cached token (once per page view, §8.8). Idempotent per sid and cached in `localStorage['ms-mo-attr']`. A failed mint is abandoned only for that page view (`moAttrFailed` is in-memory), so the next page view's trigger retries |
+| `POST /cart/update.js` | Shopify (same origin) | `{ attributes: { _mo: token } }`; blanking: `{ attributes: { _mo: "" } }` | §8.4; blanking §8.9 (not consent-gated) |
 | `GET /cart.js` | Shopify (same origin) | cart cookie | widget: every page load (`pageshow`) + focus / visibility / post-checkout poll. The header script makes its own `/cart.js` GET on every page load as well (§7.3), so widget pages make two per view |
 | `GET ?section_id=` (drawer / cart page re-render) | Shopify (same origin) | cart cookie | only when `item_count` differs from the last known count |
 | `GET /apps/chat/whoami?session=<sid>` | Shopify → App Proxy → backend (adds `logged_in_customer_id`) | session id | once per tab session (sessionStorage `ms-chat-whoami-done`), first panel open in that tab |
-| `POST /api/chat` with `context` | backend | product handle/title, ≤ 3 trail products + ≤ 2 categories | only on CTA click / nudge click (user-initiated) |
+| `POST /api/chat` with `context` | backend | product handle/title, ≤ 3 trail products + ≤ 2 categories (CTA, nudge); the page's product handle/title or collection handle/title only (typed turn, `source:"page"`) | on a CTA or nudge click, or with the first typed or spoken message per product / collection page (§2.4); always inside a request the user starts |
 | `POST /api/kpi` | backend | event name, session id, ids (§14) | on clicks |
 | Opening `cartUrl` / `shopifyUrl` / showroom | Shopify | standard navigation (new tab) | on click |
 
-The browsing trail (`localStorage['ms-chat-trail']`, 5 entries, 3-day TTL) is never sent except inside a user-initiated chat request.
+The browsing trail (`localStorage['ms-chat-trail']`, 5 entries, 3-day TTL) is never sent except inside a user-initiated CTA or nudge request; a typed turn's page context never carries it.
 
 ---
 
@@ -566,16 +590,16 @@ Complements `01-storefront-theme.md §17`.
 
 ## 16. Findings, risks and suggested frontend tasks
 
-Findings (code facts of this build; F9 is fixed):
+Findings (code facts of this build; F3 and F9 are fixed, F8 partly; the numbers stay so references stay stable):
 
 - **F1 — In-chat checkout permalink carries no attribution marker.** `cartUrl` has no `attributes[_mo]`, and the widget stamps the **current** cart instead. If the permalink's checkout does not inherit those attributes (unverified), Mo's most direct purchase path would be attributed only through product matching on a stamp that may not exist. On the first click without a cached token the mint races the navigation.
 - **F2 — Session becomes "consulted" only via `show_product` cards.** Sessions whose consultation shows only compare tables, a showroom card or an add-to-cart card are not minted until a checkout click. Purchases after such sessions via search or theme add-to-cart stay unattributed.
-- **F3 — Product context is not sent on a plain first message on a PDP.** Only the CTA and the nudge send it (§2.4). Backend side built; widget part = task 2 (`07` A3).
+- **F3 — Fixed (`bc7fb5d`): product context on a plain first message on a PDP.** The first typed or spoken message per product (or collection) page carries the page facts with `source:"page"` (§2.4); Mo uses them only with `CHAT_PAGE_CONTEXT_ENABLED` (default off in code; `07` A3 in „Done“).
 - **F4 — Variant is never known.** Neither the PDP's selected variant nor in-chat variants are used; "Zum Produkt" opens the default variant. The `/api/products` `id` is the base handle even for a variant ref (only `selectedVariantId`, ignored, carries the variant), so no product KPI event ever carries the variant.
 - **F5 — `/en` shoppers are sent to German pages** (product links, showroom, checkout permalink without locale). The PDP CTA label is German on `/en`.
 - **F6 — Different id spaces in KPIs**: `product_cta_opened` uses numeric ids, all other product events use catalog handles (always handle-level, never `handle~variantId`, §2.3).
 - **F7 — No re-stamp after theme add-to-cart (improvement, not a contract gap).** The widget meets the contract's re-stamp rule (`API_CONTRACT.md §10`: "re-stamp before opening any Mo cart link and after each `add_to_cart` click", i.e. the Mo `add_to_cart` tool card): it stamps on every „Zur Kasse“ click (`buildAddToCart()` → `moAttrEnsure(false)`) and once per page load. The contract does not ask it to observe the theme's add-to-cart. It does not listen to `product:added-to-cart`, so a cart that a completed checkout cleared is re-stamped only on the next page load of a widget page; T5 would close that small gap. A stamp is also never re-applied if Shopify drops attributes for other reasons.
-- **F8 — Stale `_mo` after session rotation.** `moAttrReset()` clears the local cache but not the cart attribute. After sign-out / erase / "Neuen Chat starten" the live cart still carries the old token until a new stamp. Backend erasure makes erased tokens inert; for "Neuen Chat starten" the old token stays valid, so the new consultation's purchase may count for the old session.
+- **F8 — Stale `_mo` after session rotation (partly fixed in `bc7fb5d`).** `moAttrReset()` clears the local cache but not the cart attribute. Sign-out, erase, a server-ended sign-in and a consent withdrawal now blank the marker first (§8.9). Still open: after an anonymous "Neuen Chat starten" or a `mo_new=1` rotation the live cart carries the old token until a new stamp; that token stays valid, so a purchase after the new consultation may count for the old session.
 - **F9 — Fixed (`8d0a0c4`): dead CTA where the widget does not mount.** The snippet hides `.ms-chat-product-advisor` / `.ms-chat-product-cta` on excluded templates, cart/checkout and with an empty shared secret, and no longer loads the JS without a secret (§3.4). Remaining edge: the CTA still does nothing if the JS fails to load or is clicked before the deferred script booted.
 - **F10 — `add_to_cart` with more than 10 ids renders nothing** (no chunking in `buildAddToCart`; the backend cap is 10).
 - **F11 — `productButton()` falls back to `href="#"`** with `target="_blank"` when `shopifyUrl` is missing: this opens a second copy of the current page in a new tab (full reload, widget included) and still fires `product_cta_clicked`.
@@ -591,7 +615,7 @@ Suggested frontend tasks — consolidated, with priorities, effort and the backe
 |---|---|---|
 | T1 | `_mo` on the „Zur Kasse“ permalink; mint eagerly when the add-to-cart card renders | A2 |
 | T2 | Compare / showroom / add-to-cart renders count as "consulted" | A1 |
-| T3 | PDP product context on the first typed message of a fresh conversation | A3 (task 2) |
+| T3 | PDP product context on the first typed message of a fresh conversation | done (`bc7fb5d`; A3 in „Done“) |
 | T4 | Selected variant into the context; „Zum Produkt“ with `?variant=`; variant-level KPIs | D3 |
 | T5 | Listen to `product:added-to-cart`: re-stamp and a KPI event | D2 |
 | T6 | `/en` product and showroom links; translated CTA label | D4 |

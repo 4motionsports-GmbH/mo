@@ -3,7 +3,7 @@
 This chapter explains how the Mo chat widget is built and how it starts on the motionsports.de storefront. It covers the load path from the theme layout to the running script, every configuration field, the internal layout of `assets/ms-chat-widget.js`, the global state, **every** browser-storage key, the session-id lifecycle, multi-tab behaviour, layout modes, stacking against the theme, CSS, i18n, accessibility, browser support, performance and error-handling conventions. It ends with the constraints for future changes and a list of risks and open questions.
 Backend behaviour is not re-specified here. It is cross-referenced to the widget contract in this folder: `API_CONTRACT.md` ("API_CONTRACT §n" or "AC §n"), `ACCOUNT_CONTRACT.md` (ACCT §n) and `CONSENT_CONTRACT.md` (CONS §n); `ORDER_ATTRIBUTION.md` (OA) is the backend's `docs/ORDER_ATTRIBUTION.md`. Aliases: README §1.
 All code locations are given as `file → function / selector / key`. Line numbers are left out on purpose because they drift.
-**Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `3e87341` (PR #73 "customer platform" `a0df103` + the fixes `8d0a0c4` + `3e87341`; README). Production state: README §4. Data recorded before 2026-10-04 comes from an older widget (§1.1).
+**Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `bc7fb5d`, live since 2026-10-06 (PR #73 "customer platform" `a0df103` + the fixes `8d0a0c4` + `3e87341` + the 2026-10-05 tasks `11ac337` + `bc7fb5d`; README). Production state: README §4. Data recorded before 2026-10-04 comes from an older widget, and some fields exist only from 2026-10-06 (§1.1).
 
 **Contents**
 
@@ -37,16 +37,16 @@ All code locations are given as `file → function / selector / key`. Line numbe
 | Item | Value |
 | --- | --- |
 | Runtime | One vanilla-JS IIFE in `'use strict'`, written in ES5 syntax (`var`, `function`, no arrow functions, no classes, no template literals). No framework, no bundler, no npm, no external libraries. |
-| Files | `assets/ms-chat-widget.js` (~6,300 lines, ~316 KB raw / ~92 KB gzip), `assets/ms-chat-widget.css` (~1,780 lines, ~70 KB raw / ~18.5 KB gzip), `snippets/ms-chat-widget.liquid` (render gate and config), an inline `<head>` script in `layout/theme.liquid`, the "AI Advisor" section in `config/settings_schema.json`. |
+| Files | `assets/ms-chat-widget.js` (~6,530 lines, ~330 KB raw / ~96 KB gzip), `assets/ms-chat-widget.css` (~1,800 lines, ~70 KB raw / ~18.7 KB gzip), `snippets/ms-chat-widget.liquid` (render gate and config), an inline `<head>` script in `layout/theme.liquid`, the "AI Advisor" section in `config/settings_schema.json`. |
 | DOM | Everything is built at runtime under a single `<div class="ms-chat-root">` appended to `<body>` (`buildShell()`). There is no Shadow DOM. Isolation comes from the `.ms-chat-` class prefix. |
 | Exceptions outside the root | Classes on `<html>` (`ms-chat-page-shift`, `ms-chat-page-anim`, `ms-chat-mobile-open`), server-rendered `.ms-chat-product-cta` buttons in product templates, writes to the theme's cart badges (`#CartBubble`, `[data-fh-cart-bubble]`), `<cart-modal>.reloadContent()`, the `.section-main-cart` section, and the live Shopify cart (`/cart/update.js`). |
 | Backend | `https://mo.motionsports.de` (Next.js on Vercel). Contract: `API_CONTRACT.md`, `ACCOUNT_CONTRACT.md`, `CONSENT_CONTRACT.md` (this folder); the rules every widget change keeps: AC §0. |
 | Public JS API | `window.MS_CHAT.openWithProduct(id, title)` and `window.MS_CHAT.openEmailSummary()`, set in `init()`. |
 | Deployment | Manual. The owner copies changed files into the Shopify code editor. `MANIFEST.md` lists the files to upload for each session (see §20). |
 
-### 1.1 History: data recorded before 2026-10-04
+### 1.1 History: data recorded before 2026-10-04 (and before 2026-10-06)
 
-The widget described here went live in two uploads on 2026-10-04: first PR #73 (`a0df103`: `assets/ms-chat-widget.js`, `assets/ms-chat-widget.css`, `layout/theme.liquid`, together with `snippets/product-qa.liquid`, `sections/header.liquid` and `snippets/product-detail-accordions.liquid` from the 2026-10-01 round), then the follow-up fixes (`8d0a0c4` + `3e87341`: the JS again, `snippets/ms-chat-widget.liquid` and three product templates). Rows tagged **[PR #73]** in later sections mark what PR #73 changed; that matters only when reading data recorded **before 2026-10-04**. Which build is live now: README §4.
+The widget described here went live in three uploads. On 2026-10-04 first PR #73 (`a0df103`: `assets/ms-chat-widget.js`, `assets/ms-chat-widget.css`, `layout/theme.liquid`, together with `snippets/product-qa.liquid`, `sections/header.liquid` and `snippets/product-detail-accordions.liquid` from the 2026-10-01 round), then the follow-up fixes (`8d0a0c4` + `3e87341`: the JS again, `snippets/ms-chat-widget.liquid` and three product templates); on 2026-10-06 the 2026-10-05 tasks (`11ac337` + `bc7fb5d`, theme PR #75: `assets/ms-chat-widget.js` and `assets/ms-chat-widget.css`). Rows tagged **[PR #73]** in later sections mark what PR #73 changed; that matters only when reading data recorded **before 2026-10-04**. Which build is live now: README §4.
 
 **Historical: pre-PR #73 widget (`44a076b`, live until 2026-10-04).** Use this table only to interpret KPI or session data recorded before the upload.
 
@@ -64,6 +64,8 @@ The widget described here went live in two uploads on 2026-10-04: first PR #73 (
 | Other keys missing before PR #73 | `ms-chat-auth-via:<sid>`, `ms-chat-optin-ask-shown` | §6 |
 
 **The follow-up fixes (`8d0a0c4`, `3e87341`), from their upload on 2026-10-04:** `contact_form_submitted` carries the session (rows before have `sessionId: null`; the backend also falls back to `x-ms-session`, AC §4); the `order_support` contact reason has its own label; the CTA is on three more product templates (`product_cta_opened` volumes are not comparable across that day) and hidden where the widget does not render; an empty shared secret loads nothing; new chat / open conversation cancel a streaming reply and stop queued speech (§21 items 1, 3, 18, 19).
+
+**The 2026-10-05 tasks (`11ac337` + `bc7fb5d`), from their upload on 2026-10-06:** the signed-in consent popup and inline card render the served `benefits` instead of the widget's own two bullets, and every `consent_gate_*` event and opt-in POST carries `placement` and the served `variant` (rows before have neither; `consent_gate_dismissed` no longer follows an accept, `04` §10.2); the first typed or spoken message of a thread on a product or collection page carries the page facts (`source: "page"`, §3.2), CTA and nudge contexts carry `source`, and `product_cta_clicked` carries `samePage`; the attribution token is renewed after a live consultation and the `_mo` marker is blanked when a session ends or analytics consent is withdrawn (§9; `06` §8.8–§8.9). The KPI tab marks these as releases of 2026-10-06 (`src/lib/kpi-releases.mjs`).
 
 ---
 
@@ -163,7 +165,7 @@ This matters for load and for KPI interpretation.
   - `GET /api/products?ids=` for every restored `show_product`, `compare_products`, `suggest_showroom` and `show_contact_form` card with `productIds`, and for a restored capture card with `productIds` (`hydrate()`, batches of 10, deduplicated within the page through `productCache`).
   - One extra, uncached `GET /api/products?ids=` per restored `add_to_cart` card (`buildAddToCart()`).
   - `GET /api/consent-copy?locale=` for a restored `offer_email_summary` card (`buildCaptureCard()` → `loadConsent()` → `fetchConsentCopy()`, 60 s cache). `buildToolCard()` suppresses this card only when `auth.signedIn`, and auth is not settled at `init()`, so this applies to signed-in customers' restored cards too.
-  - A restored `show_product` card that resolves calls `moAttrOnProductCard()` → `moAttrEnsure(true)`. With analytics consent and no cached token, this mints `POST /api/attribution/token` and then stamps the cart, without any interaction.
+  - A restored `show_product` card that resolves calls `moAttrOnProductCard()` → `moAttrEnsure(true)`. With analytics consent and no cached token, this mints `POST /api/attribution/token` and then stamps the cart, without any interaction. Restored cards never trigger the token renewal (only a live streamed turn does, `06` §8.8).
 - **Possibly `POST /cart/update.js`** (at most once per page load, consent-gated: Shopify Customer Privacy API `analyticsProcessingAllowed() === true`). It is sent when a cached attribution token for the current `sid` exists (`initAttribution()`), **or** when a restored `show_product` card triggers a mint (above). The `moAttrPageStamped` flag limits the render path to one stamp per page.
 - **Possibly `POST /api/auth/link`, then `GET /api/auth/me`.** This happens only if a sign-in code from a previous 503 is waiting in `ms-chat-link-retry` (`retryPendingLink()`). On a successful redeem it calls `probeAuth(true)`.
 - **Nudge KPIs** (`nudge_shown`) fire only when a nudge trigger actually fires.
@@ -186,20 +188,30 @@ This table is the one description of the config and the page-context fields (`01
 | `apiBase` | `settings.ai_advisor_backend_url`, default `'https://mo.motionsports.de'` | `'https://mo.motionsports.de'` | `API_BASE` | Origin for every backend call. Trailing `/` is stripped. |
 | `chatKey` | `settings.ms_chat_shared_secret` | `''`, which means no mount | `CHAT_KEY` | `x-ms-chat-key` on guarded calls (§9). |
 | `showroomUrl` | **hard-coded** in the snippet: `https://motionsports.de/pages/showroom-munchen-grobenzell` | same URL | `SHOWROOM_URL` → `buildShowroom()` | Target of the showroom card button. It is not a theme setting. |
-| `allowedFromTheme` | hard-coded `true` | — | **Nothing.** The JS never reads it. It is a leftover from the pre-build widget spec. |
+| `allowedFromTheme` | hard-coded `true` | — | — | **Nothing.** The JS never reads it. It is a leftover from the pre-build widget spec. |
 | `locale` | `localization.language.iso_code`, falling back to `request.locale.iso_code` | `'de'` | `LOCALE` | `'en'` if it starts with "en" (case-insensitive), otherwise `'de'`. A `/en` path prefix forces `'en'` (§14). |
 | `pageContext.pageType` | `request.page_type` | `''` | `PAGE_CTX.type` | Mapped to `'product'`, `'collection'`, `'cart'`, `'home'` (from `index`) or `'other'`. |
 | `pageContext.productId` | `product.id` (product pages only) | `null` | `PAGE_CTX.productId` | Numeric Shopify id (stringified in `PAGE_CTX`). Guard in `openWithProduct()` (the handle is used only when the CTA's id matches the page product), fallback id in `recordTrail()` and in the nudge-click context greeting. The `product_cta_opened` KPI uses the CTA's own `data-ms-chat-product-id` (normally the same value). |
-| `pageContext.productHandle` | `product.handle` | `null` | `PAGE_CTX.productHandle` | The slug. This is the id form the backend catalog uses (API_CONTRACT §3). Sent as `context.productId`. |
-| `pageContext.productTitle` | `product.title` | `null` | `PAGE_CTX.productName` | Nudge copy, context greeting, trail. |
+| `pageContext.productHandle` | `product.handle` | `null` | `PAGE_CTX.productHandle` | The slug. This is the id form the backend catalog uses (API_CONTRACT §3). Sent as `context.productId` (CTA, nudge, typed turn; below). Compared with a clicked card's catalog id for `product_cta_clicked.samePage` (`isSamePageProduct()`). |
+| `pageContext.productTitle` | `product.title` | `null` | `PAGE_CTX.productName` | Nudge copy, context greeting, trail, `context.productTitle` of a typed turn. |
 | `pageContext.productType` | `product.type` | `null` | `PAGE_CTX.category` | The product's "category" for the trail, nudge streaks and `recentlyViewed`. |
-| `pageContext.collectionTitle` | `collection.title` (collection pages only) | `null` | `PAGE_CTX.category` | The collection page's category. |
-| `pageContext.collectionHandle` | `collection.handle` | `null` | `PAGE_CTX.collectionHandle` | Trail id for collection entries. |
+| `pageContext.collectionTitle` | `collection.title` (collection pages only) | `null` | `PAGE_CTX.category` | The collection page's category; the `name` of the one category a typed turn sends on a collection page. |
+| `pageContext.collectionHandle` | `collection.handle` | `null` | `PAGE_CTX.collectionHandle` | Trail id for collection entries; the advisory `id` of the category a typed turn sends on a collection page. |
 | `whoamiPath` | **not emitted** by the snippet | `'/apps/chat/whoami'` | `detectViaStorefront()` | Hidden override for the App Proxy path. Today the default is always used. |
 
 There is no other `CFG.*` read. This was checked with `grep CFG\.` and covers `apiBase`, `chatKey`, `showroomUrl`, `locale`, `pageContext`, `whoamiPath`.
 
-The widget sends page facts only inside the `context` of a CTA turn or a nudge greeting (`03` §2, §4.3); typed turns carry none. The contract also defines page facts for typed turns (AC §2 "Optional `context`", `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/TASKS.md` task 2.
+**Page facts on the wire** (owner of when a turn carries them; shapes the backend accepts: AC §2 "Optional `context`" and "Typed turns"). They leave the browser only inside the `context` of a `/api/chat` request the visitor starts, never in a background call (AC §0 rule 19):
+
+| Turn | `context` | Built by |
+| --- | --- | --- |
+| Product CTA | product + trail, `source:'cta'` (shape: `03` §4.3) | `openWithProduct()` |
+| Nudge click on a fresh thread (context greeting) | product + trail, or the trail; `source:'nudge'` (shape: `03` §4.3) | `showNudge()` |
+| Typed or spoken message on a product page with a handle | `{type:'product', productId: <handle>, productTitle?: <title>, source:'page'}` — never the trail | `pageContextForSend()`, called by `onSend()` and `voiceSubmit()` |
+| Typed or spoken message on a collection page with a handle and title | `{type:'browsing', recentlyViewed:[{type:'category', id: <collection handle>, name: <collection title>}], source:'page'}` | same |
+| Typed or spoken message on any other page (home, search, content, cart, account …) | none | — |
+
+A typed or spoken turn carries the page facts when the thread has no user message yet, or when `sessionStorage['ms-chat-ctx-last']` (§6.2) does not already hold `<sid>|p:<handle>` / `<sid>|c:<collection handle>` for this page. `finalizeStream()` writes that key once the answer to a turn with such a context was saved under the same sid (a typed page context, a CTA context whose `productId` is the page's handle, or a product nudge context); a rolled-back, rate-limited, cancelled or answer-less turn writes nothing, so the next message sends the facts again. In effect the facts ride on the first message of a thread on a page and on the first after the page's product or collection changed; a new thread (`startNewChat()`, `mo_new=1`), a new sid, and `openConversation()` (which deletes the key) start over. The backend uses `source: "page"` context only with `CHAT_PAGE_CONTEXT_ENABLED` (default off in code) and may hold out a control group (AC §2 "Typed turns"); the widget sends it either way.
 
 ### 3.3 Server-rendered entry points outside the snippet
 
@@ -227,12 +239,12 @@ The file is one IIFE. Sections are separated by `// ----` banner comments. This 
 | 9 | DOM helpers | `el(tag, attrs, children)`, `ICONS` (inline SVG strings), `icon()`, `LOGO_BLOBS` / `logoBlobs()` (unique filter ids per instance), `logoEl()` |
 | 10 | Safe Markdown renderer | `safeHref()` (http/https/mailto only), `appendInline()`, `inlineScanSafe()`, `streamingSafeText()`, `renderBlocks()`, `renderMarkdownInto()`. Builds DOM only, never `innerHTML` on model text. |
 | 11 | Product hydration | `productCache`, `chunk()`, `hydrate(ids)` (batches of 10, caches only on success) |
-| 12 | Consent copy (capture form and sign-in surface) | `CONSENT_COPY_TTL_MS` (60 s), `fetchConsentCopy()`, `seedConsentCopy()`, `returningHintText()`, `fetchSignInConsentCopy()` |
+| 12 | Consent copy (capture form and sign-in surface) | `CONSENT_COPY_TTL_MS` (60 s), `fetchConsentCopy()`, `seedConsentCopy()`, `returningHintText()`, `fetchSignInConsentCopy()` (cache keyed by sid), `servedBenefits()`, `servedVariant()`, `consentGateData()`, `benefitsList()` |
 | 13 | Customer Account (tier 3) | `ACCOUNT_COPY`, `auth`, conversation-key helpers (`loadConvKey`, `saveConvKey`, `clearConvKey`, `maybeMintConversationKey`), `accountHeaders()`, `storefrontCustomerHint()`, `shouldProbeAuth()`, `applyAuth()`, `probeAuth()`, `endedSignInCleanup()`, `authVia*`, `redeemLinkCode()`, `retryPendingLink()`, `detectViaStorefront()`, `detectSignedIn()`, `initiateLogin()`, `showLinkFailedNotice()`, `earlyParam()`, `readAuthReturn()`, `handleAuthReturn()`, `dropSessionHistory()`, `signOut()`, `onSidChangedElsewhere()`, `resolveAuthOnOpen()` |
-| 14 | Formatting | `euro()`, `priceNode()`, `productButton()` |
+| 14 | Formatting | `euro()`, `priceNode()`, `isSamePageProduct()`, `productButton()` |
 | 15 | Tool card builders | `buildShowProduct()`, `buildCompare()` |
 | 16 | Storefront cart sync | `cartJsUrl()`, `readBubbleCount()`, `setCartBubble()`, `reloadCartPageSection()`, `reloadCartDrawer()`, `refreshCartUI()`, `pollCartAfterCheckout()` (1.2 / 2.5 / 4.5 / 7 s) |
-| 17 | Order attribution | `MO_ATTR_KEY`, `moAnalyticsAllowed()`, `moAttrLoad/Reset/Ensure()`, `moStampCart()`, `moAttrOnProductCard()`, `initAttribution()`, then `buildAddToCart()`, `buildShowroom()`, `buildContactForm()` |
+| 17 | Order attribution | `MO_ATTR_KEY`, `moAnalyticsAllowed()`, `moAttrLoad/Reset/Ensure()`, `moStampCart()`, `moAttrRenew()`, `moBlankCart()`, `MO_CONSULT_PARTS` / `hasConsultationPart()`, `moAttrOnProductCard()`, `initAttribution()`, then `buildAddToCart()`, `buildShowroom()`, `buildContactForm()` |
 | 18 | GDPR email-capture form | `capturedEmail` (in memory only), `buildCaptureCard()`, `buildToolCard(name, input)` (the dispatcher; it suppresses `offer_email_summary` when signed in) |
 | 19 | Widget shell | `VIEW_MODE_KEY`, `loadViewMode()`, `state`, `desktopMq`, `isDesktop()`, `buildShell()`, `updateShareBtn()`, `updateDownloadBtn()`, `applyViewMode()`, `toggleViewMode()`, `syncChrome()`, `setPageShift()`, `syncMobileViewport()`, `buildWelcome()`, `autoGrow()`, `togglePanel/openPanel/closePanel()`, `scrollToBottom()`, `updateInputState()` |
 | 20 | Voice input | `SpeechRec`, `startVoice()` (`lang='de-DE'`), `stopVoice()`, `toggleVoice()` |
@@ -242,7 +254,7 @@ The file is one IIFE. Sections are separated by `// ----` banner comments. This 
 | 24 | Rendering | `renderUserMessage()`, `textOfMessage()`, `newAssistantCtx()`, `renderPartIntoCtx()`, `renderRestoredAssistant()`, `renderAllMessages()` |
 | 25 | Generating indicator | `showTyping()` / `removeTyping()` (an animated avatar row with `role="status"`) |
 | 26 | Wire helpers | `accumulatePart()` (keeps silent tool parts and outputs for replay), `toWire()` |
-| 27 | Send and SSE stream | `onSend()`, `sendMessage(text, context)`, `sendContextGreeting(context)`, `abortActiveStream`, `startStream(opts)` (fetch + reader, AI SDK v5 UI-message stream), `handleChatHttpError()`, `lockRateLimit()`, `startNewChat()` |
+| 27 | Send and SSE stream | `pageCtxKey()`, `pageContextForSend()`, `onSend()`, `sendMessage(text, context)`, `sendContextGreeting(context)`, `abortActiveStream`, `startStream(opts)` (fetch + reader, AI SDK v5 UI-message stream), `handleChatHttpError()`, `lockRateLimit()`, `startNewChat()` |
 | 28 | Contextual nudge | `NUDGE_*`, `SS_*` keys, `nudgeEligible()`, `nudgeCopy()`, `showNudge()`, `initNudgeTriggers()` |
 | 29 | Launcher attention | `playLauncherAttention()` |
 | 30 | Public API: product CTA | `openWithProduct(id, title)` |
@@ -254,7 +266,7 @@ The file is one IIFE. Sections are separated by `// ----` banner comments. This 
 | 36 | Auth reflection | `reflectAuthState()`, `updateWelcomeAuth()`, `updateShopSignInBtn()` |
 | 37 | History drawer | `buildHistoryDrawer()`, `open/closeHistory()`, `maybeAutoOpenHistory()`, `flushAutoHistory()`, `accountReplyStale()`, `accountUnauthorized()`, the optimistic list model, `loadConversations()`, rename / delete / open conversation |
 | 38 | Data rights | `buildExportControl()` (`GET /api/account/export`), `fetchEraseCopy()` (`?surface=erase`, no cache), `buildEraseControl()`, `openEraseConfirm()`, `clearAfterErase()`, `showEraseDone()` |
-| 39 | Campaign token | `CAMPAIGN_TOKEN_KEY = 'ms_mo_c'`, `CAMPAIGN_TOKEN_RE`, `captureCampaignToken()` |
+| 39 | Campaign token | `CAMPAIGN_TOKEN_KEY = 'ms_mo_c'`, `CTX_LAST_KEY = 'ms-chat-ctx-last'` (declared here, used by section 27), `CAMPAIGN_TOKEN_RE`, `captureCampaignToken()` |
 | 40 | Deep link | `handleMoDeepLink()` |
 | 41 | Init | `init()`, `bindProductCtas()`, readyState bootstrap |
 
@@ -304,9 +316,9 @@ All state is held in closure variables of the IIFE. Nothing is put on `window` a
 | `activeConversationId` | The loaded server conversation (used only for list highlighting). |
 | `capturedEmail` | The email captured in **this page's** chat (privacy gate: memory only, reset on navigation). It is sent as `customer.email` on `/api/chat`. |
 | `productCache` | id → product, or `null` for an id the backend confirmed is unknown. Lives for the page. |
-| `consentCopyCache`, `signInConsentCache` (+ `…Inflight`) | Served consent copy, 60 s TTL, deduplicated GETs. |
+| `consentCopyCache`, `signInConsentCache` (+ `…Inflight`) | Served consent copy, 60 s TTL, deduplicated GETs. The sign-in copy and its in-flight GET are keyed by sid (CONS §3.1 "Cache per session"): a copy fetched under another sid is never rendered or reported. |
 | `historyServerList`, `historyOptimistic`, `historyLoaded` | Model for the history drawer. |
-| `moAttr`, `moAttrInflight`, `moAttrFailed`, `moAttrConsulted`, `moAttrPageStamped` | Attribution token cache and flags. Mint failures are not retried for the current page view. |
+| `moAttr`, `moAttrInflight`, `moAttrFailed`, `moAttrConsulted`, `moAttrPageStamped`, `moAttrRenewed`, `moAttrRenewing`, `moAttrStampDeferred` | Attribution token cache and flags. Mint failures are not retried for the current page view; the renewal runs at most once per page view, and a render-path stamp skipped while it is in flight is caught up afterwards. |
 | `cartCountKnown`, `cartRefreshInFlight` | Cart-sync single-flight guard and the last item count. |
 | `earlyParams`, `authReturnParams` | Values from the stash and URL that are consumed once. |
 | `authProbed`, `authOpenHandled`, `authLinkInflight`, `whoamiInflight`, `autoHistoryArmed` | Auth detection sequencing. |
@@ -323,7 +335,7 @@ This list was enumerated with `grep` over every `lsGet/lsSet/lsDel/ssGet/ssSet/s
 
 **Fallback:** if localStorage is unavailable (the `hasLS` probe fails), every `ls*` key lives in the in-memory `memStore`. That means a **new sid on every page load** and no persistence. If sessionStorage throws, `ss*` keys fall back to `memSession`, so "once per session" degrades to "once per page load".
 
-This is the one complete list of the widget's storage keys; other chapters (`01` §14, `04` §12, README §7) point here. Keys and clearers tagged **[PR #73]** were added by PR #73 (2026-10-04); the pre-PR #73 widget (`44a076b`) has none of them, so data recorded before 2026-10-04 has none either (§1.1).
+This is the one complete list of the widget's storage keys; other chapters (`01` §14, `04` §12, README §7) point here. Keys and clearers tagged **[PR #73]** were added by PR #73 (2026-10-04); the pre-PR #73 widget (`44a076b`) has none of them, so data recorded before 2026-10-04 has none either (§1.1). The key tagged **[2026-10-06]** came with `bc7fb5d`.
 
 ### 6.1 localStorage
 
@@ -335,11 +347,11 @@ This is the one complete list of the widget's storage keys; other chapters (`01`
 | `ms-chat-auth-via:<sid>` [PR #73] | per sid | `'chat'` or `'shop'` (sign-in origin) | `redeemLinkCode()` on 200 → `setAuthVia()`. `'shop'` never downgrades `'chat'`. | `applyAuth()` on a definitive not-signed-in | until a definitive sign-out |
 | `ms-chat-signed-in` | device | `'1'` (a hint that `/api/auth/me` is worth calling; carries no identity) | `applyAuth()` signed-in | `applyAuth()` on a definitive not-signed-in | until a definitive sign-out |
 | `ms-chat-trail` | device | JSON, at most 5 `{id,name,type,category,ts}` | `recordTrail()` on product/collection pages | **never** explicitly. Entries older than 3 days are filtered on read; the stored array is rewritten only on the next product/collection view. | 3-day TTL per entry |
-| `ms-mo-attr` | device key, value bound to `sid` | `{sid, token, cartAttributes}` | `moAttrEnsure()` after `POST /api/attribution/token` | `moAttrReset()` (on rotation), `moAttrLoad()` when the stored sid ≠ current sid | until rotation |
+| `ms-mo-attr` | device key, value bound to `sid` | `{sid, token, cartAttributes}` | `moAttrEnsure()` after a mint; `moAttrRenew()` when the renewal returns a different token (`06` §8.8) | `moAttrReset()` (on rotation), `moAttrLoad()` when the stored sid ≠ current sid | until rotation |
 | `ms-chat-view-mode` | device | `'sidebar'` or `'modal'` | `toggleViewMode()` only (the deep link's fullscreen is deliberately **not** persisted) | never | indefinite |
 | `ms-chat-expanded` | device (legacy) | `'1'` | **never written** (old versions only) | never | read by `loadViewMode()` as a migration: `'1'` maps to `'modal'` |
 | `ms-chat-nudge-dismissed` | device | `'1'` | nudge × click | never | permanent: dismissed once, never shown again |
-| `ms-chat-mkt-decision` | device | `{state:'accepted'|'declined', at}` | `recordMktDecision()` (opt-in card/popup accept or decline; capture form with the marketing box ticked) | never | a `'declined'` keeps the signed-in consent ask quiet for 30 days (`MKT_DECLINE_SNOOZE_MS`). `'accepted'` is stored but **not** used to suppress (the backend's `optInActionable` decides). |
+| `ms-chat-mkt-decision` | device | `{state:'accepted'\|'declined', at}` | `recordMktDecision()` (opt-in card/popup accept or decline; capture form with the marketing box ticked) | never | a `'declined'` keeps the signed-in consent ask quiet for 30 days (`MKT_DECLINE_SNOOZE_MS`). `'accepted'` is stored but **not** used to suppress (the backend's `optInActionable` decides). |
 | `ms-chat-login-gate-snooze` | device | timestamp (ms) | login popup „Später“ | never (it expires) | 24 h (`LOGIN_GATE_SNOOZE_MS`) |
 
 Device-global keys (`trail`, `view-mode`, `nudge-dismissed`, `mkt-decision`, `login-gate-snooze`) **survive** sign-out, erase and new chat. Only sid-bound data is wiped.
@@ -359,11 +371,12 @@ Device-global keys (`trail`, `view-mode`, `nudge-dismissed`, `mkt-decision`, `lo
 | `ms-chat-attn-played` | `'1'` | `playLauncherAttention()` (also when skipped for reduced motion) | never | At most one bounce per session |
 | `ms-chat-gate-shown` | `'1'` | `presentLoginGate()`, `presentConsentGate()` | never | At most one first-message popup per session |
 | `ms-chat-optin-done` | `'1'` | `markOptInDone()` (answered or dismissed) | never | The signed-in opt-in stays quiet for the session |
-| `ms-chat-optin-ask-shown` [PR #73] | `'1'` | first render of the opt-in card or popup | never | Deduplicates `consent_gate_shown {surface:'signin'}` per session; the popup does not ask again after the inline card |
+| `ms-chat-optin-ask-shown` [PR #73] | `'1'` | first render of the opt-in card or popup | never | Deduplicates `consent_gate_shown` per session; the popup does not ask again after the inline card |
+| `ms-chat-ctx-last` [2026-10-06] | `<sid>\|p:<context productId>` (the handle for a page context) or `<sid>\|c:<collection handle>` | `finalizeStream()`, once the answer to a turn whose `context` has such a key was saved under that sid | `openConversation()` deletes it; otherwise overwritten, and stale after a sid change | Page facts ride on a typed or spoken turn once per page and thread (§3.2). Chat-functional, never in a KPI payload. |
 
 ### 6.3 In memory only (never persisted)
 
-`capturedEmail`, `productCache`, consent-copy caches (60 s), erase copy (fetched fresh each time), the `auth` object, the conversation list, the attribution flags, `earlyParams` / `authReturnParams`, the one-time code itself (except the 503 retry above), and all voice state. This is deliberate: the email and the code must not outlive the page or tab.
+`capturedEmail`, `productCache`, consent-copy caches (60 s; the sign-in copy keyed by sid), erase copy (fetched fresh each time), the `auth` object, the conversation list, the attribution flags, `earlyParams` / `authReturnParams`, the one-time code itself (except the 503 retry above), and all voice state. This is deliberate: the email and the code must not outlive the page or tab.
 
 ---
 
@@ -397,9 +410,9 @@ Contract: AC §6 "Session lifecycle" (what the backend keys by the sid: rate lim
 | `payload_too_large` notice → „Neuen Chat starten“ | `handleChatHttpError()` → `startNewChat()` | new sid | sid kept, new thread key |
 | History drawer „Neue Beratung“ | `startNewChat()` + `addOptimisticConversation()` | (drawer is signed-in only) | sid kept, new thread key |
 | Deep link `?mo=open&mo_new=1` | `handleMoDeepLink()`. Branches on the **local hint** `shouldProbeAuth()`, not on the auth tier (auth is not settled at init). The columns here mean "hint absent" / "hint present". | **No hint:** `rotateSession()` → new sid. This also applies to a truly signed-in visitor whose hint is missing, and then severs the sign-in link. | **Hint present** (`ms-chat-signed-in === '1'` or a shop customer id via `storefrontCustomerHint()`): sid kept, local history and thread key cleared. This also applies to a chat-anonymous visitor who is logged into the shop. A new key is minted on the first turn only if auth has settled signed-in by then (`maybeMintConversationKey()` checks `auth.signedIn`). |
-| Sign-out („Abmelden“ in the drawer) [PR #73] | `signOut()` → `track('account_signout')` → `applyAuth(null)` → `dropSessionHistory()` | — | **new sid**. Sign-out is local; the old sid's server link is simply abandoned. **Before 2026-10-04 (pre-PR #73) the sid was kept** (`signOut()` only tracked, `applyAuth(null)`, `closeHistory()`). |
-| Erase („Alle meine Daten löschen“) succeeded (200 `erased:true`) or answered 401 [PR #73] | `openEraseConfirm()` → `clearAfterErase()` → `dropSessionHistory()` | — | new sid. The done dialog (`showEraseDone()`) shows only on 200. 503 and other errors keep the confirmation and do not rotate. **Before 2026-10-04 (pre-PR #73) the sid was kept.** |
-| [PR #73] Server says a previously signed-in session has ended (`/api/auth/me` 200 `signedIn:false` or 401/403; any `/api/account/*` 401). The backend ends a sign-in also on a whoami **handover** (another shop customer on this sid) and, for a shop-login sign-in (only with `APP_PROXY_SIGNIN_ENABLED`, default off in code), when its **shop proof** expires (`APP_PROXY_SIGNIN_MAX_AGE_HOURS` after the last whoami redeem; every new tab renews it) — ACCT §3a | `probeAuth()` / `accountUnauthorized()` → `endedSignInCleanup()` → `dropSessionHistory()` | — (applies only if the device had been signed in: `wasSignedIn`) | new sid, no KPI event |
+| Sign-out („Abmelden“ in the drawer) [PR #73] | `signOut()` → `track('account_signout')` → `moBlankCart()` → `applyAuth(null)` → `dropSessionHistory()` | — | **new sid**. Sign-out is local; the old sid's server link is simply abandoned. **Before 2026-10-04 (pre-PR #73) the sid was kept** (`signOut()` only tracked, `applyAuth(null)`, `closeHistory()`). |
+| Erase („Alle meine Daten löschen“) succeeded (200 `erased:true`) or answered 401 [PR #73] | `openEraseConfirm()` → `clearAfterErase()` → `moBlankCart()` → `dropSessionHistory()` | — | new sid. The done dialog (`showEraseDone()`) shows only on 200. 503 and other errors keep the confirmation and do not rotate. **Before 2026-10-04 (pre-PR #73) the sid was kept.** |
+| [PR #73] Server says a previously signed-in session has ended (`/api/auth/me` 200 `signedIn:false` or 401/403; any `/api/account/*` 401). The backend ends a sign-in also on a whoami **handover** (another shop customer on this sid) and, for a shop-login sign-in (only with `APP_PROXY_SIGNIN_ENABLED`, default off in code), when its **shop proof** expires (`APP_PROXY_SIGNIN_MAX_AGE_HOURS` after the last whoami redeem; every new tab renews it) — ACCT §3a | `probeAuth()` / `accountUnauthorized()` → `endedSignInCleanup()` → `moBlankCart()` → `dropSessionHistory()` | — (applies only if the device had been signed in: `wasSignedIn`) | new sid, no KPI event |
 | `?ms_auth=logged_out` return | `handleAuthReturn()` → `probeAuth(true)` | no change by itself (the marker proves nothing) | rotation happens only if `/api/auth/me` confirms the end (row above) |
 | [PR #73] Another tab changed `ms-chat-sid` | `onSidChangedElsewhere()` (window `storage` event) | adopts the other tab's sid | adopts it, drops to anonymous, closes any gate and the drawer |
 
@@ -427,7 +440,7 @@ localStorage is shared across tabs. Each tab's in-memory `sid`, `messages` and `
 - **No live sync of the conversation itself.** Two tabs on the same sid each keep their own `messages` array, and the last `saveHistory()` wins. Each tab sends its own full history to `/api/chat`, so the two tabs' threads diverge. After a reload a tab shows whatever was saved last. There is no `storage` listener for `ms-chat-history:*`.
 - **Sign-in in another tab:** this tab learns about it on the next panel open (`resolveAuthOnOpen()` → `detectSignedIn(true)`), or on `visibilitychange` to visible while the panel is open and not signed in (only `/api/auth/me`; whoami is never asked twice).
 - **A signed-in "Neue Beratung" in tab A** does not rotate the sid, so tab B is not notified. B keeps its own in-memory thread key until it reloads or opens a conversation.
-- **sessionStorage is per tab.** All "once per session" caps (nudge, attention bounce, first-message popup, opt-in ask, whoami) are per tab. Product links open with `target="_blank" rel="noopener noreferrer"`. In current browsers a `noopener` tab does not inherit sessionStorage, so the caps (and a pending `ms_mo_c`) most likely start fresh there. This was not verified on devices.
+- **sessionStorage is per tab.** All "once per session" caps (nudge, attention bounce, first-message popup, opt-in ask, whoami) and the page-context memory `ms-chat-ctx-last` are per tab, so a new tab sends the page facts once more. Product links open with `target="_blank" rel="noopener noreferrer"`. In current browsers a `noopener` tab does not inherit sessionStorage, so the caps (and a pending `ms_mo_c`) most likely start fresh there. This was not verified on devices.
 
 ---
 
@@ -437,35 +450,35 @@ This is the one list of the widget's calls (README §7 points here). It lists on
 
 | Call | Headers | Trigger | Contract |
 | --- | --- | --- | --- |
-| `POST /api/chat` (SSE via `fetch` + `getReader`, not `EventSource`) | guarded + `Content-Type` | user send, product CTA, nudge click (context greeting with `messages: []`), voice transcript | AC §2. Body: `messages` (full history), `locale`, optional `context`, `conversationKey` (signed-in), `customer.email` (captured in this page), `campaignToken` (first turn of the tab session); when each is present: `03` §3.2 |
+| `POST /api/chat` (SSE via `fetch` + `getReader`, not `EventSource`) | guarded + `Content-Type` | user send, product CTA, nudge click (context greeting with `messages: []`), voice transcript | AC §2. Body: `messages` (full history), `locale`, optional `context` (CTA, nudge, first typed or spoken message per page: §3.2), `conversationKey` (signed-in), `customer.email` (captured in this page), `campaignToken` (first turn of the tab session); when each is present: `03` §3.2 |
 | `GET /api/products?ids=` | `x-ms-session` only | card hydration (batches of 10), also for restored history on every page load (§2.6); `add_to_cart` makes its own uncached call to get `cartUrl`. `buildAddToCart()` does **not** chunk: all deduplicated `productIds` go in one request, so more ids than the AC §3 cap give a 400 and the checkout card silently renders nothing (§21 item 15). | AC §3 |
 | `POST /api/kpi` | `Content-Type`, `x-ms-session` (no secret) | `track()`: fire-and-forget, `keepalive:true`. If `fetch` is missing it falls back to `sendBeacon`. | AC §5 |
-| `GET /api/consent-copy?locale=` / `?surface=signin&locale=` | `x-ms-session` | capture form / signed-in opt-in (60 s cache) | AC §7.4 |
+| `GET /api/consent-copy?locale=` / `?surface=signin&locale=` | `x-ms-session` | capture form / signed-in opt-in (60 s cache; the sign-in copy cached per sid) | AC §7.4; CONS §3.1 |
 | `GET /api/consent-copy?surface=erase&locale=` | guarded | each opening of the erase confirmation (the backend checks only the origin on every `consent-copy` surface, AC §1) | AC §7.4; ACCT §7.5 |
 | `POST /api/capture-email` | guarded | capture-form submit | AC §7.1 |
 | `POST /api/contact` | guarded | contact-card submit; the body also carries `sessionId` (the backend keys `contact_form_submitted` on it, else on the header) | AC §4 |
 | `POST /api/feedback` | guarded | feedback-card submit | AC §9 |
 | `POST /api/tts` | guarded | voice mode only (`{text}` or `{text, stream:true, seq}`) | AC §8 |
-| `POST /api/attribution/token` | `x-ms-chat-key`, `x-ms-session` | first rendered `show_product` card (`buildShowProduct()` → `moAttrOnProductCard()`; compare, showroom and add-to-cart cards do not count), the Mo „Zur Kasse“ click (`moAttrEnsure(false)`), or a later `visitorConsentCollected` event after a `show_product` card; **only with analytics consent** | AC §10 |
+| `POST /api/attribution/token` | `x-ms-chat-key`, `x-ms-session` | **Mint** (no cached token for this sid): first rendered `show_product` card (`buildShowProduct()` → `moAttrOnProductCard()`; compare, showroom and add-to-cart cards do not count), the Mo „Zur Kasse“ click (`moAttrEnsure(false)`), or a later `visitorConsentCollected` event after a `show_product` card. **Renewal** (`moAttrRenew()`, a cached token exists): at most once per page view, after a streamed turn that finished cleanly with a `show_product`, `compare_products`, `add_to_cart` or `suggest_showroom` part; never from restored history or at page load (outcomes and ordering: `06` §8.8). Both **only with analytics consent** | AC §10 ("Lifetime and renewal") |
 | `GET /api/auth/me?session=` | guarded | panel open (lazy), `?ms_auth=ok` return, visibility re-check; `?ms_auth=logged_out` return and `link_failed` return (both only with a local sign-in hint, `shouldProbeAuth()`); after a successful `retryPendingLink()` or whoami-`linkCode` redeem (`probeAuth(true)`) | ACCT §4 |
 | `POST /api/auth/link {code}` | guarded + `Content-Type` | `ms_auth=ok` return, whoami `linkCode`, 503 retry | ACCT §2a |
 | Top-level navigation `GET /api/auth/shopify/login?session=&return_url=` | — | „Anmelden“ / „Jetzt anmelden“ / popup / account-menu sign-in / link-failed notice „Anmelden“ (`showLinkFailedNotice()`, expired-code case) | ACCT §2 |
 | `GET /api/account/conversations[/{id}]`, `PATCH`, `DELETE` | guarded | history drawer | ACCT §7.1–§7.4 |
 | `GET /api/account/summary?conversationKey=` | guarded | download button | ACCT §8 |
 | `GET /api/account/export`, `POST /api/account/erase` | guarded | drawer footer | export: ACCT §7.7; erase: ACCT §7.5 |
-| `POST /api/account/marketing-opt-in` | guarded | signed-in opt-in card or popup accept | ACCT §6.2 (shape), §6.1 (when to ask); CONS §3.2 (submit rules) |
+| `POST /api/account/marketing-opt-in` | guarded | signed-in opt-in card or popup accept; the body echoes `placement` and the served `variant` | ACCT §6.2 (shape), §6.1 (when to ask); CONS §3.2 (submit rules) |
 | **Same origin** `GET /apps/chat/whoami?session=` | `Accept: application/json`, `credentials:'include'` | first `detectSignedIn()` per tab session | ACCT §3a (backend switches and setup there). The widget uses an answer only to redeem its `linkCode`; a non-JSON or non-OK answer (an unconfigured proxy returns Shopify's HTML 404 page) means "no detection" and is silent. The pre-PR #73 widget applied `signedIn:true` as identity without a code (§1.1). |
 | **Same origin** `GET /cart.js` (`window.routes.cart_url`) | — | `pageshow` (every load), window `focus`, `visibilitychange` to visible, the poll after checkout | display-only cart sync |
 | **Same origin** `GET <path>?section_id=…` | — | cart page only, when the item count changed | Section Rendering API |
-| **Same origin** `POST /cart/update.js {attributes}` | `keepalive:true` | attribution stamp (consent re-checked on each call) | OA; AC §10 |
+| **Same origin** `POST /cart/update.js {attributes}` | `Content-Type`, `keepalive:true` | **Stamp** (`moStampCart()`): the cached `cartAttributes`, consent re-checked on each call (`06` §8.3–§8.4). **Blank** (`moBlankCart()`): every cached key set to `""` on sign-out, erase (200 or 401), a server-ended sign-in and a consent withdrawal; not consent-gated; not on an anonymous „Neuen Chat starten“ or `mo_new=1` rotation (`06` §8.9) | OA; AC §10 ("Ending the marker") |
 
 **What data leaves the browser (privacy summary)**
 
-- **KPI:** the event name, `sessionId` (the sid), an ISO timestamp, and small `data` objects: product ids, `pageType`, `contextual`, `trigger`, `surface`, `source`, `result`. Never message text, emails or product names.
+- **KPI:** the event name, `sessionId` (the sid), an ISO timestamp, and small `data` objects: product ids, `pageType`, `contextual`, `trigger`, `surface`, `placement`, `variant`, `samePage`, `source`, `result`. Never message text, emails or product names.
   - KPI is **not** consent-gated. Only the order attribution checks Shopify's Customer Privacy API.
-- **Browsing trail:** it never leaves the browser on its own. A shortened form (3 products + 2 categories: id and name) goes out only inside a user-started `/api/chat` request as `context.recentlyViewed` (product CTA, nudge click). Plain typed messages carry no `context`.
+- **Browsing trail:** it never leaves the browser on its own. A shortened form (3 products + 2 categories: id and name) goes out only inside a user-started `/api/chat` request as `context.recentlyViewed` (product CTA, nudge click). Typed and spoken messages carry the page facts only (§3.2), never the trail.
 - **Chat:** the full in-memory history goes out on every turn, including silent tool parts and their outputs. The widget does NOT trim what it sends: `toWire()` maps the whole in-memory `messages` array, which grows freely during a page view. Only storage is capped (last 40 in `ms-chat-history:<sid>`, `loadHistory()` / `saveHistory()`). Over the per-request cap (AC §2, 40 messages) the backend answers 400 `payload_too_large`, which the widget turns into the „Neuen Chat starten“ notice (in practice around the 21st user message; after a reload of a 40-message history the very next send fails). See 03 §3.3. For a signed-in customer that can include `get_order_status` output, which comes back from the backend.
-- **Chat `context`** (product CTA, nudge click only): the product handle (or numeric id as fallback) and `productTitle`, plus `recentlyViewed` ids and names.
+- **Chat `context`** (product CTA, nudge click, first typed or spoken message per page; §3.2): the product handle (CTA and nudge fall back to the numeric id) and `productTitle`, the trail's `recentlyViewed` ids and names (CTA, nudge) or the one category of a collection page (typed turn), and `source`.
 - **Contact form** (`buildContactForm()` → `POST /api/contact`): `reason`, `name`, `email`, `organization`, `phone`, free-text `message`, optional `productIds`, and `sessionId` (the sid).
 - **Email capture** (`buildCaptureCard()` → `POST /api/capture-email`): `sessionId`, `email`, `transactionalConsent`, `marketingConsent`, the echoed `consentTextShown`, `locale`, optional `trigger`.
 - **Feedback** (`POST /api/feedback`): free-text `message`, `sessionId`, `conversationId` (the `conversationKey`, signed-in only), coarse `tier`, `page` (`location.pathname` only, via `currentPagePath()`), and `email` = the in-page `capturedEmail` if any (`identifiedEmail()`).
@@ -533,7 +546,7 @@ The breakpoint is **641 px**: `desktopMq = matchMedia('(min-width: 641px)')`. Th
 | Triggers (the first one wins, then all are torn down) | `dwell`: 24 s (`NUDGE_DWELL_MS`) on product **or** collection pages. `scroll`: ≥85 % scrolled on **product** pages. `exit`: desktop only, `mouseout` with no `relatedTarget` and `clientY ≤ 16`. |
 | Consequence | On home or other pages the nudge can only fire through desktop exit intent. On mobile it fires only on product or collection pages. |
 | Copy (priority order) | product page: „Fragen zum Produkt „…“? Ich helf dir gern weiter.“ → collection: „Unsicher, was aus „…“ zu dir passt? Lass es uns klären.“ → category streak (≥2 products of one category in the trail) → generic „Hi, ich bin Mo! …“. The tone rule is to reference the page or category, never the user's behaviour. |
-| Click | `nudge_clicked`, opens the panel. For a fresh conversation it sends a **context greeting** (`messages: []` + product context or a browsing context). |
+| Click | `nudge_clicked`, opens the panel. For a fresh conversation it sends a **context greeting** (`messages: []` + product context or a browsing context, `source: 'nudge'`; §3.2). |
 | × | permanent `ms-chat-nudge-dismissed`, `nudge_dismissed` |
 | Placement | fixed, 96 px above the bottom-right corner (above the launcher), z-index just below the panel |
 
@@ -572,7 +585,7 @@ The desktop **modal** mode keeps its very high z-index even under `body.no-scrol
 
 ## 13. CSS architecture
 
-- **Prefix isolation:** every selector starts with `.ms-chat-` (about 172 distinct classes). The exceptions are the `html.ms-chat-*` state classes and `body.no-scroll` combinators. There is no Shadow DOM, so theme CSS can leak in. Avoid generic element selectors in the theme that would match inside `.ms-chat-root`.
+- **Prefix isolation:** every selector starts with `.ms-chat-` (about 173 distinct classes). The exceptions are the `html.ms-chat-*` state classes and `body.no-scroll` combinators. There is no Shadow DOM, so theme CSS can leak in. Avoid generic element selectors in the theme that would match inside `.ms-chat-root`.
 - **Tokens:** defined on `.ms-chat-root` and mapped from the theme's tokens, with literal RGB fallbacks. The rule is "Do not hardcode brand hexes."
   - Colours: `--msc-accent`, `--msc-accent-fg`, `--msc-secondary`, `--msc-secondary-fg`, `--msc-bg`, `--msc-fg`, `--msc-heading`, `--msc-sale`, `--msc-danger`, `--msc-success`. These are RGB triplets used as `rgb(var(--x) / a%)`.
   - Radii: `--msc-card-radius`, `--msc-btn-radius`, `--msc-input-radius`.
@@ -610,7 +623,7 @@ The desktop **modal** mode keeps its very high z-index even under `body.no-scrol
 
 | Hard-coded in the widget (DE + EN via `L()` / copy tables) | Served by the backend, rendered verbatim, **never** hard-coded |
 | --- | --- |
-| Header labels, placeholder „Wie kann ich dir helfen?“, disclaimer „KI-Fitnessberater – Antworten können Fehler enthalten“, notices and errors („Es gab ein Problem. Bitte versuch es gleich nochmal.“, „Chat ist gerade nicht verfügbar.“, „Zu viele Anfragen — bitte kurz warten.“), nudge copy, sign-in card and login popup („Hol mehr aus deiner Beratung“, benefits, „Später“), card labels („Zum Produkt“, „Ausverkauft“, „Lieferzeit“), capture / feedback / opt-in **chrome** (buttons, validation, success titles), marketing outcome texts, history-drawer chrome, export/erase **chrome** | Mo's replies (the language follows `locale`). **Legal/consent copy:** capture-form labels, the footer, `consentTextShown`, the returning-customer hint (`GET /api/consent-copy`, also seeded from `offer_email_summary` output). The signed-in opt-in headline, label and footer (`?surface=signin`, shown only when `lawyerApproved === true`). The erase confirmation and done text (`?surface=erase`; no fallback, so no copy means no erase). Product data (names, prices, specs, delivery time; German catalog). `comparisonContext`, tool `message` intros. |
+| Header labels, placeholder „Wie kann ich dir helfen?“, disclaimer „KI-Fitnessberater – Antworten können Fehler enthalten“, notices and errors („Es gab ein Problem. Bitte versuch es gleich nochmal.“, „Chat ist gerade nicht verfügbar.“, „Zu viele Anfragen — bitte kurz warten.“), nudge copy, sign-in card and login popup („Hol mehr aus deiner Beratung“, benefits, „Später“), card labels („Zum Produkt“, „Ausverkauft“, „Lieferzeit“), capture / feedback / opt-in **chrome** (buttons, validation, success titles), marketing outcome texts, history-drawer chrome, export/erase **chrome** | Mo's replies (the language follows `locale`). **Legal/consent copy:** capture-form labels, the footer, `consentTextShown`, the returning-customer hint (`GET /api/consent-copy`, also seeded from `offer_email_summary` output). The signed-in opt-in headline, benefit bullets, label and footer (`?surface=signin`, shown only when `lawyerApproved === true`; the bullets all or nothing, CONS §3.1). The erase confirmation and done text (`?surface=erase`; no fallback, so no copy means no erase). Product data (names, prices, specs, delivery time; German catalog). `comparisonContext`, tool `message` intros. |
 
 **Not localised**
 - Speech recognition (`recognition.lang = 'de-DE'`) and the browser speech-synthesis fallback (`u.lang = 'de-DE'`, `pickGermanVoice()`) are **German even on /en**.
@@ -647,7 +660,7 @@ The desktop **modal** mode keeps its very high z-index even under `body.no-scrol
 
 ## 17. Performance and size
 
-- **Payload:** JS ~316 KB raw / ~92 KB gzip (roughly 35–40 % comments). CSS ~70 KB raw / ~18.5 KB gzip. Both load on **every** storefront page where the widget is enabled, with no lazy loading. The JS is `defer`. The CSS is a `<link>` at the end of `<body>`. Neither is minified, because there is no build step.
+- **Payload:** JS ~330 KB raw / ~96 KB gzip (roughly 35–40 % comments). CSS ~70 KB raw / ~18.7 KB gzip. Both load on **every** storefront page where the widget is enabled, with no lazy loading. The JS is `defer`. The CSS is a `<link>` at the end of `<body>`. Neither is minified, because there is no build step.
 - **Idle cost:** the launcher orb animates forever (blob rotate/morph with SVG Gaussian blur, up to `stdDeviation=100`, plus a box-shadow halo). The product-page CTA orb animates too. Under reduced motion all of it is frozen.
 - **Network at load:** see §2.6 (`/cart.js` on every `pageshow`; KPI once per session; possibly a cart attribute stamp). For a visitor with stored history, add the restored cards' re-fetches on **every** page view: `GET /api/products` per restored product / compare / showroom / contact / capture card (batches of 10) and one uncached call per restored `add_to_cart` card, `GET /api/consent-copy` per restored capture card, and possibly `POST /api/attribution/token` + `POST /cart/update.js` from a restored `show_product` card (consent-gated).
 - **Caches:** product hydration (per page), consent copy (60 s). Nothing is cached across pages except localStorage data.
@@ -661,10 +674,10 @@ The desktop **modal** mode keeps its very high z-index even under `body.no-scrol
 | Convention | Where | Rule |
 | --- | --- | --- |
 | **Fail-silent telemetry** | `track()` | Fire-and-forget. The response is never read, errors are swallowed, and telemetry can never break a flow. |
-| **Fail-silent extras** | attribution, cart sync, whoami, deep link, campaign token, orb hydration | Wrapped in `try/catch` / `.catch(function(){})`. Shopping and chat never wait on them. Attribution gives up for the current page view after one failed mint. |
+| **Fail-silent extras** | attribution (mint, renewal, stamp, blank), cart sync, whoami, deep link, campaign token, orb hydration | Wrapped in `try/catch` / `.catch(function(){})`. Shopping and chat never wait on them. Attribution gives up for the current page view after one failed mint; a failed renewal keeps the cached token and does not stop the checkout stamp. |
 | **Fail-closed auth** | `probeAuth()`, `applyAuth()`, `redeemLinkCode()`, `accountUnauthorized()` | Any error means not signed in. Transient errors keep the device hints. Definitive answers wipe them and, if the device was signed in, wipe the sid-bound history (`endedSignInCleanup()`). |
 | **Fail-closed legal copy** | consent and erase copy | No valid served copy means no consent UI and no erase. There is never fallback legal text. The signed-in popup also requires `lawyerApproved === true`. |
-| **Stale-reply guards** | `startStream()` (`streamSid`, `cancelled`; `cancelled` is set via `abortActiveStream` by `dropSessionHistory()`, `startNewChat()` and `openConversation()`), `accountReplyStale(reqSid)`, `probeAuth()` (`sid !== reqSid`), `detectViaStorefront()` (`askSid`) | An answer that arrives after a session change is dropped. |
+| **Stale-reply guards** | `startStream()` (`streamSid`, `cancelled`; `cancelled` is set via `abortActiveStream` by `dropSessionHistory()`, `startNewChat()` and `openConversation()`), `accountReplyStale(reqSid)`, `probeAuth()` (`sid !== reqSid`), `detectViaStorefront()` (`askSid`), `moAttrRenew()` (`reqSid`), `fetchSignInConsentCopy()` (cache per sid), the opt-in accept (`consent_gate_accepted` only under the sid the ask was rendered for, `04` §8) | An answer that arrives after a session change is dropped. |
 | **Chat HTTP errors** (codes: AC §1 "Error envelope") | `handleChatHttpError()` | 429 → roll back the optimistic user message, lock the input for `Retry-After` (default 30 s), warn notice. 401/403 → `console.error` with the probable cause (secret / `ALLOWED_ORIGINS`), shopper sees „Chat ist gerade nicht verfügbar.“. `payload_too_large` → notice with „Neuen Chat starten“. 5xx/`internal_error`/`upstream_unavailable` → `console.error('[ms-chat] chat error', status, code)` and „Es gab ein Problem…“. Any other 4xx (e.g. `bad_request`) → the same `console.error`, „Chat ist gerade nicht verfügbar.“. Every case rolls back and restores the typed text to the input. |
 | **Stream errors** | `startStream()` | An `error` SSE event only sets `streamErrored`. On the next `finish` / `[DONE]` / socket close, `finalizeStream()` keeps any partial answer and appends an error row. With no content, `finalizeStream()` does **not** roll back: the user message stays in `messages` and in `ms-chat-history:<sid>`, the typed text is not restored, and the next turn sends two consecutive user messages. A network / fetch failure (the fetch `.catch`) keeps partial content if any arrived. With no content it calls `rollback()` (removes the user message and restores the typed text). Unknown event types are logged with **type only** (never the body, which could hold order data). |
 | **Render-nothing guards** | tool cards | Unknown products, fewer than 2 compare items, or an empty `add_to_cart` render nothing. Unknown or silent tools are never rendered. |
@@ -684,19 +697,19 @@ Every `track()` call in the file (grep-complete). The payload shape is `{event, 
 | `nudge_shown` | `{pageType, contextual, trigger}` (`trigger` always present: `dwell` / `scroll` / `exit`) | `showNudge()` |
 | `nudge_clicked` / `nudge_dismissed` | `{pageType, contextual}` (no trigger) | `showNudge()` |
 | `product_cta_opened` | `{productId}` (numeric Shopify id) | `openWithProduct()` |
-| `product_cta_clicked` | `{productId}` (catalog id) | `productButton()`, add-to-cart card item links |
+| `product_cta_clicked` | `{productId, samePage}` (catalog id; `samePage` = that id is the open product page's handle, `isSamePageProduct()`, always `false` off a product page) | `productButton()`, add-to-cart card item links |
 | `add_to_cart_clicked` | `{productId, productIds}` | `buildAddToCart()` checkout button |
 | `showroom_clicked` | `{productIds}` | `buildShowroom()` |
 | `email_capture_declined` | `{trigger?}` | `buildCaptureCard()` decline |
 | `voice_mode_on` / `voice_mode_off` / `voice_reply_played` | `{}` | voice mode |
 | `summary_download_started` / `summary_downloaded` | `{}` | `downloadSummary()` |
 | `account_signin_started` | `{source?:'login_gate'}` | `initiateLogin()` |
-| `account_signin_return` | `{result: 'ok'|'link_failed'|'login_required'|'error'}` | `handleAuthReturn()` |
+| `account_signin_return` | `{result: 'ok'\|'link_failed'\|'login_required'\|'error'}` | `handleAuthReturn()` |
 | `account_signout` | `{}` | `signOut()` |
 | `account_history_opened`, `account_new_consultation`, `conversation_opened`, `conversation_renamed`, `conversation_deleted` | `{}` | history drawer |
 | `account_export_started` / `account_exported` | `{}` | `buildExportControl()` |
 | `login_gate_shown` / `_signin_clicked` / `_declined` / `_dismissed` | `{}` | `presentLoginGate()` |
-| `consent_gate_shown` / `_accepted` / `_declined` / `_dismissed` | `{surface:'signin'}` | `presentConsentGate()` and the inline opt-in card |
+| `consent_gate_shown` / `_accepted` / `_declined` / `_dismissed` | `{surface:'signin', placement, variant?}` (`consentGateData()`: `placement` `'popup'` or `'signin_return'`; `variant` only when served and valid) | `presentConsentGate()` and the inline opt-in card (`_dismissed`: popup only, and only before an accept started; `_accepted`: only under the sid the ask was rendered for) |
 
 The widget does **not** emit: any erase event (`account_erased` is server-only) [PR #73; **the pre-PR #73 widget, live until 2026-10-04, still emitted `track('account_erased', {})`** after a successful erase, §1.1], `email_capture_submitted` (server), a "widget impression" event, or a `contact_form_submitted` (server-only; session keying: AC §4). Server-only list: AC §5.
 
@@ -760,4 +773,4 @@ Listed for triage. Items 1, 3, 18 and 19 (and the `order_support` label, 03 §20
 - **sessionStorage in `noopener` tabs:** the claim that product tabs opened with `rel="noopener"` start with empty sessionStorage (so the per-session caps and a pending campaign token reset there) follows current HTML-spec behaviour. It was not tested on Safari or iOS.
 - **Theme preview / editor origin:** the backend allowlists only `https://www.motionsports.de` and `https://motionsports.de` by default (`ALLOWED_ORIGINS`, AC §1). Whether the Shopify theme editor or a preview domain (`*.myshopify.com`) produces 403s (the widget then shows „Chat ist gerade nicht verfügbar.“) was not checked. The snippet does not special-case `request.design_mode`.
 - **History-drawer focus handling** was only skimmed. A full keyboard audit was not done.
-- **Live vs repo:** this chapter documents `main` at `3e87341`; which build the shop serves: README §4 (`npm run verify:widget`). Editor changes on live since the 2026-10-01 snapshot are not reflected.
+- **Live vs repo:** this chapter documents `main` at `bc7fb5d`; which build the shop serves: README §4 (`npm run verify:widget`). Editor changes on live since the 2026-10-01 snapshot are not reflected.

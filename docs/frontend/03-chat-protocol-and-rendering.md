@@ -1,6 +1,6 @@
 # 03 — Chat protocol, tools and rendering
 
-> **Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `3e87341` (PR #73 "customer platform" `a0df103` + the fixes `8d0a0c4` + `3e87341`; README). Every claim comes from reading `assets/ms-chat-widget.js` (and the Liquid that feeds it). The contract is cited as **AC §n** (`API_CONTRACT.md`) and **ACCT §n** (`ACCOUNT_CONTRACT.md`): field lists, limits, status codes and server rules live there and are not re-specified here; this chapter describes what the widget does with them. Production state: README §4.
+> **Source of truth:** the theme repo `ms_shopify_clone`, branch `main` at `bc7fb5d`, live since 2026-10-06 (PR #73 "customer platform" `a0df103` + the fixes `8d0a0c4` + `3e87341` + the 2026-10-05 tasks `11ac337` + `bc7fb5d`; README). Every claim comes from reading `assets/ms-chat-widget.js` (and the Liquid that feeds it). The contract is cited as **AC §n** (`API_CONTRACT.md`) and **ACCT §n** (`ACCOUNT_CONTRACT.md`): field lists, limits, status codes and server rules live there and are not re-specified here; this chapter describes what the widget does with them. Production state: README §4.
 > Code locations are given as `file → function / key / selector`. Line numbers are left out on purpose.
 
 This chapter covers one conversation turn from start to finish: what starts a turn, the exact `POST /api/chat` request, the page context and browsing trail, how the SSE stream is parsed and assembled, and how each tool is rendered (what data it fetches, which buttons it shows, which KPI events it fires, and its edge cases). It also covers Markdown rendering, streaming and typing states, errors, rate limits and rollback, local history persistence, "Neue Beratung" and `conversationKey` threads, the PDF summary download, voice input, hands-free voice mode with streaming TTS, and the feedback entry point. It closes with findings for backend decisions and open questions.
@@ -34,7 +34,7 @@ This chapter covers one conversation turn from start to finish: what starts a tu
 ## 1. Turn lifecycle at a glance
 
 ```
-A) composer / voice / product CTA
+A) composer / voice (+ page context, 02 §3.2) / product CTA
   └─ sendMessage(text, context?)
        ├─ maybeMintConversationKey()     (signed-in + fresh thread only)
        ├─ push optimistic user message → render bubble → saveHistory() → track('message_sent')
@@ -56,7 +56,8 @@ startStream()  — shared by A and B
                 ├─ tool-output-available → stored on the history part (never rendered)
                 ├─ error → streamErrored = true
                 └─ finish / [DONE] / socket close → finalizeStream()
-                       → push assistant message → saveHistory() → re-enable input → voice reply (§17)
+                       → push assistant message → saveHistory() → mark the page context sent → re-enable input
+                       → voice reply (§17) → attribution renewal (consultation tool, once per page view, §6.3)
 ```
 
 The optimistic user message, `saveHistory()` before the stream, `updateShareBtn()`, `track('message_sent')` and the +700 ms `maybeShowConsentGate()` belong to `sendMessage()` **only**. `sendContextGreeting()` calls just `clearNotice()`, `maybeMintConversationKey(true)`, `clearWelcome()` and `startStream({ userMsg: null })`, so the nudge greeting turn never triggers the first-message sign-in/consent popup (05 §7).
@@ -76,10 +77,10 @@ There are exactly four code paths that call `/api/chat` (grep-complete: `sendMes
 
 | Trigger | Code path | Visible user bubble? | `context` sent? | Fires `message_sent`? | Notes |
 | --- | --- | --- | --- | --- | --- |
-| **Composer**: Enter (without Shift) or send button | `textarea keydown` / `sendBtn click` → `onSend()` → `sendMessage(text)` | Yes (the typed text) | **No** | Yes | Blocked while `state.streaming` or `state.rateLocked`. Empty/whitespace input is ignored. In voice mode, a typed send stops current playback but keeps voice mode on. |
-| **Voice mode** final transcript | `recognition.onend` → `voiceSubmit(text)` → `sendMessage(text)` | Yes (transcript) | No | Yes | Only in hands-free voice mode (§17). Plain dictation only fills the textarea; the user still presses send. |
-| **Product-page CTA** "Detaillierte Beratung zu diesem Produkt" | delegated click on `.ms-chat-product-cta` (`bindProductCtas()`) → `openWithProduct(id, title)` → `sendMessage(primer, context)` | Yes — a **primer** text, see below | **Yes**, `type:"product"` | Yes, plus `product_cta_opened` | If a reply is streaming or the rate lock is active, the panel just opens and nothing is sent. Works with or without existing history (appends a normal turn). Also callable as `window.MS_CHAT.openWithProduct(id, title)` (public API, same path, see below). |
-| **Nudge bubble click** (fresh conversation only) | `showNudge()` click → `openPanel()` → `sendContextGreeting(ctx)` | **No** (`messages: []`) | Yes, `type:"product"` on product pages, else `type:"browsing"` (if a trail exists) | No (`nudge_clicked` instead) | **Popup? No**: `sendContextGreeting()` never schedules `maybeShowConsentGate()`. Only when `messages.length === 0`, not streaming, not rate-locked, and a context could be built. Otherwise the panel just opens. The backend streams a context-aware greeting as the first assistant message (AC §2 "Fresh open"). |
+| **Composer**: Enter (without Shift) or send button | `textarea keydown` / `sendBtn click` → `onSend()` → `sendMessage(text, pageContextForSend())` | Yes (the typed text) | **Page facts only** (`source:"page"`): with the first message of a thread on a product or collection page and the first after the page changed (§4.3, rules `02` §3.2); otherwise none | Yes | Blocked while `state.streaming` or `state.rateLocked`. Empty/whitespace input is ignored. In voice mode, a typed send stops current playback but keeps voice mode on. |
+| **Voice mode** final transcript | `recognition.onend` → `voiceSubmit(text)` → `sendMessage(text, pageContextForSend())` | Yes (transcript) | as the composer | Yes | Only in hands-free voice mode (§17). Plain dictation only fills the textarea; the user still presses send. |
+| **Product-page CTA** "Detaillierte Beratung zu diesem Produkt" | delegated click on `.ms-chat-product-cta` (`bindProductCtas()`) → `openWithProduct(id, title)` → `sendMessage(primer, context)` | Yes — a **primer** text, see below | **Yes**, `type:"product"`, `source:"cta"` | Yes, plus `product_cta_opened` | If a reply is streaming or the rate lock is active, the panel just opens and nothing is sent. Works with or without existing history (appends a normal turn). Also callable as `window.MS_CHAT.openWithProduct(id, title)` (public API, same path, see below). |
+| **Nudge bubble click** (fresh conversation only) | `showNudge()` click → `openPanel()` → `sendContextGreeting(ctx)` | **No** (`messages: []`) | Yes, `type:"product"` on product pages, else `type:"browsing"` (if a trail exists); `source:"nudge"` | No (`nudge_clicked` instead) | **Popup? No**: `sendContextGreeting()` never schedules `maybeShowConsentGate()`. Only when `messages.length === 0`, not streaming, not rate-locked, and a context could be built. Otherwise the panel just opens. The backend streams a context-aware greeting as the first assistant message (AC §2 "Fresh open"). |
 
 **Product CTA primer text** (`openWithProduct()`), German verbatim:
 
@@ -98,7 +99,7 @@ The CTA deliberately uses a primer *user* message instead of the `messages: []` 
 - Launcher click, header buttons, "Per E-Mail teilen", feedback card, tool-card buttons.
 - Product hydration and TTS calls go to other endpoints (§7, §17).
 
-> **Important for backend decisions:** a normally typed message carries **no page context at all**. Mo only knows the current product page if the visitor used the product CTA or clicked a nudge on that page. The trail and `PAGE_CTX` exist in the browser but are not attached to typed turns (§4.4, §20). The contract already defines page facts for typed turns (AC §2 "Optional `context`", `source: "page"`; the backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED`, default off in code); the widget side is `tasks/TASKS.md` task 2.
+> **Important for backend decisions:** a typed or spoken message carries the page facts (`source: "page"`: the product page's handle and title, or the collection page's one category; never the trail) only with the first message of a thread on that page and the first after the page changed; every later turn carries none (`02` §3.2, the owner of these rules). The backend uses them only with `CHAT_PAGE_CONTEXT_ENABLED` (default off in code) and may hold out a control group (AC §2 "Typed turns"); a CTA or nudge context is never held out.
 
 ---
 
@@ -124,7 +125,7 @@ The request uses an `AbortController` signal when available (for internal cancel
 | --- | --- | --- |
 | `messages` | **always** | `toWire(messages)`: the full in-memory history (see §3.3). `[]` for the context greeting. |
 | `locale` | **always** | same as `x-ms-locale` |
-| `context` | only for the product CTA and the nudge greeting (§2) | see §4.3 (no `source` field; AC §2 defines it, `tasks/TASKS.md` task 2 adds it) |
+| `context` | product CTA (`source:"cta"`), nudge greeting (`source:"nudge"`), and the first typed or spoken message of a thread per product or collection page (`source:"page"`; when exactly: `02` §3.2) | see §4.3 |
 | `conversationKey` | only if `auth.signedIn && activeConversationKey` | client-generated UUID of the active thread (§13). **Omitted** for anonymous and email-only visitors. **Also omitted for a signed-in visitor whose auth has not settled yet on this page load**, even when `activeConversationKey` (restored from `ms-chat-convkey:<sid>` by `loadConvKey()`) already exists. In practice this hits the product-page CTA, which sends right after `openPanel()` (§13 edge case, §20 finding 21). |
 | `customer` | only after a successful `POST /api/capture-email` **in this page load** | `{ "email": "<captured address>" }`. Held in the in-memory variable `capturedEmail` only. It is reset on navigation and on session drop (`dropSessionHistory()`), nowhere else. Never stored. AC §2 "Optional `customer`". Attached whenever `capturedEmail` is set, **with no auth check**: if auth later settles as signed in during the same page view (e.g. `visibilitychange` re-detection after a shop login in another tab), the captured address still rides along. **It also survives `startNewChat()`**: the anonymous/email-only branch calls `rotateSession()`, which does not touch `capturedEmail`, so after "Neuen Chat starten" (header icon or the `payload_too_large` notice button) later turns send `customer.email` under the **new** sid. The backend only injects memory when the capture came from the same `x-ms-session` (AC §2), so memory silently stops working while the address keeps leaving the browser (§20 finding 19). |
 | `campaignToken` | while `sessionStorage['ms_mo_c']` holds a valid token | the `mo_c` value from a campaign landing URL, re-validated against `/^[A-Za-z0-9_-]{16,64}$/` on read. It is deleted only when a chat response comes back `res.ok`, so a failed first send retries it on the next turn. It rides on the first chat request of the **tab session**, which can be the greeting, a CTA turn or a typed message, even pages later. AC §2 "Optional `campaignToken`". |
@@ -138,7 +139,8 @@ Example (signed-in visitor, product CTA, campaign landing):
   ],
   "locale": "de",
   "context": { "type": "product", "productId": "atx-rack-pro", "productTitle": "ATX Rack",
-               "recentlyViewed": [{ "type": "product", "id": "atx-rack-pro", "name": "ATX Rack" }] },
+               "recentlyViewed": [{ "type": "product", "id": "atx-rack-pro", "name": "ATX Rack" }],
+               "source": "cta" },
   "conversationKey": "9b2e…",
   "campaignToken": "Hk3f9QWm2xVbT0aLr7c1sYpNeD5uZ8gJ"
 }
@@ -176,13 +178,14 @@ The widget normalises the page facts once into `PAGE_CTX` (`type`, `productId`, 
 
 | Origin | Shape |
 | --- | --- |
-| Product CTA (`openWithProduct`) | `{ type:"product", productId: <handle if this is the CTA's own product page, else the data-attribute id>, productTitle: <data-attribute title>, recentlyViewed?: [...] }` |
-| Nudge on a product page | `{ type:"product", productId: <handle or numeric id>, productTitle?: <title>, recentlyViewed?: [...] }` |
-| Nudge elsewhere | `browsingContext(null)` → `{ type:"browsing", recentlyViewed: [...] }`, or **no greeting at all** when the trail is empty |
+| Product CTA (`openWithProduct`) | `{ type:"product", productId: <handle if this is the CTA's own product page, else the data-attribute id>, productTitle: <data-attribute title>, recentlyViewed?: [...], source:"cta" }` |
+| Nudge on a product page | `{ type:"product", productId: <handle or numeric id>, productTitle?: <title>, recentlyViewed?: [...], source:"nudge" }` |
+| Nudge elsewhere | `browsingContext(null)` → `{ type:"browsing", recentlyViewed: [...], source:"nudge" }`, or **no greeting at all** when the trail is empty |
+| Typed or spoken turn on a product or collection page (`pageContextForSend`) | the page facts only, never the trail, `source:"page"`; shapes and when they are sent: `02` §3.2 (owner) |
 
 `productId` fallback: the CTA buttons carry `data-ms-chat-product-id="{{ product.id }}"` (numeric). The widget swaps in `PAGE_CTX.productHandle` when the CTA's id matches the page's product (or either id is missing). A numeric id would be dropped server-side as unknown, but the primer text still names the product.
 
-The widget sends no `source` field. AC §2 defines `source` (`page` | `cta` | `nudge`; absent = treated like `cta` / `nudge`) and the typed-turn shape; `tasks/TASKS.md` task 2 adds it to the widget.
+Every context the widget sends carries `source` (AC §2). A typed turn on any other page sends no context.
 
 `browsingContext(leadCategory)` also supports a leading category entry. It is only ever called with `null` in the current code; the "category starters" that used a lead category were removed.
 
@@ -192,10 +195,10 @@ The widget sends no `source` field. AC §2 defines `source` (`page` | `cta` | `n
 - **Entry:** `{ id, name, type: "product"|"collection", category, ts }`. For a product, `id` = handle (else the numeric id) and `name` = title. For a collection, `id` = collection handle and `name` = collection title.
 - **Caps:** at most `TRAIL_MAX = 5` entries, most recent first, deduplicated by `type+id`. Entries older than `TRAIL_TTL_MS = 3 days` are dropped on read.
 - **Wire form** (`recentlyViewedPayload()`): up to **3 products** `{type:"product", id, name}` and **2 categories** `{type:"category", id?, name}` (collections become `category`), most recent first. This matches the server cap (AC §2). On a product page the current product is usually the first entry.
-- **When it leaves the browser:** only inside the `context` of a product-CTA turn or a nudge greeting. It is never sent on typed turns, in KPI events or in a background call.
+- **When it leaves the browser:** only inside the `context` of a product-CTA turn or a nudge greeting. It is never sent on typed turns (their page context carries the page facts only), in KPI events or in a background call.
 - **Other local use:** `trailCategoryStreak()` (≥ 2 products of one category) picks the nudge copy "Du schaust dir ein paar Produkte aus „X“ an — soll ich beim Vergleich helfen?" (nudge details: 05 §7, 02 §11).
-- **Privacy posture** (code comment `PRIVACY POSTURE (do not change)` above `PAGE_CTX`): copy built from this data references the page or category, never the user's behaviour ("TONE RULE").
-- **Stale code comment:** the same comment still says the trail "is NEVER transmitted — no backend call carries it" and that context leaves the browser "only when the USER sends a chat message that carries it". Both are out of date. Since the `recentlyViewed` context (AC §2) was added, `recentlyViewedPayload()` (via `browsingContext()`, `openWithProduct()` and `showNudge()`) sends up to 3 products + 2 categories in `context` on product-CTA turns and on nudge greetings, and the nudge greeting has no user message at all. Treat the behaviour described in this section as the truth; `tasks/TASKS.md` task 2 (item 5) corrects the comment.
+- **Privacy posture** (code comment `PRIVACY POSTURE (do not change)` above `PAGE_CTX`): page facts and the trail are gathered client-side and leave the browser only inside a `/api/chat` request the visitor starts — the product CTA (product + trail), a nudge click (product or trail), and, page facts only, the first typed or spoken message per page (`pageContextForSend()`); never in background calls. KPI events carry ids, enums and booleans only (clicked product id, `pageType`, `samePage`), never product names, the trail, message text, URLs or tokens. The TONE RULE: copy built from this data references the page or category, never the user's behaviour.
+- **Code comment matches the behaviour** since `bc7fb5d`. Builds before 2026-10-06 still claimed the trail "is NEVER transmitted", although CTA turns and nudge greetings already sent `recentlyViewed`.
 
 ---
 
@@ -265,10 +268,11 @@ So a **new background tool** needs no widget release **only if the backend does 
 
 - Final full Markdown render of the open text run.
 - If nothing visible was rendered, the empty assistant row is removed.
-- If `asstParts` is non-empty **and** the session id has not changed since the request (`sid === streamSid`), the assistant message `{id:'a-…', role:'assistant', parts}` is pushed and saved. A turn made only of silent tool parts is still stored (and counts toward the 40-message cap) but renders nothing.
+- If `asstParts` is non-empty **and** the session id has not changed since the request (`sid === streamSid`), the assistant message `{id:'a-…', role:'assistant', parts}` is pushed and saved. A turn made only of silent tool parts is still stored (and counts toward the 40-message cap) but renders nothing. In the same step the request's `context`, when it names a product (typed page, CTA or nudge context) or a typed turn's collection page, is marked as sent for this page in `sessionStorage['ms-chat-ctx-last']` (`02` §3.2).
 - `state.streaming = false`, input re-enabled.
 - If `streamErrored`: append the error line (§11).
 - Voice mode: `voiceAfterReply()` (§17).
+- Without `streamErrored`, under the same sid, and with a `show_product`, `compare_products`, `add_to_cart` or `suggest_showroom` part in the turn: `moAttrRenew()`, the attribution-token renewal (at most once per page view, consent-gated, only with a cached token; `06` §8.8).
 
 ---
 
@@ -313,8 +317,8 @@ Each tool's input and output are the contract's (AC §2 "Tools the widget MUST r
 | Input read | `productId` only. `reason` is **not rendered** (AC §2 leaves layout and `reason` to the widget; the compact card was a deliberate client direction). |
 | Data | `hydrate([productId])` |
 | Renders | one row: thumbnail (`images[0]`, if any) + name + price (sale/strike logic) + "Ausverkauft" badge when `inStock === false`. Below it, a primary pill button **"Zum Produkt"** + external icon → `shopifyUrl`. |
-| Buttons / KPI | "Zum Produkt" → `track('product_cta_clicked', { productId: <catalog id> })`. The thumbnail and name are not links. |
-| Side effect | `moAttrOnProductCard()`: the session counts as "consulted", and the order-attribution token is minted and the live cart stamped (consent-gated; see 05 §10 and 06 §8). This also runs when cards are re-rendered from restored history (at most one stamp per page load). |
+| Buttons / KPI | "Zum Produkt" → `track('product_cta_clicked', { productId: <catalog id>, samePage })`, where `samePage` is `true` only when that id is the open product page's handle (`isSamePageProduct()`). The thumbnail and name are not links. |
+| Side effect | `moAttrOnProductCard()`: the session counts as "consulted", and the order-attribution token is minted and the live cart stamped (consent-gated; see 05 §10 and 06 §8). This also runs when cards are re-rendered from restored history (at most one stamp per page load). A live turn with this card also triggers the once-per-page token renewal when a token is already cached (§6.3). |
 | Edge cases | unknown id or failed fetch → nothing rendered. No `shopifyUrl` → the button links to `#` (opens the current page in a new tab). Sold-out products still get "Zum Produkt". There is no add-to-cart on this card. |
 
 ### 8.2 `compare_products` → comparison table (`buildCompare`)
@@ -326,7 +330,7 @@ Each tool's input and output are the contract's (AC §2 "Tools the widget MUST r
 | Guard | fewer than **2** resolved products → nothing rendered |
 | Renders | optional `comparisonContext` line above the table. A horizontally scrollable table (`.ms-chat-compare-scroll`): header row = image + name per product. Rows: **"Preis"** (sale/strike), then spec rows, **"Lieferzeit"** (`deliveryTime` or `—`), and a last row with a **"Zum Produkt"** button per product. |
 | Spec rows | keys in first-seen order. With exactly 2 products: the union of all keys. With 3 or more: only keys present in ≥ 2 products. Missing values show `—`. No cap on the number of rows. |
-| KPI | each "Zum Produkt" → `product_cta_clicked { productId }` |
+| KPI | each "Zum Produkt" → `product_cta_clicked { productId, samePage }` |
 | Not shown | stock state (no sold-out marker in the table), no checkout button |
 
 ### 8.3 `add_to_cart` → direct-checkout card (`buildAddToCart`)
@@ -339,7 +343,7 @@ Each tool's input and output are the contract's (AC §2 "Tools the widget MUST r
 | Renders | `message` header. One row per resolved product (thumb + name + price). Sold-out rows get "Ausverkauft — nicht im Warenkorb", because the server-built `cartUrl` excludes sold-out items. |
 | With `cartUrl` | one blue checkout button **"Zur Kasse"** (cart icon, `.ms-chat-btn--checkout`) → `cartUrl` in a new tab, plus the caption "Direkt zur sicheren Kasse bei motionsports.de". |
 | Click on "Zur Kasse" | (1) `moAttrEnsure(false)`: mint the token if needed and **always re-stamp** the live cart with the `_mo` attribute (consent-gated, fire-and-forget). (2) `track('add_to_cart_clicked', { productId: <first resolved id>, productIds: [<all resolved ids, sold-out included>] })`. (3) `pollCartAfterCheckout()`: re-reads `/cart.js` after 1.2 s, 2.5 s, 4.5 s and 7 s. |
-| Without `cartUrl` (e.g. all sold out) | degrades to secondary "Zum Produkt" link(s) → `shopifyUrl`. With several products, each link is labelled with the product name. Each fires `product_cta_clicked`. |
+| Without `cartUrl` (e.g. all sold out) | degrades to secondary "Zum Produkt" link(s) → `shopifyUrl`. With several products, each link is labelled with the product name. Each fires `product_cta_clicked { productId, samePage }`. |
 | Not supported | quantity (always 1 per line), variant choice (only via variant-ref ids from the model), discount codes |
 
 **Cart UI sync after the checkout click** (`refreshCartUI()`): the permalink fills the cart in the **new** tab. The chat tab re-fetches `/cart.js` (display only, never POSTs) on `visibilitychange` → visible, window `focus`, `pageshow`, and the bounded poll above. It updates `#CartBubble` and every `[data-fh-cart-bubble]`. When `item_count` changed, it also calls `<cart-modal>.reloadContent()` and re-renders `.section-main-cart` (the latter is effectively dead, because the widget is not rendered on `/cart`). Theme side: 06 §7 and 05 §11 (DOM hooks `#CartBubble` / `<cart-modal>`: 01 §8).
@@ -454,7 +458,7 @@ Status codes, the error envelope and `Retry-After` are the contract's (AC §1 "E
 
 **Voice mode after HTTP errors:** only the 429 path (via `lockRateLimit()`'s timer) and the network `.catch` call `restartVoiceLoop()`. On HTTP 400 (`payload_too_large`, `bad_request`), 401, 403 and 5xx the hands-free loop is **not re-armed**: voice mode stays on but stops listening until the user toggles it. `rollback()` also puts the spoken transcript into the composer.
 
-**Product CTA after rollback:** `sendMessage()` passes `restoreText: text` to `startStream()` whatever the origin, so for a failed product-CTA turn (429, 401/403, other 4xx, 5xx, network with nothing rendered) the restored text is the primer ("Ich interessiere mich für „<title>". Kannst du mich zu diesem Produkt beraten?"). Re-sending it from the composer sends it as a typed turn without `context` (no `productId`, no trail).
+**Product CTA after rollback:** `sendMessage()` passes `restoreText: text` to `startStream()` whatever the origin, so for a failed product-CTA turn (429, 401/403, other 4xx, 5xx, network with nothing rendered) the restored text is the primer ("Ich interessiere mich für „<title>". Kannst du mich zu diesem Produkt beraten?"). Re-sending it from the composer makes it a typed turn: it never carries the CTA context (no trail); on a product page it carries the page's own facts (`source: "page"`) unless they were already sent with a saved answer in this thread (the failed turn marked nothing, `02` §3.2).
 
 Error lines are assistant-style rows in the message list. They are **not persisted**. A failed send also suppresses the first-message popup (`maybeShowConsentGate` checks that the user message is still in `messages`).
 
@@ -470,7 +474,7 @@ Error lines are assistant-style rows in the message list. They are **not persist
 | Content | user text, assistant text, **all known tool parts including outputs** (`search_products` results, `get_order_status` order data, consent copy). This is why sign-out and erase rotate the sid and delete the history (order data on shared devices, ACCT §5.1). |
 | Quota errors | `lsSet()` swallows a `setItem` failure (it writes to a memory map that `lsGet()` never reads while `localStorage` works). A full storage therefore leaves the **previous** snapshot in place without notice. |
 | Restore render | `renderAllMessages()` on init: user bubbles and `renderRestoredAssistant()` for assistant messages. A message with no renderable part (only silent/unknown tools) is skipped entirely. Unknown part types are ignored. Text renders in full Markdown. |
-| Tool cards on restore | **re-built from scratch**: products are re-hydrated (new `GET /api/products` calls), `show_product` re-triggers the attribution stamp (once per load). **Form cards come back fresh and empty**: a submitted or declined `offer_email_summary` capture form and a submitted `show_contact_form` re-appear as new forms after every reload (all visitors, signed-in included: restore runs in `init()` before auth settles, so the `buildToolCard()` suppression does not apply, §8.6), and a decline there fires `email_capture_declined` again. |
+| Tool cards on restore | **re-built from scratch**: products are re-hydrated (new `GET /api/products` calls), `show_product` re-triggers the attribution stamp (once per load; never the token renewal, §6.3). **Form cards come back fresh and empty**: a submitted or declined `offer_email_summary` capture form and a submitted `show_contact_form` re-appear as new forms after every reload (all visitors, signed-in included: restore runs in `init()` before auth settles, so the `buildToolCard()` suppression does not apply, §8.6), and a decline there fires `email_capture_declined` again. |
 | Cross-tab | another tab rotating `ms-chat-sid` (sign-out, erase, anonymous "new chat") → `onSidChangedElsewhere()` cancels the stream, drops to anonymous and adopts the new sid with that sid's stored history (02 §8). |
 
 ---
@@ -498,7 +502,7 @@ Before 2026-10-04 neither function cancelled the stream, so a late reply could l
 
 - `maybeMintConversationKey(isFreshThread)` mints a key **only** when the visitor is signed in, has no key yet, and the thread is empty (first turn of a fresh thread, including the context greeting).
 - **Sent** on `/api/chat` only when `auth.signedIn` and a key exists. Also sent as `conversationId` in feedback (§16) and used for the summary download (§14).
-- **Opening a past conversation** (`openConversation(id)`): `GET /api/account/conversations/{id}` (account headers, ACCT §7.2). On success it first cancels a reply still streaming (see above). The transcript becomes text-only messages (`transcriptToMessages()`: **tool parts and cards are lost**), keeps the last 40, adopts the server's `conversationKey`, and saves locally. Further turns append to that thread.
+- **Opening a past conversation** (`openConversation(id)`): `GET /api/account/conversations/{id}` (account headers, ACCT §7.2). On success it first cancels a reply still streaming (see above). The transcript becomes text-only messages (`transcriptToMessages()`: **tool parts and cards are lost**), keeps the last 40, adopts the server's `conversationKey`, and saves locally. It also deletes `sessionStorage['ms-chat-ctx-last']`, so the next typed message on a product or collection page carries the page facts again (`02` §3.2). Further turns append to that thread.
 - **Deleting the active conversation** in the drawer clears the local view and the key.
 - **Edge case — auth not settled at first send:** if a visitor who is actually signed in sends before `auth.settled` (e.g. product CTA or deep link on a cold load), no key is minted (`auth.signedIn` is false at that moment). Later turns do not mint either, because the thread is no longer fresh. The thread then runs **without `conversationKey`** (server falls back to `session_id`, AC §2), and the summary download button stays hidden for it.
 - **Edge case — existing keyed thread, auth not settled yet on this page load:** auth is re-resolved lazily on every page load (first panel open: `openPanel()` → `resolveAuthOnOpen()`, async), while `activeConversationKey` is restored synchronously by `loadConvKey()`. `startStream()` attaches the key only `if (auth.signedIn && activeConversationKey)`, so any send before the probe resolves omits `conversationKey` even though the thread on screen already has one. In practice this is the product-page CTA: `openWithProduct()` calls `openPanel()` and then `sendMessage()` synchronously, so the first CTA turn of a page view goes out keyless. The backend then files that turn under the legacy `session_id` thread instead of the keyed one (`src/app/api/chat/route.ts` → `conversationKey` null; `src/lib/conversation-store.ts` falls back to `sessionId`), which can create a stray or duplicate history entry. A fix would send the stored key whenever one exists, or delay CTA sends until `auth.settled` (§20 finding 21).
@@ -596,25 +600,25 @@ All via `track(event, data)` → `POST {apiBase}/api/kpi` `{ event, sessionId, t
 
 | Destination | Data |
 | --- | --- |
-| `POST /api/chat` | full local transcript (user text, assistant text, known tool inputs/outputs), `locale`, sid (header), optional `context` (handle, title, ≤ 3 products + 2 categories from the trail), optional `conversationKey`, optional `customer.email` (whenever a capture succeeded in this page load; survives an anonymous "new chat", §3.2), optional `campaignToken` |
+| `POST /api/chat` | full local transcript (user text, assistant text, known tool inputs/outputs), `locale`, sid (header), optional `context` with `source` (CTA / nudge: handle, title, ≤ 3 products + 2 categories from the trail; typed turn: the page's handle and title, or its one category; §4.3), optional `conversationKey`, optional `customer.email` (whenever a capture succeeded in this page load; survives an anonymous "new chat", §3.2), optional `campaignToken` |
 | `GET /api/products` | product ids + sid header |
 | `POST /api/capture-email` | the typed email, both consent booleans, `consentTextShown` verbatim, `locale`, `trigger` (tool cards only), `sessionId` in the body; headers chat key, sid, locale. The only place in this chapter where an email address the visitor typed is sent (§8.6). |
 | `GET /api/consent-copy?locale=` | locale (query) + sid header |
-| `POST /api/attribution/token` | sid + chat key (headers only, no body), consent-gated; triggers, caching and retries: `06` §8.2–§8.4 (owner) |
+| `POST /api/attribution/token` | sid + chat key (headers only, no body), consent-gated: the mint (triggers, caching, retries: `06` §8.2–§8.4) and the once-per-page renewal after a live consultation turn (§6.3; `06` §8.8) |
 | `GET /api/account/conversations/{id}` | conversation id (path) + account headers (chat key, sid, locale). Signed-in only. |
 | `POST /api/contact` | the form fields the visitor typed + `reason`, `productIds`, `sessionId` in the body (sid also in the header) |
 | `POST /api/feedback` | the comment + sid, tier, page path, conversation key (signed-in), captured email (whenever set in this page load, any tier, §16) |
 | `POST /api/tts` | reply text (chunks or whole), sid |
 | `GET /api/account/summary` | conversation key, sid |
 | `POST /api/kpi` | event names + small ids (see §18). Never message text. |
-| Same-origin `/cart.js`, `/cart/update.js` | read cart; write the opaque `_mo` attribute (consent-gated) |
+| Same-origin `/cart.js`, `/cart/update.js` | read cart; write the opaque `_mo` attribute (consent-gated), or blank it when a session ends or consent is withdrawn (`06` §8.9) |
 | Browser speech service | microphone audio during dictation / voice mode (browser vendor, not Mo) |
 
 ---
 
 ## 20. Findings for backend decisions (bugs, gaps, KPI levers)
 
-Found while documenting. Findings 1, 2 and 15 were fixed on 2026-10-04 (`8d0a0c4`, `3e87341`) and keep their numbers so references stay stable. The others are open.
+Found while documenting. Findings 1, 2 and 15 were fixed on 2026-10-04 (`8d0a0c4`, `3e87341`) and keep their numbers so references stay stable. The others are open in `bc7fb5d`. Of the KPI levers below, page context on typed turns was built on 2026-10-06 (`bc7fb5d`).
 
 **Correctness / contract gaps**
 
@@ -643,7 +647,7 @@ Found while documenting. Findings 1, 2 and 15 were fixed on 2026-10-04 (`8d0a0c4
 
 **KPI levers (frontend changes the backend could request)**
 
-- **Send page context on typed turns** (at least the first message of a session, or when the page changed since the last context). Today a shopper on a product page who types "Ist das leise?" gives Mo no product. → `tasks/TASKS.md` task 2; the backend side is built (AC §2 `source: "page"`, `CHAT_PAGE_CONTEXT_ENABLED` default off in code).
+- *(built 2026-10-06, `bc7fb5d`)* **Send page context on typed turns.** The first typed or spoken message of a thread on a product or collection page, and the first after the page changed, carry the page facts (`02` §3.2); Mo uses them once `CHAT_PAGE_CONTEXT_ENABLED` is on (default off in code; AC §2 "Typed turns"). Measured by the server-only `page_context_applied` / `page_context_answered` (AC §5) and `product_cta_clicked.samePage`.
 - **Track Markdown link clicks** in assistant text (product links in prose are currently invisible to the KPI funnel).
 - **Make card thumbnails and names clickable** (same `product_cta_clicked`). Today only the button is a link.
 - **Add a checkout/add-to-cart action to `show_product` and `compare_products`.** Today a purchase click needs the model to call `add_to_cart`.
@@ -664,6 +668,6 @@ Found while documenting. Findings 1, 2 and 15 were fixed on 2026-10-04 (`8d0a0c4
 1. **Cart permalink + stamped attributes:** does Shopify's `/cart/<variant>:1` permalink (opened in a new tab) keep the cart attributes stamped by `/cart/update.js` in the chat tab, or does it build a fresh checkout without them? This decides whether "Zur Kasse" orders count as attributed. Not determinable from this repo. It needs a live test order.
 2. **Does the permalink replace or merge** with the shopper's existing cart contents? The widget code assumes it "populates the cart in the new tab". The exact Shopify behaviour is not documented here.
 3. **Variant-ref names:** for `handle~variantId` ids, whether the returned `name` includes the variant title (the widget shows only `name`) depends on the backend. Check `GET /api/products` output.
-4. **Live parity:** this describes `main` at `3e87341`; which build the shop serves: README §4 (`npm run verify:widget`). Live-editor drift has reverted widget work before, so diff after each upload (`01` §16).
+4. **Live parity:** this describes `main` at `bc7fb5d`; which build the shop serves: README §4 (`npm run verify:widget`). Live-editor drift has reverted widget work before, so diff after each upload (`01` §16).
 5. *(answered)* **`get_order_status`** is silent in the widget (§6.1): stored and replayed, never rendered. The backend offers it only while `CHAT_ORDER_STATUS_ENABLED` is on (default off in code; while off, only the test accounts in `CHAT_ORDER_STATUS_TEST_CUSTOMERS` get it), and it answers only a chat sign-in; a session recognised only through the shop gets `sign_in_required` (AC §2 "Tools the widget MUST NOT render", ACCT §3a).
 6. *(answered)* **Backend profile on resumed threads:** not restored. The profile is rebuilt from the replayed history on every turn, so a resumed text-only thread starts empty; signed-in memory comes separately (finding 10).
