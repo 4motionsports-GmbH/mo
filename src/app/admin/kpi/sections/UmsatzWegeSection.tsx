@@ -43,7 +43,7 @@ const INFO = (
 
 const GROUPS: Array<{ label: string; tiers: RevenueSeriesKey[] }> = [
   { label: "Beratung im Chat", tiers: ["assisted", "influenced"] },
-  { label: "Direkt über Mo-Links und -Codes", tiers: ["direct"] },
+  { label: "Direkt über Mo", tiers: ["direct"] },
 ];
 
 export function UmsatzWegeSection({ view }: { view: RevenueView | null }) {
@@ -91,8 +91,8 @@ export function UmsatzWegeSection({ view }: { view: RevenueView | null }) {
                   <TableHead className="pl-5">Weg</TableHead>
                   <TableHead align="right">Bestellungen</TableHead>
                   <TableHead align="right">Umsatz</TableHead>
-                  <TableHead className="w-[28%] min-w-40">Anteil am Umsatz</TableHead>
-                  <TableHead align="right" className="pr-5">
+                  <TableHead className="w-[22%] min-w-36 whitespace-nowrap">Anteil am Umsatz</TableHead>
+                  <TableHead align="right" className="whitespace-nowrap pr-5">
                     Ø Bestellwert
                   </TableHead>
                 </TableRow>
@@ -123,7 +123,7 @@ export function UmsatzWegeSection({ view }: { view: RevenueView | null }) {
                     ...rows.map((c) => (
                       <TableRow key={c.key} className={cn(c.orders === 0 && "text-muted-foreground")}>
                         <TableCell className="pl-5">
-                          <span className="flex items-center gap-2">
+                          <span className="flex items-center gap-2 whitespace-nowrap">
                             <span
                               className={cn("size-2.5 shrink-0 rounded-sm", TIER_BG[c.tier as RevenueSeriesKey])}
                               aria-hidden
@@ -148,7 +148,7 @@ export function UmsatzWegeSection({ view }: { view: RevenueView | null }) {
                 })}
                 <TableRow className="hover:bg-transparent">
                   <TableCell className="pl-5">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <span className="flex items-center gap-1.5 whitespace-nowrap text-muted-foreground">
                       davon mit Mo-Rabattcode (MS5-/MK-)
                       <InfoTip label="Wie Rabattcodes gezählt werden">
                         Bestellungen, die einen einmaligen Mo-Code eingelöst haben — sie stehen schon in den Zeilen

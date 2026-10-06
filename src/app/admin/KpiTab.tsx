@@ -38,7 +38,8 @@ import { loadKpiShopifyBlock } from "@/lib/kpi-cache";
 import { getCustomerBaseKpis, getMoEffectKpis } from "@/lib/customer-list-store";
 import { getInboxKpis } from "@/lib/inbox-store";
 import type { KpiRange } from "@/lib/kpi-range";
-import { Callout, InfoTip } from "./ui";
+import { plural } from "@/lib/admin-format.mjs";
+import { Callout, Disclosure, InfoTip } from "./ui";
 import { KPI_GROUPS, kpiGroupAnchor, type KpiGroup, type KpiGroupKey } from "./kpi/groups";
 import { KpiToolbar } from "./kpi/KpiToolbar";
 import { buildRevenueView } from "./kpi/revenue-view";
@@ -170,8 +171,15 @@ export async function KpiTab({
       />
 
       {releases.length > 0 && (
-        <Callout tone="neutral" compact title="Änderungen im Zeitraum">
-          <ul className="mt-1 flex flex-col gap-1">
+        // Open by default only while short — a long list would push „Umsatz
+        // durch Mo“ off the first screen; each affected section notes it too.
+        <Disclosure
+          className="-mb-4 bg-surface-2"
+          title="Änderungen im Zeitraum"
+          meta={`${plural(releases.length, "Änderung", "Änderungen")} · zuletzt ${germanDay(releases[releases.length - 1].date)}`}
+          defaultOpen={releases.length <= 3}
+        >
+          <ul className="flex flex-col gap-1 text-sm">
             {releases.map((r) => (
               <li key={r.key}>
                 <span className="font-medium tabular-nums">{germanDay(r.date)}</span> · {r.title}{" "}
@@ -179,7 +187,7 @@ export async function KpiTab({
               </li>
             ))}
           </ul>
-        </Callout>
+        </Disclosure>
       )}
 
       <Group group={group("umsatz")}>

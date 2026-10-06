@@ -22,7 +22,7 @@ export interface KpiGroup {
 export const KPI_GROUPS: readonly KpiGroup[] = [
   {
     key: "umsatz",
-    label: "Umsatz durch Mo",
+    label: "Umsatz",
     chip: "Umsatz",
     description:
       "Was Mo im gewählten Zeitraum eingebracht hat: Umsatz, Bestellungen, Ø Bestellwert und Umsatz je Euro KI-Kosten im Vergleich zum Vorzeitraum, wie der Umsatz entstand (Beratung, Mo-Links, Set-Angebote, Kampagnen-Codes) und jede einzelne zugeordnete Bestellung.",
