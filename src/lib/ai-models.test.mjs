@@ -16,6 +16,7 @@ test("each tier maps to the intended model", () => {
   assert.equal(modelFor("writer"), SONNET_MODEL);
   assert.equal(modelFor("analyst"), SONNET_MODEL);
   assert.equal(modelFor("deep"), OPUS_MODEL);
+  assert.equal(modelFor("strategist"), OPUS_MODEL);
   assert.equal(modelFor("bulk"), HAIKU_MODEL);
 });
 
@@ -33,7 +34,7 @@ test("chat keeps thinking off (between_tools) at an effort between_tools accepts
 });
 
 test("thinking tiers send adaptive thinking, an effort and the refusal fallback", () => {
-  for (const tier of ["writer", "analyst", "deep"]) {
+  for (const tier of ["writer", "analyst", "deep", "strategist"]) {
     const { anthropic } = anthropicOptionsFor(tier);
     assert.deepEqual(anthropic.thinking, { type: "adaptive" });
     assert.ok(anthropic.effort);
@@ -51,4 +52,9 @@ test("output caps add thinking headroom only where the tier thinks", () => {
   assert.ok(maxOutputTokensFor("writer", 700) > 700);
   assert.ok(maxOutputTokensFor("analyst", 900) > maxOutputTokensFor("writer", 900));
   assert.ok(maxOutputTokensFor("deep", 1500) > 1500);
+});
+
+test("the strategist tier thinks hardest: Opus at effort high with the most headroom", () => {
+  assert.equal(anthropicOptionsFor("strategist").anthropic.effort, "high");
+  assert.ok(maxOutputTokensFor("strategist", 4000) > maxOutputTokensFor("deep", 4000));
 });
