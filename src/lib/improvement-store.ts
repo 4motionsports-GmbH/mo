@@ -496,6 +496,40 @@ export async function getLatestMeasurements(
   }
 }
 
+/**
+ * The completed Komplettanalysen with whether they carry the decision layer
+ * and how many recommendations — the new-run panel's choice (no sections
+ * payload is loaded).
+ */
+export async function listReportsForRuns(
+  sql: Sql | null = getSql()
+): Promise<Array<{ id: number; title: string; from: string; to: string; decision: boolean; recommendations: number }>> {
+  if (!sql) return [];
+  try {
+    const rows = (await sql`
+      SELECT id, title, date_from, date_to,
+             (sections->>'version') AS sections_version,
+             CASE WHEN jsonb_typeof(sections->'decision'->'recommendations') = 'array'
+                  THEN jsonb_array_length(sections->'decision'->'recommendations') ELSE 0 END AS recommendations
+        FROM analytics_reports
+       WHERE status = 'complete' AND sections IS NOT NULL
+       ORDER BY created_at DESC, id DESC
+       LIMIT 50
+    `) as Array<{ id: number; title: string; date_from: unknown; date_to: unknown; sections_version: unknown; recommendations: unknown }>;
+    return rows.map((r) => ({
+      id: Number(r.id),
+      title: String(r.title ?? ""),
+      from: ymd(r.date_from),
+      to: ymd(r.date_to),
+      decision: Number(r.sections_version) >= 2,
+      recommendations: Number(r.recommendations) || 0,
+    }));
+  } catch (err) {
+    reportError(err, { route: "lib/improvement-store", phase: "reports" });
+    return [];
+  }
+}
+
 // ── Suggestions ───────────────────────────────────────────────────────────────
 
 /** One row to insert (improvement-decision suggestionStorage; v2 `evidence` is an object). */

@@ -3,9 +3,12 @@
 // The Verbesserung screen's workspace (docs/IMPROVEMENT_LOOP.md): a
 // master–detail island like Analyse. The rail lists stored improvement runs;
 // the main area is either the "new run" panel, a running run (stepped to
-// completion from here) or a finished run (Wirkungs-Check + suggestions).
+// completion from here) or a finished run (Lage, Wirkung, Vorschläge,
+// Kennzahlen). The open backlog of every run is kept here, so a decision on a
+// card updates the lane overview and the "Alle offenen" list at once.
 // Below sit the two standing tools in Disclosures: Mo's live ANWEISUNGEN
-// layer and Mo's SELBSTBILD (the rendered system prompt + version hash).
+// layer (each with its measured effect) and Mo's SELBSTBILD (the rendered
+// system prompt + version hash).
 
 import * as React from "react";
 import { Sparkles } from "lucide-react";
@@ -27,8 +30,14 @@ import { DirectivesCard, type DirectiveItem, type DirectiveLimits } from "./Dire
 import { NewRunPanel } from "./NewRunPanel";
 import { RunStatusBadge, RunView } from "./RunView";
 import { SelfSnapshotCard, type SelfSnapshotInfo } from "./SelfSnapshotCard";
-import type { SuggestionItem } from "./SuggestionCard";
-import type { CompletedReportOption, RunDetail, RunListItem } from "./types";
+import type {
+  CompletedReportOption,
+  DirectiveEffect,
+  RunDetail,
+  RunEstimate,
+  RunListItem,
+  SuggestionItem,
+} from "./types";
 
 export type { RunDetail, RunListItem, CompletedReportOption } from "./types";
 
@@ -40,30 +49,41 @@ function syncRunParam(id: number | null) {
   window.history.replaceState(window.history.state, "", url.toString());
 }
 
+/** Keep the backlog (open + planned of every run) in step with one changed card. */
+function withChanged(backlog: SuggestionItem[], s: SuggestionItem): SuggestionItem[] {
+  const open = s.status === "open" || s.status === "accepted";
+  const has = backlog.some((b) => b.id === s.id);
+  if (!open) return backlog.filter((b) => b.id !== s.id);
+  return has ? backlog.map((b) => (b.id === s.id ? s : b)) : [s, ...backlog];
+}
+
 export function VerbesserungWorkspace({
   initialRuns,
   completedReports,
+  initialBacklog,
   initialDirectives,
   directiveLimits,
+  directiveEffects,
+  estimate,
   selfSnapshot,
   initialRunId,
 }: {
   initialRuns: RunListItem[];
   completedReports: CompletedReportOption[];
+  initialBacklog: SuggestionItem[];
   initialDirectives: DirectiveItem[];
   directiveLimits: DirectiveLimits;
+  directiveEffects: Record<number, DirectiveEffect>;
+  estimate: RunEstimate;
   selfSnapshot: SelfSnapshotInfo;
   initialRunId: number | null;
 }) {
   const [runs, setRuns] = React.useState<RunListItem[]>(initialRuns);
+  const [backlog, setBacklog] = React.useState<SuggestionItem[]>(initialBacklog);
   const [selectedId, setSelectedId] = React.useState<number | null>(initialRunId);
-  const [loaded, setLoaded] = React.useState<{ id: number; detail: RunDetail | null; error: string | null } | null>(
-    null
-  );
+  const [loaded, setLoaded] = React.useState<{ id: number; detail: RunDetail | null; error: string | null } | null>(null);
   const [reloadKey, setReloadKey] = React.useState(0);
-  const [activeDirectives, setActiveDirectives] = React.useState(
-    initialDirectives.filter((d) => d.active).length
-  );
+  const [activeDirectives, setActiveDirectives] = React.useState(initialDirectives.filter((d) => d.active).length);
 
   const refreshList = React.useCallback(async () => {
     try {
@@ -74,25 +94,26 @@ export function VerbesserungWorkspace({
     }
   }, []);
 
+  const refreshBacklog = React.useCallback(async () => {
+    try {
+      const data = await adminFetch<{ suggestions?: SuggestionItem[] }>("/api/admin/improve/backlog");
+      if (Array.isArray(data.suggestions)) setBacklog(data.suggestions);
+    } catch {
+      /* keep the last good backlog */
+    }
+  }, []);
+
   React.useEffect(() => {
     if (selectedId == null) return;
     const controller = new AbortController();
     adminFetch<{ run?: RunDetail }>(`/api/admin/improve/${selectedId}`, { signal: controller.signal })
       .then((data) => {
         if (controller.signal.aborted) return;
-        setLoaded({
-          id: selectedId,
-          detail: data.run ?? null,
-          error: data.run ? null : "Lauf konnte nicht geladen werden.",
-        });
+        setLoaded({ id: selectedId, detail: data.run ?? null, error: data.run ? null : "Lauf konnte nicht geladen werden." });
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
-        setLoaded({
-          id: selectedId,
-          detail: null,
-          error: friendlyErrorMessage(err, "Lauf konnte nicht geladen werden."),
-        });
+        setLoaded({ id: selectedId, detail: null, error: friendlyErrorMessage(err, "Lauf konnte nicht geladen werden.") });
       });
     return () => controller.abort();
   }, [selectedId, reloadKey]);
@@ -109,21 +130,17 @@ export function VerbesserungWorkspace({
 
   const onRunDone = React.useCallback(() => {
     void refreshList();
+    void refreshBacklog();
     reloadDetail();
-  }, [refreshList, reloadDetail]);
+  }, [refreshList, refreshBacklog, reloadDetail]);
 
   const onSuggestionChanged = React.useCallback((updated: SuggestionItem) => {
     setLoaded((l) =>
       l && l.detail
-        ? {
-            ...l,
-            detail: {
-              ...l.detail,
-              suggestions: l.detail.suggestions.map((s) => (s.id === updated.id ? updated : s)),
-            },
-          }
+        ? { ...l, detail: { ...l.detail, suggestions: l.detail.suggestions.map((s) => (s.id === updated.id ? updated : s)) } }
         : l
     );
+    setBacklog((b) => withChanged(b, updated));
   }, []);
 
   const current = loaded && loaded.id === selectedId ? loaded : null;
@@ -134,6 +151,7 @@ export function VerbesserungWorkspace({
       <NewRunPanel
         completedReports={completedReports}
         hasRuns={runs.length > 0}
+        estimate={estimate}
         onCreated={(id) => {
           void refreshList();
           select(id);
@@ -168,9 +186,11 @@ export function VerbesserungWorkspace({
       <RunView
         key={current.detail.id}
         detail={current.detail}
+        backlog={backlog}
         onDone={onRunDone}
         onDeleted={() => {
           void refreshList();
+          void refreshBacklog();
           goNew();
         }}
         onSuggestionChanged={onSuggestionChanged}
@@ -202,7 +222,7 @@ export function VerbesserungWorkspace({
           items={items}
           activeId={selectedId}
           onSelect={select}
-          emptyText="Noch keine Läufe. Starte oben deinen ersten Verbesserungslauf über eine fertige Komplettanalyse."
+          emptyText="Noch keine Läufe. Starte oben deinen ersten Verbesserungslauf."
         />
       }
       detail={
@@ -211,10 +231,11 @@ export function VerbesserungWorkspace({
           {/* The two tool cards stay out of the way until needed — the everyday
               flow is run → decide on cards; directives/prompt are occasional. */}
           <div className="flex flex-col gap-2">
-            <Disclosure title="Anweisungen an Mo" meta={`${num(activeDirectives)} aktiv`} keepMounted>
+            <Disclosure title="Anweisungen an Mo" meta={`${num(activeDirectives)} aktiv · mit gemessener Wirkung`} keepMounted>
               <DirectivesCard
                 initialDirectives={initialDirectives}
                 limits={directiveLimits}
+                effects={directiveEffects}
                 onActiveCountChange={setActiveDirectives}
               />
             </Disclosure>
