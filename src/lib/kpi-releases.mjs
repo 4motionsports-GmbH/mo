@@ -15,7 +15,7 @@ export const KPI_RELEASES = Object.freeze([
     key: "widget-popups",
     title: "Widget-Update: Anmelde-Popup und Einwilligungs-Popup",
     detail:
-      "Anonyme Besucher:innen werden nach der ersten Antwort zur Anmeldung eingeladen; angemeldete fragt ein Popup nach der Einwilligung. Startfragen und das anonyme E-Mail-Gate entfallen; der Kampagnen-Link öffnet den Chat wieder.",
+      "Etwa 0,7 Sekunden nach dem Senden einer Nachricht, während die Antwort noch lädt, lädt ein Popup anonyme Besucher:innen zur Anmeldung ein und fragt angemeldete nach der Einwilligung — höchstens eines pro Browser-Tab. Startfragen und das anonyme E-Mail-Gate entfallen; der Kampagnen-Link öffnet den Chat wieder.",
   },
   {
     date: "2026-10-03",
@@ -86,6 +86,27 @@ export const KPI_RELEASES = Object.freeze([
     title: "Bestell-Zuordnung: Markierung wird nach einer Beratung erneuert",
     detail:
       "Das Widget holt die Bestell-Markierung nach einer Produktberatung neu (eine gelöschte wird ersetzt) und leert sie beim Abmelden, Löschen und Widerruf der Analyse-Einwilligung. „Markierung unbekannt“ unter den markierten Bestellungen ohne Zuordnung sollte dadurch sinken.",
+  },
+  {
+    date: "2026-10-06",
+    key: "doi-mail-sent",
+    title: "DOI-Quote nur noch auf verschickte DOI-Mails",
+    detail:
+      "Opt-ins halten fest, ob die DOI-Mail wirklich verschickt wurde. „DOI-Mail fällig“ heißt jetzt „DOI-Mail verschickt“; eine fehlgeschlagene oder übersprungene Sendung zählt nicht mehr im Nenner der DOI-Quote (E-Mail-Capture-Funnel und „Nach Variante und Platzierung“) und steht als „nicht verschickt“ daneben. Ältere Opt-ins zählen wie bisher als verschickt — die DOI-Quote kann ab diesem Tag etwas steigen, ohne dass sich das Verhalten ändert.",
+  },
+  {
+    date: "2026-10-06",
+    key: "consent-ask-suppressed",
+    title: "Kein Einwilligungs-Popup für gesperrte Adressen",
+    detail:
+      "Nach der Anmeldung wird eine Adresse auf der Sperrliste (Abmeldung, Bounce, Beschwerde, Löschung) nicht mehr nach der Werbe-Einwilligung gefragt — ein Ja hätte dort ohnehin nichts bewirkt. „Angezeigt“ in „Einwilligung nach der Anmeldung“ kann leicht sinken.",
+  },
+  {
+    date: "2026-10-06",
+    key: "attribution-threads-maillinks",
+    title: "Bestell-Zuordnung: alle Gespräche im Fenster, Mail-Links ab der letzten Mail",
+    detail:
+      "„Beraten & gekauft“ prüft die gekauften Produkte gegen alle Gespräche des Geräts im Zuordnungsfenster vor der Bestellung statt nur gegen das jüngste — der Anteil kann steigen, „Beraten, anderes gekauft“ sinken. Mo-Links in E-Mails zählen ab der letzten Mail mit dieser Markierung statt ab der ersten; „Direkt“ kann leicht steigen. Bereits erfasste Bestellungen bleiben unverändert.",
   },
 ]);
 

@@ -1063,11 +1063,17 @@ three legal gates and the group **Funktionen**: the feature switches as An /
 Aus (Kunden-Abgleich mit Shopify, Einwilligung → Shopify, Löschung → Shopify,
 Mo-Merkmale als Shopify-Tags, KI-Profile für alle Kund:innen, „Einplanen“,
 nächtliche Kampagnen-Entwürfe and KI-Vorschläge im Eingang with their per-night /
-per-day figure, Bestellstatus im Chat, Pingen-Umgebung Produktion vs.
-Testumgebung; [`SystemStatusCard.tsx`](../src/app/admin/einstellungen/SystemStatusCard.tsx))
-— shown only as states, never a value (screenshots `docs/screenshots/systemstatus/`).
-The switches of 2026-10-05 (`CHAT_PAGE_CONTEXT_ENABLED`, `APP_PROXY_SIGNIN_ENABLED`,
-`MO_ATTRIBUTION_SESSION_ANCHOR`, `CONSENT_SIGNIN_VARIANTS`) are not in the list. Details:
+per-day figure, Bestellstatus im Chat, the switches of 2026-10-05 — Seitenkontext im
+Chat (`CHAT_PAGE_CONTEXT_ENABLED`, with the control-group share of
+`CHAT_PAGE_CONTEXT_HOLDOUT_PCT` when > 0), Shop-Login-Erkennung (App Proxy)
+(`APP_PROXY_SIGNIN_ENABLED`, with `APP_PROXY_SIGNIN_MAX_AGE_HOURS` or „nur mit
+Chat-Token“), Bestell-Zuordnung ab letzter Beratung (`MO_ATTRIBUTION_SESSION_ANCHOR`)
+and Einwilligungs-Popup: Varianten (`CONSENT_SIGNIN_VARIANTS`: „Nur Variante „a““ or
+„A/B-Test: …“ with the served ids) — each explained in an `InfoTip`, and Pingen-Umgebung
+Produktion vs. Testumgebung; [`SystemStatusCard.tsx`](../src/app/admin/einstellungen/SystemStatusCard.tsx),
+read through `platform-flags.mjs`, `page-context.ts` and `consent-variants.mjs` in
+`EinstellungenTab.tsx`) — shown as states plus those figures, never a key or other value
+(screenshots `docs/screenshots/systemstatus/`). Details:
 [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md).
 
 **Shopify-Abgleich**
@@ -1301,7 +1307,11 @@ und Platzierung“ in §5.7 has data only from then; no „Weggeklickt“ after 
 „Seitenkontext bei getippten Fragen (Widget)“ (`page-context-typed`: §5.1a; Mo uses the
 context only with `CHAT_PAGE_CONTEXT_ENABLED`) and „Bestell-Zuordnung: Markierung wird
 nach einer Beratung erneuert“ (`attribution-token-renewal`: fewer unknown markers in
-§5.16) — eleven entries in all; the three of 06.10. add no section note. The
+§5.16), plus three backend changes of the same day: „DOI-Quote nur noch auf verschickte
+DOI-Mails“ (`doi-mail-sent`: §5.7, §5.8), „Kein Einwilligungs-Popup für gesperrte Adressen“
+(`consent-ask-suppressed`: §5.7) and „Bestell-Zuordnung: alle Gespräche im Fenster, Mail-Links
+ab der letzten Mail“ (`attribution-threads-maillinks`: §5.16) — fourteen entries in all; the six
+of 06.10. add no section note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
@@ -1520,8 +1530,9 @@ per-model token counts. Scoped to the **selected window** via the
 `ai_usage.created_at` index (migration 0012). Two additional breakdowns:
 
 - **Nach Einsatzort** — EUR per `call_site` (every value of `AiCallSite` in
-  `ai-usage-store.ts`, largest first; a site without a German label in
-  `AiCostSection.tsx` shows its raw key), so the
+  `ai-usage-store.ts`, largest first; `AiCostSection.tsx` has a German label for
+  each — the map is typed `Record<AiCallSite, string>`, so a new site without one
+  fails `tsc`; a key only old rows carry shows raw), so the
   operator sees exactly which feature spends what instead of only the binary
   chat/admin split. TTS unit caveat is stated in the UI: for `call_site='tts'`
   the `input_tokens` column carries **characters**, not tokens.
@@ -1567,7 +1578,10 @@ limited to the period, so a renewal of an older chat sign-in still reads „Übe
 „Anmelden““. Since the same day the backend stops offering the popup
 (`optInActionable:false`) to a customer who declined it in any session or saw it
 in 3 sessions within 30 days (anti-nag, `consent-ask-policy.mjs`) — expect
-slightly fewer „Angezeigt“.
+slightly fewer „Angezeigt“. Since 2026-10-06 it is also never offered for an
+address on the suppression list (any reason; ACCOUNT_CONTRACT §6.1), so
+sign-in opt-ins with outcome `suppressed` should stay near 0 (`npm run
+verify:live` section 3).
 
 **Nach Variante und Platzierung** (2026-10-05, OI3): a table per framing
 variant (served `variant` of the sign-in copy) × placement (Popup / Nach
@@ -1578,8 +1592,9 @@ shown before the period, an older widget) · Opt-ins (Server)
 (`email_capture_marketing_opted_in {trigger:"signin_optin"}` with the same
 variant/placement) · Bereits angemeldet (`alreadyConfirmed`) · DOI-Quote
 (`email_capture_marketing_confirmed` of the session at or after the opt-in ÷
-opt-ins with `doiRequired`; already-subscribed answers are not in the
-denominator). Values outside the known variants and placements are merged into
+opt-ins whose DOI mail went out — `doiRequired` and not `doiSent: false`, OI1
+F3; rows before F3 have no `doiSent` and count when a mail was due;
+already-subscribed answers and unsent DOI mails are not in the denominator). Values outside the known variants and placements are merged into
 „unbekannt“, missing ones into „ohne (älteres Widget)“ / „ohne“ (bounded in
 SQL and in the tested `normalizeConsentVariantRows`, `kpi-widget-events.mjs`),
 so arbitrary strings posted to `/api/kpi` never get their own row. The block
@@ -1670,8 +1685,8 @@ counts unless its session has a sign-in or chat-gate opt-in.
 | Figure | Definition |
 | --- | --- |
 | **Angeboten** | `email_capture_ask_shown` in the window (all asks; since 05.10.2026 Mo no longer offers the summary to signed-in customers — release `signedin-offer-off`, §5.0) |
-| **Marketing-Haken** | opt-ins of the form; hint „n DOI-Mail fällig · n bereits abonniert · n gesperrt“ from `outcome` (`doi_required` / `already_confirmed` + `already_subscribed` / `suppressed`; older rows by `doiStatus` pending / confirmed, „gesperrt“ only from 05.10.) |
-| **DOI bestätigt** | `email_capture_marketing_confirmed` with `source: "mo_capture_form"` (older rows by session, above). Its hint „n % der fälligen DOI-Mails“ is the DOI rate: DOI bestätigt ÷ „DOI-Mail fällig“ (capped at 100 %). Already subscribed and suppressed addresses get no DOI mail and are not in the denominator; a failed or skipped send still counts as „fällig“ (the event is written before the send). |
+| **Marketing-Haken** | opt-ins of the form; hint „n DOI-Mail verschickt · n nicht verschickt · n bereits abonniert · n gesperrt“ from `outcome` (`doi_required` split by `doiSent` / `already_confirmed` + `already_subscribed` / `suppressed`; older rows by `doiStatus` pending / confirmed, „gesperrt“ only from 05.10.). „nicht verschickt“ (only when > 0) = a DOI mail was due but its send failed, was skipped (no mail provider) or never ran (the summary send failed first). |
+| **DOI bestätigt** | `email_capture_marketing_confirmed` with `source: "mo_capture_form"` (older rows by session, above). Its hint „n % der verschickten DOI-Mails“ is the DOI rate: DOI bestätigt ÷ „DOI-Mail verschickt“ (capped at 100 %). Already subscribed and suppressed addresses get no DOI mail and are not in the denominator, nor are unsent DOI mails (OI1 F3: the route writes the opt-in event after the send attempt with `doiSent`; `isDoiMailSent` in `capture-funnel.mjs`, tested). Opt-ins from before F3 carry no `doiSent` and count as sent, as before, so a period across the change stays comparable; it was „DOI-Mail fällig“ until then (KPI release `doi-mail-sent`, §5.0). |
 | **Formular gesendet** | hint „% der Angebote“ (submits ÷ asks, capped at 100 %) |
 | **Abgelehnt** | widget `email_capture_declined`, **once per session and trigger** (a stored offer can be declined again after every reload) |
 | **Angebote nach Auslöser** | asks by trigger, bounded: the tool's five values and `unspecified`; an empty trigger reads „Ohne Auslöser“, anything else „Anderer Wert“ |
@@ -1844,8 +1859,12 @@ default 30 days) counts from the token's minting; with
 `MO_ATTRIBUTION_SESSION_ANCHOR` on (default off in code; `sessionAnchor` in the
 result, ANWALTSDOSSIER §20) widget stamps count from the latest product consultation on the device
 (Produktkarte, Vergleich, Warenkorb-Karte, Showroom; written by the token's own
-session, never after the order), Mo links still from their creation. The
-InfoTip explains the rule of the active mode, plus the cross-device blind spot.
+session, never after the order), Mo links still from their creation — a mail
+link from the latest mail carrying its token, which each mail of the session
+re-stamps (ORDER_ATTRIBUTION „Attribution window“). The InfoTip explains the
+rule of the active mode, plus the cross-device blind spot. „Beraten & gekauft“
+checks the purchase against every thread of the session that was active within
+the window before the order, not only the latest one.
 
 **„Ohne Zuordnung“.** Marked orders no consultation could claim are counted as
 the server event `mo_order_marker_unresolved {reason, source?}` (orders/create
