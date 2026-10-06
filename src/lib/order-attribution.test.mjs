@@ -11,6 +11,10 @@ import {
   attributionAnchor,
   unresolvedMarkerEvent,
   countUnresolvedMarkers,
+  unresolvedMarkerDedupeKey,
+  restartsWindowOnReuse,
+  overlapLookback,
+  unionConsultedProducts,
   SESSION_ANCHORED_SOURCES,
   CONSULTATION_ANCHOR_TOOLS,
   UNRESOLVED_MARKER_REASONS,
@@ -394,6 +398,94 @@ test("countUnresolvedMarkers ignores unknown reasons and empty input", () => {
     ]),
     { unknownToken: 3, outsideWindow: 2 }
   );
+});
+
+test("unresolvedMarkerDedupeKey: one key per Shopify event id, null without a usable header", () => {
+  assert.equal(
+    unresolvedMarkerDedupeKey("98880550-7158-44d4-b7cd-2c97c8a091b5"),
+    "mo-unresolved:98880550-7158-44d4-b7cd-2c97c8a091b5"
+  );
+  assert.equal(unresolvedMarkerDedupeKey("  12345  "), "mo-unresolved:12345");
+  for (const bad of [null, undefined, "", "   ", 42, "a b", "x;DROP", "x".repeat(101)]) {
+    assert.equal(unresolvedMarkerDedupeKey(bad), null, String(bad));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// §9.1 — a mail link restarts its window when its token is reused
+// ---------------------------------------------------------------------------
+
+test("restartsWindowOnReuse: the Mo-built link sources only, never the widget", () => {
+  for (const s of ["summary_email", "marketing_email", "bundle"]) assert.equal(restartsWindowOnReuse(s), true, s);
+  for (const s of ["widget", "foo", "", null, undefined]) assert.equal(restartsWindowOnReuse(s), false, String(s));
+});
+
+test("§9.1: a mail on day 31–37 after the first ships a working link; the earlier mail's link keeps attributing", () => {
+  // One token per (session, summary_email): mail 1 on day 0, mail 2 on day 33.
+  const firstMail = MINT;
+  const secondMail = at(33);
+  // Without the restart, the window still counts from mail 1: an order through
+  // mail 2's link on day 35 was lost although mail 2 is two days old.
+  assert.equal(isWithinAttributionWindow(at(35), firstMail, 30), false);
+  // With created_at re-stamped at mail 2, the same order attributes …
+  const anchor = attributionAnchor({ source: "summary_email", tokenCreatedAt: secondMail, lastConsultedAt: null, orderAt: at(35) });
+  assert.equal(isWithinAttributionWindow(at(35), anchor, 30), true);
+  // … and so does an order through mail 1's link (same token) inside mail 2's window …
+  assert.equal(isWithinAttributionWindow(at(60), anchor, 30), true);
+  // … but not beyond it.
+  assert.equal(isWithinAttributionWindow(at(64), anchor, 30), false);
+});
+
+// ---------------------------------------------------------------------------
+// §9.2 — the overlap check reads every thread inside the window
+// ---------------------------------------------------------------------------
+
+test("overlapLookback: threads started by the order and active within the window before it", () => {
+  assert.deepEqual(overlapLookback(at(40), 30), { since: at(10), until: at(40) });
+  assert.deepEqual(overlapLookback(new Date(at(40)), 7), { since: at(33), until: at(40) });
+});
+
+test("overlapLookback fails closed on an unusable order time or window", () => {
+  for (const bad of [null, undefined, "", "garbage", 123]) assert.equal(overlapLookback(bad, 30), null, String(bad));
+  for (const w of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(overlapLookback(at(5), w), null, String(w));
+});
+
+test("unionConsultedProducts: discussed ∪ selected across threads, deduped, junk dropped", () => {
+  assert.deepEqual(unionConsultedProducts(null), []);
+  assert.deepEqual(
+    unionConsultedProducts([
+      { recommended_product_ids: ["kettlebell-16", "yoga-matte"], selected_product_ids: ["kettlebell-16"] },
+      { recommended_product_ids: ["laufband-x"], selected_product_ids: null },
+      { recommended_product_ids: [" ", 7, null, "yoga-matte"], selected_product_ids: ["hantelbank"] },
+      { recommended_product_ids: "not-an-array" },
+      null,
+    ]),
+    ["kettlebell-16", "yoga-matte", "laufband-x", "hantelbank"]
+  );
+});
+
+test("§9.2: a product from an older thread inside the window makes the order „assisted“", () => {
+  // Thread 1 (days 18–20) discussed the kettlebell, thread 2 (day 25) the mat;
+  // the order on day 28 buys the kettlebell. The latest thread alone said
+  // „influenced“; the union over the window says „assisted“.
+  const span = overlapLookback(at(28), 30);
+  const threads = [
+    { created_at: at(18), last_activity_at: at(20), recommended_product_ids: ["kettlebell-16"], selected_product_ids: [] },
+    { created_at: at(25), last_activity_at: at(25), recommended_product_ids: ["yoga-matte"], selected_product_ids: [] },
+    // Started after the order: never counts, even if it names the purchase.
+    { created_at: at(29), last_activity_at: at(29), recommended_product_ids: ["hantelbank"], selected_product_ids: [] },
+    // Last active before the window: does not count either.
+    { created_at: at(-20), last_activity_at: at(-5), recommended_product_ids: ["laufband-x"], selected_product_ids: [] },
+  ];
+  // The query's WHERE, applied to the fixture.
+  const inSpan = threads.filter((t) => t.created_at <= span.until && t.last_activity_at >= span.since);
+  const consulted = unionConsultedProducts(inSpan);
+  assert.deepEqual(consulted, ["kettlebell-16", "yoga-matte"]);
+  const tier = (bought) =>
+    classifyAttributionTier({ hasMoCode: false, tokenSource: "widget", hasOverlap: consulted.includes(bought) });
+  assert.equal(tier("kettlebell-16"), "assisted");
+  assert.equal(tier("hantelbank"), "influenced");
+  assert.equal(tier("laufband-x"), "influenced");
 });
 
 test("anchor constants are pinned", () => {

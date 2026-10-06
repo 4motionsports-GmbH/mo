@@ -8,8 +8,8 @@
 // rows — the payload's customer fields are never read. A marked order no
 // consultation can claim (unknown token, outside the window) is counted once,
 // on orders/create after the delivery was recorded, as the session-less event
-// mo_order_marker_unresolved {reason, source?} (noteUnresolvedMarker). See
-// docs/ORDER_ATTRIBUTION.md. We:
+// mo_order_marker_unresolved {reason, source?} (noteUnresolvedMarker; once per
+// X-Shopify-Event-Id when Shopify sends it). See docs/ORDER_ATTRIBUTION.md. We:
 //   1. VERIFY the X-Shopify-Hmac-SHA256 signature over the RAW body BEFORE
 //      parsing it — an unverified request never touches the catalog (mirrors the
 //      Resend/Pingen HMAC-first discipline).
@@ -161,7 +161,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: false, error: outcome.action }, { status: 500 });
       }
       await finishWebhookDelivery(webhookId, outcome.action);
-      if (attribution) await noteUnresolvedMarker(t, attribution);
+      if (attribution) await noteUnresolvedMarker(t, attribution, req.headers.get("x-shopify-event-id"));
       return NextResponse.json({
         ok: true,
         topic,

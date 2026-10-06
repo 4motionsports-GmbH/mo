@@ -274,7 +274,9 @@ export function classifyAttributionTier({ hasMoCode, tokenSource, hasOverlap }) 
 
 /**
  * True when the order falls inside the attribution window measured from the
- * token's minting. Fail-closed: missing/invalid timestamps → false (an
+ * token's anchor (its `created_at` — for a mail link the latest mail that
+ * carried it, see restartsWindowOnReuse — or the widget's session anchor,
+ * attributionAnchor). Fail-closed: missing/invalid timestamps → false (an
  * unverifiable window must not inflate the KPI).
  *
  * @param {string | Date | null | undefined} orderAt
@@ -334,7 +336,8 @@ function toMs(v) {
  * later of the token mint and the last consultation at or before the order —
  * a consultation after `orderAt` is ignored (the anchor never moves past the
  * order; no skew: chat rows are stamped by our own DB). Link and unknown
- * sources, or `lastConsultedAt` null (switch off): the mint.
+ * sources, or `lastConsultedAt` null (switch off): the mint (`created_at`,
+ * which a reused mail-link token moves to its latest mail — restartsWindowOnReuse).
  * Invalid mint → null (fail closed: isWithinAttributionWindow(…, null, …) === false).
  *
  * @param {{ source: unknown, tokenCreatedAt: unknown, lastConsultedAt?: unknown, orderAt: unknown }} input
@@ -386,4 +389,95 @@ export function countUnresolvedMarkers(rows) {
     else if (row.reason === "outside_window") out.outsideWindow += n;
   }
   return out;
+}
+
+/**
+ * Dedupe key for counting `mo_order_marker_unresolved` once per Shopify EVENT.
+ * X-Shopify-Webhook-Id (shopify_webhook_events) already absorbs a retry of the
+ * same delivery; X-Shopify-Event-Id is shared by every delivery of one event —
+ * a second subscription to the topic, or a redelivery under a new webhook id.
+ * Missing or malformed header → null (count as before, deduped by webhook id).
+ *
+ * @param {unknown} eventId the X-Shopify-Event-Id header
+ * @returns {string | null}
+ */
+export function unresolvedMarkerDedupeKey(eventId) {
+  if (typeof eventId !== "string") return null;
+  const id = eventId.trim();
+  if (!id || id.length > 100 || !/^[A-Za-z0-9._:-]+$/.test(id)) return null;
+  return `mo-unresolved:${id}`;
+}
+
+// ---------------------------------------------------------------------------
+// Mail-link window restart + cross-thread overlap (ATTR follow-ups §9.1, §9.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * True for the token sources whose reuse RESTARTS the attribution window: the
+ * Mo-built links (summary e-mail, marketing e-mail, bundle). There is one token
+ * per (session, source) — the partial unique index of migration 0042 — so
+ * every mail of a session carries the same token, and the window (and the
+ * retention purge) counts from `created_at`. mintAttributionToken therefore
+ * re-stamps `created_at` when it hands an existing link token to a new link;
+ * otherwise a mail sent 31–37 days after the first one would ship a link that
+ * is already outside the window. Earlier mails carry the same token and keep
+ * attributing, within the window of the latest one.
+ *
+ * Not the widget: its window is the session anchor (MO_ATTRIBUTION_SESSION_ANCHOR);
+ * moving it on a reuse would be the consent-gated anchor of the plan's §9.5,
+ * which waits for F-37 (b).
+ *
+ * @param {unknown} source
+ * @returns {boolean}
+ */
+export function restartsWindowOnReuse(source) {
+  return DIRECT_LINK_SOURCES.has(String(source ?? ""));
+}
+
+/**
+ * Which of the session's threads count for the product-overlap check
+ * („Beraten & gekauft“): every thread that started at or before the order and
+ * was active within the attribution window before it — not only the latest
+ * thread (a session can hold several since migration 0018). A thread started
+ * after the order never counts (a chat after the purchase cannot make it
+ * „assisted“), and neither does one whose last activity lies more than the
+ * window before the order. Returns ISO bounds for the query
+ * (`created_at <= until`, `last_activity_at >= since`), or null for an
+ * unusable order time or window (→ no overlap; such an order is outside the
+ * window anyway).
+ *
+ * @param {unknown} orderAt
+ * @param {number} windowDays
+ * @returns {{ since: string, until: string } | null}
+ */
+export function overlapLookback(orderAt, windowDays) {
+  const order = toMs(orderAt);
+  if (!Number.isFinite(order)) return null;
+  if (!Number.isFinite(windowDays) || windowDays <= 0) return null;
+  return {
+    since: new Date(order - windowDays * 86_400_000).toISOString(),
+    until: new Date(order).toISOString(),
+  };
+}
+
+/**
+ * Union of discussed ∪ selected product ids over a session's threads
+ * (`conversations` rows), first occurrence kept; blanks and non-strings dropped.
+ *
+ * @param {Array<{ recommended_product_ids?: unknown, selected_product_ids?: unknown }> | null | undefined} rows
+ * @returns {string[]}
+ */
+export function unionConsultedProducts(rows) {
+  const seen = new Set();
+  for (const row of rows ?? []) {
+    for (const list of [row?.recommended_product_ids, row?.selected_product_ids]) {
+      if (!Array.isArray(list)) continue;
+      for (const id of list) {
+        if (typeof id !== "string") continue;
+        const v = id.trim();
+        if (v) seen.add(v);
+      }
+    }
+  }
+  return [...seen];
 }

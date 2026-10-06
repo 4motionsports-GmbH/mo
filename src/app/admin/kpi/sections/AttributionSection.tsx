@@ -32,8 +32,8 @@ export function AttributionSection({
         Warenkorb-Attribut <code>attributes[_mo]</code> (von Mo-Links oder dem Widget-Stempel gesetzt)
         oder einem Mo-Rabattcode.{" "}
         {attribution?.sessionAnchor
-          ? `Zuordnungsfenster ${windowDays} Tage — bei der Widget-Markierung ab der letzten Produktberatung auf dem Gerät (Produktkarte, Vergleich, Warenkorb-Karte, Showroom), bei Mo-Links ab ihrer Erstellung.`
-          : `Zuordnungsfenster ${windowDays} Tage ab der Erstellung der Markierung.`}{" "}
+          ? `Zuordnungsfenster ${windowDays} Tage — bei der Widget-Markierung ab der letzten Produktberatung auf dem Gerät (Produktkarte, Vergleich, Warenkorb-Karte, Showroom), bei Mo-Links in E-Mails ab der letzten Mail mit dieser Markierung, bei Set-Angeboten ab ihrer Erstellung.`
+          : `Zuordnungsfenster ${windowDays} Tage ab der Erstellung der Markierung, bei Mo-Links in E-Mails ab der letzten Mail mit dieser Markierung.`}{" "}
         Unmarkierte Bestellungen werden hier nicht erfasst (nicht in der Mo-Zuordnung gespeichert); die
         Zeilen sind pseudonym (keine Kundendaten). Geräteübergreifende Käufe (Beratung am Handy, Kauf am
         Laptop) bleiben ohne E-Mail/Code unsichtbar — physikalische Grenze, keine Messlücke.
@@ -81,7 +81,7 @@ export function AttributionSection({
               label="Beraten & gekauft"
               value={money(attribution.assisted.revenueAmount, attribution.currency)}
               hint={`${num(attribution.assisted.orderCount)} Bestellung(en)`}
-              info="Der Warenkorb trug die Session-Markierung des Widgets UND mindestens ein gekauftes Produkt wurde in dieser Beratung besprochen/ausgewählt — auch wenn es manuell über die Suche in den Warenkorb gelegt wurde."
+              info="Der Warenkorb trug die Session-Markierung des Widgets UND mindestens ein gekauftes Produkt wurde in einem Gespräch dieser Session besprochen/ausgewählt, das im Zuordnungsfenster vor der Bestellung aktiv war — auch wenn es manuell über die Suche in den Warenkorb gelegt wurde."
             />
             <Stat
               label="Beraten, anderes gekauft"

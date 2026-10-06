@@ -5,7 +5,8 @@
 //   1. MINT attribution tokens — opaque, server-side random ids that ride on
 //      Mo-built cart links (`attributes[_mo]=<token>`) or that the widget
 //      stamps onto the live storefront cart. One token per (session, source),
-//      reused on re-request, so a session never accumulates marker spam.
+//      reused on re-request, so a session never accumulates marker spam; a
+//      reused mail-link token restarts its window (created_at = now()).
 //   2. INGEST orders/create + orders/paid webhook deliveries — idempotent
 //      upsert keyed by shopify_order_id. Only orders carrying a Mo marker are
 //      stored (data minimisation); the tier is snapshotted at ingest against
@@ -20,7 +21,6 @@
 
 import { getSql, type Sql } from "./db";
 import { loadProductCatalog } from "./product-catalog";
-import { loadConversationForSummary } from "./conversation-store";
 import { hasRecommendedPurchase } from "./kpi-match.mjs";
 import { isRealisedFinancialStatus } from "./kpi-revenue-core.mjs";
 import {
@@ -33,7 +33,11 @@ import {
   attributionAnchor,
   isSessionAnchoredSource,
   unresolvedMarkerEvent,
+  unresolvedMarkerDedupeKey,
   countUnresolvedMarkers,
+  restartsWindowOnReuse,
+  overlapLookback,
+  unionConsultedProducts,
   CONSULTATION_ANCHOR_TOOLS,
 } from "./order-attribution.mjs";
 import { isAttributionSessionAnchorEnabled } from "./platform-flags.mjs";
@@ -74,9 +78,18 @@ function generateAttributionToken(): string {
 
 /**
  * Mint (or reuse) the attribution token for a (session, source) pair. For a
- * sessionless carrier (bundle links) every call mints a fresh token. Returns
- * null when no DB is configured or on failure — callers then simply ship the
- * unstamped URL (the link still works; only attribution is lost).
+ * sessionless carrier (bundle links) every call mints a fresh token.
+ *
+ * Reuse: the widget gets its existing token unchanged (its window is the
+ * session anchor). A Mo-built link source (summary / marketing e-mail) gets
+ * its existing token with `created_at` re-stamped to now — the window and the
+ * retention purge count from `created_at`, so without it a mail sent 31–37
+ * days after the session's first one shipped a link that was already outside
+ * the window (restartsWindowOnReuse). The earlier mails carry the same token
+ * and keep attributing, within the window of the latest mail.
+ *
+ * Returns null when no DB is configured or on failure — callers then simply
+ * ship the unstamped URL (the link still works; only attribution is lost).
  */
 export async function mintAttributionToken(
   sessionId: string | null,
@@ -87,11 +100,18 @@ export async function mintAttributionToken(
   const sid = sessionId?.trim() || null;
   try {
     if (sid) {
-      const existing = (await sql`
-        SELECT token FROM mo_attribution_tokens
-         WHERE session_id = ${sid} AND source = ${source}
-         LIMIT 1
-      `) as Array<{ token: string }>;
+      const existing = restartsWindowOnReuse(source)
+        ? ((await sql`
+            UPDATE mo_attribution_tokens
+               SET created_at = now()
+             WHERE session_id = ${sid} AND source = ${source}
+            RETURNING token
+          `) as Array<{ token: string }>)
+        : ((await sql`
+            SELECT token FROM mo_attribution_tokens
+             WHERE session_id = ${sid} AND source = ${source}
+             LIMIT 1
+          `) as Array<{ token: string }>);
       if (existing[0]?.token) return String(existing[0].token);
     }
     const token = generateAttributionToken();
@@ -165,6 +185,34 @@ async function lastConsultationAt(
     ) AS last_consulted
   `) as Array<{ last_consulted: string | Date | null }>;
   return rows[0]?.last_consulted ?? null;
+}
+
+/**
+ * Products discussed or selected in the linked consultation, for the overlap
+ * check (ATTR §9.2): the union over every thread of the session that started
+ * at or before the order and was active within the attribution window before
+ * it (overlapLookback) — not only the latest thread. Thread level
+ * (conversations.session_id), as before. Throws — a failed read must reach
+ * the ingest's db-error path so Shopify retries, instead of snapshotting
+ * „influenced“ for good.
+ */
+async function consultedProductIds(
+  sessionId: string,
+  orderAt: string | null,
+  sql: Sql
+): Promise<string[]> {
+  const span = overlapLookback(orderAt, attributionWindowDays());
+  if (!span) return [];
+  const rows = (await sql`
+    SELECT recommended_product_ids, selected_product_ids
+      FROM conversations
+     WHERE session_id = ${sessionId}
+       AND created_at <= ${span.until}::timestamptz
+       AND last_activity_at >= ${span.since}::timestamptz
+     ORDER BY last_activity_at DESC, id DESC
+     LIMIT 100
+  `) as Array<{ recommended_product_ids: string[] | null; selected_product_ids: string[] | null }>;
+  return unionConsultedProducts(rows);
 }
 
 /**
@@ -264,14 +312,11 @@ export async function ingestShopifyOrder(payload: unknown): Promise<IngestOrderR
     const catalog = await loadProductCatalog();
     const { items, matchedHandles } = matchOrderLineItems(parsed.lineItems, catalog);
 
-    // Product overlap with the linked consultation (discussed ∪ selected).
+    // Product overlap with the linked consultation (discussed ∪ selected,
+    // across the session's threads inside the window before the order).
     let hasOverlap = false;
     if (sessionId && matchedHandles.length > 0) {
-      const conversation = await loadConversationForSummary(sessionId);
-      const consulted = [
-        ...(conversation?.recommendedProductIds ?? []),
-        ...(conversation?.selectedProductIds ?? []),
-      ];
+      const consulted = await consultedProductIds(sessionId, parsed.processedAt, sql);
       hasOverlap = hasRecommendedPurchase(consulted, matchedHandles);
     }
 
@@ -303,15 +348,46 @@ export async function ingestShopifyOrder(payload: unknown): Promise<IngestOrderR
 }
 
 /**
+ * Claim the one count of a Shopify event (key from unresolvedMarkerDedupeKey)
+ * in the webhook dedupe table — no order id, purged with it on the sync-log
+ * window. False when the event was already counted. Fails open like
+ * recordWebhookDelivery: no DB or a DB error never drops a count.
+ */
+async function claimUnresolvedMarker(key: string, sql: Sql | null = getSql()): Promise<boolean> {
+  if (!sql) return true;
+  try {
+    const rows = (await sql`
+      INSERT INTO shopify_webhook_events (webhook_id, topic, processed_at, outcome)
+      VALUES (${key}, ${KPI_MO_ORDER_MARKER_UNRESOLVED}, now(), 'counted')
+      ON CONFLICT (webhook_id) DO NOTHING
+      RETURNING webhook_id
+    `) as Array<{ webhook_id: string }>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/mo-orders-store", phase: "claimUnresolvedMarker" });
+    return true;
+  }
+}
+
+/**
  * Count a Mo-marked order that could not be attributed — the server event
  * `mo_order_marker_unresolved {reason, source?}`, session NULL, never an order
  * id, token or amount. orders/create only (the filter is in the pure core), so
  * the orders/paid delivery of the same order does not count it again. Call it
- * after the webhook delivery was recorded as done. Never throws.
+ * after the webhook delivery was recorded as done (a retry of the same
+ * delivery is absorbed by its X-Shopify-Webhook-Id). With the delivery's
+ * X-Shopify-Event-Id it also counts once per Shopify event — a second
+ * subscription or a redelivery under a new webhook id adds nothing. Never throws.
  */
-export async function noteUnresolvedMarker(topic: string, result: IngestOrderResult): Promise<void> {
+export async function noteUnresolvedMarker(
+  topic: string,
+  result: IngestOrderResult,
+  shopifyEventId: string | null = null
+): Promise<void> {
   const data = unresolvedMarkerEvent(topic, result);
   if (!data) return;
+  const key = unresolvedMarkerDedupeKey(shopifyEventId);
+  if (key && !(await claimUnresolvedMarker(key))) return;
   await recordKpiEvent({ sessionId: null, event: KPI_MO_ORDER_MARKER_UNRESOLVED, data });
 }
 
