@@ -12,11 +12,11 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
-## ▶ Open for M — the one list (05.10.2026, in this order)
+## ▶ Open for M — the one list (06.10.2026, in this order)
 
 Everything below this box is the detailed history and the step-by-step instructions; this box is
 the single list of what is still open for M. C's open items are at the end of „C · Claude's tasks“.
@@ -27,15 +27,20 @@ the single list of what is still open for M. C's open items are at the end of �
    (Details C.21; the purge of old widget tokens started 05.10.) If the switch goes on later than
    05.10., tell C the day: the KPI release „Bestell-Zuordnung: Fenster ab der letzten Beratung“ and
    the „aussagekräftig ab“ date of the attribution section are dated 05.10. (`src/lib/kpi-releases.mjs`).
-2. **Frontend prompt (when C hands it over, 05.10.).** The prompt is the „Prompt“ part of `docs/archive/frontend-tasks-2026-10-05/README.md`;
-   send it to the frontend agent with exactly the files that README lists as attachments (the list
-   is kept there, not here). When its PR is merged: upload the files it names to the theme →
-   `npm run verify:widget` must report „Widget mit den Aufgaben vom 05.10. …“ → send C that output
-   and the agent's reply (MANIFEST entry, fingerprint) — C.22.
-3. **Page context on (2–3 days after the upload in 2).** `npm run verify:live -- --since <upload day>`
-   → section 9 shows `page_context_applied` rows with `erkannt = true` → Vercel
-   `CHAT_PAGE_CONTEXT_ENABLED=true` → Redeploy → tell C the day (release note; the control group
-   comes later, C prepares it). **Not before the upload** — until then the switch does nothing.
+2. **Check the new widget (today, 5 min).** The tasks of 05.10. are live since 06.10. (theme
+   `bc7fb5d`). `npm run verify:widget` → „Widget mit den Aufgaben vom 05.10. (bc7fb5d …)“ with ✔.
+   Then `npm run verify:live -- --since 2026-10-05 --session d63d2e26` (the frontend agent's test
+   session): section 3 lists that session's `consent_gate_*` rows (and `email_capture_*` if it
+   accepted) with `variant: "a"` and `placement: "popup"` or `"signin_return"`; section 9 lists
+   `page_context_applied` (`pct: 100` while the switch is off), `page_context_answered` and
+   `product_cta_clicked` with `samePage`. Send C both outputs. Optional (task 3): in the Neon SQL
+   editor `DELETE FROM mo_attribution_tokens WHERE source = 'widget' AND session_id LIKE 'd63d2e26%';`
+   → tell the frontend agent; after its next product turn `/cart.js` holds a new `_mo`.
+3. **Page context on (from 08.10.).** `npm run verify:live -- --since 2026-10-06` → section 9 shows
+   `page_context_applied` rows with `erkannt = true` for most sessions → Vercel
+   `CHAT_PAGE_CONTEXT_ENABLED=true` → Redeploy → tell C the day (release note). Leave
+   `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` at 0: the control group comes after 2–3 days with the switch on;
+   C gives you the value (C.23).
 4. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on www.motionsports.de let Mo
    recommend a cheap product, click „Zur Kasse“ on the card, complete the order (cancel/refund it
    afterwards). Shopify admin → the order → „Zusätzliche Details“: is there an `_mo` entry? Tell C
@@ -55,6 +60,11 @@ the single list of what is still open for M. C's open items are at the end of �
 
 ## Done
 
+- [x] Frontend tasks of 05.10. live (06.10., FE PR #75 in the theme repo, `bc7fb5d`): served consent
+  benefits with variant/placement, page context on typed product- and collection-page messages,
+  attribution token renewal and blanking of the `_mo` marker on sign-out / erase / withdrawal. The
+  agent checked `_mo` on and off in `/cart.js` live. Prompt and tasks archived in
+  `docs/archive/frontend-tasks-2026-10-05/`.
 - [x] 5.2 + 5.4 App Proxy + compliance webhooks (05.10., M): new app version in the Dev Dashboard
   (scope `write_app_proxy`, App proxy `apps/chat`), compliance webhooks with the Shopify CLI (5.4b),
   checks passed, `APP_PROXY_SIGNIN_ENABLED=true` + `APP_PROXY_SIGNIN_MAX_AGE_HOURS=24` in Production.
@@ -612,11 +622,12 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       **M:** run `npm run db:migrate`, then set the switch (open list item 1). FE task 3:
       `docs/archive/frontend-tasks-2026-10-05/TASKS.md` task 3 (sent with open list item 2).
 - [ ] **C.5** Keep this file current after every step.
-- [ ] **C.22** After the widget upload (open list item 2, M sends C the `verify:widget` output):
-      mark the row `tasks-2026-10-05` current in `widget-fingerprint.mjs`, add the release notes
-      („Einwilligungs-Popup: Vorteile vom Server, Variante und Platzierung“, „Seitenkontext bei
-      getippten Fragen“), refresh `docs/frontend/04`/`05`/`07` from the widget agent's reply, then
-      move the finished tasks (`docs/frontend/tasks/`) to `docs/archive/`.
+- [x] **C.22** Widget upload of 06.10. (`bc7fb5d`): fingerprint row `tasks-2026-10-05` is current
+      (measured raw, whitespace-only and minified), KPI release notes of 06.10. („Einwilligungs-Popup:
+      Vorteile vom Server, Variante und Platzierung“, „Seitenkontext bei getippten Fragen (Widget)“,
+      „Bestell-Zuordnung: Markierung wird nach einer Beratung erneuert“), `docs/frontend/01`–`07`
+      refreshed to `bc7fb5d`, the round archived; `verify:live --session` also lists a session's
+      consent rows (section 3).
 - [ ] **C.23** Page context: once the switch is on and 2–3 days of base rate are in, pre-register
       the control-group experiment (`PAGE_CONTEXT_EXPERIMENT`, target size per arm) and tell M
       the `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` value; read the result once the target is reached.

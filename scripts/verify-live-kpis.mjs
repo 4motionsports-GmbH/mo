@@ -6,15 +6,15 @@
 //
 //   npm run verify:live                       (since 2026-10-04, Europe/Berlin)
 //   npm run verify:live -- --since 2026-10-05
-//   npm run verify:live -- --since 2026-10-05 --session <sid prefix>   (section 9)
+//   npm run verify:live -- --since 2026-10-05 --session <sid prefix>   (sections 3 and 9)
 //
 // Sections: 1 sign-in chain + diagnosis, 3 consent + no widget-sent erasures,
 // 4 campaign chat starts (once per send), 5 contact form, 6 order status,
 // 7 order attribution (pre-checks P1–P6; after migration 0076 the live
 // checks V0, V3, V4 and the kept tokens), 8 shop-login recognition (App
 // Proxy, P0.3; manual whoami checks with session=livecheck-… never count),
-// 9 page context on typed product-page messages (A3; `--session <prefix>`
-// lists one session's rows).
+// 9 page context on typed product-page messages (A3). `--session <prefix>`
+// adds one session's rows to sections 3 (consent with variant / placement) and 9.
 
 import { neon, neonConfig } from "@neondatabase/serverless";
 import { SIGNIN_DIAGNOSIS, classifySigninSession } from "../src/lib/kpi-widget-events.mjs";
@@ -149,6 +149,9 @@ table(
 );
 
 // ---------------------------------------------------------------------------
+const sessionArg = args.includes("--session") ? String(args[args.indexOf("--session") + 1] ?? "") : "";
+const sessionOk = /^[A-Za-z0-9_-]{4,64}$/.test(sessionArg);
+
 head("3 · Einwilligung nach der Anmeldung");
 table(
   await q(
@@ -191,6 +194,20 @@ table(
       GROUP BY 1, 2, 3, 4 ORDER BY 1, 2`
   )
 );
+if (sessionOk) {
+  console.log(`Sitzung ${sessionArg}… — Einwilligungs-Ereignisse mit Variante und Platzierung:`);
+  const rows = await q(
+    `SELECT session_id, event, created_at,
+            jsonb_build_object('surface', data->'surface', 'variant', data->'variant', 'placement', data->'placement',
+                               'source', data->'source', 'outcome', data->'outcome', 'variantMismatch', data->'variantMismatch') AS daten
+       FROM kpi_events
+      WHERE (event LIKE 'consent_gate_%' OR event IN ('email_capture_submitted', 'email_capture_marketing_opted_in'))
+        AND session_id LIKE $2 || '%' AND created_at >= ${SINCE}
+      ORDER BY created_at LIMIT 50`,
+    [sessionArg]
+  );
+  table(rows.map((r) => ({ sitzung: short(r.session_id), event: r.event, zeit: r.created_at, daten: JSON.stringify(r.daten) })));
+}
 console.log("DOI-Bestätigungen nach Quelle (Klick auf den Link; das Opt-in-Event selbst ändert sich nie):");
 table(
   await q(
@@ -442,7 +459,6 @@ table(
 
 // ---------------------------------------------------------------------------
 head("9 · Seitenkontext auf Produktseiten (A3)");
-const sessionArg = args.includes("--session") ? String(args[args.indexOf("--session") + 1] ?? "") : "";
 console.log("page_context_applied nach Art / Gruppe / erkannt / Sprache / Anteil:");
 table(
   await q(
@@ -453,7 +469,7 @@ table(
       GROUP BY 1, 2, 3, 4, 5 ORDER BY 7 DESC`
   )
 );
-if (/^[A-Za-z0-9_-]{4,64}$/.test(sessionArg)) {
+if (sessionOk) {
   console.log(`Sitzung ${sessionArg}… — Seitenkontext, Antworten, Produkt-Klicks:`);
   const rows = await q(
     `SELECT session_id, event, created_at,
