@@ -29,7 +29,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReportSections } from "@/lib/analytics-report-store";
-import { flattenSnapshot, formatMetricValue, HEADLINE_METRICS } from "@/lib/business-snapshot-core.mjs";
+import { flattenSnapshot, formatMetricValue } from "@/lib/business-snapshot-core.mjs";
 import { OWNERS, OWNER_LABELS, comparisonDelta } from "@/lib/analytics-report-synthesis-core.mjs";
 import { formatAdmin, ADMIN_DATE_MEDIUM } from "@/lib/admin-datetime.mjs";
 import { germanDate } from "@/lib/kpi-range.mjs";
@@ -171,7 +171,14 @@ function Overview({
       ? `Synthese: Opus 5.5, Denktiefe ${EFFORT_NAMES[efforts.decisions] ?? efforts.decisions}`
       : null,
   ].filter(Boolean);
-  const tiles = HEADLINE_METRICS.filter((k) => k !== "revenue.orders" && k !== "chat.engagement" && k !== "chat.clicksPerChat");
+  const tiles: Array<[string, string]> = [
+    ["revenue.total", "Mo-Umsatz (bezahlt)"],
+    ["ledger.moShare", "Anteil am Shop-Umsatz"],
+    ["chat.chats", "Gespräche"],
+    ["consent.newSubscribers", "Neue Einwilligungen"],
+    ["costs.total", "KI-Kosten"],
+    ["costs.roi", "Mo-Umsatz je KI-Euro"],
+  ];
   return (
     <section id="r-ueberblick" className="scroll-mt-24">
       <Section
@@ -184,7 +191,7 @@ function Overview({
             {decision && decision.headline ? (
               <>
                 <p className="text-base font-semibold leading-snug tracking-tight text-foreground">{decision.headline}</p>
-                <Prose className="text-muted-foreground">{decision.summary}</Prose>
+                <Prose>{decision.summary}</Prose>
               </>
             ) : (
               <Empty>
@@ -196,9 +203,9 @@ function Overview({
           </CardContent>
         </Card>
         {snapshot && (
-          <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            {tiles.map((k) => (
-              <MetricTile key={k} metric={m(k)} />
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-6">
+            {tiles.map(([k, label]) => (
+              <MetricTile key={k} metric={m(k)} label={label} />
             ))}
           </div>
         )}
@@ -233,7 +240,7 @@ function Decisions({ decision, range }: { decision: Decision | null; range: { fr
         {items.length === 0 ? (
           <Empty>Keine Entscheidungen in diesem Bericht.</Empty>
         ) : (
-          <ol className="grid gap-3 lg:grid-cols-2">
+          <ol className="grid gap-3 xl:grid-cols-2">
             {items.map((d, i) => (
               <li key={i}>
                 <Card className="h-full">
@@ -253,17 +260,19 @@ function Decisions({ decision, range }: { decision: Decision | null; range: { fr
                       <LevelBadge kind="impact" value={d.impact} />
                       <LevelBadge kind="confidence" value={d.confidence} />
                     </div>
-                    <div className="mt-auto flex flex-wrap items-end justify-between gap-2 border-t border-border pt-2.5">
+                    <div className="mt-auto flex flex-col gap-1.5 border-t border-border pt-2.5">
                       {d.metric && (
-                        <p className="flex min-w-0 flex-1 items-start gap-1.5 text-xs text-muted-foreground">
+                        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
                           <Target className="mt-0.5 size-3.5 shrink-0 text-accent" aria-hidden />
-                          <span>
+                          <span className="min-w-0 break-words">
                             <span className="font-medium text-foreground">Erfolg: </span>
                             {d.metric}
                           </span>
                         </p>
                       )}
-                      <AdminLinkButton target={d.link} range={range} />
+                      <div className="flex justify-end">
+                        <AdminTextLink target={d.link} range={range} />
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -303,10 +312,16 @@ function Revenue({
         info="Bezahlte Bestellungen mit Mo-Markierung oder Mo-Code (Bestell-Webhook): Direkt = Mo-Code oder Mo-Link, Beraten & gekauft = Warenkorb-Markierung und ein beratenes Produkt gekauft, Beraten, anderes gekauft = Markierung ohne Produktüberschneidung. Eine Untergrenze: Käufe auf einem anderen Gerät sind unsichtbar."
         actions={<AdminTextLink target="kpi_umsatz" range={range} />}
       >
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-          <div className="flex flex-col gap-3">
-            {decision?.revenue.summary ? <Prose>{decision.revenue.summary}</Prose> : <Empty>Keine Einordnung verfügbar.</Empty>}
-            {(decision?.revenue.drivers ?? []).length > 0 && (
+        <div className="flex flex-col gap-4">
+          {decision?.revenue.summary ? <Prose>{decision.revenue.summary}</Prose> : <Empty>Keine Einordnung verfügbar.</Empty>}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <MetricTile metric={m("revenue.total")} label="Mo-Umsatz (bezahlt)" />
+            <MetricTile metric={m("revenue.direct")} label="Direkt" />
+            <MetricTile metric={m("revenue.assisted")} label="Beraten & gekauft" />
+            <MetricTile metric={m("revenue.influenced")} label="Beraten, anderes gekauft" />
+          </div>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            {(decision?.revenue.drivers ?? []).length > 0 ? (
               <ul className="flex flex-col gap-2">
                 {decision!.revenue.drivers.map((d, i) => (
                   <li key={i} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
@@ -315,18 +330,13 @@ function Revenue({
                   </li>
                 ))}
               </ul>
+            ) : (
+              <span />
             )}
-          </div>
-          <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-3 gap-2">
-              <MetricTile metric={m("revenue.direct")} />
-              <MetricTile metric={m("revenue.assisted")} />
-              <MetricTile metric={m("revenue.influenced")} />
-            </div>
             {sources && (
               <Card>
-                <CardContent className="p-3">
-                  <BreakdownTable table={sources} compact />
+                <CardContent className="overflow-x-auto p-3">
+                  <BreakdownTable table={sources} />
                 </CardContent>
               </Card>
             )}
@@ -362,45 +372,47 @@ function Bottlenecks({
         level={3}
         info="Wo zwischen Chat, Anmeldung, Einwilligung, E-Mail, Kampagne und Kauf am meisten verloren geht. Rechts die gemessenen Stufen: Balken relativ zur ersten Stufe, daneben der Übergang von der vorigen Stufe und der Wert der Vorperiode (VP). Chat, Anmeldung und Einwilligung zählen Sitzungen, das Formular Ereignisse, Kampagnen Mails."
       >
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="flex flex-col gap-2.5">
-            {items.length === 0 ? (
-              <Empty>Keine Engpässe benannt.</Empty>
-            ) : (
-              items.map((b, i) => (
-                <Card key={i}>
-                  <CardContent className="flex flex-col gap-1.5 p-3.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-col gap-4">
+          {items.length === 0 ? (
+            <Empty>Keine Engpässe benannt.</Empty>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {items.map((b, i) => (
+                <Card key={i} className="h-full">
+                  <CardContent className="flex h-full flex-col gap-1.5 p-3.5">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
                       <h4 className="text-sm font-semibold text-foreground">{b.stage}</h4>
                       <LevelBadge kind="impact" value={b.impact} />
                     </div>
                     <Prose className="text-muted-foreground">{b.finding}</Prose>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      {b.evidence && (
-                        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-2xs font-medium tabular-nums text-foreground">
-                          {b.evidence}
-                        </span>
-                      )}
-                      <AdminLinkButton target={b.link} range={range} />
+                    {b.evidence && (
+                      <span className="self-start rounded-md bg-surface-2 px-2 py-0.5 text-2xs font-medium tabular-nums text-foreground">
+                        {b.evidence}
+                      </span>
+                    )}
+                    <div className="mt-auto flex justify-end pt-1">
+                      <AdminTextLink target={b.link} range={range} />
                     </div>
                   </CardContent>
                 </Card>
-              ))
-            )}
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-            {funnels.map((f) => (
-              <Card key={f.key}>
-                <CardContent className="p-3.5">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="text-xs font-semibold text-foreground">{f.title}</div>
-                    <AdminTextLink target={f.link} range={range} />
-                  </div>
-                  <FunnelBars funnel={f} />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
+          {funnels.length > 0 && (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {funnels.map((f) => (
+                <Card key={f.key}>
+                  <CardContent className="p-3.5">
+                    <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+                      <div className="text-xs font-semibold text-foreground">{f.title}</div>
+                      <AdminTextLink target={f.link} range={range} />
+                    </div>
+                    <FunnelBars funnel={f} />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       </Section>
     </section>
@@ -437,14 +449,14 @@ function Changes({ sections, decision }: { sections: Sections; decision: Decisio
             Verglichen mit{" "}
             <Link href={`/admin?tab=analyse&report=${c.previousReportId}`} className="font-medium text-accent hover:underline">
               {c.title || `Bericht #${c.previousReportId}`}
-            </Link>{" "}
-            ({c.from === c.to ? germanDate(c.from) : `${germanDate(c.from)} – ${germanDate(c.to)}`}
-            {c.completedAt ? `, erstellt ${formatAdmin(c.completedAt, ADMIN_DATE_MEDIUM, "")}` : ""})
+            </Link>
+            {c.title && c.title.includes(germanDate(c.from)) ? "" : ` (${c.from === c.to ? germanDate(c.from) : `${germanDate(c.from)} – ${germanDate(c.to)}`})`}
+            {c.completedAt ? ` · erstellt ${formatAdmin(c.completedAt, ADMIN_DATE_MEDIUM, "")}` : ""}
             {c.perDay ? " · unterschiedlich lange Zeiträume: Mengen je Tag" : ""}
             {c.basis === "legacy" ? " · älterer Bericht: nur die Kennzahlen, die jeder Bericht hat" : ""}
           </p>
         )}
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
           <div className="flex flex-col gap-3">
             {decision?.changes.summary ? <Prose>{decision.changes.summary}</Prose> : null}
             {items.length > 0 ? (
@@ -469,7 +481,7 @@ function Changes({ sections, decision }: { sections: Sections; decision: Decisio
           <div>
             {c && c.metrics.length > 0 ? (
               <Card>
-                <CardContent className="p-0 pb-1">
+                <CardContent className="overflow-x-auto p-0 pb-1">
                   <Table className="text-xs [&_td]:tabular-nums">
                     <TableHeader>
                       <TableRow>
@@ -489,13 +501,13 @@ function Changes({ sections, decision }: { sections: Sections; decision: Decisio
                         return (
                           <TableRow key={row.key}>
                             <TableCell className="text-foreground">{row.label}</TableCell>
-                            <TableCell align="right" className="font-medium text-foreground">
+                            <TableCell align="right" className="whitespace-nowrap font-medium text-foreground">
                               {fmt(row.now)}
                             </TableCell>
-                            <TableCell align="right" className="text-muted-foreground">
+                            <TableCell align="right" className="whitespace-nowrap text-muted-foreground">
                               {fmt(row.then)}
                             </TableCell>
-                            <TableCell align="right">
+                            <TableCell align="right" className="whitespace-nowrap">
                               {comparisonDelta(row) ? (
                                 <DeltaPill metric={{ value: row.now, previous: row.then, unit, good: row.good as SnapshotMetric["good"] }} />
                               ) : null}
@@ -563,12 +575,16 @@ function Customers({
         actions={<AdminTextLink target="kunden" range={range} />}
       >
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <MetricTile metric={m("ledger.revenue")} />
-          <MetricTile metric={m("ledger.repeatShare")} />
-          <MetricTile metric={m("moEffect.repurchaseMo")} info="Wiederkaufquote der Shopify-Kund:innen, die mit Mo gesprochen haben." />
-          <MetricTile metric={m("customers.subscribedShare")} />
+          <MetricTile metric={m("ledger.revenue")} label="Shop-Umsatz (Ledger)" />
+          <MetricTile metric={m("ledger.repeatShare")} label="Wiederkäufer:innen" />
+          <MetricTile
+            metric={m("moEffect.repurchaseMo")}
+            label="Wiederkauf mit Mo"
+            info={`Wiederkaufquote der Shopify-Kund:innen, die mit Mo gesprochen haben; vergleichbar ohne Mo: ${formatMetricValue("rate", m("moEffect.repurchaseComparable")?.value ?? null)} (Korrelation, kein Beweis).`}
+          />
+          <MetricTile metric={m("customers.subscribedShare")} label="Mit Einwilligung" />
         </div>
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
           <div className="flex flex-col gap-2.5">
             {items.length === 0 ? (
               <Empty>Keine Segment-Erkenntnisse.</Empty>
@@ -578,12 +594,12 @@ function Customers({
                   <CardContent className="flex flex-col gap-1.5 p-3.5">
                     <h4 className="text-sm font-semibold text-foreground">{s.segment}</h4>
                     <Prose className="text-muted-foreground">{s.insight}</Prose>
-                    <div className="flex flex-wrap items-end justify-between gap-2">
-                      <p className="flex min-w-0 flex-1 items-start gap-1.5 text-xs text-foreground">
-                        <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-accent" aria-hidden />
-                        {s.action}
-                      </p>
-                      <AdminLinkButton target={s.link} range={range} />
+                    <p className="flex items-start gap-1.5 text-xs text-foreground">
+                      <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-accent" aria-hidden />
+                      {s.action}
+                    </p>
+                    <div className="flex justify-end">
+                      <AdminTextLink target={s.link} range={range} />
                     </div>
                   </CardContent>
                 </Card>
@@ -639,15 +655,15 @@ function Campaigns({
         actions={<AdminTextLink target="kampagnen" range={range} />}
       >
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <MetricTile metric={m("campaigns.sent")} />
-          <MetricTile metric={m("campaigns.clickRate")} />
-          <MetricTile metric={m("campaigns.revenue")} />
-          <MetricTile metric={m("campaigns.unsubscribeRate")} />
+          <MetricTile metric={m("campaigns.sent")} label="Mails gesendet" />
+          <MetricTile metric={m("campaigns.clickRate")} label="Klickrate" />
+          <MetricTile metric={m("campaigns.revenue")} label="Umsatz mit MK-Code" />
+          <MetricTile metric={m("campaigns.unsubscribeRate")} label="Abmeldequote" />
         </div>
         <div className="mt-4 flex flex-col gap-3">
           {decision?.campaigns.summary && <Prose>{decision.campaigns.summary}</Prose>}
           {items.length > 0 && (
-            <div className="grid gap-2.5 md:grid-cols-2">
+            <div className="grid gap-2.5 xl:grid-cols-2">
               {items.map((c, i) => (
                 <div key={i} className="rounded-lg border border-border bg-surface-2 px-3 py-2">
                   <div className="text-xs font-semibold text-foreground">{c.campaign}</div>
@@ -662,8 +678,8 @@ function Campaigns({
           )}
           {table && table.rows.length > 0 ? (
             <Card>
-              <CardContent className="p-3">
-                <BreakdownTable table={table} compact />
+              <CardContent className="overflow-x-auto p-3">
+                <BreakdownTable table={table} />
               </CardContent>
             </Card>
           ) : (
@@ -786,7 +802,7 @@ function Experiments({ decision }: { decision: Decision | null }) {
         {items.length === 0 ? (
           <Empty>Keine Experimente vorgeschlagen.</Empty>
         ) : (
-          <div className="grid gap-3 lg:grid-cols-2">
+          <div className="grid gap-3 xl:grid-cols-2">
             {items.map((e, i) => (
               <Card key={i}>
                 <CardContent className="flex flex-col gap-2 p-4">
@@ -842,7 +858,7 @@ function Risks({ decision, snapshot }: { decision: Decision | null; snapshot: Sn
         level={3}
         info="Risiken für Umsatz, Recht, Technik und Ruf mit Gegenmaßnahme; dazu die Messhinweise, die die Zahlen einschränken: Releases zwischen den Zeiträumen, kleine Stichproben, Schalter (Stand heute) und die festen Regeln der Messung."
       >
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-2">
           <div className="flex flex-col gap-2.5">
             {risks.length === 0 ? (
               <Empty>Keine Risiken benannt.</Empty>

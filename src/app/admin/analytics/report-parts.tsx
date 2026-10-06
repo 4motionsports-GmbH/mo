@@ -79,15 +79,25 @@ export function DeltaPill({ metric, className }: { metric: Pick<SnapshotMetric, 
 }
 
 /** A headline metric: label, value, change and the previous value. */
-export function MetricTile({ metric, info }: { metric: SnapshotMetric | null; info?: React.ReactNode }) {
+export function MetricTile({
+  metric,
+  label,
+  info,
+}: {
+  metric: SnapshotMetric | null;
+  /** Shorter label for a tight tile (the full label goes into the InfoTip). */
+  label?: string;
+  info?: React.ReactNode;
+}) {
   if (!metric) return null;
   const small = isSmallSample(metric);
+  const explanation = info ?? (label && label !== metric.label ? metric.label : null);
   return (
     <Card className="h-full">
       <CardContent className="p-3">
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <span className="truncate">{metric.label}</span>
-          {info && <InfoTip>{info}</InfoTip>}
+        <div className="flex items-start gap-1 text-xs leading-snug text-muted-foreground">
+          <span className="line-clamp-2">{label ?? metric.label}</span>
+          {explanation && <InfoTip>{explanation}</InfoTip>}
         </div>
         <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <div className="text-xl font-semibold tabular-nums tracking-tight text-foreground">
@@ -129,13 +139,13 @@ export function MetricTable({ metrics }: { metrics: SnapshotMetric[] }) {
                 <span className="ml-1 text-2xs text-warning">n = {num(m.base)}</span>
               )}
             </TableCell>
-            <TableCell align="right" className="font-medium text-foreground">
+            <TableCell align="right" className="whitespace-nowrap font-medium text-foreground">
               {formatMetricValue(m.unit, m.value)}
             </TableCell>
-            <TableCell align="right" className="text-muted-foreground">
+            <TableCell align="right" className="whitespace-nowrap text-muted-foreground">
               {m.previous === null ? "—" : formatMetricValue(m.unit, m.previous)}
             </TableCell>
-            <TableCell align="right">
+            <TableCell align="right" className="whitespace-nowrap">
               <DeltaPill metric={m} />
             </TableCell>
           </TableRow>
@@ -146,7 +156,7 @@ export function MetricTable({ metrics }: { metrics: SnapshotMetric[] }) {
 }
 
 /** A breakdown table of the snapshot (sources, campaigns, call sites, …). */
-export function BreakdownTable({ table, compact = false }: { table: SnapshotTable; compact?: boolean }) {
+export function BreakdownTable({ table }: { table: SnapshotTable }) {
   if (table.rows.length === 0) return null;
   const hasPrevious = table.rows.some((r) => "previous" in r && r.previous);
   return (
@@ -158,7 +168,9 @@ export function BreakdownTable({ table, compact = false }: { table: SnapshotTabl
       <Table className="text-xs [&_td]:tabular-nums">
         <TableHeader>
           <TableRow>
-            <TableHead>{compact ? "" : "Zeile"}</TableHead>
+            <TableHead>
+              <span className="sr-only">Zeile</span>
+            </TableHead>
             {table.columns.map((c) => (
               <TableHead key={c.key} align="right">
                 {c.label}
@@ -176,7 +188,7 @@ export function BreakdownTable({ table, compact = false }: { table: SnapshotTabl
                   const v = (r.values as Record<string, number | null>)[c.key];
                   const p = prev?.[c.key];
                   return (
-                    <TableCell key={c.key} align="right">
+                    <TableCell key={c.key} align="right" className="whitespace-nowrap">
                       <div className="font-medium text-foreground">{formatMetricValue(c.unit as SnapshotMetric["unit"], v)}</div>
                       {hasPrevious && p !== undefined && (
                         <div className="text-2xs text-muted-foreground">VP {formatMetricValue(c.unit as SnapshotMetric["unit"], p)}</div>
@@ -207,7 +219,7 @@ export function FunnelBars({ funnel }: { funnel: SnapshotFunnel }) {
         return (
           <li key={s.label}>
             <div className="flex items-baseline justify-between gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{s.label}</span>
+              <span className="min-w-0 text-muted-foreground">{s.label}</span>
               <span className="shrink-0 tabular-nums">
                 <strong className="font-semibold text-foreground">{num(s.value)}</strong>
                 {conv !== null && <span className="ml-1.5 text-muted-foreground">{ratio(conv, 0)}</span>}

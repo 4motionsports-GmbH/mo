@@ -249,3 +249,14 @@ test("summarizeMoOrderRows: realised money by source, code family and campaign",
   assert.deepEqual(out.byCampaign, { 7: { orders: 1, revenue: 80 }, none: { orders: 1, revenue: 20 } });
   assert.deepEqual(summarizeMoOrderRows(null).bySource, []);
 });
+
+test("Mo's share of the shop revenue is unknown — not above 100 % — when the ledger is incomplete", () => {
+  const raw = structuredClone(SAMPLE_SNAPSHOT_RAW);
+  raw.cur.ledger = { ...raw.cur.ledger, revenueCents: 1_000_000 }; // 10.000 € < 15.221 € Mo revenue
+  const s = buildBusinessSnapshot(raw);
+  assert.equal(snapshotMetric(s, "ledger.moShare").value, null);
+  const cav = s.caveats.find((c) => c.title === "Bestell-Ledger unvollständig");
+  assert.ok(cav);
+  assert.match(cav.detail, /152 %/);
+  assert.ok(!buildBusinessSnapshot(SAMPLE_SNAPSHOT_RAW).caveats.some((c) => c.title === "Bestell-Ledger unvollständig"));
+});

@@ -815,16 +815,24 @@ function inboxSection(raw) {
   };
 }
 
+/** Mo-attributed revenue ÷ the ledger's shop revenue of a period (unguarded). */
+function moShareRaw(x) {
+  const mo = tierTotals(x?.attribution).revenue;
+  const shop = x?.ledger ? (finite(x.ledger.revenueCents) ?? 0) / 100 : null;
+  return safeRate(mo, shop);
+}
+
 function customerSection(raw) {
   const c = raw.cur ?? EMPTY;
   const p = raw.prev ?? EMPTY;
   const base = raw.lifetime?.customerBase;
   const effect = raw.lifetime?.moEffect;
   const ledger = (x) => x?.ledger;
+  // Mo's share of the shop revenue. Above 100 % the ledger is incomplete (the
+  // customer sync was off or behind) — then the share is unknown, not 140 %.
   const moShare = (x) => {
-    const mo = tierTotals(x?.attribution).revenue;
-    const shop = ledger(x) ? (finite(ledger(x).revenueCents) ?? 0) / 100 : null;
-    return safeRate(mo, shop);
+    const r = moShareRaw(x);
+    return r !== null && r > 1 ? null : r;
   };
   const metrics = [
     metric("ledger.orders", "Shop-Bestellungen (alle Kanäle)", "count", ledger(c)?.orders, ledger(p)?.orders),
@@ -1029,7 +1037,7 @@ function costSection(raw) {
     metric("costs.perConsultation", "Ø KI-Kosten je Beratung", "eur", c?.avgCostPerConsultationEur, p?.avgCostPerConsultationEur, { good: "down" }),
     metric("costs.cacheHitRate", "Prompt-Cache-Trefferquote (Chat)", "rate", c?.cache?.hitRate, p?.cache?.hitRate, { base: null }),
     metric("costs.cacheSaved", "Ersparnis durch Prompt-Cache", "eur", c?.cache?.savedEur, p?.cache?.savedEur),
-    metric("costs.roi", "Mo-Umsatz je 1 € KI-Kosten", "ratio", safeRate(moRev, c?.totalSpendEur), safeRate(moRevPrev, p?.totalSpendEur), {
+    metric("costs.roi", "Mo-Umsatz je 1 € KI-Kosten", "eur", safeRate(moRev, c?.totalSpendEur), safeRate(moRevPrev, p?.totalSpendEur), {
       hint: "Mo-zugeordneter Umsatz ÷ KI-Kosten (alle Aufrufe)",
     }),
   ];
@@ -1203,6 +1211,15 @@ function buildCaveats(raw, sections) {
       title: "Geringe Analyse-Abdeckung",
       detail: `Nur ${ratio(coverage, 0)} der Gespräche sind analysiert — Qualitätssignale und Themen sind nicht repräsentativ.`,
       sections: ["quality"],
+    });
+  }
+  const share = moShareRaw(c);
+  if (share !== null && share > 1) {
+    out.push({
+      level: "warning",
+      title: "Bestell-Ledger unvollständig",
+      detail: `Der Bestell-Ledger enthält weniger Umsatz als Mo zugeordnet ist (${ratio(share, 0)}) — „Anteil Mo am Shop-Umsatz“ ist deshalb nicht berechnet, Shop-Umsatz und Wiederkauf sind Untergrenzen.`,
+      sections: ["customers"],
     });
   }
   const sw = raw.switches ?? {};

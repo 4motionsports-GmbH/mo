@@ -323,7 +323,7 @@ export function sampleReportSections() {
     customerKnowledgeMd: "### Wer kauft\n\nVor allem Home-Gym-Aufbauer mit Platzfragen.",
     profiles: [],
     appendix: [],
-    notes: ["Analyse auf 2000 Gespräche begrenzt — 0 nicht analysiert."],
+    notes: ["Analyse auf 2000 Gespräche begrenzt — 14 nicht analysiert."],
     customerBase: null,
     campaigns: [],
   };
