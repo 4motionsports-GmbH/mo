@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildAnalyticsReportPdf, mdToBlocks, stripInline } from "./analytics-report-pdf.mjs";
+import { sampleReportSections } from "./analytics-report.fixtures.mjs";
 
 function sampleSections() {
   return {
@@ -152,4 +153,38 @@ test("the Kundenbasis and Kampagnen chapters render when present", () => {
   assert.ok(text.includes("Kundenbasis"));
   assert.ok(text.includes("Black Friday 2026"));
   assert.ok(text.includes("Chat gestartet 1"));
+});
+
+test("a decision report (v2) leads with the strategist's chapters and every snapshot figure", () => {
+  const pdf = buildAnalyticsReportPdf({
+    title: "Komplettanalyse · 10.08.2026 – 08.09.2026",
+    from: "2026-08-10",
+    to: "2026-09-08",
+    generatedAt: "2026-09-09T06:05:00.000Z",
+    costEur: 0.94,
+    sections: sampleReportSections(),
+  });
+  const text = pdf.toString("latin1");
+  assert.ok(text.startsWith("%PDF-1.4"));
+  for (const heading of [
+    "Auf einen Blick",
+    "Jetzt entscheiden",
+    "Umsatz über Mo",
+    "Engpässe im Funnel",
+    "Seit dem letzten Bericht",
+    "Kunden & Segmente",
+    "Maßnahmen nach Priorität",
+    "Experimente",
+    "Risiken & Datenqualität",
+    "Alle Kennzahlen",
+    "Aggregierte Insights",
+  ]) {
+    assert.ok(text.includes(heading), heading);
+  }
+  assert.ok(text.includes("Rückkehr nach der Shopify-Anmeldung reparieren"), "a recommendation");
+  assert.ok(text.includes("Verantwortlich: Frontend"), "owner label");
+  assert.ok(text.includes("Im Admin: KPIs · Anmelde-Popup"), "admin link label");
+  assert.ok(!/\?{3,}/.test(text), "no run of unencodable characters");
+  // v2 replaces the v1 KPI chapter.
+  assert.ok(!text.includes("Tier · Anonym"), "no legacy KPI chapter");
 });

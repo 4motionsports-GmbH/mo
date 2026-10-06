@@ -63,8 +63,110 @@ import {
   isShopifyCustomerSyncEnabled,
 } from "./platform-flags.mjs";
 
-export type BusinessSnapshot = ReturnType<typeof buildBusinessSnapshot>;
-export type SnapshotSection = BusinessSnapshot["sections"][number];
+// ── The snapshot's shape (built by business-snapshot-core buildBusinessSnapshot) ──
+
+export type MetricUnit = "count" | "eur" | "rate" | "ratio" | "hours" | "score";
+
+/** One figure: value in the period, value in the previous period (null for "Stand heute"). */
+export interface SnapshotMetric {
+  /** Stable key, e.g. "revenue.total" — never renamed (docs/BUSINESS_SNAPSHOT.md). */
+  key: string;
+  label: string;
+  unit: MetricUnit;
+  value: number | null;
+  previous: number | null;
+  /** Denominator of a rate (sample size). */
+  base?: number | null;
+  /** Which direction is good — colours the change. */
+  good: "up" | "down" | "none";
+  hint?: string;
+}
+
+export interface SnapshotTableColumn {
+  key: string;
+  label: string;
+  unit: MetricUnit;
+}
+
+export interface SnapshotTableRow {
+  key: string;
+  label: string;
+  values: Record<string, number | null>;
+  previous?: Record<string, number | null>;
+}
+
+export interface SnapshotTable {
+  key: string;
+  title: string;
+  columns: SnapshotTableColumn[];
+  rows: SnapshotTableRow[];
+  note?: string;
+}
+
+export type SnapshotSectionKey =
+  | "revenue"
+  | "chat"
+  | "signin"
+  | "consent"
+  | "campaigns"
+  | "customers"
+  | "inbox"
+  | "quality"
+  | "costs";
+
+export interface SnapshotSection {
+  key: SnapshotSectionKey;
+  title: string;
+  scope: "period" | "lifetime";
+  /** Admin link key (business-snapshot-core ADMIN_LINKS). */
+  link: string;
+  metrics: SnapshotMetric[];
+  tables: SnapshotTable[];
+  /** Release notes for the period (kpi-releases releaseNotesFor). */
+  notes: string[];
+  /** Release notes for the previous period — comparison only with care. */
+  previousNotes: string[];
+}
+
+export interface SnapshotFunnel {
+  key: string;
+  title: string;
+  link: string;
+  steps: Array<{ label: string; value: number | null; previous: number | null }>;
+}
+
+export interface SnapshotCaveat {
+  level: "info" | "warning";
+  title: string;
+  detail: string;
+  sections?: string[];
+}
+
+export interface SnapshotSwitch {
+  key: string;
+  label: string;
+  env: string | null;
+  value: boolean | number;
+}
+
+export interface SnapshotPeriod {
+  from: string;
+  to: string;
+  days: number;
+  label: string;
+}
+
+export interface BusinessSnapshot {
+  version: number;
+  generatedAt: string | null;
+  period: SnapshotPeriod | null;
+  previous: SnapshotPeriod | null;
+  sections: SnapshotSection[];
+  funnels: SnapshotFunnel[];
+  caveats: SnapshotCaveat[];
+  switches: SnapshotSwitch[];
+  releases: Array<{ date: string; key: string; title: string }>;
+}
 
 export interface SnapshotOptions {
   /** Also check Mo codes at Shopify (current period only, KPI cache). Default false. */
@@ -473,9 +575,9 @@ export async function getBusinessSnapshot(
 ): Promise<BusinessSnapshot> {
   try {
     const raw = await collectBusinessSnapshotRaw(range, opts, sql);
-    return buildBusinessSnapshot(raw);
+    return buildBusinessSnapshot(raw) as BusinessSnapshot;
   } catch (err) {
     reportError(err, { route: "lib/business-snapshot", phase: "build" });
-    return buildBusinessSnapshot({ period: describePeriod(range), generatedAt: (opts.now ?? new Date()).toISOString() });
+    return buildBusinessSnapshot({ period: describePeriod(range), generatedAt: (opts.now ?? new Date()).toISOString() }) as BusinessSnapshot;
   }
 }

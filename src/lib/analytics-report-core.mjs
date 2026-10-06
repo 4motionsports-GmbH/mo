@@ -200,6 +200,31 @@ function n(v) {
   return Number.isFinite(x) && x > 0 ? x : 0;
 }
 
+/** Estimated USD cost of the two strategist passes alone (shown as its own line). */
+export function estimateStrategistCostUsd(prices) {
+  const unit = (key) =>
+    usdCostForUsage({ model: EST[key].model, inputTokens: EST[key].in, outputTokens: EST[key].out }, prices);
+  return unit("decisions") + unit("plan");
+}
+
+/**
+ * Rough wall-clock minutes of a run, as a [low, high] range for the generator
+ * panel: analysis batches of 12 (~20–45 s each), persona pairs, the rollups, one
+ * Opus profile per customer, and the two strategist passes (1.5–4 min each at
+ * effort high). Shown so nobody closes the tab after a minute.
+ * @returns {[number, number]}
+ */
+export function estimateReportMinutes(input) {
+  const conversations = n(input?.conversationsToAnalyze);
+  const personas = n(input?.personaCount);
+  const customers = input?.includePerCustomer ? n(input?.customerCount) : 0;
+  const analyzeSteps = Math.ceil(conversations / 12);
+  const personaSteps = Math.ceil(personas / 2);
+  const low = analyzeSteps * 0.35 + personaSteps * 0.15 + 1 + customers * 0.6 + 0.2 + 2 * 1.5;
+  const high = analyzeSteps * 0.75 + personaSteps * 0.4 + 2.5 + customers * 1.2 + 0.5 + 2 * 4;
+  return [Math.max(1, Math.round(low)), Math.max(2, Math.round(high))];
+}
+
 /**
  * Estimated USD cost of a full run. Inputs are the counts known up front:
  * conversations still to analyse, distinct personas, and (when per-customer is

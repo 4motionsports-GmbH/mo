@@ -27,7 +27,6 @@ import {
   totalTokens,
   normalizeOptions,
 } from "./analytics-report-core.mjs";
-import type { assembleDecision, buildReportComparison } from "./analytics-report-synthesis-core.mjs";
 import type { BusinessSnapshot } from "./business-snapshot";
 import {
   classifyTier,
@@ -132,10 +131,82 @@ export interface ReportSections {
   comparison?: ReportComparison | null;
 }
 
-/** The stored decision layer (analytics-report-synthesis-core assembleDecision). */
-export type ReportDecision = ReturnType<typeof assembleDecision>;
-/** The comparison with the previous report (analytics-report-synthesis-core buildReportComparison). */
-export type ReportComparison = NonNullable<ReturnType<typeof buildReportComparison>>;
+// ── The decision layer (sections v2) — shapes of analytics-report-synthesis-core ──
+
+export type ReportOwner = "operator" | "developer" | "frontend" | "lawyer";
+export type ReportLevel = "hoch" | "mittel" | "niedrig";
+export type ReportEffortLevel = "klein" | "mittel" | "gross";
+
+/** The strategist's result as stored (assembleDecision): both passes, normalised. */
+export interface ReportDecision {
+  /** complete = both passes; partial = one failed; unavailable = none ran. */
+  status: "complete" | "partial" | "unavailable";
+  model: string | null;
+  efforts: { decisions: string | null; plan: string | null };
+  generatedAt: string | null;
+  notes: string[];
+  // Pass 1 — decisions
+  headline: string;
+  summary: string;
+  decisions: Array<{
+    title: string;
+    rationale: string;
+    owner: ReportOwner;
+    impact: ReportLevel;
+    confidence: ReportLevel;
+    metric: string;
+    link: string;
+  }>;
+  revenue: { summary: string; drivers: Array<{ title: string; detail: string }> };
+  bottlenecks: Array<{ stage: string; finding: string; evidence: string; impact: ReportLevel; link: string }>;
+  changes: {
+    summary: string;
+    items: Array<{ title: string; detail: string; direction: "besser" | "schlechter" | "gleich" | "unklar" }>;
+  };
+  segments: Array<{ segment: string; insight: string; action: string; link: string }>;
+  campaigns: { summary: string; items: Array<{ campaign: string; insight: string; action: string }> };
+  // Pass 2 — plan
+  recommendations: Array<{
+    title: string;
+    why: string;
+    action: string;
+    expectedImpact: string;
+    impact: ReportLevel;
+    effort: ReportEffortLevel;
+    confidence: ReportLevel;
+    owner: ReportOwner;
+    successMetric: string;
+    link: string;
+  }>;
+  experiments: Array<{
+    title: string;
+    hypothesis: string;
+    design: string;
+    metric: string;
+    duration: string;
+    successCriterion: string;
+    owner: ReportOwner;
+  }>;
+  risks: Array<{ title: string; detail: string; severity: ReportLevel; mitigation: string; owner: ReportOwner }>;
+  dataQuality: Array<{ title: string; detail: string }>;
+}
+
+/** The comparison with the previously stored report (buildReportComparison). */
+export interface ReportComparison {
+  previousReportId: number;
+  title: string;
+  from: string;
+  to: string;
+  completedAt: string | null;
+  /** snapshot = both reports carry a snapshot; legacy = the KPIs every report has. */
+  basis: "snapshot" | "legacy";
+  sameLength: boolean;
+  /** Counts and amounts are per day (the periods differ in length). */
+  perDay: boolean;
+  metrics: Array<{ key: string; label: string; unit: string; now: number | null; then: number | null; good: string }>;
+  previousDecisions: Array<{ title: string; owner: string | null }>;
+  previousRecommendations: Array<{ title: string; owner: string | null; successMetric: string }>;
+}
 
 export interface ReportCustomerBase {
   total: number;
@@ -465,6 +536,27 @@ export async function getPreviousCompletedReport(
     };
   } catch (err) {
     reportError(err, { route: "lib/analytics-report-store", phase: "previous" });
+    return null;
+  }
+}
+
+/** The newest completed report (id, title, period) — what a new run will compare with. */
+export async function getLatestCompletedReportMeta(
+  sql: Sql | null = getSql()
+): Promise<{ id: number; title: string; from: string; to: string } | null> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT id, title, date_from, date_to
+        FROM analytics_reports
+       WHERE status = 'complete' AND sections IS NOT NULL
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+    `) as Array<Record<string, unknown>>;
+    const r = rows[0];
+    return r ? { id: Number(r.id), title: String(r.title ?? ""), from: ymd(r.date_from), to: ymd(r.date_to) } : null;
+  } catch (err) {
+    reportError(err, { route: "lib/analytics-report-store", phase: "latestCompleted" });
     return null;
   }
 }

@@ -5,8 +5,6 @@ import {
   REPORT_SECTIONS_VERSION,
   OWNERS,
   LIMITS,
-  decisionsSchema,
-  planSchema,
   normalizeDecisions,
   normalizePlan,
   assembleDecision,
@@ -23,12 +21,12 @@ import {
   buildPlanPrompt,
   STRATEGIST_SYSTEM,
 } from "./analytics-report-synthesis-core.mjs";
+import { decisionsSchema, planSchema } from "./analytics-report-synthesis-schemas.mjs";
 import { buildBusinessSnapshot } from "./business-snapshot-core.mjs";
 import { SAMPLE_SNAPSHOT_RAW } from "./business-snapshot.fixtures.mjs";
 import {
   SAMPLE_DECISIONS_OUTPUT,
   SAMPLE_PLAN_OUTPUT,
-  SAMPLE_PREVIOUS_REPORT,
   sampleReportSections,
 } from "./analytics-report.fixtures.mjs";
 import { z } from "zod";

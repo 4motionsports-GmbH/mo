@@ -2,9 +2,11 @@
 //
 // Cheap, ZERO-token cost preview for the "Komplettanalyse" generator dialog: how
 // many conversations still need analysing, how many persona groups and (when
-// per-customer knowledge is on) how many active customers there are, and the
-// estimated EUR cost of the full run. Pure DB counts + the JS price table — the
-// operator sees "ca. €X" before confirming a deliberately expensive run.
+// per-customer knowledge is on) how many active customers there are, the
+// estimated EUR cost of the full run (and the strategist share of it), the
+// expected duration and the stored report the new one will be compared with.
+// Pure DB counts + the JS price table — the operator sees "ca. €X" before
+// confirming a deliberately expensive run.
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { isDbConfigured } from "@/lib/db";
@@ -13,9 +15,15 @@ import {
   getPersonaLabelsInRange,
   getActiveCustomerIdsInRange,
   countConversationsInRange,
+  getLatestCompletedReportMeta,
 } from "@/lib/analytics-report-store";
 import { countUnanalyzedInRange } from "@/lib/admin-conversations";
-import { normalizeOptions, estimateReportCostUsd } from "@/lib/analytics-report-core.mjs";
+import {
+  normalizeOptions,
+  estimateReportCostUsd,
+  estimateReportMinutes,
+  estimateStrategistCostUsd,
+} from "@/lib/analytics-report-core.mjs";
 import { loadModelPrices, usdEurRate, usdToEur } from "@/lib/ai-pricing.mjs";
 
 export const maxDuration = 30;
@@ -50,24 +58,25 @@ export async function POST(req: Request) {
   const resolved = resolveKpiRange({ kpiRange: range, kpiFrom: from, kpiTo: to });
   const options = normalizeOptions({ includePerCustomer });
 
-  const [conversations, unanalyzed, personas] = await Promise.all([
+  const [conversations, unanalyzed, personas, previousReport] = await Promise.all([
     countConversationsInRange(resolved.from, resolved.to),
     countUnanalyzedInRange(resolved.from, resolved.to),
     getPersonaLabelsInRange(resolved.from, resolved.to),
+    getLatestCompletedReportMeta(),
   ]);
   const customerIds = includePerCustomer
     ? await getActiveCustomerIdsInRange(resolved.from, resolved.to, options.maxProfiles)
     : [];
 
-  const estUsd = estimateReportCostUsd(
-    {
-      conversationsToAnalyze: unanalyzed,
-      personaCount: personas.length,
-      customerCount: customerIds.length,
-      includePerCustomer,
-    },
-    loadModelPrices()
-  );
+  const counts = {
+    conversationsToAnalyze: unanalyzed,
+    personaCount: personas.length,
+    customerCount: customerIds.length,
+    includePerCustomer,
+  };
+  const prices = loadModelPrices();
+  const rate = usdEurRate();
+  const [minutesLow, minutesHigh] = estimateReportMinutes(counts);
 
   return adminJson({
     range: { from: resolved.from, to: resolved.to, label: resolved.label, preset: resolved.preset },
@@ -75,6 +84,9 @@ export async function POST(req: Request) {
     unanalyzed,
     personaCount: personas.length,
     customerCount: customerIds.length,
-    estimateEur: usdToEur(estUsd, usdEurRate()),
+    estimateEur: usdToEur(estimateReportCostUsd(counts, prices), rate),
+    strategistEur: usdToEur(estimateStrategistCostUsd(prices), rate),
+    minutes: { low: minutesLow, high: minutesHigh },
+    previousReport,
   });
 }

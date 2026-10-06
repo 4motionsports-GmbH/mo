@@ -1,8 +1,11 @@
 // "Komplettanalyse" → single downloadable PDF. Renders the full assembled report
-// (KPIs, spend, category/quality distributions, the aggregate insights narrative,
-// the persona breakdown with top-questions, the aggregate + per-customer customer
-// knowledge, and the per-conversation appendix) as ONE flowed, paginated A4
-// document for the team to print / circulate.
+// as ONE flowed, paginated A4 document for the team to print / circulate. A
+// decision report (sections v2) leads with the strategist's part — at a glance,
+// decisions, revenue through Mo, bottlenecks, changes since the previous
+// report, customers, campaigns, recommendations, experiments, risks and data
+// caveats — followed by every business-snapshot figure; older reports (v1)
+// keep their KPI / Kundenbasis / Kampagnen chapters. Both end with the analysis
+// chapters (distributions, insights, personas, customer knowledge, appendix).
 //
 // Dependency-free (shared lib/pdf-core, same stack as the physical-letter and the
 // signed-in summary PDFs): no headless browser / PDF dependency on Vercel. Pure +
@@ -21,6 +24,8 @@ import {
   footerOp,
   assemblePdf,
 } from "./pdf-core.mjs";
+import { adminLinkFor, formatMetricDelta, formatMetricValue, flattenSnapshot, HEADLINE_METRICS } from "./business-snapshot-core.mjs";
+import { EFFORT_LABELS, OWNER_LABELS, isDecisionReport } from "./analytics-report-synthesis-core.mjs";
 
 const CONTENT_TOP_Y = PAGE_H - 120; // below the letterhead
 const CONTENT_BOTTOM_Y = 56; // above the footer
@@ -141,7 +146,9 @@ function makeFlow() {
     y -= 4;
     content += textOp("F2", MARGIN_X, y, 14, text, ACCENT_RGB);
     y -= 20;
-    content += ruleOp(MARGIN_X, CONTENT_RIGHT_X, y + 6, 0.6, "0.8 0.8 0.8");
+    // Rule between heading and body: below the heading's descenders, above the
+    // cap height of the first body line (y is that line's baseline).
+    content += ruleOp(MARGIN_X, CONTENT_RIGHT_X, y + 13, 0.6, "0.8 0.8 0.8");
   };
 
   const subHeading = (text) => {
@@ -250,6 +257,284 @@ export function buildAnalyticsReportPdf(input) {
   }
   flow.gap();
 
+  if (isDecisionReport(s)) renderDecisionReport(flow, s);
+  else renderLegacyKpis(flow, s);
+  renderFoundations(flow, s);
+
+  return flow.finish();
+}
+
+// ── The decision report (sections v2) ─────────────────────────────────────────
+
+const PDF_REPLACEMENTS = [
+  [/→/g, "->"],
+  [/←/g, "<-"],
+  [/≥/g, ">="],
+  [/≤/g, "<="],
+  [/≈/g, "~"],
+  [/−/g, "-"],
+  [/ /g, " "],
+];
+
+/** Typographic symbols the base-14 fonts lack → ASCII stand-ins. */
+function pdfText(v) {
+  let out = String(v ?? "");
+  for (const [re, to] of PDF_REPLACEMENTS) out = out.replace(re, to);
+  return out;
+}
+
+const LEVEL = { hoch: "hoch", mittel: "mittel", niedrig: "niedrig" };
+const DIRECTION = { besser: "besser", schlechter: "schlechter", gleich: "unverändert", unklar: "unklar" };
+
+function metricLine(m, previousWord = "Vorperiode") {
+  const value = formatMetricValue(m.unit, m.value);
+  if (m.previous === null || m.previous === undefined) return `${m.label}: ${value} (Stand heute)`;
+  const d = formatMetricDelta(m);
+  return `${m.label}: ${value}  (${previousWord} ${formatMetricValue(m.unit, m.previous)}${d ? `, ${d}` : ""})`;
+}
+
+function linkText(target, range) {
+  const link = adminLinkFor(target, range);
+  return link ? `Im Admin: ${link.label}` : null;
+}
+
+function renderTableLines(flow, t) {
+  if (!t || !Array.isArray(t.rows) || t.rows.length === 0) return;
+  flow.line(pdfText(t.title), { font: "F2", size: 10, leading: 14 });
+  const single = t.columns.length === 1;
+  for (const row of t.rows) {
+    const cells = t.columns.map((c) => {
+      const v = formatMetricValue(c.unit, row.values?.[c.key]);
+      const p = row.previous ? row.previous[c.key] : undefined;
+      const head = single ? v : `${c.label} ${v}`;
+      return p !== undefined && p !== null ? `${head} (VP ${formatMetricValue(c.unit, p)})` : head;
+    });
+    flow.bullet(pdfText(`${row.label}: ${cells.join(" · ")}`), { size: 9, leading: 12.5 });
+  }
+  flow.gap(0.3);
+}
+
+function renderDecisionReport(flow, s) {
+  const d = s.decision ?? {};
+  const snap = s.snapshot ?? null;
+  const range = snap?.period ? { from: snap.period.from, to: snap.period.to } : null;
+  const flat = snap ? flattenSnapshot(snap) : {};
+  const muted = { color: MUTED_RGB, size: 9, leading: 13, maxChars: 104 };
+  const small = { size: 9.5, leading: 13, maxChars: 100 };
+  const bold = { font: "F2", size: 10.5, leading: 14, maxChars: 86 };
+
+  // ── Auf einen Blick ──
+  flow.sectionHeading("Auf einen Blick");
+  if (snap?.period) {
+    flow.line(pdfText(`Zeitraum ${snap.period.label} · verglichen mit ${snap.previous?.label ?? "—"}`), muted);
+  }
+  if (d.headline) {
+    flow.gap(0.2);
+    flow.paragraph(pdfText(d.headline), { font: "F2", size: 11.5, leading: 15.5, maxChars: 84 });
+  }
+  if (d.summary) {
+    flow.gap(0.2);
+    flow.paragraph(pdfText(d.summary));
+  }
+  if (!d.headline && !d.summary) {
+    flow.paragraph("Keine Synthese verfügbar — die Kennzahlen unten sind vollständig.", { color: MUTED_RGB });
+  }
+  for (const n of Array.isArray(d.notes) ? d.notes : []) {
+    flow.paragraph(pdfText(`Hinweis: ${n}`), { color: MUTED_RGB, size: 8.5, leading: 12, maxChars: 110 });
+  }
+  const headline = HEADLINE_METRICS.map((k) => flat[k]).filter(Boolean);
+  if (headline.length) {
+    flow.gap(0.4);
+    for (const m of headline) flow.bullet(pdfText(metricLine(m)), small);
+  }
+  flow.gap();
+
+  // ── Jetzt entscheiden ──
+  flow.sectionHeading("Jetzt entscheiden");
+  const decisions = Array.isArray(d.decisions) ? d.decisions : [];
+  if (decisions.length === 0) flow.paragraph("Keine Entscheidungen in diesem Bericht.", { color: MUTED_RGB });
+  decisions.forEach((x, i) => {
+    flow.paragraph(pdfText(`${i + 1}. ${x.title}`), bold);
+    if (x.rationale) flow.paragraph(pdfText(x.rationale), small);
+    const meta = [
+      `Verantwortlich: ${OWNER_LABELS[x.owner] ?? x.owner}`,
+      `Wirkung ${LEVEL[x.impact] ?? x.impact}`,
+      `Konfidenz ${LEVEL[x.confidence] ?? x.confidence}`,
+      linkText(x.link, range),
+    ].filter(Boolean);
+    flow.paragraph(pdfText(meta.join(" · ")), muted);
+    if (x.metric) flow.paragraph(pdfText(`Erfolg: ${x.metric}`), muted);
+    flow.gap(0.4);
+  });
+  flow.gap(0.4);
+
+  // ── Umsatz über Mo ──
+  flow.sectionHeading("Umsatz über Mo");
+  if (d.revenue?.summary) flow.paragraph(pdfText(d.revenue.summary));
+  for (const dr of d.revenue?.drivers ?? []) flow.bullet(pdfText(`${dr.title}: ${dr.detail}`), small);
+  const revenue = (snap?.sections ?? []).find((x) => x.key === "revenue");
+  if (revenue) {
+    flow.gap(0.3);
+    for (const t of revenue.tables ?? []) renderTableLines(flow, t);
+  }
+  flow.gap();
+
+  // ── Engpässe ──
+  flow.sectionHeading("Engpässe im Funnel");
+  for (const b of d.bottlenecks ?? []) {
+    flow.paragraph(pdfText(b.stage), bold);
+    if (b.finding) flow.paragraph(pdfText(b.finding), small);
+    flow.paragraph(pdfText([b.evidence, `Wirkung ${LEVEL[b.impact] ?? b.impact}`, linkText(b.link, range)].filter(Boolean).join(" · ")), muted);
+    flow.gap(0.3);
+  }
+  for (const f of snap?.funnels ?? []) {
+    const steps = f.steps
+      .map((st) => `${st.label} ${formatMetricValue("count", st.value)} (VP ${formatMetricValue("count", st.previous)})`)
+      .join(" -> ");
+    flow.bullet(pdfText(`${f.title}: ${steps}`), { size: 9, leading: 12.5 });
+  }
+  flow.gap();
+
+  // ── Seit dem letzten Bericht ──
+  flow.sectionHeading("Seit dem letzten Bericht");
+  const c = s.comparison ?? null;
+  if (c) {
+    flow.paragraph(
+      pdfText(`Verglichen mit „${c.title || `Bericht #${c.previousReportId}`}“ (${fmtDate(c.from)} – ${fmtDate(c.to)})${c.perDay ? " · Mengen je Tag" : ""}`),
+      muted
+    );
+  }
+  if (d.changes?.summary) flow.paragraph(pdfText(d.changes.summary));
+  for (const it of d.changes?.items ?? []) {
+    flow.bullet(pdfText(`${it.title} (${DIRECTION[it.direction] ?? it.direction}): ${it.detail}`), small);
+  }
+  if (c && c.metrics.length) {
+    flow.gap(0.3);
+    for (const m of c.metrics) {
+      flow.bullet(pdfText(metricLine({ label: m.label, unit: m.unit, value: m.now, previous: m.then, good: m.good }, "damals")), {
+        size: 9,
+        leading: 12.5,
+      });
+    }
+  }
+  if (!c && !d.changes?.summary) flow.paragraph("Kein früherer Bericht gespeichert.", { color: MUTED_RGB });
+  flow.gap();
+
+  // ── Kunden & Segmente ──
+  flow.sectionHeading("Kunden & Segmente");
+  for (const seg of d.segments ?? []) {
+    flow.paragraph(pdfText(seg.segment), bold);
+    if (seg.insight) flow.paragraph(pdfText(seg.insight), small);
+    if (seg.action) flow.paragraph(pdfText(`Folgerung: ${seg.action}`), muted);
+    flow.gap(0.3);
+  }
+  const customers = (snap?.sections ?? []).find((x) => x.key === "customers");
+  const segTable = customers?.tables?.find((t) => t.key === "customers.segments");
+  if (segTable) renderTableLines(flow, segTable);
+  flow.gap();
+
+  // ── Kampagnen ──
+  flow.sectionHeading("Kampagnen");
+  if (d.campaigns?.summary) flow.paragraph(pdfText(d.campaigns.summary));
+  for (const it of d.campaigns?.items ?? []) flow.bullet(pdfText(`${it.campaign}: ${it.insight} Folgerung: ${it.action}`), small);
+  const campaigns = (snap?.sections ?? []).find((x) => x.key === "campaigns");
+  const campTable = campaigns?.tables?.find((t) => t.key === "campaigns.byCampaign");
+  if (campTable) {
+    flow.gap(0.3);
+    renderTableLines(flow, campTable);
+  }
+  flow.gap();
+
+  // ── Maßnahmen ──
+  flow.sectionHeading("Maßnahmen nach Priorität");
+  const recs = Array.isArray(d.recommendations) ? d.recommendations : [];
+  if (recs.length === 0) flow.paragraph("Keine Maßnahmen in diesem Bericht.", { color: MUTED_RGB });
+  recs.forEach((r, i) => {
+    flow.paragraph(pdfText(`#${i + 1} ${r.title}`), bold);
+    flow.line(
+      pdfText(
+        [
+          `Wirkung ${LEVEL[r.impact] ?? r.impact}`,
+          `Aufwand ${EFFORT_LABELS[r.effort] ?? r.effort}`,
+          `Konfidenz ${LEVEL[r.confidence] ?? r.confidence}`,
+          `Verantwortlich: ${OWNER_LABELS[r.owner] ?? r.owner}`,
+        ].join(" · ")
+      ),
+      muted
+    );
+    if (r.why) flow.paragraph(pdfText(`Warum: ${r.why}`), small);
+    if (r.action) flow.paragraph(pdfText(`Erste Schritte: ${r.action}`), small);
+    if (r.expectedImpact) flow.paragraph(pdfText(`Erwartete Wirkung: ${r.expectedImpact}`), small);
+    if (r.successMetric) flow.paragraph(pdfText(`Erfolgsmessung: ${r.successMetric}`), small);
+    const l = linkText(r.link, range);
+    if (l) flow.line(pdfText(l), muted);
+    flow.gap(0.4);
+  });
+  flow.gap(0.4);
+
+  // ── Experimente ──
+  flow.sectionHeading("Experimente");
+  const experiments = Array.isArray(d.experiments) ? d.experiments : [];
+  if (experiments.length === 0) flow.paragraph("Keine Experimente vorgeschlagen.", { color: MUTED_RGB });
+  for (const e of experiments) {
+    flow.paragraph(pdfText(e.title), bold);
+    for (const [label, v] of [
+      ["Hypothese", e.hypothesis],
+      ["Aufbau", e.design],
+      ["Kennzahl", e.metric],
+      ["Laufzeit", e.duration],
+      ["Erfolg, wenn", e.successCriterion],
+    ]) {
+      if (v) flow.paragraph(pdfText(`${label}: ${v}`), small);
+    }
+    flow.line(pdfText(`Verantwortlich: ${OWNER_LABELS[e.owner] ?? e.owner}`), muted);
+    flow.gap(0.4);
+  }
+  flow.gap(0.4);
+
+  // ── Risiken & Datenqualität ──
+  flow.sectionHeading("Risiken & Datenqualität");
+  for (const r of d.risks ?? []) {
+    flow.paragraph(pdfText(`${r.title} (Schwere ${LEVEL[r.severity] ?? r.severity})`), bold);
+    if (r.detail) flow.paragraph(pdfText(r.detail), small);
+    if (r.mitigation) flow.paragraph(pdfText(`Gegenmaßnahme: ${r.mitigation}`), muted);
+    flow.gap(0.3);
+  }
+  const caveats = [...(snap?.caveats ?? []), ...(d.dataQuality ?? [])];
+  if (caveats.length) {
+    flow.subHeading("Messhinweise");
+    for (const cv of caveats) flow.bullet(pdfText(`${cv.title}: ${cv.detail}`), { size: 9, leading: 12.5 });
+  }
+  if ((snap?.switches ?? []).length) {
+    flow.gap(0.3);
+    flow.line("Schalter (Stand heute):", { font: "F2", size: 9.5, leading: 13 });
+    flow.paragraph(
+      pdfText(snap.switches.map((x) => `${x.label}: ${typeof x.value === "number" ? x.value : x.value ? "an" : "aus"}`).join(" · ")),
+      { size: 9, leading: 12.5 }
+    );
+  }
+  flow.gap();
+
+  // ── Alle Kennzahlen ──
+  if (snap) {
+    flow.sectionHeading("Alle Kennzahlen");
+    flow.line("Jede Kennzahl mit Vorperiode und Veränderung; VP = Vorperiode.", muted);
+    for (const sec of snap.sections ?? []) {
+      flow.subHeading(pdfText(sec.title));
+      for (const m of sec.metrics ?? []) {
+        if (m.value === null && m.previous === null) continue;
+        flow.bullet(pdfText(metricLine(m)), { size: 9, leading: 12.5 });
+      }
+      for (const t of sec.tables ?? []) {
+        if (t.key === "revenue.tiers") continue;
+        renderTableLines(flow, t);
+      }
+    }
+    flow.gap();
+  }
+}
+
+function renderLegacyKpis(flow, s) {
   // ── Kennzahlen ──
   const k = s.kpis || {};
   const tiers = k.tiers || {};
@@ -312,6 +597,9 @@ export function buildAnalyticsReportPdf(input) {
     flow.gap();
   }
 
+}
+
+function renderFoundations(flow, s) {
   // ── Verteilung ──
   flow.sectionHeading("Verteilung der Gespräche");
   flow.subHeading("Kategorien");
@@ -403,7 +691,6 @@ export function buildAnalyticsReportPdf(input) {
     });
   }
 
-  return flow.finish();
 }
 
 function renderDistribution(flow, rows) {

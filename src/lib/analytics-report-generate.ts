@@ -53,6 +53,7 @@ import {
   type ReportUsage,
   type ReportProfileSection,
   type ReportComparison,
+  type ReportDecision,
 } from "./analytics-report-store";
 import { getBusinessSnapshot, type BusinessSnapshot } from "./business-snapshot";
 import { runStrategistObject } from "./strategist-call";
@@ -61,16 +62,15 @@ import {
   buildDecisionsPrompt,
   buildPlanPrompt,
   buildReportComparison,
-  decisionsSchema,
   normalizeDecisions,
   normalizePlan,
-  planSchema,
   strategistEffortForAttempt,
   DECISIONS_ANSWER_TOKENS,
   PLAN_ANSWER_TOKENS,
   REPORT_SECTIONS_VERSION,
   STRATEGIST_TIMEOUT_MS,
 } from "./analytics-report-synthesis-core.mjs";
+import { decisionsSchema, planSchema } from "./analytics-report-synthesis-schemas.mjs";
 import {
   getAdminConversationDetail,
   saveConversationAnalysis,
@@ -116,8 +116,8 @@ interface ReportScratch {
   profiles?: ReportProfileSection[];
   snapshot?: BusinessSnapshot;
   comparison?: ReportComparison | null;
-  decisions?: ReturnType<typeof normalizeDecisions>;
-  plan?: ReturnType<typeof normalizePlan>;
+  decisions?: unknown;
+  plan?: unknown;
   strategist?: StrategistScratch;
 }
 
@@ -772,6 +772,7 @@ async function stepAssemble(report: AnalyticsReportDetail): Promise<void> {
         version: REPORT_SECTIONS_VERSION,
         snapshot: scratch.snapshot,
         comparison: scratch.comparison ?? null,
+        // The normalisers guarantee the ReportDecision shape.
         decision: assembleDecision({
           decisions: scratch.decisions ?? null,
           plan: scratch.plan ?? null,
@@ -782,7 +783,7 @@ async function stepAssemble(report: AnalyticsReportDetail): Promise<void> {
           },
           notes: scratch.strategist?.notes ?? [],
           generatedAt: new Date().toISOString(),
-        }),
+        }) as ReportDecision,
       }
     : {};
 

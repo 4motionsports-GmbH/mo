@@ -165,3 +165,15 @@ test("the estimate always includes the two strategist passes", () => {
   assert.ok(base > opusOnly, "strategist passes are part of every run");
   assert.ok(base < opusOnly + 0.5, "the rest stays small");
 });
+
+test("the strategist share of the estimate and the duration range", async () => {
+  const { estimateStrategistCostUsd, estimateReportMinutes } = await import("./analytics-report-core.mjs");
+  const opus = estimateStrategistCostUsd(PRICES);
+  assert.equal(Math.round(opus * 1000), Math.round(((28000 + 31000) * 4 + (12000 + 13000) * 20) / 1e3));
+  const [low, high] = estimateReportMinutes({ conversationsToAnalyze: 0, personaCount: 0 });
+  assert.ok(low >= 1 && high > low, "even an empty run takes the two strategist passes");
+  const [bigLow, bigHigh] = estimateReportMinutes({ conversationsToAnalyze: 240, personaCount: 6, customerCount: 10, includePerCustomer: true });
+  assert.ok(bigLow > low && bigHigh > high);
+  const [noProfiles] = estimateReportMinutes({ conversationsToAnalyze: 240, personaCount: 6, customerCount: 10, includePerCustomer: false });
+  assert.ok(noProfiles < bigLow, "profiles only count when requested");
+});
