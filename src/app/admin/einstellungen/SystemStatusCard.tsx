@@ -3,6 +3,7 @@
 // only); no secret ever reaches the browser.
 
 import { Activity } from "lucide-react";
+import { num } from "@/lib/admin-format.mjs";
 import { Card, CardContent, CardHeader, CardTitle, InfoTip, StatusBadge } from "../ui";
 import type { SystemStatus } from "./types";
 
@@ -16,6 +17,8 @@ interface Row {
   states?: [string, string];
   /** Tone when off — a missing integration is neutral, a closed gate is a warning. */
   offTone?: "neutral" | "warning";
+  /** Explanation behind an InfoTip next to the label. */
+  info?: string;
 }
 
 export function SystemStatusCard({ status }: { status: SystemStatus }) {
@@ -77,6 +80,37 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
     },
     { label: "Bestellstatus im Chat", env: "CHAT_ORDER_STATUS_ENABLED", on: f.chatOrderStatus, states: onOff },
     {
+      label: "Seitenkontext im Chat",
+      env: "CHAT_PAGE_CONTEXT_ENABLED · CHAT_PAGE_CONTEXT_HOLDOUT_PCT",
+      on: f.pageContext,
+      value: f.pageContextHoldoutPct > 0 ? `An · ${num(f.pageContextHoldoutPct)} % Kontrollgruppe` : undefined,
+      states: onOff,
+      info: "Mo nutzt bei einer getippten oder gesprochenen Frage auf einer Produkt- oder Kollektionsseite die Seite, die das Widget mitschickt. Ein Teil der Sitzungen (CHAT_PAGE_CONTEXT_HOLDOUT_PCT, höchstens 50 %) bekommt den Produktkontext absichtlich nicht — die Kontrollgruppe unter KPIs → „Seitenkontext auf Produktseiten“. Aus: der Kontext wird nur gemessen, nicht genutzt.",
+    },
+    {
+      label: "Shop-Login-Erkennung (App Proxy)",
+      env: "APP_PROXY_SIGNIN_ENABLED · APP_PROXY_SIGNIN_MAX_AGE_HOURS",
+      on: f.appProxySignin,
+      value: f.appProxySigninMaxAgeHours > 0 ? `An · ${num(f.appProxySigninMaxAgeHours)} h` : "An · nur mit Chat-Token",
+      states: onOff,
+      info: "Wer im Shop angemeldet ist, wird beim Öffnen des Chats erkannt und ohne „Anmelden“ im Chat angemeldet (Einmal-Code über die App Proxy). Ohne Chat-Token zählt die Shop-Anmeldung so viele Stunden wie APP_PROXY_SIGNIN_MAX_AGE_HOURS, in jedem neuen Tab erneuert (0 = nur mit Chat-Token). Aus ist der Notschalter: niemand wird über den Shop angemeldet, gemessen wird weiter.",
+    },
+    {
+      label: "Bestell-Zuordnung ab letzter Beratung",
+      env: "MO_ATTRIBUTION_SESSION_ANCHOR",
+      on: f.attributionSessionAnchor,
+      states: onOff,
+      info: "Das Zuordnungsfenster einer Widget-Markierung zählt ab der letzten Produktberatung auf dem Gerät statt ab ihrer Erstellung; die Markierung bleibt gespeichert, solange das Gerät weiter berät (höchstens KPI_RETENTION_DAYS ab Erstellung). Aus: Fenster ab der Erstellung der Markierung.",
+    },
+    {
+      label: "Einwilligungs-Popup: Varianten",
+      env: "CONSENT_SIGNIN_VARIANTS",
+      on: f.consentSigninVariants.length > 1,
+      value: `A/B-Test: ${f.consentSigninVariants.join(", ")}`,
+      states: ["A/B-Test", `Nur Variante „${f.consentSigninVariants[0] ?? "a"}“`],
+      info: "Welche Rahmen-Varianten (Überschrift und Vorteile über dem Einwilligungstext) das Einwilligungs-Popup nach der Anmeldung zeigt — nur freigegebene. Mehr als eine aktive Variante ist ein A/B-Test, je Sitzung fest zugeteilt; der Einwilligungstext selbst ändert sich nie. Vergleich unter KPIs → „Einwilligung nach der Anmeldung“.",
+    },
+    {
       label: "Pingen-Umgebung",
       env: "PINGEN_STAGING",
       on: !f.pingenStaging,
@@ -91,8 +125,9 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
           <Activity className="size-4" aria-hidden /> Systemstatus
           <InfoTip>
             Welche Integrationen im Deployment konfiguriert sind, welche Freigaben (rechtliche
-            Schalter) gesetzt sind und welche Funktionen eingeschaltet sind — nur als „konfiguriert / nicht konfiguriert“, Werte werden nie
-            angezeigt. Änderungen erfolgen über die Umgebungsvariablen des Deployments.
+            Schalter) gesetzt sind und welche Funktionen eingeschaltet sind — als Zustand, bei Funktionen mit ihrer Zahl
+            (Limit, Anteil, Stunden, Varianten); Schlüssel und andere Werte werden nie angezeigt. Änderungen erfolgen über
+            die Umgebungsvariablen des Deployments.
           </InfoTip>
         </CardTitle>
       </CardHeader>
@@ -120,7 +155,10 @@ function StatusGroup({ title, rows }: { title: string; rows: Row[] }) {
               className="flex items-center justify-between gap-3 border-b border-border/60 py-1.5 last:border-0"
             >
               <dt className="min-w-0">
-                <span className="block truncate text-sm text-foreground">{r.label}</span>
+                <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
+                  <span className="truncate">{r.label}</span>
+                  {r.info && <InfoTip label={`Was „${r.label}“ bedeutet`}>{r.info}</InfoTip>}
+                </span>
                 <code className="block truncate text-2xs text-muted-foreground">{r.env}</code>
               </dt>
               <dd className="shrink-0">

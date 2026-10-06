@@ -32,9 +32,11 @@ const INFO = (
     </p>
     <p>
       Ereigniszählung im Zeitraum (nicht pro Sitzung verkettet): ein DOI-Klick, der ein Opt-in vom
-      Vortag bestätigt, zählt im Zeitraum des Klicks. DOI-Quote = bestätigt ÷ „DOI-Mail fällig“ — wer schon
-      abonniert ist oder gesperrt ist, bekommt keine DOI-Mail und zählt nicht im Nenner; ein fehlgeschlagener
-      Versand zählt mit. „Abgelehnt“ (Karte weggeklickt) meldet das Widget, einmal je Sitzung und Auslöser.
+      Vortag bestätigt, zählt im Zeitraum des Klicks. DOI-Quote = bestätigt ÷ „DOI-Mail verschickt“ — wer schon
+      abonniert ist oder gesperrt ist, bekommt keine DOI-Mail und zählt nicht im Nenner; eine DOI-Mail, deren
+      Versand fehlschlug oder übersprungen wurde, auch nicht („nicht verschickt“). Opt-ins aus der Zeit, bevor
+      der Versand festgehalten wurde, zählen als verschickt. „Abgelehnt“ (Karte weggeklickt) meldet das Widget,
+      einmal je Sitzung und Auslöser.
       Wirksam wird die Marketing-Einwilligung erst mit dem DOI-Klick.
     </p>
   </Explain>
@@ -73,14 +75,14 @@ export function EmailCaptureSection({ funnel, range }: { funnel: EmailCaptureFun
               value={num(funnel.marketingOptedIn)}
               hint={
                 funnel.marketingOptedIn > 0
-                  ? `${num(funnel.doiRequired)} DOI-Mail fällig · ${num(funnel.alreadySubscribed)} bereits abonniert${funnel.suppressed > 0 ? ` · ${num(funnel.suppressed)} gesperrt` : ""}`
+                  ? `${num(funnel.doiSent)} DOI-Mail verschickt${funnel.doiNotSent > 0 ? ` · ${num(funnel.doiNotSent)} nicht verschickt` : ""} · ${num(funnel.alreadySubscribed)} bereits abonniert${funnel.suppressed > 0 ? ` · ${num(funnel.suppressed)} gesperrt` : ""}`
                   : undefined
               }
             />
             <Stat
               label="DOI bestätigt"
               value={num(funnel.confirmed)}
-              hint={funnel.doiRate == null ? undefined : `${ratio(funnel.doiRate)} der fälligen DOI-Mails`}
+              hint={funnel.doiRate == null ? undefined : `${ratio(funnel.doiRate)} der verschickten DOI-Mails`}
             />
             <Stat label="Abgelehnt" value={num(funnel.declined)} hint="Karte weggeklickt (Widget)" />
           </FunnelLayout>

@@ -215,13 +215,12 @@ A run is 2–3 analyst-tier calls (typically well under €0.50; the exact figur
 priced from the stored usage and shown per run and in the KI-Kosten KPI under
 call site `improvement`). All improvement data is pseudonymous derived text
 (Cluster A discipline — no identity values) and operator-managed (delete per
-run, suggestions cascade). It has **no retention window**: the retention cron
-never touches `improvement_runs` / `improvement_suggestions` /
-`mo_directives` / `mo_directive_versions`, and a run outlives its source
-report (`report_id … ON DELETE SET NULL`) — unlike the Komplettanalyse itself,
-which leaves after `ANALYTICS_REPORT_RETENTION_DAYS` (365 days, step 5h,
-[`DATA_RETENTION.md`](./DATA_RETENTION.md)). Whether runs need a window of
-their own (they embed report-derived text) is open.
+run, suggestions cascade). A run outlives its source report
+(`report_id … ON DELETE SET NULL`), but not forever: the retention cron deletes
+finished, fully decided runs on the report window `ANALYTICS_REPORT_RETENTION_DAYS`
+— never a running run, a run with an open suggestion, or the newest complete
+run (the rule: [`DATA_RETENTION.md`](./DATA_RETENTION.md), Cluster A and
+step 5h). `mo_directives` / `mo_directive_versions` have no window.
 
 ## GDPR / legal
 

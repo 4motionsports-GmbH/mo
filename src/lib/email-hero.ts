@@ -426,8 +426,10 @@ async function loadHeroReferences(
 }
 
 /**
- * Render the prompt with gpt-image-1, upload the PNG to Vercel Blob and store
- * URL + prompt on the draft row. Returns the public https URL.
+ * Render the prompt with the hero image model (gpt-image-2 by default, with a
+ * 3:2 retry and a gpt-image-1.5 fallback — heroImageAttempts in
+ * email-hero-variants.mjs), upload the PNG to Vercel Blob and store URL +
+ * prompt on the draft row. Returns the public https URL.
  */
 export async function generateHeroImage(
   kind: EmailHeroKind,

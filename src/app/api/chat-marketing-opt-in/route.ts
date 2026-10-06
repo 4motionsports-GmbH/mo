@@ -1,4 +1,4 @@
-// POST /api/chat-marketing-opt-in — the CHAT CONSENT GATE accept (v4).
+// POST /api/chat-marketing-opt-in — the CHAT CONSENT GATE accept (added with copy v4).
 //
 // Marketing-ONLY opt-in with a typed email, for ANONYMOUS chat sessions: the
 // widget shows the consent gate once per session after the user's first chat
@@ -18,8 +18,9 @@
 //     the confirmation email. NO marketing is permitted until the user clicks
 //     that link (GET /api/confirm-marketing).
 //   * stores the exact label + footer shown verbatim as `consent_text_shown`
-//     with the same `consent_copy_version` stamp (v4), so the Art. 7 audit is
-//     identical to the other surfaces. Withdrawable via the same unsubscribe.
+//     with the same `consent_copy_version` stamp (CONSENT_COPY_VERSION,
+//     currently v5), so the Art. 7 audit is identical to the other surfaces.
+//     Withdrawable via the same unsubscribe.
 //
 // The capture is recorded against the session (session_id on the upsert +
 // linkCustomerOnEmailCapture) exactly like /api/capture-email, so the
@@ -137,8 +138,9 @@ export async function POST(req: Request) {
     );
     if (!recipientRl.ok) return rateLimitResponse(recipientRl.retryAfter, headers);
 
-    // Attest the v4 chat-gate copy only when the echoed text is byte-identical
-    // to the canonical CHAT string (label + footer); anything else → NULL
+    // Attest the current chat-gate copy (CONSENT_COPY_VERSION) only when the
+    // echoed text is byte-identical to the canonical CHAT string (label +
+    // footer) of the served locale; anything else → NULL
     // (honest "unattested"; the verbatim text stays authoritative).
     const consentCopyVersion = resolveConsentCopyVersion(
       consentTextShown,

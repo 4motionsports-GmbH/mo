@@ -3,11 +3,11 @@
 // this module adds the `Locale` type and a request-resolution helper used by
 // the storefront-facing routes.
 
-import { DEFAULT_LOCALE, isLocale, normalizeLocale, pick } from "./locale.mjs";
+import { DEFAULT_LOCALE, isLocale, normalizeLocale, pick, withLocaleParam } from "./locale.mjs";
 
 export type Locale = "de" | "en";
 
-export { DEFAULT_LOCALE, isLocale, normalizeLocale, pick };
+export { DEFAULT_LOCALE, isLocale, normalizeLocale, pick, withLocaleParam };
 
 /**
  * Resolve the effective locale for a request, in priority order:

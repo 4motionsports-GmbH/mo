@@ -1,6 +1,8 @@
-// Send-through-system for marketing emails. THIS is the only path that delivers
-// a marketing email, and it concentrates every legal guarantee in one auditable
-// place so no caller can bypass them:
+// Send-through-system for the legacy 1:1 marketing emails (marketing_sends).
+// approveAndSend() here and approveAndSendCampaign() (campaign-email.ts) are the
+// only two paths that deliver a marketing email; this one concentrates every
+// legal guarantee of the 1:1 path in one auditable place so no caller can
+// bypass them:
 //
 //   1. ELIGIBILITY — the address must be marketing-eligible at send time:
 //      marketing_doi_status = 'confirmed' AND not unsubscribed AND not on the

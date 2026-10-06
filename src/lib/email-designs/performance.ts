@@ -70,8 +70,8 @@ const spacerUrl = () => `${getBaseUrl()}/email-spacer.png`;
  * AI-generated. It is — it was produced from the same kind of image prompt as
  * the per-send heroes — so every hero this design renders carries the
  * AI-generated disclosure. Flip this to false only if the default is ever
- * replaced by a real photograph; per-send heroes (gpt-image-1) are always
- * labelled regardless.
+ * replaced by a real photograph; per-send heroes (AI-generated: gpt-image-2,
+ * fallback gpt-image-1.5) are always labelled regardless.
  */
 const DEFAULT_HERO_IS_AI_GENERATED = true;
 

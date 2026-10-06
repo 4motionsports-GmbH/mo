@@ -225,7 +225,7 @@ export async function POST(req: Request) {
       });
       return errorResponse(
         "upstream_unavailable",
-        "E-Mail konnte nicht zugestellt werden",
+        apiMessage("email_delivery_failed", locale),
         502,
         headers
       );

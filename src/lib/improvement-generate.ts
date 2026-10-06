@@ -236,8 +236,9 @@ const COMMON_RULES =
   "entscheidet jede Maßnahme.";
 
 // Output schema for the structured suggestion passes (generateObject, like the
-// marketing/campaign drafts). Anthropic fills a forced tool call whose input
-// matches this schema — valid JSON by construction; the free-text-JSON path
+// marketing/campaign drafts). Anthropic's native structured output
+// (`output_config.format`, docs/AI_MODELS.md — the 5.5 models reject a forced
+// tool call) returns JSON matching this schema; the free-text-JSON path
 // broke in production (literal newlines in strings / truncation →
 // "invalid_json"). Only the essential fields are strict; everything else is
 // tolerated loose and hardened by normalizeSuggestionsPayload afterwards.

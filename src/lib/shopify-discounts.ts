@@ -46,7 +46,8 @@ import { STORE_TIME_ZONE } from "./store-datetime.mjs";
 // The admin chooses the discount depth as a whole-number percent (DEFAULT 0,
 // range 0–50). The bounds + validation live in lib/discount-validation.mjs,
 // shared by the draft routes (server-side) and the dashboard input (client-side).
-// 0 mints no code; >0 mints the MS5- code below with the chosen percentage.
+// 0 mints no code; >0 mints a code below with the chosen percentage (MS5- in
+// the 1:1 marketing path, MK- for campaign mails).
 
 /**
  * The clearly-marked placeholder code shown in the DRAFT PREVIEW. No real
@@ -57,7 +58,8 @@ import { STORE_TIME_ZONE } from "./store-datetime.mjs";
  * mistake it for a working code.
  *
  * NOTE: this is only the DRAFT placeholder, not an issued code prefix — real
- * minted codes use the `MS5-` prefix (see generateDiscountCodeString).
+ * minted codes use the `MS5-` (1:1 marketing) or `MK-` (campaign) prefix (see
+ * generateDiscountCodeString).
  */
 export const PLACEHOLDER_DISCOUNT_CODE = "MO-XXXX";
 
@@ -168,7 +170,8 @@ export function formatExpiryDateForLanguage(
 /**
  * Generate a fresh, hard-to-guess code string. Short enough to read in an email,
  * random enough not to collide or be enumerated. Prefix marks its origin:
- * "MS5" = marketing sends, "WELCOME" = the one-time welcome code.
+ * "MS5" = the 1:1 marketing sends (default), "MK" = campaign mails
+ * (campaign-email.ts). The one-time "WELCOME" code is retired; nothing mints it.
  */
 export function generateDiscountCodeString(prefix = "MS5"): string {
   // 5 bytes → 8 base32-ish chars. Avoid ambiguous chars (0/O, 1/I).

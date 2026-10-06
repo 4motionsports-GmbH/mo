@@ -1,8 +1,10 @@
 // GET /api/consent-copy[?surface=signin|chat|erase] — canonical consent copy for the widget.
 //
-// The checkbox labels, the marketing benefit hint, and the pre-composed
-// `consentTextShown` audit string are legally load-bearing (Art. 7 proof of
-// consent), so the widget must never hard-code them in the theme snapshot.
+// The labels, the footer and the pre-composed `consentTextShown` audit string
+// are legally load-bearing (Art. 7 proof of consent), so the widget must never
+// hard-code them in the theme snapshot. (The v1 "marketing benefit hint" on the
+// capture form is gone since v2; benefit framing lives only on the button-
+// consent surfaces, never in `consentTextShown`.)
 // The `offer_email_summary` tool result already carries this payload for the
 // tool-triggered path; this endpoint serves the same strings for capture
 // forms NOT triggered by the tool (e.g. a proactive share-form entry point),

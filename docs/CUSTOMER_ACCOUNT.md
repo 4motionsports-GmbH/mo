@@ -302,7 +302,14 @@ entry points of the "identity bind"; both never weaken an existing tier
 2. the `conversations.customer_id` stamp (`WHERE session_id = …`) — which
    carries the chat into the customer's **history**. On the redeem it runs only
    `WHERE customer_id IS NULL OR customer_id = <this customer>`, so on a shared
-   browser a session's earlier chats stay with whoever they belong to.
+   browser a session's earlier chats stay with whoever they belong to. The
+   e-mail capture uses the same scope plus one case: a **correction** of an
+   earlier typed e-mail of the same session (its link is `email`) takes that
+   address's chats along (latest capture wins). A capture typed in a session
+   signed in as someone else (the `422 no_verified_email` fallback, or a direct
+   call) ends that sign-in but never moves the signed-in person's chats (C.27;
+   `attachSessionOnEmailCapture` / `captureMovesConversationsFrom` in
+   `customer-session-link.mjs`, tested).
 
 `linkSessionToCustomer` (`customer-session-link.mjs`, tested) upserts the direct
 link: a typed e-mail of the **same** customer never weakens a signed-in link (a
@@ -749,7 +756,11 @@ detection paths cannot diverge:
   under the verified e-mail (carried forward by the §4 stamp branch) or a shop
   newsletter subscription (once the customer mirror has the person).
 - `optInActionable` = a real e-mail (contains `@`, not the `shopify:` placeholder)
-  **and** `status === 'none'` **and** not `consentAskQuiet`.
+  **and** `status === 'none'` **and** the address is not on `suppression_list` (any
+  reason; `isSuppressed`, which answers „blocked“ without a database) **and** not
+  `consentAskQuiet` — the pure rule `isMarketingOptInActionable`
+  (`consent-ask-policy.mjs`, tested). The suppression and anti-nag reads run only when
+  the first two parts pass.
 - No customer row, a read error or no database → `{ status: 'none', optInActionable:
   false }` (fail closed; errors reported with phase `marketingState`).
 
@@ -782,8 +793,9 @@ deletes the events themselves.
    unattested (NULL).
 5. `isEmailAlreadySubscribed` → an address already subscribed (shop or earlier DOI)
    gets no second DOI mail; then the same `upsertEmailCapture` as `/api/capture-email`.
-6. `linkCustomerOnEmailCapture({ email, sessionId })` attaches the session's chats; its
-   `email` link for the **same** customer never weakens the signed-in link (§4).
+6. `linkCustomerOnEmailCapture({ email, sessionId })` attaches the session's chats that
+   have no owner yet (or are already this customer's); its `email` link for the **same**
+   customer never weakens the signed-in link (§4).
 7. `recordMoOptIn` (`consent-flows.ts`) reports a new DOI to the one consent as
    `pending` (source `mo_signin`, through `applyConsentAct`); its `consent_events` row
    notes the proof (`signInProofNote`: „Anmeldenachweis: Kundenkonto-Anmeldung im Chat“ /

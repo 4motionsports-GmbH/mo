@@ -3,8 +3,11 @@
 //
 // The widget calls this once per session (after the storefront's consent
 // state allows analytics — the CONSENT GATE FOR STAMPING LIVES IN THE WIDGET,
-// see docs/ORDER_ATTRIBUTION.md §widget) and then stamps the LIVE storefront
-// cart via a same-origin POST /cart/update.js with the returned attributes.
+// see docs/ORDER_ATTRIBUTION.md „Widget“) and then stamps the LIVE storefront
+// cart via a same-origin POST /cart/update.js with the returned attributes. A
+// repeated call returns the same token while it exists; after retention or an
+// erasure deleted it, the next call mints a new one (the widget's renewal,
+// docs/frontend/API_CONTRACT.md §10).
 // From then on, whatever ends up in that cart — Mo's card checkout or a
 // manually searched product — the resulting order carries the marker and the
 // orders webhook can attribute it (tier assisted/influenced).

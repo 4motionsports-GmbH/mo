@@ -4,25 +4,45 @@
 // /api/cron/retention endpoint (or manually). All windows are configurable via
 // env so the policy can be tuned without a code change once Legal signs off.
 //
-// What it does, per run:
-//   1. Flip stale 'active' conversations to 'abandoned' (a lazy, cron-driven
-//      version of the abandonment check).
-//   2. Delete conversations (messages cascade) past the retention window.
-//   3. Delete kpi_events past the telemetry retention window, and the
-//      dashboard/admin AI-usage rows (the ones with no conversation) on the same
-//      analytics window. Chat AI-usage rows carry a conversation FK and cascade
-//      with step 2 instead.
-//   4. Purge PII for suppressed/unsubscribed email_captures after a grace
-//      period — the suppression_list record itself is kept so we keep honouring
-//      the opt-out. The matching `customers` row (email + cached profile /
-//      purchase summaries — all PII) is purged with the same criteria; its
-//      ON DELETE SET NULL FKs return the linked conversations to plain
-//      pseudonymous rows.
+// What it does, per run (the numbers match the step comments in runRetention):
+//   1.  Flip stale 'active' conversations to 'abandoned' (a lazy, cron-driven
+//       version of the abandonment check).
+//   2.  Delete conversations (messages cascade) past the retention window.
+//   3.  Delete kpi_events past the telemetry (analytics) window; 3b the
+//       dashboard/admin AI-usage rows (the ones with no conversation) on the
+//       same window. Chat AI-usage rows carry a conversation FK and cascade
+//       with step 2 instead.
+//   4.  Purge PII for suppressed/unsubscribed email_captures after a grace
+//       period — the suppression_list record itself is kept so we keep
+//       honouring the opt-out.
+//   5.  Purge the matching non-Shopify `customers` row (email + cached profile
+//       / purchase summaries — all PII) after the same grace; its ON DELETE SET
+//       NULL FKs return the linked conversations to plain pseudonymous rows.
+//   5b–5g. Data with its OWN window: correspondence (email_messages),
+//       physical_letters, feedback, dormant non-Shopify customers without an
+//       active consent, the admin access log, campaign contacts / sends /
+//       letter recipients.
+//   5h. Derived analytics: analytics_reports (+ finished, decided Verbesserung
+//       runs) on the report window; conversation_insights and persona
+//       summaries on the analytics window.
+//   5i. Order attribution: mo_orders on the analytics window; attribution
+//       tokens once inert (attribution window + 7 days; session-anchored with
+//       MO_ATTRIBUTION_SESSION_ANCHOR).
+//   6.  Expired pending sign-ins (PKCE state) and one-time link codes.
+//   7.  Shopify sync bookkeeping (webhook dedupe rows, finished sync runs and
+//       outbox rows); 7b reviewed sign-in merge conflicts on the same window.
+//   8.  Decided Eingang items: slimmed to a marker, the marker deleted later.
+//   9.  Erasure tombstones once Shopify confirmed the redaction.
 
 import { getSql } from "./db";
 import { purgeExpiredPendingAuth } from "./customer-oauth-store";
 import { purgeSessionLinkGrants } from "./session-link-grants";
 import { parseRetentionOptions } from "./retention-options.mjs";
+import {
+  OUTBOX_FINISHED_STATUSES,
+  IMPROVEMENT_RUN_FINISHED_STATUSES,
+  IMPROVEMENT_SUGGESTION_OPEN_STATUSES,
+} from "./retention-rules.mjs";
 import { SESSION_ANCHORED_SOURCES, CONSULTATION_ANCHOR_TOOLS } from "./order-attribution.mjs";
 
 /** How long a decided Eingang item's bare marker stays (the longest rule episode). */
@@ -46,7 +66,8 @@ export interface RetentionOptions {
   /**
    * Storage limitation (Art. 5(1)(e)): purge IDENTIFIED but dormant customers —
    * last_seen_at older than this AND not holding an active marketing consent
-   * ('confirmed'/'pending', which is its own basis to retain). 0 disables.
+   * (email_consent_state 'subscribed'/'pending', which is its own basis to
+   * retain) AND not a Shopify customer. 0 disables.
    */
   customerInactivityRetentionDays: number;
   /** admin_access_log rows older than this (by occurred_at) are deleted. 0 disables. */
@@ -59,12 +80,15 @@ export interface RetentionOptions {
   /**
    * Stored Komplettanalyse reports (analytics_reports, by created_at) older
    * than this are deleted. Reports generated with per-customer profiles carry
-   * customer display names, so they must not live forever. 0 disables.
+   * customer display names, so they must not live forever. The Verbesserung
+   * runs built on them (improvement_runs + suggestions) leave on the same
+   * window once finished and decided. 0 disables.
    */
   analyticsReportRetentionDays: number;
   /**
    * Shopify sync bookkeeping (webhook dedupe rows, finished sync runs, done /
-   * dead outbox rows) older than this are deleted. 0 disables.
+   * dead / skipped outbox rows) and reviewed sign-in merge conflicts older
+   * than this are deleted. 0 disables.
    */
   shopifySyncLogRetentionDays: number;
   /** Decided Eingang items (erledigt / verworfen) older than this are deleted. 0 disables. */
@@ -111,6 +135,10 @@ export interface RetentionResult {
   deletedCampaignSends: number;
   /** analytics_reports (Komplettanalyse) purged past their own window. */
   deletedAnalyticsReports: number;
+  /** Finished, fully decided Verbesserung runs purged on the report window. */
+  deletedImprovementRuns: number;
+  /** Their suggestions (cascade with the run), counted separately. */
+  deletedImprovementSuggestions: number;
   /** conversation_insights rollups purged on the analytics window. */
   deletedConversationInsights: number;
   /** kpi_persona_question_summaries purged on the analytics window. */
@@ -126,6 +154,8 @@ export interface RetentionResult {
   purgedAuthPending: number;
   /** Shopify webhook / sync-run / outbox bookkeeping rows removed. */
   deletedShopifySyncLog: number;
+  /** Reviewed (resolved_at set) sign-in merge conflicts removed. */
+  deletedMergeConflicts: number;
   /** Decided Eingang items reduced to a marker (after the window) or removed (after two years). */
   deletedInboxItems: number;
   /** Erasure tombstones Shopify confirmed more than ERASURE_TOMBSTONE_RETENTION_DAYS ago. */
@@ -323,7 +353,7 @@ export async function runRetention(
 
   // 5e. Storage limitation (Art. 5(1)(e)): purge IDENTIFIED but DORMANT customers
   //     — no activity since the inactivity window — UNLESS they hold an active
-  //     marketing consent ('confirmed' = live consent, 'pending' = mid-DOI), which
+  //     marketing consent ('subscribed' = live consent, 'pending' = mid-DOI), which
   //     is its own lawful basis to retain. Like step 5, the ON DELETE SET NULL FKs
   //     return their conversations/correspondence to pseudonymous rows and the
   //     ON DELETE CASCADE drops their OAuth tokens; the suppression_list (keyed by
@@ -405,6 +435,7 @@ export async function runRetention(
   //       Cluster-A data, so they leave when their sources would. Regenerable on
   //       demand from whatever conversations still exist.
   let deletedAnalyticsReports = [{ n: 0 }] as Array<{ n: number }>;
+  let deletedImprovement: Array<{ runs: number; suggestions: number }> = [{ runs: 0, suggestions: 0 }];
   if (opts.analyticsReportRetentionDays > 0) {
     const reportCutoff = daysAgo(opts.analyticsReportRetentionDays);
     deletedAnalyticsReports = (await sql`
@@ -413,6 +444,36 @@ export async function runRetention(
       )
       SELECT count(*)::int AS n FROM del
     `) as Array<{ n: number }>;
+    // Verbesserung runs (0044) embed report-derived text, so they leave on the
+    // report window — but only once nothing is left to act on: the run is
+    // finished (never 'running'), none of its suggestions still awaits a
+    // decision ('open') or was decided inside the window, and it is not the
+    // newest complete run (the yardstick the next run measures against,
+    // getPreviousCompletedRun). Suggestions cascade with their run (counted
+    // here from the same snapshot); a directive adopted from one keeps its
+    // text, its suggestion_id turns NULL (ON DELETE SET NULL).
+    const finishedRuns = [...IMPROVEMENT_RUN_FINISHED_STATUSES];
+    const openSuggestions = [...IMPROVEMENT_SUGGESTION_OPEN_STATUSES];
+    deletedImprovement = (await sql`
+      WITH del AS (
+        DELETE FROM improvement_runs r
+         WHERE r.status = ANY(${finishedRuns}::text[])
+           AND r.created_at < ${reportCutoff}
+           AND r.id <> COALESCE((SELECT p.id FROM improvement_runs p
+                                  WHERE p.status = 'complete'
+                                  ORDER BY p.created_at DESC, p.id DESC LIMIT 1), 0)
+           AND NOT EXISTS (
+             SELECT 1 FROM improvement_suggestions s
+              WHERE s.run_id = r.id
+                AND (s.status = ANY(${openSuggestions}::text[])
+                     OR COALESCE(s.status_changed_at, s.created_at) >= ${reportCutoff})
+           )
+        RETURNING r.id
+      )
+      SELECT (SELECT count(*) FROM del)::int AS runs,
+             (SELECT count(*) FROM improvement_suggestions s
+               WHERE s.run_id IN (SELECT id FROM del))::int AS suggestions
+    `) as Array<{ runs: number; suggestions: number }>;
   }
   let deletedConversationInsights: Array<{ n: number }> = [{ n: 0 }];
   let deletedPersonaSummaries: Array<{ n: number }> = [{ n: 0 }];
@@ -515,11 +576,14 @@ export async function runRetention(
   const purgedAuthPending = (await purgeExpiredPendingAuth(sql)) + (await purgeSessionLinkGrants(sql));
 
   // 7. Shopify sync bookkeeping (0065): webhook dedupe rows, finished sync
-  //    runs and done / dead outbox rows leave on their own window; open
-  //    outbox rows are never purged, erasure tombstones only in step 9.
+  //    runs and finished outbox rows (done / dead / skipped — superseded
+  //    consent writes) leave on their own window; open outbox rows are never
+  //    purged, erasure tombstones only in step 9.
   let deletedShopifySyncLog = 0;
+  let deletedMergeConflicts = 0;
   if (opts.shopifySyncLogRetentionDays > 0) {
     const syncCutoff = daysAgo(opts.shopifySyncLogRetentionDays);
+    const finishedOutbox = [...OUTBOX_FINISHED_STATUSES];
     const rows = (await sql`
       WITH w AS (DELETE FROM shopify_webhook_events WHERE received_at < ${syncCutoff} RETURNING 1),
            -- The newest finished run per kind stays: it is the import marker,
@@ -529,10 +593,25 @@ export async function runRetention(
                     AND id NOT IN (SELECT max(id) FROM shopify_sync_runs WHERE status = 'done' GROUP BY kind)
                  RETURNING 1),
            o AS (DELETE FROM shopify_outbox
-                  WHERE status IN ('done', 'dead') AND created_at < ${syncCutoff} RETURNING 1)
+                  WHERE status = ANY(${finishedOutbox}::text[]) AND created_at < ${syncCutoff} RETURNING 1)
       SELECT (SELECT count(*) FROM w)::int + (SELECT count(*) FROM r)::int + (SELECT count(*) FROM o)::int AS n
     `) as Array<{ n: number }>;
     deletedShopifySyncLog = rows[0]?.n ?? 0;
+
+    // 7b. Sign-in merge conflicts (0014) on the same window — only reviewed
+    //     ones (resolved_at set, "cleared by an admin once reviewed"), aged
+    //     from the review. resolved_customer_id is NOT a decision: sign-in
+    //     always stamps it. Open conflicts (resolved_at NULL) stay; the
+    //     complete erasure removes a person's rows either way.
+    const conflicts = (await sql`
+      WITH del AS (
+        DELETE FROM customer_merge_conflicts
+         WHERE resolved_at IS NOT NULL AND resolved_at < ${syncCutoff}
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+    deletedMergeConflicts = conflicts[0]?.n ?? 0;
   }
 
   // 8. Decided Eingang items (0067). After the window their content goes
@@ -598,6 +677,8 @@ export async function runRetention(
     deletedCampaignContacts: deletedCampaignContacts[0]?.n ?? 0,
     deletedCampaignSends: deletedCampaignSends[0]?.n ?? 0,
     deletedAnalyticsReports: deletedAnalyticsReports[0]?.n ?? 0,
+    deletedImprovementRuns: deletedImprovement[0]?.runs ?? 0,
+    deletedImprovementSuggestions: deletedImprovement[0]?.suggestions ?? 0,
     deletedConversationInsights: deletedConversationInsights[0]?.n ?? 0,
     deletedPersonaSummaries: deletedPersonaSummaries[0]?.n ?? 0,
     deletedMoOrders: deletedMoOrders[0]?.n ?? 0,
@@ -605,6 +686,7 @@ export async function runRetention(
     keptActiveAttributionTokens: keptActiveAttributionTokens[0]?.n ?? 0,
     purgedAuthPending,
     deletedShopifySyncLog,
+    deletedMergeConflicts,
     deletedInboxItems,
     deletedErasureTombstones,
     ranAt: new Date().toISOString(),

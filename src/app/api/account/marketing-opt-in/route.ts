@@ -5,18 +5,21 @@
 // Shopify address, so the account removes ONLY the "type your email" step. The
 // consent itself is unchanged from the in-chat capture flow:
 //
-//   * NO auto-enrol / NO pre-tick — the widget renders an UNCHECKED box and the
-//     customer must actively tick it. We still require `marketingConsent: true`
-//     in the body; without it we refuse (a Shopify account NEVER implies
-//     consent).
+//   * NO auto-enrol / NOTHING pre-selected — BUTTON-CONSENT since v4: the
+//     widget shows the served label + footer in full and the customer must
+//     actively tap the accept button (decline equally reachable). We still
+//     require `marketingConsent: true` in the body; without it we refuse (a
+//     Shopify account NEVER implies consent).
 //   * runs the EXISTING double-opt-in: this only sets DOI 'pending' and sends
 //     the confirmation email. NO marketing is permitted until the customer
 //     clicks that link (GET /api/confirm-marketing).
 //   * stores the exact label + footer shown verbatim as `consent_text_shown`
-//     with the same `consent_copy_version` stamp (v3), so the Art. 7 audit is
-//     identical to the typed-email path. Withdrawable via the same unsubscribe.
+//     with the same `consent_copy_version` stamp (CONSENT_COPY_VERSION,
+//     currently v5), so the Art. 7 audit is identical to the typed-email path.
+//     Withdrawable via the same unsubscribe.
 //
-// Gated by the standard signed-in guard (origin + secret + live access token).
+// Gated by the standard signed-in guard (origin + secret + a live sign-in: a
+// live access token or a fresh App Proxy shop proof — lib/account-guard.ts).
 
 import { requireSignedInCustomer, readSession } from "@/lib/account-guard";
 import { preflightResponse } from "@/lib/security";
@@ -38,6 +41,7 @@ import {
   signInVariantsActive,
 } from "@/lib/consent-copy";
 import { isKnownSigninVariant, normalizePlacement, pickSigninVariant } from "@/lib/consent-variants.mjs";
+import { doiSentField, optInAnswer } from "@/lib/capture-funnel.mjs";
 import { withEmailDesign } from "@/lib/email-design-context";
 import { getCachedEmailDesignForKind } from "@/lib/email-design-store";
 import {
@@ -120,8 +124,9 @@ export async function POST(req: Request) {
     const consentTextShown =
       typeof payload.consentTextShown === "string" ? payload.consentTextShown : null;
 
-    // Attest the v3 sign-in copy only when the echoed text is byte-identical to
-    // the canonical SIGN-IN string (label + footer); anything else → NULL
+    // Attest the current sign-in copy (CONSENT_COPY_VERSION) only when the echoed
+    // text is byte-identical to the canonical SIGN-IN string (label + footer) of
+    // the served locale; anything else → NULL
     // (honest "unattested"; the verbatim text stays authoritative).
     const consentCopyVersion = resolveConsentCopyVersion(
       consentTextShown,
@@ -167,47 +172,10 @@ export async function POST(req: Request) {
       signInProof: guard.proof,
     });
 
-    // The answer the widget gets, computed once (also for the telemetry): an
-    // address subscribed elsewhere keeps doiStatus none/pending but is answered
-    // as already confirmed.
-    // A suppressed (unsubscribed) address is never answered „already
-    // subscribed“, whatever its old DOI status (OI1 F2).
-    const alreadyConfirmed =
-      !capture.suppressed &&
-      (capture.subscribedElsewhere || (capture.marketingDoiStatus === "confirmed" && !capture.doiEmailRequired));
-
-    // Funnel telemetry (pseudonymous, session-keyed — NO email in the data),
-    // tagged so the opt-in surface can be split out from the in-chat capture.
-    // placement / variant only when they are known values (OI3).
-    const placement = normalizePlacement(payload.placement);
-    const variant =
-      typeof payload.variant === "string" && isKnownSigninVariant(payload.variant, locale) ? payload.variant : null;
-    const optInData: Record<string, unknown> = {
-      trigger: "signin_optin",
-      source: "mo_signin",
-      ...(capture.optInOutcome ? { outcome: capture.optInOutcome } : {}),
-      alreadyConfirmed,
-      doiRequired: capture.doiEmailRequired,
-      ...(placement ? { placement } : {}),
-      ...(variant ? { variant } : {}),
-      ...(variant && signInVariantsActive(locale) && variant !== pickSigninVariant(sessionId, locale, process.env.CONSENT_SIGNIN_VARIANTS).id
-        ? { variantMismatch: true }
-        : {}),
-    };
-    await recordKpiEvent({
-      sessionId,
-      event: KPI_EMAIL_CAPTURE_SUBMITTED,
-      data: { marketingConsent: true, ...optInData },
-    });
-    await recordKpiEvent({
-      sessionId,
-      event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
-      data: { doiStatus: capture.marketingDoiStatus, ...optInData },
-    });
-
     // Send the DOI confirmation email — only when newly pending (an already
-    // confirmed address re-opting in doesn't re-send). NO marketing until the
-    // link is clicked.
+    // confirmed address re-opting in doesn't re-send; a suppressed address is
+    // never pended, so it never gets one). NO marketing until the link is
+    // clicked.
     let doiEmailSent = false;
     if (capture.doiEmailRequired && capture.doiToken) {
       const confirmUrl = `${getBaseUrl(req)}/api/confirm-marketing?token=${encodeURIComponent(capture.doiToken)}&locale=${locale}`;
@@ -248,18 +216,51 @@ export async function POST(req: Request) {
       }
     }
 
-    return okJson(
-      {
-        ok: true,
-        marketing: {
-          status: capture.suppressed ? "none" : capture.subscribedElsewhere ? "confirmed" : capture.marketingDoiStatus,
-          doiEmailSent,
-          // True when the address was already confirmed (re-opt-in) — no DOI needed.
-          alreadyConfirmed,
-        },
-      },
-      headers
-    );
+    // The answer the widget gets, computed once (also for the telemetry): an
+    // address subscribed elsewhere keeps doiStatus none/pending but is answered
+    // as already confirmed. A suppressed address is answered neutrally —
+    // status none, never „already subscribed“, never „DOI mail sent“ (OI1 F2;
+    // capture-funnel.mjs → optInAnswer, tested).
+    const answer = optInAnswer({
+      suppressed: capture.suppressed,
+      subscribedElsewhere: capture.subscribedElsewhere,
+      marketingDoiStatus: capture.marketingDoiStatus,
+      doiEmailRequired: capture.doiEmailRequired,
+      doiEmailSent,
+    });
+
+    // Funnel telemetry (pseudonymous, session-keyed — NO email in the data),
+    // tagged so the opt-in surface can be split out from the in-chat capture.
+    // placement / variant only when they are known values (OI3). Written after
+    // the send attempt, so the opt-in says whether its DOI mail went out
+    // (`doiSent`, OI1 F3).
+    const placement = normalizePlacement(payload.placement);
+    const variant =
+      typeof payload.variant === "string" && isKnownSigninVariant(payload.variant, locale) ? payload.variant : null;
+    const optInData: Record<string, unknown> = {
+      trigger: "signin_optin",
+      source: "mo_signin",
+      ...(capture.optInOutcome ? { outcome: capture.optInOutcome } : {}),
+      alreadyConfirmed: answer.alreadyConfirmed,
+      doiRequired: capture.doiEmailRequired,
+      ...(placement ? { placement } : {}),
+      ...(variant ? { variant } : {}),
+      ...(variant && signInVariantsActive(locale) && variant !== pickSigninVariant(sessionId, locale, process.env.CONSENT_SIGNIN_VARIANTS).id
+        ? { variantMismatch: true }
+        : {}),
+    };
+    await recordKpiEvent({
+      sessionId,
+      event: KPI_EMAIL_CAPTURE_SUBMITTED,
+      data: { marketingConsent: true, ...optInData },
+    });
+    await recordKpiEvent({
+      sessionId,
+      event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
+      data: { doiStatus: capture.marketingDoiStatus, ...optInData, ...doiSentField(capture.optInOutcome, doiEmailSent) },
+    });
+
+    return okJson({ ok: true, marketing: answer }, headers);
   } catch (err) {
     reportError(err, { route: "api/account/marketing-opt-in" });
     return errorResponse("internal_error", "Unexpected server error", 500, headers);

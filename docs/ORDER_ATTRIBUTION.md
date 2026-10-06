@@ -52,7 +52,7 @@ tab as **"Mo-zugeordneter Umsatz (Bestell-Webhook)"**:
 | Tier | Definition |
 | --- | --- |
 | **Direkt** | The order redeemed a Mo code (MS5-/MK-), or came through a cart link Mo itself built (summary email, marketing email, bundle offer — token sources `summary_email` / `marketing_email` / `bundle`). |
-| **Beraten & gekauft** (`assisted`) | The widget stamped the live cart (source `widget`) AND ≥1 purchased line matches a product discussed/selected in that session's consultation (normalised-handle matching, `lib/kpi-match.mjs`). This is the "typed it into the search bar" case. |
+| **Beraten & gekauft** (`assisted`) | The widget stamped the live cart (source `widget`) AND ≥1 purchased line matches a product discussed/selected in that session's consultation (normalised-handle matching, `lib/kpi-match.mjs`). This is the "typed it into the search bar" case. „Consultation“ = every thread of the session (`conversations.session_id`) that started at or before the order and was active within the attribution window before it — not only the latest thread (`overlapLookback`, `unionConsultedProducts`). A thread started after the order never counts. |
 | **Beraten, anderes gekauft** (`influenced`) | Session stamp present, but no purchased line matches the consultation. |
 
 Only **realised money** counts toward revenue (financial status
@@ -84,8 +84,20 @@ decision 2026-10-05: on after the migration, ANWALTSDOSSIER §20; turn on only
   own DB), so a chat after the purchase cannot pull an order into the window,
   and `orders/create` and `orders/paid` see the same rows.
 * **Link sources** (`summary_email`, `marketing_email`, `bundle`) and unknown
-  sources: always the minting.
-* A failed anchor query is a `db-error` (500, Shopify retries the idempotent
+  sources: the token's `created_at`, with either switch state. A
+  session has one token per link source (partial unique index), reused for
+  every mail of that session; each new mail **re-stamps** `created_at` to the
+  send (`mintAttributionToken`, `restartsWindowOnReuse`). The window therefore
+  counts from the latest mail carrying the token: a mail sent 31–37 days after
+  the session's first one no longer ships an already expired link, and the
+  earlier mails' links (same token) keep attributing within the latest mail's
+  window. The re-stamp happens when the link is built, just before the send,
+  so a failed send also restarts it. The widget token is never re-stamped (that
+  would be the consent-gated anchor, F-37 (b)). Edge: an order first ingested
+  more than an hour after a later mail re-stamped its token (`orders/create`
+  missed, `orders/paid` days later) counts as outside the window — fail closed.
+* A failed anchor query — and a failed read of the threads for the overlap
+  check — is a `db-error` (500, Shopify retries the idempotent
   delivery); an invalid consultation or order timestamp falls back to the minting, an invalid minting
   timestamp gives no anchor (the order counts as outside the window).
 
@@ -106,10 +118,16 @@ only counted, as the server-only event `mo_order_marker_unresolved`
 (`{reason: 'unknown_token' | 'outside_window', source?}`; `source` only for
 `outside_window`, from the known enum; session `NULL`; never an order id,
 token or amount). It fires on `orders/create` only, after the delivery was
-recorded (`noteUnresolvedMarker`), so a Shopify retry or the `orders/paid`
-delivery does not count it again; a duplicate `orders/create` subscription
-would count it twice. The KPI tab shows it as „ohne Zuordnung“
-(ADMIN_DASHBOARD §5.16). The counter works with the switch on or off.
+recorded (`noteUnresolvedMarker`), so a Shopify retry (same
+`X-Shopify-Webhook-Id`, `shopify_webhook_events`) or the `orders/paid`
+delivery does not count it again. It also counts once per Shopify **event**:
+the delivery's `X-Shopify-Event-Id` is claimed as the row
+`mo-unresolved:<event id>` in `shopify_webhook_events` (no order id; purged on
+the sync-log window), so a second `orders/create` subscription or a redelivery
+under a new webhook id adds nothing. Without that header, a duplicate
+subscription would count twice; a DB error on either dedupe fails open. The
+KPI tab shows it as „ohne Zuordnung“ (ADMIN_DASHBOARD §5.16). The counter
+works with the switch on or off.
 
 **Stated residual (also in the UI):** cross-device purchases (consultation on
 the phone, purchase on the laptop) stay invisible unless an email/code bridges
@@ -164,8 +182,10 @@ simply can't contribute to the overlap check.
   (`KPI_RETENTION_DAYS`). Tokens: switch off, `MO_ATTRIBUTION_WINDOW_DAYS + 7`
   days after minting (inert beyond the window); switch on, a `widget` token
   lives as long as its own session keeps consulting within that horizon, capped
-  after minting; link-source tokens by minting. Deleted on erasure. Owner of the
-  exact rule and the cap: `docs/DATA_RETENTION.md` step 5i.
+  after minting; link-source tokens by `created_at` — for a session's mail-link
+  token that is its latest mail (re-stamped per mail, „Attribution window“), so
+  it lives window + 7 days after the last mail carrying it. Deleted on erasure.
+  Owner of the exact rule and the cap: `docs/DATA_RETENTION.md` step 5i.
 * **Consent-independent extension (switch on).** The backend cannot see
   analytics consent at chat time: a product chat on the same device after
   analytics consent was withdrawn still extends the window of the token minted
@@ -199,8 +219,9 @@ Which of these steps are done in production: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.
    `<PUBLIC_BASE_URL>/api/webhooks/shopify`, `-- --dedupe` to delete duplicates
    (`scripts/register-shopify-webhooks.mjs`). They are signed with the app's client
    secret; the route accepts `SHOPIFY_WEBHOOK_SECRET` or `SHOPIFY_CLIENT_SECRET`.
-   Exactly one subscription per topic: a duplicate delivers every order twice and a
-   duplicate `orders/create` counts `mo_order_marker_unresolved` twice.
+   Exactly one subscription per topic: a duplicate delivers every order twice (the
+   `X-Shopify-Event-Id` dedupe keeps `mo_order_marker_unresolved` at one count only
+   while Shopify sends that header).
 3. Optionally set `MO_ATTRIBUTION_WINDOW_DAYS` (default 30).
    For the session anchor: run migration `0076` (safe right after the merge —
    until it ran, `persistTurn` writes tool rows without the column), **then**
@@ -229,14 +250,14 @@ consent is withdrawn. Contract (request, response, re-stamp, renewal, blanking, 
 | --- | --- |
 | `migrations/0042_order_attribution.sql` | `mo_attribution_tokens` + `mo_orders`. |
 | `migrations/0076_message_session_id.sql` | `messages.session_id` (writer of tool marker rows) + partial index `messages_session_marker_idx`. Additive; safe to run right after the merge. |
-| `src/lib/order-attribution.mjs` (+ tests) | Pure: marker URL builder, payload parsing (PII-free), catalog matching, tier classification, window check, window anchor (`attributionAnchor`), unresolved-marker event and tally. |
-| `src/lib/mo-orders-store.ts` | I/O: token minting, webhook ingest (anchor query, `unknown_token` / `outside_window`), `noteUnresolvedMarker`, KPI aggregation, sweep short-circuit. |
+| `src/lib/order-attribution.mjs` (+ tests) | Pure: marker URL builder, payload parsing (PII-free), catalog matching, tier classification, window check, window anchor (`attributionAnchor`), mail-link window restart (`restartsWindowOnReuse`), cross-thread overlap (`overlapLookback`, `unionConsultedProducts`), unresolved-marker event, event-id dedupe key and tally. |
+| `src/lib/mo-orders-store.ts` | I/O: token minting (mail-link re-stamp), webhook ingest (anchor query, overlap over the session's threads in the window, `unknown_token` / `outside_window`), `noteUnresolvedMarker` (event-id claim), KPI aggregation, sweep short-circuit. |
 | `src/lib/platform-flags.mjs`, `src/lib/retention-options.mjs` (+ tests) | `MO_ATTRIBUTION_SESSION_ANCHOR`; `attributionSessionAnchor` + `attributionTokenMaxDays` (the cap). |
 | `src/lib/retention.ts` | Step 5i: token purge (switch off) or keep rule with cap (switch on), `keptActiveAttributionTokens`. |
 | `src/lib/conversation-store.ts` | `persistTurn` writes `messages.session_id` on tool marker rows; retries without the column until `0076` ran. |
 | `src/lib/customer-erasure.ts` | `erasePerson` (every erasure path): severs `mo_orders` of the person's sessions (session id + token NULLed) and deletes their `mo_attribution_tokens`. |
 | `src/lib/db-errors.mjs` (+ tests) | `isUndefinedColumnError` (SQLSTATE 42703) for that retry. |
-| `src/app/api/webhooks/shopify/route.ts` | Routes `orders/create` + `orders/paid` to the ingest (HMAC-first); emits `mo_order_marker_unresolved` after the delivery is recorded. |
+| `src/app/api/webhooks/shopify/route.ts` | Routes `orders/create` + `orders/paid` to the ingest (HMAC-first); emits `mo_order_marker_unresolved` after the delivery is recorded (passes `X-Shopify-Event-Id`). |
 | `src/app/api/attribution/token/route.ts` | Widget-facing token mint (origin + secret + session guards; contract API_CONTRACT §10). |
 | `src/lib/summary-email.ts`, `src/lib/marketing-email.ts`, `src/lib/bundle-offers.ts` | Stamp their cart links at build/send time. |
 | `src/lib/conversion-sweep.ts` | Uses ingested orders as a Shopify-free short-circuit. |

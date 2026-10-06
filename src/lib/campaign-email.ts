@@ -75,6 +75,7 @@ import {
 import { renderEmailProductRows, productRowItems, firstProductImageUrl, catalogNameLookup } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
+import { withLocaleParam } from "./locale";
 import {
   createUniqueDiscountCode,
   formatExpiryDateForLanguage,
@@ -395,7 +396,9 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       // resolves back to campaignMoDeeplinkUrl(); the customer experiences a
       // perfectly normal click. Preview/copy paths stay untracked.
       const redirectToken = generateRedirectToken();
-      const trackedCtaUrl = `${getBaseUrl()}/api/r/${redirectToken}`;
+      // The recipient's locale rides along like on the unsubscribe link
+      // (API_CONTRACT §12.2); German links stay as before.
+      const trackedCtaUrl = withLocaleParam(`${getBaseUrl()}/api/r/${redirectToken}`, contact.language);
 
       // Render inside the design selected for this email type (admin
       // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
@@ -662,7 +665,7 @@ async function buildBundleBlockForContact(
   try {
     const bundle = await getActiveBundleForCampaignContact(contactId);
     if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
-    const offerUrl = buildBundleRedirectUrl(bundle.redirectToken);
+    const offerUrl = buildBundleRedirectUrl(bundle.redirectToken, language);
     if (!offerUrl) return null;
 
     // Component images fresh from the catalog; the block lists the contents

@@ -1,17 +1,21 @@
 // Consent / marketing data access (Cluster B — explicit consent).
 //
-// This is the ONLY module that writes email addresses. It backs the GDPR
-// email-capture + double-opt-in (DOI) flow:
+// The module that writes the email-capture records (email_captures). It backs
+// the GDPR email-capture + double-opt-in (DOI) flow:
 //
-//   - upsertEmailCapture()      POST /api/capture-email
+//   - upsertEmailCapture()      POST /api/capture-email, /api/chat-marketing-opt-in,
+//                               /api/account/marketing-opt-in
 //   - confirmMarketingByToken() GET  /api/confirm-marketing
 //   - unsubscribeByEmail()      GET  /api/unsubscribe
-//   - isSuppressed()/canSendMarketing()  gate every marketing send
+//   - isSuppressed()            the block list, checked by every marketing send
+//   - canSendMarketing()        the DOI gate of the legacy 1:1 path (approveAndSend)
 //
 // Rules enforced here (mirrors docs/CONSENT_FLOW.md):
 //   * Transactional consent and marketing consent are independent.
-//   * Marketing requires marketing_doi_status = 'confirmed' AND the address not
-//     suppressed/unsubscribed — never anything weaker.
+//   * The legacy 1:1 path (canSendMarketing) requires marketing_doi_status =
+//     'confirmed' AND the address not suppressed/unsubscribed. Campaign sends
+//     use the one consent instead (customers.email_consent_state = 'subscribed'
+//     AND not suppressed — campaign-prepare.ts / campaign-email.ts).
 //   * A suppressed or unsubscribed address is never re-pended for DOI.
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";

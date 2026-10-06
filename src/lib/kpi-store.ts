@@ -295,6 +295,8 @@ export interface ConsentVariantRow {
   acceptedWithoutShown: number;
   optedIn: number;
   alreadyConfirmed: number;
+  /** Sessions whose opt-in's DOI mail went out (OI1 F3: `doiSent`; rows before
+   *  F3 carry none and count when a DOI mail was due) — the DOI-rate base. */
   doiRequired: number;
   doiConfirmed: number;
   variantMismatch: number;
@@ -401,7 +403,8 @@ export async function getConsentGateFunnel(
                       WHEN data ? 'placement' THEN '?' ELSE '' END AS placement,
                  min(created_at) AS at,
                  bool_or(COALESCE((data->>'alreadyConfirmed')::boolean, data->>'doiStatus' = 'confirmed')) AS already_confirmed,
-                 bool_or(COALESCE((data->>'doiRequired')::boolean, data->>'doiStatus' = 'pending')) AS doi_required,
+                 bool_or(COALESCE((data->>'doiRequired')::boolean, data->>'doiStatus' = 'pending')
+                         AND COALESCE((data->>'doiSent')::boolean, true)) AS doi_required,
                  bool_or(COALESCE((data->>'variantMismatch')::boolean, false)) AS variant_mismatch
             FROM kpi_events
            WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
@@ -779,8 +782,11 @@ export interface EmailCaptureFunnel {
   submitted: number;
   /** The form's separate marketing box was ticked. */
   marketingOptedIn: number;
-  /** Of those, a DOI mail was due („DOI-Mail fällig“; a failed send still counts). */
-  doiRequired: number;
+  /** Of those, the DOI mail actually went out („DOI-Mail verschickt“, OI1 F3:
+   * `doiSent` on the opt-in; rows before F3 have none and count as sent). */
+  doiSent: number;
+  /** Of those, a DOI mail was due but not sent (failed or skipped send, F3). */
+  doiNotSent: number;
   /** Of those, the address was already subscribed (Mo DOI or Shopify) — no DOI. */
   alreadySubscribed: number;
   /** Of those, the address is suppressed (unsubscribed / bounced) — no DOI. */
@@ -791,7 +797,7 @@ export interface EmailCaptureFunnel {
   declined: number;
   /** submitted / askShown — null when nothing was asked. */
   submitRate: number | null;
-  /** confirmed / doiRequired — null when no DOI mail was due. */
+  /** confirmed / doiSent — null when no DOI mail went out. */
   doiRate: number | null;
   /** askShown by the offer trigger, bounded ('other' for unknown values). */
   asksByTrigger: Array<{ trigger: string; count: number }>;
@@ -802,7 +808,10 @@ export interface EmailCaptureFunnel {
  * marketing box → DOI click. Event counts inside the window (a DOI click on
  * yesterday's opt-in counts today). Only the capture form: opt-ins carry
  * `source` since 05.10.2026; older rows are told apart by their server-set
- * trigger (signin_optin / chat_gate). Returns null without a DB or on failure.
+ * trigger (signin_optin / chat_gate). „DOI-Mail verschickt“ counts opt-ins
+ * whose DOI mail went out (`doiSent`, OI1 F3 — capture-funnel.mjs →
+ * isDoiMailSent; rows before F3 count as sent). Returns null without a DB or
+ * on failure.
  */
 export async function getEmailCaptureFunnel(
   range: KpiRange,
@@ -828,7 +837,14 @@ export async function getEmailCaptureFunnel(
                                   OR (data->>'source' IS NULL
                                       AND COALESCE(data->>'trigger', '') NOT IN ('signin_optin', 'chat_gate')))
                              AND (data->>'outcome' = 'doi_required'
-                                  OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending')))::int AS doi_required,
+                                  OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending'))
+                             AND COALESCE((data->>'doiSent')::boolean, true))::int AS doi_sent,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                             AND (data->>'source' = 'mo_capture_form'
+                                  OR (data->>'source' IS NULL
+                                      AND COALESCE(data->>'trigger', '') NOT IN ('signin_optin', 'chat_gate')))
+                             AND data->>'outcome' = 'doi_required'
+                             AND (data->>'doiSent')::boolean = false)::int AS doi_not_sent,
           count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
                              AND (data->>'source' = 'mo_capture_form'
                                   OR (data->>'source' IS NULL
@@ -873,19 +889,20 @@ export async function getEmailCaptureFunnel(
     const n = (k: string) => Number(r[k] ?? 0);
     const askShown = n("ask_shown");
     const submitted = n("submitted");
-    const doiRequired = n("doi_required");
+    const doiSent = n("doi_sent");
     const confirmed = n("confirmed");
     return {
       askShown,
       submitted,
       marketingOptedIn: n("opted_in"),
-      doiRequired,
+      doiSent,
+      doiNotSent: n("doi_not_sent"),
       alreadySubscribed: n("already_subscribed"),
       suppressed: n("suppressed"),
       confirmed,
       declined: n("declined"),
       submitRate: askShown > 0 ? Math.min(1, submitted / askShown) : null,
-      doiRate: doiRequired > 0 ? Math.min(1, confirmed / doiRequired) : null,
+      doiRate: doiSent > 0 ? Math.min(1, confirmed / doiSent) : null,
       asksByTrigger: (triggerRows as Array<{ trigger: string; n: number }>).map((t) => ({
         trigger: normaliseTrigger(String(t.trigger) === "none" ? "" : String(t.trigger)),
         count: Number(t.n),

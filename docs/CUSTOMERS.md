@@ -156,9 +156,15 @@ On every e-mail capture (`/api/capture-email`, `/api/chat-marketing-opt-in`,
 1. **Find-or-create** the customer for the normalised email. An existing
    customer — including a mirrored Shopify customer with that address — means a
    returning visit: `last_seen_at` is bumped, `first_seen_at` stays.
-2. **Attach** the capture (`email_captures.customer_id`), the current
-   conversation (`conversations.customer_id`) and the session
-   (`customer_session_links`, `link_kind = 'email'`).
+2. **Attach** the capture (`email_captures.customer_id`), the session's
+   conversations (`conversations.customer_id`) and the session
+   (`customer_session_links`, `link_kind = 'email'`). Conversations without an
+   owner follow the capture; a correction of the session's earlier typed e-mail
+   takes that address's conversations along (latest capture wins). A
+   conversation of a person the session was **signed in** as stays theirs: the
+   typed address of someone else ends the sign-in, nothing more (C.27; rule:
+   `captureMovesConversationsFrom` in `customer-session-link.mjs`, tested;
+   details: [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) §4).
 3. **Mirror the transactional consent** (the summary request) from
    `email_captures`. The marketing consent is **not** copied from the capture:
    the opt-in is reported to the one consent (`src/lib/consent-flows.ts` —

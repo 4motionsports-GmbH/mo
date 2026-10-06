@@ -15,6 +15,7 @@ import { buildShopifyCartUrl } from "./shopify-cart-url.mjs";
 import { mintAttributionToken } from "./mo-orders-store";
 import { withCartAttribution } from "./order-attribution.mjs";
 import { getBaseUrl } from "./base-url";
+import { withLocaleParam, type Locale } from "./locale";
 import { isShopifyConfigured } from "./shopify";
 import {
   resolveBundleCreationMode,
@@ -65,10 +66,11 @@ function bundleExpiryDays(): number {
   return parseIntEnv("BUNDLE_OFFER_EXPIRY_DAYS", 7);
 }
 
-/** The tracked redirect URL the email CTA uses (/api/r/<token>). */
-export function buildBundleRedirectUrl(redirectToken: string | null): string | null {
+/** The tracked redirect URL the email CTA uses (/api/r/<token>), with the
+ *  mail's locale so an expired offer's page speaks it (German adds nothing). */
+export function buildBundleRedirectUrl(redirectToken: string | null, locale: Locale = "de"): string | null {
   if (!redirectToken) return null;
-  return `${getBaseUrl()}/api/r/${redirectToken}`;
+  return withLocaleParam(`${getBaseUrl()}/api/r/${redirectToken}`, locale);
 }
 
 export interface BundleComponentInput {

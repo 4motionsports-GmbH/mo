@@ -163,7 +163,7 @@ export interface SignInMarketingConsentCopy {
   variant?: string;
   /** The marketing consent label (nothing pre-selected). IS the consent text. */
   marketingLabel: string;
-  /** Shared one-line Art. 7 footer rendered beneath the checkbox. */
+  /** Shared one-line Art. 7 footer rendered beneath the label (button-consent, no checkbox). */
   consentFooter: string;
   /**
    * Pre-composed audit string the widget MUST echo back verbatim as

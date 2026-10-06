@@ -77,9 +77,11 @@ const MESSAGES = {
     de: "Löschung konnte nicht durchgeführt werden — bitte später erneut versuchen.",
     en: "The deletion could not be carried out — please try again later.",
   },
+  // Both opt-in endpoints are button-consent surfaces (no checkbox): the
+  // message names the explicit act, not a box.
   marketing_consent_required: {
-    de: "Bitte bestätige die Einwilligung aktiv (das Häkchen ist standardmäßig nicht gesetzt).",
-    en: "Please actively confirm consent (the box is unchecked by default).",
+    de: "Bitte bestätige die Einwilligung aktiv — sie gilt nur, wenn du ausdrücklich zustimmst.",
+    en: "Please actively confirm consent — it only counts when you explicitly agree.",
   },
   customer_not_found: {
     de: "Kunde nicht gefunden",

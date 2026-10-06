@@ -53,6 +53,51 @@ export function isAlreadyConfirmedAnswer(outcome) {
   return outcome === "already_confirmed" || outcome === "already_subscribed";
 }
 
+/**
+ * The `marketing` answer of the opt-in routes (/api/capture-email,
+ * /api/account/marketing-opt-in). A suppressed address — any reason — is
+ * answered neutrally whatever its old DOI row says: status `none`, never
+ * „already subscribed“ (F2) and never „DOI mail sent“ (no DOI mail goes to a
+ * blocked address; the send is never even attempted there).
+ * @param {{ suppressed: boolean, subscribedElsewhere: boolean, marketingDoiStatus: string,
+ *   doiEmailRequired: boolean, doiEmailSent: boolean }} r
+ * @returns {{ status: string, doiEmailSent: boolean, alreadyConfirmed: boolean }}
+ */
+export function optInAnswer({ suppressed, subscribedElsewhere, marketingDoiStatus, doiEmailRequired, doiEmailSent }) {
+  if (suppressed) return { status: "none", doiEmailSent: false, alreadyConfirmed: false };
+  return {
+    status: subscribedElsewhere ? "confirmed" : marketingDoiStatus,
+    doiEmailSent: doiEmailSent === true,
+    alreadyConfirmed: Boolean(subscribedElsewhere) || (marketingDoiStatus === "confirmed" && !doiEmailRequired),
+  };
+}
+
+/**
+ * Write side (OI1 F3): `{ doiSent }` for an opt-in whose DOI mail was due —
+ * true only when the send succeeded (a failed or skipped send, or none at all
+ * because the request ended first, is false). Other outcomes get no field. The
+ * opt-in event is written after the send attempt so it can carry this.
+ * @param {unknown} outcome
+ * @param {unknown} sent
+ */
+export function doiSentField(outcome, sent) {
+  return outcome === "doi_required" ? { doiSent: sent === true } : {};
+}
+
+/**
+ * Read side (OI1 F3): does a stored opt-in count as „DOI-Mail verschickt“?
+ * Its outcome is doi_required (legacy rows: doiStatus pending) and the send
+ * did not fail. Rows from before F3 carry no `doiSent` and count as sent, as
+ * they always did — so a period across the change stays comparable. The SQL
+ * in kpi-store.ts mirrors this.
+ * @param {unknown} outcome
+ * @param {unknown} doiStatus
+ * @param {unknown} doiSent  the stored field (boolean, or its JSON text)
+ */
+export function isDoiMailSent(outcome, doiStatus, doiSent) {
+  return eventOutcome(outcome, doiStatus) === "doi_required" && doiSent !== false && doiSent !== "false";
+}
+
 /** Read side: stored opted_in → outcome; legacy rows (no outcome) approximated by doiStatus. */
 export function eventOutcome(outcome, doiStatus) {
   if (OPT_IN_OUTCOMES.includes(outcome)) return outcome;

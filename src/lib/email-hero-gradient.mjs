@@ -1,4 +1,4 @@
-// Deterministic legibility for the Performance hero: after gpt-image-1 has
+// Deterministic legibility for the Performance hero: after the image model has
 // rendered the scene, a pale gradient is composited over the LEFT part of the
 // picture — the part the design prints the headline, subline and button on —
 // before the PNG is stored.

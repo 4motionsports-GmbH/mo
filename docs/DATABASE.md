@@ -282,7 +282,15 @@ data. Not seeded: OAuth tokens, pending sign-ins, merge conflicts, erasure tombs
 `campaign_letters`, `customer_link_grants` — all of them empty after `--reset` (the first four are
 in its truncate list, the last two go with `TRUNCATE … CASCADE` over their `customers` FK).
 
-`npm run db:reset` (`scripts/reset-test-data.mjs`, gated on `ALLOW_DB_RESET=true`) is the
-destructive TRUNCATE of every data table. Its table list stops at migration `0031`, so its
-completeness guard **aborts** on any database migrated further (it refuses to reset while
-unlisted tables exist). Locally use `npm run db:seed -- --reset` instead.
+`npm run db:reset` (`scripts/reset-test-data.mjs`, gated on `ALLOW_DB_RESET=true`; locally
+together with `NEON_FETCH_ENDPOINT`) is the destructive `TRUNCATE … RESTART IDENTITY` of every
+data table, on any migration level. It has no table list of its own: the data tables are the
+ones `migrations/` creates and no later migration drops (read at run time, plan in the tested
+`src/lib/db-reset-plan.mjs`). It keeps `_migrations`, `campaigns` (the built-in Einzelansprache
+and Lebenszyklus exist only through migration `0066`) and `email_design_selections`
+(configuration). It prints the target host and database first and **aborts before deleting
+anything** when the database has no `_migrations`, when a live table is created by no migration
+of the checkout (a foreign database, a table made by hand, a checkout older than the database)
+or when a kept table has a foreign key to a wiped one; the TRUNCATE runs without `CASCADE`.
+Afterwards every wiped table must count 0 and every kept table its old row count. To refill a
+local database use `npm run db:seed -- --reset`.

@@ -156,7 +156,9 @@ export function isServerOnlyEvent(event) {
  * /api/auth/link does not record), stale_widget (row 4a: return ok but
  * no redeem — an old widget), no_return (row 4b: the widget did not mount on
  * the return page or lost the code), abandoned (row 3: started, never
- * succeeded at Shopify), dismissed_while_waiting (row 1), start_lost (row 2).
+ * succeeded at Shopify), dismissed_while_waiting (row 1), start_lost (row 2),
+ * returned_error (row 9), shop_recognised / shop_renewed (row 10: an App Proxy
+ * link without a sign-in round trip), shop_not_redeemed (row 11, checked last).
  *
  * @param {{ gateClicked?: boolean, dismissedAfterClick?: boolean, started?: boolean,
  *           succeeded?: boolean, returnOk?: boolean, returnLinkFailed?: boolean,

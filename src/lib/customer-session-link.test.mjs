@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  attachSessionOnEmailCapture,
+  captureMovesConversationsFrom,
   isSignedInLinkKind,
   linkSessionToCustomer,
   resolveLinkedCustomerId,
@@ -17,11 +19,29 @@ import {
 // so a write-then-read round-trip exercises the REAL re-hydration contract:
 // "the session the widget holds resolves to the linked signed-in customer."
 // ---------------------------------------------------------------------------
-function makeSql({ customers = {} } = {}) {
+function makeSql({ customers = {}, conversations = [] } = {}) {
   const links = new Map(); // session_id → { customerId, kind }
   const authAt = new Map(); // session_id → authenticated_at
+  // conversations: id → { sessionId, customerId } (only what the capture attach touches)
+  const convs = new Map(conversations.map((c) => [c.id, { sessionId: c.sessionId, customerId: c.customerId ?? null }]));
   const sql = (strings, ...values) => {
     const text = strings.join("?");
+    if (text.includes("SELECT customer_id, link_kind FROM customer_session_links")) {
+      // attachSessionOnEmailCapture — the session's link BEFORE the capture.
+      const link = links.get(values[0]);
+      return Promise.resolve(link ? [{ customer_id: link.customerId, link_kind: link.kind }] : []);
+    }
+    if (text.includes("UPDATE conversations SET customer_id")) {
+      // Two spelled-out variants: (NULL | new) and (NULL | new | the corrected e-mail's customer).
+      const [to, sid, same, from] = values;
+      assert.equal(to, same);
+      assert.equal(text.split("OR customer_id = ?").length - 1, values.length === 4 ? 2 : 1);
+      for (const c of convs.values()) {
+        if (c.sessionId !== sid) continue;
+        if (c.customerId == null || c.customerId === to || (values.length === 4 && c.customerId === from)) c.customerId = to;
+      }
+      return Promise.resolve([]);
+    }
     if (text.includes("INSERT INTO customer_session_links")) {
       const [sid, customerId, kind] = values;
       const prev = links.get(sid);
@@ -67,6 +87,7 @@ function makeSql({ customers = {} } = {}) {
     throw new Error(`unexpected query: ${text}`);
   };
   sql._links = links;
+  sql._convs = convs;
   return sql;
 }
 
@@ -278,4 +299,106 @@ test("resolveSignedInLinkWithProof also returns when the link was authenticated"
   assert.equal(await resolveSignedInLinkWithProof(sql, "nope"), null);
   await linkSessionToCustomer(sql, "typed", 42, "email");
   assert.equal(await resolveSignedInLinkWithProof(sql, "typed"), null);
+});
+
+// ---------------------------------------------------------------------------
+// attachSessionOnEmailCapture — which chats follow a typed e-mail (C.27)
+// ---------------------------------------------------------------------------
+
+const owners = (sql) => Object.fromEntries([...sql._convs].map(([id, c]) => [id, c.customerId]));
+
+test("captureMovesConversationsFrom: only a correction of an earlier typed e-mail moves owned chats", () => {
+  assert.equal(captureMovesConversationsFrom(null, 9), null); // anonymous: nothing owned to move
+  assert.equal(captureMovesConversationsFrom(undefined, 9), null);
+  assert.equal(captureMovesConversationsFrom({ customerId: 7, kind: "email" }, 9), 7); // correction
+  assert.equal(captureMovesConversationsFrom({ customerId: "7", kind: "email" }, 9), 7);
+  assert.equal(captureMovesConversationsFrom({ customerId: 9, kind: "email" }, 9), null); // same customer
+  assert.equal(captureMovesConversationsFrom({ customerId: 42, kind: "customer_account" }, 9), null); // signed in
+  assert.equal(captureMovesConversationsFrom({ customerId: 42, kind: "app_proxy" }, 9), null);
+  assert.equal(captureMovesConversationsFrom({ customerId: 42, kind: "legacy" }, 9), null); // unknown proof: fail closed
+  assert.equal(captureMovesConversationsFrom({ customerId: null, kind: "email" }, 9), null);
+  assert.equal(captureMovesConversationsFrom({ customerId: "x", kind: "email" }, 9), null);
+});
+
+test("attachSessionOnEmailCapture no-ops without sql / session / customer", async () => {
+  const sql = makeSql({ conversations: [{ id: 1, sessionId: "s" }] });
+  assert.equal(await attachSessionOnEmailCapture(null, "s", 9), false);
+  assert.equal(await attachSessionOnEmailCapture(sql, "  ", 9), false);
+  assert.equal(await attachSessionOnEmailCapture(sql, "s", null), false);
+  assert.deepEqual(owners(sql), { 1: null });
+  assert.equal(sql._links.size, 0);
+});
+
+test("an anonymous capture links the session and all its chats, as before", async () => {
+  const sql = makeSql({
+    conversations: [
+      { id: 1, sessionId: "anon" },
+      { id: 2, sessionId: "anon" },
+      { id: 3, sessionId: "other", customerId: null },
+    ],
+  });
+  assert.equal(await attachSessionOnEmailCapture(sql, " anon ", 9), true);
+  assert.deepEqual(owners(sql), { 1: 9, 2: 9, 3: null }); // another session is never touched
+  assert.deepEqual(sql._links.get("anon"), { customerId: 9, kind: "email" });
+});
+
+test("a corrected e-mail in an anonymous session takes its chats along (latest capture wins)", async () => {
+  const sql = makeSql({ conversations: [{ id: 1, sessionId: "anon" }, { id: 2, sessionId: "anon" }] });
+  await attachSessionOnEmailCapture(sql, "anon", 7); // typo
+  await attachSessionOnEmailCapture(sql, "anon", 9); // corrected
+  assert.deepEqual(owners(sql), { 1: 9, 2: 9 });
+  assert.deepEqual(sql._links.get("anon"), { customerId: 9, kind: "email" });
+});
+
+test("C.27: a signed-in customer typing someone else's e-mail ends the sign-in, the chats stay theirs", async () => {
+  // Customer 42 signed in without a verified e-mail (shopify: placeholder); the
+  // capture form is the 422 fallback. Customer 9 owns the typed address.
+  const sql = makeSql({
+    customers: { 42: { shopify_customer_id: "9988", identity_tier: 3 }, 9: { shopify_customer_id: "5555" } },
+    conversations: [
+      { id: 1, sessionId: "s", customerId: 42 }, // stamped by the redeem / created while signed in
+      { id: 2, sessionId: "s", customerId: 42 },
+      { id: 3, sessionId: "s", customerId: null }, // no owner yet
+    ],
+  });
+  await linkSessionToCustomer(sql, "s", 42, "customer_account");
+  await attachSessionOnEmailCapture(sql, "s", 9);
+  assert.deepEqual(owners(sql), { 1: 42, 2: 42, 3: 9 });
+  // Only the sign-in link changed: the session is now linked by the typed e-mail.
+  assert.deepEqual(sql._links.get("s"), { customerId: 9, kind: "email" });
+  assert.equal(await resolveSignedInCustomerRow(sql, "s"), null);
+
+  // A further capture in the same session corrects the typed address only:
+  // the former signed-in customer's chats still stay with them.
+  await attachSessionOnEmailCapture(sql, "s", 11);
+  assert.deepEqual(owners(sql), { 1: 42, 2: 42, 3: 11 });
+});
+
+test("the same holds for a shop-login (App Proxy) sign-in and a legacy link", async () => {
+  const sql = makeSql({
+    conversations: [
+      { id: 1, sessionId: "proxy", customerId: 42 },
+      { id: 2, sessionId: "legacy", customerId: 42 },
+    ],
+  });
+  await linkSessionToCustomer(sql, "proxy", 42, "app_proxy");
+  sql._links.set("legacy", { customerId: 42, kind: "legacy" });
+  await attachSessionOnEmailCapture(sql, "proxy", 9);
+  await attachSessionOnEmailCapture(sql, "legacy", 9);
+  assert.deepEqual(owners(sql), { 1: 42, 2: 42 });
+});
+
+test("a signed-in customer typing their OWN address stays signed in; another person's chat stays theirs", async () => {
+  const sql = makeSql({
+    customers: { 42: { shopify_customer_id: "9988", identity_tier: 3 } },
+    conversations: [
+      { id: 1, sessionId: "s", customerId: null },
+      { id: 2, sessionId: "s", customerId: 42 },
+      { id: 3, sessionId: "s", customerId: 7 }, // typed by someone before this sign-in (shared browser)
+    ],
+  });
+  await linkSessionToCustomer(sql, "s", 42, "customer_account");
+  await attachSessionOnEmailCapture(sql, "s", 42); // the summary mail / the opt-in after sign-in
+  assert.deepEqual(owners(sql), { 1: 42, 2: 42, 3: 7 });
+  assert.deepEqual(await resolveSignedInCustomerRow(sql, "s"), { customerId: 42, shopifyCustomerId: "9988" });
 });

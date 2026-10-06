@@ -1,15 +1,16 @@
 // KI-Kosten — average cost per consultation (EUR) + total spend, chat vs admin,
 // per call site and prompt caching.
 
-import type { AiCostMetrics } from "@/lib/ai-usage-store";
+import type { AiCallSite, AiCostMetrics } from "@/lib/ai-usage-store";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { eur, num, ratio } from "@/lib/admin-format.mjs";
 import { BarList, Stat } from "../../ui";
 
 import { ChartCard, Explain, KpiSection, StatGrid, SubHeading } from "../KpiSection";
 
-/** German labels for the ai_usage call sites (lib/ai-usage-store AiCallSite). */
-const CALL_SITE_LABELS: Record<string, string> = {
+/** German labels for the ai_usage call sites — one per AiCallSite (lib/ai-usage-store), so a new
+ * call site without a label fails the type check; an unknown key from old rows shows raw. */
+const CALL_SITE_LABELS: Record<AiCallSite, string> = {
   chat: "Beratungs-Chat",
   embeddings: "Embeddings (Produktsuche)",
   tts: "Sprachausgabe (TTS)",
@@ -26,6 +27,12 @@ const CALL_SITE_LABELS: Record<string, string> = {
   qa_draft: "Wissen: Entwürfe",
   qa_translate: "Wissen: Übersetzung",
   bundle_suggestions: "Bundle-Vorschläge",
+  hero_image: "KI-Titelbilder",
+  campaign_assist: "Kampagnen: Zielgruppe & Briefing",
+  inbox_suggestion: "Eingang: Vorschläge",
+  inbox_mail_reply: "Eingang: E-Mail beantworten",
+  customer_ask: "Kunden: Frag Mo",
+  improvement: "Verbesserung",
 };
 
 export function AiCostSection({ cost }: { cost: AiCostMetrics | null }) {
@@ -102,7 +109,7 @@ export function AiCostSection({ cost }: { cost: AiCostMetrics | null }) {
                 <BarList
                   rows={cost.perCallSite.map((s) => ({
                     key: s.callSite,
-                    label: CALL_SITE_LABELS[s.callSite] ?? s.callSite,
+                    label: CALL_SITE_LABELS[s.callSite as AiCallSite] ?? s.callSite,
                     count: s.spendEur,
                     display: eur(s.spendEur),
                   }))}

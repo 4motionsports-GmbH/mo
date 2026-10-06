@@ -1162,7 +1162,7 @@ email address ever appears in an event). All but one are emitted **server-side**
 | ------------------------------------ | ---------- | --------------------------------------- |
 | `email_capture_ask_shown`            | server (`/api/chat`) | `{ trigger, askNumber }` — one per `offer_email_summary` call. |
 | `email_capture_submitted`            | server (`/api/capture-email`, `/api/chat-marketing-opt-in`, `/api/account/marketing-opt-in`) | `{ marketingConsent, source, outcome?, trigger? }` |
-| `email_capture_marketing_opted_in`   | server (same three routes) | `{ doiStatus, source, outcome?, trigger? }` — the marketing box was ticked / the accept tapped. |
+| `email_capture_marketing_opted_in`   | server (same three routes) | `{ doiStatus, source, outcome?, doiSent?, trigger? }` — the marketing box was ticked / the accept tapped. |
 | `email_capture_marketing_confirmed`  | server (`/api/confirm-marketing`) | `{ source }` (since 2026-10-05; `{}` before) — unique DOI confirmations only. |
 | `email_capture_declined`             | **widget** (this endpoint) | `{ trigger, askNumber? }` — capture card dismissed/declined without submit. |
 
@@ -1183,10 +1183,16 @@ apart by `trigger` there.
 
 | `outcome` (only when the marketing box was ticked) | Meaning |
 | --- | --- |
-| `doi_required` | a DOI mail is due (written before the send; a failed send still counts) |
+| `doi_required` | a DOI mail is due; whether it went out is `doiSent` (below) |
 | `already_confirmed` | the address already holds a confirmed Mo DOI — no DOI mail |
 | `already_subscribed` | the address is subscribed elsewhere (Shopify) — no DOI mail |
 | `suppressed` | the address is on the suppression list — no DOI mail, never re-pended |
+
+**`doiSent`** (boolean, `email_capture_marketing_opted_in` with `outcome: "doi_required"` from
+`/api/capture-email` and `/api/account/marketing-opt-in`, since 2026-10-06): `true` when the DOI mail
+went out, `false` when its send failed or was skipped, or never ran (the capture form's summary send
+failed first). Both routes write this event after the send attempt. Rows from before, and the
+retired chat gate's, carry no `doiSent`; readers count them as sent.
 
 The routes answer `alreadyConfirmed: true` exactly for `already_confirmed` and `already_subscribed`;
 a `suppressed` address is answered `marketing.status: "none"`, `alreadyConfirmed: false` (§7).
@@ -1276,7 +1282,7 @@ server-side capture-funnel names above, but does not store them:
 | `account_export_requested` | `GET /api/account/export` | `{}`, session `NULL` (pure volume counter) |
 | `account_erased`           | `POST /api/account/erase` | `{}`, session `NULL` (pure volume counter) |
 | `order_status_lookup`      | `POST /api/chat` — one per `get_order_status` call (`CHAT_ORDER_STATUS_ENABLED`) | `{ outcome, topic, source, orders }` — `outcome` `ok` \| `no_orders` \| `not_found` \| `sign_in_required` \| `unavailable` \| `disabled` \| `ledger_off` \| `ledger_incomplete` (first order import not finished) \| `ledger_behind` (a live read found an order the ledger lacks); `topic` as the tool input; `source` `ledger` \| `ledger+live`; `orders` = number of orders in the answer. Never an order number, amount or id. Session-keyed. |
-| `mo_order_marker_unresolved` | `POST /api/webhooks/shopify` — `orders/create` only, after the delivery was recorded (a Shopify retry or the `orders/paid` delivery of the same order does not count again; 2026-10-05) | `{ reason, source? }` — `reason` `unknown_token` (token not in the table: purged, erased, forged) \| `outside_window`; `source` only for `outside_window`, one of `widget` \| `summary_email` \| `marketing_email` \| `bundle`. Session `NULL`; never an order id, token or amount. Caveat: a duplicate `orders/create` subscription delivers each order with its own webhook id and counts it twice. |
+| `mo_order_marker_unresolved` | `POST /api/webhooks/shopify` — `orders/create` only, after the delivery was recorded (a Shopify retry or the `orders/paid` delivery of the same order does not count again; 2026-10-05) | `{ reason, source? }` — `reason` `unknown_token` (token not in the table: purged, erased, forged) \| `outside_window`; `source` only for `outside_window`, one of `widget` \| `summary_email` \| `marketing_email` \| `bundle`. Session `NULL`; never an order id, token or amount. Counted once per Shopify event (`X-Shopify-Event-Id`), so a duplicate `orders/create` subscription — each delivery with its own webhook id — or a redelivery counts once; without that header a duplicate subscription counts twice. |
 | `page_context_applied`     | `POST /api/chat` — one per request with a valid `context.source: "page"` and a user message (§2), written when the request arrives (2026-10-05) | `{ applied, kind, resolved, locale, pct }` — `applied` = the arm (context used, or ignored as switched off / control group), not "a note was added"; `kind` `product` \| `collection`; `resolved` = known to the catalog; `pct` = the control-group share in force (0–50), `100` while `CHAT_PAGE_CONTEXT_ENABLED` is off, `0` for `collection`. Session-keyed; never a product id. |
 | `page_context_answered`    | `POST /api/chat` — when that turn finished (2026-10-05) | `{ kind, productCards, otherCards }` — card tool calls in the answer (`show_product`, `compare_products`, `add_to_cart`); `otherCards` leaves out a `show_product` of the open page's product. Counts only, no ids. Session-keyed. |
 
@@ -2028,8 +2034,9 @@ The token is tried in this order:
 | Bundle offer | The bundle's cart permalink while the offer is active; any other offer state (expired, archived, failed, pending) → a branded „Angebot abgelaufen“ page (`410`). |
 | Unknown / pruned | The storefront cart (never an error page). |
 
-`&locale=` on the link sets the language of the expired-offer page (the backend's link builders do not
-append it yet, §12).
+`locale` on the link (`?locale=en`) sets the language of the expired-offer page. Campaign mails append it
+for English recipients (CTA and set link); links of the 1:1 marketing mail (German only) and links sent
+before 2026-10-06 carry none and stay German (§12).
 
 ### 11.3 `POST /api/webhooks/shopify`
 
@@ -2078,13 +2085,13 @@ integration: send `x-ms-locale` on every backend call from `/en` (and `de` or no
 | `GET /api/consent-copy` | query, header | Every surface in that language: capture strings, `surface=signin` headline, label, footer and `benefits`, `surface=erase`, `surface=chat`; with `locale` and `enLegalReviewed`. |
 | `POST /api/account/marketing-opt-in` | body, query, header | DOI mail language, stored locale, comparison against the `surface=signin` copy (§12.3). |
 | `POST /api/chat-marketing-opt-in` (not used by the widget) | body, query, header | As the opt-in above, against `surface=chat`. |
-| `POST /api/contact` | body, query, header | The response messages; the team mail stays German. Known gap: one `502` branch (mail provider exception) answers German on `/en`. |
+| `POST /api/contact` | body, query, header | The response messages; the team mail stays German. |
 | `POST /api/feedback` | body, query, header | Validation and error messages. |
 | `GET /api/account/summary` | query, header | The PDF and its filename. |
 | `GET /api/account/export` | query, header | The download filename and error messages. |
 | `POST /api/account/erase` | query, header | Error messages. |
 | `GET`/`PATCH`/`DELETE /api/account/conversations/{id}` | query, header | Error messages. |
-| Mail links (`/api/confirm-marketing`, `/api/unsubscribe`, `/api/erase-data`, `/api/newsletter-rating`, `/api/r/{token}`) | `&locale=` on the link | Page language. The backend builds these links; the widget never does. The DOI, campaign-unsubscribe and erasure links carry the recipient's locale; `/api/r/{token}` links do not yet, so the expired-offer page is German. |
+| Mail links (`/api/confirm-marketing`, `/api/unsubscribe`, `/api/erase-data`, `/api/newsletter-rating`, `/api/r/{token}`) | `locale` on the link | Page language. The backend builds these links; the widget never does. The DOI link carries the recipient's locale always; the erasure links and the unsubscribe and `/api/r/{token}` links of campaign mails (the Einzelansprache included) carry `locale=en` for English recipients and nothing for German. The 1:1 marketing mail is German only, so its links carry none; `/api/newsletter-rating` links carry none yet. A link without `locale` is German, so links sent earlier keep working. |
 
 No locale is read by `/api/products`, `/api/kpi`, `/api/tts`, `/api/attribution/token`, `/api/auth/*`
 and `GET /api/account/conversations` (no user-facing prose).
@@ -2146,3 +2153,5 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-05 | New server event `mo_order_marker_unresolved` (marked orders the backend cannot attribute). | §5 |
 | 2026-10-05 | Attribution token: a repeated call returns the same token while it exists and a new one after the backend deleted it (retention, erasure); the widget may call again after a live consultation and blanks the `_mo` attribute when the session ends. | §10 |
 | 2026-10-05 | English consent copy approved as the translation: `enLegalReviewed: true` for `en`. | §12.3 |
+| 2026-10-06 | `email_capture_marketing_opted_in` with `outcome: "doi_required"` carries `doiSent` and is written after the DOI send attempt (server-only, no widget change). | §5 |
+| 2026-10-06 | The `/api/r/{token}` links of campaign mails carry `?locale=en` for English recipients (older links stay German); the `502` of `POST /api/contact` is localised in both branches; the `marketing_consent_required` message no longer mentions a checkbox. | §11.2, §12.2 |

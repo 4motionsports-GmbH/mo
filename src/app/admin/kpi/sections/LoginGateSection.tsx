@@ -15,9 +15,11 @@ import { Explain, FunnelLayout, KpiSection, StatGrid, SubHeading } from "../KpiS
 const INFO = (
   <Explain>
     <p>
-      Nach der ersten beantworteten Nachricht bittet das Widget anonyme Besucher:innen, sich anzumelden
-      (einmal pro Sitzung, nie im Sprachmodus): Popup angezeigt → „Anmelden“ → bei Shopify angemeldet →
-      im Chat angemeldet.
+      Etwa 0,7 Sekunden nach dem Senden einer Nachricht bittet das Widget anonyme Besucher:innen, sich
+      anzumelden — während die Antwort noch lädt, nicht erst danach; höchstens ein Popup pro Browser-Tab
+      (gemeinsam mit dem Einwilligungs-Popup), nie im Sprachmodus: Popup angezeigt → „Anmelden“ → bei
+      Shopify angemeldet → im Chat angemeldet. Ein „Angezeigt“ kann deshalb zu einer Antwort gehören, die
+      danach fehlschlug.
     </p>
     <p>
       Gezählt werden Sitzungen. Die ersten Stufen meldet das Widget (<code>login_gate_*</code>); „Bei

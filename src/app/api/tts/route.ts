@@ -158,7 +158,7 @@ export async function POST(req: Request) {
         voice: TTS_VOICE,
         input: text,
         response_format: RESPONSE_FORMAT,
-        // Speaking rate (configurable, default 1.0): the steerable gpt-4o
+        // Speaking rate (TTS_SPEED, default 1.1): the steerable gpt-4o
         // models take it as a prompt hint folded into `instructions`; the
         // legacy tts-1 family takes the numeric `speed` param (and rejects
         // `instructions`). Gate each so neither can 400 the other's model.

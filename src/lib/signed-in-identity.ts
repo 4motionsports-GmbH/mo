@@ -5,20 +5,17 @@
 // "when do we surface the at-sign-in opt-in" — cannot drift between the two routes.
 
 import { getCustomerById, type CustomerMarketingStatus } from "./customer-store";
+import { isSuppressed } from "./email-capture-store";
 import { reportError } from "./observability";
 import { getSql } from "./db";
-import { isConsentAskQuiet } from "./consent-ask-policy.mjs";
+import { isConsentAskQuiet, isMailableEmail, isMarketingOptInActionable } from "./consent-ask-policy.mjs";
 import { KPI_CONSENT_GATE_DECLINED, KPI_CONSENT_GATE_SHOWN } from "./kpi-events";
 
 // A tier-3 row created with no verified Shopify email claim is keyed by this
 // synthetic placeholder — it can't receive a DOI / marketing mail, so the
 // at-sign-in opt-in is NOT actionable for it (mirrors marketing-opt-in's refusal).
-export const SYNTHETIC_EMAIL_PREFIX = "shopify:";
-
-/** True when `email` is a real, mailable address (not the synthetic placeholder). */
-function hasRealEmail(email: string | null | undefined): boolean {
-  return !!email && email.includes("@") && !email.startsWith(SYNTHETIC_EMAIL_PREFIX);
-}
+// Defined in consent-ask-policy.mjs (tested); re-exported for existing importers.
+export { SYNTHETIC_EMAIL_PREFIX } from "./consent-ask-policy.mjs";
 
 /** Best available display name (displayName → first+last → null). Structurally
  *  typed so it works for both the Customer-Account and Admin-API identity shapes. */
@@ -37,7 +34,8 @@ export function displayNameOf(identity: {
 
 export interface MarketingOptInState {
   status: CustomerMarketingStatus;
-  /** true ⇔ surface the at-sign-in opt-in card (real email + no DOI decision yet). */
+  /** true ⇔ surface the at-sign-in opt-in card (real email, no DOI decision yet,
+   *  address not suppressed, anti-nag not quiet). */
   optInActionable: boolean;
 }
 
@@ -48,10 +46,13 @@ export interface MarketingOptInState {
  * (Shopify or Mo): a customer subscribed in Shopify reads "confirmed" and is
  * never asked again. Any DOI decision already on record
  * (pending / confirmed / unsubscribed) — or a synthetic placeholder email — makes
- * it non-actionable, and so does a decline of the popup in any of the
- * customer's sessions in the last 30 days or the popup shown in 3 sessions
- * (anti-nag). Best-effort + fail-closed: a read failure degrades to
- * "not actionable" (never invite an opt-in we can't substantiate) and is logged.
+ * it non-actionable, and so does an address on the suppression list (any
+ * reason — an accept there writes no consent act), a decline of the popup in
+ * any of the customer's sessions in the last 30 days or the popup shown in 3
+ * sessions (anti-nag). The rule itself is `isMarketingOptInActionable`
+ * (consent-ask-policy.mjs, tested). Best-effort + fail-closed: a read failure
+ * degrades to "not actionable" (never invite an opt-in we can't substantiate)
+ * and is logged; `isSuppressed` answers true without a database.
  */
 export async function resolveMarketingOptInState(
   customerId: number,
@@ -60,10 +61,15 @@ export async function resolveMarketingOptInState(
   try {
     const customer = await getCustomerById(customerId);
     if (!customer) return { status: "none", optInActionable: false };
-    const actionable = hasRealEmail(customer.email) && customer.marketingStatus === "none";
+    const status = customer.marketingStatus;
+    // The two extra reads only when the cheap part of the rule still passes.
+    if (!isMailableEmail(customer.email) || status !== "none") {
+      return { status, optInActionable: false };
+    }
+    const [suppressed, quiet] = await Promise.all([isSuppressed(customer.email), consentAskQuiet(customerId)]);
     return {
-      status: customer.marketingStatus,
-      optInActionable: actionable && !(await consentAskQuiet(customerId)),
+      status,
+      optInActionable: isMarketingOptInActionable({ email: customer.email, marketingStatus: status, suppressed, quiet }),
     };
   } catch (err) {
     reportError(err, { route, phase: "marketingState" });

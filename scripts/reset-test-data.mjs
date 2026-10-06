@@ -5,44 +5,45 @@
 // set in the environment. It also prints the target database host and name
 // before doing anything, so you can verify you are not wiping a production DB.
 //
-// What is truncated (all data tables — derived from migrations/):
-//   messages                       (Cluster A — FK child of conversations)
-//   marketing_sends                (Cluster B — FK child of email_captures)
-//   conversations                  (Cluster A)
-//   kpi_events                     (Cluster A)
-//   email_captures                 (Cluster B)
-//   suppression_list               (Cluster B)
-//   kpi_persona_question_summaries (Cluster A — derived analytics cache)
-//   conversation_insights          (Cluster A — derived insights rollup cache — migration 0031)
-//   customers                      (Cluster B — migration 0008)
-//   ai_usage                       (standalone — migration 0012)
-//   bundle_offers                  (FK child of customers + marketing_sends — migration 0013)
-//   customer_oauth_tokens          (FK child of customers — migration 0014)
-//   customer_auth_pending          (standalone CSRF/PKCE state — migration 0014)
-//   customer_merge_conflicts       (standalone sign-in conflict audit — migration 0014)
-//   customer_session_links         (FK child of customers — migration 0019)
-//   feedback                       (standalone — migration 0020)
-//   email_messages                 (FK child of customers + marketing_sends — migration 0021)
-//   physical_letters               (FK child of customers + marketing_sends — migration 0022)
-//   admin_access_log               (standalone PII-access audit — migration 0028)
+// What is truncated: every table the migrations in migrations/ create (and no
+// later one drops), read from the files at run time — no hand-maintained list
+// to fall behind the schema (the old one stopped at 0031 and aborted on every
+// newer database). The plan is pure and tested: src/lib/db-reset-plan.mjs.
 //
-// The list is CURRENT THROUGH MIGRATION 0031 (migration 0031 added the
-// conversation_insights table — listed below — and the analysis_* COLUMNS on
-// conversations, which are cleared automatically by TRUNCATE conversations, no
-// list change needed; email_captures.locale from 0030 is likewise a column;
-// bestandskunden_suppression_list from 0017 was dropped in 0029). A completeness
-// guard below cross-checks this list against the LIVE schema and ABORTS if a
-// later migration added a data table that isn't listed here — so a pre-launch
-// reset can never again silently miss a table.
+// What is NOT touched (RESET_PRESERVE_TABLES in that module):
+//   _migrations              — schema version tracker
+//   campaigns                — campaign definitions incl. the built-in
+//                              Einzelansprache / Lebenszyklus (only 0066 creates them)
+//   email_design_selections  — which e-mail design each mail type uses
 //
-// What is NOT touched:
-//   _migrations        — schema version tracking; never touch (see PRESERVE_TABLES)
+// Guards, before anything is deleted (each ABORTS with exit 1):
+//   · ALLOW_DB_RESET=true is required (above all else);
+//   · the database must have `_migrations` (migrate.mjs ran on it);
+//   · every live public table must be created by a migration in this checkout
+//     or be preserved — a foreign database, a hand-made table or a checkout
+//     older than the database is never wiped;
+//   · no kept table may hold a foreign key to a wiped one.
+// The TRUNCATE runs WITHOUT CASCADE, so Postgres itself refuses rather than
+// reaching into a kept table; afterwards every wiped table must count 0 and
+// every preserved table must still hold its rows.
 //
 // Usage:
 //   ALLOW_DB_RESET=true node --env-file=.env.local scripts/reset-test-data.mjs
 //   ALLOW_DB_RESET=true npm run db:reset
+// Local Postgres behind the Neon-protocol proxy (docs/DATABASE.md): also set
+// NEON_FETCH_ENDPOINT=http://127.0.0.1:4444/sql (same switch as src/lib/db.ts).
 
-import { neon } from "@neondatabase/serverless";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { neon, neonConfig } from "@neondatabase/serverless";
+import { RESET_PRESERVE_TABLES, planReset, quoteIdent, tablesFromMigrations } from "../src/lib/db-reset-plan.mjs";
+
+if (process.env.NEON_FETCH_ENDPOINT) {
+  neonConfig.fetchEndpoint = process.env.NEON_FETCH_ENDPOINT;
+}
+
+const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 
 // ─── Safety gate ──────────────────────────────────────────────────────────────
 
@@ -102,131 +103,126 @@ console.log(`  Target db   : ${dbName}`);
 console.log("══════════════════════════════════════════════════════════════");
 console.log("");
 
-// ─── Table list (child-FK tables first, then parents, then standalone) ────────
-// RESTART IDENTITY CASCADE handles cascades automatically, but explicit ordering
-// makes the intent clear and avoids any FK violation if CASCADE is somehow off.
+// ─── Plan: what goes, what stays ──────────────────────────────────────────────
 
-const DATA_TABLES = [
-  // FK children first (deepest nesting first)
-  "messages",              // FK → conversations
-  "bundle_offers",         // FK → customers (SET NULL), marketing_sends (SET NULL) — migration 0013
-  "email_messages",        // FK → customers (SET NULL), marketing_sends (SET NULL) — migration 0021
-  "physical_letters",      // FK → customers (SET NULL), marketing_sends (SET NULL) — migration 0022
-  "marketing_sends",       // FK → email_captures
-  "customer_oauth_tokens", // FK → customers (CASCADE) — migration 0014
-  "customer_session_links", // FK → customers (CASCADE) — migration 0019
-  // Parents / standalone tables (conversations before customers: customer_id ON DELETE SET NULL)
-  "conversations",
-  "kpi_events",
-  "email_captures",
-  "suppression_list",
-  "kpi_persona_question_summaries",
-  "conversation_insights",    // derived insights rollup cache (no FK) — migration 0031
-  "customers",             // added migration 0008; email_captures/conversations truncated first
-  "ai_usage",              // added migration 0012
-  // Standalone tables — no FK constraints
-  "customer_auth_pending",    // CSRF/PKCE state — migration 0014
-  "customer_merge_conflicts", // sign-in conflict audit — migration 0014
-  "feedback",                 // standalone — migration 0020
-  "admin_access_log",         // admin PII-access audit — migration 0028 (no FK by design)
-];
-
-// Tables the reset deliberately PRESERVES. Only the schema-version tracker — the
-// completeness guard below treats every other live base table as data that MUST
-// appear in DATA_TABLES.
-const PRESERVE_TABLES = new Set(["_migrations"]);
-
-console.log("[reset-test-data] Tables to truncate:");
-for (const t of DATA_TABLES) {
-  console.log(`  • ${t}`);
+let migrationTables;
+try {
+  const files = readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .map((name) => ({ name, sql: readFileSync(join(MIGRATIONS_DIR, name), "utf8") }));
+  migrationTables = tablesFromMigrations(files);
+} catch (err) {
+  console.error(`[reset-test-data] Could not read ${MIGRATIONS_DIR}:`, err.message);
+  process.exit(1);
 }
-console.log("");
-
-// ─── Connect and execute ──────────────────────────────────────────────────────
 
 const sql = neon(cs);
 
-// ─── Completeness guard (drift protection) ────────────────────────────────────
-// Cross-check DATA_TABLES against the LIVE schema so a future migration that adds
-// a data table can never be silently missed by a pre-launch reset. Every public
-// base table must be either in DATA_TABLES or in PRESERVE_TABLES; anything else
-// ABORTS with instructions (rather than leaving stray rows behind at go-live).
+let plan;
 try {
   const liveRows = await sql.query(
     `SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
   );
-  const live = liveRows.map((r) => r.table_name);
-  const listed = new Set(DATA_TABLES);
-  const unlisted = live.filter((t) => !listed.has(t) && !PRESERVE_TABLES.has(t));
-  // Also surface a stale list entry (a table that was dropped by a migration) so
-  // the TRUNCATE below doesn't fail on a non-existent relation.
-  const liveSet = new Set(live);
-  const missingFromDb = DATA_TABLES.filter((t) => !liveSet.has(t));
-
-  if (missingFromDb.length > 0) {
-    console.error(
-      "[reset-test-data] ABORTED — DATA_TABLES lists table(s) that don't exist " +
-        "in this database (stale after a DROP, or you're pointed at the wrong DB):\n" +
-        missingFromDb.map((t) => `    • ${t}`).join("\n") +
-        "\n  Remove them from DATA_TABLES (or check the connection).\n"
-    );
-    process.exit(1);
-  }
-  if (unlisted.length > 0) {
-    console.error(
-      "[reset-test-data] ABORTED — the live schema has data table(s) NOT covered " +
-        "by this reset (a newer migration added them):\n" +
-        unlisted.map((t) => `    • ${t}`).join("\n") +
-        "\n  Add each to DATA_TABLES (in FK-safe order) — or to PRESERVE_TABLES if " +
-        "it must survive a reset — then re-run. Refusing to reset with stray data.\n"
-    );
-    process.exit(1);
-  }
-  console.log("[reset-test-data] ✓ Completeness guard: every live data table is covered.\n");
+  // Every foreign key INTO a public table; the referencing side is schema-
+  // qualified unless it is public itself.
+  const fkRows = await sql.query(
+    `SELECT CASE WHEN sn.nspname = 'public' THEN s.relname ELSE sn.nspname || '.' || s.relname END AS from_table,
+            t.relname AS to_table
+       FROM pg_constraint c
+       JOIN pg_class s ON s.oid = c.conrelid
+       JOIN pg_namespace sn ON sn.oid = s.relnamespace
+       JOIN pg_class t ON t.oid = c.confrelid
+       JOIN pg_namespace tn ON tn.oid = t.relnamespace
+      WHERE c.contype = 'f' AND tn.nspname = 'public'`
+  );
+  plan = planReset({
+    liveTables: liveRows.map((r) => r.table_name),
+    migrationTables,
+    foreignKeys: fkRows.map((r) => ({ from: r.from_table, to: r.to_table })),
+  });
 } catch (err) {
-  console.error("[reset-test-data] Completeness guard could not query the schema:", err.message);
+  console.error("[reset-test-data] Could not read the live schema:", err.message);
   process.exit(1);
 }
 
-// Single TRUNCATE statement; CASCADE ensures any FK cascade we might have
-// missed is handled automatically. RESTART IDENTITY resets all sequences to 1.
-const tableList = DATA_TABLES.join(", ");
-console.log("[reset-test-data] Executing TRUNCATE … RESTART IDENTITY CASCADE …");
+if (plan.errors.length > 0) {
+  console.error(
+    "[reset-test-data] ABORTED — nothing was deleted:\n" +
+      plan.errors.map((e) => `    • ${e}`).join("\n") +
+      "\n  Check the connection, run the migrations of this checkout, or classify the table in " +
+      "src/lib/db-reset-plan.mjs (RESET_PRESERVE_TABLES).\n"
+  );
+  process.exit(1);
+}
+if (plan.truncate.length === 0) {
+  console.log("[reset-test-data] Nothing to truncate — no migrated data tables in this database.\n");
+  process.exit(0);
+}
+
+console.log(`[reset-test-data] ✓ Plan: ${plan.truncate.length} data tables from ${migrationTables.length} migrated tables.`);
+console.log("[reset-test-data] Tables to truncate:");
+for (const t of plan.truncate) console.log(`  • ${t}`);
+console.log("[reset-test-data] Tables kept:");
+for (const t of plan.preserved) console.log(`  · ${t.padEnd(26)} ${RESET_PRESERVE_TABLES[t] ?? ""}`);
+console.log("");
+
+async function countRows(table) {
+  const rows = await sql.query(`SELECT count(*)::bigint AS n FROM ${quoteIdent(table)}`);
+  return String(rows[0]?.n ?? "?");
+}
+
+const keptBefore = new Map();
+for (const t of plan.preserved) keptBefore.set(t, await countRows(t));
+
+// ─── Truncate ─────────────────────────────────────────────────────────────────
+// One statement, so it is all-or-nothing. No CASCADE: the plan already holds
+// every table that references a wiped one; should anything still point in,
+// Postgres refuses instead of wiping a kept table. RESTART IDENTITY resets the
+// sequences of the wiped tables to 1.
+
+console.log("[reset-test-data] Executing TRUNCATE … RESTART IDENTITY …");
 try {
-  await sql.query(`TRUNCATE ${tableList} RESTART IDENTITY CASCADE`);
+  await sql.query(`TRUNCATE ${plan.truncate.map(quoteIdent).join(", ")} RESTART IDENTITY`);
 } catch (err) {
-  console.error("[reset-test-data] TRUNCATE failed:", err.message);
+  console.error("[reset-test-data] TRUNCATE failed (nothing was deleted):", err.message);
   process.exit(1);
 }
 console.log("[reset-test-data] ✓ Truncated.\n");
 
 // ─── Post-truncate row counts ─────────────────────────────────────────────────
-// All should be 0. A non-zero count here means something went wrong.
+// Wiped tables must be 0, kept tables unchanged.
 
 console.log("[reset-test-data] Row counts after truncate (all must be 0):");
-let allZero = true;
-for (const table of DATA_TABLES) {
-  let n = "error";
+let ok = true;
+for (const table of plan.truncate) {
+  let n;
   try {
-    const rows = await sql.query(`SELECT COUNT(*) AS n FROM ${table}`);
-    n = rows[0]?.n ?? "?";
+    n = await countRows(table);
   } catch (err) {
     n = `ERROR: ${err.message}`;
   }
-  const isZero = n === "0" || n === 0 || n === 0n;
-  if (!isZero) allZero = false;
-  const marker = isZero ? "✓" : "✗";
-  console.log(`  ${marker}  ${table.padEnd(42)} ${n}`);
+  const isZero = n === "0";
+  if (!isZero) ok = false;
+  console.log(`  ${isZero ? "✓" : "✗"}  ${table.padEnd(42)} ${n}`);
+}
+console.log("[reset-test-data] Kept tables (row counts unchanged):");
+for (const table of plan.preserved) {
+  let n;
+  try {
+    n = await countRows(table);
+  } catch (err) {
+    n = `ERROR: ${err.message}`;
+  }
+  const same = n === keptBefore.get(table);
+  if (!same) ok = false;
+  console.log(`  ${same ? "✓" : "✗"}  ${table.padEnd(42)} ${n}${same ? "" : ` (was ${keptBefore.get(table)})`}`);
 }
 
 console.log("");
-if (allZero) {
-  console.log("[reset-test-data] ✓  Done. All data tables are empty.\n");
+if (ok) {
+  console.log("[reset-test-data] ✓  Done. All data tables are empty; kept tables untouched.\n");
 } else {
-  console.error(
-    "[reset-test-data] ✗  WARNING: one or more tables still have rows. " +
-      "Check the counts above.\n"
-  );
+  console.error("[reset-test-data] ✗  WARNING: the counts above do not match. Check them.\n");
   process.exit(1);
 }

@@ -79,10 +79,13 @@ export const KPI_CONTACT_FORM_SUBMITTED = "contact_form_submitted";
 /** A Shopify customer-account sign-in completed (OAuth callback success). */
 export const KPI_ACCOUNT_SIGNIN_SUCCEEDED = "account_signin_succeeded";
 /** The chat redeemed the one-time sign-in code (POST /api/auth/link, 0073) —
- * the sign-in now counts for that session. `data: {kind}` (customer_account | app_proxy). */
+ * the sign-in now counts for that session. `data: {kind, renewed}` — kind
+ * customer_account | app_proxy; renewed = the session was already signed in as
+ * this customer (a new tab confirming it, not a new sign-in). */
 export const KPI_ACCOUNT_SIGNIN_LINKED = "account_signin_linked";
-/** POST /api/auth/link refused a code. `data: {reason}` — invalid (expired, used,
- * unknown) | session_mismatch (another session's code: a planted link or a widget bug). */
+/** POST /api/auth/link refused a code. `data: {reason, kind?}` — reason invalid
+ * (expired, used, unknown) | session_mismatch (another session's code: a planted
+ * link or a widget bug); kind = the grant's kind when the code was known. */
 export const KPI_ACCOUNT_SIGNIN_LINK_REFUSED = "account_signin_link_refused";
 /** Shopify's App Proxy (whoami) vouched for a logged-in shop customer on a
  * signed, fresh request (P0.3). Session-keyed; `data: {proof: token|shop|none,

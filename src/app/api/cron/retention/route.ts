@@ -1,10 +1,12 @@
 // Scheduled data-retention job.
 //
-// Triggered by Vercel Cron (see vercel.json). Enforces the windows in
-// docs/DATA_RETENTION.md: abandons stale conversations, deletes expired
-// conversations/messages and kpi_events, and purges PII for opted-out email
-// captures. Configurable via env (RETENTION_DAYS, KPI_RETENTION_DAYS,
-// ABANDON_AFTER_MINUTES, SUPPRESSED_CAPTURE_PURGE_DAYS).
+// Triggered by Vercel Cron (see vercel.json). Enforces every window in
+// docs/DATA_RETENTION.md through runRetention (lib/retention.ts — its header
+// lists all steps): abandons stale conversations, deletes expired
+// conversations/messages and kpi_events, purges PII for opted-out email
+// captures, and purges each other data category on its own window. All
+// windows are env-configurable and parsed by lib/retention-options.mjs (0
+// disables a step); the full list of variables is in .env.example.
 //
 // Piggybacked on the same daily run (status maintenance, not deletion): the
 // CONVERSION SWEEP (lib/conversion-sweep) — the bounded Shopify check that

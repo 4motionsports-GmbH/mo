@@ -22,13 +22,19 @@ import {
 } from "@/lib/campaign-flags.mjs";
 import {
   aiProfileScope,
+  appProxySigninMaxAgeHours,
   inboxAiDailyLimit,
+  isAppProxySigninEnabled,
+  isAttributionSessionAnchorEnabled,
   isChatOrderStatusEnabled,
+  isChatPageContextEnabled,
   isShopifyConsentWritebackEnabled,
   isShopifyCustomerSyncEnabled,
   isShopifyErasureSyncEnabled,
   isShopifyInsightsWritebackEnabled,
 } from "@/lib/platform-flags.mjs";
+import { pageContextHoldoutPct } from "@/lib/page-context";
+import { activeSigninVariants } from "@/lib/consent-variants.mjs";
 import { getSyncHealth, listSyncRuns } from "@/lib/shopify-sync";
 import { getOutboxStats } from "@/lib/shopify-outbox";
 import { shopifySyncFlags } from "@/lib/shopify-sync-flags";
@@ -72,6 +78,12 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
       inboxAiPerDay: inboxAiDailyLimit(),
       autoPreparePerNight: campaignAutoPrepareConfig().count,
       pingenStaging: isPingenStaging(),
+      pageContext: isChatPageContextEnabled(),
+      pageContextHoldoutPct: pageContextHoldoutPct(),
+      appProxySignin: isAppProxySigninEnabled(),
+      appProxySigninMaxAgeHours: appProxySigninMaxAgeHours(),
+      attributionSessionAnchor: isAttributionSessionAnchorEnabled(),
+      consentSigninVariants: activeSigninVariants("de", process.env.CONSENT_SIGNIN_VARIANTS).map((v) => v.id),
     },
   };
 
