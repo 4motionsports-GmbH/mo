@@ -42,5 +42,15 @@ export interface SystemStatus {
     inboxAiPerDay: number;
     autoPreparePerNight: number;
     pingenStaging: boolean;
+    /** CHAT_PAGE_CONTEXT_ENABLED + CHAT_PAGE_CONTEXT_HOLDOUT_PCT (0–50). */
+    pageContext: boolean;
+    pageContextHoldoutPct: number;
+    /** APP_PROXY_SIGNIN_ENABLED + APP_PROXY_SIGNIN_MAX_AGE_HOURS (0–720). */
+    appProxySignin: boolean;
+    appProxySigninMaxAgeHours: number;
+    /** MO_ATTRIBUTION_SESSION_ANCHOR. */
+    attributionSessionAnchor: boolean;
+    /** CONSENT_SIGNIN_VARIANTS — the served sign-in framing variant ids. */
+    consentSigninVariants: string[];
   };
 }

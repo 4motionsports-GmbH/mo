@@ -44,7 +44,7 @@ export const EMAIL_THEME_KIND_LABELS = /** @type {Record<EmailThemeKind, string>
   summary: "Zusammenfassung",
   doi: "Anmelde-Bestätigung (DOI)",
   marketing: "Marketing (Kunden)",
-  campaign: "Kampagne (Shopify-Abonnenten)",
+  campaign: "Kampagne (Kund:innen mit Einwilligung)",
 });
 
 /** One-line UI hint per kind. */
@@ -52,7 +52,7 @@ export const EMAIL_THEME_KIND_HINTS = /** @type {Record<EmailThemeKind, string>}
   summary: "Transaktionale Beratungs-Zusammenfassung mit Warenkorb-Link.",
   doi: "Double-Opt-in-Bestätigung — der rechtlich geprüfte Text bleibt unverändert.",
   marketing: "Persönliche KI-E-Mails an Chat-Kunden (Rabatt, Warenkorb, Set-Angebot).",
-  campaign: "Persönliche KI-E-Mails an Shopify-Marketing-Abonnent:innen (de/en).",
+  campaign: "Persönliche KI-E-Mails an Kund:innen mit Einwilligung in E-Mail-Werbung (de/en), auch die Einzelansprache.",
 });
 
 // ── Font stacks ──────────────────────────────────────────────────────────────

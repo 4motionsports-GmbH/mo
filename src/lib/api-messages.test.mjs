@@ -63,6 +63,12 @@ test("English API messages are English and differ from German", () => {
   }
 });
 
+test("marketing_consent_required names no checkbox (both opt-in surfaces are button-consent)", () => {
+  assert.doesNotMatch(apiMessage("marketing_consent_required", "de"), /Häkchen|Checkbox|Kästchen/i);
+  assert.doesNotMatch(apiMessage("marketing_consent_required", "en"), /\bbox\b|checkbox|tick/i);
+  assert.match(apiMessage("marketing_consent_required", "de"), /^Bitte bestätige die Einwilligung aktiv/);
+});
+
 test("an unknown id returns the id itself (fails visibly, never throws)", () => {
   assert.equal(apiMessage("does_not_exist", "de"), "does_not_exist");
   assert.equal(apiMessage("does_not_exist", "en"), "does_not_exist");

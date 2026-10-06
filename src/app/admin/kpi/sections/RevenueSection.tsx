@@ -14,8 +14,9 @@ const INFO = (
     <p>Bestellungen, die einen einmaligen, von Mo verschickten Rabattcode eingelöst haben.</p>
     <p>
       „Umsatz über Mo-Rabattcodes“ zählt <strong>ausschließlich</strong> Bestellungen, die einen{" "}
-      <strong>einmaligen, von Mo verschickten Rabattcode</strong> (<code>MS5-…</code>, aus der
-      personalisierten Marketing-E-Mail) eingelöst haben — geprüft per Shopify (
+      <strong>einmaligen, von Mo verschickten Rabattcode</strong> (<code>MK-…</code> aus einer
+      Kampagnen-E-Mail, auch der Einzelansprache, ohne Testsendungen; <code>MS5-…</code> aus der früheren
+      persönlichen Marketing-E-Mail) eingelöst haben — geprüft per Shopify (
       <code>read_orders</code>) über das Bestellfeld <code>discount_code</code>, gezählt wird der
       tatsächlich bezahlte Bestellwert (<code>currentTotalPrice</code>, nur Status PAID /
       PARTIALLY_REFUNDED). Käufe über Warenkorb-Links (In-Chat-Checkout, Zusammenfassungs-E-Mail,
@@ -55,7 +56,7 @@ export function RevenueSection({ cached }: { cached: Cached<MoRevenue | null> })
               label="Umsatz über Mo-Rabattcodes"
               value={money(revenue.revenueAmount, revenue.currency)}
               hint={`${num(revenue.orderCount)} Bestellung(en) im Zeitraum`}
-              info="Summe der tatsächlich bezahlten Bestellsummen (Shopify currentTotalPrice, Status PAID/PARTIALLY_REFUNDED) aller Bestellungen, die einen einmaligen, von Mo verschickten Rabattcode (MS5-…) eingelöst haben. Warenkorb-Links ohne Code sind nicht zurechenbar und zählen nicht."
+              info="Summe der tatsächlich bezahlten Bestellsummen (Shopify currentTotalPrice, Status PAID/PARTIALLY_REFUNDED) aller Bestellungen, die einen einmaligen, von Mo verschickten Rabattcode (MK-… aus Kampagnen-E-Mails, MS5-… aus der früheren Marketing-E-Mail) eingelöst haben. Warenkorb-Links ohne Code sind nicht zurechenbar und zählen nicht."
             />
             <Stat
               label="Bestellungen mit Mo-Code"

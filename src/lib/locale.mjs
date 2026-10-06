@@ -53,3 +53,18 @@ export function normalizeLocale(value) {
 export function pick(locale, map) {
   return locale === "en" && "en" in map ? map.en : map.de;
 }
+
+/**
+ * A backend-built mail link with the recipient's locale (docs/frontend/API_CONTRACT.md
+ * §12.2): English appends `locale=en` (`?` or `&`, whichever the URL needs);
+ * German adds nothing, so German links stay byte-identical and a link without
+ * the parameter — every link sent before — keeps meaning German.
+ *
+ * @param {string} url
+ * @param {unknown} locale
+ * @returns {string}
+ */
+export function withLocaleParam(url, locale) {
+  if (normalizeLocale(locale) !== "en") return url;
+  return `${url}${url.includes("?") ? "&" : "?"}locale=en`;
+}

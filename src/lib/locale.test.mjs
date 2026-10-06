@@ -6,6 +6,7 @@ import {
   isLocale,
   normalizeLocale,
   pick,
+  withLocaleParam,
 } from "./locale.mjs";
 
 test("default locale is German and the supported set is de + en", () => {
@@ -43,4 +44,17 @@ test("pick returns the locale's value and falls back to German", () => {
   assert.equal(pick("en", { de: "A", en: "B" }), "B");
   // A map without an `en` entry degrades to German rather than undefined.
   assert.equal(pick("en", { de: "only-de" }), "only-de");
+});
+
+test("withLocaleParam adds locale=en for English only, with the right separator", () => {
+  assert.equal(withLocaleParam("https://x.de/api/r/tok", "en"), "https://x.de/api/r/tok?locale=en");
+  assert.equal(
+    withLocaleParam("https://x.de/api/unsubscribe?token=a.b", "en"),
+    "https://x.de/api/unsubscribe?token=a.b&locale=en"
+  );
+  assert.equal(withLocaleParam("https://x.de/api/r/tok", "en-GB"), "https://x.de/api/r/tok?locale=en");
+  // German (and anything unknown) leaves the link byte-identical — old links stay German.
+  assert.equal(withLocaleParam("https://x.de/api/r/tok", "de"), "https://x.de/api/r/tok");
+  assert.equal(withLocaleParam("https://x.de/api/r/tok", null), "https://x.de/api/r/tok");
+  assert.equal(withLocaleParam("https://x.de/api/r/tok", "fr"), "https://x.de/api/r/tok");
 });
