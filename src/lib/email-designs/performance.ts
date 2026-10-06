@@ -1,11 +1,14 @@
 // "Performance" — the image-first conversion design, built from the operator's
 // AI-drafted template: bold hero section (blue kicker, oversized headline, red
 // CTA — or, in the campaign mail, no button and the picture linking to the
-// shop —, large lifestyle image), bordered product CARDS with price + outline
-// button, the BUNDLE-DEAL card, the COUPON card and the offer COUNTDOWN in
-// the same white bordered card frame (blue badges, black set price, red
-// digits on light-grey tiles), the "Frag Mo" advisor panel, and a clean
-// minimal footer. Everything sits on white — no dark blocks.
+// shop —, large lifestyle image), bordered product CARDS with price + black
+// outline button, the BUNDLE-DEAL card, the COUPON card and the offer
+// COUNTDOWN in the same white bordered card frame (blue badges and rules,
+// black set price, black outline buttons, red digits on light-grey tiles),
+// the "Frag Mo" advisor panel, the black-and-white smiley rating, and a clean
+// minimal footer. Everything sits on white — no dark blocks. Text links and
+// the short rules under card titles are BLUE; every card button uses the
+// black outline look of „Beratung mit Mo starten“ (owner, 06.10.2026).
 //
 // Personalisation hooks:
 //   - HERO IMAGE: activeEmailRenderData().heroImageUrl (the operator-generated
@@ -37,7 +40,7 @@ import { activeEmailRenderData } from "../email-design-context";
 import { getBaseUrl } from "../base-url";
 import { bundleHeadline } from "../bundle-email-core.mjs";
 import { bundleItemList } from "../bundle-offer-core.mjs";
-import { EMAIL_RATING_FACES, emailRatingUrl } from "../email-rating.mjs";
+import { emailRatingUrl } from "../email-rating.mjs";
 import {
   escapeAttr,
   escapeHtml,
@@ -104,7 +107,7 @@ const textStyle = () =>
   `font-family: ${FONT}; font-size: 14px; line-height: 22px; color: #333333; Margin: 0;`;
 const mutedTextStyle = () =>
   `font-family: ${FONT}; font-size: 11px; line-height: 16px; color: #555555; Margin: 0;`;
-const linkStyle = () => `color: ${RED}; text-decoration: underline; word-wrap: break-word;`;
+const linkStyle = () => `color: ${BLUE}; text-decoration: underline; word-wrap: break-word;`;
 
 // ── Per-kind hero copy (headline comes from opts.heading) ────────────────────
 
@@ -177,9 +180,20 @@ function redButton(cta: EmailCta, block = false, className = ""): string {
                     <a href="${escapeAttr(cta.url)}"${className ? ` class="${className}"` : ""} target="_blank" style="display:${block ? "block" : "inline-block"}; background:${RED}; color:#ffffff; text-align:center; padding:14px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</a>`;
 }
 
+/**
+ * The black outline look of „Beratung mit Mo starten“ (white, 1px black
+ * border, black bold capitals), full width — the set deal's „Zur Kasse“ and
+ * the coupon's „Code einlösen“.
+ */
+function outlineBlockButton(cta: EmailCta): string {
+  return `
+                    <a href="${escapeAttr(cta.url)}" target="_blank" style="display:block; background:#ffffff; color:#111111; border:1px solid #111111; text-align:center; padding:13px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</a>`;
+}
+
+/** The product cards' „Zum Produkt“: the same black outline look, compact. */
 function outlineButton(url: string, label: string): string {
   return `
-                    <a href="${escapeAttr(url)}" target="_blank" style="display:inline-block; color:#111111; background:#ffffff; border:1px solid ${RED}; padding:10px 15px; border-radius:3px; font-family:${FONT}; font-size:11px; font-weight:700; text-decoration:none; white-space:nowrap;">${escapeHtml(label.toUpperCase())}&nbsp;&#8594;</a>`;
+                    <a href="${escapeAttr(url)}" target="_blank" style="display:inline-block; color:#111111; background:#ffffff; border:1px solid #111111; padding:10px 15px; border-radius:3px; font-family:${FONT}; font-size:11px; font-weight:700; text-decoration:none; white-space:nowrap;">${escapeHtml(label.toUpperCase())}&nbsp;&#8594;</a>`;
 }
 
 /** The blue offer pill ("BUNDLE DEAL", "Du sparst 37,90 €"): white on BLUE. */
@@ -252,7 +266,7 @@ function productCard(item: EmailProductRowItem): string {
                         </td>
                         <td width="40%" valign="middle" class="mobile-stack product-content" style="width:40%; padding:16px 10px;">
                           <div style="font-family:${FONT}; font-size:16px; line-height:21px; font-weight:700; color:#111111;">${name}</div>
-                          <div style="width:14px; height:2px; background:${RED}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
+                          <div style="width:14px; height:2px; background:${BLUE}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
                           ${description}
                         </td>
                         <td width="28%" valign="middle" align="center" class="mobile-stack product-action" style="width:28%; padding:16px 12px;">
@@ -278,7 +292,7 @@ function productGrid(items: EmailProductGridItem[]): string {
  * The BUNDLE-DEAL card: the product cards' white bordered frame with the blue
  * badge, the component images and the price trio — the set price bold in
  * black, the component sum struck through in the cards' muted grey, the
- * saving as a blue pill — and the red CTA.
+ * saving as a blue pill — and the black outline CTA.
  */
 function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): string {
   const en = (input.language ?? "de") === "en";
@@ -322,12 +336,12 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
                         </td>
                         <td width="58%" valign="middle" class="bundle-column" style="width:58%; padding:24px 24px 24px 0;">
                           <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#111111; font-weight:700;">${escapeHtml(bundleHeadline(input.title, en ? "en" : "de"))}</div>
-                          <div class="bundle-rule" style="width:14px; height:2px; background:${RED}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
+                          <div class="bundle-rule" style="width:14px; height:2px; background:${BLUE}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
                           <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:13px;">${itemList}</table>
                           <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="bundle-prices"><tr>${priceCells}
                           </tr></table>
                           <div style="height:18px; font-size:0; line-height:0;">&nbsp;</div>
-                          ${redButton({ label: c.labels.cta, url: input.offerUrl }, true)}
+                          ${outlineBlockButton({ label: c.labels.cta, url: input.offerUrl })}
                         </td>
                       </tr>
                     </table>
@@ -338,7 +352,7 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
 /**
  * The COUPON card: the same white bordered frame as the set deal; on the left
  * the "ticket" — a dashed blue tile with the code in big bold letters — on
- * the right what it is worth, its terms, the red redeem button (Shopify's
+ * the right what it is worth, its terms, the black outline redeem button (Shopify's
  * /discount/<code> link stores the code for the checkout — mail cannot copy
  * to the clipboard, one tap is better) and a one-line hint.
  */
@@ -363,7 +377,7 @@ function couponCard(input: DiscountCouponInput): string {
                           <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#111111; font-weight:700;">${escapeHtml(input.copy.benefit)}</div>
                           <div class="bundle-rule" style="width:14px; height:2px; background:${BLUE}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
                           <div style="${label} margin-bottom:16px;">${escapeHtml(input.copy.terms)}</div>
-                          ${redButton({ label: input.copy.cta, url: input.redeemUrl }, true)}
+                          ${outlineBlockButton({ label: input.copy.cta, url: input.redeemUrl })}
                           <div style="${label} font-size:10px; line-height:14px; margin-top:10px;">${escapeHtml(input.copy.hint)}</div>
                         </td>
                       </tr>
@@ -437,13 +451,21 @@ function offerCountdownCard(input: OfferCountdownInput): string {
  * design: each link carries only the score + email kind (email-rating.mjs), so
  * a forwarded mail can never reveal the recipient. Rendered for the two
  * recommendation mails, where the question actually makes sense.
+ *
+ * The faces are black line drawings on a white disc (public/email-rating-1…5
+ * .png, 96 px shown at 32 px) — emoji would render in colour in every mail
+ * client. The alt text names the score for blocked images and screen readers.
  */
+const RATING_ALT_DE = ["sehr schlecht", "schlecht", "geht so", "gut", "sehr gut"];
+const RATING_ALT_EN = ["very poor", "poor", "okay", "good", "very good"];
+
 function ratingRow(kind: string, en: boolean): string {
   const base = getBaseUrl();
-  const cells = EMAIL_RATING_FACES.map(
-    (face, i) => `
+  const alts = en ? RATING_ALT_EN : RATING_ALT_DE;
+  const cells = alts.map(
+    (alt, i) => `
                           <td align="center" style="padding: 0 6px;">
-                            <a href="${escapeAttr(emailRatingUrl(base, i + 1, kind))}" target="_blank" style="font-family:${FONT}; font-size:28px; line-height:34px; color:#111111; text-decoration:none;">${face}</a>
+                            <a href="${escapeAttr(emailRatingUrl(base, i + 1, kind))}" target="_blank" style="text-decoration:none;"><img src="${escapeAttr(`${base}/email-rating-${i + 1}.png`)}" width="32" height="32" alt="${escapeAttr(alt)}" style="width:32px; height:32px; display:block; border:0; Margin:0 auto 4px;"></a>
                             <div style="font-family:${FONT}; font-size:11px; line-height:16px; color:#111111;">${i + 1}</div>
                           </td>`
   ).join("");

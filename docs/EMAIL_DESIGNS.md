@@ -56,7 +56,16 @@ Image-first designs can render the smiley row „Wie hilfreich war diese Empfehl
 (`email-rating.mjs` + `GET /api/newsletter-rating`). The links are deliberately **anonymous** — score
 and e-mail type only, no recipient identifier — so a forwarded mail never reveals who received it.
 A click lands as a normal feedback row (migration 0020; `feedback.rating` / `email_kind` since 0054)
-in the admin screen „Feedback“.
+in the admin screen „Feedback“. The Performance design draws the five faces as black line drawings on
+a white disc (`public/email-rating-1.png` … `-5.png`, shown at 32 px, alt text „sehr schlecht“ …
+„sehr gut“) — emoji would render in colour in every mail client.
+
+**Performance colours and buttons (owner, 06.10.2026).** Text links and the short rule under card
+headlines are blue (`#008ccb`, like the badges); every card button — „Zum Produkt“, „Zur Kasse“,
+„Code einlösen“ — has the black outline look of „Beratung mit Mo starten“ (white, 1 px `#111111`
+border, black bold capitals). Red remains for the filled primary call-to-action buttons (the hero
+button and extra CTA rows of non-campaign mails, the `ctaButton` hook), a reduced price next to the
+struck-through old one, and the countdown digits.
 
 The composers (`summary-email.ts`, `consent-copy.ts` (DOI), `marketing-email.ts`,
 `campaign-email.ts`) know nothing about the active design: the send and preview entry points resolve
@@ -138,9 +147,9 @@ muted line; the Performance design a white card with the `#e5e5e5` border of the
 (image or tiles on top, the exact deadline as a grey line below).
 
 **Set card.** In the Performance design the same white card frame as the product cards — a **blue**
-„BUNDLE DEAL“ badge (`#008ccb`, white text), the component images, a headline with the red stroke
+„BUNDLE DEAL“ badge (`#008ccb`, white text), the component images, a headline with the blue stroke
 of the product cards, the price trio (single prices struck through in grey, **set price black and
-bold**, the saving „Du sparst …“ as a blue pill) and the red „Zur Kasse“ button. The headline is
+bold**, the saving „Du sparst …“ as a blue pill) and the black outline „Zur Kasse“ button. The headline is
 short: the operator's title when it is short, otherwise „Dein persönliches Set“ (`bundleHeadline`,
 tested — generated titles of the form „Set: A + B + C“ or over 40 characters give way to the
 default); the full product names stand in the grey line below. The button says **„Zur Kasse“**
@@ -151,8 +160,8 @@ card and the countdown (`renderDiscountCoupon` in `email-template.ts`, renderer 
 `discountCoupon`; wording and link in `discount-coupon.mjs`, tested): the code large and bold on a
 dashed blue „ticket“, next to it the value („5 % auf deine gesamte Bestellung“ — or „… auf die
 empfohlenen Produkte aus dieser E-Mail“ / „… auf dein persönliches Set“, depending on the draft's
-discount scope, `discount-scope.mjs`), the terms („Einmalig einlösbar · gültig bis …“) and the red
-button **„Code einlösen“**. The button leads to Shopify's discount link
+discount scope, `discount-scope.mjs`), the terms („Einmalig einlösbar · gültig bis …“) and the black
+outline button **„Code einlösen“**. The button leads to Shopify's discount link
 `https://motionsports.de/discount/<code>`, which stores the code in the shop session and applies it
 at checkout — an e-mail cannot copy anything to the clipboard (no JavaScript), and a tap is easier
 on a phone anyway. Classic: a centred dashed box with code, value, terms and the link. The text part
