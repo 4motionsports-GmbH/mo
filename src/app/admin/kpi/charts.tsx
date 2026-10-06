@@ -12,15 +12,8 @@
 import * as React from "react";
 import dynamic from "next/dynamic";
 import { Skeleton } from "../ui";
-import {
-  CHATS_PER_DAY_HEIGHT,
-  STATUS_SPLIT_HEIGHT,
-  funnelChartHeight,
-  personaChartHeight,
-} from "./chart-geometry";
-import type { FunnelStage } from "./charts-recharts";
-
-export type { FunnelStage };
+import { CHATS_PER_DAY_HEIGHT, REVENUE_CHART_HEIGHT, personaChartHeight } from "./chart-geometry";
+import type { RevenueSeriesBucket, RevenueSeriesKey } from "./revenue-series";
 
 const HeightContext = React.createContext<number>(200);
 
@@ -33,16 +26,12 @@ const ChatsPerDayImpl = dynamic(
   () => import("./charts-recharts").then((m) => m.ChatsPerDayChart),
   { ssr: false, loading: ChartSkeleton }
 );
-const StatusSplitImpl = dynamic(
-  () => import("./charts-recharts").then((m) => m.StatusSplitChart),
-  { ssr: false, loading: ChartSkeleton }
-);
 const PersonaDistributionImpl = dynamic(
   () => import("./charts-recharts").then((m) => m.PersonaDistributionChart),
   { ssr: false, loading: ChartSkeleton }
 );
-const StageFunnelImpl = dynamic(
-  () => import("./charts-recharts").then((m) => m.StageFunnelChart),
+const RevenueOverTimeImpl = dynamic(
+  () => import("./charts-recharts").then((m) => m.RevenueOverTimeChart),
   { ssr: false, loading: ChartSkeleton }
 );
 
@@ -50,14 +39,6 @@ export function ChatsPerDayChart(props: { data: Array<{ day: string; count: numb
   return (
     <HeightContext.Provider value={CHATS_PER_DAY_HEIGHT}>
       <ChatsPerDayImpl {...props} />
-    </HeightContext.Provider>
-  );
-}
-
-export function StatusSplitChart(props: { active: number; abandoned: number; converted: number }) {
-  return (
-    <HeightContext.Provider value={STATUS_SPLIT_HEIGHT}>
-      <StatusSplitImpl {...props} />
     </HeightContext.Provider>
   );
 }
@@ -71,10 +52,14 @@ export function PersonaDistributionChart({ data }: { data: Array<{ name: string;
   );
 }
 
-export function StageFunnelChart({ stages }: { stages: FunnelStage[] }) {
+export function RevenueOverTimeChart(props: {
+  buckets: RevenueSeriesBucket[];
+  weekly: boolean;
+  series: Array<{ key: RevenueSeriesKey; label: string; color: string }>;
+}) {
   return (
-    <HeightContext.Provider value={funnelChartHeight(stages.length)}>
-      <StageFunnelImpl stages={stages} />
+    <HeightContext.Provider value={REVENUE_CHART_HEIGHT}>
+      <RevenueOverTimeImpl {...props} />
     </HeightContext.Provider>
   );
 }

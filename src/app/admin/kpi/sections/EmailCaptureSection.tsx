@@ -6,7 +6,7 @@ import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
 import { num, ratio } from "@/lib/admin-format.mjs";
 import { BarList, Stat } from "../../ui";
 
-import { StageFunnelChart } from "../charts";
+import { FunnelBars } from "../FunnelBars";
 import { Explain, FunnelLayout, KpiSection, SubHeading } from "../KpiSection";
 
 // German labels for the offer_email_summary trigger enum (lib/tools.ts) + the
@@ -54,12 +54,12 @@ export function EmailCaptureSection({ funnel, range }: { funnel: EmailCaptureFun
         <>
           <FunnelLayout
             chart={
-              <StageFunnelChart
+              <FunnelBars
                 stages={[
-                  { name: "Angeboten", value: funnel.askShown },
-                  { name: "Formular gesendet", value: funnel.submitted },
-                  { name: "Marketing-Haken", value: funnel.marketingOptedIn },
-                  { name: "DOI bestätigt", value: funnel.confirmed },
+                  { label: "Angeboten", value: funnel.askShown },
+                  { label: "Formular gesendet", value: funnel.submitted },
+                  { label: "Marketing-Haken", value: funnel.marketingOptedIn },
+                  { label: "DOI bestätigt", value: funnel.confirmed },
                 ]}
               />
             }

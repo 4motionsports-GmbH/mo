@@ -17,8 +17,10 @@
 // (post any partial refund). Mirrors COMPLETED_PURCHASE_STATUSES in
 // lib/shopify-orders.ts — duplicated here (a two-element set) so this pure module
 // needs no TypeScript import. Anything else (PENDING / AUTHORIZED / VOIDED /
-// REFUNDED / EXPIRED / …) is NOT counted as realised revenue.
-const REALISED_STATUSES = new Set(["PAID", "PARTIALLY_REFUNDED"]);
+// REFUNDED / EXPIRED / …) is NOT counted as realised revenue. Exported as a list
+// for SQL filters (`upper(financial_status) = ANY(...)`, lib/kpi-journey-store).
+export const REALISED_FINANCIAL_STATUSES = Object.freeze(["PAID", "PARTIALLY_REFUNDED"]);
+const REALISED_STATUSES = new Set(REALISED_FINANCIAL_STATUSES);
 
 /**
  * Whether a Shopify financial status counts as realised (paid) revenue.

@@ -1,14 +1,15 @@
 // KPI screen (server-rendered). Owns ALL aggregation — every number comes from
-// the kpi-store / kpi-persona / kpi-recommendation-loop / marketing-store /
-// campaign-store / ai-usage-store getters, fetched once on the server and handed
-// to the sections as plain props. The four Shopify-dependent getters go through
-// lib/kpi-cache (10-minute cache per range, decision D-4); the pure-DB sections
-// are live. Client islands: the sticky KpiToolbar (URL only), the charts
-// (Recharts, loaded on demand) and the Top-Fragen button.
+// the store getters, fetched once on the server and handed to the sections as
+// plain props. The two Shopify fan-outs (the code lookup of „Umsatz durch Mo“
+// and the campaign funnel) go through lib/kpi-cache (10-minute cache per range,
+// decision D-4); every pure-DB section is live — the revenue ledger included.
+// Client islands: the sticky KpiToolbar (URL only), the charts (Recharts,
+// loaded on demand), the sparkline, the order list and the Top-Fragen button.
 //
-// Layout: five anchored groups (kpi/groups.ts) — the toolbar's in-page
-// navigation — each holding its sections (kpi/sections/*). Every section keeps
-// its honesty caveat verbatim behind the (i) next to its title.
+// Layout: seven anchored groups (kpi/groups.ts, ordered by decision value —
+// revenue first) — the toolbar's in-page navigation — each holding its
+// sections (kpi/sections/*). Every section keeps its honesty caveat verbatim
+// behind the (i) next to its title. Reference: docs/ADMIN_DASHBOARD.md §3.5, §5.
 
 import {
   getAccountActivity,
@@ -23,44 +24,52 @@ import {
 } from "@/lib/kpi-store";
 import { germanDay, releasesInRange } from "@/lib/kpi-releases.mjs";
 import { getPersonaInsights } from "@/lib/kpi-persona";
-import { getMoAttributionKpis } from "@/lib/mo-orders-store";
+import { getMoRevenueData } from "@/lib/mo-revenue-store";
+import { getJourneyCounts } from "@/lib/kpi-journey-store";
+import { previousPeriod } from "@/lib/mo-revenue.mjs";
 import { getBundleKpis } from "@/lib/bundle-offers-store";
 import { getQaKpis } from "@/lib/qa-store";
 import { getFeedbackKpis } from "@/lib/feedback-store";
 import { getConversationStats } from "@/lib/admin-conversations";
 import { getCachedTopQuestionsMap } from "@/lib/kpi-top-questions";
-import { getAiCostMetrics } from "@/lib/ai-usage-store";
+import { getAiCostMetrics, type AiCostMetrics } from "@/lib/ai-usage-store";
 import { getPhysicalLetterStats } from "@/lib/physical-letters-store";
 import { loadKpiShopifyBlock } from "@/lib/kpi-cache";
 import { getCustomerBaseKpis, getMoEffectKpis } from "@/lib/customer-list-store";
 import { getInboxKpis } from "@/lib/inbox-store";
 import type { KpiRange } from "@/lib/kpi-range";
-import { Callout, InfoTip } from "./ui";
-import { KPI_GROUPS, kpiGroupAnchor, type KpiGroup } from "./kpi/groups";
+import { plural } from "@/lib/admin-format.mjs";
+import { Callout, Disclosure, InfoTip } from "./ui";
+import { KPI_GROUPS, kpiGroupAnchor, type KpiGroup, type KpiGroupKey } from "./kpi/groups";
 import { KpiToolbar } from "./kpi/KpiToolbar";
+import { buildRevenueView } from "./kpi/revenue-view";
+import { UmsatzSection } from "./kpi/sections/UmsatzSection";
+import { UmsatzWegeSection } from "./kpi/sections/UmsatzWegeSection";
+import { UmsatzBestellungenSection } from "./kpi/sections/UmsatzBestellungenSection";
+import { JourneySection } from "./kpi/sections/JourneySection";
 import { CoreSection } from "./kpi/sections/CoreSection";
-import { LocaleSection } from "./kpi/sections/LocaleSection";
+import { PageContextSection } from "./kpi/sections/PageContextSection";
+import { LoginGateSection } from "./kpi/sections/LoginGateSection";
+import { ConsentGateSection } from "./kpi/sections/ConsentGateSection";
+import { EmailCaptureSection } from "./kpi/sections/EmailCaptureSection";
+import { AccountSection } from "./kpi/sections/AccountSection";
+import { CampaignSection } from "./kpi/sections/CampaignSection";
+import { BundleSection } from "./kpi/sections/BundleSection";
+import { EingangSection } from "./kpi/sections/EingangSection";
 import { QualitySection } from "./kpi/sections/QualitySection";
 import { QaSection } from "./kpi/sections/QaSection";
 import { FeedbackSection } from "./kpi/sections/FeedbackSection";
-import { AccountSection } from "./kpi/sections/AccountSection";
-import { ConsentGateSection } from "./kpi/sections/ConsentGateSection";
-import { LoginGateSection } from "./kpi/sections/LoginGateSection";
-import { EmailCaptureSection } from "./kpi/sections/EmailCaptureSection";
-import { CampaignSection } from "./kpi/sections/CampaignSection";
-import { BundleSection } from "./kpi/sections/BundleSection";
-import { RevenueSection } from "./kpi/sections/RevenueSection";
-import { AttributionSection } from "./kpi/sections/AttributionSection";
-import { AiCostSection } from "./kpi/sections/AiCostSection";
-import { PhysicalMailSection } from "./kpi/sections/PhysicalMailSection";
-import { MarketingFunnelSection } from "./kpi/sections/MarketingFunnelSection";
-import { PersonaSection } from "./kpi/sections/PersonaSection";
-import { LoopSection } from "./kpi/sections/LoopSection";
-import { KundenbasisSection } from "./kpi/sections/KundenbasisSection";
-import { MoEffektSection } from "./kpi/sections/MoEffektSection";
-import { EingangSection } from "./kpi/sections/EingangSection";
 import { OrderStatusSection } from "./kpi/sections/OrderStatusSection";
-import { PageContextSection } from "./kpi/sections/PageContextSection";
+import { AiCostSection } from "./kpi/sections/AiCostSection";
+import { MoEffektSection } from "./kpi/sections/MoEffektSection";
+import { KundenbasisSection } from "./kpi/sections/KundenbasisSection";
+import { PersonaSection } from "./kpi/sections/PersonaSection";
+import { PhysicalMailSection } from "./kpi/sections/PhysicalMailSection";
+
+/** Total AI spend of a period, null when nothing was captured. */
+function spend(cost: AiCostMetrics | null): number | null {
+  return cost && cost.capturedSince != null ? cost.totalSpendEur : null;
+}
 
 export async function KpiTab({
   dbReady,
@@ -80,57 +89,74 @@ export async function KpiTab({
     );
   }
 
+  // „Umsatz je 1 € KI-Kosten“ compares with the period of equal length before.
+  const prev = previousPeriod(range);
+  const prevRange: KpiRange | null = prev ? { preset: "custom", ...prev, label: "" } : null;
+
   // The period applies to every group except "Gesamtwerte" (lifecycle / cohort
   // / lifetime aggregates, shown period-independent).
   const [
-    core,
-    attribution,
-    aiCost,
-    personas,
+    revenueData,
     shopify,
-    gateFunnel,
-    captureFunnel,
-    bundles,
-    qa,
-    feedback,
-    quality,
+    aiCost,
+    prevAiCost,
+    journey,
+    core,
     locales,
-    account,
-    cachedQuestions,
-    letterStats,
-    customerBase,
-    inboxKpis,
-    moEffect,
+    pageContext,
     loginGate,
     signinDiagnosis,
+    gateFunnel,
+    captureFunnel,
+    account,
+    bundles,
+    inboxKpis,
+    quality,
+    qa,
+    feedback,
     orderStatus,
-    pageContext,
+    moEffect,
+    customerBase,
+    personas,
+    cachedQuestions,
+    letterStats,
   ] = await Promise.all([
-    getCoreMetrics(range),
-    getMoAttributionKpis(range),
-    getAiCostMetrics(range),
-    getPersonaInsights(5),
+    getMoRevenueData(range),
     loadKpiShopifyBlock(range, fresh),
-    getConsentGateFunnel(range),
-    getEmailCaptureFunnel(range),
-    getBundleKpis(range),
-    getQaKpis(range),
-    getFeedbackKpis(range),
-    getConversationStats(range.from, range.to),
+    getAiCostMetrics(range),
+    prevRange ? getAiCostMetrics(prevRange) : Promise.resolve(null),
+    getJourneyCounts(range),
+    getCoreMetrics(range),
     getLocaleSplit(range),
-    getAccountActivity(range),
-    getCachedTopQuestionsMap(),
-    getPhysicalLetterStats(),
-    getCustomerBaseKpis(),
-    getInboxKpis(range),
-    getMoEffectKpis(),
+    getPageContextKpis(range),
     getLoginGateFunnel(range),
     getSigninDiagnosis(range),
+    getConsentGateFunnel(range),
+    getEmailCaptureFunnel(range),
+    getAccountActivity(range),
+    getBundleKpis(range),
+    getInboxKpis(range),
+    getConversationStats(range.from, range.to),
+    getQaKpis(range),
+    getFeedbackKpis(range),
     getOrderStatusKpis(range),
-    getPageContextKpis(range),
+    getMoEffectKpis(),
+    getCustomerBaseKpis(),
+    getPersonaInsights(5),
+    getCachedTopQuestionsMap(),
+    getPhysicalLetterStats(),
   ]);
 
-  const [beratung, marketing, umsatz, kosten, gesamt] = KPI_GROUPS;
+  const revenue = revenueData
+    ? buildRevenueView({
+        data: revenueData,
+        codes: shopify.revenue,
+        aiCost: spend(aiCost),
+        previousAiCost: spend(prevAiCost),
+      })
+    : null;
+  const setChannel = revenue?.summary.byChannel.find((c) => c.key === "set");
+  const group = (key: KpiGroupKey) => KPI_GROUPS.find((g) => g.key === key) as KpiGroup;
   const releases = releasesInRange(range);
 
   return (
@@ -145,8 +171,15 @@ export async function KpiTab({
       />
 
       {releases.length > 0 && (
-        <Callout tone="neutral" compact title="Änderungen im Zeitraum">
-          <ul className="mt-1 flex flex-col gap-1">
+        // Open by default only while short — a long list would push „Umsatz
+        // durch Mo“ off the first screen; each affected section notes it too.
+        <Disclosure
+          className="-mb-4 bg-surface-2"
+          title="Änderungen im Zeitraum"
+          meta={`${plural(releases.length, "Änderung", "Änderungen")} · zuletzt ${germanDay(releases[releases.length - 1].date)}`}
+          defaultOpen={releases.length <= 3}
+        >
+          <ul className="flex flex-col gap-1 text-sm">
             {releases.map((r) => (
               <li key={r.key}>
                 <span className="font-medium tabular-nums">{germanDay(r.date)}</span> · {r.title}{" "}
@@ -154,45 +187,57 @@ export async function KpiTab({
               </li>
             ))}
           </ul>
-        </Callout>
+        </Disclosure>
       )}
 
-      <Group group={beratung}>
-        <CoreSection core={core} range={range} />
-        <PageContextSection kpis={pageContext} range={range} />
-        <LocaleSection locales={locales} />
-        <QualitySection stats={quality} />
-        <QaSection kpis={qa} />
-        <FeedbackSection kpis={feedback} />
-        <AccountSection activity={account} range={range} />
-        <OrderStatusSection kpis={orderStatus} />
+      <Group group={group("umsatz")}>
+        <UmsatzSection view={revenue} range={range} />
+        <UmsatzWegeSection view={revenue} />
+        <UmsatzBestellungenSection view={revenue} />
       </Group>
 
-      <Group group={marketing}>
+      <Group group={group("funnel")}>
+        <JourneySection counts={journey} />
+        <CoreSection core={core} locales={locales} range={range} />
+        <PageContextSection kpis={pageContext} range={range} />
+      </Group>
+
+      <Group group={group("kunden")}>
         <LoginGateSection funnel={loginGate} diagnosis={signinDiagnosis} range={range} />
         <ConsentGateSection funnel={gateFunnel} range={range} />
         <EmailCaptureSection funnel={captureFunnel} range={range} />
+        <AccountSection activity={account} range={range} />
+      </Group>
+
+      <Group group={group("kampagnen")}>
         <CampaignSection cached={shopify.campaign} range={range} />
+        <BundleSection
+          kpis={bundles}
+          purchases={
+            revenue && setChannel
+              ? { orders: setChannel.orders, revenue: setChannel.revenue, currency: revenue.currency }
+              : null
+          }
+        />
         <EingangSection kpis={inboxKpis} />
-        <BundleSection kpis={bundles} />
       </Group>
 
-      <Group group={umsatz}>
-        <RevenueSection cached={shopify.revenue} />
-        <AttributionSection attribution={attribution} range={range} />
+      <Group group={group("qualitaet")}>
+        <QualitySection stats={quality} />
+        <QaSection kpis={qa} />
+        <FeedbackSection kpis={feedback} />
+        <OrderStatusSection kpis={orderStatus} />
       </Group>
 
-      <Group group={kosten}>
+      <Group group={group("kosten")}>
         <AiCostSection cost={aiCost} />
       </Group>
 
-      <Group group={gesamt}>
-        <KundenbasisSection kpis={customerBase} />
+      <Group group={group("gesamt")}>
         <MoEffektSection kpis={moEffect} />
-        <PhysicalMailSection stats={letterStats} />
-        <MarketingFunnelSection cached={shopify.funnel} />
+        <KundenbasisSection kpis={customerBase} />
         <PersonaSection personas={personas} cachedQuestions={cachedQuestions} />
-        <LoopSection cached={shopify.loop} />
+        <PhysicalMailSection stats={letterStats} />
       </Group>
     </div>
   );

@@ -5,7 +5,7 @@ the mechanism that ties a real Shopify order back to a Mo consultation, the hone
 tiers it reports, its GDPR posture, and the operator setup. It is the backend design;
 the widget contract is [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §10, the
 retention windows are owned by [`DATA_RETENTION.md`](./DATA_RETENTION.md) (step 5i), the
-KPI section by [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §5.16, and live production
+KPI sections by [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §5.5 and §5.16, and live production
 status (migrations run, switches on) by [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md). The state
 before this pipeline and superseded passages:
 [`archive/ORDER_ATTRIBUTION_HISTORY_2026-10.md`](./archive/ORDER_ATTRIBUTION_HISTORY_2026-10.md).
@@ -13,9 +13,10 @@ before this pipeline and superseded passages:
 ## The gap it closes
 
 Without a marker, an order is attributable to Mo in only two narrow cases: it
-redeemed a unique `MS5-`/`MK-` discount code (the separate code-only KPI,
-`lib/kpi-revenue-store`), or the buyer was a DOI-confirmed email contact matched in
-the recommendation→purchase loop. Everything else — purchases through Mo's own cart
+redeemed a unique `MS5-`/`MK-` discount code (the Shopify code lookup
+`lib/kpi-revenue-store`, today the complement of „Umsatz durch Mo“), or the buyer
+was a DOI-confirmed email contact matched in the recommendation→purchase loop
+(that KPI was removed on 2026-10-06). Everything else — purchases through Mo's own cart
 buttons, and especially "Mo recommended it, the user typed it into the search bar
 and bought it" — would be invisible.
 
@@ -47,7 +48,9 @@ backend's database.
 ## Attribution tiers (honesty preserved)
 
 Snapshot at ingest (`lib/order-attribution.mjs`), shown verbatim in the KPI
-tab as **"Mo-zugeordneter Umsatz (Bestell-Webhook)"**:
+tab in **„Umsatz durch Mo“** and **„Wie der Umsatz entstand“** (ADMIN_DASHBOARD §5.5,
+§5.16), where each order also gets one channel (summary e-mail, set offer,
+campaign code, …) and is listed in „Was genau passiert ist“:
 
 | Tier | Definition |
 | --- | --- |
@@ -229,7 +232,7 @@ Which of these steps are done in production: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.
    need the column).
 4. The KPI section shows an explicit empty state until the first **marked** order is
    seen — stored in `mo_orders` or counted as unresolved (`ingestionSeen`,
-   `getMoAttributionKpis`). Ingestion starts with the subscription, it is **not**
+   `getMoRevenueData`). Ingestion starts with the subscription, it is **not**
    retroactive.
 
 ## Widget
@@ -251,7 +254,7 @@ consent is withdrawn. Contract (request, response, re-stamp, renewal, blanking, 
 | `migrations/0042_order_attribution.sql` | `mo_attribution_tokens` + `mo_orders`. |
 | `migrations/0076_message_session_id.sql` | `messages.session_id` (writer of tool marker rows) + partial index `messages_session_marker_idx`. Additive; safe to run right after the merge. |
 | `src/lib/order-attribution.mjs` (+ tests) | Pure: marker URL builder, payload parsing (PII-free), catalog matching, tier classification, window check, window anchor (`attributionAnchor`), mail-link window restart (`restartsWindowOnReuse`), cross-thread overlap (`overlapLookback`, `unionConsultedProducts`), unresolved-marker event, event-id dedupe key and tally. |
-| `src/lib/mo-orders-store.ts` | I/O: token minting (mail-link re-stamp), webhook ingest (anchor query, overlap over the session's threads in the window, `unknown_token` / `outside_window`), `noteUnresolvedMarker` (event-id claim), KPI aggregation, sweep short-circuit. |
+| `src/lib/mo-orders-store.ts` | I/O: token minting (mail-link re-stamp), webhook ingest (anchor query, overlap over the session's threads in the window, `unknown_token` / `outside_window`), `noteUnresolvedMarker` (event-id claim), sweep short-circuit. |
 | `src/lib/platform-flags.mjs`, `src/lib/retention-options.mjs` (+ tests) | `MO_ATTRIBUTION_SESSION_ANCHOR`; `attributionSessionAnchor` + `attributionTokenMaxDays` (the cap). |
 | `src/lib/retention.ts` | Step 5i: token purge (switch off) or keep rule with cap (switch on), `keptActiveAttributionTokens`. |
 | `src/lib/conversation-store.ts` | `persistTurn` writes `messages.session_id` on tool marker rows; retries without the column until `0076` ran. |
@@ -261,7 +264,7 @@ consent is withdrawn. Contract (request, response, re-stamp, renewal, blanking, 
 | `src/app/api/attribution/token/route.ts` | Widget-facing token mint (origin + secret + session guards; contract API_CONTRACT §10). |
 | `src/lib/summary-email.ts`, `src/lib/marketing-email.ts`, `src/lib/bundle-offers.ts` | Stamp their cart links at build/send time. |
 | `src/lib/conversion-sweep.ts` | Uses ingested orders as a Shopify-free short-circuit. |
-| `src/app/admin/KpiTab.tsx`, `src/app/admin/kpi/sections/AttributionSection.tsx` | The tiered KPI section, the „ohne Zuordnung“ note and the release notes. |
+| `src/lib/mo-revenue-store.ts`, `src/lib/mo-revenue.mjs` (+ tests), `src/app/admin/kpi/sections/Umsatz*Section.tsx`, `src/app/admin/kpi/RevenueOrders.tsx` | The revenue sections (ADMIN_DASHBOARD §5.5, §5.16): tiers, channels, the drill-down, the „ohne Zuordnung“ note and the release notes. |
 | `src/lib/kpi-releases.mjs` | Release entries `attribution-unresolved` + `attribution-window` (2026-10-05), `attribution-token-renewal` (2026-10-06, the widget's renewal and blanking) and `MEANINGFUL_FROM.attribution`. |
 | `scripts/verify-live-kpis.mjs` | Section 7 (pre-checks P1–P6) and 7b (live checks V0, V2/V2b against the latest nightly retention run or `--ran-at`, V3, V4, tokens older than 37 days). |
 | `scripts/register-shopify-webhooks.mjs` | `npm run shopify:webhooks`: registers the `orders/create` + `orders/paid` subscriptions (with the app's other topics), `--dedupe` for duplicates. |

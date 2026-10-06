@@ -262,7 +262,7 @@ export function SentHistory({
         <div className="flex flex-col gap-2">
           <DeliveryStrip summary={summary} />
           <Link
-            href="/admin?tab=kpi#kpi-marketing"
+            href="/admin?tab=kpi#kpi-kampagne"
             className="inline-flex w-fit items-center gap-1 text-xs text-accent underline-offset-2 hover:underline"
           >
             Kampagnen-Funnel mit Einlösungen und Umsatz im KPI-Bereich <ArrowRight className="size-3" aria-hidden />

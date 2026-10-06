@@ -78,12 +78,18 @@
   /* Navigation rail */
   --sidebar: #ffffff;
   --sidebar-foreground: #111111;
-  /* Chart series — always through tokens so charts follow the theme */
-  --chart-1: var(--accent);
-  --chart-2: var(--success);
-  --chart-3: var(--warning);
-  --chart-4: var(--info);
-  --chart-5: var(--muted-foreground);
+  /* Chart series — a categorical palette, validated with the dataviz six
+   * checks against the card surface (lightness band, chroma, CVD and
+   * normal-vision separation of neighbours). Slot 1 is the brand blue, 2–5 the
+   * reference steps (orange, aqua, yellow, magenta). Assigned per entity in
+   * this fixed order, never by rank, and never the status colours. Slots 3–5
+   * sit below 3:1 on white: a chart using them shows its values as labels or
+   * in a table view. */
+  --chart-1: #008ccb;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
 }
 
 .dark {
@@ -124,6 +130,14 @@
   --accent-soft: color-mix(in srgb, var(--accent) 16%, var(--card));
   --sidebar: #101316;
   --sidebar-foreground: #f3f4f6;
+
+  /* Chart series, stepped for the dark card (all ≥ 3:1, lightness band
+   * 0.48–0.67 — the brand blue itself is too light for the band). */
+  --chart-1: #1f9bd4;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
 }
 
 @theme inline {
@@ -182,8 +196,11 @@
  * steps sit half a point under Tailwind's defaults). Numbers use tabular-nums.
  *   2xs 11/16 fine print · xs 12/16 labels, badges · sm 13.5/20 tables + forms ·
  *   base 14.5/22 prose · lg 17/24 section titles · xl 20/28 page title ·
- *   2xl 26/32 KPI values */
+ *   2xl 26/32 KPI values · hero 48/52 the one headline figure of a screen
+ *   (KPIs: „Umsatz durch Mo“) */
 @theme {
+  --text-hero: 3rem;
+  --text-hero--line-height: 3.25rem;
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
   --text-xs: 0.75rem;

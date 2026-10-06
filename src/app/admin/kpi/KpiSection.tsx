@@ -180,7 +180,7 @@ export function ChartCard({
 export function FunnelLayout({ chart, children }: { chart: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <ChartCard>{chart}</ChartCard>
+      <ChartCard className="self-start">{chart}</ChartCard>
       <div className="grid grid-cols-2 content-start gap-3">{children}</div>
     </div>
   );

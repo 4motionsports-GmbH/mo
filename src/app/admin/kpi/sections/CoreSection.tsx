@@ -1,12 +1,16 @@
-// Kern-Metriken — headline stats, chats per day, status split, in-chat clicks
-// and the raw event table (collapsed).
+// Beratungen (formerly „Kern-Metriken“) — volume and engagement of the chats in
+// the period, chats per day, the chat and capture languages (formerly the
+// section „Sprachen (DE/EN)“) and the raw event table (collapsed). The in-chat
+// clicks moved into „Vom Chat zur Bestellung“; the status donut was removed
+// (its „Konvertiert“ came only from the retired MS5- conversion sweep).
 
-import type { CoreMetrics } from "@/lib/kpi-store";
+import type { CoreMetrics, LocaleCount, LocaleSplit } from "@/lib/kpi-store";
 import type { KpiRange } from "@/lib/kpi-range";
 import { num, ratio } from "@/lib/admin-format.mjs";
 import { ADMIN_DATE_PADDED, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { discontinuedWidgetEvent } from "@/lib/kpi-widget-events.mjs";
 import {
+  BarList,
   Disclosure,
   InfoTip,
   Stat,
@@ -18,43 +22,55 @@ import {
   TableHeader,
   TableRow,
 } from "../../ui";
-import { ChatsPerDayChart, StatusSplitChart } from "../charts";
-import { ChartCard, Explain, KpiSection, StatGrid, SubHeading } from "../KpiSection";
+import { ChatsPerDayChart } from "../charts";
+import { ChartCard, Explain, KpiSection, StatGrid } from "../KpiSection";
 
-const STATUS_INFO = (
+const LOCALE_LABELS: Record<string, string> = {
+  de: "Deutsch",
+  en: "Englisch",
+  unknown: "Unbekannt (vor Erfassung)",
+};
+
+const LOCALE_INFO = (
   <Explain>
+    <p>Beratungen nach gewählter Chat-Sprache und E-Mail-Angaben nach Capture-Sprache.</p>
     <p>
-      „Konvertiert“ setzt der tägliche Conversion-Sweep: der einmalige Mo-Rabattcode (MS5-…) der aus
-      dieser Beratung entstandenen Marketing-E-Mail wurde in einer echten Bestellung eingelöst —
-      dieselbe ehrliche Zuordnung wie beim Umsatz-Abschnitt. Käufe ohne Mo-Code sind nicht
-      zurechenbar und erscheinen hier nicht; „Konvertiert“ ist eine Untergrenze.
+      Die Chat-Sprache wird seit Migration 0041 pro Beratung gespeichert (letzter Turn zählt); ältere
+      Beratungen erscheinen als „Unbekannt“. Capture-Sprache seit Migration 0030.
     </p>
   </Explain>
 );
 
-const CLICKS_INFO = (
-  <Explain>
-    <p>
-      Klick-Signale werden anhand der Event-Namen aus der Widget-Telemetrie gemustert (Produkt/CTA:{" "}
-      <code>%product%click%</code> / <code>%cta%click%</code>; Warenkorb: <code>%cart%</code> /{" "}
-      <code>%checkout%</code>). Die vollständige Event-Übersicht zeigt die Rohdaten.
-    </p>
-  </Explain>
-);
-
-export function CoreSection({ core, range }: { core: CoreMetrics | null; range: KpiRange }) {
+export function CoreSection({
+  core,
+  locales,
+  range,
+}: {
+  core: CoreMetrics | null;
+  locales: LocaleSplit | null;
+  range: KpiRange;
+}) {
   return (
     <KpiSection
       id="kern"
-      title="Kern-Metriken"
-      info="Beratungen im gewählten Zeitraum: Volumen, Länge, Abbrüche und Engagement — jede Zahl direkt aus der Datenbank."
+      title="Beratungen"
+      info="Beratungen im gewählten Zeitraum: Volumen, Länge, Abbrüche, Engagement und Sprachen — jede Zahl direkt aus der Datenbank. Wie viele davon zu Produkten, Klicks und Bestellungen führen, zeigt „Vom Chat zur Bestellung“."
       empty={core ? null : "Noch keine Daten."}
     >
       {core && (
         <>
           <StatGrid cols={4}>
-            <Stat label="Chats gesamt" value={num(core.totalChats)} />
-            <Stat label="Ø Nachrichten / Chat" value={num(core.avgMessagesPerChat, 1)} />
+            <Stat
+              label="Chats gesamt"
+              value={num(core.totalChats)}
+              hint={`Ø ${num(core.avgMessagesPerChat, 1)} Nachrichten je Chat`}
+            />
+            <Stat
+              label="Reichweite (Sitzungen)"
+              value={num(core.sessionsWithTelemetry)}
+              hint={`mit irgendeinem Widget-Event · ${num(core.openedSessions)} öffneten den Chat`}
+              info="Sitzungen mit irgendeinem Widget-Event im Zeitraum — auch ohne Öffnen (die Launcher-Animation, Hinweise und Popups senden ohne Klick)."
+            />
             <Stat
               label="Abgebrochen"
               value={`${num(core.status.abandoned)} · ${ratio(core.abandonedRate)}`}
@@ -72,38 +88,19 @@ export function CoreSection({ core, range }: { core: CoreMetrics | null; range: 
             <ChartCard className="lg:col-span-2" title={`Chats pro Tag · ${range.label}`}>
               <ChatsPerDayChart data={core.chatsByDay} />
             </ChartCard>
-            <ChartCard title="Status-Verteilung" info={STATUS_INFO}>
-              <StatusSplitChart
-                active={core.status.active}
-                abandoned={core.status.abandoned}
-                converted={core.status.converted}
-              />
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                <LegendDot color="var(--muted-foreground)" label="Aktiv" value={core.status.active} />
-                <LegendDot color="var(--warning)" label="Abgebrochen" value={core.status.abandoned} />
-                <LegendDot color="var(--success)" label="Konvertiert" value={core.status.converted} />
+            <ChartCard title="Sprachen" info={LOCALE_INFO}>
+              <div className="flex flex-col gap-4">
+                <div>
+                  <h5 className="mb-1.5 text-xs font-medium text-muted-foreground">Chats</h5>
+                  <LocaleBars counts={locales?.chats ?? []} />
+                </div>
+                <div>
+                  <h5 className="mb-1.5 text-xs font-medium text-muted-foreground">E-Mail-Angaben</h5>
+                  <LocaleBars counts={locales?.captures ?? []} />
+                </div>
               </div>
             </ChartCard>
           </div>
-
-          <SubHeading info={CLICKS_INFO}>In-Chat-Klicks (Buttons im Chat)</SubHeading>
-          <StatGrid cols={3}>
-            <Stat
-              label="Produkt-/CTA-Klicks"
-              value={num(core.productCtaClicks)}
-              hint={`${num(core.productCtaRatePerChat, 2)} pro Chat`}
-            />
-            <Stat
-              label="Add-to-Cart-Klicks"
-              value={num(core.addToCartClicks)}
-              hint={`${num(core.addToCartRatePerChat, 2)} pro Chat`}
-            />
-            <Stat
-              label="Reichweite (Sitzungen)"
-              value={num(core.sessionsWithTelemetry)}
-              hint="mit irgendeinem Widget-Event — auch ohne Öffnen"
-            />
-          </StatGrid>
 
           {core.topEvents.length > 0 && (
             <div className="mt-4">
@@ -158,11 +155,17 @@ function EventName({ event }: { event: string }) {
   );
 }
 
-function LegendDot({ color, label, value }: { color: string; label: string; value: number }) {
+function LocaleBars({ counts }: { counts: LocaleCount[] }) {
+  const total = counts.reduce((a, c) => a + c.count, 0);
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} aria-hidden />
-      {label}: <strong className="text-foreground">{num(value)}</strong>
-    </span>
+    <BarList
+      empty="Keine im Zeitraum."
+      rows={counts.map((c) => ({
+        key: c.locale,
+        label: LOCALE_LABELS[c.locale] ?? c.locale,
+        count: c.count,
+        hint: total > 0 ? ratio(c.count / total) : undefined,
+      }))}
+    />
   );
 }

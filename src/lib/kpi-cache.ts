@@ -1,8 +1,10 @@
-// KPI Shopify cache (decision D-4). The four KPI getters that fan out to the
-// Shopify Admin API (up to ~330 order lookups per page view) are served from a
-// per-process TTL cache keyed by the KPI range, so a range change or a reload
-// within ten minutes costs one DB round trip instead of seconds of Shopify
-// calls. Pure-DB sections stay live and are not cached.
+// KPI Shopify cache (decision D-4). The two KPI getters that fan out to the
+// Shopify Admin API — the code lookup of „Umsatz durch Mo“ and the campaign
+// funnel's redemption check (up to ~200 order lookups per page view) — are
+// served from a per-process TTL cache keyed by the KPI range, so a range change
+// or a reload within ten minutes costs one DB round trip instead of seconds of
+// Shopify calls. Pure-DB sections stay live and are not cached (the revenue
+// ledger `mo_orders` included — lib/mo-revenue-store).
 //
 // Freshness: "Aktualisieren" in the KPI toolbar navigates with
 // ?kpiFresh=<unix seconds>; entries fetched before that moment are treated as
@@ -17,11 +19,6 @@ import { TtlCache, parseFreshnessFloor } from "./ttl-cache.mjs";
 import type { KpiRange } from "./kpi-range";
 import { getMoRevenue, type MoRevenue } from "./kpi-revenue-store";
 import { getCampaignKpis, type CampaignKpis } from "./campaign-store";
-import {
-  getRecommendationLoop,
-  type RecommendationLoopResult,
-} from "./kpi-recommendation-loop";
-import { getMarketingFunnel, type MarketingFunnel } from "./marketing-store";
 
 const KPI_SHOPIFY_CACHE_TTL_MS = 10 * 60 * 1000;
 
@@ -37,9 +34,7 @@ export interface Cached<T> {
 export interface KpiShopifyBlock {
   revenue: Cached<MoRevenue | null>;
   campaign: Cached<CampaignKpis | null>;
-  loop: Cached<RecommendationLoopResult | null>;
-  funnel: Cached<MarketingFunnel | null>;
-  /** The oldest of the four fetch times — the "Stand" shown in the toolbar. */
+  /** The older of the two fetch times — the "Stand" shown in the toolbar. */
   fetchedAt: string;
   /** True when at least one part was served from the cache. */
   fromCache: boolean;
@@ -101,7 +96,7 @@ function rangeKey(prefix: string, range: KpiRange): string {
 }
 
 /**
- * Load the four Shopify-dependent KPI results for `range`. `freshParam` is the
+ * Load the Shopify-dependent KPI results for `range`. `freshParam` is the
  * raw `?kpiFresh=` value (unix seconds) written by the "Aktualisieren" button.
  */
 export async function loadKpiShopifyBlock(
@@ -111,13 +106,11 @@ export async function loadKpiShopifyBlock(
   const now = Date.now();
   const minFetchedAt = parseFreshnessFloor(freshParam ?? undefined, now);
   const opts = { minFetchedAt, now };
-  const [revenue, campaign, loop, funnel] = await Promise.all([
+  const [revenue, campaign] = await Promise.all([
     cachedKpi(rangeKey("revenue", range), () => getMoRevenue(range), opts),
     cachedKpi(rangeKey("campaign", range), () => getCampaignKpis(range), opts),
-    cachedKpi("loop:all", () => getRecommendationLoop(), opts),
-    cachedKpi("funnel:all", () => getMarketingFunnel(), opts),
   ]);
-  const parts = [revenue, campaign, loop, funnel];
+  const parts = [revenue, campaign];
   const oldest = parts.reduce(
     (min, p) => (Date.parse(p.fetchedAt) < Date.parse(min) ? p.fetchedAt : min),
     parts[0].fetchedAt
@@ -125,8 +118,6 @@ export async function loadKpiShopifyBlock(
   return {
     revenue,
     campaign,
-    loop,
-    funnel,
     fetchedAt: oldest,
     fromCache: parts.some((p) => p.fromCache),
   };

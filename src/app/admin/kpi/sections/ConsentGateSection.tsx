@@ -11,7 +11,7 @@ import type { KpiRange } from "@/lib/kpi-range";
 import { formatAdmin, ADMIN_DATE_PADDED } from "@/lib/admin-datetime.mjs";
 import { num, ratio } from "@/lib/admin-format.mjs";
 import { Stat, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../ui";
-import { StageFunnelChart } from "../charts";
+import { FunnelBars } from "../FunnelBars";
 import { Explain, FunnelLayout, KpiSection, StatGrid, SubHeading } from "../KpiSection";
 
 const INFO = (
@@ -79,10 +79,10 @@ export function ConsentGateSection({ funnel, range }: { funnel: ConsentGateFunne
         <>
           <FunnelLayout
             chart={
-              <StageFunnelChart
+              <FunnelBars
                 stages={[
-                  { name: "Angezeigt", value: signin.shown },
-                  { name: "Akzeptiert", value: signin.accepted },
+                  { label: "Angezeigt", value: signin.shown },
+                  { label: "Akzeptiert", value: signin.accepted },
                 ]}
               />
             }

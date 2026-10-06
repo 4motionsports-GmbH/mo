@@ -520,7 +520,7 @@ Kept for the ids other docs cite. The task texts of the 2026-10-05 round (A3, A5
 
 | Question | Blocks / changes | How to answer |
 | --- | --- | --- |
-| Does the cart-permalink checkout keep the `_mo` attribute stamped via `/cart/update.js`? | A2 priority; how to read „Mo-zugeordneter Umsatz“ | One test order (P0.2) |
+| Does the cart-permalink checkout keep the `_mo` attribute stamped via `/cart/update.js`? | A2 priority; how to read „Umsatz durch Mo“ | One test order (P0.2) |
 | Which products use which product template? | How many PDPs lack the Q&A tab (`product.produkte-im-set`) | Shopify admin / Admin API `template_suffix` |
 | Which cookie banner is live, and is the Customer Privacy API loaded on every page? | Share of visitors that can ever be attributed | Inspect the live shop |
 | Classic or new customer accounts? | P0.3 value (whether `logged_in_customer_id` is filled) | Answered by the manual whoami check of `docs/ROLLOUT_TODO.md` 5.4: open `/apps/chat/whoami?session=livecheck-manual` while logged in to the shop; an `account_shop_recognised` row for that session (`npm run verify:live` section 8) means the id arrives, no row means the lever is 0 (Shopify admin settings as a cross-check) |

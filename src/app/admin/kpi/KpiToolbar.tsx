@@ -146,7 +146,7 @@ export function KpiToolbar({
                   : "text-muted-foreground hover:bg-secondary hover:text-foreground"
               )}
             >
-              {g.label}
+              {g.chip}
             </a>
           ))}
         </nav>
@@ -171,14 +171,14 @@ export function KpiToolbar({
               {label}
             </span>
             <InfoTip label="Was der Zeitraum filtert">
-              Der Zeitraum filtert alle Abschnitte bis zur Gruppe „Gesamtwerte“. Marketing-Funnel,
-              Persona-Insights, Empfehlung → Kauf und Postversand sind Gesamtwerte
-              (zeitraumunabhängig).
+              Der Zeitraum filtert alle Abschnitte bis zur Gruppe „Gesamtwerte“. Mo-Effekt,
+              Kundenbasis, Persona-Insights und Postversand sind Gesamtwerte (zeitraumunabhängig).
+              „Umsatz durch Mo“ vergleicht mit dem gleich langen Zeitraum direkt davor.
             </InfoTip>
           </div>
 
           <div className="flex items-center gap-1.5 border-l border-border pl-3">
-            <span className="text-xs text-muted-foreground" title={shopifyFetchedAt}>
+            <span className="text-xs text-muted-foreground">
               Shopify-Daten: Stand {formatAdmin(shopifyFetchedAt, ADMIN_TIME)}
             </span>
             <Button
@@ -195,9 +195,10 @@ export function KpiToolbar({
               Aktualisieren
             </Button>
             <InfoTip label="Zwischenspeicher erklären">
-              Umsatz über Mo-Rabattcodes, Kampagnen-Funnel, Marketing-Funnel und Empfehlung → Kauf
-              fragen Shopify nach eingelösten Codes und Bestellungen. Diese Ergebnisse werden je
-              Zeitraum zehn Minuten zwischengespeichert; „Aktualisieren“ berechnet sie sofort neu.
+              Der Code-Abgleich von „Umsatz durch Mo“ und der Kampagnen-Funnel fragen Shopify nach
+              eingelösten Codes. Diese Ergebnisse werden je Zeitraum zehn Minuten
+              zwischengespeichert; „Aktualisieren“ berechnet sie sofort neu. Alles andere — auch die
+              per Webhook erfassten Bestellungen — ist immer aktuell.
               {shopifyFromCache ? " Aktuell aus dem Zwischenspeicher." : " Aktuell frisch berechnet."}
             </InfoTip>
           </div>

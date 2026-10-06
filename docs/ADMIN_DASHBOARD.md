@@ -193,7 +193,7 @@ src/app/admin/
 ├── kampagnen/            # CampaignsOverview (cards), CampaignEditor (sheet), CampaignCheckSection („Prüfen & testen“), types
 ├── kampagne/             # the desk of one campaign: KampagneWorkspace, CampaignHeader, PreparePopover, QueueRail, MailPane, ReviewColumn, sections/*, ListView, ScheduledViews („Einplanen“ dialog, view „Eingeplant“), SentHistory, LettersView, TestContactsSheet, ContactHistorySheet, EmailViewerDialog, badges, useCampaignActions, useReleaseActions, useRenderedPreview
 ├── kunden/               # KundenWorkspace, CustomerDetail, badges, useCustomerDetail, tabs/{Ueberblick (+Profil), Aktivitaet, Kaeufe, Beratungen („Gespräche“), Marketing (+OptOutControl), Korrespondenz, Brief}, BundleComposer
-├── kpi/                  # KpiToolbar, KpiSection, groups, KpiTopQuestions, charts (next/dynamic) → charts-recharts + chart-geometry, sections/* (one file per section, §3.5)
+├── kpi/                  # KpiToolbar, KpiSection, KpiTile (+ DeltaPill), FunnelBars, Sparkline, RevenueOrders (the drill-down), revenue-view (+ revenue-colors, revenue-series), groups, KpiTopQuestions, charts (next/dynamic) → charts-recharts + chart-geometry, sections/* (one file per section, §3.5)
 ├── gespraeche/           # GespraecheWorkspace, ConversationFilters, StatsPanel, ConversationList, ConversationDetail, ReportPanel, badges
 ├── wissen/               # WissenWorkspace, QaEntryEditor, ProductField, badges, useQaQueue
 ├── einstellungen/        # EmailSettingsWorkspace, ShopifySyncCard, SystemStatusCard, DesignPreviewDialog
@@ -233,8 +233,16 @@ a helper paragraph. Dark mode is a token swap, never a component branch.
 nav), `surface-2` (table heads, nested panels), `destructive`, `success`,
 `warning`, `info`, `border`, `input`, `ring`, `sidebar`, `chart-1…5`, the brand
 colours, `radius-sm/md/lg/xl` and the type scale `text-2xs` (11 px) … `text-2xl`
-(26 px) with fixed line heights. Montserrat is self-hosted
-(`fonts/montserrat-latin.woff2`). Numbers use `tabular-nums`. No component may
+(26 px) plus `text-hero` (48 px — the one headline figure of a screen, the KPIs'
+„Umsatz durch Mo“) with fixed line heights. `chart-1…5` is a categorical palette
+validated with the dataviz checks (lightness band, chroma, colour-blind and
+normal-vision separation of neighbours) against the card surface, with its own
+steps in dark mode; slot 1 is the brand blue. Charts assign it per entity in
+this fixed order (never by rank) and never use the status colours for a
+series; slots 3–5 sit below 3:1 on white, so a chart using them prints its
+values or offers a table. Montserrat is self-hosted
+(`fonts/montserrat-latin.woff2`). Numbers in columns use `tabular-nums`; a
+standalone headline figure keeps proportional digits. No component may
 hard-code a colour or a pixel font size.
 
 **Primitives** ([`ui/index.ts`](../src/app/admin/ui/index.ts) — shadcn-style
@@ -833,24 +841,46 @@ scan in batches of 10 with a progress line.
 
 ### 3.5 KPIs
 
-A sticky toolbar (in-page group navigation Beratung · Marketing & Kampagne ·
-Umsatz · Kosten · Gesamtwerte with scroll-spy, the period presets 7 / 30 / 90
-days or „Zeitraum…“, and „Shopify-Daten: Stand hh:mm · Aktualisieren“), the
-„Änderungen im Zeitraum“ Callout (§5.0) and the sections — one file each in
-`kpi/sections/`, each keeping its honesty caveat verbatim behind the (i) next
-to its title. Definitions, caveats and the cache: **§5**. Groups and sections
-in screen order ([`KpiTab.tsx`](../src/app/admin/KpiTab.tsx),
-[`kpi/groups.ts`](../src/app/admin/kpi/groups.ts)):
+A sticky toolbar (in-page group navigation Umsatz · Funnel · Anmeldung ·
+Kampagnen · Qualität · Kosten · Gesamtwerte with scroll-spy, the period presets
+7 / 30 / 90 days or „Zeitraum…“, and „Shopify-Daten: Stand hh:mm ·
+Aktualisieren“), the disclosure „Änderungen im Zeitraum“ (§5.0) and the
+sections — one file each in `kpi/sections/`, each keeping its honesty caveat
+verbatim behind the (i) next to its title. Definitions, caveats and the cache:
+**§5**. Groups and sections in screen order
+([`KpiTab.tsx`](../src/app/admin/KpiTab.tsx),
+[`kpi/groups.ts`](../src/app/admin/kpi/groups.ts)), ordered by decision value
+(owner decision 2026-10-06): what Mo earned first, then where the journey loses
+people, then the levers (sign-in and consent, campaigns), quality, cost, and the
+lifetime aggregates last:
 
-| Group | Sections (§) |
+| Group (toolbar chip) | Sections (§) |
 | --- | --- |
-| Beratung | Kern-Metriken (§5.1) · Seitenkontext auf Produktseiten (§5.1a) · Sprachen (DE/EN) (§5.14) · Gesprächsqualität (KI-Analyse) (§5.13) · Wissen (Q&A-Queue) (§5.11) · Feedback (§5.12) · Kundenkonto & Self-Service (§5.15) · Bestellstatus im Chat (§5.15a) |
-| Marketing & Kampagne | Anmelde-Popup (anonyme Besucher:innen) incl. „Diagnose: wo Anmeldungen enden“ (§5.7a) · Einwilligung nach der Anmeldung (Marketing-Opt-in) (§5.7) · E-Mail-Capture-Funnel (§5.8) · Kampagnen-Funnel incl. „Kampagnen im Vergleich“ (§5.9) · Eingang (§5.18) · Bundle-Angebote (§5.10) |
-| Umsatz | Umsatz über Mo-Rabattcodes (§5.5) · Mo-zugeordneter Umsatz (Bestell-Webhook) (§5.16) |
+| Umsatz | Umsatz durch Mo (§5.5) · Wie der Umsatz entstand · Was genau passiert ist (§5.16) |
+| Beratung & Funnel (Funnel) | Vom Chat zur Bestellung (§5.21) · Beratungen incl. Sprachen (§5.1, §5.14) · Seitenkontext auf Produktseiten (§5.1a) |
+| Anmeldung & Einwilligung (Anmeldung) | Anmelde-Popup (anonyme Besucher:innen) incl. „Diagnose: wo Anmeldungen enden“ (§5.7a) · Einwilligung nach der Anmeldung (Marketing-Opt-in) (§5.7) · E-Mail-Capture-Funnel (§5.8) · Kundenkonto & Self-Service (§5.15) |
+| Kampagnen & Eingang (Kampagnen) | Kampagnen-Funnel incl. „Kampagnen im Vergleich“ (§5.9) · Bundle-Angebote (§5.10) · Eingang (§5.18) |
+| Qualität & Wissen (Qualität) | Gesprächsqualität (KI-Analyse) (§5.13) · Wissen (Q&A-Queue) (§5.11) · Feedback (§5.12) · Bestellstatus im Chat (§5.15a) |
 | Kosten | KI-Kosten (§5.6) |
-| Gesamtwerte („vom Zeitraum unabhängig“) | Kundenbasis (§5.17) · Mo-Effekt (§5.19) · Postversand (Brief) (§5.20) · Marketing-Funnel (§5.4) · Persona-Insights (§5.2) · Empfehlung → Kauf (nur Kund:innen mit E-Mail-Angabe) (§5.3) |
+| Gesamtwerte („vom Zeitraum unabhängig“) | Mo-Effekt (§5.19) · Kundenbasis (§5.17) · Persona-Insights (§5.2) · Postversand (Brief) (§5.20) |
 
-Screenshots: `docs/screenshots/customer-platform/` (`kpi`, `kpi-kundenbasis`).
+Removed on 2026-10-06 (owner decision): „Umsatz über Mo-Rabattcodes“ and
+„Mo-zugeordneter Umsatz (Bestell-Webhook)“ (merged into §5.5 / §5.16),
+„Empfehlung → Kauf (nur Kund:innen mit E-Mail-Angabe)“ (§5.3),
+„Marketing-Funnel“ (§5.4), the standalone „Sprachen (DE/EN)“ (now a card in
+„Beratungen“, §5.14) and the „Status-Verteilung“ donut of the core metrics (§5.1).
+
+Anchors: groups `#kpi-bereich-<key>` (`umsatz`, `funnel`, `kunden`, `kampagnen`,
+`qualitaet`, `kosten`, `gesamt`), sections `#kpi-<id>` (e.g. `#kpi-umsatz`,
+`#kpi-umsatz-wege`, `#kpi-umsatz-bestellungen`, `#kpi-journey`, `#kpi-kampagne` —
+the Kampagnen desk's „Gesendet“ view links there). Every funnel is drawn by the
+one server-rendered `kpi/FunnelBars` (one hue, values printed, step conversion
+under each bar).
+
+Screenshots: `docs/screenshots/2026-10-06-kpi/` (the whole page and the
+sections `umsatz`, `umsatz-wege`, `umsatz-bestellungen` and `journey`, 1440 and
+1024 px, light and dark; `before-kpi-full-1440-light.png` is the screen before
+the redesign).
 
 ### 3.6 Gespräche
 
@@ -1233,15 +1263,21 @@ or suppressed address.
 
 Most sections read the pseudonymous analytics cluster (`conversations`,
 `messages`, `kpi_events`, `ai_usage`). The others name their table in their
-subsection: `mo_orders` (§5.1a, §5.16), `marketing_sends` (§5.4, §5.5),
-`campaign_sends` (§5.5, §5.9), `email_captures` (§5.3, §5.14), `bundle_offers`
+subsection: `mo_orders` (§5.1a, §5.5, §5.10, §5.16, §5.21), `marketing_sends` and
+`campaign_sends` (§5.5, §5.9), `email_captures` (§5.14), `bundle_offers`
 (§5.10), `qa_entries` (§5.11), `feedback` (§5.12), `physical_letters` (§5.20)
-and the customer tables `customer_overview` / `inbox_items` (§5.17–§5.19). Four
-blocks additionally ask Shopify — revenue (§5.5), campaign funnel (§5.9),
-marketing funnel (§5.4), recommendation loop (§5.3) — through the cache of §5.0.
-Every section shows counts and sums only, never an identity value. Each KPI
-carries its caveat verbatim in the UI (behind the (i) of its section). Which
-section sits in which group of the screen: §3.5.
+and the customer tables `customer_overview` / `inbox_items` (§5.17–§5.19); the
+drill-down of §5.16 also reads `conversations.customer_id` and `customer_orders`
+for its links. Two blocks additionally ask Shopify — the code lookup of „Umsatz
+durch Mo“ (§5.5) and the campaign funnel (§5.9) — through the cache of §5.0.
+Every section shows counts and sums only, never an identity value; the one list
+of single records, „Was genau passiert ist“ (§5.16), shows order numbers,
+amounts, Mo codes and product titles and links to the customer and the
+conversation by id — never a name or an e-mail address. Each KPI carries its
+caveat verbatim in the UI (behind the (i) of its section). Which section sits in
+which group of the screen: §3.5. The subsections below follow the screen order;
+their numbers are stable ids (other documents link them), so they are not in
+numeric order.
 
 ### 5.0 Period, toolbar and the Shopify cache — [`lib/kpi-range.mjs`](../src/lib/kpi-range.mjs), [`kpi/KpiToolbar.tsx`](../src/app/admin/kpi/KpiToolbar.tsx), [`lib/kpi-cache.ts`](../src/lib/kpi-cache.ts)
 
@@ -1254,36 +1290,36 @@ default 30d) into a safe `[from, to]` that the **indexed** range queries consume
 directly. The toolbar is a small client island that only rewrites the URL; the
 KPI screen stays a server component and re-renders for the new window.
 
-**Shopify cache (decision D-4).** The four Shopify-dependent blocks — revenue
-(§5.5), campaign funnel (§5.9), marketing funnel (§5.4), recommendation loop
-(§5.3) — are computed once per range and served from a **10-minute server
+**Shopify cache (decision D-4).** The two Shopify-dependent blocks — the code
+lookup of „Umsatz durch Mo“ (§5.5) and the campaign funnel's redemption check
+(§5.9) — are computed once per range and served from a **10-minute server
 cache** (`kpi-cache.ts` over the pure, tested `ttl-cache.mjs`; in-flight
 requests are de-duplicated). The toolbar shows „Shopify-Daten: Stand hh:mm“;
 „Aktualisieren“ navigates with `?kpiFresh=<unix seconds>`, a **freshness floor**
 („not older than this“) rather than a cache wipe, so it works across serverless
-instances. All pure-DB sections are live.
+instances. All pure-DB sections are live, the revenue ledger `mo_orders` (§5.5,
+§5.16) included.
 
 **The period filters every section outside the „Gesamtwerte“ group:**
 
 | Filtered by the period | Period-independent (lifetime / cohort) |
 | --- | --- |
-| **Core metrics** (§5.1) — `conversations` / `kpi_events` on `created_at` | Persona-insights (§5.2) |
-| **Seitenkontext auf Produktseiten** (§5.1a) — `kpi_events` on `created_at` (first page-context turn) | |
-| **Anmelde-Popup** (§5.7a) — `kpi_events` on `created_at` | Recommendation → purchase loop (§5.3) |
+| **Umsatz durch Mo** (§5.5, §5.16) — `mo_orders.processed_at` (the code lookup: Shopify order `created_at`); compared with the period of equal length before | Mo-Effekt (§5.19) — current state of `customer_overview` |
+| **Vom Chat zur Bestellung** (§5.21) — sessions whose chat started in the period (`conversations.created_at`) | Kundenbasis (§5.17) — current state of `customer_overview` |
+| **Beratungen** (§5.1, with Sprachen §5.14) — `conversations` / `kpi_events` / `email_captures` on `created_at` | Persona-insights (§5.2) |
+| **Seitenkontext auf Produktseiten** (§5.1a) — `kpi_events` on `created_at` (first page-context turn) | Postversand (§5.20) |
+| **Anmelde-Popup** (§5.7a) — `kpi_events` on `created_at` | |
 | **Einwilligung nach der Anmeldung** (§5.7) — `kpi_events` on `created_at` | |
-| **E-Mail-Capture-Funnel** (§5.8) — `kpi_events` on `created_at` | Marketing funnel (§5.4), Postversand (§5.20) |
-| **Umsatz über Mo-Rabatt­codes** (§5.5) — order `created_at` | Kundenbasis (§5.17) — current state of `customer_overview` |
-| **Kampagnen-Funnel** (§5.9) — `campaign_sends` on `sent_at` | Mo-Effekt (§5.19) — current state of `customer_overview` |
+| **E-Mail-Capture-Funnel** (§5.8) — `kpi_events` on `created_at` | |
+| **Kundenkonto & Self-Service** (§5.15) — `kpi_events`/`ai_usage` on `created_at` | |
+| **Kampagnen-Funnel** (§5.9) — `campaign_sends` on `sent_at` | |
+| **Bundle-Angebote** (§5.10) — `bundle_offers` / clicks on `created_at`, Set-link purchases on `mo_orders.processed_at` | |
 | **Eingang** (§5.18) — `inbox_items` on `created_at` | |
-| **Bundle-Angebote** (§5.10) — `bundle_offers` / clicks on `created_at` | |
+| **Gesprächsqualität** (§5.13) — `conversations` on `created_at` | |
 | **Wissen-KPIs** (§5.11) — `qa_entries` on `created_at`/`published_at` | |
 | **Feedback** (§5.12) — `feedback` on `created_at` | |
-| **Gesprächsqualität** (§5.13) — `conversations` on `created_at` | |
-| **Sprachen DE/EN** (§5.14) — `conversations`/`email_captures` on `created_at` | |
-| **Kundenkonto & Self-Service** (§5.15) — `kpi_events`/`ai_usage` on `created_at` | |
 | **Bestellstatus im Chat** (§5.15a) — `kpi_events` on `created_at` | |
 | **KI-Kosten** (§5.6) — `ai_usage` on `created_at` | |
-| **Mo-zugeordneter Umsatz** (§5.16) — `mo_orders` on order date | |
 
 The lifetime sections sit in the „Gesamtwerte“ group of the toolbar navigation
 (group heading „vom Zeitraum unabhängig“), each badged „Gesamtwert“ (tooltip
@@ -1293,7 +1329,9 @@ which figures the period applies to.
 **Release dates in the period** ([`lib/kpi-releases.mjs`](../src/lib/kpi-releases.mjs),
 tested). When the period contains a release that changes what a number means,
 „Änderungen im Zeitraum“ lists it under the toolbar (date + title, the detail in
-an InfoTip): 01.10.2026 widget update (sign-in popup, consent popup), 03.10.2026
+an InfoTip) — a disclosure with the count and the latest date, open by default
+only up to three entries, so a long list never pushes „Umsatz durch Mo“ off the
+first screen: 01.10.2026 widget update (sign-in popup, consent popup), 03.10.2026
 one-time sign-in code (backend), 04.10.2026 customer-platform widget, and on
 05.10.2026 the two Bestell-Zuordnung releases (marked orders without
 attribution counted; window from the latest consultation — §5.16), „Keine
@@ -1316,7 +1354,7 @@ of 06.10. add no section note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
-„Mo-zugeordneter Umsatz“ „erst ab dem 05.10.2026“; the first three also note the sign-in
+„Umsatz durch Mo“ „erst ab dem 05.10.2026“; the first three also note the sign-in
 outage from 03.10. until the widget upload on 04.10. (no sign-in could complete
 in the chat), so a drop on those days is not a trend. Einwilligung and
 E-Mail-Capture-Funnel note, for a period starting before 05.10.2026, that
@@ -1326,22 +1364,241 @@ directly comparable (sessions instead of clicks, the form only). A new release i
 in `KPI_RELEASES` (+ `MEANINGFUL_FROM` if a section's data starts with it). The Eingang's 30-day strip (§3.1) is a fixed trailing snapshot and
 has no picker.
 
-### 5.1 Core metrics — [`lib/kpi-store.ts`](../src/lib/kpi-store.ts)
+### 5.5 Umsatz durch Mo — [`lib/mo-revenue-store.ts`](../src/lib/mo-revenue-store.ts), [`lib/mo-revenue.mjs`](../src/lib/mo-revenue.mjs), [`lib/kpi-revenue-store.ts`](../src/lib/kpi-revenue-store.ts)
+
+The head of the KPI screen (2026-10-06, anchor `umsatz`): what Mo earned in the
+period. It replaces the two former revenue sections „Umsatz über Mo-Rabattcodes“
+(code-only, asked of Shopify) and „Mo-zugeordneter Umsatz (Bestell-Webhook)“,
+whose figures overlapped and could not be added up. The view is assembled in
+[`kpi/revenue-view.ts`](../src/app/admin/kpi/revenue-view.ts) through the pure,
+tested [`mo-revenue.mjs`](../src/lib/mo-revenue.mjs).
+
+**Definition.** The **paid** order value (Shopify `current_total_price` at
+ingest — incl. VAT, after partial refunds; financial status PAID /
+PARTIALLY_REFUNDED, `kpi-revenue-core`) of every order attributed to Mo with
+`processed_at` in the period: the ledger `mo_orders` (§5.16 — every order with
+the `_mo` cart attribute and/or an `MS5-`/`MK-` code, through the orders
+webhooks) plus the **code complement** — coded orders the Shopify lookup finds
+that the ledger never saw (placed before the webhooks were registered). Every
+order counts **exactly once**.
+
+| Figure | Definition |
+| --- | --- |
+| **Bezahlter Umsatz** (hero) | Σ paid order value; the change against the **Vorzeitraum** — the period of equal length directly before (`previousPeriod`) — and its value (InfoTip: its dates). |
+| Legend + chart | revenue per tier (§5.16) — per day, per week (from Monday) for periods over 92 days (`revenueSeries`) — as stacked columns in the tier colours (`--chart-1…3`; 2 px gaps, round top only on the top segment, round axis ticks from `chart-ticks.mjs`); one tooltip per bar with every tier, the total and the orders; „Werte als Tabelle“ lists the days with revenue. |
+| **Bestellungen** | paid orders, change and Vorzeitraum; sparkline of the orders per week (per day up to 21 days, `orderTrendPoints`). |
+| **Ø Bestellwert** | revenue ÷ orders, change and Vorzeitraum. |
+| **Umsatz je 1 € KI-Kosten** | revenue ÷ the total AI spend of the period (§5.6, every call site, no postage — `revenuePerAiEuro`), change against the same ratio of the Vorzeitraum; „—“ without captured AI cost. |
+
+**No double counting.**
+- *Tier and channel* — each ledger order has one tier (the snapshot of §5.16)
+  and one channel by a fixed precedence (`classifyRevenueOrder`): a Mo code
+  first (`MK-` → Kampagne, `MS5-` → persönliche Marketing-E-Mail), then the Mo
+  link it came through (Set-Angebot, Marketing-E-Mail, Zusammenfassung), then
+  the widget stamp (Beraten & gekauft / Beraten, anderes gekauft). An order with
+  a code **and** a marker counts once, under its code.
+- *Ledger vs. Shopify lookup* — the lookup (`getMoRevenue`: the newest 100 coded
+  marketing and non-test campaign sends minted by the period end, one
+  `fetchCodeRedemption` each, cached ten minutes, §5.0) returns its redeemed
+  orders; `mergeCodeRedemptions` drops every redemption whose code or order
+  number the ledger holds (orders from seven days before to seven days after the
+  period), and an order found under two codes once. Only the rest is added.
+- *Code cross-cut* — „davon mit Mo-Rabattcode“ (§5.16) is a subset of the
+  channel rows, never added on top.
+
+**Comparison.** The deltas compare the **ledger** of both periods — the
+Vorzeitraum gets no Shopify lookup (that would double the fan-out); when the
+complement adds orders, a note says the comparison is computed without them.
+
+**Notes under the section** (only when they apply): the release note
+`attribution` (§5.0); the complement („n Bestellungen mit Mo-Code (x €) aus dem
+Shopify-Code-Abgleich ergänzt …“); unpaid ledger orders with their value;
+marked orders without attribution („Ohne Zuordnung“, §5.16); Shopify not
+configured (the complement cannot run); codes Shopify did not answer; the
+100-code cap; orders in another currency (only the main currency — the most
+frequent among the paid orders, `mainCurrency` — is summed). Until the first
+marked order is seen (`ingestionSeen`) a Callout names the webhook setup
+(ORDER_ATTRIBUTION „Operator setup“).
+
+> ⚠️ Caveats (the InfoTip): revenue is not margin, and part of it would have been
+> bought without Mo („Beraten, anderes gekauft“ above all); unmarked orders are
+> not recorded; cross-device purchases (advice on the phone, purchase on the
+> laptop) stay invisible without an e-mail or a code — a physical limit, not a
+> measurement gap; the attribution window (§5.16) bounds every marker.
+
+### 5.16 Wie der Umsatz entstand · Was genau passiert ist — [`lib/mo-revenue-store.ts`](../src/lib/mo-revenue-store.ts), [`kpi/RevenueOrders.tsx`](../src/app/admin/kpi/RevenueOrders.tsx)
+
+The attribution ledger behind „Umsatz durch Mo“ (design:
+[`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)): orders/create + orders/paid
+webhooks push every order carrying a **Mo marker** (the opaque cart attribute
+`attributes[_mo]` from Mo-built cart links or the widget's live-cart stamp,
+and/or an MS5-/MK- code) into `mo_orders` (migration **0042**). Plain DB — **no
+Shopify calls, no caps, no sampling** (the drill-down lists the newest 500 of a
+period, the totals count all). Two sections show it (2026-10-06; they replace
+„Mo-zugeordneter Umsatz (Bestell-Webhook)“):
+
+**Wie der Umsatz entstand** (anchor `umsatz-wege`). The three tiers as figures
+(revenue, share, orders) and as one part-to-whole bar (2 px gaps, a tooltip per
+segment), then a table of the channels grouped by tier — Bestellungen · Umsatz ·
+Anteil am Umsatz (a bar in the tier colour) · Ø Bestellwert —, a subtotal row per
+group („Beratung im Chat“ = the two widget tiers, „Direkt über Mo“) and the cross-cut row „davon mit Mo-Rabattcode (MS5-/MK-)“ (the coded
+orders inside the rows above, InfoTip on how they count). Each channel row
+carries its definition in an InfoTip (`REVENUE_CHANNELS`); channels without
+orders stay visible (greyed), „Sonstiger Mo-Weg“ only when it has some.
+
+| Tier | Channel | Definition |
+| --- | --- | --- |
+| **Beraten & gekauft** (`assisted`) | Beraten & gekauft | Widget cart stamp + ≥1 purchased line was discussed/selected in that session's chats (catches search-bar purchases). |
+| **Beraten, anderes gekauft** (`influenced`) | Beraten, anderes gekauft | Widget cart stamp, no product overlap. |
+| **Direkt über Mo** (`direct`) | Zusammenfassungs-E-Mail | the cart link of the chat summary e-mail (`summary_email`) |
+| | Set-Angebot | the cart link of a bundle offer (`bundle`) |
+| | Kampagne (MK-Code) | the single-use MK- code of a campaign mail (incl. Einzelansprache) was redeemed |
+| | Persönliche Marketing-E-Mail (MS5-) | the MS5- code or the cart link (`marketing_email`) of the former per-customer mail (§4) |
+| | Sonstiger Mo-Weg | direct without a known way (old rows) |
+
+A row without a valid stored tier is re-classified with the ingest rules; one
+that stays unclassifiable is not counted.
+
+**Was genau passiert ist** (anchor `umsatz-bestellungen`). Every ledger order of
+the period (the newest 500 — a note says so beyond that) and every order of the
+code complement (§5.5), newest first, sortable by date and amount, 10 per page,
+with filter chips per channel (count per chip). Above the list three figures:
+**Vom Chat bis zum Kauf** (median whole days from the session's last chat message
+to the order, over the paid orders with a chat before them), **Produkt aus der
+Beratung im Warenkorb** (share of the paid widget-tier orders with ≥ 1 consulted
+product) and **Mit Kundenkonto verknüpft** (rows with a customer link; hint: rows
+with a conversation) — `drillInsights`. Per row:
+- date and time; the order number with its Mo code; a badge for an unpaid order
+  („noch nicht bezahlt“, „erstattet“, „storniert“ — amount struck through, not in
+  the totals), a partial refund („teilerstattet“) and the complement
+  („Code-Abgleich“); the channel in its tier colour;
+- **Was passiert ist** (`orderPathSummary`): e.g. „Beraten am 12.08. · 2 Tage
+  später gekauft · 1 von 2 Produkten aus der Beratung“, „Kampagnen-Code MK-…
+  eingelöst · zuletzt beraten am …“, „Link der Zusammenfassungs-E-Mail · nach der
+  Beratung am …“; „Beraten am“ is the session's last chat message at or before
+  the order;
+- the products (up to three, „+ n weitere“): a check marks the ones discussed or
+  selected in the session's chats up to the order (`markConsultedLines`,
+  normalised handles); below 1280 px they sit inside the story cell;
+- the amount, and two icon links with tooltips: the customer
+  (`?tab=kunden&customer=<id>` — from that conversation, another chat of the
+  session, or the order ledger `customer_orders`) and the conversation
+  (`?tab=gespraeche&gid=<id>` — the one holding that last message, else the
+  session's latest). Without a link the icon is dimmed and says why.
+Complement rows have no products and no links.
+
+Only realised money counts (PAID/PARTIALLY_REFUNDED — `kpi-revenue-core`
+policy); unpaid ledger orders are listed and noted, never silently dropped.
+Unmarked orders are not recorded here (never stored in `mo_orders`; the order
+ledger stores them while the customer sync is on). Ingestion starts at webhook
+registration (not retroactive); `ingestionSeen` is true once a row exists in
+`mo_orders` **or** a `mo_order_marker_unresolved` event exists, so a shop whose
+marked orders are all unresolved does not see the „Noch keine Bestellung über
+den Webhook erfasst“ callout (§5.5).
+
+**Window anchor.** The attribution window (`MO_ATTRIBUTION_WINDOW_DAYS`,
+default 30 days) counts from the token's minting; with
+`MO_ATTRIBUTION_SESSION_ANCHOR` on (default off in code; `sessionAnchor` in the
+result, ANWALTSDOSSIER §20) widget stamps count from the latest product consultation on the device
+(Produktkarte, Vergleich, Warenkorb-Karte, Showroom; written by the token's own
+session, never after the order), Mo links still from their creation — a mail
+link from the latest mail carrying its token, which each mail of the session
+re-stamps (ORDER_ATTRIBUTION „Attribution window“). The InfoTip explains the
+rule of the active mode, plus the cross-device blind spot. „Beraten & gekauft“
+checks the purchase against every thread of the session that was active within
+the window before the order, not only the latest one.
+
+**„Ohne Zuordnung“.** Marked orders no consultation could claim are counted as
+the server event `mo_order_marker_unresolved {reason, source?}` (orders/create
+only, dated by its arrival ≈ order time; `unresolved: { unknownToken,
+outsideWindow }` of `getMoRevenueData`). When the range has any, a note under „Umsatz durch Mo“ (§5.5) says
+„{n} markierte Bestellung(en) im Zeitraum ohne Zuordnung: {a} mit unbekannter
+oder gelöschter Markierung, {b} außerhalb des Zuordnungsfensters — keiner
+Beratung zugeordnet (nicht in der Mo-Zuordnung gespeichert), nur gezählt.“
+They are not linked to a session and not in `mo_orders`.
+
+**Release notes.** The releases `attribution-unresolved`, `attribution-window`
+(both 05.10.2026) and `attribution-token-renewal` (06.10.2026: from the widget
+build `bc7fb5d` a token the backend deleted is replaced after the next live
+product consultation, and the marker is blanked when the session ends — so „mit
+unbekannter oder gelöschter Markierung“ should drop; widget rules: API_CONTRACT
+§10, as built: docs/frontend/06 §8) are listed under „Änderungen im Zeitraum“
+(§5.0). „Umsatz durch Mo“ (§5.5) shows
+`releaseNotesFor("attribution", range)`: for a period starting before 05.10.2026
+the note „Erst ab dem 05.10.2026 aussagekräftig“ — „Beraten & gekauft“ and „Beraten,
+anderes gekauft“ count from the latest consultation since then („Direkt“
+unchanged). The note and the `attribution-window` release are shown regardless of
+the switch; the latest-consultation window they describe applies only with
+`MO_ATTRIBUTION_SESSION_ANCHOR` on (window anchor above).
+
+The code-only revenue figure that stood next to this ledger until 2026-10-06 is
+now the code complement of §5.5; an order with a code and a marker counts once.
+
+### 5.21 Vom Chat zur Bestellung — [`lib/kpi-journey-store.ts`](../src/lib/kpi-journey-store.ts), [`lib/kpi-journey.mjs`](../src/lib/kpi-journey.mjs)
+
+The journey funnel (2026-10-06, anchor `journey`, group „Beratung & Funnel“):
+sessions, step by step from the chat to the attributed order. Pure DB
+(`conversations`, `messages`, `kpi_events`, `mo_orders`), never cached;
+manual-check sessions (`livecheck-%`) never count.
+
+| Stage | Sessions … |
+| --- | --- |
+| **Beratung** | with a conversation started in the period that has ≥ 1 visitor message (`messages.role = 'user'`) |
+| **Produkt gezeigt** | … whose chats in the period discussed or selected ≥ 1 product (`recommended_product_ids` / `selected_product_ids` not empty — every product of a `show_product`, `compare_products` or `add_to_cart` call) |
+| **Produkt angeklickt** | … with a product click (`CTA_PATTERNS`) or an add-to-cart click (`CART_PATTERNS`) at or after the first chat (widget events, [`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §5) |
+| **Warenkorb / Kasse** | … with an add-to-cart / checkout click (`CART_PATTERNS`) |
+| **Bestellt** | … with a paid `mo_orders` row of the session at or after the first chat |
+
+The stages are nested (each a subset of the one before; `journeyFunnel` also
+clamps), so every „weiter“ under a bar is a real conversion; each bar also shows
+its share of all consultations, and the step with the largest relative loss is
+marked „größter Abbruch“ (icon + text). Every window starts at the session's first
+chat in the period and ends with the period. Each stage explains itself in an
+InfoTip.
+
+Next to it: **Beratung → Bestellung** — consultation sessions with a paid
+attributed order, cart click or not (hint: how many ordered without a cart click
+in the chat — search bar, a later visit, a mail link); **Umsatz je Beratung** —
+their paid revenue ÷ consultations (orders of the same session only — „Umsatz
+durch Mo“ also counts campaign codes and set offers without a chat); **Klicks im
+Chat** — the raw product/CTA and add-to-cart event counts of all sessions
+(formerly „In-Chat-Klicks“ of §5.1), with clicks per consultation.
+
+> ⚠️ Caveats (the InfoTip): orders after the period end do not count (the last
+> days of a period are incomplete); without analytics consent in the shop the
+> widget sends no clicks and stamps no cart, so the click and order stages are
+> lower bounds; a session is a device, not a visit (docs/frontend/05 §3.2).
+
+### 5.1 Beratungen (core metrics) — [`lib/kpi-store.ts`](../src/lib/kpi-store.ts)
 
 All core metrics are scoped to the **selected window** (`created_at >= from AND
 created_at < to+1`), served by the `conversations`/`kpi_events` `created_at`
-indexes (migrations 0001 + 0027).
+indexes (migrations 0001 + 0027). Since 2026-10-06 the section is called
+„Beratungen“ (anchor `kern`): four tiles — Chats gesamt (hint Ø Nachrichten),
+Reichweite (hint: sessions that opened the chat), Abgebrochen, Geöffnet →
+geschrieben —, „Chats pro Tag“, the card „Sprachen“ (§5.14) and the collapsed
+event table. The in-chat clicks moved to „Vom Chat zur Bestellung“ (§5.21). The
+donut „Status-Verteilung“ was removed: its „Konvertiert“ came only from the
+conversion sweep of the retired per-customer MS5- mail (§4) and never showed a
+purchase without that code; purchases are in §5.5.
 
 | KPI | Definition | Caveats |
 | --- | --- | --- |
 | **Chats gesamt** | `count(conversations)` in the window — one row per conversation thread, created when a visitor message arrives (`ensureConversationStarted`) or when a turn finishes (`persistTurn` in `/api/chat` `onFinish`). Includes greeting-only threads: the context greeting after a nudge click (`messages: []`, no visitor message) is persisted with `message_count` 1. | Scoped to the picked period (default last 30d). For "the visitor wrote" use **Geöffnet → geschrieben** (`message_sent`), not this count. |
 | **Chats pro Tag** | New conversations grouped by `date(created_at)` across the window, gap-filled with 0. | — |
-| **Ø Nachrichten / Chat** | `avg(conversations.message_count)`. | Counts user + assistant + tool-marker turns. |
+| **Ø Nachrichten / Chat** (hint of „Chats gesamt“) | `avg(conversations.message_count)`. | Counts user + assistant + tool-marker turns. |
 | **Abgebrochen** | `count(status='abandoned')` and its share of all chats. | `status` is flipped to `abandoned` lazily by the retention cron after `ABANDON_AFTER_MINUTES` idle — not real-time. |
-| **Konvertiert** (status split) | `status='converted'`, set by the daily **conversion sweep** ([`lib/conversion-sweep.ts`](../src/lib/conversion-sweep.ts), runs with the retention cron): the unique `MS5-` code of the marketing email drafted from this conversation was redeemed in a real order (`wasDiscountCodeRedeemed`), bookkept via `marketing_sends.shopify_order_matched`. Attributed to the session's most-recently-active thread as of the send. | A **lower bound**: purchases without a Mo code are unattributable (same honesty rule as §5.5) and never flip a conversation. Campaign (MK-) sends carry no session and can't convert a conversation. Bounded to `CONVERSION_SWEEP_MAX_CODES` (default 25) checks/run; unmatched codes retry while their discount is still redeemable. |
-| **Produkt-/CTA-Klicks**, **Add-to-Cart-Klicks** | `kpi_events` counts, **pattern-matched** by event name: CTA = `event ILIKE '%product%click%' OR '%cta%click%'`; cart = `event ILIKE '%cart%' OR '%checkout%'`. Each also shown as a rate per chat. | The literal event names are owned by the **frontend** widget's `track()`. We match by shape (survives a rename) and additionally surface the **full event breakdown** so the raw truth is always visible. If the widget emits different names, adjust the patterns. |
 | **Geöffnet → geschrieben** (engagement, since 2026-10-04) | Sessions with `message_sent` ÷ sessions with `chat_opened` in the window (both widget events, capped at 100 %). | Replaced `chats ÷ sessions with any telemetry`: the old denominator counted sessions that never opened the chat (nudge, popup and CTA impressions) and the old numerator counted greeting-only conversation rows (docs/frontend/05 §12, §14.3). Panel opens without a click (campaign deep link, sign-in return) also fire `chat_opened` (docs/frontend/02 §2.6). |
 | **Reichweite (Sitzungen)** | `count(distinct session_id)` in `kpi_events` — sessions with any widget event, opened or not. | Was „Sessions mit Telemetrie“; the denominator of nothing any more, shown as reach. |
+
+### 5.14 Sprachen (card in „Beratungen“) — [`getLocaleSplit()`](../src/lib/kpi-store.ts)
+
+Chats by `conversations.locale` (stamped by `persistTurn` since migration
+**0041**, latest turn wins; older rows show as "Unbekannt") and captures by
+`email_captures.locale` (migration 0030). The capture query is a pure locale
+GROUP BY — no identity value is read.
+Since 2026-10-06 shown as the card „Sprachen“ next to „Chats pro Tag“ in
+„Beratungen“ (§5.1), no longer as a section of its own.
 
 ### 5.1a Seitenkontext auf Produktseiten — [`getPageContextKpis()`](../src/lib/kpi-store.ts), [`page-context.mjs`](../src/lib/page-context.mjs)
 
@@ -1421,128 +1678,50 @@ observed base rate). Without it no comparison is shown.
 > Which build is live: `npm run verify:widget`. Live check: `npm run
 > verify:live -- --session <prefix>` section 9.
 
-### 5.2 Persona-group insights — [`lib/kpi-persona.ts`](../src/lib/kpi-persona.ts)
+### 5.7a Anmelde-Popup — [`getLoginGateFunnel()`](../src/lib/kpi-store.ts)
 
-Grouped by `COALESCE(persona_label, 'unknown')`.
+The widget's sign-in ask for **anonymous** visitors (since 2026-10-01). The
+widget decides about 0.7 s after a send — while the reply is still streaming,
+not after it — once per **tab** session (`sessionStorage` `ms-chat-gate-shown`,
+shared with the consent popup of §5.7), never in voice mode; „Später“ snoozes it
+for 24 h on the device (docs/frontend/04 §9.1–§9.2). So a `login_gate_shown`
+can belong to a turn that later failed. Counted per **session**: **Angezeigt**
+(`login_gate_shown`) → **„Anmelden“ geklickt** (`login_gate_signin_clicked`) →
+**Bei Shopify angemeldet** (server `account_signin_succeeded` in the same
+session after the click) → **Im Chat angemeldet** (server
+`account_signin_linked {kind:"customer_account"}` — the chat redeemed the
+one-time code, 0073; only this sign-in counts; since 2026-10-05 a shop-login
+link of the same session, `kind:"app_proxy"`, no longer counts as a popup
+conversion). Plus „Später“ (`login_gate_declined`) and „Weggeklickt“ (`login_gate_dismissed`) with their
+share of the shown sessions, and **Anmeldestarts nach Herkunft** from the widget's
+`account_signin_started` (`data.source: "login_gate"` = popup; absent = welcome
+card or header button). A note appears when sessions signed in at Shopify but not
+in the chat. Rates in the tested `kpi-widget-events.mjs` (`loginGateRates`).
 
-- **Lieblingsprodukte (favorite products)** — pure aggregation:
-  `unnest(recommended_product_ids)` counted per persona. Because
-  `recommended_product_ids` is de-duped per conversation, a count is "in how many
-  of this persona's chats was this product recommended". Reliable.
-- **Top-Fragen (top questions)** — the **on-demand**, token-costing insight
-  ([`lib/kpi-top-questions.ts`](../src/lib/kpi-top-questions.ts)). A button runs an
-  Anthropic pass over a sample of up to **80 recent user messages** in that persona
-  group and returns the common themes/questions in German. **Never runs on page
-  load**: the result is cached in `kpi_persona_question_summaries` (migration
-  0004: summary, sample size, model) with a timestamp
-  and re-used until the operator explicitly regenerates it. The token cost is
-  stated in the UI. Degrades to a clear message when no `ANTHROPIC_API_KEY` is set.
-
-### 5.3 Recommendation → purchase loop — [`lib/kpi-recommendation-loop.ts`](../src/lib/kpi-recommendation-loop.ts)
-
-The headline ROI number. For each marketing-eligible contact (DOI-confirmed, not
-unsubscribed, not suppressed, with a `session_id`) we bridge READ-ONLY to the
-conversation, then ask Shopify (`read_orders`) what that email actually bought. If
-a **recommended** product appears in a real order, that contact counts. The
-surfaced rate is `withRecommendedPurchase ÷ withPurchase`.
-
-> 🏷️ **Honest labeling.** Because this can only match a chat to a purchase when
-> the customer gave a **consented email**, it covers a *minority subset*, not all
-> chat users. The UI labels it accordingly — the section title reads *"Empfehlung
-> → Kauf (nur Kund:innen mit E-Mail-Angabe)"* and a prominent caveat banner states
-> it is **not** a site-wide conversion rate. Only the framing changed; the
-> computation is unchanged.
-
-> ⚠️ **Honest limitations** (also stated in the UI):
-> - Covers **only** users who gave an email **and** confirmed consent — a minority
->   of chatters, and not all buyers.
-> - Product matching is by **normalised handle**
->   ([`lib/kpi-match.mjs`](../src/lib/kpi-match.mjs), unit-tested): our catalog id
->   equals the storefront handle, but a live Shopify handle is normalised
->   (lowercased, `®`/special chars stripped), so we normalise both sides. Renamed
->   or archived products can be missed.
-> - Capped at the **100 newest** eligible contacts to bound Shopify calls per page
->   load — a sample, not a census. Contacts where Shopify can't answer are counted
->   as "unknown", never as "no purchase".
-
-### 5.4 Marketing funnel — [`getMarketingFunnel()`](../src/lib/marketing-store.ts)
-
-A lightweight **sent → clicked → converted** funnel over the marketing emails the
-dashboard actually sent on the former per-customer path (§4;
-`marketing_sends.status = 'sent'`; campaign mails are §5.9):
-
-| Stage | Definition |
-| --- | --- |
-| **Gesendet (sent)** | `count(status = 'sent')`. |
-| **Geklickt (clicked)** | `count(clicked_at IS NOT NULL)` + click rate. `clicked_at` is the **first** click on the tracked `/api/r/<token>` redirect (see §10). No pixel — only the link the user chose to click. |
-| **Eingelöst (converted)** | The send's **unique single-use** code was redeemed in a real order. Reuses `read_orders` via [`wasDiscountCodeRedeemed()`](../src/lib/shopify-orders.ts) (`orders(query: 'discount_code:"…"')`). Capped at the **100 newest** coded sends to bound Shopify calls; codes where Shopify can't answer are "unknown", never counted as "not redeemed". The **rate** divides by the checked codes with a definite answer (`codesChecked − redemptionUnknown`) — **never** by the uncapped `sent`, which would systematically under-report once more than the cap exist (uncoded sends can't convert at all). |
-
-This funnel is inherently scoped to consented marketing recipients (every send went
-to a DOI-confirmed contact), so it is **not** a site-wide rate and isn't framed as
-one.
-
-### 5.5 Umsatz über Mo-Rabattcodes (revenue) — [`lib/kpi-revenue-store.ts`](../src/lib/kpi-revenue-store.ts)
-
-> 🏷️ **Honest attribution — what we can actually measure.** "Revenue made with Mo"
-> is defined as the **actually-paid totals of real Shopify orders that redeemed a
-> UNIQUE single-use discount code minted by Mo's outbound mail** — `MS5-…` codes
-> of `marketing_sends` and `MK-…` codes of campaign sends (`campaign_sends`, test
-> sends excluded); both `usageLimit:1`, the prefix keeps the channels separable.
-> This is the **only** code signal that both ties an order back to Mo
-> *and* exposes its value, so the KPI is labeled precisely — **"Umsatz über
-> Mo-Rabattcodes"**, not a vague "revenue".
-
-**Deliberately NOT counted here:**
-
-- **Cart links and bundle offers** — orders through a Mo-built cart link
-  (summary or marketing e-mail, bundle offer; `attributes[_mo]`) or a cart the
-  widget stamped are counted by the **separate** §5.16 „Mo-zugeordneter Umsatz“;
-  this KPI stays code-only by definition. The in-chat quick-checkout („Zur
-  Kasse“, `/api/products` `cartUrl`) is a cart permalink without
-  `attributes[_mo]`; whether the widget's live-cart stamp carries over to that
-  checkout is unverified (docs/frontend/05 §10.3).
-- **Welcome code** — that automatic discount has been **retired**.
-
-| Field | Definition |
-| --- | --- |
-| **Umsatz über Mo-Rabattcodes** | `Σ currentTotalPrice` of orders that redeemed a Mo `MS5-…` or `MK-…` code **within the window**, counting only **realised** money (`displayFinancialStatus ∈ {PAID, PARTIALLY_REFUNDED}`). |
-| **Bestellungen mit Mo-Code** | Count of those redeemed, paid orders. |
-| **Geprüfte Codes** | Codes checked against Shopify (of the sent, coded emails in scope). |
-
-**How:** candidate codes are the sent marketing and (non-test) campaign mails
-carrying a code, `sent_at ≤ window-end`, newest-first across both channels,
-**capped at the 100 newest**
-([`REVENUE_MAX_CODES`](../src/lib/kpi-revenue-store.ts)) to bound the Shopify
-fan-out — same discipline as the funnel/loop. Each is looked up via
-[`fetchCodeRedemption()`](../src/lib/shopify-orders.ts) (`read_orders`,
-`orders(query: 'discount_code:"…" created_at:>=… created_at:<=…')`), reading
-`currentTotalPriceSet` + status + date. The money summation and the realised-status
-policy are the pure, unit-tested
-[`summarizeRedemptions()`](../src/lib/kpi-revenue-core.mjs). Codes where Shopify
-can't answer are **"unknown"**, never counted as zero revenue; the cap and any
-unknowns are disclosed in the UI caveat. When `MARKETING_ORDER_LOOKBACK_DAYS`-style
-limits or Shopify being unconfigured apply, the KPI degrades to an honest empty
-state.
-
-### 5.6 KI-Kosten (AI cost) — [`lib/ai-usage-store.ts`](../src/lib/ai-usage-store.ts)
-
-Cost-per-consultation + total spend (chat vs admin split), priced from the stored
-per-model token counts. Scoped to the **selected window** via the
-`ai_usage.created_at` index (migration 0012). Two additional breakdowns:
-
-- **Nach Einsatzort** — EUR per `call_site` (every value of `AiCallSite` in
-  `ai-usage-store.ts`, largest first; `AiCostSection.tsx` has a German label for
-  each — the map is typed `Record<AiCallSite, string>`, so a new site without one
-  fails `tsc`; a key only old rows carry shows raw), so the
-  operator sees exactly which feature spends what instead of only the binary
-  chat/admin split. TTS unit caveat is stated in the UI: for `call_site='tts'`
-  the `input_tokens` column carries **characters**, not tokens.
-- **Prompt-Caching (Chat)** — cache **hit rate** (`cache_read_tokens ÷ total chat
-  input tokens`) and the **net EUR saving** vs. the same calls without caching
-  (read discount 0.9× minus write premium 0.25×, pure + unit-tested in
-  [`usdCacheSavingsForUsage()`](../src/lib/ai-pricing.mjs)). Can be negative for
-  a write-heavy pattern — reported honestly. See
-  [`PROMPT_CACHING.md`](./PROMPT_CACHING.md).
+**Diagnose: wo Anmeldungen enden** ([`getSigninDiagnosis()`](../src/lib/kpi-store.ts),
+classification in the tested `classifySigninSession`, docs/frontend/05 §12.1).
+Every session with a sign-in event in the period — whatever started it: popup,
+welcome card, header, or the shop's App Proxy — is classified by the point where
+its sign-in ended, from widget and server events of that session: Im Chat
+angemeldet (code redeemed, return `ok`), Vom Shop erkannt (`account_signin_linked
+{kind:"app_proxy", renewed:false}` without a sign-in round trip — a new sign-in of
+the session), Bereits angemeldet, vom Shop bestätigt (`shop_renewed`: every
+App Proxy link of the session was `renewed:true`, a new tab confirming an
+existing sign-in), Angemeldet (zweiter Versuch),
+Code für andere Sitzung (`session_mismatch`), Code abgelaufen oder benutzt
+(`invalid`), Widget hat nicht eingelöst (return `link_failed` without a refusal —
+also a 503 at the redeem, which is not recorded), Altes Widget (return `ok`
+without a redeem), Keine Rückkehr gemeldet (Shopify sign-in, no return event),
+Rückkehr mit Fehler, Bei Shopify abgebrochen, Beim Warten geschlossen, Start
+nicht angekommen, Shop-Code nicht eingelöst (`shop_not_redeemed`: whoami issued a
+code, `account_shop_recognised {codeIssued:true}`, but the session has no link —
+an old widget without code redemption, a session change during the request, or a
+redeem failure; checked last, so any chat sign-in outcome wins) — each with its
+likely cause. Sessions the shop only **recognised** without a code stay out of
+the diagnosis (they appear in §5.15 „Shop-Login-Erkennung“). Below the table the
+widget's `account_signin_return` results. At most 20,000 sessions per period,
+newest first (`ORDER BY max(created_at) DESC` before the limit; noted).
+Manual-check sessions (`livecheck-%`) never count.
 
 ### 5.7 Einwilligung nach der Anmeldung — [`getConsentGateFunnel()`](../src/lib/kpi-store.ts)
 
@@ -1624,51 +1803,6 @@ so „Bereits angemeldet“ never includes a blocked address.
 > the badge „eingestellt“ (`kpi-widget-events.mjs` `DISCONTINUED_WIDGET_EVENTS`), so
 > their drop to zero never reads as an outage.
 
-### 5.7a Anmelde-Popup — [`getLoginGateFunnel()`](../src/lib/kpi-store.ts)
-
-The widget's sign-in ask for **anonymous** visitors (since 2026-10-01). The
-widget decides about 0.7 s after a send — while the reply is still streaming,
-not after it — once per **tab** session (`sessionStorage` `ms-chat-gate-shown`,
-shared with the consent popup of §5.7), never in voice mode; „Später“ snoozes it
-for 24 h on the device (docs/frontend/04 §9.1–§9.2). So a `login_gate_shown`
-can belong to a turn that later failed. Counted per **session**: **Angezeigt**
-(`login_gate_shown`) → **„Anmelden“ geklickt** (`login_gate_signin_clicked`) →
-**Bei Shopify angemeldet** (server `account_signin_succeeded` in the same
-session after the click) → **Im Chat angemeldet** (server
-`account_signin_linked {kind:"customer_account"}` — the chat redeemed the
-one-time code, 0073; only this sign-in counts; since 2026-10-05 a shop-login
-link of the same session, `kind:"app_proxy"`, no longer counts as a popup
-conversion). Plus „Später“ (`login_gate_declined`) and „Weggeklickt“ (`login_gate_dismissed`) with their
-share of the shown sessions, and **Anmeldestarts nach Herkunft** from the widget's
-`account_signin_started` (`data.source: "login_gate"` = popup; absent = welcome
-card or header button). A note appears when sessions signed in at Shopify but not
-in the chat. Rates in the tested `kpi-widget-events.mjs` (`loginGateRates`).
-
-**Diagnose: wo Anmeldungen enden** ([`getSigninDiagnosis()`](../src/lib/kpi-store.ts),
-classification in the tested `classifySigninSession`, docs/frontend/05 §12.1).
-Every session with a sign-in event in the period — whatever started it: popup,
-welcome card, header, or the shop's App Proxy — is classified by the point where
-its sign-in ended, from widget and server events of that session: Im Chat
-angemeldet (code redeemed, return `ok`), Vom Shop erkannt (`account_signin_linked
-{kind:"app_proxy", renewed:false}` without a sign-in round trip — a new sign-in of
-the session), Bereits angemeldet, vom Shop bestätigt (`shop_renewed`: every
-App Proxy link of the session was `renewed:true`, a new tab confirming an
-existing sign-in), Angemeldet (zweiter Versuch),
-Code für andere Sitzung (`session_mismatch`), Code abgelaufen oder benutzt
-(`invalid`), Widget hat nicht eingelöst (return `link_failed` without a refusal —
-also a 503 at the redeem, which is not recorded), Altes Widget (return `ok`
-without a redeem), Keine Rückkehr gemeldet (Shopify sign-in, no return event),
-Rückkehr mit Fehler, Bei Shopify abgebrochen, Beim Warten geschlossen, Start
-nicht angekommen, Shop-Code nicht eingelöst (`shop_not_redeemed`: whoami issued a
-code, `account_shop_recognised {codeIssued:true}`, but the session has no link —
-an old widget without code redemption, a session change during the request, or a
-redeem failure; checked last, so any chat sign-in outcome wins) — each with its
-likely cause. Sessions the shop only **recognised** without a code stay out of
-the diagnosis (they appear in §5.15 „Shop-Login-Erkennung“). Below the table the
-widget's `account_signin_return` results. At most 20,000 sessions per period,
-newest first (`ORDER BY max(created_at) DESC` before the limit; noted).
-Manual-check sessions (`livecheck-%`) never count.
-
 ### 5.8 E-Mail-Capture-Funnel — [`getEmailCaptureFunnel()`](../src/lib/kpi-store.ts)
 
 The five canonical capture events ([`lib/kpi-events.ts`](../src/lib/kpi-events.ts))
@@ -1696,88 +1830,6 @@ counts unless its session has a sign-in or chat-gate opt-in.
 > opt-in counts in the window of the click. Stated in the UI caveat. A period
 > starting before 05.10.2026 carries the release note that source and outcome
 > are approximated before that day and the figures are not directly comparable.
-
-### 5.9 Kampagnen-Funnel — [`getCampaignKpis()`](../src/lib/campaign-store.ts)
-
-The MK- channel — every campaign mail to customers with the one consent, all
-campaigns incl. the Einzelansprache (see [`CAMPAIGNS.md`](./CAMPAIGNS.md)) — as
-**gesendet → geklickt → eingelöst**, windowed on `campaign_sends.sent_at`:
-
-- **Geklickt** — campaign emails' main CTA (the Mo deep link, or the shop link
-  of a campaign whose button leads to the shop) routes through
-  the tracked redirect since migration **0041** (`campaign_sends.redirect_token` /
-  `clicked_at`, `campaign_email_clicked` kpi_event — §10). The click-rate base is
-  the **tracked** sends only: copy-path sends and sends from before 0041 carry no
-  link and can never count as clicked.
-- **Eingelöst** — per-send `wasDiscountCodeRedeemed()` over the windowed MK-
-  codes, capped at the 100 newest (`CAMPAIGN_KPI_MAX_CODES`); the rate divides by
-  the checked codes with an answer, mirroring §5.4.
-- **Sprache** — sends by the recipient contact's *effective* language
-  (`language_override ?? language`); purged contacts land in "unbekannt".
-- **Kampagnen im Vergleich** (migration 0066) — the same funnel per campaign
-  (`byCampaign`: Gesendet, Button-Klickrate, Set geklickt, **Chat gestartet**,
-  Eingelöst, Umsatz, Umsatz / Send, Abgemeldet;
-  sends without a campaign as „Ohne Kampagne“), next to the existing
-  breakdowns per hero variant and per lifecycle segment.
-- **Chat gestartet** („Chat-Start“) — sends whose Mo link opened a chat: the
-  tracked redirect appends the send's token as `mo_c` to the Mo deep link, the
-  widget passes it back as `campaignToken` on `POST /api/chat`
-  ([`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §2), and
-  `recordCampaignChatStarted` stores **one session-less** `kpi_events` row
-  `campaign_chat_started` (`data: { sendId, campaignId }`) per send (test sends
-  carry `test: true` and are not counted) — the pseudonymous chat is never tied
-  to the person. Shop-CTA campaigns carry no
-  `mo_c`. The column counts only from the widget build that sends the token
-  (KPI release of 04.10.2026; the section notes it for a period starting
-  earlier). Rules: [`CAMPAIGNS.md`](./CAMPAIGNS.md) „Chat-Start“.
-
-The tables of this funnel label their rate **Button-Klickrate**: it counts the
-main button (`clicked_at`) and shows set clicks separately („Set geklickt“);
-the „Klickrate“ of the campaign cards on the
-Kampagnen overview, Kunden → Marketing („geklickt“), the Aktivität timeline and
-the AI profile's campaign history count **any** click (button or set link).
-
-### 5.10 Bundle-Angebote — [`getBundleKpis()`](../src/lib/bundle-offers-store.ts)
-
-Offers **created** in the window by lifecycle status, the current live count
-(`activeNow`, period-independent by nature), clicks on the tracked offer link
-(`bundle_offer_clicked` events + distinct offers clicked) and the average
-discount depth vs. the true component sum. **Purchases are deliberately NOT
-attributed per offer** — no order↔offer link is stored; an order through a
-bundle link carries the `_mo` marker and counts as „Direkt“ in §5.16 (within
-the attribution window).
-
-### 5.11 Wissen-KPIs — [`getQaKpis()`](../src/lib/qa-store.ts)
-
-Knowledge-loop throughput: lifetime queue state (open / answered / published /
-dismissed — the Wissen tab's own numbers), **gaps found** and **published** inside
-the window, the **median hours** from draft→answer and draft→publish (over entries
-answered/published in the window), and the current **scan backlog**
-(`countScanCandidates()` — eligible, not-yet-scanned conversations). Whether Mo
-actually *used* a published answer is not measurable and not claimed.
-
-### 5.12 Feedback — [`getFeedbackKpis()`](../src/lib/feedback-store.ts)
-
-Windowed volume over the `feedback` table: total, with-conversation share,
-with-email share ("answerable"), and the tier split (widget self-reported,
-telemetry-grade). Counts only — never the message text or email value; content
-stays in the Feedback tab.
-
-### 5.13 Gesprächsqualität — [`getConversationStats()`](../src/lib/admin-conversations.ts)
-
-The Gespräche inspector's cached analysis columns surfaced as KPIs for the
-window: **analysis coverage** (analysed ÷ total — the representativeness of
-everything below), the **quality distribution** (handled_well / unmet_need /
-dropped_off / …) and the **top categories**. Reuses the exact same range-scoped
-getter the Gespräche tab calls — one definition, two surfaces. Distributions
-cover only operator-analysed conversations (analysis is on-demand).
-
-### 5.14 Sprachen (DE/EN) — [`getLocaleSplit()`](../src/lib/kpi-store.ts)
-
-Chats by `conversations.locale` (stamped by `persistTurn` since migration
-**0041**, latest turn wins; older rows show as "Unbekannt") and captures by
-`email_captures.locale` (migration 0030). The capture query is a pure locale
-GROUP BY — no identity value is read.
 
 ### 5.15 Kundenkonto & Self-Service — [`getAccountActivity()`](../src/lib/kpi-store.ts)
 
@@ -1816,102 +1868,58 @@ if it reports no acceptable build with code redemption, set
 codes, renewals included. Every query excludes `livecheck-%` sessions; the same
 numbers are in `npm run verify:live` section 8 „Shop-Login-Erkennung“.
 
-### 5.15a Bestellstatus im Chat — [`getOrderStatusKpis()`](../src/lib/kpi-store.ts)
+### 5.9 Kampagnen-Funnel — [`getCampaignKpis()`](../src/lib/campaign-store.ts)
 
-The server's `order_status_lookup` events (one per `get_order_status` call,
-[`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) „Order status in the chat“) in the period: **Abfragen**, **Sitzungen**,
-**Beantwortet** (outcome `ok`, with its share), and three bar lists — **Ergebnis**
-(ok, no_orders, not_found, sign_in_required, unavailable, disabled, ledger_off,
-ledger_incomplete, ledger_behind, in German), **Thema** (status, shipping, return,
-cancellation, refund) and **Quelle der Antwort** (ledger only vs ledger + the short
-live read at Shopify). Empty until `CHAT_ORDER_STATUS_ENABLED=true` or a session
-of a `CHAT_ORDER_STATUS_TEST_CUSTOMERS` account asks. No order number, amount or
-address is ever in the event.
+The MK- channel — every campaign mail to customers with the one consent, all
+campaigns incl. the Einzelansprache (see [`CAMPAIGNS.md`](./CAMPAIGNS.md)) — as
+**gesendet → geklickt → eingelöst**, windowed on `campaign_sends.sent_at`:
 
-### 5.16 Mo-zugeordneter Umsatz (Bestell-Webhook) — [`getMoAttributionKpis()`](../src/lib/mo-orders-store.ts)
+- **Geklickt** — campaign emails' main CTA (the Mo deep link, or the shop link
+  of a campaign whose button leads to the shop) routes through
+  the tracked redirect since migration **0041** (`campaign_sends.redirect_token` /
+  `clicked_at`, `campaign_email_clicked` kpi_event — §10). The click-rate base is
+  the **tracked** sends only: copy-path sends and sends from before 0041 carry no
+  link and can never count as clicked.
+- **Eingelöst** — per-send `wasDiscountCodeRedeemed()` over the windowed MK-
+  codes, capped at the 100 newest (`CAMPAIGN_KPI_MAX_CODES`); the rate divides by
+  the checked codes with an answer (never by all sends, which would under-report
+  once more than the cap exist).
+- **Sprache** — sends by the recipient contact's *effective* language
+  (`language_override ?? language`); purged contacts land in "unbekannt".
+- **Kampagnen im Vergleich** (migration 0066) — the same funnel per campaign
+  (`byCampaign`: Gesendet, Button-Klickrate, Set geklickt, **Chat gestartet**,
+  Eingelöst, Umsatz, Umsatz / Send, Abgemeldet;
+  sends without a campaign as „Ohne Kampagne“), next to the existing
+  breakdowns per hero variant and per lifecycle segment.
+- **Chat gestartet** („Chat-Start“) — sends whose Mo link opened a chat: the
+  tracked redirect appends the send's token as `mo_c` to the Mo deep link, the
+  widget passes it back as `campaignToken` on `POST /api/chat`
+  ([`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §2), and
+  `recordCampaignChatStarted` stores **one session-less** `kpi_events` row
+  `campaign_chat_started` (`data: { sendId, campaignId }`) per send (test sends
+  carry `test: true` and are not counted) — the pseudonymous chat is never tied
+  to the person. Shop-CTA campaigns carry no
+  `mo_c`. The column counts only from the widget build that sends the token
+  (KPI release of 04.10.2026; the section notes it for a period starting
+  earlier). Rules: [`CAMPAIGNS.md`](./CAMPAIGNS.md) „Chat-Start“.
 
-The tiered order-attribution KPI (design: [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)):
-orders/create + orders/paid webhooks push every order carrying a **Mo marker**
-(the opaque cart attribute `attributes[_mo]` from Mo-built cart links or the
-widget's live-cart stamp, and/or an MS5-/MK- code) into `mo_orders`
-(migration **0042**). The section is a plain DB aggregate — **no Shopify
-calls, no caps, no sampling** — split into three honest tiers:
+The tables of this funnel label their rate **Button-Klickrate**: it counts the
+main button (`clicked_at`) and shows set clicks separately („Set geklickt“);
+the „Klickrate“ of the campaign cards on the
+Kampagnen overview, Kunden → Marketing („geklickt“), the Aktivität timeline and
+the AI profile's campaign history count **any** click (button or set link).
 
-| Tier | Definition |
-| --- | --- |
-| **Direkt** | Mo code redeemed, or the order came through a Mo-built cart link (summary/marketing e-mail, bundle). |
-| **Beraten & gekauft** | Widget cart stamp + ≥1 purchased line was discussed/selected in that session (catches manual search-bar purchases). |
-| **Beraten, anderes gekauft** | Cart stamp present, no product overlap. |
+### 5.10 Bundle-Angebote — [`getBundleKpis()`](../src/lib/bundle-offers-store.ts)
 
-Only realised money counts (PAID/PARTIALLY_REFUNDED — `kpi-revenue-core`
-policy); unpaid ingested orders are disclosed separately. Unmarked orders are
-not recorded here (never stored in `mo_orders`; the order ledger stores them
-while the customer sync is on) — the InfoTip says „Unmarkierte Bestellungen
-werden hier nicht erfasst (nicht in der Mo-Zuordnung gespeichert)“.
-Ingestion starts at webhook registration (not retroactive), and the section
-shows an explicit empty state until the first marked order is seen —
-`ingestionSeen` is true once a row exists in `mo_orders` **or** a
-`mo_order_marker_unresolved` event exists, so a shop whose marked orders are
-all unresolved does not see the „Noch keine Bestellung über den Webhook
-erfasst“ callout.
-
-**Window anchor.** The attribution window (`MO_ATTRIBUTION_WINDOW_DAYS`,
-default 30 days) counts from the token's minting; with
-`MO_ATTRIBUTION_SESSION_ANCHOR` on (default off in code; `sessionAnchor` in the
-result, ANWALTSDOSSIER §20) widget stamps count from the latest product consultation on the device
-(Produktkarte, Vergleich, Warenkorb-Karte, Showroom; written by the token's own
-session, never after the order), Mo links still from their creation — a mail
-link from the latest mail carrying its token, which each mail of the session
-re-stamps (ORDER_ATTRIBUTION „Attribution window“). The InfoTip explains the
-rule of the active mode, plus the cross-device blind spot. „Beraten & gekauft“
-checks the purchase against every thread of the session that was active within
-the window before the order, not only the latest one.
-
-**„Ohne Zuordnung“.** Marked orders no consultation could claim are counted as
-the server event `mo_order_marker_unresolved {reason, source?}` (orders/create
-only, dated by its arrival ≈ order time; `unresolvedOrders: { unknownToken,
-outsideWindow }`). When the range has any, a note says
-„{n} markierte Bestellung(en) im Zeitraum ohne Zuordnung: {a} mit unbekannter
-oder gelöschter Markierung, {b} außerhalb des Zuordnungsfensters — keiner
-Beratung zugeordnet (nicht in der Mo-Zuordnung gespeichert), nur gezählt.“
-They are not linked to a session and not in `mo_orders`.
-
-**Release notes.** The releases `attribution-unresolved`, `attribution-window`
-(both 05.10.2026) and `attribution-token-renewal` (06.10.2026: from the widget
-build `bc7fb5d` a token the backend deleted is replaced after the next live
-product consultation, and the marker is blanked when the session ends — so „mit
-unbekannter oder gelöschter Markierung“ should drop; widget rules: API_CONTRACT
-§10, as built: docs/frontend/06 §8) are listed under „Änderungen im Zeitraum“
-(§5.0). The section itself takes `range` and shows
-`releaseNotesFor("attribution", range)`: for a period starting before 05.10.2026
-the note „Erst ab dem 05.10.2026 aussagekräftig“ — „Beraten & gekauft“ and „Beraten,
-anderes gekauft“ count from the latest consultation since then („Direkt“
-unchanged). The note and the `attribution-window` release are shown regardless of
-the switch; the latest-consultation window they describe applies only with
-`MO_ATTRIBUTION_SESSION_ANCHOR` on (window anchor above).
-
-§5.5's code-only revenue KPI deliberately stays separate (exact definition
-preserved); orders can appear in both when a coded order also carries the cart
-marker.
-
-### 5.17 Kundenbasis — [`getCustomerBaseKpis()`](../src/lib/customer-list-store.ts)
-
-The shape of the whole customer base, **period-independent** (Gesamtwerte),
-pure DB over the `customer_overview` view — no Shopify call:
-
-| Figure | Definition |
-| --- | --- |
-| **Kunden gesamt** | all `customers` rows; split Shopify customers vs. Interessenten (no Shopify customer) |
-| **Mit Mo gesprochen** | `conversations_count > 0`, share of the base, of which Shopify customers |
-| **Mit Einwilligung** | `email_consent_state = 'subscribed'` and not blocked; share of the base and the DOI share (`confirmed_opt_in`) among them |
-| **Abwanderung hoch** | `churn_risk = 'hoch'` (time since the last order against the person's own rhythm) |
-| Lebenszyklus | count per `lifecycle_segment` (no orders → „Ohne Bestellung“) |
-| Einwilligung | Angemeldet · Bestätigung offen · Abgemeldet · Keine Einwilligung · Gesperrt (blocked counts only there) |
-| Wertstufe & Profile | count per value tier; Vollprofil · Kaufprofil · ohne Profil |
-
-Lifecycle, value tier and churn come from the nightly `customer_facts`; before
-the first Shopify import the section covers only Mo people and the former
-newsletter contacts (stated in the caveat).
+Offers **created** in the window by lifecycle status, the current live count
+(`activeNow`, period-independent by nature), clicks on the tracked offer link
+(`bundle_offer_clicked` events + distinct offers clicked) and the average
+discount depth vs. the true component sum (hint: offers live now), and since
+2026-10-06 **„Über Set-Link gekauft“** — the paid revenue and orders of the
+channel „Set-Angebot“ of §5.16 in the period (an order through a bundle link
+carries the `_mo` marker; within the attribution window). **Purchases are not
+attributed per offer** — no order↔offer link is stored; an order with a
+campaign code counts under „Kampagne“ instead.
 
 ### 5.18 Eingang — [`getInboxKpis()`](../src/lib/inbox-store.ts)
 
@@ -1931,6 +1939,65 @@ Plus the totals Hinweise, Gehandelt (share) and KI-Vorschläge (items with a
 suggestion). The caveat states it verbatim: a **description, not proof of
 effect** — people acted on differ from those not acted on; thresholds are
 changed by a human, never by the system.
+
+### 5.13 Gesprächsqualität — [`getConversationStats()`](../src/lib/admin-conversations.ts)
+
+The Gespräche inspector's cached analysis columns surfaced as KPIs for the
+window: **analysis coverage** (analysed ÷ total — the representativeness of
+everything below), the **quality distribution** (handled_well / unmet_need /
+dropped_off / …) and the **top categories**. Reuses the exact same range-scoped
+getter the Gespräche tab calls — one definition, two surfaces. Distributions
+cover only operator-analysed conversations (analysis is on-demand).
+
+### 5.11 Wissen-KPIs — [`getQaKpis()`](../src/lib/qa-store.ts)
+
+Knowledge-loop throughput: lifetime queue state (open / answered / published /
+dismissed — the Wissen tab's own numbers), **gaps found** and **published** inside
+the window, the **median hours** from draft→answer and draft→publish (over entries
+answered/published in the window), and the current **scan backlog**
+(`countScanCandidates()` — eligible, not-yet-scanned conversations). Whether Mo
+actually *used* a published answer is not measurable and not claimed.
+
+### 5.12 Feedback — [`getFeedbackKpis()`](../src/lib/feedback-store.ts)
+
+Windowed volume over the `feedback` table: total, with-conversation share,
+with-email share ("answerable"), and the tier split (widget self-reported,
+telemetry-grade). Counts only — never the message text or email value; content
+stays in the Feedback tab.
+
+### 5.15a Bestellstatus im Chat — [`getOrderStatusKpis()`](../src/lib/kpi-store.ts)
+
+The server's `order_status_lookup` events (one per `get_order_status` call,
+[`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) „Order status in the chat“) in the period: **Abfragen**, **Sitzungen**,
+**Beantwortet** (outcome `ok`, with its share), and three bar lists — **Ergebnis**
+(ok, no_orders, not_found, sign_in_required, unavailable, disabled, ledger_off,
+ledger_incomplete, ledger_behind, in German), **Thema** (status, shipping, return,
+cancellation, refund) and **Quelle der Antwort** (ledger only vs ledger + the short
+live read at Shopify). Empty until `CHAT_ORDER_STATUS_ENABLED=true` or a session
+of a `CHAT_ORDER_STATUS_TEST_CUSTOMERS` account asks. No order number, amount or
+address is ever in the event.
+
+### 5.6 KI-Kosten (AI cost) — [`lib/ai-usage-store.ts`](../src/lib/ai-usage-store.ts)
+
+Cost-per-consultation + total spend (chat vs admin split), priced from the stored
+per-model token counts. Scoped to the **selected window** via the
+`ai_usage.created_at` index (migration 0012). The total spend also feeds „Umsatz
+je 1 € KI-Kosten“ of §5.5 (for the period and the one before). Two additional
+breakdowns:
+
+- **Nach Einsatzort** — EUR per `call_site` (every value of `AiCallSite` in
+  `ai-usage-store.ts`, largest first; `AiCostSection.tsx` has a German label for
+  each — the map is typed `Record<AiCallSite, string>`, so a new site without one
+  fails `tsc`; a key only old rows carry shows raw), so the
+  operator sees exactly which feature spends what instead of only the binary
+  chat/admin split. TTS unit caveat is stated in the UI: for `call_site='tts'`
+  the `input_tokens` column carries **characters**, not tokens.
+- **Prompt-Caching (Chat)** — cache **hit rate** (`cache_read_tokens ÷ total chat
+  input tokens`) and the **net EUR saving** vs. the same calls without caching
+  (read discount 0.9× minus write premium 0.25×, pure + unit-tested in
+  [`usdCacheSavingsForUsage()`](../src/lib/ai-pricing.mjs)). Can be negative for
+  a write-heavy pattern — reported honestly. See
+  [`PROMPT_CACHING.md`](./PROMPT_CACHING.md).
 
 ### 5.19 Mo-Effekt — [`getMoEffectKpis()`](../src/lib/customer-list-store.ts), [`mo-effect.mjs`](../src/lib/mo-effect.mjs)
 
@@ -1952,6 +2019,42 @@ customers with at least one order only:
 > ⚠️ Correlation, not causation: people who chat may be more interested to
 > begin with (selection effect) — stated in the caveat.
 
+### 5.17 Kundenbasis — [`getCustomerBaseKpis()`](../src/lib/customer-list-store.ts)
+
+The shape of the whole customer base, **period-independent** (Gesamtwerte),
+pure DB over the `customer_overview` view — no Shopify call:
+
+| Figure | Definition |
+| --- | --- |
+| **Kunden gesamt** | all `customers` rows; split Shopify customers vs. Interessenten (no Shopify customer) |
+| **Mit Mo gesprochen** | `conversations_count > 0`, share of the base, of which Shopify customers |
+| **Mit Einwilligung** | `email_consent_state = 'subscribed'` and not blocked; share of the base and the DOI share (`confirmed_opt_in`) among them |
+| **Abwanderung hoch** | `churn_risk = 'hoch'` (time since the last order against the person's own rhythm) |
+| Lebenszyklus | count per `lifecycle_segment` (no orders → „Ohne Bestellung“) |
+| Einwilligung | Angemeldet · Bestätigung offen · Abgemeldet · Keine Einwilligung · Gesperrt (blocked counts only there) |
+| Wertstufe & Profile | count per value tier; Vollprofil · Kaufprofil · ohne Profil |
+
+Lifecycle, value tier and churn come from the nightly `customer_facts`; before
+the first Shopify import the section covers only Mo people and the former
+newsletter contacts (stated in the caveat).
+
+### 5.2 Persona-group insights — [`lib/kpi-persona.ts`](../src/lib/kpi-persona.ts)
+
+Grouped by `COALESCE(persona_label, 'unknown')`.
+
+- **Lieblingsprodukte (favorite products)** — pure aggregation:
+  `unnest(recommended_product_ids)` counted per persona. Because
+  `recommended_product_ids` is de-duped per conversation, a count is "in how many
+  of this persona's chats was this product recommended". Reliable.
+- **Top-Fragen (top questions)** — the **on-demand**, token-costing insight
+  ([`lib/kpi-top-questions.ts`](../src/lib/kpi-top-questions.ts)). A button runs an
+  Anthropic pass over a sample of up to **80 recent user messages** in that persona
+  group and returns the common themes/questions in German. **Never runs on page
+  load**: the result is cached in `kpi_persona_question_summaries` (migration
+  0004: summary, sample size, model) with a timestamp
+  and re-used until the operator explicitly regenerates it. The token cost is
+  stated in the UI. Degrades to a clear message when no `ANTHROPIC_API_KEY` is set.
+
 ### 5.20 Postversand (Brief) — [`getPhysicalLetterStats()`](../src/lib/physical-letters-store.ts)
 
 Period-independent (Gesamtwerte, badge „Gesamtwert“), pure DB over
@@ -1963,13 +2066,33 @@ default 106 = 1,06 €). Empty state „Noch keine Briefe versendet.“ The cave
 names the cost source and that failed submissions do not count. Per-campaign
 postage and budget are in the desk view „Briefe“ (§3.2).
 
+### 5.3 Empfehlung → Kauf — removed 2026-10-06
+
+Removed by owner decision (KPI redesign). It matched the purchases of
+DOI-confirmed e-mail contacts (the 100 newest, one Shopify call each,
+period-independent) against the products recommended to them — a sampled
+minority, and labelled as such. The same question is answered for every session
+with a cart stamp, unsampled and per period, by „Beraten & gekauft“ (§5.16) and
+„Vom Chat zur Bestellung“ (§5.21). `lib/kpi-recommendation-loop.ts` and its
+cache entry were deleted.
+
+### 5.4 Marketing-Funnel — removed 2026-10-06
+
+Removed by owner decision (KPI redesign). It measured the former per-customer
+marketing mail (`marketing_sends`, sent → clicked → redeemed MS5- code, lifetime,
+the 100 newest codes checked at Shopify). That path starts no new draft (§4);
+personal mails run as the campaign „Einzelansprache“ and are measured in the
+Kampagnen-Funnel (§5.9). Orders through an MS5- code or the mail's cart link
+still count in „Umsatz durch Mo“ (channel „Persönliche Marketing-E-Mail“,
+§5.16). `getMarketingFunnel` and its cache entry were deleted.
+
 ---
 
 ## 6. Shopify scopes & API versions
 
 - **Scopes:** `write_discounts` (code creation) and `read_orders` (purchase
-  check, the recommendation→purchase loop **and** the revenue KPI's
-  `discount_code` → order-total lookup). The
+  check **and** the `discount_code` → order-total lookup of „Umsatz durch Mo“
+  and the campaign funnel). The
   customer platform additionally needs `read_customers` (mirror: import,
   webhooks, reconcile), `write_customers` (consent write-back, Shopify
   customers for Mo-only subscribers, erasure requests), `read_all_orders` (to
@@ -2049,7 +2172,7 @@ this order:
 
 | Kind | Resolved by | Records | Redirects to |
 | --- | --- | --- | --- |
-| Marketing send (`marketing_sends.redirect_token`, the former `MS5-` path, §4) | [`recordEmailClick()`](../src/lib/marketing-store.ts) | `clicked_at` on the first click only (§5.4 „Geklickt“); a `marketing_email_clicked` event on **every** click, `data: { sendId, captureId, firstClick }` | the stored prefilled cart (`cart_url`, `?discount=CODE` intact) |
+| Marketing send (`marketing_sends.redirect_token`, the former `MS5-` path, §4) | [`recordEmailClick()`](../src/lib/marketing-store.ts) | `clicked_at` on the first click only; a `marketing_email_clicked` event on **every** click, `data: { sendId, captureId, firstClick }` | the stored prefilled cart (`cart_url`, `?discount=CODE` intact) |
 | Campaign send (`campaign_sends.redirect_token`, migration 0041) | `recordCampaignClick()` in [`campaign-store.ts`](../src/lib/campaign-store.ts) | `clicked_at` on the first click only (§5.9 „Geklickt“); a `campaign_email_clicked` event on every click, `data: { sendId, firstClick }` | the campaign's shop link (`cta_kind = shop`), else `CAMPAIGN_MO_DEEPLINK_URL` with the token as `mo_c` (§5.9 „Chat gestartet“) — both read at click time |
 | Bundle offer (set link) | `resolveBundleRedirect()` in [`bundle-offers-store.ts`](../src/lib/bundle-offers-store.ts) | a `bundle_offer_clicked` event, `data: { offerId, status, expired }`; the first set click of a campaign send stamps `campaign_sends.bundle_clicked_at` („Set geklickt“) | an active offer's cart permalink; an expired, archived, failed or pending offer gets a branded „Angebot abgelaufen“ page (410, link to `BUNDLE_EXPIRED_REDIRECT_URL` or the shop) |
 

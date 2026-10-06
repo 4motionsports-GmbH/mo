@@ -21,30 +21,24 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
-  Funnel,
-  FunnelChart,
   LabelList,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import { ADMIN_DAY_MONTH, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { num } from "@/lib/admin-format.mjs";
+import { eur, num } from "@/lib/admin-format.mjs";
+import { niceTicks } from "@/lib/chart-ticks.mjs";
 import {
   CHATS_PER_DAY_HEIGHT,
-  STATUS_SPLIT_HEIGHT,
-  funnelChartHeight,
+  REVENUE_CHART_HEIGHT,
   personaChartHeight,
 } from "./chart-geometry";
+import type { RevenueSeriesBucket, RevenueSeriesKey } from "./revenue-series";
 
 // Theme token references (resolve via CSS variables in theme.css).
 const ACCENT = "var(--accent)";
-const SUCCESS = "var(--success)";
-const WARNING = "var(--warning)";
 const MUTED = "var(--muted-foreground)";
 const BORDER = "var(--border)";
 const FOREGROUND = "var(--foreground)";
@@ -81,16 +75,18 @@ function ChartTooltip({
   active,
   payload,
   label,
+  formatLabel,
 }: {
   active?: boolean;
   payload?: TooltipItem[];
   label?: string | number;
+  formatLabel?: (label: string) => string;
 }) {
   if (!active || !payload || payload.length === 0) return null;
   return (
     <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
       {label != null && label !== "" && (
-        <div className="mb-1 font-semibold">{label}</div>
+        <div className="mb-1 font-semibold">{formatLabel ? formatLabel(String(label)) : label}</div>
       )}
       {payload.map((p, i) => (
         <div key={i} className="flex items-center gap-2">
@@ -130,7 +126,7 @@ export function ChatsPerDayChart({
             <stop offset="100%" stopColor={ACCENT} stopOpacity={0.02} />
           </linearGradient>
         </defs>
-        <CartesianGrid stroke={BORDER} strokeDasharray="3 3" vertical={false} />
+        <CartesianGrid stroke={BORDER} vertical={false} />
         <XAxis
           dataKey="day"
           tickFormatter={dayTick}
@@ -147,11 +143,7 @@ export function ChatsPerDayChart({
           tickLine={false}
           axisLine={false}
         />
-        <Tooltip
-          content={<ChartTooltip />}
-          labelFormatter={(v) => dayTick(String(v))}
-          cursor={{ stroke: BORDER }}
-        />
+        <Tooltip content={<ChartTooltip formatLabel={dayTick} />} cursor={{ stroke: BORDER }} />
         <Area
           type="monotone"
           dataKey="count"
@@ -163,51 +155,6 @@ export function ChatsPerDayChart({
           isAnimationActive={false}
         />
       </AreaChart>
-    </ChartFrame>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Status split — abandoned vs converted (vs active) donut.
-// ---------------------------------------------------------------------------
-
-export function StatusSplitChart({
-  active,
-  abandoned,
-  converted,
-}: {
-  active: number;
-  abandoned: number;
-  converted: number;
-}) {
-  const data = [
-    { name: "Aktiv", value: active, fill: MUTED },
-    { name: "Abgebrochen", value: abandoned, fill: WARNING },
-    { name: "Konvertiert", value: converted, fill: SUCCESS },
-  ].filter((d) => d.value > 0);
-
-  if (data.length === 0) return null;
-
-  return (
-    <ChartFrame height={STATUS_SPLIT_HEIGHT}>
-      <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-        <Pie
-          data={data}
-          dataKey="value"
-          nameKey="name"
-          innerRadius="55%"
-          outerRadius="80%"
-          paddingAngle={2}
-          stroke="var(--card)"
-          strokeWidth={2}
-          isAnimationActive={false}
-        >
-          {data.map((d) => (
-            <Cell key={d.name} fill={d.fill} />
-          ))}
-        </Pie>
-        <Tooltip content={<ChartTooltip />} />
-      </PieChart>
     </ChartFrame>
   );
 }
@@ -230,7 +177,7 @@ export function PersonaDistributionChart({
         data={data}
         margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
       >
-        <CartesianGrid stroke={BORDER} strokeDasharray="3 3" horizontal={false} />
+        <CartesianGrid stroke={BORDER} horizontal={false} />
         <XAxis
           type="number"
           allowDecimals={false}
@@ -256,50 +203,136 @@ export function PersonaDistributionChart({
 }
 
 // ---------------------------------------------------------------------------
-// Funnel — shared renderer for the recommendation→purchase and marketing funnels.
-// Stages must be passed in descending order (they form the funnel taper).
+// Revenue over time — „Umsatz durch Mo“ per day (or week) stacked by tier.
+// Thin columns (≤ 24 px), a 2 px surface gap between stacked segments, the
+// rounded data end only on the top segment, one tooltip listing every tier.
+// Colours: the categorical chart tokens in the fixed tier order.
 // ---------------------------------------------------------------------------
 
-export interface FunnelStage {
-  name: string;
-  value: number;
+interface RevenueChartRow extends RevenueSeriesBucket {
+  /** Topmost / bottommost non-zero tier of the stack (shape geometry). */
+  top: RevenueSeriesKey | null;
+  bottom: RevenueSeriesKey | null;
 }
 
-// Accent → success gradient across the stages so the taper reads as "progress".
-const FUNNEL_FILLS = [
-  "var(--accent)",
-  "color-mix(in srgb, var(--accent) 70%, var(--success))",
-  "color-mix(in srgb, var(--accent) 35%, var(--success))",
-  "var(--success)",
-];
+interface SegmentProps {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  fill?: string;
+  payload?: RevenueChartRow;
+}
 
-export function StageFunnelChart({ stages }: { stages: FunnelStage[] }) {
-  const data = stages.map((s, i) => ({
-    ...s,
-    fill: FUNNEL_FILLS[Math.min(i, FUNNEL_FILLS.length - 1)],
-  }));
+function stackSegment(series: RevenueSeriesKey) {
+  return function Segment(props: SegmentProps) {
+    const { x = 0, y = 0, width = 0, fill, payload } = props;
+    let height = props.height ?? 0;
+    if (!payload || width <= 0 || height <= 0) return <g />;
+    // 2 px surface gap towards the segment below.
+    if (payload.bottom !== series) height = Math.max(0, height - 2);
+    if (height <= 0) return <g />;
+    if (payload.top !== series) return <rect x={x} y={y} width={width} height={height} fill={fill} />;
+    const r = Math.min(4, width / 2, height);
+    const d = `M${x},${y + height} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + width - r},${y} Q${x + width},${y} ${x + width},${y + r} L${x + width},${y + height} Z`;
+    return <path d={d} fill={fill} />;
+  };
+}
 
+function RevenueTooltip({
+  active,
+  payload,
+  series,
+  weekly,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload?: RevenueChartRow }>;
+  series: Array<{ key: RevenueSeriesKey; label: string; color: string }>;
+  weekly: boolean;
+}) {
+  const row = payload?.[0]?.payload;
+  if (!active || !row) return null;
+  const day = formatAdmin(`${row.start}T12:00:00Z`, ADMIN_DAY_MONTH, row.start);
   return (
-    <ChartFrame height={funnelChartHeight(stages.length)}>
-      <FunnelChart margin={{ top: 8, right: 96, bottom: 8, left: 8 }}>
-        <Tooltip content={<ChartTooltip />} />
-        <Funnel dataKey="value" data={data} isAnimationActive={false} stroke="var(--card)">
-          <LabelList
-            position="right"
-            dataKey="name"
-            fill={FOREGROUND}
-            stroke="none"
-            fontSize={12}
+    <div className="min-w-44 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <span className="font-semibold">{weekly ? `Woche ab ${day}` : day}</span>
+        <span className="text-muted-foreground">
+          {num(row.orders)} {row.orders === 1 ? "Bestellung" : "Bestellungen"}
+        </span>
+      </div>
+      {[...series].reverse().map((s) => (
+        <div key={s.key} className="flex items-center gap-2 py-0.5">
+          <span className="h-0.5 w-3 shrink-0 rounded-full" style={{ background: s.color }} aria-hidden />
+          <strong className="tabular-nums">{eur(row[s.key])}</strong>
+          <span className="text-muted-foreground">{s.label}</span>
+        </div>
+      ))}
+      <div className="mt-1 flex items-center gap-2 border-t border-border pt-1">
+        <strong className="tabular-nums">{eur(row.total)}</strong>
+        <span className="text-muted-foreground">gesamt</span>
+      </div>
+    </div>
+  );
+}
+
+export function RevenueOverTimeChart({
+  buckets,
+  weekly,
+  series,
+}: {
+  buckets: RevenueSeriesBucket[];
+  weekly: boolean;
+  /** Bottom → top, in the fixed tier order. */
+  series: Array<{ key: RevenueSeriesKey; label: string; color: string }>;
+}) {
+  const data: RevenueChartRow[] = buckets.map((b) => {
+    const present = series.filter((s) => b[s.key] > 0).map((s) => s.key);
+    return { ...b, top: present[present.length - 1] ?? null, bottom: present[0] ?? null };
+  });
+  const tickInterval = Math.max(0, Math.ceil(data.length / 8) - 1);
+  const dayTick = (iso: string): string => formatAdmin(`${iso}T12:00:00Z`, ADMIN_DAY_MONTH, iso);
+  const yTicks = niceTicks(Math.max(0, ...data.map((d) => d.total)), 5);
+  return (
+    <ChartFrame height={REVENUE_CHART_HEIGHT}>
+      <BarChart data={data} margin={{ top: 8, right: 4, left: 4, bottom: 0 }} barCategoryGap="20%">
+        <CartesianGrid stroke={BORDER} vertical={false} />
+        <XAxis
+          dataKey="start"
+          tickFormatter={dayTick}
+          interval={tickInterval}
+          tick={{ fill: MUTED, fontSize: 11 }}
+          tickLine={false}
+          axisLine={{ stroke: BORDER }}
+          minTickGap={8}
+        />
+        <YAxis
+          width={64}
+          domain={[0, yTicks[yTicks.length - 1]]}
+          ticks={yTicks}
+          tickFormatter={(v: number) => eur(v, 0)}
+          tick={{ fill: MUTED, fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          allowDecimals={false}
+        />
+        <Tooltip
+          content={<RevenueTooltip series={series} weekly={weekly} />}
+          cursor={{ fill: "var(--secondary)", fillOpacity: 0.6 }}
+        />
+        {series.map((s) => (
+          <Bar
+            key={s.key}
+            dataKey={s.key}
+            name={s.label}
+            stackId="umsatz"
+            fill={s.color}
+            maxBarSize={24}
+            isAnimationActive={false}
+            shape={stackSegment(s.key)}
           />
-          <LabelList
-            position="inside"
-            dataKey="value"
-            fill="#fff"
-            stroke="none"
-            fontSize={12}
-          />
-        </Funnel>
-      </FunnelChart>
+        ))}
+      </BarChart>
     </ChartFrame>
   );
 }

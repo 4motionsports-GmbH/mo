@@ -9,7 +9,7 @@ import { SIGNIN_DIAGNOSIS } from "@/lib/kpi-widget-events.mjs";
 import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
 import { num, ratio } from "@/lib/admin-format.mjs";
 import { InfoTip, Stat, StatusBadge, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../ui";
-import { StageFunnelChart } from "../charts";
+import { FunnelBars } from "../FunnelBars";
 import { Explain, FunnelLayout, KpiSection, StatGrid, SubHeading } from "../KpiSection";
 
 const INFO = (
@@ -78,12 +78,12 @@ export function LoginGateSection({
         <>
           <FunnelLayout
             chart={
-              <StageFunnelChart
+              <FunnelBars
                 stages={[
-                  { name: "Angezeigt", value: funnel.shown },
-                  { name: "„Anmelden“", value: funnel.clicked },
-                  { name: "Bei Shopify", value: funnel.signedIn },
-                  { name: "Im Chat", value: funnel.linked },
+                  { label: "Angezeigt", value: funnel.shown },
+                  { label: "„Anmelden“", value: funnel.clicked },
+                  { label: "Bei Shopify", value: funnel.signedIn },
+                  { label: "Im Chat", value: funnel.linked },
                 ]}
               />
             }
