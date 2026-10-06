@@ -1,10 +1,11 @@
 "use client";
 
-// Überblick — the person at a glance: the computed figures (customer_facts:
-// orders, value, rhythm, lifecycle, churn), where we know them from (Shopify,
-// Mo, correspondence), the e-mail language pin, and the AI profile with its
-// depth (Kaufprofil / Vollprofil). Missing data is said plainly instead of
-// left blank. An Art. 21 objection to profiling is recorded here.
+// Überblick — the person at a glance: first the AI profile card („Aktuelles
+// Kundenverständnis“ with its depth, the structured facts and the Art. 21
+// objection — ProfilTab), then the computed figures (customer_facts: orders,
+// value, rhythm, lifecycle, churn), where we know them from (Shopify, Mo,
+// correspondence) and the e-mail language pin. Missing data is said plainly
+// instead of left blank.
 
 import * as React from "react";
 import type { CustomerDetail } from "@/lib/customer-detail";
@@ -15,7 +16,6 @@ import Link from "next/link";
 import type { SimilarCustomers } from "@/lib/customer-list-store";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
-  Button,
   DescriptionItem,
   DescriptionList,
   Disclosure,
@@ -23,8 +23,6 @@ import {
   SegmentedControl,
   StatusBadge,
   buttonVariants,
-  toast,
-  useConfirm,
 } from "../../ui";
 import { adminFetch } from "../../lib/admin-fetch";
 import { useAsyncAction } from "../../lib/use-async-action";
@@ -34,7 +32,6 @@ import { ProfilTab } from "./ProfilTab";
 
 export function UeberblickTab({ customer }: { customer: CustomerDetail }) {
   const { refresh } = useCustomerActions();
-  const { confirm, confirmDialog } = useConfirm();
   const f = customer.figures;
   const [language, setLanguage] = React.useState<"auto" | "de" | "en">(customer.languageOverride ?? "auto");
 
@@ -51,31 +48,6 @@ export function UeberblickTab({ customer }: { customer: CustomerDetail }) {
     }
   );
 
-  const objection = useAsyncAction(
-    (objected: boolean) =>
-      adminFetch("/api/admin/customers/objection", { body: { customerId: customer.id, kind: "profile", objected } }),
-    {
-      errorToast: "Widerspruch nicht gespeichert",
-      onSuccess: () => {
-        toast({ variant: "success", title: "Gespeichert" });
-        refresh();
-      },
-    }
-  );
-
-  async function toggleObjection() {
-    const objected = !customer.profileObjectionAt;
-    const ok = await confirm({
-      title: objected ? "Widerspruch gegen Profilbildung eintragen?" : "Widerspruch aufheben?",
-      description: objected
-        ? "Das KI-Profil wird gelöscht und nicht mehr erstellt oder verwendet (Art. 21 DSGVO). Mails werden dann ohne Profil formuliert."
-        : "Nur aufheben, wenn die Person ihren Widerspruch zurückgenommen hat.",
-      confirmLabel: objected ? "Widerspruch eintragen" : "Aufheben",
-      tone: objected ? "destructive" : "default",
-    });
-    if (ok) void objection.run(objected);
-  }
-
   const sources = [
     customer.isShopifyCustomer
       ? `Shopify${customer.shopifyCreatedAt ? ` seit ${formatAdmin(customer.shopifyCreatedAt, ADMIN_DATE)}` : ""}`
@@ -86,7 +58,8 @@ export function UeberblickTab({ customer }: { customer: CustomerDetail }) {
 
   return (
     <div className="flex flex-col gap-5">
-      {confirmDialog}
+      <ProfilTab customer={customer} />
+
       <section>
         <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold">
           Kennzahlen
@@ -181,28 +154,6 @@ export function UeberblickTab({ customer }: { customer: CustomerDetail }) {
             ]}
           />
         </div>
-      </section>
-
-      <section className="border-t border-border pt-4">
-        {customer.profileObjectionAt ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-surface-2 px-3 py-2 text-sm">
-            <span>
-              Widerspruch gegen Profilbildung seit {formatAdmin(customer.profileObjectionAt, ADMIN_DATE)} — kein KI-Profil.
-            </span>
-            <Button variant="ghost" size="xs" onClick={() => void toggleObjection()} loading={objection.pending}>
-              Aufheben
-            </Button>
-          </div>
-        ) : (
-          <ProfilTab customer={customer} />
-        )}
-        {!customer.profileObjectionAt && (
-          <div className="mt-3 flex justify-end">
-            <Button variant="ghost" size="xs" onClick={() => void toggleObjection()} loading={objection.pending}>
-              Widerspruch gegen Profilbildung eintragen
-            </Button>
-          </div>
-        )}
       </section>
 
       {f && f.ordersCount > 0 && <SimilarCustomersSection customerId={customer.id} />}
