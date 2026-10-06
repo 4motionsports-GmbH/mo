@@ -85,7 +85,7 @@ fixture.
   caveats:  [ { level: "info"|"warning", title, detail, sections? } ],
   switches: [ { key, label, env, value } ],
   releases: [ { date, key, title } ] }
-metric = { key, label, unit, value, previous, base?, good: "up"|"down"|"none", hint? }
+metric = { key, label, unit, value, previous, base?, previousBase?, good: "up"|"down"|"none", hint? }
 ```
 
 - **Units:** `count`, `eur`, `rate` (0–1), `ratio` (a plain multiple, e.g. clicks
@@ -96,9 +96,11 @@ metric = { key, label, unit, value, previous, base?, good: "up"|"down"|"none", h
 - **`previous` is null** for figures of „Stand heute“ (lifetime: `customers.*`,
   `moEffect.*`, `knowledge.open`, `knowledge.scanBacklog`) and for the Shopify
   cross-check (current period only).
-- **`base`** is the denominator of a rate. A rate with `base` < 30
-  (`MIN_RATE_BASE`) is a small sample (`isSmallSample`) and is named in the
-  caveat „Kleine Stichproben“.
+- **`base`** is the denominator of a rate, **`previousBase`** the denominator
+  of its previous value (every period rate carries both — the sample sizes a
+  before/after test needs; the prompt shows them as „n = …, VP n = …“). A rate
+  with `base` < 30 (`MIN_RATE_BASE`) is a small sample (`isSmallSample`) and is
+  named in the caveat „Kleine Stichproben“.
 - **Stable keys.** Never rename a metric key — other code and stored reports
   reference it; add a new key instead. Bump `SNAPSHOT_VERSION` only for a
   breaking change of the shape.

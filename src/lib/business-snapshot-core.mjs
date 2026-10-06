@@ -186,13 +186,16 @@ export function describePeriod(range) {
  * @typedef {{
  *   key: string, label: string, unit: MetricUnit,
  *   value: number | null, previous: number | null,
- *   base?: number | null, good: "up" | "down" | "none", hint?: string,
+ *   base?: number | null, previousBase?: number | null,
+ *   good: "up" | "down" | "none", hint?: string,
  * }} SnapshotMetric
  */
 
 /**
  * Build one metric. `previous` is null for lifetime figures or when the
- * previous period is not comparable; `base` is the denominator of a rate.
+ * previous period is not comparable; `base` is the denominator of a rate and
+ * `previousBase` the denominator of its previous value (the sample sizes of
+ * both periods — what a before/after test needs).
  * @returns {SnapshotMetric}
  */
 export function metric(key, label, unit, value, previous = null, opts = {}) {
@@ -206,6 +209,7 @@ export function metric(key, label, unit, value, previous = null, opts = {}) {
     good: opts.good ?? "up",
   };
   if (opts.base !== undefined) m.base = finite(opts.base);
+  if (opts.previousBase !== undefined) m.previousBase = finite(opts.previousBase);
   if (opts.hint) m.hint = opts.hint;
   return m;
 }
@@ -674,14 +678,21 @@ function chatSection(raw, d) {
     metric("chat.reach", "Reichweite (Sitzungen mit Widget)", "count", cc?.sessionsWithTelemetry, pc?.sessionsWithTelemetry),
     metric("chat.opened", "Chat geöffnet (Sitzungen)", "count", cc?.openedSessions, pc?.openedSessions),
     metric("chat.wrote", "Geschrieben (Sitzungen)", "count", cc?.wroteSessions, pc?.wroteSessions),
-    metric("chat.engagement", "Geöffnet → geschrieben", "rate", cc?.engagementRate, pc?.engagementRate, { base: cc?.openedSessions }),
+    metric("chat.engagement", "Geöffnet → geschrieben", "rate", cc?.engagementRate, pc?.engagementRate, {
+      base: cc?.openedSessions,
+      previousBase: pc?.openedSessions,
+    }),
     metric("chat.chats", "Gespräche", "count", chats(cc), chats(pc)),
     metric("chat.avgMessages", "Ø Nachrichten je Gespräch", "ratio", cc?.avgMessagesPerChat, pc?.avgMessagesPerChat, { good: "none" }),
     metric("chat.productClicks", "Produktklicks", "count", cc?.productCtaClicks, pc?.productCtaClicks),
     metric("chat.clicksPerChat", "Produktklicks je Gespräch", "ratio", cc?.productCtaRatePerChat, pc?.productCtaRatePerChat),
     metric("chat.cartClicks", "Warenkorb-Klicks", "count", cc?.addToCartClicks, pc?.addToCartClicks),
     metric("chat.cartPerChat", "Warenkorb-Klicks je Gespräch", "ratio", cc?.addToCartRatePerChat, pc?.addToCartRatePerChat),
-    metric("chat.abandoned", "Abgebrochene Gespräche", "rate", cc?.abandonedRate, pc?.abandonedRate, { good: "down", base: chats(cc) }),
+    metric("chat.abandoned", "Abgebrochene Gespräche", "rate", cc?.abandonedRate, pc?.abandonedRate, {
+      good: "down",
+      base: chats(cc),
+      previousBase: chats(pc),
+    }),
     metric("chat.recommended", "Gespräche mit Produktempfehlung", "count", c.reportKpis?.checkoutOffered, p.reportKpis?.checkoutOffered),
     metric("chat.pageContext", "Fragen auf Produktseiten (Sitzungen)", "count", c.pageContext?.sessions, p.pageContext?.sessions),
     metric(
@@ -690,11 +701,12 @@ function chatSection(raw, d) {
       "rate",
       safeRate(c.pageContext?.resolved, c.pageContext?.sessions),
       safeRate(p.pageContext?.resolved, p.pageContext?.sessions),
-      { base: c.pageContext?.sessions }
+      { base: c.pageContext?.sessions, previousBase: p.pageContext?.sessions }
     ),
     metric("chat.englishShare", "Anteil englischer Gespräche", "rate", enShare(c.locales), enShare(p.locales), {
       good: "none",
       base: sum((c.locales?.chats ?? []).map((r) => r.count)),
+      previousBase: sum((p.locales?.chats ?? []).map((r) => r.count)),
     }),
   ];
   // „Vom Chat zur Bestellung“ (kpi-journey): sessions with a chat started in
@@ -709,6 +721,7 @@ function chatSection(raw, d) {
     }),
     metric("journey.chatToOrder", "Beratung → Bestellung", "rate", jc?.chatToOrderRate, jp?.chatToOrderRate, {
       base: start(jc),
+      previousBase: start(jp),
       hint: jc?.biggestDrop ? `größter Verlust: ${jc.biggestDrop.from} → ${jc.biggestDrop.to} (${ratio(jc.biggestDrop.rate, 0)})` : undefined,
     }),
     metric("journey.revenuePerChat", "Umsatz je Beratung", "eur", jc?.revenuePerChat, jp?.revenuePerChat, {
@@ -729,6 +742,7 @@ function signinSection(raw) {
     metric("signin.popupLinked", "Über das Popup im Chat angemeldet", "count", lg(c)?.linked, lg(p)?.linked),
     metric("signin.popupRate", "Popup → im Chat angemeldet", "rate", safeRate(lg(c)?.linked, lg(c)?.shown), safeRate(lg(p)?.linked, lg(p)?.shown), {
       base: lg(c)?.shown,
+      previousBase: lg(p)?.shown,
     }),
     metric("signin.linkedSignin", "Im Chat angemeldet über „Anmelden“ (Sitzungen)", "count", acc(c)?.linkedSessions?.signin, acc(p)?.linkedSessions?.signin),
     metric("signin.linkedShop", "Über Shop-Login angemeldet (Sitzungen)", "count", acc(c)?.linkedSessions?.shop, acc(p)?.linkedSessions?.shop),
@@ -739,7 +753,7 @@ function signinSection(raw) {
       "rate",
       safeRate(acc(c)?.shopRecognition?.redeemed, acc(c)?.shopRecognition?.withCode),
       safeRate(acc(p)?.shopRecognition?.redeemed, acc(p)?.shopRecognition?.withCode),
-      { base: acc(c)?.shopRecognition?.withCode }
+      { base: acc(c)?.shopRecognition?.withCode, previousBase: acc(p)?.shopRecognition?.withCode }
     ),
     metric("signin.refused", "Abgelehnte Anmelde-Codes", "count", acc(c)?.refusedLinks, acc(p)?.refusedLinks, { good: "down" }),
     metric("signin.shopifySignins", "Shopify-Anmeldungen (inkl. still)", "count", acc(c)?.signins, acc(p)?.signins),
@@ -763,16 +777,23 @@ function consentSection(raw) {
     metric("consent.popupAccepted", "Einwilligungs-Popup akzeptiert (Sitzungen)", "count", way(c, "accepted"), way(p, "accepted")),
     metric("consent.popupRate", "Popup-Akzeptanz", "rate", safeRate(way(c, "accepted"), way(c, "shown")), safeRate(way(p, "accepted"), way(p, "shown")), {
       base: way(c, "shown"),
+      previousBase: way(p, "shown"),
     }),
     metric("consent.popupOptIns", "Opt-ins nach Anmeldung (Server)", "count", way(c, "optedIn"), way(p, "optedIn")),
     metric("consent.newSubscribers", "Neue Einwilligungen (alle Wege)", "count", c.newSubscribers, p.newSubscribers),
     metric("capture.asked", "E-Mail-Zusammenfassung angeboten", "count", cap(c)?.askShown, cap(p)?.askShown, { good: "none" }),
     metric("capture.submitted", "Formular gesendet", "count", cap(c)?.submitted, cap(p)?.submitted),
-    metric("capture.submitRate", "Angebot → Formular", "rate", cap(c)?.submitRate, cap(p)?.submitRate, { base: cap(c)?.askShown }),
+    metric("capture.submitRate", "Angebot → Formular", "rate", cap(c)?.submitRate, cap(p)?.submitRate, {
+      base: cap(c)?.askShown,
+      previousBase: cap(p)?.askShown,
+    }),
     metric("capture.optedIn", "Marketing-Haken im Formular", "count", cap(c)?.marketingOptedIn, cap(p)?.marketingOptedIn),
     metric("capture.doiSent", "DOI-Mails verschickt", "count", cap(c)?.doiSent, cap(p)?.doiSent, { good: "none" }),
     metric("capture.confirmed", "DOI bestätigt (Formular)", "count", cap(c)?.confirmed, cap(p)?.confirmed),
-    metric("capture.doiRate", "DOI-Quote (Formular)", "rate", cap(c)?.doiRate, cap(p)?.doiRate, { base: cap(c)?.doiSent }),
+    metric("capture.doiRate", "DOI-Quote (Formular)", "rate", cap(c)?.doiRate, cap(p)?.doiRate, {
+      base: cap(c)?.doiSent,
+      previousBase: cap(p)?.doiSent,
+    }),
   ];
   const tables = [];
   const ways = c.consentGate?.signinByWay;
@@ -863,6 +884,7 @@ function campaignSection(raw, d) {
     metric("campaigns.clicked", "Geklickt (Button oder Set)", "count", tot(cs, "clicked"), tot(ps, "clicked")),
     metric("campaigns.clickRate", "Klickrate (getrackte Mails)", "rate", safeRate(tot(cs, "clicked"), tot(cs, "tracked")), safeRate(tot(ps, "clicked"), tot(ps, "tracked")), {
       base: tot(cs, "tracked"),
+      previousBase: tot(ps, "tracked"),
     }),
     metric("campaigns.chatStarted", "Chat aus der Mail gestartet", "count", tot(cs, "chatStarted"), tot(ps, "chatStarted")),
     metric("campaigns.orders", "Bestellungen mit MK-Code (bezahlt)", "count", ck?.orders, pk?.orders),
@@ -873,10 +895,15 @@ function campaignSection(raw, d) {
     metric("campaigns.unsubscribeRate", "Abmeldequote", "rate", safeRate(tot(cs, "unsubscribed"), tot(cs, "sent")), safeRate(tot(ps, "unsubscribed"), tot(ps, "sent")), {
       good: "down",
       base: tot(cs, "sent"),
+      previousBase: tot(ps, "sent"),
     }),
     metric("campaigns.bounced", "Unzustellbar (Bounce)", "count", tot(cs, "bounced"), tot(ps, "bounced"), { good: "down" }),
     metric("campaigns.complained", "Spam-Beschwerden", "count", tot(cs, "complained"), tot(ps, "complained"), { good: "down" }),
-    metric("campaigns.rating", "Ø Bewertung der Kampagnen-Mails", "score", cr.avg, pr.avg, { base: cr.n, hint: cr.n ? `${num(cr.n)} Bewertungen` : undefined }),
+    metric("campaigns.rating", "Ø Bewertung der Kampagnen-Mails", "score", cr.avg, pr.avg, {
+      base: cr.n,
+      previousBase: pr.n,
+      hint: cr.n ? `${num(cr.n)} Bewertungen` : undefined,
+    }),
     metric("letters.sent", "Briefe versendet (Pingen)", "count", c.letters?.sent, p.letters?.sent, { good: "none" }),
     metric("letters.cost", "Porto der Briefe", "eur", c.letters ? (finite(c.letters.costCents) ?? 0) / 100 : null, p.letters ? (finite(p.letters.costCents) ?? 0) / 100 : null, {
       good: "none",
@@ -955,6 +982,7 @@ function inboxSection(raw) {
     metric("inbox.acted", "Gehandelt", "count", c?.totalActed, p?.totalActed),
     metric("inbox.actedShare", "Anteil gehandelt", "rate", safeRate(c?.totalActed, c?.totalCreated), safeRate(p?.totalActed, p?.totalCreated), {
       base: c?.totalCreated,
+      previousBase: p?.totalCreated,
     }),
     metric("inbox.dismissed", "Verworfen", "count", kindSum(c, "dismissed"), kindSum(p, "dismissed"), { good: "none" }),
     metric("inbox.suggestions", "Mit KI-Vorschlag", "count", c?.suggestionsMade, p?.suggestionsMade, { good: "none" }),
@@ -1029,9 +1057,11 @@ function customerSection(raw, d) {
     metric("ledger.returningBuyers", "Wiederkäufer:innen", "count", ledger(c)?.returningBuyers, ledger(p)?.returningBuyers),
     metric("ledger.repeatShare", "Anteil Wiederkäufer:innen", "rate", safeRate(ledger(c)?.returningBuyers, ledger(c)?.buyers), safeRate(ledger(p)?.returningBuyers, ledger(p)?.buyers), {
       base: ledger(c)?.buyers,
+      previousBase: ledger(p)?.buyers,
     }),
     metric("ledger.moShare", "Anteil Mo am Shop-Umsatz", "rate", moShare(d.revenue?.summary, ledger(c)), moShare(d.revenue?.previous, ledger(p)), {
       base: ledger(c)?.orders,
+      previousBase: ledger(p)?.orders,
       hint: "„Umsatz durch Mo“ ÷ Shop-Umsatz im Ledger",
     }),
     metric("customers.total", "Kund:innen gesamt (Stand heute)", "count", base?.total, null, { good: "none" }),
@@ -1145,10 +1175,22 @@ function qualitySection(raw) {
   const metrics = [
     metric("quality.coverage", "Analyse-Abdeckung", "rate", safeRate(c.quality?.analyzedCount, c.quality?.total), safeRate(p.quality?.analyzedCount, p.quality?.total), {
       base: c.quality?.total,
+      previousBase: p.quality?.total,
     }),
-    metric("quality.handledWell", "Gut gelöst", "rate", qShare(c, "handled_well"), qShare(p, "handled_well"), { base: analyzed(c) }),
-    metric("quality.unmetNeed", "Offener Bedarf", "rate", qShare(c, "unmet_need"), qShare(p, "unmet_need"), { good: "down", base: analyzed(c) }),
-    metric("quality.droppedOff", "Abgesprungen", "rate", qShare(c, "dropped_off"), qShare(p, "dropped_off"), { good: "down", base: analyzed(c) }),
+    metric("quality.handledWell", "Gut gelöst", "rate", qShare(c, "handled_well"), qShare(p, "handled_well"), {
+      base: analyzed(c),
+      previousBase: analyzed(p),
+    }),
+    metric("quality.unmetNeed", "Offener Bedarf", "rate", qShare(c, "unmet_need"), qShare(p, "unmet_need"), {
+      good: "down",
+      base: analyzed(c),
+      previousBase: analyzed(p),
+    }),
+    metric("quality.droppedOff", "Abgesprungen", "rate", qShare(c, "dropped_off"), qShare(p, "dropped_off"), {
+      good: "down",
+      base: analyzed(c),
+      previousBase: analyzed(p),
+    }),
     metric("quality.noReply", "Gespräche ohne Antwort (Fehler-Proxy)", "count", c.reportKpis?.withError, p.reportKpis?.withError, { good: "down" }),
     metric("knowledge.gaps", "Wissenslücken gefunden", "count", c.qa?.createdInWindow, p.qa?.createdInWindow, { good: "none" }),
     metric("knowledge.published", "Antworten veröffentlicht", "count", c.qa?.publishedInWindow, p.qa?.publishedInWindow),
@@ -1156,10 +1198,15 @@ function qualitySection(raw) {
     metric("knowledge.open", "Offene Wissensfragen (Stand heute)", "count", c.qa?.queue?.open, null, { good: "down" }),
     metric("knowledge.scanBacklog", "Noch nicht auf Lücken geprüfte Gespräche", "count", c.qa?.scanBacklog, null, { good: "down" }),
     metric("feedback.total", "Feedback aus dem Widget", "count", c.feedback?.total, p.feedback?.total, { good: "none" }),
-    metric("feedback.rating", "Ø E-Mail-Bewertung (alle Mails)", "score", cr.avg, pr.avg, { base: cr.n, hint: cr.n ? `${num(cr.n)} Bewertungen` : undefined }),
+    metric("feedback.rating", "Ø E-Mail-Bewertung (alle Mails)", "score", cr.avg, pr.avg, {
+      base: cr.n,
+      previousBase: pr.n,
+      hint: cr.n ? `${num(cr.n)} Bewertungen` : undefined,
+    }),
     metric("orderStatus.lookups", "Bestellstatus-Abfragen im Chat", "count", os(c)?.lookups, os(p)?.lookups, { good: "none" }),
     metric("orderStatus.answered", "Bestellstatus beantwortet", "rate", safeRate(osOk(c), os(c)?.lookups), safeRate(osOk(p), os(p)?.lookups), {
       base: os(c)?.lookups,
+      previousBase: os(p)?.lookups,
     }),
   ];
   const tables = [];
@@ -1839,7 +1886,9 @@ function metricLine(m) {
     const d = formatMetricDelta(m);
     bits.push(`Vorperiode ${formatMetricValue(m.unit, m.previous)}${d ? `, ${d}` : ""}`);
   }
-  if (m.unit === "rate" && m.base !== undefined && m.base !== null) bits.push(`n = ${num(m.base)}`);
+  if (m.unit === "rate" && m.base !== undefined && m.base !== null) {
+    bits.push(`n = ${num(m.base)}${m.previousBase != null && m.previous != null ? `, VP n = ${num(m.previousBase)}` : ""}`);
+  }
   if (isSmallSample(m)) bits.push("kleine Stichprobe");
   if (m.hint) bits.push(m.hint);
   return `- ${m.label} [${m.key}]: ${value}${bits.length ? ` (${bits.join("; ")})` : ""}`;

@@ -85,6 +85,8 @@ export interface SnapshotMetric {
   previous: number | null;
   /** Denominator of a rate (sample size). */
   base?: number | null;
+  /** Denominator of the previous value (sample size of the previous period). */
+  previousBase?: number | null;
   /** Which direction is good — colours the change. */
   good: "up" | "down" | "none";
   hint?: string;
