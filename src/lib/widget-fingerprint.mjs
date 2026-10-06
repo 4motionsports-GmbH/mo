@@ -98,7 +98,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Wie main, nur stoppt die Vorlesestimme bei „Neuer Chat“ nicht sofort — 3e87341 hochladen. Bestellstatus darf eingeschaltet werden; der App Proxy darf eingerichtet werden (ROLLOUT 5.4).",
+      "Stand vom 04.10. ohne Audio-Stopp bei „Neuer Chat“ und ohne die Aufgaben vom 05.10. — bc7fb5d hochladen.",
   },
   {
     key: "pr73",
@@ -107,7 +107,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Anmeldung, mo_c und App-Proxy-Einlösen funktionieren; ohne Sitzung im Kontaktformular-Body (das Backend nimmt dann x-ms-session), ohne order_support-Beschriftung und ohne Antwortabbruch bei neuem Chat — die 8d0a0c4-Dateien hochladen.",
+      "Anmeldung, mo_c und App-Proxy-Einlösen funktionieren; ohne Sitzung im Kontaktformular-Body (das Backend nimmt dann x-ms-session), ohne order_support-Beschriftung, ohne Antwortabbruch bei neuem Chat und ohne die Aufgaben vom 05.10. — bc7fb5d hochladen.",
   },
   {
     key: "popup-2026-10-01",

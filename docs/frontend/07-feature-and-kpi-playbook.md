@@ -232,7 +232,7 @@ Constraints that must survive any change (`04` §9–§10, `05` §6–§7):
 
 ### 4.1 What worked in `FRONTEND_PROMPT_2026-10.md`
 
-The October prompt (archived: `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md`) produced PR #73 in one pass. The round of 2026-10-05 (three tasks in one file, archived in `docs/archive/frontend-tasks-2026-10-05/`) followed the template of §4.3 and came back as one PR and one upload (`bc7fb5d`). A new round goes into `docs/frontend/tasks/` while it is open. Keep these properties:
+The October prompt (archived: `docs/archive/frontend-handoff/FRONTEND_PROMPT_2026-10.md`) produced PR #73 in one pass. The round of 2026-10-05 (three tasks in one file, archived in `docs/archive/frontend-tasks-2026-10-05/`) followed the template of §4.3 and came back as one PR and one upload (`bc7fb5d`). A new round gets a `tasks/` folder in `docs/frontend/` while it is open. Keep these properties:
 
 1. **Self-contained and paste-ready.** It says "paste this into the frontend agent" and lists the contract files to attach. The frontend agent never needs the backend repo.
 2. **Precedence is explicit:** "Where this prompt and those files disagree, the files win."

@@ -149,7 +149,7 @@ The order matters. Each step depends on the ones before it.
 | 10 | `recordTrail()` | Adds the current product or collection page to the local browsing trail. |
 | 11 | `initNudgeTriggers()` | Arms the dwell / scroll / exit-intent nudge triggers, if the visitor is eligible. |
 | 12 | `playLauncherAttention()` | One bounce per tab session, 1.4 s after load. |
-| 13 | `initAttribution()` | Arms the `visitorConsentCollected` listener and the once-per-page re-stamp of a cached attribution token. |
+| 13 | `initAttribution()` | Arms the `visitorConsentCollected` listener (stamp on consent, blank the marker on a withdrawal) and the once-per-page re-stamp of a cached attribution token. |
 | 14 | `window.addEventListener('storage', onSidChangedElsewhere)` [PR #73] | Follows a session rotation done in another tab (§8). |
 | 15 | `handleAuthReturn()` | Processes the sign-in or logout return marker: redeem the code, then `/api/auth/me`. If there is no marker, it runs `retryPendingLink()` instead. |
 | 16 | `handleMoDeepLink()` | `?mo=open` / `#mo-open` with optional `mo_new=1` and `mo_view=fullscreen`. It runs **last**, so the panel opens on a fully initialised widget. |
@@ -578,7 +578,7 @@ The desktop **modal** mode keeps its very high z-index even under `body.no-scrol
 | `window.routes.cart_url` (`'/cart.js'` or the locale variant) | `cartJsUrl()` | `layout/theme.liquid` |
 | `sticky-header` element (641–749 px) | page-shift CSS | `sections/header.liquid` |
 | `window.ShopifyAnalytics.meta.page.customerId` | `storefrontCustomerHint()` | Shopify |
-| `window.Shopify.customerPrivacy.analyticsProcessingAllowed()`, `visitorConsentCollected` event | attribution consent gate | Shopify consent banner |
+| `window.Shopify.customerPrivacy.analyticsProcessingAllowed()`, `visitorConsentCollected` event | attribution consent gate; marker blanking on a withdrawal | Shopify consent banner |
 | Theme CSS custom properties (`--button-primary-background`, `--color-base-*`, `--block-corner-radius`, `--font-body-family`, …) | widget colours, radii, font | theme settings |
 
 ---
