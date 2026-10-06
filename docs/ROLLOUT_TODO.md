@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -21,23 +21,28 @@ doc paths follow the new layout — widget docs in `docs/frontend/`, history in 
 Everything below this box is the detailed history and the step-by-step instructions; this box is
 the single list of what is still open for M. C's open items are at the end of „C · Claude's tasks“.
 
-1. **Consent popup with variant and placement (10 min, M or the frontend agent).** The frontend
-   agent's test session `d63d2e26` belongs to a customer who had already subscribed, so the popup
-   correctly did not appear and there is nothing to check yet. Test with a **new** address, never
-   by deleting an existing one: an erasure in Mo — and deleting the customer in the Shopify admin,
-   which reaches Mo as `customers/delete` — keeps the address on the suppression list with reason
-   `erasure` for good (no mail, no re-import; there is no admin action to lift it). Steps: a
-   private browser window → www.motionsports.de → chat → „Anmelden“ with a fresh address you can
-   read (e.g. `marcel+mo-test1@marcelkueck.dev`; Shopify creates the account with the one-time
-   code) → send a question → the popup shows the three served benefit points → accept and click
-   the link in the DOI mail. `npm run verify:live -- --since 2026-10-06`: in section 3 „Wer sich
-   im Chat angemeldet hat“ the newest row is that session (`popup_erwartet` is true only until the
-   customer answers); run it again with `--session <those 8 characters>` → `consent_gate_shown`
-   and `_accepted` with `variant: "a"` and `placement: "popup"`, the opt-in with `source:
-   "mo_signin"`. Send C the output. Afterwards „Meine Daten löschen“ in the chat removes the test
-   customer in Mo (that suppresses only the test address); while 6.2 is open, delete the Shopify
-   customer in the Shopify admin yourself. A decline also counts as a result, but then
-   the popup stays away for that customer for 30 days — use a new address for a second run.
+1. **Consent popup with variant and placement — re-test (10 min, M or the frontend agent).** M's
+   test of 06.10. showed no popup: the customer was „never asked“ in Mo and no `consent_gate_shown`
+   arrived — most likely the widget's per-tab popup memory from earlier tests (D18,
+   `docs/frontend/07` §7). Always a **new** address, never a deleted one (an erasure in Mo or a
+   Shopify customer deletion blocks the address for good, and a blocked address is never asked).
+   Steps: close **all** private windows, open a fresh one → www.motionsports.de → chat → „Anmelden“
+   with another fresh address (e.g. `marcel+mo-test2@marcelkueck.dev`), **without** ticking the
+   shop's newsletter box → send a question → the popup shows the three served benefit points →
+   accept and click the link in the DOI mail. No popup: F12 → Network → the `me` response →
+   `marketing.optInActionable`, and Application → Session storage → the `ms-chat-*` keys; send C
+   both. `npm run verify:live -- --since 2026-10-06`: in section 3 the newest sign-in row is that
+   session (`popup_erwartet` true until the answer, `gesperrt` false); with
+   `--session <its 8 characters>` → `consent_gate_shown` / `_accepted` with `variant: "a"`,
+   `placement: "popup"`, the opt-in with `source: "mo_signin"`, `doiSent: true`. Send C the output.
+   Clean-up: „Meine Daten löschen“ in the chat; while 6.2 is open also delete the Shopify customer
+   yourself. A decline counts too (then no popup for that customer for 30 days).
+   **Second check (5 min):** at the sign-up of 06.10. M ticked the shop's newsletter box (Shopify
+   sent its own confirmation mail; Mo recorded no Shopify consent event). About 10 min after such a
+   sign-up, re-run the consent diagnosis for that address (Mo's side: Kunden → the address →
+   „Werbe-Einwilligung“ → „Verlauf“) and check Shopify admin → Kunden → the address →
+   E-Mail-Marketing status. Pending in Shopify but no `shopify` consent event in Mo → Mo misses the
+   shop's sign-up consent and would ask again (two confirmation mails) → tell C (C.29).
 2. **Live check on 09.10. (5 min).** `npm run verify:live -- --since 2026-10-06` → send C the
    output: section 9 (page-context base rate for the control group, C.23; product clicks by
    `samePage`), section 7b V2/V2b (both must be 0) and V3.
@@ -50,9 +55,8 @@ the single list of what is still open for M. C's open items are at the end of �
    the Eingang once (C.9b).
 5. **Later, when you decide:** 6.1–6.4 (Shopify accounts for Mo-only subscribers, deletions to
    Shopify, AI profiles for everyone, Shopify tags) and 7.1/7.2 (tuning, Claude GitHub App);
-   Black Friday (4.x) when you bring it up; app ownership (5.3); the decision in C.27 (should an
-   unsubscribed address stop the post-sign-in ask?); with C, optional: the App Proxy handover and
-   shop-logout tests (C.26). Tell F once: run `shopify app config link` before F's next
+   Black Friday (4.x) when you bring it up; app ownership (5.3); with C, optional: the App Proxy
+   handover and shop-logout tests (C.26). Tell F once: run `shopify app config link` before F's next
    `shopify app deploy` (5.4 step 15).
 6. **Lawyer / privacy policy (as you update them):** dossier §19 (App Proxy, F-36 answered), §20
    (attribution window, F-37), §21 (consent bullets + page context, F-38); privacy-policy sentences
@@ -60,6 +64,18 @@ the single list of what is still open for M. C's open items are at the end of �
 
 ## Done
 
+- [x] Code tracks of 06.10. (C; no migration, no new switch — live with their deploy): **owner
+  decision 06.10.:** an address on the suppression list (any reason) is never asked after sign-in;
+  a capture keeps a signed-in customer's chats; opt-ins record whether the DOI mail went out (OI1
+  F3); retention gaps closed on existing windows; `db:reset` works on the current schema; admin
+  texts, Systemstatus and copy fixed (C.27); attribution §9.1/§9.2/§4.9 (C.26). KPI release notes
+  `doi-mail-sent`, `consent-ask-suppressed`, `attribution-threads-maillinks` (06.10.). Detail: C.26,
+  C.27; screenshots `docs/screenshots/2026-10-06-c27/`.
+- [x] Performance e-mail design (owner, 06.10., on main `599e2e1`): text links and the rule under
+  card titles blue `#008ccb`; „Zum Produkt“, „Zur Kasse“ and „Code einlösen“ in the black outline
+  look of „Beratung mit Mo starten“; the rating row as black-and-white line-drawn faces
+  (`public/email-rating-1…5.png`) instead of colour emoji. `docs/EMAIL_DESIGNS.md`; screenshots
+  `docs/screenshots/2026-10-06-performance-mail/`.
 - [x] Widget checks of 06.10. (M + C): `verify:widget` ✔ (`bc7fb5d`). Page context works in
   production: the first typed product-page question came 06.10. 09:13 UTC, the product was found
   and Mo answered with one card of that product. The test session `d63d2e26` typed on the home page
@@ -650,8 +666,9 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       after `0076` ran on production (it ran on 05.10. → from 11.11.2026); A2 (`_mo` on the „Zur Kasse“
       link) after M's test order (P0.2).
 - [ ] **C.25** Backlog, no deadline: D14 sanitize, B2 sign-in entry points, B6 handle mapping,
-      E6 widget version header (`docs/frontend/07` §7).
-- [ ] **C.26** Open follow-ups of the built 04.10. plans (not built; detail in
+      E6 widget version header, D18 popup memory per person instead of per tab / device (the likely
+      cause of the missing popup on 06.10., open list item 1) (`docs/frontend/07` §7).
+- [ ] **C.26** Open follow-ups of the built 04.10. plans (not built unless marked done; detail in
       `docs/archive/plans-2026-10-04/<plan>`):
   - **P0.3** — after 5.4 step 12, with M: the shop-logout token test (does a shop logout end the
     chat's Customer-Account sign-in?) and the handover test (two test customers in one browser →
@@ -662,9 +679,11 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
     signature within its 5 minutes (KV, fails open) (P0.3.md §3.5, §10). `KPI_RELEASES` entries with
     per-section notes (`sections` / `sectionNote`) — only if the App Proxy release should annotate
     the Anmelde-Popup / Einwilligung / Kundenkonto sections (P0.3.md §3.11).
-  - **OI1 F3** — record that the DOI mail was actually sent: „DOI-Mail fällig“ counts
-    `doiEmailRequired`, and the opt-in event is written before the send, so failed or skipped sends
-    count too (OI1.md §1 F3, §13).
+  - **OI1 F3** — done 06.10. (no migration): opt-in events carry `doiSent`, written after the send
+    attempt (`/api/capture-email`, `/api/account/marketing-opt-in`); „DOI-Mail fällig“ became „DOI-Mail
+    verschickt“, with „nicht verschickt“ shown only when > 0; the DOI rate divides by mails sent
+    (capture funnel and „Nach Variante und Platzierung“), older rows count as sent; `verify:live`
+    section 3 column `doi_verschickt`; release `doi-mail-sent` (OI1.md §1 F3, §13).
   - **OI3 B4** — a second consent-popup variant only after L's answer on F-38 (b); if the shown
     variant must be on the consent record: migration `0077` (`email_captures.consent_variant`),
     written by the opt-in route before the second variant is activated (OI3.md „B4“).
@@ -674,37 +693,67 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
     only together with an attribution replacement (A3.md §9 step 7).
   - **ATTR** — V2/V2b (no old widget token survived without a same-session consultation; the
     180-day cap holds) are in `verify:live` 7b since 06.10.; M's next run reports them (open list
-    item 2). §9.1: a reused mail-link token
-    keeps its old `created_at` (`mintAttributionToken`), so a mail sent 31–37 days after the
-    token was minted carries a link that is already outside the window. §9.2: the overlap check reads only the session's latest thread
-    (`loadConversationForSummary`). §9.5: anchor on the consent-gated token renewal instead of chat
-    rows — decide with F-37 (b). §4.9, optional: dedupe `mo_order_marker_unresolved` by
-    `X-Shopify-Event-Id`.
+    item 2). Done 06.10. (no migration, no switch): §9.1 a reused mail-link token re-stamps
+    `created_at` per mail (window and purge count from the latest mail); §9.2 the overlap check reads
+    every thread of the session active within the window before the order; §4.9
+    `mo_order_marker_unresolved` counts once per `X-Shopify-Event-Id` (claim `mo-unresolved:<id>` in
+    `shopify_webhook_events`). Live check after the first unresolved order:
+    `SELECT count(*) FROM shopify_webhook_events WHERE webhook_id LIKE 'mo-unresolved:%'` equals V3's
+    events since the deploy (0 means Shopify sends no event id; behaviour as before). Still open:
+    §9.5 (decide with F-37 (b)).
 - [ ] **C.27** Code findings of the docs audit of 05.10. (the docs now describe the code as it is;
-      these are code changes, none urgent):
-  - **Bug:** a signed-in customer without a verified e-mail who types someone else's address into
-    the capture form ends their sign-in (correct) **and** `linkCustomerOnEmailCapture` moves all
-    conversations of the session to that address's customer row (`customer-store.ts`) — only the
-    sign-in link should change.
-  - **Decide (M):** an accept for a suppressed (unsubscribed) address writes no consent act, so the
-    post-sign-in ask can come back until the anti-nag stops it — should suppression make
-    `optInActionable` false?
-  - Copy: `marketing_consent_required` (`api-messages.mjs`) mentions a checkbox on the button-consent
-    surface; `/api/contact`'s delivery-failure message is German on `/en`; `/api/r/{token}` links and
-    1:1 marketing unsubscribe links carry no `locale`.
-  - `npm run db:reset` aborts on any database past migration 0031 (`scripts/reset-test-data.mjs`
-    `DATA_TABLES` stops there) — documented in `docs/DATABASE.md`, script still to fix.
-  - Retention gaps to decide: `shopify_outbox` rows with status `skipped` are never purged;
-    `customer_merge_conflicts` and `improvement_runs` / `improvement_suggestions` have no window.
-  - Admin texts that contradict the code: popup timing in `LoginGateSection` and the
-    `widget-popups` release note (the widget decides ~0.7 s after a send, once per tab session);
-    `RevenueSection` InfoTips name only MS5- codes (the query includes MK-); `AiCostSection` has no
-    label for 6 call sites; `SystemStatusCard` does not show the 05.10. switches
-    (`CHAT_PAGE_CONTEXT_ENABLED`, `APP_PROXY_SIGNIN_ENABLED`, `MO_ATTRIBUTION_SESSION_ANCHOR`,
-    `CONSENT_SIGNIN_VARIANTS`); `email-theme.mjs` labels the campaign audience „Shopify-Abonnenten“.
-  - Comment sweep: stale code comments listed in the audit reports (consent stamp versions in the
-    opt-in routes, `consent-copy` route header, `retention.ts` header, `kpi-events.ts` link data,
-    `seed-dev.mjs`, `shopify-discounts.ts` WELCOME prefix, a few more).
+      these are code changes, none urgent). Built 06.10. (no migration, no new switch) except the
+      two small items marked open:
+  - **Bug — fixed 06.10.:** a capture no longer moves a signed-in customer's chats. Typing someone
+    else's address still ends the sign-in, but only chats without an owner — or, on a correction
+    of an earlier typed e-mail, that e-mail's chats — follow the typed address
+    (`attachSessionOnEmailCapture` / `captureMovesConversationsFrom` in
+    `src/lib/customer-session-link.mjs`, tested). **Open edge case:** after a sign-in ended, typing
+    the signed-in person's own address and then a third address moves their chats as a
+    „correction“; closing that needs a link-kind record per chat (a migration).
+  - **Decided (M) 06.10.:** any `suppression_list` row (unsubscribe, manual, complaint, bounce,
+    erasure) makes `optInActionable` false — `isMarketingOptInActionable` in
+    `src/lib/consent-ask-policy.mjs` (tested), used by `resolveMarketingOptInState`; release
+    `consent-ask-suppressed`.
+  - Copy — done 06.10.: `marketing_consent_required` no longer mentions a checkbox; `/api/contact`'s
+    502 is localised; campaign CTA `/api/r/<token>` links and set links carry `locale=en` for English
+    recipients (`withLocaleParam` in `src/lib/locale.mjs`). The unsubscribe links of the 1:1 mail
+    (Einzelansprache) already carried the locale; the links without it belong to the German-only
+    legacy MS5 mail, left as is.
+    **Open, small:** `/api/newsletter-rating` links carry no locale (noted in
+    `docs/frontend/API_CONTRACT.md` §12.2).
+  - `db:reset` — fixed 06.10.: the tables come from `migrations/` at run time
+    (`src/lib/db-reset-plan.mjs`, tested); it keeps `_migrations`, `campaigns` and
+    `email_design_selections` and stops on a database without `_migrations`, on an unknown table or
+    on a foreign key from a kept table (`TRUNCATE … RESTART IDENTITY`, no CASCADE). Tested on a
+    local database at 0076.
+  - Retention gaps — closed 06.10. on existing windows: skipped outbox rows go with done / dead
+    (`SHOPIFY_SYNC_LOG_RETENTION_DAYS`, step 7); reviewed `customer_merge_conflicts` by
+    `resolved_at` (step 7b); finished, fully decided `improvement_runs` and their suggestions on
+    `ANALYTICS_REPORT_RETENTION_DAYS` (step 5h); counters `deletedImprovementRuns`,
+    `deletedImprovementSuggestions`, `deletedMergeConflicts`; tested status lists in
+    `src/lib/retention-rules.mjs`. Step 7b removes nothing yet → C.28.
+  - Admin texts — done 06.10.: the `LoginGateSection` InfoTip and the `widget-popups` release detail
+    (~0.7 s after a send, at most one popup per browser tab); `RevenueSection` InfoTips name MK- and
+    MS5-; `AiCostSection` labels for `hero_image`, `campaign_assist`, `inbox_suggestion`,
+    `inbox_mail_reply`, `customer_ask`, `improvement` (map typed `Record<AiCallSite, string>`);
+    Systemstatus shows four new rows with InfoTips (Seitenkontext im Chat ± Kontrollgruppe,
+    Shop-Login-Erkennung (App Proxy), Bestell-Zuordnung ab letzter Beratung, Einwilligungs-Popup:
+    Varianten); `email-theme.mjs` label „Kampagne (Kund:innen mit Einwilligung)“.
+  - Comment sweep — done 06.10. (22 files, comments only): consent stamp versions and the button
+    consent in the opt-in routes, the `consent-copy` route header, the full step list in the
+    `retention.ts` header, `kpi-events.ts` link data, `seed-dev.mjs`, the MS5-/MK- prefixes in
+    `shopify-discounts.ts`, the image model names, the two delivery paths of marketing mail, and a
+    few more from the audit reports.
+- [ ] **C.28** Merge conflicts, decide later: nothing ever sets `customer_merge_conflicts.resolved_at`
+      (there is no admin view of the table), so retention step 7b (C.27) removes nothing today and
+      the rows leave only with the complete erasure. Either add a review action, or also purge
+      unresolved conflicts after a window (`docs/DATA_RETENTION.md`).
+- [ ] **C.29** Shop sign-up consent, to check (after the second check of open list item 1): M ticked
+      the shop's newsletter box at the sign-up of 06.10. — Shopify sent its own confirmation mail,
+      Mo recorded no Shopify consent event. If Shopify shows the address as pending while Mo has no
+      `shopify` consent event, Mo misses the shop's sign-up consent and the popup after the sign-in
+      would ask again (two confirmation mails): find where it is lost and fix it.
 
 ## Backlog — not built, decide later
 
