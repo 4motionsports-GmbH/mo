@@ -21,15 +21,23 @@ doc paths follow the new layout — widget docs in `docs/frontend/`, history in 
 Everything below this box is the detailed history and the step-by-step instructions; this box is
 the single list of what is still open for M. C's open items are at the end of „C · Claude's tasks“.
 
-1. **Consent popup with variant and placement (5 min, M or the frontend agent).** The frontend
+1. **Consent popup with variant and placement (10 min, M or the frontend agent).** The frontend
    agent's test session `d63d2e26` belongs to a customer who had already subscribed, so the popup
-   correctly did not appear and there is nothing to check yet. Sign in once in the chat on
-   www.motionsports.de with a Shopify customer who has **never** given marketing consent (real
-   e-mail address) and send a message — the popup appears; either answer is fine. Then
-   `npm run verify:live -- --since 2026-10-06`: section 3 „Wer sich im Chat angemeldet hat“ shows
-   that session with `popup_erwartet = true`; run it again with `--session <those 8 characters>` →
-   `consent_gate_shown` (and `_accepted` / `_declined`) with `variant: "a"` and
-   `placement: "popup"`. Send C the output.
+   correctly did not appear and there is nothing to check yet. Test with a **new** address, never
+   by deleting an existing one: an erasure in Mo — and deleting the customer in the Shopify admin,
+   which reaches Mo as `customers/delete` — keeps the address on the suppression list with reason
+   `erasure` for good (no mail, no re-import; there is no admin action to lift it). Steps: a
+   private browser window → www.motionsports.de → chat → „Anmelden“ with a fresh address you can
+   read (e.g. `marcel+mo-test1@marcelkueck.dev`; Shopify creates the account with the one-time
+   code) → send a question → the popup shows the three served benefit points → accept and click
+   the link in the DOI mail. `npm run verify:live -- --since 2026-10-06`: in section 3 „Wer sich
+   im Chat angemeldet hat“ the newest row is that session (`popup_erwartet` is true only until the
+   customer answers); run it again with `--session <those 8 characters>` → `consent_gate_shown`
+   and `_accepted` with `variant: "a"` and `placement: "popup"`, the opt-in with `source:
+   "mo_signin"`. Send C the output. Afterwards „Meine Daten löschen“ in the chat removes the test
+   customer in Mo (that suppresses only the test address); while 6.2 is open, delete the Shopify
+   customer in the Shopify admin yourself. A decline also counts as a result, but then
+   the popup stays away for that customer for 30 days — use a new address for a second run.
 2. **Live check on 09.10. (5 min).** `npm run verify:live -- --since 2026-10-06` → send C the
    output: section 9 (page-context base rate for the control group, C.23; product clicks by
    `samePage`), section 7b V2/V2b (both must be 0) and V3.
