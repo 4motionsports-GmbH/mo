@@ -194,10 +194,7 @@ function Overview({
                 <Prose>{decision.summary}</Prose>
               </>
             ) : (
-              <Empty>
-                Keine Synthese verfügbar — die Kennzahlen unten sind vollständig, die Entscheidungen fehlen
-                {decision?.notes?.length ? ` (${decision.notes.join(" ")})` : "."}
-              </Empty>
+              <Empty>Keine Synthese verfügbar — die Kennzahlen unten sind vollständig, die Entscheidungen fehlen.</Empty>
             )}
             {meta.length > 0 && <p className="text-2xs text-muted-foreground">{meta.join(" · ")}</p>}
           </CardContent>
@@ -432,6 +429,7 @@ const DIRECTION_LABEL: Record<string, string> = { besser: "besser", schlechter: 
 function Changes({ sections, decision }: { sections: Sections; decision: Decision | null }) {
   const c = sections.comparison ?? null;
   const items = decision?.changes.items ?? [];
+  const hasReading = Boolean(decision?.changes.summary) || items.length > 0;
   return (
     <section id="r-veraenderung" className="scroll-mt-24">
       <Section
@@ -456,8 +454,8 @@ function Changes({ sections, decision }: { sections: Sections; decision: Decisio
             {c.basis === "legacy" ? " · älterer Bericht: nur die Kennzahlen, die jeder Bericht hat" : ""}
           </p>
         )}
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-          <div className="flex flex-col gap-3">
+        <div className={cn("grid gap-4", hasReading && "xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]")}>
+          <div className={cn("flex flex-col gap-3", !hasReading && "hidden")}>
             {decision?.changes.summary ? <Prose>{decision.changes.summary}</Prose> : null}
             {items.length > 0 ? (
               <ul className="flex flex-col gap-2">
