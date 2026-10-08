@@ -65,6 +65,8 @@ import {
   PROFILE_PERSONAS,
 } from "./customer-profile-core.mjs";
 import { reportError } from "./observability";
+import { isAbortError } from "./object-stream.mjs";
+import { settleWithin } from "./settle-within.mjs";
 
 // Deep tier (lib/ai-models.mjs): identity-level judgement over dense input.
 const PROFILE_MODEL = modelFor("deep");
@@ -103,6 +105,18 @@ export interface GenerateProfileInput {
   campaignHistory?: string | null;
   /** kauf = purchase profile on the writer tier; voll (default) = deep tier. */
   depth?: "kauf" | "voll";
+}
+
+/**
+ * Bounds for a caller inside a time-limited step (the Komplettanalyse).
+ * Absent = as before: no timeout, the SDK's 2 retries, the refresh awaited.
+ */
+export interface ProfileCallBounds {
+  /** Ends the model call (retry waits included) → a model_error result. */
+  abortSignal?: AbortSignal;
+  maxRetries?: number;
+  /** regenerateCustomerProfile: wait at most this long for the Shopify purchase refresh, then go on without it. */
+  refreshTimeoutMs?: number;
 }
 
 export type GenerateProfileResult =
@@ -197,7 +211,8 @@ const profileSchema = z.object({
  * result with the real reason (no key, nothing to summarise, model failure).
  */
 export async function generateCustomerProfile(
-  input: GenerateProfileInput
+  input: GenerateProfileInput,
+  bounds: ProfileCallBounds = {}
 ): Promise<GenerateProfileResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
     return {
@@ -235,6 +250,8 @@ export async function generateCustomerProfile(
       model: anthropic(model),
       providerOptions: anthropicOptionsFor(tier),
       maxOutputTokens: maxOutputTokensFor(tier, light ? 1200 : 2000),
+      abortSignal: bounds.abortSignal,
+      maxRetries: bounds.maxRetries,
       schema: profileSchema,
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
@@ -288,7 +305,11 @@ export async function generateCustomerProfile(
       },
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = isAbortError(err)
+      ? "Zeitlimit erreicht — Profil nicht erstellt."
+      : err instanceof Error
+        ? err.message
+        : String(err);
     return { ok: false, reason: "model_error", message };
   }
 }
@@ -305,10 +326,12 @@ export type RegenerateProfileResult =
  * (Kampagne customers start without one), generates, and stores text +
  * structured fields. A run with nothing to summarise or a model failure still
  * stamps profile_checked_at, so the upkeep waits for new activity instead of
- * retrying every night. Never throws.
+ * retrying every night. `bounds` (optional) limit the model call and the
+ * refresh for a caller inside a time-limited step. Never throws.
  */
 export async function regenerateCustomerProfile(
-  customerId: number
+  customerId: number,
+  bounds: ProfileCallBounds = {}
 ): Promise<RegenerateProfileResult> {
   try {
     let customer = await getCustomerById(customerId);
@@ -332,8 +355,10 @@ export async function regenerateCustomerProfile(
     // Purchases: the order ledger for mirrored people, else the per-e-mail
     // Shopify read (fetched first when it was never loaded).
     if (!customer.shopifySyncedAt && !customer.purchaseSummary) {
-      const refreshed = await refreshCustomerData(customer);
-      if (refreshed.ok) customer = (await getCustomerById(customerId)) ?? customer;
+      // Best effort: a bounded caller goes on without it after refreshTimeoutMs
+      // (the refresh may still land in the background).
+      const refreshed = await settleWithin(refreshCustomerData(customer), bounds.refreshTimeoutMs);
+      if (refreshed.ok && refreshed.value.ok) customer = (await getCustomerById(customerId)) ?? customer;
     }
 
     const [sessions, correspondence, campaignHistory, purchases] = await Promise.all([
@@ -345,18 +370,24 @@ export async function regenerateCustomerProfile(
     const depth: "kauf" | "voll" =
       sessions.some((s) => s.transcript.length > 0) || correspondence.trim() ? "voll" : "kauf";
 
-    const result = await generateCustomerProfile({
-      sessions,
-      purchases,
-      accountContext: customer.shopifyAccountSummary?.addressContext ?? null,
-      correspondence,
-      campaignHistory,
-      depth,
-    });
+    const result = await generateCustomerProfile(
+      {
+        sessions,
+        purchases,
+        accountContext: customer.shopifyAccountSummary?.addressContext ?? null,
+        correspondence,
+        campaignHistory,
+        depth,
+      },
+      bounds
+    );
     if (!result.ok) {
       // "unconfigured" is an environment problem, not a verdict on the
       // customer — leave them due so the next run with a key picks them up.
-      if (result.reason !== "unconfigured") await markCustomerProfileChecked(customerId);
+      // Same for a call the caller's deadline cut short (the nightly upkeep
+      // has none).
+      const cutShort = bounds.abortSignal?.aborted === true;
+      if (result.reason !== "unconfigured" && !cutShort) await markCustomerProfileChecked(customerId);
       return result;
     }
     const saved = await saveCustomerProfile(customerId, { summary: result.summary, data: result.data, depth });

@@ -24,6 +24,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
+import { isAbortError } from "./object-stream.mjs";
 import {
   loadAnalysesForRollup,
   saveInsights,
@@ -54,13 +55,28 @@ function nowIso(): string {
 }
 
 /**
+ * Bounds for a caller inside a time-limited step (the Komplettanalyse). Each
+ * timeout is asked right before its pass, so the time spent before counts.
+ * Absent = the SDK defaults (no timeout, 2 retries) — the Gespräche button.
+ */
+export interface InsightsCallBounds {
+  /** Abort timeout (ms) of the narrative pass. */
+  reportTimeoutMs: () => number;
+  /** Abort timeout (ms) of the refs pass; 0 skips it (the narrative is kept without curated refs). */
+  refsTimeoutMs: () => number;
+  /** SDK retries per pass. */
+  maxRetries: number;
+}
+
+/**
  * Generate (and cache) the insights rollup for a [from, to] window. Never throws;
- * on a missing key / model error it returns a clear German message (not cached, so
- * a retry is cheap). Reads CACHED summaries only — never transcripts.
+ * on a missing key / model error / timeout it returns a clear German message (not
+ * cached, so a retry is cheap). Reads CACHED summaries only — never transcripts.
  */
 export async function generateConversationInsights(
   from: string,
-  to: string
+  to: string,
+  bounds?: InsightsCallBounds
 ): Promise<InsightsRollup> {
   const analyses = await loadAnalysesForRollup(from, to, MAX_ANALYSES);
 
@@ -117,6 +133,8 @@ export async function generateConversationInsights(
     const { text, usage, finishReason } = await generateText({
       model: anthropic(INSIGHTS_MODEL),
       providerOptions: anthropicOptionsFor("analyst"),
+      abortSignal: bounds ? AbortSignal.timeout(bounds.reportTimeoutMs()) : undefined,
+      maxRetries: bounds?.maxRetries,
       // Well above the instructed ~700-word length so the report always ends
       // cleanly even when the model overshoots (observed: 400 summaries pushed
       // it past 3000 and it was cut mid-sentence — reported via finishReason).
@@ -161,59 +179,71 @@ export async function generateConversationInsights(
 
     // ── Pass 2: references only (JSON out, nothing else) ─────────────────────
     // A dedicated bounded pass cannot be starved by report length. Failure here
-    // must never cost the narrative, so it is fenced in its own try/catch.
+    // must never cost the narrative, so it is fenced in its own try/catch. A
+    // bounded caller with too little time left skips it.
     let references = inlineRefs;
     let refsInputTokens = 0;
     let refsOutputTokens = 0;
-    try {
-      const refsRes = await generateText({
-        model: anthropic(INSIGHTS_MODEL),
-        providerOptions: anthropicOptionsFor("analyst"),
-        // Curated examples (≤8 per section × 4 sections at ~30 tokens each) —
-        // complete listings are the list filters' job, not the model's.
-        maxOutputTokens: maxOutputTokensFor("analyst", 2500),
-        system:
-          "Du bist Analyst bei motion sports. Du erhältst (a) KURZ-" +
-          "ZUSAMMENFASSUNGEN von Beratungsgesprächen, jede mit ihrer Gesprächs-ID " +
-          "(z. B. [#1234]), und (b) einen fertigen Insights-Report mit vier " +
-          "Abschnitten. Deine EINZIGE Aufgabe: Belege liefern — welche Gespräche " +
-          "stützen welchen Report-Abschnitt.\n\n" +
-          "Antworte AUSSCHLIESSLICH mit diesem JSON (kein Markdown, kein Text " +
-          "davor oder danach):\n" +
-          '{ "references": [ { "section": "top_themen", "conversationId": 1234, ' +
-          '"reason": "Ein kurzer deutscher Satz, warum dieses Gespräch das Muster belegt." } ] }\n\n' +
-          "Regeln:\n" +
-          "- \"section\" ist GENAU einer dieser Schlüssel: top_themen (Abschnitt 1), " +
-          "stockend (Abschnitt 2), beduerfnisse (Abschnitt 3), vorschlaege (Abschnitt 4).\n" +
-          "- KURATIERE: Wähle je Abschnitt die aussagekräftigsten Beleg-Gespräche " +
-          "aus, maximal 8 pro Abschnitt (die stärksten zuerst). Ein Gespräch darf " +
-          "in mehreren Abschnitten erscheinen, wenn es mehrere Muster belegt.\n" +
-          "- Gib für JEDEN der vier Abschnitte Referenzen an, sofern es Belege gibt.\n" +
-          "- \"conversationId\" MUSS eine der [#…]-IDs aus den gelieferten " +
-          "Zusammenfassungen sein — erfinde NIEMALS IDs.\n" +
-          "- \"reason\" ist EIN kurzer deutscher Satz (max. ~15 Wörter), gestützt " +
-          "auf die jeweilige Zusammenfassung.",
-        prompt:
-          `${summariesBlock}\n\n## Insights-Report\n\n${markdown}\n\n` +
-          "Gib jetzt NUR das references-JSON aus.",
+    const refsTimeoutMs = bounds ? bounds.refsTimeoutMs() : null;
+    const refsSkipped = refsTimeoutMs === 0;
+    if (refsSkipped) {
+      reportError(new Error("insights refs pass skipped: step time used up"), {
+        route: "lib/conversation-insights",
+        phase: "refs-skipped",
       });
-      if (refsRes.finishReason === "length") {
-        reportError(new Error("insights refs pass truncated at maxOutputTokens"), {
-          route: "lib/conversation-insights",
-          phase: "refs-truncated",
+    } else {
+      try {
+        const refsRes = await generateText({
+          model: anthropic(INSIGHTS_MODEL),
+          providerOptions: anthropicOptionsFor("analyst"),
+          abortSignal: refsTimeoutMs ? AbortSignal.timeout(refsTimeoutMs) : undefined,
+          maxRetries: bounds?.maxRetries,
+          // Curated examples (≤8 per section × 4 sections at ~30 tokens each) —
+          // complete listings are the list filters' job, not the model's.
+          maxOutputTokens: maxOutputTokensFor("analyst", 2500),
+          system:
+            "Du bist Analyst bei motion sports. Du erhältst (a) KURZ-" +
+            "ZUSAMMENFASSUNGEN von Beratungsgesprächen, jede mit ihrer Gesprächs-ID " +
+            "(z. B. [#1234]), und (b) einen fertigen Insights-Report mit vier " +
+            "Abschnitten. Deine EINZIGE Aufgabe: Belege liefern — welche Gespräche " +
+            "stützen welchen Report-Abschnitt.\n\n" +
+            "Antworte AUSSCHLIESSLICH mit diesem JSON (kein Markdown, kein Text " +
+            "davor oder danach):\n" +
+            '{ "references": [ { "section": "top_themen", "conversationId": 1234, ' +
+            '"reason": "Ein kurzer deutscher Satz, warum dieses Gespräch das Muster belegt." } ] }\n\n' +
+            "Regeln:\n" +
+            "- \"section\" ist GENAU einer dieser Schlüssel: top_themen (Abschnitt 1), " +
+            "stockend (Abschnitt 2), beduerfnisse (Abschnitt 3), vorschlaege (Abschnitt 4).\n" +
+            "- KURATIERE: Wähle je Abschnitt die aussagekräftigsten Beleg-Gespräche " +
+            "aus, maximal 8 pro Abschnitt (die stärksten zuerst). Ein Gespräch darf " +
+            "in mehreren Abschnitten erscheinen, wenn es mehrere Muster belegt.\n" +
+            "- Gib für JEDEN der vier Abschnitte Referenzen an, sofern es Belege gibt.\n" +
+            "- \"conversationId\" MUSS eine der [#…]-IDs aus den gelieferten " +
+            "Zusammenfassungen sein — erfinde NIEMALS IDs.\n" +
+            "- \"reason\" ist EIN kurzer deutscher Satz (max. ~15 Wörter), gestützt " +
+            "auf die jeweilige Zusammenfassung.",
+          prompt:
+            `${summariesBlock}\n\n## Insights-Report\n\n${markdown}\n\n` +
+            "Gib jetzt NUR das references-JSON aus.",
         });
+        if (refsRes.finishReason === "length") {
+          reportError(new Error("insights refs pass truncated at maxOutputTokens"), {
+            route: "lib/conversation-insights",
+            phase: "refs-truncated",
+          });
+        }
+        refsInputTokens = refsRes.usage?.inputTokens ?? 0;
+        refsOutputTokens = refsRes.usage?.outputTokens ?? 0;
+        const passRefs = parseInsightsRefsPayload(refsRes.text, validIds);
+        if (passRefs.length > 0) references = passRefs;
+      } catch (refsErr) {
+        reportError(refsErr, { route: "lib/conversation-insights", phase: "refs-pass" });
       }
-      refsInputTokens = refsRes.usage?.inputTokens ?? 0;
-      refsOutputTokens = refsRes.usage?.outputTokens ?? 0;
-      const passRefs = parseInsightsRefsPayload(refsRes.text, validIds);
-      if (passRefs.length > 0) references = passRefs;
-    } catch (refsErr) {
-      reportError(refsErr, { route: "lib/conversation-insights", phase: "refs-pass" });
     }
 
     // References failing is tolerated (the narrative always survives) but must
     // not be silent — surface it so it is debuggable in observability.
-    if (references.length === 0) {
+    if (references.length === 0 && !refsSkipped) {
       reportError(new Error("insights references empty after both passes"), {
         route: "lib/conversation-insights",
         phase: "parse-refs",
@@ -263,11 +293,14 @@ export async function generateConversationInsights(
       references,
     };
   } catch (err) {
-    reportError(err, { route: "lib/conversation-insights", phase: "generate" });
+    const timedOut = isAbortError(err);
+    reportError(err, { route: "lib/conversation-insights", phase: timedOut ? "generate-timeout" : "generate" });
     return {
       from,
       to,
-      summaryMd: "_Insights-Report fehlgeschlagen — bitte später erneut versuchen._",
+      summaryMd: timedOut
+        ? "_Insights-Report nicht erstellt (Zeitlimit) — bitte später erneut versuchen._"
+        : "_Insights-Report fehlgeschlagen — bitte später erneut versuchen._",
       analyzedCount: analyses.length,
       model: INSIGHTS_MODEL,
       costEur: 0,

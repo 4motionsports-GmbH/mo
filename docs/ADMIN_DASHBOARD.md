@@ -1059,6 +1059,22 @@ stepped by `useStepLoop` over `analytics/step`, one bounded chunk per step:
 | `plan` | strategist pass 2: prioritised recommendations, experiments, risks, data-quality caveats | strategist |
 | `assemble` | pure aggregations, the sections payload | — |
 
+Every model call in a step is bounded in time
+([`analytics-report-budget.mjs`](../src/lib/analytics-report-budget.mjs), tested):
+an abort from the step start (`callTimeoutWithinStep` — 300 s minus the time
+used minus a 40 s reserve, capped per call: analysis 45 s, insights narrative
+170 s and the refs pass whatever is left — skipped under 30 s, persona 110 s,
+synthesis 200 s, profile 200 s incl. a Shopify refresh of at most 20 s), one SDK
+retry, and the loops start no new item after 150 s (analyses) or with less than
+120 s left (personas — the persona goes back to the front of the queue). A
+timeout is one failed item with a note („_Top-Fragen nicht erstellt
+(Zeitlimit)._“, „_Kundensynthese nicht erstellt (Zeitlimit)._“, „_Insights-Report
+nicht erstellt (Zeitlimit)…_“), never a failed report. A conversation whose
+analysis fails is skipped for the rest of the report (`scratch.analyzeSkip` —
+it stays unanalysed, so a later report or the Gespräche button tries again;
+note „N Gespräch(e) nicht analysiert (Fehler oder Zeitlimit).“), and 24
+failures in a row end the analysis phase.
+
 The two strategist passes ([`strategist-call.ts`](../src/lib/strategist-call.ts),
 prompts and schemas in [`analytics-report-synthesis-core.mjs`](../src/lib/analytics-report-synthesis-core.mjs) /
 `-schemas.mjs`, tested) read the snapshot as text (`renderSnapshotForPrompt`),

@@ -57,7 +57,23 @@ import {
 } from "./analytics-report-store";
 import { getBusinessSnapshot, type BusinessSnapshot } from "./business-snapshot";
 import { runStrategistObject } from "./strategist-call";
-import { callTimeoutWithinStep } from "./object-stream.mjs";
+import { callTimeoutWithinStep, isAbortError } from "./object-stream.mjs";
+import {
+  analyzeGaveUp,
+  mayStartAnother,
+  noteAnalyzeResult,
+  readAnalyzeLedger,
+  refsPassTimeoutMs,
+  requeueFront,
+  ANALYSIS_CALL_CAP_MS,
+  ANALYZE_START_UNTIL_MS,
+  INSIGHTS_REPORT_CAP_MS,
+  PERSONA_CALL_CAP_MS,
+  PERSONA_START_UNTIL_MS,
+  PROFILE_CALL_CAP_MS,
+  PROFILE_REFRESH_TIMEOUT_MS,
+  SYNTHESIS_CALL_CAP_MS,
+} from "./analytics-report-budget.mjs";
 import {
   assembleDecision,
   buildDecisionsPrompt,
@@ -97,9 +113,17 @@ import {
 } from "./analytics-report-core.mjs";
 
 // Per-step work budgets — sized so a single /step stays well under maxDuration.
+// Every model call is also bounded in time (analytics-report-budget.mjs): an
+// abort timeout from the step start, one SDK retry, and the loops start no new
+// item once the step has used its share.
 const ANALYZE_BATCH = 12; // cheap Haiku passes
 const PERSONA_BATCH = 2; // Sonnet top-questions
 const PROFILE_BATCH = 1; // Opus per-customer profile (slow → one per step)
+
+/** Abort signal for one model call that keeps the step inside maxDuration. */
+function stepCallSignal(stepStartedAt: number, capMs: number): AbortSignal {
+  return AbortSignal.timeout(callTimeoutWithinStep({ stepStartedAt, maxDurationS: STEP_MAX_DURATION_S, capMs }));
+}
 
 // Bounds on the heavier inputs/outputs so a huge interval stays sane.
 const SYNTHESIS_SUMMARIES = 150;
@@ -111,6 +135,10 @@ interface ReportScratch {
   // (Record<string, unknown>); the named fields keep their precise types.
   [key: string]: unknown;
   notes?: string[];
+  /** Conversations whose analysis failed in this report — not picked again. */
+  analyzeSkip?: number[];
+  /** Failed analyses in a row; ANALYZE_FAIL_STREAK_LIMIT ends the phase. */
+  analyzeFailStreak?: number;
   insightsMd?: string;
   personaQueue?: string[];
   personaTopQ?: Record<string, string>;
@@ -217,19 +245,19 @@ export async function stepReport(id: number): Promise<StepResult> {
   try {
     switch (report.phase) {
       case "analyze":
-        await stepAnalyze(report);
+        await stepAnalyze(report, stepStartedAt);
         break;
       case "insights":
-        await stepInsights(report);
+        await stepInsights(report, stepStartedAt);
         break;
       case "personas":
-        await stepPersonas(report);
+        await stepPersonas(report, stepStartedAt);
         break;
       case "customer_synthesis":
-        await stepSynthesis(report);
+        await stepSynthesis(report, stepStartedAt);
         break;
       case "customer_profiles":
-        await stepProfiles(report);
+        await stepProfiles(report, stepStartedAt);
         break;
       case "snapshot":
         await stepSnapshot(report);
@@ -271,34 +299,48 @@ export async function stepReport(id: number): Promise<StepResult> {
 
 // ── Phase: analyze every conversation in the interval ─────────────────────────
 
-async function stepAnalyze(report: AnalyticsReportDetail): Promise<void> {
+/**
+ * One batch of per-conversation analyses. No new analysis starts after
+ * ANALYZE_START_UNTIL_MS (the rest is the next step's) and each call is
+ * aborted after ANALYSIS_CALL_CAP_MS. A conversation that fails is skipped for
+ * the rest of the report (scratch.analyzeSkip) — nothing is written for it, so
+ * it would be picked again on every step — and a run of failures in a row
+ * ends the phase with a note.
+ */
+async function stepAnalyze(report: AnalyticsReportDetail, stepStartedAt: number): Promise<void> {
   const { from, to, options } = report;
   const progress = report.progress;
   const scratch = getScratch(progress);
+  let ledger = readAnalyzeLedger(scratch);
+
+  // The notes when the phase ends: the reason plus the skipped conversations.
+  const endNotes = (reason?: string) => {
+    let notes = reason ? pushNote(scratch.notes, reason) : scratch.notes;
+    if (ledger.skip.length > 0) {
+      notes = pushNote(notes, `${ledger.skip.length} Gespräch(e) nicht analysiert (Fehler oder Zeitlimit).`);
+    }
+    return notes;
+  };
+  const budgetNote = (remaining: number) =>
+    remaining > 0 ? `Analyse auf ${options.maxAnalyze} Gespräche begrenzt — ${remaining} nicht analysiert.` : undefined;
 
   const budgetLeft = options.maxAnalyze - progress.analyzed;
-  const advance = async (extraNote?: string) => {
-    const remaining = await countUnanalyzedInRange(from, to);
-    const notes = extraNote ? pushNote(scratch.notes, extraNote) : scratch.notes;
+  const advance = async (remaining: number, reason?: string) => {
     await updateAnalyticsReport(report.id, {
       phase: nextPhase("analyze", options),
-      progress: { ...progress, analyzeRemaining: remaining, scratch: { ...scratch, notes } },
+      progress: { ...progress, analyzeRemaining: remaining, scratch: { ...scratch, notes: endNotes(reason) } },
     });
   };
 
   if (budgetLeft <= 0) {
-    const remaining = await countUnanalyzedInRange(from, to);
-    await advance(
-      remaining > 0
-        ? `Analyse auf ${options.maxAnalyze} Gespräche begrenzt — ${remaining} nicht analysiert.`
-        : undefined
-    );
+    const remaining = await countUnanalyzedInRange(from, to, ledger.skip);
+    await advance(remaining, budgetNote(remaining));
     return;
   }
 
-  const ids = await loadUnanalyzedIds(from, to, Math.min(ANALYZE_BATCH, budgetLeft));
+  const ids = await loadUnanalyzedIds(from, to, Math.min(ANALYZE_BATCH, budgetLeft), ledger.skip);
   if (ids.length === 0) {
-    await advance();
+    await advance(await countUnanalyzedInRange(from, to, ledger.skip));
     return;
   }
 
@@ -306,42 +348,62 @@ async function stepAnalyze(report: AnalyticsReportDetail): Promise<void> {
   let analyzed = progress.analyzed;
   let failed = progress.analyzeFailed;
   let unconfigured = false;
+  let started = 0;
 
   for (const cid of ids) {
+    if (!mayStartAnother({ stepStartedAt, startedThisStep: started, startUntilMs: ANALYZE_START_UNTIL_MS })) break;
+    started += 1;
     const detail = await getAdminConversationDetail(cid);
-    if (!detail || detail.transcript.length === 0) continue;
-    const res = await generateConversationAnalysis({ conversationId: cid, transcript: detail.transcript });
-    if (res.ok) {
-      await saveConversationAnalysis(cid, res.analysis, ANALYSIS_MODEL, res.usage);
+    const res =
+      detail && detail.transcript.length > 0
+        ? await generateConversationAnalysis(
+            { conversationId: cid, transcript: detail.transcript },
+            { abortSignal: stepCallSignal(stepStartedAt, ANALYSIS_CALL_CAP_MS), maxRetries: 1 }
+          )
+        : null;
+    if (res && !res.ok && res.reason === "unconfigured") {
+      unconfigured = true;
+      break;
+    }
+    let ok = false;
+    if (res?.ok) {
       usage = mergeUsage(usage, ANALYSIS_MODEL, res.usage.inputTokens, res.usage.outputTokens);
+      // Unsaved = still unanalysed: it would come back on the next step.
+      ok = await saveConversationAnalysis(cid, res.analysis, ANALYSIS_MODEL, res.usage);
+    }
+    ledger = noteAnalyzeResult(ledger, cid, ok);
+    if (ok) {
       analyzed += 1;
     } else {
+      // Unreadable, failed, timed out or not saved: skipped for this report.
       failed += 1;
-      if (res.reason === "unconfigured") {
-        unconfigured = true;
-        break;
-      }
+      if (analyzeGaveUp(ledger)) break;
     }
   }
 
-  const remaining = await countUnanalyzedInRange(from, to);
+  const remaining = await countUnanalyzedInRange(from, to, ledger.skip);
   const budgetExhausted = analyzed >= options.maxAnalyze;
+  const gaveUp = analyzeGaveUp(ledger);
   const baseProgress = { ...progress, analyzed, analyzeFailed: failed, analyzeRemaining: remaining };
+  const nextScratch = { ...scratch, analyzeSkip: ledger.skip, analyzeFailStreak: ledger.failStreak };
 
-  if (unconfigured || remaining === 0 || budgetExhausted) {
-    let notes = scratch.notes;
-    if (unconfigured) notes = pushNote(notes, "Anthropic-Key fehlt — Gesprächsanalyse übersprungen.");
-    else if (budgetExhausted && remaining > 0)
-      notes = pushNote(notes, `Analyse auf ${options.maxAnalyze} Gespräche begrenzt — ${remaining} nicht analysiert.`);
+  if (unconfigured || gaveUp || remaining === 0 || budgetExhausted) {
+    const reason = unconfigured
+      ? "Anthropic-Key fehlt — Gesprächsanalyse übersprungen."
+      : gaveUp
+        ? `Gesprächsanalyse nach ${ledger.failStreak} Fehlern in Folge abgebrochen — ${remaining} Gespräche nicht analysiert.`
+        : budgetExhausted
+          ? budgetNote(remaining)
+          : undefined;
     await updateAnalyticsReport(report.id, {
       phase: nextPhase("analyze", options),
-      progress: { ...baseProgress, scratch: { ...scratch, notes } },
+      progress: { ...baseProgress, scratch: { ...nextScratch, notes: endNotes(reason) } },
       usage,
     });
   } else {
     await updateAnalyticsReport(report.id, {
       phase: "analyze",
-      progress: { ...baseProgress, scratch },
+      progress: { ...baseProgress, scratch: nextScratch },
       usage,
     });
   }
@@ -349,7 +411,7 @@ async function stepAnalyze(report: AnalyticsReportDetail): Promise<void> {
 
 // ── Phase: aggregate insights rollup over the cached summaries ─────────────────
 
-async function stepInsights(report: AnalyticsReportDetail): Promise<void> {
+async function stepInsights(report: AnalyticsReportDetail, stepStartedAt: number): Promise<void> {
   const { from, to, options } = report;
   const progress = report.progress;
   const scratch = getScratch(progress);
@@ -360,8 +422,15 @@ async function stepInsights(report: AnalyticsReportDetail): Promise<void> {
   // inspector's report panel for this window is already filled in afterwards.
   // The rollup handles the empty/unconfigured/error cases itself (clear German
   // notices, never throws) and records its ai_usage; the token counts it returns
-  // are folded into this report's own per-model cost.
-  const rollup = await generateConversationInsights(from, to);
+  // are folded into this report's own per-model cost. Bounded for the step: the
+  // narrative pass gets INSIGHTS_REPORT_CAP_MS, the refs pass what is left (or
+  // is skipped); a timeout comes back as a notice and the phase moves on.
+  const rollup = await generateConversationInsights(from, to, {
+    reportTimeoutMs: () =>
+      callTimeoutWithinStep({ stepStartedAt, maxDurationS: STEP_MAX_DURATION_S, capMs: INSIGHTS_REPORT_CAP_MS }),
+    refsTimeoutMs: () => refsPassTimeoutMs({ stepStartedAt, maxDurationS: STEP_MAX_DURATION_S }),
+    maxRetries: 1,
+  });
   const usage = mergeUsage(
     report.usage,
     rollup.model,
@@ -378,7 +447,12 @@ async function stepInsights(report: AnalyticsReportDetail): Promise<void> {
 
 // ── Phase: range-scoped top-questions per persona ─────────────────────────────
 
-async function stepPersonas(report: AnalyticsReportDetail): Promise<void> {
+/**
+ * Up to PERSONA_BATCH personas per step, each call aborted after
+ * PERSONA_CALL_CAP_MS. A persona that no longer fits the step (less than
+ * 120 s left) goes back to the front of the queue for the next step.
+ */
+async function stepPersonas(report: AnalyticsReportDetail, stepStartedAt: number): Promise<void> {
   const { from, to, options } = report;
   const progress = report.progress;
   const scratch = getScratch(progress);
@@ -392,7 +466,7 @@ async function stepPersonas(report: AnalyticsReportDetail): Promise<void> {
     progress.personasTotal = labels.length;
   }
 
-  const queue = scratch.personaQueue ?? [];
+  let queue = [...(scratch.personaQueue ?? [])];
   if (queue.length === 0) {
     await updateAnalyticsReport(report.id, {
       phase: nextPhase("personas", options),
@@ -401,11 +475,18 @@ async function stepPersonas(report: AnalyticsReportDetail): Promise<void> {
     return;
   }
 
-  const batch = queue.splice(0, PERSONA_BATCH);
+  const batch = queue.slice(0, PERSONA_BATCH);
+  queue = queue.slice(PERSONA_BATCH);
   const topQ = scratch.personaTopQ ?? {};
   let done = progress.personasDone;
 
-  for (const label of batch) {
+  for (let pos = 0; pos < batch.length; pos++) {
+    if (!mayStartAnother({ stepStartedAt, startedThisStep: pos, startUntilMs: PERSONA_START_UNTIL_MS })) {
+      // Too little of the step left for another call: first in line next step.
+      queue = requeueFront(queue, batch.slice(pos));
+      break;
+    }
+    const label = batch[pos];
     const samples = await sampleUserMessagesForPersona(label, from, to, PERSONA_SAMPLE);
     if (samples.length === 0) {
       topQ[label] = "_Keine Nutzernachrichten in dieser Persona-Gruppe._";
@@ -423,6 +504,8 @@ async function stepPersonas(report: AnalyticsReportDetail): Promise<void> {
         model: anthropic(PERSONA_MODEL),
         providerOptions: anthropicOptionsFor("writer"),
         maxOutputTokens: maxOutputTokensFor("writer", 500),
+        abortSignal: stepCallSignal(stepStartedAt, PERSONA_CALL_CAP_MS),
+        maxRetries: 1,
         system:
           "Du bist Analyst für motion sports (Fitness- und Kraftsportgeräte). Du erhältst echte " +
           "Nutzernachrichten aus dem Beratungs-Chat einer bestimmten Kundengruppe (Persona). Fasse " +
@@ -442,8 +525,9 @@ async function stepPersonas(report: AnalyticsReportDetail): Promise<void> {
       });
       usage = mergeUsage(usage, PERSONA_MODEL, u?.inputTokens ?? 0, u?.outputTokens ?? 0);
     } catch (err) {
-      reportError(err, { route: "lib/analytics-report-generate", phase: "personas" });
-      topQ[label] = "_Top-Fragen fehlgeschlagen._";
+      const timedOut = isAbortError(err);
+      reportError(err, { route: "lib/analytics-report-generate", phase: timedOut ? "personas-timeout" : "personas" });
+      topQ[label] = timedOut ? "_Top-Fragen nicht erstellt (Zeitlimit)._" : "_Top-Fragen fehlgeschlagen._";
     }
     done += 1;
   }
@@ -462,7 +546,11 @@ async function stepPersonas(report: AnalyticsReportDetail): Promise<void> {
 
 // ── Phase: aggregate, pseudonymous customer-knowledge synthesis ───────────────
 
-async function stepSynthesis(report: AnalyticsReportDetail): Promise<void> {
+/**
+ * One Sonnet call, aborted after SYNTHESIS_CALL_CAP_MS. A timeout or model
+ * error keeps a short note as the section and moves on — never a failed report.
+ */
+async function stepSynthesis(report: AnalyticsReportDetail, stepStartedAt: number): Promise<void> {
   const { from, to, options } = report;
   const progress = report.progress;
   const scratch = getScratch(progress);
@@ -497,35 +585,47 @@ async function stepSynthesis(report: AnalyticsReportDetail): Promise<void> {
       })
       .join("\n");
 
-    const { text, usage: u } = await generateText({
-      model: anthropic(SYNTHESIS_MODEL),
-      providerOptions: anthropicOptionsFor("analyst"),
-      maxOutputTokens: maxOutputTokensFor("analyst", 1200),
-      system:
-        "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Aus den verdichteten " +
-        "Beratungsdaten EINES Zeitraums (Persona-Verteilung, Kategorien, Gesprächs-Zusammenfassungen) " +
-        "erstellst du ein aggregiertes KUNDENWISSEN auf Deutsch (Markdown) für Produkt-, Marketing- und " +
-        "Beratungsteam. Es ist PSEUDONYM — keine einzelnen Personen, nur Muster über Gruppen.\n\n" +
-        "Gliederung (Markdown-Überschriften):\n" +
-        "1. **Wer kauft/fragt** — dominierende Segmente & Personas im Zeitraum.\n" +
-        "2. **Bedürfnisse & Kaufmotive** — was Kund:innen wollen, welche Produkte/Themen ziehen.\n" +
-        "3. **Einwände & Reibung** — Preis, Größe, Technik, Lieferzeit usw.\n" +
-        "4. **Chancen** — konkrete Empfehlungen für Sortiment, Bündel, Ansprache.\n\n" +
-        "Faktenbasiert, knapp, priorisiert. Erfinde nichts, was nicht aus den Daten hervorgeht.",
-      prompt:
-        `Zeitraum: ${from} bis ${to}\n\n## Persona-Verteilung\n${personaBlock || "(keine)"}\n\n` +
-        `## Kategorien\n${categoryBlock || "(keine)"}\n\n` +
-        `## Gesprächs-Zusammenfassungen (Stichprobe ${summaries.length})\n${summaryBlock}\n\n` +
-        "Erstelle jetzt das aggregierte Kundenwissen.",
-    });
-    md = text.trim() || "_Keine klaren Muster erkennbar._";
-    await recordAiUsage({
-      callSite: "analytics_report",
-      model: SYNTHESIS_MODEL,
-      inputTokens: u?.inputTokens ?? 0,
-      outputTokens: u?.outputTokens ?? 0,
-    });
-    usage = mergeUsage(usage, SYNTHESIS_MODEL, u?.inputTokens ?? 0, u?.outputTokens ?? 0);
+    try {
+      const { text, usage: u } = await generateText({
+        model: anthropic(SYNTHESIS_MODEL),
+        providerOptions: anthropicOptionsFor("analyst"),
+        maxOutputTokens: maxOutputTokensFor("analyst", 1200),
+        abortSignal: stepCallSignal(stepStartedAt, SYNTHESIS_CALL_CAP_MS),
+        maxRetries: 1,
+        system:
+          "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Aus den verdichteten " +
+          "Beratungsdaten EINES Zeitraums (Persona-Verteilung, Kategorien, Gesprächs-Zusammenfassungen) " +
+          "erstellst du ein aggregiertes KUNDENWISSEN auf Deutsch (Markdown) für Produkt-, Marketing- und " +
+          "Beratungsteam. Es ist PSEUDONYM — keine einzelnen Personen, nur Muster über Gruppen.\n\n" +
+          "Gliederung (Markdown-Überschriften):\n" +
+          "1. **Wer kauft/fragt** — dominierende Segmente & Personas im Zeitraum.\n" +
+          "2. **Bedürfnisse & Kaufmotive** — was Kund:innen wollen, welche Produkte/Themen ziehen.\n" +
+          "3. **Einwände & Reibung** — Preis, Größe, Technik, Lieferzeit usw.\n" +
+          "4. **Chancen** — konkrete Empfehlungen für Sortiment, Bündel, Ansprache.\n\n" +
+          "Faktenbasiert, knapp, priorisiert. Erfinde nichts, was nicht aus den Daten hervorgeht.",
+        prompt:
+          `Zeitraum: ${from} bis ${to}\n\n## Persona-Verteilung\n${personaBlock || "(keine)"}\n\n` +
+          `## Kategorien\n${categoryBlock || "(keine)"}\n\n` +
+          `## Gesprächs-Zusammenfassungen (Stichprobe ${summaries.length})\n${summaryBlock}\n\n` +
+          "Erstelle jetzt das aggregierte Kundenwissen.",
+      });
+      md = text.trim() || "_Keine klaren Muster erkennbar._";
+      await recordAiUsage({
+        callSite: "analytics_report",
+        model: SYNTHESIS_MODEL,
+        inputTokens: u?.inputTokens ?? 0,
+        outputTokens: u?.outputTokens ?? 0,
+      });
+      usage = mergeUsage(usage, SYNTHESIS_MODEL, u?.inputTokens ?? 0, u?.outputTokens ?? 0);
+    } catch (err) {
+      // Fail-soft: the report keeps a note instead of the section.
+      const timedOut = isAbortError(err);
+      reportError(err, {
+        route: "lib/analytics-report-generate",
+        phase: timedOut ? "customer_synthesis-timeout" : "customer_synthesis",
+      });
+      md = timedOut ? "_Kundensynthese nicht erstellt (Zeitlimit)._" : "_Kundensynthese fehlgeschlagen._";
+    }
   }
 
   await updateAnalyticsReport(report.id, {
@@ -537,7 +637,12 @@ async function stepSynthesis(report: AnalyticsReportDetail): Promise<void> {
 
 // ── Phase: per-customer "current understanding" profiles (identity) ───────────
 
-async function stepProfiles(report: AnalyticsReportDetail): Promise<void> {
+/**
+ * One customer profile per step. The whole regeneration (best-effort Shopify
+ * refresh ≤ PROFILE_REFRESH_TIMEOUT_MS, loads, the Opus call) is aborted after
+ * PROFILE_CALL_CAP_MS; a timeout is a failed profile like any model error.
+ */
+async function stepProfiles(report: AnalyticsReportDetail, stepStartedAt: number): Promise<void> {
   const { from, to, options } = report;
   const progress = report.progress;
   const scratch = getScratch(progress);
@@ -568,7 +673,11 @@ async function stepProfiles(report: AnalyticsReportDetail): Promise<void> {
     try {
       // The shared regeneration path: stores text + structured fields on the
       // customer too, so the (expensive) pass also refreshes the live profile.
-      const res = await regenerateCustomerProfile(cid);
+      const res = await regenerateCustomerProfile(cid, {
+        abortSignal: stepCallSignal(stepStartedAt, PROFILE_CALL_CAP_MS),
+        maxRetries: 1,
+        refreshTimeoutMs: PROFILE_REFRESH_TIMEOUT_MS,
+      });
       if (res.ok) {
         const customer = await getCustomerById(cid);
         usage = mergeUsage(usage, PROFILE_MODEL, res.usage.inputTokens, res.usage.outputTokens);

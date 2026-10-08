@@ -18,6 +18,7 @@
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { modelFor } from "./ai-models.mjs";
+import { isAbortError } from "./object-stream.mjs";
 import { recordAiUsage } from "./ai-usage-store";
 import {
   parseAnalysisResponse,
@@ -57,6 +58,16 @@ export type GenerateAnalysisResult =
   | { ok: true; analysis: AnalysisResult; usage: AnalysisUsage }
   | { ok: false; reason: "unconfigured" | "no_data" | "model_error"; message: string };
 
+/**
+ * Bounds for a caller inside a time-limited step (the Komplettanalyse):
+ * `abortSignal` ends the call — retry waits included — and the result is a
+ * model_error. Absent = the SDK defaults (no timeout, 2 retries).
+ */
+export interface AnalysisCallBounds {
+  abortSignal?: AbortSignal;
+  maxRetries?: number;
+}
+
 function renderTranscript(turns: AdminTranscriptTurn[]): string {
   const kept = turns.slice(-MAX_TURNS);
   const text = kept
@@ -72,10 +83,13 @@ function renderTranscript(turns: AdminTranscriptTurn[]): string {
  * admin route can answer with the real reason (no key, nothing to analyse, model
  * failure). Records token usage against the conversation FK on success.
  */
-export async function generateConversationAnalysis(input: {
-  conversationId: number;
-  transcript: AdminTranscriptTurn[];
-}): Promise<GenerateAnalysisResult> {
+export async function generateConversationAnalysis(
+  input: {
+    conversationId: number;
+    transcript: AdminTranscriptTurn[];
+  },
+  bounds: AnalysisCallBounds = {}
+): Promise<GenerateAnalysisResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
     return {
       ok: false,
@@ -97,6 +111,8 @@ export async function generateConversationAnalysis(input: {
     const result = await generateText({
       model: anthropic(ANALYSIS_MODEL),
       maxOutputTokens: 600,
+      abortSignal: bounds.abortSignal,
+      maxRetries: bounds.maxRetries,
       system:
         "Du bist Analyst bei motion sports (Fitness- und Kraftsportgeräte). Du " +
         "analysierst EIN Beratungsgespräch zwischen einem Kunden und dem Chatbot " +
@@ -148,7 +164,11 @@ export async function generateConversationAnalysis(input: {
       },
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = isAbortError(err)
+      ? "Zeitlimit erreicht — Analyse abgebrochen."
+      : err instanceof Error
+        ? err.message
+        : String(err);
     return { ok: false, reason: "model_error", message };
   }
 }

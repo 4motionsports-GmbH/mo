@@ -20,8 +20,11 @@ import { reportError } from "@/lib/observability";
 // long — callTimeoutWithinStep; keep STEP_MAX_DURATION_S in
 // analytics-report-synthesis-core in sync with this value) and is retried on
 // the next step with less thinking. Should the platform kill a step anyway,
-// the attempt's in-flight mark makes the next step count it as failed. A
-// concurrent retry of the same report answers `busy` (migration 0077).
+// the attempt's in-flight mark makes the next step count it as failed. The
+// other phases' calls are bounded the same way (analytics-report-budget.mjs:
+// a cap per call, one SDK retry, no new item late in the step); a timeout
+// there is a failed item with a note. A concurrent retry of the same report
+// answers `busy` (migration 0077).
 export const maxDuration = 300;
 
 export async function POST(req: Request) {

@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -49,7 +49,9 @@ the single list of what is still open for M. C's open items are at the end of �
    - **Analyse:** one Komplettanalyse for 30 days → note the minutes per Opus phase, any note „… im 2.
      Versuch …“ (the 240 s limit was hit, the effort lowered), the cost of the decision part (≈ 0,70 €)
      and the chapter „Seit dem letzten Bericht“. Vercel → Logs: no timeout (504) on
-     `/api/admin/analytics/step` — the plan must allow the route's 300 s.
+     `/api/admin/analytics/step` (fixed 08.10. — see Done; a 504 there now means: tell C with the
+     report's notes). The report that stopped on 08.10. needs no restart: open it after the deploy —
+     it continues by itself at the Opus phase where it stopped (else „Erneut versuchen“).
    - **Kunden:** one person with a Vollprofil, one with a Kaufprofil → Überblick: each part of the
      profile text sits in the right card, nothing is missing.
    - **Verbesserung:** one run on the new Komplettanalyse („Maßnahmen importieren“ on) → note the
@@ -74,6 +76,12 @@ the single list of what is still open for M. C's open items are at the end of �
 
 ## Done
 
+- [x] Komplettanalyse stopped with a 504 (C, 08.10., pushed to main at the owner's request; no
+  migration, no switch): the Opus call never finished once Opus started writing its answer, so the
+  step ran into Vercel's 300 s limit. Now the call finishes normally, a step the platform still kills
+  counts as a failed attempt (next try with less thinking), every other report phase has its own time
+  limits, and the page bridges server timeouts and dropped connections by itself (Verbesserung the
+  same). Check: open list item 3 („Analyse“, „Verbesserung“).
 - [x] Four reworks of 06.10. (C; pushed to main on 06.10. at the owner's request; migration `0077`
   for M, no new switch; checks: open list item 3; open questions: C.30):
   - **Verbesserung:** runs on the business snapshot (a Komplettanalyse's period or 7/30/90 days vs

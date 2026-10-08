@@ -596,11 +596,13 @@ export async function saveConversationAnalysis(
 }
 
 /** Conversations in the window that are not yet analysed but have readable
- *  content to analyse — the bulk-action work list. */
+ *  content to analyse — the bulk-action work list. `exclude`: ids a caller
+ *  already gave up on (the Komplettanalyse's failed analyses). */
 export async function loadUnanalyzedIds(
   from: string,
   to: string,
   limit: number,
+  exclude: number[] = [],
   sql: Sql | null = getSql()
 ): Promise<number[]> {
   if (!sql) return [];
@@ -610,6 +612,7 @@ export async function loadUnanalyzedIds(
         FROM conversations c
        WHERE c.analysis_updated_at IS NULL
          AND c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+         AND NOT (c.id = ANY(${exclude}::bigint[]))
          AND EXISTS (SELECT 1 FROM messages m
                       WHERE m.conversation_id = c.id AND m.role = 'user'
                         AND m.tool_name IS NULL AND length(btrim(m.content)) > 0)
@@ -623,10 +626,12 @@ export async function loadUnanalyzedIds(
   }
 }
 
-/** Count of un-analysed-but-analysable conversations in the window (estimate). */
+/** Count of un-analysed-but-analysable conversations in the window (estimate),
+ *  without the `exclude` ids (as loadUnanalyzedIds). */
 export async function countUnanalyzedInRange(
   from: string,
   to: string,
+  exclude: number[] = [],
   sql: Sql | null = getSql()
 ): Promise<number> {
   if (!sql) return 0;
@@ -636,6 +641,7 @@ export async function countUnanalyzedInRange(
         FROM conversations c
        WHERE c.analysis_updated_at IS NULL
          AND c.created_at >= ${from}::date AND c.created_at < (${to}::date + 1)
+         AND NOT (c.id = ANY(${exclude}::bigint[]))
          AND EXISTS (SELECT 1 FROM messages m
                       WHERE m.conversation_id = c.id AND m.role = 'user'
                         AND m.tool_name IS NULL AND length(btrim(m.content)) > 0)
