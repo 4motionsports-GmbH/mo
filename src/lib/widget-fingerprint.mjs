@@ -29,6 +29,8 @@ export const WIDGET_MARKERS = Object.freeze([
   "ms-chat-ctx-last", // tasks of 2026-10-05: page context on typed messages (storage key)
   "ms-chat-optin-benefits", // tasks of 2026-10-05: served consent-popup bullets (class name)
   "Rabattaktionen zuerst erfahren", // widget-authored popup bullet (2026-10-01 … 2026-10-04 builds); gone with the served bullets
+  "ms-chat-reward-badge", // round of 2026-10-08 (495fdf6, PR #76): served reward badge (class name)
+  "ms-chat-vm-lead", // round of 2026-10-08: value-moment lead of the inline card (class name)
 ]);
 
 /** @param {string} s */
@@ -58,20 +60,30 @@ export function countWidgetMarkers(js) {
 }
 
 /**
- * The builds, newest first. `current` = the build live since 2026-10-06 (bc7fb5d);
+ * The builds, newest first. `current` = the build live since 2026-10-08 (495fdf6,
+ * dormant until the backend serves `reward` / `valueMoment`);
  * `acceptable` = the widget side is ready for the order status and the App Proxy
  * (the App Proxy also needs the backend step C.17, docs/ROLLOUT_TODO.md 5.4).
  * @type {ReadonlyArray<{ key: string, commit: string, label: string, current: boolean, acceptable: boolean, consequence: string }>}
  */
 export const WIDGET_BUILDS = Object.freeze([
   {
-    key: "tasks-2026-10-05",
-    commit: "bc7fb5d",
-    label: "Widget mit den Aufgaben vom 05.10. (bc7fb5d, 2026-10-06: Vorteile vom Server, Seitenkontext, Token-Erneuerung)",
+    key: "reward-2026-10-08",
+    commit: "495fdf6",
+    label: "Widget mit der Runde vom 08.10. (495fdf6, PR #76: Willkommensgutschein, Anmelde-Teaser, Wertmoment — ruhend)",
     current: true,
     acceptable: true,
     consequence:
-      "Erwarteter Live-Stand: Vorteile im Einwilligungs-Popup kommen vom Server (mit Variante und Platzierung), getippte Fragen auf Produkt- und Kollektionsseiten tragen den Seitenkontext, die Bestell-Markierung wird nach einer Beratung erneuert und beim Abmelden geleert.",
+      "Erwarteter Live-Stand, ruhend: ohne reward / valueMoment im ausgelieferten Text (v6) zeigt das Widget nichts Neues; aktiv sind nur die Härtungen H-1 (kein Wertmoment und keine Token-Erneuerung nach einem abgebrochenen Stream) und H-2 (ein Ja der letzten 24 h auf diesem Gerät fragt nicht erneut). CONSENT_REWARD_ENABLED / CONSENT_VALUE_MOMENT_ENABLED erst nach T8/T9.",
+  },
+  {
+    key: "tasks-2026-10-05",
+    commit: "bc7fb5d",
+    label: "Widget mit den Aufgaben vom 05.10. (bc7fb5d, 2026-10-06: Vorteile vom Server, Seitenkontext, Token-Erneuerung)",
+    current: false,
+    acceptable: true,
+    consequence:
+      "Stand vom 06.10.: Vorteile im Einwilligungs-Popup kommen vom Server (mit Variante und Platzierung), getippte Fragen auf Produkt- und Kollektionsseiten tragen den Seitenkontext, die Bestell-Markierung wird nach einer Beratung erneuert und beim Abmelden geleert — aber ohne Gutschein-Hinweis, Anmelde-Teaser und Wertmoment und ohne H-1/H-2. 495fdf6 hochladen.",
   },
   {
     key: "main-2026-10-04",
@@ -80,7 +92,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Stand vor dem 06.10.: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat — aber Vorteile im Einwilligungs-Popup noch aus dem Widget, kein Seitenkontext bei getippten Fragen, keine Token-Erneuerung. bc7fb5d hochladen.",
+      "Stand vor dem 06.10.: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat — aber Vorteile im Einwilligungs-Popup noch aus dem Widget, kein Seitenkontext bei getippten Fragen, keine Token-Erneuerung. 495fdf6 hochladen.",
   },
   {
     key: "fixes-minified",
@@ -89,7 +101,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Stand vor dem 06.10. (minifiziert; ob der Audio-Stopp von 3e87341 dabei ist, lässt sich nicht erkennen): ohne Vorteile vom Server, Seitenkontext und Token-Erneuerung — bc7fb5d hochladen.",
+      "Stand vor dem 06.10. (minifiziert; ob der Audio-Stopp von 3e87341 dabei ist, lässt sich nicht erkennen): ohne Vorteile vom Server, Seitenkontext und Token-Erneuerung — 495fdf6 hochladen.",
   },
   {
     key: "fixes-8d0a0c4",
@@ -98,7 +110,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Stand vom 04.10. ohne Audio-Stopp bei „Neuer Chat“ und ohne die Aufgaben vom 05.10. — bc7fb5d hochladen.",
+      "Stand vom 04.10. ohne Audio-Stopp bei „Neuer Chat“ und ohne die Aufgaben vom 05.10. — 495fdf6 hochladen.",
   },
   {
     key: "pr73",
@@ -107,7 +119,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Anmeldung, mo_c und App-Proxy-Einlösen funktionieren; ohne Sitzung im Kontaktformular-Body (das Backend nimmt dann x-ms-session), ohne order_support-Beschriftung, ohne Antwortabbruch bei neuem Chat und ohne die Aufgaben vom 05.10. — bc7fb5d hochladen.",
+      "Anmeldung, mo_c und App-Proxy-Einlösen funktionieren; ohne Sitzung im Kontaktformular-Body (das Backend nimmt dann x-ms-session), ohne order_support-Beschriftung, ohne Antwortabbruch bei neuem Chat und ohne die Aufgaben vom 05.10. — 495fdf6 hochladen.",
   },
   {
     key: "popup-2026-10-01",
@@ -161,7 +173,14 @@ export function classifyWidgetBuild(c) {
     // a half-applied build is unknown.
     const complete =
       n("ms-chat-ctx-last") > 0 && n("ms-chat-optin-benefits") > 0 && n("Rabattaktionen zuerst erfahren") === 0;
-    return complete ? build("tasks-2026-10-05") : null;
+    if (!complete) return null;
+    // On top of it, the round of 2026-10-08 (495fdf6): both of its class names,
+    // or it is half applied.
+    const reward = n("ms-chat-reward-badge") > 0;
+    const valueMoment = n("ms-chat-vm-lead") > 0;
+    if (reward && valueMoment) return build("reward-2026-10-08");
+    if (reward || valueMoment) return null;
+    return build("tasks-2026-10-05");
   }
   if (pr73 && fixes) {
     const speaking = n("endSpeaking(");

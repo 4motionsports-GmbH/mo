@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   consentStrings,
   CONSENT_COPY_EN_LEGAL_REVIEWED,
+  DOI_MAIL_SUBJECTS,
 } from "./consent-copy-core.mjs";
 
 // The German values are lawyer-approved and MUST stay byte-identical (no
@@ -88,4 +89,19 @@ test("the approved English consent strings are pinned (a change is a new review 
 test("an unsupported locale falls back to the German copy", () => {
   // consentStrings is `en` only for exactly "en"; everything else → German.
   assert.deepEqual(consentStrings("fr"), consentStrings("de"));
+});
+
+test("DOI_MAIL_SUBJECTS holds every current DOI subject and never drops an older one (append-only)", () => {
+  // verify:live section 10 finds DOI mails in email_messages by these subjects.
+  assert.ok(DOI_MAIL_SUBJECTS.includes(consentStrings("de").doiSubject), "current German subject missing — append it");
+  assert.ok(DOI_MAIL_SUBJECTS.includes(consentStrings("en").doiSubject), "current English subject missing — append it");
+  // The subjects sent since the first DOI mail; new ones go after them.
+  assert.deepEqual(DOI_MAIL_SUBJECTS.slice(0, 2), [
+    "Bitte bestätige deine Anmeldung bei motion sports",
+    "Please confirm your sign-up with motion sports",
+  ]);
+  assert.equal(new Set(DOI_MAIL_SUBJECTS).size, DOI_MAIL_SUBJECTS.length);
+  assert.ok(Object.isFrozen(DOI_MAIL_SUBJECTS));
+  // A reply („Re: …“) is not a DOI mail.
+  assert.ok(!DOI_MAIL_SUBJECTS.some((s) => s.startsWith("Re:")));
 });
