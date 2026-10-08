@@ -42,6 +42,9 @@ const INFO = (
   </Explain>
 );
 
+const PENDING_INFO =
+  "„Bestätigung schon unterwegs“: keine neue DOI-Mail, weil schon eine Bestätigung unterwegs ist — eine gültige DOI-Mail ging innerhalb der Sperrfrist raus (oder eine gleichzeitige Anfrage verschickt sie gerade), oder die Bestätigungsmail des Shops ist verschickt. Zählt nicht als „DOI-Mail verschickt“ und nicht im Nenner der DOI-Quote.";
+
 export function EmailCaptureSection({ funnel, range }: { funnel: EmailCaptureFunnel | null; range: KpiRange }) {
   const empty = !funnel
     ? "Noch keine Daten."
@@ -73,9 +76,10 @@ export function EmailCaptureSection({ funnel, range }: { funnel: EmailCaptureFun
             <Stat
               label="Marketing-Haken"
               value={num(funnel.marketingOptedIn)}
+              info={funnel.doiPending > 0 ? PENDING_INFO : undefined}
               hint={
                 funnel.marketingOptedIn > 0
-                  ? `${num(funnel.doiSent)} DOI-Mail verschickt${funnel.doiNotSent > 0 ? ` · ${num(funnel.doiNotSent)} nicht verschickt` : ""} · ${num(funnel.alreadySubscribed)} bereits abonniert${funnel.suppressed > 0 ? ` · ${num(funnel.suppressed)} gesperrt` : ""}`
+                  ? `${num(funnel.doiSent)} DOI-Mail verschickt${funnel.doiNotSent > 0 ? ` · ${num(funnel.doiNotSent)} nicht verschickt` : ""}${funnel.doiPending > 0 ? ` · ${num(funnel.doiPending)} Bestätigung schon unterwegs` : ""} · ${num(funnel.alreadySubscribed)} bereits abonniert${funnel.suppressed > 0 ? ` · ${num(funnel.suppressed)} gesperrt` : ""}`
                   : undefined
               }
             />

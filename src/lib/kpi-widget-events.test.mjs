@@ -92,7 +92,7 @@ test("loginGateRates: junk and impossible counts never break the funnel", () => 
 
 test("server-only events: the AC §5 server table, nothing the widget sends", async () => {
   const { SERVER_ONLY_EVENTS, isServerOnlyEvent } = await import("./kpi-widget-events.mjs");
-  for (const e of ["account_signin_linked", "account_signin_link_refused", "account_signin_succeeded", "account_erased", "campaign_chat_started", "contact_form_submitted", "order_status_lookup", "mo_order_marker_unresolved", "account_shop_recognised", "page_context_applied", "page_context_answered", "email_capture_ask_shown"]) {
+  for (const e of ["account_signin_linked", "account_signin_link_refused", "account_signin_succeeded", "account_erased", "campaign_chat_started", "contact_form_submitted", "order_status_lookup", "mo_order_marker_unresolved", "account_shop_recognised", "page_context_applied", "page_context_answered", "email_capture_ask_shown", "consent_ask_eligible", "consent_copy_served"]) {
     assert.equal(isServerOnlyEvent(e), true, e);
   }
   for (const e of [LOGIN_GATE_SHOWN, ACCOUNT_SIGNIN_STARTED, ACCOUNT_SIGNIN_RETURN, "consent_gate_accepted", "email_capture_declined", "account_export_started", "account_exported", "chat_opened", "product_cta_clicked", "add_to_cart_clicked"]) {
@@ -172,4 +172,84 @@ test("consent variant rows: forged values merge into „unbekannt“; DOI rate l
   assert.equal(byKey["a|unbekannt"].shown, 1);
   assert.deepEqual(r({ shown: 0, accepted: 0, doiRequired: 0, doiConfirmed: 0 }), { acceptRate: null, doiRate: null, comparable: false });
   assert.deepEqual(r({ shown: 200, accepted: 50, doiRequired: 40, doiConfirmed: 20 }), { acceptRate: 0.25, doiRate: 0.5, comparable: true });
+});
+
+test("consent variant rows: the reward counts merge with the rest, the row key stays variant|placement", async () => {
+  const { normalizeConsentVariantRows: n } = await import("./kpi-widget-events.mjs");
+  const known = (id) => id === "a" || id === "b";
+  const place = (p) => (["popup", "signin_return", "value_moment"].includes(p) ? p : null);
+  const rows = n(
+    [
+      { variant: "b", placement: "popup", shown: 10, accepted: 3, rewardShown: 8, rewardAccepted: 2 },
+      { variant: "b", placement: "popup", optedIn: 3, doiRequired: 3, doiConfirmed: 1 },
+      { variant: "a", placement: "popup", shown: 5 },
+    ],
+    known,
+    place
+  );
+  const byKey = Object.fromEntries(rows.map((x) => [`${x.variant}|${x.placement}`, x]));
+  assert.equal(rows.length, 2);
+  assert.equal(byKey["b|popup"].rewardShown, 8);
+  assert.equal(byKey["b|popup"].rewardAccepted, 2);
+  assert.equal(byKey["b|popup"].optedIn, 3);
+  assert.equal(byKey["a|popup"].rewardShown, 0);
+});
+
+test("rewardRenderGap: only for a variant with a reward, never negative", async () => {
+  const { rewardRenderGap: g } = await import("./kpi-widget-events.mjs");
+  assert.equal(g({ shown: 10, rewardShown: 7 }, true), 3);
+  assert.equal(g({ shown: 10, rewardShown: 7 }, false), 0);
+  assert.equal(g({ shown: 5, rewardShown: 9 }, true), 0);
+  assert.equal(g({ shown: "4" }, true), 4);
+  assert.equal(g(/** @type {any} */ (null), true), 0);
+});
+
+test("login teaser rows: hint × variant, forged variants merge into „unbekannt“, mixed sessions apart", async () => {
+  const { normalizeLoginTeaserRows: n } = await import("./kpi-widget-events.mjs");
+  const known = (id) => id === "a" || id === "b";
+  const rows = n(
+    [
+      { teaser: true, mixed: false, variant: "b", servedVariant: "b", shown: 6, clicked: 3, signedIn: 2, linked: 2, optedIn: 1, confirmed: 1 },
+      { teaser: true, mixed: false, variant: "b", servedVariant: null, shown: 4, clicked: 1, linked: 1 },
+      { teaser: true, mixed: false, variant: "<x>", shown: 2, clicked: 1 },
+      { teaser: true, mixed: false, variant: "zz", shown: 1 },
+      { teaser: false, mixed: false, variant: "", servedVariant: "a", shown: 20, clicked: 4, linked: 2 },
+      { teaser: false, mixed: false, variant: "b", shown: 1 }, // no teaser → no variant shown
+      { teaser: false, mixed: true, variant: "b", shown: 2, clicked: 2, linked: 1 },
+      { teaser: true, mixed: false, variant: "b", shown: 0, clicked: 5 }, // no shown session → dropped
+    ],
+    known
+  );
+  assert.deepEqual(
+    rows.map((r) => `${r.hint}|${r.variant}|${r.shown}`),
+    ["mit Hinweis|b|10", "mit Hinweis|unbekannt|3", "ohne Hinweis|—|21", "gemischt|b|2"]
+  );
+  const b = rows[0];
+  assert.equal(b.clicked, 4);
+  assert.equal(b.linked, 3);
+  assert.equal(b.optedIn, 1);
+  assert.equal(b.confirmed, 1);
+  assert.equal(b.rates.overallRate, 0.3);
+  assert.equal(rows[2].rates.overallRate, 2 / 21);
+});
+
+test("served-variant rows: only sessions with a served variant, teaser share counted", async () => {
+  const { normalizeServedVariantRows: n } = await import("./kpi-widget-events.mjs");
+  const known = (id) => id === "a" || id === "b";
+  const rows = n(
+    [
+      { teaser: true, mixed: false, variant: "b", servedVariant: "b", shown: 6, clicked: 3, linked: 2 },
+      { teaser: false, mixed: false, variant: "", servedVariant: "b", shown: 2, clicked: 1 },
+      { teaser: false, mixed: false, variant: "", servedVariant: "a", shown: 10, clicked: 2, linked: 1 },
+      { teaser: false, mixed: false, variant: "", servedVariant: null, shown: 50 },
+      { teaser: false, mixed: false, variant: "", servedVariant: "", shown: 50 },
+      { teaser: false, mixed: false, variant: "", servedVariant: "?", shown: 1 },
+    ],
+    known
+  );
+  assert.deepEqual(
+    rows.map((r) => `${r.variant}|${r.shown}|${r.withTeaser}`),
+    ["a|10|0", "b|8|6", "unbekannt|1|0"]
+  );
+  assert.equal(rows[1].rates.overallRate, 0.25);
 });

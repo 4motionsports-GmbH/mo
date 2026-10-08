@@ -23,6 +23,8 @@ import { fetchCustomerIdentity } from "@/lib/shopify-customer-account";
 import { isRevokedTokenError } from "@/lib/customer-account-oauth.mjs";
 import { fetchAdminCustomerById } from "@/lib/shopify-orders";
 import { displayNameOf, resolveMarketingOptInState } from "@/lib/signed-in-identity";
+import { recordConsentAskEligible } from "@/lib/consent-ask-kpi";
+import { resolveLocale } from "@/lib/locale";
 
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -106,6 +108,14 @@ export async function GET(req: Request) {
     // gates its opt-in card on `optInActionable`). Identical rule on the
     // shop-native detection path; see lib/signed-in-identity.
     const marketing = await resolveMarketingOptInState(resolved.customerId, "api/auth/me");
+    // Welcome-voucher test (OPTIN_REWARD T6): an askable session counts once per
+    // 24 h with the variant its sign-in copy assigns (x-ms-locale) — the
+    // intention-to-treat base. Best-effort, never fails the answer.
+    await recordConsentAskEligible({
+      sessionId,
+      locale: resolveLocale(req),
+      optInActionable: marketing.optInActionable,
+    });
 
     return json(
       {

@@ -215,6 +215,11 @@ export async function GET(req: Request) {
     // 4) At-sign-in marketing opt-in state — the SAME shared contract as
     //    /api/auth/me (lib/signed-in-identity), so the opt-in card never diverges
     //    between the shop-native and chatbot detection paths.
+    //    No consent_ask_eligible here (OPTIN_REWARD T6): the session is not
+    //    signed in until the widget redeems the code, the widget takes
+    //    `marketing` from /api/auth/me after the redeem (which records it),
+    //    and this request carries no locale — a record here would pin the
+    //    wrong arm for /en sessions for 24 h.
     const marketing: MarketingOptInState =
       customerId != null
         ? await resolveMarketingOptInState(customerId, "api/auth/storefront")

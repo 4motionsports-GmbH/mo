@@ -122,6 +122,9 @@ export const RELEASE_EFFECTS = Object.freeze({
   "doi-mail-sent": { measurement: ["capture.doiRate", "capture.doiSent"], product: [] },
   "consent-ask-suppressed": { measurement: ["consent.popupShown", "consent.popupRate"], product: [] },
   "attribution-threads-maillinks": { measurement: ATTRIBUTION, product: [] },
+  // Dormant reward round: only H-2 (no second ask in another tab within 24 h
+  // of a yes) and H-1 (no marker renewal after a broken answer) act today.
+  "widget-reward-dormant": { measurement: ["consent.popupShown", "consent.popupRate", ...ATTRIBUTION], product: [] },
 });
 
 /** What flipping a switch changes (switch keys of business-snapshot snapshotSwitches). */
