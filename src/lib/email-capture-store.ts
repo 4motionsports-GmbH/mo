@@ -5,6 +5,7 @@
 //
 //   - upsertEmailCapture()      POST /api/capture-email, /api/chat-marketing-opt-in,
 //                               /api/account/marketing-opt-in
+//   - releaseDoiClaim()         the same routes, after a DOI send that failed or never ran
 //   - confirmMarketingByToken() GET  /api/confirm-marketing
 //   - unsubscribeByEmail()      GET  /api/unsubscribe
 //   - isSuppressed()            the block list, checked by every marketing send
@@ -17,18 +18,32 @@
 //     use the one consent instead (customers.email_consent_state = 'subscribed'
 //     AND not suppressed — campaign-prepare.ts / campaign-email.ts).
 //   * A suppressed or unsubscribed address is never re-pended for DOI.
+//   * At most one DOI mail per address within MARKETING_DOI_RESEND_COOLDOWN_
+//     MINUTES, also for parallel requests; a DOI link confirms once, and never
+//     after a withdrawal or a block (OPTIN_REWARD T2.1–T2.3).
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getSql, type Sql } from "./db";
 import { isValidEmail } from "./capture-validation.mjs";
-import { decideCaptureDoi } from "./email-capture-core.mjs";
+import { decideCaptureDoi, recordDoiCooldown } from "./email-capture-core.mjs";
+import { parseDoiResendCooldownMinutes } from "./doi-cooldown.mjs";
 import { optInOutcome } from "./capture-funnel.mjs";
 import { normalizeLocale } from "./locale.mjs";
 import type { Locale } from "./locale";
 import { parseIntEnv } from "./env-num";
 import { getBaseUrl } from "./base-url";
+import { reportError } from "./observability";
 
 export type MarketingDoiStatus = "none" | "pending" | "confirmed";
+
+/** What a ticked marketing box led to (capture-funnel.mjs → OPT_IN_OUTCOMES). */
+export type OptInOutcome =
+  | "doi_required"
+  | "already_confirmed"
+  | "already_subscribed"
+  | "suppressed"
+  | "doi_pending"
+  | "shopify_pending";
 
 // Canonical email validation lives in capture-validation.mjs (plain .mjs so
 // the capture-request validation is unit-testable); re-exported here so
@@ -47,6 +62,15 @@ function generateDoiToken(): string {
 
 export function doiExpiryDays(): number {
   return parseIntEnv("MARKETING_DOI_EXPIRY_DAYS", 7);
+}
+
+/**
+ * MARKETING_DOI_RESEND_COOLDOWN_MINUTES (default 30, at least 1): after a DOI
+ * mail, another opt-in for the address sends none within this window — and
+ * parallel accepts collapse into one mail (doi-cooldown.mjs).
+ */
+export function doiResendCooldownMinutes(): number {
+  return parseDoiResendCooldownMinutes(process.env.MARKETING_DOI_RESEND_COOLDOWN_MINUTES);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +185,13 @@ export interface UpsertCaptureInput {
    * as evidence, but no new DOI token / mail is issued.
    */
   alreadySubscribed?: boolean;
+  /**
+   * The shop's own sign-up confirmation mail is out for this person (C.29:
+   * Shopify PENDING within MARKETING_DOI_EXPIRY_DAYS — lib/shopify-optin-
+   * precheck.ts): like `alreadySubscribed`, the tap is recorded as evidence,
+   * no Mo token or mail is issued, and a pending Mo DOI is kept untouched.
+   */
+  pendingElsewhere?: boolean;
 }
 
 export interface UpsertCaptureResult {
@@ -168,33 +199,74 @@ export interface UpsertCaptureResult {
   email: string;
   marketingDoiStatus: MarketingDoiStatus;
   doiToken: string | null;
-  /** True when a fresh DOI confirmation email must be sent for marketing. */
+  /**
+   * True when THIS request claimed the DOI send and must mail `doiToken` now.
+   * After a failed send (or none at all) the route calls releaseDoiClaim.
+   */
   doiEmailRequired: boolean;
+  /** The claim's exact doi_sent_at text (releaseDoiClaim guard); null without a claim. */
+  doiClaimStamp: string | null;
+  /**
+   * What releaseDoiClaim puts back into doi_sent_at: the previous send time
+   * of a re-sent token (its earlier link stays valid), null for a new token.
+   */
+  doiClaimRestore: string | null;
+  /**
+   * The box was ticked, but a valid Mo DOI mail went out within the resend
+   * cooldown or a parallel request just claimed the send: no mail now, the
+   * answer reads „confirmation mail is out“ (T2.1, outcome doi_pending).
+   */
+  doiCooldown: boolean;
+  /** The claim mails the still-valid pending token again (its expiry restarts). */
+  doiResend: boolean;
   /**
    * Marketing was granted and the address already holds the one consent
    * (input.alreadySubscribed) and is not suppressed — answer "confirmed",
    * no DOI mail.
    */
   subscribedElsewhere: boolean;
+  /**
+   * Marketing was granted, the address is neither suppressed nor subscribed,
+   * and the shop's own confirmation mail is out (input.pendingElsewhere) —
+   * answer "pending", no Mo DOI mail (C.29, outcome shopify_pending).
+   */
+  pendingElsewhere: boolean;
   /** The address is on the suppression list (unsubscribed / bounced / complained). */
   suppressed: boolean;
   /** What a ticked marketing box led to (capture-funnel.mjs), null when not ticked. */
-  optInOutcome: "doi_required" | "already_confirmed" | "already_subscribed" | "suppressed" | null;
+  optInOutcome: OptInOutcome | null;
   /** The stored language for this address ("de" default). */
   locale: Locale;
 }
 
 /**
  * Upsert one consent record (keyed by normalised email). Records the exact
- * consent copy shown for the Art. 7 audit trail. Decides the marketing DOI
- * state defensively:
+ * consent copy shown for the Art. 7 audit trail, and decides the marketing
+ * DOI state — at most ONE DOI mail per address within the resend cooldown,
+ * also when requests race (OPTIN_REWARD T2.1/T2.2):
  *   - already 'confirmed' → stays confirmed (re-submitting doesn't reset it).
- *   - marketing ticked, not yet confirmed, not suppressed → 'pending' + new
- *     token + doiEmailRequired=true.
+ *   - marketing ticked, address subscribed elsewhere or the shop's own
+ *     confirmation mail out (pendingElsewhere) → no Mo token, no mail; a
+ *     pending Mo DOI stays untouched.
+ *   - marketing ticked, a Mo DOI pending whose mail went out within the
+ *     cooldown → kept, no mail (doiCooldown).
+ *   - marketing ticked otherwise, not suppressed → CLAIM: 'pending', the
+ *     still-valid pending token (re-send, doiResend) or a new one, sent now —
+ *     doiEmailRequired=true only for the request whose claim wins.
  *   - marketing not ticked (or address suppressed) → no new DOI; an existing
  *     'confirmed' is preserved, a 'pending' one too unless the address is
  *     suppressed (its link stays valid), otherwise 'none'.
- * Rules and tests: email-capture-core.mjs.
+ *
+ * Two conditional statements, both deciding on the locked current row and the
+ * database clock (a JS read alone races): CLAIM (only when the core decided
+ * to send) writes the pending DOI unless the row is confirmed, within the
+ * cooldown or suppressed — a row back means this request sends; RECORD (every
+ * other decision, and every lost claim) stores the evidence and computes the
+ * DOI columns from the current row, so it never clobbers a parallel claim or
+ * reverts a confirmation. Rules and tests: email-capture-core.mjs
+ * (decideCaptureDoi, recordDoiStatus, recordDoiCooldown) — the SQL mirrors
+ * them. A lost claim is not an error; null only when there is no database or
+ * a statement fails (the routes answer 503).
  */
 export async function upsertEmailCapture(
   input: UpsertCaptureInput,
@@ -204,97 +276,264 @@ export async function upsertEmailCapture(
   const email = normalizeEmail(input.email);
   const sessionId = input.sessionId?.trim() || null;
   const locale: Locale = normalizeLocale(input.locale);
+  const ticked = Boolean(input.marketingConsent);
 
-  // Read existing state to decide the marketing transition.
-  const existingRows = await sql`
-    SELECT id, marketing_doi_status, doi_token, doi_sent_at, unsubscribed_at
-      FROM email_captures WHERE email = ${email}
-  `;
-  const existing = existingRows[0] as
-    | {
-        marketing_doi_status: MarketingDoiStatus;
-        doi_token: string | null;
-        doi_sent_at: string | Date | null;
-        unsubscribed_at: string | null;
-      }
-    | undefined;
-
-  const suppressed = await isSuppressed(email, sql);
-
-  // The transition rules live in the tested core (email-capture-core.mjs).
-  const decided = decideCaptureDoi({
-    marketingConsent: input.marketingConsent,
-    alreadySubscribed: input.alreadySubscribed,
-    suppressed,
-    existing: existing
-      ? {
-          status: existing.marketing_doi_status,
-          token: existing.doi_token,
-          sentAt:
-            existing.doi_sent_at == null
-              ? null
-              : existing.doi_sent_at instanceof Date
-                ? existing.doi_sent_at.toISOString()
-                : String(existing.doi_sent_at),
+  try {
+    // Read existing state to pre-decide the marketing transition.
+    const existingRows = await sql`
+      SELECT marketing_doi_status, doi_token, doi_sent_at, doi_sent_at::text AS doi_sent_at_text
+        FROM email_captures WHERE email = ${email}
+    `;
+    const existing = existingRows[0] as
+      | {
+          marketing_doi_status: MarketingDoiStatus;
+          doi_token: string | null;
+          doi_sent_at: string | Date | null;
+          doi_sent_at_text: string | null;
         }
-      : null,
-    newToken: generateDoiToken,
-    now: new Date().toISOString(),
-  });
-  const status: MarketingDoiStatus = decided.status;
-  const doiToken = decided.doiToken;
-  const doiSentAt = decided.doiSentAt;
-  const doiEmailRequired = decided.doiEmailRequired;
-  const marketingConsentColumn = decided.marketingConsentColumn;
+      | undefined;
 
-  const rows = await sql`
-    INSERT INTO email_captures
-      (session_id, email, transactional_consent, marketing_consent,
-       marketing_doi_status, doi_token, doi_sent_at, consent_text_shown,
-       consent_copy_version, locale, created_at)
-    VALUES
-      (${sessionId}, ${email}, ${input.transactionalConsent}, ${marketingConsentColumn},
-       ${status}, ${doiToken}, ${doiSentAt}, ${input.consentTextShown},
-       ${input.consentCopyVersion}, ${locale}, now())
-    ON CONFLICT (email) DO UPDATE SET
-      session_id            = COALESCE(EXCLUDED.session_id, email_captures.session_id),
-      transactional_consent = email_captures.transactional_consent OR EXCLUDED.transactional_consent,
-      marketing_consent     = EXCLUDED.marketing_consent,
-      marketing_doi_status  = EXCLUDED.marketing_doi_status,
-      doi_token             = EXCLUDED.doi_token,
-      doi_sent_at           = EXCLUDED.doi_sent_at,
-      -- Keep the freshest consent copy we actually showed; the version always
-      -- follows the text it describes (updated together, or not at all).
-      consent_text_shown    = COALESCE(EXCLUDED.consent_text_shown, email_captures.consent_text_shown),
-      consent_copy_version  = CASE
-        WHEN EXCLUDED.consent_text_shown IS NOT NULL THEN EXCLUDED.consent_copy_version
-        ELSE email_captures.consent_copy_version
-      END,
-      -- Track the latest storefront language this address engaged from.
-      locale                = COALESCE(EXCLUDED.locale, email_captures.locale)
-    RETURNING id
-  `;
-  const id = rows[0]?.id as number | undefined;
-  if (id == null) return null;
+    const suppressed = await isSuppressed(email, sql);
+    const cooldownMinutes = doiResendCooldownMinutes();
+    const expiryDays = doiExpiryDays();
 
-  const subscribedElsewhere = Boolean(input.marketingConsent && !suppressed && input.alreadySubscribed);
-  return {
-    id,
-    email,
-    marketingDoiStatus: status,
-    doiToken,
-    doiEmailRequired,
-    subscribedElsewhere,
-    suppressed,
-    optInOutcome: optInOutcome({
-      marketingConsent: Boolean(input.marketingConsent),
+    // The transition rules live in the tested core (email-capture-core.mjs).
+    const decided = decideCaptureDoi({
+      marketingConsent: ticked,
+      alreadySubscribed: input.alreadySubscribed,
+      pendingElsewhere: input.pendingElsewhere,
       suppressed,
-      doiEmailRequired,
-      marketingDoiStatus: status,
-      subscribedElsewhere,
-    }),
-    locale,
-  };
+      existing: existing
+        ? {
+            status: existing.marketing_doi_status,
+            token: existing.doi_token,
+            sentAt: existing.doi_sent_at == null ? null : new Date(existing.doi_sent_at).toISOString(),
+          }
+        : null,
+      newToken: generateDoiToken,
+      now: new Date().toISOString(),
+      cooldownMinutes,
+      expiryDays,
+    });
+
+    const result = (r: {
+      id: number;
+      status: MarketingDoiStatus;
+      doiToken: string | null;
+      doiEmailRequired: boolean;
+      doiClaimStamp: string | null;
+      doiClaimRestore: string | null;
+      doiCooldown: boolean;
+      doiResend: boolean;
+      suppressed: boolean;
+    }): UpsertCaptureResult => {
+      const subscribedElsewhere = Boolean(ticked && !r.suppressed && input.alreadySubscribed);
+      const pendingElsewhere = Boolean(ticked && !r.suppressed && !input.alreadySubscribed && input.pendingElsewhere);
+      return {
+        id: r.id,
+        email,
+        marketingDoiStatus: r.status,
+        doiToken: r.doiToken,
+        doiEmailRequired: r.doiEmailRequired,
+        doiClaimStamp: r.doiClaimStamp,
+        doiClaimRestore: r.doiClaimRestore,
+        doiCooldown: r.doiCooldown,
+        doiResend: r.doiResend,
+        subscribedElsewhere,
+        pendingElsewhere,
+        suppressed: r.suppressed,
+        optInOutcome: optInOutcome({
+          marketingConsent: ticked,
+          suppressed: r.suppressed,
+          doiEmailRequired: r.doiEmailRequired,
+          marketingDoiStatus: r.status,
+          subscribedElsewhere,
+          pendingElsewhere,
+        }) as OptInOutcome | null,
+        locale,
+      };
+    };
+
+    if (decided.doiEmailRequired) {
+      // CLAIM. The VALUES token is always a new one; the SQL keeps a pending,
+      // unexpired token instead (a re-send), so a token the core read as
+      // reusable but the database clock calls expired is replaced. A row
+      // back = this request won the send; nothing back = confirmed, within
+      // the cooldown (a parallel request claimed it) or suppressed since.
+      const freshToken = decided.doiResend ? generateDoiToken() : (decided.doiToken ?? generateDoiToken());
+      const claimed = (await sql`
+        INSERT INTO email_captures
+          (session_id, email, transactional_consent, marketing_consent,
+           marketing_doi_status, doi_token, doi_sent_at, consent_text_shown,
+           consent_copy_version, locale, created_at)
+        VALUES
+          (${sessionId}, ${email}, ${input.transactionalConsent}, true,
+           'pending', ${freshToken}, now(), ${input.consentTextShown},
+           ${input.consentCopyVersion}, ${locale}, now())
+        ON CONFLICT (email) DO UPDATE SET
+          session_id            = COALESCE(EXCLUDED.session_id, email_captures.session_id),
+          transactional_consent = email_captures.transactional_consent OR EXCLUDED.transactional_consent,
+          marketing_consent     = true,
+          marketing_doi_status  = 'pending',
+          doi_token             = CASE
+            WHEN email_captures.marketing_doi_status = 'pending'
+             AND email_captures.doi_token IS NOT NULL
+             AND (email_captures.doi_sent_at IS NULL
+                  OR email_captures.doi_sent_at > now() - make_interval(days => ${expiryDays}))
+            THEN email_captures.doi_token
+            ELSE EXCLUDED.doi_token
+          END,
+          doi_sent_at           = EXCLUDED.doi_sent_at,
+          consent_text_shown    = COALESCE(EXCLUDED.consent_text_shown, email_captures.consent_text_shown),
+          consent_copy_version  = CASE
+            WHEN EXCLUDED.consent_text_shown IS NOT NULL THEN EXCLUDED.consent_copy_version
+            ELSE email_captures.consent_copy_version
+          END,
+          locale                = COALESCE(EXCLUDED.locale, email_captures.locale)
+        WHERE email_captures.marketing_doi_status <> 'confirmed'
+          AND NOT (email_captures.marketing_doi_status = 'pending'
+                   AND email_captures.doi_token IS NOT NULL
+                   AND email_captures.doi_sent_at IS NOT NULL
+                   AND email_captures.doi_sent_at > now() - make_interval(mins => ${cooldownMinutes}))
+          AND NOT EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = EXCLUDED.email)
+        RETURNING id, doi_token, doi_sent_at::text AS doi_claim_stamp
+      `) as Array<{ id: number | string; doi_token: string; doi_claim_stamp: string }>;
+      const won = claimed[0];
+      if (won && won.id != null) {
+        const doiToken = String(won.doi_token);
+        const doiResend = doiToken !== freshToken;
+        return result({
+          id: Number(won.id),
+          status: "pending",
+          doiToken,
+          doiEmailRequired: true,
+          doiClaimStamp: String(won.doi_claim_stamp),
+          // A re-sent token was mailed before: a failed re-send puts its
+          // previous send time back, so the link in the inbox stays valid.
+          doiClaimRestore: doiResend && existing?.doi_token === doiToken ? (existing.doi_sent_at_text ?? null) : null,
+          doiCooldown: false,
+          doiResend,
+          suppressed,
+        });
+      }
+    }
+
+    // RECORD (mirrors recordDoiStatus): confirmed stays; pending stays unless
+    // suppressed; anything else → none without a token.
+    const rows = (await sql`
+      INSERT INTO email_captures
+        (session_id, email, transactional_consent, marketing_consent,
+         marketing_doi_status, doi_token, doi_sent_at, consent_text_shown,
+         consent_copy_version, locale, created_at)
+      VALUES
+        (${sessionId}, ${email}, ${input.transactionalConsent}, ${decided.marketingConsentColumn},
+         'none', NULL, NULL, ${input.consentTextShown},
+         ${input.consentCopyVersion}, ${locale}, now())
+      ON CONFLICT (email) DO UPDATE SET
+        session_id            = COALESCE(EXCLUDED.session_id, email_captures.session_id),
+        transactional_consent = email_captures.transactional_consent OR EXCLUDED.transactional_consent,
+        marketing_consent     = CASE
+          WHEN email_captures.marketing_doi_status = 'confirmed' THEN true
+          WHEN email_captures.marketing_doi_status = 'pending'
+           AND NOT EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = EXCLUDED.email) THEN true
+          ELSE EXCLUDED.marketing_consent
+        END,
+        marketing_doi_status  = CASE
+          WHEN email_captures.marketing_doi_status = 'confirmed' THEN 'confirmed'
+          WHEN email_captures.marketing_doi_status = 'pending'
+           AND NOT EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = EXCLUDED.email) THEN 'pending'
+          ELSE 'none'
+        END,
+        doi_token             = CASE
+          WHEN email_captures.marketing_doi_status = 'confirmed' THEN email_captures.doi_token
+          WHEN email_captures.marketing_doi_status = 'pending'
+           AND NOT EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = EXCLUDED.email) THEN email_captures.doi_token
+          ELSE NULL
+        END,
+        doi_sent_at           = CASE
+          WHEN email_captures.marketing_doi_status = 'confirmed' THEN email_captures.doi_sent_at
+          WHEN email_captures.marketing_doi_status = 'pending'
+           AND NOT EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = EXCLUDED.email) THEN email_captures.doi_sent_at
+          ELSE NULL
+        END,
+        -- Keep the freshest consent copy we actually showed; the version always
+        -- follows the text it describes (updated together, or not at all).
+        consent_text_shown    = COALESCE(EXCLUDED.consent_text_shown, email_captures.consent_text_shown),
+        consent_copy_version  = CASE
+          WHEN EXCLUDED.consent_text_shown IS NOT NULL THEN EXCLUDED.consent_copy_version
+          ELSE email_captures.consent_copy_version
+        END,
+        -- Track the latest storefront language this address engaged from.
+        locale                = COALESCE(EXCLUDED.locale, email_captures.locale)
+      RETURNING id, marketing_doi_status, doi_token,
+                (marketing_doi_status = 'pending'
+                 AND doi_token IS NOT NULL
+                 AND doi_sent_at IS NOT NULL
+                 AND doi_sent_at > now() - make_interval(mins => ${cooldownMinutes})) AS in_cooldown,
+                EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = email_captures.email) AS suppressed_now
+    `) as Array<{
+      id: number | string;
+      marketing_doi_status: MarketingDoiStatus;
+      doi_token: string | null;
+      in_cooldown: boolean;
+      suppressed_now: boolean;
+    }>;
+    const row = rows[0];
+    if (!row || row.id == null) return null;
+    const suppressedFinal = suppressed || row.suppressed_now === true;
+    return result({
+      id: Number(row.id),
+      status: row.marketing_doi_status,
+      doiToken: row.doi_token ?? null,
+      doiEmailRequired: false,
+      doiClaimStamp: null,
+      doiClaimRestore: null,
+      doiCooldown: recordDoiCooldown({
+        marketingConsent: ticked,
+        suppressed: suppressedFinal,
+        alreadySubscribed: input.alreadySubscribed,
+        pendingElsewhere: input.pendingElsewhere,
+        status: row.marketing_doi_status,
+        inCooldown: row.in_cooldown === true,
+      }),
+      doiResend: false,
+      suppressed: suppressedFinal,
+    });
+  } catch (err) {
+    reportError(err, { route: "lib/email-capture-store", phase: "upsertEmailCapture" });
+    return null;
+  }
+}
+
+/**
+ * Undo a DOI claim whose mail did not go out (the send failed, or the request
+ * ended before it ran): doi_sent_at goes back to what the claim replaced —
+ * NULL for a new token (the next accept sends at once, also within the
+ * cooldown), the previous send time for a re-sent token (its earlier mail's
+ * link stays valid). Guarded by id + token + the claim's exact stamp, so a
+ * late release after a newer claim is a no-op. Fail-soft: false on no-op, no
+ * database or an error.
+ */
+export async function releaseDoiClaim(
+  claim: Pick<UpsertCaptureResult, "id" | "doiToken" | "doiClaimStamp" | "doiClaimRestore">,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql || !claim.doiToken || !claim.doiClaimStamp) return false;
+  try {
+    const rows = await sql`
+      UPDATE email_captures
+         SET doi_sent_at = ${claim.doiClaimRestore}::timestamptz
+       WHERE id = ${claim.id}
+         AND doi_token = ${claim.doiToken}
+         AND marketing_doi_status = 'pending'
+         AND doi_sent_at = ${claim.doiClaimStamp}::timestamptz
+      RETURNING id
+    `;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/email-capture-store", phase: "releaseDoiClaim" });
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,53 +543,92 @@ export async function upsertEmailCapture(
 export type ConfirmResult =
   | {
       ok: true;
+      /** true = this click did not confirm (an earlier or a parallel click did) — no act, no KPI. */
       alreadyConfirmed: boolean;
       email: string;
       /** Pseudonymous session the capture came from (for KPI telemetry). */
       sessionId: string | null;
+      /** email_captures.id — the consent act's origin (email_capture:<id>). */
+      captureId: number;
     }
-  | { ok: false; reason: "not_found" | "expired" };
+  | { ok: false; reason: "not_found" | "expired" | "unavailable" };
 
 /**
- * Validate a DOI token and flip the capture to 'confirmed'. Idempotent: a
- * token that is already confirmed returns ok with alreadyConfirmed=true. Tokens
- * older than the expiry window (by doi_sent_at) are rejected as expired.
+ * Validate a DOI token and flip the capture to 'confirmed' — once (T2.3). The
+ * flip is conditional: the row is still 'pending' with this token, its link
+ * is not expired and the address is not suppressed; exactly one click wins
+ * (alreadyConfirmed=false) and only the winner may record the consent act and
+ * the KPI. A click on an already confirmed token — earlier or in parallel —
+ * answers ok with alreadyConfirmed=true. A token whose address has withdrawn
+ * since (status 'none') or is suppressed → not_found, so an old link never
+ * re-subscribes. Tokens older than the expiry window (by doi_sent_at; none =
+ * a released claim) → expired. No database or a failed statement →
+ * unavailable.
  */
 export async function confirmMarketingByToken(
   token: string,
   sql: Sql | null = getSql()
 ): Promise<ConfirmResult> {
-  if (!sql) return { ok: false, reason: "not_found" };
+  if (!sql) return { ok: false, reason: "unavailable" };
   const t = token.trim();
   if (!t) return { ok: false, reason: "not_found" };
 
-  const rows = await sql`
-    SELECT id, email, session_id, marketing_doi_status, doi_sent_at, doi_confirmed_at
-      FROM email_captures WHERE doi_token = ${t}
-  `;
-  const row = rows[0] as
-    | { id: number; email: string; session_id: string | null; marketing_doi_status: MarketingDoiStatus; doi_sent_at: string | null }
-    | undefined;
-  if (!row) return { ok: false, reason: "not_found" };
+  try {
+    const rows = await sql`
+      SELECT id, email, session_id, marketing_doi_status, doi_sent_at
+        FROM email_captures WHERE doi_token = ${t}
+    `;
+    const row = rows[0] as
+      | {
+          id: number | string;
+          email: string;
+          session_id: string | null;
+          marketing_doi_status: MarketingDoiStatus;
+          doi_sent_at: string | Date | null;
+        }
+      | undefined;
+    if (!row) return { ok: false, reason: "not_found" };
+    const found = { email: row.email, sessionId: row.session_id, captureId: Number(row.id) };
 
-  if (row.marketing_doi_status === "confirmed") {
-    return { ok: true, alreadyConfirmed: true, email: row.email, sessionId: row.session_id };
+    if (row.marketing_doi_status === "confirmed") {
+      return { ok: true, alreadyConfirmed: true, ...found };
+    }
+    // Withdrawn since the mail (unsubscribe keeps the token with status none).
+    if (row.marketing_doi_status !== "pending") return { ok: false, reason: "not_found" };
+
+    // Expiry by doi_sent_at (no stamp = a released claim → expired).
+    const sentAt = row.doi_sent_at == null ? NaN : new Date(row.doi_sent_at).getTime();
+    const ageMs = Number.isFinite(sentAt) ? Date.now() - sentAt : Infinity;
+    if (ageMs > doiExpiryDays() * 86_400_000) {
+      return { ok: false, reason: "expired" };
+    }
+
+    const won = await sql`
+      UPDATE email_captures
+         SET marketing_doi_status = 'confirmed',
+             doi_confirmed_at = now()
+       WHERE id = ${row.id}
+         AND doi_token = ${t}
+         AND marketing_doi_status = 'pending'
+         AND doi_sent_at > now() - make_interval(days => ${doiExpiryDays()})
+         AND NOT EXISTS (SELECT 1 FROM suppression_list s WHERE s.email = email_captures.email)
+      RETURNING id
+    `;
+    if (won.length > 0) return { ok: true, alreadyConfirmed: false, ...found };
+
+    // Lost: a parallel click confirmed it — or it was withdrawn, suppressed,
+    // expired or re-tokened in the meantime (→ the invalid page).
+    const again = (await sql`
+      SELECT marketing_doi_status FROM email_captures WHERE id = ${row.id} AND doi_token = ${t}
+    `) as Array<{ marketing_doi_status: MarketingDoiStatus }>;
+    if (again[0]?.marketing_doi_status === "confirmed") {
+      return { ok: true, alreadyConfirmed: true, ...found };
+    }
+    return { ok: false, reason: "not_found" };
+  } catch (err) {
+    reportError(err, { route: "lib/email-capture-store", phase: "confirmMarketingByToken" });
+    return { ok: false, reason: "unavailable" };
   }
-
-  // Expiry by doi_sent_at (fall back to "expired" if we somehow have no stamp).
-  const sentAt = row.doi_sent_at ? Date.parse(row.doi_sent_at) : NaN;
-  const ageMs = Number.isFinite(sentAt) ? Date.now() - sentAt : Infinity;
-  if (ageMs > doiExpiryDays() * 86_400_000) {
-    return { ok: false, reason: "expired" };
-  }
-
-  await sql`
-    UPDATE email_captures
-       SET marketing_doi_status = 'confirmed',
-           doi_confirmed_at = now()
-     WHERE id = ${row.id}
-  `;
-  return { ok: true, alreadyConfirmed: false, email: row.email, sessionId: row.session_id };
 }
 
 // ---------------------------------------------------------------------------

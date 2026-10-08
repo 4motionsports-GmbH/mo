@@ -791,6 +791,12 @@ export interface EmailCaptureFunnel {
   alreadySubscribed: number;
   /** Of those, the address is suppressed (unsubscribed / bounced) — no DOI. */
   suppressed: number;
+  /** Of those, a valid DOI mail was already out (resend cooldown or a parallel
+   * request — outcome doi_pending, T2.1) — no new mail. */
+  doiPending: number;
+  /** Of those, the shop's own confirmation mail was out (outcome
+   * shopify_pending, C.29) — no Mo DOI mail. */
+  shopifyPending: number;
   /** DOI links clicked for capture-form opt-ins (source mo_capture_form; legacy rows by their session). */
   confirmed: number;
   /** Capture cards dismissed (widget), once per session and trigger. */
@@ -854,6 +860,12 @@ export async function getEmailCaptureFunnel(
           count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
                              AND data->>'source' = 'mo_capture_form'
                              AND data->>'outcome' = 'suppressed')::int AS suppressed,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                             AND data->>'source' = 'mo_capture_form'
+                             AND data->>'outcome' = 'doi_pending')::int AS doi_pending,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                             AND data->>'source' = 'mo_capture_form'
+                             AND data->>'outcome' = 'shopify_pending')::int AS shopify_pending,
           count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED}
                              AND (data->>'source' = 'mo_capture_form'
                                   OR (data->>'source' IS NULL AND NOT EXISTS (
@@ -899,6 +911,8 @@ export async function getEmailCaptureFunnel(
       doiNotSent: n("doi_not_sent"),
       alreadySubscribed: n("already_subscribed"),
       suppressed: n("suppressed"),
+      doiPending: n("doi_pending"),
+      shopifyPending: n("shopify_pending"),
       confirmed,
       declined: n("declined"),
       submitRate: askShown > 0 ? Math.min(1, submitted / askShown) : null,
