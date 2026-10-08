@@ -20,6 +20,8 @@ import {
   buildDecisionsPrompt,
   buildPlanPrompt,
   STRATEGIST_SYSTEM,
+  settleInFlightAttempt,
+  IN_FLIGHT_LIVE_MS,
 } from "./analytics-report-synthesis-core.mjs";
 import { decisionsSchema, planSchema } from "./analytics-report-synthesis-schemas.mjs";
 import { buildBusinessSnapshot } from "./business-snapshot-core.mjs";
@@ -195,4 +197,23 @@ test("the prompts carry the data, the task and the rules — and no personal dat
   assert.match(p.prompt, /recommendations: 5–10 priorisierte Maßnahmen/);
   assert.match(buildPlanPrompt(input, null).prompt, /nicht verfügbar/);
   for (const owner of OWNERS) assert.ok(STRATEGIST_SYSTEM.includes(`${owner} =`), `owner ${owner} defined`);
+});
+
+test("settleInFlightAttempt: a killed attempt counts, a live one blocks, a cleared one is ignored", () => {
+  const now = Date.parse("2026-10-08T12:00:00Z");
+  const at = (msAgo) => new Date(now - msAgo).toISOString();
+  // No mark / other pass / stale attempt number → nothing changes.
+  assert.deepEqual(settleInFlightAttempt(1, null, "decisions", { now }), { attempts: 1, interrupted: false, live: false });
+  assert.deepEqual(settleInFlightAttempt(0, { pass: "plan", attempt: 0, startedAt: at(600_000) }, "decisions", { now }), { attempts: 0, interrupted: false, live: false });
+  assert.deepEqual(settleInFlightAttempt(2, { pass: "decisions", attempt: 1, startedAt: at(600_000) }, "decisions", { now }), { attempts: 2, interrupted: false, live: false });
+  // Killed by the platform (older than maxDuration + margin): counts as failed.
+  assert.deepEqual(settleInFlightAttempt(0, { pass: "decisions", attempt: 0, startedAt: at(IN_FLIGHT_LIVE_MS + 1) }, "decisions", { now }), { attempts: 1, interrupted: true, live: false });
+  assert.deepEqual(settleInFlightAttempt(1, { pass: "plan", attempt: 1, startedAt: at(900_000) }, "plan", { now }), { attempts: 2, interrupted: true, live: false });
+  // Unreadable start → treated as killed (never blocks forever).
+  assert.deepEqual(settleInFlightAttempt(0, { pass: "plan", attempt: 0, startedAt: "x" }, "plan", { now }), { attempts: 1, interrupted: true, live: false });
+  // Young mark: another step may still be inside the call.
+  assert.deepEqual(settleInFlightAttempt(0, { pass: "plan", attempt: 0, startedAt: at(60_000) }, "plan", { now }), { attempts: 0, interrupted: false, live: true });
+  // Clock skew between instances: a start slightly in the future is still live.
+  assert.deepEqual(settleInFlightAttempt(0, { pass: "plan", attempt: 0, startedAt: at(-2_000) }, "plan", { now }), { attempts: 0, interrupted: false, live: true });
+  assert.ok(IN_FLIGHT_LIVE_MS > STEP_MAX_DURATION_S * 1000);
 });

@@ -201,5 +201,10 @@ export interface RunAnalysisV2 {
     efforts: Partial<Record<"wirkungscheck" | "vorschlaege_chat" | "vorschlaege_betrieb", StrategistEffortName | null>>;
     model: string | null;
     notes: string[];
+    /**
+     * Written before a strategist call, cleared by every write after it. Still
+     * set on the next step = that step was killed (settleInFlightAttempt).
+     */
+    inFlight?: { pass: "wirkungscheck" | "vorschlaege_chat" | "vorschlaege_betrieb"; attempt: number; startedAt: string } | null;
   };
 }

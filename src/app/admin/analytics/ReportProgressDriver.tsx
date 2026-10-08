@@ -92,6 +92,7 @@ export function ReportProgressDriver({
     },
     isDone: (data) => Boolean(data.done),
     isBusy: (data) => Boolean(data.busy),
+    resumable: true,
     onDone,
   });
 
@@ -126,13 +127,14 @@ export function ReportProgressDriver({
                 Lass diesen Bericht geöffnet — er wird Schritt für Schritt erstellt und links im
                 Seitenpanel gespeichert. Pausieren ist jederzeit möglich; beim Fortsetzen (oder beim
                 nächsten Öffnen des Berichts) geht es an derselben Stelle weiter. Kurze
-                Verbindungsabbrüche überbrückt die Seite automatisch; läuft auf dem Server noch ein
-                Schritt, wartet sie darauf, statt ihn doppelt zu starten.
+                Verbindungsabbrüche und Zeitüberschreitungen des Servers überbrückt die Seite
+                automatisch; läuft auf dem Server noch ein Schritt, wartet sie darauf, statt ihn doppelt
+                zu starten.
               </InfoTip>
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {title}
-              {loop.reconnecting && " · Verbindung unterbrochen — es wird automatisch weiter versucht"}
+              {loop.reconnecting && " · Server nicht erreichbar — es wird automatisch weiter versucht"}
               {busy && !loop.reconnecting && " · ein Schritt läuft noch auf dem Server — wird abgewartet"}
             </p>
           </div>

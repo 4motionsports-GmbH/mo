@@ -17,9 +17,11 @@ import { reportError } from "@/lib/observability";
 // A strategist pass streams one Opus call that is aborted after 240 s
 // (IMPROVEMENT_STRATEGIST_TIMEOUT_MS, improvement-decision.mjs — keep
 // IMPROVEMENT_STEP_MAX_DURATION_S there in sync with this value) and is
-// retried on the next step one rung lower on the effort ladder; the
-// measurement step stops fetching window snapshots after 120 s. The full
-// Fluid-compute headroom keeps the platform from killing a function mid-call.
+// retried on the next step one rung lower on the effort ladder (shortened when
+// the step's earlier work took long — callTimeoutWithinStep); the measurement
+// step stops fetching window snapshots after 120 s. Should the platform kill a
+// step anyway, the attempt's in-flight mark makes the next step count it as
+// failed instead of repeating it.
 export const maxDuration = 300;
 
 export async function POST(req: Request) {

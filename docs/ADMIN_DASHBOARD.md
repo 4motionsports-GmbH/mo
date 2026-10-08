@@ -216,7 +216,7 @@ Shared, pure logic sits in `src/lib/*.mjs` with `node --test` suites next to it
 | `adminFetch(path, { body })` | the one way to call `/api/admin/*`: JSON in/out, throws `AdminApiError` (status, code, German message), redirects to the login on 401 and back afterwards. `friendlyErrorMessage()` turns network errors into „Netzwerkfehler — bitte erneut versuchen.“ |
 | `useAsyncAction(fn, { onSuccess, errorToast })` | pending state + error toast for a button; prevents double submits. |
 | `useConfirm()` | promise-based `ConfirmDialog` (title, description, confirm label, destructive tone) — used for sends, deletes and paid bulk runs only. |
-| `useStepLoop({ path, body, onStep, isDone, isBusy, retry })` | drives the step-wise jobs (Komplettanalyse, Verbesserungslauf, Shopify import): one bounded POST per step, retries network errors (60 × 5 s, „Verbindung wird wiederhergestellt“), pauses, stops on `AdminApiError`, polls while the server is busy, stops on unmount. |
+| `useStepLoop({ path, body, onStep, isDone, isBusy, retry, resumable })` | drives the step-wise jobs (Komplettanalyse, Verbesserungslauf, Shopify import, letters): one bounded POST per step, retries a broken-off response (60 × 5 s, „reconnecting“), pauses, stops on `AdminApiError`, polls while the server is busy, stops on unmount. With `resumable` (Komplettanalyse, Verbesserung — retry-safe through the step claim) it also bridges a dropped connection the same way and a platform error page (502/503/504, a 5xx without the route's JSON, 429; `classifyStepFailure` in `lib/step-loop-retry.mjs`, tested) up to 3 times without progress, 15 s apart; the status line reads „Server nicht erreichbar — es wird automatisch weiter versucht“. |
 | `useMediaQuery(query, ssrDefault)` | responsive behaviour without layout flashes (sidebar labels, SplitPane stacking). |
 | `fetchPdf(path, payload)` | POST for a binary answer (a letter PDF) with the admin JSON error envelope — `adminFetch()` is JSON-only. Kunden → Brief and Kampagnen → Briefe. |
 
@@ -1065,21 +1065,28 @@ prompts and schemas in [`analytics-report-synthesis-core.mjs`](../src/lib/analyt
 the comparison and what the previous report decided, the insights, the
 customer knowledge and the persona themes — aggregates only, free texts through
 `scrubPii`, never a per-customer profile. One pass per step: structured output,
-streamed, aborted after 240 s (`STRATEGIST_TIMEOUT_MS`, below the route's 300 s);
-a pass that times out or fails stays in its phase and is retried on the next
-step one rung lower (effort `high` → `medium` → `low`); after the third failure
-— or without an Anthropic key — the report completes without that part and says
-so („Synthese unvollständig“ / the decision status `partial` / `unavailable`).
+streamed and read to its end, aborted after 240 s (`STRATEGIST_TIMEOUT_MS`,
+shortened so the step stays below the route's 300 s — details in
+[`AI_MODELS.md`](./AI_MODELS.md) „strategist“); a pass that times out or fails
+stays in its phase and is retried on the next step one rung lower (effort
+`high` → `medium` → `low`); after the third failure — or without an Anthropic
+key — the report completes without that part and says so („Synthese
+unvollständig“ / the decision status `partial` / `unavailable`). A step the
+platform killed mid-call counts as a failed attempt (the in-flight mark in the
+report's scratch, note „… vom Server nach 300 s abgebrochen.“).
 **Step claim** (migration 0077): every step claims the report
 (`step_claimed_at`); a concurrent step — the browser retried a dropped request
 while the function still waits for Opus — answers `busy` and the client polls
 instead of starting a second Opus call. Without the migration the claim fails
-open (the behaviour before). A stale claim expires after 6 minutes.
+open, and a fresh in-flight mark answers `busy` instead. A stale claim expires
+after 6 minutes.
 
 **Progress** ([`ReportProgressDriver.tsx`](../src/app/admin/analytics/ReportProgressDriver.tsx)):
 overall bar, the phase checklist with counters and an „Opus 5.5“ tag on the two
 strategist phases, the elapsed time of the current phase, an info line while the
-strategist thinks, „wird abgewartet“ on a busy answer, Pause / Fortsetzen; a
+strategist thinks, „wird abgewartet“ on a busy answer, „Server nicht
+erreichbar — es wird automatisch weiter versucht“ while a dropped connection or
+a platform error is bridged (`useStepLoop` `resumable`), Pause / Fortsetzen; a
 report left open resumes where it stopped.
 
 **The report** ([`ReportView.tsx`](../src/app/admin/analytics/ReportView.tsx)

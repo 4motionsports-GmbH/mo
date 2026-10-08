@@ -107,21 +107,36 @@ inside a 300 s serverless step:
   `analytics-report-synthesis-core.mjs` clamp lists and texts), sent as
   `output_config.format`; Opus 5.5 rejects `tool_choice` `any`/`tool`.
 - **Streamed**, so the response starts at once and a long thinking phase never
-  hits a response-headers timeout.
+  hits a response-headers timeout — and **read to its end**
+  ([`object-stream.mjs`](../src/lib/object-stream.mjs), tested against the real
+  `streamObject` with a mock model): ai@6 settles `object`, `usage` and
+  `finishReason` only while the stream is consumed. Until 2026-10-08 the call
+  only awaited those promises; every answer then hung until Vercel killed the
+  step at 300 s (the 504 on `analytics/step`).
 - **Output cap with headroom** — `maxOutputTokensFor("strategist", answer)`:
   answer budgets 6,000 (decisions) and 7,000 (plan) plus 16,000 thinking
   headroom; thinking counts toward `max_tokens`.
-- **Bounded** — an `AbortSignal` after 240 s (`STRATEGIST_TIMEOUT_MS`, below the
-  step route's `maxDuration` 300), one SDK retry. A pass that times out, is cut
-  off or returns no valid object stays in its phase; the next step retries it
-  one rung lower on the effort ladder (`high` → `medium` → `low`); after the
-  third failure the report completes without that part and names it.
+- **Bounded** — an abort after 240 s (`STRATEGIST_TIMEOUT_MS`), shortened when
+  the step's earlier work took long (`callTimeoutWithinStep`: 300 s minus the
+  time used minus a 40 s reserve), a watchdog 10 s later in case the transport
+  ignores the abort, one SDK retry. A pass that times out, is cut off or
+  returns no valid object stays in its phase; the next step retries it one rung
+  lower on the effort ladder (`high` → `medium` → `low`); after the third
+  failure the report completes without that part and names it.
+- **A killed step still counts** — before the call the attempt is stored as
+  „in flight“ (`{ pass, attempt, startedAt }`), every write after it clears the
+  mark. If the platform kills the step anyway, the next step finds the mark
+  (older than 330 s, `settleInFlightAttempt`), counts the attempt as failed
+  with a note and continues one rung lower — never the same call again.
 - **One Opus call per step, never two** — the step claim of migration 0077 turns
   a retried request (the browser dropped the connection while the function still
-  waits) into a `busy` poll.
+  waits) into a `busy` poll; a fresh in-flight mark does the same where the
+  claim is missing.
 - **Refusal fallback** — `fallbacks: "default"` like every 5.x tier.
 - **Usage** — recorded in `ai_usage` (call site `analytics_report`), also for an
-  output that ended without a valid object; the report's own cost counts it.
+  output that ended without a valid object; the report's own cost counts it. An
+  aborted call reports no usage — the tokens Anthropic billed up to the abort
+  are not known.
 
 **The Verbesserung** runs the same wrapper the same way
 ([`improvement-generate.ts`](../src/lib/improvement-generate.ts), one strategist
@@ -130,8 +145,10 @@ call per `improve/step`, `maxDuration` 300): the Wirkungs-Check (answer budget
 verdict to assess) and the two suggestion passes (5,000 each,
 `SUGGESTIONS_ANSWER_TOKENS`, at most 6 suggestions per pass), each plus 16,000
 thinking headroom, aborted after 240 s (`IMPROVEMENT_STRATEGIST_TIMEOUT_MS`,
-tested to stay ≥ 45 s below the route's `maxDuration`), the same effort ladder
-(`strategistEffortForAttempt`), call site `improvement`. Splitting the
+tested to stay ≥ 45 s below the route's `maxDuration`; shortened by
+`callTimeoutWithinStep` like the report's), the same effort ladder
+(`strategistEffortForAttempt`) and in-flight mark (`state.inFlight`), call site
+`improvement`. Splitting the
 suggestions into two passes keeps each call well inside the timeout at effort
 `high`. Input: the full snapshot (≤ 26,000 characters), the measurement, the
 backlog, the directives and — chat pass only — Mo's self-snapshot (≤ 32,000

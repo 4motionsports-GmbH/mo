@@ -103,7 +103,11 @@ timeouts and the retry ladder in [`AI_MODELS.md`](./AI_MODELS.md). A pass that
 times out, is cut off or returns no valid object stays in its phase and is
 retried one rung lower (`high` → `medium` → `low`); after the third failure, or
 without an Anthropic key, the run moves on with a note in „Lage“ — the
-deterministic parts (snapshot, measurement, imports) always complete. Every
+deterministic parts (snapshot, measurement, imports) always complete. Before
+each call the attempt is stored as in flight (`state.inFlight`, saved without
+ending the step); a step the platform killed mid-call is counted as a failed
+attempt on the next step (note „… vom Server nach 300 s abgebrochen.“), so the
+ladder moves on instead of repeating the same call. Every
 pass records its tokens in `ai_usage` under the call site `improvement` and in
 the run's `usage` (EUR priced on read).
 
@@ -112,8 +116,11 @@ network change while the serverless step keeps working, so the driver retries
 dropped requests; the atomic per-run **step claim**
 (`improvement_runs.step_claimed_at`) turns a retry that lands while a step is
 live into a `busy` poll (stale claims expire after 6 minutes, above
-`maxDuration`; a failing claim check falls through fail-open). One Opus call per
-step, never two.
+`maxDuration`; a failing claim check falls through fail-open, a fresh in-flight
+mark then answers `busy` as well). One Opus call per step, never two. The driver
+also bridges platform error pages (a 504 when a step ran into `maxDuration`,
+502/503 without the route's JSON) up to 3 times without progress
+(`useStepLoop` `resumable`, [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §2).
 
 **Old runs.** A v1 run that is still `running` (started before 2026-10-06)
 continues as a v2 run over its report's period on its next step (its existing

@@ -90,6 +90,7 @@ export function RunProgress({
     },
     isDone: (data) => Boolean(data.done),
     isBusy: (data) => Boolean(data.busy),
+    resumable: true,
     onDone,
   });
 
@@ -120,13 +121,14 @@ export function RunProgress({
                 Lass den Lauf geöffnet — er wird Schritt für Schritt erstellt und links gespeichert. Zuerst die
                 Geschäftsdaten und die Messung der umgesetzten Änderungen (ohne KI), dann bis zu drei
                 Durchgänge des Strategie-Modells (Opus 5.5) von je 1–4 Minuten. Pausieren ist jederzeit möglich;
-                beim Fortsetzen geht es an derselben Stelle weiter. Kurze Verbindungsabbrüche überbrückt die
-                Seite; läuft auf dem Server noch ein Schritt, wartet sie darauf.
+                beim Fortsetzen geht es an derselben Stelle weiter. Kurze Verbindungsabbrüche und
+                Zeitüberschreitungen des Servers überbrückt die Seite; läuft auf dem Server noch ein Schritt,
+                wartet sie darauf.
               </InfoTip>
             </div>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">
               {title}
-              {loop.reconnecting && " · Verbindung unterbrochen — es wird automatisch weiter versucht"}
+              {loop.reconnecting && " · Server nicht erreichbar — es wird automatisch weiter versucht"}
               {busy && !loop.reconnecting && " · ein Schritt läuft noch auf dem Server — wird abgewartet"}
             </p>
           </div>

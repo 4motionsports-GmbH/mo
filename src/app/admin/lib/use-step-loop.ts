@@ -2,13 +2,18 @@
 
 // useStepLoop — drives a server-side generator to completion by POSTing
 // "step" requests until the server reports `done` (Komplettanalyse,
-// Verbesserungslauf). One loop instance per report/run:
+// Verbesserungslauf, Shopify import, letters). One loop instance per run:
 //
-//   · network failures (a dropped connection while the serverless step keeps
-//     working) are retried with a delay — up to `retry.max` times in a row —
-//     and shown as "reconnecting", never as a dead end;
-//   · a non-2xx answer stops the loop with the server's message and offers a
-//     manual resume;
+//   · a response whose body broke off is retried with a delay — up to
+//     `retry.max` times in a row — and shown as "reconnecting";
+//   · `resumable` steppers (server state resumable and retry-safe through a
+//     step claim — Komplettanalyse, Verbesserung) also bridge a dropped
+//     connection the same way, and a platform error page (502/503/504, a 5xx
+//     without the route's JSON — e.g. a step killed at maxDuration) up to
+//     GATEWAY_RETRY_MAX times without progress in between
+//     (lib/step-loop-retry.mjs);
+//   · any other non-2xx answer stops the loop with the server's message and
+//     offers a manual resume;
 //   · `busy` answers (another step for the same id is running server-side)
 //     are polled;
 //   · pause()/resume() stop after the current request and continue later;
@@ -16,6 +21,12 @@
 
 import * as React from "react";
 import { AdminApiError, adminFetch, errorMessage } from "./admin-fetch";
+import {
+  GATEWAY_GIVE_UP_MESSAGE,
+  GATEWAY_RETRY_DELAY_MS,
+  GATEWAY_RETRY_MAX,
+  classifyStepFailure,
+} from "@/lib/step-loop-retry.mjs";
 
 export interface StepLoopOptions<T> {
   path: string;
@@ -29,6 +40,11 @@ export interface StepLoopOptions<T> {
   onDone: () => void;
   autoStart?: boolean;
   retry?: { max: number; delayMs: number };
+  /**
+   * The server state survives a lost or killed request and a repeated step is
+   * safe (step claim): bridge dropped connections and platform errors too.
+   */
+  resumable?: boolean;
   pollDelayMs?: number;
 }
 
@@ -53,6 +69,7 @@ export function useStepLoop<T>({
   onDone,
   autoStart = true,
   retry = { max: 60, delayMs: 5_000 },
+  resumable = false,
   pollDelayMs = 5_000,
 }: StepLoopOptions<T>): StepLoop {
   const [running, setRunning] = React.useState(false);
@@ -63,9 +80,9 @@ export function useStepLoop<T>({
   const pausedRef = React.useRef(false);
   const mountedRef = React.useRef(true);
   // Latest callbacks/config without restarting the loop on re-render.
-  const cfg = React.useRef({ path, body, onStep, isDone, isBusy, onDone, retry, pollDelayMs });
+  const cfg = React.useRef({ path, body, onStep, isDone, isBusy, onDone, retry, resumable, pollDelayMs });
   React.useEffect(() => {
-    cfg.current = { path, body, onStep, isDone, isBusy, onDone, retry, pollDelayMs };
+    cfg.current = { path, body, onStep, isDone, isBusy, onDone, retry, resumable, pollDelayMs };
   });
 
   const start = React.useCallback(() => {
@@ -78,6 +95,9 @@ export function useStepLoop<T>({
     setReconnecting(false);
     void (async () => {
       let failures = 0;
+      // Platform errors since the last step that made progress (a `busy` poll
+      // is no progress — a step killed again and again must end the loop).
+      let gatewayFailures = 0;
       try {
         while (!pausedRef.current) {
           const c = cfg.current;
@@ -85,12 +105,23 @@ export function useStepLoop<T>({
           try {
             data = await adminFetch<T>(c.path, { body: c.body });
           } catch (err) {
-            if (err instanceof AdminApiError) {
+            const kind = err instanceof AdminApiError ? (c.resumable ? classifyStepFailure(err) : "fatal") : "network";
+            if (kind === "fatal") {
               if (mountedRef.current) setError(errorMessage(err, "Ein Schritt ist fehlgeschlagen."));
               return;
             }
-            // Local network hiccup — the server may still be working. Keep
-            // going, mark the reconnect state and try again shortly.
+            if (kind === "gateway") {
+              gatewayFailures += 1;
+              if (gatewayFailures > GATEWAY_RETRY_MAX) {
+                if (mountedRef.current) setError(GATEWAY_GIVE_UP_MESSAGE);
+                return;
+              }
+              if (mountedRef.current) setReconnecting(true);
+              await sleep(GATEWAY_RETRY_DELAY_MS);
+              continue;
+            }
+            // Network hiccup — the server may still be working. Keep going,
+            // mark the reconnect state and try again shortly.
             failures += 1;
             if (failures >= c.retry.max) {
               if (mountedRef.current) {
@@ -103,6 +134,7 @@ export function useStepLoop<T>({
             continue;
           }
           failures = 0;
+          if (!c.isBusy?.(data)) gatewayFailures = 0;
           if (!mountedRef.current) return;
           setReconnecting(false);
           c.onStep?.(data);

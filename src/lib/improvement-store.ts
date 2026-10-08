@@ -416,6 +416,34 @@ export async function claimRunStep(id: number, sql: Sql | null = getSql()): Prom
   }
 }
 
+/**
+ * Save the run's analysis state WITHOUT ending the step — the claim stays (the
+ * in-flight mark written before a strategist call).
+ */
+export async function saveImprovementRunState(id: number, delta: RunAnalysisV2, sql: Sql | null = getSql()): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`
+      UPDATE improvement_runs
+         SET delta_json = ${JSON.stringify(delta)}::jsonb,
+             updated_at = now()
+       WHERE id = ${id}
+    `;
+  } catch (err) {
+    reportError(err, { route: "lib/improvement-store", phase: "save-state" });
+  }
+}
+
+/** Release a step claim without other changes (a step that only found another one running). */
+export async function releaseRunStep(id: number, sql: Sql | null = getSql()): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`UPDATE improvement_runs SET step_claimed_at = NULL WHERE id = ${id}`;
+  } catch (err) {
+    reportError(err, { route: "lib/improvement-store", phase: "release" });
+  }
+}
+
 export async function deleteImprovementRun(id: number, sql: Sql | null = getSql()): Promise<boolean> {
   if (!sql) return false;
   try {

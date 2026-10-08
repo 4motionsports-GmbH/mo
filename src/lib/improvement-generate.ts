@@ -29,7 +29,8 @@
 import { getAnalyticsReport, type AnalyticsReportDetail } from "./analytics-report-store";
 import { getBusinessSnapshot, type BusinessSnapshot } from "./business-snapshot";
 import { flattenSnapshot } from "./business-snapshot-core.mjs";
-import { isDecisionReport, strategistEffortForAttempt } from "./analytics-report-synthesis-core.mjs";
+import { isDecisionReport, settleInFlightAttempt, strategistEffortForAttempt } from "./analytics-report-synthesis-core.mjs";
+import { callTimeoutWithinStep } from "./object-stream.mjs";
 import { mergeUsage } from "./analytics-report-core.mjs";
 import { buildMoSelfSnapshot } from "./mo-self-snapshot";
 import { listDirectives } from "./directives-store";
@@ -46,6 +47,7 @@ import {
 import { dayOf, snapshotMovers, summariseMeasurements, switchChanges } from "./improvement-effects.mjs";
 import {
   EFFECT_REVIEW_ANSWER_TOKENS,
+  IMPROVEMENT_STEP_MAX_DURATION_S,
   IMPROVEMENT_STRATEGIST_TIMEOUT_MS,
   MEASURE_STEP_BUDGET_MS,
   SUGGESTIONS_ANSWER_TOKENS,
@@ -65,6 +67,8 @@ import {
   insertSuggestions,
   listPriorSuggestions,
   listSuggestionOrigins,
+  releaseRunStep,
+  saveImprovementRunState,
   updateImprovementRun,
   type ImprovementRunDetail,
   type SuggestionInsert,
@@ -216,6 +220,7 @@ function progressOf(run: ImprovementRunDetail): RunStepResult["progress"] {
 
 /** Advance the run by one bounded unit of work. Never throws. */
 export async function stepImprovementRun(id: number): Promise<RunStepResult> {
+  const stepStartedAt = Date.now();
   const run = await getImprovementRun(id);
   if (!run) return { ok: false, done: true, error: "not_found" };
   if (run.status !== "running") {
@@ -230,6 +235,7 @@ export async function stepImprovementRun(id: number): Promise<RunStepResult> {
     return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: false, busy: true, progress: progressOf(run) };
   }
 
+  let busy = false;
   try {
     const v2 = v2Of(run);
     if (!v2) {
@@ -243,11 +249,11 @@ export async function stepImprovementRun(id: number): Promise<RunStepResult> {
           await stepMeasure(run, v2.baseline, v2.analysis);
           break;
         case "wirkungscheck":
-          await stepEffectReview(run, v2.baseline, v2.analysis);
+          busy = (await stepEffectReview(run, v2.baseline, v2.analysis, stepStartedAt)) === "busy";
           break;
         case "vorschlaege_chat":
         case "vorschlaege_betrieb":
-          await stepSuggestions(run, v2.baseline, v2.analysis, run.phase);
+          busy = (await stepSuggestions(run, v2.baseline, v2.analysis, run.phase, stepStartedAt)) === "busy";
           break;
         default:
           await updateImprovementRun(id, { status: "complete", phase: "done", completed: true });
@@ -258,6 +264,13 @@ export async function stepImprovementRun(id: number): Promise<RunStepResult> {
     const message = err instanceof Error ? err.message : String(err);
     await updateImprovementRun(id, { status: "failed", error: message.slice(0, 500) });
     return { ok: true, status: "failed", phase: run.phase, done: true, error: message };
+  }
+
+  if (busy) {
+    // Another step is still inside its strategist call (in-flight mark) —
+    // nothing was done here; hand the claim back and let the client poll.
+    if (claim === "claimed") await releaseRunStep(id);
+    return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: false, busy: true, progress: progressOf(run) };
   }
 
   const after = await getImprovementRun(id);
@@ -370,12 +383,30 @@ async function stepMeasure(run: ImprovementRunDetail, baseline: RunBaselineV2, a
 /**
  * Bookkeeping shared by the three strategist passes: the effort of this
  * attempt, and how to move on (success, give up with a note, or stay for a
- * retry one rung lower).
+ * retry one rung lower). An attempt whose step the platform killed (its
+ * in-flight mark is still stored) counts as failed; a mark that may still
+ * belong to a running step makes this step answer "busy" (`live`).
  */
-function ladder(run: ImprovementRunDetail, analysis: RunAnalysisV2, phase: StrategistPhase) {
-  const attempts = analysis.state.attempts[phase] ?? 0;
-  const effort = strategistEffortForAttempt(attempts) as StrategistEffortName | null;
+function ladder(run: ImprovementRunDetail, analysis: RunAnalysisV2, phase: StrategistPhase, stepStartedAt: number) {
   const label = PASS_LABELS[phase];
+  const settled = settleInFlightAttempt(analysis.state.attempts[phase] ?? 0, analysis.state.inFlight, phase);
+  const attempts = settled.attempts;
+  const effort = strategistEffortForAttempt(attempts) as StrategistEffortName | null;
+  const killedEffort = settled.interrupted ? (strategistEffortForAttempt(attempts - 1) ?? "?") : null;
+  // Every write of this step starts from this state: the recovered attempt
+  // count, a note for a killed attempt, no in-flight mark.
+  const state: RunAnalysisV2["state"] = {
+    ...analysis.state,
+    attempts: { ...analysis.state.attempts, [phase]: attempts },
+    notes: killedEffort
+      ? pushNote(
+          analysis.state.notes,
+          `${label}: Versuch mit Denktiefe „${killedEffort}“ vom Server nach ${IMPROVEMENT_STEP_MAX_DURATION_S} s abgebrochen.`
+        )
+      : analysis.state.notes,
+    inFlight: null,
+  };
+  const base: RunAnalysisV2 = { ...analysis, state };
   const next = nextRunPhase(phase);
   const finish = async (patch: Partial<RunAnalysisV2>, extra: { usage?: ImprovementRunDetail["usage"]; effectCheckMd?: string | null } = {}) => {
     const done = next === "done";
@@ -384,44 +415,60 @@ function ladder(run: ImprovementRunDetail, analysis: RunAnalysisV2, phase: Strat
       ...(done ? { status: "complete" as const, completed: true } : {}),
       ...(extra.usage ? { usage: extra.usage } : {}),
       ...(extra.effectCheckMd ? { effectCheckMd: extra.effectCheckMd } : {}),
-      delta: { ...analysis, ...patch },
+      delta: { ...base, ...patch },
     });
   };
   const skip = async (note: string, usage?: ImprovementRunDetail["usage"]) => {
-    await finish({ state: { ...analysis.state, notes: pushNote(analysis.state.notes, note) } }, { usage });
+    await finish({ state: { ...state, notes: pushNote(state.notes, note) } }, { usage });
   };
   const retryOrSkip = async (message: string, usage: ImprovementRunDetail["usage"]) => {
     const nextAttempts = attempts + 1;
-    const state = { ...analysis.state, attempts: { ...analysis.state.attempts, [phase]: nextAttempts } };
+    const retryState = { ...state, attempts: { ...state.attempts, [phase]: nextAttempts } };
     if (strategistEffortForAttempt(nextAttempts) === null) {
-      await finish({ state: { ...state, notes: pushNote(state.notes, `${label} nicht erstellt (${message}).`) } }, { usage });
+      await finish({ state: { ...retryState, notes: pushNote(retryState.notes, `${label} nicht erstellt (${message}).`) } }, { usage });
       return;
     }
-    await updateImprovementRun(run.id, { phase, usage, delta: { ...analysis, state } });
+    await updateImprovementRun(run.id, { phase, usage, delta: { ...base, state: retryState } });
   };
   const succeeded = (eff: StrategistEffortName) => {
-    let notes = analysis.state.notes;
+    let notes = state.notes;
     if (attempts > 0) notes = pushNote(notes, `${label} im ${attempts + 1}. Versuch mit Denktiefe „${eff}“ erstellt (vorher Zeitlimit oder Fehler).`);
-    return { ...analysis.state, notes, model: STRATEGIST_MODEL, efforts: { ...analysis.state.efforts, [phase]: eff } };
+    return { ...state, notes, model: STRATEGIST_MODEL, efforts: { ...state.efforts, [phase]: eff } };
   };
-  return { attempts, effort, label, finish, skip, retryOrSkip, succeeded };
+  /** Mark the attempt right before the minutes-long call (the step claim stays held). */
+  const markInFlight = () =>
+    saveImprovementRunState(run.id, {
+      ...base,
+      state: { ...state, inFlight: { pass: phase, attempt: attempts, startedAt: new Date().toISOString() } },
+    });
+  /** The call's abort timeout: the cap, or less when the step's earlier work took long. */
+  const timeoutMs = () =>
+    callTimeoutWithinStep({ stepStartedAt, maxDurationS: IMPROVEMENT_STEP_MAX_DURATION_S, capMs: IMPROVEMENT_STRATEGIST_TIMEOUT_MS });
+  return { attempts, effort, label, live: settled.live, finish, skip, retryOrSkip, succeeded, markInFlight, timeoutMs };
 }
 
-async function stepEffectReview(run: ImprovementRunDetail, baseline: RunBaselineV2, analysis: RunAnalysisV2): Promise<void> {
-  const l = ladder(run, analysis, "wirkungscheck");
+async function stepEffectReview(
+  run: ImprovementRunDetail,
+  baseline: RunBaselineV2,
+  analysis: RunAnalysisV2,
+  stepStartedAt: number
+): Promise<"busy" | void> {
+  const l = ladder(run, analysis, "wirkungscheck", stepStartedAt);
+  if (l.live) return "busy";
   if (!process.env.ANTHROPIC_API_KEY) return l.skip(`Anthropic-Key fehlt — ${l.label} übersprungen; die Messung steht.`);
   if (!baseline.snapshot) return l.skip(`Keine Geschäftsdaten — ${l.label} übersprungen.`);
   if (l.effort === null) return l.skip(`${l.label} nach ${l.attempts} Versuchen nicht erstellt.`);
 
   const measurements = analysis.measurement.measurements as Measurement[];
   const directives = await listDirectives();
+  await l.markInFlight();
   const res = await runStrategistObject({
     schema: effectReviewSchema,
     ...buildEffectReviewPrompt({ snapshot: baseline.snapshot, movers: snapshotMovers(baseline.snapshot), measurements, directives }),
     answerTokens: EFFECT_REVIEW_ANSWER_TOKENS,
     callSite: "improvement",
     effort: l.effort,
-    timeoutMs: IMPROVEMENT_STRATEGIST_TIMEOUT_MS,
+    timeoutMs: l.timeoutMs(),
     label: "improvement-effects",
   });
   const usage = mergeUsage(run.usage, res.model, res.inputTokens, res.outputTokens);
@@ -437,9 +484,11 @@ async function stepSuggestions(
   run: ImprovementRunDetail,
   baseline: RunBaselineV2,
   analysis: RunAnalysisV2,
-  pass: "vorschlaege_chat" | "vorschlaege_betrieb"
-): Promise<void> {
-  const l = ladder(run, analysis, pass);
+  pass: "vorschlaege_chat" | "vorschlaege_betrieb",
+  stepStartedAt: number
+): Promise<"busy" | void> {
+  const l = ladder(run, analysis, pass, stepStartedAt);
+  if (l.live) return "busy";
   if (!process.env.ANTHROPIC_API_KEY) return l.skip(`Anthropic-Key fehlt — ${l.label} übersprungen.`);
   if (!baseline.snapshot) return l.skip(`Keine Geschäftsdaten — ${l.label} übersprungen.`);
   if (l.effort === null) return l.skip(`${l.label} nach ${l.attempts} Versuchen nicht erstellt.`);
@@ -454,6 +503,7 @@ async function stepSuggestions(
   ]);
   const snapshot: BusinessSnapshot = baseline.snapshot;
   const flat = flattenSnapshot(snapshot);
+  await l.markInFlight();
   const res = await runStrategistObject({
     schema: suggestionsSchema(pass),
     ...buildSuggestionPrompt(pass, {
@@ -471,7 +521,7 @@ async function stepSuggestions(
     answerTokens: SUGGESTIONS_ANSWER_TOKENS,
     callSite: "improvement",
     effort: l.effort,
-    timeoutMs: IMPROVEMENT_STRATEGIST_TIMEOUT_MS,
+    timeoutMs: l.timeoutMs(),
     label: `improvement-${pass}`,
   });
   const usage = mergeUsage(run.usage, res.model, res.inputTokens, res.outputTokens);

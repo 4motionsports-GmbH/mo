@@ -16,10 +16,12 @@ import { reportError } from "@/lib/observability";
 // One step may run a handful of model calls (a batch of Haiku analyses), a
 // single Opus customer profile, or ONE strategist pass (Opus 5.5 at effort
 // high, several minutes). The strategist call aborts itself after
-// STRATEGIST_TIMEOUT_MS (240 s, analytics-report-synthesis-core — keep
-// STEP_MAX_DURATION_S there in sync with this value) and is retried on the next
-// step with less thinking, so the platform never kills the function mid-call.
-// A concurrent retry of the same report answers `busy` (migration 0077).
+// STRATEGIST_TIMEOUT_MS (240 s, shortened when the step's earlier work took
+// long — callTimeoutWithinStep; keep STEP_MAX_DURATION_S in
+// analytics-report-synthesis-core in sync with this value) and is retried on
+// the next step with less thinking. Should the platform kill a step anyway,
+// the attempt's in-flight mark makes the next step count it as failed. A
+// concurrent retry of the same report answers `busy` (migration 0077).
 export const maxDuration = 300;
 
 export async function POST(req: Request) {

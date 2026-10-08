@@ -57,6 +57,7 @@ import {
 } from "./analytics-report-store";
 import { getBusinessSnapshot, type BusinessSnapshot } from "./business-snapshot";
 import { runStrategistObject } from "./strategist-call";
+import { callTimeoutWithinStep } from "./object-stream.mjs";
 import {
   assembleDecision,
   buildDecisionsPrompt,
@@ -64,10 +65,12 @@ import {
   buildReportComparison,
   normalizeDecisions,
   normalizePlan,
+  settleInFlightAttempt,
   strategistEffortForAttempt,
   DECISIONS_ANSWER_TOKENS,
   PLAN_ANSWER_TOKENS,
   REPORT_SECTIONS_VERSION,
+  STEP_MAX_DURATION_S,
   STRATEGIST_TIMEOUT_MS,
 } from "./analytics-report-synthesis-core.mjs";
 import { decisionsSchema, planSchema } from "./analytics-report-synthesis-schemas.mjs";
@@ -128,6 +131,11 @@ interface StrategistScratch {
   decisionsEffort: string | null;
   planEffort: string | null;
   notes: string[];
+  /**
+   * Written before the Opus call, cleared by every write after it. Still set
+   * on the next step = that step was killed (settleInFlightAttempt).
+   */
+  inFlight?: { pass: "decisions" | "plan"; attempt: number; startedAt: string } | null;
 }
 
 export interface StepResult {
@@ -174,6 +182,7 @@ function leanProgress(p: ReportProgress): ReportProgress {
  * and skipped. Returns the fresh post-step state so the client can keep stepping.
  */
 export async function stepReport(id: number): Promise<StepResult> {
+  const stepStartedAt = Date.now();
   const report = await getAnalyticsReport(id);
   if (!report) return { ok: false, done: true, error: "not_found" };
   if (report.status !== "running") {
@@ -204,6 +213,7 @@ export async function stepReport(id: number): Promise<StepResult> {
     };
   }
 
+  let busy = false;
   try {
     switch (report.phase) {
       case "analyze":
@@ -225,10 +235,10 @@ export async function stepReport(id: number): Promise<StepResult> {
         await stepSnapshot(report);
         break;
       case "decisions":
-        await stepStrategist(report, "decisions");
+        busy = (await stepStrategist(report, "decisions", stepStartedAt)) === "busy";
         break;
       case "plan":
-        await stepStrategist(report, "plan");
+        busy = (await stepStrategist(report, "plan", stepStartedAt)) === "busy";
         break;
       case "assemble":
         await stepAssemble(report);
@@ -255,6 +265,7 @@ export async function stepReport(id: number): Promise<StepResult> {
     progress: leanProgress(after.progress),
     costEur: after.costEur,
     done: after.status !== "running",
+    ...(busy ? { busy: true } : {}),
   };
 }
 
@@ -640,8 +651,14 @@ const PASS_LABELS = { decisions: "Entscheidungsteil", plan: "Maßnahmenteil" } a
  * output stays in the phase and is retried on the next step one rung lower on
  * the effort ladder; an exhausted ladder or a missing key moves on with a note
  * (the report still completes — the snapshot and the other chapters stand).
+ * A step the platform killed mid-call counts as a failed attempt (in-flight
+ * mark); a mark that may still belong to a running step answers "busy".
  */
-async function stepStrategist(report: AnalyticsReportDetail, pass: "decisions" | "plan"): Promise<void> {
+async function stepStrategist(
+  report: AnalyticsReportDetail,
+  pass: "decisions" | "plan",
+  stepStartedAt: number
+): Promise<"busy" | void> {
   const { options } = report;
   const progress = report.progress;
   const scratch = getScratch(progress);
@@ -653,8 +670,19 @@ async function stepStrategist(report: AnalyticsReportDetail, pass: "decisions" |
     notes: [],
   };
   const attemptsKey = pass === "decisions" ? "decisionsAttempts" : "planAttempts";
-  const effort = strategistEffortForAttempt(strat[attemptsKey]);
   const label = PASS_LABELS[pass];
+  const inFlight = settleInFlightAttempt(strat[attemptsKey], strat.inFlight, pass);
+  if (inFlight.live) return "busy";
+  if (inFlight.interrupted) {
+    const killedEffort = strategistEffortForAttempt(inFlight.attempts - 1) ?? "?";
+    strat.notes = pushNote(
+      strat.notes,
+      `${label}: Versuch mit Denktiefe „${killedEffort}“ vom Server nach ${STEP_MAX_DURATION_S} s abgebrochen.`
+    );
+  }
+  strat[attemptsKey] = inFlight.attempts;
+  strat.inFlight = null;
+  const effort = strategistEffortForAttempt(strat[attemptsKey]);
 
   const advance = async (patch: Partial<ReportScratch>, usage?: ReportUsage) => {
     await updateAnalyticsReport(report.id, {
@@ -681,6 +709,15 @@ async function stepStrategist(report: AnalyticsReportDetail, pass: "decisions" |
   }
 
   const input = await strategistInput(report, scratch);
+  // Mark the attempt before the minutes-long call: if the platform kills this
+  // step, the next one finds the mark and moves down the ladder.
+  strat.inFlight = { pass, attempt: strat[attemptsKey], startedAt: new Date().toISOString() };
+  await updateAnalyticsReport(report.id, {
+    phase: pass,
+    progress: { ...progress, scratch: { ...scratch, strategist: strat } },
+  });
+  strat.inFlight = null;
+  const timeoutMs = callTimeoutWithinStep({ stepStartedAt, maxDurationS: STEP_MAX_DURATION_S, capMs: STRATEGIST_TIMEOUT_MS });
   const res =
     pass === "decisions"
       ? await runStrategistObject({
@@ -689,7 +726,7 @@ async function stepStrategist(report: AnalyticsReportDetail, pass: "decisions" |
           answerTokens: DECISIONS_ANSWER_TOKENS,
           callSite: "analytics_report",
           effort,
-          timeoutMs: STRATEGIST_TIMEOUT_MS,
+          timeoutMs,
           label: "analytics-decisions",
         })
       : await runStrategistObject({
@@ -698,7 +735,7 @@ async function stepStrategist(report: AnalyticsReportDetail, pass: "decisions" |
           answerTokens: PLAN_ANSWER_TOKENS,
           callSite: "analytics_report",
           effort,
-          timeoutMs: STRATEGIST_TIMEOUT_MS,
+          timeoutMs,
           label: "analytics-plan",
         });
   const usage = mergeUsage(report.usage, res.model, res.inputTokens, res.outputTokens);

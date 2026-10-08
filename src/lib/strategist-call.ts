@@ -6,22 +6,27 @@
 //     streamObject with a zod schema) — Opus 5.5 rejects a forced tool choice,
 //     and @ai-sdk/anthropic ≥ 3.0.125 uses the native format for it;
 //   · streamed, so the HTTP response starts at once and a long thinking phase
-//     never runs into a response-headers timeout;
+//     never runs into a response-headers timeout — and the stream is READ to
+//     its end (object-stream.mjs): ai@6 settles `object`/`usage` only while the
+//     stream is consumed; awaiting them alone hung every answer until the
+//     platform killed the step (the 504 of 2026-10-08);
 //   · bounded: maxOutputTokens = the answer budget plus the tier's thinking
-//     headroom (thinking counts toward max_tokens), an AbortSignal timeout
-//     below the route's maxDuration, at most one SDK retry;
+//     headroom (thinking counts toward max_tokens), an abort at `timeoutMs`
+//     (the caller derives it from its step deadline — callTimeoutWithinStep)
+//     plus a watchdog shortly after, at most one SDK retry;
 //   · the effort can be lowered for a retry after a timeout (the caller owns
 //     the ladder — analytics-report-synthesis-core STRATEGIST_EFFORTS);
 //   · usage recorded in ai_usage under the caller's call site.
 //
 // Never throws: the result says why it failed (no key, timeout, truncated,
-// refused/invalid output, model error). Used by the Komplettanalyse; the
-// Verbesserung can use it the same way.
+// refused/invalid output, model error). Used by the Komplettanalyse and the
+// Verbesserung.
 
 import { NoObjectGeneratedError, streamObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { z } from "zod";
 import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
+import { settleObjectStream } from "./object-stream.mjs";
 import { recordAiUsage, type AiCallSite } from "./ai-usage-store";
 import { reportError } from "./observability";
 
@@ -50,14 +55,6 @@ export type StrategistResult<T> =
       outputTokens: number;
       ms: number;
     };
-
-function isAbort(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const name = (err as { name?: string }).name ?? "";
-  if (name === "AbortError" || name === "TimeoutError") return true;
-  const cause = (err as { cause?: unknown }).cause;
-  return cause ? isAbort(cause) : false;
-}
 
 /**
  * Run one strategist pass. `answerTokens` is the budget of the answer alone;
@@ -91,61 +88,65 @@ export async function runStrategistObject<T>({
 
   const options = anthropicOptionsFor("strategist");
   const providerOptions = { ...options, anthropic: { ...(options.anthropic ?? {}), effort } };
-  const abortSignal = AbortSignal.timeout(timeoutMs);
-  let streamError: unknown = null;
 
-  try {
-    const result = streamObject({
-      model: anthropic(STRATEGIST_MODEL),
-      schema,
-      system,
-      prompt,
-      providerOptions,
-      maxOutputTokens: maxOutputTokensFor("strategist", answerTokens),
-      maxRetries: 1,
-      abortSignal,
-      onError: ({ error }) => {
-        streamError = error;
-      },
-    });
-    const [object, usage, finishReason] = await Promise.all([result.object, result.usage, result.finishReason]);
+  const out = await settleObjectStream(
+    ({ abortSignal, onError }) =>
+      streamObject({
+        model: anthropic(STRATEGIST_MODEL),
+        schema,
+        system,
+        prompt,
+        providerOptions,
+        maxOutputTokens: maxOutputTokensFor("strategist", answerTokens),
+        maxRetries: 1,
+        abortSignal,
+        onError,
+      }),
+    { timeoutMs }
+  );
+  const ms = Date.now() - started;
+
+  if (out.status === "ok") {
+    const usage = out.usage as { inputTokens?: number; outputTokens?: number } | undefined;
     const inputTokens = usage?.inputTokens ?? 0;
     const outputTokens = usage?.outputTokens ?? 0;
     await recordAiUsage({ callSite, model: STRATEGIST_MODEL, inputTokens, outputTokens });
-    if (finishReason === "length") {
+    if (out.finishReason === "length") {
       reportError(new Error(`${label}: strategist output hit maxOutputTokens`), { route: "lib/strategist-call", phase: label });
     }
-    return { ok: true, object, model: STRATEGIST_MODEL, effort, inputTokens, outputTokens, finishReason: String(finishReason), ms: Date.now() - started };
-  } catch (err) {
-    const ms = Date.now() - started;
-    const cause = streamError ?? err;
-    if (abortSignal.aborted || isAbort(cause)) {
-      return {
-        ok: false,
-        reason: "timeout",
-        message: `Zeitlimit nach ${Math.round(ms / 1000)} s erreicht (effort ${effort}).`,
-        ...base,
-        ms,
-      };
-    }
-    reportError(cause, { route: "lib/strategist-call", phase: label });
-    const message = cause instanceof Error ? cause.message : String(cause);
-    // A response that ended without a valid object still cost tokens — record them.
-    const failed = NoObjectGeneratedError.isInstance(cause) ? cause : NoObjectGeneratedError.isInstance(err) ? err : null;
-    const inputTokens = failed?.usage?.inputTokens ?? 0;
-    const outputTokens = failed?.usage?.outputTokens ?? 0;
-    if (inputTokens > 0 || outputTokens > 0) {
-      await recordAiUsage({ callSite, model: STRATEGIST_MODEL, inputTokens, outputTokens });
-    }
-    const truncated = failed?.finishReason === "length" || /max_tokens|maxOutputTokens/i.test(message);
+    return { ok: true, object: out.object as T, model: STRATEGIST_MODEL, effort, inputTokens, outputTokens, finishReason: String(out.finishReason), ms };
+  }
+
+  if (out.status === "timeout") {
+    // An aborted stream reports no usage; the tokens Anthropic billed up to
+    // the abort are not known here.
     return {
       ok: false,
-      reason: truncated ? "truncated" : failed ? "invalid" : "model_error",
-      message: message.slice(0, 300),
+      reason: "timeout",
+      message: `Zeitlimit nach ${Math.round(ms / 1000)} s erreicht (effort ${effort}).`,
       ...base,
-      inputTokens,
-      outputTokens,
       ms,
     };
   }
+
+  const cause = out.error;
+  reportError(cause, { route: "lib/strategist-call", phase: label });
+  const message = cause instanceof Error ? cause.message : String(cause);
+  // A response that ended without a valid object still cost tokens — record them.
+  const failed = NoObjectGeneratedError.isInstance(cause) ? cause : null;
+  const inputTokens = failed?.usage?.inputTokens ?? 0;
+  const outputTokens = failed?.usage?.outputTokens ?? 0;
+  if (inputTokens > 0 || outputTokens > 0) {
+    await recordAiUsage({ callSite, model: STRATEGIST_MODEL, inputTokens, outputTokens });
+  }
+  const truncated = failed?.finishReason === "length" || /max_tokens|maxOutputTokens/i.test(message);
+  return {
+    ok: false,
+    reason: truncated ? "truncated" : failed ? "invalid" : "model_error",
+    message: message.slice(0, 300),
+    ...base,
+    inputTokens,
+    outputTokens,
+    ms,
+  };
 }

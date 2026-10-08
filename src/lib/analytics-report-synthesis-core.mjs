@@ -273,10 +273,41 @@ export function strategistEffortForAttempt(attempt) {
   return Number.isFinite(i) && i >= 0 && i < STRATEGIST_EFFORTS.length ? STRATEGIST_EFFORTS[i] : null;
 }
 
+/**
+ * A strategist attempt is marked "in flight" in the stored state BEFORE the
+ * model call and the mark is cleared by every write after it. A mark that is
+ * still there on a later step means one of two things:
+ *  - it is younger than the step's maxDuration (+ margin): that step may still
+ *    be running (a retried request; no step claim) → `live`, do not start a
+ *    second call;
+ *  - it is older: the platform killed that step (timeout) → the attempt counts
+ *    as failed, so the ladder moves down instead of repeating the same call.
+ *
+ * @param {unknown} attempts  stored attempt count of this pass
+ * @param {unknown} inFlight  stored mark `{ pass, attempt, startedAt }` or null
+ * @param {string} pass
+ * @param {{ now?: number, liveMs?: number }} [opts]
+ * @returns {{ attempts: number, interrupted: boolean, live: boolean }}
+ */
+export function settleInFlightAttempt(attempts, inFlight, pass, { now = Date.now(), liveMs = IN_FLIGHT_LIVE_MS } = {}) {
+  const n = Math.max(0, Math.floor(Number(attempts)) || 0);
+  const mark = inFlight && typeof inFlight === "object" ? /** @type {{ pass?: unknown, attempt?: unknown, startedAt?: unknown }} */ (inFlight) : null;
+  if (!mark || mark.pass !== pass) return { attempts: n, interrupted: false, live: false };
+  const attempt = Math.floor(Number(mark.attempt));
+  if (!Number.isFinite(attempt) || attempt < n) return { attempts: n, interrupted: false, live: false };
+  const started = Date.parse(String(mark.startedAt ?? ""));
+  if (Number.isFinite(started) && Math.abs(now - started) < liveMs) {
+    return { attempts: n, interrupted: false, live: true };
+  }
+  return { attempts: attempt + 1, interrupted: true, live: false };
+}
+
 /** The step route's maxDuration (s) — keep in sync with api/admin/analytics/step. */
 export const STEP_MAX_DURATION_S = 300;
 /** Abort a strategist call after this long so the step can record it and retry. */
 export const STRATEGIST_TIMEOUT_MS = 240_000;
+/** An in-flight mark younger than this may belong to a step that is still running. */
+export const IN_FLIGHT_LIVE_MS = (STEP_MAX_DURATION_S + 30) * 1000;
 /** Answer budgets (thinking headroom comes on top, maxOutputTokensFor). */
 export const DECISIONS_ANSWER_TOKENS = 6000;
 export const PLAN_ANSWER_TOKENS = 7000;
