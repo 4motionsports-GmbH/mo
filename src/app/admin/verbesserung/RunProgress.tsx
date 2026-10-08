@@ -128,8 +128,8 @@ export function RunProgress({
             </div>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">
               {title}
-              {loop.reconnecting && " · Server nicht erreichbar — es wird automatisch weiter versucht"}
-              {busy && !loop.reconnecting && " · ein Schritt läuft noch auf dem Server — wird abgewartet"}
+              {running && loop.reconnecting && " · Server nicht erreichbar — es wird automatisch weiter versucht"}
+              {running && busy && !loop.reconnecting && " · ein Schritt läuft noch auf dem Server — wird abgewartet"}
             </p>
           </div>
           <div className="flex items-center gap-2">

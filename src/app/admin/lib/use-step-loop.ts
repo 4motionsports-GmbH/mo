@@ -25,6 +25,7 @@ import {
   GATEWAY_GIVE_UP_MESSAGE,
   GATEWAY_RETRY_DELAY_MS,
   GATEWAY_RETRY_MAX,
+  NETWORK_GIVE_UP_MESSAGE,
   classifyStepFailure,
 } from "@/lib/step-loop-retry.mjs";
 
@@ -86,7 +87,15 @@ export function useStepLoop<T>({
   });
 
   const start = React.useCallback(() => {
-    if (runningRef.current) return;
+    if (runningRef.current) {
+      // A loop is still parked in an await (a request or a retry wait): un-pause
+      // it so it carries on — returning here would let it exit with nothing
+      // left running. No await sits between its `while` check and its
+      // `finally`, so there is never a second loop.
+      pausedRef.current = false;
+      setPaused(false);
+      return;
+    }
     runningRef.current = true;
     pausedRef.current = false;
     setRunning(true);
@@ -125,7 +134,9 @@ export function useStepLoop<T>({
             failures += 1;
             if (failures >= c.retry.max) {
               if (mountedRef.current) {
-                setError("Verbindung dauerhaft unterbrochen — bitte „Fortsetzen“ klicken.");
+                // Resumable drivers show „Erneut versuchen“ in the error state,
+                // the others a „Fortsetzen“ button.
+                setError(c.resumable ? NETWORK_GIVE_UP_MESSAGE : "Verbindung dauerhaft unterbrochen — bitte „Fortsetzen“ klicken.");
               }
               return;
             }
@@ -134,7 +145,8 @@ export function useStepLoop<T>({
             continue;
           }
           failures = 0;
-          if (!c.isBusy?.(data)) gatewayFailures = 0;
+          const busyNow = Boolean(c.isBusy?.(data));
+          if (!busyNow) gatewayFailures = 0;
           if (!mountedRef.current) return;
           setReconnecting(false);
           c.onStep?.(data);
@@ -142,11 +154,16 @@ export function useStepLoop<T>({
             c.onDone();
             return;
           }
-          if (c.isBusy?.(data)) await sleep(c.pollDelayMs);
+          if (busyNow) await sleep(c.pollDelayMs);
         }
       } finally {
         runningRef.current = false;
-        if (mountedRef.current) setRunning(false);
+        if (mountedRef.current) {
+          setRunning(false);
+          // Whatever ended the loop (done, error, give-up, pause during a
+          // wait), it is no longer reconnecting.
+          setReconnecting(false);
+        }
       }
     })();
   }, []);

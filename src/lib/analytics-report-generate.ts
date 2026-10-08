@@ -211,15 +211,15 @@ function leanProgress(p: ReportProgress): ReportProgress {
  */
 export async function stepReport(id: number): Promise<StepResult> {
   const stepStartedAt = Date.now();
-  const report = await getAnalyticsReport(id);
-  if (!report) return { ok: false, done: true, error: "not_found" };
-  if (report.status !== "running") {
+  const first = await getAnalyticsReport(id);
+  if (!first) return { ok: false, done: true, error: "not_found" };
+  if (first.status !== "running") {
     return {
       ok: true,
-      status: report.status,
-      phase: report.phase,
-      progress: leanProgress(report.progress),
-      costEur: report.costEur,
+      status: first.status,
+      phase: first.phase,
+      progress: leanProgress(first.progress),
+      costEur: first.costEur,
       done: true,
     };
   }
@@ -229,15 +229,31 @@ export async function stepReport(id: number): Promise<StepResult> {
   // the claim turns the retry into a cheap "busy" poll. 'error' (migration not
   // applied, DB hiccup) proceeds without a claim, as before.
   const claim = await claimReportStep(id);
-  if (claim === "busy") {
+  const busyAnswer = (r: AnalyticsReportDetail): StepResult => ({
+    ok: true,
+    status: r.status,
+    phase: r.phase,
+    progress: leanProgress(r.progress),
+    costEur: r.costEur,
+    done: false,
+    busy: true,
+  });
+  if (claim === "busy") return busyAnswer(first);
+
+  // The first read may predate the last write of a step that released its
+  // claim in between — work only on the row as it is now that this step holds
+  // the claim.
+  const report = claim === "claimed" ? await getAnalyticsReport(id) : first;
+  if (!report || report.status !== "running") {
+    if (claim === "claimed") await releaseReportStep(id);
+    if (!report) return busyAnswer(first);
     return {
       ok: true,
       status: report.status,
       phase: report.phase,
       progress: leanProgress(report.progress),
       costEur: report.costEur,
-      done: false,
-      busy: true,
+      done: true,
     };
   }
 
@@ -391,7 +407,7 @@ async function stepAnalyze(report: AnalyticsReportDetail, stepStartedAt: number)
     const reason = unconfigured
       ? "Anthropic-Key fehlt — Gesprächsanalyse übersprungen."
       : gaveUp
-        ? `Gesprächsanalyse nach ${ledger.failStreak} Fehlern in Folge abgebrochen — ${remaining} Gespräche nicht analysiert.`
+        ? `Gesprächsanalyse nach ${ledger.failStreak} Fehlern in Folge abgebrochen${remaining > 0 ? ` — ${remaining} weitere Gespräche nicht mehr versucht` : ""}.`
         : budgetExhausted
           ? budgetNote(remaining)
           : undefined;
@@ -793,8 +809,14 @@ async function stepStrategist(
   strat.inFlight = null;
   const effort = strategistEffortForAttempt(strat[attemptsKey]);
 
+  // A write after the minutes-long call that does not land would leave the
+  // in-flight mark behind and make the next step count a finished attempt as
+  // killed — try it a second time.
+  const save = async (patch: Parameters<typeof updateAnalyticsReport>[1]) => {
+    if (!(await updateAnalyticsReport(report.id, patch))) await updateAnalyticsReport(report.id, patch);
+  };
   const advance = async (patch: Partial<ReportScratch>, usage?: ReportUsage) => {
-    await updateAnalyticsReport(report.id, {
+    await save({
       phase: nextPhase(pass, options),
       progress: { ...progress, scratch: { ...scratch, ...patch, strategist: strat } },
       ...(usage ? { usage } : {}),
@@ -878,7 +900,7 @@ async function stepStrategist(
     await advance({}, usage);
     return;
   }
-  await updateAnalyticsReport(report.id, {
+  await save({
     phase: pass,
     progress: { ...progress, scratch: { ...scratch, strategist: strat } },
     usage,

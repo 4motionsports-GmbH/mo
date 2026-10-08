@@ -33,3 +33,7 @@ export const GATEWAY_RETRY_DELAY_MS = 15_000;
 /** The message when the loop gives up after repeated platform errors. */
 export const GATEWAY_GIVE_UP_MESSAGE =
   "Der Server hat mehrmals nicht rechtzeitig geantwortet — der Stand ist gespeichert, „Erneut versuchen“ setzt an derselben Stelle fort.";
+
+/** The message when a resumable loop gives up after the network retries (its error state offers „Erneut versuchen“). */
+export const NETWORK_GIVE_UP_MESSAGE =
+  "Verbindung dauerhaft unterbrochen — der Stand ist gespeichert, „Erneut versuchen“ setzt an derselben Stelle fort.";

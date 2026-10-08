@@ -221,18 +221,35 @@ function progressOf(run: ImprovementRunDetail): RunStepResult["progress"] {
 /** Advance the run by one bounded unit of work. Never throws. */
 export async function stepImprovementRun(id: number): Promise<RunStepResult> {
   const stepStartedAt = Date.now();
-  const run = await getImprovementRun(id);
-  if (!run) return { ok: false, done: true, error: "not_found" };
-  if (run.status !== "running") {
-    return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: true, progress: progressOf(run) };
+  const first = await getImprovementRun(id);
+  if (!first) return { ok: false, done: true, error: "not_found" };
+  if (first.status !== "running") {
+    return { ok: true, status: first.status, phase: first.phase, costEur: first.costEur, done: true, progress: progressOf(first) };
   }
 
   // Retry-safety (migration 0045): a retried request while the original is
   // still working becomes a cheap "busy" poll. 'error' (claim not possible)
   // falls through fail-open — the pre-claim behaviour.
   const claim = await claimRunStep(id);
-  if (claim === "busy") {
-    return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: false, busy: true, progress: progressOf(run) };
+  const busyAnswer = (r: ImprovementRunDetail): RunStepResult => ({
+    ok: true,
+    status: r.status,
+    phase: r.phase,
+    costEur: r.costEur,
+    done: false,
+    busy: true,
+    progress: progressOf(r),
+  });
+  if (claim === "busy") return busyAnswer(first);
+
+  // The first read may predate the last write of a step that released its
+  // claim in between — work only on the run as it is now that this step holds
+  // the claim.
+  const run = claim === "claimed" ? await getImprovementRun(id) : first;
+  if (!run || run.status !== "running") {
+    if (claim === "claimed") await releaseRunStep(id);
+    if (!run) return busyAnswer(first);
+    return { ok: true, status: run.status, phase: run.phase, costEur: run.costEur, done: true, progress: progressOf(run) };
   }
 
   let busy = false;
