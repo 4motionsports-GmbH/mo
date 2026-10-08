@@ -17,6 +17,7 @@
     "verify:widget": "node scripts/check-live-widget.mjs",
     "verify:live": "node --env-file=.env scripts/verify-live-kpis.mjs",
     "diagnose:address": "node --env-file=.env scripts/diagnose-address.mjs",
+    "check:welcome": "node --env-file=.env scripts/check-welcome-code.mjs",
     "db:migrate": "node --env-file=.env scripts/migrate.mjs",
     "db:reset": "node --env-file=.env scripts/reset-test-data.mjs",
     "analyze:repurchase": "node --env-file=.env scripts/analyze-repurchase.mjs",

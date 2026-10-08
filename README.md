@@ -103,6 +103,7 @@ every retention window treats `0` as „disabled“, never as „delete everythi
 | `npm run shopify:webhooks` (`-- --apply`) | List (and create) the Shopify webhook subscriptions Mo needs; checks the app's scopes. |
 | `npm run profiles:backfill` | Build missing AI customer profiles in batches. |
 | `npm run diagnose:address` | Inspect the address capture for one customer. |
+| `npm run check:welcome` (`-- --email <addr> --inbox <ISO>`) | Read-only: which Shopify discount is today's 5 % welcome code (settings, redemptions from `customer_orders`) and, for one test address, Mo's DOI/outbox timeline against Shopify's consent ([`docs/DISCOUNTS.md`](docs/DISCOUNTS.md) „Welcome codes“). |
 | `npm run analyze:repurchase` | Repurchase analysis behind the lifecycle segments ([`docs/REPURCHASE_ANALYSIS.md`](docs/REPURCHASE_ANALYSIS.md)). |
 | `npm run convert-catalog`, `npm run index` | One-off catalog conversion and embedding build (the daily cron does this in production). |
 | `npm run hero:gradient`, `npm run hero:compare` | Hero-image tooling. |
