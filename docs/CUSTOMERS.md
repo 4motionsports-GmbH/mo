@@ -272,7 +272,12 @@ exploitable via alias e-mails); no code mints welcome codes and the
 `welcome_issued_at`) stay on `customers`, read-only and never written; the only
 reader is the chat memory (`welcome_issued_at` set → Mo is told to promise no
 welcome discount). No admin view shows them. They go with the customer row on
-erasure. Discount codes today: [`DISCOUNTS.md`](./DISCOUNTS.md).
+erasure. Discount codes today: [`DISCOUNTS.md`](./DISCOUNTS.md). Separately, a
+Shopify-side tool (not Mo, not the theme) mails a 5 % welcome code to shop
+newsletter sign-ups; finding it is task T1 of
+[`frontend/tasks/OPTIN_REWARD_2026-10-08.md`](./frontend/tasks/OPTIN_REWARD_2026-10-08.md),
+and a new reward on the chat's consent ask is under legal review
+([`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) § 22).
 
 ## Customer memory in the live chat (in-session re-identification ONLY)
 
