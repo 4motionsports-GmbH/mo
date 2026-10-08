@@ -150,32 +150,49 @@ export async function recordKpiEvent(opts: {
   }
 }
 
+/** The session's latest opt-in whose DOI mail went out — what a DOI click confirms. */
+export interface LatestDoiOptIn {
+  source: string;
+  /** Sign-in ask placement / variant of that opt-in (OPTIN_REWARD T6); null when it carried none. */
+  placement: string | null;
+  variant: string | null;
+}
+
 /**
- * The source of the session's latest opt-in that needed a DOI mail (OI1 §4):
- * the surface a DOI click in that session confirms. Legacy rows (no `source`)
- * map through their trigger. Null on no row, no DB or an error.
+ * The session's latest opt-in that sent a DOI mail (OI1 §4): the surface a
+ * DOI click in that session confirms. Opt-ins that sent no mail (a failed
+ * send, `doi_pending` within the resend cooldown, `shopify_pending`) do not
+ * count. Legacy rows (no `outcome`, no `source`) map through their trigger.
+ * Null on no row, no DB or an error.
  */
-export async function latestDoiOptInSource(sessionId: string | null): Promise<string | null> {
+export async function latestDoiOptIn(sessionId: string | null): Promise<LatestDoiOptIn | null> {
   if (!sessionId) return null;
   const sql = getSql();
   if (!sql) return null;
   try {
     const rows = (await sql`
-      SELECT COALESCE(data->>'source', '') AS source, COALESCE(data->>'trigger', '') AS trigger
+      SELECT COALESCE(data->>'source', '') AS source, COALESCE(data->>'trigger', '') AS trigger,
+             data->>'placement' AS placement, data->>'variant' AS variant
         FROM kpi_events
        WHERE session_id = ${sessionId}
          AND event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
-         AND (data->>'outcome' = 'doi_required'
-              OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending'))
+         AND ((data->>'outcome' = 'doi_required' AND COALESCE(data->>'doiSent', 'true') <> 'false')
+              OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending'
+                  AND COALESCE(data->>'doiCooldown', 'false') <> 'true'))
        ORDER BY created_at DESC, id DESC
        LIMIT 1
-    `) as Array<{ source: string; trigger: string }>;
+    `) as Array<{ source: string; trigger: string; placement: string | null; variant: string | null }>;
     const r = rows[0];
-    return r ? eventSource(r.source, r.trigger) : null;
+    return r ? { source: eventSource(r.source, r.trigger), placement: r.placement || null, variant: r.variant || null } : null;
   } catch (err) {
-    reportError(err, { route: "lib/kpi-events", phase: "latestDoiOptInSource" });
+    reportError(err, { route: "lib/kpi-events", phase: "latestDoiOptIn" });
     return null;
   }
+}
+
+/** The source of the session's latest DOI opt-in (see latestDoiOptIn). */
+export async function latestDoiOptInSource(sessionId: string | null): Promise<string | null> {
+  return (await latestDoiOptIn(sessionId))?.source ?? null;
 }
 
 /**
