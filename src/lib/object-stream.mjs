@@ -25,6 +25,27 @@ export function isAbortError(err, depth = 0) {
   return err.cause ? isAbortError(err.cause, depth + 1) : false;
 }
 
+/**
+ * A readable message for anything a stream can fail with — an SSE `error`
+ * event arrives as a plain object ({ type, error: { type, message } }), not an
+ * Error, and would read "[object Object]".
+ */
+export function describeStreamError(err) {
+  if (err instanceof Error) return err.message || err.name;
+  if (err && typeof err === "object") {
+    const inner = /** @type {{ message?: unknown, error?: { message?: unknown, type?: unknown }, type?: unknown }} */ (err);
+    const message = inner.message ?? inner.error?.message;
+    const type = inner.error?.type ?? inner.type;
+    if (typeof message === "string" && message) return typeof type === "string" && type ? `${type}: ${message}` : message;
+    try {
+      return JSON.stringify(err).slice(0, 300);
+    } catch {
+      return "Unbekannter Fehler";
+    }
+  }
+  return String(err);
+}
+
 function timeoutReason(timeoutMs) {
   const err = new Error(`Zeitlimit von ${Math.round(timeoutMs / 1000)} s erreicht.`);
   err.name = "TimeoutError";

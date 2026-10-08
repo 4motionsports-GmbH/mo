@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { streamObject, NoObjectGeneratedError } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import { z } from "zod";
-import { STEP_RESERVE_MS, callTimeoutWithinStep, isAbortError, settleObjectStream } from "./object-stream.mjs";
+import { STEP_RESERVE_MS, callTimeoutWithinStep, describeStreamError, isAbortError, settleObjectStream } from "./object-stream.mjs";
 
 // The real ai SDK streamObject against a mock model: the regression for the
 // 504 of 2026-10-08 (awaiting the result promises without reading the stream
@@ -161,4 +161,13 @@ test("callTimeoutWithinStep keeps the call inside the step", () => {
   assert.equal(callTimeoutWithinStep({ ...base, capMs: 10_000, stepStartedAt: 700_000 }), 10_000);
   // A missing start counts as "now".
   assert.equal(callTimeoutWithinStep({ ...base, stepStartedAt: Number.NaN }), 240_000);
+});
+
+test("describeStreamError reads SSE error objects, not [object Object]", () => {
+  assert.equal(describeStreamError({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }), "overloaded_error: Overloaded");
+  assert.equal(describeStreamError(new Error("boom")), "boom");
+  assert.equal(describeStreamError({ message: "plain" }), "plain");
+  assert.equal(describeStreamError({ x: 1 }), '{"x":1}');
+  assert.equal(describeStreamError("text"), "text");
+  assert.equal(describeStreamError(undefined), "undefined");
 });

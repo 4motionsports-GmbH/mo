@@ -9,7 +9,9 @@
 //     never runs into a response-headers timeout — and the stream is READ to
 //     its end (object-stream.mjs): ai@6 settles `object`/`usage` only while the
 //     stream is consumed; awaiting them alone hung every answer until the
-//     platform killed the step (the 504 of 2026-10-08);
+//     platform killed the step (the 504 of 2026-10-08). streamObject re-parses
+//     the partial JSON on every delta — about 1 s of CPU for a 32 KB answer,
+//     spread over the stream; fine for answers of a few thousand tokens;
 //   · bounded: maxOutputTokens = the answer budget plus the tier's thinking
 //     headroom (thinking counts toward max_tokens), an abort at `timeoutMs`
 //     (the caller derives it from its step deadline — callTimeoutWithinStep)
@@ -26,7 +28,7 @@ import { NoObjectGeneratedError, streamObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { z } from "zod";
 import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
-import { settleObjectStream } from "./object-stream.mjs";
+import { describeStreamError, settleObjectStream } from "./object-stream.mjs";
 import { recordAiUsage, type AiCallSite } from "./ai-usage-store";
 import { reportError } from "./observability";
 
@@ -130,8 +132,8 @@ export async function runStrategistObject<T>({
   }
 
   const cause = out.error;
-  reportError(cause, { route: "lib/strategist-call", phase: label });
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = describeStreamError(cause);
+  reportError(cause instanceof Error ? cause : new Error(message), { route: "lib/strategist-call", phase: label });
   // A response that ended without a valid object still cost tokens — record them.
   const failed = NoObjectGeneratedError.isInstance(cause) ? cause : null;
   const inputTokens = failed?.usage?.inputTokens ?? 0;
