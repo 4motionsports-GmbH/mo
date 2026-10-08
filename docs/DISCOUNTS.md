@@ -47,3 +47,20 @@ No code mints welcome codes any more (the retirement is recorded in
 The migration `0009` columns stay read-only on `customers`; the only reader is
 the chat memory (`src/lib/customer-memory.ts`): when `welcome_issued_at` is set,
 Mo is told to promise no welcome discount. No admin view shows them.
+
+**Today's 5 % welcome code is not Mo's.** A Shopify-side tool sends it (a
+Shopify Messaging automation, a Flow workflow or an app — which one is the open
+T1 check of [`frontend/tasks/OPTIN_REWARD_2026-10-08.md`](./frontend/tasks/OPTIN_REWARD_2026-10-08.md));
+Mo's only part is that a confirmed DOI writes `SUBSCRIBED` / `CONFIRMED_OPT_IN`
+with a fresh `consentUpdatedAt` to Shopify (`shopify_outbox`), which can fire
+that automation. `npm run check:welcome` (`scripts/check-welcome-code.mjs`,
+read-only, core `src/lib/welcome-code-check.mjs`) identifies it: the code
+discounts that look like the welcome code with their settings (value, one code
+or unique codes, limits, minimum, collections, expiry, the app that created
+them) and their redemptions; with `-- --email <test address> [--inbox <arrival
+time>]` it puts Mo's DOI and outbox timeline next to Shopify's consent for that
+one address (test cases 8 / 8b). Redemptions come from Mo's order ledger,
+`customer_orders.discount_codes` (filled by the `orders/*` webhooks, the import
+and the reconcile; guest orders without a Shopify customer are not in it). The
+automation itself — trigger, conditions, activity report — is visible only in
+the Shopify admin.
