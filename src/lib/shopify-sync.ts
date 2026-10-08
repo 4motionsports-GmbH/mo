@@ -8,6 +8,9 @@
 //     (useStepLoop) or `npm run shopify:import`.
 //   * Reconciliation (nightly cron): every customer and order Shopify changed
 //     since the last run, so a lost webhook never leaves the mirror wrong.
+//   * One customer, live (fetchMirrorCustomer, C.29): a bounded read with the
+//     mirror's fields for request paths — the consent webhook's inline import
+//     and the opt-in precheck (lib/shopify-optin-precheck.ts).
 //
 // Both write through the same stores as the webhooks
 // (customer-mirror-store, customer-orders-store). Gated by
@@ -15,7 +18,8 @@
 
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
-import { adminGraphql, isShopifyConfigured } from "./shopify";
+import { adminGraphql, isShopifyConfigured, ShopifyThrottledError } from "./shopify";
+import { isThrottleGateActive } from "./shopify-throttle-gate";
 import {
   splitJsonlBytes,
   groupBulkLines,
@@ -23,7 +27,13 @@ import {
   BULK_CHUNK_BYTES,
   IMPORT_KINDS,
 } from "./shopify-bulk-core.mjs";
-import { mapShopifyCustomer, mapShopifyOrder, mapShopifyLineItem, numericShopifyId } from "./shopify-customer-map.mjs";
+import {
+  mapShopifyCustomer,
+  mapShopifyOrder,
+  mapShopifyLineItem,
+  numericShopifyId,
+  customerGid,
+} from "./shopify-customer-map.mjs";
 import type { MirrorCustomer, MirrorOrder, MirrorLineItem } from "./shopify-customer-map.mjs";
 import { upsertMirrorCustomers } from "./customer-mirror-store";
 import { upsertMirrorOrders, appendOrderLineItems, linkOrphanOrders } from "./customer-orders-store";
@@ -86,6 +96,16 @@ const RECONCILE_CUSTOMERS = /* GraphQL */ `
       pageInfo { hasNextPage endCursor }
       nodes { ${CUSTOMER_FIELDS} }
     }
+  }
+`;
+
+// One customer, same fields as the mirror (C.29: the consent webhook's inline
+// import, the opt-in precheck). emailMarketingConsent is deprecated in Admin API
+// 2026-04 in favour of defaultEmailAddress { marketingState marketingOptInLevel
+// marketingUpdatedAt } — still served; switch together with CUSTOMER_FIELDS.
+const CUSTOMER_BY_ID = /* GraphQL */ `
+  query MoCustomerById($id: ID!) {
+    customer(id: $id) { ${CUSTOMER_FIELDS} }
   }
 `;
 
@@ -243,7 +263,7 @@ async function processChunk(
     for (let i = 0; i < mapped.length; i += 500) {
       const res = await upsertMirrorCustomers(mapped.slice(i, i + 500), { origin: `import:${run.id}` }, sql);
       if (!res) throw new Error("customer upsert failed");
-      customers += res.inserted + res.updated + res.stamped;
+      customers += res.inserted + res.updated + res.stamped + res.raced;
       skipped += res.skipped;
     }
   } else {
@@ -485,7 +505,7 @@ export async function reconcileShopifyCustomers(
         stopped = "customer write failed";
         break;
       }
-      customers += res.inserted + res.updated + res.stamped;
+      customers += res.inserted + res.updated + res.stamped + res.raced;
       if (!data.customers.pageInfo.hasNextPage) break;
       cursor = data.customers.pageInfo.endCursor;
     }
@@ -529,6 +549,63 @@ export async function reconcileShopifyCustomers(
   } catch (err) {
     reportError(err, { route: "lib/shopify-sync", phase: "reconcileShopifyCustomers" });
     return { ok: false, reason: "error", ...empty };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// One customer, live (bounded)
+// ---------------------------------------------------------------------------
+
+/** Why a live read gave no customer (`ok` carries one). */
+export type MirrorFetchStatus = "ok" | "not_found" | "timeout" | "throttled" | "error" | "not_configured" | "disabled";
+
+export type MirrorFetch =
+  | { status: "ok"; customer: MirrorCustomer }
+  | { status: Exclude<MirrorFetchStatus, "ok"> };
+
+const isAbortError = (err: unknown): boolean => {
+  const name = (err as { name?: unknown } | null)?.name;
+  return name === "AbortError" || name === "TimeoutError";
+};
+
+/**
+ * Read one Shopify customer with the mirror's fields, inside a request path
+ * (C.29: the consent webhook's inline import, the opt-in precheck). Bounded:
+ * no call while Shopify is not configured, the customer sync is off or the
+ * shared throttle gate is up; no throttle wait, no retry; the whole read —
+ * including a cold token exchange — ends after `timeoutMs`. Never throws; the
+ * status says why there is no customer, and the caller falls back.
+ */
+export async function fetchMirrorCustomer(shopifyId: string, opts: { timeoutMs: number }): Promise<MirrorFetch> {
+  if (!isShopifyConfigured()) return { status: "not_configured" };
+  if (!isShopifyCustomerSyncEnabled()) return { status: "disabled" };
+  const id = numericShopifyId(shopifyId);
+  if (!id) return { status: "not_found" };
+  const read = (async (): Promise<MirrorFetch> => {
+    try {
+      if (await isThrottleGateActive()) return { status: "throttled" };
+      const data = await adminGraphql<{ customer: unknown }>(
+        CUSTOMER_BY_ID,
+        { id: customerGid(id) },
+        { timeoutMs: opts.timeoutMs, retry: false }
+      );
+      const customer = mapShopifyCustomer(data?.customer);
+      return customer ? { status: "ok", customer } : { status: "not_found" };
+    } catch (err) {
+      if (err instanceof ShopifyThrottledError) return { status: "throttled" };
+      if (isAbortError(err)) return { status: "timeout" };
+      reportError(err, { route: "lib/shopify-sync", phase: "fetchMirrorCustomer" });
+      return { status: "error" };
+    }
+  })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<MirrorFetch>((resolve) => {
+    timer = setTimeout(() => resolve({ status: "timeout" }), opts.timeoutMs);
+  });
+  try {
+    return await Promise.race([read, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

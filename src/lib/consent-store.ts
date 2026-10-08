@@ -403,9 +403,13 @@ export function isSubscribed(c: Pick<CustomerConsent, "state" | "suppression"> |
 
 /**
  * A pending double opt-in whose confirmation link has expired is no consent:
- * set the person back to `not_subscribed` (local only — pending never reached
- * Shopify, so nothing is pushed) with a history entry, so the at-sign-in card
- * and the chat gate may ask again. `graceDays` after the link's expiry.
+ * set the person back to `not_subscribed` with a history entry, so the
+ * at-sign-in card and the chat gate may ask again. `graceDays` after the
+ * link's expiry. Local only, nothing is pushed: a Mo pending never reached
+ * Shopify, and a Shopify-sourced pending (a shop sign-up whose confirmation
+ * mail went unanswered) is reset here too but stays as it is in Shopify — a
+ * later, older Shopify value never pushes this not_subscribed back
+ * (consent-core: only subscribed / unsubscribed heal).
  * Returns the number of people reset; never throws.
  */
 export async function expirePendingConsents(

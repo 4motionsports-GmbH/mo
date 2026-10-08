@@ -23,7 +23,8 @@
 //   6. Side effects are declared: an unsubscribe adds the block-list row, a
 //      newer real subscribe lifts an unsubscribe/manual row, a Mo-side change is
 //      pushed to Shopify, and a Shopify value that LOSES against a newer Mo
-//      state is answered by pushing Mo's state back (drift heals itself).
+//      subscribe or unsubscribe is answered by pushing Mo's state back (drift
+//      heals itself). Healing never pushes pending or not_subscribed.
 
 /** @typedef {"subscribed" | "pending" | "unsubscribed" | "not_subscribed"} ConsentState */
 /** @typedef {"confirmed_opt_in" | "single_opt_in" | "unknown"} ConsentLevel */
@@ -164,8 +165,13 @@ export function resolveEmailConsent(current, incoming) {
 
   if (!wins) {
     // A Shopify value that loses against a newer Mo state: Shopify drifted
-    // (e.g. our write is still in the outbox) — push Mo's state back.
-    const heal = fromShopify && isMoSource(cur.source) && cur.state !== "pending";
+    // (e.g. our write is still in the outbox) — push Mo's state back. Only a
+    // state Mo itself pushes heals: subscribed (DOI confirm) or unsubscribed
+    // (opt-out). Pending is local, and not_subscribed is never an act of Mo's —
+    // only the DOI expiry sets it, also for a Shopify-sourced pending — so
+    // pushing it would overwrite the shop's own pending or consent (C.29).
+    const heal =
+      fromShopify && isMoSource(cur.source) && (cur.state === "subscribed" || cur.state === "unsubscribed");
     return keep("stale", null, { ...noEffects(), pushToShopify: heal });
   }
 
