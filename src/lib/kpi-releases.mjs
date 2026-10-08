@@ -108,6 +108,13 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "„Beraten & gekauft“ prüft die gekauften Produkte gegen alle Gespräche des Geräts im Zuordnungsfenster vor der Bestellung statt nur gegen das jüngste — der Anteil kann steigen, „Beraten, anderes gekauft“ sinken. Mo-Links in E-Mails zählen ab der letzten Mail mit dieser Markierung statt ab der ersten; „Direkt“ kann leicht steigen. Bereits erfasste Bestellungen bleiben unverändert.",
   },
+  {
+    date: "2026-10-08",
+    key: "widget-reward-dormant",
+    title: "Widget-Update: Gutschein-Hinweise vorbereitet (ohne sichtbare Änderung)",
+    detail:
+      "Das Widget kann einen Gutschein-Hinweis im Einwilligungs-Popup, in der Karte und im Anmelde-Popup zeigen und angemeldete Kund:innen nach einer Produktempfehlung fragen („Wertmoment“) — erst, wenn der Server die Texte ausliefert (Schalter aus). Sofort wirksam: Ein zweiter Tab desselben Geräts fragt 24 Stunden nach einem Ja nicht erneut („Angezeigt“ kann leicht sinken); nach einer abgebrochenen Antwort erneuert das Widget die Bestell-Markierung nicht.",
+  },
 ]);
 
 /** First day the opt-in events carry source and outcome (OI1). */

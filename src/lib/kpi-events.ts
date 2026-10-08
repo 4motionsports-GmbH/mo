@@ -128,6 +128,21 @@ export const KPI_PAGE_CONTEXT_APPLIED = "page_context_applied";
 /** When that turn finished: `{kind, productCards, otherCards}` — counts only. */
 export const KPI_PAGE_CONTEXT_ANSWERED = "page_context_answered";
 
+// ---------------------------------------------------------------------------
+// Welcome-voucher test of the consent ask (OPTIN_REWARD T6, server-emitted)
+// ---------------------------------------------------------------------------
+
+/** A signed-in session the consent ask may be offered to (GET /api/auth/me
+ * answered `optInActionable: true`) — the test's intention-to-treat population.
+ * `data: {variant, mode: popup|value_moment, locale}` = what the server assigned
+ * this session. At most once per session per 24 h (consent-ask-kpi.ts). */
+export const KPI_CONSENT_ASK_ELIGIBLE = "consent_ask_eligible";
+/** GET /api/consent-copy?surface=signin served a per-session copy (only while
+ * several variants are active) to a request with `x-ms-session` — the variant of
+ * anonymous sign-in popup sessions too. `data: {variant, locale, reward,
+ * valueMoment}` (booleans = what renders). At most once per session per 24 h. */
+export const KPI_CONSENT_COPY_SERVED = "consent_copy_served";
+
 /**
  * Record one pseudonymous KPI event from server code. Same table and shape as
  * the widget's fail-silent track() → POST /api/kpi path, so dashboard
@@ -224,5 +239,37 @@ export async function hasDeclinedEmailCapture(
       event: KPI_EMAIL_CAPTURE_DECLINED,
     });
     return false;
+  }
+}
+
+/**
+ * Record a session-keyed event at most once per session within `hours` (one
+ * statement: insert unless the session already has that event in the window).
+ * Not race-proof — two parallel requests can both insert — so readers count
+ * DISTINCT sessions. No session, no database or a failed write → nothing
+ * recorded, logged, never thrown (like recordKpiEvent).
+ */
+export async function recordKpiEventOncePerWindow(opts: {
+  sessionId: string | null;
+  event: string;
+  data?: Record<string, unknown>;
+  hours: number;
+}): Promise<void> {
+  if (!opts.sessionId) return;
+  const sql = getSql();
+  if (!sql) return;
+  const hours = Math.max(1, Math.floor(opts.hours) || 1);
+  try {
+    await sql`
+      INSERT INTO kpi_events (session_id, event, data)
+      SELECT ${opts.sessionId}, ${opts.event}, ${JSON.stringify(opts.data ?? {})}::jsonb
+       WHERE NOT EXISTS (
+         SELECT 1 FROM kpi_events
+          WHERE session_id = ${opts.sessionId}
+            AND event = ${opts.event}
+            AND created_at >= now() - make_interval(hours => ${hours}::int))
+    `;
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-events", phase: "insertOnce", event: opts.event });
   }
 }

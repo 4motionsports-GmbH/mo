@@ -45,6 +45,8 @@ import {
 } from "@/lib/consent-copy";
 import { isShopifyErasureSyncEnabled } from "@/lib/platform-flags.mjs";
 import { resolveLocale } from "@/lib/locale";
+import { recordConsentCopyServed } from "@/lib/consent-ask-kpi";
+import { after } from "next/server";
 
 export const maxDuration = 10;
 
@@ -84,6 +86,15 @@ export async function GET(req: Request) {
     // quickly, since the served strings ARE the audit-trail text. While a
     // sign-in framing A/B test runs, the copy is per session: never cached.
     const perSession = surface === "signin" && signInVariantsActive(locale);
+    // Welcome-voucher test (OPTIN_REWARD T6): which variant this session was
+    // served — anonymous login-popup sessions included. Only per-session copies
+    // (a cached single-variant copy has nothing to compare); once per session
+    // per 24 h; written after the answer, because the login popup waits at most
+    // 1.2 s for this copy.
+    const sessionId = req.headers.get("x-ms-session");
+    if (perSession && sessionId) {
+      after(() => recordConsentCopyServed({ sessionId, locale, copy }));
+    }
     return new Response(JSON.stringify(copy), {
       status: 200,
       headers: {

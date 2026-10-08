@@ -37,6 +37,7 @@ import { getPhysicalLetterStats } from "@/lib/physical-letters-store";
 import { loadKpiShopifyBlock } from "@/lib/kpi-cache";
 import { getCustomerBaseKpis, getMoEffectKpis } from "@/lib/customer-list-store";
 import { getInboxKpis } from "@/lib/inbox-store";
+import { getConsentExperiment, getWelcomeCodeStats } from "@/lib/kpi-consent-experiment-store";
 import type { KpiRange } from "@/lib/kpi-range";
 import { plural } from "@/lib/admin-format.mjs";
 import { Callout, Disclosure, InfoTip } from "./ui";
@@ -107,6 +108,8 @@ export async function KpiTab({
     loginGate,
     signinDiagnosis,
     gateFunnel,
+    consentExperiment,
+    welcomeCodes,
     captureFunnel,
     account,
     bundles,
@@ -132,6 +135,8 @@ export async function KpiTab({
     getLoginGateFunnel(range),
     getSigninDiagnosis(range),
     getConsentGateFunnel(range),
+    getConsentExperiment(range),
+    getWelcomeCodeStats(range),
     getEmailCaptureFunnel(range),
     getAccountActivity(range),
     getBundleKpis(range),
@@ -204,7 +209,7 @@ export async function KpiTab({
 
       <Group group={group("kunden")}>
         <LoginGateSection funnel={loginGate} diagnosis={signinDiagnosis} range={range} />
-        <ConsentGateSection funnel={gateFunnel} range={range} />
+        <ConsentGateSection funnel={gateFunnel} experiment={consentExperiment} codes={welcomeCodes} range={range} />
         <EmailCaptureSection funnel={captureFunnel} range={range} />
         <AccountSection activity={account} range={range} />
       </Group>
