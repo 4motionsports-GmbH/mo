@@ -192,6 +192,12 @@ export interface UpsertCaptureInput {
    * no Mo token or mail is issued, and a pending Mo DOI is kept untouched.
    */
   pendingElsewhere?: boolean;
+  /**
+   * The shop holds an unsubscribe or an invalid address for this person
+   * (C.29 precheck route "blocked"): handled as suppressed — no DOI mail,
+   * neutral answer — even if writing the block-list row failed.
+   */
+  blocked?: boolean;
 }
 
 export interface UpsertCaptureResult {
@@ -293,7 +299,7 @@ export async function upsertEmailCapture(
         }
       | undefined;
 
-    const suppressed = await isSuppressed(email, sql);
+    const suppressed = input.blocked === true || (await isSuppressed(email, sql));
     const cooldownMinutes = doiResendCooldownMinutes();
     const expiryDays = doiExpiryDays();
 

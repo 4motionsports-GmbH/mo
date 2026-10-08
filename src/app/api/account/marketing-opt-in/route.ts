@@ -137,7 +137,8 @@ export async function POST(req: Request) {
     // C.29: when Mo's copy holds no consent, the shop's live status is checked
     // first — subscribed there → no DOI; the shop's own confirmation mail out
     // (pending) → no Mo DOI either; unsubscribed / invalid there → the
-    // precheck writes the block, which the upsert then sees (neutral answer).
+    // precheck writes the block and the upsert treats the address as
+    // suppressed (neutral answer, no mail — also if that write failed).
     const pre = await precheckShopifyConsent({
       customerId: guard.customerId,
       shopifyCustomerId: guard.shopifyCustomerId,
@@ -154,6 +155,7 @@ export async function POST(req: Request) {
       locale,
       alreadySubscribed,
       pendingElsewhere: pre.route === "shopify_pending",
+      blocked: pre.route === "blocked",
     });
     if (!capture) {
       return errorResponse(
