@@ -145,23 +145,53 @@ interface GraphQLResponse<T> {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Options for a read inside a request path with a time budget. */
+export interface AdminGraphqlOptions {
+  /**
+   * Abort the GraphQL request after this many ms (the fetch rejects with a
+   * `TimeoutError`). The token exchange is shared between callers and not
+   * aborted — a caller that needs a hard bound races its own deadline too.
+   */
+  timeoutMs?: number;
+  /**
+   * `false`: no throttle wait and no transient retry. A throttle raises the
+   * shared gate and throws ShopifyThrottledError at once; a network error or a
+   * 5xx throws as is. Default: ride both out (the background paths).
+   */
+  retry?: boolean;
+}
+
+interface GraphqlControl {
+  signal: AbortSignal | undefined;
+  retry: boolean;
+}
+
+/** The background default: no deadline, ride out throttles and transient errors. */
+const RIDE_OUT: GraphqlControl = { signal: undefined, retry: true };
+
 /**
  * Run an authenticated Admin GraphQL query/mutation and return `data`. Throws on
  * HTTP errors, GraphQL `errors`, or a missing `data`. Exported so the discount
  * and orders modules share one auth + transport path (token cache, error
- * handling) rather than re-implementing it.
+ * handling) rather than re-implementing it. `opts` bounds a read in a request
+ * path (C.29: the consent webhook, the opt-in precheck); without it nothing
+ * changes for the existing callers.
  */
 export async function adminGraphql<T>(
   query: string,
-  variables?: Record<string, unknown>
+  variables?: Record<string, unknown>,
+  opts?: AdminGraphqlOptions
 ): Promise<T> {
-  return graphql<T>(query, variables);
+  const timeoutMs = opts?.timeoutMs;
+  const signal = typeof timeoutMs === "number" && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+  return graphql<T>(query, variables, 0, { signal, retry: opts?.retry !== false });
 }
 
 async function graphql<T>(
   query: string,
   variables?: Record<string, unknown>,
-  attempt = 0
+  attempt = 0,
+  ctl: GraphqlControl = RIDE_OUT
 ): Promise<T> {
   const token = await getAdminToken();
   const url = `https://${storeDomain()}/admin/api/${apiVersion()}/graphql.json`;
@@ -181,8 +211,11 @@ async function graphql<T>(
         "X-Shopify-Access-Token": token,
       },
       body: JSON.stringify({ query, variables }),
+      signal: ctl.signal,
     });
   } catch (err) {
+    // The caller's deadline passed (or it asked for no retries): give up now.
+    if (ctl.signal?.aborted || !ctl.retry) throw err;
     // NETWORK-level failure: fetch() rejected before any response — a connect
     // timeout, socket reset or DNS hiccup, all surfaced by Node's undici as
     // `TypeError: fetch failed` (specifics on .cause). The request never
@@ -196,7 +229,7 @@ async function graphql<T>(
           `in ${plan.waitMs}ms (${(err as Error).message})`
       );
       await sleep(plan.waitMs);
-      return graphql<T>(query, variables, attempt + 1);
+      return graphql<T>(query, variables, attempt + 1, ctl);
     }
     throw err;
   }
@@ -215,6 +248,15 @@ async function graphql<T>(
   // wait for the leaky bucket to refill the deficit, then retry. Only when the
   // retry cap is exhausted do we fall through and throw (last-resort fallback).
   const plan = planThrottleRetry({ json, httpStatus: res.status, attempt });
+  if (plan.retry && !ctl.retry) {
+    // A bounded read never waits for the bucket: raise the shared gate so the
+    // next callers skip Shopify too, and let the caller fall back now.
+    await tripThrottleGate({ waitMs: plan.waitMs });
+    throw new ShopifyThrottledError(
+      "Shopify GraphQL throttled (no retry requested)",
+      json?.extensions?.cost?.throttleStatus
+    );
+  }
   if (plan.retry) {
     // Raise the SHARED gate before sleeping: the bucket is per-shop, so the
     // clearest signal a webhook storm can get is "someone is already throttled —
@@ -226,7 +268,7 @@ async function graphql<T>(
         `(throttleStatus=${JSON.stringify(json?.extensions?.cost?.throttleStatus ?? {})})`
     );
     await sleep(plan.waitMs);
-    return graphql<T>(query, variables, attempt + 1);
+    return graphql<T>(query, variables, attempt + 1, ctl);
   }
   if (plan.reason === "max-retries-exhausted") {
     // Throttling PERSISTED past the cap — sustained demand on the bucket. Hold
@@ -247,16 +289,16 @@ async function graphql<T>(
   // RIDE OUT a transient upstream failure — a 502/503/504 (or 500/408) from
   // Shopify's origin or its Cloudflare front. DISTINCT from a throttle: the
   // request was fine, the server momentarily wasn't. Retry idempotent ops with
-  // backoff; a mutation (or the exhausted cap) falls through to the throw below so
-  // the error still surfaces.
+  // backoff; a mutation, a bounded read (`retry: false`) or the exhausted cap falls
+  // through to the throw below so the error still surfaces.
   const transient = planTransientRetry({ httpStatus: res.status, idempotent, attempt });
-  if (transient.retry) {
+  if (transient.retry && ctl.retry) {
     console.warn(
       `[shopify] HTTP ${res.status} ${res.statusText} — retry ${attempt + 1}/` +
         `${TRANSIENT_MAX_RETRIES} in ${transient.waitMs}ms (transient upstream error)`
     );
     await sleep(transient.waitMs);
-    return graphql<T>(query, variables, attempt + 1);
+    return graphql<T>(query, variables, attempt + 1, ctl);
   }
 
   if (!res.ok) {

@@ -71,6 +71,38 @@ test("an undated Shopify value never overrides a dated Mo state", () => {
   assert.equal(d.effects.pushToShopify, true);
 });
 
+test("a DOI expiry is never pushed over the shop's own pending (C.29 heal rule)", () => {
+  // expirePendingConsents reset a Shopify-sourced pending to not_subscribed (source 'mo').
+  const expired = { state: "not_subscribed", level: null, at: T3, source: "mo" };
+  const d = resolveEmailConsent(expired, { state: "pending", level: null, at: T1, source: "shopify" });
+  assert.equal(d.changed, false);
+  assert.equal(d.outcome, "stale");
+  assert.equal(d.effects.pushToShopify, false);
+  // The same for an older Shopify subscribe / unsubscribe / not_subscribed.
+  for (const state of ["subscribed", "unsubscribed", "not_subscribed"]) {
+    const r = resolveEmailConsent(expired, { state, level: state === "subscribed" ? "single_opt_in" : null, at: T1, source: "shopify" });
+    assert.equal(r.effects.pushToShopify, false, state);
+  }
+});
+
+test("a Mo pending is never pushed back over an older Shopify value", () => {
+  const pending = { state: "pending", level: null, at: T3, source: "mo_signin" };
+  const d = resolveEmailConsent(pending, { state: "not_subscribed", at: T1, source: "shopify" });
+  assert.equal(d.outcome, "stale");
+  assert.equal(d.effects.pushToShopify, false);
+});
+
+test("Mo's subscribe and unsubscribe still heal an older Shopify value", () => {
+  const sub = { state: "subscribed", level: "confirmed_opt_in", at: T3, source: "mo_chat_gate" };
+  assert.equal(resolveEmailConsent(sub, { state: "pending", at: T1, source: "shopify" }).effects.pushToShopify, false); // rule 3: ignored
+  assert.equal(resolveEmailConsent(sub, { state: "unsubscribed", at: T1, source: "shopify" }).effects.pushToShopify, true);
+  const unsub = { state: "unsubscribed", level: null, at: T3, source: "admin", suppression: "manual" };
+  assert.equal(resolveEmailConsent(unsub, { state: "pending", at: T1, source: "shopify" }).effects.pushToShopify, true);
+  // A Shopify-sourced current state never heals (Shopify is not drifting from itself).
+  const shopSub = { state: "subscribed", level: "single_opt_in", at: T3, source: "shopify" };
+  assert.equal(resolveEmailConsent(shopSub, { state: "unsubscribed", at: T1, source: "shopify" }).effects.pushToShopify, false);
+});
+
 test("an undated value may fill an empty state", () => {
   const d = resolveEmailConsent(none, { state: "subscribed", level: "unknown", at: null, source: "shopify" });
   assert.equal(d.changed, true);

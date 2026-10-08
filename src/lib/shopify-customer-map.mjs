@@ -228,6 +228,35 @@ export function mapConsentWebhook(payload) {
   return { shopifyId, email: normalizeMirrorEmail(payload.email_address ?? payload.email), consent };
 }
 
+/**
+ * The minimal mirror row for a consent webhook whose customer Mo has not
+ * mirrored yet and whose Admin read failed or was skipped (C.29): id + e-mail +
+ * consent, nothing else. Undated on purpose (`updatedAt: null`): the mirror's
+ * stale guard never lets it overwrite a stored identity, and the next
+ * customers/* delivery or the nightly reconciliation fills in the rest.
+ * `createdAt: null` keeps an address erased in Mo earlier out (the mirror's
+ * erasure filter needs a creation date newer than the erasure).
+ *
+ * @param {{ shopifyId: string, email: string | null, consent: ShopifyConsent }} parsed  mapConsentWebhook's result
+ * @returns {MirrorCustomer}
+ */
+export function mirrorCustomerFromConsentWebhook(parsed) {
+  return {
+    shopifyId: parsed.shopifyId,
+    gid: customerGid(parsed.shopifyId),
+    email: parsed.email ?? null,
+    firstName: null,
+    lastName: null,
+    locale: null,
+    countryCode: null,
+    state: null,
+    tags: [],
+    createdAt: null,
+    updatedAt: null,
+    consent: parsed.consent,
+  };
+}
+
 function moneyAmount(set) {
   return set?.shopMoney?.amount ?? set?.presentmentMoney?.amount ?? null;
 }
