@@ -100,7 +100,7 @@ Relevant columns of `email_captures` (one row per address):
 | `marketing_consent` | Marketing was ticked / accepted, or an earlier DOI of the address is still `pending` or `confirmed`. |
 | `marketing_doi_status` | `none` → `pending` → `confirmed`; back to `none` on unsubscribe, bounce or complaint. |
 | `doi_token` | Random 256-bit token in the confirmation link. |
-| `doi_sent_at` | When the current token was last mailed (a re-send after the cooldown restarts it); the link expires `MARKETING_DOI_EXPIRY_DAYS` (default 7) later. A claim whose mail did not go out (failed, skipped or never ran) is given back: a re-sent link gets its previous send time back, a new token is moved to just before the cooldown — the next accept sends at once with the same token, and a mail the provider delivered despite a reported failure keeps a working link. Without a stamp a click shows the expired page. |
+| `doi_sent_at` | When the current token was last mailed (a re-send after the cooldown restarts it); the link expires `MARKETING_DOI_EXPIRY_DAYS` (default 7) later. A claim whose mail did not go out (failed or never ran) is given back: a re-sent link gets its previous send time back, a new token is moved to just before the cooldown — the next accept sends at once with the same token, and a mail the provider delivered despite a reported failure keeps a working link. A skipped send (no mail provider configured, local development) keeps the claim and records the pending act. Without a stamp a click shows the expired page. |
 | `doi_confirmed_at` | When the user clicked confirm. |
 | `consent_text_shown` | Verbatim copy the user saw (audit trail); a submit without an echo keeps the stored text. |
 | `consent_copy_version` | Which canonical copy that text is (`'v1'`…`'v5'`; `NULL` = unattested echo). Migration `0011`. |
@@ -161,7 +161,9 @@ The rules:
 2. **The newer act wins.** On equal timestamps the more restrictive state wins. An undated act
    (Shopify reports none for never-subscribed customers) never overrides a dated state. One exception
    (2026-10-08): a dated Shopify `subscribed` or `unsubscribed` always overrides the DOI expiry's local
-   `not_subscribed` (a Mo-sourced reset that never reached Shopify), even when the expiry is newer.
+   `not_subscribed` (a Mo-sourced reset that never reached Shopify), even when the expiry is newer. The
+   state keeps Shopify's date; when it is older than the expiry, the history entry is dated when Mo
+   learned it, with Shopify's day in its note, so the history and the period counts stay in order.
 3. **No silent downgrade:** a Mo `pending` never overrides `subscribed`.
 4. **Echo is a no-op:** the same state coming back only stamps `email_consent_synced_at`. Exception
    (2026-10-08): a newer Mo `pending` over a Shopify-sourced `pending` is recorded (source and time move
@@ -302,10 +304,11 @@ Chat → the model calls offer_email_summary (value-triggered: after a well-rece
         ├─ (A) marketing, claimed → send the DOI confirmation e-mail FIRST ► user inbox
         │      • sent → one consent 'pending' (source mo_capture_form;        │
         │        local), recorded before the summary                          │
-        │      • failed or skipped → claim given back (doi_sent_at → just     │
-        │        before the cooldown, or the previous send time of a          │
-        │        re-sent link); no consent act — the next accept sends        │
-        │        at once                                                      │
+        │      • failed → claim given back (doi_sent_at → just before the     │
+        │        cooldown, or the previous send time of a re-sent link);      │
+        │        no consent act — the next accept sends at once               │
+        │      • skipped (no mail provider, local development) → claim kept,  │
+        │        act recorded                                                 │
         │      • first, so no claim is held across the slow summary: a        │
         │        parallel or retried accept is never told „mail is out“       │
         │        before it went                                               │
@@ -552,7 +555,7 @@ On `/api/capture-email` the DOI mail goes out before the summary; a real summary
 `502` (the consent is already stored and a DOI mail that went out stays valid). On all three opt-in routes a DOI-send failure is logged without dropping the
 stored `pending` opt-in: the answer is `doiEmailSent: false`, the claim is given back (`doi_sent_at` →
 just before the cooldown, or the previous send time of a re-sent link — the link keeps working), and no pending consent act is written, so the next
-accept sends at once — also within the resend cooldown. When Resend isn't configured (`RESEND_API_KEY` /
+accept sends at once — also within the resend cooldown (a `skipped` send, below, keeps the claim and records the act). When Resend isn't configured (`RESEND_API_KEY` /
 `CONTACT_FROM_EMAIL`) the helper returns a `skipped` result and logs a one-line notice without
 recipient or subject (local development), rather than faking success.
 

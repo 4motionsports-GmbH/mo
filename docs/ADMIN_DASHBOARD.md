@@ -1827,6 +1827,7 @@ Sessions without one are left out; the table is shown only when rows exist. Both
 the tested `normalizeLoginTeaserRows` / `normalizeServedVariantRows` (`kpi-widget-events.mjs`). Until
 the server serves a teaser or runs several variants (OPTIN_REWARD T3, switches off) neither table
 appears.
+Screenshots (light/dark, 1440/1024, 2026-10-08): `docs/screenshots/2026-10-08-optin-reward/kpi-anmelde-popup-*`.
 
 **Diagnose: wo Anmeldungen enden** ([`getSigninDiagnosis()`](../src/lib/kpi-store.ts),
 classification in the tested `classifySigninSession`, docs/frontend/05 §12.1).
@@ -1944,9 +1945,10 @@ folded by the tested `summariseConsentExperiment`, `consent-experiment.mjs`).
   eligibility ever** — one already eligible before the period is not in it, so
   its arm and start never depend on the range picked.
 - **Outcomes.** Opt-in and DOI mail sent (the DOI-Quote definition above) count in
-  the same session within `MARKETING_DOI_EXPIRY_DAYS` (7) after the eligibility,
-  the confirmation within twice that (the link is valid that long from its mail,
-  so a late opt-in's click still counts). Only sessions whose confirmation window
+  the same session within `MARKETING_DOI_EXPIRY_DAYS` (7) after the eligibility;
+  a confirmation counts only for such an opt-in that mailed a link, at most the
+  link's life (7 days) after that opt-in (the same capture when both events carry
+  `captureId`) — a later opt-in's click does not count. Only sessions whose window
   (2 × 7 days) has closed are compared.
 - **Exclusions**, each counted once, checked in this order: unknown variant or one
   outside the test, mixed (more than one variant), other locale, before the test
@@ -1989,6 +1991,9 @@ because it reads the order ledger; aggregate only). Two stats:
   (WELCOME_CODE_MATCH)“), never an estimate. Guest orders without a Shopify
   customer are not in the ledger ([`DISCOUNTS.md`](./DISCOUNTS.md) „Welcome codes“).
 
+Screenshots of the section with these blocks and the „Gutschein-Test“ InfoTip (light/dark, 1440/1024,
+2026-10-08): `docs/screenshots/2026-10-08-optin-reward/kpi-consent-*`.
+
 **Already subscribed vs. suppressed (F2, 2026-10-05).** A suppressed address
 is answered `status: "none"`, `alreadyConfirmed: false` by every opt-in route,
 so „Bereits angemeldet“ never includes a blocked address.
@@ -2025,7 +2030,7 @@ counts unless its session has a sign-in or chat-gate opt-in.
 | Figure | Definition |
 | --- | --- |
 | **Angeboten** | `email_capture_ask_shown` in the window (all asks; since 05.10.2026 Mo no longer offers the summary to signed-in customers — release `signedin-offer-off`, §5.0) |
-| **Marketing-Haken** | opt-ins of the form; hint „n DOI-Mail verschickt · n nicht verschickt · n Bestätigung schon unterwegs · n Shop-Bestätigung unterwegs · n bereits abonniert · n gesperrt“ from `outcome` (`doi_required` split by `doiSent` / `doi_pending` / `shopify_pending` / `already_confirmed` + `already_subscribed` / `suppressed`; older rows by `doiStatus` pending / confirmed, „gesperrt“ only from 05.10.). Buckets other than „DOI-Mail verschickt“ and „bereits abonniert“ show only when > 0. „nicht verschickt“ = a DOI mail was due but its send failed, was skipped (no mail provider) or never ran (the summary send failed first). „Bestätigung schon unterwegs“ (since 08.10.2026, outcome `doi_pending`) = a valid DOI mail for the address had gone out within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (default 30) or a parallel request was sending it — no second mail. „Shop-Bestätigung unterwegs“ (since 08.10.2026, outcome `shopify_pending`, C.29) = the shop's own confirmation mail of a newsletter sign-up there was out — no Mo mail. Neither counts as „DOI-Mail verschickt“ nor in the DOI-rate denominator; both are explained in the section's InfoTip. |
+| **Marketing-Haken** | opt-ins of the form; hint „n DOI-Mail verschickt · n nicht verschickt · n Bestätigung schon unterwegs · n Shop-Bestätigung unterwegs · n bereits abonniert · n gesperrt“ from `outcome` (`doi_required` split by `doiSent` / `doi_pending` / `shopify_pending` / `already_confirmed` + `already_subscribed` / `suppressed`; older rows by `doiStatus` pending / confirmed, „gesperrt“ only from 05.10.). Buckets other than „DOI-Mail verschickt“ and „bereits abonniert“ show only when > 0. „nicht verschickt“ = a DOI mail was due but its send failed, was skipped (no mail provider) or never ran (an error before the send). „Bestätigung schon unterwegs“ (since 08.10.2026, outcome `doi_pending`) = a valid DOI mail for the address had gone out within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (default 30) or a parallel request was sending it — no second mail. „Shop-Bestätigung unterwegs“ (since 08.10.2026, outcome `shopify_pending`, C.29) = the shop's own confirmation mail of a newsletter sign-up there was out — no Mo mail. Neither counts as „DOI-Mail verschickt“ nor in the DOI-rate denominator; both are explained in the section's InfoTip. |
 | **DOI bestätigt** | `email_capture_marketing_confirmed` with `source: "mo_capture_form"` (older rows by session, above). Its hint „n % der verschickten DOI-Mails“ is the DOI rate: DOI bestätigt ÷ „DOI-Mail verschickt“ (capped at 100 %). Already subscribed and suppressed addresses get no DOI mail and are not in the denominator, nor are unsent DOI mails (OI1 F3: the route writes the opt-in event after the send attempt with `doiSent`; `isDoiMailSent` in `capture-funnel.mjs`, tested). Opt-ins from before F3 carry no `doiSent` and count as sent, as before, so a period across the change stays comparable; it was „DOI-Mail fällig“ until then (KPI release `doi-mail-sent`, §5.0). |
 | **Formular gesendet** | hint „% der Angebote“ (submits ÷ asks, capped at 100 %) |
 | **Abgelehnt** | widget `email_capture_declined`, **once per session and trigger** (a stored offer can be declined again after every reload) |

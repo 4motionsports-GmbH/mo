@@ -39,8 +39,8 @@ nothing in Vercel for now).
       `--shopify` reads the live consent and tags of the C.29 candidates and the confirmed customers
       (needs `SHOPIFY_*` in `.env`, scope `read_customers`, read-only); with `--welcome-tag "<tag>"`
       (once item 2 named the tag the shop's automation sets) a confirmed customer without that tag
-      is a ⚑ — without the flag it is only counted. An invalid flag value stops the script with a
-      message instead of falling back to a default.
+      in the live read is a ⚑ — without the flag it is only counted. An unknown option or an invalid
+      value stops the script with a message instead of falling back to a default.
       - **Section 3:** the sign-in opt-ins by source / outcome; new outcomes `doi_pending` (a valid
         Mo DOI mail was already out — no second mail) and `shopify_pending` (the shop's own
         confirmation mail was out — no Mo mail) are fine.
@@ -244,9 +244,9 @@ nothing in Vercel for now).
     from Mo; the consent webhook no longer drops a person Mo has not mirrored yet.
   - **Checks and KPIs:** `npm run check:welcome` (who sends the 5 % code, test cases 8 / 8b),
     `verify:live` section 10 „Einmal-Garantie“, `verify:widget` expects the widget `495fdf6`; KPI tab:
-    „Mit Gutschein-Hinweis“, teaser tables, „Gutschein-Test“, „Willkommensgutscheine“, „Bestätigung
+    „n mit Gutschein-Hinweis“ under „Angezeigt“, teaser tables, „Gutschein-Test“, „Willkommensgutscheine“, „Bestätigung
     schon unterwegs“ / „Shop-Bestätigung unterwegs“ (screenshots
-    `docs/screenshots/2026-10-08-optin-once/`); KPI release `widget-reward-dormant`.
+    `docs/screenshots/2026-10-08-optin-reward/` and `…-optin-once/`); KPI release `widget-reward-dormant`.
   - **Dossier § 22** (F-39 to F-47) ready to send (open list item 5).
 - [x] Komplettanalyse stopped with a 504 (C, 08.10., pushed to main at the owner's request; no
   migration, no switch): the Opus call never finished once Opus started writing its answer, so the
@@ -1019,12 +1019,11 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         `--all`), `customerByIdentifier`, the customer-events filter.
   - [x] **T2 — DOI only once** (built, PR #234): resend cooldown 30 min, atomic claim in SQL (parallel
         accepts → one mail), the same still-valid link re-sent after the cooldown (its expiry
-        restarts), the claim released after a failed send, conditional confirm (once; never after an
+        restarts), the claim released right after a failed send, conditional confirm (once; never after an
         unsubscribe or block), outcomes `doi_pending` / `shopify_pending`, all three opt-in routes.
         Check: open list item 1 (section 10). Acknowledgement of the old-link change: open list item 4.
-        Known limits, decide later: a cooldown loser still moves `email_captures.session_id` to its
-        session, so a later confirmation can land in a session whose opt-in was `doi_pending` (source
-        falls back, no placement/variant); a row still `confirmed` after a Shopify-side unsubscribe
+        Known limits, decide later: only opt-ins written before this release (no `captureId`) credit a
+        confirmation to the row's latest session; a row still `confirmed` after a Shopify-side unsubscribe
         shows the success page on an old link (no act is recorded); a loser answers „mail is out“
         while the winner's send is still running (if that send fails, the next accept sends); in local
         development without a mail provider a skipped send keeps the claim; the business-snapshot
@@ -1032,11 +1031,9 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
   - [x] **T2.4 = C.29** (built, PR #234 — Done above). Follow-ups: (1) at sign-in, import a customer
         whose `shopify_synced_at` is NULL (so a pending shop sign-up never even sees the popup);
         (2) Admin API 2026-04 deprecates `Customer.emailMarketingConsent` → switch `CUSTOMER_FIELDS`,
-        the bulk query and `mapShopifyConsent` to `defaultEmailAddress` together; (3) a stale
-        Shopify-sourced pending plus a Mo opt-in gives a Mo pending that is only an echo (its `at`
-        is not refreshed), so the DOI expiry can reset it while Mo's link is still valid; (4)
-        `expirePendingConsents` stamps `at = now()`, so a Shopify SUBSCRIBED dated before that reset
-        loses as stale (the opt-in's live read still answers „already subscribed“); (5) Shopify 5xx
+        the bulk query and `mapShopifyConsent` to `defaultEmailAddress` together; (3) and (4) done in
+        PR #234 — a newer Mo pending over a shop pending is recorded (resolver rule 4), and a dated shop
+        subscribe / unsubscribe beats the local DOI expiry (rule 2; `CONSENT_FLOW.md`); (5) Shopify 5xx
         in the opt-in read is reported to Sentry — downgrade if noisy; (6) side finding: the 2026-04
         `customerEmailMarketingConsentUpdate` rejects `NOT_SUBSCRIBED`, but the comment in
         `shopify-outbox.ts` and `toShopifyConsentInput` still treat it as accepted.
@@ -1044,7 +1041,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         `reward-2026-10-08` (built, PR #234). Run: open list item 1; during T9 run
         `npm run verify:live -- --since <test start, ISO with zone> --session <sid prefix> [--shopify]` per case
         **before** „Meine Daten löschen“ (erasure deletes the evidence). Assumed until T1/T3 decide:
-        the welcome tag `welcome_code_issued` (`--welcome-tag`), the ledger columns of design (b);
+        the welcome tag `welcome_code_issued` (`--welcome-tag`; a missing tag is a ⚑ only with
+        `--welcome-tag` and `--shopify`), the ledger columns of design (b);
         `late_push` rests on the unverified 24 h `consentUpdatedAt` rule; the script still exits 0
         with ⚑.
   - [ ] **T3 — served copy v6 (`reward`, `valueMoment`, variants b/c, `CONSENT_REWARD_ENABLED`,
@@ -1058,13 +1056,14 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         owner checks Shopify's „Customer marketing confirmation“ mail.
   - [x] **T6 — KPI** (built, PR #234; dormant until T3): server-only `consent_ask_eligible` (only
         `/api/auth/me`, not the whoami: no locale there and the session is not signed in before the
-        redeem) and `consent_copy_served`; „Mit Gutschein-Hinweis“, teaser tables, „Gutschein-Test“
+        redeem) and `consent_copy_served`; „n mit Gutschein-Hinweis“ under „Angezeigt“, teaser tables,
+        „Gutschein-Test“
         (ITT, `CONSENT_REWARD_EXPERIMENT` stays `null` until the flip commit: arms, start, locale,
         target from M, open list item 4), „Willkommensgutscheine“, capture buckets, release
         `widget-reward-dormant`. Not built: orders / revenue per arm (M decides, item 4). Caveats: a
         `shopify_pending` opt-in writes no Mo confirmation (the test's „Bestätigt“ undercounts that
-        path in every arm). Light/dark screenshots of the new consent and login blocks are still
-        missing (the sandbox had no browser; the capture-funnel hint has them).
+        path in every arm). Screenshots (light/dark, 1440/1024):
+        `docs/screenshots/2026-10-08-optin-reward/` and `docs/screenshots/2026-10-08-optin-once/`.
   - [ ] **T7 — § 7 Abs. 3 UWG** — dossier question only (F-47); nothing is built before counsel and
         an explicit decision of M and the maintainer (the CLAUDE.md audience rule).
   - [x] **T8 — counsel package** (dossier § 22, F-39…F-47, additions to F-12/F-17/F-29/F-38; built,
