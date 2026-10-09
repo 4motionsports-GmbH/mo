@@ -8,8 +8,9 @@
 //   getConsentExperiment — intention-to-treat per assigned variant: every
 //     signed-in session the ask may be offered to (server event
 //     consent_ask_eligible, consent-ask-kpi.ts) with its FIRST assigned
-//     variant; opt-in, DOI mail and confirmation in the same session within
-//     MARKETING_DOI_EXPIRY_DAYS after it; folded by consent-experiment.mjs.
+//     variant; opt-in and DOI mail in the same session within
+//     MARKETING_DOI_EXPIRY_DAYS after it, the confirmation of such an opt-in
+//     within the link's life after the opt-in; folded by consent-experiment.mjs.
 //     Orders / revenue per arm are deliberately not included (open option:
 //     customer_session_links → customer_orders, 30-day window, aggregate only,
 //     after the owner's OK).
@@ -41,7 +42,7 @@ const CONSENT_EXPERIMENT_MAX = 20_000;
 export type ConsentExperimentSummary = ReturnType<typeof summariseConsentExperiment>;
 
 export interface ConsentExperimentKpis extends ConsentExperimentSummary {
-  /** Days after eligibility in which an opt-in counts (MARKETING_DOI_EXPIRY_DAYS); a confirmation counts up to twice that. */
+  /** Days after eligibility in which an opt-in counts (MARKETING_DOI_EXPIRY_DAYS); its confirmation counts up to as many days after the opt-in. */
   windowDays: number;
   /** More than CONSENT_EXPERIMENT_MAX eligible sessions in the period (the latest are left out). */
   truncated: boolean;
@@ -89,9 +90,9 @@ export async function getConsentExperiment(
         SELECT * FROM s ORDER BY at LIMIT ${CONSENT_EXPERIMENT_MAX}
       ), f AS (
         SELECT e.*,
-               -- Opt-ins count up to the expiry days after eligibility, confirmations
-               -- up to twice that (a DOI link stays valid that long after its mail), so a
-               -- late opt-in's click still counts once the window has closed.
+               -- Opt-ins count up to the expiry days after eligibility, their
+               -- confirmation up to the link's life after the opt-in — so the window
+               -- closes twice the expiry days after eligibility.
                e.at <= now() - make_interval(days => ${days * 2}::int) AS window_closed,
                e.at >= ${start}::date AS after_start,
                EXISTS (
@@ -126,12 +127,28 @@ export async function getConsentExperiment(
                          OR (o.data->>'outcome' IS NULL
                              AND COALESCE((o.data->>'alreadyConfirmed')::boolean, o.data->>'doiStatus' = 'confirmed')))
                ) AS already_subscribed,
+               -- A confirmation of an in-window opt-in that mailed a link, at most
+               -- the link's life after that opt-in (the same capture when both
+               -- events carry captureId); a later opt-in's click does not count.
                EXISTS (
-                 SELECT 1 FROM kpi_events c
-                  WHERE c.session_id = e.session_id
+                 SELECT 1 FROM kpi_events o
+                   JOIN kpi_events c
+                     ON c.session_id = o.session_id
                     AND c.event = ${KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED}
-                    AND c.created_at >= e.at
-                    AND c.created_at <= e.at + make_interval(days => ${days * 2}::int)
+                    AND c.created_at >= o.created_at
+                    AND c.created_at <= o.created_at + make_interval(days => ${days}::int)
+                    AND (c.data->>'captureId' IS NULL OR o.data->>'captureId' IS NULL
+                         OR c.data->>'captureId' = o.data->>'captureId')
+                  WHERE o.session_id = e.session_id
+                    AND o.event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                    AND o.data->>'trigger' = 'signin_optin'
+                    AND o.created_at >= e.at
+                    AND o.created_at <= e.at + make_interval(days => ${days}::int)
+                    AND CASE WHEN o.data->>'outcome' IS NOT NULL
+                             THEN o.data->>'outcome' = 'doi_required'
+                             ELSE COALESCE((o.data->>'doiRequired')::boolean, o.data->>'doiStatus' = 'pending')
+                                  AND COALESCE(o.data->>'doiCooldown', 'false') <> 'true' END
+                    AND COALESCE(o.data->>'doiSent', 'true') <> 'false'
                ) AS confirmed
           FROM e
       )
