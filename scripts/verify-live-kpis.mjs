@@ -34,13 +34,15 @@
 //
 // Section 10 options: the cooldown is `--cooldown <min>`, else
 // MARKETING_DOI_RESEND_COOLDOWN_MINUTES from .env (default 30; the script says
-// which — pass the Vercel value). `--welcome-tag <tag>` names the tag the
-// shop's welcome automation sets: given, a confirmed customer without it is a
+// which — pass the Vercel value), clamped below the link's life like the app.
+// `--welcome-tag <tag>` names the tag the shop's welcome automation sets:
+// given, a confirmed customer without it in the live read (`--shopify`) is a
 // finding (⚑); without it the default welcome_code_issued is only counted.
 // `--welcome-code <PREFIX>` counts orders with a code of that prefix (codes are
 // never printed). `--since` takes a day (midnight Europe/Berlin) or an ISO time
-// with zone, e.g. the deploy time 2026-10-09T14:05+02:00. An invalid value of
-// any of these flags stops the script (exit 1) instead of falling back.
+// with zone, e.g. the deploy time 2026-10-09T14:05+02:00. Options take their
+// value after a space; an unknown option, a missing or invalid value stops the
+// script (exit 1) instead of falling back to a default.
 // `--shopify` reads the live consent and tags of the C.29 candidates, the
 // confirmed customers and the `--session` customers from the Admin API
 // (read-only, client credentials, read_customers; at most `--sample` candidates,
@@ -53,7 +55,11 @@ import { SIGNIN_DIAGNOSIS, classifySigninSession } from "../src/lib/kpi-widget-e
 import { parseRetentionOptions } from "../src/lib/retention-options.mjs";
 import { CONSULTATION_ANCHOR_TOOLS, SESSION_ANCHORED_SOURCES } from "../src/lib/order-attribution.mjs";
 import { DOI_MAIL_SUBJECTS } from "../src/lib/consent-copy-core.mjs";
-import { MAX_DOI_RESEND_COOLDOWN_MINUTES, parseDoiResendCooldownMinutes } from "../src/lib/doi-cooldown.mjs";
+import {
+  MAX_DOI_RESEND_COOLDOWN_MINUTES,
+  effectiveDoiResendCooldownMinutes,
+  parseDoiResendCooldownMinutes,
+} from "../src/lib/doi-cooldown.mjs";
 import { c29Verdict, consentWebhookVerdict, welcomeVerdict } from "../src/lib/once-guarantee.mjs";
 import { customerGid, mapShopifyConsent } from "../src/lib/shopify-customer-map.mjs";
 
@@ -66,13 +72,26 @@ if (!url) {
 }
 const sql = neon(url);
 const args = process.argv.slice(2);
-/** Stop on a flag whose value is unusable instead of silently checking with a default. */
+/** Stop on an unusable option instead of silently checking with a default. */
 const usage = (message) => {
   console.error(`${message} — siehe die Hinweise oben in scripts/verify-live-kpis.mjs.`);
   process.exit(1);
 };
+const VALUE_FLAGS = ["--since", "--ran-at", "--session", "--cooldown", "--welcome-tag", "--welcome-code", "--sample"];
+for (const a of args) {
+  if (!a.startsWith("--")) continue;
+  if (a.includes("=")) usage(`„${a}“: den Wert mit Leerzeichen angeben (${a.slice(0, a.indexOf("="))} <Wert>)`);
+  if (!VALUE_FLAGS.includes(a) && a !== "--shopify") usage(`unbekannte Option „${a}“`);
+}
+/** The value after a flag: undefined without the flag; stops when the flag has no value. */
+const argValue = (name) => {
+  if (!args.includes(name)) return undefined;
+  const v = args[args.indexOf(name) + 1];
+  if (v == null || v.startsWith("--") || v.trim() === "") usage(`${name} ohne Wert`);
+  return v.trim();
+};
 // --since: a day (midnight Europe/Berlin) or an ISO timestamp with zone (the deploy time).
-const sinceArg = args.includes("--since") ? String(args[args.indexOf("--since") + 1] ?? "").trim() : null;
+const sinceArg = argValue("--since") ?? null;
 const SINCE_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const SINCE_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
 const validDay = (d) => SINCE_DAY.test(d) && !Number.isNaN(Date.parse(d)) && new Date(d).toISOString().slice(0, 10) === d;
@@ -81,46 +100,61 @@ if (sinceArg != null && !validDay(sinceArg) && !(SINCE_ISO.test(sinceArg) && val
 }
 const since = sinceArg ?? "2026-10-04";
 /** The retention run V2/V2b read against: `--ran-at <ISO>`, else the latest 03:30 UTC. */
-const ranAtArg = args.includes("--ran-at") ? args[args.indexOf("--ran-at") + 1] : null;
+const ranAtArg = argValue("--ran-at") ?? null;
+if (ranAtArg != null && Number.isNaN(Date.parse(ranAtArg))) usage(`--ran-at „${ranAtArg}“ ist kein Zeitpunkt (ranAt aus dem Cron-Log)`);
 const ranAt = (() => {
-  if (ranAtArg && !Number.isNaN(Date.parse(ranAtArg))) return new Date(ranAtArg).toISOString();
+  if (ranAtArg != null) return new Date(ranAtArg).toISOString();
   const now = new Date();
   const run = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 3, 30));
   if (run > now) run.setUTCDate(run.getUTCDate() - 1);
   return run.toISOString();
 })();
-/** The value after a flag, or undefined. */
-const argValue = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 
-// Section 10: the resend cooldown — `--cooldown`, else the shared parser over .env.
+// Section 10: the resend cooldown — `--cooldown`, else the shared parser over .env;
+// clamped below the link's life as in the app (effectiveDoiResendCooldownMinutes).
 /** A whole number of minutes the parser accepts as given (not its fallback). */
 const validCooldown = (raw) => /^\d+$/.test(raw) && Number(raw) >= 1 && Number(raw) <= MAX_DOI_RESEND_COOLDOWN_MINUTES;
-const cooldownArg = String(argValue("--cooldown") ?? "").trim();
+const cooldownArg = argValue("--cooldown") ?? "";
+if (cooldownArg !== "" && !validCooldown(cooldownArg)) {
+  usage(`--cooldown „${cooldownArg}“ ist keine ganze Minutenzahl von 1 bis ${MAX_DOI_RESEND_COOLDOWN_MINUTES}`);
+}
 const cooldownEnv = String(process.env.MARKETING_DOI_RESEND_COOLDOWN_MINUTES ?? "").trim();
-const cooldown = validCooldown(cooldownArg) ? Number(cooldownArg) : parseDoiResendCooldownMinutes(cooldownEnv);
-const cooldownSource = validCooldown(cooldownArg)
-  ? "aus --cooldown"
-  : validCooldown(cooldownEnv)
-    ? "aus .env (MARKETING_DOI_RESEND_COOLDOWN_MINUTES; falls Vercel abweicht: --cooldown)"
-    : `Standard${cooldownArg || cooldownEnv ? " (Angabe ungültig)" : ""} — den Vercel-Wert mit --cooldown angeben`;
+const expiryDaysRaw = Number.parseInt(String(process.env.MARKETING_DOI_EXPIRY_DAYS ?? ""), 10);
+const expiryDays = Number.isFinite(expiryDaysRaw) && expiryDaysRaw >= 1 ? expiryDaysRaw : 7;
+const cooldownGiven = cooldownArg !== "" ? Number(cooldownArg) : parseDoiResendCooldownMinutes(cooldownEnv);
+const cooldown = effectiveDoiResendCooldownMinutes(cooldownGiven, expiryDays);
+const cooldownSource =
+  (cooldownArg !== ""
+    ? "aus --cooldown"
+    : validCooldown(cooldownEnv)
+      ? "aus .env (MARKETING_DOI_RESEND_COOLDOWN_MINUTES; falls Vercel abweicht: --cooldown)"
+      : `Standard${cooldownEnv ? " (Angabe in .env ungültig)" : ""} — den Vercel-Wert mit --cooldown angeben`) +
+  (cooldown !== cooldownGiven
+    ? `; auf ${cooldown} min begrenzt — der Link gilt ${expiryDays} Tag(e), MARKETING_DOI_EXPIRY_DAYS`
+    : "");
 // Section 10d: the tag the Shopify automation sets (a Shopify tag: no comma, at most 255
-// characters). Given explicitly, a confirmed customer without it is a finding (⚑);
-// with the default name it is only counted — the shop's automation may tag differently.
-const tagRequired = args.includes("--welcome-tag");
-const welcomeTagArg = String(argValue("--welcome-tag") ?? "").trim();
+// characters). Given explicitly, a confirmed customer without it is a finding (⚑) in the
+// live read (--shopify); with the default name it is only counted — the shop's automation
+// may tag differently.
+const welcomeTagArg = argValue("--welcome-tag");
+const tagRequired = welcomeTagArg !== undefined;
 if (tagRequired && !/^[^,]{1,255}$/u.test(welcomeTagArg)) usage(`--welcome-tag „${welcomeTagArg}“ ist kein Shopify-Tag (1–255 Zeichen, kein Komma)`);
 const welcomeTag = tagRequired ? welcomeTagArg : "welcome_code_issued";
-const welcomeCodeArg = args.includes("--welcome-code") ? String(argValue("--welcome-code") ?? "").trim() : null;
+const welcomeCodeArg = argValue("--welcome-code") ?? null;
 if (welcomeCodeArg != null && !/^[A-Za-z0-9_-]{2,32}$/.test(welcomeCodeArg)) {
   usage(`--welcome-code „${welcomeCodeArg}“ ist kein Code-Präfix (2–32 Zeichen A–Z, 0–9, _ und -)`);
 }
 const welcomeCode = welcomeCodeArg;
-const sampleRaw = args.includes("--sample") ? String(argValue("--sample") ?? "").trim() : null;
+const sampleRaw = argValue("--sample") ?? null;
 if (sampleRaw != null && !(/^\d+$/.test(sampleRaw) && Number(sampleRaw) >= 1 && Number(sampleRaw) <= 250)) {
   usage(`--sample „${sampleRaw}“ ist keine Zahl von 1 bis 250`);
 }
 const sample = sampleRaw != null ? Number(sampleRaw) : 50;
 const withShopify = args.includes("--shopify");
+/** `--session <prefix>`: one session's rows in sections 3, 9 and 10. */
+const sessionArg = argValue("--session") ?? "";
+const sessionOk = /^[A-Za-z0-9_-]{4,64}$/.test(sessionArg);
+if (sessionArg !== "" && !sessionOk) usage(`--session „${sessionArg}“ ist kein Sitzungs-Präfix (4–64 Zeichen A–Z, 0–9, _ und -)`);
 
 /** The lower bound of every query: midnight Europe/Berlin of a `--since` day, or the given instant. */
 // A day is midnight Europe/Berlin; anything else was checked above as an ISO timestamp with zone.
@@ -128,6 +162,15 @@ const SINCE = `(CASE WHEN $1::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
                     THEN (left($1::text, 10)::date)::timestamp AT TIME ZONE 'Europe/Berlin'
                     ELSE $1::text::timestamptz END)`;
 const q = (text, params = []) => sql.query(text, [since, ...params]);
+// Postgres decides the instant (e.g. an offset it does not accept) before any section runs.
+try {
+  await q(`SELECT ${SINCE} AS t`);
+} catch (err) {
+  if (/timestamp|time zone|date|out of range/i.test(String(err?.message ?? ""))) {
+    usage(`--since „${since}“ versteht die Datenbank nicht als Zeitpunkt`);
+  }
+  throw err;
+}
 const short = (s) => (typeof s === "string" ? `${s.slice(0, 8)}…` : s);
 const head = (t) => console.log(`\n=== ${t} ===`);
 /** console.table, or one line when there is nothing to show. */
@@ -248,8 +291,6 @@ table(
 );
 
 // ---------------------------------------------------------------------------
-const sessionArg = args.includes("--session") ? String(args[args.indexOf("--session") + 1] ?? "") : "";
-const sessionOk = /^[A-Za-z0-9_-]{4,64}$/.test(sessionArg);
 
 head("3 · Einwilligung nach der Anmeldung");
 console.log("Einwilligungsfrage nach Oberfläche, Platzierung und Gutschein-Hinweis (gutschein = reward im Widget-Event, ab Text v6):");
@@ -679,25 +720,22 @@ const DOI_MAIL_SENT = `((k.data->>'outcome' = 'doi_required' AND COALESCE(k.data
                            AND COALESCE(k.data->>'doiCooldown', 'false') <> 'true'))`;
 /**
  * Opt-in / confirmation event → the address it was about (kpi_events has no
- * customer id). Exact by `captureId` (one capture per address; on the events
- * since this release); older events: the sign-in link only for a sign-in
- * opt-in (its address is the account's), else the session's capture only when
- * the session has exactly one. Two addresses typed in one session (a corrected
- * typo, a capture-form address and a different account) are never merged.
+ * customer id). Exact by `captureId` (one capture per address; on every event
+ * since this release, kept as the key even when the row is gone); older events
+ * without it: the sign-in link only for a sign-in opt-in (its address is the
+ * account's), else the event on its own. Two addresses typed in one session (a
+ * corrected typo, a capture-form address and a different account) are never
+ * merged.
  */
 const KPI_CUSTOMER_JOINS = `
        LEFT JOIN email_captures eid
               ON eid.id = CASE WHEN k.data->>'captureId' ~ '^[0-9]{1,18}$' THEN (k.data->>'captureId')::bigint END
-       LEFT JOIN customer_session_links l ON l.session_id = k.session_id AND k.data->>'source' = 'mo_signin'
-       LEFT JOIN LATERAL (SELECT count(*)::int AS n, min(id) AS id, min(customer_id) AS customer_id
-                            FROM email_captures WHERE session_id = k.session_id) ecs ON true`;
+       LEFT JOIN customer_session_links l
+              ON l.session_id = k.session_id AND k.data->>'source' = 'mo_signin' AND NOT (k.data ? 'captureId')`;
 /** The customer of an event joined by KPI_CUSTOMER_JOINS, or NULL. */
-const KPI_CUSTOMER = `(CASE WHEN eid.id IS NOT NULL THEN eid.customer_id
-                            ELSE COALESCE(l.customer_id, CASE WHEN ecs.n = 1 THEN ecs.customer_id END) END)`;
-/** Grouping key: the customer, else the one capture (address), else the event itself. */
-const KPI_WHO = `COALESCE(${KPI_CUSTOMER}::text,
-                          'c:' || COALESCE(eid.id, CASE WHEN l.customer_id IS NULL AND ecs.n = 1 THEN ecs.id END),
-                          'e:' || k.id)`;
+const KPI_CUSTOMER = `COALESCE(eid.customer_id, l.customer_id)`;
+/** Grouping key: the customer, else the capture (address), else the event itself. */
+const KPI_WHO = `COALESCE(${KPI_CUSTOMER}::text, 'c:' || (k.data->>'captureId'), 'e:' || k.id)`;
 const doiSubjects = [...DOI_MAIL_SUBJECTS];
 
 // 10a — DOI mails in the mail log per address (the gap reaches back one cooldown before --since).
@@ -792,8 +830,8 @@ const optRows = await q(
 );
 console.log(
   `10b · Opt-ins mit DOI-Mail (email_capture_marketing_opted_in) — mehr als 1 je Kunde innerhalb der Sperrfrist: ` +
-    `${flagged(optRows.length)} (je Adresse über die Erfassung des Opt-ins; ältere Events über die Anmeldung oder die ` +
-    `einzige Erfassung der Sitzung, sonst je Event)`
+    `${flagged(optRows.length)} (je Adresse über die Erfassung des Opt-ins; ältere Events ohne Erfassungs-Id: ` +
+    `Anmelde-Opt-ins über die Anmeldung, sonst je Event)`
 );
 table(optRows.slice(0, 25).map((r) => ({ ...r, kunde: r.kunde ?? "–", erfassung: r.erfassung ?? "–", sitzung: r.sitzung ? short(r.sitzung) : "" })));
 
