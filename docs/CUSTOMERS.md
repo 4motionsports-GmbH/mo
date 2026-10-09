@@ -127,8 +127,8 @@ the catalog path (targeted refresh, backpressure): [`CATALOG_SYNC.md`](./CATALOG
 | Topic (`X-Shopify-Topic`) | Effect |
 | --- | --- |
 | `products/*`, `inventory_levels/*` | Targeted single-product catalog refresh ([`CATALOG_SYNC.md`](./CATALOG_SYNC.md)). |
-| `customers/create`, `customers/update` | Upsert the customer mirror; the embedded e-mail-marketing consent goes through the consent resolver. |
-| `customers_email_marketing_consent/update` | Consent resolver only (Shopify-side subscribe / unsubscribe). Unknown customers are left to the reconciliation. |
+| `customers/create`, `customers/update` | Upsert the customer mirror; the embedded e-mail-marketing consent goes through the consent resolver. When two deliveries insert the same new person at once, the loser applies its consent (and a newer identity) to the winner's row (outcome `raced`, since 2026-10-08). |
+| `customers_email_marketing_consent/update` | Consent resolver (Shopify-side subscribe / unsubscribe / sign-up pending). Since 2026-10-08 (C.29) a customer not mirrored yet is imported inline first — one Admin read of the mirror's fields (≤ 2 s, skipped while the throttle gate is up), else a minimal row from the payload (id, e-mail; the next `customers/*` delivery or the reconciliation fills in the rest) — and then gets the consent; erased people stay out (`ignored:erased`). When the minimal row hits an address erased in Mo and the Admin read had failed (timeout, throttle, error), it cannot tell a new account on that address from the erased one: the delivery answers 500 (`deferred:erased-unverified(<status>)`, forgotten like any failed delivery) and Shopify's redelivery reads again. Outcome `consent:<outcome>`, plus `:imported` or `:imported-payload(<why>)`; `ignored:unknown-customer` only when the address belongs to another row (the reconciliation imports it). |
 | `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled` | Order ledger (`customer_orders`). `orders/create` and `orders/paid` also feed the pseudonymous order attribution (`mo_orders`, [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)); a marked order that cannot be attributed is counted on `orders/create` as the session-less event `mo_order_marker_unresolved`. Other `orders/*` topics are acknowledged and ignored. |
 | `customers/delete`, `customers/redact` | The one erasure in Mo (trigger `shopify`: Shopify is not asked again). More than `SHOPIFY_ERASURE_ALERT_PER_HOUR` (default 20, `0` off) in an hour raises an alert and an Eingang item. |
 | `customers/data_request` | An Eingang item `datenauskunft` (deadline 30 days), see "Retention / erasure". |
@@ -272,7 +272,12 @@ exploitable via alias e-mails); no code mints welcome codes and the
 `welcome_issued_at`) stay on `customers`, read-only and never written; the only
 reader is the chat memory (`welcome_issued_at` set → Mo is told to promise no
 welcome discount). No admin view shows them. They go with the customer row on
-erasure. Discount codes today: [`DISCOUNTS.md`](./DISCOUNTS.md).
+erasure. Discount codes today: [`DISCOUNTS.md`](./DISCOUNTS.md). Separately, a
+Shopify-side tool (not Mo, not the theme) mails a 5 % welcome code to shop
+newsletter sign-ups; finding it is task T1 of
+[`frontend/tasks/OPTIN_REWARD_2026-10-08.md`](./frontend/tasks/OPTIN_REWARD_2026-10-08.md),
+and a new reward on the chat's consent ask is under legal review
+([`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) § 22).
 
 ## Customer memory in the live chat (in-session re-identification ONLY)
 

@@ -15,15 +15,20 @@
 //      given a new consent, which lifts the erasure block.
 //   2. The newer act wins. On equal timestamps the more restrictive state wins.
 //      An act without a timestamp (Shopify reports none for never-subscribed
-//      customers) can never override a timestamped state.
+//      customers) can never override a timestamped state. Exception: a dated
+//      Shopify subscribed / unsubscribed always overrides Mo's local DOI-expiry
+//      not_subscribed (its history event stamped when Mo learns it if
+//      Shopify's date is older; the state keeps Shopify's date).
 //   3. No silent downgrade: a pending DOI never overrides "subscribed".
 //   4. Echo is a no-op: an incoming state equal to the current one only marks
-//      the mirror as in sync with Shopify.
+//      the mirror as in sync with Shopify. Exception: a newer Mo pending over a
+//      Shopify pending is recorded (the click is credited to Mo's opt-in).
 //   5. The level follows the act (our DOI → confirmed_opt_in).
 //   6. Side effects are declared: an unsubscribe adds the block-list row, a
 //      newer real subscribe lifts an unsubscribe/manual row, a Mo-side change is
 //      pushed to Shopify, and a Shopify value that LOSES against a newer Mo
-//      state is answered by pushing Mo's state back (drift heals itself).
+//      subscribe or unsubscribe is answered by pushing Mo's state back (drift
+//      heals itself). Healing never pushes pending or not_subscribed.
 
 /** @typedef {"subscribed" | "pending" | "unsubscribed" | "not_subscribed"} ConsentState */
 /** @typedef {"confirmed_opt_in" | "single_opt_in" | "unknown"} ConsentLevel */
@@ -56,7 +61,8 @@ const RESTRICTIVENESS = { subscribed: 0, pending: 1, not_subscribed: 2, unsubscr
  * @property {{ state: ConsentState, level: ConsentLevel | null, at: string | null, source: string | null }} next
  * @property {boolean} changed       the stored state changes (→ write + history event)
  * @property {string} outcome        applied | echo | stale | blocked | ignored
- * @property {string | null} note    German note for the history (blocked / ignored cases)
+ * @property {string | null} note    German note for the history (blocked / ignored cases; a late shop act over the DOI expiry)
+ * @property {string} [eventAt]      when the history event is stamped, if not next.at (a late shop act over the DOI expiry)
  * @property {{
  *   suppress: SuppressionReason | null,
  *   liftSuppression: boolean,
@@ -125,8 +131,17 @@ export function resolveEmailConsent(current, incoming) {
   const tInc = time(inc.at);
   const tCur = time(cur.at);
 
-  // (4) Echo.
-  if (sameConsent(cur, inc)) {
+  // (4) Echo — except a newer Mo pending over a shop pending: Mo's own DOI
+  // mail went out (e.g. the shop's link had gone stale), so its act is
+  // recorded (event, surface, date) and the DOI expiry counts from it.
+  const moPendingOverShop =
+    cur.state === "pending" &&
+    inc.state === "pending" &&
+    cur.source === "shopify" &&
+    isMoSource(inc.source) &&
+    tInc !== null &&
+    (tCur === null || tInc > tCur);
+  if (sameConsent(cur, inc) && !moPendingOverShop) {
     return keep("echo", null, { ...noEffects(), markSynced: fromShopify });
   }
 
@@ -147,9 +162,22 @@ export function resolveEmailConsent(current, incoming) {
     return keep("ignored", "Bereits angemeldet — keine erneute Bestätigung nötig");
   }
 
-  // (2) Newer act wins.
+  // (2) Newer act wins. Mo's not_subscribed is never a person's act — only
+  // the DOI expiry sets it, locally — so a dated definitive shop state
+  // (subscribed / unsubscribed) wins over it whatever the dates (C.29: the
+  // shop may keep its original consentUpdatedAt after a late confirmation).
+  const localExpiry = cur.state === "not_subscribed" && isMoSource(cur.source);
+  const overExpiry =
+    fromShopify && localExpiry && tInc !== null && (inc.state === "subscribed" || inc.state === "unsubscribed");
+  // Shopify's date is older than the expiry: the state keeps Shopify's date
+  // (later shop acts still compare against it), but the history event is
+  // stamped when Mo learned it — after the expiry, so the history and the
+  // period counts keep their causal order — with Shopify's day in the note.
+  const lateOverExpiry = overExpiry && tCur !== null && tInc <= tCur;
   let wins;
-  if (tInc === null) {
+  if (overExpiry) {
+    wins = true;
+  } else if (tInc === null) {
     // An undated act may only fill a gap, never override a dated state.
     wins = tCur === null && cur.state === "not_subscribed";
   } else if (tCur === null) {
@@ -164,8 +192,13 @@ export function resolveEmailConsent(current, incoming) {
 
   if (!wins) {
     // A Shopify value that loses against a newer Mo state: Shopify drifted
-    // (e.g. our write is still in the outbox) — push Mo's state back.
-    const heal = fromShopify && isMoSource(cur.source) && cur.state !== "pending";
+    // (e.g. our write is still in the outbox) — push Mo's state back. Only a
+    // state Mo itself pushes heals: subscribed (DOI confirm) or unsubscribed
+    // (opt-out). Pending is local, and not_subscribed is never an act of Mo's —
+    // only the DOI expiry sets it, also for a Shopify-sourced pending — so
+    // pushing it would overwrite the shop's own pending or consent (C.29).
+    const heal =
+      fromShopify && isMoSource(cur.source) && (cur.state === "subscribed" || cur.state === "unsubscribed");
     return keep("stale", null, { ...noEffects(), pushToShopify: heal });
   }
 
@@ -184,9 +217,10 @@ export function resolveEmailConsent(current, incoming) {
 
   return {
     next: { state: inc.state, level: inc.level, at: inc.at ?? new Date().toISOString(), source: inc.source },
+    ...(lateOverExpiry ? { eventAt: new Date().toISOString() } : {}),
     changed: true,
     outcome: "applied",
-    note: null,
+    note: lateOverExpiry ? `Shopify-Stand vom ${String(inc.at).slice(0, 10)} — älter als der lokale Ablauf` : null,
     effects,
   };
 }

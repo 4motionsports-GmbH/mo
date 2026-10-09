@@ -39,8 +39,26 @@ const INFO = (
       einmal je Sitzung und Auslöser.
       Wirksam wird die Marketing-Einwilligung erst mit dem DOI-Klick.
     </p>
+    <p>
+      „Bestätigung schon unterwegs“: Für die Adresse war eine gültige DOI-Mail gerade erst verschickt (innerhalb
+      der Sperrfrist, Standard 30 Minuten) oder wurde von einer gleichzeitigen Anfrage verschickt — Mo schickt
+      keine zweite. „Shop-Bestätigung unterwegs“: Die Bestätigungsmail des Shops zu einer Newsletter-Anmeldung
+      dort ist noch offen — Mo schickt keine eigene. Beide zählen nicht im Nenner der DOI-Quote.
+    </p>
   </Explain>
 );
+
+/** „N DOI-Mail verschickt · … “ under „Marketing-Haken“ — zero buckets except „bereits abonniert“ are left out. */
+function optInHint(f: EmailCaptureFunnel): string {
+  const parts = [`${num(f.doiSent)} DOI-Mail verschickt`];
+  if (f.doiNotSent > 0) parts.push(`${num(f.doiNotSent)} nicht verschickt`);
+  if (f.doiPending > 0) parts.push(`${num(f.doiPending)} Bestätigung schon unterwegs`);
+  if (f.shopifyPending > 0) parts.push(`${num(f.shopifyPending)} Shop-Bestätigung unterwegs`);
+  parts.push(`${num(f.alreadySubscribed)} bereits abonniert`);
+  if (f.suppressed > 0) parts.push(`${num(f.suppressed)} gesperrt`);
+  // Each bucket stays on one line (no break inside „2 Shop-Bestätigung …“).
+  return parts.map((p) => p.replace(/ /g, "\u00a0").replace(/-/g, "\u2011")).join(" · ");
+}
 
 export function EmailCaptureSection({ funnel, range }: { funnel: EmailCaptureFunnel | null; range: KpiRange }) {
   const empty = !funnel
@@ -73,11 +91,7 @@ export function EmailCaptureSection({ funnel, range }: { funnel: EmailCaptureFun
             <Stat
               label="Marketing-Haken"
               value={num(funnel.marketingOptedIn)}
-              hint={
-                funnel.marketingOptedIn > 0
-                  ? `${num(funnel.doiSent)} DOI-Mail verschickt${funnel.doiNotSent > 0 ? ` · ${num(funnel.doiNotSent)} nicht verschickt` : ""} · ${num(funnel.alreadySubscribed)} bereits abonniert${funnel.suppressed > 0 ? ` · ${num(funnel.suppressed)} gesperrt` : ""}`
-                  : undefined
-              }
+              hint={funnel.marketingOptedIn > 0 ? optInHint(funnel) : undefined}
             />
             <Stat
               label="DOI bestätigt"

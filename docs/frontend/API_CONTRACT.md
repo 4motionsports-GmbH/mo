@@ -1162,16 +1162,16 @@ email address ever appears in an event). All but one are emitted **server-side**
 | ------------------------------------ | ---------- | --------------------------------------- |
 | `email_capture_ask_shown`            | server (`/api/chat`) | `{ trigger, askNumber }` — one per `offer_email_summary` call. |
 | `email_capture_submitted`            | server (`/api/capture-email`, `/api/chat-marketing-opt-in`, `/api/account/marketing-opt-in`) | `{ marketingConsent, source, outcome?, trigger? }` |
-| `email_capture_marketing_opted_in`   | server (same three routes) | `{ doiStatus, source, outcome?, doiSent?, trigger? }` — the marketing box was ticked / the accept tapped. |
-| `email_capture_marketing_confirmed`  | server (`/api/confirm-marketing`) | `{ source }` (since 2026-10-05; `{}` before) — unique DOI confirmations only. |
+| `email_capture_marketing_opted_in`   | server (same three routes) | `{ doiStatus, source, outcome?, doiSent?, doiCooldown?, doiResend?, trigger?, captureId? }` — the marketing box was ticked / the accept tapped. `captureId` (since 2026-10-08) is the consent row's id, never an address. |
+| `email_capture_marketing_confirmed`  | server (`/api/confirm-marketing`) | `{ source, placement?, variant?, captureId? }` (`{ source }` since 2026-10-05, `{}` before; `placement` / `variant` / `captureId` since 2026-10-08) — unique DOI confirmations only, written once per confirmation (parallel clicks too). |
 | `email_capture_declined`             | **widget** (this endpoint) | `{ trigger, askNumber? }` — capture card dismissed/declined without submit. |
 
 `trigger` is the value moment from the `offer_email_summary` tool call (`recommendation_accepted`,
 `comparison_delivered`, `consideration_pause`, `buying_intent`, `checkout_intent`).
 `/api/capture-email` stores the echoed `trigger` only when it is one of these five values (since
-2026-10-05). The chat consent gate's captures carry `trigger: "chat_gate"`, the at-sign-in opt-in
-`trigger: "signin_optin"`; rows from before 2026-10-05 have no `source`, and readers tell the surfaces
-apart by `trigger` there.
+2026-10-05). The chat consent gate's captures carry `trigger: "chat_gate"` (server-set; since
+2026-10-08 the client echo is ignored), the at-sign-in opt-in `trigger: "signin_optin"`; rows from
+before 2026-10-05 have no `source`, and readers tell the surfaces apart by `trigger` there.
 
 **`source` and `outcome` (server-set, `src/lib/capture-funnel.mjs`).** The widget sends none of them.
 
@@ -1186,20 +1186,36 @@ apart by `trigger` there.
 | `doi_required` | a DOI mail is due; whether it went out is `doiSent` (below) |
 | `already_confirmed` | the address already holds a confirmed Mo DOI — no DOI mail |
 | `already_subscribed` | the address is subscribed elsewhere (Shopify) — no DOI mail |
-| `suppressed` | the address is on the suppression list — no DOI mail, never re-pended |
+| `suppressed` | the address is on the suppression list (on the signed-in opt-in also: unsubscribed or invalid in the shop, found at the accept) — no DOI mail, never re-pended |
+| `doi_pending` | (since 2026-10-08) a valid Mo DOI mail for the address went out within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES`, or a parallel request is sending it — no new mail; `doiCooldown: true` (without it: the earlier send failed and was given back; the next opt-in sends) |
+| `shopify_pending` | (since 2026-10-08) the shop's own sign-up confirmation mail is out (Shopify `PENDING`, at most `MARKETING_DOI_EXPIRY_DAYS` old, in the backend's copy or, on the signed-in opt-in, read live) — no Mo DOI mail |
 
-**`doiSent`** (boolean, `email_capture_marketing_opted_in` with `outcome: "doi_required"` from
-`/api/capture-email` and `/api/account/marketing-opt-in`, since 2026-10-06): `true` when the DOI mail
-went out, `false` when its send failed or was skipped, or never ran (the capture form's summary send
-failed first). Both routes write this event after the send attempt. Rows from before, and the
-retired chat gate's, carry no `doiSent`; readers count them as sent.
+- **`doiSent`** (boolean, `email_capture_marketing_opted_in` with `outcome: "doi_required"`;
+  `/api/capture-email` and `/api/account/marketing-opt-in` since 2026-10-06,
+  `/api/chat-marketing-opt-in` since 2026-10-08): `true` when the DOI mail went out, `false` when its
+  send failed or was skipped, or never ran (an error before the send). All three
+  routes write this event after the send attempt. Rows from before carry no `doiSent`; readers count
+  them as sent.
+- **`doiCooldown: true`** (with `outcome: "doi_pending"`, since 2026-10-08): no mail, because a valid
+  DOI mail went out within the cooldown or a parallel request is sending it. Never a sent DOI mail.
+- **`doiResend: true`** (with `outcome: "doi_required"`, since 2026-10-08): the address's pending,
+  still-valid link was mailed again instead of a new one (after the cooldown, or after an earlier
+  send failed); `doiSent` says whether it went out.
 
 The routes answer `alreadyConfirmed: true` exactly for `already_confirmed` and `already_subscribed`;
-a `suppressed` address is answered `marketing.status: "none"`, `alreadyConfirmed: false` (§7).
+`shopify_pending` and `doi_pending` with `doiCooldown` are answered `marketing.status: "pending"`,
+`doiEmailSent: true`, `alreadyConfirmed: false` (`doi_pending` without it: `doiEmailSent: false`);
+a `suppressed` address is answered
+`marketing.status: "none"`, `alreadyConfirmed: false` (§7).
 
 `email_capture_marketing_confirmed.source` is the surface the DOI click confirms: the `source` of the
-capture session's latest opt-in that needed a DOI mail, else the surface of the latest pending consent
-row, else `mo`.
+latest opt-in that sent a DOI mail for the confirmed consent row — by `captureId` since 2026-10-08,
+so a click is credited to the opt-in that mailed the link even when a later accept on another device
+moved the row's session; older opt-ins without `captureId`: the capture session's latest one (an
+opt-in with `doiSent: false`, `doi_pending` or `shopify_pending` does not count) —, else the surface of
+the latest pending consent row, else `mo`. The event is written in that opt-in's session. Since
+2026-10-08 it also carries that opt-in's `placement` / `variant` when it had valid ones, and the
+confirmed row's `captureId`.
 
 **Sign-in opt-in extras.** Both `signin_optin` events additionally carry `alreadyConfirmed`
 (boolean, the same value as the response), `doiRequired` (boolean: a DOI mail was due, even when its
@@ -1207,6 +1223,17 @@ send failed), `placement?` and `variant?` (the validated echo of the opt-in POST
 ACCOUNT_CONTRACT.md §6.2; left out when unknown) and, only while more than one consent-popup variant
 is active, `variantMismatch: true` when the echoed variant is not the one this
 session is assigned (§7.4).
+
+**`shopifyConsent`** (string, both `signin_optin` events, since 2026-10-08): what the shop check
+before the DOI decision found (ACCOUNT_CONTRACT.md §6.2).
+- `skipped` — no check needed or possible: the backend's copy already holds a decision (subscribed,
+  unsubscribed or a Mo pending), the address is blocked, or there is no Shopify id.
+- `mirror_pending` / `mirror_pending_stale` — the backend's copy holds a shop pending within /
+  beyond `MARKETING_DOI_EXPIRY_DAYS` (no Shopify call).
+- From the live read: `subscribed`, `pending`, `pending_stale` (older or undated → Mo's DOI as
+  before), `unsubscribed`, `invalid`, `not_subscribed` (also a redacted or missing consent).
+- `unavailable` — the backend's copy could not be read, or the read failed, timed out or was
+  throttled, Shopify is not configured or the customer sync is off (→ Mo's DOI as before).
 
 ### Sign-in popup events (widget 2026-10-01)
 
@@ -1216,7 +1243,7 @@ first sent message, once per tab session, never in voice mode), it sends these *
 
 | Event                       | `data`                    | When |
 | --------------------------- | ------------------------- | ---- |
-| `login_gate_shown`          | `{}`                      | The popup was shown. |
+| `login_gate_shown`          | `{}` or `{ teaser: true, variant? }` | The popup was shown. The widget of 2026-10-08 (`495fdf6`) sends `teaser: true` when the served reward teaser rendered on it (`variant` = that copy's `variant` when valid), otherwise `{}`; dormant until the backend serves `reward` (OPTIN_REWARD T3). Stored verbatim; the dashboard counts only a JSON `true`. |
 | `login_gate_signin_clicked` | `{}`                      | „Anmelden“ — the redirect follows once the reply has finished streaming. |
 | `login_gate_declined`       | `{}`                      | „Später“ — snoozed for 24 h on the device. |
 | `login_gate_dismissed`      | `{}`                      | Closed with Esc or a backdrop click (no snooze). |
@@ -1233,13 +1260,18 @@ the session the login used (`login?session=`).
 The marketing consent ask for **signed-in** customers (a popup in the signed-in session, plus the
 inline card right after a mid-conversation sign-in; when to show it: ACCOUNT_CONTRACT.md §6.1) is
 measured through four **widget** events (names in `src/lib/kpi-events.ts`; the backend observes the accept only as the
-opt-in POST). Each carries `data: { surface: "signin", placement?, variant? }`:
+opt-in POST). Each carries `data: { surface: "signin", placement?, variant?, reward? }`:
 
 - `surface` — `"signin"`. (`"chat"` was the anonymous e-mail gate, not used by the widget since
   2026-10-01; old events stay countable.)
-- `placement` — `popup` | `signin_return` | `value_moment`, optional.
+- `placement` — `popup` | `signin_return` | `value_moment`, optional. The widget of 2026-10-08
+  (`495fdf6`) sends `value_moment` from its value-moment card, only once the served copy carries a
+  valid `valueMoment` (not served yet, OPTIN_REWARD T3).
 - `variant` — the served `variant` id of the copy that was rendered (`^[a-z0-9_-]{1,32}$`, §7.4),
   optional.
+- `reward` — `true` when the served reward hint rendered on that ask (widget of 2026-10-08; not
+  served yet), otherwise absent. Stored verbatim; only a JSON `true` counts. Telemetry only, never
+  part of the consent record.
 
 The dashboard groups a missing `variant` as „ohne (älteres Widget)“ and a missing `placement` as „ohne“; a value it does not know becomes „unbekannt“ — an arbitrary string never gets its own row.
 
@@ -1285,6 +1317,8 @@ server-side capture-funnel names above, but does not store them:
 | `mo_order_marker_unresolved` | `POST /api/webhooks/shopify` — `orders/create` only, after the delivery was recorded (a Shopify retry or the `orders/paid` delivery of the same order does not count again; 2026-10-05) | `{ reason, source? }` — `reason` `unknown_token` (token not in the table: purged, erased, forged) \| `outside_window`; `source` only for `outside_window`, one of `widget` \| `summary_email` \| `marketing_email` \| `bundle`. Session `NULL`; never an order id, token or amount. Counted once per Shopify event (`X-Shopify-Event-Id`), so a duplicate `orders/create` subscription — each delivery with its own webhook id — or a redelivery counts once; without that header a duplicate subscription counts twice. |
 | `page_context_applied`     | `POST /api/chat` — one per request with a valid `context.source: "page"` and a user message (§2), written when the request arrives (2026-10-05) | `{ applied, kind, resolved, locale, pct }` — `applied` = the arm (context used, or ignored as switched off / control group), not "a note was added"; `kind` `product` \| `collection`; `resolved` = known to the catalog; `pct` = the control-group share in force (0–50), `100` while `CHAT_PAGE_CONTEXT_ENABLED` is off, `0` for `collection`. Session-keyed; never a product id. |
 | `page_context_answered`    | `POST /api/chat` — when that turn finished (2026-10-05) | `{ kind, productCards, otherCards }` — card tool calls in the answer (`show_product`, `compare_products`, `add_to_cart`); `otherCards` leaves out a `show_product` of the open page's product. Counts only, no ids. Session-keyed. |
+| `consent_ask_eligible`     | `GET /api/auth/me` when it answers `marketing.optInActionable: true` — at most once per session per 24 h (2026-10-08). Only there: the App Proxy whoami never writes it | `{ variant, mode, locale }` — `variant` = the sign-in copy variant this session is assigned (the same pick as `/api/consent-copy?surface=signin` with this `x-ms-session`); `mode` `popup` \| `value_moment` (`value_moment` only when that copy carries an approved, valid `valueMoment`); `locale` `de` \| `en` (`?locale=` / `x-ms-locale`, §12). Session-keyed. The base of the welcome-voucher test (AD §5.7). |
+| `consent_copy_served`      | `GET /api/consent-copy?surface=signin` with `x-ms-session`, only while more than one variant is active (the `private, no-store` answer, §7.4) — at most once per session per 24 h, written after the answer (2026-10-08) | `{ variant, locale, reward, valueMoment }` — the variant served; `reward` / `valueMoment` = whether the served copy carries an approved, valid one (what the widget would render). Session-keyed, anonymous sessions included. |
 
 Which admin KPI section reads which event: backend doc `ADMIN_DASHBOARD.md` §5.
 
@@ -1366,10 +1400,27 @@ additive, no field changed:
   — and is **not on the suppression list** gets **no second DOI mail**. The opt-in endpoints then answer
   `marketing.status: "confirmed"`, `alreadyConfirmed: true`, `doiEmailSent: false`. The tap itself is
   still stored as Art. 7 evidence. Treat it like any `confirmed` answer: no „bitte bestätigen“ hint.
-- An address **on the suppression list** (unsubscribed, bounced, complained, erased) gets no DOI mail
-  either and the neutral answer `marketing.status: "none"`, `alreadyConfirmed: false`,
-  `doiEmailSent: false` on all three opt-in endpoints — never „already subscribed“, even when its old
-  DOI row still reads `confirmed` (since 2026-10-05). The widget shows its neutral thank-you.
+  The signed-in opt-in also reads the shop's live consent when the backend's copy has none (one
+  read, at most 1.5 s; a failed read changes nothing).
+- An address **on the suppression list** (unsubscribed, bounced, complained, erased) — on the
+  signed-in opt-in also one the shop holds as unsubscribed or invalid — gets no DOI mail either and
+  the neutral answer `marketing.status: "none"`, `alreadyConfirmed: false`, `doiEmailSent: false` on
+  all three opt-in endpoints — never „already subscribed“, even when its old DOI row still reads
+  `confirmed` (since 2026-10-05). The widget shows its neutral thank-you.
+- **One confirmation mail per address** (since 2026-10-08):
+  - Within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (default 30) after a DOI mail, another opt-in for
+    the same address — any of the three opt-in endpoints, any tab, device or session, also
+    simultaneous requests — sends **no** new mail. It is answered `marketing.status: "pending"`,
+    `doiEmailSent: true`: a valid link is in the inbox.
+  - After the cooldown an opt-in mails the link again — the **same** one while it is valid, and its
+    expiry restarts; an expired link is replaced.
+  - While the person's own shop sign-up (at most `MARKETING_DOI_EXPIRY_DAYS` old) still awaits the
+    shop's confirmation mail — per the backend's copy, on the signed-in opt-in also per the live
+    read — Mo sends none either and answers the same.
+  - If a DOI mail could not be sent, the answer is `pending`, `doiEmailSent: false`, and the next
+    opt-in sends at once.
+  - `doiEmailSent: true` therefore means „a valid confirmation mail is out“, not „this request sent
+    one“. The widget's „bitte bestätigen“ text stays correct; no widget change.
 - The DOI click and the unsubscribe link are reported to Shopify (§7.2, §7.3), so both sides stay in
   step.
 - A `pending` opt-in whose DOI link was never clicked falls back to „no consent“ one day after the link
@@ -1406,9 +1457,10 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   **`400` with code `transactional_consent_required`** (dedicated, stable code so the widget can show a
   targeted „bitte Häkchen setzen“ hint instead of a generic error).
 - `marketingConsent` is independent. When `true` (and the address isn't suppressed), the backend sets
-  the DOI `pending`, issues a DOI token, and sends the confirmation email. **No marketing** is sent until
-  the user clicks that link. Exception: the address already holds the one consent → no token, no DOI
-  mail, response `confirmed` (§7 intro).
+  the DOI `pending`, issues a DOI token (or re-uses the still-valid one) and sends the confirmation
+  email — none when a valid one went out within the cooldown or the shop's own confirmation mail is
+  out (§7 intro). **No marketing** is sent until the user clicks that link. Exception: the address
+  already holds the one consent → no token, no DOI mail, response `confirmed` (§7 intro).
 - `consentTextShown` is stored verbatim as Art. 7 proof. It MUST be the **backend-provided**
   `consentCopy.consentTextShown` string (from the `offer_email_summary` tool result or
   `GET /api/consent-copy`, §7.4) echoed back **byte-for-byte**. The backend additionally stores a
@@ -1423,13 +1475,18 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
 
 1. Stores one consent record per email (with `consentTextShown` and the version stamp) and links the
    session's conversation to the customer.
-2. **Transactional:** sends the summary email immediately — a summary of the conversation in the
-   shopper's language plus a prefilled-cart permalink (no discount). Which products the cart carries
-   is a backend rule (backend doc `CONSENT_FLOW.md`, "End-to-end flow"); `productIds` from the widget
-   are not used for it.
-3. **Marketing:** if newly granted, sends the DOI confirmation email and records the one consent as
-   `pending`. A suppressed/unsubscribed address is never re-pended; an address already confirmed in Mo
-   **or subscribed in Shopify** isn't sent a DOI (only checked when `marketingConsent: true`).
+2. **Marketing** (first, since 2026-10-08): if granted, sends the DOI confirmation email — unless a
+   valid one for the address went out within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (§7 intro) — and
+   records the one consent as `pending` once that mail went out. A suppressed/unsubscribed address is
+   never re-pended. No DOI is sent to an address already confirmed in Mo **or subscribed in
+   Shopify**, nor to one whose shop sign-up still awaits the shop's confirmation mail (only checked
+   when `marketingConsent: true`). A DOI mail that could not be sent does not hold back the next
+   opt-in.
+3. **Transactional:** then sends the summary email — a summary of the conversation in the shopper's
+   language plus a prefilled-cart permalink (no discount). Which products the cart carries is a
+   backend rule (backend doc `CONSENT_FLOW.md`, "End-to-end flow"); `productIds` from the widget are
+   not used for it. A `502` here can follow a DOI mail that went out: it stays valid, and a retry
+   within the cooldown is answered `pending`, `doiEmailSent: true` without a second mail.
 
 #### Success response
 
@@ -1468,8 +1525,8 @@ session's subsequent `/api/chat` requests — see §2 "Optional `customer`" for 
 | 401    | `unauthorized`         | Missing / wrong shared secret.                                    |
 | 403    | `forbidden`            | Cross-origin from an origin not in allowlist.                     |
 | 429    | `rate_limited`         | `chat` bucket (20 req / 60 s) or the per-recipient cap (3 requests / 60 min per address, shared with §7.6 — a 4th submit for the same address within the hour fails even from a fresh session). `Retry-After` set. |
-| 502    | `upstream_unavailable` | The transactional summary email failed to deliver (the consent is stored). |
-| 503    | `upstream_unavailable` | No database configured — consent could not be stored.            |
+| 502    | `upstream_unavailable` | The transactional summary email failed to deliver (the consent is stored; a DOI mail sent before it stays valid). |
+| 503    | `upstream_unavailable` | No database configured, or the database could not be reached — consent could not be stored. |
 | 500    | `internal_error`       | Anything else.                                                    |
 
 ### 7.2 `GET /api/confirm-marketing?token=…&locale=…`
@@ -1479,10 +1536,16 @@ The marketing double-opt-in confirmation link (in the DOI email; the backend app
 widget never calls it.
 
 - Valid, unexpired token → confirms the DOI and renders „Danke, deine Anmeldung ist bestätigt.“ (200).
-  Idempotent for an already-confirmed token. The first confirmation sets the one consent to
-  `subscribed` and reports it to Shopify (backend doc `CONSENT_FLOW.md`).
-- Invalid token (also when no database is configured) → error page (400). Expired token (older than
-  `MARKETING_DOI_EXPIRY_DAYS`, default 7) → error page (410). Unexpected failure → error page (500).
+  It confirms once: only the first click — also among simultaneous clicks, or clicks from several
+  mails of the same link — sets the one consent to `subscribed`, reports it to Shopify and writes
+  `email_capture_marketing_confirmed` (backend doc `CONSENT_FLOW.md`); a click on an
+  already-confirmed token renders the same page and records nothing.
+- Invalid token → error page (400). The same for an unconfirmed link whose address has unsubscribed
+  or been blocked since, in Mo or in the shop (since 2026-10-08): an old link never re-subscribes.
+- Expired token (older than `MARKETING_DOI_EXPIRY_DAYS`, default 7, counted from the last time the
+  link was mailed) → error page (410).
+- No database, or the database could not be reached → error page (503). Unexpected failure → error
+  page (500).
 
 ### 7.3 `GET /api/unsubscribe?token=…`
 
@@ -1641,8 +1704,8 @@ Moved: the backend's environment variables are documented in `.env.example` (bac
 that change a widget-visible response are named where the response is described:
 `RETURNING_HINT_ENABLED` and `CONSENT_SIGNIN_VARIANTS` (§7.4), `SHOPIFY_ERASURE_SYNC` (§7.4
 `surface=erase`), `CHAT_PAGE_CONTEXT_ENABLED` / `CHAT_PAGE_CONTEXT_HOLDOUT_PCT` (§2),
-`CHAT_ORDER_STATUS_ENABLED` (§2), `MARKETING_DOI_EXPIRY_DAYS` (§7), `MO_ATTRIBUTION_SESSION_ANCHOR`
-(§10).
+`CHAT_ORDER_STATUS_ENABLED` (§2), `MARKETING_DOI_EXPIRY_DAYS` and
+`MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (§7), `MO_ATTRIBUTION_SESSION_ANCHOR` (§10).
 
 ### 7.6 `POST /api/chat-marketing-opt-in`
 
@@ -1667,7 +1730,7 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
   "marketingConsent": true,        // MUST be the user's actual accept tap — never hard-code true
   "consentTextShown": "Ja, schickt mir persönliche Angebote … | Verarbeitung durch motion sports …",  // the served surface=chat consentTextShown, echoed VERBATIM
   "locale": "de",                  // optional ("de" default, "en" on /en), §12
-  "trigger": "chat_gate"           // optional echo; telemetry-only, ≤40 chars
+  "trigger": "chat_gate"           // optional; accepted for compatibility, not stored — the events always carry "chat_gate"
 }
 ```
 
@@ -1681,7 +1744,9 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
 - Runs the **same double-opt-in pipeline** as `/api/capture-email` (marketing half): DOI `pending` +
   token + confirmation email; a suppressed address is never re-pended (answer `none`); an address
   already confirmed in Mo or subscribed in Shopify is not sent a DOI (answer `confirmed`,
-  `alreadyConfirmed: true`, `doiEmailSent: false`). **No marketing until the link is clicked.**
+  `alreadyConfirmed: true`, `doiEmailSent: false`); one confirmation mail per address within the
+  cooldown, none while the shop's own confirmation mail is out (§7 intro). **No marketing until the
+  link is clicked.**
 - The capture records the **session id** and links the customer exactly like `/api/capture-email`, so
   after a success the widget MAY attach the email as `customer.email` on subsequent `/api/chat`
   requests (§2 privacy rules apply).
@@ -1713,7 +1778,7 @@ confirm; after `none` a neutral thank-you.
 | 401    | `unauthorized`               | Missing / wrong shared secret.                             |
 | 403    | `forbidden`                  | Cross-origin from an origin not in allowlist.              |
 | 429    | `rate_limited`               | `chat` bucket (20 req / 60 s) or the per-recipient cap (3 requests / 60 min per address, shared with §7.1). `Retry-After` set. |
-| 503    | `upstream_unavailable`       | No database configured — consent could not be stored.      |
+| 503    | `upstream_unavailable`       | No database configured, or the database could not be reached — consent could not be stored. |
 | 500    | `internal_error`             | Anything else.                                             |
 
 ---
@@ -2094,7 +2159,8 @@ integration: send `x-ms-locale` on every backend call from `/en` (and `de` or no
 | Mail links (`/api/confirm-marketing`, `/api/unsubscribe`, `/api/erase-data`, `/api/newsletter-rating`, `/api/r/{token}`) | `locale` on the link | Page language. The backend builds these links; the widget never does. The DOI link carries the recipient's locale always; the erasure links and the unsubscribe and `/api/r/{token}` links of campaign mails (the Einzelansprache included) carry `locale=en` for English recipients and nothing for German. The 1:1 marketing mail is German only, so its links carry none; `/api/newsletter-rating` links carry none yet. A link without `locale` is German, so links sent earlier keep working. |
 
 No locale is read by `/api/products`, `/api/kpi`, `/api/tts`, `/api/attribution/token`, `/api/auth/*`
-and `GET /api/account/conversations` (no user-facing prose).
+and `GET /api/account/conversations` (no user-facing prose) — except that `GET /api/auth/me` reads
+query and header for the server event `consent_ask_eligible` (§5; since 2026-10-08).
 
 ### 12.3 Consent copy per locale
 
@@ -2155,3 +2221,7 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-05 | English consent copy approved as the translation: `enLegalReviewed: true` for `en`. | §12.3 |
 | 2026-10-06 | `email_capture_marketing_opted_in` with `outcome: "doi_required"` carries `doiSent` and is written after the DOI send attempt (server-only, no widget change). | §5 |
 | 2026-10-06 | The `/api/r/{token}` links of campaign mails carry `?locale=en` for English recipients (older links stay German); the `502` of `POST /api/contact` is localised in both branches; the `marketing_consent_required` message no longer mentions a checkbox. | §11.2, §12.2 |
+| 2026-10-08 | One DOI mail per address within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (default 30), also for parallel requests: a repeated opt-in is answered `pending`, `doiEmailSent: true` without a new mail; after the cooldown the link is mailed again (the same one while valid). A failed DOI send no longer holds back the next opt-in. `POST /api/capture-email` sends the DOI mail before the summary (a `502` of the summary can follow a sent, still-valid DOI mail). A database error on the three opt-in endpoints answers `503` (was `500`). A DOI link confirms once (parallel clicks too); an unconfirmed link whose address unsubscribed or was blocked since → `400`; no database → `503` (was `400`). Response shapes unchanged; no widget change. | §7, §7.1, §7.2, §7.6; ACCOUNT_CONTRACT.md §6.2 |
+| 2026-10-08 | No Mo DOI mail while the person's own shop sign-up awaits the shop's confirmation mail (answered `pending`, `doiEmailSent: true`); the signed-in opt-in reads the shop's live consent when the backend's copy has none (subscribed → `confirmed`; unsubscribed / invalid → `none`). No widget change. | §7; ACCOUNT_CONTRACT.md §6.1, §6.2 |
+| 2026-10-08 | Opt-in server events: outcomes `doi_pending` / `shopify_pending`, `doiCooldown`, `doiResend`, `shopifyConsent`; the chat gate's events come after the send with `doiSent` and always `trigger: "chat_gate"`; `email_capture_marketing_confirmed` gains `placement?` / `variant?`; both events carry `captureId` (the consent row's id) and the confirmation is credited to the opt-in that mailed its link. New server-only events `consent_ask_eligible` (`GET /api/auth/me`, which now reads the locale for it) and `consent_copy_served` (`GET /api/consent-copy?surface=signin`, per-session copy); `POST /api/kpi` drops both. No widget change. | §5, §7.6, §12.2; ACCOUNT_CONTRACT.md §4 |
+| 2026-10-08 | The data the dormant widget of 2026-10-08 (`495fdf6`) already sends — `login_gate_shown` `{ teaser: true, variant? }`, `consent_gate_*` `reward: true` and `placement: "value_moment"` — is stored verbatim and read by the dashboard (JSON `true` only); nothing to change. | §5 |

@@ -13,42 +13,42 @@
 //   - marketingConsent → sets marketing_doi_status='pending', issues a DOI
 //     token, and sends a confirmation email. NO marketing is permitted until
 //     the user clicks that link. A suppressed/unsubscribed address is never
-//     re-pended.
+//     re-pended. One DOI mail per address within MARKETING_DOI_RESEND_
+//     COOLDOWN_MINUTES, also for parallel requests (email-capture-store.ts);
+//     none when the shop's own confirmation mail is out (C.29, Mo's mirror).
 //
 // Defensive: an email-send failure is logged AND surfaced in the response
 // (never silently lost). The summary send failing returns 502; the DOI send
 // failing is reported per-channel without losing the (successful) capture.
-// The marketing opt-in KPI event is written after the send attempt (finally),
-// so it records whether the DOI mail went out (OI1 F3).
+// The DOI mail goes out before the summary; a claim whose mail did not go out
+// (failed, or an error before the send) is released right after the attempt,
+// so the next accept sends at once. The marketing opt-in KPI event is written
+// right after the send attempt too (on an early exit: in `finally`), so it
+// records whether the DOI mail went out (OI1 F3) and exists before the link can
+// be clicked.
 
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, checkRateLimitKeyed, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { validateCaptureRequest } from "@/lib/capture-validation.mjs";
 import { resolveConsentCopyVersion } from "@/lib/consent-copy-version.mjs";
-import { upsertEmailCapture } from "@/lib/email-capture-store";
+import { releaseDoiClaim, upsertEmailCapture } from "@/lib/email-capture-store";
+import { isDoiOptInRecorded, shouldReleaseDoiClaim } from "@/lib/email-capture-core.mjs";
 import { isEmailAlreadySubscribed, recordMoOptIn } from "@/lib/consent-flows";
+import { mirrorConsentForEmail } from "@/lib/shopify-optin-precheck";
 import { linkCustomerOnEmailCapture } from "@/lib/customer-store";
-import { sendEmail, senderAddress } from "@/lib/email";
-import { outboundThreading } from "@/lib/email-inbound";
-import { recordSentMessage } from "@/lib/email-messages-store";
+import { sendDoiMail, type DoiSendState } from "@/lib/doi-mail";
 import { sendSummaryEmail } from "@/lib/summary-email";
 import { getBaseUrl } from "@/lib/base-url";
 import { resolveLocale } from "@/lib/locale";
 import { apiMessage } from "@/lib/api-messages.mjs";
-import {
-  doiEmailSubject,
-  doiEmailBody,
-  captureConsentCopy,
-} from "@/lib/consent-copy";
-import { withEmailDesign } from "@/lib/email-design-context";
-import { getCachedEmailDesignForKind } from "@/lib/email-design-store";
+import { captureConsentCopy } from "@/lib/consent-copy";
 import {
   KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
   KPI_EMAIL_CAPTURE_SUBMITTED,
   recordKpiEvent,
 } from "@/lib/kpi-events";
-import { doiSentField, optInAnswer, storedOfferTrigger } from "@/lib/capture-funnel.mjs";
+import { doiCooldownField, doiSentField, optInAnswer, storedOfferTrigger } from "@/lib/capture-funnel.mjs";
 
 export const maxDuration = 30;
 
@@ -147,8 +147,13 @@ export async function POST(req: Request) {
     );
 
     // ONE consent (docs/archive/CUSTOMER_PLATFORM_PLAN.md §7): an address already
-    // subscribed — via Shopify or an earlier DOI — gets no second DOI mail.
-    const alreadySubscribed = marketingConsent ? await isEmailAlreadySubscribed(email) : false;
+    // subscribed — via Shopify or an earlier DOI — gets no second DOI mail;
+    // nor does one whose shop sign-up still awaits the shop's own confirmation
+    // mail (C.29 — Mo's mirror only, no Shopify call for a typed address).
+    const mirror = marketingConsent ? await mirrorConsentForEmail(email) : null;
+    const alreadySubscribed = marketingConsent
+      ? (await isEmailAlreadySubscribed(email)) || mirror?.subscribed === true
+      : false;
 
     const capture = await upsertEmailCapture({
       sessionId,
@@ -159,6 +164,7 @@ export async function POST(req: Request) {
       consentCopyVersion,
       locale,
       alreadySubscribed,
+      pendingElsewhere: mirror?.shopifyPendingFresh === true,
     });
     if (!capture) {
       // No DB configured (or the write failed) — we cannot store the consent,
@@ -178,9 +184,6 @@ export async function POST(req: Request) {
     // same customer. Best-effort (never throws): the consent is already stored,
     // and a linking failure must not block the summary/DOI emails.
     await linkCustomerOnEmailCapture({ email, sessionId });
-    // Report the act to the one consent (pending until the DOI link is
-    // clicked; nothing goes to Shopify before that).
-    await recordMoOptIn({ email, surface: "mo_capture_form", captureId: capture.id, doiPending: capture.doiEmailRequired });
 
     // Funnel telemetry (pseudonymous, session-keyed — NO email in the data).
     // `submitted` is emitted as soon as the consent is stored, so a downstream
@@ -202,15 +205,85 @@ export async function POST(req: Request) {
     });
 
     const baseUrl = getBaseUrl(req);
-    let doiEmailSent = false;
+    let doiSend: DoiSendState = "none";
+
+    // A claimed DOI whose mail did not go out — the send failed or an
+    // unexpected error came first — is released, so the next accept sends at
+    // once instead of waiting out the cooldown. Right after the send attempt,
+    // and again (a no-op then) on every exit.
+    let claimSettled = false;
+    const releaseUnsentClaim = async () => {
+      if (claimSettled) return;
+      claimSettled = true;
+      if (shouldReleaseDoiClaim(capture.doiEmailRequired, doiSend)) await releaseDoiClaim(capture);
+    };
+    // The marketing opt-in event, written once the DOI send is decided —
+    // before the summary, and on any exit before that point — so it says
+    // whether the DOI mail actually went out (`doiSent`, OI1 F3) or why none
+    // was due (`doiCooldown`, T2.1), and exists before the link can be clicked.
+    let optInEventWritten = false;
+    const writeOptInEvent = async () => {
+      if (optInEventWritten || !marketingConsent) return;
+      optInEventWritten = true;
+      await recordKpiEvent({
+        sessionId,
+        event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
+        data: {
+          doiStatus: capture.marketingDoiStatus,
+          source: "mo_capture_form",
+          ...(outcome ? { outcome } : {}),
+          ...doiSentField(outcome, doiSend === "sent"),
+          ...doiCooldownField(outcome, capture.doiCooldown),
+          ...(capture.doiResend ? { doiResend: true } : {}),
+          // The capture this opt-in belongs to (an id, no address): the DOI click
+          // is attributed to the opt-in that sent its mail, also across devices.
+          captureId: capture.id,
+          ...(storedTrigger ? { trigger: storedTrigger } : {}),
+        },
+      });
+    };
 
     try {
-      // 1) Transactional summary email — send immediately (the requested service).
+      // 1) Marketing double-opt-in confirmation email — first, before the
+      // summary: the summary (an LLM call, the cart, a second send) can take
+      // long, and a claim held across it would answer every parallel or
+      // retried accept „confirmation mail is out“ before any mail went (and,
+      // if the function were cut off, for the whole cooldown). Only when this
+      // request claimed it (none within the cooldown after an earlier DOI
+      // mail, for a confirmed / subscribed / suppressed address, or when the
+      // shop's own confirmation mail is out). A failed send is reported,
+      // never fails the request, and its claim is released below.
+      if (capture.doiEmailRequired && capture.doiToken) {
+        doiSend = await sendDoiMail({
+          email,
+          token: capture.doiToken,
+          locale,
+          baseUrl,
+          route: "api/capture-email",
+        });
+      }
+      const doiEmailSent = doiSend === "sent";
+      await releaseUnsentClaim();
+
+      // Report the act to the one consent (pending until the DOI link is
+      // clicked; nothing goes to Shopify before that) — only once the DOI mail
+      // went out, and before the summary, so a summary failure cannot lose it.
+      await recordMoOptIn({
+        email,
+        surface: "mo_capture_form",
+        captureId: capture.id,
+        doiPending: isDoiOptInRecorded(capture.doiEmailRequired, doiSend),
+      });
+      await writeOptInEvent();
+
+      // 2) Transactional summary email — the requested service.
       const summary = await sendSummaryEmail({ sessionId, email, locale });
       // `skipped` means Resend isn't configured (local dev) — not a real failure.
       const summarySkipped = summary.result.ok === false && summary.result.skipped;
       if (!summary.sent && !summarySkipped) {
-        // A real delivery failure: surface it. The consent is already stored.
+        // A real delivery failure: surface it. The consent is stored and a
+        // DOI mail that went out stays valid (a retry within the cooldown is
+        // answered „confirmation mail is out“).
         return errorResponse(
           "upstream_unavailable",
           apiMessage("summary_delivery_failed", locale),
@@ -219,86 +292,31 @@ export async function POST(req: Request) {
         );
       }
 
-      // 2) Marketing double-opt-in confirmation email — only when newly pending.
-      if (capture.doiEmailRequired && capture.doiToken) {
-        // Carry the locale on the confirmation link so the confirm page renders in
-        // the same language as the email.
-        const confirmUrl = `${baseUrl}/api/confirm-marketing?token=${encodeURIComponent(capture.doiToken)}&locale=${locale}`;
-        // Render inside the design selected for this email type (admin
-        // Einstellungen); null → classic built-ins. The lawyer-approved DOI copy
-        // itself is untouched — only the design around it changes.
-        const emailDesign = await getCachedEmailDesignForKind("doi");
-        const body = withEmailDesign(emailDesign, () => doiEmailBody(confirmUrl, locale));
-        const threading = outboundThreading();
-        const doiResult = await sendEmail({
-          to: email,
-          subject: doiEmailSubject(locale),
-          text: body.text,
-          html: body.html,
-          kind: "doi",
-          messageId: threading.messageId,
-          replyTo: threading.replyTo,
-        });
-        doiEmailSent = doiResult.ok;
-        // MIRROR-WRITE (additive, fail-soft): log the DOI mail in the unified mail
-        // log. It's correspondence, NOT marketing consent — the consent record
-        // still lives only in email_captures.
-        if (doiResult.ok) {
-          await recordSentMessage({
-            toAddress: email,
-            fromAddress: senderAddress() ?? "",
-            subject: doiEmailSubject(locale),
-            bodyText: body.text,
-            bodyHtml: body.html,
-            messageId: threading.messageId,
-          });
-        }
-        if (!doiResult.ok && !doiResult.skipped) {
-          // DOI send failed for real. The pending capture stays, the user just
-          // didn't get the link — report it; the user can re-request. We do NOT
-          // fail the whole request, since the transactional summary already went.
-          reportError(doiResult.error, {
-            route: "api/capture-email",
-            phase: "doi_send",
-          });
-        }
-      }
-
       return okJson(
         {
           ok: true,
           transactional: { summarySent: summary.sent || summarySkipped },
           // A suppressed address is answered neutrally — status none, never
-          // „already subscribed“, never „DOI mail sent“ (OI1 F2;
-          // capture-funnel.mjs → optInAnswer, tested). alreadyConfirmed: the
-          // user is already confirmed (re-submission) — no DOI needed.
+          // „already subscribed“, never „DOI mail sent“ (OI1 F2).
+          // alreadyConfirmed: the user is already confirmed (re-submission) —
+          // no DOI needed. A valid confirmation mail already out (Mo within
+          // the cooldown, or the shop's) reads pending + doiEmailSent
+          // (capture-funnel.mjs → optInAnswer, tested).
           marketing: optInAnswer({
             suppressed: capture.suppressed,
             subscribedElsewhere: capture.subscribedElsewhere,
+            pendingElsewhere: capture.pendingElsewhere,
             marketingDoiStatus: capture.marketingDoiStatus,
             doiEmailRequired: capture.doiEmailRequired,
             doiEmailSent,
+            doiCooldown: capture.doiCooldown,
           }),
         },
         headers
       );
     } finally {
-      // The marketing opt-in event is written once the DOI send is decided —
-      // on every exit, including the 502 above and an unexpected error — so it
-      // says whether the DOI mail actually went out (`doiSent`, OI1 F3).
-      if (marketingConsent) {
-        await recordKpiEvent({
-          sessionId,
-          event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
-          data: {
-            doiStatus: capture.marketingDoiStatus,
-            source: "mo_capture_form",
-            ...(outcome ? { outcome } : {}),
-            ...doiSentField(outcome, doiEmailSent),
-            ...(storedTrigger ? { trigger: storedTrigger } : {}),
-          },
-        });
-      }
+      await releaseUnsentClaim();
+      await writeOptInEvent();
     }
   } catch (err) {
     reportError(err, { route: "api/capture-email" });

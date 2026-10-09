@@ -113,3 +113,15 @@ const EN = {
   unsubscribeInvalidHeading: "This unsubscribe link is invalid.",
   unsubscribeInvalidBody: "Please use the unsubscribe link from one of our emails.",
 };
+
+/**
+ * Every DOI-mail subject Mo has ever sent, in any locale — APPEND-ONLY.
+ * `email_messages` stores no send kind, so `npm run verify:live` section 10
+ * („Einmal-Garantie“) recognises a DOI mail in the mail log by its subject.
+ * When a `doiSubject` above changes, add the new string here and keep the old
+ * one, or older mails drop out of the count (the test pins both rules).
+ */
+export const DOI_MAIL_SUBJECTS = Object.freeze([
+  "Bitte bestätige deine Anmeldung bei motion sports",
+  "Please confirm your sign-up with motion sports",
+]);

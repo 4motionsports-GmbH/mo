@@ -7,6 +7,7 @@ import {
   toShopifyConsentInput,
   mapShopifyCustomer,
   mapConsentWebhook,
+  mirrorCustomerFromConsentWebhook,
   mapShopifyOrder,
   withCatalogHandles,
 } from "./shopify-customer-map.mjs";
@@ -123,6 +124,37 @@ test("mapConsentWebhook reads the consent topic payload", () => {
     consent: { state: "subscribed", level: "confirmed_opt_in", at: "2026-09-01T00:00:00.000Z" },
   });
   assert.equal(mapConsentWebhook({ customer_id: 9 }), null);
+});
+
+test("mirrorCustomerFromConsentWebhook builds an undated minimal row (C.29)", () => {
+  const parsed = mapConsentWebhook({
+    customer_id: 77,
+    email_address: " New@Shop.de ",
+    email_marketing_consent: { state: "pending", opt_in_level: "confirmed_opt_in", consent_updated_at: "2026-10-06T09:00:00Z" },
+  });
+  const row = mirrorCustomerFromConsentWebhook(parsed);
+  assert.deepEqual(row, {
+    shopifyId: "77",
+    gid: "gid://shopify/Customer/77",
+    email: "new@shop.de",
+    firstName: null,
+    lastName: null,
+    locale: null,
+    countryCode: null,
+    state: null,
+    tags: [],
+    // Undated: the mirror's stale guard never lets it overwrite a stored identity,
+    // and an address erased in Mo earlier stays out (no creation date).
+    createdAt: null,
+    updatedAt: null,
+    consent: { state: "pending", level: "confirmed_opt_in", at: "2026-10-06T09:00:00.000Z" },
+  });
+  // A payload without an address still yields a row (the mirror stores a placeholder).
+  const noMail = mirrorCustomerFromConsentWebhook({ shopifyId: "78", email: null, consent: parsed.consent });
+  assert.equal(noMail.email, null);
+  assert.equal(noMail.gid, "gid://shopify/Customer/78");
+  // Only the listed fields leave the module (data minimisation).
+  assert.deepEqual(Object.keys(row).sort(), Object.keys(mapShopifyCustomer({ id: 1 })).sort());
 });
 
 test("mapShopifyOrder handles a GraphQL order with bulk child line items", () => {

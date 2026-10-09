@@ -128,6 +128,21 @@ export const KPI_PAGE_CONTEXT_APPLIED = "page_context_applied";
 /** When that turn finished: `{kind, productCards, otherCards}` — counts only. */
 export const KPI_PAGE_CONTEXT_ANSWERED = "page_context_answered";
 
+// ---------------------------------------------------------------------------
+// Welcome-voucher test of the consent ask (OPTIN_REWARD T6, server-emitted)
+// ---------------------------------------------------------------------------
+
+/** A signed-in session the consent ask may be offered to (GET /api/auth/me
+ * answered `optInActionable: true`) — the test's intention-to-treat population.
+ * `data: {variant, mode: popup|value_moment, locale}` = what the server assigned
+ * this session. At most once per session per 24 h (consent-ask-kpi.ts). */
+export const KPI_CONSENT_ASK_ELIGIBLE = "consent_ask_eligible";
+/** GET /api/consent-copy?surface=signin served a per-session copy (only while
+ * several variants are active) to a request with `x-ms-session` — the variant of
+ * anonymous sign-in popup sessions too. `data: {variant, locale, reward,
+ * valueMoment}` (booleans = what renders). At most once per session per 24 h. */
+export const KPI_CONSENT_COPY_SERVED = "consent_copy_served";
+
 /**
  * Record one pseudonymous KPI event from server code. Same table and shape as
  * the widget's fail-silent track() → POST /api/kpi path, so dashboard
@@ -150,32 +165,91 @@ export async function recordKpiEvent(opts: {
   }
 }
 
+/** The session's latest opt-in whose DOI mail went out — what a DOI click confirms. */
+export interface LatestDoiOptIn {
+  source: string;
+  /** Sign-in ask placement / variant of that opt-in (OPTIN_REWARD T6); null when it carried none. */
+  placement: string | null;
+  variant: string | null;
+}
+
 /**
- * The source of the session's latest opt-in that needed a DOI mail (OI1 §4):
- * the surface a DOI click in that session confirms. Legacy rows (no `source`)
- * map through their trigger. Null on no row, no DB or an error.
+ * The session's latest opt-in that sent a DOI mail (OI1 §4): the surface a
+ * DOI click in that session confirms. Opt-ins that sent no mail (a failed
+ * send, `doi_pending` within the resend cooldown, `shopify_pending`) do not
+ * count. Legacy rows (no `outcome`, no `source`) map through their trigger.
+ * Null on no row, no DB or an error.
  */
-export async function latestDoiOptInSource(sessionId: string | null): Promise<string | null> {
+export async function latestDoiOptIn(sessionId: string | null): Promise<LatestDoiOptIn | null> {
   if (!sessionId) return null;
   const sql = getSql();
   if (!sql) return null;
   try {
     const rows = (await sql`
-      SELECT COALESCE(data->>'source', '') AS source, COALESCE(data->>'trigger', '') AS trigger
+      SELECT COALESCE(data->>'source', '') AS source, COALESCE(data->>'trigger', '') AS trigger,
+             data->>'placement' AS placement, data->>'variant' AS variant
         FROM kpi_events
        WHERE session_id = ${sessionId}
          AND event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
-         AND (data->>'outcome' = 'doi_required'
-              OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending'))
+         AND ((data->>'outcome' = 'doi_required' AND COALESCE(data->>'doiSent', 'true') <> 'false')
+              OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending'
+                  AND COALESCE(data->>'doiCooldown', 'false') <> 'true'))
        ORDER BY created_at DESC, id DESC
        LIMIT 1
-    `) as Array<{ source: string; trigger: string }>;
+    `) as Array<{ source: string; trigger: string; placement: string | null; variant: string | null }>;
     const r = rows[0];
-    return r ? eventSource(r.source, r.trigger) : null;
+    return r ? { source: eventSource(r.source, r.trigger), placement: r.placement || null, variant: r.variant || null } : null;
   } catch (err) {
-    reportError(err, { route: "lib/kpi-events", phase: "latestDoiOptInSource" });
+    reportError(err, { route: "lib/kpi-events", phase: "latestDoiOptIn" });
     return null;
   }
+}
+
+/**
+ * The latest opt-in of a CAPTURE (email_captures.id, carried as `captureId`
+ * on the opt-in event since 2026-10-09) that sent a DOI mail, with its
+ * session: a DOI click is attributed to the opt-in that mailed the link —
+ * not to whichever session last touched the capture row (a second device's
+ * accept within the resend cooldown overwrites email_captures.session_id).
+ * Null for older opt-ins without captureId, no DB or an error.
+ */
+export async function latestDoiOptInForCapture(
+  captureId: number | null | undefined
+): Promise<(LatestDoiOptIn & { sessionId: string | null }) | null> {
+  if (captureId == null || !Number.isInteger(captureId) || captureId <= 0) return null;
+  const sql = getSql();
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT session_id, COALESCE(data->>'source', '') AS source, COALESCE(data->>'trigger', '') AS trigger,
+             data->>'placement' AS placement, data->>'variant' AS variant
+        FROM kpi_events
+       WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+         AND created_at >= now() - interval '60 days'
+         AND data->>'captureId' = ${String(captureId)}
+         AND data->>'outcome' = 'doi_required'
+         AND COALESCE(data->>'doiSent', 'true') <> 'false'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+    `) as Array<{ session_id: string | null; source: string; trigger: string; placement: string | null; variant: string | null }>;
+    const r = rows[0];
+    return r
+      ? {
+          sessionId: r.session_id ?? null,
+          source: eventSource(r.source, r.trigger),
+          placement: r.placement || null,
+          variant: r.variant || null,
+        }
+      : null;
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-events", phase: "latestDoiOptInForCapture" });
+    return null;
+  }
+}
+
+/** The source of the session's latest DOI opt-in (see latestDoiOptIn). */
+export async function latestDoiOptInSource(sessionId: string | null): Promise<string | null> {
+  return (await latestDoiOptIn(sessionId))?.source ?? null;
 }
 
 /**
@@ -207,5 +281,37 @@ export async function hasDeclinedEmailCapture(
       event: KPI_EMAIL_CAPTURE_DECLINED,
     });
     return false;
+  }
+}
+
+/**
+ * Record a session-keyed event at most once per session within `hours` (one
+ * statement: insert unless the session already has that event in the window).
+ * Not race-proof — two parallel requests can both insert — so readers count
+ * DISTINCT sessions. No session, no database or a failed write → nothing
+ * recorded, logged, never thrown (like recordKpiEvent).
+ */
+export async function recordKpiEventOncePerWindow(opts: {
+  sessionId: string | null;
+  event: string;
+  data?: Record<string, unknown>;
+  hours: number;
+}): Promise<void> {
+  if (!opts.sessionId) return;
+  const sql = getSql();
+  if (!sql) return;
+  const hours = Math.max(1, Math.floor(opts.hours) || 1);
+  try {
+    await sql`
+      INSERT INTO kpi_events (session_id, event, data)
+      SELECT ${opts.sessionId}, ${opts.event}, ${JSON.stringify(opts.data ?? {})}::jsonb
+       WHERE NOT EXISTS (
+         SELECT 1 FROM kpi_events
+          WHERE session_id = ${opts.sessionId}
+            AND event = ${opts.event}
+            AND created_at >= now() - make_interval(hours => ${hours}::int))
+    `;
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-events", phase: "insertOnce", event: opts.event });
   }
 }

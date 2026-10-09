@@ -1,9 +1,11 @@
 // Anmelde-Popup — the widget's sign-in ask for anonymous visitors (2026-10-01):
 // shown → „Anmelden“ → signed in at Shopify → signed in in the chat, per
-// session, plus „Später“ / weggeklickt, where sign-ins start, and — for every
-// session with a sign-in event — where its sign-in ended (docs/frontend/05 §12.1).
+// session, plus „Später“ / weggeklickt, where sign-ins start, the same sessions
+// with and without the reward teaser and by served variant (OPTIN_REWARD T6),
+// and — for every session with a sign-in event — where its sign-in ended
+// (docs/frontend/05 §12.1).
 
-import type { LoginGateFunnel, SigninDiagnosis } from "@/lib/kpi-store";
+import type { LoginGateFunnel, LoginServedVariantRow, LoginTeaserRow, SigninDiagnosis } from "@/lib/kpi-store";
 import type { KpiRange } from "@/lib/kpi-range";
 import { SIGNIN_DIAGNOSIS } from "@/lib/kpi-widget-events.mjs";
 import { releaseNotesFor } from "@/lib/kpi-releases.mjs";
@@ -33,6 +35,12 @@ const INFO = (
 
 const DIAGNOSIS_INFO =
   "Jede Sitzung mit einem Anmelde-Event im Zeitraum, eingeordnet nach der Stelle, an der ihre Anmeldung endete — aus Widget- und Server-Events derselben Sitzung (Herkunft egal: Popup, Begrüßung, Kopfzeile, Shop-Erkennung). Die Ursachen sind die wahrscheinlichen laut Frontend-Doku (05 §12.1).";
+
+const TEASER_INFO =
+  "Sitzungen nach ihrem ersten Anmelde-Popup: mit Gutschein-Hinweis oder ohne. „Ohne“ umfasst Variante a, Englisch und Sitzungen, in denen der Text nicht innerhalb von 1,2 Sekunden ankam — deshalb kein sauberer Vergleich. Belastbar ist die Tabelle je Variante (die Variante, die der Server dieser Sitzung ausgeliefert hat). „Opt-in danach“ und „Bestätigt“: in derselben Sitzung nach dem Klick auf „Anmelden“. Die Begrüßungskarte meldet keinen Hinweis.";
+
+const SERVED_INFO =
+  "Dieselben Sitzungen nach der Variante, die der Server ihnen mit dem Einwilligungstext ausgeliefert hat (consent_copy_served — nur, solange mehrere Varianten aktiv sind; Sitzungen ohne diese Angabe fehlen hier), unabhängig davon, ob der Hinweis erschien. „Mit Hinweis“ = davon mit Gutschein-Hinweis im ersten Popup.";
 
 const RESULT_LABELS: Record<string, string> = {
   ok: "ok (Code eingelöst)",
@@ -123,6 +131,54 @@ export function LoginGateSection({
             <Stat label="Aus dem Popup" value={num(funnel.startsBySource.login_gate)} />
             <Stat label="Begrüßung oder Kopfzeile" value={num(funnel.startsBySource.other)} />
           </StatGrid>
+
+          {funnel.byTeaser.some((t) => t.hint !== "ohne Hinweis") && (
+            <>
+              <SubHeading info={TEASER_INFO}>Mit und ohne Gutschein-Hinweis</SubHeading>
+              <Table className="text-xs [&_td]:tabular-nums">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Hinweis</TableHead>
+                    <TableHead>Variante</TableHead>
+                    <TeaserHeads />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {funnel.byTeaser.map((t) => (
+                    <TableRow key={`${t.hint}|${t.variant}`}>
+                      <TableCell className="font-medium">{t.hint}</TableCell>
+                      <TableCell>{t.variant}</TableCell>
+                      <TeaserCells row={t} />
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </>
+          )}
+
+          {funnel.byServedVariant.length > 0 && (
+            <>
+              <SubHeading info={SERVED_INFO}>Nach ausgelieferter Variante</SubHeading>
+              <Table className="text-xs [&_td]:tabular-nums">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Variante</TableHead>
+                    <TableHead align="right">Mit Hinweis</TableHead>
+                    <TeaserHeads />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {funnel.byServedVariant.map((t) => (
+                    <TableRow key={t.variant}>
+                      <TableCell className="font-medium">{t.variant}</TableCell>
+                      <TableCell align="right">{num(t.withTeaser)}</TableCell>
+                      <TeaserCells row={t} />
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </>
+          )}
         </>
       )}
 
@@ -170,5 +226,32 @@ export function LoginGateSection({
         </>
       )}
     </KpiSection>
+  );
+}
+
+/** The shared count columns of the two teaser tables. */
+function TeaserHeads() {
+  return (
+    <>
+      <TableHead align="right">Angezeigt</TableHead>
+      <TableHead align="right">„Anmelden“</TableHead>
+      <TableHead align="right">Im Chat angemeldet</TableHead>
+      <TableHead align="right">Anmelderate (im Chat ÷ angezeigt)</TableHead>
+      <TableHead align="right">Opt-in danach</TableHead>
+      <TableHead align="right">Bestätigt</TableHead>
+    </>
+  );
+}
+
+function TeaserCells({ row }: { row: LoginTeaserRow | LoginServedVariantRow }) {
+  return (
+    <>
+      <TableCell align="right">{num(row.shown)}</TableCell>
+      <TableCell align="right">{num(row.clicked)}</TableCell>
+      <TableCell align="right">{num(row.linked)}</TableCell>
+      <TableCell align="right">{row.rates.overallRate == null ? "—" : ratio(row.rates.overallRate)}</TableCell>
+      <TableCell align="right">{num(row.optedIn)}</TableCell>
+      <TableCell align="right">{num(row.confirmed)}</TableCell>
+    </>
   );
 }

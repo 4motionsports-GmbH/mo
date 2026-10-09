@@ -1,7 +1,8 @@
 // The customer mirror: Shopify customers → `customers` rows (I/O).
 //
-// ONE write path for the bulk import, the nightly reconciliation and the
-// customers/* webhooks (rows normalised by lib/shopify-customer-map.mjs):
+// ONE write path for the bulk import, the nightly reconciliation, the
+// customers/* webhooks and the consent webhook's inline import of a customer
+// not mirrored yet (rows normalised by lib/shopify-customer-map.mjs):
 //
 //   1. erased people stay out — Shopify ids with an erasure tombstone, and
 //      e-mails erased in Mo before this Shopify account existed;
@@ -9,11 +10,17 @@
 //      that address gets the Shopify id stamped on), else insert
 //      (source 'shopify');
 //   3. a payload older than the stored shopify_updated_at changes nothing
-//      (stale guard for out-of-order webhooks);
+//      (stale guard for out-of-order webhooks); an undated payload (the
+//      minimal row a consent webhook builds, C.29) never overwrites a stored
+//      identity;
 //   4. an e-mail change onto an address an Interessent already uses merges
 //      the two rows (lib/customer-merge-store.ts);
 //   5. the embedded emailMarketingConsent goes through the consent resolver
-//      (lib/consent-store.ts) — never written directly.
+//      (lib/consent-store.ts) — never written directly;
+//   6. two deliveries that insert the same new person at once (customers/create
+//      next to customers/update or the consent webhook's import): the loser
+//      re-reads the winner's row and still applies its consent and a newer
+//      identity to it (`raced`).
 //
 // docs/archive/CUSTOMER_PLATFORM_PLAN.md §6.1–§6.2.
 
@@ -30,6 +37,8 @@ export interface MirrorUpsertResult {
   stamped: number;
   merged: number;
   skipped: number;
+  /** Inserts lost to a parallel delivery of the same person, applied to the winner's row. */
+  raced: number;
   consentChanged: number;
   /** Customer ids touched (for follow-up work such as facts). */
   customerIds: number[];
@@ -48,6 +57,7 @@ const EMPTY: MirrorUpsertResult = {
   stamped: 0,
   merged: 0,
   skipped: 0,
+  raced: 0,
   consentChanged: 0,
   customerIds: [],
 };
@@ -65,6 +75,44 @@ function mapExisting(r: Record<string, unknown>): ExistingRow {
     shopifyCustomerId: (r.shopify_customer_id as string | null) ?? null,
     shopifyUpdatedAt: r.shopify_updated_at ? ts(String(r.shopify_updated_at)) : null,
   };
+}
+
+/**
+ * Identity UPDATE of rows already keyed by this Shopify id. One statement for
+ * the normal path and the race recovery (a whole query, never a fragment).
+ */
+function identityUpdate(sql: Sql, updates: Array<Record<string, unknown>>) {
+  return sql`
+    UPDATE customers c SET
+      email              = COALESCE(x.email, c.email),
+      first_name         = x.first_name,
+      last_name          = x.last_name,
+      locale             = COALESCE(x.locale, c.locale),
+      country_code       = x.country_code,
+      shopify_state      = x.shopify_state,
+      shopify_tags       = COALESCE(x.shopify_tags, '{}'),
+      shopify_created_at = COALESCE(x.shopify_created_at, c.shopify_created_at),
+      shopify_updated_at = COALESCE(x.shopify_updated_at, c.shopify_updated_at),
+      shopify_synced_at  = now(),
+      facts_dirty_at     = now()
+    FROM jsonb_to_recordset(${JSON.stringify(updates)}::jsonb) AS x(
+      id bigint, email text, first_name text, last_name text, locale text, country_code text,
+      shopify_state text, shopify_tags text[], shopify_created_at timestamptz, shopify_updated_at timestamptz)
+    WHERE c.id = x.id
+      AND (x.email IS NULL OR NOT EXISTS (SELECT 1 FROM customers o WHERE o.email = x.email AND o.id <> c.id))
+  `;
+}
+
+/**
+ * The stale guard: does this payload's identity lose against the stored row?
+ * Older than the stored shopify_updated_at, or undated (only the minimal row a
+ * consent webhook builds carries no date — it must never wipe names, country,
+ * state or tags).
+ */
+function identityIsStale(incomingUpdatedAt: string | null, storedTs: number | null): boolean {
+  const incomingTs = ts(incomingUpdatedAt);
+  if (incomingTs === null) return true;
+  return storedTs !== null && incomingTs < storedTs;
 }
 
 function identityPayload(c: MirrorCustomer) {
@@ -140,9 +188,8 @@ export async function upsertMirrorCustomers(
       const existing = rowByShopifyId.get(c.shopifyId);
       if (existing) {
         resolvedId.set(c.shopifyId, existing.id);
-        const incomingTs = ts(c.updatedAt);
-        if (existing.shopifyUpdatedAt !== null && incomingTs !== null && incomingTs < existing.shopifyUpdatedAt) {
-          continue; // stale payload — consent still runs below on its own clock
+        if (identityIsStale(c.updatedAt, existing.shopifyUpdatedAt)) {
+          continue; // stale or undated payload — consent still runs below on its own clock
         }
         let email: string | null = null;
         if (c.email && c.email !== existing.email) {
@@ -173,27 +220,7 @@ export async function upsertMirrorCustomers(
     }
 
     const queries = [];
-    if (updates.length > 0) {
-      queries.push(sql`
-        UPDATE customers c SET
-          email              = COALESCE(x.email, c.email),
-          first_name         = x.first_name,
-          last_name          = x.last_name,
-          locale             = COALESCE(x.locale, c.locale),
-          country_code       = x.country_code,
-          shopify_state      = x.shopify_state,
-          shopify_tags       = COALESCE(x.shopify_tags, '{}'),
-          shopify_created_at = COALESCE(x.shopify_created_at, c.shopify_created_at),
-          shopify_updated_at = COALESCE(x.shopify_updated_at, c.shopify_updated_at),
-          shopify_synced_at  = now(),
-          facts_dirty_at     = now()
-        FROM jsonb_to_recordset(${JSON.stringify(updates)}::jsonb) AS x(
-          id bigint, email text, first_name text, last_name text, locale text, country_code text,
-          shopify_state text, shopify_tags text[], shopify_created_at timestamptz, shopify_updated_at timestamptz)
-        WHERE c.id = x.id
-          AND (x.email IS NULL OR NOT EXISTS (SELECT 1 FROM customers o WHERE o.email = x.email AND o.id <> c.id))
-      `);
-    }
+    if (updates.length > 0) queries.push(identityUpdate(sql, updates));
     if (stamps.length > 0) {
       queries.push(sql`
         UPDATE customers c SET
@@ -243,6 +270,31 @@ export async function upsertMirrorCustomers(
     }
     result.updated = updates.length;
     result.stamped = stamps.length;
+
+    // Inserts that returned no row: another delivery inserted the same person
+    // between our SELECT and the INSERT (ON CONFLICT DO NOTHING). Re-read the
+    // winner's row, so this payload's consent still lands on it below, and
+    // apply this payload's identity when it is newer than the winner's.
+    const lost = inserts.map((i) => String(i.shopify_customer_id)).filter((id) => !resolvedId.has(id));
+    if (lost.length > 0) {
+      const again = (await sql`
+        SELECT id, email, shopify_customer_id, shopify_updated_at FROM customers
+         WHERE shopify_customer_id = ANY(${lost}::text[])
+      `) as Array<Record<string, unknown>>;
+      const byShopifyId = new Map(rows.map((c) => [c.shopifyId, c]));
+      const catchUp: Array<Record<string, unknown>> = [];
+      for (const r of again) {
+        const winner = mapExisting(r);
+        const shopifyId = String(r.shopify_customer_id);
+        resolvedId.set(shopifyId, winner.id);
+        const c = byShopifyId.get(shopifyId);
+        if (c && !identityIsStale(c.updatedAt, winner.shopifyUpdatedAt)) {
+          catchUp.push({ id: winner.id, email: null, ...identityPayload(c) });
+        }
+      }
+      if (catchUp.length > 0) await identityUpdate(sql, catchUp);
+      result.raced = again.length;
+    }
 
     for (const m of merges) {
       const res = await mergeCustomers(m.keepId, m.dropId, { newEmail: m.email, note: "E-Mail-Änderung in Shopify" }, sql);

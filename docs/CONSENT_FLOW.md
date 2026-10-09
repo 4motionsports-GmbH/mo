@@ -100,7 +100,7 @@ Relevant columns of `email_captures` (one row per address):
 | `marketing_consent` | Marketing was ticked / accepted, or an earlier DOI of the address is still `pending` or `confirmed`. |
 | `marketing_doi_status` | `none` → `pending` → `confirmed`; back to `none` on unsubscribe, bounce or complaint. |
 | `doi_token` | Random 256-bit token in the confirmation link. |
-| `doi_sent_at` | When the token was issued; the link expires `MARKETING_DOI_EXPIRY_DAYS` (default 7) later. |
+| `doi_sent_at` | When the current token was last mailed (a re-send after the cooldown restarts it); the link expires `MARKETING_DOI_EXPIRY_DAYS` (default 7) later. A claim whose mail did not go out (failed or never ran) is given back: a re-sent link gets its previous send time back, a new token is moved to just before the cooldown — the next accept sends at once with the same token, and a mail the provider delivered despite a reported failure keeps a working link. A skipped send (no mail provider configured, local development) keeps the claim and records the pending act. Without a stamp a click shows the expired page. |
 | `doi_confirmed_at` | When the user clicked confirm. |
 | `consent_text_shown` | Verbatim copy the user saw (audit trail); a submit without an echo keeps the stored text. |
 | `consent_copy_version` | Which canonical copy that text is (`'v1'`…`'v5'`; `NULL` = unattested echo). Migration `0011`. |
@@ -159,24 +159,34 @@ The rules:
    subscribe that is not a new act newer than the erasure (a person who deleted their data and later
    signs up again has given a new consent).
 2. **The newer act wins.** On equal timestamps the more restrictive state wins. An undated act
-   (Shopify reports none for never-subscribed customers) never overrides a dated state.
+   (Shopify reports none for never-subscribed customers) never overrides a dated state. One exception
+   (2026-10-08): a dated Shopify `subscribed` or `unsubscribed` always overrides the DOI expiry's local
+   `not_subscribed` (a Mo-sourced reset that never reached Shopify), even when the expiry is newer. The
+   state keeps Shopify's date; when it is older than the expiry, the history entry is dated when Mo
+   learned it, with Shopify's day in its note, so the history and the period counts stay in order.
 3. **No silent downgrade:** a Mo `pending` never overrides `subscribed`.
-4. **Echo is a no-op:** the same state coming back only stamps `email_consent_synced_at`.
+4. **Echo is a no-op:** the same state coming back only stamps `email_consent_synced_at`. Exception
+   (2026-10-08): a newer Mo `pending` over a Shopify-sourced `pending` is recorded (source and time move
+   to the Mo surface), so the later DOI click is credited to Mo's opt-in.
 5. **The level follows the act:** our DOI → `confirmed_opt_in`; a Shopify act carries Shopify's level.
 6. **Side effects:** an unsubscribe adds a `suppression_list` row; a newer real subscribe lifts an
    `unsubscribe`/`manual` row (a `bounce` stays); every Mo-side change except `pending` is queued for
-   Shopify; a Shopify value that loses against a newer Mo state is answered by pushing Mo's state back.
+   Shopify; a Shopify value that loses against a newer Mo state is answered by pushing Mo's state back
+   (**drift healing**) — only when Mo's state is `subscribed` or `unsubscribed`, never `pending` and
+   never the DOI expiry's `not_subscribed` (that would overwrite a shop sign-up's own pending, C.29).
    Shopify `INVALID` (undeliverable) is not consent — it adds a `bounce` block.
 
 **Mo surfaces → the one consent** (`src/lib/consent-flows.ts`):
 
 | Act | One consent | Shopify (outbox) |
 | --- | --- | --- |
-| Opt-in on the capture form / the sign-in ask / the retired chat gate, DOI mail due | `pending`, source `mo_capture_form` / `mo_signin` / `mo_chat_gate` | — (nothing before the click) |
+| Opt-in on the capture form / the sign-in ask / the retired chat gate, DOI mail sent | `pending`, source `mo_capture_form` / `mo_signin` / `mo_chat_gate` — written only once the DOI mail went out (a failed send writes no act, so the ask stays open) | — (nothing before the click) |
+| Opt-in while a valid Mo DOI mail for the address went out within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (default 30), also a parallel request (since 2026-10-08) | unchanged; **no second DOI mail**; answer `pending`, `doiEmailSent: true`; the tap is kept in `email_captures` | — |
+| Opt-in while the person's own shop sign-up still awaits the shop's confirmation mail (Shopify `pending`, at most `MARKETING_DOI_EXPIRY_DAYS` old — C.29, since 2026-10-08) | unchanged (a signed-in opt-in that read the shop's `PENDING` live records it, source `shopify`); **no Mo DOI mail**; answer `pending`, `doiEmailSent: true` | — |
 | Opt-in on an address already `subscribed` (Shopify or earlier DOI) and not on the block list | unchanged; **no DOI mail**; answer `confirmed`, `alreadyConfirmed: true` (`subscribedElsewhere` in `email-capture-store.ts`); the tap is kept in `email_captures` | — |
-| Opt-in on an address on the block list | unchanged; no DOI mail, never re-pended; answer `status: "none"`, `alreadyConfirmed: false` | — |
-| DOI link clicked (`/api/confirm-marketing`) | `subscribed` / `confirmed_opt_in`, source = the surface of the latest pending act | `consent_update`, or `customer_create` with the consent for a Mo-only subscriber |
-| DOI link never clicked — `MARKETING_DOI_EXPIRY_DAYS` + 1 day after the opt-in (nightly `/api/cron/refresh-customers`, `expirePendingConsents` in `consent-store.ts`) | `pending` → `not_subscribed` (source `mo`), history entry `origin_ref` `doi_expiry` „Bestätigungslink nicht geklickt — Anmeldung verfallen“; the surfaces may ask again | — (pending never reached Shopify) |
+| Opt-in on an address on the block list (also one the signed-in shop check finds unsubscribed or invalid in Shopify) | unchanged; no DOI mail, never re-pended; answer `status: "none"`, `alreadyConfirmed: false` | — |
+| DOI link clicked (`/api/confirm-marketing`) — only while the capture is `pending` and the address not suppressed, and only once | `subscribed` / `confirmed_opt_in`, source = the surface of the latest pending act, `origin_ref` `email_capture:<id>` | `consent_update`, or `customer_create` with the consent for a Mo-only subscriber |
+| DOI link never clicked — `MARKETING_DOI_EXPIRY_DAYS` + 1 day after the opt-in (nightly `/api/cron/refresh-customers`, `expirePendingConsents` in `consent-store.ts`) | `pending` → `not_subscribed` (source `mo`), history entry `origin_ref` `doi_expiry` „Bestätigungslink nicht geklickt — Anmeldung verfallen“; the surfaces may ask again | — (a Mo pending never reached Shopify; a Shopify-sourced pending stays as it is in Shopify — the expiry is local and is never pushed, not even when an older Shopify `PENDING` arrives later) |
 | Unsubscribe link (`/api/unsubscribe`) | `unsubscribed` + block-list `unsubscribe` | `consent_update` |
 | Admin opt-out (Kunden → Marketing, Kampagne card; `/api/admin/customers/marketing-optout`) | `unsubscribed`, source `admin` + block-list `manual` | `consent_update` |
 | Admin „Abmeldung aufheben“ (a mistaken opt-out) | the previous `subscribed` state and level from `consent_events` (nothing without one) | `consent_update` (or `customer_create`) |
@@ -193,6 +203,30 @@ reach Mo through the webhooks `customers/create`, `customers/update` and
 with `SHOPIFY_CONSENT_TEXT_VERSION` (`consent_events.text_version`) as the best available evidence of
 the wording live on the shop at the time. A Shopify unsubscribe therefore also puts the address on Mo's
 block list.
+
+A consent change for a customer Mo has not mirrored yet (at a shop sign-up the consent topic often
+overtakes `customers/create`) first imports the person inline — one Admin read of the mirror's fields
+(≤ 2 s, skipped while the throttle gate is up), else a minimal row from the payload — and then applies
+the act; a person erased in Mo stays out (C.29, 2026-10-08; outcomes: [`CUSTOMERS.md`](./CUSTOMERS.md)
+„Shopify webhook topics“). Two deliveries that insert the same new person at once both land on one row
+(the loser's consent is applied to the winner's).
+
+**Before a Mo DOI mail** (C.29, 2026-10-08) the backend checks the shop
+(`lib/shopify-optin-precheck.ts`, rules in the tested `lib/optin-precheck.mjs`). On the signed-in opt-in:
+
+- a Shopify-sourced `pending` of the last `MARKETING_DOI_EXPIRY_DAYS` days in Mo's copy → the shop's
+  confirmation mail is out, no Mo DOI (no Shopify call);
+- Mo's copy `not_subscribed` and the address not blocked → one live Admin read (≤ 1.5 s, gated by
+  `SHOPIFY_CUSTOMER_SYNC_ENABLED`):
+  - `SUBSCRIBED` → already subscribed, no DOI;
+  - `PENDING` within the window (at most 5 min in the future) → no Mo DOI, answer pending;
+  - `UNSUBSCRIBED` / `INVALID` → recorded (block list), no mail, neutral answer — the opt-in treats the
+    address as suppressed even if that write failed;
+  - an older or undated `PENDING`, `NOT_SUBSCRIBED` / `REDACTED`, or a failed / timed-out read → Mo's DOI
+    as before.
+
+What the shop says is recorded through the resolver (source `shopify`, `origin_ref` `optin_precheck`).
+The typed-address surfaces (capture form, retired chat gate) check Mo's copy only, never Shopify.
 
 **Mo → Shopify.** `shopify_outbox` (`src/lib/shopify-outbox.ts`): each row carries its target state,
 is tried inline right after the change and by `/api/cron/shopify-sync` every 5 minutes, backs off on
@@ -247,31 +281,59 @@ Chat → the model calls offer_email_summary (value-triggered: after a well-rece
         ├─ validate email + transactionalConsent === true
         │    (else 400 bad_request / transactional_consent_required)
         ├─ upsert email_captures: consent_text_shown + version stamp, locale, and the
-        │    marketing DOI decision (decideCaptureDoi, email-capture-core.mjs, tested):
+        │    marketing DOI decision (decideCaptureDoi, email-capture-core.mjs, tested;
+        │    decided again in SQL on the locked row, so parallel requests agree):
         │      • Mo DOI already 'confirmed' → stays confirmed (only a withdrawal revokes it)
         │      • suppressed → never (re-)pended; answer status 'none'
         │      • already subscribed in the one consent (Shopify or earlier DOI) → no
         │        token; answer 'confirmed', alreadyConfirmed: true
-        │      • marketing ticked → 'pending' + a new doi_token
+        │      • the shop's own sign-up confirmation mail is out (C.29, Mo's copy) →
+        │        no Mo token or mail, a pending Mo DOI kept as it is; answer
+        │        'pending', doiEmailSent (outcome shopify_pending)
+        │      • ticked, a Mo DOI 'pending' whose mail went out less than
+        │        MARKETING_DOI_RESEND_COOLDOWN_MINUTES (default 30) ago → no mail
+        │        (outcome doi_pending, doiCooldown); answer 'pending', doiEmailSent
+        │      • ticked otherwise → CLAIM 'pending': the still-valid pending token
+        │        (a re-send of the same link, doiResend; its expiry restarts) or a new
+        │        one. Only the request whose conditional upsert returns the row sends;
+        │        parallel ones get the cooldown answer
         │      • not ticked, an earlier DOI still 'pending' → kept as it is; the link
         │        already in the inbox works until it expires
-        │    no database → 503, nothing sent
+        │    no database or a database error → 503, nothing sent
         ├─ link the session's conversation to the customer (find-or-create)
-        ├─ newly pending → one consent 'pending' (source mo_capture_form; local only)
-        ├─ (A) transactional: send the summary e-mail NOW ──────────────► user inbox
-        │      • a summary of the conversation in the shopper's language (de/en)
-        │      • prefilled-cart permalink (NO discount; products: below)
-        │      • a real delivery failure → 502; the consent stays stored and this
-        │        request sends no DOI mail
-        └─ (B) marketing, newly pending → send the DOI confirmation e-mail ─► user inbox
+        ├─ (A) marketing, claimed → send the DOI confirmation e-mail FIRST ► user inbox
+        │      • sent → one consent 'pending' (source mo_capture_form;        │
+        │        local), recorded before the summary                          │
+        │      • failed → claim given back (doi_sent_at → just before the     │
+        │        cooldown, or the previous send time of a re-sent link);      │
+        │        no consent act — the next accept sends at once               │
+        │      • skipped (no mail provider, local development) → claim kept,  │
+        │        act recorded                                                 │
+        │      • first, so no claim is held across the slow summary: a        │
+        │        parallel or retried accept is never told „mail is out“       │
+        │        before it went                                               │
+        └─ (B) transactional: send the summary e-mail ─────────────────► user inbox
+               • a summary of the conversation in the shopper's language      │
+                 (de/en)                                                      │
+               • prefilled-cart permalink (NO discount; products: below)      │
+               • a real delivery failure → 502; the consent stays stored      │
+                 and a DOI mail that went out stays valid (a retry within     │
+                 the cooldown is answered „confirmation mail is out“)         │
                                                                               │
    user clicks confirm link ──────────────────────────────────────────────────┘
      → GET /api/confirm-marketing?token=…&locale=…
-        ├─ token valid & not expired (MARKETING_DOI_EXPIRY_DAYS, default 7)
-        │    (else an error page: 400 invalid, 410 expired)
-        ├─ marketing_doi_status = 'confirmed', set doi_confirmed_at
-        ├─ one consent → 'subscribed' / confirmed_opt_in
-        │    → shopify_outbox: consent_update, or customer_create (Mo-only)
+        ├─ token found, row 'pending', link not expired (MARKETING_DOI_EXPIRY_DAYS,
+        │    default 7, from the last mail), address not suppressed
+        │    (else an error page: 400 invalid / withdrawn / blocked since — an old
+        │    link never re-subscribes after an unsubscribe or a block —, 410 expired,
+        │    503 no database; an already 'confirmed' token → the success page,
+        │    nothing recorded)
+        ├─ conditional UPDATE → 'confirmed', doi_confirmed_at — exactly one click wins;
+        │    parallel or later clicks see the success page and record nothing
+        ├─ winner only: one consent → 'subscribed' / confirmed_opt_in (origin
+        │    email_capture:<id>) → shopify_outbox: consent_update, or customer_create
+        │    (Mo-only); KPI email_capture_marketing_confirmed {source, placement?, variant?,
+        │    captureId} in the session of the opt-in that mailed the link (by captureId)
         └─ render „Danke, deine Anmeldung ist bestätigt.“
 
    link never clicked:
@@ -310,7 +372,7 @@ capture request carries no product list.
 
 Every Mo opt-in surface runs the same machinery: `upsertEmailCapture` (the Art. 7 evidence and the DOI
 decision above), `linkCustomerOnEmailCapture`, `recordMoOptIn` (the one consent turns `pending` only
-when a DOI mail is due) and the same DOI mail, confirmation link and unsubscribe. They differ in where
+once the DOI mail went out) and the same DOI mail, confirmation link and unsubscribe. They differ in where
 the address comes from and what is consented to. When and how the widget shows each surface, and the
 shapes, are the widget contract's:
 
@@ -321,9 +383,11 @@ shapes, are the widget contract's:
 | Chat consent gate — retired in the widget — copy: `?surface=chat` | `POST /api/chat-marketing-opt-in` | marketing only, button-consent | typed | gate label + footer · `mo_chat_gate` | API_CONTRACT §7.4, §7.6 |
 
 On every surface the stamp is resolved against that surface's canonical text in the request's locale,
-an address already holding the one consent gets no second DOI mail, and a suppressed address is never
-re-pended and is answered `status: "none"` (never „already subscribed“, `isAlreadyConfirmedAnswer` in
-`src/lib/capture-funnel.mjs`).
+an address already holding the one consent gets no second DOI mail, an address gets at most one Mo DOI
+mail within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (at most one minute below the link's life,
+`MARKETING_DOI_EXPIRY_DAYS`, `effectiveDoiResendCooldownMinutes` in `src/lib/doi-cooldown.mjs`; none while its
+shop sign-up's own confirmation mail is out), and a suppressed address is never re-pended and is answered `status: "none"` (never
+„already subscribed“, `isAlreadyConfirmedAnswer` in `src/lib/capture-funnel.mjs`).
 
 ### At-sign-in marketing opt-in
 
@@ -400,6 +464,11 @@ Removed entirely on 2026-06-16 (client decision; never live; migration `0029` dr
 the consent-based path (Art. 6(1)(a), the one consent) remains. History:
 [`archive/CONSENT_SIGNOFF_HISTORY.md`](./archive/CONSENT_SIGNOFF_HISTORY.md) §4.
 
+**Under review again (2026-10-08):** the client asked for a reintroduction to be prepared. Nothing is
+built before the lawyer answers ([`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) § 22, F-47). A build would be
+an exception to the rule that marketing mail needs the one consent (`CLAUDE.md`, „Marketing mail goes
+through a campaign“), so it needs the maintainer's decision as well.
+
 ## Suppression & "can I send?" logic
 
 - **`isSuppressed(email)`** ([`email-capture-store.ts`](../src/lib/email-capture-store.ts)) — true if
@@ -472,17 +541,21 @@ Shopify deletion only then (otherwise it says the shop-account deletion is queue
 The ask → submit → opt-in → DOI-confirm funnel and the consent-popup events are session-keyed
 `kpi_events` — no e-mail address in any event (`src/lib/kpi-events.ts`; the widget's events by
 contract). The surface (`source`), the
-result (`outcome`), the offer `trigger` and the sign-in `placement` / `variant` live only there, never
-on the consent record. Event names and data: [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md)
-§5.
+result (`outcome`), the offer `trigger`, the sign-in `placement` / `variant`, whether the widget showed a
+reward hint (`reward: true`, widget of 2026-10-08) and the welcome-voucher test's server events
+(`consent_ask_eligible`, `consent_copy_served`) live only there, never on the consent record (whether
+they belong there: dossier F-38 d, e). Event names and data:
+[`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §5.
 
 ## Defensive email handling
 
 All sends go through [`lib/email.ts`](../src/lib/email.ts) (`sendEmail`), which never throws, **reports
 every failure** (`reportError`) and returns a discriminated result — failures are never silently lost.
-On `/api/capture-email` a real summary-send failure answers `502` (the consent is already stored); a
-DOI-send failure is logged without dropping the stored `pending` consent — the opt-in answers with
-`doiEmailSent: false`, and the user can re-request. When Resend isn't configured (`RESEND_API_KEY` /
+On `/api/capture-email` the DOI mail goes out before the summary; a real summary-send failure answers
+`502` (the consent is already stored and a DOI mail that went out stays valid). On all three opt-in routes a DOI-send failure is logged without dropping the
+stored `pending` opt-in: the answer is `doiEmailSent: false`, the claim is given back (`doi_sent_at` →
+just before the cooldown, or the previous send time of a re-sent link — the link keeps working), and no pending consent act is written, so the next
+accept sends at once — also within the resend cooldown (a `skipped` send, below, keeps the claim and records the act). When Resend isn't configured (`RESEND_API_KEY` /
 `CONTACT_FROM_EMAIL`) the helper returns a `skipped` result and logs a one-line notice without
 recipient or subject (local development), rather than faking success.
 
@@ -497,7 +570,8 @@ DOI mail body, the unsubscribe footer, the erase copy and the retired chat gate'
 chrome, never part of `consentTextShown`). Approved: the German v3 set (June 2026) and the v4 additions
 incl. the button-consent mechanic (July 2026) — `CONSENT_COPY_LAWYER_APPROVED = true`; English as the
 translation (D-AP3, 2026-10-05) — `CONSENT_COPY_EN_LEGAL_REVIEWED = true`. Any wording change needs a
-fresh review. The finished checklists (v2–v4, the capture form, the welcome discount N/A) are in
+fresh review. The finished checklists (v2–v4, the capture form, the retired welcome discount — a new
+reward is under review: dossier § 22, F-39–F-46) are in
 [`archive/CONSENT_SIGNOFF_HISTORY.md`](./archive/CONSENT_SIGNOFF_HISTORY.md) §5.
 
 ### Customer platform (2026-10) — open, not yet recorded as reviewed
@@ -517,8 +591,7 @@ default to `false` in code; which are on in production: [`ROLLOUT_TODO.md`](./RO
 - [ ] **Erase copy naming the shop account** (`erasurePageCopy` with `includesShop`, served on
       `/api/erase-data` and `surface=erase`) and the bidirectional erasure itself (D-5,
       `SHOPIFY_ERASURE_SYNC`) (F-26).
-- [ ] **A new subscribe after an erasure lifts the erasure block** (resolver rule 1) (no dossier
-      question yet).
+- [ ] **A new subscribe after an erasure lifts the erasure block** (resolver rule 1) (F-46 d).
 - [ ] **AI profiles without consent** (`CUSTOMER_AI_PROFILE_SCOPE=all`, D-1): Art. 6(1)(f) basis,
       privacy policy, right to object ([`CUSTOMERS.md`](./CUSTOMERS.md)) (F-23).
 - [ ] **The Kundenstamm** — every Shopify customer mirrored with order ledger and nightly facts (D-6,
@@ -540,3 +613,30 @@ default to `false` in code; which are on in production: [`ROLLOUT_TODO.md`](./RO
 - [ ] **Must the shown framing variant be stored on the consent record** (`email_captures`)? Today it
       is only in the pseudonymous `kpi_events` (deleted after `KPI_RETENTION_DAYS`); answer before a
       second variant is activated (F-38 b).
+
+### Newsletter reward (2026-10-08) — open
+
+Planned, nothing served yet (switches off; task
+[`frontend/tasks/OPTIN_REWARD_2026-10-08.md`](./frontend/tasks/OPTIN_REWARD_2026-10-08.md)). The questions
+are in the dossier, § 22.
+
+- [ ] **The shop's 5 % welcome code today:** sent by a tool outside Mo, possibly triggered by Mo's DOI
+      write-back. Also Mo's line „kein automatisches Willkommensgeschenk“, which the prompt gives only to
+      recognised customers (F-39 e).
+- [ ] **Reward block as framing outside `consentTextShown`:** badge, one-line terms with a „Bedingungen“
+      link, and `afterAccept`. Consent text, footer and DOI stay unchanged. The copy ceiling above („no
+      concrete discount amount“) gets an exception for the served reward block only (F-39, F-40).
+- [ ] **„bis zu 100 €“ tiers** vs a fixed amount (F-41).
+- [ ] **Teaser on the anonymous sign-in surfaces** (login popup, welcome card) (F-42).
+- [ ] **Value-moment ask** after a product recommendation (variant `c`) (F-43).
+- [ ] **No computed reduced prices** in the chat (PAngV) (F-44).
+- [ ] **Neutral DOI mail** (Mo's and Shopify's) and the confirmation page (F-45).
+- [ ] **First sign-up only**, the post-erasure hash and alias normalisation (F-46 a–c).
+- [ ] **DOI only once** (T2 and C.29, without a switch — live with the deploy of this round):
+  - the pending answer within the resend cooldown, and for a shop sign-up still awaiting Shopify's mail;
+  - the existing invalid-link page for a link clicked after an unsubscribe or block — an old link no
+    longer re-subscribes (F-46 e, f).
+- [ ] **Variants `b`/`c` and reward-shown evidence:** must reward, variant and placement be on the consent
+      record? (F-38 d, e)
+- [ ] **English reward texts:** not covered by D-AP3; no `en` reward until confirmed (F-12).
+- [ ] **§ 7 Abs. 3 UWG reintroduction** (F-47; "§7 Abs. 3 UWG Bestandskunden" above).

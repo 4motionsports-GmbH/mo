@@ -37,6 +37,7 @@ import {
   KPI_ORDER_STATUS_LOOKUP,
   KPI_PAGE_CONTEXT_APPLIED,
   KPI_PAGE_CONTEXT_ANSWERED,
+  KPI_CONSENT_COPY_SERVED,
 } from "./kpi-events";
 import { PAGE_CONTEXT_EXPERIMENT, summarisePageContextRows } from "./page-context.mjs";
 // The two headline click-signal shapes — shared with the Gespräche inspector
@@ -55,6 +56,8 @@ import {
   shopRecognitionRates,
   signinSource,
   normalizeConsentVariantRows,
+  normalizeLoginTeaserRows,
+  normalizeServedVariantRows,
 } from "./kpi-widget-events.mjs";
 import { isKnownSigninVariant, normalizePlacement } from "./consent-variants.mjs";
 import { OFFER_TRIGGERS, normaliseTrigger } from "./capture-funnel.mjs";
@@ -293,6 +296,11 @@ export interface ConsentVariantRow {
   declined: number;
   dismissed: number;
   acceptedWithoutShown: number;
+  /** Shown sessions whose consent_gate_shown carried `reward: true` (the reward
+   *  hint rendered — OPTIN_REWARD §2.4); a property of the variant, so a count, not a split. */
+  rewardShown: number;
+  /** Of those, accepted. */
+  rewardAccepted: number;
   optedIn: number;
   alreadyConfirmed: number;
   /** Sessions whose opt-in's DOI mail went out (OI1 F3: `doiSent`; rows before
@@ -379,7 +387,8 @@ export async function getConsentGateFunnel(
                  bool_or(event = ${KPI_CONSENT_GATE_SHOWN}) AS shown,
                  bool_or(event = ${KPI_CONSENT_GATE_ACCEPTED}) AS accepted,
                  bool_or(event = ${KPI_CONSENT_GATE_DECLINED}) AS declined,
-                 bool_or(event = ${KPI_CONSENT_GATE_DISMISSED}) AS dismissed
+                 bool_or(event = ${KPI_CONSENT_GATE_DISMISSED}) AS dismissed,
+                 COALESCE(bool_or(event = ${KPI_CONSENT_GATE_SHOWN} AND data->'reward' = 'true'::jsonb), false) AS has_reward
             FROM kpi_events
            WHERE event IN (${KPI_CONSENT_GATE_SHOWN}, ${KPI_CONSENT_GATE_ACCEPTED},
                            ${KPI_CONSENT_GATE_DECLINED}, ${KPI_CONSENT_GATE_DISMISSED})
@@ -391,7 +400,9 @@ export async function getConsentGateFunnel(
                count(*) FILTER (WHERE shown AND accepted)::int AS accepted,
                count(*) FILTER (WHERE shown AND declined AND NOT accepted)::int AS declined,
                count(*) FILTER (WHERE shown AND dismissed AND NOT accepted AND NOT declined)::int AS dismissed,
-               count(*) FILTER (WHERE accepted AND NOT shown)::int AS accepted_without_shown
+               count(*) FILTER (WHERE accepted AND NOT shown)::int AS accepted_without_shown,
+               count(*) FILTER (WHERE shown AND has_reward)::int AS reward_shown,
+               count(*) FILTER (WHERE shown AND accepted AND has_reward)::int AS reward_accepted
           FROM gate GROUP BY 1, 2
       `,
       sql`
@@ -403,7 +414,13 @@ export async function getConsentGateFunnel(
                       WHEN data ? 'placement' THEN '?' ELSE '' END AS placement,
                  min(created_at) AS at,
                  bool_or(COALESCE((data->>'alreadyConfirmed')::boolean, data->>'doiStatus' = 'confirmed')) AS already_confirmed,
-                 bool_or(COALESCE((data->>'doiRequired')::boolean, data->>'doiStatus' = 'pending')
+                 -- A DOI mail went out: outcome doi_required and the send did not
+                 -- fail; legacy rows (no outcome) by doiRequired / doiStatus, minus
+                 -- a cooldown answer. doi_pending / shopify_pending sent no Mo mail.
+                 bool_or(CASE WHEN data->>'outcome' IS NOT NULL
+                              THEN data->>'outcome' = 'doi_required'
+                              ELSE COALESCE((data->>'doiRequired')::boolean, data->>'doiStatus' = 'pending')
+                                   AND COALESCE(data->>'doiCooldown', 'false') <> 'true' END
                          AND COALESCE((data->>'doiSent')::boolean, true)) AS doi_required,
                  bool_or(COALESCE((data->>'variantMismatch')::boolean, false)) AS variant_mismatch
             FROM kpi_events
@@ -440,6 +457,8 @@ export async function getConsentGateFunnel(
             declined: r.declined,
             dismissed: r.dismissed,
             acceptedWithoutShown: r.accepted_without_shown,
+            rewardShown: r.reward_shown,
+            rewardAccepted: r.reward_accepted,
           })),
           ...(variantOptInRows as Array<Record<string, unknown>>).map((r) => ({
             variant: r.variant,
@@ -521,14 +540,47 @@ export interface LoginGateFunnel {
   rates: ReturnType<typeof loginGateRates>;
   /** All sign-in starts in the window by origin: the popup or the welcome card / header button. */
   startsBySource: { login_gate: number; other: number };
+  /** The same sessions by their first popup: with the reward teaser or without (× teaser variant). */
+  byTeaser: LoginTeaserRow[];
+  /** The same sessions by the variant the server served them (consent_copy_served; sessions without one left out). */
+  byServedVariant: LoginServedVariantRow[];
+}
+
+interface LoginTeaserCounts {
+  shown: number;
+  clicked: number;
+  declined: number;
+  dismissed: number;
+  signedIn: number;
+  linked: number;
+  /** Clicked AND the sign-in opt-in (trigger signin_optin) in the same session afterwards. */
+  optedIn: number;
+  /** Clicked AND a DOI confirmation in the same session afterwards. */
+  confirmed: number;
+  rates: ReturnType<typeof loginGateRates>;
+}
+
+export interface LoginTeaserRow extends LoginTeaserCounts {
+  /** „mit Hinweis“ | „ohne Hinweis“ | „gemischt“ (kpi-widget-events.mjs LOGIN_TEASER_HINTS). */
+  hint: string;
+  /** The teaser's variant; „—“ without a teaser, „unbekannt“ for an unknown id. */
+  variant: string;
+}
+
+export interface LoginServedVariantRow extends LoginTeaserCounts {
+  variant: string;
+  /** Of the shown sessions, those whose first popup carried the teaser. */
+  withTeaser: number;
 }
 
 /**
  * The sign-in popup for anonymous visitors (widget 2026-10-01), counted per
  * SESSION: the four widget events, joined in the same session to the
  * server-side sign-in events after the click. Starts by source come from the
- * widget's account_signin_started (`data.source`). Returns null when no DB is
- * configured or on a hard failure.
+ * widget's account_signin_started (`data.source`). `byTeaser` /
+ * `byServedVariant` split the same sessions by the reward teaser and by the
+ * served variant (OPTIN_REWARD T6). Returns null when no DB is configured or
+ * on a hard failure.
  */
 export async function getLoginGateFunnel(
   range: KpiRange,
@@ -536,7 +588,7 @@ export async function getLoginGateFunnel(
 ): Promise<LoginGateFunnel | null> {
   if (!sql) return null;
   try {
-    const [funnelRows, sourceRows] = await Promise.all([
+    const [funnelRows, sourceRows, teaserRows] = await Promise.all([
       sql`
         WITH g AS (
           SELECT session_id,
@@ -585,6 +637,85 @@ export async function getLoginGateFunnel(
            AND created_at < (${range.to}::date + 1)
          GROUP BY 1
       `,
+      // OPTIN_REWARD T6: the same shown sessions by their FIRST popup's reward
+      // teaser (login_gate_shown {teaser: true, variant?}), whether a later popup
+      // differed (mixed), the teaser's variant, and the variant the server served
+      // the session (its first consent_copy_served — only while several variants
+      // run). Opt-in and confirmation in the same session after the click.
+      sql`
+        WITH g AS (
+          SELECT session_id,
+                 (array_agg(COALESCE(data->'teaser' = 'true'::jsonb, false) ORDER BY created_at, id)
+                    FILTER (WHERE event = ${LOGIN_GATE_SHOWN}))[1] AS teaser_first,
+                 COALESCE(bool_or(data->'teaser' = 'true'::jsonb) FILTER (WHERE event = ${LOGIN_GATE_SHOWN}), false) AS teaser_any,
+                 COALESCE(bool_and(COALESCE(data->'teaser' = 'true'::jsonb, false)) FILTER (WHERE event = ${LOGIN_GATE_SHOWN}), false) AS teaser_all,
+                 (array_agg(data->>'variant' ORDER BY created_at, id)
+                    FILTER (WHERE event = ${LOGIN_GATE_SHOWN} AND data->'teaser' = 'true'::jsonb))[1] AS raw_variant,
+                 bool_or(event = ${LOGIN_GATE_SHOWN}) AS shown,
+                 bool_or(event = ${LOGIN_GATE_SIGNIN_CLICKED}) AS clicked,
+                 bool_or(event = ${LOGIN_GATE_DECLINED}) AS declined,
+                 bool_or(event = ${LOGIN_GATE_DISMISSED}) AS dismissed,
+                 min(created_at) FILTER (WHERE event = ${LOGIN_GATE_SIGNIN_CLICKED}) AS clicked_at
+            FROM kpi_events
+           WHERE event IN (${LOGIN_GATE_SHOWN}, ${LOGIN_GATE_SIGNIN_CLICKED},
+                           ${LOGIN_GATE_DECLINED}, ${LOGIN_GATE_DISMISSED})
+             AND session_id IS NOT NULL
+             AND created_at >= ${range.from}::date
+             AND created_at < (${range.to}::date + 1)
+           GROUP BY session_id
+        ), h AS (
+          SELECT g.*,
+                 g.clicked_at IS NOT NULL AND EXISTS (
+                   SELECT 1 FROM kpi_events s
+                    WHERE s.session_id = g.session_id
+                      AND s.event = ${KPI_ACCOUNT_SIGNIN_SUCCEEDED}
+                      AND s.created_at >= g.clicked_at
+                 ) AS signed_in,
+                 g.clicked_at IS NOT NULL AND EXISTS (
+                   SELECT 1 FROM kpi_events s
+                    WHERE s.session_id = g.session_id
+                      AND s.event = ${KPI_ACCOUNT_SIGNIN_LINKED}
+                      AND COALESCE(s.data->>'kind', 'customer_account') = 'customer_account'
+                      AND s.created_at >= g.clicked_at
+                 ) AS linked,
+                 g.clicked_at IS NOT NULL AND EXISTS (
+                   SELECT 1 FROM kpi_events o
+                    WHERE o.session_id = g.session_id
+                      AND o.event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                      AND o.data->>'trigger' = 'signin_optin'
+                      AND o.created_at >= g.clicked_at
+                 ) AS opted_in,
+                 g.clicked_at IS NOT NULL AND EXISTS (
+                   SELECT 1 FROM kpi_events c
+                    WHERE c.session_id = g.session_id
+                      AND c.event = ${KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED}
+                      AND c.created_at >= g.clicked_at
+                 ) AS confirmed,
+                 (SELECT c.data->>'variant' FROM kpi_events c
+                   WHERE c.session_id = g.session_id
+                     AND c.event = ${KPI_CONSENT_COPY_SERVED}
+                   ORDER BY c.created_at, c.id
+                   LIMIT 1) AS raw_served
+            FROM g
+           WHERE g.shown
+        )
+        SELECT teaser_first IS TRUE AS teaser,
+               (teaser_any AND NOT teaser_all) AS mixed,
+               CASE WHEN raw_variant ~ '^[a-z0-9_-]{1,32}$' THEN raw_variant
+                    WHEN raw_variant IS NOT NULL THEN '?' ELSE '' END AS variant,
+               CASE WHEN raw_served ~ '^[a-z0-9_-]{1,32}$' THEN raw_served
+                    WHEN raw_served IS NOT NULL THEN '?' ELSE '' END AS served_variant,
+               count(*)::int AS shown,
+               count(*) FILTER (WHERE clicked)::int AS clicked,
+               count(*) FILTER (WHERE declined)::int AS declined,
+               count(*) FILTER (WHERE dismissed)::int AS dismissed,
+               count(*) FILTER (WHERE clicked AND signed_in)::int AS signed_in,
+               count(*) FILTER (WHERE clicked AND linked)::int AS linked,
+               count(*) FILTER (WHERE clicked AND opted_in)::int AS opted_in,
+               count(*) FILTER (WHERE clicked AND confirmed)::int AS confirmed
+          FROM h
+         GROUP BY 1, 2, 3, 4
+      `,
     ]);
     const r = ((funnelRows as Array<Record<string, unknown>>)[0] ?? {}) as Record<string, unknown>;
     const n = (k: string) => Number(r[k] ?? 0);
@@ -600,7 +731,28 @@ export async function getLoginGateFunnel(
     for (const row of sourceRows as Array<{ source: string; n: number }>) {
       startsBySource[signinSource(row.source)] += Number(row.n);
     }
-    return { ...counts, rates: loginGateRates(counts), startsBySource };
+    const sessionRows = (teaserRows as Array<Record<string, unknown>>).map((t) => ({
+      teaser: t.teaser === true,
+      mixed: t.mixed === true,
+      variant: String(t.variant ?? ""),
+      servedVariant: String(t.served_variant ?? ""),
+      shown: t.shown,
+      clicked: t.clicked,
+      declined: t.declined,
+      dismissed: t.dismissed,
+      signedIn: t.signed_in,
+      linked: t.linked,
+      optedIn: t.opted_in,
+      confirmed: t.confirmed,
+    }));
+    const known = (id: string) => isKnownSigninVariant(id);
+    return {
+      ...counts,
+      rates: loginGateRates(counts),
+      startsBySource,
+      byTeaser: normalizeLoginTeaserRows(sessionRows, known) as LoginTeaserRow[],
+      byServedVariant: normalizeServedVariantRows(sessionRows, known) as LoginServedVariantRow[],
+    };
   } catch (err) {
     reportError(err, { route: "lib/kpi-store", phase: "getLoginGateFunnel" });
     return null;
@@ -791,6 +943,12 @@ export interface EmailCaptureFunnel {
   alreadySubscribed: number;
   /** Of those, the address is suppressed (unsubscribed / bounced) — no DOI. */
   suppressed: number;
+  /** Of those, a valid DOI mail was already out (resend cooldown or a parallel
+   * request — outcome doi_pending, T2.1) — no new mail. */
+  doiPending: number;
+  /** Of those, the shop's own confirmation mail was out (outcome
+   * shopify_pending, C.29) — no Mo DOI mail. */
+  shopifyPending: number;
   /** DOI links clicked for capture-form opt-ins (source mo_capture_form; legacy rows by their session). */
   confirmed: number;
   /** Capture cards dismissed (widget), once per session and trigger. */
@@ -810,8 +968,10 @@ export interface EmailCaptureFunnel {
  * `source` since 05.10.2026; older rows are told apart by their server-set
  * trigger (signin_optin / chat_gate). „DOI-Mail verschickt“ counts opt-ins
  * whose DOI mail went out (`doiSent`, OI1 F3 — capture-funnel.mjs →
- * isDoiMailSent; rows before F3 count as sent). Returns null without a DB or
- * on failure.
+ * isDoiMailSent; rows before F3 count as sent); an opt-in answered without a
+ * new mail because a confirmation is already out counts as „Bestätigung
+ * schon unterwegs“ (doi_pending) or „Shop-Bestätigung unterwegs“
+ * (shopify_pending) instead. Returns null without a DB or on failure.
  */
 export async function getEmailCaptureFunnel(
   range: KpiRange,
@@ -837,7 +997,8 @@ export async function getEmailCaptureFunnel(
                                   OR (data->>'source' IS NULL
                                       AND COALESCE(data->>'trigger', '') NOT IN ('signin_optin', 'chat_gate')))
                              AND (data->>'outcome' = 'doi_required'
-                                  OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending'))
+                                  OR (data->>'outcome' IS NULL AND data->>'doiStatus' = 'pending'
+                                      AND COALESCE(data->>'doiCooldown', 'false') <> 'true'))
                              AND COALESCE((data->>'doiSent')::boolean, true))::int AS doi_sent,
           count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
                              AND (data->>'source' = 'mo_capture_form'
@@ -854,6 +1015,12 @@ export async function getEmailCaptureFunnel(
           count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
                              AND data->>'source' = 'mo_capture_form'
                              AND data->>'outcome' = 'suppressed')::int AS suppressed,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                             AND data->>'source' = 'mo_capture_form'
+                             AND data->>'outcome' = 'doi_pending')::int AS doi_pending,
+          count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+                             AND data->>'source' = 'mo_capture_form'
+                             AND data->>'outcome' = 'shopify_pending')::int AS shopify_pending,
           count(*) FILTER (WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED}
                              AND (data->>'source' = 'mo_capture_form'
                                   OR (data->>'source' IS NULL AND NOT EXISTS (
@@ -899,6 +1066,8 @@ export async function getEmailCaptureFunnel(
       doiNotSent: n("doi_not_sent"),
       alreadySubscribed: n("already_subscribed"),
       suppressed: n("suppressed"),
+      doiPending: n("doi_pending"),
+      shopifyPending: n("shopify_pending"),
       confirmed,
       declined: n("declined"),
       submitRate: askShown > 0 ? Math.min(1, submitted / askShown) : null,

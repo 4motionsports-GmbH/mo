@@ -10,7 +10,9 @@
 //
 // After an anonymous visitor's first answered message (once per browser
 // session, never in voice mode) the widget asks them to sign in. All four
-// carry `data: {}`.
+// carry `data: {}` — except that since the widget of 2026-10-08
+// login_gate_shown carries `{teaser: true, variant?}` when the served sign-in
+// copy's reward teaser rendered on it (OPTIN_REWARD §2.4).
 
 /** The sign-in popup was shown. */
 export const LOGIN_GATE_SHOWN = "login_gate_shown";
@@ -135,6 +137,8 @@ export const SERVER_ONLY_EVENTS = Object.freeze([
   "account_shop_recognised",
   "page_context_applied",
   "page_context_answered",
+  "consent_ask_eligible",
+  "consent_copy_served",
 ]);
 
 const SERVER_ONLY = new Set(SERVER_ONLY_EVENTS);
@@ -226,7 +230,7 @@ export const MIN_VARIANT_SESSIONS = 100;
 export function normalizeConsentVariantRows(rows, isKnownVariant, normalizePlacementFn) {
   /** @type {Map<string, Record<string, number | string>>} */
   const merged = new Map();
-  const fields = ["shown", "accepted", "declined", "dismissed", "acceptedWithoutShown", "optedIn", "alreadyConfirmed", "doiRequired", "doiConfirmed", "variantMismatch"];
+  const fields = ["shown", "accepted", "declined", "dismissed", "acceptedWithoutShown", "rewardShown", "rewardAccepted", "optedIn", "alreadyConfirmed", "doiRequired", "doiConfirmed", "variantMismatch"];
   for (const r of rows ?? []) {
     const rawV = String(r.variant ?? "");
     const rawP = String(r.placement ?? "");
@@ -241,6 +245,20 @@ export function normalizeConsentVariantRows(rows, isKnownVariant, normalizePlace
 }
 
 /**
+ * Shown sessions of a variant row whose ask carried NO reward hint although the
+ * variant defines one (served text invalid, English, or the switch off) — 0 for
+ * a variant without a reward. `rewardShown` = shown sessions whose
+ * consent_gate_shown carried `reward: true` (OPTIN_REWARD §2.4).
+ * @param {{ shown?: unknown, rewardShown?: unknown }} row
+ * @param {boolean} variantHasReward
+ */
+export function rewardRenderGap(row, variantHasReward) {
+  if (!variantHasReward) return 0;
+  const n = (v) => Math.max(0, Math.floor(Number(v) || 0));
+  return Math.max(0, n(row?.shown) - n(row?.rewardShown));
+}
+
+/**
  * Rates of one variant row: accept rate on shown sessions; DOI rate on opt-ins
  * that needed a DOI (already-confirmed answers are left out).
  * @param {{ shown: number, accepted: number, doiRequired: number, doiConfirmed: number }} row
@@ -251,6 +269,94 @@ export function consentVariantRates(row) {
     doiRate: rate(row.doiConfirmed, row.doiRequired),
     comparable: Number(row.shown) >= MIN_VARIANT_SESSIONS,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Sign-in popup with and without the reward teaser (OPTIN_REWARD T6)
+// ---------------------------------------------------------------------------
+
+/** Display keys of the teaser split, in display order. */
+export const LOGIN_TEASER_HINTS = Object.freeze(["mit Hinweis", "ohne Hinweis", "gemischt"]);
+
+const LOGIN_TEASER_FIELDS = Object.freeze(["shown", "clicked", "declined", "dismissed", "signedIn", "linked", "optedIn", "confirmed"]);
+
+/**
+ * A stored variant id → its display key: none → „—“, forged or undefined →
+ * „unbekannt“ (arbitrary strings posted to /api/kpi never get their own row).
+ * @param {unknown} raw @param {(id: string) => boolean} isKnownVariant
+ */
+function displayVariant(raw, isKnownVariant) {
+  const v = raw == null ? "" : String(raw);
+  if (v === "") return "—";
+  return /^[a-z0-9_-]{1,32}$/.test(v) && isKnownVariant(v) ? v : "unbekannt";
+}
+
+/** @param {Record<string, unknown>} r @returns {Record<string, number>} */
+function teaserCounts(r) {
+  return Object.fromEntries(LOGIN_TEASER_FIELDS.map((f) => [f, Math.max(0, Math.floor(Number(r?.[f]) || 0))]));
+}
+
+/**
+ * Sign-in popup sessions by their FIRST popup: with the reward teaser („mit
+ * Hinweis“), without („ohne Hinweis“ — variant a, English, a copy slower than
+ * the widget's 1.2 s wait, invalid copy) or both across the session
+ * („gemischt“), × the teaser's variant (only a teaser carries one: „—“ without).
+ * Input rows are the store's per-(teaser, mixed, variant, servedVariant) session
+ * counts; rows with the same display key merge. Rates via loginGateRates
+ * (overallRate = im Chat angemeldet ÷ angezeigt).
+ *
+ * @param {Array<Record<string, unknown>>} rows
+ * @param {(id: string) => boolean} isKnownVariant
+ * @returns {Array<{ hint: string, variant: string, shown: number, clicked: number, declined: number,
+ *   dismissed: number, signedIn: number, linked: number, optedIn: number, confirmed: number,
+ *   rates: ReturnType<typeof loginGateRates> }>}
+ */
+export function normalizeLoginTeaserRows(rows, isKnownVariant) {
+  /** @type {Map<string, Record<string, any>>} */
+  const merged = new Map();
+  for (const r of rows ?? []) {
+    const c = teaserCounts(r);
+    if (c.shown === 0) continue; // only sessions that saw the popup
+    const hint = r.mixed === true ? "gemischt" : r.teaser === true ? "mit Hinweis" : "ohne Hinweis";
+    const variant = hint === "ohne Hinweis" ? "—" : displayVariant(r.variant, isKnownVariant);
+    const key = `${hint}|${variant}`;
+    const cur = merged.get(key) ?? { hint, variant, ...Object.fromEntries(LOGIN_TEASER_FIELDS.map((f) => [f, 0])) };
+    for (const f of LOGIN_TEASER_FIELDS) cur[f] += c[f];
+    merged.set(key, cur);
+  }
+  return [...merged.values()]
+    .sort((a, b) => LOGIN_TEASER_HINTS.indexOf(a.hint) - LOGIN_TEASER_HINTS.indexOf(b.hint) || String(a.variant).localeCompare(String(b.variant)))
+    .map((r) => /** @type {any} */ ({ ...r, rates: loginGateRates(/** @type {any} */ (r)) }));
+}
+
+/**
+ * The same sessions by the variant the server served them with the sign-in
+ * copy (consent_copy_served — recorded only while several variants are
+ * active); sessions without one are left out. `withTeaser` = of the shown
+ * sessions, those whose first popup carried the teaser.
+ *
+ * @param {Array<Record<string, unknown>>} rows
+ * @param {(id: string) => boolean} isKnownVariant
+ * @returns {Array<{ variant: string, withTeaser: number, shown: number, clicked: number, declined: number,
+ *   dismissed: number, signedIn: number, linked: number, optedIn: number, confirmed: number,
+ *   rates: ReturnType<typeof loginGateRates> }>}
+ */
+export function normalizeServedVariantRows(rows, isKnownVariant) {
+  /** @type {Map<string, Record<string, any>>} */
+  const merged = new Map();
+  for (const r of rows ?? []) {
+    if (r.servedVariant == null || r.servedVariant === "") continue;
+    const c = teaserCounts(r);
+    if (c.shown === 0) continue;
+    const variant = displayVariant(r.servedVariant, isKnownVariant);
+    const cur = merged.get(variant) ?? { variant, withTeaser: 0, ...Object.fromEntries(LOGIN_TEASER_FIELDS.map((f) => [f, 0])) };
+    for (const f of LOGIN_TEASER_FIELDS) cur[f] += c[f];
+    if (r.teaser === true) cur.withTeaser += c.shown;
+    merged.set(variant, cur);
+  }
+  return [...merged.values()]
+    .sort((a, b) => String(a.variant).localeCompare(String(b.variant)))
+    .map((r) => /** @type {any} */ ({ ...r, rates: loginGateRates(/** @type {any} */ (r)) }));
 }
 
 // ---------------------------------------------------------------------------

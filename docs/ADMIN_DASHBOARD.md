@@ -1415,7 +1415,7 @@ instances. All pure-DB sections are live, the revenue ledger `mo_orders` (§5.5,
 | **Beratungen** (§5.1, with Sprachen §5.14) — `conversations` / `kpi_events` / `email_captures` on `created_at` | Persona-insights (§5.2) |
 | **Seitenkontext auf Produktseiten** (§5.1a) — `kpi_events` on `created_at` (first page-context turn) | Postversand (§5.20) |
 | **Anmelde-Popup** (§5.7a) — `kpi_events` on `created_at` | |
-| **Einwilligung nach der Anmeldung** (§5.7) — `kpi_events` on `created_at` | |
+| **Einwilligung nach der Anmeldung** (§5.7) — `kpi_events` on `created_at` (the „Gutschein-Test“: eligible sessions whose first `consent_ask_eligible` falls in the period; „Willkommensgutscheine“: `customer_orders.processed_at`) | |
 | **E-Mail-Capture-Funnel** (§5.8) — `kpi_events` on `created_at` | |
 | **Kundenkonto & Self-Service** (§5.15) — `kpi_events`/`ai_usage` on `created_at` | |
 | **Kampagnen-Funnel** (§5.9) — `campaign_sends` on `sent_at` | |
@@ -1455,8 +1455,12 @@ nach einer Beratung erneuert“ (`attribution-token-renewal`: fewer unknown mark
 §5.16), plus three backend changes of the same day: „DOI-Quote nur noch auf verschickte
 DOI-Mails“ (`doi-mail-sent`: §5.7, §5.8), „Kein Einwilligungs-Popup für gesperrte Adressen“
 (`consent-ask-suppressed`: §5.7) and „Bestell-Zuordnung: alle Gespräche im Fenster, Mail-Links
-ab der letzten Mail“ (`attribution-threads-maillinks`: §5.16) — fourteen entries in all; the six
-of 06.10. add no section note. The
+ab der letzten Mail“ (`attribution-threads-maillinks`: §5.16), and on 08.10.2026 „Widget-Update:
+Gutschein-Hinweise vorbereitet (ohne sichtbare Änderung)“ (`widget-reward-dormant`, the widget build
+`495fdf6`: reward hint, sign-in teaser and value-moment ask stay dormant until the server serves them;
+at once a second tab of the same device does not ask again within 24 h of an accept — „Angezeigt“ in
+§5.7 can drop slightly — and a broken answer renews no order marker) — fifteen entries in all; the six
+of 06.10. and the one of 08.10. add no section note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
@@ -1804,6 +1808,27 @@ share of the shown sessions, and **Anmeldestarts nach Herkunft** from the widget
 card or header button). A note appears when sessions signed in at Shopify but not
 in the chat. Rates in the tested `kpi-widget-events.mjs` (`loginGateRates`).
 
+**Mit und ohne Gutschein-Hinweis** (2026-10-08, OPTIN_REWARD T6; InfoTip): the same shown sessions by
+their **first** popup.
+- Hinweis: „mit Hinweis“ (`login_gate_shown {teaser:true}`, a JSON `true` only), „ohne Hinweis“ or
+  „gemischt“ (a later popup of the session differed). Variant: the teaser's `variant` („—“ without a
+  teaser, unknown ids „unbekannt“).
+- Columns: Angezeigt · „Anmelden“ · Im Chat angemeldet · Anmelderate (im Chat ÷ angezeigt) · Opt-in
+  danach (`email_capture_marketing_opted_in {trigger:"signin_optin"}` in the same session after the
+  click) · Bestätigt (`email_capture_marketing_confirmed` in the same session after the click).
+- Shown only once a teaser or mixed row exists (otherwise it would repeat the funnel). Not a clean
+  comparison: „ohne“ mixes variant a, English, copies slower than the widget's 1.2 s wait and invalid
+  copy. The welcome card's teaser sends no event.
+
+**Nach ausgelieferter Variante** (InfoTip): the same columns plus „Mit Hinweis“ (of the shown sessions,
+those whose first popup carried the teaser), by the variant the server served the session — its first
+server `consent_copy_served`, recorded only while several variants are active (`private, no-store`).
+Sessions without one are left out; the table is shown only when rows exist. Both tables are folded by
+the tested `normalizeLoginTeaserRows` / `normalizeServedVariantRows` (`kpi-widget-events.mjs`). Until
+the server serves a teaser or runs several variants (OPTIN_REWARD T3, switches off) neither table
+appears.
+Screenshots (light/dark, 1440/1024, 2026-10-08): `docs/screenshots/2026-10-08-optin-reward/kpi-anmelde-popup-*`.
+
 **Diagnose: wo Anmeldungen enden** ([`getSigninDiagnosis()`](../src/lib/kpi-store.ts),
 classification in the tested `classifySigninSession`, docs/frontend/05 §12.1).
 Every session with a sign-in event in the period — whatever started it: popup,
@@ -1842,7 +1867,12 @@ sub-block „Chat-Gate (anonym) — eingestellt“ while they fall in the period
 from the four **widget-emitted** `kpi_events` (`consent_gate_shown` /
 `_accepted` / `_declined` / `_dismissed`, each carrying
 `data.surface`) — see [`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §5. Scoped to the
-selected window (`kpi_events.created_at`).
+selected window (`kpi_events.created_at`). Since the widget of 2026-10-08 the ask can carry a
+reward hint (`reward: true` on the events) and, in one variant, come after a product
+recommendation in the chat window instead of as a popup („Wertmoment“) — both only once the server
+serves the texts (OPTIN_REWARD T3, switches off); the InfoTip says so, and that the 3-sessions rule
+counts every placement. The section is no longer empty when only eligible sessions or a
+`WELCOME_CODE_MATCH` pattern exist (the two blocks below).
 
 **Sessions, not clicks (2026-10-05, OI1).** The `signin` funnel and its stats
 count **sessions with their final state**: accepted beats declined beats
@@ -1871,16 +1901,20 @@ verify:live` section 3).
 
 **Nach Variante und Platzierung** (2026-10-05, OI3): a table per framing
 variant (served `variant` of the sign-in copy) × placement (Popup / Nach
-Anmeldung im Chat / Wertmoment), per **session** — Angezeigt · Akzeptiert ·
+Anmeldung im Chat / Wertmoment), per **session** — Angezeigt (2026-10-08: under it, in muted
+`text-2xs`, „n mit Gutschein-Hinweis“ when n > 0 — shown sessions whose `consent_gate_shown` carried
+`reward: true`, a JSON boolean; `rewardAccepted` is in the data, not shown) · Akzeptiert ·
 Akzeptanzrate (akzeptiert ÷ angezeigt; „(zu wenige Sitzungen)“ below 100 shown
 sessions per row) · Abgelehnt · Akzeptiert ohne Anzeige (diagnostic only:
 shown before the period, an older widget) · Opt-ins (Server)
 (`email_capture_marketing_opted_in {trigger:"signin_optin"}` with the same
 variant/placement) · Bereits angemeldet (`alreadyConfirmed`) · DOI-Quote
 (`email_capture_marketing_confirmed` of the session at or after the opt-in ÷
-opt-ins whose DOI mail went out — `doiRequired` and not `doiSent: false`, OI1
-F3; rows before F3 have no `doiSent` and count when a mail was due;
-already-subscribed answers and unsent DOI mails are not in the denominator). Values outside the known variants and placements are merged into
+opt-ins whose DOI mail went out — outcome `doi_required` and not `doiSent: false`
+(OI1 F3); rows without `outcome` by `doiRequired` / `doiStatus` unless `doiCooldown`;
+`doi_pending` / `shopify_pending` never (2026-10-08); rows before F3 have no
+`doiSent` and count when a mail was due; already-subscribed answers and unsent
+DOI mails are not in the denominator). Values outside the known variants and placements are merged into
 „unbekannt“, missing ones into „ohne (älteres Widget)“ / „ohne“ (bounded in
 SQL and in the tested `normalizeConsentVariantRows`, `kpi-widget-events.mjs`),
 so arbitrary strings posted to `/api/kpi` never get their own row. The block
@@ -1888,9 +1922,77 @@ appears only once a known variant arrives — i.e. from the widget build that
 echoes the served bullets' `variant` and `placement`: `bc7fb5d` (2026-10-06,
 KPI release `consent-benefits-served`) and later; older builds send neither
 field, so the block has data from 2026-10-06. The widget sends `popup` or
-`signin_return`, never `value_moment` (the placement is accepted but unused).
-`variantMismatch` (echoed variant ≠ the session's assignment while more than
-one variant runs) is counted for the live check.
+`signin_return`; since the widget of 2026-10-08 (`495fdf6`) also `value_moment`,
+but only once the served copy carries `valueMoment` (OPTIN_REWARD T3, behind
+`CONSENT_VALUE_MOMENT_ENABLED`). For a variant that defines a reward
+(`variantDefinesReward`, `consent-experiment.mjs`) the section notes list „n
+Anzeigen von Variante x ohne Gutschein-Hinweis (Text ungültig, Englisch oder
+Schalter aus).“ (`rewardRenderGap`). The row key stays variant × placement, so
+the business snapshot is unchanged. `variantMismatch` (echoed variant ≠ the
+session's assignment while more than one variant runs) is counted for the live
+check.
+
+**Gutschein-Test: Varianten gegen Kontrollgruppe a** (2026-10-08, OPTIN_REWARD T6;
+InfoTip; [`getConsentExperiment()`](../src/lib/kpi-consent-experiment-store.ts),
+folded by the tested `summariseConsentExperiment`, `consent-experiment.mjs`).
+- **Method.** Intention-to-treat by **assigned** variant, not by what was shown:
+  per-shown rates are biased for the value-moment variant c, which asks only after
+  a recommendation.
+- **Population.** Every signed-in session `GET /api/auth/me` answered
+  `optInActionable: true` (server `consent_ask_eligible {variant, mode, locale}`,
+  once per session per 24 h; not written by the App Proxy whoami), with its
+  **first** assigned variant. A session enters the period of its **first
+  eligibility ever** — one already eligible before the period is not in it, so
+  its arm and start never depend on the range picked.
+- **Outcomes.** Opt-in and DOI mail sent (the DOI-Quote definition above) count in
+  the same session within `MARKETING_DOI_EXPIRY_DAYS` (7) after the eligibility;
+  a confirmation counts only for such an opt-in that mailed a link, at most the
+  link's life (7 days) after that opt-in (the same capture when both events carry
+  `captureId`) — a later opt-in's click does not count. Only sessions whose window
+  (2 × 7 days) has closed are compared.
+- **Exclusions**, each counted once, checked in this order: unknown variant or one
+  outside the test, mixed (more than one variant), other locale, before the test
+  start, window still open (line „Ausgeschlossen: …“, `text-2xs`). `livecheck-%` sessions never
+  count. At most 20,000 sessions per period (earliest first; a section note says
+  so).
+- **Pre-registration.** A comparison runs only with `CONSENT_REWARD_EXPERIMENT`
+  (`consent-experiment.mjs`, `null` today). It is set in the commit that flips
+  `CONSENT_SIGNIN_VARIANTS` and holds the start, the variants, control `a`, the
+  locale, the primary metric (`confirmedPerEligible`) and `targetPerArm` from
+  `requiredSampleSize`.
+- **Without a test**, a Callout instead: „Kein Gutschein-Test im Zeitraum — nur
+  eine Variante aktiv.“, or, with several known first variants in the period, the
+  warning „Mehrere Varianten aktiv, aber kein Test vorab festgelegt
+  (CONSENT_REWARD_EXPERIMENT) — kein Vergleich.“
+- **With a test**, per treatment variant: a headline „Bestätigte Anmeldungen je
+  berechtigter Sitzung: b vs. a“ with both rates; StatusBadge „belastbar“ (target
+  reached; 95 %-interval of the difference in percentage points, „Unterschied
+  gesichert“ / „kein gesicherter Unterschied“) or „läuft (n / Ziel)“; and a table
+  Variante · Berechtigte Sitzungen (window closed) · Opt-ins · DOI-Mail verschickt
+  · Bestätigt · Bestätigt je Sitzung · Unterschied zu a (Pp., relative lift).
+  Arithmetic from `page-context.mjs` (`compareArms`, `experimentProgress`).
+- **Not included:** orders and revenue per arm (open option after the owner's OK:
+  `customer_session_links` → `customer_orders`, 30-day window, aggregate only).
+- **Caveat** (in the InfoTip): variant-a subscribers also get the shop's welcome
+  code, so the test measures the hint in the chat, not the voucher. A
+  `shopify_pending` opt-in is confirmed in the shop and writes no Mo confirmation,
+  so „Bestätigt“ undercounts that path equally in every arm.
+
+**Willkommensgutscheine** (2026-10-08, OPTIN_REWARD T6; InfoTip;
+[`getWelcomeCodeStats()`](../src/lib/kpi-consent-experiment-store.ts) — its own store
+because it reads the order ledger; aggregate only). Two stats:
+- „Gutscheine ausgegeben“ is always „n/a“ (hint „nur in Shopify
+  (Automatisierung)“): the codes come from a Shopify-side tool, not Mo.
+- „Gutscheine eingelöst“ = orders of the order copy (`customer_orders`, not
+  cancelled, `processed_at` in the period) with a discount code matching
+  `WELCOME_CODE_MATCH` — a comma list of exact codes or `PREFIX*`,
+  case-insensitive (`welcome-code-match.mjs`, tested); hint „n % der
+  Bestellungen“. Without a pattern: „n/a“ (hint „kein Muster
+  (WELCOME_CODE_MATCH)“), never an estimate. Guest orders without a Shopify
+  customer are not in the ledger ([`DISCOUNTS.md`](./DISCOUNTS.md) „Welcome codes“).
+
+Screenshots of the section with these blocks and the „Gutschein-Test“ InfoTip (light/dark, 1440/1024,
+2026-10-08): `docs/screenshots/2026-10-08-optin-reward/kpi-consent-*`.
 
 **Already subscribed vs. suppressed (F2, 2026-10-05).** A suppressed address
 is answered `status: "none"`, `alreadyConfirmed: false` by every opt-in route,
@@ -1899,10 +2001,12 @@ so „Bereits angemeldet“ never includes a blocked address.
 > ⚠️ **Measures the UI, not the DOI.** An "Akzeptiert" is the gate tap; the
 > consent only becomes an effective marketing subscription after the
 > double-opt-in link is clicked. The DOI outcome of the sign-in opt-in is the
-> „DOI-Quote“ of „Nach Variante und Platzierung“ and `npm run verify:live`
-> section 3 (opt-ins by source / outcome / variant / placement, confirmations
-> by source); since 2026-10-05 the E-Mail-Capture-Funnel (§5.8) no longer
-> contains it.
+> „DOI-Quote“ of „Nach Variante und Platzierung“, the „Gutschein-Test“
+> (confirmed per eligible session) and `npm run verify:live` section 3 (opt-ins
+> by source / outcome / variant / placement, confirmations by source / variant /
+> placement); one DOI mail per address within the resend cooldown is checked by
+> section 10 „Einmal-Garantie“; since 2026-10-05 the E-Mail-Capture-Funnel (§5.8)
+> no longer contains it.
 > Events without a `surface` payload count in the totals but in neither
 > surface split. The retired `starter_shown` / `starter_clicked` widget events
 > are no longer aggregated anywhere; in the raw event breakdown (§5.1) they carry
@@ -1926,11 +2030,13 @@ counts unless its session has a sign-in or chat-gate opt-in.
 | Figure | Definition |
 | --- | --- |
 | **Angeboten** | `email_capture_ask_shown` in the window (all asks; since 05.10.2026 Mo no longer offers the summary to signed-in customers — release `signedin-offer-off`, §5.0) |
-| **Marketing-Haken** | opt-ins of the form; hint „n DOI-Mail verschickt · n nicht verschickt · n bereits abonniert · n gesperrt“ from `outcome` (`doi_required` split by `doiSent` / `already_confirmed` + `already_subscribed` / `suppressed`; older rows by `doiStatus` pending / confirmed, „gesperrt“ only from 05.10.). „nicht verschickt“ (only when > 0) = a DOI mail was due but its send failed, was skipped (no mail provider) or never ran (the summary send failed first). |
+| **Marketing-Haken** | opt-ins of the form; hint „n DOI-Mail verschickt · n nicht verschickt · n Bestätigung schon unterwegs · n Shop-Bestätigung unterwegs · n bereits abonniert · n gesperrt“ from `outcome` (`doi_required` split by `doiSent` / `doi_pending` / `shopify_pending` / `already_confirmed` + `already_subscribed` / `suppressed`; older rows by `doiStatus` pending / confirmed, „gesperrt“ only from 05.10.). Buckets other than „DOI-Mail verschickt“ and „bereits abonniert“ show only when > 0. „nicht verschickt“ = a DOI mail was due but its send failed, was skipped (no mail provider) or never ran (an error before the send). „Bestätigung schon unterwegs“ (since 08.10.2026, outcome `doi_pending`) = a valid DOI mail for the address had gone out within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (default 30) or a parallel request was sending it — no second mail. „Shop-Bestätigung unterwegs“ (since 08.10.2026, outcome `shopify_pending`, C.29) = the shop's own confirmation mail of a newsletter sign-up there was out — no Mo mail. Neither counts as „DOI-Mail verschickt“ nor in the DOI-rate denominator; both are explained in the section's InfoTip. |
 | **DOI bestätigt** | `email_capture_marketing_confirmed` with `source: "mo_capture_form"` (older rows by session, above). Its hint „n % der verschickten DOI-Mails“ is the DOI rate: DOI bestätigt ÷ „DOI-Mail verschickt“ (capped at 100 %). Already subscribed and suppressed addresses get no DOI mail and are not in the denominator, nor are unsent DOI mails (OI1 F3: the route writes the opt-in event after the send attempt with `doiSent`; `isDoiMailSent` in `capture-funnel.mjs`, tested). Opt-ins from before F3 carry no `doiSent` and count as sent, as before, so a period across the change stays comparable; it was „DOI-Mail fällig“ until then (KPI release `doi-mail-sent`, §5.0). |
 | **Formular gesendet** | hint „% der Angebote“ (submits ÷ asks, capped at 100 %) |
 | **Abgelehnt** | widget `email_capture_declined`, **once per session and trigger** (a stored offer can be declined again after every reload) |
 | **Angebote nach Auslöser** | asks by trigger, bounded: the tool's five values and `unspecified`; an empty trigger reads „Ohne Auslöser“, anything else „Anderer Wert“ |
+
+Screenshots of the hint and its InfoTip (2026-10-08): `docs/screenshots/2026-10-08-optin-once/`.
 
 > ⚠️ Event counting, not per-session chaining: a DOI click confirming yesterday's
 > opt-in counts in the window of the click. Stated in the UI caveat. A period

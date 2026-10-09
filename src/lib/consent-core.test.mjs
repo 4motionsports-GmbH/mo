@@ -71,6 +71,38 @@ test("an undated Shopify value never overrides a dated Mo state", () => {
   assert.equal(d.effects.pushToShopify, true);
 });
 
+test("a DOI expiry is never pushed over the shop's own pending (C.29 heal rule)", () => {
+  // expirePendingConsents reset a Shopify-sourced pending to not_subscribed (source 'mo').
+  const expired = { state: "not_subscribed", level: null, at: T3, source: "mo" };
+  const d = resolveEmailConsent(expired, { state: "pending", level: null, at: T1, source: "shopify" });
+  assert.equal(d.changed, false);
+  assert.equal(d.outcome, "stale");
+  assert.equal(d.effects.pushToShopify, false);
+  // The same for an older Shopify subscribe / unsubscribe / not_subscribed.
+  for (const state of ["subscribed", "unsubscribed", "not_subscribed"]) {
+    const r = resolveEmailConsent(expired, { state, level: state === "subscribed" ? "single_opt_in" : null, at: T1, source: "shopify" });
+    assert.equal(r.effects.pushToShopify, false, state);
+  }
+});
+
+test("a Mo pending is never pushed back over an older Shopify value", () => {
+  const pending = { state: "pending", level: null, at: T3, source: "mo_signin" };
+  const d = resolveEmailConsent(pending, { state: "not_subscribed", at: T1, source: "shopify" });
+  assert.equal(d.outcome, "stale");
+  assert.equal(d.effects.pushToShopify, false);
+});
+
+test("Mo's subscribe and unsubscribe still heal an older Shopify value", () => {
+  const sub = { state: "subscribed", level: "confirmed_opt_in", at: T3, source: "mo_chat_gate" };
+  assert.equal(resolveEmailConsent(sub, { state: "pending", at: T1, source: "shopify" }).effects.pushToShopify, false); // rule 3: ignored
+  assert.equal(resolveEmailConsent(sub, { state: "unsubscribed", at: T1, source: "shopify" }).effects.pushToShopify, true);
+  const unsub = { state: "unsubscribed", level: null, at: T3, source: "admin", suppression: "manual" };
+  assert.equal(resolveEmailConsent(unsub, { state: "pending", at: T1, source: "shopify" }).effects.pushToShopify, true);
+  // A Shopify-sourced current state never heals (Shopify is not drifting from itself).
+  const shopSub = { state: "subscribed", level: "single_opt_in", at: T3, source: "shopify" };
+  assert.equal(resolveEmailConsent(shopSub, { state: "unsubscribed", at: T1, source: "shopify" }).effects.pushToShopify, false);
+});
+
 test("an undated value may fill an empty state", () => {
   const d = resolveEmailConsent(none, { state: "subscribed", level: "unknown", at: null, source: "shopify" });
   assert.equal(d.changed, true);
@@ -136,4 +168,51 @@ test("labels and the legacy mirror", () => {
   assert.equal(consentLabel("subscribed", "single_opt_in"), "Angemeldet (ohne DOI-Nachweis)");
   assert.equal(isHardBlock("erasure"), true);
   assert.equal(isHardBlock("unsubscribe"), false);
+});
+
+test("a dated shop subscribe / unsubscribe wins over Mo's local DOI expiry (C.29)", () => {
+  // expirePendingConsents reset the pending at T3; the shop still dates its
+  // consent T1 (confirmed late, consentUpdatedAt unchanged).
+  const expired = { state: "not_subscribed", level: null, at: T3, source: "mo" };
+  const sub = resolveEmailConsent(expired, { state: "subscribed", level: "confirmed_opt_in", at: T1, source: "shopify" });
+  assert.equal(sub.changed, true);
+  assert.equal(sub.outcome, "applied");
+  assert.equal(sub.next.state, "subscribed");
+  assert.equal(sub.effects.pushToShopify, false);
+  // Shopify's date is older than the expiry: the state keeps it (a later shop
+  // unsubscribe dated after T1 still wins), the history event is stamped when
+  // Mo learns it (after the expiry), Shopify's day kept in the note.
+  assert.equal(sub.next.at, T1);
+  assert.ok(Date.parse(sub.eventAt) > Date.parse(T3));
+  assert.match(sub.note, new RegExp(`Shopify-Stand vom ${T1.slice(0, 10)}`));
+  const out = resolveEmailConsent(sub.next, { state: "unsubscribed", level: null, at: T2, source: "shopify" });
+  assert.equal(out.outcome, "applied");
+  // A shop act newer than the expiry keeps its own date, no event stamp, no note.
+  const T4 = new Date(Date.parse(T3) + 60_000).toISOString();
+  const newer = resolveEmailConsent(expired, { state: "subscribed", level: "single_opt_in", at: T4, source: "shopify" });
+  assert.equal(newer.next.at, T4);
+  assert.equal(newer.eventAt, undefined);
+  assert.equal(newer.note, null);
+  const unsub = resolveEmailConsent(expired, { state: "unsubscribed", level: null, at: T1, source: "shopify" });
+  assert.equal(unsub.changed, true);
+  assert.equal(unsub.effects.suppress, "unsubscribe");
+  // A stale shop pending still loses (it would re-expire every night).
+  assert.equal(resolveEmailConsent(expired, { state: "pending", level: null, at: T1, source: "shopify" }).outcome, "stale");
+  // An undated shop value still only fills a gap.
+  assert.equal(resolveEmailConsent(expired, { state: "subscribed", level: "single_opt_in", at: null, source: "shopify" }).changed, false);
+  // A Mo-side unsubscribe (a person's act) is not a local expiry.
+  const moOut = { state: "unsubscribed", level: null, at: T3, source: "mo" };
+  assert.equal(resolveEmailConsent(moOut, { state: "subscribed", level: "single_opt_in", at: T1, source: "shopify" }).outcome, "stale");
+});
+
+test("a newer Mo pending over a shop pending is recorded, not an echo (C.29)", () => {
+  const shopPending = { state: "pending", level: null, at: T1, source: "shopify" };
+  const d = resolveEmailConsent(shopPending, { state: "pending", level: null, at: T2, source: "mo_capture_form" });
+  assert.equal(d.changed, true);
+  assert.equal(d.outcome, "applied");
+  assert.deepEqual(d.next, { state: "pending", level: null, at: T2, source: "mo_capture_form" });
+  assert.equal(d.effects.pushToShopify, false);
+  // An older Mo pending, or a shop pending over a Mo pending, stays an echo.
+  assert.equal(resolveEmailConsent({ ...shopPending, at: T3 }, { state: "pending", level: null, at: T2, source: "mo_signin" }).outcome, "echo");
+  assert.equal(resolveEmailConsent({ state: "pending", level: null, at: T1, source: "mo_signin" }, { state: "pending", level: null, at: T2, source: "shopify" }).outcome, "echo");
 });

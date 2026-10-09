@@ -3,7 +3,9 @@
 // after the HMAC check; the route deduplicates by X-Shopify-Webhook-Id first.
 //
 //   customers/create|update                 → mirror upsert (+ consent resolver)
-//   customers_email_marketing_consent/update → consent resolver
+//   customers_email_marketing_consent/update → consent resolver; a customer Mo
+//                                             has not mirrored yet is imported
+//                                             inline first (C.29)
 //   orders/create|updated|paid|cancelled    → order ledger (mo_orders attribution
 //                                             stays in lib/mo-orders-store.ts)
 //   customers/delete, customers/redact      → the one erasure (trigger "shopify")
@@ -17,6 +19,7 @@ import { reportError } from "./observability";
 import {
   mapShopifyCustomer,
   mapConsentWebhook,
+  mirrorCustomerFromConsentWebhook,
   mapShopifyOrder,
   numericShopifyId,
   normalizeMirrorEmail,
@@ -26,6 +29,7 @@ import { upsertMirrorOrders } from "./customer-orders-store";
 import { applyConsentAct } from "./consent-store";
 import { erasePerson } from "./customer-erasure";
 import { createInboxItem } from "./inbox-store";
+import { fetchMirrorCustomer } from "./shopify-sync";
 import { erasureAlertPerHour, shopifyConsentTextVersion } from "./platform-flags.mjs";
 
 /**
@@ -84,29 +88,66 @@ export interface WebhookOutcome {
   action: string;
 }
 
+/**
+ * Budget of the consent webhook's inline Admin read (C.29). Shopify expects an
+ * answer within about five seconds; the read, the mirror write and the consent
+ * act together stay well below that.
+ */
+export const WEBHOOK_IMPORT_MS = 2000;
+
 export async function handleCustomerWebhook(payload: unknown, webhookId: string | null): Promise<WebhookOutcome> {
   const customer = mapShopifyCustomer(payload);
   if (!customer) return { ok: true, action: "ignored:no-id" };
   const res = await upsertMirrorCustomers([customer], { origin: `webhook:${webhookId ?? "?"}` });
   if (!res) return { ok: false, action: "failed" };
-  return { ok: true, action: res.skipped > 0 ? "skipped" : res.inserted > 0 ? "inserted" : "updated" };
+  const action = res.skipped > 0 ? "skipped" : res.inserted > 0 ? "inserted" : res.raced > 0 ? "raced" : "updated";
+  return { ok: true, action };
 }
 
+/**
+ * customers_email_marketing_consent/update → the consent resolver. The topic
+ * often overtakes customers/create for a new shop sign-up (C.29), so a customer
+ * Mo has not mirrored yet is imported first: the Admin read of the mirror's
+ * fields (≤ WEBHOOK_IMPORT_MS, skipped while the throttle gate is up), else a
+ * minimal row from the payload. The import carries no consent of its own — the
+ * payload's act below is the one recorded. A person erased in Mo stays out; a
+ * failed DB write answers 500 so Shopify retries.
+ */
 export async function handleConsentWebhook(payload: unknown, webhookId: string | null): Promise<WebhookOutcome> {
   const parsed = mapConsentWebhook(payload);
   if (!parsed) return { ok: true, action: "ignored:shapeless" };
   if (parsed.consent.state === "redacted") return { ok: true, action: "ignored:redacted" };
-  const customerId = await customerIdForShopifyId(parsed.shopifyId);
-  // Not mirrored yet: the reconciliation imports the person with this state.
-  if (!customerId) return { ok: true, action: "ignored:unknown-customer" };
+  const origin = `webhook:${webhookId ?? "?"}`;
+  let customerId = await customerIdForShopifyId(parsed.shopifyId);
+  let via = "";
+  if (!customerId) {
+    const fetched = await fetchMirrorCustomer(parsed.shopifyId, { timeoutMs: WEBHOOK_IMPORT_MS });
+    const row = fetched.status === "ok" ? fetched.customer : mirrorCustomerFromConsentWebhook(parsed);
+    const imported = await upsertMirrorCustomers([{ ...row, consent: null }], { origin });
+    if (!imported) return { ok: false, action: "failed" };
+    // Tombstoned, or an address erased in Mo before this Shopify account.
+    // The payload row has no createdAt, so a NEW account reusing an erased
+    // address cannot be told apart from the erased one: after a transient
+    // read failure answer 500 — Shopify redelivers and the next read decides.
+    if (imported.skipped > 0) {
+      if (fetched.status === "timeout" || fetched.status === "throttled" || fetched.status === "error") {
+        return { ok: false, action: `deferred:erased-unverified(${fetched.status})` };
+      }
+      return { ok: true, action: "ignored:erased" };
+    }
+    customerId = await customerIdForShopifyId(parsed.shopifyId);
+    // Still no row (the address belongs to another row): the reconciliation imports it.
+    if (!customerId) return { ok: true, action: "ignored:unknown-customer" };
+    via = fetched.status === "ok" ? ":imported" : `:imported-payload(${fetched.status})`;
+  }
   const res = await applyConsentAct({
     customerId,
     incoming: { state: parsed.consent.state, level: parsed.consent.level, at: parsed.consent.at, source: "shopify" },
-    originRef: `webhook:${webhookId ?? "?"}`,
+    originRef: origin,
     textVersion: shopifyConsentTextVersion(),
   });
   if (!res) return { ok: false, action: "failed" };
-  return { ok: true, action: `consent:${res.outcome}` };
+  return { ok: true, action: `consent:${res.outcome}${via}` };
 }
 
 export async function handleOrderLedgerWebhook(payload: unknown): Promise<WebhookOutcome> {

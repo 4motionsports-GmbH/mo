@@ -12,7 +12,10 @@
 //     Shopify account NEVER implies consent).
 //   * runs the EXISTING double-opt-in: this only sets DOI 'pending' and sends
 //     the confirmation email. NO marketing is permitted until the customer
-//     clicks that link (GET /api/confirm-marketing).
+//     clicks that link (GET /api/confirm-marketing). One mail per address
+//     within MARKETING_DOI_RESEND_COOLDOWN_MINUTES, also for parallel
+//     requests (email-capture-store.ts); none when the shop's own
+//     confirmation mail is out (C.29 precheck).
 //   * stores the exact label + footer shown verbatim as `consent_text_shown`
 //     with the same `consent_copy_version` stamp (CONSENT_COPY_VERSION,
 //     currently v5), so the Art. 7 audit is identical to the typed-email path.
@@ -25,25 +28,18 @@ import { requireSignedInCustomer, readSession } from "@/lib/account-guard";
 import { preflightResponse } from "@/lib/security";
 import { errorResponse, reportError } from "@/lib/observability";
 import { resolveConsentCopyVersion } from "@/lib/consent-copy-version.mjs";
-import { upsertEmailCapture } from "@/lib/email-capture-store";
+import { releaseDoiClaim, upsertEmailCapture } from "@/lib/email-capture-store";
+import { isDoiOptInRecorded, shouldReleaseDoiClaim } from "@/lib/email-capture-core.mjs";
 import { isEmailAlreadySubscribed, recordMoOptIn } from "@/lib/consent-flows";
+import { precheckShopifyConsent } from "@/lib/shopify-optin-precheck";
 import { getCustomerById, linkCustomerOnEmailCapture } from "@/lib/customer-store";
-import { sendEmail, senderAddress } from "@/lib/email";
-import { outboundThreading } from "@/lib/email-inbound";
-import { recordSentMessage } from "@/lib/email-messages-store";
+import { sendDoiMail, type DoiSendState } from "@/lib/doi-mail";
 import { getBaseUrl } from "@/lib/base-url";
 import { resolveLocale } from "@/lib/locale";
 import { apiMessage } from "@/lib/api-messages.mjs";
-import {
-  doiEmailSubject,
-  doiEmailBody,
-  signInMarketingConsentCopy,
-  signInVariantsActive,
-} from "@/lib/consent-copy";
+import { signInMarketingConsentCopy, signInVariantsActive } from "@/lib/consent-copy";
 import { isKnownSigninVariant, normalizePlacement, pickSigninVariant } from "@/lib/consent-variants.mjs";
-import { doiSentField, optInAnswer } from "@/lib/capture-funnel.mjs";
-import { withEmailDesign } from "@/lib/email-design-context";
-import { getCachedEmailDesignForKind } from "@/lib/email-design-store";
+import { doiCooldownField, doiSentField, optInAnswer } from "@/lib/capture-funnel.mjs";
 import {
   KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
   KPI_EMAIL_CAPTURE_SUBMITTED,
@@ -138,7 +134,16 @@ export async function POST(req: Request) {
     // DB OR-merges it so an existing transactional consent is never downgraded.
     // ONE consent (docs/archive/CUSTOMER_PLATFORM_PLAN.md §7): an address already
     // subscribed — via Shopify or an earlier DOI — gets no second DOI mail.
-    const alreadySubscribed = await isEmailAlreadySubscribed(email);
+    // C.29: when Mo's copy holds no consent, the shop's live status is checked
+    // first — subscribed there → no DOI; the shop's own confirmation mail out
+    // (pending) → no Mo DOI either; unsubscribed / invalid there → the
+    // precheck writes the block and the upsert treats the address as
+    // suppressed (neutral answer, no mail — also if that write failed).
+    const pre = await precheckShopifyConsent({
+      customerId: guard.customerId,
+      shopifyCustomerId: guard.shopifyCustomerId,
+    });
+    const alreadySubscribed = pre.route === "already_subscribed" || (await isEmailAlreadySubscribed(email));
 
     const capture = await upsertEmailCapture({
       sessionId,
@@ -149,6 +154,8 @@ export async function POST(req: Request) {
       consentCopyVersion,
       locale,
       alreadySubscribed,
+      pendingElsewhere: pre.route === "shopify_pending",
+      blocked: pre.route === "blocked",
     });
     if (!capture) {
       return errorResponse(
@@ -162,78 +169,64 @@ export async function POST(req: Request) {
     // Attach the current conversation + sync the customer's mirrored consent.
     // GREATEST(identity_tier, 2) never downgrades this signed-in (tier-3) row.
     await linkCustomerOnEmailCapture({ email, sessionId });
+
+    // Send the DOI confirmation email — only when this request claimed it (a
+    // pending DOI mailed within the cooldown, an already confirmed or
+    // subscribed address and a suppressed one get none). A claim whose mail
+    // did not go out is released, so the next accept sends at once. NO
+    // marketing until the link is clicked.
+    let doiSend: DoiSendState = "none";
+    try {
+      if (capture.doiEmailRequired && capture.doiToken) {
+        doiSend = await sendDoiMail({
+          email,
+          token: capture.doiToken,
+          locale,
+          baseUrl: getBaseUrl(req),
+          route: "api/account/marketing-opt-in",
+        });
+      }
+    } finally {
+      if (shouldReleaseDoiClaim(capture.doiEmailRequired, doiSend)) await releaseDoiClaim(capture);
+    }
+    const doiEmailSent = doiSend === "sent";
+
     // Report the act to the one consent (pending until the DOI link is
-    // clicked; nothing goes to Shopify before that).
+    // clicked; nothing goes to Shopify before that) — only once the DOI mail
+    // went out, so a failed send leaves the customer asked again.
     await recordMoOptIn({
       email,
       surface: "mo_signin",
       captureId: capture.id,
-      doiPending: capture.doiEmailRequired,
+      doiPending: isDoiOptInRecorded(capture.doiEmailRequired, doiSend),
       signInProof: guard.proof,
     });
-
-    // Send the DOI confirmation email — only when newly pending (an already
-    // confirmed address re-opting in doesn't re-send; a suppressed address is
-    // never pended, so it never gets one). NO marketing until the link is
-    // clicked.
-    let doiEmailSent = false;
-    if (capture.doiEmailRequired && capture.doiToken) {
-      const confirmUrl = `${getBaseUrl(req)}/api/confirm-marketing?token=${encodeURIComponent(capture.doiToken)}&locale=${locale}`;
-      // Render inside the design selected for this email type (admin
-      // Einstellungen); null → classic built-ins. The lawyer-approved DOI copy
-      // itself is untouched — only the design around it changes.
-      const emailDesign = await getCachedEmailDesignForKind("doi");
-      const body = withEmailDesign(emailDesign, () => doiEmailBody(confirmUrl, locale));
-      const threading = outboundThreading();
-      const doiResult = await sendEmail({
-        to: email,
-        subject: doiEmailSubject(locale),
-        text: body.text,
-        html: body.html,
-        kind: "doi",
-        messageId: threading.messageId,
-        replyTo: threading.replyTo,
-      });
-      doiEmailSent = doiResult.ok;
-      // MIRROR-WRITE (additive, fail-soft): log the DOI mail as correspondence.
-      if (doiResult.ok) {
-        await recordSentMessage({
-          toAddress: email,
-          fromAddress: senderAddress() ?? "",
-          subject: doiEmailSubject(locale),
-          bodyText: body.text,
-          bodyHtml: body.html,
-          messageId: threading.messageId,
-        });
-      }
-      if (!doiResult.ok && !doiResult.skipped) {
-        // The pending consent is stored; the user just didn't get the link. Log
-        // it (they can re-request) rather than failing the whole opt-in.
-        reportError(doiResult.error, {
-          route: "api/account/marketing-opt-in",
-          phase: "doi_send",
-        });
-      }
-    }
 
     // The answer the widget gets, computed once (also for the telemetry): an
     // address subscribed elsewhere keeps doiStatus none/pending but is answered
     // as already confirmed. A suppressed address is answered neutrally —
-    // status none, never „already subscribed“, never „DOI mail sent“ (OI1 F2;
-    // capture-funnel.mjs → optInAnswer, tested).
+    // status none, never „already subscribed“, never „DOI mail sent“ (OI1 F2).
+    // A valid confirmation mail already out (Mo within the cooldown, or the
+    // shop's) reads pending + doiEmailSent (capture-funnel.mjs → optInAnswer,
+    // tested).
     const answer = optInAnswer({
       suppressed: capture.suppressed,
       subscribedElsewhere: capture.subscribedElsewhere,
+      pendingElsewhere: capture.pendingElsewhere,
       marketingDoiStatus: capture.marketingDoiStatus,
       doiEmailRequired: capture.doiEmailRequired,
       doiEmailSent,
+      doiCooldown: capture.doiCooldown,
     });
 
     // Funnel telemetry (pseudonymous, session-keyed — NO email in the data),
     // tagged so the opt-in surface can be split out from the in-chat capture.
     // placement / variant only when they are known values (OI3). Written after
     // the send attempt, so the opt-in says whether its DOI mail went out
-    // (`doiSent`, OI1 F3).
+    // (`doiSent`, OI1 F3), whether none was sent because one went out within
+    // the cooldown (`doiCooldown`, T2.1) or the still-valid link was mailed
+    // again (`doiResend`), and what the shop precheck found (`shopifyConsent`,
+    // C.29).
     const placement = normalizePlacement(payload.placement);
     const variant =
       typeof payload.variant === "string" && isKnownSigninVariant(payload.variant, locale) ? payload.variant : null;
@@ -243,6 +236,7 @@ export async function POST(req: Request) {
       ...(capture.optInOutcome ? { outcome: capture.optInOutcome } : {}),
       alreadyConfirmed: answer.alreadyConfirmed,
       doiRequired: capture.doiEmailRequired,
+      shopifyConsent: pre.check,
       ...(placement ? { placement } : {}),
       ...(variant ? { variant } : {}),
       ...(variant && signInVariantsActive(locale) && variant !== pickSigninVariant(sessionId, locale, process.env.CONSENT_SIGNIN_VARIANTS).id
@@ -257,7 +251,16 @@ export async function POST(req: Request) {
     await recordKpiEvent({
       sessionId,
       event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
-      data: { doiStatus: capture.marketingDoiStatus, ...optInData, ...doiSentField(capture.optInOutcome, doiEmailSent) },
+      data: {
+        doiStatus: capture.marketingDoiStatus,
+        ...optInData,
+        ...doiSentField(capture.optInOutcome, doiEmailSent),
+        ...doiCooldownField(capture.optInOutcome, capture.doiCooldown),
+        ...(capture.doiResend ? { doiResend: true } : {}),
+        // The capture this opt-in belongs to (an id, no address): the DOI click
+        // is attributed to the opt-in that sent its mail, also across devices.
+        captureId: capture.id,
+      },
     });
 
     return okJson({ ok: true, marketing: answer }, headers);
