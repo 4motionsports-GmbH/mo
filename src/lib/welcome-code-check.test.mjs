@@ -38,12 +38,13 @@ const basic = (over = {}) => ({
   ...over,
 });
 
-test("masking: e-mail keeps first letter and domain, codes keep 4 chars + length", () => {
+test("masking: e-mail keeps first letter and domain, codes keep 4 chars + length (short codes none)", () => {
   assert.equal(maskEmail("Max.Muster@Example.com"), "m•••@example.com");
   assert.equal(maskEmail("nope"), "•••");
   assert.equal(maskCode("WILLKOMMEN5"), "WILL•••(11)");
   assert.equal(maskCode("WILLKOMMEN5", true), "WILLKOMMEN5");
-  assert.equal(maskCode("AB"), "AB");
+  assert.equal(maskCode("AB"), "•••(2)");
+  assert.equal(maskCode("AB", true), "AB");
 });
 
 test("free text: addresses masked, tags stripped, cut to length", () => {
@@ -321,4 +322,29 @@ test("assess: without Mo's database only Shopify's side, the mail measured again
   assert.ok(!out.some((l) => /keine DOI-Bestätigung|Outbox-Zeile|Mo → Shopify/.test(l)));
   assert.match(out.at(-1), /2 min nach Shopifys letzter Einwilligungsänderung/);
   assert.match(assessWelcomeTrigger({ moChecked: false, inboxAt: T }).at(-1), /kein Bezugspunkt/);
+});
+
+test("a discount titled with its code never prints the code in clear (unless --show-codes)", async () => {
+  const { describeDiscountNode, maskCodesIn, maskCode } = await import("./welcome-code-check.mjs");
+  const node = {
+    id: "gid://shopify/DiscountCodeNode/1",
+    discount: {
+      __typename: "DiscountCodeBasic",
+      title: "WILLKOMMEN5",
+      summary: "5 % auf alles mit WILLKOMMEN5",
+      tags: ["newsletter willkommen5"],
+      codes: { nodes: [{ code: "WILLKOMMEN5" }] },
+    },
+    events: { nodes: [{ message: "Discount WILLKOMMEN5 was created." }] },
+  };
+  const d = describeDiscountNode(node);
+  // Everything the script prints: title, summary, tags, event texts, the codes' shown form.
+  const printed = JSON.stringify([d.title, d.summary, d.tags, d.events.map((e) => e.message), d.codes.map((c) => c.shown)]);
+  assert.equal(/willkommen5/i.test(printed), false);
+  const shown = describeDiscountNode(node, { showCodes: true });
+  assert.equal(shown.title, "WILLKOMMEN5");
+  // Short codes are masked too; regex characters in a code are literal.
+  assert.equal(maskCode("AB12"), "•••(4)");
+  assert.equal(maskCodesIn("Code a.b+c gilt", ["a.b+c"]), "Code a.b+•••(5) gilt".replace("a.b+•••(5)", maskCode("a.b+c")));
+  assert.equal(maskCodesIn(null, ["X"]), null);
 });

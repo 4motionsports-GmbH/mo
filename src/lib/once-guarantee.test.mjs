@@ -42,6 +42,7 @@ test("welcome (a): late push, missing tag after the grace, waiting, tagged", () 
   assert.equal(v("2026-10-09T11:00:00Z", []).key, "late_push");
   assert.equal(v("2026-10-09T11:00:00Z", []).flag, true);
   assert.equal(v("2026-10-08T10:00:05Z", []).key, "no_tag");
+  assert.equal(v("2026-10-08T10:00:05Z", []).flag, false);
   assert.equal(v("2026-10-08T13:30:00Z", []).key, "waiting");
   assert.equal(v("2026-10-08T13:30:00Z", []).flag, false);
   assert.equal(v("2026-10-08T10:00:05Z", ["x", "w"]).key, "tagged");
@@ -60,8 +61,24 @@ test("welcome (a): not written to Shopify, with a short grace; not subscribed in
   assert.equal(welcomeVerdict({ ...base, now: confMs + OUTBOX_GRACE_MS + 1 }).flag, true);
   assert.equal(welcomeVerdict({ ...base, now: confMs + 60_000 }).key, "waiting");
   assert.equal(welcomeVerdict({ ...base, confirmedAt: null, now: confMs }).key, "not_pushed");
-  const notSub = welcomeVerdict({ ...base, pushedAt: conf, shopify: { state: "pending" }, now: confMs });
+  // Not SUBSCRIBED in Shopify: a finding only past the grace while Mo still holds the subscription.
+  const late = confMs + OUTBOX_GRACE_MS + 1;
+  const notSub = welcomeVerdict({ ...base, pushedAt: conf, shopify: { state: "pending" }, moState: "subscribed", now: late });
   assert.deepEqual([notSub.key, notSub.flag], ["not_subscribed", true]);
+  const inGrace = welcomeVerdict({ ...base, pushedAt: conf, shopify: { state: "pending" }, moState: "subscribed", now: confMs + 60_000 });
+  assert.deepEqual([inGrace.key, inGrace.flag], ["waiting", false]);
+  const withdrawn = welcomeVerdict({ ...base, pushedAt: conf, shopify: { state: "unsubscribed" }, moState: "unsubscribed", now: late });
+  assert.deepEqual([withdrawn.key, withdrawn.flag], ["withdrawn", false]);
+  // An unpushed confirmation inside the outbox grace waits, whatever Shopify says.
+  assert.equal(welcomeVerdict({ ...base, shopify: { state: "not_subscribed" }, now: confMs + 60_000 }).key, "waiting");
+});
+
+test("welcome (a): a missing tag is counted, flagged only when the run names the tag", () => {
+  const conf = "2026-10-08T10:00:00Z";
+  const now = Date.parse("2026-10-08T14:00:00Z");
+  const base = { confirmedAt: conf, pushedAt: "2026-10-08T10:00:05Z", tags: [], tag: "w", shopify: { state: "subscribed" }, now };
+  assert.deepEqual([welcomeVerdict(base).key, welcomeVerdict(base).flag], ["no_tag", false]);
+  assert.equal(welcomeVerdict({ ...base, tagRequired: true }).flag, true);
 });
 
 test("welcome (a): the windows are 24 h, 2 h and 15 min", () => {

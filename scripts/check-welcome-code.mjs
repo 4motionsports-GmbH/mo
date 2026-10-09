@@ -60,6 +60,7 @@ import {
   isReadOnlyGraphql,
   isSelectOnlySql,
   maskCode,
+  maskCodesIn,
   maskEmail,
   parseInboxTime,
   shopifyConsentOf,
@@ -630,9 +631,11 @@ if (email) {
         if (shopifyConsent?.consentUpdatedAt) {
           timeline.push({ at: shopifyConsent.consentUpdatedAt, side: "Shopify", what: `Einwilligung jetzt ${shopifyConsent.marketingState}/${shopifyConsent.optInLevel ?? "—"} (zuletzt geändert)` });
         }
+        // The codes this customer used — masked wherever a text repeats them.
+        const orderCodes = (c.orders?.nodes ?? []).flatMap((o) => (o.discountCodes ?? []).map(String));
         const events = c.events?.nodes ?? [];
         for (const e of events) {
-          timeline.push({ at: e.createdAt, side: "Shopify", what: `Ereignis ${e.action}${e.appTitle ? ` [${e.appTitle}]` : ""}: ${cleanText(e.message, 140) ?? ""}` });
+          timeline.push({ at: e.createdAt, side: "Shopify", what: `Ereignis ${e.action}${e.appTitle ? ` [${e.appTitle}]` : ""}: ${cleanText(maskCodesIn(e.message, orderCodes, showCodes), 140) ?? ""}` });
         }
         console.log(`  ${events.length} Kunden-Ereignis(se) seit ${since} (Versand-Ereignisse von Shopify Messaging fehlen dort oft → Aktivitätsbericht).`);
         const used = new Set();
@@ -643,7 +646,7 @@ if (email) {
         }
         for (const code of used) {
           const d = (await gql(CODE_LOOKUP_QUERY, { code }))?.codeDiscountNodeByCode?.codeDiscount;
-          console.log(`  Code ${maskCode(code, showCodes)} gehört zu: ${d ? `${cleanText(d.title, 80)} (angelegt ${berlin(d.createdAt)})` : "— (gelöscht oder unbekannt)"}`);
+          console.log(`  Code ${maskCode(code, showCodes)} gehört zu: ${d ? `${cleanText(maskCodesIn(d.title, [code], showCodes), 80)} (angelegt ${berlin(d.createdAt)})` : "— (gelöscht oder unbekannt)"}`);
         }
       }
     } catch (err) {

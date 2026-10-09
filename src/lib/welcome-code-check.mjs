@@ -118,8 +118,30 @@ export function cleanText(text, max = 160) {
 /** A redeemable code is a bearer secret: "WELC•••(12)" unless `show`. */
 export function maskCode(code, show = false) {
   const c = String(code ?? "");
-  if (show || c.length <= 4) return c;
+  if (show || c.length === 0) return c;
+  if (c.length <= 4) return `•••(${c.length})`;
   return `${c.slice(0, 4)}•••(${c.length})`;
+}
+
+/**
+ * `text` with every occurrence of the given codes (case-insensitive) masked —
+ * a discount made in the Shopify admin is usually titled with its code, and
+ * event texts and summaries repeat it.
+ * @param {unknown} text
+ * @param {Iterable<unknown>} codes
+ * @param {boolean} [show]
+ * @returns {string | null}
+ */
+export function maskCodesIn(text, codes, show = false) {
+  if (text == null) return null;
+  let out = String(text);
+  if (show) return out;
+  const list = [...new Set([...codes].map((c) => String(c ?? "").trim()).filter(Boolean))].sort((a, b) => b.length - a.length);
+  for (const code of list) {
+    const re = new RegExp(code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+    out = out.replace(re, (m) => maskCode(m, false));
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -289,12 +311,16 @@ export function describeDiscountNode(node, opts = {}) {
   }));
   const restricted = d.context?.__typename === "DiscountCustomers" || Array.isArray(d.context?.customers);
   const rawTitle = String(d.title ?? "");
+  // Codes never in clear (unless --show-codes): also not via the title, the
+  // summary, the tags or the event texts, which usually repeat the code.
+  const allCodes = codes.map((c) => c.code);
+  const mask = (text) => maskCodesIn(text, allCodes, opts.showCodes);
   const percent = percentOf(d.customerGets);
   return {
     id: String(node?.id ?? ""),
     type: d.__typename ?? "?",
     // A per-person discount's title may carry that person's name — never shown.
-    title: restricted ? HIDDEN_TITLE : cleanText(rawTitle, 120) ?? "",
+    title: restricted ? HIDDEN_TITLE : cleanText(mask(rawTitle), 120) ?? "",
     restricted,
     titleHint: WELCOME_HINT_RE.test(rawTitle),
     status: d.status ?? "?",
@@ -313,10 +339,10 @@ export function describeDiscountNode(node, opts = {}) {
     buyers: describeBuyers(d.context),
     combines: describeCombines(d.combinesWith),
     classes: Array.isArray(d.discountClasses) ? d.discountClasses : [],
-    tags: Array.isArray(d.tags) ? d.tags.map((t) => cleanText(t, 60)) : [],
+    tags: Array.isArray(d.tags) ? d.tags.map((t) => cleanText(mask(t), 60)) : [],
     appType: d.appDiscountType ? `${cleanText(d.appDiscountType.title, 60)} (App ${d.appDiscountType.app?.title ?? "?"})` : null,
     // Shopify's own summary can name the customers of a restricted code — drop it then.
-    summary: restricted ? null : cleanText(d.summary, 240),
+    summary: restricted ? null : cleanText(mask(d.summary), 240),
     totalSales: moneyOf(d.totalSales),
     events: (node?.events?.nodes ?? []).map((e) => ({
       at: e.createdAt ?? null,
@@ -324,7 +350,7 @@ export function describeDiscountNode(node, opts = {}) {
       app: e.appTitle ?? null,
       byApp: Boolean(e.attributeToApp),
       byStaff: Boolean(e.attributeToUser),
-      message: cleanText(e.message, 160),
+      message: cleanText(mask(e.message), 160),
     })),
   };
 }

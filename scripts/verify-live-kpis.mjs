@@ -9,7 +9,7 @@
 //   npm run verify:live -- --since 2026-10-05
 //   npm run verify:live -- --since 2026-10-05 --session <sid prefix>   (sections 3, 9 and 10)
 //   npm run verify:live -- --ran-at <ISO>     (V2/V2b against that retention run)
-//   npm run verify:live -- --since <T2 deploy day> [--shopify] [--cooldown <min>]
+//   npm run verify:live -- --since <T2 deploy time> [--shopify] [--cooldown <min>]
 //        [--welcome-tag <tag>] [--welcome-code <PREFIX>] [--sample <n>]       (section 10)
 //
 // Sections: 1 sign-in chain + diagnosis (login_gate_shown split by teaser; popup
@@ -34,14 +34,18 @@
 //
 // Section 10 options: the cooldown is `--cooldown <min>`, else
 // MARKETING_DOI_RESEND_COOLDOWN_MINUTES from .env (default 30; the script says
-// which — pass the Vercel value). `--welcome-tag` (default welcome_code_issued)
-// is the tag the shop's welcome automation sets; `--welcome-code <PREFIX>`
-// counts orders with a code of that prefix (codes are never printed).
+// which — pass the Vercel value). `--welcome-tag <tag>` names the tag the
+// shop's welcome automation sets: given, a confirmed customer without it is a
+// finding (⚑); without it the default welcome_code_issued is only counted.
+// `--welcome-code <PREFIX>` counts orders with a code of that prefix (codes are
+// never printed). `--since` takes a day (midnight Europe/Berlin) or an ISO time
+// with zone, e.g. the deploy time 2026-10-09T14:05+02:00. An invalid value of
+// any of these flags stops the script (exit 1) instead of falling back.
 // `--shopify` reads the live consent and tags of the C.29 candidates, the
 // confirmed customers and the `--session` customers from the Admin API
 // (read-only, client credentials, read_customers; at most `--sample` candidates,
 // default 50, max 250). Before the T2 deploy every accept sent a DOI mail, so
-// use `--since <deploy day>` for the acceptance; erasure deletes the evidence,
+// use `--since <deploy time>` for the acceptance; erasure deletes the evidence,
 // so run `--session` before „Meine Daten löschen“.
 
 import { neon, neonConfig } from "@neondatabase/serverless";
@@ -62,8 +66,20 @@ if (!url) {
 }
 const sql = neon(url);
 const args = process.argv.slice(2);
-const sinceArg = args[args.indexOf("--since") + 1];
-const since = args.includes("--since") && /^\d{4}-\d{2}-\d{2}$/.test(sinceArg ?? "") ? sinceArg : "2026-10-04";
+/** Stop on a flag whose value is unusable instead of silently checking with a default. */
+const usage = (message) => {
+  console.error(`${message} — siehe die Hinweise oben in scripts/verify-live-kpis.mjs.`);
+  process.exit(1);
+};
+// --since: a day (midnight Europe/Berlin) or an ISO timestamp with zone (the deploy time).
+const sinceArg = args.includes("--since") ? String(args[args.indexOf("--since") + 1] ?? "").trim() : null;
+const SINCE_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const SINCE_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/;
+const validDay = (d) => SINCE_DAY.test(d) && !Number.isNaN(Date.parse(d)) && new Date(d).toISOString().slice(0, 10) === d;
+if (sinceArg != null && !validDay(sinceArg) && !(SINCE_ISO.test(sinceArg) && validDay(sinceArg.slice(0, 10)) && !Number.isNaN(Date.parse(sinceArg)))) {
+  usage(`--since „${sinceArg}“ ist weder ein Tag (2026-10-08) noch ein ISO-Zeitpunkt mit Zone (2026-10-08T14:05:00+02:00)`);
+}
+const since = sinceArg ?? "2026-10-04";
 /** The retention run V2/V2b read against: `--ran-at <ISO>`, else the latest 03:30 UTC. */
 const ranAtArg = args.includes("--ran-at") ? args[args.indexOf("--ran-at") + 1] : null;
 const ranAt = (() => {
@@ -87,23 +103,37 @@ const cooldownSource = validCooldown(cooldownArg)
   : validCooldown(cooldownEnv)
     ? "aus .env (MARKETING_DOI_RESEND_COOLDOWN_MINUTES; falls Vercel abweicht: --cooldown)"
     : `Standard${cooldownArg || cooldownEnv ? " (Angabe ungültig)" : ""} — den Vercel-Wert mit --cooldown angeben`;
+// Section 10d: the tag the Shopify automation sets (a Shopify tag: no comma, at most 255
+// characters). Given explicitly, a confirmed customer without it is a finding (⚑);
+// with the default name it is only counted — the shop's automation may tag differently.
+const tagRequired = args.includes("--welcome-tag");
 const welcomeTagArg = String(argValue("--welcome-tag") ?? "").trim();
-const welcomeTag = /^[\p{L}\p{N}_:. -]{1,64}$/u.test(welcomeTagArg) ? welcomeTagArg : "welcome_code_issued";
-const welcomeCodeArg = String(argValue("--welcome-code") ?? "");
-const welcomeCode = /^[A-Za-z0-9_-]{2,32}$/.test(welcomeCodeArg) ? welcomeCodeArg : null;
-const sampleArg = Number(argValue("--sample"));
-const sample = Number.isInteger(sampleArg) && sampleArg > 0 ? Math.min(sampleArg, 250) : 50;
+if (tagRequired && !/^[^,]{1,255}$/u.test(welcomeTagArg)) usage(`--welcome-tag „${welcomeTagArg}“ ist kein Shopify-Tag (1–255 Zeichen, kein Komma)`);
+const welcomeTag = tagRequired ? welcomeTagArg : "welcome_code_issued";
+const welcomeCodeArg = args.includes("--welcome-code") ? String(argValue("--welcome-code") ?? "").trim() : null;
+if (welcomeCodeArg != null && !/^[A-Za-z0-9_-]{2,32}$/.test(welcomeCodeArg)) {
+  usage(`--welcome-code „${welcomeCodeArg}“ ist kein Code-Präfix (2–32 Zeichen A–Z, 0–9, _ und -)`);
+}
+const welcomeCode = welcomeCodeArg;
+const sampleRaw = args.includes("--sample") ? String(argValue("--sample") ?? "").trim() : null;
+if (sampleRaw != null && !(/^\d+$/.test(sampleRaw) && Number(sampleRaw) >= 1 && Number(sampleRaw) <= 250)) {
+  usage(`--sample „${sampleRaw}“ ist keine Zahl von 1 bis 250`);
+}
+const sample = sampleRaw != null ? Number(sampleRaw) : 50;
 const withShopify = args.includes("--shopify");
 
-/** Midnight Europe/Berlin of `since`, as the lower bound of every query. */
-const SINCE = `(($1::date)::timestamp AT TIME ZONE 'Europe/Berlin')`;
+/** The lower bound of every query: midnight Europe/Berlin of a `--since` day, or the given instant. */
+// A day is midnight Europe/Berlin; anything else was checked above as an ISO timestamp with zone.
+const SINCE = `(CASE WHEN $1::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                    THEN (left($1::text, 10)::date)::timestamp AT TIME ZONE 'Europe/Berlin'
+                    ELSE $1::text::timestamptz END)`;
 const q = (text, params = []) => sql.query(text, [since, ...params]);
 const short = (s) => (typeof s === "string" ? `${s.slice(0, 8)}…` : s);
 const head = (t) => console.log(`\n=== ${t} ===`);
 /** console.table, or one line when there is nothing to show. */
 const table = (rows) => (rows.length ? console.table(rows) : console.log("  (keine Zeilen)"));
 
-console.log(`Live-Check ab ${since} (Europe/Berlin)`);
+console.log(`Live-Check ab ${since}${SINCE_DAY.test(since) ? " (Europe/Berlin)" : ""}`);
 
 // ---------------------------------------------------------------------------
 head("1 · Anmeldung: Kette started → succeeded → return → linked");
@@ -630,7 +660,7 @@ if (sessionOk) {
 // The address is grouped on, never selected; codes are never selected either.
 head("10 · Einmal-Garantie (eine DOI-Mail je Sperrfrist, eine Bestätigung, ein Willkommens-Code, C.29)");
 console.log(
-  `Sperrfrist ${cooldown} min (${cooldownSource}). ⚑ = ansehen; ab dem T2-Deploy (--since <Deploy-Tag>) ` +
+  `Sperrfrist ${cooldown} min (${cooldownSource}). ⚑ = ansehen; ab dem T2-Deploy (--since <Deploy-Zeitpunkt, z. B. 2026-10-09T14:05+02:00>) ` +
     "0 oder jeder erklärt. Nur Kunden-/Erfassungs-Ids und gekürzte Sitzungen."
 );
 let onceFlags = 0;
@@ -648,15 +678,26 @@ const DOI_MAIL_SENT = `((k.data->>'outcome' = 'doi_required' AND COALESCE(k.data
                        OR (k.data->>'outcome' IS NULL AND k.data->>'doiStatus' = 'pending'
                            AND COALESCE(k.data->>'doiCooldown', 'false') <> 'true'))`;
 /**
- * Session → customer, approximate (kpi_events has no customer id): the sign-in
- * link, the conversation, then the capture whose latest session it is.
+ * Opt-in / confirmation event → the address it was about (kpi_events has no
+ * customer id). Exact by `captureId` (one capture per address; on the events
+ * since this release); older events: the sign-in link only for a sign-in
+ * opt-in (its address is the account's), else the session's capture only when
+ * the session has exactly one. Two addresses typed in one session (a corrected
+ * typo, a capture-form address and a different account) are never merged.
  */
 const KPI_CUSTOMER_JOINS = `
-       LEFT JOIN customer_session_links l ON l.session_id = k.session_id
-       LEFT JOIN LATERAL (SELECT customer_id FROM conversations
-                           WHERE session_id = k.session_id AND customer_id IS NOT NULL LIMIT 1) cv ON true
-       LEFT JOIN LATERAL (SELECT customer_id FROM email_captures
-                           WHERE session_id = k.session_id AND customer_id IS NOT NULL LIMIT 1) ecs ON true`;
+       LEFT JOIN email_captures eid
+              ON eid.id = CASE WHEN k.data->>'captureId' ~ '^[0-9]{1,18}$' THEN (k.data->>'captureId')::bigint END
+       LEFT JOIN customer_session_links l ON l.session_id = k.session_id AND k.data->>'source' = 'mo_signin'
+       LEFT JOIN LATERAL (SELECT count(*)::int AS n, min(id) AS id, min(customer_id) AS customer_id
+                            FROM email_captures WHERE session_id = k.session_id) ecs ON true`;
+/** The customer of an event joined by KPI_CUSTOMER_JOINS, or NULL. */
+const KPI_CUSTOMER = `(CASE WHEN eid.id IS NOT NULL THEN eid.customer_id
+                            ELSE COALESCE(l.customer_id, CASE WHEN ecs.n = 1 THEN ecs.customer_id END) END)`;
+/** Grouping key: the customer, else the one capture (address), else the event itself. */
+const KPI_WHO = `COALESCE(${KPI_CUSTOMER}::text,
+                          'c:' || COALESCE(eid.id, CASE WHEN l.customer_id IS NULL AND ecs.n = 1 THEN ecs.id END),
+                          'e:' || k.id)`;
 const doiSubjects = [...DOI_MAIL_SUBJECTS];
 
 // 10a — DOI mails in the mail log per address (the gap reaches back one cooldown before --since).
@@ -730,16 +771,15 @@ table(
 const optRows = await q(
   `WITH o AS (
      SELECT k.id, k.session_id, k.created_at, COALESCE(k.data->>'source', '') AS quelle,
-            COALESCE(l.customer_id, cv.customer_id, ecs.customer_id)::text AS kunde
+            ${KPI_CUSTOMER}::text AS kunde, ${KPI_WHO} AS who
        FROM kpi_events k ${KPI_CUSTOMER_JOINS}
       WHERE k.event = 'email_capture_marketing_opted_in' AND ${DOI_MAIL_SENT}
         AND k.created_at >= ${SINCE} - make_interval(mins => $2::int)),
    g AS (
-     SELECT o.*, COALESCE(kunde, 's:' || session_id, 'e:' || id) AS who,
-            created_at - lag(created_at) OVER (PARTITION BY COALESCE(kunde, 's:' || session_id, 'e:' || id)
-                                               ORDER BY created_at) AS gap
+     SELECT o.*, created_at - lag(created_at) OVER (PARTITION BY who ORDER BY created_at) AS gap
        FROM o)
-   SELECT max(kunde) AS kunde, CASE WHEN max(kunde) IS NULL THEN min(session_id) END AS sitzung,
+   SELECT max(kunde) AS kunde, CASE WHEN who LIKE 'c:%' THEN substr(who, 3) END AS erfassung,
+          CASE WHEN max(kunde) IS NULL THEN min(session_id) END AS sitzung,
           count(DISTINCT session_id) FILTER (WHERE created_at >= ${SINCE})::int AS sitzungen,
           count(*) FILTER (WHERE created_at >= ${SINCE})::int AS opt_ins_mit_doi,
           count(*) FILTER (WHERE created_at >= ${SINCE} AND gap < make_interval(mins => $2::int))::int AS in_sperrfrist,
@@ -747,19 +787,20 @@ const optRows = await q(
           string_agg(DISTINCT quelle, ',') AS quellen
      FROM g GROUP BY who
    HAVING count(*) FILTER (WHERE created_at >= ${SINCE} AND gap < make_interval(mins => $2::int)) > 0
-    ORDER BY 5 DESC, 4 DESC`,
+    ORDER BY 6 DESC, 5 DESC`,
   [cooldown]
 );
 console.log(
   `10b · Opt-ins mit DOI-Mail (email_capture_marketing_opted_in) — mehr als 1 je Kunde innerhalb der Sperrfrist: ` +
-    `${flagged(optRows.length)} (Kunde über Anmeldung, Gespräch oder Erfassung der Sitzung; sonst je Sitzung)`
+    `${flagged(optRows.length)} (je Adresse über die Erfassung des Opt-ins; ältere Events über die Anmeldung oder die ` +
+    `einzige Erfassung der Sitzung, sonst je Event)`
 );
-table(optRows.slice(0, 25).map((r) => ({ ...r, kunde: r.kunde ?? "–", sitzung: r.sitzung ? short(r.sitzung) : "" })));
+table(optRows.slice(0, 25).map((r) => ({ ...r, kunde: r.kunde ?? "–", erfassung: r.erfassung ?? "–", sitzung: r.sitzung ? short(r.sitzung) : "" })));
 
 // 10c — confirmations per customer: the KPI, the consent act and the Shopify write.
 const confRows = await q(
   `WITH kpi AS (
-     SELECT COALESCE(l.customer_id, cv.customer_id, ecs.customer_id) AS kunde, count(*)::int AS n
+     SELECT ${KPI_CUSTOMER} AS kunde, count(*)::int AS n
        FROM kpi_events k ${KPI_CUSTOMER_JOINS}
       WHERE k.event = 'email_capture_marketing_confirmed' AND k.created_at >= ${SINCE}
       GROUP BY 1),
@@ -770,13 +811,14 @@ const confRows = await q(
       WHERE state = 'subscribed' AND level = 'confirmed_opt_in'
         AND source IN ('mo_signin', 'mo_chat_gate', 'mo_capture_form', 'mo')
         AND (origin_ref = 'doi' OR origin_ref LIKE 'email_capture:%')
-        AND recorded_at >= ${SINCE}
+        AND recorded_at >= ${SINCE} AND customer_id IS NOT NULL
       GROUP BY 1),
    pushes AS (
      SELECT customer_id AS kunde, count(*)::int AS n
        FROM shopify_outbox
       WHERE kind IN ('consent_update', 'customer_create') AND payload->>'state' = 'subscribed'
         AND status = 'done' AND created_at >= ${SINCE}
+        AND customer_id IS NOT NULL
       GROUP BY 1)
    SELECT COALESCE(kpi.kunde, acts.kunde, pushes.kunde)::text AS kunde,
           COALESCE(kpi.n, 0) AS kpi_bestaetigt, COALESCE(acts.n, 0) AS einwilligungsakte,
@@ -825,7 +867,7 @@ if (ledgerPresent) {
 const legacyIssued = (await q(`SELECT count(*)::int AS n FROM customers WHERE welcome_issued_at >= ${SINCE}`))[0]?.n ?? 0;
 console.log(`  alter Mo-Pfad (customers.welcome_issued_at, entfernt) im Zeitraum: ${flagged(legacyIssued)} — erwartet 0`);
 const welcomeRows = await q(
-  `SELECT c.id::text AS kunde, c.shopify_customer_id, c.shopify_tags,
+  `SELECT c.id::text AS kunde, c.shopify_customer_id, c.shopify_tags, c.email_consent_state AS mo_state,
           'mo-welcome-issued' = ANY(c.shopify_tags) AS mo_tag,
           (SELECT max(e.occurred_at) FROM consent_events e
             WHERE e.customer_id = c.id AND e.state = 'subscribed' AND e.level = 'confirmed_opt_in'
@@ -844,7 +886,7 @@ const welcomeRows = await q(
 const actRows = welcomeRows.filter((r) => r.confirmed_at != null);
 const mirrorVerdicts = actRows.map((r) => ({
   r,
-  v: welcomeVerdict({ confirmedAt: r.confirmed_at, pushedAt: r.pushed_at, tags: r.shopify_tags, tag: welcomeTag, shopify: null }),
+  v: welcomeVerdict({ confirmedAt: r.confirmed_at, pushedAt: r.pushed_at, tags: r.shopify_tags, tag: welcomeTag, shopify: null, moState: r.mo_state, tagRequired }),
 }));
 const countKey = (list, key) => list.filter((x) => x.v.key === key).length;
 // From the mirror only Mo's own side is a finding (not written / written late);
@@ -1065,7 +1107,7 @@ if (shop && !shop.error) {
     const wv = welcomeSample.map((r) => {
       const l = tagsLive.get(String(r.shopify_customer_id));
       const v = l
-        ? welcomeVerdict({ confirmedAt: r.confirmed_at, pushedAt: r.pushed_at, tags: l.tags, tag: welcomeTag, shopify: l.consent })
+        ? welcomeVerdict({ confirmedAt: r.confirmed_at, pushedAt: r.pushed_at, tags: l.tags, tag: welcomeTag, shopify: l.consent, moState: r.mo_state, tagRequired })
         : { flag: true, key: "not_found", label: "in Shopify nicht gefunden" };
       return { kunde: r.kunde, key: v.key, befund: v.label, flag: v.flag };
     });
@@ -1073,7 +1115,9 @@ if (shop && !shop.error) {
     const liveOnly = wv.filter((v) => v.flag && !moFlagged.has(v.kunde));
     console.log(
       `  Live in Shopify (Willkommens-Tag, Stichprobe ${wv.length} von ${actRows.length}): ` +
-        `${wv.filter((v) => v.key === "tagged").length} mit Tag, ${wv.filter((v) => v.key === "waiting").length} wartend, ` +
+        `${wv.filter((v) => v.key === "tagged").length} mit Tag, ${wv.filter((v) => v.key === "no_tag").length} ohne Tag ` +
+        `(${tagRequired ? "⚑ — --welcome-tag gesetzt" : "nur gezählt; mit --welcome-tag ein Befund"}), ` +
+        `${wv.filter((v) => v.key === "withdrawn").length} später abgemeldet, ${wv.filter((v) => v.key === "waiting").length} wartend, ` +
         `auffällig ${flagged(liveOnly.length)} (zusätzlich zu den oben gezählten)`
     );
     table(liveOnly.slice(0, 25).map((v) => ({ kunde: v.kunde, befund: v.befund })));
@@ -1150,7 +1194,7 @@ if (sessionOk) {
               ? "im Zeitraum nicht bestätigt"
               : w.confirmed_at == null
                 ? "bestätigt ohne neuen Einwilligungsakt (war schon angemeldet)"
-                : welcomeVerdict({ confirmedAt: w.confirmed_at, pushedAt: w.pushed_at, tags: l?.tags ?? null, tag: welcomeTag, shopify: l?.consent ?? null }).label,
+                : welcomeVerdict({ confirmedAt: w.confirmed_at, pushedAt: w.pushed_at, tags: l?.tags ?? null, tag: welcomeTag, shopify: l?.consent ?? null, moState: w.mo_state, tagRequired }).label,
           };
         })
       );
@@ -1160,5 +1204,5 @@ if (sessionOk) {
 
 console.log(
   `\nEinmal-Garantie: ${onceFlags} Hinweis(e) (⚑) — ab dem T2-Deploy 0 oder jeder erklärt ` +
-    "(vor dem Deploy schickte jedes Ja eine DOI-Mail: --since <Deploy-Tag>)."
+    "(vor dem Deploy schickte jedes Ja eine DOI-Mail: --since <Deploy-Zeitpunkt>)."
 );

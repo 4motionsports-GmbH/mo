@@ -52,15 +52,19 @@ export function c29Verdict({ moState, hasShopifyEvent, moDoiMail, shopify }) {
  * Design (a) of the welcome code: Shopify's automation issues it when Mo
  * writes the confirmed consent. Did the write go out in time, and does the
  * customer carry the welcome tag the automation sets?
+ *
+ * A missing tag is counted, not flagged, unless the run names the tag
+ * (`tagRequired` — today no automation sets one). A live state other than
+ * SUBSCRIBED is a finding only while Mo still holds the subscription and the
+ * write is past its grace (a later withdrawal is legitimate).
  * @param {{ confirmedAt: string | Date | null, pushedAt: string | Date | null, tags: string[] | null,
- *           tag: string, shopify: { state: string } | null, now?: number }} x
- *   shopify = the live consent (null = not read; the mirror's tags are used)
- * @returns {{ flag: boolean, key: "not_subscribed" | "not_pushed" | "late_push" | "no_tag" | "waiting" | "tagged", label: string }}
+ *           tag: string, shopify: { state: string } | null, moState?: string | null,
+ *           tagRequired?: boolean, now?: number }} x
+ *   shopify = the live consent (null = not read; the mirror's tags are used);
+ *   moState = Mo's current email_consent_state (null = unknown)
+ * @returns {{ flag: boolean, key: "not_subscribed" | "withdrawn" | "not_pushed" | "late_push" | "no_tag" | "waiting" | "tagged", label: string }}
  */
-export function welcomeVerdict({ confirmedAt, pushedAt, tags, tag, shopify, now = Date.now() }) {
-  if (shopify && shopify.state !== "subscribed") {
-    return { flag: true, key: "not_subscribed", label: `in Shopify ${shopify.state}, nicht SUBSCRIBED — Outbox prüfen` };
-  }
+export function welcomeVerdict({ confirmedAt, pushedAt, tags, tag, shopify, moState = null, tagRequired = false, now = Date.now() }) {
   const confirmed = ms(confirmedAt);
   const pushed = ms(pushedAt);
   if (Number.isNaN(pushed)) {
@@ -72,10 +76,19 @@ export function welcomeVerdict({ confirmedAt, pushedAt, tags, tag, shopify, now 
   if (!Number.isNaN(confirmed) && pushed - confirmed > SHOPIFY_TRIGGER_WINDOW_MS) {
     return { flag: true, key: "late_push", label: "mehr als 24 h nach der Bestätigung geschrieben — Automation feuert vermutlich nicht (T1)" };
   }
+  if (shopify && shopify.state !== "subscribed") {
+    if (moState != null && moState !== "subscribed") {
+      return { flag: false, key: "withdrawn", label: `später abgemeldet (Shopify ${shopify.state}, Mo ${moState})` };
+    }
+    if (now - pushed < OUTBOX_GRACE_MS) {
+      return { flag: false, key: "waiting", label: "Shopify übernimmt das Schreiben noch" };
+    }
+    return { flag: true, key: "not_subscribed", label: `in Shopify ${shopify.state}, nicht SUBSCRIBED — Outbox prüfen` };
+  }
   const hasTag = Array.isArray(tags) && tags.includes(tag);
   if (hasTag) return { flag: false, key: "tagged", label: "Tag gesetzt" };
   if (now - pushed > WELCOME_TAG_GRACE_MS) {
-    return { flag: true, key: "no_tag", label: `kein Tag „${tag}“ 2 h nach dem Schreiben` };
+    return { flag: tagRequired === true, key: "no_tag", label: `kein Tag „${tag}“ 2 h nach dem Schreiben` };
   }
   return { flag: false, key: "waiting", label: "Tag steht noch aus" };
 }
