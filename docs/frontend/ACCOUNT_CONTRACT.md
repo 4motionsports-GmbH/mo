@@ -283,6 +283,9 @@ Response (`200`, `Cache-Control: no-store`):
     customer mirror has them. Signing in never grants or changes it.
   - `optInActionable` — whether to offer the marketing ask now. The single source of truth for
     "ask or not"; never re-derive it from `status`. Rules: §6.1.
+- Server side (no widget action): an answer with `optInActionable: true` records the server-only
+  KPI event `consent_ask_eligible` (API_CONTRACT §5), at most once per session per 24 h; it reads
+  the widget's `x-ms-locale` (or `?locale=`) for it. The answer itself is unchanged.
 - Supports a CORS preflight; advertises `GET, OPTIONS`.
 
 ## 5. Logout — `GET /api/auth/shopify/logout`
@@ -389,7 +392,9 @@ optInActionable =
   `MARKETING_DOI_EXPIRY_DAYS` + 1 days (default 8) after the opt-in. `optInActionable` can then be
   `true` again. `"pending"`, `"confirmed"` and `"unsubscribed"` are otherwise final for the ask —
   a customer who opted in, whose earlier opt-in carried forward when their e-mail merged into the
-  signed-in identity, or who subscribed in the shop is not asked.
+  signed-in identity, who subscribed in the shop, or whose shop sign-up still awaits the shop's
+  own confirmation mail (`pending`) is not asked. Should the backend's copy of the shop have
+  missed it, the accept finds it in the shop and sends no second mail (§6.2).
 - **Anti-nag (backend, per customer).** `optInActionable` is `false` when, within the last 30
   days, any session linked to the customer has a `consent_gate_declined`, or at least 3 of them
   have a `consent_gate_shown` — counting only events with `data.surface: "signin"` (API_CONTRACT
@@ -398,11 +403,14 @@ optInActionable =
   (`consent_gate_dismissed`) counts only through its `shown`.
 - **The widget's own memory stays**: remember a decline on the device (30 days) and a dismissal
   at least for the tab session. The **backend** truth for "ask or not" is `optInActionable`.
-- **After an accept** that started a DOI (`pending`) or found the address subscribed
-  (`confirmed`), `/api/auth/me` reports `optInActionable: false`. An accept for a suppressed
-  address (possible only from an answer read before the block; answer `status: "none"`,
-  `doiEmailSent: false`, §6.2) changes nothing in the consent; `optInActionable` is already
-  `false` for it.
+- **After an accept** whose confirmation mail went out (`pending`), that found a valid
+  confirmation mail already out (`pending`, no new mail — Mo's within the resend cooldown, or the
+  shop's own), or that found the address subscribed (`confirmed`), `/api/auth/me` reports
+  `optInActionable: false`. An accept whose DOI mail could not be sent records nothing in the
+  consent: `optInActionable` stays `true`, and the next accept sends the mail at once. An accept
+  for a blocked address — suppressed in Mo (possible only from an answer read before the block),
+  or unsubscribed / invalid in the shop, found at the accept — is answered `status: "none"`,
+  `doiEmailSent: false` (§6.2) and starts no DOI; `optInActionable` is `false` for it.
 
 Copy: `GET /api/consent-copy?surface=signin` (payload API_CONTRACT §7.4, rendering
 CONSENT_CONTRACT §3.1). Submit: §6.2.
@@ -452,10 +460,10 @@ Response (`200`, `Cache-Control: no-store`):
 
 | `marketing` | Meaning |
 |---|---|
-| `status: "pending"`, `doiEmailSent: true` | the DOI mail went to the stored address; not subscribed until the link is clicked |
-| `status: "pending"`, `doiEmailSent: false` | the opt-in is stored, but the mail could not be sent right now (a later accept sends a new link) |
-| `status: "confirmed"`, `alreadyConfirmed: true`, `doiEmailSent: false` | the address already holds the consent (shop or an earlier DOI); no mail |
-| `status: "none"`, `alreadyConfirmed: false`, `doiEmailSent: false` | the address is suppressed (unsubscribed, bounced, complained); no mail |
+| `status: "pending"`, `doiEmailSent: true` | a valid confirmation mail for the stored address is out: Mo's DOI mail, sent now or within the last `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (default 30; a repeated accept in that window, also from another tab or device, sends none — after it the link is mailed again, the same one while it is valid) — or, when the customer's own shop sign-up of the last `MARKETING_DOI_EXPIRY_DAYS` days still awaits confirmation, the shop's own confirmation mail (Mo sends no second one). Not subscribed until a link is clicked |
+| `status: "pending"`, `doiEmailSent: false` | the opt-in is stored, but no confirmation mail could be sent right now; the next accept sends one at once (also within the cooldown) |
+| `status: "confirmed"`, `alreadyConfirmed: true`, `doiEmailSent: false` | the address already holds the consent (shop — the backend checks the shop's live status when its own copy has none — or an earlier DOI); no mail |
+| `status: "none"`, `alreadyConfirmed: false`, `doiEmailSent: false` | the address is blocked: unsubscribed (in Mo or in the shop), bounced or invalid, complained; no mail |
 
 What to show for each answer: CONSENT_CONTRACT "One consent, shared with the shop".
 
@@ -468,14 +476,20 @@ What to show for each answer: CONSENT_CONTRACT "One consent, shared with the sho
 | `404` | `not_found` | „Kunde nicht gefunden“ | the customer no longer exists (e.g. erased elsewhere); showing the message is enough — treating it like a sign-out is optional |
 | `422` | `no_verified_email` | „Für dieses Konto liegt keine verifizierte E-Mail-Adresse vor.“ | offer the capture form (CONSENT_CONTRACT §4; mind §6.0) |
 | `429` | `rate_limited` | — | wait `Retry-After`, keep decline usable |
-| `503` | `upstream_unavailable` | „Einwilligung konnte nicht gespeichert werden — bitte später erneut versuchen.“ | nothing stored; let the user retry |
+| `503` | `upstream_unavailable` | „Einwilligung konnte nicht gespeichert werden — bitte später erneut versuchen.“ | nothing stored (no database, or the database could not be reached); let the user retry |
 | `500` | `internal_error` | — | retry later |
 
 Server side (no widget action): the tap is stored as Art. 7 evidence (the echoed text and its
-version stamp; for a new DOI also which sign-in stood behind it), and the backend writes the server-only KPI events
-`email_capture_submitted` and `email_capture_marketing_opted_in` with `trigger: "signin_optin"`,
-`source: "mo_signin"`, `outcome`, `alreadyConfirmed`, `doiRequired` and the known `placement` /
-`variant` (API_CONTRACT §5). The widget sends only its own `consent_gate_accepted`.
+version stamp; for a DOI mail that went out also which sign-in stood behind it). Before the DOI
+decision the backend checks the shop: its own copy first, the shop's live consent (one read, at
+most 1.5 s) only when its copy has none; what the shop says is recorded, a failed check changes
+nothing. The backend writes the server-only KPI events `email_capture_submitted` and
+`email_capture_marketing_opted_in` with `trigger: "signin_optin"`, `source: "mo_signin"`, `outcome`
+(also `doi_pending` — a valid Mo DOI mail was already out, no new one — and `shopify_pending` — the
+shop's confirmation mail is out), `alreadyConfirmed`, `doiRequired`, `shopifyConsent` (what the
+shop check found) and the known `placement` / `variant`; the opted-in event also `doiSent`,
+`doiCooldown` and `doiResend` where they apply (API_CONTRACT §5). The widget sends only its own
+`consent_gate_accepted`.
 
 ## 7. Signed-in conversation history and data rights — `/api/account/*`
 
@@ -746,3 +760,6 @@ built before the date. Changes to other endpoints: API_CONTRACT Appendix A.
 | 2026-10-05 | The backend no longer offers `offer_email_summary` to a live signed-in session. | §6.0 |
 | 2026-10-05 | `GET /api/account/export` documented (route unchanged). | §7.7 |
 | 2026-10-06 | `optInActionable` is `false` for an address on the suppression list (any reason); the field and its shape are unchanged. A capture submit that ends a sign-in leaves the session's chats with the signed-in customer. | §6.1, §6.0 |
+| 2026-10-08 | One confirmation mail per address within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (default 30), also for parallel accepts from several tabs or devices: a repeated accept is answered `pending`, `doiEmailSent: true` without a new mail; after the cooldown the link is mailed again (the same one while valid). A failed DOI send records nothing in the consent, so the ask and the next accept can send at once. A database error answers `503` (was `500`). Response shapes unchanged; `doiEmailSent: true` reads „a valid confirmation mail is out“. No widget change. | §6.1, §6.2 |
+| 2026-10-08 | Before the DOI decision the backend checks the shop's consent (its own copy; the shop's live status when the copy has none). A shop sign-up still awaiting the shop's confirmation mail is not asked and is answered `pending`, `doiEmailSent: true` without a Mo mail; subscribed in the shop → `confirmed`, `alreadyConfirmed: true`; unsubscribed or invalid in the shop → `none`. The opt-in server events gain `shopifyConsent`. No widget change. | §6.1, §6.2 |
+| 2026-10-08 | `/api/auth/me` records the server-only event `consent_ask_eligible` when it answers `optInActionable: true` (reads `x-ms-locale`); response unchanged, no widget change. | §4 |

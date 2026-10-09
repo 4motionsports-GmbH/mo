@@ -39,6 +39,11 @@ the shop; nothing for the widget to do. What to show after an accept, on every s
 
 On the capture form the marketing line is shown only when the marketing box was ticked.
 
+`status: "pending"` with `doiEmailSent: true` means „a valid confirmation mail is out“ (since
+2026-10-08): Mo's, sent now or shortly before (a repeated accept within the resend cooldown sends
+none), or the shop's own — a shop sign-up of the last days that still awaits its confirmation; Mo
+then sends no second mail. The same text fits; no widget change.
+
 ---
 
 ## 1. The golden rules (do not break these — Abmahnung-sensitive)
@@ -197,3 +202,4 @@ built before the date.
 | 2026-10-05 | The accept echoes `placement` and `variant`, also in the `consent_gate_*` data. | §3.2 |
 | 2026-10-05 | A suppressed address is answered `status: "none"` (neutral thank-you) on every opt-in endpoint. | top table |
 | 2026-10-05 | The English consent copy is approved as the translation of the German (`enLegalReviewed: true`). | §1 |
+| 2026-10-08 | `pending` + `doiEmailSent: true` also when a valid confirmation mail was already out — Mo's within the resend cooldown, or the shop's own for a shop sign-up still awaiting confirmation; no second mail, same text, no widget change. | top table |
