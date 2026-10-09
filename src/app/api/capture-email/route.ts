@@ -21,10 +21,11 @@
 // (never silently lost). The summary send failing returns 502; the DOI send
 // failing is reported per-channel without losing the (successful) capture.
 // The DOI mail goes out before the summary; a claim whose mail did not go out
-// (failed, skipped, or an error before the send) is released, so the next
-// accept sends at once. The marketing opt-in KPI event
-// is written after the send attempt (finally), so it records whether the DOI
-// mail went out (OI1 F3).
+// (failed, or an error before the send) is released right after the attempt,
+// so the next accept sends at once. The marketing opt-in KPI event is written
+// right after the send attempt too (on an early exit: in `finally`), so it
+// records whether the DOI mail went out (OI1 F3) and exists before the link can
+// be clicked.
 
 import { corsHeaders, guardRequest, preflightResponse } from "@/lib/security";
 import { checkRateLimit, checkRateLimitKeyed, rateLimitResponse } from "@/lib/rate-limit";
@@ -206,6 +207,42 @@ export async function POST(req: Request) {
     const baseUrl = getBaseUrl(req);
     let doiSend: DoiSendState = "none";
 
+    // A claimed DOI whose mail did not go out — the send failed or an
+    // unexpected error came first — is released, so the next accept sends at
+    // once instead of waiting out the cooldown. Right after the send attempt,
+    // and again (a no-op then) on every exit.
+    let claimSettled = false;
+    const releaseUnsentClaim = async () => {
+      if (claimSettled) return;
+      claimSettled = true;
+      if (shouldReleaseDoiClaim(capture.doiEmailRequired, doiSend)) await releaseDoiClaim(capture);
+    };
+    // The marketing opt-in event, written once the DOI send is decided —
+    // before the summary, and on any exit before that point — so it says
+    // whether the DOI mail actually went out (`doiSent`, OI1 F3) or why none
+    // was due (`doiCooldown`, T2.1), and exists before the link can be clicked.
+    let optInEventWritten = false;
+    const writeOptInEvent = async () => {
+      if (optInEventWritten || !marketingConsent) return;
+      optInEventWritten = true;
+      await recordKpiEvent({
+        sessionId,
+        event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
+        data: {
+          doiStatus: capture.marketingDoiStatus,
+          source: "mo_capture_form",
+          ...(outcome ? { outcome } : {}),
+          ...doiSentField(outcome, doiSend === "sent"),
+          ...doiCooldownField(outcome, capture.doiCooldown),
+          ...(capture.doiResend ? { doiResend: true } : {}),
+          // The capture this opt-in belongs to (an id, no address): the DOI click
+          // is attributed to the opt-in that sent its mail, also across devices.
+          captureId: capture.id,
+          ...(storedTrigger ? { trigger: storedTrigger } : {}),
+        },
+      });
+    };
+
     try {
       // 1) Marketing double-opt-in confirmation email — first, before the
       // summary: the summary (an LLM call, the cart, a second send) can take
@@ -226,6 +263,7 @@ export async function POST(req: Request) {
         });
       }
       const doiEmailSent = doiSend === "sent";
+      await releaseUnsentClaim();
 
       // Report the act to the one consent (pending until the DOI link is
       // clicked; nothing goes to Shopify before that) — only once the DOI mail
@@ -236,6 +274,7 @@ export async function POST(req: Request) {
         captureId: capture.id,
         doiPending: isDoiOptInRecorded(capture.doiEmailRequired, doiSend),
       });
+      await writeOptInEvent();
 
       // 2) Transactional summary email — the requested service.
       const summary = await sendSummaryEmail({ sessionId, email, locale });
@@ -276,32 +315,8 @@ export async function POST(req: Request) {
         headers
       );
     } finally {
-      // A claimed DOI whose mail did not go out — the send failed or an
-      // unexpected error came first — is released, so the next accept sends
-      // at once instead of waiting out the cooldown.
-      if (shouldReleaseDoiClaim(capture.doiEmailRequired, doiSend)) await releaseDoiClaim(capture);
-      // The marketing opt-in event is written once the DOI send is decided —
-      // on every exit, including the 502 above and an unexpected error — so it
-      // says whether the DOI mail actually went out (`doiSent`, OI1 F3), or
-      // why none was due (`doiCooldown`, T2.1).
-      if (marketingConsent) {
-        await recordKpiEvent({
-          sessionId,
-          event: KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN,
-          data: {
-            doiStatus: capture.marketingDoiStatus,
-            source: "mo_capture_form",
-            ...(outcome ? { outcome } : {}),
-            ...doiSentField(outcome, doiSend === "sent"),
-            ...doiCooldownField(outcome, capture.doiCooldown),
-            ...(capture.doiResend ? { doiResend: true } : {}),
-            // The capture this opt-in belongs to (an id, no address): the DOI click
-            // is attributed to the opt-in that sent its mail, also across devices.
-            captureId: capture.id,
-            ...(storedTrigger ? { trigger: storedTrigger } : {}),
-          },
-        });
-      }
+      await releaseUnsentClaim();
+      await writeOptInEvent();
     }
   } catch (err) {
     reportError(err, { route: "api/capture-email" });

@@ -411,10 +411,42 @@ export async function upsertEmailCapture(
         RETURNING id, doi_token, doi_sent_at::text AS doi_claim_stamp
       `) as Array<{ id: number | string; doi_token: string; doi_claim_stamp: string }>;
       const won = claimed[0];
+      const wonClaim =
+        won && won.id != null
+          ? (() => {
+              const doiToken = String(won.doi_token);
+              const doiResend = doiToken !== freshToken;
+              return {
+                id: Number(won.id),
+                doiToken,
+                doiResend,
+                doiClaimStamp: String(won.doi_claim_stamp),
+                // A re-sent token was mailed before: a failed re-send puts its
+                // previous send time back, so the link in the inbox stays valid.
+                doiClaimRestore:
+                  doiResend && existing?.doi_token === doiToken ? (existing.doi_sent_at_text ?? null) : null,
+              };
+            })()
+          : null;
       // An unsubscribe that committed while this claim waited on the row lock
       // is not visible to the claim's own NOT EXISTS (statement snapshot):
-      // re-check the block list in a fresh statement and undo the claim.
-      if (won && won.id != null && (await isSuppressed(email, sql))) {
+      // re-check the block list in a fresh statement and undo the claim. A
+      // failed read gives the claim back instead (no mail, an earlier link
+      // keeps working) and fails the request — never a wiped link.
+      let blockedSince = false;
+      if (wonClaim) {
+        try {
+          const hit = await sql`
+            SELECT 1 FROM suppression_list WHERE email = ${email} LIMIT 1
+          `;
+          blockedSince = hit.length > 0;
+        } catch (err) {
+          reportError(err, { route: "lib/email-capture-store", phase: "upsertEmailCapture:recheck" });
+          await releaseDoiClaim(wonClaim, sql);
+          return null;
+        }
+      }
+      if (won && wonClaim && blockedSince) {
         await sql`
           UPDATE email_captures
              SET marketing_doi_status = 'none', doi_token = NULL, doi_sent_at = NULL
@@ -435,20 +467,16 @@ export async function upsertEmailCapture(
           suppressed: true,
         });
       }
-      if (won && won.id != null) {
-        const doiToken = String(won.doi_token);
-        const doiResend = doiToken !== freshToken;
+      if (wonClaim) {
         return result({
-          id: Number(won.id),
+          id: wonClaim.id,
           status: "pending",
-          doiToken,
+          doiToken: wonClaim.doiToken,
           doiEmailRequired: true,
-          doiClaimStamp: String(won.doi_claim_stamp),
-          // A re-sent token was mailed before: a failed re-send puts its
-          // previous send time back, so the link in the inbox stays valid.
-          doiClaimRestore: doiResend && existing?.doi_token === doiToken ? (existing.doi_sent_at_text ?? null) : null,
+          doiClaimStamp: wonClaim.doiClaimStamp,
+          doiClaimRestore: wonClaim.doiClaimRestore,
           doiCooldown: false,
-          doiResend,
+          doiResend: wonClaim.doiResend,
           suppressed,
         });
       }
