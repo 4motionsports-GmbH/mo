@@ -169,3 +169,36 @@ test("labels and the legacy mirror", () => {
   assert.equal(isHardBlock("erasure"), true);
   assert.equal(isHardBlock("unsubscribe"), false);
 });
+
+test("a dated shop subscribe / unsubscribe wins over Mo's local DOI expiry (C.29)", () => {
+  // expirePendingConsents reset the pending at T3; the shop still dates its
+  // consent T1 (confirmed late, consentUpdatedAt unchanged).
+  const expired = { state: "not_subscribed", level: null, at: T3, source: "mo" };
+  const sub = resolveEmailConsent(expired, { state: "subscribed", level: "confirmed_opt_in", at: T1, source: "shopify" });
+  assert.equal(sub.changed, true);
+  assert.equal(sub.outcome, "applied");
+  assert.equal(sub.next.state, "subscribed");
+  assert.equal(sub.effects.pushToShopify, false);
+  const unsub = resolveEmailConsent(expired, { state: "unsubscribed", level: null, at: T1, source: "shopify" });
+  assert.equal(unsub.changed, true);
+  assert.equal(unsub.effects.suppress, "unsubscribe");
+  // A stale shop pending still loses (it would re-expire every night).
+  assert.equal(resolveEmailConsent(expired, { state: "pending", level: null, at: T1, source: "shopify" }).outcome, "stale");
+  // An undated shop value still only fills a gap.
+  assert.equal(resolveEmailConsent(expired, { state: "subscribed", level: "single_opt_in", at: null, source: "shopify" }).changed, false);
+  // A Mo-side unsubscribe (a person's act) is not a local expiry.
+  const moOut = { state: "unsubscribed", level: null, at: T3, source: "mo" };
+  assert.equal(resolveEmailConsent(moOut, { state: "subscribed", level: "single_opt_in", at: T1, source: "shopify" }).outcome, "stale");
+});
+
+test("a newer Mo pending over a shop pending is recorded, not an echo (C.29)", () => {
+  const shopPending = { state: "pending", level: null, at: T1, source: "shopify" };
+  const d = resolveEmailConsent(shopPending, { state: "pending", level: null, at: T2, source: "mo_capture_form" });
+  assert.equal(d.changed, true);
+  assert.equal(d.outcome, "applied");
+  assert.deepEqual(d.next, { state: "pending", level: null, at: T2, source: "mo_capture_form" });
+  assert.equal(d.effects.pushToShopify, false);
+  // An older Mo pending, or a shop pending over a Mo pending, stays an echo.
+  assert.equal(resolveEmailConsent({ ...shopPending, at: T3 }, { state: "pending", level: null, at: T2, source: "mo_signin" }).outcome, "echo");
+  assert.equal(resolveEmailConsent({ state: "pending", level: null, at: T1, source: "mo_signin" }, { state: "pending", level: null, at: T2, source: "shopify" }).outcome, "echo");
+});

@@ -126,7 +126,15 @@ export async function handleConsentWebhook(payload: unknown, webhookId: string |
     const imported = await upsertMirrorCustomers([{ ...row, consent: null }], { origin });
     if (!imported) return { ok: false, action: "failed" };
     // Tombstoned, or an address erased in Mo before this Shopify account.
-    if (imported.skipped > 0) return { ok: true, action: "ignored:erased" };
+    // The payload row has no createdAt, so a NEW account reusing an erased
+    // address cannot be told apart from the erased one: after a transient
+    // read failure answer 500 — Shopify redelivers and the next read decides.
+    if (imported.skipped > 0) {
+      if (fetched.status === "timeout" || fetched.status === "throttled" || fetched.status === "error") {
+        return { ok: false, action: `deferred:erased-unverified(${fetched.status})` };
+      }
+      return { ok: true, action: "ignored:erased" };
+    }
     customerId = await customerIdForShopifyId(parsed.shopifyId);
     // Still no row (the address belongs to another row): the reconciliation imports it.
     if (!customerId) return { ok: true, action: "ignored:unknown-customer" };

@@ -126,8 +126,17 @@ export function resolveEmailConsent(current, incoming) {
   const tInc = time(inc.at);
   const tCur = time(cur.at);
 
-  // (4) Echo.
-  if (sameConsent(cur, inc)) {
+  // (4) Echo — except a newer Mo pending over a shop pending: Mo's own DOI
+  // mail went out (e.g. the shop's link had gone stale), so its act is
+  // recorded (event, surface, date) and the DOI expiry counts from it.
+  const moPendingOverShop =
+    cur.state === "pending" &&
+    inc.state === "pending" &&
+    cur.source === "shopify" &&
+    isMoSource(inc.source) &&
+    tInc !== null &&
+    (tCur === null || tInc > tCur);
+  if (sameConsent(cur, inc) && !moPendingOverShop) {
     return keep("echo", null, { ...noEffects(), markSynced: fromShopify });
   }
 
@@ -148,9 +157,15 @@ export function resolveEmailConsent(current, incoming) {
     return keep("ignored", "Bereits angemeldet — keine erneute Bestätigung nötig");
   }
 
-  // (2) Newer act wins.
+  // (2) Newer act wins. Mo's not_subscribed is never a person's act — only
+  // the DOI expiry sets it, locally — so a dated definitive shop state
+  // (subscribed / unsubscribed) wins over it whatever the dates (C.29: the
+  // shop may keep its original consentUpdatedAt after a late confirmation).
+  const localExpiry = cur.state === "not_subscribed" && isMoSource(cur.source);
   let wins;
-  if (tInc === null) {
+  if (fromShopify && localExpiry && tInc !== null && (inc.state === "subscribed" || inc.state === "unsubscribed")) {
+    wins = true;
+  } else if (tInc === null) {
     // An undated act may only fill a gap, never override a dated state.
     wins = tCur === null && cur.state === "not_subscribed";
   } else if (tCur === null) {
