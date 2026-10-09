@@ -179,6 +179,20 @@ test("a dated shop subscribe / unsubscribe wins over Mo's local DOI expiry (C.29
   assert.equal(sub.outcome, "applied");
   assert.equal(sub.next.state, "subscribed");
   assert.equal(sub.effects.pushToShopify, false);
+  // Shopify's date is older than the expiry: the state keeps it (a later shop
+  // unsubscribe dated after T1 still wins), the history event is stamped when
+  // Mo learns it (after the expiry), Shopify's day kept in the note.
+  assert.equal(sub.next.at, T1);
+  assert.ok(Date.parse(sub.eventAt) > Date.parse(T3));
+  assert.match(sub.note, new RegExp(`Shopify-Stand vom ${T1.slice(0, 10)}`));
+  const out = resolveEmailConsent(sub.next, { state: "unsubscribed", level: null, at: T2, source: "shopify" });
+  assert.equal(out.outcome, "applied");
+  // A shop act newer than the expiry keeps its own date, no event stamp, no note.
+  const T4 = new Date(Date.parse(T3) + 60_000).toISOString();
+  const newer = resolveEmailConsent(expired, { state: "subscribed", level: "single_opt_in", at: T4, source: "shopify" });
+  assert.equal(newer.next.at, T4);
+  assert.equal(newer.eventAt, undefined);
+  assert.equal(newer.note, null);
   const unsub = resolveEmailConsent(expired, { state: "unsubscribed", level: null, at: T1, source: "shopify" });
   assert.equal(unsub.changed, true);
   assert.equal(unsub.effects.suppress, "unsubscribe");

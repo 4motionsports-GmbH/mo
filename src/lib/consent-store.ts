@@ -199,13 +199,13 @@ export async function applyConsentActs(
         finalState.set(row.id, d.next);
         events.push({
           customer_id: row.id,
-          occurred_at: d.next.at,
+          occurred_at: d.eventAt ?? d.next.at,
           source: act.incoming.source,
           state: d.next.state,
           level: d.next.level,
           origin_ref: act.originRef ?? null,
           text_version: act.textVersion ?? null,
-          note: act.note ?? null,
+          note: [act.note, d.note].filter(Boolean).join(" · ") || null,
         });
       } else if (d.outcome === "blocked") {
         events.push({
