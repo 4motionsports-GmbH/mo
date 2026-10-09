@@ -100,7 +100,7 @@ Relevant columns of `email_captures` (one row per address):
 | `marketing_consent` | Marketing was ticked / accepted, or an earlier DOI of the address is still `pending` or `confirmed`. |
 | `marketing_doi_status` | `none` → `pending` → `confirmed`; back to `none` on unsubscribe, bounce or complaint. |
 | `doi_token` | Random 256-bit token in the confirmation link. |
-| `doi_sent_at` | When the current token was last mailed (a re-send after the cooldown restarts it); the link expires `MARKETING_DOI_EXPIRY_DAYS` (default 7) later. `NULL` on a `pending` row = its send failed or never ran and the claim was given back (the next accept sends at once). |
+| `doi_sent_at` | When the current token was last mailed (a re-send after the cooldown restarts it); the link expires `MARKETING_DOI_EXPIRY_DAYS` (default 7) later. A claim whose mail did not go out (failed, skipped or never ran) is given back: a re-sent link gets its previous send time back, a new token is moved to just before the cooldown — the next accept sends at once with the same token, and a mail the provider delivered despite a reported failure keeps a working link. Without a stamp a click shows the expired page. |
 | `doi_confirmed_at` | When the user clicked confirm. |
 | `consent_text_shown` | Verbatim copy the user saw (audit trail); a submit without an echo keeps the stored text. |
 | `consent_copy_version` | Which canonical copy that text is (`'v1'`…`'v5'`; `NULL` = unattested echo). Migration `0011`. |
@@ -300,19 +300,22 @@ Chat → the model calls offer_email_summary (value-triggered: after a well-rece
         │    no database or a database error → 503, nothing sent
         ├─ link the session's conversation to the customer (find-or-create)
         ├─ (A) marketing, claimed → send the DOI confirmation e-mail FIRST ► user inbox
-        │      • sent → one consent 'pending' (source mo_capture_form; local),  │
-        │        recorded before the summary                                   │
-        │      • failed or skipped → claim given back (doi_sent_at → NULL, or   │
-        │        the previous send time of a re-sent link); no consent act —    │
-        │        the next accept sends at once                                  │
-        │      • first, so no claim is held across the slow summary: a parallel│
-        │        or retried accept is never told „mail is out“ before it went   │
+        │      • sent → one consent 'pending' (source mo_capture_form;        │
+        │        local), recorded before the summary                          │
+        │      • failed or skipped → claim given back (doi_sent_at → just     │
+        │        before the cooldown, or the previous send time of a          │
+        │        re-sent link); no consent act — the next accept sends        │
+        │        at once                                                      │
+        │      • first, so no claim is held across the slow summary: a        │
+        │        parallel or retried accept is never told „mail is out“       │
+        │        before it went                                               │
         └─ (B) transactional: send the summary e-mail ─────────────────► user inbox
-               • a summary of the conversation in the shopper's language (de/en)│
-               • prefilled-cart permalink (NO discount; products: below)       │
-               • a real delivery failure → 502; the consent stays stored and a │
-                 DOI mail that went out stays valid (a retry within the        │
-                 cooldown is answered „confirmation mail is out“)              │
+               • a summary of the conversation in the shopper's language      │
+                 (de/en)                                                      │
+               • prefilled-cart permalink (NO discount; products: below)      │
+               • a real delivery failure → 502; the consent stays stored      │
+                 and a DOI mail that went out stays valid (a retry within     │
+                 the cooldown is answered „confirmation mail is out“)         │
                                                                               │
    user clicks confirm link ──────────────────────────────────────────────────┘
      → GET /api/confirm-marketing?token=…&locale=…
@@ -548,7 +551,7 @@ every failure** (`reportError`) and returns a discriminated result — failures 
 On `/api/capture-email` the DOI mail goes out before the summary; a real summary-send failure answers
 `502` (the consent is already stored and a DOI mail that went out stays valid). On all three opt-in routes a DOI-send failure is logged without dropping the
 stored `pending` opt-in: the answer is `doiEmailSent: false`, the claim is given back (`doi_sent_at` →
-`NULL`, or the previous send time of a re-sent link), and no pending consent act is written, so the next
+just before the cooldown, or the previous send time of a re-sent link — the link keeps working), and no pending consent act is written, so the next
 accept sends at once — also within the resend cooldown. When Resend isn't configured (`RESEND_API_KEY` /
 `CONTACT_FROM_EMAIL`) the helper returns a `skipped` result and logs a one-line notice without
 recipient or subject (local development), rather than faking success.
