@@ -41,7 +41,7 @@ const CONSENT_EXPERIMENT_MAX = 20_000;
 export type ConsentExperimentSummary = ReturnType<typeof summariseConsentExperiment>;
 
 export interface ConsentExperimentKpis extends ConsentExperimentSummary {
-  /** Days after eligibility in which an opt-in / confirmation counts (MARKETING_DOI_EXPIRY_DAYS). */
+  /** Days after eligibility in which an opt-in counts (MARKETING_DOI_EXPIRY_DAYS); a confirmation counts up to twice that. */
   windowDays: number;
   /** More than CONSENT_EXPERIMENT_MAX eligible sessions in the period (the latest are left out). */
   truncated: boolean;
@@ -73,6 +73,15 @@ export async function getConsentExperiment(
            AND session_id NOT LIKE 'livecheck-%'
            AND created_at >= ${range.from}::date
            AND created_at < (${range.to}::date + 1)
+           -- A session enters with its FIRST eligibility ever: one asked
+           -- before the period is not in it (otherwise arm and start would
+           -- depend on the range picked).
+           AND NOT EXISTS (
+             SELECT 1 FROM kpi_events p
+              WHERE p.session_id = kpi_events.session_id
+                AND p.event = ${KPI_CONSENT_ASK_ELIGIBLE}
+                AND p.created_at < ${range.from}::date
+           )
          GROUP BY session_id
          ORDER BY min(created_at)
          LIMIT ${CONSENT_EXPERIMENT_MAX + 1}
@@ -80,7 +89,10 @@ export async function getConsentExperiment(
         SELECT * FROM s ORDER BY at LIMIT ${CONSENT_EXPERIMENT_MAX}
       ), f AS (
         SELECT e.*,
-               e.at <= now() - make_interval(days => ${days}::int) AS window_closed,
+               -- Opt-ins count up to the expiry days after eligibility, confirmations
+               -- up to twice that (a DOI link stays valid that long after its mail), so a
+               -- late opt-in's click still counts once the window has closed.
+               e.at <= now() - make_interval(days => ${days * 2}::int) AS window_closed,
                e.at >= ${start}::date AS after_start,
                EXISTS (
                  SELECT 1 FROM kpi_events o
@@ -119,7 +131,7 @@ export async function getConsentExperiment(
                   WHERE c.session_id = e.session_id
                     AND c.event = ${KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED}
                     AND c.created_at >= e.at
-                    AND c.created_at <= e.at + make_interval(days => ${days}::int)
+                    AND c.created_at <= e.at + make_interval(days => ${days * 2}::int)
                ) AS confirmed
           FROM e
       )

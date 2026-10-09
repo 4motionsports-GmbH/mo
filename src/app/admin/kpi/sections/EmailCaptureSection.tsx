@@ -56,7 +56,8 @@ function optInHint(f: EmailCaptureFunnel): string {
   if (f.shopifyPending > 0) parts.push(`${num(f.shopifyPending)} Shop-Bestätigung unterwegs`);
   parts.push(`${num(f.alreadySubscribed)} bereits abonniert`);
   if (f.suppressed > 0) parts.push(`${num(f.suppressed)} gesperrt`);
-  return parts.join(" · ");
+  // Each bucket stays on one line (no break inside „2 Shop-Bestätigung …“).
+  return parts.map((p) => p.replace(/ /g, "\u00a0").replace(/-/g, "\u2011")).join(" · ");
 }
 
 export function EmailCaptureSection({ funnel, range }: { funnel: EmailCaptureFunnel | null; range: KpiRange }) {

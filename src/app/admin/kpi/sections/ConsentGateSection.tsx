@@ -46,11 +46,11 @@ const BY_WAY_INFO =
   "Sitzungen, nicht Events: je Sitzung zählt der letzte Stand (ein Akzeptieren mit anschließendem Wegklicken zählt einmal, als akzeptiert). „Über „Anmelden““ = im Chat angemeldet, „Über Shop-Login erkannt“ = vom Shop erkannt (App Proxy). „Opt-in (Server)“ = das vom Server gespeicherte Opt-in (email_capture_marketing_opted_in, trigger signin_optin) in derselben Sitzung.";
 
 const VARIANT_INFO =
-  "Sitzungen je Rahmen-Variante (Überschrift und Vorteile über dem Einwilligungstext) und Platzierung (Popup, nach der Anmeldung im Chat, Wertmoment). Akzeptanzrate = akzeptiert ÷ angezeigt; „akzeptiert ohne Anzeige“ ist nur ein Hinweis (Anzeige vor dem Zeitraum, älteres Widget). DOI-Quote = bestätigt ÷ verschickte DOI-Mails (bereits Abonnierte und nicht verschickte DOI-Mails zählen nicht; Opt-ins aus der Zeit, bevor der Versand festgehalten wurde, zählen als verschickt). Verglichen wird erst ab 100 Sitzungen je Zeile. Unbekannte Werte erscheinen als „unbekannt“. „Mit Gutschein-Hinweis“ = Sitzungen, deren Anzeige den Gutschein-Hinweis trug (reward im Event); Varianten mit Gutschein sollten ihn bei jeder Anzeige tragen. „Wertmoment“ = die Frage nach einer Produktempfehlung statt des Popups (Variante c).";
+  "Sitzungen je Rahmen-Variante (Überschrift und Vorteile über dem Einwilligungstext) und Platzierung (Popup, nach der Anmeldung im Chat, Wertmoment). Akzeptanzrate = akzeptiert ÷ angezeigt; „akzeptiert ohne Anzeige“ ist nur ein Hinweis (Anzeige vor dem Zeitraum, älteres Widget). DOI-Quote = bestätigt ÷ verschickte DOI-Mails (bereits Abonnierte und nicht verschickte DOI-Mails zählen nicht; Opt-ins aus der Zeit, bevor der Versand festgehalten wurde, zählen als verschickt). Verglichen wird erst ab 100 Sitzungen je Zeile. Unbekannte Werte erscheinen als „unbekannt“. „… mit Gutschein-Hinweis“ unter „Angezeigt“ = Sitzungen, deren Anzeige den Gutschein-Hinweis trug (reward im Event); Varianten mit Gutschein sollten ihn bei jeder Anzeige tragen. „Wertmoment“ = die Frage nach einer Produktempfehlung statt des Popups (Variante c).";
 
 /** @param days MARKETING_DOI_EXPIRY_DAYS (default 7) */
 const experimentInfo = (days: number) =>
-  `Vergleich nach zugeteilter Variante, nicht nach Anzeige. Grundlage sind alle angemeldeten Sitzungen, denen die Einwilligungsfrage angeboten werden durfte (echte Adresse, noch keine Entscheidung, nicht gesperrt, nicht pausiert), mit der zuerst zugeteilten Variante. Zielgröße: bestätigte Anmeldungen je berechtigter Sitzung (Bestätigung in derselben Sitzung, höchstens ${num(days)} Tage danach; Sitzungen mit offener Frist zählen noch nicht). Variante a ist die Kontrollgruppe ohne Gutschein-Hinweis. Auch Abonnent:innen aus a erhalten den Willkommenscode des Shops — der Test misst die Wirkung des Hinweises im Chat, nicht die des Gutscheins. Belastbar erst ab der vorab festgelegten Zielgröße; 95-%-Intervall des Unterschieds.`;
+  `Vergleich nach zugeteilter Variante, nicht nach Anzeige. Grundlage sind alle angemeldeten Sitzungen, denen die Einwilligungsfrage angeboten werden durfte (echte Adresse, noch keine Entscheidung, nicht gesperrt, nicht pausiert), mit der Variante ihrer ersten Berechtigung (eine Sitzung, die schon vor dem Zeitraum berechtigt war, zählt nicht). Zielgröße: bestätigte Anmeldungen je berechtigter Sitzung (Opt-in höchstens ${num(days)} Tage nach der Berechtigung, Bestätigung höchstens ${num(days * 2)} Tage danach — der Bestätigungslink gilt ab seiner Mail; Sitzungen mit offener Frist zählen noch nicht). Variante a ist die Kontrollgruppe ohne Gutschein-Hinweis. Auch Abonnent:innen aus a erhalten den Willkommenscode des Shops — der Test misst die Wirkung des Hinweises im Chat, nicht die des Gutscheins. Belastbar erst ab der vorab festgelegten Zielgröße; 95-%-Intervall des Unterschieds.`;
 
 const CODES_INFO =
   "Die Willkommenscodes verschickt heute ein Werkzeug in Shopify, nicht Mo — wie viele ausgegeben wurden, steht nur im Bericht dieser Automatisierung. „Eingelöst“ zählt Bestellungen der Bestellkopie mit einem Willkommenscode (Muster WELCOME_CODE_MATCH); ohne Muster „n/a“, keine Schätzung.";
@@ -180,7 +180,6 @@ export function ConsentGateSection({
                     <TableHead>Variante</TableHead>
                     <TableHead>Platzierung</TableHead>
                     <TableHead align="right">Angezeigt</TableHead>
-                    <TableHead align="right">Mit Gutschein-Hinweis</TableHead>
                     <TableHead align="right">Akzeptiert</TableHead>
                     <TableHead align="right">Akzeptanzrate</TableHead>
                     <TableHead align="right">Abgelehnt</TableHead>
@@ -197,10 +196,13 @@ export function ConsentGateSection({
                       <TableRow key={`${r.variant}|${r.placement}`}>
                         <TableCell className="font-medium">{r.variant}</TableCell>
                         <TableCell>{PLACEMENT_LABELS[r.placement] ?? r.placement}</TableCell>
-                        <TableCell align="right">{num(r.shown)}</TableCell>
                         <TableCell align="right">
-                          {num(r.rewardShown)}
-                          {r.rewardShown > 0 && r.shown > 0 ? ` (${ratio(r.rewardShown / r.shown)})` : ""}
+                          {num(r.shown)}
+                          {r.rewardShown > 0 && (
+                            <span className="block text-2xs text-muted-foreground">
+                              {num(r.rewardShown)} mit Gutschein-Hinweis
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell align="right">{num(r.accepted)}</TableCell>
                         <TableCell align="right">
@@ -234,7 +236,9 @@ export function ConsentGateSection({
               label="Gutscheine eingelöst"
               value={codes?.configured && codes.redeemed != null ? num(codes.redeemed) : "n/a"}
               hint={
-                !codes?.configured || codes.redeemed == null
+                codes == null
+                  ? "keine Daten (Abfrage fehlgeschlagen)"
+                  : !codes.configured || codes.redeemed == null
                   ? "kein Muster (WELCOME_CODE_MATCH)"
                   : codes.orders > 0
                     ? `${ratio(codes.redeemed / codes.orders)} der Bestellungen`

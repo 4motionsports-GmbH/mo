@@ -123,8 +123,9 @@ export const RELEASE_EFFECTS = Object.freeze({
   "consent-ask-suppressed": { measurement: ["consent.popupShown", "consent.popupRate"], product: [] },
   "attribution-threads-maillinks": { measurement: ATTRIBUTION, product: [] },
   // Dormant reward round: only H-2 (no second ask in another tab within 24 h
-  // of a yes) and H-1 (no marker renewal after a broken answer) act today.
-  "widget-reward-dormant": { measurement: ["consent.popupShown", "consent.popupRate", ...ATTRIBUTION], product: [] },
+  // of a yes) acts measurably today. H-1 (no marker renewal after a broken
+  // answer with partial content) is too rare to block revenue comparisons.
+  "widget-reward-dormant": { measurement: ["consent.popupShown", "consent.popupRate"], product: [] },
 });
 
 /** What flipping a switch changes (switch keys of business-snapshot snapshotSwitches). */
