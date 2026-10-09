@@ -257,6 +257,9 @@ export async function POST(req: Request) {
         ...doiSentField(capture.optInOutcome, doiEmailSent),
         ...doiCooldownField(capture.optInOutcome, capture.doiCooldown),
         ...(capture.doiResend ? { doiResend: true } : {}),
+        // The capture this opt-in belongs to (an id, no address): the DOI click
+        // is attributed to the opt-in that sent its mail, also across devices.
+        captureId: capture.id,
       },
     });
 

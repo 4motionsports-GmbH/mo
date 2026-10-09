@@ -30,6 +30,7 @@ import { renderResultPage } from "@/lib/result-page";
 import {
   KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED,
   latestDoiOptIn,
+  latestDoiOptInForCapture,
   recordKpiEvent,
 } from "@/lib/kpi-events";
 
@@ -69,16 +70,24 @@ export async function GET(req: Request) {
       if (!result.alreadyConfirmed) {
         try {
           const pendingSource = await recordDoiConfirmed({ email: result.email, captureId: result.captureId });
-          const optIn = await latestDoiOptIn(result.sessionId ?? null);
+          // The opt-in that mailed this link (by capture id — a second
+          // device's accept within the cooldown moves the row's session_id);
+          // older opt-ins without a capture id: the row's session as before.
+          const byCapture = await latestDoiOptInForCapture(result.captureId);
+          const optIn = byCapture ?? (await latestDoiOptIn(result.sessionId ?? null));
+          const sessionId = byCapture?.sessionId ?? result.sessionId ?? null;
           const placement = normalizePlacement(optIn?.placement);
           const variant = optIn?.variant && SIGNIN_VARIANT_ID_RE.test(optIn.variant) ? optIn.variant : null;
           await recordKpiEvent({
-            sessionId: result.sessionId,
+            sessionId,
             event: KPI_EMAIL_CAPTURE_MARKETING_CONFIRMED,
             data: {
               source: confirmationSource({ sessionSource: optIn?.source ?? null, pendingSource }),
               ...(placement ? { placement } : {}),
               ...(variant ? { variant } : {}),
+              // The confirmed capture (an id, no address): verify:live counts
+              // confirmations per address, not per session.
+              captureId: result.captureId,
             },
           });
         } catch (err) {

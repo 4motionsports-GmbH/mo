@@ -26,7 +26,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getSql, type Sql } from "./db";
 import { isValidEmail } from "./capture-validation.mjs";
 import { decideCaptureDoi, recordDoiCooldown } from "./email-capture-core.mjs";
-import { parseDoiResendCooldownMinutes } from "./doi-cooldown.mjs";
+import { effectiveDoiResendCooldownMinutes, parseDoiResendCooldownMinutes } from "./doi-cooldown.mjs";
 import { optInOutcome } from "./capture-funnel.mjs";
 import { normalizeLocale } from "./locale.mjs";
 import type { Locale } from "./locale";
@@ -70,7 +70,12 @@ export function doiExpiryDays(): number {
  * parallel accepts collapse into one mail (doi-cooldown.mjs).
  */
 export function doiResendCooldownMinutes(): number {
-  return parseDoiResendCooldownMinutes(process.env.MARKETING_DOI_RESEND_COOLDOWN_MINUTES);
+  // Never as long as the link's life: an expired link is never answered as
+  // „a valid mail is out“.
+  return effectiveDoiResendCooldownMinutes(
+    parseDoiResendCooldownMinutes(process.env.MARKETING_DOI_RESEND_COOLDOWN_MINUTES),
+    doiExpiryDays()
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +219,8 @@ export interface UpsertCaptureResult {
   doiClaimStamp: string | null;
   /**
    * What releaseDoiClaim puts back into doi_sent_at: the previous send time
-   * of a re-sent token (its earlier link stays valid), null for a new token.
+   * of a re-sent token (its earlier link stays valid); null for a new token
+   * (moved to just before the cooldown instead).
    */
   doiClaimRestore: string | null;
   /**
@@ -405,6 +411,30 @@ export async function upsertEmailCapture(
         RETURNING id, doi_token, doi_sent_at::text AS doi_claim_stamp
       `) as Array<{ id: number | string; doi_token: string; doi_claim_stamp: string }>;
       const won = claimed[0];
+      // An unsubscribe that committed while this claim waited on the row lock
+      // is not visible to the claim's own NOT EXISTS (statement snapshot):
+      // re-check the block list in a fresh statement and undo the claim.
+      if (won && won.id != null && (await isSuppressed(email, sql))) {
+        await sql`
+          UPDATE email_captures
+             SET marketing_doi_status = 'none', doi_token = NULL, doi_sent_at = NULL
+           WHERE id = ${won.id}
+             AND doi_token = ${String(won.doi_token)}
+             AND marketing_doi_status = 'pending'
+             AND doi_sent_at = ${String(won.doi_claim_stamp)}::timestamptz
+        `;
+        return result({
+          id: Number(won.id),
+          status: "none",
+          doiToken: null,
+          doiEmailRequired: false,
+          doiClaimStamp: null,
+          doiClaimRestore: null,
+          doiCooldown: false,
+          doiResend: false,
+          suppressed: true,
+        });
+      }
       if (won && won.id != null) {
         const doiToken = String(won.doi_token);
         const doiResend = doiToken !== freshToken;
@@ -513,10 +543,11 @@ export async function upsertEmailCapture(
 
 /**
  * Undo a DOI claim whose mail did not go out (the send failed, or the request
- * ended before it ran): doi_sent_at goes back to what the claim replaced —
- * NULL for a new token (the next accept sends at once, also within the
- * cooldown), the previous send time for a re-sent token (its earlier mail's
- * link stays valid). Guarded by id + token + the claim's exact stamp, so a
+ * ended before it ran): a new token's doi_sent_at moves to just before the
+ * cooldown (the next accept sends at once — the same token —, and a mail the
+ * provider delivered despite a reported failure keeps a working link); a
+ * re-sent token gets its previous send time back (its earlier mail's link
+ * stays valid). Guarded by id + token + the claim's exact stamp, so a
  * late release after a newer claim is a no-op. Fail-soft: false on no-op, no
  * database or an error.
  */
@@ -526,9 +557,17 @@ export async function releaseDoiClaim(
 ): Promise<boolean> {
   if (!sql || !claim.doiToken || !claim.doiClaimStamp) return false;
   try {
+    // A re-sent token gets its previous send time back. A new token is moved
+    // to just before the cooldown, not cleared: the next accept sends at once
+    // (same token), and a mail the provider delivered despite reporting a
+    // failure keeps a working link.
+    const cooldownMinutes = doiResendCooldownMinutes();
     const rows = await sql`
       UPDATE email_captures
-         SET doi_sent_at = ${claim.doiClaimRestore}::timestamptz
+         SET doi_sent_at = COALESCE(
+               ${claim.doiClaimRestore}::timestamptz,
+               ${claim.doiClaimStamp}::timestamptz - make_interval(mins => ${cooldownMinutes}) - interval '1 second'
+             )
        WHERE id = ${claim.id}
          AND doi_token = ${claim.doiToken}
          AND marketing_doi_status = 'pending'
@@ -567,8 +606,8 @@ export type ConfirmResult =
  * the KPI. A click on an already confirmed token — earlier or in parallel —
  * answers ok with alreadyConfirmed=true. A token whose address has withdrawn
  * since (status 'none') or is suppressed → not_found, so an old link never
- * re-subscribes. Tokens older than the expiry window (by doi_sent_at; none =
- * a released claim) → expired. No database or a failed statement →
+ * re-subscribes. Tokens older than the expiry window (by doi_sent_at; none →
+ * expired, from claims released before 2026-10-09) → expired. No database or a failed statement →
  * unavailable.
  */
 export async function confirmMarketingByToken(
@@ -602,7 +641,7 @@ export async function confirmMarketingByToken(
     // Withdrawn since the mail (unsubscribe keeps the token with status none).
     if (row.marketing_doi_status !== "pending") return { ok: false, reason: "not_found" };
 
-    // Expiry by doi_sent_at (no stamp = a released claim → expired).
+    // Expiry by doi_sent_at (no stamp — a claim released before 2026-10-09 → expired).
     const sentAt = row.doi_sent_at == null ? NaN : new Date(row.doi_sent_at).getTime();
     const ageMs = Number.isFinite(sentAt) ? Date.now() - sentAt : Infinity;
     if (ageMs > doiExpiryDays() * 86_400_000) {

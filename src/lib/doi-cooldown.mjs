@@ -21,3 +21,17 @@ export function parseDoiResendCooldownMinutes(raw) {
   const n = Number(text);
   return n >= 1 && n <= MAX_DOI_RESEND_COOLDOWN_MINUTES ? n : DEFAULT_DOI_RESEND_COOLDOWN_MINUTES;
 }
+
+/**
+ * The cooldown actually applied: never as long as the link's life, so a link
+ * that has expired is never answered as „a valid mail is out“ (at most the
+ * expiry minus one minute, at least 1).
+ * @param {number} cooldownMinutes
+ * @param {number} expiryDays
+ * @returns {number}
+ */
+export function effectiveDoiResendCooldownMinutes(cooldownMinutes, expiryDays) {
+  const cooldown = Number.isFinite(cooldownMinutes) && cooldownMinutes >= 1 ? Math.floor(cooldownMinutes) : DEFAULT_DOI_RESEND_COOLDOWN_MINUTES;
+  const lifeMinutes = Number.isFinite(expiryDays) && expiryDays > 0 ? Math.floor(expiryDays * 1440) : 7 * 1440;
+  return Math.max(1, Math.min(cooldown, lifeMinutes - 1));
+}

@@ -7,7 +7,7 @@
 // and the database clock, and is authoritative when requests race (OPTIN_REWARD
 // T2.1/T2.2). Change both together.
 
-import { DEFAULT_DOI_RESEND_COOLDOWN_MINUTES } from "./doi-cooldown.mjs";
+import { DEFAULT_DOI_RESEND_COOLDOWN_MINUTES, effectiveDoiResendCooldownMinutes } from "./doi-cooldown.mjs";
 
 /** MARKETING_DOI_EXPIRY_DAYS default (email-capture-store.ts → doiExpiryDays). */
 export const DEFAULT_DOI_EXPIRY_DAYS = 7;
@@ -27,8 +27,9 @@ function ageMs(iso, now) {
 
 /**
  * A pending DOI whose mail went out less than `cooldownMs` ago — a valid link
- * is in the inbox, so another opt-in sends none. A released claim (sentAt
- * null: its send failed or never ran) is never in the cooldown.
+ * is in the inbox, so another opt-in sends none. A released claim (its send
+ * failed or never ran: sentAt moved to just before the cooldown, or null from
+ * before 2026-10-09) is never in the cooldown.
  * @param {ExistingDoi | null | undefined} existing
  * @param {string} now
  * @param {number} cooldownMs
@@ -91,8 +92,12 @@ export function decideCaptureDoi(input) {
   const ex = input.existing ?? null;
   const confirmed = ex?.status === "confirmed";
   const pending = ex?.status === "pending";
-  const cooldownMs = (input.cooldownMinutes ?? DEFAULT_DOI_RESEND_COOLDOWN_MINUTES) * 60_000;
-  const expiryMs = (input.expiryDays ?? DEFAULT_DOI_EXPIRY_DAYS) * 86_400_000;
+  const expiryDays = input.expiryDays ?? DEFAULT_DOI_EXPIRY_DAYS;
+  const expiryMs = expiryDays * 86_400_000;
+  // Never as long as the link's life (doi-cooldown.mjs; the store passes the
+  // same clamped value to its SQL).
+  const cooldownMs =
+    effectiveDoiResendCooldownMinutes(input.cooldownMinutes ?? DEFAULT_DOI_RESEND_COOLDOWN_MINUTES, expiryDays) * 60_000;
   const base = { doiCooldown: false, doiResend: false };
   /** @param {DoiStatus} status */
   const keep = (status) => ({

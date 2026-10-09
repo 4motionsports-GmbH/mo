@@ -20,8 +20,9 @@
 // Defensive: an email-send failure is logged AND surfaced in the response
 // (never silently lost). The summary send failing returns 502; the DOI send
 // failing is reported per-channel without losing the (successful) capture.
-// A DOI claim whose mail did not go out (failed, or the 502 came first) is
-// released, so the next accept sends at once. The marketing opt-in KPI event
+// The DOI mail goes out before the summary; a claim whose mail did not go out
+// (failed, skipped, or an error before the send) is released, so the next
+// accept sends at once. The marketing opt-in KPI event
 // is written after the send attempt (finally), so it records whether the DOI
 // mail went out (OI1 F3).
 
@@ -206,26 +207,15 @@ export async function POST(req: Request) {
     let doiSend: DoiSendState = "none";
 
     try {
-      // 1) Transactional summary email — send immediately (the requested service).
-      const summary = await sendSummaryEmail({ sessionId, email, locale });
-      // `skipped` means Resend isn't configured (local dev) — not a real failure.
-      const summarySkipped = summary.result.ok === false && summary.result.skipped;
-      if (!summary.sent && !summarySkipped) {
-        // A real delivery failure: surface it. The consent is already stored;
-        // a DOI claim is released below (its mail never ran).
-        return errorResponse(
-          "upstream_unavailable",
-          apiMessage("summary_delivery_failed", locale),
-          502,
-          headers
-        );
-      }
-
-      // 2) Marketing double-opt-in confirmation email — only when this request
-      // claimed it (none within the cooldown after an earlier DOI mail, for a
-      // confirmed / subscribed / suppressed address, or when the shop's own
-      // confirmation mail is out). A failed send is reported, never fails the
-      // request (the summary already went), and its claim is released.
+      // 1) Marketing double-opt-in confirmation email — first, before the
+      // summary: the summary (an LLM call, the cart, a second send) can take
+      // long, and a claim held across it would answer every parallel or
+      // retried accept „confirmation mail is out“ before any mail went (and,
+      // if the function were cut off, for the whole cooldown). Only when this
+      // request claimed it (none within the cooldown after an earlier DOI
+      // mail, for a confirmed / subscribed / suppressed address, or when the
+      // shop's own confirmation mail is out). A failed send is reported,
+      // never fails the request, and its claim is released below.
       if (capture.doiEmailRequired && capture.doiToken) {
         doiSend = await sendDoiMail({
           email,
@@ -239,13 +229,29 @@ export async function POST(req: Request) {
 
       // Report the act to the one consent (pending until the DOI link is
       // clicked; nothing goes to Shopify before that) — only once the DOI mail
-      // went out.
+      // went out, and before the summary, so a summary failure cannot lose it.
       await recordMoOptIn({
         email,
         surface: "mo_capture_form",
         captureId: capture.id,
         doiPending: isDoiOptInRecorded(capture.doiEmailRequired, doiSend),
       });
+
+      // 2) Transactional summary email — the requested service.
+      const summary = await sendSummaryEmail({ sessionId, email, locale });
+      // `skipped` means Resend isn't configured (local dev) — not a real failure.
+      const summarySkipped = summary.result.ok === false && summary.result.skipped;
+      if (!summary.sent && !summarySkipped) {
+        // A real delivery failure: surface it. The consent is stored and a
+        // DOI mail that went out stays valid (a retry within the cooldown is
+        // answered „confirmation mail is out“).
+        return errorResponse(
+          "upstream_unavailable",
+          apiMessage("summary_delivery_failed", locale),
+          502,
+          headers
+        );
+      }
 
       return okJson(
         {
@@ -270,9 +276,9 @@ export async function POST(req: Request) {
         headers
       );
     } finally {
-      // A claimed DOI whose mail did not go out — the send failed, the 502
-      // above came first, or an unexpected error — is released, so the next
-      // accept sends at once instead of waiting out the cooldown.
+      // A claimed DOI whose mail did not go out — the send failed or an
+      // unexpected error came first — is released, so the next accept sends
+      // at once instead of waiting out the cooldown.
       if (shouldReleaseDoiClaim(capture.doiEmailRequired, doiSend)) await releaseDoiClaim(capture);
       // The marketing opt-in event is written once the DOI send is decided —
       // on every exit, including the 502 above and an unexpected error — so it
@@ -289,6 +295,9 @@ export async function POST(req: Request) {
             ...doiSentField(outcome, doiSend === "sent"),
             ...doiCooldownField(outcome, capture.doiCooldown),
             ...(capture.doiResend ? { doiResend: true } : {}),
+            // The capture this opt-in belongs to (an id, no address): the DOI click
+            // is attributed to the opt-in that sent its mail, also across devices.
+            captureId: capture.id,
             ...(storedTrigger ? { trigger: storedTrigger } : {}),
           },
         });

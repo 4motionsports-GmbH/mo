@@ -205,6 +205,48 @@ export async function latestDoiOptIn(sessionId: string | null): Promise<LatestDo
   }
 }
 
+/**
+ * The latest opt-in of a CAPTURE (email_captures.id, carried as `captureId`
+ * on the opt-in event since 2026-10-09) that sent a DOI mail, with its
+ * session: a DOI click is attributed to the opt-in that mailed the link —
+ * not to whichever session last touched the capture row (a second device's
+ * accept within the resend cooldown overwrites email_captures.session_id).
+ * Null for older opt-ins without captureId, no DB or an error.
+ */
+export async function latestDoiOptInForCapture(
+  captureId: number | null | undefined
+): Promise<(LatestDoiOptIn & { sessionId: string | null }) | null> {
+  if (captureId == null || !Number.isInteger(captureId) || captureId <= 0) return null;
+  const sql = getSql();
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT session_id, COALESCE(data->>'source', '') AS source, COALESCE(data->>'trigger', '') AS trigger,
+             data->>'placement' AS placement, data->>'variant' AS variant
+        FROM kpi_events
+       WHERE event = ${KPI_EMAIL_CAPTURE_MARKETING_OPTED_IN}
+         AND created_at >= now() - interval '60 days'
+         AND data->>'captureId' = ${String(captureId)}
+         AND data->>'outcome' = 'doi_required'
+         AND COALESCE(data->>'doiSent', 'true') <> 'false'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+    `) as Array<{ session_id: string | null; source: string; trigger: string; placement: string | null; variant: string | null }>;
+    const r = rows[0];
+    return r
+      ? {
+          sessionId: r.session_id ?? null,
+          source: eventSource(r.source, r.trigger),
+          placement: r.placement || null,
+          variant: r.variant || null,
+        }
+      : null;
+  } catch (err) {
+    reportError(err, { route: "lib/kpi-events", phase: "latestDoiOptInForCapture" });
+    return null;
+  }
+}
+
 /** The source of the session's latest DOI opt-in (see latestDoiOptIn). */
 export async function latestDoiOptInSource(sessionId: string | null): Promise<string | null> {
   return (await latestDoiOptIn(sessionId))?.source ?? null;
