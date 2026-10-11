@@ -4,6 +4,22 @@
 // full sync — the nightly reconcile or the import itself — for 36 hours.
 
 const DAY_MS = 86_400_000;
+/** No webhook for this long (with the sync on) = the subscriptions or their signature are broken. */
+export const WEBHOOK_QUIET_MS = 2 * DAY_MS;
+
+/**
+ * True when Shopify webhooks have been arriving before but none for more than
+ * two days — the shop has orders and customer changes every day, so that is
+ * an outage (subscriptions gone, or the signature no longer verifies), not a
+ * quiet shop. Before the first webhook ever there is nothing to compare.
+ * @param {string | Date | null | undefined} lastWebhookAt newest shopify_webhook_events.received_at
+ * @param {number} [now]
+ */
+export function isWebhookQuiet(lastWebhookAt, now = Date.now()) {
+  if (lastWebhookAt == null) return false;
+  const t = new Date(lastWebhookAt).getTime();
+  return Number.isFinite(t) && now - t > WEBHOOK_QUIET_MS;
+}
 
 /**
  * @param {{ importDone: boolean, lastImportAt: string | null, lastReconcileAt: string | null,
@@ -17,8 +33,8 @@ export function describeSyncProblems(health, deadOutbox, opts) {
   const out = [];
   if (opts.syncEnabled && health) {
     if (!health.importDone) out.push("Der erste Import des Shopify-Kundenstamms steht noch aus.");
-    if (health.lastWebhookAt && now - new Date(health.lastWebhookAt).getTime() > 2 * DAY_MS) {
-      out.push("Seit über zwei Tagen kam kein Shopify-Webhook an.");
+    if (isWebhookQuiet(health.lastWebhookAt, now)) {
+      out.push("Seit über zwei Tagen kam kein Shopify-Webhook an — neue Bestellungen werden Mo nicht zugeordnet.");
     }
     // The import is a full sync too: right after it no reconcile has run yet,
     // and that is no problem until the first night has passed.
