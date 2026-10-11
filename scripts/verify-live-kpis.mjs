@@ -61,6 +61,7 @@ import {
   parseDoiResendCooldownMinutes,
 } from "../src/lib/doi-cooldown.mjs";
 import { c29Verdict, consentWebhookVerdict, welcomeVerdict } from "../src/lib/once-guarantee.mjs";
+import { isWebhookQuiet } from "../src/lib/shopify-sync-health.mjs";
 import { customerGid, mapShopifyConsent } from "../src/lib/shopify-customer-map.mjs";
 
 if (process.env.NEON_FETCH_ENDPOINT) neonConfig.fetchEndpoint = process.env.NEON_FETCH_ENDPOINT;
@@ -177,6 +178,17 @@ const head = (t) => console.log(`\n=== ${t} ===`);
 const table = (rows) => (rows.length ? console.table(rows) : console.log("  (keine Zeilen)"));
 
 console.log(`Live-Check ab ${since}${SINCE_DAY.test(since) ? " (Europe/Berlin)" : ""}`);
+// Webhook health first: without them no order is attributed to Mo and a shop
+// consent arrives only with the nightly reconcile (C.29 checks then say little).
+const lastWebhookAt = (await sql.query(`SELECT max(received_at) AS at FROM shopify_webhook_events`, []))[0]?.at ?? null;
+const webhooksQuiet = isWebhookQuiet(lastWebhookAt);
+if (webhooksQuiet) {
+  console.log(
+    `⚑ Seit ${new Date(lastWebhookAt).toISOString()} kam kein Shopify-Webhook an (Bestellungen, Kunden, Einwilligung) — ` +
+      "Bestellungen werden Mo nicht zugeordnet. Prüfen: npm run shopify:webhooks (fehlende mit --apply); sind alle da: " +
+      "Vercel-Logs von /api/webhooks/shopify (401 = SHOPIFY_CLIENT_SECRET passt nicht)."
+  );
+}
 
 // ---------------------------------------------------------------------------
 head("1 · Anmeldung: Kette started → succeeded → return → linked");
@@ -986,6 +998,13 @@ const hooks = await q(
 );
 const hookKind = (key) =>
   hooks.filter((h) => consentWebhookVerdict(h.outcome).key === key).reduce((s, h) => s + h.events, 0);
+if (webhooksQuiet) {
+  onceFlags += 1;
+  console.log(
+    `10e · ⚑ keine Webhooks seit ${new Date(lastWebhookAt).toISOString()} (siehe ganz oben) — eine Shop-Einwilligung ` +
+      "kommt nur mit dem nächtlichen Abgleich an; erst die Abonnements reparieren, dann diesen Abschnitt neu lesen."
+  );
+}
 console.log(
   `10e · C.29 — Kunden-Webhooks: Shop-Einwilligung verloren (ignored:unknown-customer) ${flagged(hookKind("lost"))}; ` +
     `beim Webhook nachgeladen (…:imported…) ${hookKind("imported")}; gleichzeitige Anlage aufgelöst (raced) ${hookKind("raced")}; ` +
@@ -1052,7 +1071,45 @@ console.log(
     `max. ${sample}): ${c29.length}, davon mit Mo-DOI-Mail ${c29.filter((r) => r.mo_doi_mail).length}` +
     (withShopify ? "" : " — den Shopify-Stand liest --shopify")
 );
-table(c29.slice(0, 25).map((r) => ({ kunde: r.kunde, mo_stand: r.mo_stand, mo_doi_mail: r.mo_doi_mail })));
+// Only the candidates with a Mo signal are worth a look by id; the rest are new
+// shop customers without a sign-up as a rule — the live read (--shopify) checks them.
+const c29Signal = c29.filter((r) => r.mo_doi_mail || r.mo_stand === "pending");
+table(c29Signal.slice(0, 25).map((r) => ({ kunde: r.kunde, mo_stand: r.mo_stand, mo_doi_mail: r.mo_doi_mail })));
+if (c29.length > c29Signal.length) {
+  console.log(
+    `  weitere ${c29.length - c29Signal.length} ohne Mo-Signal (neu angelegt, in Mo nicht angemeldet) — in der Regel ohne ` +
+      `Anmeldung im Shop${withShopify ? "; der Live-Abgleich unten prüft sie" : "; mit --shopify live geprüft"}.`
+  );
+}
+
+// 10f — old DOI links (dossier § 22.1, F-46 f): a Mo DOI confirmation after an
+// unsubscribe, with no new opt-in in between. Before the T2 deploy a link up
+// to 7 days old re-subscribed such a person; since then it shows the invalid
+// page, so a case after --since is a finding. consent_events exist since
+// 01.10.2026; erased people are not in it. Customer ids only.
+const oldLinks = await q(
+  `SELECT s.customer_id::text AS kunde, u.source AS abgemeldet_ueber, u.occurred_at AS abgemeldet_am,
+          s.occurred_at AS bestaetigt_am, s.occurred_at >= ${SINCE} AS im_zeitraum
+     FROM consent_events s
+     JOIN LATERAL (SELECT e.source, e.occurred_at FROM consent_events e
+                    WHERE e.customer_id = s.customer_id AND e.state = 'unsubscribed'
+                      AND e.occurred_at < s.occurred_at
+                    ORDER BY e.occurred_at DESC LIMIT 1) u ON true
+    WHERE s.source IN ('mo', 'mo_capture_form', 'mo_chat_gate', 'mo_signin')
+      AND s.state = 'subscribed'
+      AND (s.origin_ref = 'doi' OR s.origin_ref LIKE 'email_capture:%')
+      AND NOT EXISTS (SELECT 1 FROM consent_events p
+                       WHERE p.customer_id = s.customer_id AND p.state IN ('pending', 'subscribed')
+                         AND p.occurred_at > u.occurred_at AND p.occurred_at < s.occurred_at)
+    ORDER BY s.occurred_at`
+);
+const oldLinksInRange = oldLinks.filter((r) => r.im_zeitraum).length;
+console.log(
+  `10f · Alte Bestätigungslinks nach einer Abmeldung (Wiederanmeldung ohne neues Opt-in, seit 01.10.): ${oldLinks.length} ` +
+    `insgesamt, davon im Zeitraum ${flagged(oldLinksInRange)} (ab dem T2-Deploy erwartet 0; die Zahl vor dem Deploy ` +
+    `gehört in das Dossier § 22.1 — 0 = „keine Fälle“)`
+);
+table(oldLinks.slice(0, 25).map(({ im_zeitraum, ...r }) => ({ ...r, im_zeitraum: im_zeitraum ? "ja" : "" })));
 
 /**
  * Read-only Admin API access with client credentials (as diagnose-address.mjs).

@@ -348,3 +348,14 @@ test("a discount titled with its code never prints the code in clear (unless --s
   assert.equal(maskCodesIn("Code a.b+c gilt", ["a.b+c"]), "Code a.b+•••(5) gilt".replace("a.b+•••(5)", maskCode("a.b+c")));
   assert.equal(maskCodesIn(null, ["X"]), null);
 });
+
+test("describe: a code looked up by name is masked in the texts even beyond the first five codes", () => {
+  const d = describeDiscountNode(
+    node(basic({ title: "Willkommen ZZTOP12345678", summary: "ZZTOP12345678: 5 % auf alles", codes: { nodes: [{ code: "AAAA00000000" }] } })),
+    { knownCodes: ["ZZTOP12345678"] }
+  );
+  assert.ok(!JSON.stringify(d).includes("ZZTOP12345678"));
+  assert.match(d.title, /ZZTO•••\(13\)/);
+  const shown = describeDiscountNode(node(basic({ title: "Willkommen ZZTOP12345678" })), { knownCodes: ["ZZTOP12345678"], showCodes: true });
+  assert.equal(shown.title, "Willkommen ZZTOP12345678");
+});

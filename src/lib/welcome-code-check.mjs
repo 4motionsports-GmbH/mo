@@ -298,7 +298,7 @@ function describeCombines(cw) {
  * Flatten one `discountNodes` / `discountNode` node (any code discount type)
  * into what the operator compares against the advertised terms.
  * @param {any} node  { id, discount: {...}, events?: { nodes } }
- * @param {{ showCodes?: boolean }} [opts]
+ * @param {{ showCodes?: boolean, knownCodes?: string[] }} [opts]  knownCodes: further codes of this discount to mask in its texts (one looked up by code may be beyond the first five)
  * @returns {DiscountDesc & Record<string, any>}
  */
 export function describeDiscountNode(node, opts = {}) {
@@ -313,7 +313,7 @@ export function describeDiscountNode(node, opts = {}) {
   const rawTitle = String(d.title ?? "");
   // Codes never in clear (unless --show-codes): also not via the title, the
   // summary, the tags or the event texts, which usually repeat the code.
-  const allCodes = codes.map((c) => c.code);
+  const allCodes = [...codes.map((c) => c.code), ...(opts.knownCodes ?? []).map(String)];
   const mask = (text) => maskCodesIn(text, allCodes, opts.showCodes);
   const percent = percentOf(d.customerGets);
   return {
