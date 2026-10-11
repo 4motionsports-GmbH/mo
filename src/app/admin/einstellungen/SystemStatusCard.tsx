@@ -111,6 +111,21 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
       info: "Welche Rahmen-Varianten (Überschrift und Vorteile über dem Einwilligungstext) das Einwilligungs-Popup nach der Anmeldung zeigt — nur freigegebene. Mehr als eine aktive Variante ist ein A/B-Test, je Sitzung fest zugeteilt; der Einwilligungstext selbst ändert sich nie. Vergleich unter KPIs → „Einwilligung nach der Anmeldung“.",
     },
     {
+      label: "Willkommensgutschein",
+      env: "CONSENT_REWARD_ENABLED · CONSENT_REWARD_TERMS_URL",
+      on: f.consentReward,
+      value: f.consentRewardTermsLink ? "An · mit Link „Bedingungen“" : "An · ohne Link „Bedingungen“",
+      states: onOff,
+      info: "Der Gutschein für die erste Newsletter-Anmeldung ist live: Die Varianten b und c der Einwilligungsfrage zeigen den Hinweis mit den Bedingungen, Mo nennt ihn auf Frage wörtlich so, und die Seite nach dem Bestätigungslink sagt, dass er per E-Mail kommt. Nur einschalten, wenn die Willkommensgutscheine genau so verschickt werden. Aus: kein Hinweis, Mo verspricht und verneint nichts.",
+    },
+    {
+      label: "Einwilligungsfrage nach einer Empfehlung",
+      env: "CONSENT_VALUE_MOMENT_ENABLED",
+      on: f.consentValueMoment && f.consentReward && f.consentSigninVariants.includes("c"),
+      states: onOff,
+      info: "Variante c fragt angemeldete Kund:innen erst, nachdem Mo ein Produkt gezeigt, verglichen oder in den Warenkorb gelegt hat („Wertmoment“), statt im Popup nach der ersten Nachricht. Wirkt nur zusammen mit dem Willkommensgutschein und wenn Variante c aktiv ist.",
+    },
+    {
       label: "Pingen-Umgebung",
       env: "PINGEN_STAGING",
       on: !f.pingenStaging,

@@ -13,7 +13,7 @@
 
 The widget renders consent text **served by the backend** and never hard-codes it: the served
 `consentTextShown` is the Art. 7 audit record, and a hard-coded snapshot would silently drift from
-what the backend stores. One copy version (`v5`) spans every surface; the widget does not read
+what the backend stores. One copy version (`v6`) spans every surface; the widget does not read
 `version`.
 
 | Surface | Who sees it | E-mail field | Mechanic | Copy | Submit |
@@ -66,6 +66,11 @@ then sends no second mail. The same text fits; no widget change.
   never in widget-authored text. No dark patterns: no countdowns, no fake urgency, no concrete
   discount amount. Framing is static per locale (no placeholders, nothing about the visitor's
   behaviour). Neither is part of `consentTextShown`.
+- **The one exception: the served welcome-voucher block** (copy v6, 2026-10-11; `reward` /
+  `valueMoment` on `surface=signin`, API_CONTRACT §7.4). It may name the voucher amount and its
+  conditions — exactly as served, only on a copy with `lawyerApproved: true` (on `/en` also `enLegalReviewed: true`).
+  The headline and the bullets keep the rule above. Like them it is framing, never part of
+  `consentTextShown`.
 - **Show the imprint + privacy links** (`imprintUrl`, `privacyUrl`) next to the consent block.
 - **Fail closed.** Render a surface only when its served copy loaded and is valid: its labels
   (`marketingLabel`; the capture form also `transactionalLabel`) and `consentTextShown` are
@@ -104,11 +109,22 @@ signed in, so the backend holds their verified address.
 - **Request:** `GET {BASE_URL}/api/consent-copy?surface=signin&locale=de|en` with only the
   `x-ms-session` header (no shared secret; origin allow-list). Add no other request header — the
   backend's CORS allow-list is fixed (API_CONTRACT §0). Payload: API_CONTRACT §7.4.
-- **Render, in this order:** the `headline` (framing); the `benefits` list (framing, below);
-  the `marketingLabel` (the consent text, fully visible); the `consentFooter`; the imprint and
-  privacy links (`imprintUrl`, `privacyUrl`); then the accept „Ja, Angebote aktivieren“ and an
-  equally reachable decline. Keep `consentTextShown` and `variant` for the submit (§3.2).
-  `version`, `locale` and `enLegalReviewed` are not rendered.
+- **Render, in this order:** (on the value-moment card only: `valueMoment.lead`); the
+  `reward.badge`; the `headline` (framing); the `benefits` list (framing, below); the `reward.terms`
+  with the link „Bedingungen“ to `reward.termsUrl`; the `marketingLabel` (the consent text, fully
+  visible); the `consentFooter`; the imprint and privacy links (`imprintUrl`, `privacyUrl`); then the
+  accept „Ja, Angebote aktivieren“ and an equally reachable decline. Nothing widget-authored sits
+  between the headline and the `marketingLabel`. Keep `consentTextShown` and `variant` for the submit
+  (§3.2). `version`, `locale` and `enLegalReviewed` are not rendered.
+- **`reward` — all or nothing** (copy v6, optional): render badge and terms only when both are
+  non-empty strings within their limits (badge ≤ 60, terms ≤ 300) and the copy has
+  `lawyerApproved: true`; on `/en` also `enLegalReviewed: true`. Drop an invalid `termsUrl`
+  (`safeHref`), `teaser` (≤ 160) or `afterAccept` (≤ 200) on its own. `afterAccept` goes under the
+  success text after an accept answered `pending` or `other` (not `already`) — the backend does **not**
+  serve it, because `other` includes the neutral `none` where no mail goes out; serving it needs a widget
+  that shows it only for `pending` with `doiEmailSent: true`. `teaser` (+ terms + link)
+  belongs to the anonymous sign-in surfaces (login popup, welcome sign-in card) — not the consent ask.
+  Without `reward` the DOM is exactly v5's. The backend serves only valid values (API_CONTRACT §7.4).
 - **`benefits` — all or nothing.** Render a list (popup and card, under the headline, each item
   with `textContent`) only when `benefits` is an array of 1–4 strings, each non-empty after trim
   and at most 200 characters. Otherwise render **no** list — never a subset, never bullets of the
@@ -130,8 +146,12 @@ Shape, answers and error codes: ACCOUNT_CONTRACT §6.2. Rules for the widget:
 - `consentTextShown`: the rendered copy's string, byte for byte. `locale`: the language the copy
   was fetched in.
 - `placement`: `"popup"` from the popup, `"signin_return"` from the inline card after a chat
-  sign-in. `"value_moment"` is reserved for an ask at a value moment — never send it
-  unless a task introduces that ask.
+  sign-in, `"value_moment"` from the value-moment card. That card exists only while the served copy
+  carries a valid `valueMoment` (variant `c`, copy v6) and `lawyerApproved: true`: the first-send popup
+  is then not shown (unless the visitor completed a chat sign-in in this tab), and the ask appears as
+  a new card once after a clean answer in which Mo showed, compared or added a product to the cart —
+  at most once per tab session, never from restored history, never in voice mode or behind a dialog.
+  It counts toward the same anti-nag cap (ACCOUNT_CONTRACT §6.1).
 - `variant`: the rendered copy's `variant` when it is valid (§3.1), else omit it.
 - Send the same `placement` and `variant` in the `consent_gate_*` KPI data
   (`{ surface: "signin", placement, variant? }`, API_CONTRACT §5): `consent_gate_shown` once per
@@ -203,3 +223,4 @@ built before the date.
 | 2026-10-05 | A suppressed address is answered `status: "none"` (neutral thank-you) on every opt-in endpoint. | top table |
 | 2026-10-05 | The English consent copy is approved as the translation of the German (`enLegalReviewed: true`). | §1 |
 | 2026-10-08 | `pending` + `doiEmailSent: true` also when a valid confirmation mail was already out — Mo's within the resend cooldown, or the shop's own for a shop sign-up still awaiting confirmation; no second mail, same text, no widget change. | top table |
+| 2026-10-11 | Copy `v6`: the welcome-voucher block (`reward`, variants `b`/`c`) and the value-moment lead (`valueMoment`, variant `c`) on `surface=signin`, behind switches that are off by default; the copy ceiling's one exception; the value-moment placement is live in the widget of 2026-10-08. `consentTextShown` unchanged. | §1, §3.1, §3.2 |

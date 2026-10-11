@@ -26,7 +26,7 @@ descriptions, aliases, URL builder) is the pure, unit-tested
 [`src/lib/admin-tabs.mjs`](../src/lib/admin-tabs.mjs); the icons live in
 [`src/app/admin/tabs.tsx`](../src/app/admin/tabs.tsx) (Eingang: `Inbox`).
 
-> The consent copy (served version v5) is approved — German by the lawyer, English as its
+> The consent copy (served version v6) is approved — German by the lawyer, English as its
 > faithful translation (`CONSENT_COPY_LAWYER_APPROVED` in
 > [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts), `CONSENT_COPY_EN_LEGAL_REVIEWED` in
 > `consent-copy-core.mjs`). Any wording change is a new legal
@@ -1207,11 +1207,15 @@ Chat (`CHAT_PAGE_CONTEXT_ENABLED`, with the control-group share of
 (`APP_PROXY_SIGNIN_ENABLED`, with `APP_PROXY_SIGNIN_MAX_AGE_HOURS` or „nur mit
 Chat-Token“), Bestell-Zuordnung ab letzter Beratung (`MO_ATTRIBUTION_SESSION_ANCHOR`)
 and Einwilligungs-Popup: Varianten (`CONSENT_SIGNIN_VARIANTS`: „Nur Variante „a““ or
-„A/B-Test: …“ with the served ids) — each explained in an `InfoTip`, and Pingen-Umgebung
+„A/B-Test: …“ with the served ids), and since 2026-10-11 Willkommensgutschein
+(`CONSENT_REWARD_ENABLED` · `CONSENT_REWARD_TERMS_URL`: „An · mit Link „Bedingungen““ / „An · ohne
+Link „Bedingungen““) and Einwilligungsfrage nach einer Empfehlung (`CONSENT_VALUE_MOMENT_ENABLED`, „An“
+only together with the voucher and with variant `c` active) — each explained in an `InfoTip`, and Pingen-Umgebung
 Produktion vs. Testumgebung; [`SystemStatusCard.tsx`](../src/app/admin/einstellungen/SystemStatusCard.tsx),
 read through `platform-flags.mjs`, `page-context.ts` and `consent-variants.mjs` in
 `EinstellungenTab.tsx`) — shown as states plus those figures, never a key or other value
-(screenshots `docs/screenshots/systemstatus/`). Details:
+(screenshots `docs/screenshots/systemstatus/`, the voucher rows
+`docs/screenshots/2026-10-11-reward-switches/`). Details:
 [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md).
 
 **Shopify-Abgleich**

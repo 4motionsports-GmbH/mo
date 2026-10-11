@@ -44,8 +44,18 @@
  *            (frontend task 1 of 2026-10-05). Bullet wording chosen by the
  *            owner 05.10.2026 (D-AP4); the English copy is approved as the
  *            translation of the German (D-AP3). Labels and footers unchanged.
+ *   - "v6" — FRAMING ONLY (OPTIN_REWARD T3): the sign-in copy may carry the
+ *            welcome-voucher hint (`reward`: badge, terms, terms link, teaser
+ *            for the anonymous sign-in surfaces) on variants b/c
+ *            and the value-moment lead (`valueMoment`) on c, each behind its
+ *            switch (CONSENT_REWARD_ENABLED, CONSENT_VALUE_MOMENT_ENABLED); the
+ *            DOI confirmation page may add a voucher note. Approved by counsel
+ *            (reported by the owner 11.10.2026; English as the F-12 drafts,
+ *            with the fixed amount). Every label, footer and
+ *            consentTextShown is byte-identical to v5 — echoes of the v5 text
+ *            are stamped "v6".
  */
-export const CONSENT_COPY_VERSION = "v5";
+export const CONSENT_COPY_VERSION = "v6";
 
 /**
  * Compose the pre-served `consentTextShown` audit string from the copy blocks

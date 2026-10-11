@@ -12,6 +12,8 @@ export interface ResultPageOptions {
   status: number;
   heading: string;
   body: string;
+  /** An optional second paragraph under the body (e.g. the welcome-voucher note on the DOI page). */
+  note?: string | null;
   tone: "success" | "error";
   /** Language of the page chrome (<html lang>). Default German. */
   locale?: Locale;
@@ -43,6 +45,7 @@ export function renderResultPage(opts: ResultPageOptions): Response {
            font-size:26px; font-weight:700; }
   h1 { font-size:20px; margin:0 0 12px; }
   p { font-size:15px; line-height:1.6; color:#444; margin:0; }
+  p.note { margin-top:12px; }
   .brand { margin-top:28px; font-size:13px; color:#999; }
   form { margin-top:24px; }
   button { font:inherit; font-size:15px; font-weight:600; color:#fff; background:${accent};
@@ -53,7 +56,8 @@ export function renderResultPage(opts: ResultPageOptions): Response {
   <main class="card">
     <div class="badge">${opts.tone === "success" ? "✓" : "!"}</div>
     <h1>${escapeHtml(opts.heading)}</h1>
-    <p>${escapeHtml(opts.body)}</p>${
+    <p>${escapeHtml(opts.body)}</p>${opts.note ? `
+    <p class="note">${escapeHtml(opts.note)}</p>` : ""}${
       opts.action
         ? `
     <form method="post">${Object.entries(opts.action.fields)

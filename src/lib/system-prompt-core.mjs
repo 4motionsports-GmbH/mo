@@ -161,19 +161,73 @@ function fmtMemoryDate(iso, locale) {
   return d.toLocaleDateString(locale === "en" ? "en-GB" : "de-DE");
 }
 
-// Welcome-gift rule inside the customer-memory block. There is NO automatic
-// welcome discount — Mo must never announce or promise one to anyone. A
-// customer who received a code historically (welcomeAlreadyIssued) gets a
-// slightly different line so questions about that old code are handled.
-function renderWelcomeMemoryRule(welcomeAlreadyIssued, locale) {
+// Welcome-voucher line inside the customer-memory block (OPTIN_REWARD T4). The
+// voucher itself is the separate section below (renderWelcomeRewardSection), so
+// this line only points there and handles a customer who received a welcome
+// code before (welcomeAlreadyIssued): the voucher is for the first sign-up only.
+// `reward` null = the voucher is not live (CONSENT_REWARD_ENABLED off): the
+// neutral interim rule — neither promise nor deny (F-39 (e), approved).
+function renderWelcomeMemoryRule(welcomeAlreadyIssued, locale, reward) {
   if (locale === "en") {
+    if (reward) {
+      return welcomeAlreadyIssued
+        ? "This customer received a welcome code once in the past. The welcome voucher is for the first newsletter sign-up only — if they ask, kindly point them to the welcome email from back then or info@motionsports.de and do not hold out the prospect of a new voucher."
+        : "For the newsletter welcome voucher only the section \"Newsletter welcome voucher\" below applies; beyond that, promise no welcome or new-customer discount.";
+    }
     return welcomeAlreadyIssued
-      ? "There is currently NO automatic welcome gift — do not promise or mention ANY welcome or new-customer discount. This customer received a welcome code once in the past; if they ask about it, kindly point them to the welcome email from back then or info@motionsports.de — but do not hold out the prospect of a new discount."
-      : "There is currently NO automatic welcome gift — do not promise or mention ANY welcome or new-customer discount. Discount codes are issued solely by the motion sports team; for questions, kindly refer to info@motionsports.de.";
+      ? "Make no promises about welcome or new-customer discounts. This customer received a welcome code once in the past; if they ask about it, kindly point them to the welcome email from back then or info@motionsports.de — but do not hold out the prospect of a new discount."
+      : "Make no promises about welcome or new-customer discounts — see the section \"Newsletter and welcome discounts\" below.";
+  }
+  if (reward) {
+    return welcomeAlreadyIssued
+      ? "Dieser Kunde hat früher einmal einen Willkommenscode erhalten. Der Willkommensgutschein gilt nur für die erste Newsletter-Anmeldung — fragt er danach, verweise freundlich auf die damalige Willkommens-E-Mail bzw. info@motionsports.de und stelle keinen neuen Gutschein in Aussicht."
+      : "Zum Newsletter-Willkommensgutschein gilt ausschließlich der Abschnitt „Newsletter-Willkommensgutschein“ unten; darüber hinaus versprichst du keinen Willkommens- oder Neukundenrabatt.";
   }
   return welcomeAlreadyIssued
-    ? "Ein automatisches Willkommensgeschenk gibt es derzeit NICHT — versprich oder erwähne KEINEN Willkommens- oder Neukundenrabatt. Dieser Kunde hat früher einmal einen Willkommenscode erhalten; fragt er danach, verweise freundlich auf die damalige Willkommens-E-Mail bzw. info@motionsports.de — stelle aber keinen neuen Rabatt in Aussicht."
-    : "Ein automatisches Willkommensgeschenk gibt es derzeit NICHT — versprich oder erwähne KEINEN Willkommens- oder Neukundenrabatt. Rabattcodes vergibt ausschließlich das motion sports Team; verweise bei Fragen freundlich an info@motionsports.de.";
+    ? "Zu Willkommens- oder Neukundenrabatten machst du keine Zusagen. Dieser Kunde hat früher einmal einen Willkommenscode erhalten; fragt er danach, verweise freundlich auf die damalige Willkommens-E-Mail bzw. info@motionsports.de — stelle aber keinen neuen Rabatt in Aussicht."
+    : "Zu Willkommens- oder Neukundenrabatten machst du keine Zusagen — siehe Abschnitt „Newsletter- und Willkommensrabatte“ unten.";
+}
+
+/**
+ * The newsletter welcome voucher, for every visitor (OPTIN_REWARD T4). While
+ * the voucher is live, Mo states it — only when asked — with exactly the served
+ * badge and terms (the strings the widget shows, consent-variants.mjs), never
+ * free text: no other amounts, no codes, no urgency, no computed reduced price
+ * (PAngV), not for reduced items or Concept2, never as a condition of the help.
+ * Not live (`reward` null): the neutral interim rule — neither promise nor deny,
+ * point to the shop's newsletter sign-up (F-39 (e), approved by counsel).
+ * `alt`: the other language's approved wording — quoted when Mo answers in that
+ * language, so the conditions are never translated freely.
+ * @param {{ badge: string, terms: string, termsUrl?: string, alt?: { badge: string, terms: string } } | null | undefined} reward
+ * @param {"de" | "en"} locale
+ */
+function renderWelcomeRewardSection(reward, locale) {
+  if (locale === "en") {
+    if (!reward) {
+      return `### Newsletter and welcome discounts
+Do not bring up welcome or new-customer discounts on your own. If the customer asks about one, promise no discount and name no amounts, percentages or codes — but do not deny that there is one either. Kindly point them to the newsletter sign-up in the shop (at the bottom of every page; the conditions are shown there) or to info@motionsports.de.`;
+    }
+    return `### Newsletter welcome voucher
+There is a welcome voucher for the first newsletter sign-up. Do not bring it up on your own. If the customer asks about a newsletter, welcome or new-customer discount, state it in exactly these words:
+"${reward.badge}" — ${reward.terms}${reward.termsUrl ? `\nThe full conditions are here: ${reward.termsUrl}` : ""}${reward.alt ? `\nIf you answer in German, state instead exactly: „${reward.alt.badge}“ — ${reward.alt.terms}` : ""}
+Never translate the badge or the conditions yourself.
+- The voucher requires the first sign-up to the newsletter and the confirmation via the link in the email; the code then arrives by email. Never sign the customer up yourself and never collect consent in the chat. If they ask how to sign up: via the newsletter form at the bottom of every shop page.
+- Name no other amounts or percentages and no codes, never claim a code has already been issued, create no urgency and no pressure, and never make your advice or the summary depend on a sign-up.
+- Never calculate a reduced price ("X € instead of Y €") — the voucher is deducted at checkout if the conditions are met. Never say it applies to reduced items or Concept2; if asked, state the conditions.
+- If the customer says they are already subscribed or already received a welcome voucher: the voucher is for the first sign-up only — point them to the welcome email or info@motionsports.de.`;
+  }
+  if (!reward) {
+    return `### Newsletter- und Willkommensrabatte
+Sprich Willkommens- oder Neukundenrabatte nicht von dir aus an. Fragt der Kunde danach, versprich keinen Rabatt und nenne keine Beträge, Prozente oder Codes — verneine aber auch nicht, dass es einen gibt. Verweise freundlich auf die Newsletter-Anmeldung im Shop (unten auf jeder Seite; dort stehen die Bedingungen) bzw. auf info@motionsports.de.`;
+  }
+  return `### Newsletter-Willkommensgutschein
+Für die erste Newsletter-Anmeldung gibt es einen Willkommensgutschein. Sprich ihn nicht von dir aus an. Fragt der Kunde nach einem Newsletter-, Willkommens- oder Neukundenrabatt, nenne ihn genau mit diesen Worten:
+„${reward.badge}“ — ${reward.terms}${reward.termsUrl ? `\nDie vollständigen Bedingungen stehen hier: ${reward.termsUrl}` : ""}${reward.alt ? `\nAntwortest du auf Englisch, nenne stattdessen genau: "${reward.alt.badge}" — ${reward.alt.terms}` : ""}
+Übersetze Hinweis und Bedingungen nie selbst.
+- Der Gutschein setzt die erste Anmeldung zum Newsletter und die Bestätigung über den Link in der E-Mail voraus; der Code kommt danach per E-Mail. Melde den Kunden nie selbst an und hole keine Einwilligung im Chat ein. Fragt er, wie er sich anmeldet: über das Newsletter-Formular unten auf jeder Shopseite.
+- Nenne keine anderen Beträge oder Prozente und keine Codes, behaupte nie, ein Code sei schon ausgestellt, erzeuge keine Dringlichkeit und keinen Druck, und mache deine Beratung oder die Zusammenfassung nie von einer Anmeldung abhängig.
+- Rechne nie einen reduzierten Preis aus („X € statt Y €“) — der Gutschein wird an der Kasse abgezogen, wenn die Bedingungen erfüllt sind. Sage nie, dass er für reduzierte Artikel oder Concept2 gilt; fragt der Kunde danach, nenne die Bedingungen.
+- Ist der Kunde nach eigener Aussage schon angemeldet oder hat er schon einen Willkommensgutschein bekommen: Der Gutschein gilt nur für die erste Anmeldung — verweise auf die Willkommens-E-Mail bzw. info@motionsports.de.`;
 }
 
 // A SIGNED-IN (tier-3) customer who has NOT consented to history-personalisation
@@ -207,7 +261,7 @@ Der Kunde ist in seinem motion sports Konto ANGEMELDET${name ? ` (Name: **${name
 ${privacy}`;
 }
 
-function renderCustomerMemory(memory, locale, orderStatus) {
+function renderCustomerMemory(memory, locale, orderStatus, welcomeReward = null) {
   // Signed-in but not (yet) consented to history-personalisation → name only.
   if (memory.signedIn && !memory.personalised) {
     return renderSignedInNameOnly(memory.displayName?.trim() || "", locale, orderStatus);
@@ -267,7 +321,7 @@ ${summaryBlock}${glanceBlock}
 - **Faster to the point.** Use the known profile (level, focus, space/budget signals) to advise more aptly and skip unnecessary basic questions — but keep asking follow-ups when today's request is unclear.
 - **Today beats yesterday.** If the customer contradicts the memory in the current conversation (different budget, different focus, moved house), today's statement holds — people change. Quietly correct via \`update_customer_profile\` if needed.
 - **No rule is softened.** The memory only informs your recommendations. Availability/sold-out rules, direct-checkout rules, B2B rules and the rest of the tool behaviour apply unchanged — a sold-out product stays sold out even for a regular.
-- **Don't promise a welcome gift.** ${renderWelcomeMemoryRule(memory.welcomeAlreadyIssued, locale)}
+- **Welcome voucher.** ${renderWelcomeMemoryRule(memory.welcomeAlreadyIssued, locale, welcomeReward)}
 - **Privacy.** Only reproduce information from this memory block or the current conversation — never invent or guess order numbers, amounts or third-party data.${
       orderStatus
         ? " The state of an order (status, shipping, delivery, refund) only ever from the result of `get_order_status`."
@@ -324,7 +378,7 @@ ${summaryBlock}${glanceBlock}
 - **Schneller zum Punkt.** Nutze das bekannte Profil (Niveau, Fokus, Platz-/Budget-Signale), um passender zu beraten und unnötige Basisfragen zu überspringen — stelle aber weiterhin Rückfragen, wenn das heutige Anliegen unklar ist.
 - **Heute schlägt gestern.** Widerspricht der Kunde im aktuellen Gespräch dem Gedächtnis (anderes Budget, anderer Fokus, umgezogen), gilt die heutige Aussage — Menschen ändern sich. Korrigiere ggf. still per \`update_customer_profile\`.
 - **Keine Regel wird aufgeweicht.** Das Gedächtnis informiert nur deine Empfehlungen. Verfügbarkeits-/Ausverkauft-Regeln, Direkt-Checkout-Regeln, B2B-Regeln und das übrige Tool-Verhalten gelten unverändert — ein ausverkauftes Produkt bleibt auch für einen Stammkunden ausverkauft.
-- **Kein Willkommensgeschenk versprechen.** ${renderWelcomeMemoryRule(memory.welcomeAlreadyIssued, locale)}
+- **Willkommensgutschein.** ${renderWelcomeMemoryRule(memory.welcomeAlreadyIssued, locale, welcomeReward)}
 - **Datenschutz.** Gib ausschließlich Informationen aus diesem Gedächtnisblock oder dem aktuellen Gespräch wieder — niemals Bestellnummern, Beträge oder Daten Dritter erfinden oder vermuten.${
     orderStatus
       ? " Den Stand einer Bestellung (Status, Versand, Zustellung, Erstattung) nennst du ausschließlich aus dem Ergebnis von `get_order_status`."
@@ -1056,8 +1110,12 @@ export function greetingTriggerText(locale, ctx) {
  *   directives?: Array<{ content: string }>,
  *   locale?: "de" | "en",
  *   orderStatus?: boolean,
+ *   welcomeReward?: { badge: string, terms: string, termsUrl?: string, alt?: { badge: string, terms: string } } | null,
  * }} opts  orderStatus: get_order_status is offered (CHAT_ORDER_STATUS_ENABLED);
- *   absent/false leaves the prompt byte-identical to before the feature
+ *   absent/false leaves the prompt byte-identical to before the feature.
+ *   welcomeReward: the live newsletter welcome voucher (CONSENT_REWARD_ENABLED,
+ *   consent-variants.mjs welcomeRewardForPrompt); absent/null → the neutral
+ *   interim rule (OPTIN_REWARD T4)
  * @returns {string}
  */
 export function buildSystemPrompt({
@@ -1072,6 +1130,7 @@ export function buildSystemPrompt({
   directives,
   locale = "de",
   orderStatus = false,
+  welcomeReward = null,
 }) {
   const profileBlock = renderProfileForPrompt(profile, locale);
   const archetypeAddendum = getPersonaAddendum(archetype, locale);
@@ -1088,7 +1147,7 @@ export function buildSystemPrompt({
     ? `\n\n${renderBrowsingContext(browsingContext, { greet: !productContext }, locale)}`
     : "";
   const customerMemoryBlock = customerMemory
-    ? `\n\n${renderCustomerMemory(customerMemory, locale, orderStatus === true)}`
+    ? `\n\n${renderCustomerMemory(customerMemory, locale, orderStatus === true, welcomeReward ?? null)}`
     : "";
   const orderSupportLimits = renderOrderSupportLimits(orderStatus === true, locale);
   const orderStatusSection = renderOrderStatusSection(orderStatus === true, locale);
@@ -1096,6 +1155,7 @@ export function buildSystemPrompt({
     emailOffer ?? { offersMade: 0, emailCaptured: false },
     locale
   );
+  const welcomeRewardSection = renderWelcomeRewardSection(welcomeReward, locale);
 
   if (locale === "en") {
     return `You are Mo, the AI fitness advisor of motion sports (motionsports.de), a leading European online shop for high-quality fitness equipment and gear.${productContextBlock}${browsingContextBlock}
@@ -1183,6 +1243,8 @@ For \`segment=studio\` or \`segment=public_sector\`: NEVER use \`add_to_cart\`. 
 For expensive products (>€500) and when the customer seems unsure, suggest the showroom via \`suggest_showroom\`.
 
 ${emailOfferSection}
+
+${welcomeRewardSection}
 
 ### Limits
 - Do NOT invent product data. Only the products listed below or found via search_products are real.
@@ -1310,6 +1372,8 @@ Bei \`segment=studio\` oder \`segment=public_sector\`: nutze NIEMALS \`add_to_ca
 Bei teuren Produkten (>500€) und wenn der Kunde unsicher wirkt, schlage den Showroom über \`suggest_showroom\` vor.
 
 ${emailOfferSection}
+
+${welcomeRewardSection}
 
 ### Grenzen
 - Erfinde KEINE Produktdaten. Nur die unten aufgelisteten oder via search_products gefundenen Produkte sind echt.

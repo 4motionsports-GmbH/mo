@@ -74,6 +74,27 @@ export function isChatPageContextEnabled(env = process.env) {
 }
 
 /**
+ * CONSENT_REWARD_ENABLED (OPTIN_REWARD T3–T5): the newsletter welcome voucher is
+ * live — the sign-in copy serves the reward hint for the variants that carry it,
+ * Mo states it when asked, and the confirmation page says it comes by e-mail.
+ * Turn on only together with the shop: new subscribers must get exactly the
+ * served voucher. Default off (the kill switch).
+ */
+export function isConsentRewardEnabled(env = process.env) {
+  return parseFlag(env.CONSENT_REWARD_ENABLED);
+}
+
+/**
+ * CONSENT_VALUE_MOMENT_ENABLED (OPTIN_REWARD T3): variant c serves the
+ * value-moment lead — the signed-in ask moves from the popup to the moment
+ * after a product recommendation. Only together with CONSENT_REWARD_ENABLED
+ * (the lead names the voucher). Default off.
+ */
+export function isConsentValueMomentEnabled(env = process.env) {
+  return parseFlag(env.CONSENT_VALUE_MOMENT_ENABLED);
+}
+
+/**
  * MO_ATTRIBUTION_SESSION_ANCHOR (ATTR-TOKEN-LIFETIME, docs/ORDER_ATTRIBUTION.md):
  * a widget token's 30-day window counts from the device's latest product
  * consultation instead of the token's minting, and retention keeps the token

@@ -13,7 +13,7 @@ and the descriptions of retired surfaces:
 > in [`src/lib/consent-copy.ts`](../src/lib/consent-copy.ts); the v3 set June 2026, the v4 additions
 > July 2026). The English copy is approved as its faithful translation
 > (`CONSENT_COPY_EN_LEGAL_REVIEWED = true` in `consent-copy-core.mjs`, D-AP3, 2026-10-05). Served copy
-> version: **v5** (`CONSENT_COPY_VERSION`). Any wording change in either language is a new legal
+> version: **v6** (`CONSENT_COPY_VERSION`). Any wording change in either language is a new legal
 > review — "Lawyer sign-off status".
 
 ## Legal background (why it's built this way)
@@ -57,7 +57,11 @@ Rules baked into the code:
   („persönliche Angebote und exklusive Rabatt-Aktionen“, lawyer-approved July 2026); since v5 the same
   framing may appear in the served `benefits` bullets of the sign-in ask — static per locale, no
   placeholders, nothing about the visitor's behaviour (`src/lib/consent-variants.mjs`). No countdowns,
-  no invented urgency, no concrete discount amount.
+  no invented urgency, no concrete discount amount. **One exception since copy v6 (2026-10-11):** the
+  served welcome-voucher block of the sign-in ask (`reward`, variants `b`/`c`; `valueMoment` on `c`) names
+  the voucher and its conditions — German and English, approved by counsel (reported by the owner 11.10.2026,
+  dossier § 22), served only behind `CONSENT_REWARD_ENABLED` / `CONSENT_VALUE_MOMENT_ENABLED` (default
+  off). Headline and bullets keep the rule; the block is framing, never part of `consentTextShown`.
 - **A shared one-line footer** (`consentFooter` in `consent-copy-core.mjs`) sits beneath the consent
   text on every surface — the Art. 7 minimum (controller + policy + anytime withdrawal) — with the
   imprint and privacy links next to it (served as `imprintUrl` / `privacyUrl`).
@@ -103,7 +107,7 @@ Relevant columns of `email_captures` (one row per address):
 | `doi_sent_at` | When the current token was last mailed (a re-send after the cooldown restarts it); the link expires `MARKETING_DOI_EXPIRY_DAYS` (default 7) later. A claim whose mail did not go out (failed or never ran) is given back: a re-sent link gets its previous send time back, a new token is moved to just before the cooldown — the next accept sends at once with the same token, and a mail the provider delivered despite a reported failure keeps a working link. A skipped send (no mail provider configured, local development) keeps the claim and records the pending act. Without a stamp a click shows the expired page. |
 | `doi_confirmed_at` | When the user clicked confirm. |
 | `consent_text_shown` | Verbatim copy the user saw (audit trail); a submit without an echo keeps the stored text. |
-| `consent_copy_version` | Which canonical copy that text is (`'v1'`…`'v5'`; `NULL` = unattested echo). Migration `0011`. |
+| `consent_copy_version` | Which canonical copy that text is (`'v1'`…`'v6'`; `NULL` = unattested echo). Migration `0011`. |
 | `locale` | Storefront language of the latest capture (`de` / `en`) — the language of its summary and DOI mails; counted in the KPI language split. |
 | `unsubscribed_at` | Set on unsubscribe (and on a bounce or complaint); the address also goes to `suppression_list`. Evidence only — the block list decides. |
 
@@ -122,6 +126,7 @@ stored values:
 | `v3` | Adds the at-sign-in opt-in (lawyer-approved June 2026); capture labels unchanged. |
 | `v4` | Adds the chat consent gate, the personalised-offers headlines and button-consent on the marketing-only surfaces (lawyer-approved July 2026); capture labels unchanged. |
 | `v5` | Adds the served `benefits` bullets and a framing `variant` id on the sign-in ask (2026-10-05); labels, footers and every `consentTextShown` unchanged (a framing-only bump). |
+| `v6` | Adds the served welcome-voucher block (`reward`, variants `b`/`c`) and the value-moment lead (`valueMoment`, `c`) on the sign-in ask behind `CONSENT_REWARD_ENABLED` / `CONSENT_VALUE_MOMENT_ENABLED`, plus the DOI confirmation-page note (2026-10-11, approved by counsel per the owner, dossier § 22); labels, footers and every `consentTextShown` unchanged (a framing-only bump; echoes of the v5 text are stamped `v6`). |
 
 `suppression_list (email, added_at, reason)` is the block-list checked before any marketing send.
 Reasons: `unsubscribe`, `manual` (opt-outs — a newer real subscribe lifts them) and `bounce`,
@@ -419,6 +424,11 @@ optimisation only — the lawful basis is unchanged (consent path B, a real doub
   is not cached (headers: API_CONTRACT §7.4). Variant `a`'s registry flag stands for
   its approved v4 headline and the owner's bullet decision (D-AP4) — the bullets themselves are an open
   legal item ("Lawyer sign-off status").
+- **Welcome voucher (v6, 2026-10-11).** Variants `b` and `c` add the served `reward` (badge, terms, terms
+  link, teaser) and `c` the `valueMoment` lead — framing like the bullets, never in `consentTextShown`,
+  served only while `CONSENT_REWARD_ENABLED` (and for the lead `CONSENT_VALUE_MOMENT_ENABLED`) is on
+  (`servedSigninExtras`, tested; API_CONTRACT §7.4). The same switch gives Mo the voucher rule and the
+  confirmation page its note; off, Mo neither promises nor denies a welcome discount.
 - **Telemetry, not evidence:** the POST's optional `placement` and `variant` (fields: ACCOUNT_CONTRACT
   §6.2; event data: API_CONTRACT §5) are written only to the pseudonymous KPI events — never to the
   consent record.
@@ -609,34 +619,42 @@ default to `false` in code; which are on in production: [`ROLLOUT_TODO.md`](./RO
       `consentTextShown`; not yet recorded as reviewed by the lawyer (F-38 a).
 - [ ] **Every later sign-in framing variant** (`b`, …) needs its own approval before
       `CONSENT_SIGNIN_VARIANTS` lists it — together with the § 25 TDDDG question of assigning variants
-      per session id (F-38 b, F-14).
+      per session id (F-38 b, F-14). Variants `b` and `c` (German and English) are approved with § 22 (11.10.2026, see
+      „Newsletter reward“ below).
 - [ ] **Must the shown framing variant be stored on the consent record** (`email_captures`)? Today it
       is only in the pseudonymous `kpi_events` (deleted after `KPI_RETENTION_DAYS`); answer before a
       second variant is activated (F-38 b).
 
-### Newsletter reward (2026-10-08) — open
+### Newsletter reward (2026-10-08) — approved 11.10.2026
 
-Planned, nothing served yet (switches off; task
-[`frontend/tasks/OPTIN_REWARD_2026-10-08.md`](./frontend/tasks/OPTIN_REWARD_2026-10-08.md)). The questions
-are in the dossier, § 22.
+Counsel approved the questions of dossier § 22 (F-39 … F-47 and the additions; reported by the owner on
+11.10.2026 — the written answer belongs in the dossier's Anhang A). The owner decided O-1 … O-9 the same
+day: a fixed **50 € from 500 €** as a personal single-use code, 30 days, not for reduced items or
+Concept2, one code per customer ever, none for
+checkout or imported subscribers, no written goodwill rule, no § 7 Abs. 3 UWG mailing for now. Built
+in copy v6 (task [`frontend/tasks/OPTIN_REWARD_2026-10-08.md`](./frontend/tasks/OPTIN_REWARD_2026-10-08.md)
+T3–T5), everything behind switches that are off until the flip (`docs/ROLLOUT_TODO.md` C.31). **Who issues
+the codes is open again:** Shopify Messaging, first chosen (O-2), can insert only one shared code with a
+fixed end date (dossier § 22.2/§ 22.3, `ROLLOUT_TODO.md` open list item 1).
 
-- [ ] **The shop's 5 % welcome code today:** sent by a tool outside Mo, possibly triggered by Mo's DOI
-      write-back. Also Mo's line „kein automatisches Willkommensgeschenk“, which the prompt gives only to
-      recognised customers (F-39 e).
-- [ ] **Reward block as framing outside `consentTextShown`:** badge, one-line terms with a „Bedingungen“
-      link, and `afterAccept`. Consent text, footer and DOI stay unchanged. The copy ceiling above („no
-      concrete discount amount“) gets an exception for the served reward block only (F-39, F-40).
-- [ ] **„bis zu 100 €“ tiers** vs a fixed amount (F-41).
-- [ ] **Teaser on the anonymous sign-in surfaces** (login popup, welcome card) (F-42).
-- [ ] **Value-moment ask** after a product recommendation (variant `c`) (F-43).
-- [ ] **No computed reduced prices** in the chat (PAngV) (F-44).
-- [ ] **Neutral DOI mail** (Mo's and Shopify's) and the confirmation page (F-45).
-- [ ] **First sign-up only**, the post-erasure hash and alias normalisation (F-46 a–c).
-- [ ] **DOI only once** (T2 and C.29, without a switch — live with the deploy of this round):
-  - the pending answer within the resend cooldown, and for a shop sign-up still awaiting Shopify's mail;
-  - the existing invalid-link page for a link clicked after an unsubscribe or block — an old link no
-    longer re-subscribes (F-46 e, f).
-- [ ] **Variants `b`/`c` and reward-shown evidence:** must reward, variant and placement be on the consent
-      record? (F-38 d, e)
-- [ ] **English reward texts:** not covered by D-AP3; no `en` reward until confirmed (F-12).
-- [ ] **§ 7 Abs. 3 UWG reintroduction** (F-47; "§7 Abs. 3 UWG Bestandskunden" above).
+- [x] **The shop's 5 % welcome code today** (found 11.10.: Shopify Messaging, one shared code; a chat
+      DOI confirmation fires it). Mo's interim line is now neutral — neither promise nor deny, point to
+      the shop's newsletter sign-up (F-39 e, `system-prompt-core.mjs`).
+- [x] **Reward block as framing outside `consentTextShown`:** badge, one-line terms with a „Bedingungen“
+      link and teaser (`afterAccept` is not served: the widget would show it on a neutral answer without a
+      mail too); consent text, footer and DOI unchanged; the copy-ceiling exception
+      above (F-39, F-40).
+- [x] **A fixed amount, no „bis zu“ tiers** (F-41 not needed).
+- [x] **Teaser on the anonymous sign-in surfaces** (F-42) and the **value-moment ask** (variant `c`, F-43).
+- [x] **No computed reduced prices** in the chat (PAngV, F-44) — Mo's voucher rule forbids them.
+- [x] **Neutral DOI mail** (Mo's unchanged; Shopify's „Customer marketing confirmation“ is the owner's
+      check) and the confirmation page note „Ist das deine erste Newsletter-Anmeldung, kommt dein
+      Willkommensgutschein in Kürze per E-Mail.“ while the voucher is live (F-45).
+- [ ] **First sign-up only** (F-46 a–c, answered): one code per customer ever, a second one possible after
+      an erasure, alias addresses accepted as a risk (limited by the minimum order). How it is enforced
+      depends on the issuer: if Mo issues the codes, by its own record and the `welcome_code_issued` tag; with
+      the shop automation, by the automation's tag rule.
+- [x] **DOI only once** (T2 and C.29, live since PR #234; F-46 e, f).
+- [x] **Variants `b`/`c` and reward-shown evidence:** stays KPI-only (F-38 d, e).
+- [x] **English reward texts:** the F-12 drafts, with the fixed amount (F-12).
+- [x] **§ 7 Abs. 3 UWG reintroduction** (F-47) — answered; the owner decided not to build it now (O-9).

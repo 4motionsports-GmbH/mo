@@ -111,7 +111,7 @@ export function ConsentGateSection({
         ...releaseNotesFor("consent", range),
         withoutSurface > 0 && `${num(withoutSurface)} Anzeigen ohne surface-Angabe zählen in keiner Oberfläche.`,
         ...[...gaps].map(
-          ([v, gap]) => `${num(gap)} Anzeigen von Variante ${v} ohne Gutschein-Hinweis (Text ungültig, Englisch oder Schalter aus).`
+          ([v, gap]) => `${num(gap)} Anzeigen von Variante ${v} ohne Gutschein-Hinweis (Text ungültig, Schalter aus oder älteres Widget).`
         ),
         experiment?.truncated && "Gutschein-Test auf die ersten 20.000 berechtigten Sitzungen begrenzt.",
       ]}

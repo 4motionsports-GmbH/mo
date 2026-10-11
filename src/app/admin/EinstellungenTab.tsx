@@ -28,13 +28,15 @@ import {
   isAttributionSessionAnchorEnabled,
   isChatOrderStatusEnabled,
   isChatPageContextEnabled,
+  isConsentRewardEnabled,
+  isConsentValueMomentEnabled,
   isShopifyConsentWritebackEnabled,
   isShopifyCustomerSyncEnabled,
   isShopifyErasureSyncEnabled,
   isShopifyInsightsWritebackEnabled,
 } from "@/lib/platform-flags.mjs";
 import { pageContextHoldoutPct } from "@/lib/page-context";
-import { activeSigninVariants } from "@/lib/consent-variants.mjs";
+import { activeSigninVariants, parseRewardTermsUrl } from "@/lib/consent-variants.mjs";
 import { getSyncHealth, listSyncRuns } from "@/lib/shopify-sync";
 import { getOutboxStats } from "@/lib/shopify-outbox";
 import { shopifySyncFlags } from "@/lib/shopify-sync-flags";
@@ -84,6 +86,9 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
       appProxySigninMaxAgeHours: appProxySigninMaxAgeHours(),
       attributionSessionAnchor: isAttributionSessionAnchorEnabled(),
       consentSigninVariants: activeSigninVariants("de", process.env.CONSENT_SIGNIN_VARIANTS).map((v) => v.id),
+      consentReward: isConsentRewardEnabled(),
+      consentRewardTermsLink: parseRewardTermsUrl(process.env.CONSENT_REWARD_TERMS_URL) !== null,
+      consentValueMoment: isConsentValueMomentEnabled(),
     },
   };
 

@@ -27,6 +27,7 @@ import { getPersonaAddendum } from "./system-prompt-core.mjs";
 import { ARCHETYPE_META } from "./persona";
 import { listPublishedGeneralQa } from "./qa-store";
 import { listActiveDirectives } from "./directives-store";
+import { welcomeRewardForPrompt } from "./consent-copy";
 
 export interface MoSelfSnapshot {
   /** The full snapshot text (German) — engine input and admin view. */
@@ -65,6 +66,8 @@ export async function buildMoSelfSnapshot(): Promise<MoSelfSnapshot> {
     directives,
     locale: "de",
     orderStatus,
+    // The welcome-voucher rule as the chat sees it (CONSENT_REWARD_ENABLED).
+    welcomeReward: welcomeRewardForPrompt("de"),
   });
 
   const tools = activeToolCopy("de", { orderStatus });

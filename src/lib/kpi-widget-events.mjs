@@ -246,7 +246,7 @@ export function normalizeConsentVariantRows(rows, isKnownVariant, normalizePlace
 
 /**
  * Shown sessions of a variant row whose ask carried NO reward hint although the
- * variant defines one (served text invalid, English, or the switch off) — 0 for
+ * variant defines one (served text invalid, the switch off, or an older widget) — 0 for
  * a variant without a reward. `rewardShown` = shown sessions whose
  * consent_gate_shown carried `reward: true` (OPTIN_REWARD §2.4).
  * @param {{ shown?: unknown, rewardShown?: unknown }} row

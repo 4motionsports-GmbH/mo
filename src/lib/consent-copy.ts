@@ -46,7 +46,13 @@ import {
   CONSENT_COPY_EN_LEGAL_REVIEWED,
 } from "./consent-copy-core.mjs";
 import type { Locale } from "./locale";
-import { activeSigninVariants, pickSigninVariant } from "./consent-variants.mjs";
+import {
+  activeSigninVariants,
+  pickSigninVariant,
+  servedSigninExtras,
+  welcomeRewardForPrompt as welcomeRewardForPromptCore,
+} from "./consent-variants.mjs";
+import { isConsentRewardEnabled, isConsentValueMomentEnabled } from "./platform-flags.mjs";
 
 export { CONSENT_COPY_VERSION, CONSENT_COPY_EN_LEGAL_REVIEWED };
 
@@ -84,7 +90,7 @@ function returningHintEnabled(): boolean {
 
 /** The exact copy the widget needs to render the capture form. */
 export interface CaptureConsentCopy {
-  /** Identifier of the served copy (CONSENT_COPY_VERSION, currently "v5"). */
+  /** Identifier of the served copy (CONSENT_COPY_VERSION, currently "v6"). */
   version: string;
   /** Served language ("de" default, "en" on /en). */
   locale: Locale;
@@ -161,6 +167,18 @@ export interface SignInMarketingConsentCopy {
   benefits?: string[];
   /** Framing variant id (consent-variants.mjs); echoed on the opt-in POST and the consent_gate_* events. */
   variant?: string;
+  /**
+   * The welcome-voucher hint (copy v6, variants b/c, CONSENT_REWARD_ENABLED;
+   * per language only once approved). Framing — NEVER part of
+   * consentTextShown. The widget renders it all or nothing (badge + terms).
+   */
+  reward?: { badge: string; terms: string; termsUrl?: string; teaser?: string; afterAccept?: string }; // afterAccept: not served (consent-variants.mjs)
+  /**
+   * The value-moment lead (copy v6, variant c, CONSENT_VALUE_MOMENT_ENABLED,
+   * only with `reward`): the signed-in ask moves to the moment after a product
+   * recommendation. Framing — never consent text.
+   */
+  valueMoment?: { lead: string };
   /** The marketing consent label (nothing pre-selected). IS the consent text. */
   marketingLabel: string;
   /** Shared one-line Art. 7 footer rendered beneath the label (button-consent, no checkbox). */
@@ -185,12 +203,20 @@ export function signInMarketingConsentCopy(
   // The framing variant for this session (only "a" unless an A/B test is
   // configured, CONSENT_SIGNIN_VARIANTS); the consent text never varies.
   const v = pickSigninVariant(sessionId, locale, process.env.CONSENT_SIGNIN_VARIANTS);
+  // Copy v6: the voucher hint (and c's value-moment lead) behind their switches;
+  // nothing at all while CONSENT_REWARD_ENABLED is off.
+  const extras = servedSigninExtras(v, {
+    rewardEnabled: isConsentRewardEnabled(),
+    valueMomentEnabled: isConsentValueMomentEnabled(),
+    termsUrl: process.env.CONSENT_REWARD_TERMS_URL ?? null,
+  });
   return {
     version: CONSENT_COPY_VERSION,
     locale,
     headline: v.headline,
     benefits: [...v.benefits],
     variant: v.id,
+    ...extras,
     marketingLabel: s.signinLabel,
     consentFooter: s.consentFooter,
     // Audit string = label + footer only (headline and bullets are framing, not consent).
@@ -200,6 +226,20 @@ export function signInMarketingConsentCopy(
     lawyerApproved: CONSENT_COPY_LAWYER_APPROVED && v.lawyerApproved,
     enLegalReviewed: locale === "en" ? CONSENT_COPY_EN_LEGAL_REVIEWED : true,
   };
+}
+
+/**
+ * The welcome voucher Mo may state when asked (OPTIN_REWARD T4): the approved
+ * badge + terms for the locale while CONSENT_REWARD_ENABLED is on, else null
+ * (Mo's neutral interim rule). The same strings the widget shows.
+ */
+export function welcomeRewardForPrompt(
+  locale: Locale = "de"
+): { badge: string; terms: string; termsUrl?: string; alt?: { badge: string; terms: string } } | null {
+  return welcomeRewardForPromptCore(locale, {
+    rewardEnabled: isConsentRewardEnabled(),
+    termsUrl: process.env.CONSENT_REWARD_TERMS_URL ?? null,
+  });
 }
 
 /** More than one sign-in framing variant is served (an A/B test is running). */
@@ -399,6 +439,13 @@ export function doiEmailBody(
 export function doiPageCopy(locale: Locale = "de"): {
   confirmedHeading: string;
   confirmedBody: string;
+  /**
+   * OPTIN_REWARD T5: a second line on the success page while the welcome
+   * voucher is live (CONSENT_REWARD_ENABLED, the locale's reward approved) —
+   * the code comes in the welcome mail, never on this page. The DOI mail
+   * itself stays neutral.
+   */
+  confirmedRewardNote: string | null;
   invalidHeading: string;
   invalidBody: string;
 } {
@@ -406,6 +453,7 @@ export function doiPageCopy(locale: Locale = "de"): {
   return {
     confirmedHeading: s.doiConfirmedHeading,
     confirmedBody: s.doiConfirmedBody,
+    confirmedRewardNote: welcomeRewardForPrompt(locale) ? s.doiConfirmedRewardNote : null,
     invalidHeading: s.doiInvalidHeading,
     invalidBody: s.doiInvalidBody,
   };

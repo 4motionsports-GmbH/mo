@@ -57,7 +57,14 @@ is that a confirmed DOI writes `SUBSCRIBED` / `CONFIRMED_OPT_IN` with a fresh
 `consentUpdatedAt` to Shopify (`shopify_outbox`), and that fires the automation:
 in test case 8 (signed-in chat popup) the welcome mail arrived within a minute
 of Mo's write. The anonymous capture-form path (`customerCreate`, test case 8b)
-is not tested yet. `npm run check:welcome` (`scripts/check-welcome-code.mjs`,
+is not tested yet.
+
+**The planned voucher (decided 2026-10-11, not live):** 50 € from 500 € on an eligible collection (no
+reduced items, no Concept2 — they do not count toward the minimum either), a personal single-use code,
+30 days, one per customer. Shopify Messaging can insert only one shared code with a fixed end date, so
+who issues the personal codes is still open ([`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) open list 1; Mo as
+issuer would reuse the `discountCodeBasicCreate` path of `shopify-discounts.ts` with the code restricted
+to the customer). The chat's served text and Mo's rule: [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §7.4. `npm run check:welcome` (`scripts/check-welcome-code.mjs`,
 read-only, core `src/lib/welcome-code-check.mjs`) identifies it: the code
 discounts that look like the welcome code with their settings (value, one code
 or unique codes, limits, minimum, collections, expiry, the app that created

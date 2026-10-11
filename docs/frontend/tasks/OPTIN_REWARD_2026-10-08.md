@@ -26,6 +26,15 @@ The newsletter sign-up reward should be advertised **as attractively as possible
 
 ### 0.2 Decisions still OPEN for the owner (each blocks the step named)
 
+> **Status 2026-10-11:** counsel approved § 22 of the dossier (F-39…F-47 and the additions, reported
+> by the owner) and the owner said yes to every recommendation below: **O-1** a fixed 50 € from 500 €,
+> **O-2** the shop automation as the only issuer, **O-3** 30 days, **O-4** a unique single-use code,
+> **O-5** reduced items and Concept2 excluded everywhere, **O-6** one code per customer ever, **O-7** none
+> for checkout or imported subscribers, **O-8** no written goodwill rule, **O-9** no § 7 Abs. 3 UWG
+> mailing for now. T3–T5 are built behind their switches (`docs/ROLLOUT_TODO.md` C.31). **O-2 conflicts
+> with O-3/O-4:** Shopify Messaging inserts only one shared, pre-made code with a fixed end date, so
+> the issuer is open again (`ROLLOUT_TODO.md` open list item 1).
+
 | # | Decision | Recommendation | Blocks |
 |---|---|---|---|
 | O-1 | **Reward amount and design** | Replace the current **5 %** with a **fixed euro amount**. Either one fixed amount (e.g. **50 € from 500 € order value**) or **tiers advertised as „bis zu 100 €“** (25 € from 250 € / 50 € from 500 € / 100 € from 1,000 €). See the margin table below. | T3 copy, T1 code settings |
@@ -530,6 +539,12 @@ Recommended sequence:
 
 ### T3. Served copy v6: `reward` + `valueMoment` per variant, behind switches (required after counsel)
 
+> *Built 2026-10-11* — `consent-variants.mjs` (`servedSigninExtras`, `welcomeRewardForPrompt`), German and
+> English (the F-12 drafts with the fixed amount); `CONSENT_REWARD_TERMS_URL`; copy `v6`. Contracts:
+> API_CONTRACT §7.4, CONSENT_CONTRACT §1/§3, ACCOUNT_CONTRACT §6.1. The served terms add that reduced
+> items and Concept2 do not count toward the 500 € (Shopify counts only the eligible items toward the
+> minimum of a collection-limited discount).
+
 **Where**
 - `src/lib/consent-variants.mjs` (variant objects);
 - `src/lib/consent-copy.ts` (`SignInMarketingConsentCopy`, `signInMarketingConsentCopy()`, :151-202);
@@ -602,6 +617,10 @@ Recommended sequence:
 
 ### T4. Mo's system prompt (required with T3)
 
+> *Built 2026-10-11* — `system-prompt-core.mjs` `renderWelcomeRewardSection` for every visitor; with the
+> switch off the neutral interim rule of F-39 (e) replaces „kein automatisches Willkommensgeschenk“
+> (the „Switch off → today's rule unchanged“ below is superseded by that decision).
+
 **Where:** `src/lib/system-prompt-core.mjs:164-175` (`renderWelcomeMemoryRule`, used at :270 / :327) and the prompt builder that knows the served copy.
 
 **Change**
@@ -626,6 +645,9 @@ Recommended sequence:
 - [ ] Manual chat test: „Gibt es einen Newsletter-Rabatt?“ → correct terms; „Gilt der für das Concept2 RowErg?“ → no; „Was kostet das Laufband dann?“ → no computed price.
 
 ### T5. DOI mail stays neutral; confirmation landing page (required check, small change)
+
+> *Built 2026-10-11* — the DOI mail is unchanged; the landing page adds „Ist das deine erste
+> Newsletter-Anmeldung, kommt dein Willkommensgutschein in Kürze per E-Mail.“ while the voucher is live.
 
 **Where**
 - `src/lib/consent-copy.ts:291-397` (`doiEmailBody` / `doiEmailSubject`);
@@ -744,6 +766,9 @@ The proposed numbering continues after **F-38**; renumber if taken. Add each to 
 - [ ] `lawyerApproved` for b and c set only after the corresponding answers.
 
 ### T9. Live test matrix (required before the switch flip; repeat after each issuer change)
+
+> *2026-10-11:* the switches are global and there is no test allow-list, so T9 runs **right after** the
+> flip with a rollback rule (`docs/ROLLOUT_TODO.md` open list items 5–6).
 
 **Setup**
 - Shopify DOI on.

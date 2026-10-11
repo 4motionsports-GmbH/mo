@@ -52,5 +52,10 @@ export interface SystemStatus {
     attributionSessionAnchor: boolean;
     /** CONSENT_SIGNIN_VARIANTS — the served sign-in framing variant ids. */
     consentSigninVariants: string[];
+    /** CONSENT_REWARD_ENABLED + whether CONSENT_REWARD_TERMS_URL is a valid https link. */
+    consentReward: boolean;
+    consentRewardTermsLink: boolean;
+    /** CONSENT_VALUE_MOMENT_ENABLED. */
+    consentValueMoment: boolean;
   };
 }

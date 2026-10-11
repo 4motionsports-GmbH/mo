@@ -400,7 +400,13 @@ optInActionable =
   have a `consent_gate_shown` — counting only events with `data.surface: "signin"` (API_CONTRACT
   §5). It works on every device, for chat sign-ins and shop-login recognition alike. Those two
   widget events are what feed it, so send them with the signed-in `session_id`; a dismiss
-  (`consent_gate_dismissed`) counts only through its `shown`.
+  (`consent_gate_dismissed`) counts only through its `shown`. Every placement counts toward the same
+  cap, the value-moment card (`placement: "value_moment"`) included — there is no per-placement rule.
+- **Value-moment timing (copy v6, variant `c`).** When the served sign-in copy carries a valid
+  `valueMoment` (and `lawyerApproved: true`), the first-send popup is not shown; the ask comes as a
+  card after Mo showed, compared or added a product (CONSENT_CONTRACT §3.2). A visitor who completed
+  a chat sign-in in this tab still gets today's popup / card. `optInActionable` is the same gate for
+  both.
 - **The widget's own memory stays**: remember a decline on the device (30 days) and a dismissal
   at least for the tab session. The **backend** truth for "ask or not" is `optInActionable`.
 - **After an accept** whose confirmation mail went out (`pending`), that found a valid
@@ -439,7 +445,7 @@ Headers: x-ms-chat-key, x-ms-session, Content-Type: application/json (§1.1)
 - `locale` in the body wins over `?locale=` / `x-ms-locale` (default `de`). It sets the DOI mail's
   language, the message language, and which canonical text the echo is compared with.
 - `consentTextShown` byte-identical to the canonical sign-in text of that `locale` → stored with
-  the version stamp (`v5`); anything else (a stale copy, a missing echo) is stored as sent without
+  the version stamp (`v6`); anything else (a stale copy, a missing echo) is stored as sent without
   a stamp ("unattested") — not an error. Always echo the served string.
 - `placement` and `variant` are telemetry only: unknown or invalid values are ignored, **never** a
   `400`. `variant` counts only when it is a variant id the backend defines for that locale.
@@ -763,3 +769,4 @@ built before the date. Changes to other endpoints: API_CONTRACT Appendix A.
 | 2026-10-08 | One confirmation mail per address within `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (default 30), also for parallel accepts from several tabs or devices: a repeated accept is answered `pending`, `doiEmailSent: true` without a new mail; after the cooldown the link is mailed again (the same one while valid). A failed DOI send records nothing in the consent, so the ask and the next accept can send at once. A database error answers `503` (was `500`). Response shapes unchanged; `doiEmailSent: true` reads „a valid confirmation mail is out“. No widget change. | §6.1, §6.2 |
 | 2026-10-08 | Before the DOI decision the backend checks the shop's consent (its own copy; the shop's live status when the copy has none). A shop sign-up still awaiting the shop's confirmation mail is not asked and is answered `pending`, `doiEmailSent: true` without a Mo mail; subscribed in the shop → `confirmed`, `alreadyConfirmed: true`; unsubscribed or invalid in the shop → `none`. The opt-in server events gain `shopifyConsent`. No widget change. | §6.1, §6.2 |
 | 2026-10-08 | `/api/auth/me` records the server-only event `consent_ask_eligible` when it answers `optInActionable: true` (reads `x-ms-locale`); response unchanged, no widget change. | §4 |
+| 2026-10-11 | Copy v6 can carry the value-moment lead (variant `c`, behind a switch that is off by default): the ask then moves from the first-send popup to after a product recommendation; the same anti-nag cap counts it. No widget change (the widget of 2026-10-08 does this). | §6.1 |

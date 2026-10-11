@@ -444,6 +444,7 @@ export const SAMPLE_SNAPSHOT_RAW = {
     pageContext: true,
     pageContextHoldoutPct: 0,
     chatOrderStatus: false,
+    consentReward: false,
     emailConfigured: true,
     anthropicConfigured: true,
   },
