@@ -83,7 +83,7 @@ The newsletter sign-up reward should be advertised **as attractively as possible
 - a system-prompt rule that forbids Mo to mention any welcome discount (`src/lib/system-prompt-core.mjs:164-175`);
 - a copy ceiling that forbids discount amounts.
 
-**Where the 5 % welcome code comes from:** a Shopify-side automation or app, not Mo, and not the theme (`theme.md` §5). Mo's DOI confirmation writes `SUBSCRIBED`/`CONFIRMED_OPT_IN` to Shopify with a fresh `consentUpdatedAt`, so it **probably already triggers that automation** [unverified, T1].
+**Where the 5 % welcome code comes from:** a Shopify-side automation or app, not Mo, and not the theme (`theme.md` §5). Mo's DOI confirmation writes `SUBSCRIBED`/`CONFIRMED_OPT_IN` to Shopify with a fresh `consentUpdatedAt`, so it **probably already triggers that automation** [unverified, T1]. *Update 11.10.2026: it does — the issuer is Shopify Messaging with one shared 5 % code, and in test case 8 (signed-in popup) the welcome mail arrived within a minute of Mo's write; `ROLLOUT_TODO.md` C.31 T1.*
 
 **Order of work:**
 1. Settle who issues codes (T1).

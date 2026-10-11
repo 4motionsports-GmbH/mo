@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-11 evening (M's third round: webhooks arrive again; 10f = 0 old-link cases; the welcome code's settings read; test case 8 passed — a chat DOI confirmation fires Shopify Messaging's 5 % welcome mail within a minute; open items 1–2 done, item 3 down to two steps; dossier § 22.1 updated); before: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -23,62 +23,48 @@ the single list of what is still open for M. C's open items are at the end of �
 **Before running any script: `git pull` in your local checkout** (the scripts change with C's PRs).
 Commands are meant to be copied as they are — only words in CAPITALS are yours to replace.
 
-1. **Shopify webhooks — restored 11.10., one check left (2 min).** `verify:live` of 11.10. showed
-   the last webhook of every topic on 05.10. between 16:03 and 16:45 Berlin; the dry run of 11.10.
-   found **all 13 subscriptions missing** (no requests, so nothing in the Vercel logs) and `--apply`
-   created them. Most likely cause: the 5.4 app setup on 05.10. (a reinstall or a new app version
-   removes the subscriptions the script made). Rule from now on: after every reinstall, scope change
-   or `shopify app deploy` run `npm run shopify:webhooks -- --url https://mo.motionsports.de` (only
-   reads) and `--apply` what is missing (5.4 step 15).
-   - **Check:** change one tag on any customer in the Shopify admin, wait a minute → Einstellungen →
-     Shopify-Abgleich → „Letzter Webhook" shows „gerade eben" or „vor 1 Min.", and the warnings on
-     the KPI page and in the Eingang are gone. Tell C if not.
-   - Marked orders of 05.10.–11.10. stay unattributed (Shopify does not redeliver); C can backfill
-     them if you want (C.32).
-2. **Live check after the PR #234 deploy — done 11.10. except one line.** `verify:widget`: OK (build
-   `reward-2026-10-08`). `verify:live --since 2026-10-09T16:40+02:00 --shopify`: „Einmal-Garantie:
-   0 Hinweis(e)“, C.29 live check 0 of 13 suspicious — but no Mo opt-in happened since the deploy
-   (the two signed-in sessions were already subscribed), so T2 shows up only with test case 8
-   (item 3). That run was made before `git pull`, so 10f is missing: **after `git pull`** run
-   `npm run verify:live -- --since 2026-10-09T16:40+02:00` once more and send C the line starting
-   with „10f“ (the count for the dossier, § 22.1).
-3. **Welcome code (T1) — found 11.10.; two steps and test case 8 left — before the clean-up in item 6.**
-   Found: the issuer is **Shopify Messaging** — the active automation „Neue Abonnenten mit einer 5%
-   Rabatt-E-Mail willkommen heißen“ (79 mails in 30 days, 1 order) and a second active automation
-   „New Workflow“ (54 mails, 0 orders); the active automation mails are „Unser Dankeschön für Deine
-   Newsletter-Anmeldung“ (the one M received after ticking the marketing box), „5% für Deine erste
-   Bestellung“ and „Zeit für Deine Bestform“. The code is **one shared code for everyone** (12
-   characters, row 0 of `check:welcome` section C): 150 different customers used it in 60 days, once
-   each.
-   1. Open both active automations (Shopify Messaging → Automations): note for each the trigger, the
-      conditions (e.g. „did not subscribe at checkout“, first-time only) and which mail it sends — two
-      welcome automations can send one person two codes. Screenshots.
-   2. Vercel (Production) → `WELCOME_CODE_MATCH` = that shared code (the 12 characters of row 0 in
-      `npm run check:welcome -- --show-codes`, the same code as in the „Unser Dankeschön…“ mail; never
-      paste that output) → Redeploy. „Gutscheine eingelöst“ on the KPI page then counts it.
-   3. After `git pull`: `npm run check:welcome` once more → section C prints that code's settings
-      (value, once per customer, limits, minimum, expiry, collections — e.g. whether Concept2 is
-      really excluded) → send C that block.
-   4. **Test case 8 — signed-in chat popup** (Mo's DOI → Shopify `consent_update`; after item 1):
-      1. Create a **new** customer account on www.motionsports.de with a fresh address (e.g.
-         `yourname+test8@gmail.com` — Mo and Shopify treat it as its own address); do **not** tick
-         the newsletter box. (Not the 06.10. address: it already has a decision in Mo, so the popup
-         would not come.) Then a fresh private window → log in at www.motionsports.de/account.
-      2. Open the chat on any shop page, send a first message (e.g. „Hallo“); the popup appears
-         (≈ 0.7 s later). Tap „Ja, Angebote aktivieren“ and note the time.
-      3. Click the link in Mo's confirmation mail and note the time.
-      4. Wait 15 min; note whether and when a 5 % mail arrives.
-      5. `npm run check:welcome -- --email TESTADDRESS --inbox "DD.MM.YYYY HH:MM"` (the arrival
-         time of the 5 % mail; leave out `--inbox` if none came).
-      6. Screenshot the automation's activity report for that address.
-      **Test case 8b — in-chat capture form** (anonymous; Mo's DOI → Shopify `customerCreate`;
-      when convenient): fresh private window, NOT signed in, an address that has never been a shop
-      customer; let Mo recommend a product, ask for the summary by e-mail, tick the summary and the
-      newsletter box, send; click the link in Mo's mail (note the time); then steps 4–6.
-   4b. **The 06.10. test address** (shop box + chat popup) before item 6:
-      `npm run check:welcome -- --email TESTADDRESS` (add `--inbox "06.10.2026 HH:MM"` if a 5 % mail
-      came).
-   → Send C the outputs (never one made with `--show-codes`), the screenshots and the times.
+1. [x] **Shopify webhooks — restored 11.10.** All 13 subscriptions were missing since 05.10.
+   (most likely removed by a reinstall or new app version during the 5.4 setup); `--apply` created
+   them, and `verify:live` shows webhooks arriving again from 11.10. 12:50 Berlin (`orders/create`,
+   `customers/update`). Rule from now on: after every reinstall, scope change or `shopify app deploy`
+   run `npm run shopify:webhooks -- --url https://mo.motionsports.de` (only reads) and `--apply` what
+   is missing (5.4 step 15). Marked orders of 05.10.–11.10. stay unattributed (Shopify does not
+   redeliver); C can backfill them if you want (C.32).
+2. [x] **Live check after the PR #234 deploy — done 11.10.** `verify:widget`: OK (build
+   `reward-2026-10-08`); `verify:live --since 2026-10-09T16:40+02:00 --shopify`: „Einmal-Garantie:
+   0 Hinweis(e)“, C.29 0 of 13 suspicious; after `git pull`: **10f: 0** old confirmation links used
+   after an unsubscribe since 01.10. (dossier § 22.1: „keine Fälle“). The 6 ⚑ of a run without
+   `--since` are DOI repeats from before the deploy (expected).
+3. **Welcome code (T1) — answered 11.10.; two steps left — before the clean-up in item 6.**
+   - **Issuer: Shopify Messaging** — the active automations „Neue Abonnenten mit einer 5%
+     Rabatt-E-Mail willkommen heißen“ (79 mails in 30 days) and „New Workflow“ (54 mails); the
+     active automation mails „Unser Dankeschön für Deine Newsletter-Anmeldung“, „5% für Deine erste
+     Bestellung“ and „Zeit für Deine Bestform“.
+   - **The code: one shared code for everyone** (12 characters, row 0 of `check:welcome` section C):
+     5 % on the collection „not discounted“, no minimum, not combinable, once per customer, no total
+     limit, no end date; created 26.08.2025, used 1,021 times (150 different customers in 60 days).
+   - **Test case 8 passed — a chat confirmation fires the welcome mail** (Berlin): account created
+     without the newsletter box 13:23:15 → popup 13:25:17 → Mo's DOI mail 13:25:51 → link clicked
+     13:26:55 → Mo's write to Shopify done 13:26:57 (1 try; Shopify SUBSCRIBED / CONFIRMED_OPT_IN with
+     Mo's confirmation time) → „Unser Dankeschön…“ with the 5 % code in the inbox at 13:27. So today
+     everyone who confirms in the chat gets the 5 % code (dossier § 22.1, F-39 e).
+   Left:
+   1. Vercel (Production) → `WELCOME_CODE_MATCH` = that same shared code (the one in the „Unser
+      Dankeschön…“ mail; never paste `--show-codes` output) → Redeploy. „Gutscheine eingelöst“ on
+      the KPI page then counts it. Only if another welcome mail carries a different code, add it
+      comma-separated.
+   2. Shopify admin, screenshots: both active automations (trigger, conditions, which mail — two
+      welcome automations can mail one person twice), the activity report for the test-8 address
+      (confirms the trigger beyond the timing), and Products → Collections → „not discounted“: are
+      Concept2 products in it? (The footer promises to exclude them.)
+   Optional, only if you want the second path confirmed before T9 (T9 covers it): **test case 8b —
+   in-chat capture form** (anonymous; Mo's DOI → Shopify `customerCreate`): fresh private window,
+   NOT signed in, an address that has never been a shop customer; let Mo recommend a product, ask for
+   the summary by e-mail, tick the summary and the newsletter box, send; click the link in Mo's mail
+   (note the time); wait 15 min; then
+   `npm run check:welcome -- --email TESTADDRESS --inbox "DD.MM.YYYY HH:MM"` (leave out `--inbox`
+   if no 5 % mail came).
+   → Send C the screenshots (and the 8b output if you ran it).
 4. **Decide (the newsletter reward, OPTIN_REWARD §0.2; each blocks the step named).** Tell C your
    answers; C records them in C.31 and the dossier (§ 22.3).
    - **O-1** reward amount and design (fixed euro amount, e.g. 50 € from 500 €, or tiers „bis zu
@@ -113,14 +99,15 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
      own kill switch for the live read (it follows `SHOPIFY_CUSTOMER_SYNC_ENABLED`).
 5. **Send the dossier § 22 to counsel** (`docs/ANWALTSDOSSIER.md`, questions F-39 to F-47 and the
    additions to F-12 / F-17 / F-29 / F-38 in § 22.5), together with the screenshots of item 3 (F-39 e
-   asks about today's 5 % code) and the 10f count of item 2. Before an answer nothing is served
-   (T3–T5 wait); the § 7 Abs. 3 part (F-47) builds nothing either. Done when L has it and has given
+   asks about today's 5 % code; § 22.1 already has test case 8 and the 10f count). Before an answer
+   nothing is served (T3–T5 wait); the § 7 Abs. 3 part (F-47) builds nothing either. Done when L has it and has given
    a date; C records the answers in Anhang A and F-39 … F-47.
-6. **Clean up the test customers — only after item 3.** „Meine Daten löschen“ in the chat (or Kunden
-   → „Kunde vollständig löschen“) and delete them in the Shopify admin (6.2 is off). The consent
+6. **Clean up the test customers — only after item 3.** The 06.10. test account, the test-8 account
+   of 11.10. (Kunde #24553) and the 8b address if you ran it: „Meine Daten löschen“ in the chat (or
+   Kunden → „Kunde vollständig löschen“) and delete them in the Shopify admin (6.2 is off). The consent
    popup itself works (06.10.; the run of 11.10. shows the opt-in `mo_signin`, variant a, popup,
    DOI mail sent).
-7. **Test order through „Zur Kasse“ (P0.2, 10 min, after item 1).** In the chat on
+7. **Test order through „Zur Kasse“ (P0.2, 10 min).** In the chat on
    www.motionsports.de let Mo recommend a cheap product, click „Zur Kasse“ on the card, complete the
    order (cancel/refund it afterwards). Shopify admin → the order → „Zusätzliche Details“: is there an
    `_mo` entry? Tell C yes/no (decides the next attribution task, A2).
@@ -962,6 +949,17 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         Bestform“; the code in the order copy is that shared one. Open: which automation sends which
         mail, their triggers and conditions (two welcome automations can mail one person twice), the
         code's settings (section C after `git pull`), test case 8. Dossier § 22.1 updated.
+        **11.10. (M's third round) — answered:** the code's settings: 5 % on the collection „not
+        discounted“, no minimum, not combinable, once per customer, no total limit, no end date,
+        created 26.08.2025, 1,021 uses. **Test case 8 (signed-in popup, `consent_update` path): the
+        chat confirmation fires the welcome mail** — DOI click 13:26:55, outbox done 13:26:57 (1 try),
+        Shopify SUBSCRIBED / CONFIRMED_OPT_IN with Mo's confirmation time, „Unser Dankeschön…“ with
+        the 5 % code in the inbox at 13:27 (minute precision; nothing else happened to that customer
+        in between). Verified live with that run: `customerByIdentifier` and the customer-events
+        filter (the `discountNodes` filter already on the first run). Open (open list item 3): M sets
+        `WELCOME_CODE_MATCH` (that one shared code), the automations' triggers and conditions, the
+        activity report of the test-8 address, whether Concept2 is in „not discounted“; optional 8b
+        (`customerCreate` path, else in T9). Then O-2 + counsel sign-off.
   - [x] **T2 — DOI only once** (built, PR #234): resend cooldown 30 min, atomic claim in SQL (parallel
         accepts → one mail), the same still-valid link re-sent after the cooldown (its expiry
         restarts), the claim released right after a failed send, conditional confirm (once; never after an
@@ -988,8 +986,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         **before** „Meine Daten löschen“ (erasure deletes the evidence). Assumed until T1/T3 decide:
         the welcome tag `welcome_code_issued` (`--welcome-tag`; a missing tag is a ⚑ only with
         `--welcome-tag` and `--shopify`), the ledger columns of design (b);
-        `late_push` rests on the unverified 24 h `consentUpdatedAt` rule; the script still exits 0
-        with ⚑.
+        `late_push` rests on the 24 h `consentUpdatedAt` rule — test case 8 shows a fresh write fires
+        the automation, the 24 h limit itself is unverified; the script still exits 0 with ⚑.
   - [ ] **T3 — served copy v6 (`reward`, `valueMoment`, variants b/c, `CONSENT_REWARD_ENABLED`,
         `CONSENT_VALUE_MOMENT_ENABLED`)** — waits for O-1…O-9 and counsel (F-39…F-43, F-12). Note for
         the build: `variantDefinesReward` (`consent-experiment.mjs`) reads a `reward` property on the
@@ -1013,8 +1011,9 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         an explicit decision of M and the maintainer (the CLAUDE.md audience rule).
   - [x] **T8 — counsel package** (dossier § 22, F-39…F-47, additions to F-12/F-17/F-29/F-38; built,
         PR #234). Send: open list item 5. After the answers: answers in place + Anhang A, rewrite
-        dossier :51 and § 5 (v5 → v6) with T3; `lawyerApproved` for b/c only after the answers;
-        add the old-link count (`verify:live` 10f, open list item 2) to § 22.1.
+        dossier :51 and § 5 (v5 → v6) with T3; `lawyerApproved` for b/c only after the answers.
+        The old-link count (`verify:live` 10f = 0, „keine Fälle“) and test case 8 are in § 22.1
+        (11.10.).
   - [ ] **T9 — live test matrix** (15 cases, OPTIN_REWARD §T9; 8b = the in-chat capture form) — after
         the T1 issuer setup and T3–T5, with the switches on for testing; pass = exactly one welcome
         code per customer across all paths, at most one Mo DOI mail per address within the cooldown,
@@ -1029,7 +1028,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
   a ⚑ at the top of `verify:live` (and in 10e). **11.10.: M's dry run found all 13 subscriptions
   missing (so no 401s in the Vercel logs); `--apply` created them** — most likely removed by a
   reinstall / new app version during 5.4 (5.4 step 15 now says to check after every such step).
-  Open: M's tag check (open list item 1); optional, if M wants it: backfill the attribution of the gap's marked orders
+  Webhooks arrive again since 11.10. 12:50 Berlin (`orders/create`, `customers/update` in M's
+  `verify:live`). Open, optional, if M wants it: backfill the attribution of the gap's marked orders
   (read the orders of the gap with their `_mo` attribute from the Admin API and run them through
   `ingestShopifyOrder`, read-only on Shopify).
 

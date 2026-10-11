@@ -48,12 +48,16 @@ The migration `0009` columns stay read-only on `customers`; the only reader is
 the chat memory (`src/lib/customer-memory.ts`): when `welcome_issued_at` is set,
 Mo is told to promise no welcome discount. No admin view shows them.
 
-**Today's 5 % welcome code is not Mo's.** A Shopify-side tool sends it (a
-Shopify Messaging automation, a Flow workflow or an app — which one is the open
-T1 check of [`frontend/tasks/OPTIN_REWARD_2026-10-08.md`](./frontend/tasks/OPTIN_REWARD_2026-10-08.md));
-Mo's only part is that a confirmed DOI writes `SUBSCRIBED` / `CONFIRMED_OPT_IN`
-with a fresh `consentUpdatedAt` to Shopify (`shopify_outbox`), which can fire
-that automation. `npm run check:welcome` (`scripts/check-welcome-code.mjs`,
+**Today's 5 % welcome code is not Mo's.** A Shopify Messaging automation sends
+it: one shared code for everyone, 5 % on the collection „not discounted“, once
+per customer, no end date (T1 of
+[`frontend/tasks/OPTIN_REWARD_2026-10-08.md`](./frontend/tasks/OPTIN_REWARD_2026-10-08.md),
+found 11.10.2026 — [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) C.31). Mo's only part
+is that a confirmed DOI writes `SUBSCRIBED` / `CONFIRMED_OPT_IN` with a fresh
+`consentUpdatedAt` to Shopify (`shopify_outbox`), and that fires the automation:
+in test case 8 (signed-in chat popup) the welcome mail arrived within a minute
+of Mo's write. The anonymous capture-form path (`customerCreate`, test case 8b)
+is not tested yet. `npm run check:welcome` (`scripts/check-welcome-code.mjs`,
 read-only, core `src/lib/welcome-code-check.mjs`) identifies it: the code
 discounts that look like the welcome code with their settings (value, one code
 or unique codes, limits, minimum, collections, expiry, the app that created
