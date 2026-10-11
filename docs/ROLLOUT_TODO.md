@@ -27,7 +27,7 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
    (O-1…O-9, dossier § 22.3) want a **personal code per customer, valid 30 days**. Shopify Messaging
    cannot do that: its mail inserts one **shared** code made beforehand, with a fixed end date only (C's
    research of 11.10.; no unique codes per recipient, no „30 days from sending“). Choose one:
-   - **(a) Mo issues the codes — C's recommendation.** At a customer's first confirmed newsletter
+   - **(1) Mo issues the codes — C's recommendation** (the task's design (b)). At a customer's first confirmed newsletter
      sign-up (chat or shop form) Mo creates a code that **only this customer** can use (50 € from 500 €,
      eligible collection, single use, ends after 30 days), sends the welcome mail itself (an e-mail design
      like the others, editable in Einstellungen) and tags the customer `welcome_code_issued` in Shopify.
@@ -35,10 +35,10 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
      else; Mo knows who got which code (no double codes, exact „issued / redeemed“ on the KPI page, the
      confirmation page can show the code). C builds it (~1 day, one migration); counsel already answered
      the questions for this case (F-45, F-46).
-   - **(b) Shopify Messaging with one shared code.** Simplest, but the 50 € code ends up on coupon sites:
+   - **(2) Shopify Messaging with one shared code.** Simplest, but the 50 € code ends up on coupon sites:
      anyone can use it once per e-mail address on a 500 € order. The conditions change to „einmal je
      Kunde“ and „gültig bis <date>“ (C changes the texts; counsel re-confirms).
-   - **(c) An extra app** that adds personal codes to Shopify mails (e.g. a discount-code generator app):
+   - **(3) An extra app** that adds personal codes to Shopify mails (e.g. a discount-code generator app):
      another provider (privacy policy, contract), monthly cost; C would check one you name.
 2. **Shopify preparation — now, ~30 min, independent of item 1.**
    1. **Eligible collection.** Produkte → Kollektionen → Kollektion erstellen, title „Willkommensgutschein
@@ -86,8 +86,10 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
    and the blog, prepared on an **unpublished copy** of the theme. You publish it at the flip.
 5. **Switch-on (after 1–4 and C's build for item 1; ~20 min, a quiet hour).** In this order:
    1. C deploys the issuer build and commits the voucher test (`CONSENT_REWARD_EXPERIMENT`: variants
-      `a,b,c`, start = the flip day, both languages — say if you want only `a,b`).
-   2. Shopify: switch the new issuing on (for (a): nothing to do in Shopify; for (b): the edited
+      `a,b,c`, start = the flip day, both languages — say if you want only `a,b`). Also tell C: orders
+      and revenue per arm in the test (sessions → customer → orders within 30 days, aggregate only) —
+      build it, yes or no? (C's recommendation: yes, it shows whether the voucher pays for itself.)
+   2. Shopify: switch the new issuing on (for (1): nothing to do in Shopify; for (2): the edited
       automation), then **switch off** both old automations (Apps → Shopify Messaging → Automationen →
       each → Deaktivieren).
    3. The old 5 % code: **Rabatte** → open it → **Enddatum** = flip day + 30 days (people who just got it
@@ -95,20 +97,24 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
    4. Publish the theme copy (item 4); make the terms page visible.
    5. Vercel (Production): `CONSENT_REWARD_ENABLED=true`, `CONSENT_VALUE_MOMENT_ENABLED=true`,
       `CONSENT_SIGNIN_VARIANTS=a,b,c` (`CONSENT_REWARD_TERMS_URL` from item 2.6) → Redeploy.
-      Einstellungen → Systemstatus then shows „Newsletter-Willkommensgutschein: An · mit Link
+      Einstellungen → Systemstatus then shows „Willkommensgutschein: An · mit Link
       „Bedingungen““.
    6. `WELCOME_CODE_MATCH`: add the new codes' prefix (C names it with the build), e.g.
       `OLDCODE,WILLKOMMEN-*` → Redeploy.
    Kill switch at any time: `CONSENT_REWARD_ENABLED=false` → Redeploy (reaches every widget within ~6 min).
 6. **Live test right after the switch-on (T9, ~45 min).** With fresh test addresses: footer sign-up →
-   Shopify confirmation → exactly one welcome mail with a 50 € code; chat sign-in → popup with the voucher
-   hint (variant b/c; open a few private windows until one shows it) → confirm → the confirmation page
+   Shopify confirmation → exactly one welcome mail with a 50 € code; chat sign-in → the voucher hint
+   on the ask (variant b: the popup after the first message; variant c: no popup — the card comes after
+   Mo showed a product; open a few private windows until you get b and c) → accept → confirm → the confirmation page
    says the voucher comes → exactly one welcome mail; unsubscribe + re-subscribe → no second code; ask Mo
    „Gibt es einen Newsletter-Rabatt?“ / „Gilt der auch für Concept2?“ / „Was kostet das Laufband dann?“ →
    the exact conditions, no, no computed price; try the code with a 400 € cart, a Concept2 item and a
    second order → refused. Then `npm run verify:live -- --since FLIPTIME` and send C the output. Clean up
    the test customers afterwards („Meine Daten löschen“ in the chat + delete in Shopify), together with
-   the 06.10. test account and the test-8 account of 11.10. (Kunde #24553).
+   the 06.10. test account and the test-8 account of 11.10. (Kunde #24553). **Rollback rule:** if any case
+   fails (a second code for one customer, a code that works below 500 € or on Concept2 / reduced items, the
+   hint without a matching mail) → `CONSENT_REWARD_ENABLED=false` → Redeploy, switch the old automation
+   back on if needed, tell C.
 7. **Test order through „Zur Kasse“ (P0.2, 10 min; independent of the voucher).** In the chat on
    www.motionsports.de let Mo recommend a cheap product, click „Zur Kasse“ on the card, complete the
    order (cancel/refund it afterwards). Shopify admin → the order → „Zusätzliche Details“: is there an
@@ -148,7 +154,7 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
    the final texts' one-line OK is item 3); privacy-policy sentences F-05/F-28 for shop-login
    recognition and purchase attribution — and, before the switch-on (item 5), the welcome voucher and
    the actual mail provider instead of the old MailChimp mentions (OPTIN_REWARD owner to-do 5; with
-   issuer (a): Mo sends the welcome mail).
+   issuer (1): Mo sends the welcome mail).
 
 ## Done
 
@@ -170,7 +176,7 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
   11.10.).
 
 - [x] Opt-in reward round of 08.10., backend part (C, PR #234; no migration, no new switch, no widget
-  change — live with its deploy; checks: open list items 2–3; detail and the parts still open: C.31):
+  change — live with its deploy; checks done 11.10. (Done above); detail and the parts still open: C.31):
   - **DOI only once:** at most one confirmation mail per address within 30 minutes
     (`MARKETING_DOI_RESEND_COOLDOWN_MINUTES`, also for two tabs or devices at once); after that the
     same, still-valid link is mailed again; a failed send blocks nothing. A link confirms once, and
@@ -182,7 +188,7 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
     „n mit Gutschein-Hinweis“ under „Angezeigt“, teaser tables, „Gutschein-Test“, „Willkommensgutscheine“, „Bestätigung
     schon unterwegs“ / „Shop-Bestätigung unterwegs“ (screenshots
     `docs/screenshots/2026-10-08-optin-reward/` and `…-optin-once/`); KPI release `widget-reward-dormant`.
-  - **Dossier § 22** (F-39 to F-47) ready to send (open list item 5).
+  - **Dossier § 22** (F-39 to F-47) — sent and approved 11.10. (Done above).
 - [x] Komplettanalyse stopped with a 504 (C, 08.10., pushed to main at the owner's request; no
   migration, no switch): the Opus call never finished once Opus started writing its answer, so the
   step ran into Vercel's 300 s limit. Now the call finishes normally, a step the platform still kills
@@ -230,7 +236,7 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
   and Mo answered with one card of that product. The test session `d63d2e26` typed on the home page
   (no page context — correct) and got its `_mo` token after the product turn. No
   `product_cta_clicked` with `samePage` yet: the three clicks of 06.10. came from the previous
-  widget before the upload. Consent popup: open list item 6. The optional token deletion (task 3)
+  widget before the upload. Consent popup: works (06.10., 11.10.). The optional token deletion (task 3)
   was skipped.
 - [x] Switches of 05.10. (M): migration `0076` and `MO_ATTRIBUTION_SESSION_ANCHOR=true` — the first
   nightly run with it (06.10. 03:30 UTC) kept the widget token of 29.08. because its device kept
@@ -822,7 +828,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       link) after M's test order (P0.2).
 - [ ] **C.25** Backlog, no deadline: D14 sanitize, B2 sign-in entry points, B6 handle mapping,
       E6 widget version header, D18 popup memory per person instead of per tab / device (the likely
-      cause of the missing popup on 06.10., open list item 6) (`docs/frontend/07` §7).
+      cause of the missing popup on 06.10.) (`docs/frontend/07` §7).
 - [ ] **C.26** Open follow-ups of the built 04.10. plans (not built unless marked done; detail in
       `docs/archive/plans-2026-10-04/<plan>`):
   - **P0.3** — after 5.4 step 12, with M: the shop-logout token test (does a shop logout end the
@@ -917,7 +923,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
       subscribed“ for a shop subscriber and treats a shop unsubscribe / invalid address as blocked;
       drift healing never pushes `pending` or the DOI expiry's `not_subscribed`. What happened on
       06.10.: answered by `verify:live` 10e of 11.10. (6 shop consents lost on 05.10. 11:01, before
-      the fix; from 16:45 the webhook outage — open list item 1, C.32). Docs: `CONSENT_FLOW.md` „Shopify → Mo“,
+      the fix; from 16:45 the webhook outage — restored 11.10., C.32). Docs: `CONSENT_FLOW.md` „Shopify → Mo“,
       `CUSTOMERS.md` „Shopify webhook topics“. Follow-ups: C.31.
 - [ ] **C.30** Open decisions of the four reworks of 06.10. — **M decides**, C builds what changes:
   - **Order list and privacy:** „Was genau passiert ist“ shows per order the order number, amount, Mo
@@ -943,13 +949,14 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
     cards on other screens look cramped at the top (Verbesserung pads its own).
 
 - [ ] **C.31** **Opt-in reward round 2026-10-08** ([`frontend/tasks/OPTIN_REWARD_2026-10-08.md`](./frontend/tasks/OPTIN_REWARD_2026-10-08.md);
-      widget `495fdf6` shipped dormant by FE — live once `verify:widget` names it, open list item 2; the backend part built in PR #234 — no migration, no new
+      widget `495fdf6` shipped dormant by FE — live (`verify:widget` OK 11.10.); the backend part built in PR #234 — no migration, no new
       switch, no widget change; new env `MARKETING_DOI_RESEND_COOLDOWN_MINUTES` (30) and
       `WELCOME_CODE_MATCH` (empty = „n/a“)). Order of the rest: T1 → O-1…O-9 + counsel (T8) →
-      T3 + T4 + T5 behind switches → T9 → switch flip.
+      T3 + T4 + T5 behind switches (done 11.10.) → the issuer (open list 1) → switch flip → T9 right
+      after it (open list 5–6; the switches are global, there is no test allow-list).
   - [ ] **T1 — who issues the welcome code.** Tooling built (`npm run check:welcome`,
         `src/lib/welcome-code-check.mjs`, tested; `DISCOUNTS.md` „Welcome codes“). Open: M's run and
-        admin record (open list item 3) → C records here: the sender (Shopify Messaging automation /
+        admin record (done 11.10., see below) → C records here: the sender (Shopify Messaging automation /
         Flow / app / Mailchimp), its trigger and conditions, the discount settings, the activity
         report, test cases 8 / 8b with their times (Mo's DOI click → outbox done → Shopify consent
         time → welcome mail), whether a chat confirmation fires the automation per path
@@ -961,7 +968,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         staff codes and the „Happy Birthday Marketing“ app's birthday codes); the order copy shows one
         shared code (`3AVB…`, 12 characters) used by 150 different customers in 60 days, once each —
         the likely welcome code; `check:welcome` now prints its settings (section C, PR #235). The
-        `--email` run failed on a typed placeholder (open list item 3 has the exact command).
+        `--email` run failed on a typed placeholder (re-run correctly the same day, see below).
         **11.10. (M's screenshots):** issuer = Shopify Messaging; active automations „Neue Abonnenten
         mit einer 5% Rabatt-E-Mail willkommen heißen“ (79 mails / 30 days) and „New Workflow“ (54);
         active automation mails „Unser Dankeschön für Deine Newsletter-Anmeldung“ (received by M after
@@ -976,15 +983,15 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         Shopify SUBSCRIBED / CONFIRMED_OPT_IN with Mo's confirmation time, „Unser Dankeschön…“ with
         the 5 % code in the inbox at 13:27 (minute precision; nothing else happened to that customer
         in between). Verified live with that run: `customerByIdentifier` and the customer-events
-        filter (the `discountNodes` filter already on the first run). Open (open list item 3): M sets
-        `WELCOME_CODE_MATCH` (that one shared code), the automations' triggers and conditions, the
-        activity report of the test-8 address, whether Concept2 is in „not discounted“; optional 8b
-        (`customerCreate` path, else in T9). Then O-2 + counsel sign-off.
+        filter (the `discountNodes` filter already on the first run). `WELCOME_CODE_MATCH` set by M
+        (11.10.). Left: open list item 2 (whether Concept2 is in „not discounted“, the automations' triggers
+        and conditions); the activity report of the test-8 address is no longer needed; optional 8b
+        (`customerCreate` path, else in T9). Then the issuer decision (open list item 1).
   - [x] **T2 — DOI only once** (built, PR #234): resend cooldown 30 min, atomic claim in SQL (parallel
         accepts → one mail), the same still-valid link re-sent after the cooldown (its expiry
         restarts), the claim released right after a failed send, conditional confirm (once; never after an
         unsubscribe or block), outcomes `doi_pending` / `shopify_pending`, all three opt-in routes.
-        Check: open list item 2 (section 10). Acknowledgement of the old-link change: open list item 4.
+        Check: done 11.10. (section 10 clean, 10f = 0). The old-link change: acknowledged with O-1…O-9 (11.10.).
         Known limits, decide later: only opt-ins written before this release (no `captureId`) credit a
         confirmation to the row's latest session; a row still `confirmed` after a Shopify-side unsubscribe
         shows the success page on an old link (no act is recorded); a loser answers „mail is out“
@@ -1001,7 +1008,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         `customerEmailMarketingConsentUpdate` rejects `NOT_SUBSCRIBED`, but the comment in
         `shopify-outbox.ts` and `toShopifyConsentInput` still treat it as accepted.
   - [x] **T2.7 — `verify:live` section 10 „Einmal-Garantie“** and the `verify:widget` row
-        `reward-2026-10-08` (built, PR #234). Run: open list item 2; during T9 run
+        `reward-2026-10-08` (built, PR #234). Run 11.10. (clean); during T9 run
         `npm run verify:live -- --since <test start, ISO with zone> --session <sid prefix> [--shopify]` per case
         **before** „Meine Daten löschen“ (erasure deletes the evidence). Assumed until T1/T3 decide:
         the welcome tag `welcome_code_issued` (`--welcome-tag`; a missing tag is a ⚑ only with
@@ -1040,8 +1047,8 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         redeem) and `consent_copy_served`; „n mit Gutschein-Hinweis“ under „Angezeigt“, teaser tables,
         „Gutschein-Test“
         (ITT, `CONSENT_REWARD_EXPERIMENT` stays `null` until the flip commit: arms, start, locale,
-        target from M, open list item 4), „Willkommensgutscheine“, capture buckets, release
-        `widget-reward-dormant`. Not built: orders / revenue per arm (M decides, item 4). Caveats: a
+        target from M, open list item 5.1), „Willkommensgutscheine“, capture buckets, release
+        `widget-reward-dormant`. Not built: orders / revenue per arm (M decides, open list item 5.1). Caveats: a
         `shopify_pending` opt-in writes no Mo confirmation (the test's „Bestätigt“ undercounts that
         path in every arm). Screenshots (light/dark, 1440/1024):
         `docs/screenshots/2026-10-08-optin-reward/` and `docs/screenshots/2026-10-08-optin-once/`.
@@ -1049,12 +1056,13 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         an explicit decision of M and the maintainer (the CLAUDE.md audience rule).
   - [x] **T8 — counsel package** (approved 11.10. per M — dossier § 22.4, Anhang A; the final texts'
         one-line OK: open list item 3) (dossier § 22, F-39…F-47, additions to F-12/F-17/F-29/F-38; built,
-        PR #234). Send: open list item 5. After the answers: answers in place + Anhang A, rewrite
+        PR #234). Sent and approved 11.10. After the answers: answers in place + Anhang A, rewrite
         dossier :51 and § 5 (v5 → v6) with T3; `lawyerApproved` for b/c only after the answers.
         The old-link count (`verify:live` 10f = 0, „keine Fälle“) and test case 8 are in § 22.1
         (11.10.).
-  - [ ] **T9 — live test matrix** (15 cases, OPTIN_REWARD §T9; 8b = the in-chat capture form) — after
-        the T1 issuer setup and T3–T5, with the switches on for testing; pass = exactly one welcome
+  - [ ] **T9 — live test matrix** (15 cases, OPTIN_REWARD §T9; 8b = the in-chat capture form) — right
+        after the switch-on (open list item 6; `CONSENT_REWARD_ENABLED` is global, no test allow-list),
+        with the rollback rule there; pass = exactly one welcome
         code per customer across all paths, at most one Mo DOI mail per address within the cooldown,
         section 10 without unexplained ⚑.
 - [ ] **C.32** **Shopify webhooks: outage of 05.10. and its gap.** M's `verify:live` of 11.10.: the last

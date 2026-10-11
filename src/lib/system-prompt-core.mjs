@@ -196,7 +196,9 @@ function renderWelcomeMemoryRule(welcomeAlreadyIssued, locale, reward) {
  * (PAngV), not for reduced items or Concept2, never as a condition of the help.
  * Not live (`reward` null): the neutral interim rule — neither promise nor deny,
  * point to the shop's newsletter sign-up (F-39 (e), approved by counsel).
- * @param {{ badge: string, terms: string, termsUrl?: string } | null | undefined} reward
+ * `alt`: the other language's approved wording — quoted when Mo answers in that
+ * language, so the conditions are never translated freely.
+ * @param {{ badge: string, terms: string, termsUrl?: string, alt?: { badge: string, terms: string } } | null | undefined} reward
  * @param {"de" | "en"} locale
  */
 function renderWelcomeRewardSection(reward, locale) {
@@ -207,7 +209,8 @@ Do not bring up welcome or new-customer discounts on your own. If the customer a
     }
     return `### Newsletter welcome voucher
 There is a welcome voucher for the first newsletter sign-up. Do not bring it up on your own. If the customer asks about a newsletter, welcome or new-customer discount, state it in exactly these words:
-"${reward.badge}" — ${reward.terms}${reward.termsUrl ? `\nThe full conditions are here: ${reward.termsUrl}` : ""}
+"${reward.badge}" — ${reward.terms}${reward.termsUrl ? `\nThe full conditions are here: ${reward.termsUrl}` : ""}${reward.alt ? `\nIf you answer in German, state instead exactly: „${reward.alt.badge}“ — ${reward.alt.terms}` : ""}
+Never translate the badge or the conditions yourself.
 - The voucher requires the first sign-up to the newsletter and the confirmation via the link in the email; the code then arrives by email. Never sign the customer up yourself and never collect consent in the chat. If they ask how to sign up: via the newsletter form at the bottom of every shop page.
 - Name no other amounts or percentages and no codes, never claim a code has already been issued, create no urgency and no pressure, and never make your advice or the summary depend on a sign-up.
 - Never calculate a reduced price ("X € instead of Y €") — the voucher is deducted at checkout if the conditions are met. Never say it applies to reduced items or Concept2; if asked, state the conditions.
@@ -219,7 +222,8 @@ Sprich Willkommens- oder Neukundenrabatte nicht von dir aus an. Fragt der Kunde 
   }
   return `### Newsletter-Willkommensgutschein
 Für die erste Newsletter-Anmeldung gibt es einen Willkommensgutschein. Sprich ihn nicht von dir aus an. Fragt der Kunde nach einem Newsletter-, Willkommens- oder Neukundenrabatt, nenne ihn genau mit diesen Worten:
-„${reward.badge}“ — ${reward.terms}${reward.termsUrl ? `\nDie vollständigen Bedingungen stehen hier: ${reward.termsUrl}` : ""}
+„${reward.badge}“ — ${reward.terms}${reward.termsUrl ? `\nDie vollständigen Bedingungen stehen hier: ${reward.termsUrl}` : ""}${reward.alt ? `\nAntwortest du auf Englisch, nenne stattdessen genau: "${reward.alt.badge}" — ${reward.alt.terms}` : ""}
+Übersetze Hinweis und Bedingungen nie selbst.
 - Der Gutschein setzt die erste Anmeldung zum Newsletter und die Bestätigung über den Link in der E-Mail voraus; der Code kommt danach per E-Mail. Melde den Kunden nie selbst an und hole keine Einwilligung im Chat ein. Fragt er, wie er sich anmeldet: über das Newsletter-Formular unten auf jeder Shopseite.
 - Nenne keine anderen Beträge oder Prozente und keine Codes, behaupte nie, ein Code sei schon ausgestellt, erzeuge keine Dringlichkeit und keinen Druck, und mache deine Beratung oder die Zusammenfassung nie von einer Anmeldung abhängig.
 - Rechne nie einen reduzierten Preis aus („X € statt Y €“) — der Gutschein wird an der Kasse abgezogen, wenn die Bedingungen erfüllt sind. Sage nie, dass er für reduzierte Artikel oder Concept2 gilt; fragt der Kunde danach, nenne die Bedingungen.
@@ -1106,7 +1110,7 @@ export function greetingTriggerText(locale, ctx) {
  *   directives?: Array<{ content: string }>,
  *   locale?: "de" | "en",
  *   orderStatus?: boolean,
- *   welcomeReward?: { badge: string, terms: string, termsUrl?: string } | null,
+ *   welcomeReward?: { badge: string, terms: string, termsUrl?: string, alt?: { badge: string, terms: string } } | null,
  * }} opts  orderStatus: get_order_status is offered (CHAT_ORDER_STATUS_ENABLED);
  *   absent/false leaves the prompt byte-identical to before the feature.
  *   welcomeReward: the live newsletter welcome voucher (CONSENT_REWARD_ENABLED,

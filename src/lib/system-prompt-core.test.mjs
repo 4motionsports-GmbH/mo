@@ -621,6 +621,15 @@ test("welcome voucher on: the served badge and terms verbatim, the link, and no 
   const amounts = section.match(/\d+\s*€/g) ?? [];
   assert.deepEqual([...new Set(amounts)].sort(), ["50 €", "500 €"]);
   assert.doesNotMatch(section, /%/);
+  assert.match(de, /Übersetze Hinweis und Bedingungen nie selbst\./);
+  // The other language's approved wording, quoted when Mo answers in it.
+  const both = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    welcomeReward: { ...v, alt: { badge: "€50 welcome voucher from €500 order value", terms: "EN terms." } },
+  });
+  assert.ok(both.includes('Antwortest du auf Englisch, nenne stattdessen genau: "€50 welcome voucher from €500 order value" — EN terms.'));
   // Without a terms URL: no link line.
   const noUrl = buildSystemPrompt({
     profile: emptyProfile(),
@@ -632,6 +641,7 @@ test("welcome voucher on: the served badge and terms verbatim, the link, and no 
   const en = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], welcomeReward: v, locale: "en" });
   assert.match(en, /### Newsletter welcome voucher/);
   assert.ok(en.includes(`"${v.badge}" — ${v.terms}`));
+  assert.match(en, /Never translate the badge or the conditions yourself\./);
 });
 
 test("welcome voucher on + memory: points to the section; an earlier welcome code gets no new voucher", () => {

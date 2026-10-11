@@ -119,7 +119,10 @@ test("v6 reward strings fit the widget's limits and state every condition (O-1�
   }
   assert.ok(de.badge.includes("50 €") && de.badge.includes("500 €"));
   // No percentage anywhere (the old 5 % is gone) and no „bis zu“ (F-41 not used).
-  for (const t of [de.badge, de.terms, de.teaser, de.afterAccept]) {
+  // No afterAccept: the widget would show it on a neutral answer without a mail too.
+  assert.equal(de.afterAccept, undefined);
+  assert.equal(en.afterAccept, undefined);
+  for (const t of [de.badge, de.terms, de.teaser]) {
     assert.doesNotMatch(t, /%|bis zu/i);
   }
 });
@@ -174,7 +177,11 @@ test("welcomeRewardForPrompt: the approved badge and terms of the locale while t
   assert.equal(welcomeRewardForPrompt("en", {}), null);
   assert.equal(welcomeRewardForPrompt("en", { rewardEnabled: true })?.badge, SIGNIN_VARIANTS.en[1].reward.badge);
   const r = welcomeRewardForPrompt("de", { rewardEnabled: true, termsUrl: "https://x.de/t" });
-  assert.deepEqual(r, { badge: SIGNIN_VARIANTS.de[1].reward.badge, terms: SIGNIN_VARIANTS.de[1].reward.terms, termsUrl: "https://x.de/t" });
+  const de = SIGNIN_VARIANTS.de[1].reward;
+  const en = SIGNIN_VARIANTS.en[1].reward;
+  // The other language's approved wording rides along, so Mo never translates the terms.
+  assert.deepEqual(r, { badge: de.badge, terms: de.terms, termsUrl: "https://x.de/t", alt: { badge: en.badge, terms: en.terms } });
+  assert.deepEqual(welcomeRewardForPrompt("en", { rewardEnabled: true }).alt, { badge: de.badge, terms: de.terms });
   assert.equal(welcomeRewardForPrompt("xx", { rewardEnabled: true })?.badge, SIGNIN_VARIANTS.de[1].reward.badge);
 });
 

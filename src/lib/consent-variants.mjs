@@ -61,7 +61,11 @@ export const REWARD_LIMITS = Object.freeze({ badge: 60, terms: 300, teaser: 160,
  * 500 €, a unique single-use code, 30 days, not for reduced items or Concept2,
  * one code per customer ever). Shopify counts only the eligible items toward the
  * minimum of a collection-limited discount, so the terms say that the excluded
- * items do not count toward the 500 €.
+ * items do not count toward the 500 €. No `afterAccept` (the approved „Dein
+ * Gutschein kommt per E-Mail, sobald du deine Anmeldung bestätigt hast.“): the
+ * widget of 2026-10-08 shows it on every non-`already` answer, also on a neutral
+ * `none` where no mail goes out; the terms already say „nach Bestätigung per
+ * E-Mail“.
  * Both languages follow the texts counsel approved (dossier § 22.2 and the English
  * drafts at F-12, reported by the owner 11.10.2026) with the decided fixed amount
  * in place of the example tiers. A wording change is a new review.
@@ -72,14 +76,12 @@ const REWARD = Object.freeze({
     terms:
       "Für deine erste Newsletter-Anmeldung, nach Bestätigung per E-Mail. 50 € ab 500 € Bestellwert; reduzierte Artikel und Concept2 sind ausgeschlossen und zählen nicht zum Bestellwert; einmal einlösbar, 30 Tage gültig; nicht mit anderen Rabatten kombinierbar.",
     teaser: "Melde dich an und sichere dir 50 € Willkommensgutschein ab 500 € Bestellwert.",
-    afterAccept: "Dein Gutschein kommt per E-Mail, sobald du deine Anmeldung bestätigt hast.",
   }),
   en: Object.freeze({
     badge: "€50 welcome voucher from €500 order value",
     terms:
       "For your first newsletter sign-up, after you confirm by e-mail. €50 from €500 order value; reduced items and Concept2 are excluded and do not count towards the order value; single use, valid 30 days; cannot be combined with other discounts.",
     teaser: "Sign in and get a €50 welcome voucher from €500 order value.",
-    afterAccept: "Your voucher arrives by e-mail once you have confirmed your sign-up.",
   }),
 });
 
@@ -230,23 +232,38 @@ export function servedSigninExtras(variant, { rewardEnabled = false, valueMoment
   return out;
 }
 
+/** @param {"de" | "en"} l @param {{ rewardEnabled?: boolean, termsUrl?: string | null }} opts */
+function approvedReward(l, opts) {
+  for (const v of SIGNIN_VARIANTS[l]) {
+    const { reward } = servedSigninExtras(v, opts);
+    if (reward) return reward;
+  }
+  return null;
+}
+
 /**
  * The welcome voucher as Mo may state it (OPTIN_REWARD T4): the badge and terms
  * of the first approved variant with a reward for the locale, only while
  * CONSENT_REWARD_ENABLED is on — independent of the variant a session sees (the
  * voucher exists for every first sign-up; the variants test only the hint on the
- * ask). Null → Mo's neutral interim rule.
+ * ask). `alt` = the other language's approved wording, so Mo quotes an approved
+ * text when it answers in the other language (it may switch to the customer's
+ * language) instead of translating the conditions itself. Null → Mo's neutral
+ * interim rule.
  *
  * @param {unknown} locale
  * @param {{ rewardEnabled?: boolean, termsUrl?: string | null }} opts
- * @returns {{ badge: string, terms: string, termsUrl?: string } | null}
+ * @returns {{ badge: string, terms: string, termsUrl?: string, alt?: { badge: string, terms: string } } | null}
  */
 export function welcomeRewardForPrompt(locale, { rewardEnabled = false, termsUrl = null } = {}) {
-  for (const v of SIGNIN_VARIANTS[loc(locale)]) {
-    const { reward } = servedSigninExtras(v, { rewardEnabled, termsUrl });
-    if (reward) {
-      return { badge: reward.badge, terms: reward.terms, ...(reward.termsUrl ? { termsUrl: reward.termsUrl } : {}) };
-    }
-  }
-  return null;
+  const l = loc(locale);
+  const reward = approvedReward(l, { rewardEnabled, termsUrl });
+  if (!reward) return null;
+  const other = approvedReward(l === "de" ? "en" : "de", { rewardEnabled, termsUrl });
+  return {
+    badge: reward.badge,
+    terms: reward.terms,
+    ...(reward.termsUrl ? { termsUrl: reward.termsUrl } : {}),
+    ...(other ? { alt: { badge: other.badge, terms: other.terms } } : {}),
+  };
 }

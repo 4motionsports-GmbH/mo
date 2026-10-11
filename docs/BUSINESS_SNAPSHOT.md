@@ -137,7 +137,7 @@ without any data are left out.
 `shopifyConfigured`, `customerSync`, `consentWriteback`, `campaignSendsApproved`,
 `campaignRelease`, `physicalMailApproved`, `appProxySignin`,
 `attributionSessionAnchor`, `pageContext`, `pageContextHoldoutPct`,
-`chatOrderStatus`, `emailConfigured`, `anthropicConfigured` — with their env name.
+`chatOrderStatus`, `consentReward`, `emailConfigured`, `anthropicConfigured` — with their env name.
 
 ## Caveats
 

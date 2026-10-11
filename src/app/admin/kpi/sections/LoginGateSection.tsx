@@ -37,7 +37,7 @@ const DIAGNOSIS_INFO =
   "Jede Sitzung mit einem Anmelde-Event im Zeitraum, eingeordnet nach der Stelle, an der ihre Anmeldung endete — aus Widget- und Server-Events derselben Sitzung (Herkunft egal: Popup, Begrüßung, Kopfzeile, Shop-Erkennung). Die Ursachen sind die wahrscheinlichen laut Frontend-Doku (05 §12.1).";
 
 const TEASER_INFO =
-  "Sitzungen nach ihrem ersten Anmelde-Popup: mit Gutschein-Hinweis oder ohne. „Ohne“ umfasst Variante a, Englisch und Sitzungen, in denen der Text nicht innerhalb von 1,2 Sekunden ankam — deshalb kein sauberer Vergleich. Belastbar ist die Tabelle je Variante (die Variante, die der Server dieser Sitzung ausgeliefert hat). „Opt-in danach“ und „Bestätigt“: in derselben Sitzung nach dem Klick auf „Anmelden“. Die Begrüßungskarte meldet keinen Hinweis.";
+  "Sitzungen nach ihrem ersten Anmelde-Popup: mit Gutschein-Hinweis oder ohne. „Ohne“ umfasst Variante a und Sitzungen, in denen der Text nicht innerhalb von 1,2 Sekunden ankam — deshalb kein sauberer Vergleich. Belastbar ist die Tabelle je Variante (die Variante, die der Server dieser Sitzung ausgeliefert hat). „Opt-in danach“ und „Bestätigt“: in derselben Sitzung nach dem Klick auf „Anmelden“. Die Begrüßungskarte meldet keinen Hinweis.";
 
 const SERVED_INFO =
   "Dieselben Sitzungen nach der Variante, die der Server ihnen mit dem Einwilligungstext ausgeliefert hat (consent_copy_served — nur, solange mehrere Varianten aktiv sind; Sitzungen ohne diese Angabe fehlen hier), unabhängig davon, ob der Hinweis erschien. „Mit Hinweis“ = davon mit Gutschein-Hinweis im ersten Popup.";

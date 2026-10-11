@@ -82,7 +82,7 @@ together with the final texts** (dossier § 22.2).
 >   Bestellwert. Reduzierte Artikel (mit Streichpreis) und Artikel der Marke Concept2 sind ausgeschlossen
 >   und zählen nicht zum Bestellwert.
 > - **Einlösen:** Der Code ist persönlich, einmal einlösbar und 30 Tage ab Erhalt gültig. Er ist nicht mit
->   anderen Rabattcodes kombinierbar und wird nicht bar ausgezahlt.
+>   anderen Rabatten (auch nicht mit automatischen Rabatten) kombinierbar und wird nicht bar ausgezahlt.
 > - **Abmeldung:** Du kannst dich jederzeit über den Abmeldelink in jeder E-Mail abmelden. Ein bereits
 >   erhaltener Gutschein bleibt bis zu seinem Ablauf gültig.
 > - **Fragen:** info@motionsports.de

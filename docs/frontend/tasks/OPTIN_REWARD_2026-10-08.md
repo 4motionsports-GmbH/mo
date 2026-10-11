@@ -767,6 +767,9 @@ The proposed numbering continues after **F-38**; renumber if taken. Add each to 
 
 ### T9. Live test matrix (required before the switch flip; repeat after each issuer change)
 
+> *2026-10-11:* the switches are global and there is no test allow-list, so T9 runs **right after** the
+> flip with a rollback rule (`docs/ROLLOUT_TODO.md` open list items 5–6).
+
 **Setup**
 - Shopify DOI on.
 - Fresh real test inboxes, plus `+alias` variants to probe abuse.

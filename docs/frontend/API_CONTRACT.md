@@ -1620,8 +1620,9 @@ takes `variant` from the copy object it actually rendered.
   "badge": "50 € Willkommensgutschein ab 500 € Bestellwert",                 // ≤ 60
   "terms": "Für deine erste Newsletter-Anmeldung, nach Bestätigung per E-Mail. 50 € ab 500 € Bestellwert; reduzierte Artikel und Concept2 sind ausgeschlossen und zählen nicht zum Bestellwert; einmal einlösbar, 30 Tage gültig; nicht mit anderen Rabatten kombinierbar.",  // ≤ 300
   "termsUrl": "https://www.motionsports.de/pages/newsletter-gutschein",       // optional: CONSENT_REWARD_TERMS_URL, https only
-  "teaser": "Melde dich an und sichere dir 50 € Willkommensgutschein ab 500 € Bestellwert.",  // ≤ 160, anonymous sign-in surfaces
-  "afterAccept": "Dein Gutschein kommt per E-Mail, sobald du deine Anmeldung bestätigt hast."  // ≤ 200
+  "teaser": "Melde dich an und sichere dir 50 € Willkommensgutschein ab 500 € Bestellwert."  // ≤ 160, anonymous sign-in surfaces
+  // "afterAccept" (≤ 200) is part of the widget contract but NOT served: the widget of 2026-10-08 shows it
+  // after every non-`already` answer, also after a neutral `none` where no confirmation mail goes out.
 },
 "valueMoment": {               // variant c, only with `reward` and while CONSENT_VALUE_MOMENT_ENABLED (default off)
   "lead": "Gefällt dir die Empfehlung? Hol dir deinen Willkommensgutschein für die Bestellung."  // ≤ 200
@@ -1630,7 +1631,7 @@ takes `variant` from the copy object it actually rendered.
 
 - The strings live in `src/lib/consent-variants.mjs` (the example above is today's German text). The
   server enforces the widget's limits (trimmed, non-empty, the lengths above): a `reward` without a valid
-  `badge` and `terms` is not served at all, an invalid `termsUrl` / `teaser` / `afterAccept` is left out
+  `badge` and `terms` is not served at all, an invalid `termsUrl` / `teaser` is left out
   on its own, so what is served is what renders.
 - Served only for an approved variant: `b` / `c` in both languages since counsel's approval (reported
   2026-10-11; English as the translation, `locale=en` serves the English strings).

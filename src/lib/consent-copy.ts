@@ -172,7 +172,7 @@ export interface SignInMarketingConsentCopy {
    * per language only once approved). Framing — NEVER part of
    * consentTextShown. The widget renders it all or nothing (badge + terms).
    */
-  reward?: { badge: string; terms: string; termsUrl?: string; teaser?: string; afterAccept?: string };
+  reward?: { badge: string; terms: string; termsUrl?: string; teaser?: string; afterAccept?: string }; // afterAccept: not served (consent-variants.mjs)
   /**
    * The value-moment lead (copy v6, variant c, CONSENT_VALUE_MOMENT_ENABLED,
    * only with `reward`): the signed-in ask moves to the moment after a product
@@ -235,7 +235,7 @@ export function signInMarketingConsentCopy(
  */
 export function welcomeRewardForPrompt(
   locale: Locale = "de"
-): { badge: string; terms: string; termsUrl?: string } | null {
+): { badge: string; terms: string; termsUrl?: string; alt?: { badge: string; terms: string } } | null {
   return welcomeRewardForPromptCore(locale, {
     rewardEnabled: isConsentRewardEnabled(),
     termsUrl: process.env.CONSENT_REWARD_TERMS_URL ?? null,

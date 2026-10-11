@@ -445,7 +445,7 @@ Headers: x-ms-chat-key, x-ms-session, Content-Type: application/json (§1.1)
 - `locale` in the body wins over `?locale=` / `x-ms-locale` (default `de`). It sets the DOI mail's
   language, the message language, and which canonical text the echo is compared with.
 - `consentTextShown` byte-identical to the canonical sign-in text of that `locale` → stored with
-  the version stamp (`v5`); anything else (a stale copy, a missing echo) is stored as sent without
+  the version stamp (`v6`); anything else (a stale copy, a missing echo) is stored as sent without
   a stamp ("unattested") — not an error. Always echo the served string.
 - `placement` and `variant` are telemetry only: unknown or invalid values are ignored, **never** a
   `400`. `variant` counts only when it is a variant id the backend defines for that locale.

@@ -787,7 +787,7 @@ deletes the events themselves.
 2. `marketingConsent === true` required (no auto-enrol), else `400`.
 3. The address is `customers.email` — the verified one; the synthetic `shopify:<id>`
    placeholder → `422 no_verified_email`; no customer → `404 not_found`.
-4. Version stamp: `resolveConsentCopyVersion` stamps `CONSENT_COPY_VERSION` (`v5`,
+4. Version stamp: `resolveConsentCopyVersion` stamps `CONSENT_COPY_VERSION` (`v6`,
    `consent-copy-version.mjs`) only when the echoed `consentTextShown` is byte-identical
    to `signInMarketingConsentCopy(locale).consentTextShown`; anything else is stored
    unattested (NULL).

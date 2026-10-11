@@ -87,7 +87,7 @@ interface BuildPromptOpts {
   // in consent-copy.ts — set only while CONSENT_REWARD_ENABLED is on): Mo states
   // exactly the served badge + terms when asked. Absent/null → the neutral
   // interim rule (neither promise nor deny).
-  welcomeReward?: { badge: string; terms: string; termsUrl?: string } | null;
+  welcomeReward?: { badge: string; terms: string; termsUrl?: string; alt?: { badge: string; terms: string } } | null;
 }
 
 // Lightweight in-conversation note used when the user opens the product

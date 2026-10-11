@@ -46,7 +46,7 @@
  *            translation of the German (D-AP3). Labels and footers unchanged.
  *   - "v6" — FRAMING ONLY (OPTIN_REWARD T3): the sign-in copy may carry the
  *            welcome-voucher hint (`reward`: badge, terms, terms link, teaser
- *            for the anonymous sign-in surfaces, afterAccept) on variants b/c
+ *            for the anonymous sign-in surfaces) on variants b/c
  *            and the value-moment lead (`valueMoment`) on c, each behind its
  *            switch (CONSENT_REWARD_ENABLED, CONSENT_VALUE_MOMENT_ENABLED); the
  *            DOI confirmation page may add a voucher note. Approved by counsel

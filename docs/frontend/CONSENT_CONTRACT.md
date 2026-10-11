@@ -120,7 +120,9 @@ signed in, so the backend holds their verified address.
   non-empty strings within their limits (badge ≤ 60, terms ≤ 300) and the copy has
   `lawyerApproved: true`; on `/en` also `enLegalReviewed: true`. Drop an invalid `termsUrl`
   (`safeHref`), `teaser` (≤ 160) or `afterAccept` (≤ 200) on its own. `afterAccept` goes under the
-  success text after an accept answered `pending` or `other` (not `already`). `teaser` (+ terms + link)
+  success text after an accept answered `pending` or `other` (not `already`) — the backend does **not**
+  serve it, because `other` includes the neutral `none` where no mail goes out; serving it needs a widget
+  that shows it only for `pending` with `doiEmailSent: true`. `teaser` (+ terms + link)
   belongs to the anonymous sign-in surfaces (login popup, welcome sign-in card) — not the consent ask.
   Without `reward` the DOM is exactly v5's. The backend serves only valid values (API_CONTRACT §7.4).
 - **`benefits` — all or nothing.** Render a list (popup and card, under the headline, each item
