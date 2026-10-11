@@ -178,14 +178,15 @@ const head = (t) => console.log(`\n=== ${t} ===`);
 const table = (rows) => (rows.length ? console.table(rows) : console.log("  (keine Zeilen)"));
 
 console.log(`Live-Check ab ${since}${SINCE_DAY.test(since) ? " (Europe/Berlin)" : ""}`);
-// Webhook health first: without them no order is attributed to Mo and a shop
-// consent arrives only with the nightly reconcile (C.29 checks then say little).
+// Webhook health first: without them no marked order is attributed to Mo and a
+// shop consent arrives only with the nightly reconcile (C.29 checks then say little).
 const lastWebhookAt = (await sql.query(`SELECT max(received_at) AS at FROM shopify_webhook_events`, []))[0]?.at ?? null;
 const webhooksQuiet = isWebhookQuiet(lastWebhookAt);
 if (webhooksQuiet) {
   console.log(
     `⚑ Seit ${new Date(lastWebhookAt).toISOString()} kam kein Shopify-Webhook an (Bestellungen, Kunden, Einwilligung) — ` +
-      "Bestellungen werden Mo nicht zugeordnet. Prüfen: npm run shopify:webhooks (fehlende mit --apply); sind alle da: " +
+      "Bestellungen mit Mo-Markierung werden nicht zugeordnet (Mo-Codes ergänzt der Code-Abgleich). " +
+      "Prüfen: npm run shopify:webhooks -- --url https://mo.motionsports.de (fehlende mit --apply); sind alle da: " +
       "Vercel-Logs von /api/webhooks/shopify (401 = SHOPIFY_CLIENT_SECRET passt nicht)."
   );
 }

@@ -168,7 +168,8 @@ export async function KpiTab({
   const setChannel = revenue?.summary.byChannel.find((c) => c.key === "set");
   const group = (key: KpiGroupKey) => KPI_GROUPS.find((g) => g.key === key) as KpiGroup;
   const releases = releasesInRange(range);
-  // Orders reach „Umsatz durch Mo“ only through the orders/create webhook; the
+  // Marked orders reach „Umsatz durch Mo“ only through the orders/create and
+  // orders/paid webhooks (Mo-code orders also through the code lookup); the
   // nightly reconcile fills the order copy but attributes nothing.
   const webhooksQuietSince = isWebhookQuiet(syncHealth?.lastWebhookAt) ? syncHealth?.lastWebhookAt ?? null : null;
 
@@ -186,13 +187,16 @@ export async function KpiTab({
       {webhooksQuietSince && (
         <Callout tone="warning" className="-mb-4">
           Seit {formatAdmin(webhooksQuietSince, ADMIN_DATE_TIME_SHORT)} kommen keine Shopify-Webhooks an — Bestellungen
-          seitdem sind Mo nicht zugeordnet, „Umsatz durch Mo“ fehlt für diese Zeit.{" "}
+          mit Mo-Markierung (Chat, Set-Link) sind seitdem nicht zugeordnet, „Umsatz durch Mo“ ist für diese Zeit zu
+          niedrig.{" "}
           <InfoTip label="Warum und was tun">
-            Bestellungen werden Mo nur über den Shopify-Webhook „Bestellung angelegt“ zugeordnet; der nächtliche Abgleich
-            übernimmt sie in die Bestellkopie, ordnet aber nichts zu. Meist fehlen die Webhook-Abonnements der App oder
-            ihre Signatur passt nicht mehr. Prüfen mit „npm run shopify:webhooks“ (fehlende mit „--apply“ anlegen); sind
-            alle da, in Vercel die Logs von /api/webhooks/shopify ansehen (401 = SHOPIFY_CLIENT_SECRET passt nicht zur
-            App). Einstellungen → Shopify-Abgleich zeigt den letzten Webhook.
+            Mo ordnet Bestellungen über die Shopify-Webhooks „Bestellung angelegt“ und „Bestellung bezahlt“ zu.
+            Bestellungen mit einem Mo-Code ergänzt der Code-Abgleich weiter (die 100 neuesten Codes); es fehlen die mit
+            Mo-Markierung aus dem Warenkorb. Der nächtliche Abgleich übernimmt alle in die Bestellkopie, ordnet aber
+            nichts zu. Meist fehlen die Webhook-Abonnements der App oder ihre Signatur passt nicht mehr. Prüfen mit „npm
+            run shopify:webhooks“ (fehlende mit „--apply“ anlegen); sind alle da, in Vercel die Logs von
+            /api/webhooks/shopify ansehen (401 = SHOPIFY_CLIENT_SECRET passt nicht zur App). Einstellungen →
+            Shopify-Abgleich zeigt den letzten Webhook.
           </InfoTip>
         </Callout>
       )}

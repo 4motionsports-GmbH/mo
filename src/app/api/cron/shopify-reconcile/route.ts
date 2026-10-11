@@ -6,7 +6,7 @@
 // and §6.4 (facts).
 //
 // Reports when no Shopify webhook arrived for more than two days (an outage:
-// orders are no longer attributed). Reconcile is gated by
+// marked orders are no longer attributed). Reconcile is gated by
 // SHOPIFY_CUSTOMER_SYNC_ENABLED; the facts run always
 // (they also cover chat-only people). With SHOPIFY_WRITEBACK_ENABLED the fresh
 // facts then queue Mo's `mo-…` customer tags for Shopify (lib/shopify-insights).
@@ -36,8 +36,8 @@ async function handle(req: Request): Promise<Response> {
     const facts = await recomputeCustomerFacts({ deadlineMs: startedAt + 260_000 });
     const insightTags = await queueInsightWritebacks({ deadlineMs: startedAt + 285_000 });
     console.log("[cron/shopify-reconcile] done", { reconcile, facts, insightTags });
-    // The reconcile covers the order copy, but attribution and instant consent
-    // need the webhooks: report an outage once a night until it is fixed.
+    // The reconcile covers the order copy, but the attribution of marked orders
+    // and instant consent need the webhooks: report an outage once a night until it is fixed.
     if (isShopifyCustomerSyncEnabled()) {
       const health = await getSyncHealth();
       if (health && isWebhookQuiet(health.lastWebhookAt)) {

@@ -34,7 +34,7 @@ export function describeSyncProblems(health, deadOutbox, opts) {
   if (opts.syncEnabled && health) {
     if (!health.importDone) out.push("Der erste Import des Shopify-Kundenstamms steht noch aus.");
     if (isWebhookQuiet(health.lastWebhookAt, now)) {
-      out.push("Seit über zwei Tagen kam kein Shopify-Webhook an — neue Bestellungen werden Mo nicht zugeordnet.");
+      out.push("Seit über zwei Tagen kam kein Shopify-Webhook an — neue Bestellungen mit Mo-Markierung werden nicht zugeordnet.");
     }
     // The import is a full sync too: right after it no reconcile has run yet,
     // and that is no problem until the first night has passed.

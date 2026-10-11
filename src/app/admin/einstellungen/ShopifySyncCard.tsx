@@ -241,7 +241,8 @@ export function ShopifySyncCard({ health, runs, outbox, alignment, flags }: Shop
         {flags.customerSync && health && isWebhookQuiet(health.lastWebhookAt) && (
           <Callout tone="warning">
             Seit {formatAdmin(health.lastWebhookAt, ADMIN_DATE_TIME_SHORT)} kam kein Webhook von Shopify — neue
-            Bestellungen werden Mo nicht zugeordnet, Änderungen im Shop kommen erst mit dem nächtlichen Abgleich an.{" "}
+            Bestellungen mit Mo-Markierung werden nicht zugeordnet, Änderungen im Shop kommen erst mit dem nächtlichen
+            Abgleich an.{" "}
             <InfoTip label="Was tun">
               Meist fehlen die Webhook-Abonnements der App oder ihre Signatur passt nicht mehr. Prüfen mit „npm run
               shopify:webhooks“ (fehlende mit „--apply“ anlegen); sind alle da, in Vercel die Logs von
