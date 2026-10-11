@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #236); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -27,7 +27,7 @@ Commands are meant to be copied as they are — only words in CAPITALS are yours
    shows the last webhook of every topic (orders, customers, consent) on 05.10. between 16:03 and
    16:45 Berlin — during the 5.4 app setup (new app version, Shopify CLI). Since then no order is
    attributed to Mo („Umsatz durch Mo“ is missing those days) and shop sign-ups reach Mo only with
-   the nightly reconcile (the order copy itself is complete — the reconcile fills it). Since PR #236
+   the nightly reconcile (the order copy itself is complete — the reconcile fills it). Since PR #235
    the KPI page, Einstellungen → Shopify-Abgleich and the Eingang show a warning while this lasts.
    1. `npm run shopify:webhooks -- --url https://mo.motionsports.de` (only reads) → lists the 13
       topics at that address. **Topics missing** → `npm run shopify:webhooks -- --url
@@ -935,7 +935,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
         scopes are there; the filter works (294 code discounts, 105 candidates — mostly single-use
         staff codes and the „Happy Birthday Marketing“ app's birthday codes); the order copy shows one
         shared code (`3AVB…`, 12 characters) used by 150 different customers in 60 days, once each —
-        the likely welcome code; `check:welcome` now prints its settings (section C, PR #236). The
+        the likely welcome code; `check:welcome` now prints its settings (section C, PR #235). The
         `--email` run failed on a typed placeholder (open list item 3 has the exact command).
   - [x] **T2 — DOI only once** (built, PR #234): resend cooldown 30 min, atomic claim in SQL (parallel
         accepts → one mail), the same still-valid link re-sent after the cooldown (its expiry
@@ -997,7 +997,7 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
 - [ ] **C.32** **Shopify webhooks: outage of 05.10. and its gap.** M's `verify:live` of 11.10.: the last
   webhook of every topic on 05.10. 16:03–16:45 Berlin (during the 5.4 app setup); the order copy
   stays complete through the nightly reconcile, but no order is attributed and shop consents arrive
-  only nightly. Built (PR #236): `isWebhookQuiet` (`shopify-sync-health.mjs`, tested — no webhook for
+  only nightly. Built (PR #235): `isWebhookQuiet` (`shopify-sync-health.mjs`, tested — no webhook for
   more than two days) drives a warning on the KPI page, in Einstellungen → Shopify-Abgleich, the
   Eingang system card (now with the consequence), a nightly `reportError` from the reconcile cron and
   a ⚑ at the top of `verify:live` (and in 10e). Open: M restores the subscriptions (open list item 1)
