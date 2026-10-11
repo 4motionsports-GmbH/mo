@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { describeSyncProblems } from "./shopify-sync-health.mjs";
+import { describeSyncProblems, isWebhookQuiet } from "./shopify-sync-health.mjs";
 
 const NOW = Date.parse("2026-10-02T20:00:00Z");
 const h = (over = {}) => ({
@@ -25,7 +25,7 @@ test("no full sync for 36 hours is reported", () => {
 
 test("import pending, quiet webhooks and dead outbox rows", () => {
   assert.deepEqual(run(h({ importDone: false, lastImportAt: null })), ["Der erste Import des Shopify-Kundenstamms steht noch aus."]);
-  assert.deepEqual(run(h({ lastWebhookAt: "2026-09-29T00:00:00Z" })), ["Seit über zwei Tagen kam kein Shopify-Webhook an."]);
+  assert.deepEqual(run(h({ lastWebhookAt: "2026-09-29T00:00:00Z" })), ["Seit über zwei Tagen kam kein Shopify-Webhook an — neue Bestellungen mit Mo-Markierung werden nicht zugeordnet."]);
   assert.deepEqual(run(h(), 1), ["1 Übertragung an Shopify wurde aufgegeben."]);
   assert.deepEqual(run(h(), 3), ["3 Übertragungen an Shopify wurden aufgegeben."]);
 });
@@ -33,4 +33,13 @@ test("import pending, quiet webhooks and dead outbox rows", () => {
 test("with the sync off only dead outbox rows count", () => {
   assert.deepEqual(run(h({ importDone: false }), 0, false), []);
   assert.equal(run(null, 2, false).length, 1);
+});
+
+test("isWebhookQuiet: more than two days since the last webhook; never one = no verdict", () => {
+  assert.equal(isWebhookQuiet("2026-09-30T19:59:00Z", NOW), true);
+  assert.equal(isWebhookQuiet("2026-09-30T20:01:00Z", NOW), false);
+  assert.equal(isWebhookQuiet(new Date("2026-09-01T00:00:00Z"), NOW), true);
+  assert.equal(isWebhookQuiet(null, NOW), false);
+  assert.equal(isWebhookQuiet(undefined, NOW), false);
+  assert.equal(isWebhookQuiet("kein Datum", NOW), false);
 });

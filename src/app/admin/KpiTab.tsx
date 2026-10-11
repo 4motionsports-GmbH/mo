@@ -40,6 +40,9 @@ import { getInboxKpis } from "@/lib/inbox-store";
 import { getConsentExperiment, getWelcomeCodeStats } from "@/lib/kpi-consent-experiment-store";
 import type { KpiRange } from "@/lib/kpi-range";
 import { plural } from "@/lib/admin-format.mjs";
+import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { getSyncHealth } from "@/lib/shopify-sync";
+import { isWebhookQuiet } from "@/lib/shopify-sync-health.mjs";
 import { Callout, Disclosure, InfoTip } from "./ui";
 import { KPI_GROUPS, kpiGroupAnchor, type KpiGroup, type KpiGroupKey } from "./kpi/groups";
 import { KpiToolbar } from "./kpi/KpiToolbar";
@@ -123,6 +126,7 @@ export async function KpiTab({
     personas,
     cachedQuestions,
     letterStats,
+    syncHealth,
   ] = await Promise.all([
     getMoRevenueData(range),
     loadKpiShopifyBlock(range, fresh),
@@ -150,6 +154,7 @@ export async function KpiTab({
     getPersonaInsights(5),
     getCachedTopQuestionsMap(),
     getPhysicalLetterStats(),
+    getSyncHealth(),
   ]);
 
   const revenue = revenueData
@@ -163,6 +168,10 @@ export async function KpiTab({
   const setChannel = revenue?.summary.byChannel.find((c) => c.key === "set");
   const group = (key: KpiGroupKey) => KPI_GROUPS.find((g) => g.key === key) as KpiGroup;
   const releases = releasesInRange(range);
+  // Marked orders reach „Umsatz durch Mo“ only through the orders/create and
+  // orders/paid webhooks (Mo-code orders also through the code lookup); the
+  // nightly reconcile fills the order copy but attributes nothing.
+  const webhooksQuietSince = isWebhookQuiet(syncHealth?.lastWebhookAt) ? syncHealth?.lastWebhookAt ?? null : null;
 
   return (
     <div className="-mt-6 flex flex-col gap-10">
@@ -174,6 +183,23 @@ export async function KpiTab({
         shopifyFetchedAt={shopify.fetchedAt}
         shopifyFromCache={shopify.fromCache}
       />
+
+      {webhooksQuietSince && (
+        <Callout tone="warning" className="-mb-4">
+          Seit {formatAdmin(webhooksQuietSince, ADMIN_DATE_TIME_SHORT)} kommen keine Shopify-Webhooks an — Bestellungen
+          mit Mo-Markierung (Chat, Set-Link) sind seitdem nicht zugeordnet, „Umsatz durch Mo“ ist für diese Zeit zu
+          niedrig.{" "}
+          <InfoTip label="Warum und was tun">
+            Mo ordnet Bestellungen über die Shopify-Webhooks „Bestellung angelegt“ und „Bestellung bezahlt“ zu.
+            Bestellungen mit einem Mo-Code ergänzt der Code-Abgleich weiter (die 100 neuesten Codes); es fehlen die mit
+            Mo-Markierung aus dem Warenkorb. Der nächtliche Abgleich übernimmt alle in die Bestellkopie, ordnet aber
+            nichts zu. Meist fehlen die Webhook-Abonnements der App oder ihre Signatur passt nicht mehr. Prüfen mit „npm
+            run shopify:webhooks“ (fehlende mit „--apply“ anlegen); sind alle da, in Vercel die Logs von
+            /api/webhooks/shopify ansehen (401 = SHOPIFY_CLIENT_SECRET passt nicht zur App). Einstellungen →
+            Shopify-Abgleich zeigt den letzten Webhook.
+          </InfoTip>
+        </Callout>
+      )}
 
       {releases.length > 0 && (
         // Open by default only while short — a long list would push „Umsatz

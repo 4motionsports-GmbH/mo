@@ -145,6 +145,8 @@ const apiVersion = (process.env.SHOPIFY_API_VERSION ?? "").trim();
 const MAX_RETRIES = 6;
 /** Pass 2 reads the full settings of at most this many candidates (newest first). */
 const MAX_DETAIL = 25;
+/** Shared codes from the order ledger whose discount settings section C looks up. */
+const SHARED_LOOKUPS = 5;
 let accessToken = null;
 
 /** Client-credentials token, the same flow as src/lib/shopify.ts and verify:shopify. */
@@ -357,6 +359,25 @@ if (!shopifyOn && !dbOn) {
 }
 
 const candidates = [];
+/** One discount's settings, as section B and the shared-code lookup of C print them. */
+function printDiscount(desc, note) {
+  console.log(`\n  ▸ ${desc.title || "(ohne Titel)"} — ${desc.status} · ${desc.type}${note ? ` · ${note}` : ""}`);
+  console.log(
+    `    Wert: ${desc.value ?? desc.appType ?? "?"} auf ${desc.items ?? "?"} · ${desc.minimum ?? "Mindestwert: —"} · ${desc.combines ?? "?"}`
+  );
+  console.log(
+    `    Wer: ${desc.buyers ?? "?"} · einmal je Kunde: ${desc.oncePerCustomer ? "ja" : "nein"} · Gesamtlimit: ${desc.usageLimit ?? "keins"} · genutzt: ${desc.used ?? "?"}`
+  );
+  const sample = desc.codes.map((c) => `${c.shown}${c.createdBy ? ` [App ${c.createdBy}]` : ""}${c.used != null ? ` ×${c.used}` : ""}`).join(", ");
+  console.log(`    Codes: ${num(desc.codesCount)} (${codeKind(desc)}) — ${sample || "—"}`);
+  console.log(`    Angelegt ${berlin(desc.createdAt)} · gültig ${berlin(desc.startsAt)} bis ${berlin(desc.endsAt)} · Umsatz ${desc.totalSales ?? "?"}`);
+  if (desc.tags.length) console.log(`    Tags: ${desc.tags.join(", ")}`);
+  if (desc.summary) console.log(`    Shopify-Zusammenfassung: ${desc.summary}`);
+  for (const e of desc.events) {
+    console.log(`    Ereignis ${berlin(e.at)}: ${e.action ?? ""}${e.app ? ` (App ${e.app})` : e.byStaff ? " (Mitarbeiter)" : ""} ${e.message ?? ""}`);
+  }
+}
+
 if (shopifyOn) {
   head("A · Zugriffsrechte der App");
   try {
@@ -405,23 +426,7 @@ if (shopifyOn) {
     console.log(`  ${num(scanned)} Code-Rabatte gelesen, davon ${num(mo)} Mo-eigene (MS5-/MK-), ${num(ids.length)} Kandidaten:`);
     if (ids.length > MAX_DETAIL) console.log(`  Nur die neuesten ${MAX_DETAIL} Kandidaten im Detail (viele Einzelrabatte je Empfänger? → App in Einstellungen → Apps suchen).`);
     if (scanned === 0 && !flags.has("--all")) console.log("  Keine Treffer — mit --all wiederholen (prüft auch den Suchfilter).");
-    for (const { desc, reasons } of candidates) {
-      console.log(`\n  ▸ ${desc.title || "(ohne Titel)"} — ${desc.status} · ${desc.type} · Hinweise: ${reasons.join("; ")}`);
-      console.log(
-        `    Wert: ${desc.value ?? desc.appType ?? "?"} auf ${desc.items ?? "?"} · ${desc.minimum ?? "Mindestwert: —"} · ${desc.combines ?? "?"}`
-      );
-      console.log(
-        `    Wer: ${desc.buyers ?? "?"} · einmal je Kunde: ${desc.oncePerCustomer ? "ja" : "nein"} · Gesamtlimit: ${desc.usageLimit ?? "keins"} · genutzt: ${desc.used ?? "?"}`
-      );
-      const sample = desc.codes.map((c) => `${c.shown}${c.createdBy ? ` [App ${c.createdBy}]` : ""}${c.used != null ? ` ×${c.used}` : ""}`).join(", ");
-      console.log(`    Codes: ${num(desc.codesCount)} (${codeKind(desc)}) — ${sample || "—"}`);
-      console.log(`    Angelegt ${berlin(desc.createdAt)} · gültig ${berlin(desc.startsAt)} bis ${berlin(desc.endsAt)} · Umsatz ${desc.totalSales ?? "?"}`);
-      if (desc.tags.length) console.log(`    Tags: ${desc.tags.join(", ")}`);
-      if (desc.summary) console.log(`    Shopify-Zusammenfassung: ${desc.summary}`);
-      for (const e of desc.events) {
-        console.log(`    Ereignis ${berlin(e.at)}: ${e.action ?? ""}${e.app ? ` (App ${e.app})` : e.byStaff ? " (Mitarbeiter)" : ""} ${e.message ?? ""}`);
-      }
-    }
+    for (const { desc, reasons } of candidates) printDiscount(desc, `Hinweise: ${reasons.join("; ")}`);
     if (others.length) {
       console.log(`\n  Weitere Code-Rabatte ohne Hinweis (${others.length}${others.length > 20 ? ", die neuesten 20" : ""}):`);
       for (const d of others.slice(0, 20)) {
@@ -458,6 +463,29 @@ if (dbOn) {
       }))
     );
     if (groups.length > 25) console.log(`  … ${groups.length - 25} weitere Gruppen`);
+    // A shared code many customers used once each is how a welcome code looks:
+    // show the settings of the most used ones (value, limits, the creating app).
+    const shared = groups.filter((g) => g.shared && !g.mo).slice(0, SHARED_LOOKUPS);
+    if (shopifyOn && shared.length) {
+      console.log(`\n  Einstellungen der ${shared.length} meistgenutzten gemeinsamen Codes (ein gemeinsamer Willkommenscode sieht so aus):`);
+      for (const g of shared) {
+        const label = `${codeGroupLabel(g, showCodes)}: ${plural(g.orders, "Bestellung", "Bestellungen")} von ${plural(g.customers, "Kunde", "Kunden")}`;
+        try {
+          const id = (await gql(CODE_LOOKUP_QUERY, { code: g.group }))?.codeDiscountNodeByCode?.id;
+          const node = id ? (await gql(DETAIL_QUERY, { id }))?.discountNode : null;
+          if (!node) {
+            console.log(`\n  ▸ ${label} — in Shopify nicht (mehr) als Rabattcode gefunden (gelöscht, oder von einer App außerhalb von Shopify)`);
+            continue;
+          }
+          const desc = describeDiscountNode(node, { showCodes, knownCodes: [g.group] });
+          const hints = welcomeCandidateReasons(desc);
+          printDiscount(desc, `${label}${hints.length ? ` · Hinweise: ${hints.join("; ")}` : ""}`);
+        } catch (err) {
+          console.log(`\n  ▸ ${label} — Fehler: ${errText(err)}`);
+        }
+      }
+      console.log("  Ist einer davon der Willkommenscode, in Vercel WELCOME_CODE_MATCH=<Code> setzen (Code mit --show-codes).");
+    }
     for (const { desc } of candidates) {
       const { codes, complete } = await allCodes(desc.id);
       if (codes.length === 0) continue;

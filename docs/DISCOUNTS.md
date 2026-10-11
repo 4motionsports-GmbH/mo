@@ -57,7 +57,9 @@ that automation. `npm run check:welcome` (`scripts/check-welcome-code.mjs`,
 read-only, core `src/lib/welcome-code-check.mjs`) identifies it: the code
 discounts that look like the welcome code with their settings (value, one code
 or unique codes, limits, minimum, collections, expiry, the app that created
-them) and their redemptions; with `-- --email <test address> [--inbox <arrival
+them) and their redemptions — plus, looked up by code, the settings of the
+shared codes customers actually used most (one shared code used once each by many
+customers is how a shared welcome code looks); with `-- --email <test address> [--inbox <arrival
 time>]` it puts Mo's DOI and outbox timeline next to Shopify's consent for that
 one address (test cases 8 / 8b). Redemptions come from Mo's order ledger,
 `customer_orders.discount_codes` (filled by the `orders/*` webhooks, the import

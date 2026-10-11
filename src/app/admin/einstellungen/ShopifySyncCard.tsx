@@ -18,6 +18,7 @@ import type { ShopifySyncFlags } from "@/lib/shopify-sync-flags";
 import { outboxKindLabel } from "@/lib/outbox-core.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { num, plural, relativeTime } from "@/lib/admin-format.mjs";
+import { isWebhookQuiet } from "@/lib/shopify-sync-health.mjs";
 import {
   Button,
   Callout,
@@ -236,6 +237,19 @@ export function ShopifySyncCard({ health, runs, outbox, alignment, flags }: Shop
             {outbox ? `${num(outbox.pending + outbox.failed)} offen · ${num(outbox.doneLast24h)} erledigt (24 h)` : "—"}
           </DescriptionItem>
         </DescriptionList>
+
+        {flags.customerSync && health && isWebhookQuiet(health.lastWebhookAt) && (
+          <Callout tone="warning">
+            Seit {formatAdmin(health.lastWebhookAt, ADMIN_DATE_TIME_SHORT)} kam kein Webhook von Shopify — neue
+            Bestellungen mit Mo-Markierung werden nicht zugeordnet, Änderungen im Shop kommen erst mit dem nächtlichen
+            Abgleich an.{" "}
+            <InfoTip label="Was tun">
+              Meist fehlen die Webhook-Abonnements der App oder ihre Signatur passt nicht mehr. Prüfen mit „npm run
+              shopify:webhooks“ (fehlende mit „--apply“ anlegen); sind alle da, in Vercel die Logs von
+              /api/webhooks/shopify ansehen — 401 heißt, SHOPIFY_CLIENT_SECRET passt nicht zur App.
+            </InfoTip>
+          </Callout>
+        )}
 
         {importing ? (
           <div className="flex flex-col gap-2">
