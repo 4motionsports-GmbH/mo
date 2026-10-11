@@ -25,6 +25,7 @@ import {
 import { pageContextHoldoutPct } from "@/lib/page-context";
 import { isChatPageContextEnabled } from "@/lib/platform-flags.mjs";
 import { resolveLocale } from "@/lib/locale";
+import { welcomeRewardForPrompt } from "@/lib/consent-copy";
 import { resolveBrowsingContext, type BrowsingContext } from "@/lib/browsing-context";
 import { resolveChatIdentity } from "@/lib/customer-memory";
 import { buildChatTools, MAX_EMAIL_OFFERS_PER_CONVERSATION } from "@/lib/tools";
@@ -574,6 +575,7 @@ export async function POST(req: Request) {
             directives,
             locale,
             orderStatus: orderStatusEnabled,
+            welcomeReward: welcomeRewardForPrompt(locale),
           }),
           providerOptions: cacheEphemeral,
         },

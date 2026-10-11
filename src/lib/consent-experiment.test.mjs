@@ -133,8 +133,30 @@ test("servedCopyFacts: reward and value moment only when served valid and approv
   assert.equal(servedCopyFacts(null).variant, null);
 });
 
-test("variantDefinesReward: no shipped variant defines a reward before T3; forged ids never do", () => {
+test("variantDefinesReward: since copy v6 b and c define a reward, the control a never; forged ids never do", () => {
   assert.equal(variantDefinesReward("a"), false);
+  assert.equal(variantDefinesReward("b"), true);
+  assert.equal(variantDefinesReward("c"), true);
   assert.equal(variantDefinesReward("zz"), false);
   assert.equal(variantDefinesReward(42), false);
+});
+
+test("servedCopyFacts reads a v6 copy built by servedSigninExtras: b → reward, c → value moment", async () => {
+  const { SIGNIN_VARIANTS, servedSigninExtras } = await import("./consent-variants.mjs");
+  const [, b, c] = SIGNIN_VARIANTS.de;
+  const on = { rewardEnabled: true, valueMomentEnabled: true };
+  assert.deepEqual(servedCopyFacts({ variant: "b", lawyerApproved: true, ...servedSigninExtras(b, on) }), {
+    variant: "b",
+    reward: true,
+    valueMoment: false,
+    mode: "popup",
+  });
+  assert.deepEqual(servedCopyFacts({ variant: "c", lawyerApproved: true, ...servedSigninExtras(c, on) }), {
+    variant: "c",
+    reward: true,
+    valueMoment: true,
+    mode: "value_moment",
+  });
+  // Switch off → a v6 copy of b looks like the control.
+  assert.equal(servedCopyFacts({ variant: "b", lawyerApproved: true, ...servedSigninExtras(b, {}) }).reward, false);
 });

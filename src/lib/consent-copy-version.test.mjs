@@ -10,8 +10,8 @@ import {
 // (migration 0011). The strings themselves live in src/lib/consent-copy.ts
 // (lawyer file); these tests pin the version mechanics.
 
-test("current consent copy version is v5", () => {
-  assert.equal(CONSENT_COPY_VERSION, "v5");
+test("current consent copy version is v6", () => {
+  assert.equal(CONSENT_COPY_VERSION, "v6");
 });
 
 test("consentTextShown is composed in display order with the stable separator", () => {

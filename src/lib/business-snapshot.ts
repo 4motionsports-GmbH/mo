@@ -67,6 +67,7 @@ import {
   isAttributionSessionAnchorEnabled,
   isChatOrderStatusEnabled,
   isChatPageContextEnabled,
+  isConsentRewardEnabled,
   isShopifyConsentWritebackEnabled,
   isShopifyCustomerSyncEnabled,
 } from "./platform-flags.mjs";
@@ -508,6 +509,7 @@ export function snapshotSwitches() {
     pageContext: isChatPageContextEnabled(),
     pageContextHoldoutPct: pageContextHoldoutPct(),
     chatOrderStatus: isChatOrderStatusEnabled(),
+    consentReward: isConsentRewardEnabled(),
     emailConfigured: isEmailConfigured(),
     anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
   };

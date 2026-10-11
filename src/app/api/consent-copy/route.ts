@@ -10,7 +10,8 @@
 // forms NOT triggered by the tool (e.g. a proactive share-form entry point),
 // and lets the widget refresh its copy without a theme release.
 //
-// Four surfaces, ONE version stamp (v5; signin carries served `benefits` + `variant`):
+// Four surfaces, ONE version stamp (v6; signin carries served `benefits` + `variant`,
+// and since v6 the optional `reward` / `valueMoment` framing behind their switches):
 //   * default            — the in-chat capture form (email + two checkboxes).
 //   * ?surface=signin    — the AT-SIGN-IN marketing opt-in for a signed-in
 //                          customer (benefit-framed button-consent block, no

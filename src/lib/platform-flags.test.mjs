@@ -9,6 +9,8 @@ import {
   isAttributionSessionAnchorEnabled,
   isAppProxySigninEnabled,
   isChatPageContextEnabled,
+  isConsentRewardEnabled,
+  isConsentValueMomentEnabled,
   appProxySigninMaxAgeHours,
   appProxyShopProofHours,
   aiProfileScope,
@@ -106,4 +108,12 @@ test("App Proxy sign-in: off by default, max age 0 by default, clamped, and 0 wh
 test("page context is off unless explicitly enabled", () => {
   assert.equal(isChatPageContextEnabled({}), false);
   assert.equal(isChatPageContextEnabled({ CHAT_PAGE_CONTEXT_ENABLED: "true" }), true);
+});
+
+test("the welcome-voucher switches default off and need a truthy value", () => {
+  assert.equal(isConsentRewardEnabled({}), false);
+  assert.equal(isConsentRewardEnabled({ CONSENT_REWARD_ENABLED: "false" }), false);
+  assert.equal(isConsentRewardEnabled({ CONSENT_REWARD_ENABLED: " TRUE " }), true);
+  assert.equal(isConsentValueMomentEnabled({}), false);
+  assert.equal(isConsentValueMomentEnabled({ CONSENT_VALUE_MOMENT_ENABLED: "1" }), true);
 });

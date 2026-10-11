@@ -83,6 +83,11 @@ interface BuildPromptOpts {
   // "order data only from get_order_status" exception. Absent/false → the
   // prompt is byte-identical to before the feature.
   orderStatus?: boolean;
+  // The live newsletter welcome voucher (OPTIN_REWARD T4, welcomeRewardForPrompt
+  // in consent-copy.ts — set only while CONSENT_REWARD_ENABLED is on): Mo states
+  // exactly the served badge + terms when asked. Absent/null → the neutral
+  // interim rule (neither promise nor deny).
+  welcomeReward?: { badge: string; terms: string; termsUrl?: string } | null;
 }
 
 // Lightweight in-conversation note used when the user opens the product

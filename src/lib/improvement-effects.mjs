@@ -141,6 +141,8 @@ export const SWITCH_EFFECTS = Object.freeze({
   pageContext: { measurement: [], product: ["chat", "journey"] },
   pageContextHoldoutPct: { measurement: [], product: ["chat", "journey"] },
   chatOrderStatus: { measurement: [], product: ["orderStatus", "quality", "chat"] },
+  // The welcome voucher (hint on the ask, teaser on the login popup, Mo's answer).
+  consentReward: { measurement: [], product: ["consent", "signin", "capture", "chat"] },
   emailConfigured: { measurement: [], product: ["capture", "campaigns", "consent"] },
   anthropicConfigured: { measurement: [], product: ["chat", "quality", "journey", "inbox", "knowledge"] },
 });

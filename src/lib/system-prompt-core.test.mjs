@@ -579,3 +579,66 @@ test("A3 page notes: softer than the product pivot, no card instruction, both lo
   }
   assert.match(pageCategoryPivotNote({ name: "Hanteln" }, "de"), /Kategorieseite "Hanteln"/);
 });
+
+// ---------------------------------------------------------------------------
+// Newsletter welcome voucher (OPTIN_REWARD T4)
+// ---------------------------------------------------------------------------
+
+const voucher = () => ({
+  badge: "50 € Willkommensgutschein ab 500 € Bestellwert",
+  terms: "Für deine erste Newsletter-Anmeldung, nach Bestätigung per E-Mail. 50 € ab 500 € Bestellwert; reduzierte Artikel und Concept2 sind ausgeschlossen und zählen nicht zum Bestellwert; einmal einlösbar, 30 Tage gültig; nicht mit anderen Rabatten kombinierbar.",
+  termsUrl: "https://www.motionsports.de/pages/newsletter-gutschein",
+});
+
+test("welcome voucher off (default / null): neutral interim rule, no denial, no amount", () => {
+  for (const locale of ["de", "en"]) {
+    for (const customerMemory of [undefined, nameOnlyMemory(), { ...fullMemory(), welcomeAlreadyIssued: true }]) {
+      const base = { profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], customerMemory, locale };
+      const off = buildSystemPrompt(base);
+      assert.equal(buildSystemPrompt({ ...base, welcomeReward: null }), off);
+      assert.doesNotMatch(off, /gibt es derzeit NICHT|currently NO automatic welcome gift/);
+      const head = locale === "en" ? "### Newsletter and welcome discounts" : "### Newsletter- und Willkommensrabatte";
+      assert.ok(off.includes(head));
+      const section = off.slice(off.indexOf(head), off.indexOf(locale === "en" ? "### Limits" : "### Grenzen"));
+      assert.doesNotMatch(section, /\d+\s*€|€\s*\d+|\d+\s*%/);
+      assert.match(off, locale === "en" ? /do not deny that there is one either/ : /verneine aber auch nicht, dass es einen gibt/);
+    }
+  }
+});
+
+test("welcome voucher on: the served badge and terms verbatim, the link, and no other amount", () => {
+  const v = voucher();
+  const de = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], welcomeReward: v });
+  assert.match(de, /### Newsletter-Willkommensgutschein/);
+  assert.ok(de.includes(`„${v.badge}“ — ${v.terms}`));
+  assert.ok(de.includes(`Die vollständigen Bedingungen stehen hier: ${v.termsUrl}`));
+  assert.match(de, /Sprich ihn nicht von dir aus an/);
+  assert.match(de, /Rechne nie einen reduzierten Preis aus/);
+  assert.match(de, /reduzierte Artikel oder Concept2/);
+  assert.doesNotMatch(de, /### Newsletter- und Willkommensrabatte/);
+  // The only euro amounts in the voucher section are the served ones.
+  const section = de.slice(de.indexOf("### Newsletter-Willkommensgutschein"), de.indexOf("### Grenzen"));
+  const amounts = section.match(/\d+\s*€/g) ?? [];
+  assert.deepEqual([...new Set(amounts)].sort(), ["50 €", "500 €"]);
+  assert.doesNotMatch(section, /%/);
+  // Without a terms URL: no link line.
+  const noUrl = buildSystemPrompt({
+    profile: emptyProfile(),
+    archetype: "unknown",
+    retrievedProducts: [],
+    welcomeReward: { badge: v.badge, terms: v.terms },
+  });
+  assert.doesNotMatch(noUrl, /Die vollständigen Bedingungen stehen hier/);
+  const en = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], welcomeReward: v, locale: "en" });
+  assert.match(en, /### Newsletter welcome voucher/);
+  assert.ok(en.includes(`"${v.badge}" — ${v.terms}`));
+});
+
+test("welcome voucher on + memory: points to the section; an earlier welcome code gets no new voucher", () => {
+  const base = { profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], welcomeReward: voucher() };
+  const fresh = buildSystemPrompt({ ...base, customerMemory: fullMemory() });
+  assert.match(fresh, /\*\*Willkommensgutschein\.\*\* Zum Newsletter-Willkommensgutschein gilt ausschließlich der Abschnitt/);
+  const issued = buildSystemPrompt({ ...base, customerMemory: { ...fullMemory(), welcomeAlreadyIssued: true } });
+  assert.match(issued, /gilt nur für die erste Newsletter-Anmeldung/);
+  assert.match(issued, /stelle keinen neuen Gutschein in Aussicht/);
+});

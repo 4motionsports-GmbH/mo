@@ -22,7 +22,7 @@
 //     out (C.29, Mo's mirror).
 //   * stores the exact label + footer shown verbatim as `consent_text_shown`
 //     with the same `consent_copy_version` stamp (CONSENT_COPY_VERSION,
-//     currently v5), so the Art. 7 audit is identical to the other surfaces.
+//     currently v6), so the Art. 7 audit is identical to the other surfaces.
 //     Withdrawable via the same unsubscribe.
 //
 // The capture is recorded against the session (session_id on the upsert +

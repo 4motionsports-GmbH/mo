@@ -71,6 +71,11 @@ const DE = {
   doiConfirmedHeading: "Danke, deine Anmeldung ist bestätigt.",
   doiConfirmedBody:
     "Du erhältst ab jetzt persönliche Empfehlungen und Angebote von motion sports. Du kannst dich jederzeit über den Abmeldelink in jeder E-Mail wieder abmelden.",
+  // OPTIN_REWARD T5 (copy v6): shown under the body only while the welcome
+  // voucher is live (doiPageCopy). Conditional wording: a re-subscriber gets no
+  // second code (one code per customer, O-6).
+  doiConfirmedRewardNote:
+    "Ist das deine erste Newsletter-Anmeldung, kommt dein Willkommensgutschein in Kürze per E-Mail.",
   doiInvalidHeading: "Dieser Bestätigungslink ist ungültig oder abgelaufen.",
   doiInvalidBody:
     "Bitte fordere im Chat erneut eine Zusammenfassung an, wenn du dich für Empfehlungen und Angebote anmelden möchtest.",
@@ -104,6 +109,8 @@ const EN = {
   doiConfirmedHeading: "Thanks, your sign-up is confirmed.",
   doiConfirmedBody:
     "From now on you'll receive personal recommendations and offers from motion sports. You can unsubscribe at any time via the unsubscribe link in every email.",
+  doiConfirmedRewardNote:
+    "If this is your first newsletter sign-up, your welcome voucher will arrive by e-mail shortly.",
   doiInvalidHeading: "This confirmation link is invalid or has expired.",
   doiInvalidBody:
     "Please request a summary again in the chat if you'd like to sign up for recommendations and offers.",

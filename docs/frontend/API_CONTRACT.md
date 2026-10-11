@@ -766,7 +766,7 @@ the same `toolCallId`):
   "output": {
     "ok": true,
     "consentCopy": {
-      "version": "v5",
+      "version": "v6",
       "locale": "de",
       "transactionalLabel": "Ja, schickt mir meine Beratungs-Zusammenfassung per E-Mail (inkl. Direkt-Link zur Kasse).",
       "marketingLabel": "Ja, ich möchte exklusive Angebote und Aktionen erhalten — nur für Abonnenten. Jederzeit abbestellbar.",
@@ -1266,11 +1266,12 @@ opt-in POST). Each carries `data: { surface: "signin", placement?, variant?, rew
   2026-10-01; old events stay countable.)
 - `placement` — `popup` | `signin_return` | `value_moment`, optional. The widget of 2026-10-08
   (`495fdf6`) sends `value_moment` from its value-moment card, only once the served copy carries a
-  valid `valueMoment` (not served yet, OPTIN_REWARD T3).
+  valid `valueMoment` (served since 2026-10-11 for variant `c` behind `CONSENT_VALUE_MOMENT_ENABLED`,
+  default off in code; §7.4).
 - `variant` — the served `variant` id of the copy that was rendered (`^[a-z0-9_-]{1,32}$`, §7.4),
   optional.
-- `reward` — `true` when the served reward hint rendered on that ask (widget of 2026-10-08; not
-  served yet), otherwise absent. Stored verbatim; only a JSON `true` counts. Telemetry only, never
+- `reward` — `true` when the served reward hint rendered on that ask (widget of 2026-10-08; served
+  since 2026-10-11 for variants `b`/`c` behind `CONSENT_REWARD_ENABLED`, default off in code), otherwise absent. Stored verbatim; only a JSON `true` counts. Telemetry only, never
   part of the consent record.
 
 The dashboard groups a missing `variant` as „ohne (älteres Widget)“ and a missing `placement` as „ohne“; a value it does not know becomes „unbekannt“ — an arbitrary string never gets its own row.
@@ -1464,7 +1465,7 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
 - `consentTextShown` is stored verbatim as Art. 7 proof. It MUST be the **backend-provided**
   `consentCopy.consentTextShown` string (from the `offer_email_summary` tool result or
   `GET /api/consent-copy`, §7.4) echoed back **byte-for-byte**. The backend additionally stores a
-  **consent copy version stamp** (`consent_copy_version`, e.g. `"v5"`) — resolved **server-side**:
+  **consent copy version stamp** (`consent_copy_version`, e.g. `"v6"`) — resolved **server-side**:
   stamped only when the echoed string is byte-identical to the currently served capture copy of the
   request's locale, `NULL` otherwise (the widget sends no version field).
 - `trigger` is optional (telemetry only). It is **truncated to 40 characters** server-side; a value
@@ -1579,7 +1580,8 @@ GET /api/consent-copy?surface=chat      # chat consent gate — not used by the 
 ```
 
 Every surface accepts `?locale=en` (default German, §12). Every consent surface carries `version`
-(`"v5"` since 2026-10-05, one stamp for every surface), `locale` and `enLegalReviewed` (§12).
+(`"v6"` since 2026-10-11, one stamp for every surface; v6 adds framing only — every label, footer and
+`consentTextShown` is byte-identical to v5), `locale` and `enLegalReviewed` (§12).
 
 **`surface=signin`** (and the legacy `surface=chat`) share one payload shape: `headline`,
 `marketingLabel`, `consentFooter`, `consentTextShown`, `imprintUrl`, `privacyUrl`, `lawyerApproved`,
@@ -1608,6 +1610,37 @@ never hides the popup or the card. Only variant `a` is served by default
 session from the `x-ms-session` header of this GET, and the response is `Cache-Control: private,
 no-store` instead of the public 60 s cache — so the widget keeps the served copy per session id and
 takes `variant` from the copy object it actually rendered.
+
+**v6 (2026-10-11): `reward` and `valueMoment` on `surface=signin`** (OPTIN_REWARD T3; widget of
+2026-10-08, `495fdf6`). Both are framing like `headline` / `benefits` — **never part of
+`consentTextShown`** — and optional; an old widget ignores them.
+
+```jsonc
+"reward": {                    // variants b and c, only while CONSENT_REWARD_ENABLED (default off in code)
+  "badge": "50 € Willkommensgutschein ab 500 € Bestellwert",                 // ≤ 60
+  "terms": "Für deine erste Newsletter-Anmeldung, nach Bestätigung per E-Mail. 50 € ab 500 € Bestellwert; reduzierte Artikel und Concept2 sind ausgeschlossen und zählen nicht zum Bestellwert; einmal einlösbar, 30 Tage gültig; nicht mit anderen Rabatten kombinierbar.",  // ≤ 300
+  "termsUrl": "https://www.motionsports.de/pages/newsletter-gutschein",       // optional: CONSENT_REWARD_TERMS_URL, https only
+  "teaser": "Melde dich an und sichere dir 50 € Willkommensgutschein ab 500 € Bestellwert.",  // ≤ 160, anonymous sign-in surfaces
+  "afterAccept": "Dein Gutschein kommt per E-Mail, sobald du deine Anmeldung bestätigt hast."  // ≤ 200
+},
+"valueMoment": {               // variant c, only with `reward` and while CONSENT_VALUE_MOMENT_ENABLED (default off)
+  "lead": "Gefällt dir die Empfehlung? Hol dir deinen Willkommensgutschein für die Bestellung."  // ≤ 200
+}
+```
+
+- The strings live in `src/lib/consent-variants.mjs` (the example above is today's German text). The
+  server enforces the widget's limits (trimmed, non-empty, the lengths above): a `reward` without a valid
+  `badge` and `terms` is not served at all, an invalid `termsUrl` / `teaser` / `afterAccept` is left out
+  on its own, so what is served is what renders.
+- Served only for an approved variant: `b` / `c` in both languages since counsel's approval (reported
+  2026-10-11; English as the translation, `locale=en` serves the English strings).
+- With `CONSENT_REWARD_ENABLED` off the payload is exactly v5's apart from `version` (variants `b` / `c`
+  then look like `a`).
+- Anonymous sessions fetch this copy too (the login-popup teaser); the variant is assigned from the
+  same `x-ms-session`.
+- Kill switch: `CONSENT_REWARD_ENABLED=false` (or dropping `b` / `c` from `CONSENT_SIGNIN_VARIANTS`);
+  with one variant the public cache makes a switch-off reach widgets within ~6 min (60 s + 300 s SWR),
+  with several variants at once (`no-store`).
 
 **`surface=erase`** returns the confirmation copy for the widget's „Meine Daten löschen“ (the same
 wording as the mail-link page `/api/erase-data`). It is not consent text; it has no `version` /
@@ -1654,10 +1687,10 @@ Cache-Control: public, max-age=60, stale-while-revalidate=300
 ```
 ```jsonc
 {
-  // Identifier of the served copy ("v5" since 2026-10-05; one stamp for every
+  // Identifier of the served copy ("v6" since 2026-10-11; one stamp for every
   // surface). Stamped server-side into the audit trail (consent_copy_version)
   // when the echoed consentTextShown matches.
-  "version": "v5",
+  "version": "v6",
   // The language of these strings (§12).
   "locale": "de",
   // BOTH checkboxes start UNCHECKED — never pre-check either box.
@@ -1739,7 +1772,7 @@ Same as `/api/chat` (origin allowlist + `x-ms-chat-key` + `x-ms-session`).
 - `marketingConsent` must be exactly `true` — anything else → **`400` code
   `marketing_consent_required`**.
 - `consentTextShown` is stored verbatim as Art. 7 proof, with the server-side `consent_copy_version`
-  stamp (`"v5"` when byte-identical to the served `surface=chat` string of the request's locale, `NULL`
+  stamp (`"v6"` when byte-identical to the served `surface=chat` string of the request's locale, `NULL`
   otherwise) — same rules as §7.1.
 - Runs the **same double-opt-in pipeline** as `/api/capture-email` (marketing half): DOI `pending` +
   token + confirmation email; a suppressed address is never re-pended (answer `none`); an address
@@ -2167,7 +2200,9 @@ query and header for the server event `consent_ask_eligible` (§5; since 2026-10
 - `GET /api/consent-copy?locale=en` returns the English strings of every surface, with `locale: "en"`
   and `enLegalReviewed`. The German copy is lawyer-approved; the English copy is approved as its
   faithful translation (since 2026-10-05), so `enLegalReviewed` is `true` for both locales. `version` is
-  the same for both (`v5`); a wording change in either language is a new review and a new version.
+  the same for both (`v6`); a wording change in either language is a new review and a new version.
+  The welcome-voucher fields of `surface=signin` (§7.4, v6) have their own approval per language
+  (`lawyerApproved` of the variant); both languages are approved since 2026-10-11.
 - The `offer_email_summary` output carries the copy for the **chat's** locale, so an `/en` chat hands
   the widget English consent strings.
 - **The locale of a consent POST must match the copy that was rendered:** `POST /api/capture-email`
@@ -2225,3 +2260,4 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-08 | No Mo DOI mail while the person's own shop sign-up awaits the shop's confirmation mail (answered `pending`, `doiEmailSent: true`); the signed-in opt-in reads the shop's live consent when the backend's copy has none (subscribed → `confirmed`; unsubscribed / invalid → `none`). No widget change. | §7; ACCOUNT_CONTRACT.md §6.1, §6.2 |
 | 2026-10-08 | Opt-in server events: outcomes `doi_pending` / `shopify_pending`, `doiCooldown`, `doiResend`, `shopifyConsent`; the chat gate's events come after the send with `doiSent` and always `trigger: "chat_gate"`; `email_capture_marketing_confirmed` gains `placement?` / `variant?`; both events carry `captureId` (the consent row's id) and the confirmation is credited to the opt-in that mailed its link. New server-only events `consent_ask_eligible` (`GET /api/auth/me`, which now reads the locale for it) and `consent_copy_served` (`GET /api/consent-copy?surface=signin`, per-session copy); `POST /api/kpi` drops both. No widget change. | §5, §7.6, §12.2; ACCOUNT_CONTRACT.md §4 |
 | 2026-10-08 | The data the dormant widget of 2026-10-08 (`495fdf6`) already sends — `login_gate_shown` `{ teaser: true, variant? }`, `consent_gate_*` `reward: true` and `placement: "value_moment"` — is stored verbatim and read by the dashboard (JSON `true` only); nothing to change. | §5 |
+| 2026-10-11 | Copy `v6` on every surface (framing only; every `consentTextShown` unchanged). `surface=signin` may carry `reward` (variants `b`/`c`, `CONSENT_REWARD_ENABLED`) and `valueMoment` (variant `c`, `CONSENT_VALUE_MOMENT_ENABLED`), German and English; both switches default off in code, so nothing changes until the owner turns them on. The widget of 2026-10-08 renders them; no widget change. | §7.4, §5, §12.3; CONSENT_CONTRACT.md §1, §3 |

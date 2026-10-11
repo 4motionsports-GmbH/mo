@@ -94,10 +94,14 @@ export async function GET(req: Request) {
           reportError(err, { route: "api/confirm-marketing", phase: "record_confirmed" });
         }
       }
+      // While the welcome voucher is live (OPTIN_REWARD T5): a note that the code
+      // comes by e-mail — never the code itself. Also on a repeated click; never
+      // on an invalid or expired link.
       return renderResultPage({
         status: 200,
         heading: copy.confirmedHeading,
         body: copy.confirmedBody,
+        note: copy.confirmedRewardNote,
         tone: "success",
         locale,
       });

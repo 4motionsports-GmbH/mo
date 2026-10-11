@@ -1395,6 +1395,7 @@ const SWITCH_DEFS = Object.freeze([
   ["pageContext", "Seitenkontext im Chat", "CHAT_PAGE_CONTEXT_ENABLED"],
   ["pageContextHoldoutPct", "Kontrollgruppe Seitenkontext (%)", "CHAT_PAGE_CONTEXT_HOLDOUT_PCT"],
   ["chatOrderStatus", "Bestellstatus im Chat", "CHAT_ORDER_STATUS_ENABLED"],
+  ["consentReward", "Newsletter-Willkommensgutschein (Hinweis und Mo)", "CONSENT_REWARD_ENABLED"],
   ["emailConfigured", "E-Mail-Versand konfiguriert", null],
   ["anthropicConfigured", "KI (Anthropic) konfiguriert", null],
 ]);
