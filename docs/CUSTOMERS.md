@@ -127,8 +127,9 @@ the catalog path (targeted refresh, backpressure): [`CATALOG_SYNC.md`](./CATALOG
 **Outage detection** (2026-10-11): every delivery of the customer and order topics is recorded in
 `shopify_webhook_events`; when the newest is more than two days old while the sync is on
 (`isWebhookQuiet`, `src/lib/shopify-sync-health.mjs`, tested) the subscriptions or their signature
-are broken — orders are then no longer attributed (only `orders/create` attributes; the nightly
-reconcile keeps the order copy complete) and shop consents arrive only nightly. The KPI page,
+are broken — orders carrying Mo's cart marker are then no longer attributed (only `orders/create`
+/ `orders/paid` attribute them; orders with a Mo code are still added by the KPI page's code
+lookup; the nightly reconcile keeps the order copy complete) and shop consents arrive only nightly. The KPI page,
 Einstellungen → Shopify-Abgleich and the Eingang warn, the nightly reconcile reports it
 (`reportError`), and `npm run verify:live` flags it at the top. Fix: `npm run shopify:webhooks`
 (missing topics → `--apply`), else the Vercel logs of this route (`401` = `SHOPIFY_CLIENT_SECRET`
