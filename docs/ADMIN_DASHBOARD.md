@@ -844,7 +844,8 @@ scan in batches of 10 with a progress line.
 A sticky toolbar (in-page group navigation Umsatz · Funnel · Anmeldung ·
 Kampagnen · Qualität · Kosten · Gesamtwerte with scroll-spy, the period presets
 7 / 30 / 90 days or „Zeitraum…“, and „Shopify-Daten: Stand hh:mm ·
-Aktualisieren“), the disclosure „Änderungen im Zeitraum“ (§5.0) and the
+Aktualisieren“), a warning while Shopify webhooks are out (§5.0), the disclosure „Änderungen im
+Zeitraum“ (§5.0) and the
 sections — one file each in `kpi/sections/`, each keeping its honesty caveat
 verbatim behind the (i) next to its title. Definitions, caveats and the cache:
 **§5**. Groups and sections in screen order
@@ -1230,6 +1231,15 @@ the customer platform's link to Shopify:
 - **Counts:** Kund:innen aus Shopify, Bestellungen (Kopie), Erster Import,
   Nächtlicher Abgleich, Letzter Webhook (+ count in 24 h), Warteschlange an
   Shopify (open · done in 24 h).
+- **Webhook outage** (2026-10-11): with the sync on and the last webhook more than
+  two days old (`isWebhookQuiet`, `shopify-sync-health.mjs`, tested), a warning
+  Callout „Seit <Zeitpunkt> kam kein Webhook von Shopify — neue Bestellungen werden
+  Mo nicht zugeordnet, Änderungen im Shop kommen erst mit dem nächtlichen Abgleich
+  an.“ with an InfoTip on what to check (`npm run shopify:webhooks`, the Vercel
+  logs of `/api/webhooks/shopify`, `SHOPIFY_CLIENT_SECRET`). The same rule feeds
+  the Eingang system card („Seit über zwei Tagen kam kein Shopify-Webhook an — neue
+  Bestellungen werden Mo nicht zugeordnet.“), the KPI page warning (§5) and a
+  nightly `reportError` from `/api/cron/shopify-reconcile`.
 - **Import:** „Kundenstamm übernehmen“ / „Vollständig neu importieren“
   (confirmed; customers and orders via bulk operations, no addresses or phone
   numbers, no e-mail sent) runs step by step with `useStepLoop`
@@ -1431,6 +1441,16 @@ The lifetime sections sit in the „Gesamtwerte“ group of the toolbar navigati
 (group heading „vom Zeitraum unabhängig“), each badged „Gesamtwert“ (tooltip
 „Gesamtwert — unabhängig vom gewählten Zeitraum.“), so an operator always knows
 which figures the period applies to.
+
+**Webhook outage** (2026-10-11): while no Shopify webhook has arrived for more than two days
+(`isWebhookQuiet`, `shopify-sync-health.mjs`, tested; `getSyncHealth().lastWebhookAt`), a warning
+Callout sits directly under the toolbar: „Seit <Zeitpunkt> kommen keine Shopify-Webhooks an —
+Bestellungen seitdem sind Mo nicht zugeordnet, „Umsatz durch Mo“ fehlt für diese Zeit.“ with an
+InfoTip „Warum und was tun“ (orders are attributed only through the `orders/create` webhook; the
+nightly reconcile fills the order copy but attributes nothing; check `npm run shopify:webhooks`, the
+Vercel logs of `/api/webhooks/shopify`, `SHOPIFY_CLIENT_SECRET`). Not shown before the first webhook
+ever. Einstellungen → Shopify-Abgleich (§3.10) shows the same state. Screenshots (light/dark,
+1440/1024): `docs/screenshots/2026-10-11-webhook-warning/`.
 
 **Release dates in the period** ([`lib/kpi-releases.mjs`](../src/lib/kpi-releases.mjs),
 tested). When the period contains a release that changes what a number means,
