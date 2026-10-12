@@ -114,22 +114,35 @@ export async function countRecentMarketingMails(
     return Number.isInteger(id) && id > 0 ? id : null;
   });
   try {
+    // First the window's sends to ANY of these recipients (index-friendly,
+    // materialised once), then the count per recipient over that small set.
+    // A send matching both the e-mail and the customer id counts once; a NULL
+    // customer id never matches.
     const rows = (await sql`
+      WITH r AS (
+        SELECT * FROM unnest(${e}::text[], ${c}::bigint[]) WITH ORDINALITY AS r(email, customer_id, idx)
+      ),
+      recent_campaign AS MATERIALIZED (
+        SELECT s.email, s.customer_id
+          FROM campaign_sends s
+         WHERE s.is_test = false
+           AND s.sent_at >= now() - make_interval(days => ${days}::int)
+           AND (s.email = ANY(${e}::text[]) OR s.customer_id = ANY(${c}::bigint[]))
+      ),
+      recent_marketing AS MATERIALIZED (
+        SELECT ec.email, m.customer_id
+          FROM marketing_sends m
+          JOIN email_captures ec ON ec.id = m.email_capture_id
+         WHERE m.status = 'sent'
+           AND m.sent_at >= now() - make_interval(days => ${days}::int)
+           AND (ec.email = ANY(${e}::text[]) OR m.customer_id = ANY(${c}::bigint[]))
+      )
       SELECT r.idx::int AS idx,
-             (SELECT count(*)::int
-                FROM campaign_sends cs
-               WHERE cs.is_test = false
-                 AND cs.sent_at >= now() - make_interval(days => ${days}::int)
-                 AND (cs.email = r.email
-                      OR (r.customer_id IS NOT NULL AND cs.customer_id = r.customer_id)))
-           + (SELECT count(*)::int
-                FROM marketing_sends ms
-                JOIN email_captures ec ON ec.id = ms.email_capture_id
-               WHERE ms.status = 'sent'
-                 AND ms.sent_at >= now() - make_interval(days => ${days}::int)
-                 AND (ec.email = r.email
-                      OR (r.customer_id IS NOT NULL AND ms.customer_id = r.customer_id))) AS n
-        FROM unnest(${e}::text[], ${c}::bigint[]) WITH ORDINALITY AS r(email, customer_id, idx)
+             (SELECT count(*)::int FROM recent_campaign x
+               WHERE x.email = r.email OR x.customer_id = r.customer_id)
+           + (SELECT count(*)::int FROM recent_marketing y
+               WHERE y.email = r.email OR y.customer_id = r.customer_id) AS n
+        FROM r
     `) as Array<{ idx: number; n: number }>;
     const out = new Array<number>(e.length).fill(0);
     for (const row of rows) {
