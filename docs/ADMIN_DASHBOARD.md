@@ -1246,8 +1246,8 @@ read through `platform-flags.mjs`, `page-context.ts` and `consent-variants.mjs` 
 after „Versand-Konfiguration“) — the threshold of the soft warning before a
 marketing mail to a person who already got several
 ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §3): an InfoTip on the title (what counts, a
-warning only, Testkontakte never, 0 = aus), two number fields **„Warnung ab …
-Werbe-Mails“** (0–50) and **„in … Tagen“** (0–365) with the shared validation of
+warning only, Testkontakte never, 0 = aus), two number fields **„Warnung ab
+(Mails)“** (0–50) and **„Zeitraum (Tage)“** (0–365) with the shared validation of
 [`contact-frequency.mjs`](../src/lib/contact-frequency.mjs) as field errors,
 **„Speichern“** (`settings/contact-frequency`, `useAsyncAction`, success toast
 with the new summary), the line „Gilt jetzt“ („Warnung ab 3 Werbe-Mails in 30

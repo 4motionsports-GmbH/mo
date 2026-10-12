@@ -442,8 +442,8 @@ function ContactFrequencyCard({
           }}
         >
           <Field
-            label="Warnung ab … Werbe-Mails"
-            info={`Ganze Zahl von ${mailBounds.min} bis ${mailBounds.max}. Die Warnung erscheint, wenn die Person schon so viele oder mehr bekommen hat; 0 = aus.`}
+            label="Warnung ab (Mails)"
+            info={`Warnung ab … Werbe-Mails: ganze Zahl von ${mailBounds.min} bis ${mailBounds.max}. Die Warnung erscheint, wenn die Person schon so viele oder mehr bekommen hat; 0 = aus.`}
             error={maxMailsError}
             className="w-44"
           >
@@ -459,8 +459,8 @@ function ContactFrequencyCard({
             />
           </Field>
           <Field
-            label="in … Tagen"
-            info={`Ganze Zahl von ${dayBounds.min} bis ${dayBounds.max}: der Zeitraum, in dem gezählt wird (rückwärts ab jetzt); 0 = aus.`}
+            label="Zeitraum (Tage)"
+            info={`In … Tagen: ganze Zahl von ${dayBounds.min} bis ${dayBounds.max}: der Zeitraum, in dem gezählt wird (rückwärts ab jetzt); 0 = aus.`}
             error={windowDaysError}
             className="w-44"
           >

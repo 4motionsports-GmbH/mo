@@ -16,7 +16,7 @@
 import * as React from "react";
 import { Inbox, RefreshCw, Sparkles } from "lucide-react";
 import { num } from "@/lib/admin-format.mjs";
-import { CONTACT_FREQUENCY_HINT_DETAIL, contactFrequencyQuestion } from "@/lib/contact-frequency.mjs";
+import { contactFrequencyQuestion } from "@/lib/contact-frequency.mjs";
 import { Button, ConfirmDialog, EmptyState, Kbd, Sheet, cn, type ConfirmOptions } from "../ui";
 import { CampaignHeader } from "./CampaignHeader";
 import { ContactHistorySheet } from "./ContactHistorySheet";
@@ -67,7 +67,10 @@ function sendConfirmOptions(pending: SendConfirm | null, email: string): Confirm
   if (pending?.frequency) {
     return {
       title: contactFrequencyQuestion(pending.frequency),
-      description: `An ${email}. ${CONTACT_FREQUENCY_HINT_DETAIL}${pending.firstOfDay ? ` Erste E-Mail heute: nur diese eine geht raus. ${FIRST_SEND_TEXT}` : ""}`,
+      // Short on purpose: what counts is in the Prüfpunkt's InfoTip; this
+      // confirm also stands in for the first-send-of-the-day question, and it
+      // too sends only this one mail.
+      description: `Nur diese eine E-Mail an ${email}. Ein Hinweis, keine Sperre — die Schwelle steht in Einstellungen → Kontakthäufigkeit.`,
       confirmLabel: "Trotzdem senden",
     };
   }
