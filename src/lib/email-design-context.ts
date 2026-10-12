@@ -27,22 +27,63 @@ import type { BrandedEmailOptions, EmailCta } from "./email-template";
 import type { EmailProductGridItem, EmailProductRowItem } from "./email-products";
 import type { BundleOfferBlockInput } from "./bundle-email";
 
+/** One row of the set block: one distinct item of the set (bundle-email-core
+ * bundleBlockModel). */
+export interface BundleBlockItem {
+  name: string;
+  /** How many of it the set contains — shown prominently („2×“). */
+  quantity: number;
+  /** Absolute https image, or null (the row renders without a picture). */
+  imageUrl: string | null;
+  /** Short description (draft highlight → catalog shortDescription), clamped; or null. */
+  description: string | null;
+  /** The SNAPSHOT unit price, ready to print: „je 49,00 €“ (qty > 1) or
+   * „49,00 €“; null → no price in the row (prices that do not add up to the
+   * component sum are never shown). */
+  unitPriceLabel: string | null;
+}
+
 /**
- * Precomputed, PAngV-checked bundle labels handed to a bundleBlock override —
+ * Precomputed, PAngV-checked set-block model handed to a bundleBlock override —
  * strike/saving values are non-null ONLY when the saving is genuine
- * (bundle-email.ts computes them once for every design).
+ * (bundle-email-core.mjs bundleBlockModel computes everything once for every
+ * design, so an override never derives money, a strike or a saving itself).
  */
 export interface BundleBlockComputed {
+  /** Short set headline (bundleHeadline: the operator's short title or „Dein persönliches Set“). */
+  headline: string;
   /** Formatted set price (e.g. "159,90 €"). */
   priceLabel: string;
   /** Formatted genuine component sum, or null → NO strike line allowed. */
   stattLabel: string | null;
   /** Formatted genuine saving amount, or null → NO saving line allowed. */
   savingLabel: string | null;
-  /** Whole-percent saving matching savingLabel, or null. */
+  /** Whole-percent saving (rounded down) matching savingLabel, or null. */
   savingPct: number | null;
-  /** Locale-correct fixed labels (kicker/price/instead/save/cta). */
-  labels: { kicker: string; price: string; instead: string; save: string; cta: string };
+  /** Locale-correct fixed labels. `cta` is „Zur Kasse“ / „Checkout“. */
+  labels: {
+    kicker: string;
+    deal: string;
+    price: string;
+    instead: string;
+    save: string;
+    separately: string;
+    cta: string;
+  };
+  /** The set's contents, one entry per distinct item, in order. */
+  items: BundleBlockItem[];
+  /** Distinct items. */
+  itemCount: number;
+  /** Total pieces (Σ quantity). */
+  pieceCount: number;
+  /** Which eyecatcher tops the block: "saving" (genuine saving — the badge
+   * shows `eyecatcherCopy.value` „−16 %“ and `note` „Du sparst 29,90 €“) or
+   * "price" (no saving — the badge shows `label` „Set-Preis“ + `value`). */
+  eyecatcher: "saving" | "price";
+  eyecatcherCopy: { label: string | null; value: string; note: string | null };
+  /** The short line under the headline („3 Produkte · zusammen günstiger“ —
+   * the "cheaper" claim only with a genuine saving). */
+  tagline: string;
 }
 
 /** Options of renderSectionRow — mirrored here to keep the interface local. */
@@ -80,10 +121,13 @@ export interface EmailDesignRenderers {
   /** Inline style for prose links (overrides emailLinkStyle()). */
   linkStyle?: () => string;
   /**
-   * The bundle special-offer block's HTML (full-width card rows for the
-   * preCtaRows slot). The TEXT part and the PAngV price computation stay with
-   * bundle-email.ts for every design — the override only restyles the visuals
-   * and MUST show strike/saving lines only when `computed` carries them.
+   * The set block's HTML (full-width card rows for the preCtaRows slot). The
+   * TEXT part and the PAngV price computation stay with bundle-email.ts for
+   * every design — the override only lays out `computed` and MUST show
+   * strike/saving lines only when `computed` carries them. The set's items are
+   * rows WITHOUT per-item links or buttons; the one action is the CTA
+   * `computed.labels.cta` („Zur Kasse“) on `input.offerUrl` (the tracked
+   * /api/r/<token> link — it must stay the CTA target).
    */
   bundleBlock?: (input: BundleOfferBlockInput, computed: BundleBlockComputed) => string;
   /**
