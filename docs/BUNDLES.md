@@ -230,8 +230,9 @@ Sets are created in two places:
   `ReviewColumn.tsx`, actions in `kampagne/useCampaignActions.ts`) creates a set
   from the card's recommended products (optional price override) with
   `campaignContactId` and no customer id, and removes it via `/bundles/archive`;
-  either way the draft text is regenerated. The campaign mail's set block and
-  `discount_scope = set` are described in [`CAMPAIGNS.md`](./CAMPAIGNS.md).
+  either way the draft text is regenerated. With a set attached the mail is a
+  set mail (step 6 below; the block: „How a set is shown to the customer“); the
+  campaign desk side is described in [`CAMPAIGNS.md`](./CAMPAIGNS.md).
 - **Kunden → customer detail → „Marketing“ → disclosure „Persönliche E-Mail
   (bisheriger Weg) — offener Entwurf“** — shown only while the person has an
   open draft of the former 1:1 marketing path (`marketing_sends`) and a sendable
@@ -255,16 +256,21 @@ Sets are created in two places:
 4. **„Set erstellen“** (`/bundles/create`) → the service above, with the open
    draft's id (`marketingSendId`); creation errors (sold-out offenders, missing
    publication scope) surface inline.
-5. **Email integration** — the draft's personalised email then carries a
-   SPECIAL-OFFER block (title, the set's contents as a **bullet list with the
-   count of each item** — "2× Kettlebell – 16 kg" — the bundle price and — only
-   when `bundle_price < components_sum` — a PAngV "statt €<sum>" line) with a
-   "Zum Angebot" CTA on the **tracked** `/api/r/<token>` link. The drafting
-   prompt is extended minimally so the prose references the set; the rest of
-   the send path (unsubscribe, suppression, confirmed-consent, tracked links,
-   discount minting) is **unchanged**.
-6. **Coexistence + list** — a send may carry a discount code, a set, both or
-   neither. The list „Sets für <e-mail>“ shows each offer's status („Wird
+5. **Email integration** — the draft's personalised email becomes a **set
+   mail**: it carries the set block (below, „How a set is shown to the
+   customer“) with the CTA **„Zur Kasse“** on the **tracked** `/api/r/<token>`
+   link, and nothing else on offer — no single-product rows, no cart button, no
+   discount code. The drafting prompt is extended minimally so the prose
+   references the set; the rest of the send path (unsubscribe, suppression,
+   confirmed-consent, tracked links) is **unchanged**.
+6. **Set XOR items + list** — a mail is **either** a set offer **or**
+   single-item recommendations, never both (owner, 12.10.2026,
+   `offer-mode.mjs`): the kind is derived from whether an active set is
+   attached; a discount code exists only in an item mail — the set price is the
+   concession. Both send paths refuse a draft with an active set **and** a
+   discount (`offer_conflict`, 409) before anything is claimed or minted, and
+   never mint a code for a set mail; the discount scope „Set“ is history (old
+   sends read back, new drafts cannot carry it). The list „Sets für <e-mail>“ shows each offer's status („Wird
    erstellt…“, „Aktiv“, „Versendet“, „Abgelaufen“, „Fehlgeschlagen“), „Klick
    erfasst“ when the tracked link reported a click, „Angebots-Link“ for an
    active offer, **„Entfernen“** for an active offer (`/bundles/archive`,
@@ -275,13 +281,31 @@ Sets are created in two places:
 
 ## How a set is shown to the customer
 
-Everywhere a customer sees a set, its contents are a **bullet list, one line per
-item with how many the set contains** ("2× Kettlebell – 16 kg"), built by the
-pure `bundleItemList` / `bundleItemLabel` (`bundle-offer-core.mjs`, tested;
-items with the same name are merged and their counts added):
+Everywhere a customer sees a set, its contents are **one entry per item with how
+many the set contains** ("2× Kettlebell – 16 kg"); items with the same name are
+merged and their counts added (`bundleItemList` / `bundleItemLabel`,
+`bundle-offer-core.mjs`, tested):
 
-- **E-mail** — the special-offer block in every design (classic, studio,
-  performance) and its plain-text part (`- 2× …`).
+- **E-mail** — a set mail shows **only the set**, in one frame that marks it as
+  a bundle (every design: classic, studio, performance — details in
+  [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Set card“):
+  - an **eyecatcher** at the top: the short set headline, „3 Produkte ·
+    zusammen günstiger“ and a big badge — „−15 %“ + „Du sparst 98,90 €“ when the
+    set genuinely costs less than its parts, otherwise „Set-Preis“ + the amount;
+  - one **row per item** like the product rows (picture | „2×“ + name + short
+    description | the unit price, „je 239,00 €“ for more than one) — **no
+    „Zum Produkt“ button and no per-item link**. The unit price is the
+    component's **snapshot** (`components[].unitPrice`), shown only when
+    Σ unit price × count equals `components_sum`;
+  - the **price summary** — „Einzelkauf“ struck through (PAngV: only when
+    `bundle_price < components_sum`, the genuine snapshotted sum) and the set
+    price big and bold — and the one action **„Zur Kasse“** on the tracked link.
+
+  All of it comes from `bundleBlockModel` (`bundle-email-core.mjs`, tested), so
+  no design computes a price, strike or saving itself. The plain-text part lists
+  the set title, „- 2× Name — je 239,00 €“ per item, the set price (+ „statt …“
+  and „Du sparst … (x %)“ only when genuine) and „Zur Kasse: <url>“. The offer
+  countdown under it runs to the set's deadline.
 - **Shopify** — the set product's description (`<p>Dieses Set enthält:</p><ul>…</ul>`,
   `bundleDescriptionHtml`), written on both creation paths, so the set's
   product page lists the contents. A generated title carries the count where it
