@@ -5,8 +5,9 @@ in **campaigns**: the running lifecycle campaign „Bestandskunden – Lebenszyk
 **Aktionen** the team creates in the admin (Black Friday, a launch …), and the built-in
 **Einzelansprache** for single, hand-picked mails. For each recipient the system generates a
 personalised email from the customer profile, the past purchases and the campaign's **Briefing**,
-recommends 2–3 suitable catalog products, optionally weaves in a unique single-use discount code
-(`MK-` prefix) and/or a bundle offer, and ends with the campaign's call to action — the Mo chatbot
+offers **either** 2–3 suitable catalog products — optionally with a unique single-use discount code
+(`MK-` prefix) — **or** one personal set (bundle offer, no code), never both (§4), and ends with the
+campaign's call to action — the Mo chatbot
 deep link that auto-opens the widget, or a shop link. A human reviews **every** email on the
 campaign's review desk (Prüftisch) in the **Kampagnen** screen of `/admin` before anything is sent.
 
@@ -139,7 +140,7 @@ again on the server (`validateCampaignInput`):
 | Grundlagen | Name 3–80 chars (`name`, a unique `slug` is derived), Art (`kind`), Start/Ende (`starts_at`/`ends_at`, end after start), Priorität 0–100 (`priority`) |
 | Briefing | `brief`, max 4,000 chars — Anlass, Ziel, Ton, Muss rein, Bitte nicht. The drafter reads it for every mail of the campaign (§4). „Briefing vorschlagen“ drafts one from name, kind, end date, discount and notes. |
 | Zielgruppe | The audience spec (`audience`, below), Fest/Dynamisch (`audience_mode`), „Erneut aufnehmen nach“ (`reentry_days`, `laufend` only, 14–3,650 days, empty = never), live count. Hidden for the Einzelansprache. |
-| Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations / set), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them |
+| Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations — `set` is history, refused for new values), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them. A recipient with a set attached is drafted without a code whatever the default says (set XOR items, §4) |
 | Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode`: `none` / `default` / `ai_ab` / `ai_all`), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
 | Brief | Letters as a channel (migration `0074`, §8): „Briefe“ (`letter_mode`: „Keine Briefe“ `aus` — the default —, „An alle ohne E-Mail-Einwilligung“ `ohne_einwilligung`, „An alle (auch mit Einwilligung)“ `alle`), „Porto-Budget (€)“ (`letter_budget_cents`, 0–100,000 €, empty = no cap) and the live line „Per Brief: N Empfänger:innen (Adresse schon bekannt: M) · ≈ X € Porto bei Y € je Brief“ (M counts purchase addresses only); Callouts while `PHYSICAL_MAIL_SENDS_APPROVED` is off or Pingen is not configured. Hidden for the Einzelansprache. |
 | Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000 — no automation; shown as „Tagesziel n“ next to today's progress in the desk header) |
@@ -378,6 +379,30 @@ campaign.
 Per recipient ([`campaign-draft.ts`](../src/lib/campaign-draft.ts), same model + fallback
 discipline as `marketing-draft.ts`):
 
+**Set XOR items (owner, 12.10.2026).** A mail offers **either** single products (the
+recommendations, optionally with a discount code) **or** one set — never both. The kind is
+**derived**, not stored: an active, unexpired set attached to the recipient
+(`shouldRenderBundleBlock`, the guard the send path renders the set block with) makes it a **set
+mail** ([`offer-mode.mjs`](../src/lib/offer-mode.mjs) `offerKind`). `prepareDraftForContact`
+enforces it for every caller — desk depth, campaign default, Vorbereiten popover, Eingang
+suggestion, nightly auto-prepare: a set mail is generated and saved with `discount_percent = 0` and
+scope `all` whatever was requested; an item mail keeps the requested depth, and a requested or
+stored scope `set` becomes `all` (`effectiveDraftOffer` in
+[`draft-offer.mjs`](../src/lib/draft-offer.mjs), tested). The prompt variant follows
+(`draftPromptPlan`):
+
+| | Item mail | Set mail |
+| --- | --- | --- |
+| Prompt shows | the 2–3 recommendations with URLs | the set's contents with counts („2× Kettlebell – 16 kg“, `setContentsLines`) as **the** offer — not „außerdem ein Set“ |
+| Discount | the code block (`discountHint`), scope `all` \| `recommendations` | the „KEIN Rabattangebot“ branch: no code, no percentage — the set price is the concession |
+| Rules | link products as `[Name](URL)`, no invented prices | the mail is about this one set, no other products, no links; no price, saving or percentage from the model — the set block below the prose states price and the genuine „statt“ (PAngV). „Günstiger als einzeln“ only when the set really costs less (`hasSaving`) |
+| `product_highlights` | one per recommended product | one per set product, named exactly like the component titles the set block lists (`setHighlightNames`; `alignHighlightNames` snaps copied „2× …“ prefixes and case back), so the block can show them |
+| KI-Hero | products and reference photos from the recommendations | from the set's components, with counts ([`email-hero.ts`](../src/lib/email-hero.ts)) |
+
+The templated fallback follows the same split. The legacy Kunden draft
+(`POST /api/admin/customers/marketing-draft`, `generateCustomerMarketingDraft`) branches the same
+way: a live set attached to the customer makes it a set mail drafted with depth 0.
+
 0. **The campaign and the customer profile are the brief.** The prompt opens with an „Anlass“
    section: for an Aktion or the Einzelansprache the campaign name and kind (and an Aktion's real
    end date), the campaign's **Briefing**, and the recipient's `admin_note` (Einzelansprache,
@@ -392,7 +417,8 @@ discipline as `marketing-draft.ts`):
 1. Personal greeting by first name (graceful fallback).
 2. A natural, warm reference to the purchase history — one category or one
    item, never an itemized dump.
-3. 2–3 recommendations with product URLs, briefly reasoned
+3. 2–3 recommendations with product URLs (item mail; a set mail presents the set
+   instead), briefly reasoned
    ([`campaign-recommendations.ts`](../src/lib/campaign-recommendations.ts)),
    written as **markdown links** `[Produktname](URL)` — the HTML part renders
    every link as clickable text, never a raw pasted URL
@@ -412,8 +438,13 @@ discipline as `marketing-draft.ts`):
    A **regenerate preserves the draft's stored product list** (auto-picked or
    manually curated) so the prose, the picture grid and the review card can
    never drift apart; recommendations are recomputed only for the first
-   draft or an explicit basis change (`refreshRecommendations`).
-4. Optional discount block — the **exact existing mechanism**: the campaign
+   draft or an explicit basis change (`refreshRecommendations`). While a set
+   is attached they are never replaced — not even by a refresh: the stored
+   list is the set's source and is saved back unchanged, and the set itself
+   (its per-item counts and the operator's set price) stays untouched —
+   nothing rebuilds a set automatically.
+4. Optional discount block (item mails only — a set mail carries no code, see
+   above) — the **exact existing mechanism**: the campaign
    (or the admin) picks 0–50 % (`discount-validation.mjs`), the draft weaves in
    the `MO-XXXX` placeholder + projected expiry
    (`formatGermanExpiryDate`/`discountExpiryDaysPublic`; for a campaign with
@@ -422,34 +453,41 @@ discipline as `marketing-draft.ts`):
    explicit regenerate overwrites the open draft (`shouldReuseCampaignDraft`)
    so text and eventual code never disagree.
    **Scope** (`discount_scope`, migration `0058`, `discount-scope.mjs`): the
-   code applies to the whole order (`all`, the default), only to the products
-   recommended in this mail (`recommendations`) or only to the attached set
-   (`set`). The prompt states the scope (`discountHint`: "gilt NICHT für den
-   Rest der Bestellung"), the coupon's benefit line and the text part use the
-   same phrase (`discountScopePhrase`), and at send time the code is minted
-   with `customerGets.items.products.productsToAdd` = the Shopify product gids
-   of that scope (recommended handles resolved via
-   `fetchProductGidsByHandles`, the set's `shopify_product_id`). A scope that
-   cannot be honoured (no available recommendation, unresolvable handle, no
-   active set) **refuses the send** (`discount_scope_unresolved`) — the desk
-   shows the same rule as a blocked Prüfpunkt beforehand
-   (`discount_scope_no_set` / `discount_scope_no_recommendations`). A changed
-   scope regenerates the prose. Recommendation: with a set attached, scope the
-   code to the recommendations so each offer has one clear price.
-   **Bundle offers** (alternative or addition to a percentage code): the card's
+   code applies to the whole order (`all`, the default) or only to the
+   products recommended in this mail (`recommendations`). The third value,
+   `set` (the code only on the attached set), is **history** since the set XOR
+   items rule: it still parses so older sends read back, but no new draft or
+   campaign takes it (`parseEditableDiscountScope`; a draft regenerated with a
+   stored `set` gets `all`). The prompt states the scope (`discountHint`:
+   "gilt NICHT für den Rest der Bestellung"), the coupon's benefit line and
+   the text part use the same phrase (`discountScopePhrase`), and at send time
+   the code is minted with `customerGets.items.products.productsToAdd` = the
+   Shopify product gids of that scope (recommended handles resolved via
+   `fetchProductGidsByHandles`; for a draft from before the rule still stored
+   with `set`, the set's `shopify_product_id`). A scope that cannot be
+   honoured (no available recommendation, unresolvable handle, a stored `set`
+   without an active set) **refuses the send** (`discount_scope_unresolved`) —
+   the desk shows the same rule as a blocked Prüfpunkt beforehand
+   (`discount_scope_no_recommendations` / `discount_scope_no_set`). A changed
+   scope regenerates the prose.
+   **Bundle offers** (the set mail — instead of the recommendations and
+   instead of a percentage code, never in addition): the card's
    "Set-Angebot" section creates a real UNLISTED Shopify set from the card's
    recommendations via the **existing** bundle mechanism
    (`/api/admin/bundles/create` with `campaignContactId` — migration `0035`
    adds the nullable FK on `bundle_offers`, parallel to
    `customer_id`/`marketing_send_id`; see [`BUNDLES.md`](./BUNDLES.md) for
-   scopes, pricing/PAngV and expiry). A regenerate weaves a natural mention
-   into the prose (`bundleHint`); the deterministic offer block (components,
-   price, genuine "statt", tracked `/api/r/<token>` CTA) is appended at send
-   time (`buildBundleBlockForContact`, same active-only guard + renderer as
-   the marketing path) and a resolution failure degrades to "no block", never
+   scopes, pricing/PAngV and expiry). Attaching it turns the mail into a set
+   mail; a regenerate then presents the set as the offer (`setOfferSection`,
+   contents with counts, no price from the model) and drafts without a code.
+   The deterministic offer block (components with counts, price, genuine
+   "statt", tracked `/api/r/<token>` CTA) is appended at send time
+   (`buildBundleBlockForContact`, same active-only guard + renderer as the
+   marketing path) and a resolution failure degrades to "no block", never
    blocking a send. Expiry stays with the existing cron (it deletes the set's
    Shopify product); "Set entfernen" uses the existing archive route, which
-   deletes it too.
+   deletes it too — the mail is an item mail again, with the stored
+   recommendations it had.
 5. Call to action — appended **deterministically** at send time, never editable
    prose, per the campaign's `cta_kind` and `mo_promo`:
    - `mo_chat` (default): the Mo promo block + deep link (`CAMPAIGN_MO_DEEPLINK_URL`, default
@@ -601,8 +639,9 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   current catalog product gets a checkbox in the card's Kaufhistorie (all
   selected = default). Changing the selection and clicking "Empfehlungen &
   Text neu erzeugen" recomputes the recommendations from the selected
-  purchases, focuses the prose's purchase reference on them, rebuilds an
-  attached bundle, and regenerates the text — one round-trip
+  purchases, focuses the prose's purchase reference on them, and regenerates
+  the text — one round-trip (with a set attached the recommendations and the
+  set stay as they are, §4.3)
   (`POST /api/admin/campaign/draft` with `refreshRecommendations` +
   `purchaseSelection`). The selection persists on the draft
   (`purchase_selected_ids`, migration `0043`), so later regenerates /

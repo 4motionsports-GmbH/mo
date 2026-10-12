@@ -11,6 +11,13 @@
 // code (MO-XXXX) + projected expiry with the campaign's briefing, and
 // persist. Resilient: a per-recipient failure marks that row 'draft_failed'
 // and the batch continues.
+//
+// Set XOR items (offer-mode.mjs, owner 12.10.2026) is enforced HERE, for every
+// caller (desk depth, campaign default, Vorbereiten popover, Eingang
+// suggestion, nightly auto-prepare): with an active set attached the draft is
+// a set mail — generated and saved without a discount, scope "all", and its
+// stored recommendations (the set's source) left alone; without one, the
+// history scope "set" becomes "all" (draft-offer.effectiveDraftOffer).
 
 import { isSuppressed } from "./email-capture-store";
 import { getCampaignForContact, getCampaign, type Campaign } from "./campaigns-store";
@@ -25,11 +32,11 @@ import {
 import { generateCampaignDraft } from "./campaign-draft";
 import type { EmailTextMode } from "./marketing-draft";
 import { DEFAULT_EMAIL_TEXT_MODE, storedTextMode } from "./email-text-mode.mjs";
-import { DEFAULT_DISCOUNT_SCOPE, parseDiscountScope, type DiscountScope } from "./discount-scope.mjs";
+import { DEFAULT_DISCOUNT_SCOPE, type DiscountScope } from "./discount-scope.mjs";
 import { loadCampaignPersonalization } from "./campaign-recommendations";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
-import { archiveBundleOffer, createBundleOffer } from "./bundle-offers";
-import { bundleStattPrice } from "./bundle-email-core.mjs";
+import { bundleHeadline, bundleStattPrice, shouldRenderBundleBlock } from "./bundle-email-core.mjs";
+import { effectiveDraftOffer } from "./draft-offer.mjs";
 import { resolveProductSelections } from "./product-catalog";
 import type { Product } from "./types";
 import {
@@ -77,7 +84,9 @@ export interface PrepareDraftOptions {
    * basis instead of PRESERVING the draft's stored list. Default false: a
    * plain regenerate (text, discount depth, language) keeps the products the
    * card shows — including manual curation — so the prose and the picture grid
-   * can never drift apart from the review card.
+   * can never drift apart from the review card. Ignored while a set is
+   * attached: the set IS the offer and the stored list is its source, so
+   * neither is replaced (the set keeps its counts and its price).
    */
   refreshRecommendations?: boolean;
   /**
@@ -93,7 +102,9 @@ export interface PrepareDraftOptions {
   textMode?: EmailTextMode | null;
   /**
    * What the discount code applies to (discount-scope.mjs). Omit to keep the
-   * existing draft's stored scope; a first draft defaults to "all".
+   * existing draft's stored scope; a first draft defaults to "all". The
+   * history value "set" is accepted and becomes "all"; a set mail always
+   * saves "all" (it carries no code).
    */
   discountScope?: DiscountScope | null;
 }
@@ -101,6 +112,9 @@ export interface PrepareDraftOptions {
 /**
  * Generate + persist the draft for ONE contact. Throws on failure — batch
  * callers catch per contact. Returns null only when the DB vanished mid-run.
+ *
+ * `discountPercent` is the REQUESTED depth: with an active set attached the
+ * draft is generated and saved with 0 whatever was requested (set XOR items).
  */
 export async function prepareDraftForContact(
   contact: CampaignContactRow,
@@ -108,6 +122,22 @@ export async function prepareDraftForContact(
   opts: PrepareDraftOptions = {}
 ): Promise<CampaignDraftRow | null> {
   const existing = await getDraftForContact(contact.id);
+  // What the mail offers is DERIVED from the attached set (offer-mode.mjs):
+  // an active, unexpired set — the same guard the send path renders the set
+  // block with — makes it a set mail. Decided first, because it steers the
+  // discount, the scope, the recommendations and the prompt below.
+  const bundle = await getActiveBundleForCampaignContact(contact.id);
+  const hasActiveBundle = shouldRenderBundleBlock(bundle);
+  // The effective offer: a set mail no discount and scope "all"; an item mail
+  // the requested depth and the requested — else stored — scope, "set"
+  // (history) becoming "all".
+  const offer = effectiveDraftOffer({
+    discountPercent,
+    requestedScope: opts.discountScope ?? null,
+    storedScope: existing?.discountScope ?? null,
+    hasActiveBundle,
+  });
+  const discountScope: DiscountScope = offer.discountScope;
   // The effective purchase basis: an explicit new selection wins, else the
   // draft's stored one, else all purchases.
   const purchaseSelection =
@@ -119,11 +149,6 @@ export async function prepareDraftForContact(
   // for a brand-new draft.
   const textMode: EmailTextMode =
     opts.textMode ?? (existing ? storedTextMode(existing) : DEFAULT_EMAIL_TEXT_MODE);
-  // The effective discount scope: an explicit request wins, else the existing
-  // draft's stored scope, else "all" (the classic behaviour).
-  const discountScope: DiscountScope = parseDiscountScope(
-    opts.discountScope ?? existing?.discountScope ?? DEFAULT_DISCOUNT_SCOPE
-  );
 
   // A Testkontakt may borrow a real customer's purchase history so the mail
   // is realistic (0057); everything else about the draft is the test address.
@@ -148,6 +173,10 @@ export async function prepareDraftForContact(
   // Which products the email recommends: preserve the draft's stored list
   // (auto-picked or manually curated, possibly variant-pinned refs) on a plain
   // regenerate; recompute only for the first draft or an explicit refresh.
+  // While a set is attached the stored list is never replaced: the set IS the
+  // offer and those products are its source — a refresh used to rebuild the
+  // set from fresh picks with quantity 1 and the default price, destroying
+  // the operator's per-item counts and set price. The set stays untouched.
   // Stored entries that dropped out of the catalog, went out of stock, or
   // whose PINNED VARIANT vanished are dropped (never silently downgraded to
   // the default variant — the operator approved a concrete price); when
@@ -157,7 +186,8 @@ export async function prepareDraftForContact(
   let recommendedProducts = recommendations.products;
   let recommendedRefs = recommendations.products.map((p) => p.id);
   let lowConfidence = recommendations.lowConfidence;
-  if (!opts.refreshRecommendations && existing && existing.recommendedProductIds.length > 0) {
+  const keepStored = !opts.refreshRecommendations || hasActiveBundle;
+  if (keepStored && existing && existing.recommendedProductIds.length > 0) {
     const stored = (await resolveProductSelections(existing.recommendedProductIds)).filter(
       (s) => !s.missingVariant && s.available && s.display
     );
@@ -167,53 +197,29 @@ export async function prepareDraftForContact(
       lowConfidence = existing.lowConfidence;
     }
   }
-
-  // An explicit recommendation refresh keeps an attached bundle in sync with
-  // the new product set: snapshots are immutable, so "update" = archive + new
-  // offer from the fresh picks (same rule as the /recommendations route).
-  if (opts.refreshRecommendations && recommendedProducts.length > 0) {
-    const active = await getActiveBundleForCampaignContact(contact.id);
-    // A refresh always holds fresh auto-picks — bare product ids, no refs.
-    const newIds = recommendedProducts.map((p) => p.id);
-    const sameSet =
-      active &&
-      active.components.length === newIds.length &&
-      active.components.every((c) => newIds.includes(c.productId));
-    if (active && !sameSet) {
-      const archived = await archiveBundleOffer(active.id);
-      if (archived.ok) {
-        const created = await createBundleOffer(
-          null,
-          newIds.map((productId) => ({ productId })),
-          { campaignContactId: contact.id }
-        );
-        if (!created.ok) {
-          reportError(new Error(`Bundle rebuild failed: ${created.message}`), {
-            route: "lib/campaign-prepare",
-            phase: "rebuildBundle",
-            contactId: String(contact.id),
-          });
-        }
-      }
-    }
+  // A set mail does not show the recommendations at all, so its stored list is
+  // saved back exactly as it was — nothing pruned, nothing re-picked — and is
+  // there unchanged when the operator removes the set again.
+  if (hasActiveBundle && existing && existing.recommendedProductIds.length > 0) {
+    recommendedRefs = [...existing.recommendedProductIds];
+    lowConfidence = existing.lowConfidence;
   }
 
-  const hasDiscount = discountPercent > 0;
+  const hasDiscount = offer.discountPercent > 0;
   const expiry = hasDiscount ? projectedExpiry(campaign) : null;
 
-  // An attached (active) bundle offer is referenced NATURALLY in the prose;
-  // the deterministic offer block itself is appended at send time
-  // (campaign-email.ts). Same division of labour as the marketing draft.
-  const bundle = await getActiveBundleForCampaignContact(contact.id);
-  const attachedBundle = bundle
-    ? {
-        title:
-          bundle.title ??
-          (contact.language === "en" ? "Your personal set" : "Dein persönliches Set"),
-        componentNames: bundle.components.map((c) => c.title),
-        hasSaving: bundleStattPrice(bundle.bundlePrice, bundle.componentsSum) != null,
-      }
-    : null;
+  // A set mail introduces the attached set as THE offer (contents with
+  // counts); the deterministic set block itself — price, the genuine „statt“,
+  // CTA — is appended at send time (campaign-email.ts). Same division of
+  // labour as the marketing draft.
+  const attachedBundle =
+    bundle && hasActiveBundle
+      ? {
+          title: bundleHeadline(bundle.title, contact.language),
+          components: bundle.components.map((c) => ({ title: c.title, quantity: c.quantity })),
+          hasSaving: bundleStattPrice(bundle.bundlePrice, bundle.componentsSum) != null,
+        }
+      : null;
 
   // A narrowed basis also steers the PROSE: the purchase reference sticks to
   // the selected products (titles resolved from the fetched history).
@@ -250,6 +256,7 @@ export async function prepareDraftForContact(
       category: p.category || null,
     })),
     lowConfidence,
+    offerKind: offer.kind,
     attachedBundle,
     textMode,
     segment,
@@ -265,7 +272,7 @@ export async function prepareDraftForContact(
       : null,
     recommendationStrategy: recommendations.strategy,
     discountCode: hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null,
-    discountPercent,
+    discountPercent: offer.discountPercent,
     discountScope,
     // The expiry label the prose states, in the contact's language (English
     // drafts get "31 July 2026" instead of the German 31.07.2026).
@@ -279,7 +286,7 @@ export async function prepareDraftForContact(
     contactId: contact.id,
     subject: draft.subject,
     body: draft.body,
-    discountPercent,
+    discountPercent: offer.discountPercent,
     discountExpiresAt: expiry ? expiry.toISOString() : null,
     discountScope,
     purchaseSummary,
