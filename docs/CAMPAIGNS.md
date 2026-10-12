@@ -331,6 +331,27 @@ Testkontakte (§5) skip gates 2, 4 and 5 — they are the operator's own inboxes
 (`POST /api/admin/campaign/mark-done`) delivers nothing, so the master flag does not apply; it does
 check the consent and the block list (409 `not_eligible`).
 
+**Kontakthäufigkeit — a warning, not a gate** (migration `0078`, owner decision 12.10.2026;
+[`contact-frequency.mjs`](../src/lib/contact-frequency.mjs), tested). When the person already
+received `maxMails` or more marketing mails in the last `windowDays` days, the desk shows a hint
+(§5) and Senden asks once („Trotzdem senden“) — the operator can always send anyway. The threshold
+is edited in Einstellungen → „Kontakthäufigkeit“ (`admin_settings` key `contact_frequency`,
+`{ maxMails, windowDays }`; default **3 in 30 days**, i.e. the warning comes before the 4th mail;
+bounds 0–50 / 0–365, invalid → default; **0 in either field switches it off**). Counted
+(`countRecentMarketingMails` in [`admin-settings-store.ts`](../src/lib/admin-settings-store.ts), one
+query per desk): `campaign_sends` with `is_test = false` — every campaign, the Einzelansprache and
+the copy path included — plus `marketing_sends` with status `sent`, matched by e-mail **or**
+customer id. Not counted: DOI, chat summary, correspondence replies, test sends, letters (never
+read from `email_messages`). Server backstop: `POST /api/admin/campaign/send`, `/approve` and
+`/api/admin/marketing/send` count fresh and answer **409** `{ error: { code: "contact_frequency",
+message }, frequency: { count, maxMails, windowDays } }` unless the body carries
+`ignoreContactFrequency: true`. The check lives in those routes, not in `approveAndSendCampaign` /
+`campaignSendPreflight`, so the release cron and sample sends never see it; Testkontakte never
+warn. Fail-soft: before 0078 or on a read error the defaults apply, a failed count never warns.
+**Not the same as gate 5:** `MARKETING_MIN_SEND_INTERVAL_DAYS` is a hard refusal (429) while the
+*last* send is too recent and comes from the environment; the Kontakthäufigkeit counts *how many*
+mails in a window, is set in the dashboard and never refuses.
+
 **What the two flags stand for:** `CAMPAIGN_SENDS_APPROVED` — mailing this audience on the basis of
 Shopify's checkbox consent at all; `CAMPAIGN_ALLOW_SINGLE_OPT_IN` — whether `SINGLE_OPT_IN`/`UNKNOWN`
 contacts may be included or must first re-confirm. The lawyer approved both on 2026-07-21 (record:
@@ -522,6 +543,17 @@ block list, a KI-Hero present). Each check carries one fix action
 (Überspringen, Neu generieren, Basis anpassen, Produkt tauschen, Set neu
 erstellen, Hero erzeugen, Betreff kürzen). The rail dot, the „Hinweise“ /
 „Blockiert“ chips and the Liste column show the same verdict.
+
+**Kontakthäufigkeit** (§3) is a *hint* too (`contact_frequency`, e.g. „Schon 3 Werbe-Mails in 30
+Tagen“, meta `{ count, maxMails, windowDays }`; skipped for a Testkontakt, while the warning is off
+and below the threshold): the server hands every card its `recentMailCount` (one batch count per
+desk), the „Letzte Mail“ row shows „n Werbe-Mails in N Tagen“ (warning tone at the threshold).
+Senden on such a card opens ONE confirmation („Schon n Werbe-Mails in den letzten N Tagen an diese
+Adresse — trotzdem senden?“, „Trotzdem senden“) that also stands in for the first-send-of-the-day
+question, then sends with `ignoreContactFrequency`. When the server's fresh count answers 409
+(the count moved since the page loaded, or a retry from the Postausgang), the card comes back
+WITHOUT a refusal and the same confirmation opens with the server's numbers. „Einplanen“ shows the
+warning in its dialog; pressing „Einplanen“ is the acknowledgement.
 
 **Sending never blocks the next card.** The desk takes a sent card out of the queue at once and
 waits for the server in the Postausgang; a refusal brings the card back with the server's reason as
@@ -758,8 +790,9 @@ Shopify side: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Complete erasure“ 
 | Curate recommendations (+ bundle rebuild) | `POST /api/admin/campaign/recommendations` |
 | Set discount post-generation | `POST /api/admin/campaign/discount` |
 | Rebuild one campaign's queue (discard its open drafts → pending) | `POST /api/admin/campaign/reset-queue` (`campaignId`) |
-| Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` |
+| Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` (`send` and `approve`: 409 `contact_frequency` unless `ignoreContactFrequency: true`, §3) |
 | Einplanen / Zurücknehmen | `POST /api/admin/campaign/{approve,unapprove}` |
+| Kontakthäufigkeit (warning threshold, Einstellungen) | `POST /api/admin/settings/contact-frequency` (`{ maxMails, windowDays }`) |
 | Release job (cron, off by default) | `GET/POST /api/cron/release-campaign-mails` (`CRON_SECRET`, every 10 min, `CAMPAIGN_RELEASE_*`) |
 | Contact search (all statuses, one campaign) | `POST /api/admin/campaign/contacts` (`query`, `campaignId`) |
 | Testkontakte (list / create + draft / delete) | `GET ?campaignId=` + `POST /api/admin/campaign/test-contacts` |

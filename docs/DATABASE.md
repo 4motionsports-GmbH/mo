@@ -47,7 +47,7 @@ the pooled one. To add a migration, drop a new file with the next number
 DDL (`--` comments and `;` statement separators; no dollar-quoted function
 bodies, which the lightweight splitter doesn't parse). Production migrations are
 run manually by the maintainer. The latest migration is
-`0077_analytics_report_step_claim.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
+`0078_admin_settings.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
 below names the migration that created each table.
 
 ## Schema overview
@@ -211,7 +211,7 @@ The schema follows the two-cluster split whose lawful bases and windows
 
 ## Table index — every table and where it is documented
 
-Every base table in the schema (migrations `0001`–`0077`; dropped tables
+Every base table in the schema (migrations `0001`–`0078`; dropped tables
 `bestandskunden_suppression_list`, `email_templates`, `email_template_assignments`
 are gone since `0029` / `0049`). Columns of the tables marked *here* are in the
 sections above; the others are owned by the linked doc. Retention and erasure of
@@ -244,6 +244,7 @@ every table: [`DATA_RETENTION.md`](./DATA_RETENTION.md).
 | view `customer_overview` | 0068 | here |
 | `customer_link_grants` | 0073 | here („The customer entity“) |
 | `campaign_letters` | 0074 | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §8 |
+| `admin_settings` | 0078 | `key` (PK), `value` (jsonb), `updated_at` — operator settings edited in Einstellungen, parsed and clamped at read time (missing / broken → the code default). Keys: `contact_frequency` `{ maxMails, windowDays }` — the soft Kontakthäufigkeit warning ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §3, [`admin-settings-store.ts`](../src/lib/admin-settings-store.ts)). Configuration: kept by `db:reset` |
 | `_migrations` | runner | applied migration names (`scripts/migrate.mjs`) |
 
 ## Local database (development)
@@ -287,8 +288,8 @@ together with `NEON_FETCH_ENDPOINT`) is the destructive `TRUNCATE … RESTART ID
 data table, on any migration level. It has no table list of its own: the data tables are the
 ones `migrations/` creates and no later migration drops (read at run time, plan in the tested
 `src/lib/db-reset-plan.mjs`). It keeps `_migrations`, `campaigns` (the built-in Einzelansprache
-and Lebenszyklus exist only through migration `0066`) and `email_design_selections`
-(configuration). It prints the target host and database first and **aborts before deleting
+and Lebenszyklus exist only through migration `0066`), `email_design_selections` and
+`admin_settings` (configuration). It prints the target host and database first and **aborts before deleting
 anything** when the database has no `_migrations`, when a live table is created by no migration
 of the checkout (a foreign database, a table made by hand, a checkout older than the database)
 or when a kept table has a foreign key to a wiped one; the TRUNCATE runs without `CASCADE`.
