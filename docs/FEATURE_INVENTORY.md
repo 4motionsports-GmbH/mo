@@ -372,14 +372,14 @@ Bildschirm-Beschreibung: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.3. Die
 | **Bundle-Angebot (BundleOfferSection, innerhalb Marketing)** — 2026-10: nur noch im offenen Entwurf des bisherigen Wegs; Sets für die Einzelansprache entstehen im Prüftisch (KAM-82) ||||||
 | KUN-71 | Kopf „🎁 Bundle-Angebot · N vorhanden" ▸/▾ | button (collapse) | Auf-/Zuklappen | client-only | kunden/BundleComposer.tsx |
 | KUN-72 | „✨ Bundle vorschlagen" / „Schlage vor…" | button | KI-Vorschlag Komponenten + Titel; Toast „KI-Vorschlag erstellt" | POST /api/admin/bundles/suggest `{customerId}` | kunden/BundleComposer.tsx |
-| KUN-73 | Komponentenliste (Bild, Titel, Preis · Begründung) + „✕" Entfernen (aria „… aus dem Bundle entfernen") | list + button | Zusammensetzung bearbeiten | client-only | kunden/BundleComposer.tsx |
-| KUN-74 | „Komponentensumme: X €" | display | – | – | kunden/BundleComposer.tsx |
-| KUN-75 | Produktsuche (CatalogProductPicker, Placeholder „Produkt suchen (Name)…", Variantenwahl, „Ausverkauft — nicht hinzufügbar") | input (search) + list | Produkt/Variante hinzufügen | POST /api/admin/catalog/search `{query}` | kunden/BundleComposer.tsx |
-| KUN-76 | „Bundle-Preis (€)" (auto = Komponentensumme bis editiert) | input (number) | Preis | client-only | kunden/BundleComposer.tsx |
+| KUN-73 | Komponentenliste (Bild, Titel, Preis · n auf Lager · Begründung) + Anzahl 1–10× (begrenzt durch bekannten Bestand) + „✕" Entfernen (aria „… aus dem Set entfernen") | list + select + button | Zusammensetzung bearbeiten | client-only | kunden/BundleComposer.tsx |
+| KUN-74 | „Normalpreis: X €" | display | – | – | kunden/BundleComposer.tsx |
+| KUN-75 | Produktsuche (CatalogProductPicker, Placeholder „Produkt suchen (Name)…", Variantenwahl, „· n auf Lager", „Ausverkauft — nicht hinzufügbar") | input (search) + list | Produkt/Variante hinzufügen | POST /api/admin/catalog/search `{query}` | kunden/BundleComposer.tsx |
+| KUN-76 | „Set-Preis" (Platzhalter = Normalpreis grau, leer = Normalpreis; deutsche Eingabe „1.299,00 €" ok) + „Ersparnis … (n %)" | input (text) | Preis | client-only | kunden/BundleComposer.tsx |
 | KUN-77 | „Titel" (Default „Dein persönliches Set") | input | – | client-only | kunden/BundleComposer.tsx |
 | KUN-78 | „Gültig (Tage)" (Default 7, min 1) | input (number) | Ablauf | client-only | kunden/BundleComposer.tsx |
-| KUN-79 | Warnung „⚠ Preis über der Komponentensumme … KEINE „statt"-Zeile" | display | – | – | kunden/BundleComposer.tsx |
-| KUN-80 | „Bundle erstellen" / „Erstelle…" (2–5 Produkte, Preis>0) | button | Erstellt Angebot, hängt an offenen Draft; Fehler-Toast mit „Ausverkauft: …" | POST /api/admin/bundles/create `{customerId, components[{productId,variantId?}], bundlePriceOverride, title, expiryDays, marketingSendId?}` | kunden/BundleComposer.tsx |
+| KUN-79 | Warnung „Preis nicht unter dem Normalpreis … keine „statt"-Zeile" | display | – | – | kunden/BundleComposer.tsx |
+| KUN-80 | „Set erstellen" (2–5 Produkte, Preis leer oder > 0) | button | Erstellt Angebot, hängt an offenen Draft und entfernt dessen Rabattcode (Rabatt-Feld dann fest auf 0: „Entfällt — ein Set ist angehängt"); Fehler-Toast nennt die Produkte | POST /api/admin/bundles/create `{customerId, components[{productId,variantId?,quantity}], bundlePriceOverride?, title, expiryDays, marketingSendId?}` | kunden/BundleComposer.tsx |
 | KUN-81 | Liste „Bundles für <email> (N)": Titel, Status-Badge (Fehlgeschlagen/Abgelaufen/Wird erstellt…/Versendet/Aktiv), „↗ Klick erfasst", Preis „(statt …)", Komponenten, „Erstellt … · läuft ab …", Fehlertext | display | Bestehende Bundles | server-render | kunden/BundleComposer.tsx |
 | KUN-82 | „🗑 Löschen" (nur pending/failed) | button + confirm (`"Dieses Bundle wirklich löschen? …"`) | Löscht unveröffentlichtes Bundle | POST /api/admin/bundles/delete `{id}` | kunden/BundleComposer.tsx |
 | KUN-83 | „↗ Angebots-Link" (nur active) | link (target=_blank) | Getrackter `/api/r/<token>`-Link | – | kunden/BundleComposer.tsx |
@@ -579,18 +579,18 @@ Die Beschreibung vor dem Desk (Stand 2026-09-08: eine Karte je Kontakt der Shopi
 | KAM-43 | „Verwerfen" + Warnung „Mindestens einen Kauf auswählen." | button + display | Auswahl zurücksetzen | client-only | kampagne/* |
 | **Empfehlungen (RecommendationsEditor)** ||||||
 | KAM-44 | „Empfohlene Produkte · speichert…" | display | – | – | kampagne/* |
-| KAM-45 | Liste Produktname (Link zu Shopify, target=_blank) + „✕" entfernen (disabled bei ≤1) / „Keine." | list + button | Entfernen → sofort persistiert + Bundle-Rebuild + Regenerate | POST /api/admin/campaign/recommendations `{contactId, productIds}` + /draft | kampagne/* |
-| KAM-46 | CatalogProductPicker (Placeholder „Produkt suchen (tippen)…", max 6, ohne Thumbnails, Variantenwahl → `handle~variantId`) | input (search) | Produkt hinzufügen | POST /api/admin/catalog/search + /recommendations | kampagne/* |
+| KAM-45 | Liste Produktname (Link zu Shopify, target=_blank), Preis, Bestand „n auf Lager" (wo Shopify ihn führt; „(alle Varianten)" ohne gewählte Variante), ausverkaufte / nicht mehr im Katalog geführte ausgegraut mit „Ausverkauft" / „Nicht im Katalog" + „✕" entfernen (disabled bei ≤1) / „Keine."; in einer Set-Mail stattdessen „Im Set" mit dem gezählten Inhalt | list + button | Entfernen → sofort persistiert + Regenerate; veraltete gespeicherte Produkte fallen beim nächsten Speichern heraus (Toast „Nicht mehr verfügbare Empfehlungen entfernt"); bei angehängtem Set gesperrt (409 `set_attached`) | POST /api/admin/campaign/recommendations `{contactId, productIds}` + /draft | kampagne/ReviewColumn.tsx |
+| KAM-46 | CatalogProductPicker (Placeholder „Produkt hinzufügen (tippen)…", max 6, mit Thumbnails, „· n auf Lager" je Produkt und Variante, Variantenwahl → `handle~variantId`, ausverkaufte nicht wählbar) | input (search) | Produkt hinzufügen (nur verfügbare; Ablehnungen nennen das Produkt) | POST /api/admin/catalog/search + /recommendations | kampagne/* |
 | **Rabatt (DiscountControl)** ||||||
 | KAM-47 | „Rabatt" Zahlenfeld (0–50) + „%" | input (number) | Depth | client-only | kampagne/* |
 | KAM-48 | „Übernehmen" / „Speichert…" (disabled wenn unverändert) | button | Setzt Rabatt am Draft + Regenerate; Toast „Rabatt auf N % gesetzt"/„Rabatt entfernt" | POST /api/admin/campaign/discount `{contactId, discountPercent}` + /draft | kampagne/* |
 | KAM-49 | Hinweistext „Aktuell N % — echter MK-Code wird beim Senden erzeugt (voraussichtlich gültig bis …). …" / „Kein Rabatt. …" | display | – | – | kampagne/* |
-| **Set-Angebot (BundleSection)** ||||||
-| KAM-50 | Angehängtes Set: Titel, Inhalt als Aufzählung mit Anzahl („2× A"), Preis „(statt …)", „· läuft ab …" | display | – | server-render | kampagne/sections/BundleSection.tsx |
-| KAM-51 | „Set entfernen" | button | Beendet das Set (Shopify-Produkt gelöscht) + Regenerate | POST /api/admin/bundles/archive `{id}` + /draft | kampagne/sections/BundleSection.tsx |
-| KAM-52 | „Keine Empfehlungen, aus denen ein Set gebaut werden könnte." / „Shopify nicht konfiguriert — keine Set-Angebote möglich." | display | – | – | kampagne/* |
-| KAM-53 | Composer: Checkbox je Empfehlung (vorausgewählt), Input „Set-Preis € (optional)" | checkbox + input | Zusammensetzung/Preis | client-only | kampagne/* |
-| KAM-54 | „Set aus Empfehlungen erstellen" / „Erstellt…" | button | Erstellt Bundle mit campaignContactId + Regenerate | POST /api/admin/bundles/create `{campaignContactId, components, bundlePriceOverride?}` + /draft | kampagne/* |
+| **Set-Angebot (Angebot-Block + Set-Dialog `sections/BundleSection.tsx`)** — seit 12.10.2026: eine Mail ist ein Set-Angebot ODER Einzelprodukte, nie beides ||||||
+| KAM-50 | „Art: Einzelprodukte \| Set"; angehängtes Set: Titel, Preis „statt …", Ersparnis-Badge „−n %", „· bis …"; „Rabatt: Entfällt — der Set-Preis ist das Angebot" (bzw. „Noch n % gesetzt — bei einem Set nicht erlaubt" + „Rabatt entfernen") | segmented + display | „Set" öffnet den Set-Dialog | server-render | kampagne/ReviewColumn.tsx |
+| KAM-51 | „Einzelprodukte" bei angehängtem Set → Bestätigung „Set entfernen?" | segmented + confirm | Beendet das Set (Shopify-Produkt gelöscht) + Regenerate | POST /api/admin/bundles/archive `{id}` + /draft | kampagne/ReviewColumn.tsx |
+| KAM-52 | „Keine verfügbaren Empfehlungen" / „Shopify nicht konfiguriert" (Set nicht wählbar) | display | – | – | kampagne/ReviewColumn.tsx |
+| KAM-53 | Set-Dialog: Verfügbarkeitsprüfung beim Öffnen („Prüfe Verfügbarkeit im Katalog…", „n von m nicht verfügbar — ausgegraut"); je Empfehlung Checkbox (verfügbare vorausgewählt, nicht verfügbare ausgegraut + nicht wählbar), Bild, Einzelpreis, Bestand, Anzahl 1–10× (begrenzt durch bekannten Bestand), Zeilensumme; Hinweis „Ein Set ersetzt den Rabattcode…" bei gesetztem Rabatt | checkbox + select | Zusammensetzung und Anzahl | POST /api/admin/catalog/availability `{refs}` | kampagne/sections/BundleSection.tsx |
+| KAM-54 | „Set-Preis" (Platzhalter = Normalpreis grau, leer = Normalpreis) + „Normalpreis", Live-Zeile „Ersparnis … (n %)" / „Kein Preisvorteil …" / „Kein gültiger Betrag"; „Set erstellen" (mind. zwei Stück) | input + button | Erstellt das Set mit campaignContactId (Varianten-Refs aufgeteilt, `quantity` je Produkt), Server entfernt den Rabattcode, Regenerate; Fehler nennen die Produkte | POST /api/admin/bundles/create `{campaignContactId, components[{productId, variantId?, quantity}], bundlePriceOverride?}` + /draft | kampagne/sections/BundleSection.tsx |
 | **Karte rechts: Entwurf + Aktionen** ||||||
 | KAM-55 | Betreff (aria „Betreff") | input | Autosave 600 ms debounced | POST /api/admin/campaign/update `{contactId, subject, body}` | kampagne/* |
 | KAM-56 | E-Mail-Text (Textarea 16 Zeilen, mono; aria „E-Mail-Text") | textarea | Autosave wie oben | dito | kampagne/* |
@@ -1495,6 +1495,7 @@ Common to all (checked against the code on 2026-10-05):
 | `POST bundles/delete` | Post | KUN-82 | – |
 | `POST bundles/list` — **❌ removed 2026-09 (D-9)** | – | – (offers are rendered server-side) | – |
 | `POST catalog/search` | Post | KUN-75, KAM-46, WIS-10 | – |
+| `POST catalog/availability` (2026-10-12) | Post | KAM-53 (Set-Dialog: Verfügbarkeit, Preis, Bestand der Empfehlungen) | – |
 | `POST correspondence/send` | Post | KUN-90, EIG-14, EIG-15 | – |
 | `POST correspondence/message` | Post | KUN-95 | ✓ |
 | `POST correspondence/assign` | Post | EIG-12, EIG-14 (formerly KUN-04) | – |

@@ -580,15 +580,24 @@ revenue stay on the KPI screen with its Shopify cache.
 The workflow is generated-first but everything stays adjustable per card
 WITHOUT regenerating (the deterministic send-time blocks make that safe):
 
-- **Recommendations** are editable: remove per item, add via the shared
-  catalog picker (`/api/admin/catalog/search`); each change persists
-  immediately (`POST /api/admin/campaign/recommendations` — validates against
-  the sync-fresh catalog, refuses sold-out products, clears `low_confidence`)
-  and an attached bundle offer is **rebuilt to match** (snapshots are
-  immutable, so "update" = archive + recreate through the unchanged bundle
-  mechanism). The UI then chains a regenerate; because a regenerate
-  preserves the stored list (§4.3), the fresh prose talks about exactly the
-  curated products.
+- **Recommendations** are editable in an item mail: remove per item, add via
+  the shared catalog picker (`/api/admin/catalog/search`, which shows the stock
+  per product and variant); each change persists immediately
+  (`POST /api/admin/campaign/recommendations`, clears `low_confidence`). A
+  NEWLY added product must be in the sync-fresh catalog, keep its pinned
+  variant and be available — refusals are German and name the product. A
+  product that was already on the draft and has sold out or left the catalog
+  since does not block the edit: it drops out and comes back as `dropped`
+  (toast „Nicht mehr verfügbare Empfehlungen entfernt“); a list with nothing
+  available left is refused (`nothing_available`). The card shows each
+  recommendation's price and — where Shopify tracks it — the stock („12 auf
+  Lager“, for a multi-variant product without a pinned variant „(alle
+  Varianten)“, [`stock-level.mjs`](../src/lib/stock-level.mjs)); sold-out or
+  vanished ones are greyed out with „Ausverkauft“ / „Nicht im Katalog“. While a
+  set is attached the list is fixed (409 `set_attached`): the mail shows only
+  the set, and the card lists its contents as „Im Set“. The UI then chains a
+  regenerate; because a regenerate preserves the stored list (§4.3), the
+  fresh prose talks about exactly the curated products.
 - **Purchase basis** is selectable: every purchased item that maps to a
   current catalog product gets a checkbox in the card's Kaufhistorie (all
   selected = default). Changing the selection and clicking "Empfehlungen &
@@ -608,14 +617,37 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   because the Kontakt block's Umsatz is the lifetime figure of the recipient snapshot
   (`customer_facts` at the last audience refresh) and will not equal the sum of the shown orders
   (`purchaseHistoryCoverage` in `campaign-desk-core.mjs`).
-- **Discount** can be set/changed/cleared AFTER generation
+- **Discount** can be set/changed/cleared AFTER generation in an item mail
   (`POST /api/admin/campaign/discount { contactId, discountPercent, discountScope? }`):
-  depth and scope („Gilt für“: Alles / Empfehlungen / Set) live on the draft,
+  depth and scope („Gilt für“: Alles / Empfehlungen) live on the draft,
   the real MK- code + deadline ship deterministically outside the prose, and
   the route warns when the current prose clearly states a different
   percentage (which the send route would refuse — regenerate then). A scope
-  change regenerates automatically, because the prose states the scope.
-- **Bundle** can be attached/removed after generation (see §4).
+  change regenerates automatically, because the prose states the scope. While
+  a set is attached a depth above 0 is refused (409 `offer_conflict`); 0 stays
+  allowed so an older draft that still has both can be cleaned up. Scope
+  `set` is no longer accepted (400) — it only still reads on old sends.
+- **Set or single products.** A mail offers EITHER single products (with an
+  optional code) OR one set — never both
+  ([`offer-mode.mjs`](../src/lib/offer-mode.mjs)). The card's Angebot block
+  switches „Art: Einzelprodukte | Set“: „Set“ opens the set dialog (below),
+  „Einzelprodukte“ removes the set after a confirm. Creating a set clears the
+  draft's code on the server; the review check `offer_conflict` (blocked, fix
+  „Rabatt entfernen“) catches a draft from before this rule.
+- **Set dialog** („Set erstellen…“, sheet): on open it re-resolves the card's
+  recommendations against the current catalog
+  (`POST /api/admin/catalog/availability { refs }`) — the final check. Available
+  products are pre-selected; sold-out or vanished ones stay visible but greyed
+  out and cannot be chosen. Each row shows the unit price, the stock and a
+  count 1–10 (`BUNDLE_QUANTITY_MAX`, capped by the known stock of the variant
+  the set uses). The empty „Set-Preis“ field shows the normal price (Σ unit
+  price × count) in grey — empty means the set costs that and the mail shows no
+  strike price; a lower price shows the saving live („Ersparnis … (16 %)“), a
+  price at or above it says there is none
+  ([`set-composer-core.mjs`](../src/lib/set-composer-core.mjs)). A set needs at
+  least two units (one product twice, or two products). Variant-pinned
+  recommendations keep their variant (`handle~variantId` is split into
+  `productId` + `variantId`), and every refusal names the products (§4).
 
 Actions:
 
@@ -755,8 +787,9 @@ Shopify side: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Complete erasure“ 
 | Nightly prepare (cron, off by default) | `GET/POST /api/cron/prepare-campaign-drafts` (`CRON_SECRET`, `CAMPAIGN_AUTO_PREPARE_*`, per-campaign `auto_prepare_per_day`) |
 | Single draft / regenerate / purchase-basis selection | `POST /api/admin/campaign/draft` |
 | Save edits | `POST /api/admin/campaign/update` |
-| Curate recommendations (+ bundle rebuild) | `POST /api/admin/campaign/recommendations` |
-| Set discount post-generation | `POST /api/admin/campaign/discount` |
+| Curate recommendations (item mails; 409 `set_attached` while a set is attached) | `POST /api/admin/campaign/recommendations` |
+| Set discount post-generation (item mails; 409 `offer_conflict` with a set) | `POST /api/admin/campaign/discount` |
+| Set dialog: availability, price and stock of the card's recommendations | `POST /api/admin/catalog/availability` |
 | Rebuild one campaign's queue (discard its open drafts → pending) | `POST /api/admin/campaign/reset-queue` (`campaignId`) |
 | Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` |
 | Einplanen / Zurücknehmen | `POST /api/admin/campaign/{approve,unapprove}` |

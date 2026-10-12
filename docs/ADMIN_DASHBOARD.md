@@ -550,8 +550,9 @@ The sheet's sections, top to bottom (every field, column, bound and default per 
   (`campaigns/audience-preview`, debounced): total, with Mo chat, DE / EN, the
   plain-German description, a few names and — when there are any — „Ohne
   Einwilligung passen weitere N — davon M per Brief erreichbar“ (InfoTip).
-- **Angebot** — Rabatt, Gilt für, „Codes gültig bis“ (Aktion): starting values
-  for Vorbereiten; codes are minted at send.
+- **Angebot** — Rabatt, Gilt für (Alles / Empfehlungen), „Codes gültig bis“
+  (Aktion): starting values for Vorbereiten; codes are minted at send. A card
+  that gets a set carries no code (offer-mode.mjs).
 - **Gestaltung** — Design, Titelbild, Textlänge, „Button führt zu“ Mo-Chat /
   Shop, „Mo-Hinweis anhängen“ (Mo-Chat without the hint is refused: „Der Button
   zu Mo steht im Mo-Hinweis — …“).
@@ -627,10 +628,18 @@ clearing 100–200 e-mails a day:
   check, computed by [`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs);
   which check blocks and which only hints: [`CAMPAIGNS.md`](./CAMPAIGNS.md) §5
   „Prüfpunkte“),
-  Empfehlungen (thumbnails, prices, availability, „+ Produkt“ with the catalog
-  picker), Angebot (Rabatt 0/5/10/15/20/custom, „Gilt für“ Alles / Empfehlungen /
-  Set — what Shopify applies the code to, coupon and prose follow; Set line with
-  the composer in a sheet), Text (Sprache, Modus), Hero (only when the campaign design has a
+  Empfehlungen (thumbnails, prices, stock „n auf Lager“ where Shopify tracks it,
+  sold-out or vanished products greyed out with „Ausverkauft“ / „Nicht im
+  Katalog“, „+ Produkt“ with the catalog picker — or, in a set mail, „Im Set“
+  with the set's counted contents), Angebot („Art: Einzelprodukte | Set“ — a
+  mail offers single products with an optional code OR one set, never both;
+  Einzelprodukte: Rabatt 0/5/10/15/20/custom and „Gilt für“ Alles / Empfehlungen
+  — what Shopify applies the code to, coupon and prose follow; Set: the set
+  line with price, „statt“, saving badge and end date, „Rabatt: Entfällt“. „Set“
+  opens the set dialog in a sheet: a fresh availability check of the
+  recommendations, unavailable ones greyed out, unit price + stock + count
+  1–10 per product, the normal price greyed in the empty „Set-Preis“ field and
+  the live saving — [`CAMPAIGNS.md`](./CAMPAIGNS.md) §4), Text (Sprache, Modus), Hero (only when the campaign design has a
   hero: Erzeugen, Anpassen… sheet, Entfernen), Kundenprofil (persona badge,
   plain-text excerpt of the central profile, „Öffnen“ → the customer in
   Kunden), Kaufhistorie (collapsed, with the recommendation basis; "Letzte 5
@@ -1303,7 +1312,10 @@ consent is sendable
 Rabatt (%) 0–50 (`DISCOUNT_PERCENT_MAX`; > 0 mints a single-use code valid 7
 days at send), Textmodus, „Besondere Hinweise (optional)“, „Neu generieren“
 (`customers/marketing-draft`), Betreff and E-Mail-Text, the hero image, the
-Set-Angebot composer (`bundles/*`), „Speichern“ (`marketing/update`), the
+Set-Angebot composer (`bundles/*`; count per product, the normal price greyed
+in the empty price field, stock from the picker; an active set fixes the Rabatt
+at 0 — „Entfällt — ein Set ist angehängt“ — and creating one clears the open
+draft's code), „Speichern“ (`marketing/update`), the
 preview (`marketing/email-preview`, placeholder code `MO-XXXX`), **„Freigeben &
 senden“** (`marketing/send` → `approveAndSend`, §4.3) and „Entwurf löschen“
 (`marketing/delete`). Changing Rabatt, Textmodus or the Hinweise after
@@ -2460,7 +2472,7 @@ them. Actions that read or act on one person's data write the admin access log
 | Kunden | `POST campaigns/add-recipients { customerIds, campaignId?, adminNote? }` | „Zur Kampagne…“ for a selection (≤ 200 ids, else 400): `addRecipient` per person — without consent or with a block counted and skipped, never added; nothing drafted or sent → `{ campaignId, campaignSlug, added, alreadyIn, noConsent, blocked, notFound, failed }`; 404 / 409 `campaign_closed` for an ended or archived campaign (access log `campaign.add_recipients` with counts) |
 | Kampagnen (desk) | `POST campaign/prepare { campaignId, count, discountPercent?, textMode?, discountScope? }` | draft the next *n* pending recipients of one campaign (offer defaults from the campaign; 409 `campaign_closed` when not active or past its end) |
 | | `POST campaign/draft { contactId, … }` | (re)generate one draft |
-| | `POST campaign/update / discount / recommendations / language` | edit text, discount depth, recommended products, language pin of a draft |
+| | `POST campaign/update / discount / recommendations / language` | edit text, discount depth, recommended products, language pin of a draft (`discount`: 409 `offer_conflict` for a depth above 0 while a set is attached, 400 for scope `set`; `recommendations`: 409 `set_attached` while a set is attached, stale stored products come back as `dropped`) |
 | | `POST campaign/email-preview` | render the on-screen draft as text/html |
 | | `POST campaign/send { contactId }` | approve & send through the system (`approveAndSendCampaign`); a refusal answers with its reason as the code — e.g. `campaign_closed` 409, `sends_not_approved` / `no_consent` / `opt_in_blocked` 403, `too_soon` 429 |
 | | `POST campaign/skip / unskip / mark-done` | review decisions; `mark-done` closes the copy workflow (consent + block checked) |
@@ -2483,8 +2495,9 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST customers/objection { customerId, kind: profile \| postal, objected }` | record / lift an Art. 21 objection: `profile` deletes the AI profile and stops it and queues the removal of Mo's `mo-` tags in Shopify (`removeInsightTags`, §3.10), `postal` stops advertising letters (access log `customer.objection`) |
 | | `POST customers/marketing-draft` | per-customer marketing draft of the former path (§4; the UI calls it only to regenerate an open draft) |
 | | `POST marketing/update / email-preview / send / delete` | edit, preview, approve & send (`approveAndSend`), delete an open draft of the former path |
-| | `POST bundles/suggest / create / archive / delete` | Set-Angebot composer |
-| | `POST catalog/search { query }` | product search for the composer and pickers |
+| | `POST bundles/suggest / create / archive / delete` | Set-Angebot composer (`create`: `quantity` 1–10 per component, else 400 `bad_quantity`; a ref `handle~variantId` as `productId` is split; refusals carry `offenders` + `offenderNames` and a German message naming the products; on success the attached campaign or legacy draft's code is cleared → `discountCleared`) |
+| | `POST catalog/search { query }` | product search for the composer and pickers (with `stock` per product and variant — null when unknown or not tracked) |
+| Kampagnen (desk) | `POST catalog/availability { refs }` | the set dialog's final check: the card's recommendation refs re-resolved against the current catalog (availability, unit price, stock) |
 | | `POST correspondence/send / message / assign / email-preview` | reply (closes the person's open „E-Mail beantworten“ item → `closedItems`), lazy body, assign unmatched inbound (now from the Eingang; opens the item → `itemId`), preview |
 | Eingang | `POST correspondence/assign-prospect { messageId }` | „Als Interessent anlegen“: a customer from the sender (no consent), the mail assigned, the item opened → `{ customerId, itemId }` (access log `correspondence.assign_prospect`) |
 | | `POST customers/letter-draft / letter-preview`, `POST physical/send` | physical letter (`letter-draft` 409 after a postal objection; since 0074 `physical/send` answers 409 `objection`, `not_purchase_address` or `address_invalid` too) |

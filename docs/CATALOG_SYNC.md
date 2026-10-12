@@ -201,9 +201,18 @@ The sync captures each product's stock status from the Shopify Admin API
   availability data) keep their prior behaviour and never falsely read as
   sold out.
 - **`inventoryQuantity`** (`number`, optional) — `Product.totalInventory` when
-  present.
+  present; each variant carries its own `inventoryQuantity` too.
+- **`tracksInventory`** (`boolean`, optional, since 12.10.2026) —
+  `Product.tracksInventory`; when `false` the quantities are meaningless.
 - **`anyVariantAvailable`** (`boolean`, optional) — whether any variant is
   `availableForSale`. Omitted when no availability data was present.
+
+The admin shows these quantities as „n auf Lager“ (Kampagne → Empfehlungen, the
+set dialog, the catalog picker) through
+[`stock-level.mjs`](../src/lib/stock-level.mjs): a number appears only when it
+is positive and tracking is not off — 0, a negative „continue selling“ value,
+an untracked product or the committed fallback bundle (no stock data) read as
+unknown, never as „0 auf Lager“. Availability itself stays `availableForSale`.
 
 These are written to the catalog Blob alongside every other field and surfaced
 on `GET /api/products` (`inStock` is what the widget uses for an "Ausverkauft"
