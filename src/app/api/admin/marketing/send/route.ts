@@ -1,4 +1,4 @@
-// POST /api/admin/marketing/send  { sendId }
+// POST /api/admin/marketing/send  { sendId, ignoreContactFrequency? }
 //
 // Approve & send the (possibly edited) draft THROUGH THE SYSTEM. All the legal
 // guarantees live in approveAndSend (lib/marketing-email): the address must be
@@ -6,10 +6,18 @@
 // appended, the discount + cart come from the stored row, and the status flips
 // to 'sent' with a timestamp. The admin never sends from a personal client.
 //
+// Contact frequency (lib/contact-frequency.mjs, a warning — not a gate): when
+// the person already received the configured number of marketing mails in the
+// window, the route answers 409 code 'contact_frequency' with the numbers
+// unless the body carries `ignoreContactFrequency: true` (Kunden → Marketing
+// asks first). A failed count never stops a send.
+//
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { approveAndSend } from "@/lib/marketing-email";
+import { contactFrequencyWarningForMarketingSend } from "@/lib/admin-settings-store";
+import { contactFrequencyConflict } from "@/lib/contact-frequency.mjs";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 30;
@@ -33,9 +41,11 @@ export async function POST(req: Request) {
   if (blocked) return blocked;
 
   let sendId: number;
+  let ignoreContactFrequency = false;
   try {
-    const json = (await req.json()) as { sendId?: unknown };
+    const json = (await req.json()) as { sendId?: unknown; ignoreContactFrequency?: unknown };
     sendId = Number(json.sendId);
+    ignoreContactFrequency = json.ignoreContactFrequency === true;
     if (!Number.isInteger(sendId) || sendId <= 0) {
       return adminJsonError("bad_request", "sendId required", 400);
     }
@@ -44,6 +54,10 @@ export async function POST(req: Request) {
   }
 
   try {
+    if (!ignoreContactFrequency) {
+      const warning = await contactFrequencyWarningForMarketingSend(sendId);
+      if (warning) return adminJson(contactFrequencyConflict(warning), 409);
+    }
     const result = await approveAndSend(sendId);
     if (result.ok) {
       return adminJson({ ok: true, sentTo: result.sentTo });

@@ -1,4 +1,4 @@
-// POST /api/admin/campaign/send  { contactId }
+// POST /api/admin/campaign/send  { contactId, ignoreContactFrequency? }
 //
 // Approve & send the (possibly edited) campaign draft THROUGH THE SYSTEM. All
 // the legal guarantees live in approveAndSendCampaign (lib/campaign-email):
@@ -8,10 +8,20 @@
 // immutable campaign_sends record. While the master flag is false this route
 // refuses EVERY send — via UI or direct API call.
 //
+// Contact frequency (lib/contact-frequency.mjs) — a WARNING, not a gate: when
+// the person already received the configured number of marketing mails in the
+// window, the route answers 409 { error: { code: 'contact_frequency' },
+// frequency: { count, maxMails, windowDays } } unless the body carries
+// `ignoreContactFrequency: true` (the desk's „Trotzdem senden“). Checked here,
+// not in approveAndSendCampaign, so the release cron and sample sends never
+// see it; a Testkontakt never warns; a failed count never stops a send.
+//
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { approveAndSendCampaign } from "@/lib/campaign-email";
+import { contactFrequencyWarningForCampaignContact } from "@/lib/admin-settings-store";
+import { contactFrequencyConflict } from "@/lib/contact-frequency.mjs";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 30;
@@ -42,9 +52,11 @@ export async function POST(req: Request) {
   if (blocked) return blocked;
 
   let contactId: number;
+  let ignoreContactFrequency = false;
   try {
-    const json = (await req.json()) as { contactId?: unknown };
+    const json = (await req.json()) as { contactId?: unknown; ignoreContactFrequency?: unknown };
     contactId = Number(json.contactId);
+    ignoreContactFrequency = json.ignoreContactFrequency === true;
     if (!Number.isInteger(contactId) || contactId <= 0) {
       return adminJsonError("bad_request", "contactId required", 400);
     }
@@ -53,6 +65,10 @@ export async function POST(req: Request) {
   }
 
   try {
+    if (!ignoreContactFrequency) {
+      const warning = await contactFrequencyWarningForCampaignContact(contactId);
+      if (warning) return adminJson(contactFrequencyConflict(warning), 409);
+    }
     const result = await approveAndSendCampaign(contactId);
     if (result.ok) {
       // `test`: a Testkontakt stays in the queue — the desk keeps its card.

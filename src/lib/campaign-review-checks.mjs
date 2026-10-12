@@ -14,6 +14,12 @@
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
 import { hasStrayPlaceholder } from "./discount-swap.mjs";
 import { campaignSegmentByKey } from "./campaign-segments.mjs";
+import {
+  CONTACT_FREQUENCY_CHECK,
+  CONTACT_FREQUENCY_HINT_DETAIL,
+  contactFrequencyTitle,
+  contactFrequencyWarning,
+} from "./contact-frequency.mjs";
 
 export const CHECK_LEVELS = Object.freeze({
   BLOCKED: "blocked",
@@ -93,6 +99,7 @@ function parseTime(value) {
  *   sendError?: string | null,
  *   isTest?: boolean,
  *   suppressed?: boolean,
+ *   recentMailCount?: number | null,
  * }} ReviewItem
  *
  * @typedef {{
@@ -102,6 +109,7 @@ function parseTime(value) {
  *   heroMode?: "none" | "default" | "ai_ab" | "ai_all",
  *   sendWindowApplies?: boolean,
  *   minSendIntervalDays?: number,
+ *   contactFrequency?: { maxMails: number, windowDays: number } | null,
  *   now?: Date | number,
  * }} ReviewContext
  */
@@ -356,6 +364,23 @@ export function reviewChecks(item, ctx = {}) {
       detail: `${subject.length} Zeichen — ab ${SUBJECT_MAX_CHARS} schneiden viele Mail-Clients ab.`,
       fix: "shorten_subject",
     });
+  }
+
+  // Contact frequency (contact-frequency.mjs): the person already received
+  // the configured number of marketing mails in the window. A warning only —
+  // Senden asks once and then sends anyway; a Testkontakt never warns.
+  if (ctx.contactFrequency && item.isTest !== true) {
+    const warning = contactFrequencyWarning({ count: item.recentMailCount, settings: ctx.contactFrequency });
+    if (warning) {
+      hints.push({
+        key: CONTACT_FREQUENCY_CHECK,
+        level: "hint",
+        title: contactFrequencyTitle(warning),
+        detail: CONTACT_FREQUENCY_HINT_DETAIL,
+        fix: null,
+        meta: { count: warning.count, maxMails: warning.maxMails, windowDays: warning.windowDays },
+      });
+    }
   }
 
   // ── info ────────────────────────────────────────────────────────────────
