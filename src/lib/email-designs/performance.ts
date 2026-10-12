@@ -3,13 +3,14 @@
 // CTA — or, in the campaign mail, no button and the picture linking to the
 // shop —, large lifestyle image), bordered product CARDS with price + black
 // outline button, the SET card (one 2px blue frame: saving eyecatcher, item
-// rows, price summary, „Zur Kasse“), the COUPON card and the offer COUNTDOWN
-// in the same light card style (blue badges and rules, black set price, black
-// outline buttons, red digits on light-grey tiles),
+// rows, price summary, a solid black „Zur Kasse“), the COUPON card and the
+// offer COUNTDOWN in the same light card style (blue badges and rules, black
+// set price, black outline buttons, red digits on light-grey tiles),
 // the "Frag Mo" advisor panel, the black-and-white smiley rating, and a clean
 // minimal footer. Everything sits on white — no dark blocks. Text links and
-// the short rules under card titles are BLUE; every card button uses the
-// black outline look of „Beratung mit Mo starten“ (owner, 06.10.2026).
+// the short rules under card titles are BLUE; the card buttons use the black
+// outline look of „Beratung mit Mo starten“ (owner, 06.10.2026) — except the
+// set's „Zur Kasse“, solid black with white text (owner, 12.10.2026).
 //
 // Personalisation hooks:
 //   - HERO IMAGE: activeEmailRenderData().heroImageUrl (the operator-generated
@@ -181,12 +182,29 @@ function redButton(cta: EmailCta, block = false, className = ""): string {
 
 /**
  * The black outline look of „Beratung mit Mo starten“ (white, 1px black
- * border, black bold capitals), full width — the set deal's „Zur Kasse“ and
- * the coupon's „Code einlösen“.
+ * border, black bold capitals), full width — the coupon's „Code einlösen“.
  */
 function outlineBlockButton(cta: EmailCta): string {
   return `
                     <a href="${escapeAttr(cta.url)}" target="_blank" style="display:block; background:#ffffff; color:#111111; border:1px solid #111111; text-align:center; padding:13px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</a>`;
+}
+
+/**
+ * The set's „Zur Kasse“: solid black with white bold capitals, full width —
+ * the one purchase action of a set mail, so it stands out from the outline
+ * card buttons (owner, 12.10.2026). The black also sits on the table cell
+ * (bgcolor) so Outlook, which ignores an anchor's background and padding,
+ * still shows a black button with white text.
+ */
+function solidBlockButton(cta: EmailCta): string {
+  return `
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+                      <tr>
+                        <td align="center" bgcolor="#111111" style="background:#111111; border-radius:3px;">
+                          <a href="${escapeAttr(cta.url)}" target="_blank" style="display:block; background:#111111; color:#ffffff; border:1px solid #111111; text-align:center; padding:13px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;"><span style="color:#ffffff;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</span></a>
+                        </td>
+                      </tr>
+                    </table>`;
 }
 
 /** The product cards' „Zum Produkt“: the same black outline look, compact. */
@@ -399,7 +417,7 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
                             <tr>${summaryCells}
                             </tr>
                           </table>
-                          ${outlineBlockButton({ label: c.labels.cta, url: input.offerUrl })}
+                          ${solidBlockButton({ label: c.labels.cta, url: input.offerUrl })}
                         </td>
                       </tr>
                     </table>

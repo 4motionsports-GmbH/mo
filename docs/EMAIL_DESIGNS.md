@@ -62,10 +62,12 @@ a white disc (`public/email-rating-1.png` … `-5.png`, shown at 32 px, alt text
 „sehr gut“) — emoji would render in colour in every mail client.
 
 **Performance colours and buttons (owner, 06.10.2026).** Text links and the short rule under card
-headlines are blue (`#008ccb`, like the badges); every card button — „Zum Produkt“ (single-product
-cards only; the set's item rows have none), „Zur Kasse“, „Code einlösen“ — has the black outline
+headlines are blue (`#008ccb`, like the badges); the card buttons „Zum Produkt“ (single-product
+cards only; the set's item rows have none) and „Code einlösen“ have the black outline
 look of „Beratung mit Mo starten“ (white, 1 px `#111111`
-border, black bold capitals). Red remains for the filled primary call-to-action buttons (the hero
+border, black bold capitals). The set's **„Zur Kasse“** — the one purchase action of a set mail —
+is solid black (`#111111`) with white bold capitals (owner, 12.10.2026; the black also sits on the
+table cell so Outlook shows it). Red remains for the filled primary call-to-action buttons (the hero
 button and extra CTA rows of non-campaign mails, the `ctaButton` hook), a reduced price next to the
 struck-through old one, and the countdown digits.
 
@@ -184,7 +186,7 @@ design:
 
 Performance: a 2 px blue (`#008ccb`) frame with a 10 px radius, a pale-blue eyecatcher band
 (`#eaf6fc`) with the blue pill and a solid blue badge, the rows with the blue stroke of the product
-cards, the black outline „Zur Kasse“ button. Classic: a 2 px frame and the badge in
+cards, the solid black „Zur Kasse“ button with white text. Classic: a 2 px frame and the badge in
 `emailAccentColor()`, the band a light tint of it (`tintHex`), the theme's CTA button
 (`renderCtaButton`) under the „Dein persönliches Angebot“ band — Studio inherits this with its black
 accent and square button. On phones (shell media rules) the eyecatcher stacks centred and each row
