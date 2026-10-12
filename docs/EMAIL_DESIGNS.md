@@ -341,8 +341,9 @@ and the picture shown as a row of its own **under** the text.
 
 `email-hero-context.mjs` (tested): the condensed **customer understanding** (goals, space, noise,
 level), the **purchase history** (what is already there — the new equipment visibly completes the
-existing setup), the **recommended products with brand, product name, type and colour** (below), an
-**attached set** as a group, persona/team hints, for campaigns also the **customer status** (first
+existing setup), the **recommended products with brand, product name, type and colour** (below) —
+in a set mail instead the **set's products with their counts** („2× …“), shown together as ONE
+offer (a mail is a set offer or single items, never both) —, persona/team hints, for campaigns also the **customer status** (first
 buyer to regular) and the language — plus the **season** for light and mood. The headline names the
 person's goal or situation; discounts, prices and product names are deliberately banned from it
 (they stand deterministically elsewhere and would go stale here).

@@ -568,9 +568,11 @@ keyed by contact id, so filtering never mis-targets a card.
 while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off, address on the block list or without the one consent,
 address inside the cross-channel frequency cap, prose naming a different percentage than the set
 discount — the same `detectDiscountTextMismatch` the send path enforces — or the
-`MO-XXXX` placeholder without a discount, or a refusal the server returned for
-the last attempt), *hint* when worth a look (low-confidence recommendations, a
-recommended product gone or sold out, an attached set expired or expiring
+`MO-XXXX` placeholder without a discount, a set mail that still carries a code
+(`offer_conflict`, fix „Rabatt entfernen“ — set XOR items, §4), the retired
+scope „Gilt für: Set“ with a code (`discount_scope_no_set`), or a refusal the server returned for
+the last attempt), *hint* when worth a look (in an item mail: low-confidence recommendations, a
+recommended product gone or sold out; an attached set expired or expiring
 within two days, a missing KI-Hero while the campaign design has a hero —
 following the campaign's hero mode: under `ai_ab` an A-group card without one,
 under `ai_all` every card without one („Ohne KI-Hero“), under `default` /
@@ -579,7 +581,7 @@ under `ai_all` every card without one („Ohne KI-Hero“), under `default` /
 subject over 70 characters), *info* (edited by hand, a Testkontakt, a Testkontakt address on the
 block list, a KI-Hero present). Each check carries one fix action
 (Überspringen, Neu generieren, Basis anpassen, Produkt tauschen, Set neu
-erstellen, Hero erzeugen, Betreff kürzen). The rail dot, the „Hinweise“ /
+erstellen, Rabatt entfernen, Hero erzeugen, Betreff kürzen). The rail dot, the „Hinweise“ /
 „Blockiert“ chips and the Liste column show the same verdict.
 
 **Kontakthäufigkeit** (§3) is a *hint* too (`contact_frequency`, e.g. „Schon 3 Werbe-Mails in 30

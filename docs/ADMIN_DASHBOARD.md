@@ -2539,7 +2539,7 @@ them. Actions that read or act on one person's data write the admin access log
 | Analyse | `GET analytics`, `GET analytics/<id>`, `GET analytics/<id>/pdf`, `POST analytics/estimate / create / step / delete` | Komplettanalysen; `estimate` also returns `strategistEur`, `minutes { low, high }` and `previousReport`; `step` answers `busy: true` while another step holds the report's claim (0077) |
 | Verbesserung | `GET improve`, `GET improve/<id>`, `GET improve/backlog`, `POST improve/run / step / suggestion / adopt / delete` | improvement runs, the open backlog |
 | | `POST directives/save / toggle`, `GET directives/versions?id=` | Mo's live directives |
-| Einstellungen | `POST email-designs/preview / assign` | design preview and per-type assignment |
+| Einstellungen | `POST email-designs/preview / assign` | design preview (`preview { designKey, kind, sample?: items \| set }` — marketing and campaign samples as an item mail or a set mail) and per-type assignment |
 | | `POST settings/contact-frequency { maxMails, windowDays }` | „Kontakthäufigkeit“: store the warning threshold (`admin_settings`, 0078; whole numbers 0–50 / 0–365, 0 = aus) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before migration 0078 („Migration 0078 fehlt — bitte zuerst ausführen.“); audit `settings.contact_frequency` |
 | | `GET shopify/status` | Shopify-Abgleich: `{ health, runs, outbox, alignment, flags }` (pure DB) |
 | | `POST shopify/import { action: start \| step \| cancel }` | the full customer + order import, stepped (`useStepLoop`); a finished import computes a first batch of figures |
