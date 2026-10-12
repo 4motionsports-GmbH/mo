@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isAvailable, filterAvailable } from "./availability.mjs";
+import { isAvailable, filterAvailable, isDefaultVariantAvailable } from "./availability.mjs";
 
 test("isAvailable: only inStock === false is unavailable", () => {
   assert.equal(isAvailable({ inStock: true }), true);
@@ -27,4 +27,17 @@ test("a restocked item becomes recommendable again once inStock flips back", () 
   assert.deepEqual(filterAvailable([product]), []);
   const restocked = { ...product, inStock: true };
   assert.deepEqual(filterAvailable([restocked]).map((p) => p.id), ["x"]);
+});
+
+test("isDefaultVariantAvailable: a sold-out default variant is not recommendable", () => {
+  const v = (isDefault, available) => ({ isDefault, available });
+  assert.equal(isDefaultVariantAvailable({ inStock: true, variants: [v(true, true), v(false, false)] }), true);
+  assert.equal(isDefaultVariantAvailable({ inStock: true, variants: [v(true, false), v(false, true)] }), false);
+  // no isDefault flag → the first variant is the default
+  assert.equal(isDefaultVariantAvailable({ inStock: true, variants: [v(false, false), v(false, true)] }), false);
+  // no variant data (fallback bundle) → product-level rule
+  assert.equal(isDefaultVariantAvailable({ inStock: true }), true);
+  assert.equal(isDefaultVariantAvailable({}), true);
+  assert.equal(isDefaultVariantAvailable({ inStock: false, variants: [v(true, true)] }), false);
+  assert.equal(isDefaultVariantAvailable(null), false);
 });
