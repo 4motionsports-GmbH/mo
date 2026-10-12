@@ -2,9 +2,10 @@
 // AI-drafted template: bold hero section (blue kicker, oversized headline, red
 // CTA — or, in the campaign mail, no button and the picture linking to the
 // shop —, large lifestyle image), bordered product CARDS with price + black
-// outline button, the BUNDLE-DEAL card, the COUPON card and the offer
-// COUNTDOWN in the same white bordered card frame (blue badges and rules,
-// black set price, black outline buttons, red digits on light-grey tiles),
+// outline button, the SET card (one 2px blue frame: saving eyecatcher, item
+// rows, price summary, „Zur Kasse“), the COUPON card and the offer COUNTDOWN
+// in the same light card style (blue badges and rules, black set price, black
+// outline buttons, red digits on light-grey tiles),
 // the "Frag Mo" advisor panel, the black-and-white smiley rating, and a clean
 // minimal footer. Everything sits on white — no dark blocks. Text links and
 // the short rules under card titles are BLUE; every card button uses the
@@ -38,8 +39,6 @@ import type {
 } from "../email-design-context";
 import { activeEmailRenderData } from "../email-design-context";
 import { getBaseUrl } from "../base-url";
-import { bundleHeadline } from "../bundle-email-core.mjs";
-import { bundleItemList } from "../bundle-offer-core.mjs";
 import { emailRatingUrl } from "../email-rating.mjs";
 import {
   escapeAttr,
@@ -288,59 +287,118 @@ function productGrid(items: EmailProductGridItem[]): string {
   return items.map((item) => productCard(item)).join("");
 }
 
+/** Pale blue of the set frame's eyecatcher band (BLUE at ~8 %). */
+const BLUE_TINT = "#eaf6fc";
+/** Item image size in the set rows (px, 1×). */
+const SET_ITEM_IMAGE = 96;
+
 /**
- * The BUNDLE-DEAL card: the product cards' white bordered frame with the blue
- * badge, the component images and the price trio — the set price bold in
- * black, the component sum struck through in the cards' muted grey, the
- * saving as a blue pill — and the black outline CTA.
+ * The SET card — one 2px BLUE frame that reads as one bundle:
+ *   - EYECATCHER on a pale-blue band: the blue „BUNDLE DEAL“ pill, the short
+ *     headline, „3 Produkte · zusammen günstiger“, and the solid blue badge —
+ *     „−16 %“ big in white with „Du sparst 29,90 €“ under it for a genuine
+ *     saving, otherwise „Set-Preis“ + the amount;
+ *   - the items in the product cards' row structure (image | „2×“ + name +
+ *     blue rule + short description | the muted snapshot unit price) — no
+ *     per-item links, no „Zum Produkt“;
+ *   - the price summary (Einzelkauf struck through in grey when genuine, the
+ *     set price black and bold) and the black outline „Zur Kasse“ button on
+ *     the tracked offer link.
+ * Every value comes from `c` (bundleBlockModel) — nothing is derived here.
+ * Phones (shell @media): the eyecatcher stacks centred, each row keeps its
+ * picture on the left and stacks name and price beside it.
  */
 function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): string {
-  const en = (input.language ?? "de") === "en";
-  const images = input.components
-    .map((comp) => comp.imageUrl)
-    .filter((u): u is string => Boolean(u))
-    .slice(0, 2)
-    .map(
-      (u) =>
-        `<img src="${escapeAttr(u)}" width="104" alt="" style="width:104px; height:104px; object-fit:cover; display:inline-block; border-radius:4px; background:#ffffff; margin:2px;">`
-    )
+  const badgeInner =
+    c.eyecatcher === "saving"
+      ? `<div style="font-family:${FONT}; font-size:38px; line-height:40px; font-weight:800; letter-spacing:-1px; color:#ffffff; white-space:nowrap;">${escapeHtml(c.eyecatcherCopy.value)}</div>` +
+        (c.eyecatcherCopy.note
+          ? `<div style="font-family:${FONT}; font-size:12px; line-height:16px; font-weight:700; color:#ffffff; margin-top:6px; white-space:nowrap;">${escapeHtml(c.eyecatcherCopy.note)}</div>`
+          : "")
+      : (c.eyecatcherCopy.label
+          ? `<div style="font-family:${FONT}; font-size:10px; line-height:14px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:#ffffff;">${escapeHtml(c.eyecatcherCopy.label)}</div>`
+          : "") +
+        `<div style="font-family:${FONT}; font-size:26px; line-height:32px; font-weight:800; color:#ffffff; margin-top:4px; white-space:nowrap;">${escapeHtml(c.eyecatcherCopy.value)}</div>`;
+
+  const eyecatcher = `
+                      <tr>
+                        <td bgcolor="${BLUE_TINT}" style="background:${BLUE_TINT}; border-radius:8px 8px 0 0; padding:22px 22px 22px 24px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+                            <tr>
+                              <td valign="middle" class="set-eye-text" style="padding-right:16px;">
+                                <div style="margin-bottom:12px;">${bluePill(c.labels.deal.toUpperCase())}</div>
+                                <div style="font-family:${FONT}; font-size:22px; line-height:27px; color:#111111; font-weight:800; letter-spacing:-0.3px;">${escapeHtml(c.headline)}</div>
+                                <div style="font-family:${FONT}; font-size:13px; line-height:19px; color:#333333; margin-top:6px;">${escapeHtml(c.tagline)}</div>
+                              </td>
+                              <td valign="middle" align="right" width="176" class="set-eye-badge" style="width:176px;">
+                                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right" class="set-badge" style="border-collapse:separate !important; border-spacing:0;">
+                                  <tr>
+                                    <td align="center" bgcolor="${BLUE}" style="background:${BLUE}; border-radius:10px; padding:16px 20px 15px 20px;">${badgeInner}
+                                    </td>
+                                  </tr>
+                                </table>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>`;
+
+  const rows = c.items
+    .map((item, i) => {
+      const divider = i === 0 ? "" : "border-top:1px solid #e5e5e5;";
+      const image = item.imageUrl
+        ? `<img src="${escapeAttr(item.imageUrl)}" width="${SET_ITEM_IMAGE}" height="${SET_ITEM_IMAGE}" alt="${escapeAttr(item.name)}" class="set-item-img" style="width:${SET_ITEM_IMAGE}px; height:${SET_ITEM_IMAGE}px; display:block; border:none; object-fit:contain; background:#ffffff;">`
+        : "&nbsp;";
+      const description = item.description
+        ? `<div style="font-family:${FONT}; font-size:12px; line-height:17px; color:#444444;">${escapeHtml(item.description)}</div>`
+        : "";
+      const price = item.unitPriceLabel
+        ? `<div style="font-family:${FONT}; font-size:12px; line-height:16px; color:#777777; white-space:nowrap;">${escapeHtml(item.unitPriceLabel)}</div>`
+        : "&nbsp;";
+      return `
+                            <tr>
+                              <td width="${SET_ITEM_IMAGE + 16}" valign="middle" class="set-item-img-cell" style="width:${SET_ITEM_IMAGE + 16}px; padding:14px 16px 14px 0; ${divider}">${image}</td>
+                              <td valign="middle" style="padding:0; ${divider}">
+                                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+                                  <tr>
+                                    <td valign="middle" class="set-item-text" style="padding:14px 12px 14px 0;">
+                                      <div style="font-family:${FONT}; font-size:15px; line-height:20px; font-weight:700; color:#111111;"><span style="color:${BLUE}; font-weight:800;">${item.quantity}&times;</span>&nbsp; ${escapeHtml(item.name)}</div>
+                                      <div style="width:14px; height:2px; background:${BLUE}; margin:8px 0; font-size:0; line-height:0;">&nbsp;</div>
+                                      ${description}
+                                    </td>
+                                    <td width="96" valign="middle" align="right" class="set-item-price" style="width:96px; padding:14px 0;">${price}</td>
+                                  </tr>
+                                </table>
+                              </td>
+                            </tr>`;
+    })
     .join("");
-  const priceLabel = `font-family:${FONT}; color:#555555; font-size:10px; line-height:14px;`;
-  const priceCells =
+
+  const label = `font-family:${FONT}; color:#555555; font-size:10px; line-height:14px; letter-spacing:0.4px; text-transform:uppercase;`;
+  const summaryCells =
     (c.stattLabel
       ? `
-                          <td valign="bottom" style="${priceLabel} padding-right:14px;">${en ? "Separately" : "Einzelkauf"}<br><span style="font-size:16px; line-height:22px; color:#777777; text-decoration:line-through;">${escapeHtml(c.stattLabel)}</span></td>`
+                                <td valign="bottom" style="padding:0 22px 3px 0;"><div style="${label}">${escapeHtml(c.labels.separately)}</div><div style="font-family:${FONT}; font-size:16px; line-height:22px; color:#777777; text-decoration:line-through; white-space:nowrap;">${escapeHtml(c.stattLabel)}</div></td>`
       : "") +
     `
-                          <td valign="bottom" style="${priceLabel} padding-right:14px;">${escapeHtml(c.labels.price)}<br><strong style="font-size:22px; line-height:26px; color:#111111; font-weight:800;">${escapeHtml(c.priceLabel)}</strong></td>` +
-    (c.savingLabel && c.savingPct != null
-      ? `
-                          <td valign="bottom" style="${priceLabel} padding-bottom:2px;">${bluePill(`${c.labels.save} ${c.savingLabel}`)}</td>`
-      : "");
-  // The contents as a bullet list with the count of each item ("2× …").
-  const itemStyle = `font-family:${FONT}; font-size:12px; line-height:17px; color:#555555; padding:0 0 3px 0;`;
-  const itemList = bundleItemList(input.components)
-    .map(
-      (item) =>
-        `<tr><td valign="top" width="12" style="${itemStyle} width:12px;">&bull;</td><td valign="top" style="${itemStyle}"><strong style="color:#111111;">${item.quantity}&times;</strong> ${escapeHtml(item.name)}</td></tr>`
-    )
-    .join("");
+                                <td valign="bottom"><div style="${label}">${escapeHtml(c.labels.price)}</div><div style="font-family:${FONT}; font-size:28px; line-height:34px; color:#111111; font-weight:800; white-space:nowrap;">${escapeHtml(c.priceLabel)}</div></td>`;
+
   return `
                 <tr>
                   <td class="content-pad" style="padding: 8px 38px 16px 38px;" bgcolor="#ffffff">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#ffffff; border:1px solid #e5e5e5; border-radius:7px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="set-frame" style="width:100%; background:#ffffff; border:2px solid ${BLUE}; border-radius:10px; border-collapse:separate !important; border-spacing:0;">${eyecatcher}
                       <tr>
-                        <td width="42%" valign="middle" align="center" class="bundle-column" style="width:42%; padding:22px;">
-                          <div style="margin-bottom:12px;">${bluePill("BUNDLE DEAL")}</div>
-                          <div>${images || "&nbsp;"}</div>
+                        <td style="padding:6px 22px 2px 24px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">${rows}
+                          </table>
                         </td>
-                        <td width="58%" valign="middle" class="bundle-column" style="width:58%; padding:24px 24px 24px 0;">
-                          <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#111111; font-weight:700;">${escapeHtml(bundleHeadline(input.title, en ? "en" : "de"))}</div>
-                          <div class="bundle-rule" style="width:14px; height:2px; background:${BLUE}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
-                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:13px;">${itemList}</table>
-                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="bundle-prices"><tr>${priceCells}
-                          </tr></table>
-                          <div style="height:18px; font-size:0; line-height:0;">&nbsp;</div>
+                      </tr>
+                      <tr>
+                        <td style="padding:18px 24px 24px 24px; border-top:1px solid #e5e5e5;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="set-summary" style="margin-bottom:18px;">
+                            <tr>${summaryCells}
+                            </tr>
+                          </table>
                           ${outlineBlockButton({ label: c.labels.cta, url: input.offerUrl })}
                         </td>
                       </tr>
@@ -702,6 +760,17 @@ function makeShell(kind: keyof typeof HERO_COPY) {
         .product-action { padding: 0 20px 20px 20px !important; text-align: center !important; }
         .bundle-column { display: block !important; width: 100% !important; text-align: center !important; padding: 22px !important; }
         .bundle-rule, .bundle-prices { margin-left: auto !important; margin-right: auto !important; }
+        /* The set card: eyecatcher text and badge stack centred; each item row
+           keeps a smaller picture on the left and stacks name and price. */
+        .set-eye-text, .set-eye-badge, .set-item-text, .set-item-price { display: block !important; width: 100% !important; box-sizing: border-box !important; }
+        .set-eye-text { padding: 0 !important; text-align: center !important; }
+        .set-eye-badge { padding: 16px 0 0 0 !important; text-align: center !important; }
+        .set-badge { float: none !important; margin: 0 auto !important; }
+        .set-item-img { width: 72px !important; height: 72px !important; }
+        .set-item-img-cell { width: 84px !important; padding-right: 12px !important; }
+        .set-item-text { padding: 14px 0 4px 0 !important; }
+        .set-item-price { padding: 0 0 14px 0 !important; text-align: left !important; }
+        .set-summary { margin-left: auto !important; margin-right: auto !important; }
       }
     </style>
   </head>
