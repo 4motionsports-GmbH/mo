@@ -215,19 +215,21 @@ export function BundleSection({
                     )}
                   </span>
                 </span>
-                <Select
-                  value={String(quantity)}
-                  onChange={(e) => setQuantity(r.id, Number(e.target.value))}
-                  disabled={busy || !isChosen}
-                  aria-label={`Anzahl ${r.name}`}
-                  className="h-8 w-[4.5rem] pr-7 text-xs"
-                >
-                  {Array.from({ length: maxQty }, (_, i) => i + 1).map((n) => (
-                    <option key={n} value={n}>
-                      {n}×
-                    </option>
-                  ))}
-                </Select>
+                <div className="w-[4.5rem] shrink-0">
+                  <Select
+                    value={String(quantity)}
+                    onChange={(e) => setQuantity(r.id, Number(e.target.value))}
+                    disabled={busy || !isChosen}
+                    aria-label={`Anzahl ${r.name}`}
+                    className="h-8 pr-7 text-xs"
+                  >
+                    {Array.from({ length: maxQty }, (_, i) => i + 1).map((n) => (
+                      <option key={n} value={n}>
+                        {n}×
+                      </option>
+                    ))}
+                  </Select>
+                </div>
                 <span className="w-20 shrink-0 text-right text-xs tabular-nums">
                   {lineCents != null ? eurFromCentsPlain(lineCents) : ""}
                 </span>

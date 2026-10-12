@@ -73,7 +73,7 @@ export function stockLabel({ available, stock, stockScope }) {
   if (status === "sold_out") return "Ausverkauft";
   if (status === "missing") return "Nicht im Katalog";
   if (stock == null) return null;
-  return stockScope === "product" ? `${num(stock)} auf Lager (alle Varianten)` : `${num(stock)} auf Lager`;
+  return stockScope === "product" ? `${num(stock)} auf Lager (gesamt)` : `${num(stock)} auf Lager`;
 }
 
 /**

@@ -82,7 +82,7 @@ test("stockStatus and stockLabel", () => {
   assert.equal(stockLabel({ available: null }), "Nicht im Katalog");
   assert.equal(stockLabel({ available: true, stock: null }), null);
   assert.equal(stockLabel({ available: true, stock: 1200, stockScope: "variant" }), "1.200 auf Lager");
-  assert.equal(stockLabel({ available: true, stock: 30, stockScope: "product" }), "30 auf Lager (alle Varianten)");
+  assert.equal(stockLabel({ available: true, stock: 30, stockScope: "product" }), "30 auf Lager (gesamt)");
 });
 
 test("maxSetQuantity: the known stock caps the count, unknown stock leaves the cap", () => {

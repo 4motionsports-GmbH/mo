@@ -432,12 +432,11 @@ export function ReviewColumn({
           </div>
           {isSetMail && item.bundle ? (
             <>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-start gap-2">
                 <span className="w-12 shrink-0 font-medium text-muted-foreground">Set</span>
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="font-medium">{item.bundle.title}</span>
-                  <span className="text-muted-foreground tabular-nums">
-                    {" · "}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{item.bundle.title}</span>
+                  <span className="block truncate text-muted-foreground tabular-nums">
                     {Number.isFinite(Number(item.bundle.bundlePrice))
                       ? money(Number(item.bundle.bundlePrice), item.bundle.currency || "EUR")
                       : item.bundle.bundlePrice}

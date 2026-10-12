@@ -591,8 +591,7 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   (toast „Nicht mehr verfügbare Empfehlungen entfernt“); a list with nothing
   available left is refused (`nothing_available`). The card shows each
   recommendation's price and — where Shopify tracks it — the stock („12 auf
-  Lager“, for a multi-variant product without a pinned variant „(alle
-  Varianten)“, [`stock-level.mjs`](../src/lib/stock-level.mjs)); sold-out or
+  Lager“, for a multi-variant product without a pinned variant the total, „(gesamt)“, [`stock-level.mjs`](../src/lib/stock-level.mjs)); sold-out or
   vanished ones are greyed out with „Ausverkauft“ / „Nicht im Katalog“. While a
   set is attached the list is fixed (409 `set_attached`): the mail shows only
   the set, and the card lists its contents as „Im Set“. The UI then chains a
