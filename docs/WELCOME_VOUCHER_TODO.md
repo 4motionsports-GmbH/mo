@@ -20,7 +20,25 @@ frontend agent, the switch-on and the live test. The step-by-step history and li
 
 Order: **A** questions to the client → **B** OK from the lawyer → **C** Shopify preparation and **D**
 theme texts (in parallel) → Claude's build for the chosen issuer → **E** switch-on → **F** live test right
-after it.
+after it. **H** only if the client says yes to question 6.
+
+### Why the marketing box is never pre-ticked
+
+A pre-ticked box is not a consent: only an active tick by the person counts (CJEU „Planet49“, C-673/17;
+BGH „Cookie-Einwilligung II“, I ZR 7/16). Every address collected that way counts legally as „no consent“;
+marketing mails to it are spam under § 7 Abs. 2 UWG (warning letters from competitors, GDPR fines). The
+double opt-in does not cure it — the first click was never a valid consent. The client decided „no
+pre-selection anywhere, including the checkout box“ on 08.10.2026, and the lawyer's approval rests on it
+(dossier § 22.3). So every box stays unticked — in the chat, in the shop and in the checkout.
+
+**The lawful ways to more consents and more reach:**
+
+1. **The 50 € voucher** (built, waiting for the switch-on — sections A–F): the hint at the consent ask,
+   the teaser on the sign-in popup, the ask after a product recommendation, Mo naming it when asked.
+2. **The voucher next to every sign-up box** — footer, `/pages/rabatte` (section D) and, if the client
+   says yes to question 5, the checkout box itself (C.7): people tick it themselves, which is valid.
+3. **Mails to existing customers without a tick (§ 7 Abs. 3 UWG)** — buyers may get mails about similar
+   products if they were told at the purchase and can object in every mail (question 6, section H).
 
 ---
 
@@ -30,13 +48,13 @@ after it.
 
 Ready to copy (adapt the greeting and the „Sie“ / „du“ as you usually write to him):
 
-> **Betreff: Newsletter-Gutschein — vier kurze Entscheidungen vor dem Start**
+> **Betreff: Newsletter-Gutschein — sechs kurze Entscheidungen vor dem Start**
 >
 > Hallo,
 >
 > die Anwältin hat den Willkommensgutschein freigegeben (50 € ab 500 € Bestellwert, persönlicher Code,
 > einmal einlösbar, 30 Tage gültig, nicht für reduzierte Artikel und Concept2, ein Code pro Kunde). Im
-> Chat ist alles fertig gebaut und noch ausgeschaltet. Vor dem Start brauche ich vier Entscheidungen:
+> Chat ist alles fertig gebaut und noch ausgeschaltet. Vor dem Start brauche ich sechs Entscheidungen:
 >
 > **1. Wer verschickt die Gutscheincodes?**
 > Die heutige Willkommens-Mail von Shopify Messaging kann nur **einen gemeinsamen Code für alle**
@@ -64,6 +82,30 @@ Ready to copy (adapt the greeting and the „Sie“ / „du“ as you usually wr
 > **4. Der alte 5-%-Code:** Beim Start ein Enddatum 30 Tage später setzen, damit wer ihn gerade bekommen hat
 > ihn noch nutzen kann und er danach nicht weiter kursiert. Empfehlung: **ja**.
 >
+> **5. Gutschein auch für Anmeldungen im Bezahlvorgang (Checkout)?** Bisher ausgenommen (Entscheidung vom
+> 11.10.: wer gerade gekauft hat, bekommt keinen Gutschein). Bei „ja“ darf das Newsletter-Kästchen im
+> Checkout direkt mit dem Gutschein werben, etwa: „Ja, ich möchte exklusive Angebote per E-Mail erhalten —
+> mit 50 € Willkommensgutschein ab 500 € für meine nächste Bestellung.“ Das Kästchen sieht jede Käuferin und
+> jeder Käufer; viele setzen das Häkchen dann selbst. Der Gutschein gilt dann für die nächste Bestellung.
+> Bei „nein“ darf das Kästchen nicht mit dem Gutschein werben. Empfehlung: **ja**, wenn mehr Anmeldungen das
+> Ziel sind (die Bedingungen passe ich an, die Anwältin schaut kurz drüber).
+>
+> **6. Werbung an Bestandskunden ohne Häkchen (§ 7 Abs. 3 UWG)?** Das ist der einzige rechtlich zulässige
+> Weg, Kunden ohne Einwilligung per E-Mail zu bewerben: Wer bei uns gekauft hat, darf E-Mails zu
+> **ähnlichen Produkten** bekommen (wer ein Laufband gekauft hat, z. B. zu Matten, Pflege, Zubehör und
+> Service) — wenn er beim Kauf darauf hingewiesen wurde und in jeder Mail widersprechen kann. Es braucht
+> einen Hinweis im Checkout, in der Bestellbestätigung und in der Datenschutzerklärung, und es zählen nur
+> Bestellungen **nach** dem Einbau dieses Hinweises (frühere Käufer dürfen nicht nachträglich so
+> angeschrieben werden). Die Anwältin hat die Frage beantwortet; am 16.06. und am 11.10. hieß es „vorerst
+> nein“. Aufwand: etwa 1–2 Entwicklungstage. Empfehlung: **ja**, wenn mehr Reichweite gewünscht ist — am
+> besten direkt nach dem Start des Gutscheins.
+>
+> **Zur Frage, warum das Marketing-Häkchen nicht vorausgewählt ist:** Ein vorausgewähltes Kästchen ist
+> rechtlich keine Einwilligung (EuGH „Planet49“, C-673/17; BGH „Cookie-Einwilligung II“, I ZR 7/16). Jede so
+> gesammelte Adresse gilt als „ohne Einwilligung“; Werbemails daran wären Spam (§ 7 Abs. 2 UWG) mit Abmahn-
+> und Bußgeldrisiko — auch die Bestätigungsmail ändert daran nichts. Deshalb bleibt das Kästchen überall
+> leer; die Punkte 1, 5 und 6 bringen stattdessen rechtssicher mehr Anmeldungen und mehr Reichweite.
+>
 > Viele Grüße
 
 ---
@@ -71,6 +113,10 @@ Ready to copy (adapt the greeting and the „Sie“ / „du“ as you usually wr
 ## B. The lawyer: one short OK on the final texts (before the switch-on)
 
 - [ ] Sent · [ ] OK received · [ ] Written approval of 11.10. filed in the dossier (§ 22.4)
+- [ ] If the client says yes to question 5: also the checkout-box text (C.7) and the terms without the
+      checkout exclusion (Claude sends the revised terms).
+- [ ] If the client says yes to question 6: the notice texts for checkout, order confirmation and privacy
+      policy (section H; Claude drafts them).
 
 Attach the table of dossier § 22.2 (German and English texts) and the terms-page draft (section C.6).
 Ready to copy:
@@ -118,7 +164,7 @@ Ready to copy:
 4. [ ] **Shopify's own confirmation mail neutral.** Einstellungen → Benachrichtigungen → Kunden →
    „Bestätigung für Kundenmarketing“: no offer, no code, no „5 %“. Screenshot.
 5. [ ] **Checkout box not pre-ticked.** Einstellungen → Checkout → Marketing-Optionen: „E-Mail“ on,
-   „vorausgewählt“ off.
+   „vorausgewählt“ **off** (see „Why the marketing box is never pre-ticked“ above).
 6. [ ] **Terms page.** Onlineshop → Seiten → Seite hinzufügen, title „Bedingungen
    Newsletter-Willkommensgutschein“, URL handle `newsletter-gutschein`, the text below, Sichtbarkeit
    **Ausgeblendet** until the switch-on. Then Vercel (Production) → `CONSENT_REWARD_TERMS_URL` =
@@ -142,6 +188,14 @@ Ready to copy:
    > - **Abmeldung:** Du kannst dich jederzeit über den Abmeldelink in jeder E-Mail abmelden. Ein bereits
    >   erhaltener Gutschein bleibt bis zu seinem Ablauf gültig.
    > - **Fragen:** info@motionsports.de
+
+7. [ ] **Only if the client says yes to question 5 — the voucher at the checkout box.** Change the label
+   of the checkout's newsletter box (it stays **unticked**), e.g. „Ja, ich möchte exklusive Angebote per
+   E-Mail erhalten — mit 50 € Willkommensgutschein ab 500 € für meine nächste Bestellung.“ The menu depends on
+   the admin version: Onlineshop → Themes → ⋯ → „Standard-Theme-Inhalte bearbeiten“ → search for the box's
+   current text („Angebote“ / „news and offers“), or Einstellungen → Sprachen → Übersetzen → Checkout.
+   Change it **at the switch-on** (E), only after the lawyer's OK (B), and only once Claude has adapted the
+   conditions (checkout subscribers then get the voucher for their next order).
 
 → Send Claude: the screenshots (3, 4), the collection URL (1) and the Concept2 answer (2).
 
@@ -183,7 +237,8 @@ In this order:
    automation), then **switch off** both old automations (Apps → Shopify Messaging → Automationen → each
    → Deaktivieren).
 3. [ ] The old 5 % code (question 4): **Rabatte** → open it → **Enddatum** = switch-on day + 30 days.
-4. [ ] Publish the theme copy (D) and make the terms page visible (C.6).
+4. [ ] Publish the theme copy (D) and make the terms page visible (C.6); if question 5 = yes, change the
+   checkout-box text (C.7).
 5. [ ] Vercel (Production): `CONSENT_REWARD_ENABLED=true`, `CONSENT_VALUE_MOMENT_ENABLED=true`,
    `CONSENT_SIGNIN_VARIANTS=a,b,c` (or `a,b` per question 2) → Redeploy. Check: Einstellungen →
    Systemstatus shows „Willkommensgutschein: An · mit Link „Bedingungen““.
@@ -206,6 +261,8 @@ With fresh test addresses (e.g. `yourname+voucher1@gmail.com`), each in a fresh 
       accept → click the link in Mo's mail → the confirmation page says the voucher is on its way → exactly
       **one** welcome mail.
 - [ ] **Unsubscribe and subscribe again** → no second code.
+- [ ] **Only if question 5 = yes — checkout:** a test order with the newsletter box ticked → exactly **one**
+      welcome mail with a code for the next order.
 - [ ] **Ask Mo:** „Gibt es einen Newsletter-Rabatt?“ → the exact conditions; „Gilt der auch für Concept2?“ →
       no; „Was kostet das Laufband dann?“ → no computed price.
 - [ ] **Try the code:** cart below 500 € → refused; a Concept2 item / a reduced item → not discounted; a
@@ -230,3 +287,29 @@ switch the old automation back on if needed, tell Claude.
 - [ ] **Neue Auswertungen prüfen** (~30 min): `ROLLOUT_TODO.md` open list item 8.
 - [ ] **Privacy policy** (before the switch-on): the welcome voucher, and the actual mail provider instead
       of the old MailChimp mentions (with answer (1): Mo sends the welcome mail) — with the lawyer.
+
+---
+
+## H. Only if the client says yes to question 6 — mails to existing customers (§ 7 Abs. 3 UWG)
+
+Lawful only with all four conditions, read narrowly (dossier F-47, task brief T7):
+
+1. **A notice when the address is collected at a purchase** — before the order is placed: in the
+   checkout (contact step), in the order confirmation mail and in the privacy policy. Addresses collected
+   **before** the notice was live may not be used this way.
+2. **A notice and an objection link in every such mail.**
+3. **Only the shop's own, similar products**, per purchased category (treadmill buyer → mats, care,
+   accessories, service) — no general newsletter, no Black-Week blast.
+4. **A completed purchase** (cancelled orders do not count); a time limit set by the lawyer (conservative:
+   last order ≤ 24 months ago).
+
+Steps:
+
+- [ ] Claude drafts the three notice texts → the lawyer approves them (B).
+- [ ] M places them: Shopify checkout (contact step, via the checkout settings / texts), the order
+      confirmation (Einstellungen → Benachrichtigungen → Bestellbestätigung), the privacy policy; the theme
+      setting „Widerspruchshinweis im Warenkorb“ (already built, empty today) gets the cart notice.
+- [ ] Claude builds the separate audience (Shopify consent is **never** set to subscribed for these
+      people), the „similar products“ selection per category, the objection handling (immediate permanent
+      block) and the sends through Mo's campaign path with a human release per send — about 1–2 days.
+- [ ] First mails only to customers who ordered after the notices went live.

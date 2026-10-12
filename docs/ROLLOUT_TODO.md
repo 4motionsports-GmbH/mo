@@ -40,6 +40,11 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
    - **(2) Shopify Messaging with one shared code.** Simplest, but the 50 € code ends up on coupon sites:
      anyone can use it once per e-mail address on a 500 € order. The conditions change to „einmal je
      Kunde“ and „gültig bis <date>“ (C changes the texts; counsel re-confirms).
+   - Two more questions for the client in the same message (ready to send in
+     [`WELCOME_VOUCHER_TODO.md`](./WELCOME_VOUCHER_TODO.md) A.5 / A.6): the voucher also for checkout
+     subscribers, so the checkout box may advertise it (changes O-7), and mails to existing customers
+     under § 7 Abs. 3 UWG (revisits O-9; section H there). The marketing box itself is never pre-ticked
+     (Planet49; the client's decision of 08.10.).
    - **(3) An extra app** that adds personal codes to Shopify mails (e.g. a discount-code generator app):
      another provider (privacy policy, contract), monthly cost; C would check one you name.
 2. **Shopify preparation — now, ~30 min, independent of item 1.**
